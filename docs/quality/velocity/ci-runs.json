@@ -1,0 +1,2416 @@
+{
+  "runs": [
+    {
+      "at": "2026-09-11T00:02:39Z",
+      "branch": "fix/idempotency-contract",
+      "conclusion": "success",
+      "seconds": 466
+    },
+    {
+      "at": "2026-09-11T00:12:23Z",
+      "branch": "campaign/architecture-a",
+      "conclusion": "success",
+      "seconds": 492
+    },
+    {
+      "at": "2026-09-11T16:01:04Z",
+      "branch": "main",
+      "conclusion": "failure",
+      "seconds": 487
+    },
+    {
+      "at": "2026-09-11T19:03:28Z",
+      "branch": "docs/campaign-model-routing",
+      "conclusion": "success",
+      "seconds": 458
+    },
+    {
+      "at": "2026-09-11T22:20:22Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 511
+    },
+    {
+      "at": "2026-09-11T23:51:46Z",
+      "branch": "feat/trades-bars-b3",
+      "conclusion": "success",
+      "seconds": 464
+    },
+    {
+      "at": "2026-09-11T23:58:37Z",
+      "branch": "feat/trades-bars-b3",
+      "conclusion": "success",
+      "seconds": 501
+    },
+    {
+      "at": "2026-09-11T23:58:50Z",
+      "branch": "feat/trades-bars-b3",
+      "conclusion": "success",
+      "seconds": 471
+    },
+    {
+      "at": "2026-09-12T00:04:56Z",
+      "branch": "fix/load-sensitive-tests",
+      "conclusion": "success",
+      "seconds": 469
+    },
+    {
+      "at": "2026-09-12T00:13:20Z",
+      "branch": "fix/load-sensitive-tests",
+      "conclusion": "failure",
+      "seconds": 501
+    },
+    {
+      "at": "2026-09-12T00:17:19Z",
+      "branch": "refactor/pane-under-1500",
+      "conclusion": "success",
+      "seconds": 452
+    },
+    {
+      "at": "2026-09-12T00:26:59Z",
+      "branch": "fix/load-sensitive-tests",
+      "conclusion": "success",
+      "seconds": 462
+    },
+    {
+      "at": "2026-09-12T00:27:18Z",
+      "branch": "refactor/paper-trading-under-1500",
+      "conclusion": "failure",
+      "seconds": 452
+    },
+    {
+      "at": "2026-09-12T00:40:00Z",
+      "branch": "refactor/pane-under-1500",
+      "conclusion": "failure",
+      "seconds": 448
+    },
+    {
+      "at": "2026-09-12T00:40:29Z",
+      "branch": "refactor/pane-under-1500",
+      "conclusion": "success",
+      "seconds": 467
+    },
+    {
+      "at": "2026-09-12T00:41:14Z",
+      "branch": "refactor/pane-under-1500",
+      "conclusion": "success",
+      "seconds": 483
+    },
+    {
+      "at": "2026-09-12T00:41:32Z",
+      "branch": "refactor/paper-trading-under-1500",
+      "conclusion": "success",
+      "seconds": 521
+    },
+    {
+      "at": "2026-09-12T00:57:10Z",
+      "branch": "refactor/pane-under-1500",
+      "conclusion": "success",
+      "seconds": 506
+    },
+    {
+      "at": "2026-09-12T00:58:12Z",
+      "branch": "refactor/pane-under-1500",
+      "conclusion": "success",
+      "seconds": 493
+    },
+    {
+      "at": "2026-09-12T01:00:06Z",
+      "branch": "refactor/paper-trading-under-1500",
+      "conclusion": "success",
+      "seconds": 448
+    },
+    {
+      "at": "2026-09-12T01:04:01Z",
+      "branch": "refactor/pane-under-1500",
+      "conclusion": "success",
+      "seconds": 484
+    },
+    {
+      "at": "2026-09-12T01:16:27Z",
+      "branch": "refactor/pane-under-1500",
+      "conclusion": "success",
+      "seconds": 483
+    },
+    {
+      "at": "2026-09-12T01:18:26Z",
+      "branch": "fix/campaign-gate-cd-prefix",
+      "conclusion": "success",
+      "seconds": 468
+    },
+    {
+      "at": "2026-09-12T01:27:35Z",
+      "branch": "refactor/pane-under-1500",
+      "conclusion": "success",
+      "seconds": 486
+    },
+    {
+      "at": "2026-09-12T01:28:05Z",
+      "branch": "fix/campaign-gate-cd-prefix",
+      "conclusion": "success",
+      "seconds": 467
+    },
+    {
+      "at": "2026-09-12T01:30:10Z",
+      "branch": "fix/campaign-gate-cd-prefix",
+      "conclusion": "success",
+      "seconds": 482
+    },
+    {
+      "at": "2026-09-12T01:31:56Z",
+      "branch": "fix/campaign-gate-cd-prefix",
+      "conclusion": "success",
+      "seconds": 458
+    },
+    {
+      "at": "2026-09-12T03:20:46Z",
+      "branch": "refactor/orderflow-render-under-1500",
+      "conclusion": "success",
+      "seconds": 422
+    },
+    {
+      "at": "2026-09-12T03:50:00Z",
+      "branch": "refactor/orderflow-render-under-1500",
+      "conclusion": "success",
+      "seconds": 464
+    },
+    {
+      "at": "2026-09-12T04:21:21Z",
+      "branch": "refactor/orderflow-render-under-1500",
+      "conclusion": "success",
+      "seconds": 524
+    },
+    {
+      "at": "2026-09-12T04:58:22Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 536
+    },
+    {
+      "at": "2026-09-12T05:05:22Z",
+      "branch": "refactor/paper-trading-under-1500",
+      "conclusion": "success",
+      "seconds": 485
+    },
+    {
+      "at": "2026-09-12T05:11:32Z",
+      "branch": "refactor/drawings-mod-under-1500",
+      "conclusion": "success",
+      "seconds": 483
+    },
+    {
+      "at": "2026-09-12T05:17:15Z",
+      "branch": "refactor/drawings-mod-under-1500",
+      "conclusion": "success",
+      "seconds": 455
+    },
+    {
+      "at": "2026-09-12T05:17:40Z",
+      "branch": "refactor/control-plane-under-1500",
+      "conclusion": "success",
+      "seconds": 464
+    },
+    {
+      "at": "2026-09-12T05:33:00Z",
+      "branch": "feat/trades-bars-b3",
+      "conclusion": "success",
+      "seconds": 485
+    },
+    {
+      "at": "2026-09-12T05:33:54Z",
+      "branch": "refactor/pane-under-1500",
+      "conclusion": "success",
+      "seconds": 424
+    },
+    {
+      "at": "2026-09-12T05:35:22Z",
+      "branch": "feat/trades-bars-b3",
+      "conclusion": "success",
+      "seconds": 445
+    },
+    {
+      "at": "2026-09-12T05:43:48Z",
+      "branch": "refactor/orderflow-render-under-1500",
+      "conclusion": "success",
+      "seconds": 388
+    },
+    {
+      "at": "2026-09-12T05:53:11Z",
+      "branch": "refactor/drawings-mod-under-1500",
+      "conclusion": "failure",
+      "seconds": 467
+    },
+    {
+      "at": "2026-09-12T05:54:01Z",
+      "branch": "refactor/drawings-mod-under-1500",
+      "conclusion": "success",
+      "seconds": 513
+    },
+    {
+      "at": "2026-09-12T05:55:34Z",
+      "branch": "feat/trades-bars-b3",
+      "conclusion": "success",
+      "seconds": 475
+    },
+    {
+      "at": "2026-09-12T06:48:23Z",
+      "branch": "fix/mission-review-completion-gates",
+      "conclusion": "failure",
+      "seconds": 460
+    },
+    {
+      "at": "2026-09-12T06:56:29Z",
+      "branch": "fix/mission-review-completion-gates",
+      "conclusion": "success",
+      "seconds": 483
+    },
+    {
+      "at": "2026-09-12T07:04:17Z",
+      "branch": "fix/mission-review-completion-gates",
+      "conclusion": "success",
+      "seconds": 464
+    },
+    {
+      "at": "2026-09-12T07:13:24Z",
+      "branch": "fix/mission-review-completion-gates",
+      "conclusion": "success",
+      "seconds": 449
+    },
+    {
+      "at": "2026-09-12T07:54:49Z",
+      "branch": "sync/main-57767f25",
+      "conclusion": "success",
+      "seconds": 467
+    },
+    {
+      "at": "2026-09-12T08:12:29Z",
+      "branch": "refactor/control-plane-under-1500",
+      "conclusion": "success",
+      "seconds": 525
+    },
+    {
+      "at": "2026-09-12T08:18:06Z",
+      "branch": "refactor/chrome-under-1500",
+      "conclusion": "success",
+      "seconds": 458
+    },
+    {
+      "at": "2026-09-12T08:45:45Z",
+      "branch": "refactor/control-plane-under-1500",
+      "conclusion": "success",
+      "seconds": 513
+    },
+    {
+      "at": "2026-09-12T09:03:38Z",
+      "branch": "refactor/mt5-stream-under-1500",
+      "conclusion": "success",
+      "seconds": 456
+    },
+    {
+      "at": "2026-09-12T09:22:21Z",
+      "branch": "refactor/orderflow-crate-under-1500",
+      "conclusion": "success",
+      "seconds": 464
+    },
+    {
+      "at": "2026-09-12T09:33:46Z",
+      "branch": "refactor/pine-under-1500",
+      "conclusion": "success",
+      "seconds": 481
+    },
+    {
+      "at": "2026-09-12T09:37:51Z",
+      "branch": "refactor/orderflow-crate-under-1500",
+      "conclusion": "success",
+      "seconds": 479
+    },
+    {
+      "at": "2026-09-12T09:39:58Z",
+      "branch": "fix/gateway-load-sensitive-tests",
+      "conclusion": "success",
+      "seconds": 474
+    },
+    {
+      "at": "2026-09-12T09:50:05Z",
+      "branch": "fix/gateway-load-sensitive-tests",
+      "conclusion": "success",
+      "seconds": 591
+    },
+    {
+      "at": "2026-09-12T09:52:46Z",
+      "branch": "fix/gateway-load-sensitive-tests",
+      "conclusion": "success",
+      "seconds": 469
+    },
+    {
+      "at": "2026-09-12T10:03:31Z",
+      "branch": "fix/gateway-load-sensitive-tests",
+      "conclusion": "success",
+      "seconds": 503
+    },
+    {
+      "at": "2026-09-12T10:04:57Z",
+      "branch": "refactor/orderflow-crate-under-1500",
+      "conclusion": "success",
+      "seconds": 490
+    },
+    {
+      "at": "2026-09-12T10:48:28Z",
+      "branch": "feat/ui-behaviour-capability-matrix",
+      "conclusion": "success",
+      "seconds": 394
+    },
+    {
+      "at": "2026-09-12T11:00:22Z",
+      "branch": "feat/ui-behaviour-capability-matrix",
+      "conclusion": "success",
+      "seconds": 520
+    },
+    {
+      "at": "2026-09-12T11:10:31Z",
+      "branch": "feat/ui-behaviour-capability-matrix",
+      "conclusion": "success",
+      "seconds": 501
+    },
+    {
+      "at": "2026-09-12T11:23:01Z",
+      "branch": "feat/ui-behaviour-capability-matrix",
+      "conclusion": "success",
+      "seconds": 501
+    },
+    {
+      "at": "2026-09-12T11:34:07Z",
+      "branch": "feat/ui-behaviour-capability-matrix",
+      "conclusion": "success",
+      "seconds": 482
+    },
+    {
+      "at": "2026-09-12T11:36:49Z",
+      "branch": "feat/ui-behaviour-capability-matrix",
+      "conclusion": "success",
+      "seconds": 515
+    },
+    {
+      "at": "2026-09-12T14:48:04Z",
+      "branch": "fix/gateway-load-sensitive-tests",
+      "conclusion": "success",
+      "seconds": 454
+    },
+    {
+      "at": "2026-09-12T15:06:23Z",
+      "branch": "refactor/control-plane-under-1500",
+      "conclusion": "success",
+      "seconds": 489
+    },
+    {
+      "at": "2026-09-12T15:17:00Z",
+      "branch": "refactor/orderflow-crate-under-1500",
+      "conclusion": "success",
+      "seconds": 470
+    },
+    {
+      "at": "2026-09-12T15:53:26Z",
+      "branch": "fix/layers-test-load-sensitive",
+      "conclusion": "success",
+      "seconds": 487
+    },
+    {
+      "at": "2026-09-12T16:03:22Z",
+      "branch": "fix/layers-test-load-sensitive",
+      "conclusion": "success",
+      "seconds": 491
+    },
+    {
+      "at": "2026-09-12T16:09:19Z",
+      "branch": "feat/live-workload-envelope",
+      "conclusion": "success",
+      "seconds": 501
+    },
+    {
+      "at": "2026-09-12T16:16:32Z",
+      "branch": "feat/size-baseline-no-exceptions",
+      "conclusion": "success",
+      "seconds": 487
+    },
+    {
+      "at": "2026-09-12T16:28:33Z",
+      "branch": "feat/live-workload-envelope",
+      "conclusion": "success",
+      "seconds": 486
+    },
+    {
+      "at": "2026-09-12T16:29:51Z",
+      "branch": "feat/size-baseline-no-exceptions",
+      "conclusion": "success",
+      "seconds": 486
+    },
+    {
+      "at": "2026-09-12T16:52:18Z",
+      "branch": "feat/live-workload-envelope",
+      "conclusion": "success",
+      "seconds": 505
+    },
+    {
+      "at": "2026-09-12T17:28:58Z",
+      "branch": "feat/live-workload-envelope",
+      "conclusion": "success",
+      "seconds": 469
+    },
+    {
+      "at": "2026-09-12T17:44:51Z",
+      "branch": "feat/live-workload-envelope",
+      "conclusion": "success",
+      "seconds": 486
+    },
+    {
+      "at": "2026-09-12T17:59:30Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 458
+    },
+    {
+      "at": "2026-09-12T18:02:04Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 465
+    },
+    {
+      "at": "2026-09-12T18:13:52Z",
+      "branch": "feat/live-workload-envelope",
+      "conclusion": "success",
+      "seconds": 478
+    },
+    {
+      "at": "2026-09-12T18:43:47Z",
+      "branch": "ci/app-tests-under-contention",
+      "conclusion": "success",
+      "seconds": 611
+    },
+    {
+      "at": "2026-09-12T19:01:40Z",
+      "branch": "ci/app-tests-under-contention",
+      "conclusion": "success",
+      "seconds": 751
+    },
+    {
+      "at": "2026-09-12T19:13:11Z",
+      "branch": "ci/app-tests-under-contention",
+      "conclusion": "success",
+      "seconds": 645
+    },
+    {
+      "at": "2026-09-12T19:19:58Z",
+      "branch": "ci/app-tests-under-contention",
+      "conclusion": "success",
+      "seconds": 836
+    },
+    {
+      "at": "2026-09-12T19:29:41Z",
+      "branch": "ci/app-tests-under-contention",
+      "conclusion": "success",
+      "seconds": 784
+    },
+    {
+      "at": "2026-09-12T20:22:47Z",
+      "branch": "perf/hot-path-session-length",
+      "conclusion": "success",
+      "seconds": 496
+    },
+    {
+      "at": "2026-09-12T20:58:10Z",
+      "branch": "feat/copy-paste-drawings",
+      "conclusion": "success",
+      "seconds": 491
+    },
+    {
+      "at": "2026-09-12T20:59:15Z",
+      "branch": "feat/retry-readback-matrix",
+      "conclusion": "success",
+      "seconds": 559
+    },
+    {
+      "at": "2026-09-12T21:19:24Z",
+      "branch": "perf/hot-path-session-length",
+      "conclusion": "success",
+      "seconds": 499
+    },
+    {
+      "at": "2026-09-12T21:29:14Z",
+      "branch": "perf/hot-path-session-length",
+      "conclusion": "success",
+      "seconds": 480
+    },
+    {
+      "at": "2026-09-12T21:59:32Z",
+      "branch": "perf/hot-path-session-length",
+      "conclusion": "success",
+      "seconds": 486
+    },
+    {
+      "at": "2026-09-12T22:26:00Z",
+      "branch": "perf/hot-path-session-length",
+      "conclusion": "success",
+      "seconds": 526
+    },
+    {
+      "at": "2026-09-13T02:23:00Z",
+      "branch": "main",
+      "conclusion": "failure",
+      "seconds": 462
+    },
+    {
+      "at": "2026-09-13T02:29:22Z",
+      "branch": "perf/hot-path-session-length",
+      "conclusion": "success",
+      "seconds": 489
+    },
+    {
+      "at": "2026-09-13T03:09:51Z",
+      "branch": "feat/mcp-newest-version-default",
+      "conclusion": "success",
+      "seconds": 511
+    },
+    {
+      "at": "2026-09-13T03:14:19Z",
+      "branch": "feat/mcp-newest-version-default",
+      "conclusion": "success",
+      "seconds": 512
+    },
+    {
+      "at": "2026-09-13T04:34:32Z",
+      "branch": "fix/contention-listed-tests",
+      "conclusion": "success",
+      "seconds": 566
+    },
+    {
+      "at": "2026-09-13T04:58:11Z",
+      "branch": "fix/contention-listed-tests",
+      "conclusion": "success",
+      "seconds": 493
+    },
+    {
+      "at": "2026-09-13T05:23:42Z",
+      "branch": "fix/contention-listed-tests",
+      "conclusion": "success",
+      "seconds": 495
+    },
+    {
+      "at": "2026-09-13T05:42:18Z",
+      "branch": "fix/contention-listed-tests",
+      "conclusion": "success",
+      "seconds": 506
+    },
+    {
+      "at": "2026-09-13T06:34:37Z",
+      "branch": "perf/chunked-trade-tape",
+      "conclusion": "success",
+      "seconds": 504
+    },
+    {
+      "at": "2026-09-13T06:48:23Z",
+      "branch": "perf/chunked-trade-tape",
+      "conclusion": "success",
+      "seconds": 475
+    },
+    {
+      "at": "2026-09-13T07:07:07Z",
+      "branch": "fix/contention-listed-tests",
+      "conclusion": "success",
+      "seconds": 510
+    },
+    {
+      "at": "2026-09-13T07:16:18Z",
+      "branch": "feat/right-drag-volume-profile",
+      "conclusion": "success",
+      "seconds": 491
+    },
+    {
+      "at": "2026-09-13T07:22:53Z",
+      "branch": "perf/chunked-trade-tape",
+      "conclusion": "success",
+      "seconds": 527
+    },
+    {
+      "at": "2026-09-13T09:26:42Z",
+      "branch": "fix/gateway-request-id-ordering",
+      "conclusion": "success",
+      "seconds": 551
+    },
+    {
+      "at": "2026-09-13T10:30:09Z",
+      "branch": "fix/gateway-request-id-ordering",
+      "conclusion": "success",
+      "seconds": 440
+    },
+    {
+      "at": "2026-09-13T11:20:34Z",
+      "branch": "fix/gateway-request-id-ordering",
+      "conclusion": "success",
+      "seconds": 497
+    },
+    {
+      "at": "2026-09-13T11:24:21Z",
+      "branch": "fix/gateway-request-id-ordering",
+      "conclusion": "success",
+      "seconds": 524
+    },
+    {
+      "at": "2026-09-13T11:44:21Z",
+      "branch": "sync/main-d8de9a1b",
+      "conclusion": "success",
+      "seconds": 530
+    },
+    {
+      "at": "2026-09-13T12:38:29Z",
+      "branch": "sync/main-d8de9a1b",
+      "conclusion": "success",
+      "seconds": 514
+    },
+    {
+      "at": "2026-09-13T13:03:56Z",
+      "branch": "sync/main-d8de9a1b",
+      "conclusion": "success",
+      "seconds": 524
+    },
+    {
+      "at": "2026-09-13T13:25:24Z",
+      "branch": "sync/main-d8de9a1b",
+      "conclusion": "success",
+      "seconds": 514
+    },
+    {
+      "at": "2026-09-13T13:39:32Z",
+      "branch": "sync/main-d8de9a1b",
+      "conclusion": "success",
+      "seconds": 496
+    },
+    {
+      "at": "2026-09-13T13:54:39Z",
+      "branch": "sync/main-d8de9a1b",
+      "conclusion": "success",
+      "seconds": 511
+    },
+    {
+      "at": "2026-09-13T14:32:17Z",
+      "branch": "docs/gate6-remeasure",
+      "conclusion": "success",
+      "seconds": 503
+    },
+    {
+      "at": "2026-09-13T14:48:14Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 495
+    },
+    {
+      "at": "2026-09-13T15:41:44Z",
+      "branch": "sync/main-5c7b7d1a",
+      "conclusion": "success",
+      "seconds": 514
+    },
+    {
+      "at": "2026-09-13T15:49:41Z",
+      "branch": "fix/campaign-aware-ship-gate",
+      "conclusion": "success",
+      "seconds": 521
+    },
+    {
+      "at": "2026-09-13T16:01:36Z",
+      "branch": "fix/campaign-aware-ship-gate",
+      "conclusion": "success",
+      "seconds": 496
+    },
+    {
+      "at": "2026-09-13T16:11:05Z",
+      "branch": "sync/main-5c7b7d1a",
+      "conclusion": "success",
+      "seconds": 390
+    },
+    {
+      "at": "2026-09-13T16:11:23Z",
+      "branch": "sync/main-5c7b7d1a",
+      "conclusion": "success",
+      "seconds": 518
+    },
+    {
+      "at": "2026-09-13T16:14:59Z",
+      "branch": "fix/campaign-aware-ship-gate",
+      "conclusion": "success",
+      "seconds": 524
+    },
+    {
+      "at": "2026-09-13T16:42:14Z",
+      "branch": "sync/main-5c7b7d1a",
+      "conclusion": "success",
+      "seconds": 517
+    },
+    {
+      "at": "2026-09-13T17:27:14Z",
+      "branch": "sync/main-5c7b7d1a",
+      "conclusion": "success",
+      "seconds": 519
+    },
+    {
+      "at": "2026-09-13T18:13:57Z",
+      "branch": "docs/gate6-remeasure-2",
+      "conclusion": "success",
+      "seconds": 513
+    },
+    {
+      "at": "2026-09-13T18:27:21Z",
+      "branch": "campaign/lean-a-plus",
+      "conclusion": "success",
+      "seconds": 543
+    },
+    {
+      "at": "2026-09-13T19:12:38Z",
+      "branch": "feat/app-ui-free-ratchet",
+      "conclusion": "success",
+      "seconds": 528
+    },
+    {
+      "at": "2026-09-13T19:14:24Z",
+      "branch": "feat/app-ui-free-ratchet",
+      "conclusion": "success",
+      "seconds": 473
+    },
+    {
+      "at": "2026-09-13T19:25:40Z",
+      "branch": "feat/app-ui-free-ratchet",
+      "conclusion": "success",
+      "seconds": 537
+    },
+    {
+      "at": "2026-09-13T19:26:09Z",
+      "branch": "feat/app-ui-free-ratchet",
+      "conclusion": "success",
+      "seconds": 494
+    },
+    {
+      "at": "2026-09-13T19:28:25Z",
+      "branch": "fix/mcp-describe-refusal",
+      "conclusion": "success",
+      "seconds": 510
+    },
+    {
+      "at": "2026-09-13T19:32:50Z",
+      "branch": "refactor/control-host-headless",
+      "conclusion": "success",
+      "seconds": 542
+    },
+    {
+      "at": "2026-09-13T19:38:04Z",
+      "branch": "fix/mcp-describe-refusal",
+      "conclusion": "success",
+      "seconds": 548
+    },
+    {
+      "at": "2026-09-13T19:46:42Z",
+      "branch": "refactor/control-host-headless",
+      "conclusion": "success",
+      "seconds": 467
+    },
+    {
+      "at": "2026-09-13T19:48:49Z",
+      "branch": "campaign/lean-a-plus",
+      "conclusion": "success",
+      "seconds": 518
+    },
+    {
+      "at": "2026-09-13T19:56:00Z",
+      "branch": "refactor/paper-account-headless",
+      "conclusion": "success",
+      "seconds": 538
+    },
+    {
+      "at": "2026-09-13T20:05:12Z",
+      "branch": "fix/mcp-describe-test-name",
+      "conclusion": "success",
+      "seconds": 528
+    },
+    {
+      "at": "2026-09-13T20:07:18Z",
+      "branch": "refactor/paper-account-headless",
+      "conclusion": "success",
+      "seconds": 524
+    },
+    {
+      "at": "2026-09-13T20:08:51Z",
+      "branch": "refactor/paper-account-headless",
+      "conclusion": "success",
+      "seconds": 514
+    },
+    {
+      "at": "2026-09-13T20:13:09Z",
+      "branch": "refactor/control-host-headless",
+      "conclusion": "success",
+      "seconds": 527
+    },
+    {
+      "at": "2026-09-13T20:15:45Z",
+      "branch": "campaign/lean-a-plus",
+      "conclusion": "success",
+      "seconds": 488
+    },
+    {
+      "at": "2026-09-13T20:27:56Z",
+      "branch": "refactor/paper-account-headless",
+      "conclusion": "success",
+      "seconds": 520
+    },
+    {
+      "at": "2026-09-13T20:34:03Z",
+      "branch": "refactor/control-host-headless",
+      "conclusion": "success",
+      "seconds": 545
+    },
+    {
+      "at": "2026-09-13T20:38:49Z",
+      "branch": "refactor/paper-account-headless",
+      "conclusion": "success",
+      "seconds": 547
+    },
+    {
+      "at": "2026-09-13T20:43:32Z",
+      "branch": "refactor/control-host-headless",
+      "conclusion": "success",
+      "seconds": 538
+    },
+    {
+      "at": "2026-09-13T20:58:53Z",
+      "branch": "refactor/paper-account-headless",
+      "conclusion": "success",
+      "seconds": 418
+    },
+    {
+      "at": "2026-09-13T21:11:05Z",
+      "branch": "refactor/paper-account-headless",
+      "conclusion": "success",
+      "seconds": 525
+    },
+    {
+      "at": "2026-09-14T00:05:46Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 452
+    },
+    {
+      "at": "2026-09-14T00:18:58Z",
+      "branch": "refactor/control-host-headless",
+      "conclusion": "success",
+      "seconds": 527
+    },
+    {
+      "at": "2026-09-14T00:56:15Z",
+      "branch": "feat/app-ui-free-ratchet",
+      "conclusion": "success",
+      "seconds": 568
+    },
+    {
+      "at": "2026-09-14T01:03:06Z",
+      "branch": "feat/app-ui-free-ratchet",
+      "conclusion": "success",
+      "seconds": 541
+    },
+    {
+      "at": "2026-09-14T01:19:56Z",
+      "branch": "docs/outside-score",
+      "conclusion": "success",
+      "seconds": 527
+    },
+    {
+      "at": "2026-09-14T01:29:37Z",
+      "branch": "docs/outside-score",
+      "conclusion": "success",
+      "seconds": 521
+    },
+    {
+      "at": "2026-09-14T01:30:42Z",
+      "branch": "fix/session-length-test-cheap",
+      "conclusion": "success",
+      "seconds": 537
+    },
+    {
+      "at": "2026-09-14T01:36:34Z",
+      "branch": "docs/outside-score",
+      "conclusion": "success",
+      "seconds": 438
+    },
+    {
+      "at": "2026-09-14T01:37:18Z",
+      "branch": "docs/verify-copy-paste-latest",
+      "conclusion": "success",
+      "seconds": 504
+    },
+    {
+      "at": "2026-09-14T01:38:39Z",
+      "branch": "docs/verify-copy-paste-latest",
+      "conclusion": "success",
+      "seconds": 574
+    },
+    {
+      "at": "2026-09-14T01:49:41Z",
+      "branch": "docs/verify-copy-paste-latest",
+      "conclusion": "success",
+      "seconds": 537
+    },
+    {
+      "at": "2026-09-14T01:50:21Z",
+      "branch": "docs/verify-copy-paste-latest",
+      "conclusion": "success",
+      "seconds": 515
+    },
+    {
+      "at": "2026-09-14T03:25:27Z",
+      "branch": "fix/volume-profile-precise-hit",
+      "conclusion": "success",
+      "seconds": 513
+    },
+    {
+      "at": "2026-09-14T03:39:43Z",
+      "branch": "fix/volume-profile-precise-hit",
+      "conclusion": "success",
+      "seconds": 499
+    },
+    {
+      "at": "2026-09-14T03:51:43Z",
+      "branch": "fix/native-drawing-clipboard",
+      "conclusion": "success",
+      "seconds": 537
+    },
+    {
+      "at": "2026-09-14T04:00:43Z",
+      "branch": "fix/volume-profile-precise-hit",
+      "conclusion": "success",
+      "seconds": 529
+    },
+    {
+      "at": "2026-09-14T04:15:33Z",
+      "branch": "fix/rectangle-four-corners",
+      "conclusion": "success",
+      "seconds": 528
+    },
+    {
+      "at": "2026-09-14T04:25:37Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 519
+    },
+    {
+      "at": "2026-09-14T04:37:12Z",
+      "branch": "docs/gate6-remeasure-3",
+      "conclusion": "success",
+      "seconds": 563
+    },
+    {
+      "at": "2026-09-14T04:38:52Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 550
+    },
+    {
+      "at": "2026-09-14T05:46:56Z",
+      "branch": "sync/main-8f59a25c",
+      "conclusion": "success",
+      "seconds": 545
+    },
+    {
+      "at": "2026-09-14T06:47:02Z",
+      "branch": "docs/gate6-remeasure-4",
+      "conclusion": "success",
+      "seconds": 547
+    },
+    {
+      "at": "2026-09-14T06:59:28Z",
+      "branch": "campaign/lean-a-plus",
+      "conclusion": "success",
+      "seconds": 561
+    },
+    {
+      "at": "2026-09-14T07:47:26Z",
+      "branch": "fix/paper-report-same-frame",
+      "conclusion": "success",
+      "seconds": 537
+    },
+    {
+      "at": "2026-09-14T07:58:30Z",
+      "branch": "campaign/lean-a-plus",
+      "conclusion": "success",
+      "seconds": 470
+    },
+    {
+      "at": "2026-09-14T08:26:51Z",
+      "branch": "docs/gate6-remeasure-5",
+      "conclusion": "success",
+      "seconds": 543
+    },
+    {
+      "at": "2026-09-14T08:37:54Z",
+      "branch": "campaign/lean-a-plus",
+      "conclusion": "success",
+      "seconds": 464
+    },
+    {
+      "at": "2026-09-14T11:56:24Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 542
+    },
+    {
+      "at": "2026-09-14T17:54:11Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 512
+    },
+    {
+      "at": "2026-09-14T17:54:24Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 543
+    },
+    {
+      "at": "2026-09-14T19:08:03Z",
+      "branch": "refactor/one-bar-spec",
+      "conclusion": "success",
+      "seconds": 520
+    },
+    {
+      "at": "2026-09-14T19:11:12Z",
+      "branch": "refactor/one-bar-spec",
+      "conclusion": "success",
+      "seconds": 528
+    },
+    {
+      "at": "2026-09-14T19:21:21Z",
+      "branch": "refactor/one-bar-spec",
+      "conclusion": "success",
+      "seconds": 471
+    },
+    {
+      "at": "2026-09-14T19:26:31Z",
+      "branch": "feat/per-pane-layout-strips",
+      "conclusion": "failure",
+      "seconds": 431
+    },
+    {
+      "at": "2026-09-14T19:30:41Z",
+      "branch": "refactor/one-bar-spec",
+      "conclusion": "success",
+      "seconds": 512
+    },
+    {
+      "at": "2026-09-14T19:34:26Z",
+      "branch": "feat/per-pane-layout-strips",
+      "conclusion": "failure",
+      "seconds": 465
+    },
+    {
+      "at": "2026-09-14T19:40:29Z",
+      "branch": "fix/mutation-retry-truth",
+      "conclusion": "success",
+      "seconds": 452
+    },
+    {
+      "at": "2026-09-14T19:53:22Z",
+      "branch": "feat/per-pane-layout-strips",
+      "conclusion": "success",
+      "seconds": 447
+    },
+    {
+      "at": "2026-09-14T20:39:25Z",
+      "branch": "feat/pr-read-cost",
+      "conclusion": "success",
+      "seconds": 532
+    },
+    {
+      "at": "2026-09-14T20:49:28Z",
+      "branch": "fix/feed-gap-honesty",
+      "conclusion": "success",
+      "seconds": 537
+    },
+    {
+      "at": "2026-09-14T21:02:02Z",
+      "branch": "fix/feed-gap-honesty",
+      "conclusion": "success",
+      "seconds": 456
+    },
+    {
+      "at": "2026-09-14T21:30:17Z",
+      "branch": "fix/resize-stacked-panes",
+      "conclusion": "success",
+      "seconds": 526
+    },
+    {
+      "at": "2026-09-14T21:35:10Z",
+      "branch": "fix/resize-stacked-panes",
+      "conclusion": "success",
+      "seconds": 547
+    },
+    {
+      "at": "2026-09-14T21:41:19Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 514
+    },
+    {
+      "at": "2026-09-14T21:45:46Z",
+      "branch": "fix/resize-stacked-panes",
+      "conclusion": "success",
+      "seconds": 521
+    },
+    {
+      "at": "2026-09-14T22:36:07Z",
+      "branch": "feat/chart-context-menu-layers",
+      "conclusion": "success",
+      "seconds": 498
+    },
+    {
+      "at": "2026-09-14T22:40:58Z",
+      "branch": "feat/chart-context-menu-layers",
+      "conclusion": "success",
+      "seconds": 516
+    },
+    {
+      "at": "2026-09-14T22:46:22Z",
+      "branch": "feat/chart-context-menu-layers",
+      "conclusion": "success",
+      "seconds": 434
+    },
+    {
+      "at": "2026-09-14T23:11:14Z",
+      "branch": "feat/sync-main-bars",
+      "conclusion": "success",
+      "seconds": 523
+    },
+    {
+      "at": "2026-09-15T00:30:15Z",
+      "branch": "feat/sync-main-bars",
+      "conclusion": "success",
+      "seconds": 429
+    },
+    {
+      "at": "2026-09-15T00:46:15Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 505
+    },
+    {
+      "at": "2026-09-15T00:47:29Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 471
+    },
+    {
+      "at": "2026-09-15T01:26:11Z",
+      "branch": "feat/evidence-resources",
+      "conclusion": "success",
+      "seconds": 532
+    },
+    {
+      "at": "2026-09-15T02:04:16Z",
+      "branch": "feat/per-pane-layout-strips",
+      "conclusion": "success",
+      "seconds": 519
+    },
+    {
+      "at": "2026-09-15T02:05:52Z",
+      "branch": "feat/per-pane-layout-strips",
+      "conclusion": "success",
+      "seconds": 521
+    },
+    {
+      "at": "2026-09-15T02:23:18Z",
+      "branch": "feat/show-drawing-all-charts-toggle",
+      "conclusion": "success",
+      "seconds": 440
+    },
+    {
+      "at": "2026-09-15T02:33:10Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 498
+    },
+    {
+      "at": "2026-09-15T02:40:10Z",
+      "branch": "feat/edit-loop-windows",
+      "conclusion": "failure",
+      "seconds": 573
+    },
+    {
+      "at": "2026-09-15T03:04:56Z",
+      "branch": "feat/right-drag-fibonacci-actions",
+      "conclusion": "success",
+      "seconds": 539
+    },
+    {
+      "at": "2026-09-15T03:13:05Z",
+      "branch": "feat/right-drag-fibonacci-actions",
+      "conclusion": "success",
+      "seconds": 511
+    },
+    {
+      "at": "2026-09-15T03:45:10Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 515
+    },
+    {
+      "at": "2026-09-15T03:46:27Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 429
+    },
+    {
+      "at": "2026-09-15T04:27:34Z",
+      "branch": "chore/stop-tracking-agent-evidence",
+      "conclusion": "success",
+      "seconds": 522
+    },
+    {
+      "at": "2026-09-15T04:29:25Z",
+      "branch": "feat/mouse-vertical-line",
+      "conclusion": "success",
+      "seconds": 517
+    },
+    {
+      "at": "2026-09-15T04:43:23Z",
+      "branch": "feat/mouse-vertical-line",
+      "conclusion": "success",
+      "seconds": 454
+    },
+    {
+      "at": "2026-09-15T04:54:10Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 522
+    },
+    {
+      "at": "2026-09-15T05:37:11Z",
+      "branch": "chore/stop-tracking-agent-evidence",
+      "conclusion": "failure",
+      "seconds": 450
+    },
+    {
+      "at": "2026-09-15T05:54:30Z",
+      "branch": "chore/stop-tracking-agent-evidence",
+      "conclusion": "success",
+      "seconds": 550
+    },
+    {
+      "at": "2026-09-15T06:15:51Z",
+      "branch": "fix/stale-control-descriptors",
+      "conclusion": "success",
+      "seconds": 419
+    },
+    {
+      "at": "2026-09-15T06:17:26Z",
+      "branch": "fix/stale-control-descriptors",
+      "conclusion": "success",
+      "seconds": 511
+    },
+    {
+      "at": "2026-09-15T06:20:02Z",
+      "branch": "fix/stale-control-descriptors",
+      "conclusion": "success",
+      "seconds": 450
+    },
+    {
+      "at": "2026-09-15T06:26:15Z",
+      "branch": "fix/stale-control-descriptors",
+      "conclusion": "success",
+      "seconds": 513
+    },
+    {
+      "at": "2026-09-15T06:35:47Z",
+      "branch": "fix/stale-control-descriptors",
+      "conclusion": "success",
+      "seconds": 507
+    },
+    {
+      "at": "2026-09-15T06:59:30Z",
+      "branch": "fix/context-column-divider-drag",
+      "conclusion": "success",
+      "seconds": 410
+    },
+    {
+      "at": "2026-09-15T07:07:27Z",
+      "branch": "feat/sync-main-chart-layout",
+      "conclusion": "success",
+      "seconds": 687
+    },
+    {
+      "at": "2026-09-15T12:15:30Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 510
+    },
+    {
+      "at": "2026-09-15T12:15:48Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 513
+    },
+    {
+      "at": "2026-09-15T23:18:44Z",
+      "branch": "feat/sync-main-chart-layout",
+      "conclusion": "success",
+      "seconds": 703
+    },
+    {
+      "at": "2026-09-16T02:42:04Z",
+      "branch": "feat/sync-main-chart-layout",
+      "conclusion": "success",
+      "seconds": 660
+    },
+    {
+      "at": "2026-09-16T03:06:32Z",
+      "branch": "feat/sync-main-chart-layout",
+      "conclusion": "success",
+      "seconds": 597
+    },
+    {
+      "at": "2026-09-16T04:17:09Z",
+      "branch": "feat/bar-selection-registry",
+      "conclusion": "success",
+      "seconds": 705
+    },
+    {
+      "at": "2026-09-16T04:32:21Z",
+      "branch": "feat/layer-policy-registry",
+      "conclusion": "success",
+      "seconds": 701
+    },
+    {
+      "at": "2026-09-16T04:51:06Z",
+      "branch": "fix/paste-without-text-clipboard",
+      "conclusion": "success",
+      "seconds": 544
+    },
+    {
+      "at": "2026-09-16T12:21:45Z",
+      "branch": "feat/mcp-native-chart-image",
+      "conclusion": "success",
+      "seconds": 552
+    },
+    {
+      "at": "2026-09-16T16:54:59Z",
+      "branch": "feat/bar-selection-registry",
+      "conclusion": "success",
+      "seconds": 665
+    },
+    {
+      "at": "2026-09-16T17:31:24Z",
+      "branch": "feat/layer-policy-registry",
+      "conclusion": "success",
+      "seconds": 684
+    },
+    {
+      "at": "2026-09-16T21:46:26Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 510
+    },
+    {
+      "at": "2026-09-16T21:48:36Z",
+      "branch": "main",
+      "conclusion": "failure",
+      "seconds": 505
+    },
+    {
+      "at": "2026-09-16T21:49:30Z",
+      "branch": "main",
+      "conclusion": "failure",
+      "seconds": 437
+    },
+    {
+      "at": "2026-09-17T01:08:53Z",
+      "branch": "feat/capability-admission-owner",
+      "conclusion": "success",
+      "seconds": 697
+    },
+    {
+      "at": "2026-09-17T01:21:58Z",
+      "branch": "feat/capability-admission-owner",
+      "conclusion": "success",
+      "seconds": 696
+    },
+    {
+      "at": "2026-09-17T03:30:07Z",
+      "branch": "feat/sync-main-current",
+      "conclusion": "success",
+      "seconds": 693
+    },
+    {
+      "at": "2026-09-17T04:34:11Z",
+      "branch": "feat/edit-loop-windows",
+      "conclusion": "success",
+      "seconds": 1147
+    },
+    {
+      "at": "2026-09-17T04:50:28Z",
+      "branch": "feat/edit-loop-windows",
+      "conclusion": "success",
+      "seconds": 1149
+    },
+    {
+      "at": "2026-09-17T05:27:21Z",
+      "branch": "feat/edit-loop-windows",
+      "conclusion": "success",
+      "seconds": 997
+    },
+    {
+      "at": "2026-09-17T05:53:49Z",
+      "branch": "fix/feed-handoff-continuity",
+      "conclusion": "success",
+      "seconds": 713
+    },
+    {
+      "at": "2026-09-17T06:43:13Z",
+      "branch": "fix/feed-handoff-continuity",
+      "conclusion": "success",
+      "seconds": 1102
+    },
+    {
+      "at": "2026-09-17T06:44:01Z",
+      "branch": "fix/feed-handoff-continuity",
+      "conclusion": "success",
+      "seconds": 841
+    },
+    {
+      "at": "2026-09-17T13:13:39Z",
+      "branch": "fix/feed-handoff-continuity",
+      "conclusion": "success",
+      "seconds": 1117
+    },
+    {
+      "at": "2026-09-17T15:21:13Z",
+      "branch": "fix/feed-handoff-continuity",
+      "conclusion": "success",
+      "seconds": 991
+    },
+    {
+      "at": "2026-09-17T15:54:04Z",
+      "branch": "fix/feed-handoff-continuity",
+      "conclusion": "success",
+      "seconds": 915
+    },
+    {
+      "at": "2026-09-17T17:32:00Z",
+      "branch": "fix/feed-handoff-continuity",
+      "conclusion": "failure",
+      "seconds": 1003
+    },
+    {
+      "at": "2026-09-17T17:49:43Z",
+      "branch": "fix/feed-handoff-continuity",
+      "conclusion": "success",
+      "seconds": 1033
+    },
+    {
+      "at": "2026-09-18T14:50:00Z",
+      "branch": "feat/app-owner-landing",
+      "conclusion": "success",
+      "seconds": 1466
+    },
+    {
+      "at": "2026-09-18T16:51:25Z",
+      "branch": "feat/mvu-app-owners",
+      "conclusion": "success",
+      "seconds": 1169
+    },
+    {
+      "at": "2026-09-18T16:54:00Z",
+      "branch": "feat/declared-stage-registry",
+      "conclusion": "failure",
+      "seconds": 1286
+    },
+    {
+      "at": "2026-09-18T17:13:43Z",
+      "branch": "feat/headless-app-core",
+      "conclusion": "success",
+      "seconds": 1415
+    },
+    {
+      "at": "2026-09-18T17:16:06Z",
+      "branch": "feat/mvu-app-owners",
+      "conclusion": "success",
+      "seconds": 1353
+    },
+    {
+      "at": "2026-09-18T17:32:34Z",
+      "branch": "feat/long-fn-commands",
+      "conclusion": "success",
+      "seconds": 1501
+    },
+    {
+      "at": "2026-09-18T17:36:11Z",
+      "branch": "feat/headless-app-core",
+      "conclusion": "failure",
+      "seconds": 240
+    },
+    {
+      "at": "2026-09-18T17:59:46Z",
+      "branch": "feat/harness-composition-root",
+      "conclusion": "failure",
+      "seconds": 2358
+    },
+    {
+      "at": "2026-09-18T18:01:04Z",
+      "branch": "feat/headless-app-core",
+      "conclusion": "failure",
+      "seconds": 123
+    },
+    {
+      "at": "2026-09-18T18:18:43Z",
+      "branch": "feat/headless-app-core",
+      "conclusion": "failure",
+      "seconds": 142
+    },
+    {
+      "at": "2026-09-18T18:20:48Z",
+      "branch": "feat/harness-composition-root",
+      "conclusion": "failure",
+      "seconds": 1914
+    },
+    {
+      "at": "2026-09-18T18:23:18Z",
+      "branch": "feat/app-owner-landing",
+      "conclusion": "failure",
+      "seconds": 1338
+    },
+    {
+      "at": "2026-09-18T18:30:39Z",
+      "branch": "feat/headless-app-core",
+      "conclusion": "failure",
+      "seconds": 126
+    },
+    {
+      "at": "2026-09-18T18:52:07Z",
+      "branch": "feat/headless-app-core",
+      "conclusion": "failure",
+      "seconds": 147
+    },
+    {
+      "at": "2026-09-18T18:59:13Z",
+      "branch": "feat/app-owner-landing",
+      "conclusion": "success",
+      "seconds": 1221
+    },
+    {
+      "at": "2026-09-18T21:05:19Z",
+      "branch": "feat/app-owner-landing",
+      "conclusion": "success",
+      "seconds": 1432
+    },
+    {
+      "at": "2026-09-18T21:05:59Z",
+      "branch": "feat/harness-composition-root",
+      "conclusion": "success",
+      "seconds": 2198
+    },
+    {
+      "at": "2026-09-18T21:25:23Z",
+      "branch": "feat/headless-app-core",
+      "conclusion": "failure",
+      "seconds": 1069
+    },
+    {
+      "at": "2026-09-18T21:53:56Z",
+      "branch": "feat/long-fn-commands",
+      "conclusion": "success",
+      "seconds": 1117
+    },
+    {
+      "at": "2026-09-18T21:56:51Z",
+      "branch": "feat/mvu-app-owners",
+      "conclusion": "success",
+      "seconds": 1391
+    },
+    {
+      "at": "2026-09-18T21:59:02Z",
+      "branch": "feat/declared-stage-registry",
+      "conclusion": "success",
+      "seconds": 1354
+    },
+    {
+      "at": "2026-09-18T22:13:54Z",
+      "branch": "feat/declared-stage-registry",
+      "conclusion": "failure",
+      "seconds": 1202
+    },
+    {
+      "at": "2026-09-18T22:21:19Z",
+      "branch": "feat/harness-composition-root",
+      "conclusion": "success",
+      "seconds": 2650
+    },
+    {
+      "at": "2026-09-18T23:05:41Z",
+      "branch": "feat/declared-stage-registry",
+      "conclusion": "success",
+      "seconds": 1402
+    },
+    {
+      "at": "2026-09-18T23:06:56Z",
+      "branch": "feat/declared-stage-registry",
+      "conclusion": "failure",
+      "seconds": 1368
+    },
+    {
+      "at": "2026-09-18T23:23:27Z",
+      "branch": "feat/declared-stage-registry",
+      "conclusion": "success",
+      "seconds": 1422
+    },
+    {
+      "at": "2026-09-18T23:58:23Z",
+      "branch": "feat/long-fn-commands",
+      "conclusion": "failure",
+      "seconds": 1062
+    },
+    {
+      "at": "2026-09-19T00:04:43Z",
+      "branch": "feat/long-fn-commands",
+      "conclusion": "success",
+      "seconds": 1367
+    },
+    {
+      "at": "2026-09-19T00:40:26Z",
+      "branch": "feat/long-fn-commands",
+      "conclusion": "success",
+      "seconds": 1377
+    },
+    {
+      "at": "2026-09-19T01:18:59Z",
+      "branch": "feat/mvu-app-owners",
+      "conclusion": "failure",
+      "seconds": 1017
+    },
+    {
+      "at": "2026-09-19T01:35:19Z",
+      "branch": "feat/mvu-app-owners",
+      "conclusion": "success",
+      "seconds": 1318
+    },
+    {
+      "at": "2026-09-19T01:49:14Z",
+      "branch": "feat/mvu-app-owners",
+      "conclusion": "success",
+      "seconds": 1158
+    },
+    {
+      "at": "2026-09-19T03:18:52Z",
+      "branch": "feat/harness-composition-root",
+      "conclusion": "success",
+      "seconds": 2835
+    },
+    {
+      "at": "2026-09-19T03:23:13Z",
+      "branch": "feat/mvu-app-owners",
+      "conclusion": "success",
+      "seconds": 1401
+    },
+    {
+      "at": "2026-09-19T03:33:01Z",
+      "branch": "feat/mvu-app-owners",
+      "conclusion": "success",
+      "seconds": 1381
+    },
+    {
+      "at": "2026-09-19T03:45:04Z",
+      "branch": "feat/harness-composition-root",
+      "conclusion": "success",
+      "seconds": 2218
+    },
+    {
+      "at": "2026-09-19T04:32:47Z",
+      "branch": "feat/harness-composition-root",
+      "conclusion": "success",
+      "seconds": 2166
+    },
+    {
+      "at": "2026-09-19T06:11:05Z",
+      "branch": "feat/mvu-app-owners",
+      "conclusion": "success",
+      "seconds": 2769
+    },
+    {
+      "at": "2026-09-19T06:15:45Z",
+      "branch": "feat/headless-app-core",
+      "conclusion": "failure",
+      "seconds": 1152
+    },
+    {
+      "at": "2026-09-19T07:10:39Z",
+      "branch": "feat/headless-app-core",
+      "conclusion": "failure",
+      "seconds": 1107
+    },
+    {
+      "at": "2026-09-19T07:16:54Z",
+      "branch": "feat/headless-app-core",
+      "conclusion": "success",
+      "seconds": 2535
+    },
+    {
+      "at": "2026-09-19T07:29:29Z",
+      "branch": "feat/headless-app-core",
+      "conclusion": "failure",
+      "seconds": 1970
+    },
+    {
+      "at": "2026-09-19T07:35:17Z",
+      "branch": "feat/headless-app-core",
+      "conclusion": "failure",
+      "seconds": 2199
+    },
+    {
+      "at": "2026-09-19T08:13:33Z",
+      "branch": "feat/headless-app-core",
+      "conclusion": "success",
+      "seconds": 2297
+    },
+    {
+      "at": "2026-09-19T08:51:23Z",
+      "branch": "feat/headless-app-core",
+      "conclusion": "success",
+      "seconds": 2534
+    },
+    {
+      "at": "2026-09-19T09:58:01Z",
+      "branch": "feat/headless-app-core",
+      "conclusion": "success",
+      "seconds": 2588
+    },
+    {
+      "at": "2026-09-19T10:51:59Z",
+      "branch": "campaign/outside-eight",
+      "conclusion": "success",
+      "seconds": 3095
+    },
+    {
+      "at": "2026-09-19T12:32:34Z",
+      "branch": "fix/final-review-repairs",
+      "conclusion": "success",
+      "seconds": 3129
+    },
+    {
+      "at": "2026-09-19T12:39:39Z",
+      "branch": "feat/architecture-ratchets",
+      "conclusion": "success",
+      "seconds": 1074
+    },
+    {
+      "at": "2026-09-19T12:51:50Z",
+      "branch": "feat/architecture-ratchets",
+      "conclusion": "success",
+      "seconds": 1067
+    },
+    {
+      "at": "2026-09-19T12:53:46Z",
+      "branch": "docs/halve-agent-instructions",
+      "conclusion": "success",
+      "seconds": 736
+    },
+    {
+      "at": "2026-09-19T12:54:27Z",
+      "branch": "feat/architecture-ratchets",
+      "conclusion": "success",
+      "seconds": 1070
+    },
+    {
+      "at": "2026-09-19T12:56:09Z",
+      "branch": "docs/halve-agent-instructions",
+      "conclusion": "success",
+      "seconds": 703
+    },
+    {
+      "at": "2026-09-19T13:26:36Z",
+      "branch": "campaign/outside-eight",
+      "conclusion": "success",
+      "seconds": 2635
+    },
+    {
+      "at": "2026-09-19T13:31:58Z",
+      "branch": "feat/fast-draft-ci",
+      "conclusion": "success",
+      "seconds": 76
+    },
+    {
+      "at": "2026-09-19T13:32:33Z",
+      "branch": "demo/fast-ci-engine",
+      "conclusion": "success",
+      "seconds": 655
+    },
+    {
+      "at": "2026-09-19T13:43:52Z",
+      "branch": "feat/fast-draft-ci",
+      "conclusion": "success",
+      "seconds": 40
+    },
+    {
+      "at": "2026-09-19T13:57:11Z",
+      "branch": "feat/fast-draft-ci",
+      "conclusion": "success",
+      "seconds": 53
+    },
+    {
+      "at": "2026-09-19T13:58:58Z",
+      "branch": "feat/fast-draft-ci",
+      "conclusion": "success",
+      "seconds": 1067
+    },
+    {
+      "at": "2026-09-19T14:19:14Z",
+      "branch": "feat/fast-draft-ci",
+      "conclusion": "success",
+      "seconds": 555
+    },
+    {
+      "at": "2026-09-19T20:12:29Z",
+      "branch": "main",
+      "conclusion": "failure",
+      "seconds": 1810
+    },
+    {
+      "at": "2026-09-19T20:16:16Z",
+      "branch": "feat/fast-draft-ci",
+      "conclusion": "success",
+      "seconds": 2610
+    },
+    {
+      "at": "2026-09-19T20:49:40Z",
+      "branch": "main",
+      "conclusion": "failure",
+      "seconds": 2214
+    },
+    {
+      "at": "2026-09-19T20:54:38Z",
+      "branch": "docs/halve-agent-instructions",
+      "conclusion": "failure",
+      "seconds": 1306
+    },
+    {
+      "at": "2026-09-19T21:16:23Z",
+      "branch": "fix/feed-handoff-continuity",
+      "conclusion": "success",
+      "seconds": 3190
+    },
+    {
+      "at": "2026-09-19T21:42:48Z",
+      "branch": "main",
+      "conclusion": "failure",
+      "seconds": 2218
+    },
+    {
+      "at": "2026-09-19T21:44:26Z",
+      "branch": "fix/guards-after-outside-eight",
+      "conclusion": "success",
+      "seconds": 798
+    },
+    {
+      "at": "2026-09-19T22:12:01Z",
+      "branch": "fix/guards-after-outside-eight",
+      "conclusion": "success",
+      "seconds": 794
+    },
+    {
+      "at": "2026-09-19T22:26:15Z",
+      "branch": "fix/guards-after-outside-eight",
+      "conclusion": "success",
+      "seconds": 800
+    },
+    {
+      "at": "2026-09-19T22:30:41Z",
+      "branch": "fix/guards-after-outside-eight",
+      "conclusion": "success",
+      "seconds": 3201
+    },
+    {
+      "at": "2026-09-19T23:24:42Z",
+      "branch": "fix/guards-after-outside-eight",
+      "conclusion": "success",
+      "seconds": 2585
+    },
+    {
+      "at": "2026-09-19T23:27:43Z",
+      "branch": "feat/read-cost-ledger",
+      "conclusion": "failure",
+      "seconds": 801
+    },
+    {
+      "at": "2026-09-20T00:00:25Z",
+      "branch": "feat/read-cost-ledger",
+      "conclusion": "failure",
+      "seconds": 784
+    },
+    {
+      "at": "2026-09-20T00:01:06Z",
+      "branch": "feat/analyst-authority-tier",
+      "conclusion": "success",
+      "seconds": 844
+    },
+    {
+      "at": "2026-09-20T00:08:13Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 3191
+    },
+    {
+      "at": "2026-09-20T00:28:52Z",
+      "branch": "feat/read-cost-ledger",
+      "conclusion": "success",
+      "seconds": 3097
+    },
+    {
+      "at": "2026-09-20T00:28:53Z",
+      "branch": "feat/read-cost-ledger",
+      "conclusion": "success",
+      "seconds": 3173
+    },
+    {
+      "at": "2026-09-20T00:33:18Z",
+      "branch": "docs/halve-agent-instructions",
+      "conclusion": "success",
+      "seconds": 3106
+    },
+    {
+      "at": "2026-09-20T00:41:58Z",
+      "branch": "feat/ci-under-fifteen-minutes",
+      "conclusion": "success",
+      "seconds": 52
+    },
+    {
+      "at": "2026-09-20T00:42:06Z",
+      "branch": "feat/ci-under-fifteen-minutes",
+      "conclusion": "failure",
+      "seconds": 951
+    },
+    {
+      "at": "2026-09-20T00:46:51Z",
+      "branch": "feat/analyst-authority-tier",
+      "conclusion": "success",
+      "seconds": 864
+    },
+    {
+      "at": "2026-09-20T00:49:17Z",
+      "branch": "feat/ci-under-fifteen-minutes",
+      "conclusion": "failure",
+      "seconds": 967
+    },
+    {
+      "at": "2026-09-20T01:02:23Z",
+      "branch": "feat/ci-under-fifteen-minutes",
+      "conclusion": "success",
+      "seconds": 637
+    },
+    {
+      "at": "2026-09-20T01:05:15Z",
+      "branch": "feat/analyst-authority-tier",
+      "conclusion": "success",
+      "seconds": 355
+    },
+    {
+      "at": "2026-09-20T01:05:22Z",
+      "branch": "feat/analyst-authority-tier",
+      "conclusion": "failure",
+      "seconds": 2593
+    },
+    {
+      "at": "2026-09-20T01:28:09Z",
+      "branch": "feat/analyst-authority-tier",
+      "conclusion": "success",
+      "seconds": 2580
+    },
+    {
+      "at": "2026-09-20T01:43:15Z",
+      "branch": "main",
+      "conclusion": "failure",
+      "seconds": 1900
+    },
+    {
+      "at": "2026-09-20T01:44:38Z",
+      "branch": "feat/ci-under-fifteen-minutes",
+      "conclusion": "success",
+      "seconds": 471
+    },
+    {
+      "at": "2026-09-20T01:53:26Z",
+      "branch": "feat/read-cost-ledger",
+      "conclusion": "success",
+      "seconds": 2553
+    },
+    {
+      "at": "2026-09-20T01:55:24Z",
+      "branch": "feat/ci-under-fifteen-minutes",
+      "conclusion": "success",
+      "seconds": 645
+    },
+    {
+      "at": "2026-09-20T01:55:30Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 631
+    },
+    {
+      "at": "2026-09-20T02:05:58Z",
+      "branch": "feat/read-cost-ledger",
+      "conclusion": "success",
+      "seconds": 627
+    },
+    {
+      "at": "2026-09-20T02:16:16Z",
+      "branch": "feat/analyst-authority-tier",
+      "conclusion": "success",
+      "seconds": 490
+    },
+    {
+      "at": "2026-09-20T02:17:57Z",
+      "branch": "feat/read-cost-ledger",
+      "conclusion": "success",
+      "seconds": 626
+    },
+    {
+      "at": "2026-09-20T02:26:07Z",
+      "branch": "perf/ci-under-seven-minutes",
+      "conclusion": "success",
+      "seconds": 51
+    },
+    {
+      "at": "2026-09-20T02:26:11Z",
+      "branch": "perf/ci-under-seven-minutes",
+      "conclusion": "success",
+      "seconds": 1064
+    },
+    {
+      "at": "2026-09-20T02:40:12Z",
+      "branch": "feat/analyst-authority-tier",
+      "conclusion": "success",
+      "seconds": 613
+    },
+    {
+      "at": "2026-09-20T02:44:23Z",
+      "branch": "perf/ci-under-seven-minutes",
+      "conclusion": "success",
+      "seconds": 512
+    },
+    {
+      "at": "2026-09-20T02:58:59Z",
+      "branch": "perf/ci-under-seven-minutes",
+      "conclusion": "success",
+      "seconds": 417
+    },
+    {
+      "at": "2026-09-20T03:08:50Z",
+      "branch": "perf/ci-under-seven-minutes",
+      "conclusion": "success",
+      "seconds": 420
+    },
+    {
+      "at": "2026-09-20T03:17:30Z",
+      "branch": "perf/ci-under-seven-minutes",
+      "conclusion": "success",
+      "seconds": 384
+    },
+    {
+      "at": "2026-09-20T03:29:20Z",
+      "branch": "perf/ci-under-seven-minutes",
+      "conclusion": "success",
+      "seconds": 380
+    },
+    {
+      "at": "2026-09-20T03:40:47Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 650
+    },
+    {
+      "at": "2026-09-20T03:41:11Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 603
+    },
+    {
+      "at": "2026-09-20T03:43:22Z",
+      "branch": "perf/ci-under-seven-minutes",
+      "conclusion": "success",
+      "seconds": 597
+    },
+    {
+      "at": "2026-09-20T03:56:55Z",
+      "branch": "perf/ci-under-seven-minutes",
+      "conclusion": "success",
+      "seconds": 374
+    },
+    {
+      "at": "2026-09-20T04:06:01Z",
+      "branch": "perf/ci-under-seven-minutes",
+      "conclusion": "success",
+      "seconds": 370
+    },
+    {
+      "at": "2026-09-20T04:21:11Z",
+      "branch": "perf/ci-under-seven-minutes",
+      "conclusion": "success",
+      "seconds": 387
+    },
+    {
+      "at": "2026-09-20T05:01:06Z",
+      "branch": "feat/capability-family-registries",
+      "conclusion": "success",
+      "seconds": 627
+    },
+    {
+      "at": "2026-09-20T05:04:39Z",
+      "branch": "feat/capability-family-registries",
+      "conclusion": "success",
+      "seconds": 634
+    },
+    {
+      "at": "2026-09-20T05:19:42Z",
+      "branch": "feat/capability-family-registries",
+      "conclusion": "success",
+      "seconds": 604
+    },
+    {
+      "at": "2026-09-20T10:12:26Z",
+      "branch": "main",
+      "conclusion": "failure",
+      "seconds": 1018
+    },
+    {
+      "at": "2026-09-20T10:49:41Z",
+      "branch": "fix/mcp-trim-tool-list",
+      "conclusion": "success",
+      "seconds": 271
+    },
+    {
+      "at": "2026-09-20T15:41:40Z",
+      "branch": "fix/mcp-trim-tool-list",
+      "conclusion": "failure",
+      "seconds": 408
+    },
+    {
+      "at": "2026-09-20T15:41:45Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 378
+    },
+    {
+      "at": "2026-09-20T15:45:12Z",
+      "branch": "feat/capability-family-registries",
+      "conclusion": "success",
+      "seconds": 539
+    },
+    {
+      "at": "2026-09-20T15:54:54Z",
+      "branch": "feat/capability-family-registries",
+      "conclusion": "success",
+      "seconds": 385
+    },
+    {
+      "at": "2026-09-20T16:02:26Z",
+      "branch": "feat/capability-family-registries",
+      "conclusion": "success",
+      "seconds": 405
+    },
+    {
+      "at": "2026-09-20T19:06:55Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 395
+    },
+    {
+      "at": "2026-09-20T19:54:33Z",
+      "branch": "feat/pr-is-the-context",
+      "conclusion": "success",
+      "seconds": 283
+    },
+    {
+      "at": "2026-09-20T20:17:10Z",
+      "branch": "fix/risk-lock-refusal-spacing",
+      "conclusion": "success",
+      "seconds": 272
+    },
+    {
+      "at": "2026-09-20T20:17:23Z",
+      "branch": "fix/risk-lock-refusal-spacing",
+      "conclusion": "success",
+      "seconds": 409
+    },
+    {
+      "at": "2026-09-20T20:29:23Z",
+      "branch": "feat/pr-is-the-context",
+      "conclusion": "success",
+      "seconds": 282
+    },
+    {
+      "at": "2026-09-20T20:38:19Z",
+      "branch": "fix/risk-lock-refusal-spacing",
+      "conclusion": "success",
+      "seconds": 344
+    },
+    {
+      "at": "2026-09-20T20:49:52Z",
+      "branch": "feat/pr-is-the-context",
+      "conclusion": "success",
+      "seconds": 412
+    },
+    {
+      "at": "2026-09-20T20:57:24Z",
+      "branch": "feat/pr-is-the-context",
+      "conclusion": "success",
+      "seconds": 402
+    },
+    {
+      "at": "2026-09-20T21:04:26Z",
+      "branch": "fix/risk-lock-refusal-spacing",
+      "conclusion": "success",
+      "seconds": 390
+    },
+    {
+      "at": "2026-09-20T21:06:48Z",
+      "branch": "feat/slim-hub-modules",
+      "conclusion": "success",
+      "seconds": 284
+    },
+    {
+      "at": "2026-09-20T21:06:59Z",
+      "branch": "feat/slim-hub-modules",
+      "conclusion": "success",
+      "seconds": 410
+    },
+    {
+      "at": "2026-09-20T21:12:00Z",
+      "branch": "fix/risk-lock-refusal-spacing",
+      "conclusion": "success",
+      "seconds": 403
+    },
+    {
+      "at": "2026-09-20T21:18:29Z",
+      "branch": "feat/slim-hub-modules",
+      "conclusion": "success",
+      "seconds": 412
+    },
+    {
+      "at": "2026-09-20T21:31:37Z",
+      "branch": "feat/pr-is-the-context",
+      "conclusion": "success",
+      "seconds": 390
+    },
+    {
+      "at": "2026-09-20T21:45:32Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 425
+    },
+    {
+      "at": "2026-09-20T21:45:58Z",
+      "branch": "feat/slim-hub-modules",
+      "conclusion": "success",
+      "seconds": 416
+    },
+    {
+      "at": "2026-09-20T21:48:42Z",
+      "branch": "fix/risk-lock-refusal-spacing",
+      "conclusion": "success",
+      "seconds": 481
+    },
+    {
+      "at": "2026-09-20T22:03:58Z",
+      "branch": "feat/slim-hub-modules",
+      "conclusion": "success",
+      "seconds": 408
+    },
+    {
+      "at": "2026-09-20T23:33:36Z",
+      "branch": "fix/ship-gate-reads-advisories",
+      "conclusion": "success",
+      "seconds": 387
+    },
+    {
+      "at": "2026-09-20T23:33:51Z",
+      "branch": "fix/ship-gate-reads-advisories",
+      "conclusion": "success",
+      "seconds": 388
+    },
+    {
+      "at": "2026-09-20T23:46:14Z",
+      "branch": "fix/ship-gate-reads-advisories",
+      "conclusion": "success",
+      "seconds": 384
+    },
+    {
+      "at": "2026-09-20T23:53:21Z",
+      "branch": "fix/ship-gate-reads-advisories",
+      "conclusion": "success",
+      "seconds": 418
+    },
+    {
+      "at": "2026-09-21T00:26:58Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 396
+    },
+    {
+      "at": "2026-09-21T00:38:01Z",
+      "branch": "fix/risk-lock-refusal-spacing",
+      "conclusion": "success",
+      "seconds": 379
+    },
+    {
+      "at": "2026-09-21T00:50:45Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 401
+    },
+    {
+      "at": "2026-09-21T01:13:07Z",
+      "branch": "feat/slim-hub-modules",
+      "conclusion": "success",
+      "seconds": 394
+    },
+    {
+      "at": "2026-09-21T01:18:03Z",
+      "branch": "feat/mission-cost-harness",
+      "conclusion": "success",
+      "seconds": 431
+    },
+    {
+      "at": "2026-09-21T01:22:56Z",
+      "branch": "feat/mission-cost-harness",
+      "conclusion": "failure",
+      "seconds": 408
+    },
+    {
+      "at": "2026-09-21T01:30:12Z",
+      "branch": "feat/mission-cost-harness",
+      "conclusion": "success",
+      "seconds": 391
+    },
+    {
+      "at": "2026-09-21T01:35:28Z",
+      "branch": "feat/mission-cost-harness",
+      "conclusion": "success",
+      "seconds": 381
+    },
+    {
+      "at": "2026-09-21T01:42:49Z",
+      "branch": "feat/mission-cost-harness",
+      "conclusion": "success",
+      "seconds": 416
+    },
+    {
+      "at": "2026-09-21T03:20:05Z",
+      "branch": "main",
+      "conclusion": "success",
+      "seconds": 401
+    }
+  ],
+  "schema": 1,
+  "seconds": "updatedAt minus startedAt",
+  "since": "2026-09-11",
+  "source": "gh run list --limit 1000 --json workflowName,headBranch,status,conclusion,createdAt,startedAt,updatedAt",
+  "taken_at": "2026-09-21T04:10:00Z",
+  "workflow": "CI"
+}

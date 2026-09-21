@@ -1,0 +1,281 @@
+{
+  "method": "docs/quality/mission-cost/method.md",
+  "metric": "opening_prompt_tokens",
+  "pivot": "2026-09-20T01:43:13+00:00",
+  "registered_comparison": false,
+  "result": {
+    "after": {
+      "max": 61174.0,
+      "mean": 59265.71428571428,
+      "median": 58795.0,
+      "min": 57618.0,
+      "n": 7,
+      "p25": 58081.0,
+      "p75": 60555.5
+    },
+    "before": {
+      "max": 66558.0,
+      "mean": 57712.5,
+      "median": 58146.0,
+      "min": 43203.0,
+      "n": 32,
+      "p25": 56382.75,
+      "p75": 59547.25
+    },
+    "reason": "the after median did not fall",
+    "relative_change": -0.011161558834657586,
+    "thresholds": {
+      "max_unplaced_share": 0.2,
+      "min_group_n": 5,
+      "min_relative_change": 0.1
+    },
+    "verdict": "no_reduction"
+  },
+  "schema": 1,
+  "sessions": [
+    {
+      "at": "2026-09-11T15:16:05.615000+00:00",
+      "prompt_tokens": 51959,
+      "root": "C--src-quantick",
+      "session": "37997e54-8d80-4a98-af11-96dca0b9156c"
+    },
+    {
+      "at": "2026-09-11T15:16:44.538000+00:00",
+      "prompt_tokens": 56017,
+      "root": "C--src-quantick",
+      "session": "e150ea61-5c62-44c4-8bd5-3e4b22c79b5a"
+    },
+    {
+      "at": "2026-09-11T16:04:19.573000+00:00",
+      "prompt_tokens": 56229,
+      "root": "C--src-quantick",
+      "session": "dfcbe4ef-1a9d-4913-9b89-3e0cb988e16d"
+    },
+    {
+      "at": "2026-09-11T18:43:07.846000+00:00",
+      "prompt_tokens": 56434,
+      "root": "C--src-quantick",
+      "session": "be80ec12-77bc-4683-bf00-0469bb84bf0c"
+    },
+    {
+      "at": "2026-09-11T21:52:33.779000+00:00",
+      "prompt_tokens": 58236,
+      "root": "C--src-quantick",
+      "session": "143be9a9-7faf-4bc5-bd26-00e977466642"
+    },
+    {
+      "at": "2026-09-11T22:23:42.047000+00:00",
+      "prompt_tokens": 58091,
+      "root": "C--src-quantick",
+      "session": "4b062ab6-1828-44ae-aed3-750ccce1c550"
+    },
+    {
+      "at": "2026-09-11T22:30:01.191000+00:00",
+      "prompt_tokens": 58238,
+      "root": "C--src-quantick",
+      "session": "e68b97ed-23bb-4a09-ae2a-1a9455accef9"
+    },
+    {
+      "at": "2026-09-11T22:32:36.033000+00:00",
+      "prompt_tokens": 57944,
+      "root": "C--src-quantick",
+      "session": "3a165671-28b5-4df8-b196-1c2b05232464"
+    },
+    {
+      "at": "2026-09-12T04:35:38.409000+00:00",
+      "prompt_tokens": 58562,
+      "root": "C--src-quantick",
+      "session": "a3616a9a-024e-4f5c-8796-f1c8662c65a6"
+    },
+    {
+      "at": "2026-09-12T18:04:20.149000+00:00",
+      "prompt_tokens": 56161,
+      "root": "C--src-quantick",
+      "session": "f83fa584-5e93-43a2-90b2-b14b62493096"
+    },
+    {
+      "at": "2026-09-14T11:49:36.800000+00:00",
+      "prompt_tokens": 58201,
+      "root": "C--src-quantick",
+      "session": "48536fe4-b113-4f4a-b6eb-0be0da258eeb"
+    },
+    {
+      "at": "2026-09-15T02:27:53.495000+00:00",
+      "prompt_tokens": 57141,
+      "root": "C--src-quantick",
+      "session": "0fef46f4-f881-4a56-bb7b-b95610d62a48"
+    },
+    {
+      "at": "2026-09-15T04:32:52.265000+00:00",
+      "prompt_tokens": 56600,
+      "root": "C--src-quantick",
+      "session": "782d7dc9-010e-4d46-89e4-ee0fb34284e5"
+    },
+    {
+      "at": "2026-09-15T12:16:40.116000+00:00",
+      "prompt_tokens": 57139,
+      "root": "C--src-quantick",
+      "session": "8851b5d7-60d1-4ef7-8dcb-30812f476218"
+    },
+    {
+      "at": "2026-09-15T22:37:50.144000+00:00",
+      "prompt_tokens": 48723,
+      "root": "C--src-quantick",
+      "session": "7afff6c5-00b7-4189-b8fc-cac000908a84"
+    },
+    {
+      "at": "2026-09-16T01:59:57.989000+00:00",
+      "prompt_tokens": 49605,
+      "root": "C--src-quantick",
+      "session": "ed797b38-78f1-4719-a48c-bccd21eebca5"
+    },
+    {
+      "at": "2026-09-16T17:30:36.564000+00:00",
+      "prompt_tokens": 52407,
+      "root": "C--src-quantick",
+      "session": "0c11dc0f-077f-4844-92a1-ed02924c7ccd"
+    },
+    {
+      "at": "2026-09-16T18:11:26.139000+00:00",
+      "prompt_tokens": 66558,
+      "root": "C--src-quantick",
+      "session": "2dd2cc98-403c-4307-9bc4-0c9223797171"
+    },
+    {
+      "at": "2026-09-17T11:49:51.010000+00:00",
+      "prompt_tokens": 57875,
+      "root": "C--src-quantick",
+      "session": "47340b9d-de5d-46f8-bbe3-819ca8da8205"
+    },
+    {
+      "at": "2026-09-18T11:50:08.721000+00:00",
+      "prompt_tokens": 58418,
+      "root": "C--src-quantick",
+      "session": "41c3fd58-2a5d-46a0-8de9-12ed2e6656dc"
+    },
+    {
+      "at": "2026-09-18T11:55:23.994000+00:00",
+      "prompt_tokens": 60630,
+      "root": "C--src-quantick",
+      "session": "9cb715b4-13f8-43ed-9cf8-3b866be36d60"
+    },
+    {
+      "at": "2026-09-18T14:39:51.017000+00:00",
+      "prompt_tokens": 57370,
+      "root": "C--src-quantick",
+      "session": "c3576e12-7c45-4b8c-829d-cfef4c8a09dc"
+    },
+    {
+      "at": "2026-09-19T01:08:28.183000+00:00",
+      "prompt_tokens": 59276,
+      "root": "C--src-quantick",
+      "session": "6ab713bd-dc39-4801-a404-9c09789fdfa0"
+    },
+    {
+      "at": "2026-09-19T12:23:51.794000+00:00",
+      "prompt_tokens": 59764,
+      "root": "C--src-quantick",
+      "session": "f92db6df-841d-43ad-9bb9-dd35f6e118b0"
+    },
+    {
+      "at": "2026-09-19T12:26:14.684000+00:00",
+      "prompt_tokens": 59445,
+      "root": "C--src-quantick",
+      "session": "7d9fdbea-37d2-4b45-8ed9-1dd035c09bbd"
+    },
+    {
+      "at": "2026-09-19T12:27:15.324000+00:00",
+      "prompt_tokens": 59475,
+      "root": "C--src-quantick",
+      "session": "96177554-4331-4b7f-876a-f986438330bf"
+    },
+    {
+      "at": "2026-09-19T20:50:12.739000+00:00",
+      "prompt_tokens": 43203,
+      "root": "C--src-quantick",
+      "session": "b2d9ad09-fc92-41c1-bbdd-001e745be67c"
+    },
+    {
+      "at": "2026-09-19T21:43:17.564000+00:00",
+      "prompt_tokens": 65854,
+      "root": "C--src-quantick",
+      "session": "121b4725-5a9b-4a27-87fa-284096eaa9a2"
+    },
+    {
+      "at": "2026-09-19T22:09:04.211000+00:00",
+      "prompt_tokens": 59909,
+      "root": "C--src-quantick",
+      "session": "eb4a220a-30ff-48c6-97c3-7e93c67de2e7"
+    },
+    {
+      "at": "2026-09-19T22:11:55.155000+00:00",
+      "prompt_tokens": 60909,
+      "root": "C--src-quantick",
+      "session": "ea212f55-a876-4b2e-85da-478b0f8c998f"
+    },
+    {
+      "at": "2026-09-19T22:28:15.659000+00:00",
+      "prompt_tokens": 65370,
+      "root": "C--src-quantick",
+      "session": "852a9f26-883e-4f72-a105-e6db3e7189e5"
+    },
+    {
+      "at": "2026-09-20T00:15:20.104000+00:00",
+      "prompt_tokens": 65057,
+      "root": "C--src-quantick",
+      "session": "63c5af77-9151-401f-a493-49f763342c03"
+    },
+    {
+      "at": "2026-09-20T02:13:34.552000+00:00",
+      "prompt_tokens": 61174,
+      "root": "C--src-quantick",
+      "session": "6371dcf2-6067-4d03-98ac-8097652dc1e8"
+    },
+    {
+      "at": "2026-09-20T02:20:33.870000+00:00",
+      "prompt_tokens": 58795,
+      "root": "C--src-quantick",
+      "session": "e9c55519-58df-4d92-a172-8e33c7200dc9"
+    },
+    {
+      "at": "2026-09-20T03:44:27.639000+00:00",
+      "prompt_tokens": 60183,
+      "root": "C--src-quantick",
+      "session": "fbf0506a-ff48-4d4c-b6b9-045725d709eb"
+    },
+    {
+      "at": "2026-09-20T04:03:49.094000+00:00",
+      "prompt_tokens": 57628,
+      "root": "C--src-quantick",
+      "session": "c3dbe4c2-f041-45ff-a72e-a0f931a01f63"
+    },
+    {
+      "at": "2026-09-20T19:07:25.256000+00:00",
+      "prompt_tokens": 57618,
+      "root": "C--src-quantick",
+      "session": "9d7277aa-62f1-4bff-ba6f-ba616a3ce1d1"
+    },
+    {
+      "at": "2026-09-20T19:28:19.241000+00:00",
+      "prompt_tokens": 58534,
+      "root": "C--src-quantick",
+      "session": "c4596bce-3839-4a1f-a44a-5648f655c0e2"
+    },
+    {
+      "at": "2026-09-21T00:37:33.489000+00:00",
+      "prompt_tokens": 60928,
+      "root": "C--src-quantick",
+      "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6"
+    }
+  ],
+  "since": "2026-09-11T15:16:00+00:00",
+  "summary": {
+    "max": 66558.0,
+    "mean": 57991.282051282054,
+    "median": 58236.0,
+    "min": 43203.0,
+    "n": 39,
+    "p25": 56869.5,
+    "p75": 59836.5
+  }
+}

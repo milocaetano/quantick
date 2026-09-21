@@ -1,0 +1,5990 @@
+{
+  "as_of": "2026-09-21T04:00:00Z",
+  "inputs": {
+    "digest": "sha256:3797ff9123d3ec131536ceebdf3aa8c7f85d56ae4fda95e147945baadd573597",
+    "out_of_order_lines": 0,
+    "roots": [
+      "C--src-quantick",
+      "C--src-quantick-worktrees-fix-control-review-followups"
+    ],
+    "sessions": 49,
+    "skipped": [],
+    "transcripts": 654,
+    "undated_usage_lines": 0,
+    "unparsed_lines": 0
+  },
+  "method": "docs/quality/mission-cost/method.md",
+  "missions": [
+    {
+      "agent_seconds": 1888.114,
+      "branch": "docs/campaign-model-routing",
+      "delivery": {
+        "base": "main",
+        "branch": "docs/campaign-model-routing",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 458.0,
+        "ci_wall_seconds": 458.0,
+        "created_at": "2026-09-11T19:03:25Z",
+        "ended_at": "2026-09-11T22:20:18Z",
+        "ended_at_source": "merged",
+        "head": "6bedbce957f537f847a1fd95b2edc191bdca8644",
+        "pr": 366,
+        "pr_open_seconds": 11813.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 1871.315,
+      "first_timestamp_seen": "2026-09-11T18:43:07.846000+00:00",
+      "group": null,
+      "last_timestamp_seen": "2026-09-11T22:14:36.694000+00:00",
+      "main_thread": {
+        "billable_tokens": 21547676,
+        "cache_creation_input_tokens": 529912,
+        "cache_read_input_tokens": 20817522,
+        "input_tokens": 2798,
+        "output_tokens": 197444,
+        "requests": 195
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": false,
+      "pr": 366,
+      "sessions": [
+        {
+          "method": "window",
+          "session": "143be9a9-7faf-4bc5-bd26-00e977466642"
+        },
+        {
+          "method": "window",
+          "session": "be80ec12-77bc-4683-bf00-0469bb84bf0c"
+        }
+      ],
+      "span_seconds": 12688.848,
+      "subagents": {
+        "billable_tokens": 286963,
+        "cache_creation_input_tokens": 86130,
+        "cache_read_input_tokens": 200772,
+        "input_tokens": 12,
+        "output_tokens": 49,
+        "requests": 6
+      },
+      "total": {
+        "billable_tokens": 21834639,
+        "cache_creation_input_tokens": 616042,
+        "cache_read_input_tokens": 21018294,
+        "input_tokens": 2810,
+        "output_tokens": 197493,
+        "requests": 201
+      },
+      "window": {
+        "ended_at": "2026-09-11T22:20:18+00:00",
+        "started_at": "2026-09-11T19:00:26+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/load-sensitive-tests",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "fix/load-sensitive-tests",
+        "ci_listing_truncated": false,
+        "ci_runs": 3,
+        "ci_seconds": 1432.0,
+        "ci_wall_seconds": 1432.0,
+        "created_at": "2026-09-12T00:04:53Z",
+        "ended_at": "2026-09-12T05:04:26Z",
+        "ended_at_source": "merged",
+        "head": "01a001c7a9c836de331100c054896a485347729f",
+        "pr": 382,
+        "pr_open_seconds": 17973.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 382,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T05:04:26+00:00",
+        "started_at": "2026-09-12T00:03:19+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/campaign-gate-cd-prefix",
+      "delivery": {
+        "base": "main",
+        "branch": "fix/campaign-gate-cd-prefix",
+        "ci_listing_truncated": false,
+        "ci_runs": 4,
+        "ci_seconds": 1875.0,
+        "ci_wall_seconds": 1533.0,
+        "created_at": "2026-09-12T01:18:21Z",
+        "ended_at": "2026-09-12T04:58:20Z",
+        "ended_at_source": "merged",
+        "head": "0c88cd9824caf1f5d295b2faf63f501249c05248",
+        "pr": 387,
+        "pr_open_seconds": 13199.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 387,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T04:58:20+00:00",
+        "started_at": "2026-09-12T01:17:06+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "refactor/paper-trading-under-1500",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "refactor/paper-trading-under-1500",
+        "ci_listing_truncated": false,
+        "ci_runs": 4,
+        "ci_seconds": 1906.0,
+        "ci_wall_seconds": 1906.0,
+        "created_at": "2026-09-12T00:27:16Z",
+        "ended_at": "2026-09-12T05:31:44Z",
+        "ended_at_source": "merged",
+        "head": "a66fa479a3a48328ef4d87baeec4b4fc08dc8d98",
+        "pr": 384,
+        "pr_open_seconds": 18268.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 384,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T05:31:44+00:00",
+        "started_at": "2026-09-12T05:05:13+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "refactor/pane-under-1500",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "refactor/pane-under-1500",
+        "ci_listing_truncated": false,
+        "ci_runs": 10,
+        "ci_seconds": 4726.0,
+        "ci_wall_seconds": 3297.0,
+        "created_at": "2026-09-12T00:17:16Z",
+        "ended_at": "2026-09-12T05:42:13Z",
+        "ended_at_source": "merged",
+        "head": "625dbdf43b1a27a012657bacf517f64381960513",
+        "pr": 383,
+        "pr_open_seconds": 19497.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 383,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T05:42:13+00:00",
+        "started_at": "2026-09-12T05:33:06+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "refactor/orderflow-render-under-1500",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "refactor/orderflow-render-under-1500",
+        "ci_listing_truncated": false,
+        "ci_runs": 4,
+        "ci_seconds": 1798.0,
+        "ci_wall_seconds": 1798.0,
+        "created_at": "2026-09-12T03:20:43Z",
+        "ended_at": "2026-09-12T05:51:44Z",
+        "ended_at_source": "merged",
+        "head": "867273b2b0f3d8f8e8d633dcf8208a5cdd66bbd2",
+        "pr": 388,
+        "pr_open_seconds": 9061.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 388,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T05:51:44+00:00",
+        "started_at": "2026-09-12T05:42:55+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "refactor/drawings-mod-under-1500",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "refactor/drawings-mod-under-1500",
+        "ci_listing_truncated": false,
+        "ci_runs": 4,
+        "ci_seconds": 1918.0,
+        "ci_wall_seconds": 1361.0,
+        "created_at": "2026-09-12T05:11:29Z",
+        "ended_at": "2026-09-12T07:53:35Z",
+        "ended_at_source": "merged",
+        "head": "ce88f57eb7178c95b1b3d8e8c5eff445c677cdbb",
+        "pr": 390,
+        "pr_open_seconds": 9726.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 390,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T07:53:35+00:00",
+        "started_at": "2026-09-12T05:52:30+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/mission-review-completion-gates",
+      "delivery": {
+        "base": "main",
+        "branch": "fix/mission-review-completion-gates",
+        "ci_listing_truncated": false,
+        "ci_runs": 4,
+        "ci_seconds": 1856.0,
+        "ci_wall_seconds": 1841.0,
+        "created_at": "2026-09-12T06:48:20Z",
+        "ended_at": "2026-09-12T17:59:28Z",
+        "ended_at_source": "merged",
+        "head": "60caa8083272275cab8bad6713d29c000a9a69be",
+        "pr": 393,
+        "pr_open_seconds": 40268.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 393,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T17:59:28+00:00",
+        "started_at": "2026-09-12T06:39:59+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "refactor/chrome-under-1500",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "refactor/chrome-under-1500",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 458.0,
+        "ci_wall_seconds": 458.0,
+        "created_at": "2026-09-12T05:55:26Z",
+        "ended_at": "2026-09-12T08:26:26Z",
+        "ended_at_source": "merged",
+        "head": "23f56c213c1221dff4e0af7aa0bca24dc4acaa83",
+        "pr": 392,
+        "pr_open_seconds": 9060.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 392,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T08:26:26+00:00",
+        "started_at": "2026-09-12T08:17:21+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "refactor/mt5-stream-under-1500",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "refactor/mt5-stream-under-1500",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 456.0,
+        "ci_wall_seconds": 456.0,
+        "created_at": "2026-09-12T08:46:45Z",
+        "ended_at": "2026-09-12T09:12:04Z",
+        "ended_at_source": "merged",
+        "head": "7569b49db5dad5be2375271666b15c36aa23b5d0",
+        "pr": 395,
+        "pr_open_seconds": 1519.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 395,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T09:12:04+00:00",
+        "started_at": "2026-09-12T09:03:25+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "refactor/pine-under-1500",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "refactor/pine-under-1500",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 481.0,
+        "ci_wall_seconds": 481.0,
+        "created_at": "2026-09-12T09:29:17Z",
+        "ended_at": "2026-09-12T09:42:35Z",
+        "ended_at_source": "merged",
+        "head": "3e9a183ca52f07d5bbc6f248eea32de403d9443e",
+        "pr": 399,
+        "pr_open_seconds": 798.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 399,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T09:42:35+00:00",
+        "started_at": "2026-09-12T09:33:31+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/ui-behaviour-capability-matrix",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "feat/ui-behaviour-capability-matrix",
+        "ci_listing_truncated": false,
+        "ci_runs": 6,
+        "ci_seconds": 2913.0,
+        "ci_wall_seconds": 2593.0,
+        "created_at": "2026-09-12T10:48:25Z",
+        "ended_at": "2026-09-12T14:47:35Z",
+        "ended_at_source": "merged",
+        "head": "d0a16ab43bb7510998a48ee659f0cd5bb00319e2",
+        "pr": 402,
+        "pr_open_seconds": 14350.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 402,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T14:47:35+00:00",
+        "started_at": "2026-09-12T10:47:35+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/gateway-load-sensitive-tests",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "fix/gateway-load-sensitive-tests",
+        "ci_listing_truncated": false,
+        "ci_runs": 5,
+        "ci_seconds": 2491.0,
+        "ci_wall_seconds": 2061.0,
+        "created_at": "2026-09-12T09:39:54Z",
+        "ended_at": "2026-09-12T15:04:56Z",
+        "ended_at_source": "merged",
+        "head": "3dc0ebc1c4af9399b07fc2e2fc55836a830db810",
+        "pr": 400,
+        "pr_open_seconds": 19502.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 400,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T15:04:56+00:00",
+        "started_at": "2026-09-12T14:47:56+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "refactor/control-plane-under-1500",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "refactor/control-plane-under-1500",
+        "ci_listing_truncated": false,
+        "ci_runs": 4,
+        "ci_seconds": 1991.0,
+        "ci_wall_seconds": 1991.0,
+        "created_at": "2026-09-12T05:17:38Z",
+        "ended_at": "2026-09-12T15:15:31Z",
+        "ended_at_source": "merged",
+        "head": "dcdf20fa00f94c0589edeb4cdf6a50a79c51e9df",
+        "pr": 391,
+        "pr_open_seconds": 35873.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 391,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T15:15:31+00:00",
+        "started_at": "2026-09-12T15:05:22+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "refactor/orderflow-crate-under-1500",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "refactor/orderflow-crate-under-1500",
+        "ci_listing_truncated": false,
+        "ci_runs": 4,
+        "ci_seconds": 1903.0,
+        "ci_wall_seconds": 1903.0,
+        "created_at": "2026-09-12T08:53:31Z",
+        "ended_at": "2026-09-12T15:25:42Z",
+        "ended_at_source": "merged",
+        "head": "58668d907807cf7f5319df9bff3d1198cbd4b46f",
+        "pr": 396,
+        "pr_open_seconds": 23531.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 396,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T15:25:42+00:00",
+        "started_at": "2026-09-12T15:16:02+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/layers-test-load-sensitive",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "fix/layers-test-load-sensitive",
+        "ci_listing_truncated": false,
+        "ci_runs": 2,
+        "ci_seconds": 978.0,
+        "ci_wall_seconds": 978.0,
+        "created_at": "2026-09-12T15:53:22Z",
+        "ended_at": "2026-09-12T16:12:03Z",
+        "ended_at_source": "merged",
+        "head": "470e7e4743b447a592f3f4ee09666e44854f1cc1",
+        "pr": 404,
+        "pr_open_seconds": 1121.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 404,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T16:12:03+00:00",
+        "started_at": "2026-09-12T16:03:14+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/size-baseline-no-exceptions",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "feat/size-baseline-no-exceptions",
+        "ci_listing_truncated": false,
+        "ci_runs": 2,
+        "ci_seconds": 973.0,
+        "ci_wall_seconds": 973.0,
+        "created_at": "2026-09-12T16:16:29Z",
+        "ended_at": "2026-09-12T16:39:51Z",
+        "ended_at_source": "merged",
+        "head": "25b5b40901de948a802a03a432a6389da7453e82",
+        "pr": 406,
+        "pr_open_seconds": 1402.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 406,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T16:39:51+00:00",
+        "started_at": "2026-09-12T16:14:21+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/live-workload-envelope",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "feat/live-workload-envelope",
+        "ci_listing_truncated": false,
+        "ci_runs": 6,
+        "ci_seconds": 2925.0,
+        "ci_wall_seconds": 2925.0,
+        "created_at": "2026-09-12T16:09:17Z",
+        "ended_at": "2026-09-12T18:22:23Z",
+        "ended_at_source": "merged",
+        "head": "fc1eb3bc0e8e0b8c8919028e29340b138cc763de",
+        "pr": 405,
+        "pr_open_seconds": 7986.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 405,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T18:22:23+00:00",
+        "started_at": "2026-09-12T18:12:47+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/retry-readback-matrix",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "feat/retry-readback-matrix",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 559.0,
+        "ci_wall_seconds": 559.0,
+        "created_at": "2026-09-12T20:59:10Z",
+        "ended_at": "2026-09-12T21:10:47Z",
+        "ended_at_source": "merged",
+        "head": "e76c6b61e4f8992adfec54db4b39dc2a5e535949",
+        "pr": 421,
+        "pr_open_seconds": 697.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 421,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-12T21:10:47+00:00",
+        "started_at": "2026-09-12T18:50:08+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/copy-paste-drawings",
+      "delivery": {
+        "base": "main",
+        "branch": "feat/copy-paste-drawings",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 491.0,
+        "ci_wall_seconds": 491.0,
+        "created_at": "2026-09-12T20:58:08Z",
+        "ended_at": "2026-09-13T02:22:57Z",
+        "ended_at_source": "merged",
+        "head": "8127196b14910f2c7fb32a95aab565811a7a6270",
+        "pr": 420,
+        "pr_open_seconds": 19489.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 420,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-13T02:22:57+00:00",
+        "started_at": "2026-09-12T20:45:26+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "perf/hot-path-session-length",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "perf/hot-path-session-length",
+        "ci_listing_truncated": false,
+        "ci_runs": 6,
+        "ci_seconds": 2976.0,
+        "ci_wall_seconds": 2976.0,
+        "created_at": "2026-09-12T20:22:44Z",
+        "ended_at": "2026-09-13T02:38:43Z",
+        "ended_at_source": "merged",
+        "head": "7e772fd78efa30ad03ceb339693096dee3c68f53",
+        "pr": 419,
+        "pr_open_seconds": 22559.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 419,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-13T02:38:43+00:00",
+        "started_at": "2026-09-13T02:28:08+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/mcp-newest-version-default",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "feat/mcp-newest-version-default",
+        "ci_listing_truncated": false,
+        "ci_runs": 2,
+        "ci_seconds": 1023.0,
+        "ci_wall_seconds": 780.0,
+        "created_at": "2026-09-13T03:09:48Z",
+        "ended_at": "2026-09-13T03:24:25Z",
+        "ended_at_source": "merged",
+        "head": "76094f463c51ec68827cda45ddf39803b901ffb4",
+        "pr": 424,
+        "pr_open_seconds": 877.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 424,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-13T03:24:25+00:00",
+        "started_at": "2026-09-13T02:57:04+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/contention-listed-tests",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "fix/contention-listed-tests",
+        "ci_listing_truncated": false,
+        "ci_runs": 5,
+        "ci_seconds": 2570.0,
+        "ci_wall_seconds": 2570.0,
+        "created_at": "2026-09-13T04:34:28Z",
+        "ended_at": "2026-09-13T07:18:53Z",
+        "ended_at_source": "merged",
+        "head": "60ef40535927342dcf8fe9f965bbb8d743c022be",
+        "pr": 426,
+        "pr_open_seconds": 9865.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 426,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-13T07:18:53+00:00",
+        "started_at": "2026-09-13T04:41:52+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/right-drag-volume-profile",
+      "delivery": {
+        "base": "main",
+        "branch": "feat/right-drag-volume-profile",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 491.0,
+        "ci_wall_seconds": 491.0,
+        "created_at": "2026-09-13T07:16:16Z",
+        "ended_at": "2026-09-13T14:48:10Z",
+        "ended_at_source": "merged",
+        "head": "1c5c6f8347f1399a088f57a47104f36c9b0f03df",
+        "pr": 433,
+        "pr_open_seconds": 27114.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 433,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-13T14:48:10+00:00",
+        "started_at": "2026-09-13T07:12:29+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "perf/chunked-trade-tape",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "perf/chunked-trade-tape",
+        "ci_listing_truncated": false,
+        "ci_runs": 3,
+        "ci_seconds": 1506.0,
+        "ci_wall_seconds": 1506.0,
+        "created_at": "2026-09-13T06:34:34Z",
+        "ended_at": "2026-09-13T07:32:29Z",
+        "ended_at_source": "merged",
+        "head": "3777e9ab14d4447e579b93e876898ecec7b3fc14",
+        "pr": 431,
+        "pr_open_seconds": 3475.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 431,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-13T07:32:29+00:00",
+        "started_at": "2026-09-13T07:22:11+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/gateway-request-id-ordering",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "fix/gateway-request-id-ordering",
+        "ci_listing_truncated": false,
+        "ci_runs": 4,
+        "ci_seconds": 2012.0,
+        "ci_wall_seconds": 1742.0,
+        "created_at": "2026-09-13T09:26:39Z",
+        "ended_at": "2026-09-13T13:15:07Z",
+        "ended_at_source": "merged",
+        "head": "de270b8312f529581dee8aba4da57f5d084dfd29",
+        "pr": 436,
+        "pr_open_seconds": 13708.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 436,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-13T13:15:07+00:00",
+        "started_at": "2026-09-13T09:05:31+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "docs/gate6-remeasure",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "docs/gate6-remeasure",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 503.0,
+        "ci_wall_seconds": 503.0,
+        "created_at": "2026-09-13T14:32:14Z",
+        "ended_at": "2026-09-13T14:43:16Z",
+        "ended_at_source": "merged",
+        "head": "07c7ff1e853cf93940444d7a2fda1567877f637f",
+        "pr": 440,
+        "pr_open_seconds": 662.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 440,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-13T14:43:16+00:00",
+        "started_at": "2026-09-13T14:31:20+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/campaign-aware-ship-gate",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "fix/campaign-aware-ship-gate",
+        "ci_listing_truncated": false,
+        "ci_runs": 3,
+        "ci_seconds": 1541.0,
+        "ci_wall_seconds": 1541.0,
+        "created_at": "2026-09-13T15:49:39Z",
+        "ended_at": "2026-09-13T16:27:15Z",
+        "ended_at_source": "merged",
+        "head": "5a26bce78144ba9bb7cf9123f8cacccb0cdca382",
+        "pr": 446,
+        "pr_open_seconds": 2256.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 446,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-13T16:27:15+00:00",
+        "started_at": "2026-09-13T15:43:21+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "docs/gate6-remeasure-2",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "docs/gate6-remeasure-2",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 513.0,
+        "ci_wall_seconds": 513.0,
+        "created_at": "2026-09-13T18:13:54Z",
+        "ended_at": "2026-09-13T18:25:43Z",
+        "ended_at_source": "merged",
+        "head": "a5a31c2519c4fb4e17bc8b1bd4cdd2283459a7ba",
+        "pr": 448,
+        "pr_open_seconds": 709.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 448,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-13T18:25:43+00:00",
+        "started_at": "2026-09-13T18:11:33+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/mcp-describe-refusal",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "fix/mcp-describe-refusal",
+        "ci_listing_truncated": false,
+        "ci_runs": 2,
+        "ci_seconds": 1058.0,
+        "ci_wall_seconds": 1058.0,
+        "created_at": "2026-09-13T19:28:21Z",
+        "ended_at": "2026-09-13T19:48:44Z",
+        "ended_at_source": "merged",
+        "head": "e4c8223ecae0680acace712716e5dc0ef0aa3336",
+        "pr": 451,
+        "pr_open_seconds": 1223.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 451,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-13T19:48:44+00:00",
+        "started_at": "2026-09-13T19:09:10+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/mcp-describe-test-name",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "fix/mcp-describe-test-name",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 528.0,
+        "ci_wall_seconds": 528.0,
+        "created_at": "2026-09-13T20:05:09Z",
+        "ended_at": "2026-09-13T20:15:40Z",
+        "ended_at_source": "merged",
+        "head": "2c552c8902dcec705e5485bb2ae6d2206866378c",
+        "pr": 454,
+        "pr_open_seconds": 631.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 454,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-13T20:15:40+00:00",
+        "started_at": "2026-09-13T20:04:14+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "refactor/paper-account-headless",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "refactor/paper-account-headless",
+        "ci_listing_truncated": false,
+        "ci_runs": 7,
+        "ci_seconds": 3586.0,
+        "ci_wall_seconds": 3155.0,
+        "created_at": "2026-09-13T19:55:57Z",
+        "ended_at": "2026-09-14T00:06:14Z",
+        "ended_at_source": "merged",
+        "head": "545e2f919e8a211a316d459ed81bb927f4b435ea",
+        "pr": 453,
+        "pr_open_seconds": 15017.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 453,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T00:06:14+00:00",
+        "started_at": "2026-09-13T20:18:28+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "refactor/control-host-headless",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "refactor/control-host-headless",
+        "ci_listing_truncated": false,
+        "ci_runs": 6,
+        "ci_seconds": 3146.0,
+        "ci_wall_seconds": 3146.0,
+        "created_at": "2026-09-13T19:32:47Z",
+        "ended_at": "2026-09-14T00:48:37Z",
+        "ended_at_source": "merged",
+        "head": "50c34002bd5de91665ad3e6579a3be3be4c7841e",
+        "pr": 452,
+        "pr_open_seconds": 18950.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 452,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T00:48:37+00:00",
+        "started_at": "2026-09-14T00:07:37+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/app-ui-free-ratchet",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "feat/app-ui-free-ratchet",
+        "ci_listing_truncated": false,
+        "ci_runs": 6,
+        "ci_seconds": 3141.0,
+        "ci_wall_seconds": 2068.0,
+        "created_at": "2026-09-13T19:12:35Z",
+        "ended_at": "2026-09-14T01:14:17Z",
+        "ended_at_source": "merged",
+        "head": "5b3ff1e0121b0133566b6100d9b53a5f2da64114",
+        "pr": 450,
+        "pr_open_seconds": 21702.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 450,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T01:14:17+00:00",
+        "started_at": "2026-09-14T00:49:12+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "docs/outside-score",
+      "delivery": {
+        "base": "main",
+        "branch": "docs/outside-score",
+        "ci_listing_truncated": false,
+        "ci_runs": 3,
+        "ci_seconds": 1486.0,
+        "ci_wall_seconds": 1382.0,
+        "created_at": "2026-09-14T01:19:54Z",
+        "ended_at": "2026-09-14T17:54:08Z",
+        "ended_at_source": "merged",
+        "head": "ba667d47a0444463f9cf70030af6e9f92afda3c7",
+        "pr": 457,
+        "pr_open_seconds": 59654.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 457,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T17:54:08+00:00",
+        "started_at": "2026-09-14T01:14:55+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/session-length-test-cheap",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "fix/session-length-test-cheap",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 537.0,
+        "ci_wall_seconds": 537.0,
+        "created_at": "2026-09-14T01:30:39Z",
+        "ended_at": "2026-09-14T01:43:27Z",
+        "ended_at_source": "merged",
+        "head": "431dbf4ac6d02eab94b27a4c3513e88fc8f5f5dd",
+        "pr": 458,
+        "pr_open_seconds": 768.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 458,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T01:43:27+00:00",
+        "started_at": "2026-09-14T01:22:56+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/volume-profile-precise-hit",
+      "delivery": {
+        "base": "main",
+        "branch": "fix/volume-profile-precise-hit",
+        "ci_listing_truncated": false,
+        "ci_runs": 3,
+        "ci_seconds": 1541.0,
+        "ci_wall_seconds": 1541.0,
+        "created_at": "2026-09-14T03:25:24Z",
+        "ended_at": "2026-09-14T04:38:49Z",
+        "ended_at_source": "merged",
+        "head": "ca9bf890c9c1622007b6b1293c13fce1807c9b24",
+        "pr": 461,
+        "pr_open_seconds": 4405.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 461,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T04:38:49+00:00",
+        "started_at": "2026-09-14T03:24:26+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/native-drawing-clipboard",
+      "delivery": {
+        "base": "main",
+        "branch": "fix/native-drawing-clipboard",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 537.0,
+        "ci_wall_seconds": 537.0,
+        "created_at": "2026-09-14T03:51:40Z",
+        "ended_at": "2026-09-14T04:25:35Z",
+        "ended_at_source": "merged",
+        "head": "63f66b43f7b3b6b779717bbc647a75b1157ec901",
+        "pr": 462,
+        "pr_open_seconds": 2035.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 462,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T04:25:35+00:00",
+        "started_at": "2026-09-14T03:48:22+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/rectangle-four-corners",
+      "delivery": {
+        "base": "main",
+        "branch": "fix/rectangle-four-corners",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 528.0,
+        "ci_wall_seconds": 528.0,
+        "created_at": "2026-09-14T04:15:30Z",
+        "ended_at": "2026-09-14T17:54:22Z",
+        "ended_at_source": "merged",
+        "head": "190af4533192d5081e5bd827f01872b76c4848f9",
+        "pr": 463,
+        "pr_open_seconds": 49132.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 463,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T17:54:22+00:00",
+        "started_at": "2026-09-14T04:14:19+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "docs/gate6-remeasure-3",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "docs/gate6-remeasure-3",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 563.0,
+        "ci_wall_seconds": 563.0,
+        "created_at": "2026-09-14T04:37:09Z",
+        "ended_at": "2026-09-14T04:49:14Z",
+        "ended_at_source": "merged",
+        "head": "db45e7695add100d994006f98eb056d0aa893ddd",
+        "pr": 464,
+        "pr_open_seconds": 725.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 464,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T04:49:14+00:00",
+        "started_at": "2026-09-14T04:24:30+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "docs/gate6-remeasure-4",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "docs/gate6-remeasure-4",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 547.0,
+        "ci_wall_seconds": 547.0,
+        "created_at": "2026-09-14T06:46:59Z",
+        "ended_at": "2026-09-14T06:58:35Z",
+        "ended_at_source": "merged",
+        "head": "9ca2878365ba24787507ca892651c8686ffb11a0",
+        "pr": 467,
+        "pr_open_seconds": 696.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 467,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T06:58:35+00:00",
+        "started_at": "2026-09-14T06:36:49+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/paper-report-same-frame",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "fix/paper-report-same-frame",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 537.0,
+        "ci_wall_seconds": 537.0,
+        "created_at": "2026-09-14T07:47:23Z",
+        "ended_at": "2026-09-14T07:58:23Z",
+        "ended_at_source": "merged",
+        "head": "3541984d506d067782a8942ec85f8559344b2549",
+        "pr": 469,
+        "pr_open_seconds": 660.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 469,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T07:58:23+00:00",
+        "started_at": "2026-09-14T07:33:35+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "docs/gate6-remeasure-5",
+      "delivery": {
+        "base": "campaign/lean-a-plus",
+        "branch": "docs/gate6-remeasure-5",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 543.0,
+        "ci_wall_seconds": 543.0,
+        "created_at": "2026-09-14T08:26:47Z",
+        "ended_at": "2026-09-14T08:37:48Z",
+        "ended_at_source": "merged",
+        "head": "9ee888e1bbe0bd66ee72d136e7bbde8d86f91eea",
+        "pr": 470,
+        "pr_open_seconds": 661.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/lean-a-plus",
+      "partial_main_thread": true,
+      "pr": 470,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T08:37:48+00:00",
+        "started_at": "2026-09-14T08:17:13+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "refactor/one-bar-spec",
+      "delivery": {
+        "base": "main",
+        "branch": "refactor/one-bar-spec",
+        "ci_listing_truncated": false,
+        "ci_runs": 4,
+        "ci_seconds": 2031.0,
+        "ci_wall_seconds": 1700.0,
+        "created_at": "2026-09-14T19:08:00Z",
+        "ended_at": "2026-09-14T21:41:17Z",
+        "ended_at_source": "merged",
+        "head": "de95516c0d7628a068ba2d23a9f8cfbf0ba0106f",
+        "pr": 484,
+        "pr_open_seconds": 9197.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 484,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T21:41:17+00:00",
+        "started_at": "2026-09-14T18:13:10+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/sync-main-bars",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "feat/sync-main-bars",
+        "ci_listing_truncated": false,
+        "ci_runs": 2,
+        "ci_seconds": 952.0,
+        "ci_wall_seconds": 952.0,
+        "created_at": "2026-09-14T23:11:11Z",
+        "ended_at": "2026-09-15T00:43:37Z",
+        "ended_at_source": "merged",
+        "head": "c0704ad505dd1f4ac10c00275d47c72bea667ca3",
+        "pr": 494,
+        "pr_open_seconds": 5546.0,
+        "read_cost": 19233,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 494,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-15T00:43:37+00:00",
+        "started_at": "2026-09-14T18:13:10+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/mutation-retry-truth",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "fix/mutation-retry-truth",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 452.0,
+        "ci_wall_seconds": 452.0,
+        "created_at": "2026-09-14T19:40:26Z",
+        "ended_at": "2026-09-14T20:02:02Z",
+        "ended_at_source": "merged",
+        "head": "dab637883aff1a3e18962b2549eef5e8e2d2e3c7",
+        "pr": 486,
+        "pr_open_seconds": 1296.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 486,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T20:02:02+00:00",
+        "started_at": "2026-09-14T19:35:06+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/pr-read-cost",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "feat/pr-read-cost",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 532.0,
+        "ci_wall_seconds": 532.0,
+        "created_at": "2026-09-14T20:39:22Z",
+        "ended_at": "2026-09-14T20:53:34Z",
+        "ended_at_source": "merged",
+        "head": "664052aad069bf925660db554ee59c59f5f2f2df",
+        "pr": 487,
+        "pr_open_seconds": 852.0,
+        "read_cost": 0,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 487,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T20:53:34+00:00",
+        "started_at": "2026-09-14T20:02:21+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/feed-gap-honesty",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "fix/feed-gap-honesty",
+        "ci_listing_truncated": false,
+        "ci_runs": 2,
+        "ci_seconds": 993.0,
+        "ci_wall_seconds": 993.0,
+        "created_at": "2026-09-14T20:49:25Z",
+        "ended_at": "2026-09-14T21:34:21Z",
+        "ended_at_source": "merged",
+        "head": "18153648286e26a6f52c99b211b9a8fc1c7fef28",
+        "pr": 488,
+        "pr_open_seconds": 2696.0,
+        "read_cost": 17251,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 488,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-14T21:34:21+00:00",
+        "started_at": "2026-09-14T20:55:22+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/resize-stacked-panes",
+      "delivery": {
+        "base": "main",
+        "branch": "fix/resize-stacked-panes",
+        "ci_listing_truncated": false,
+        "ci_runs": 3,
+        "ci_seconds": 1594.0,
+        "ci_wall_seconds": 1361.0,
+        "created_at": "2026-09-14T21:30:15Z",
+        "ended_at": "2026-09-15T00:47:27Z",
+        "ended_at_source": "merged",
+        "head": "e0e121c6f65388e0b36de11da61b356b3e859d20",
+        "pr": 489,
+        "pr_open_seconds": 11832.0,
+        "read_cost": 8098,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 489,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-15T00:47:27+00:00",
+        "started_at": "2026-09-14T21:45:31+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/sync-main-chart-layout",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "feat/sync-main-chart-layout",
+        "ci_listing_truncated": false,
+        "ci_runs": 4,
+        "ci_seconds": 2647.0,
+        "ci_wall_seconds": 2647.0,
+        "created_at": "2026-09-15T07:07:23Z",
+        "ended_at": "2026-09-16T03:50:31Z",
+        "ended_at_source": "merged",
+        "head": "97edcb664af0fbbafc444e36f787c9bae03f4328",
+        "pr": 511,
+        "pr_open_seconds": 74588.0,
+        "read_cost": 59771,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 511,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-16T03:50:31+00:00",
+        "started_at": "2026-09-14T21:45:31+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/chart-context-menu-layers",
+      "delivery": {
+        "base": "main",
+        "branch": "feat/chart-context-menu-layers",
+        "ci_listing_truncated": false,
+        "ci_runs": 3,
+        "ci_seconds": 1448.0,
+        "ci_wall_seconds": 1049.0,
+        "created_at": "2026-09-14T22:36:04Z",
+        "ended_at": "2026-09-15T00:46:12Z",
+        "ended_at_source": "merged",
+        "head": "2a9b732f5178f619e9ba0aa5609cd278894c5f3c",
+        "pr": 493,
+        "pr_open_seconds": 7808.0,
+        "read_cost": 21105,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 493,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-15T00:46:12+00:00",
+        "started_at": "2026-09-14T22:34:50+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/evidence-resources",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "feat/evidence-resources",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 532.0,
+        "ci_wall_seconds": 532.0,
+        "created_at": "2026-09-15T01:26:07Z",
+        "ended_at": "2026-09-15T02:00:12Z",
+        "ended_at_source": "merged",
+        "head": "642c7f45ce393d642f1d2b53d7d5f44a1d507dc4",
+        "pr": 497,
+        "pr_open_seconds": 2045.0,
+        "read_cost": 5670,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 497,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-15T02:00:12+00:00",
+        "started_at": "2026-09-15T01:23:36+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/per-pane-layout-strips",
+      "delivery": {
+        "base": "main",
+        "branch": "feat/per-pane-layout-strips",
+        "ci_listing_truncated": false,
+        "ci_runs": 5,
+        "ci_seconds": 2383.0,
+        "ci_wall_seconds": 1960.0,
+        "created_at": "2026-09-14T19:26:28Z",
+        "ended_at": "2026-09-15T03:46:22Z",
+        "ended_at_source": "merged",
+        "head": "883a21c9c655b90b5af17d03ef6ba408fb459844",
+        "pr": 485,
+        "pr_open_seconds": 29994.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 485,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-15T03:46:22+00:00",
+        "started_at": "2026-09-15T01:24:03+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/edit-loop-windows",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "feat/edit-loop-windows",
+        "ci_listing_truncated": false,
+        "ci_runs": 8,
+        "ci_seconds": 6365.0,
+        "ci_wall_seconds": 3904.0,
+        "created_at": "2026-09-15T02:40:08Z",
+        "ended_at": "2026-09-17T06:15:57Z",
+        "ended_at_source": "merged",
+        "head": "8b52b503bcc9d94ee84bf6a4164f55401867c411",
+        "pr": 499,
+        "pr_open_seconds": 185749.0,
+        "read_cost": 0,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 499,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-17T06:15:57+00:00",
+        "started_at": "2026-09-15T02:07:36+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/show-drawing-all-charts-toggle",
+      "delivery": {
+        "base": "main",
+        "branch": "feat/show-drawing-all-charts-toggle",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 440.0,
+        "ci_wall_seconds": 440.0,
+        "created_at": "2026-09-15T02:23:15Z",
+        "ended_at": "2026-09-15T02:33:07Z",
+        "ended_at_source": "merged",
+        "head": "985a61669626266ae2f42cc9d3e27e4168f9a778",
+        "pr": 498,
+        "pr_open_seconds": 592.0,
+        "read_cost": 2171,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 498,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-15T02:33:07+00:00",
+        "started_at": "2026-09-15T02:22:10+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/right-drag-fibonacci-actions",
+      "delivery": {
+        "base": "main",
+        "branch": "feat/right-drag-fibonacci-actions",
+        "ci_listing_truncated": false,
+        "ci_runs": 2,
+        "ci_seconds": 1050.0,
+        "ci_wall_seconds": 1000.0,
+        "created_at": "2026-09-15T03:04:52Z",
+        "ended_at": "2026-09-15T03:45:07Z",
+        "ended_at_source": "merged",
+        "head": "71b6bd17b8791fcaca03452739b21cf1d76cb335",
+        "pr": 500,
+        "pr_open_seconds": 2415.0,
+        "read_cost": 35517,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 500,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-15T03:45:07+00:00",
+        "started_at": "2026-09-15T02:58:17+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/mouse-vertical-line",
+      "delivery": {
+        "base": "main",
+        "branch": "feat/mouse-vertical-line",
+        "ci_listing_truncated": false,
+        "ci_runs": 2,
+        "ci_seconds": 971.0,
+        "ci_wall_seconds": 971.0,
+        "created_at": "2026-09-15T03:59:55Z",
+        "ended_at": "2026-09-15T04:54:07Z",
+        "ended_at_source": "merged",
+        "head": "085254c23e99c85d307a0773841773a03d3377fa",
+        "pr": 506,
+        "pr_open_seconds": 3252.0,
+        "read_cost": 51075,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 506,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-15T04:54:07+00:00",
+        "started_at": "2026-09-15T04:03:13+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/sync-main-current",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "feat/sync-main-current",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 693.0,
+        "ci_wall_seconds": 693.0,
+        "created_at": "2026-09-17T03:30:03Z",
+        "ended_at": "2026-09-17T03:50:38Z",
+        "ended_at_source": "merged",
+        "head": "13b139aafc184b3c51332759f0ff57d110da6354",
+        "pr": 524,
+        "pr_open_seconds": 1235.0,
+        "read_cost": 61180,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 524,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-17T03:50:38+00:00",
+        "started_at": "2026-09-15T04:03:13+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "chore/stop-tracking-agent-evidence",
+      "delivery": {
+        "base": "main",
+        "branch": "chore/stop-tracking-agent-evidence",
+        "ci_listing_truncated": false,
+        "ci_runs": 3,
+        "ci_seconds": 1522.0,
+        "ci_wall_seconds": 1522.0,
+        "created_at": "2026-09-15T04:27:31Z",
+        "ended_at": "2026-09-16T21:48:33Z",
+        "ended_at_source": "merged",
+        "head": "c6ea9abf7c28080f9158dfcf33cb9ee3b0a3033f",
+        "pr": 507,
+        "pr_open_seconds": 148862.0,
+        "read_cost": 4415,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 507,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-16T21:48:33+00:00",
+        "started_at": "2026-09-15T04:20:47+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/context-column-divider-drag",
+      "delivery": {
+        "base": "main",
+        "branch": "fix/context-column-divider-drag",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 410.0,
+        "ci_wall_seconds": 410.0,
+        "created_at": "2026-09-15T06:59:27Z",
+        "ended_at": "2026-09-15T12:15:46Z",
+        "ended_at_source": "merged",
+        "head": "4224149b456a4696543838e67fc79f14ec20677f",
+        "pr": 510,
+        "pr_open_seconds": 18979.0,
+        "read_cost": 10613,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 510,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-15T12:15:46+00:00",
+        "started_at": "2026-09-15T06:01:44+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/stale-control-descriptors",
+      "delivery": {
+        "base": "main",
+        "branch": "fix/stale-control-descriptors",
+        "ci_listing_truncated": false,
+        "ci_runs": 5,
+        "ci_seconds": 2400.0,
+        "ci_wall_seconds": 1644.0,
+        "created_at": "2026-09-15T06:15:48Z",
+        "ended_at": "2026-09-15T12:15:27Z",
+        "ended_at_source": "merged",
+        "head": "bf2cf3654030b63e91ea3a9a3950ddc32d2fb901",
+        "pr": 508,
+        "pr_open_seconds": 21579.0,
+        "read_cost": 1048,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 508,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-15T12:15:27+00:00",
+        "started_at": "2026-09-15T06:14:56+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/paste-without-text-clipboard",
+      "delivery": {
+        "base": "main",
+        "branch": "fix/paste-without-text-clipboard",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 544.0,
+        "ci_wall_seconds": 544.0,
+        "created_at": "2026-09-16T04:51:04Z",
+        "ended_at": "2026-09-16T21:46:21Z",
+        "ended_at_source": "merged",
+        "head": "e3d97015f9ec165c2ac57bbe286dc0f13603cc2b",
+        "pr": 516,
+        "pr_open_seconds": 60917.0,
+        "read_cost": 2864,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 516,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-16T21:46:21+00:00",
+        "started_at": "2026-09-16T02:22:43+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/bar-selection-registry",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "feat/bar-selection-registry",
+        "ci_listing_truncated": false,
+        "ci_runs": 2,
+        "ci_seconds": 1370.0,
+        "ci_wall_seconds": 1370.0,
+        "created_at": "2026-09-16T04:17:05Z",
+        "ended_at": "2026-09-16T17:09:48Z",
+        "ended_at_source": "merged",
+        "head": "75a8b8bd7cf25e36a03fb4837f23d4708b986bf8",
+        "pr": 514,
+        "pr_open_seconds": 46363.0,
+        "read_cost": 49257,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 514,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-16T17:09:48+00:00",
+        "started_at": "2026-09-16T04:15:57+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/mcp-native-chart-image",
+      "delivery": {
+        "base": "main",
+        "branch": "feat/mcp-native-chart-image",
+        "ci_listing_truncated": false,
+        "ci_runs": 1,
+        "ci_seconds": 552.0,
+        "ci_wall_seconds": 552.0,
+        "created_at": "2026-09-16T12:21:41Z",
+        "ended_at": "2026-09-16T21:49:28Z",
+        "ended_at_source": "merged",
+        "head": "97a1eeef267ffdc1e3abd3222e1f8ca3e543f58b",
+        "pr": 519,
+        "pr_open_seconds": 34067.0,
+        "read_cost": 2096,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 519,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-16T21:49:28+00:00",
+        "started_at": "2026-09-16T12:12:11+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/layer-policy-registry",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "feat/layer-policy-registry",
+        "ci_listing_truncated": false,
+        "ci_runs": 2,
+        "ci_seconds": 1385.0,
+        "ci_wall_seconds": 1385.0,
+        "created_at": "2026-09-16T04:32:18Z",
+        "ended_at": "2026-09-16T21:22:55Z",
+        "ended_at_source": "merged",
+        "head": "84e595042f7f02557b394682b26ccc886bab0548",
+        "pr": 515,
+        "pr_open_seconds": 60637.0,
+        "read_cost": 48977,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 515,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-16T21:22:55+00:00",
+        "started_at": "2026-09-16T17:18:04+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/capability-admission-owner",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "feat/capability-admission-owner",
+        "ci_listing_truncated": false,
+        "ci_runs": 2,
+        "ci_seconds": 1393.0,
+        "ci_wall_seconds": 1393.0,
+        "created_at": "2026-09-17T01:08:50Z",
+        "ended_at": "2026-09-17T01:44:22Z",
+        "ended_at_source": "merged",
+        "head": "49d75928026d4880e8fec03635b6c7d5313c36c2",
+        "pr": 522,
+        "pr_open_seconds": 2132.0,
+        "read_cost": 10142,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 522,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-17T01:44:22+00:00",
+        "started_at": "2026-09-17T01:07:56+00:00"
+      }
+    },
+    {
+      "agent_seconds": 358.565,
+      "branch": "feat/app-owner-landing",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "feat/app-owner-landing",
+        "ci_listing_truncated": false,
+        "ci_runs": 8,
+        "ci_seconds": 10106.0,
+        "ci_wall_seconds": 6381.0,
+        "created_at": "2026-09-18T14:49:56Z",
+        "ended_at": "2026-09-18T21:31:05Z",
+        "ended_at_source": "merged",
+        "head": "e309e7d6b4fefbdea5cf70db9ff7b8e395895f1e",
+        "pr": 529,
+        "pr_open_seconds": 24069.0,
+        "read_cost": 73843,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 358.565,
+      "first_timestamp_seen": "2026-09-17T11:49:51.010000+00:00",
+      "group": null,
+      "last_timestamp_seen": "2026-09-18T14:41:30.035000+00:00",
+      "main_thread": {
+        "billable_tokens": 2559517,
+        "cache_creation_input_tokens": 227137,
+        "cache_read_input_tokens": 2312974,
+        "input_tokens": 76,
+        "output_tokens": 19330,
+        "requests": 38
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": false,
+      "pr": 529,
+      "sessions": [
+        {
+          "method": "window",
+          "session": "41c3fd58-2a5d-46a0-8de9-12ed2e6656dc"
+        },
+        {
+          "method": "window",
+          "session": "47340b9d-de5d-46f8-bbe3-819ca8da8205"
+        }
+      ],
+      "span_seconds": 96699.025,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 2559517,
+        "cache_creation_input_tokens": 227137,
+        "cache_read_input_tokens": 2312974,
+        "input_tokens": 76,
+        "output_tokens": 19330,
+        "requests": 38
+      },
+      "window": {
+        "ended_at": "2026-09-18T21:31:05+00:00",
+        "started_at": "2026-09-17T06:40:41+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/mvu-app-owners",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "feat/mvu-app-owners",
+        "ci_listing_truncated": false,
+        "ci_runs": 11,
+        "ci_seconds": 14873.0,
+        "ci_wall_seconds": 12371.0,
+        "created_at": "2026-09-18T16:51:21Z",
+        "ended_at": "2026-09-19T07:00:30Z",
+        "ended_at_source": "merged",
+        "head": "e8655a000b3afa5c026db8f891eb50f79332b9b0",
+        "pr": 530,
+        "pr_open_seconds": 50949.0,
+        "read_cost": 46575,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 530,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-19T07:00:30+00:00",
+        "started_at": "2026-09-18T15:19:27+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/long-fn-commands",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "feat/long-fn-commands",
+        "ci_listing_truncated": false,
+        "ci_runs": 6,
+        "ci_seconds": 7663.0,
+        "ci_wall_seconds": 5742.0,
+        "created_at": "2026-09-18T17:32:31Z",
+        "ended_at": "2026-09-19T01:05:05Z",
+        "ended_at_source": "merged",
+        "head": "0a004fdcef11d85dd308f852e12c2f55451606f2",
+        "pr": 533,
+        "pr_open_seconds": 27154.0,
+        "read_cost": 42795,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 533,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-19T01:05:05+00:00",
+        "started_at": "2026-09-18T15:57:04+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/declared-stage-registry",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "feat/declared-stage-registry",
+        "ci_listing_truncated": false,
+        "ci_runs": 7,
+        "ci_seconds": 9251.0,
+        "ci_wall_seconds": 5868.0,
+        "created_at": "2026-09-18T16:53:56Z",
+        "ended_at": "2026-09-18T23:49:21Z",
+        "ended_at_source": "merged",
+        "head": "6c5ec549ce5fa710915e50c714c3b8a18816ed3d",
+        "pr": 531,
+        "pr_open_seconds": 24925.0,
+        "read_cost": 16839,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 531,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-18T23:49:21+00:00",
+        "started_at": "2026-09-18T16:15:02+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/headless-app-core",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "feat/headless-app-core",
+        "ci_listing_truncated": false,
+        "ci_runs": 30,
+        "ci_seconds": 36292.0,
+        "ci_wall_seconds": 20645.0,
+        "created_at": "2026-09-18T17:13:39Z",
+        "ended_at": "2026-09-19T10:50:50Z",
+        "ended_at_source": "merged",
+        "head": "f45af710a13ac7037d50dd560cbb0815d489338f",
+        "pr": 532,
+        "pr_open_seconds": 63431.0,
+        "read_cost": 56699,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 532,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-19T10:50:50+00:00",
+        "started_at": "2026-09-18T17:04:37+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/harness-composition-root",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "feat/harness-composition-root",
+        "ci_listing_truncated": false,
+        "ci_runs": 18,
+        "ci_seconds": 30415.0,
+        "ci_wall_seconds": 15964.0,
+        "created_at": "2026-09-18T17:59:43Z",
+        "ended_at": "2026-09-19T05:52:39Z",
+        "ended_at_source": "merged",
+        "head": "b7fff055871e58ea60cbc9b2ea3c7c0a9b51dd5c",
+        "pr": 534,
+        "pr_open_seconds": 42776.0,
+        "read_cost": 61967,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 534,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-19T05:52:39+00:00",
+        "started_at": "2026-09-18T17:42:19+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/final-review-repairs",
+      "delivery": {
+        "base": "campaign/outside-eight",
+        "branch": "fix/final-review-repairs",
+        "ci_listing_truncated": false,
+        "ci_runs": 2,
+        "ci_seconds": 4365.0,
+        "ci_wall_seconds": 3129.0,
+        "created_at": "2026-09-19T12:32:31Z",
+        "ended_at": "2026-09-19T13:26:31Z",
+        "ended_at_source": "merged",
+        "head": "25c75c23c1cfce037ecab6ffebc5c1696a0378a2",
+        "pr": 543,
+        "pr_open_seconds": 3240.0,
+        "read_cost": 33739,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/outside-eight",
+      "partial_main_thread": true,
+      "pr": 543,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-19T13:26:31+00:00",
+        "started_at": "2026-09-19T11:34:46+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/architecture-ratchets",
+      "delivery": {
+        "base": "main",
+        "branch": "feat/architecture-ratchets",
+        "ci_listing_truncated": false,
+        "ci_runs": 3,
+        "ci_seconds": 3211.0,
+        "ci_wall_seconds": 1958.0,
+        "created_at": "2026-09-19T12:39:35Z",
+        "ended_at": "2026-09-19T20:49:38Z",
+        "ended_at_source": "merged",
+        "head": "379a3c9c969ec28b438fbd29b353f333a4d12262",
+        "pr": 544,
+        "pr_open_seconds": 29403.0,
+        "read_cost": 4146,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 544,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-19T20:49:38+00:00",
+        "started_at": "2026-09-19T12:35:41+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "docs/halve-agent-instructions",
+      "delivery": {
+        "base": "main",
+        "branch": "docs/halve-agent-instructions",
+        "ci_listing_truncated": false,
+        "ci_runs": 4,
+        "ci_seconds": 5851.0,
+        "ci_wall_seconds": 5258.0,
+        "created_at": "2026-09-19T12:53:42Z",
+        "ended_at": "2026-09-20T01:43:13Z",
+        "ended_at_source": "merged",
+        "head": "5cf2121070ba3efde6fb3cae6523bfb338414eda",
+        "pr": 546,
+        "pr_open_seconds": 46171.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "graded by #565: halve always-loaded agent instructions",
+      "partial_main_thread": true,
+      "pr": 546,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-20T01:43:13+00:00",
+        "started_at": "2026-09-19T12:39:26+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/fast-draft-ci",
+      "delivery": {
+        "base": "main",
+        "branch": "feat/fast-draft-ci",
+        "ci_listing_truncated": false,
+        "ci_runs": 7,
+        "ci_seconds": 4402.0,
+        "ci_wall_seconds": 4402.0,
+        "created_at": "2026-09-19T13:31:55Z",
+        "ended_at": "2026-09-19T21:42:46Z",
+        "ended_at_source": "merged",
+        "head": "75649c55a723f333c259698d474a82fe937f6169",
+        "pr": 547,
+        "pr_open_seconds": 29451.0,
+        "read_cost": 0,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "graded by #565: fast affected-crates job on drafts",
+      "partial_main_thread": true,
+      "pr": 547,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-19T21:42:46+00:00",
+        "started_at": "2026-09-19T13:31:37+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/guards-after-outside-eight",
+      "delivery": {
+        "base": "main",
+        "branch": "fix/guards-after-outside-eight",
+        "ci_listing_truncated": false,
+        "ci_runs": 5,
+        "ci_seconds": 8178.0,
+        "ci_wall_seconds": 7644.0,
+        "created_at": "2026-09-19T21:44:24Z",
+        "ended_at": "2026-09-20T00:08:11Z",
+        "ended_at_source": "merged",
+        "head": "ee7d5df512c9c5ebc16a510f3b3a1eece8933183",
+        "pr": 549,
+        "pr_open_seconds": 8627.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 549,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-20T00:08:11+00:00",
+        "started_at": "2026-09-19T21:44:07+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/ci-under-fifteen-minutes",
+      "delivery": {
+        "base": "main",
+        "branch": "feat/ci-under-fifteen-minutes",
+        "ci_listing_truncated": false,
+        "ci_runs": 6,
+        "ci_seconds": 3723.0,
+        "ci_wall_seconds": 2978.0,
+        "created_at": "2026-09-20T00:41:55Z",
+        "ended_at": "2026-09-20T01:55:27Z",
+        "ended_at_source": "merged",
+        "head": "1698d92c90543dca2db4d9315c8eb18fed581091",
+        "pr": 552,
+        "pr_open_seconds": 4412.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "graded by #565: full Linux verdict from 43 minutes to parallel jobs",
+      "partial_main_thread": true,
+      "pr": 552,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-20T01:55:27+00:00",
+        "started_at": "2026-09-20T01:44:18+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/read-cost-ledger",
+      "delivery": {
+        "base": "main",
+        "branch": "feat/read-cost-ledger",
+        "ci_listing_truncated": false,
+        "ci_runs": 10,
+        "ci_seconds": 12842.0,
+        "ci_wall_seconds": 10215.0,
+        "created_at": "2026-09-19T23:27:23Z",
+        "ended_at": "2026-09-20T03:40:45Z",
+        "ended_at_source": "merged",
+        "head": "e89d4df341fd4c960e49300d1da914f8d7a36da4",
+        "pr": 550,
+        "pr_open_seconds": 15202.0,
+        "read_cost": 0,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "graded by #565: per-pull-request read cost visible and bounded",
+      "partial_main_thread": true,
+      "pr": 550,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-20T03:40:45+00:00",
+        "started_at": "2026-09-20T02:05:07+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/analyst-authority-tier",
+      "delivery": {
+        "base": "main",
+        "branch": "feat/analyst-authority-tier",
+        "ci_listing_truncated": false,
+        "ci_runs": 8,
+        "ci_seconds": 8808.0,
+        "ci_wall_seconds": 7217.0,
+        "created_at": "2026-09-20T00:01:03Z",
+        "ended_at": "2026-09-20T03:41:09Z",
+        "ended_at_source": "merged",
+        "head": "f33e6478dd2d6764911cb2166f993bc61309d1a6",
+        "pr": 551,
+        "pr_open_seconds": 13206.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 551,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-20T03:41:09+00:00",
+        "started_at": "2026-09-20T02:12:06+00:00"
+      }
+    },
+    {
+      "agent_seconds": 1830.516,
+      "branch": "perf/ci-under-seven-minutes",
+      "delivery": {
+        "base": "main",
+        "branch": "perf/ci-under-seven-minutes",
+        "ci_listing_truncated": false,
+        "ci_runs": 11,
+        "ci_seconds": 4956.0,
+        "ci_wall_seconds": 4909.0,
+        "created_at": "2026-09-20T02:26:03Z",
+        "ended_at": "2026-09-20T10:12:23Z",
+        "ended_at_source": "merged",
+        "head": "21c1b45d8bb07c8765b2c22710da486cf78d4b92",
+        "pr": 553,
+        "pr_open_seconds": 27980.0,
+        "read_cost": 0,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 1830.516,
+      "first_timestamp_seen": "2026-09-20T03:44:27.639000+00:00",
+      "group": null,
+      "last_timestamp_seen": "2026-09-20T04:20:24.631000+00:00",
+      "main_thread": {
+        "billable_tokens": 14028772,
+        "cache_creation_input_tokens": 218370,
+        "cache_read_input_tokens": 13705411,
+        "input_tokens": 256,
+        "output_tokens": 104735,
+        "requests": 128
+      },
+      "note": "graded by #565: full CI critical path under seven minutes",
+      "partial_main_thread": false,
+      "pr": 553,
+      "sessions": [
+        {
+          "method": "window",
+          "session": "fbf0506a-ff48-4d4c-b6b9-045725d709eb"
+        }
+      ],
+      "span_seconds": 2156.992,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 14028772,
+        "cache_creation_input_tokens": 218370,
+        "cache_read_input_tokens": 13705411,
+        "input_tokens": 256,
+        "output_tokens": 104735,
+        "requests": 128
+      },
+      "window": {
+        "ended_at": "2026-09-20T10:12:23+00:00",
+        "started_at": "2026-09-20T03:42:54+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/mcp-trim-tool-list",
+      "delivery": {
+        "base": "main",
+        "branch": "fix/mcp-trim-tool-list",
+        "ci_listing_truncated": false,
+        "ci_runs": 2,
+        "ci_seconds": 679.0,
+        "ci_wall_seconds": 679.0,
+        "created_at": "2026-09-20T10:49:38Z",
+        "ended_at": "2026-09-20T15:41:43Z",
+        "ended_at_source": "merged",
+        "head": "a52bb810da0a46e2463d0d97a07af9f85bae18d4",
+        "pr": 556,
+        "pr_open_seconds": 17525.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "graded by #565: stop publishing MCP output schemas",
+      "partial_main_thread": true,
+      "pr": 556,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-20T15:41:43+00:00",
+        "started_at": "2026-09-20T10:49:12+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/capability-family-registries",
+      "delivery": {
+        "base": "main",
+        "branch": "feat/capability-family-registries",
+        "ci_listing_truncated": false,
+        "ci_runs": 8,
+        "ci_seconds": 4048.0,
+        "ci_wall_seconds": 2956.0,
+        "created_at": "2026-09-20T05:00:58Z",
+        "ended_at": "2026-09-20T19:06:52Z",
+        "ended_at_source": "merged",
+        "head": "17204dd3f0026ad5fe4b65dc34da309e5e557be4",
+        "pr": 554,
+        "pr_open_seconds": 50754.0,
+        "read_cost": 6129,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 554,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-20T19:06:52+00:00",
+        "started_at": "2026-09-20T15:45:02+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/pr-is-the-context",
+      "delivery": {
+        "base": "main",
+        "branch": "feat/pr-is-the-context",
+        "ci_listing_truncated": false,
+        "ci_runs": 5,
+        "ci_seconds": 1769.0,
+        "ci_wall_seconds": 1769.0,
+        "created_at": "2026-09-20T19:54:30Z",
+        "ended_at": "2026-09-20T21:45:30Z",
+        "ended_at_source": "merged",
+        "head": "4ffae7c69b07c4a12aa68c827103491a9ff3a3f0",
+        "pr": 557,
+        "pr_open_seconds": 6660.0,
+        "read_cost": 0,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "graded by #565: phase two into a fresh pull-request-only context",
+      "partial_main_thread": true,
+      "pr": 557,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-20T21:45:30+00:00",
+        "started_at": "2026-09-20T19:53:47+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/ship-gate-reads-advisories",
+      "delivery": {
+        "base": "main",
+        "branch": "fix/ship-gate-reads-advisories",
+        "ci_listing_truncated": false,
+        "ci_runs": 5,
+        "ci_seconds": 1606.0,
+        "ci_wall_seconds": 1214.0,
+        "created_at": "2026-09-20T23:33:24Z",
+        "ended_at": "2026-09-21T00:26:56Z",
+        "ended_at_source": "merged",
+        "head": "44cdc8e63f7f647595e4e881cd75e640d07c186a",
+        "pr": 562,
+        "pr_open_seconds": 3212.0,
+        "read_cost": 0,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 562,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-21T00:26:56+00:00",
+        "started_at": "2026-09-20T23:32:59+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "fix/risk-lock-refusal-spacing",
+      "delivery": {
+        "base": "main",
+        "branch": "fix/risk-lock-refusal-spacing",
+        "ci_listing_truncated": false,
+        "ci_runs": 7,
+        "ci_seconds": 2678.0,
+        "ci_wall_seconds": 2419.0,
+        "created_at": "2026-09-20T20:17:07Z",
+        "ended_at": "2026-09-21T00:50:43Z",
+        "ended_at_source": "merged",
+        "head": "4a2becc2edb6e23fa28b2c4c759872987c7f6bac",
+        "pr": 558,
+        "pr_open_seconds": 16416.0,
+        "read_cost": null,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base main",
+      "partial_main_thread": true,
+      "pr": 558,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-21T00:50:43+00:00",
+        "started_at": "2026-09-21T00:37:35+00:00"
+      }
+    },
+    {
+      "agent_seconds": 0.0,
+      "branch": "feat/mission-cost-harness",
+      "delivery": {
+        "base": "campaign/mission-velocity",
+        "branch": "feat/mission-cost-harness",
+        "ci_listing_truncated": false,
+        "ci_runs": 7,
+        "ci_seconds": 2480.0,
+        "ci_wall_seconds": 1819.0,
+        "created_at": "2026-09-21T01:17:55Z",
+        "ended_at": "2026-09-21T03:12:41Z",
+        "ended_at_source": "merged",
+        "head": "5eebc3339134ebabf90f2bb4b0f1ab5b64f947ce",
+        "pr": 569,
+        "pr_open_seconds": 6886.0,
+        "read_cost": 0,
+        "state": "MERGED"
+      },
+      "elapsed_seconds": 0.0,
+      "first_timestamp_seen": null,
+      "group": null,
+      "last_timestamp_seen": null,
+      "main_thread": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "note": "baseline population of #565; base campaign/mission-velocity",
+      "partial_main_thread": true,
+      "pr": 569,
+      "sessions": [],
+      "span_seconds": 0.0,
+      "subagents": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "total": {
+        "billable_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "requests": 0
+      },
+      "window": {
+        "ended_at": "2026-09-21T03:12:41+00:00",
+        "started_at": "2026-09-21T01:00:12+00:00"
+      }
+    }
+  ],
+  "notes": [],
+  "schema": 1,
+  "thresholds": {
+    "idle_gap_seconds": 300,
+    "max_unplaced_share": 0.2,
+    "min_group_n": 5,
+    "min_relative_change": 0.1
+  },
+  "unplaced": {
+    "billable_tokens": 10915067303,
+    "measured_billable_tokens": 10953490231,
+    "share_of_billable_tokens": 0.9964921748967961,
+    "shared": {
+      "agent_seconds": 513368.18,
+      "elapsed_seconds": 250065.999,
+      "first_timestamp_seen": "2026-09-11T15:16:44.538000+00:00",
+      "last_timestamp_seen": "2026-09-21T03:21:13.277000+00:00",
+      "main_thread": {
+        "billable_tokens": 2177155738,
+        "cache_creation_input_tokens": 55403509,
+        "cache_read_input_tokens": 2114135632,
+        "input_tokens": 31677,
+        "output_tokens": 7584920,
+        "requests": 8274
+      },
+      "partial_main_thread": false,
+      "sessions": [
+        {
+          "candidates": [
+            "chore/stop-tracking-agent-evidence",
+            "feat/edit-loop-windows",
+            "feat/layer-policy-registry",
+            "feat/mcp-native-chart-image",
+            "feat/sync-main-current",
+            "fix/paste-without-text-clipboard"
+          ],
+          "first_timestamp_seen": "2026-09-16T17:30:36.564000+00:00",
+          "last_timestamp_seen": "2026-09-16T17:39:54.194000+00:00",
+          "session": "0c11dc0f-077f-4844-92a1-ed02924c7ccd",
+          "total": {
+            "billable_tokens": 667720,
+            "cache_creation_input_tokens": 54909,
+            "cache_read_input_tokens": 607450,
+            "input_tokens": 24,
+            "output_tokens": 5337,
+            "requests": 12
+          }
+        },
+        {
+          "candidates": [
+            "feat/edit-loop-windows",
+            "feat/per-pane-layout-strips",
+            "feat/right-drag-fibonacci-actions",
+            "feat/show-drawing-all-charts-toggle",
+            "feat/sync-main-chart-layout"
+          ],
+          "first_timestamp_seen": "2026-09-15T02:27:53.495000+00:00",
+          "last_timestamp_seen": "2026-09-15T03:13:18.201000+00:00",
+          "session": "0fef46f4-f881-4a56-bb7b-b95610d62a48",
+          "total": {
+            "billable_tokens": 10502269,
+            "cache_creation_input_tokens": 206706,
+            "cache_read_input_tokens": 10207440,
+            "input_tokens": 206,
+            "output_tokens": 87917,
+            "requests": 103
+          }
+        },
+        {
+          "candidates": [
+            "docs/halve-agent-instructions",
+            "feat/analyst-authority-tier",
+            "feat/ci-under-fifteen-minutes",
+            "feat/read-cost-ledger",
+            "fix/guards-after-outside-eight"
+          ],
+          "first_timestamp_seen": "2026-09-19T21:43:17.564000+00:00",
+          "last_timestamp_seen": "2026-09-20T03:42:32.583000+00:00",
+          "session": "121b4725-5a9b-4a27-87fa-284096eaa9a2",
+          "total": {
+            "billable_tokens": 218247173,
+            "cache_creation_input_tokens": 5058104,
+            "cache_read_input_tokens": 212772754,
+            "input_tokens": 1878,
+            "output_tokens": 414437,
+            "requests": 939
+          }
+        },
+        {
+          "candidates": [
+            "chore/stop-tracking-agent-evidence",
+            "feat/app-owner-landing",
+            "feat/capability-admission-owner",
+            "feat/edit-loop-windows",
+            "feat/layer-policy-registry",
+            "feat/mcp-native-chart-image",
+            "feat/sync-main-current",
+            "fix/paste-without-text-clipboard"
+          ],
+          "first_timestamp_seen": "2026-09-16T18:11:26.139000+00:00",
+          "last_timestamp_seen": "2026-09-17T18:32:55.455000+00:00",
+          "session": "2dd2cc98-403c-4307-9bc4-0c9223797171",
+          "total": {
+            "billable_tokens": 9744922,
+            "cache_creation_input_tokens": 601284,
+            "cache_read_input_tokens": 9078280,
+            "input_tokens": 184,
+            "output_tokens": 65174,
+            "requests": 92
+          }
+        },
+        {
+          "candidates": [
+            "docs/gate6-remeasure",
+            "docs/gate6-remeasure-2",
+            "docs/outside-score",
+            "feat/app-ui-free-ratchet",
+            "feat/copy-paste-drawings",
+            "feat/live-workload-envelope",
+            "feat/mcp-newest-version-default",
+            "feat/retry-readback-matrix",
+            "feat/right-drag-volume-profile",
+            "feat/size-baseline-no-exceptions",
+            "feat/ui-behaviour-capability-matrix",
+            "fix/campaign-aware-ship-gate",
+            "fix/campaign-gate-cd-prefix",
+            "fix/contention-listed-tests",
+            "fix/gateway-load-sensitive-tests",
+            "fix/gateway-request-id-ordering",
+            "fix/layers-test-load-sensitive",
+            "fix/load-sensitive-tests",
+            "fix/mcp-describe-refusal",
+            "fix/mcp-describe-test-name",
+            "fix/mission-review-completion-gates",
+            "fix/session-length-test-cheap",
+            "perf/chunked-trade-tape",
+            "perf/hot-path-session-length",
+            "refactor/chrome-under-1500",
+            "refactor/control-host-headless",
+            "refactor/control-plane-under-1500",
+            "refactor/drawings-mod-under-1500",
+            "refactor/mt5-stream-under-1500",
+            "refactor/orderflow-crate-under-1500",
+            "refactor/orderflow-render-under-1500",
+            "refactor/pane-under-1500",
+            "refactor/paper-account-headless",
+            "refactor/paper-trading-under-1500",
+            "refactor/pine-under-1500"
+          ],
+          "first_timestamp_seen": "2026-09-11T22:32:36.033000+00:00",
+          "last_timestamp_seen": "2026-09-14T01:37:53.226000+00:00",
+          "session": "3a165671-28b5-4df8-b196-1c2b05232464",
+          "total": {
+            "billable_tokens": 129084688,
+            "cache_creation_input_tokens": 2861839,
+            "cache_read_input_tokens": 125527139,
+            "input_tokens": 1570,
+            "output_tokens": 694140,
+            "requests": 640
+          }
+        },
+        {
+          "candidates": [
+            "chore/stop-tracking-agent-evidence",
+            "docs/outside-score",
+            "feat/chart-context-menu-layers",
+            "feat/edit-loop-windows",
+            "feat/evidence-resources",
+            "feat/mouse-vertical-line",
+            "feat/per-pane-layout-strips",
+            "feat/pr-read-cost",
+            "feat/right-drag-fibonacci-actions",
+            "feat/show-drawing-all-charts-toggle",
+            "feat/sync-main-bars",
+            "feat/sync-main-chart-layout",
+            "feat/sync-main-current",
+            "fix/feed-gap-honesty",
+            "fix/mutation-retry-truth",
+            "fix/rectangle-four-corners",
+            "fix/resize-stacked-panes",
+            "refactor/one-bar-spec"
+          ],
+          "first_timestamp_seen": "2026-09-14T11:49:36.800000+00:00",
+          "last_timestamp_seen": "2026-09-15T05:34:30.194000+00:00",
+          "session": "48536fe4-b113-4f4a-b6eb-0be0da258eeb",
+          "total": {
+            "billable_tokens": 33686024,
+            "cache_creation_input_tokens": 2123879,
+            "cache_read_input_tokens": 31479839,
+            "input_tokens": 404,
+            "output_tokens": 81902,
+            "requests": 202
+          }
+        },
+        {
+          "candidates": [
+            "feat/analyst-authority-tier",
+            "feat/read-cost-ledger"
+          ],
+          "first_timestamp_seen": "2026-09-20T02:13:34.552000+00:00",
+          "last_timestamp_seen": "2026-09-20T02:19:18.772000+00:00",
+          "session": "6371dcf2-6067-4d03-98ac-8097652dc1e8",
+          "total": {
+            "billable_tokens": 2248603,
+            "cache_creation_input_tokens": 147956,
+            "cache_read_input_tokens": 2076290,
+            "input_tokens": 691,
+            "output_tokens": 23666,
+            "requests": 27
+          }
+        },
+        {
+          "candidates": [
+            "docs/halve-agent-instructions",
+            "feat/analyst-authority-tier",
+            "feat/ci-under-fifteen-minutes",
+            "feat/read-cost-ledger"
+          ],
+          "first_timestamp_seen": "2026-09-20T00:15:20.104000+00:00",
+          "last_timestamp_seen": "2026-09-20T02:18:09.710000+00:00",
+          "session": "63c5af77-9151-401f-a493-49f763342c03",
+          "total": {
+            "billable_tokens": 54637489,
+            "cache_creation_input_tokens": 459412,
+            "cache_read_input_tokens": 53847771,
+            "input_tokens": 566,
+            "output_tokens": 329740,
+            "requests": 283
+          }
+        },
+        {
+          "candidates": [
+            "docs/halve-agent-instructions",
+            "feat/analyst-authority-tier",
+            "feat/architecture-ratchets",
+            "feat/ci-under-fifteen-minutes",
+            "feat/fast-draft-ci",
+            "feat/harness-composition-root",
+            "feat/headless-app-core",
+            "feat/mvu-app-owners",
+            "feat/read-cost-ledger",
+            "fix/final-review-repairs",
+            "fix/guards-after-outside-eight",
+            "fix/mcp-trim-tool-list",
+            "perf/ci-under-seven-minutes"
+          ],
+          "first_timestamp_seen": "2026-09-19T01:08:28.183000+00:00",
+          "last_timestamp_seen": "2026-09-20T15:42:30.239000+00:00",
+          "session": "6ab713bd-dc39-4801-a404-9c09789fdfa0",
+          "total": {
+            "billable_tokens": 14904504,
+            "cache_creation_input_tokens": 747737,
+            "cache_read_input_tokens": 14056656,
+            "input_tokens": 264,
+            "output_tokens": 99847,
+            "requests": 132
+          }
+        },
+        {
+          "candidates": [
+            "chore/stop-tracking-agent-evidence",
+            "feat/edit-loop-windows",
+            "feat/mouse-vertical-line",
+            "feat/sync-main-chart-layout",
+            "feat/sync-main-current",
+            "fix/context-column-divider-drag"
+          ],
+          "first_timestamp_seen": "2026-09-15T04:32:52.265000+00:00",
+          "last_timestamp_seen": "2026-09-15T06:04:18.675000+00:00",
+          "session": "782d7dc9-010e-4d46-89e4-ee0fb34284e5",
+          "total": {
+            "billable_tokens": 26705567,
+            "cache_creation_input_tokens": 405223,
+            "cache_read_input_tokens": 26177054,
+            "input_tokens": 320,
+            "output_tokens": 122970,
+            "requests": 160
+          }
+        },
+        {
+          "candidates": [
+            "chore/stop-tracking-agent-evidence",
+            "feat/edit-loop-windows",
+            "feat/sync-main-chart-layout",
+            "feat/sync-main-current"
+          ],
+          "first_timestamp_seen": "2026-09-15T22:37:50.144000+00:00",
+          "last_timestamp_seen": "2026-09-15T22:39:41.743000+00:00",
+          "session": "7afff6c5-00b7-4189-b8fc-cac000908a84",
+          "total": {
+            "billable_tokens": 250245,
+            "cache_creation_input_tokens": 47302,
+            "cache_read_input_tokens": 199893,
+            "input_tokens": 10,
+            "output_tokens": 3040,
+            "requests": 5
+          }
+        },
+        {
+          "candidates": [
+            "docs/halve-agent-instructions",
+            "feat/architecture-ratchets",
+            "feat/fast-draft-ci",
+            "fix/final-review-repairs"
+          ],
+          "first_timestamp_seen": "2026-09-19T12:26:14.684000+00:00",
+          "last_timestamp_seen": "2026-09-19T19:52:25.184000+00:00",
+          "session": "7d9fdbea-37d2-4b45-8ed9-1dd035c09bbd",
+          "total": {
+            "billable_tokens": 35104078,
+            "cache_creation_input_tokens": 858818,
+            "cache_read_input_tokens": 34067255,
+            "input_tokens": 390,
+            "output_tokens": 177615,
+            "requests": 195
+          }
+        },
+        {
+          "candidates": [
+            "docs/halve-agent-instructions",
+            "feat/analyst-authority-tier",
+            "feat/ci-under-fifteen-minutes",
+            "feat/read-cost-ledger",
+            "fix/guards-after-outside-eight"
+          ],
+          "first_timestamp_seen": "2026-09-19T22:28:15.659000+00:00",
+          "last_timestamp_seen": "2026-09-20T03:42:50.814000+00:00",
+          "session": "852a9f26-883e-4f72-a105-e6db3e7189e5",
+          "total": {
+            "billable_tokens": 144944036,
+            "cache_creation_input_tokens": 1124270,
+            "cache_read_input_tokens": 143426669,
+            "input_tokens": 1030,
+            "output_tokens": 392067,
+            "requests": 515
+          }
+        },
+        {
+          "candidates": [
+            "chore/stop-tracking-agent-evidence",
+            "feat/edit-loop-windows",
+            "feat/sync-main-chart-layout",
+            "feat/sync-main-current"
+          ],
+          "first_timestamp_seen": "2026-09-15T12:16:40.116000+00:00",
+          "last_timestamp_seen": "2026-09-16T01:41:03.346000+00:00",
+          "session": "8851b5d7-60d1-4ef7-8dcb-30812f476218",
+          "total": {
+            "billable_tokens": 22891525,
+            "cache_creation_input_tokens": 1136393,
+            "cache_read_input_tokens": 21651222,
+            "input_tokens": 462,
+            "output_tokens": 103448,
+            "requests": 231
+          }
+        },
+        {
+          "candidates": [
+            "docs/halve-agent-instructions",
+            "feat/architecture-ratchets",
+            "feat/fast-draft-ci",
+            "fix/final-review-repairs"
+          ],
+          "first_timestamp_seen": "2026-09-19T12:27:15.324000+00:00",
+          "last_timestamp_seen": "2026-09-19T20:34:54.017000+00:00",
+          "session": "96177554-4331-4b7f-876a-f986438330bf",
+          "total": {
+            "billable_tokens": 81098380,
+            "cache_creation_input_tokens": 1281551,
+            "cache_read_input_tokens": 79508450,
+            "input_tokens": 746,
+            "output_tokens": 307633,
+            "requests": 373
+          }
+        },
+        {
+          "candidates": [
+            "feat/app-owner-landing",
+            "feat/declared-stage-registry",
+            "feat/harness-composition-root",
+            "feat/headless-app-core",
+            "feat/long-fn-commands",
+            "feat/mvu-app-owners",
+            "fix/final-review-repairs"
+          ],
+          "first_timestamp_seen": "2026-09-18T11:55:23.994000+00:00",
+          "last_timestamp_seen": "2026-09-19T12:05:43.569000+00:00",
+          "session": "9cb715b4-13f8-43ed-9cf8-3b866be36d60",
+          "total": {
+            "billable_tokens": 8065224,
+            "cache_creation_input_tokens": 821157,
+            "cache_read_input_tokens": 7156502,
+            "input_tokens": 1878,
+            "output_tokens": 85687,
+            "requests": 65
+          }
+        },
+        {
+          "candidates": [
+            "feat/mission-cost-harness",
+            "feat/pr-is-the-context",
+            "fix/risk-lock-refusal-spacing",
+            "fix/ship-gate-reads-advisories"
+          ],
+          "first_timestamp_seen": "2026-09-20T19:07:25.256000+00:00",
+          "last_timestamp_seen": "2026-09-21T01:22:01.443000+00:00",
+          "session": "9d7277aa-62f1-4bff-ba6f-ba616a3ce1d1",
+          "total": {
+            "billable_tokens": 191645888,
+            "cache_creation_input_tokens": 1798105,
+            "cache_read_input_tokens": 189385560,
+            "input_tokens": 1236,
+            "output_tokens": 460987,
+            "requests": 618
+          }
+        },
+        {
+          "candidates": [
+            "fix/campaign-gate-cd-prefix",
+            "fix/load-sensitive-tests",
+            "refactor/paper-trading-under-1500"
+          ],
+          "first_timestamp_seen": "2026-09-12T04:35:38.409000+00:00",
+          "last_timestamp_seen": "2026-09-12T05:29:37.205000+00:00",
+          "session": "a3616a9a-024e-4f5c-8796-f1c8662c65a6",
+          "total": {
+            "billable_tokens": 11075081,
+            "cache_creation_input_tokens": 373647,
+            "cache_read_input_tokens": 10646531,
+            "input_tokens": 146,
+            "output_tokens": 54757,
+            "requests": 73
+          }
+        },
+        {
+          "candidates": [
+            "docs/halve-agent-instructions",
+            "feat/fast-draft-ci",
+            "fix/guards-after-outside-eight"
+          ],
+          "first_timestamp_seen": "2026-09-19T20:50:12.739000+00:00",
+          "last_timestamp_seen": "2026-09-20T00:33:26.793000+00:00",
+          "session": "b2d9ad09-fc92-41c1-bbdd-001e745be67c",
+          "total": {
+            "billable_tokens": 55628798,
+            "cache_creation_input_tokens": 2077697,
+            "cache_read_input_tokens": 53389017,
+            "input_tokens": 820,
+            "output_tokens": 161264,
+            "requests": 410
+          }
+        },
+        {
+          "candidates": [
+            "feat/mission-cost-harness",
+            "fix/risk-lock-refusal-spacing"
+          ],
+          "first_timestamp_seen": "2026-09-21T00:37:33.489000+00:00",
+          "last_timestamp_seen": "2026-09-21T03:21:13.277000+00:00",
+          "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
+          "total": {
+            "billable_tokens": 106962182,
+            "cache_creation_input_tokens": 2430771,
+            "cache_read_input_tokens": 104199315,
+            "input_tokens": 1070,
+            "output_tokens": 331026,
+            "requests": 535
+          }
+        },
+        {
+          "candidates": [
+            "docs/halve-agent-instructions",
+            "feat/app-owner-landing",
+            "feat/architecture-ratchets",
+            "feat/declared-stage-registry",
+            "feat/fast-draft-ci",
+            "feat/harness-composition-root",
+            "feat/headless-app-core",
+            "feat/long-fn-commands",
+            "feat/mvu-app-owners",
+            "fix/final-review-repairs",
+            "fix/guards-after-outside-eight"
+          ],
+          "first_timestamp_seen": "2026-09-18T14:39:51.017000+00:00",
+          "last_timestamp_seen": "2026-09-20T00:17:27.353000+00:00",
+          "session": "c3576e12-7c45-4b8c-829d-cfef4c8a09dc",
+          "total": {
+            "billable_tokens": 2363793288,
+            "cache_creation_input_tokens": 125062838,
+            "cache_read_input_tokens": 2233514251,
+            "input_tokens": 76578,
+            "output_tokens": 5139621,
+            "requests": 11925
+          }
+        },
+        {
+          "candidates": [
+            "feat/capability-family-registries",
+            "fix/mcp-trim-tool-list",
+            "perf/ci-under-seven-minutes"
+          ],
+          "first_timestamp_seen": "2026-09-20T04:03:49.094000+00:00",
+          "last_timestamp_seen": "2026-09-20T16:10:27.547000+00:00",
+          "session": "c3dbe4c2-f041-45ff-a72e-a0f931a01f63",
+          "total": {
+            "billable_tokens": 106602810,
+            "cache_creation_input_tokens": 3003786,
+            "cache_read_input_tokens": 103209252,
+            "input_tokens": 1162,
+            "output_tokens": 388610,
+            "requests": 581
+          }
+        },
+        {
+          "candidates": [
+            "feat/pr-is-the-context",
+            "fix/risk-lock-refusal-spacing",
+            "fix/ship-gate-reads-advisories"
+          ],
+          "first_timestamp_seen": "2026-09-20T19:28:19.241000+00:00",
+          "last_timestamp_seen": "2026-09-21T00:52:30.303000+00:00",
+          "session": "c4596bce-3839-4a1f-a44a-5648f655c0e2",
+          "total": {
+            "billable_tokens": 131540346,
+            "cache_creation_input_tokens": 8137320,
+            "cache_read_input_tokens": 122858024,
+            "input_tokens": 3090,
+            "output_tokens": 541912,
+            "requests": 1545
+          }
+        },
+        {
+          "candidates": [
+            "docs/campaign-model-routing",
+            "docs/gate6-remeasure",
+            "docs/gate6-remeasure-2",
+            "docs/gate6-remeasure-3",
+            "docs/gate6-remeasure-4",
+            "docs/gate6-remeasure-5",
+            "docs/outside-score",
+            "feat/app-ui-free-ratchet",
+            "feat/copy-paste-drawings",
+            "feat/live-workload-envelope",
+            "feat/mcp-newest-version-default",
+            "feat/retry-readback-matrix",
+            "feat/right-drag-volume-profile",
+            "feat/size-baseline-no-exceptions",
+            "feat/sync-main-bars",
+            "feat/ui-behaviour-capability-matrix",
+            "fix/campaign-aware-ship-gate",
+            "fix/campaign-gate-cd-prefix",
+            "fix/contention-listed-tests",
+            "fix/gateway-load-sensitive-tests",
+            "fix/gateway-request-id-ordering",
+            "fix/layers-test-load-sensitive",
+            "fix/load-sensitive-tests",
+            "fix/mcp-describe-refusal",
+            "fix/mcp-describe-test-name",
+            "fix/mission-review-completion-gates",
+            "fix/mutation-retry-truth",
+            "fix/native-drawing-clipboard",
+            "fix/paper-report-same-frame",
+            "fix/rectangle-four-corners",
+            "fix/session-length-test-cheap",
+            "fix/volume-profile-precise-hit",
+            "perf/chunked-trade-tape",
+            "perf/hot-path-session-length",
+            "refactor/chrome-under-1500",
+            "refactor/control-host-headless",
+            "refactor/control-plane-under-1500",
+            "refactor/drawings-mod-under-1500",
+            "refactor/mt5-stream-under-1500",
+            "refactor/one-bar-spec",
+            "refactor/orderflow-crate-under-1500",
+            "refactor/orderflow-render-under-1500",
+            "refactor/pane-under-1500",
+            "refactor/paper-account-headless",
+            "refactor/paper-trading-under-1500",
+            "refactor/pine-under-1500"
+          ],
+          "first_timestamp_seen": "2026-09-11T15:16:44.538000+00:00",
+          "last_timestamp_seen": "2026-09-14T19:41:04.118000+00:00",
+          "session": "e150ea61-5c62-44c4-8bd5-3e4b22c79b5a",
+          "total": {
+            "billable_tokens": 316872017,
+            "cache_creation_input_tokens": 6564877,
+            "cache_read_input_tokens": 309544597,
+            "input_tokens": 4032,
+            "output_tokens": 758511,
+            "requests": 1980
+          }
+        },
+        {
+          "candidates": [
+            "docs/gate6-remeasure",
+            "docs/gate6-remeasure-2",
+            "docs/gate6-remeasure-3",
+            "docs/gate6-remeasure-4",
+            "docs/gate6-remeasure-5",
+            "docs/outside-score",
+            "feat/app-ui-free-ratchet",
+            "feat/copy-paste-drawings",
+            "feat/live-workload-envelope",
+            "feat/mcp-newest-version-default",
+            "feat/retry-readback-matrix",
+            "feat/right-drag-volume-profile",
+            "feat/size-baseline-no-exceptions",
+            "feat/ui-behaviour-capability-matrix",
+            "fix/campaign-aware-ship-gate",
+            "fix/campaign-gate-cd-prefix",
+            "fix/contention-listed-tests",
+            "fix/gateway-load-sensitive-tests",
+            "fix/gateway-request-id-ordering",
+            "fix/layers-test-load-sensitive",
+            "fix/load-sensitive-tests",
+            "fix/mcp-describe-refusal",
+            "fix/mcp-describe-test-name",
+            "fix/mission-review-completion-gates",
+            "fix/native-drawing-clipboard",
+            "fix/paper-report-same-frame",
+            "fix/rectangle-four-corners",
+            "fix/session-length-test-cheap",
+            "fix/volume-profile-precise-hit",
+            "perf/chunked-trade-tape",
+            "perf/hot-path-session-length",
+            "refactor/chrome-under-1500",
+            "refactor/control-host-headless",
+            "refactor/control-plane-under-1500",
+            "refactor/drawings-mod-under-1500",
+            "refactor/mt5-stream-under-1500",
+            "refactor/orderflow-crate-under-1500",
+            "refactor/orderflow-render-under-1500",
+            "refactor/pane-under-1500",
+            "refactor/paper-account-headless",
+            "refactor/paper-trading-under-1500",
+            "refactor/pine-under-1500"
+          ],
+          "first_timestamp_seen": "2026-09-11T22:30:01.191000+00:00",
+          "last_timestamp_seen": "2026-09-14T15:42:37.923000+00:00",
+          "session": "e68b97ed-23bb-4a09-ae2a-1a9455accef9",
+          "total": {
+            "billable_tokens": 4940480709,
+            "cache_creation_input_tokens": 267605800,
+            "cache_read_input_tokens": 4667715457,
+            "input_tokens": 152418,
+            "output_tokens": 5007034,
+            "requests": 24534
+          }
+        },
+        {
+          "candidates": [
+            "feat/analyst-authority-tier",
+            "feat/read-cost-ledger",
+            "perf/ci-under-seven-minutes"
+          ],
+          "first_timestamp_seen": "2026-09-20T02:20:33.870000+00:00",
+          "last_timestamp_seen": "2026-09-20T04:30:02.739000+00:00",
+          "session": "e9c55519-58df-4d92-a172-8e33c7200dc9",
+          "total": {
+            "billable_tokens": 94425800,
+            "cache_creation_input_tokens": 713188,
+            "cache_read_input_tokens": 93371832,
+            "input_tokens": 858,
+            "output_tokens": 339922,
+            "requests": 429
+          }
+        },
+        {
+          "candidates": [
+            "docs/halve-agent-instructions",
+            "feat/analyst-authority-tier",
+            "feat/capability-family-registries",
+            "feat/ci-under-fifteen-minutes",
+            "feat/pr-is-the-context",
+            "feat/read-cost-ledger",
+            "fix/guards-after-outside-eight",
+            "fix/mcp-trim-tool-list",
+            "fix/risk-lock-refusal-spacing",
+            "fix/ship-gate-reads-advisories",
+            "perf/ci-under-seven-minutes"
+          ],
+          "first_timestamp_seen": "2026-09-19T22:11:55.155000+00:00",
+          "last_timestamp_seen": "2026-09-21T00:52:37.220000+00:00",
+          "session": "ea212f55-a876-4b2e-85da-478b0f8c998f",
+          "total": {
+            "billable_tokens": 26294723,
+            "cache_creation_input_tokens": 2852166,
+            "cache_read_input_tokens": 23244300,
+            "input_tokens": 1476,
+            "output_tokens": 196781,
+            "requests": 167
+          }
+        },
+        {
+          "candidates": [
+            "docs/halve-agent-instructions",
+            "fix/guards-after-outside-eight"
+          ],
+          "first_timestamp_seen": "2026-09-19T22:09:04.211000+00:00",
+          "last_timestamp_seen": "2026-09-20T00:58:44.950000+00:00",
+          "session": "eb4a220a-30ff-48c6-97c3-7e93c67de2e7",
+          "total": {
+            "billable_tokens": 15891492,
+            "cache_creation_input_tokens": 599402,
+            "cache_read_input_tokens": 15211798,
+            "input_tokens": 334,
+            "output_tokens": 79958,
+            "requests": 167
+          }
+        },
+        {
+          "candidates": [
+            "chore/stop-tracking-agent-evidence",
+            "feat/bar-selection-registry",
+            "feat/edit-loop-windows",
+            "feat/sync-main-chart-layout",
+            "feat/sync-main-current",
+            "fix/paste-without-text-clipboard"
+          ],
+          "first_timestamp_seen": "2026-09-16T01:59:57.989000+00:00",
+          "last_timestamp_seen": "2026-09-16T04:51:10.148000+00:00",
+          "session": "ed797b38-78f1-4719-a48c-bccd21eebca5",
+          "total": {
+            "billable_tokens": 4602410,
+            "cache_creation_input_tokens": 191964,
+            "cache_read_input_tokens": 4382349,
+            "input_tokens": 122,
+            "output_tokens": 27975,
+            "requests": 61
+          }
+        },
+        {
+          "candidates": [
+            "feat/live-workload-envelope",
+            "feat/retry-readback-matrix"
+          ],
+          "first_timestamp_seen": "2026-09-12T18:04:20.149000+00:00",
+          "last_timestamp_seen": "2026-09-12T19:09:37.824000+00:00",
+          "session": "f83fa584-5e93-43a2-90b2-b14b62493096",
+          "total": {
+            "billable_tokens": 2086565,
+            "cache_creation_input_tokens": 96834,
+            "cache_read_input_tokens": 1973011,
+            "input_tokens": 68,
+            "output_tokens": 16652,
+            "requests": 31
+          }
+        },
+        {
+          "candidates": [
+            "docs/halve-agent-instructions",
+            "feat/architecture-ratchets",
+            "fix/final-review-repairs"
+          ],
+          "first_timestamp_seen": "2026-09-19T12:23:51.794000+00:00",
+          "last_timestamp_seen": "2026-09-19T13:09:18.946000+00:00",
+          "session": "f92db6df-841d-43ad-9bb9-dd35f6e118b0",
+          "total": {
+            "billable_tokens": 60066513,
+            "cache_creation_input_tokens": 647308,
+            "cache_read_input_tokens": 59201246,
+            "input_tokens": 544,
+            "output_tokens": 217415,
+            "requests": 272
+          }
+        }
+      ],
+      "span_seconds": 821068.739,
+      "subagents": {
+        "billable_tokens": 7043595331,
+        "cache_creation_input_tokens": 384688734,
+        "cache_read_input_tokens": 6649551572,
+        "input_tokens": 222900,
+        "output_tokens": 9132125,
+        "requests": 39028
+      },
+      "total": {
+        "billable_tokens": 9220751069,
+        "cache_creation_input_tokens": 440092243,
+        "cache_read_input_tokens": 8763687204,
+        "input_tokens": 254577,
+        "output_tokens": 16717045,
+        "requests": 47302
+      }
+    },
+    "unassigned": {
+      "agent_seconds": 94537.706,
+      "elapsed_seconds": 55686.833,
+      "first_timestamp_seen": "2026-09-04T02:06:12.805000+00:00",
+      "last_timestamp_seen": "2026-09-11T22:25:04.283000+00:00",
+      "main_thread": {
+        "billable_tokens": 1407304016,
+        "cache_creation_input_tokens": 26041333,
+        "cache_read_input_tokens": 1374729226,
+        "input_tokens": 57228,
+        "output_tokens": 6476229,
+        "requests": 4552
+      },
+      "partial_main_thread": false,
+      "sessions": [
+        {
+          "first_timestamp_seen": "2026-09-05T05:18:29.207000+00:00",
+          "last_timestamp_seen": "2026-09-05T07:59:10.556000+00:00",
+          "session": "0e86f0e2-f90d-4ba5-ab55-598a589e5aff",
+          "total": {
+            "billable_tokens": 153776324,
+            "cache_creation_input_tokens": 3764725,
+            "cache_read_input_tokens": 149522727,
+            "input_tokens": 1634,
+            "output_tokens": 487238,
+            "requests": 817
+          }
+        },
+        {
+          "first_timestamp_seen": "2026-09-11T15:16:05.615000+00:00",
+          "last_timestamp_seen": "2026-09-11T15:21:01.073000+00:00",
+          "session": "37997e54-8d80-4a98-af11-96dca0b9156c",
+          "total": {
+            "billable_tokens": 1283476,
+            "cache_creation_input_tokens": 72639,
+            "cache_read_input_tokens": 1205088,
+            "input_tokens": 44,
+            "output_tokens": 5705,
+            "requests": 21
+          }
+        },
+        {
+          "first_timestamp_seen": "2026-09-11T22:23:42.047000+00:00",
+          "last_timestamp_seen": "2026-09-11T22:25:04.283000+00:00",
+          "session": "4b062ab6-1828-44ae-aed3-750ccce1c550",
+          "total": {
+            "billable_tokens": 1431669,
+            "cache_creation_input_tokens": 100645,
+            "cache_read_input_tokens": 1321319,
+            "input_tokens": 582,
+            "output_tokens": 9123,
+            "requests": 21
+          }
+        },
+        {
+          "first_timestamp_seen": "2026-09-04T22:27:12.403000+00:00",
+          "last_timestamp_seen": "2026-09-05T03:26:35.657000+00:00",
+          "session": "5a4e37c8-9f65-458a-ba0e-a4374cae3a3c",
+          "total": {
+            "billable_tokens": 60111587,
+            "cache_creation_input_tokens": 890222,
+            "cache_read_input_tokens": 58930694,
+            "input_tokens": 706,
+            "output_tokens": 289965,
+            "requests": 353
+          }
+        },
+        {
+          "first_timestamp_seen": "2026-09-05T05:02:25.817000+00:00",
+          "last_timestamp_seen": "2026-09-06T00:26:55.124000+00:00",
+          "session": "8644b02e-69d7-4c1e-9466-b36c1338b5bd",
+          "total": {
+            "billable_tokens": 263961892,
+            "cache_creation_input_tokens": 7514009,
+            "cache_read_input_tokens": 255808223,
+            "input_tokens": 2656,
+            "output_tokens": 637004,
+            "requests": 1328
+          }
+        },
+        {
+          "first_timestamp_seen": "2026-09-05T05:19:58.711000+00:00",
+          "last_timestamp_seen": "2026-09-05T07:18:12.559000+00:00",
+          "session": "8a5d5d09-f2f8-455c-b052-f86cee13e29a",
+          "total": {
+            "billable_tokens": 62229967,
+            "cache_creation_input_tokens": 708268,
+            "cache_read_input_tokens": 61230085,
+            "input_tokens": 692,
+            "output_tokens": 290922,
+            "requests": 346
+          }
+        },
+        {
+          "first_timestamp_seen": "2026-09-05T04:09:40.430000+00:00",
+          "last_timestamp_seen": "2026-09-05T15:48:20.652000+00:00",
+          "session": "8ebaea4c-e7d0-4ee3-80dd-ef382bcf525e",
+          "total": {
+            "billable_tokens": 37122944,
+            "cache_creation_input_tokens": 2045315,
+            "cache_read_input_tokens": 34593945,
+            "input_tokens": 644,
+            "output_tokens": 483040,
+            "requests": 322
+          }
+        },
+        {
+          "first_timestamp_seen": "2026-09-05T04:27:05.446000+00:00",
+          "last_timestamp_seen": "2026-09-05T05:44:16.109000+00:00",
+          "session": "98a406d1-c7cb-483a-b669-854f53b614bf",
+          "total": {
+            "billable_tokens": 64653293,
+            "cache_creation_input_tokens": 829603,
+            "cache_read_input_tokens": 63492683,
+            "input_tokens": 724,
+            "output_tokens": 330283,
+            "requests": 362
+          }
+        },
+        {
+          "first_timestamp_seen": "2026-09-05T04:15:17.958000+00:00",
+          "last_timestamp_seen": "2026-09-05T05:15:42.623000+00:00",
+          "session": "b33778a2-1476-4dd8-aaf0-5dfc3d3a4f75",
+          "total": {
+            "billable_tokens": 37967058,
+            "cache_creation_input_tokens": 623981,
+            "cache_read_input_tokens": 37101865,
+            "input_tokens": 496,
+            "output_tokens": 240716,
+            "requests": 248
+          }
+        },
+        {
+          "first_timestamp_seen": "2026-09-04T22:44:23.505000+00:00",
+          "last_timestamp_seen": "2026-09-05T04:11:47.489000+00:00",
+          "session": "c364de8b-4e3e-41ce-8c5c-7439c6f79ec7",
+          "total": {
+            "billable_tokens": 6649530,
+            "cache_creation_input_tokens": 344726,
+            "cache_read_input_tokens": 6181999,
+            "input_tokens": 154,
+            "output_tokens": 122651,
+            "requests": 77
+          }
+        },
+        {
+          "first_timestamp_seen": "2026-09-04T02:46:35.955000+00:00",
+          "last_timestamp_seen": "2026-09-05T06:11:40.159000+00:00",
+          "session": "c5dc4461-c2f4-459f-9d79-eb1ba71a42c9",
+          "total": {
+            "billable_tokens": 70709427,
+            "cache_creation_input_tokens": 3135077,
+            "cache_read_input_tokens": 66903846,
+            "input_tokens": 9336,
+            "output_tokens": 661168,
+            "requests": 418
+          }
+        },
+        {
+          "first_timestamp_seen": "2026-09-04T02:06:12.805000+00:00",
+          "last_timestamp_seen": "2026-09-05T05:44:02.829000+00:00",
+          "session": "dc24c121-c286-4c16-b72d-97c83559d851",
+          "total": {
+            "billable_tokens": 925679244,
+            "cache_creation_input_tokens": 23172799,
+            "cache_read_input_tokens": 899298373,
+            "input_tokens": 64162,
+            "output_tokens": 3143910,
+            "requests": 3112
+          }
+        },
+        {
+          "first_timestamp_seen": "2026-09-11T16:04:19.573000+00:00",
+          "last_timestamp_seen": "2026-09-11T18:40:35.088000+00:00",
+          "session": "dfcbe4ef-1a9d-4913-9b89-3e0cb988e16d",
+          "total": {
+            "billable_tokens": 8739823,
+            "cache_creation_input_tokens": 463885,
+            "cache_read_input_tokens": 8215324,
+            "input_tokens": 164,
+            "output_tokens": 60450,
+            "requests": 77
+          }
+        }
+      ],
+      "span_seconds": 677931.478,
+      "subagents": {
+        "billable_tokens": 287012218,
+        "cache_creation_input_tokens": 17624561,
+        "cache_read_input_tokens": 269076945,
+        "input_tokens": 24766,
+        "output_tokens": 285946,
+        "requests": 2950
+      },
+      "total": {
+        "billable_tokens": 1694316234,
+        "cache_creation_input_tokens": 43665894,
+        "cache_read_input_tokens": 1643806171,
+        "input_tokens": 81994,
+        "output_tokens": 6762175,
+        "requests": 7502
+      }
+    }
+  }
+}
