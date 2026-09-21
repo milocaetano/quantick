@@ -832,7 +832,7 @@
           "started_at": "2026-09-21T11:14:22Z"
         },
         {
-          "ended_at": null,
+          "ended_at": "2026-09-21T11:45:38Z",
           "role": "subagent",
           "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
           "started_at": "2026-09-21T11:27:15Z"
@@ -840,11 +840,14 @@
       ],
       "ended_at": null,
       "group": null,
-      "note": "T7 of #563, the graded mission of ledger entry L1. Written at mission step 6, before the first edit, under section 9 of docs/quality/velocity/experiment-protocol.md. The session id came from CLAUDE_CODE_SESSION_ID in the environment, never from a transcript. A claim is appended at every context handoff, because the point of this lever is that there will be several and a later context cannot recover an earlier one's identity. Claim one closed at the first handoff, at 111 requests: the context that wrote the rule measured itself with the command the rule adds and found it already past the cap, which is the finding the rule is reported with.",
+      "note": "T7 of #563, the graded mission of ledger entry L1. Written at mission step 6, before the first edit, under section 9 of docs/quality/velocity/experiment-protocol.md. The session id came from CLAUDE_CODE_SESSION_ID in the environment, never from a transcript. A claim is appended at every context handoff, because the point of this lever is that there will be several and a later context cannot recover an earlier one's identity. Claim one closed at the first handoff, at 111 requests: the context that wrote the rule measured itself with the command the rule adds and found it already past the cap, which is the finding the rule is reported with. At the draft pull request both claims resolved by containment, uncontested, to one transcript each; the union is the transcripts field.",
       "pr": null,
       "sessions": [],
       "started_at": null,
-      "transcripts": []
+      "transcripts": [
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a5a25505f12780ff8.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-aa49c0aa114d448ee.jsonl"
+      ]
     }
   ],
   "schema": 1
