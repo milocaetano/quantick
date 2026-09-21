@@ -105,19 +105,40 @@ split it there rather than let it run.
 For the cases where a context wants the number,
 
 ```sh
-python tools/mission_cost/measure.py contexts --since <the claim's started_at>
+python tools/mission_cost/measure.py contexts --role subagent --since <the claim's started_at>
 ```
 
 reads `CLAUDE_CODE_SESSION_ID` from the environment and prints the request count
-of the context that is running it, against the cap. `--since` is what makes the
-answer exact: the context's own `started_at` names it by containment, and the
-report says `resolved: true`. Without it the command can only offer the newest
-writer in the session, which a sibling agent often is; that answer carries
-`resolution: newest_write` and `resolved: false`, because a guess must not read
-as a measurement. Two contexts containing the instant are `contested`, with
-nothing named. It reads `usage` fields and
-timestamps only, which is the same boundary the rest of the harness keeps
-(method error mode E2); it never reads transcript content.
+of the context that is running it, against the cap.
+
+`--role` is not optional in practice. A dispatched context lives inside its
+coordinator's main thread, so the coordinator's span contains the instant the
+child claimed, containment alone finds two contexts, and neither is named. A
+dispatched context passes `--role subagent`; a coordinator's own thread passes
+`--role main`.
+
+`--since` is what makes the answer exact: the context's own `started_at` names
+it by containment. Without it the command can only offer the newest writer in
+the session, which a sibling agent often is.
+
+`state` is the outcome in one word, and it is the field a consumer branches on:
+
+| `state` | What it means |
+| --- | --- |
+| `resolved` | one containing context, under `--since`. The exact answer |
+| `guessed` | one candidate, the newest writer. The count is exact; the identity is not, because a guess must not read as a measurement |
+| `contested` | more than one candidate, so nothing is named |
+| `no_match` | no candidate at all: the claimed instant missed every context of this role |
+
+`requests`, `remaining` and `over_cap` are present in every state, and null in
+the two that name no context. The default answers in a few lines, because a
+report that exists to save tokens must not spend them on a listing; `--full`
+adds `contexts` — every context of the session with its span and its count —
+which is what a reviewer needs in order to see what a guess was made from.
+
+It reads `usage` fields and timestamps only, which is the same boundary the
+rest of the harness keeps (method error mode E2); it never reads transcript
+content.
 
 ## What the rule costs
 

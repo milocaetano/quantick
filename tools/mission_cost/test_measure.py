@@ -856,8 +856,7 @@ class Contexts(unittest.TestCase):
         """The claimed `started_at` names the context exactly, not by guess."""
         found = self.contexts("--since", "2026-01-01T00:11:30Z", "--role", "subagent")
         self.assertEqual(found["resolution"], "containment")
-        self.assertTrue(found["resolved"])
-        self.assertFalse(found["contested"])
+        self.assertEqual(found["state"], "resolved")
         self.assertEqual(found["running"]["relative"], self.ALPHA_ONE)
         self.assertEqual(found["requests"], 2)
 
@@ -875,7 +874,7 @@ class Contexts(unittest.TestCase):
         offset = datetime.timezone(datetime.timedelta(hours=1))
         since = datetime.datetime(2026, 1, 1, 1, 11, 30, tzinfo=offset)
         found = measure.contexts([TRANSCRIPTS], ALPHA, 80, "subagent", since)
-        self.assertTrue(found["resolved"])
+        self.assertEqual(found["state"], "resolved")
         self.assertEqual(found["running"]["relative"], self.ALPHA_ONE)
 
     def test_an_instant_on_the_span_end_is_still_contained(self):
@@ -888,7 +887,7 @@ class Contexts(unittest.TestCase):
         found = self.contexts(
             "--since", "2026-01-01T00:12:00.000Z", "--role", "subagent"
         )
-        self.assertTrue(found["resolved"])
+        self.assertEqual(found["state"], "resolved")
         self.assertEqual(found["running"]["relative"], self.ALPHA_ONE)
 
     def test_without_since_the_answer_says_it_is_the_newest_writer(self):
@@ -896,14 +895,13 @@ class Contexts(unittest.TestCase):
 
         Without a claimed instant the command can only offer whoever wrote
         last, which a sibling agent running beside the caller will often be.
-        `resolution` carries that word and `resolved` stays false however few
+        `resolution` carries that word and `state` says `guessed` however few
         candidates there are, so a reader can tell the heuristic from the
         measurement instead of reading the same number twice.
         """
         found = self.contexts()
         self.assertEqual(found["resolution"], "newest_write")
-        self.assertFalse(found["resolved"])
-        self.assertFalse(found["contested"])
+        self.assertEqual(found["state"], "guessed")
         self.assertEqual(found["running"]["relative"], self.ALPHA_MAIN)
         self.assertEqual(found["requests"], 4)
 
@@ -912,18 +910,15 @@ class Contexts(unittest.TestCase):
 
         A claim that missed its own context has to read differently from two
         siblings spanning it: the first is a wrong claim, the second a real
-        contest. `identify` keeps them apart with `contested` and `resolved`,
-        and this report says it the same way.
+        contest. `state` names each in one word, so neither is reconstructed
+        from a pair of flags.
         """
         missed = self.contexts("--since", "2020-01-01T00:00:00Z")
         overlap = self.contexts("--since", "2026-01-01T00:11:30Z")
-        self.assertFalse(missed["contested"])
-        self.assertFalse(missed["resolved"])
+        self.assertEqual(missed["state"], "no_match")
         self.assertEqual(missed["candidates"], [])
         self.assertIsNone(missed["running"])
-        self.assertNotIn("requests", missed)
-        self.assertTrue(overlap["contested"])
-        self.assertFalse(overlap["resolved"])
+        self.assertEqual(overlap["state"], "contested")
 
     def test_role_keeps_the_main_thread_from_competing_with_a_child(self):
         """The same reason `identify` has the flag, one layer along.
@@ -935,16 +930,13 @@ class Contexts(unittest.TestCase):
         window = ("--since", "2026-01-01T00:11:30Z")
         both = self.contexts(*window)
         child = self.contexts(*window, "--role", "subagent")
-        self.assertTrue(both["contested"])
-        self.assertFalse(both["resolved"])
+        self.assertEqual(both["state"], "contested")
         self.assertIsNone(both["running"])
-        self.assertNotIn("requests", both)
         self.assertEqual(
             sorted(row["relative"] for row in both["candidates"]),
             [self.ALPHA_MAIN, self.ALPHA_ONE],
         )
-        self.assertTrue(child["resolved"])
-        self.assertFalse(child["contested"])
+        self.assertEqual(child["state"], "resolved")
         self.assertEqual(child["running"]["relative"], self.ALPHA_ONE)
 
     def test_remaining_and_over_cap_are_the_caps_arithmetic(self):
@@ -961,6 +953,56 @@ class Contexts(unittest.TestCase):
         self.assertEqual(over["cap"], 1)
         self.assertEqual(over["remaining"], -1)
         self.assertTrue(over["over_cap"])
+
+    def test_the_default_answers_without_listing_the_whole_session(self):
+        """The report that exists to save tokens must not spend them.
+
+        A campaign session holds dozens of contexts, and the caller wants one
+        integer. So the default carries the answer and `counted`, and says the
+        listing was not taken by leaving `contexts` null rather than empty --
+        an empty list would read as "the session has no contexts".
+        """
+        window = ("--since", "2026-01-01T00:11:30Z", "--role", "subagent")
+        brief = self.contexts(*window)
+        self.assertIsNone(brief["contexts"])
+        self.assertEqual(brief["counted"]["contexts"], 2)
+        self.assertEqual(brief["counted"]["candidates"], 1)
+        self.assertEqual(brief["requests"], 2)
+        self.assertLess(
+            len(run("contexts", "--transcripts", TRANSCRIPTS, "--session", ALPHA, *window)),
+            len(run(
+                "contexts", "--transcripts", TRANSCRIPTS, "--session", ALPHA,
+                *window, "--full",
+            )),
+        )
+
+    def test_full_lists_every_context_the_answer_was_chosen_from(self):
+        """A reviewer reading a guess still needs what it was guessed from.
+
+        `--full` is the shape the review contexts read: the same answer, plus
+        every context of the session with its span and its count.
+        """
+        full = self.contexts("--full")
+        self.assertEqual(full["state"], "guessed")
+        self.assertEqual(
+            sorted(row["relative"] for row in full["contexts"]),
+            sorted([self.ALPHA_MAIN, self.ALPHA_ONE, f"{ALPHA}/subagents/agent-2222.jsonl"]),
+        )
+        self.assertEqual(full["counted"]["contexts"], len(full["contexts"]))
+
+    def test_the_caps_arithmetic_is_present_in_every_state(self):
+        """A consumer reads the three fields; it never tests whether they exist.
+
+        Conditional keys force a caller to decode presence as meaning. Null
+        says "no context was named", which `state` has already said in a word.
+        """
+        for found in (
+            self.contexts("--since", "2020-01-01T00:00:00Z"),
+            self.contexts("--since", "2026-01-01T00:11:30Z"),
+        ):
+            for field in ("requests", "remaining", "over_cap"):
+                self.assertIn(field, found)
+                self.assertIsNone(found[field])
 
     def test_a_missing_session_id_is_an_error_naming_the_variable(self):
         """The one failure a real context will hit, and it must read as advice.

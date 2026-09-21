@@ -517,7 +517,7 @@ def session_roots(repo):
     return ordered
 
 
-def contexts(roots, session, cap, role=None, since=None):
+def contexts(roots, session, cap, role=None, since=None, full=False):
     """How far the context running this command already is through the cap.
 
     The cap lives in ``docs/quality/velocity/context-cap.md`` and the operative
@@ -539,18 +539,38 @@ def contexts(roots, session, cap, role=None, since=None):
     ``newest_write``
         Without ``since``, the newest writer in the session. It is a heuristic
         and it is wrong whenever a sibling agent is running beside the caller,
-        which is ordinary in a campaign: the sibling may have written last.
-        Every context is listed with its count either way, so a reader can see
-        what the guess was made from, and a tie leaves two ``candidates`` and
-        is ``contested``.
+        which is ordinary in a campaign: the sibling may have written last. A
+        tie leaves two ``candidates`` and names nothing.
 
-    **Three report states, and a reader branches on two flags.** ``contested``
-    is more than one candidate -- a real overlap, and nothing is named.
-    ``resolved`` is the exact answer: one containing context, under
-    ``containment`` only. Neither flag set with a candidate named is the
-    ``newest_write`` guess; neither flag set with ``running`` null is no
-    candidate at all. ``resolved`` is never true under ``newest_write``,
-    because a guess must not read as a measurement.
+    **``state`` is the outcome, in one word a caller branches on**, rather than
+    a rule for decoding flags against each other:
+
+    ``resolved``
+        One containing context, under ``containment``. The exact answer.
+    ``guessed``
+        One candidate, under ``newest_write``. The count is exact -- the guess
+        is about *which* context, not about how many requests it made -- but
+        the identity is not, so it never reads as ``resolved``.
+    ``contested``
+        More than one candidate: a real overlap, and nothing is named, exactly
+        as ``identify`` does.
+    ``no_match``
+        No candidate at all, which under ``containment`` means the claimed
+        instant missed every context of this ``role``.
+
+    ``requests``, ``remaining`` and ``over_cap`` are always present, and are
+    null in the two states that name no context; a caller that wants certainty
+    passes ``since``.
+
+    **The listing is opt-in, because this report exists to save tokens.** A
+    campaign session holds dozens of contexts, and printing all of them to
+    deliver one integer spends what the cap is trying to save. So the default
+    carries the answer plus ``counted``, and ``full`` adds ``contexts``: every
+    context of the session with its span and count, which is what a reviewer
+    needs to see what a ``newest_write`` guess was made from. ``contexts`` is
+    null when it was not asked for, never an empty list. ``candidates`` is
+    always listed -- it is at most a handful of rows and it is the one the
+    contested state is about.
 
     Instants are compared as instants, never as the text they print as:
     ``transcripts.require_instant`` owns that rule for this package, and
@@ -598,7 +618,19 @@ def contexts(roots, session, cap, role=None, since=None):
         newest = max((last for _, last, _ in spans), default=None)
         candidates = [row for _, last, row in spans if last == newest]
     running = candidates[0] if len(candidates) == 1 else None
-    report = {
+    if len(candidates) > 1:
+        state = "contested"
+    elif running is None:
+        state = "no_match"
+    elif resolution == "containment":
+        state = "resolved"
+    else:
+        state = "guessed"
+    # The arithmetic is the named context's, whichever way it was named, and
+    # the three fields are emitted in every state so a consumer reads them
+    # rather than testing whether they are there. Null is "no context was
+    # named", which `state` already said in a word.
+    return {
         "method": METHOD,
         "cap_policy": "docs/quality/velocity/context-cap.md",
         "session": session,
@@ -606,21 +638,15 @@ def contexts(roots, session, cap, role=None, since=None):
         "cap": cap,
         "since": None if since is None else since.isoformat(),
         "resolution": resolution,
-        "contexts": rows,
-        "candidates": candidates,
+        "state": state,
+        "requests": None if running is None else running["requests"],
+        "remaining": None if running is None else cap - running["requests"],
+        "over_cap": None if running is None else running["requests"] > cap,
         "running": running,
-        "contested": len(candidates) > 1,
-        "resolved": resolution == "containment" and len(candidates) == 1,
+        "counted": {"contexts": len(rows), "candidates": len(candidates)},
+        "candidates": candidates,
+        "contexts": rows if full else None,
     }
-    # The arithmetic is the named context's, whichever way it was named. What
-    # `newest_write` guesses is *which* context, not how many requests it made,
-    # so the count is exact and `resolved: false` beside it says the identity
-    # is not. A caller that needs certainty passes `--since`.
-    if running is not None:
-        report["requests"] = running["requests"]
-        report["remaining"] = cap - running["requests"]
-        report["over_cap"] = running["requests"] > cap
-    return report
 
 
 def add_common(parser):
@@ -711,6 +737,14 @@ def main(argv=None):
         "--cap", type=int, default=SHAPE.POLICY_CAP,
         help=f"requests after which a context hands off (default {SHAPE.POLICY_CAP})",
     )
+    running.add_argument(
+        "--full",
+        action="store_true",
+        help=(
+            "also list every context of the session; the default answers in a "
+            "few lines, because this report exists to spend fewer tokens"
+        ),
+    )
     running.add_argument("--out", default="-", help="where to write; - is stdout")
     options = parser.parse_args(argv)
 
@@ -750,7 +784,11 @@ def main(argv=None):
             except TRANSCRIPTS.InstantError as problem:
                 parser.error(str(problem))
         emit(
-            render(contexts(roots, session, options.cap, options.role, since)),
+            render(
+                contexts(
+                    roots, session, options.cap, options.role, since, options.full
+                )
+            ),
             options.out,
         )
         return 0

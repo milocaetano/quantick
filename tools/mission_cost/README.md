@@ -290,14 +290,26 @@ python tools/mission_cost/measure.py contexts \
 ```
 
 `--since` is the `started_at` that context claimed, and it names the running
-context by the same containment rule, exactly; `resolved` then says so. Left
-off, the command can only offer the session's newest writer, which a sibling
-agent breaks -- so that answer carries `resolution: newest_write` and never
-`resolved`. Two containing contexts are `contested` and name nothing, as in
-`identify`. The session id comes from `$CLAUDE_CODE_SESSION_ID` unless
-`--session` overrides it, and without `--transcripts` the roots are this
-worktree's own and, through the `.git` pointer it carries, the checkout that
-dispatched it.
+context by the same containment rule, exactly. Left off, the command can only
+offer the session's newest writer, which a sibling agent breaks.
+
+`state` carries the outcome in one word, so nothing has to be decoded from a
+pair of flags: `resolved` is the containment answer, `guessed` the newest
+writer -- an exact count of a context named by heuristic -- `contested` is more
+than one candidate with nothing named, as in `identify`, and `no_match` is a
+claimed instant that missed every context of this role. `requests`, `remaining`
+and `over_cap` are emitted in every state, null in the two that name no
+context.
+
+The default answers in a few lines: a report a context reads in order to spend
+fewer tokens must not spend them listing the session. `--full` adds `contexts`,
+every context of the session with its span and its count, which is what a
+reviewer needs to see what a `guessed` answer was chosen from; without it that
+field is null rather than an empty list.
+
+The session id comes from `$CLAUDE_CODE_SESSION_ID` unless `--session`
+overrides it, and without `--transcripts` the roots are this worktree's own
+and, through the `.git` pointer it carries, the checkout that dispatched it.
 
 ## Tests
 

@@ -53,11 +53,11 @@ not delicate; below 40 the handoff charge eats the saving. Why, and how to move
 it: [the context cap](../../../docs/quality/velocity/context-cap.md).
 
 A request is a billed call, not a turn, and a turn costs several — 80 requests
-is nearer 25 turns. Read the count, never estimate it:
-`python tools/mission_cost/measure.py contexts --since <the claim's started_at>`.
+is nearer 25 turns. Read it, never guess:
+`python tools/mission_cost/measure.py contexts --role subagent --since <the claim's started_at>`.
 The boundaries are structural: steps **1–6**, **7 to the draft PR**, then step 8,
 which already dispatches per review, watch and repair; split either at a
-commit-sized seam rather than run it long. A handoff carries only what [the
+commit-sized seam rather than run long. A handoff carries only what [the
 delivery contract](../../../docs/workflow/delivery.md#hand-off-before-a-context-accumulates)
 lists, never the conversation.
 
