@@ -212,6 +212,13 @@ class NotARegistry(unittest.TestCase):
         with self.assertRaises(group_registry.RegistryError):
             group_registry.load(path)
 
+    def test_a_file_that_is_not_utf_8_is_refused_rather_than_traced_back(self):
+        path = os.path.join(self.directory.name, "latin1.json")
+        with open(path, "wb") as stream:
+            stream.write(b'{"schema": 1, "missions": [], "note": "\xff not utf-8"}')
+        with self.assertRaises(SystemExit):
+            group_registry.main(["--registry", path, "--pivot", PIVOT])
+
 
 class CommittedRegistries(unittest.TestCase):
     """The seven grouped registries still re-derive from the one registry.

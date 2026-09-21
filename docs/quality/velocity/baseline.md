@@ -292,8 +292,10 @@ Those seven files are derived: each is exactly
 <merge instant>`, and they cost 168 KB in a repository separately working to
 shrink its clone. They are committed anyway, because a reader reconciling a
 table should not have to re-run a tool to see what it was grouped by. If the
-trade goes the other way later, the seven merge instants in the verdict table
-are enough to regenerate all of them.
+trade goes the other way later, the seven merge instants — one at the head of
+each per-pull-request section below — are enough to regenerate all of them, and
+to the minute: the seven files come back byte-identical even when the pivot is
+given without its seconds.
 
 The figures are `dispersion.summary` over the `delivery` values already in
 [`baseline-report.json`](baseline-report.json), which is three lines a reader

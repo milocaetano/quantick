@@ -145,12 +145,12 @@ def main(argv=None):
     try:
         document = load(options.registry)
         grouped = regroup(document, options.pivot)
-    except (
-        OSError,
-        json.JSONDecodeError,
-        InstantError,
-        RegistryError,
-    ) as problem:
+    # `ValueError` rather than `json.JSONDecodeError` alone: a registry file
+    # that is not valid UTF-8 raises `UnicodeDecodeError`, which is a
+    # `ValueError` and neither of the other two. `attribution.load_registry`
+    # already catches the whole class, and a reader that refuses one malformed
+    # file and traces back on another is worse than either.
+    except (OSError, ValueError, RegistryError) as problem:
         parser.error(str(problem))
     emit(render(grouped), options.out)
     return 0

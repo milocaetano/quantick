@@ -98,7 +98,8 @@ def _instant(entry, field):
 
     The rule lives in `transcripts.require_instant`. The failure is re-raised as
     a `RegistryError` because here it is a fault in the registry document, which
-    is what this module's callers already catch; the wording is unchanged.
+    is what this module's callers already catch. The message now ends with the
+    offending value, which the shared rule appends and this one did not.
     """
     value = entry.get(field)
     if value is None:
