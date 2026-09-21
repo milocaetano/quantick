@@ -22,7 +22,7 @@
       "probation": {
         "missions": 1,
         "extensions_used": 0,
-        "graded_branch": null
+        "graded_branch": "perf/cap-agent-context"
       },
       "references": [],
       "readings": [],
