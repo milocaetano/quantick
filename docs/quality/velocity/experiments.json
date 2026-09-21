@@ -139,8 +139,59 @@
           "total_requests": 1604
         }
       ],
-      "readings": [],
-      "verdict": null,
+      "readings": [
+        {
+          "branch": "perf/prune-review-rounds",
+          "pr": 588,
+          "taken_at": "2026-09-21T19:33:29Z",
+          "attribution": "declared",
+          "contested": true,
+          "contexts": [
+            {
+              "requests": 94,
+              "kind": "subagent"
+            },
+            {
+              "requests": 140,
+              "kind": "subagent"
+            },
+            {
+              "requests": 99,
+              "kind": "subagent"
+            },
+            {
+              "requests": 46,
+              "kind": "subagent"
+            },
+            {
+              "requests": 47,
+              "kind": "subagent"
+            },
+            {
+              "requests": 9,
+              "kind": "subagent"
+            },
+            {
+              "requests": 141,
+              "kind": "subagent"
+            }
+          ],
+          "measured_billable": 64279674,
+          "requests": {
+            "measured": 576
+          },
+          "mechanism": {
+            "before": 21,
+            "after": 0
+          },
+          "quality": {
+            "ci": "green",
+            "guards_report": "explained"
+          },
+          "note": "CONTESTED, and the reading says so rather than hiding it. This mission's second context claim resolves to two containing transcripts of its own role -- its own context 2 (agent-adbeb2fdc0023dc4d) and its own context 1 (agent-aab6b60cefb512957), whose transcript kept receiving lines until 2026-09-21T18:53:53Z, after context 2 had finished. Section 9's containment rule cannot tell a predecessor context whose tail outlives the handoff from a spanning sibling, so `identify --role subagent` names both and refuses to choose. Under section 5 a contested mission is void, and nothing may be concluded from this reading in either direction. The cause is the same tail E14 already records as an under-count; what is new is that the tail also contests the successor's claim. Two further facts the claim procedure surfaced: the first two claims were written with their instants truncated down to the second, which put each one a fraction of a second BEFORE its own context's first request and made containment fail outright until the instants were corrected upward; and context 1 ran 94 requests and context 2 ran 140 against L1's cap of 80. The vector below is the whole attributed set -- three own contexts plus every agent this mission dispatched -- measured from the transcripts directly, not from the claim windows. Excluded: agent-ab4879516208c61bc, a sibling mission of the same session dispatched against the main checkout at 18:35:29Z, identified by its own first user message. Also excluded, and this is error mode E14 of docs/quality/mission-cost/method.md: every request any context issued after this reading was taken, including the second review passes, the ship gate and the handbacks."
+        }
+      ],
+      "verdict": "void",
       "reverted_in": null,
       "escaped_defects": [],
       "note": "Not disjoint from L1: both move N. Whichever runs second is graded against the state the first left, never against the original baseline. `reduces_review` is true, so the three honesty fields are owed by the mission that runs it and `verify` refuses the ledger once a probation branch is named with any of them empty. Needs MIN_REFERENCE_N = 3 reference missions with the removed contexts measured before a verdict is reachable; #566 measured one (#571's three AI-review rounds at 11.5%) and two delivery-review shares at 9.1% and 2.9%, which is the honest starting point and not yet the three this form requires."

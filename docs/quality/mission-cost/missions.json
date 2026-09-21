@@ -854,31 +854,39 @@
       "branch": "perf/prune-review-rounds",
       "pr": 588,
       "sessions": [],
-      "transcripts": [],
+      "transcripts": [
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a21cb591d71bc9eaa.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a3fc9f0042f1de781.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a6ad949d8cfcfa6f9.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-aab6b60cefb512957.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-ab9ad6fe3745fb1a8.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-ada0f9c0897d11277.jsonl",
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-adbeb2fdc0023dc4d.jsonl"
+      ],
       "claim": [
         {
           "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
           "role": "subagent",
-          "started_at": "2026-09-21T17:50:58Z",
+          "started_at": "2026-09-21T17:50:59Z",
           "ended_at": "2026-09-21T18:05:35Z"
         },
         {
           "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
           "role": "subagent",
-          "started_at": "2026-09-21T18:06:13Z",
+          "started_at": "2026-09-21T18:06:14Z",
           "ended_at": "2026-09-21T18:49:39Z"
         },
         {
           "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
           "role": "subagent",
           "started_at": "2026-09-21T18:52:45Z",
-          "ended_at": null
+          "ended_at": "2026-09-21T19:33:29Z"
         }
       ],
       "started_at": null,
       "ended_at": null,
       "group": null,
-      "note": "T8 of #563, the graded mission of ledger entry L3. Written at mission step 6, before the first edit, under section 9 of docs/quality/velocity/experiment-protocol.md. The session id came from CLAUDE_CODE_SESSION_ID in the environment, never from a transcript. started_at is this context first request instant, so containment resolves it; the claim is appended at every handoff."
+      "note": "T8 of #563, the graded mission of ledger entry L3. Written at mission step 6, before the first edit, under section 9 of docs/quality/velocity/experiment-protocol.md. The session id came from CLAUDE_CODE_SESSION_ID in the environment, never from a transcript. started_at is this context first request instant, so containment resolves it; the claim is appended at every handoff. Resolved at the draft pull request with measure.py identify --role subagent, one window per claim. Claim 1 resolves uncontested to agent-aab6b60cefb512957. Claim 2 comes back CONTESTED: context 1's transcript kept receiving lines until 18:53:53Z and therefore also contains claim 2's whole window, so identify names both and refuses to choose; under section 5 of the experiment protocol that makes the L3 reading void. Claims 1 and 2 also had to have their started_at corrected upward by a fraction of a second: both were written truncated down to the second, which placed them before their own context's first request and broke containment. The transcripts field is the whole attributed set, its own contexts plus the agents it dispatched, and it excludes agent-ab4879516208c61bc, a sibling mission of the same session. Resolved at the draft pull request with measure.py identify --role subagent, one window per claim. Claim 1 resolves uncontested to agent-aab6b60cefb512957. Claim 2 comes back CONTESTED: context 1's transcript kept receiving lines until 18:53:53Z and therefore also contains claim 2's whole window, so identify names both and refuses to choose; under section 5 of the experiment protocol that makes the L3 reading void. Claims 1 and 2 also had to have their started_at corrected upward by a fraction of a second: both were written truncated down to the second, which placed them before their own context's first request and broke containment. The transcripts field is the whole attributed set, its own contexts plus the agents it dispatched, and it excludes agent-ab4879516208c61bc, a sibling mission of the same session. Resolved at the draft pull request with measure.py identify --role subagent, one window per claim. Claim 1 resolves uncontested to agent-aab6b60cefb512957. Claim 2 comes back CONTESTED: context 1's transcript kept receiving lines until 18:53:53Z and therefore also contains claim 2's whole window, so identify names both and refuses to choose; under section 5 of the experiment protocol that makes the L3 reading void. Claims 1 and 2 also had to have their started_at corrected upward by a fraction of a second: both were written truncated down to the second, which placed them before their own context's first request and broke containment. The transcripts field is the whole attributed set, its own contexts plus the agents it dispatched, and it excludes the six contexts of sibling mission fix/poc-plate-price, pull request 589."
     }
   ]
 }
