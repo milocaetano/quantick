@@ -241,6 +241,41 @@ second copy appears (`test_canonical.OneOwner`): the byte contract in
 puts a mission on one side of a pivot goes through. `Z` sorts after `+`, so one
 moment spelled two legal ways must never be compared as text.
 
+## Grading a change
+
+Measuring what a mission cost is one question; deciding whether a change to the
+loop earned its place is another, with its own thresholds and its own
+refusals. [`docs/quality/velocity/experiment-protocol.md`](../../docs/quality/velocity/experiment-protocol.md)
+is that rule and `docs/quality/mission-cost/method.md` section 10 registers its
+constants. `experiment.py` executes it over the committed ledger,
+`docs/quality/velocity/experiments.json`:
+
+```sh
+python tools/mission_cost/experiment.py verify
+python tools/mission_cost/experiment.py grade --id L1
+```
+
+`verify` reads no transcript at all -- it is arithmetic over the ledger -- so
+CI runs it on every pull request, which is the only part of the protocol a
+later session cannot decline to read. `grade` prices each lever's
+counterfactual through `shape.modelled` on the coefficients `shape.json`
+already publishes, never on a law re-fitted over the mission being graded.
+
+A verdict may only rest on transcripts a mission declared about itself. What a
+mission records, and when, is section 9 of the protocol; this resolves the
+record it wrote into the exact paths the registry wants:
+
+```sh
+python tools/mission_cost/measure.py identify \
+  --session "$CLAUDE_CODE_SESSION_ID" --role subagent \
+  --from 2026-09-21T10:06:00Z --to 2026-09-21T10:20:00Z
+```
+
+Containment finds the mission's own context; being contained finds the agents
+it dispatched. `--role` is not decoration: a coordinator's main thread spans
+every child it dispatched, so without it every campaign child would look
+contested and none would be gradeable.
+
 ## Tests
 
 ```sh

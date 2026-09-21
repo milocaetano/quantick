@@ -1,0 +1,89 @@
+{
+  "schema": 1,
+  "protocol": "docs/quality/velocity/experiment-protocol.md",
+  "laws": "docs/quality/velocity/shape.json",
+  "note": "Pre-registrations for campaign #563. Registered before any of these levers took a reading, which is the whole of what makes a verdict worth anything. Checked in CI by `python tools/mission_cost/experiment.py verify`.",
+  "experiments": [
+    {
+      "id": "L1",
+      "issue": 573,
+      "lever": "Cap an agent context at 80 requests and hand off to a fresh dispatch.",
+      "form": "reshape",
+      "variable": "longest_context_requests",
+      "predicted_saving": 0.459,
+      "policy": {
+        "cap": 80,
+        "handoff": 8,
+        "law": "subagent"
+      },
+      "registered_at": "2026-09-21T12:00:00Z",
+      "reduces_review": false,
+      "reduction": null,
+      "probation": {
+        "missions": 1,
+        "extensions_used": 0,
+        "graded_branch": null
+      },
+      "references": [],
+      "readings": [],
+      "verdict": null,
+      "reverted_in": null,
+      "escaped_defects": [],
+      "note": "The -45.9% is #566's population-level arithmetic over 520 subagent contexts, not a per-mission figure. The graded mission is priced on its own context vector; the prediction is here so that a reading that comes out far from it is visible as a surprise rather than quietly renamed the expectation."
+    },
+    {
+      "id": "L2",
+      "issue": 574,
+      "lever": "Take 10,000 tokens off the standing frame every request pays.",
+      "form": "frame",
+      "variable": "frame_tokens_per_request",
+      "predicted_saving": 0.051,
+      "policy": {
+        "trim": 10000
+      },
+      "registered_at": "2026-09-21T12:00:00Z",
+      "reduces_review": false,
+      "reduction": null,
+      "probation": {
+        "missions": 1,
+        "extensions_used": 0,
+        "graded_branch": null
+      },
+      "references": [],
+      "readings": [],
+      "verdict": null,
+      "reverted_in": null,
+      "escaped_defects": [],
+      "note": "Disjoint from L1 and L3 under protocol section 8, so it may be in probation beside either of them. Its mechanism reading is the measured fall in opening cache reads per request; the protocol states why that is used as the trim and where it is conservative."
+    },
+    {
+      "id": "L3",
+      "issue": 575,
+      "lever": "Cut the review rounds the chain cannot show a catch for.",
+      "form": "removal",
+      "variable": "removed_context_requests",
+      "predicted_saving": 0.295,
+      "policy": {
+        "law": "subagent"
+      },
+      "registered_at": "2026-09-21T12:00:00Z",
+      "reduces_review": true,
+      "reduction": {
+        "removes": "",
+        "risk": "",
+        "justified_by": ""
+      },
+      "probation": {
+        "missions": 1,
+        "extensions_used": 0,
+        "graded_branch": null
+      },
+      "references": [],
+      "readings": [],
+      "verdict": null,
+      "reverted_in": null,
+      "escaped_defects": [],
+      "note": "Not disjoint from L1: both move N. Whichever runs second is graded against the state the first left, never against the original baseline. `reduces_review` is true, so the three honesty fields are owed by the mission that runs it and `verify` refuses the ledger once a probation branch is named with any of them empty. Needs MIN_REFERENCE_N = 3 reference missions with the removed contexts measured before a verdict is reachable; #566 measured one (#571's three AI-review rounds at 11.5%) and two delivery-review shares at 9.1% and 2.9%, which is the honest starting point and not yet the three this form requires."
+    }
+  ]
+}

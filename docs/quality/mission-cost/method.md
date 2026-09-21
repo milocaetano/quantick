@@ -251,6 +251,15 @@ The schema number does not move for `transcripts`. The field is additive: a
 registry without it parses and assigns exactly as it did before, which is what
 makes the amendment below invalidate no earlier reading.
 
+A record may also carry `claim`: a list of
+`{session, role, started_at, ended_at}` objects, the context claim section 9 of
+`docs/quality/velocity/experiment-protocol.md` asks a mission to write about
+itself while it runs. **Nothing in the harness reads it**, and no assignment
+depends on it -- `transcripts` is still what places a mission's cost. It is
+recorded because E12's only defence is that a mission wrote its own entry as it
+worked, and a claim a later reader can check against the branch's commit times
+is a stronger form of that than a remembered file name.
+
 ## 7. Determinism
 
 One documented command, canonical JSON out: keys sorted, ASCII, newline at end,
@@ -321,6 +330,13 @@ a reading from this harness is allowed to claim.
   it counts against `MAX_UNPLACED_SHARE` for every group whose window it
   touches. A campaign that declares the children and not the coordinator is
   measuring the children exactly and the campaign loosely, on purpose.
+- **E14 — A context claim under-counts its own tail.** A mission writes its
+  `ended_at` when it publishes its evidence, so the requests it makes after
+  that — the final verifier, the handback, a late repair — fall outside the
+  claim and outside the transcripts the claim resolves to. It is a handful of
+  requests against a mission's hundreds, and it errs downward rather than
+  upward, so a cost measured this way is never flattered by it. The remedy, if
+  one is ever wanted, is a second claim rather than a wider window.
 
 ## 9. Amendments
 
@@ -330,3 +346,40 @@ version before it, with what that change invalidated.
 | Date | Change | Readings invalidated |
 | --- | --- | --- |
 | 2026-09-21 | Section 2 gains rule 1, declared transcripts; section 6 gains the `transcripts` field; E12 and E13 added. [#576](https://github.com/milocaetano/quantick/issues/576) | **None.** The change adds a rule and moves no threshold. Rules 2 and 3 are the previous two rules verbatim, and they see the whole of every session in a registry that declares no transcript, so a registry without the field assigns exactly what it assigned before. `docs/quality/velocity/baseline.md` (#565) and `docs/quality/velocity/ranking.md` (#566) were both read from such a registry and stand unchanged. The harness's pre-existing offline suite, unaltered by this amendment, is the executable form of that claim. |
+| 2026-09-21 | Section 8 gains E14; section 10 registers the experiment-grading constants and the two rules that bind them to this document. [#567](https://github.com/milocaetano/quantick/issues/567) | **None.** No threshold in sections 1 to 8 moved and no assignment rule changed. Section 10's six constants are new and govern a comparison this document did not previously make, so no reading was ever taken under an earlier value of any of them; section 5's `MIN_GROUP_N`, `MIN_RELATIVE_CHANGE` and `MAX_UNPLACED_SHARE` are untouched and `docs/quality/velocity/baseline.md` and `ranking.md` stand unchanged. E14 records an under-count in a claim shape that no committed reading has used yet. |
+
+## 10. Experiment grading
+
+Registered by [#567](https://github.com/milocaetano/quantick/issues/567), before
+any reading was taken under it. Section 5 above grades a **group of missions**
+against another group and is untouched. This section grades **one lever** on one
+mission, which is a different comparison with different thresholds, and it
+exists because the group rule cannot return anything but `inconclusive` for a
+campaign that will never have five after-missions per lever.
+
+`docs/quality/velocity/experiment-protocol.md` owns the procedure: the three
+admissible proof forms, the two keys, the verdict table, the quality floor, the
+revert rule and what a mission records about itself.
+`tools/mission_cost/experiment.py` implements it, and CI runs its `verify` over
+the committed ledger.
+
+| Constant | Value | What it is for |
+| --- | ---: | --- |
+| `MIN_MECHANISM_CHANGE` | 0.10 | the smallest relative movement of a lever's declared variable that counts as the lever having acted |
+| `MIN_MODELLED_SAVING` | 0.03 | below this a modelled saving is inside the model's own error |
+| `MAX_MODEL_RESIDUAL` | 0.25 | how far the registered law may mispredict the graded mission's own total before its counterfactual stops being evidence |
+| `MIN_REFERENCE_N` | 3 | reference missions a `removal` needs before the size of what it removed is transferable |
+| `PROBATION_MISSIONS` | 1 | graded missions a lever gets before a verdict is due |
+| `MAX_UNPROVEN_EXTENSIONS` | 1 | how many times an `unproven` verdict may buy one more mission |
+
+Two rules bind this section to the rest of the document:
+
+- **The law is an input, never an output.** Counterfactuals are priced on the
+  coefficients `docs/quality/velocity/shape.json` already publishes, through
+  `shape.modelled`. Re-fitting the law over the mission being graded and then
+  pricing the lever against that re-fit is circular and is refused.
+- **Only exact attribution carries a verdict.** A reading whose transcripts
+  were placed by section 2's rule 3 — window inference — is `void`. Section 2's
+  rule 1, declared transcripts, is the only assignment a verdict may rest on,
+  which is what the context claim in the protocol's section 9 exists to
+  produce.

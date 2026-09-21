@@ -269,6 +269,17 @@ jobs:
         # reader widened by one field fails here rather than in a published
         # aggregate. Discovered rather than named, like the two suites above.
         run: python3 -m unittest discover -s tools/mission_cost -p 'test_*.py'
+      - name: Velocity experiment ledger
+        # The one gate the experiment protocol has that a later session cannot
+        # simply not read. Every velocity lever registers itself in
+        # docs/quality/velocity/experiments.json before it takes a reading, and
+        # this refuses the ledger if a reading precedes its registration, if a
+        # refuted or void lever has no revert recorded, if a spent probation
+        # carries no verdict, if two levers that both move N are in probation at
+        # once, or if a lever that reduces review depth has not said what it
+        # removes and what that risks. Pure arithmetic over a committed file:
+        # no transcript, which is exactly why it can run here at all.
+        run: python3 tools/mission_cost/experiment.py verify
       - name: Binary hook scan tests
         # The scan below reads a half-gigabyte binary, so its own cases run
         # against fixtures instead: the boundary rule, the prose exemption, and
