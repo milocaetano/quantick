@@ -63,6 +63,21 @@ class GroupFor(unittest.TestCase):
             group_registry.group_for(mission("a", None, "2026-09-25T00:00:00Z"), PIVOT)
         )
 
+    def test_the_same_moment_spelled_two_ways_lands_on_the_same_side(self):
+        # `Z` sorts after `+` in ASCII, so a string comparison would put these
+        # two spellings of one instant on opposite sides of each other.
+        offset = "2026-09-20T01:43:13+00:00"
+        self.assertEqual(group_registry.group_for(mission("a", offset, None), PIVOT), "after")
+        self.assertEqual(group_registry.group_for(mission("b", PIVOT, None), offset), "after")
+        self.assertIsNone(group_registry.group_for(mission("c", None, offset), PIVOT))
+        self.assertIsNone(group_registry.group_for(mission("d", None, PIVOT), offset))
+
+    def test_an_instant_that_is_not_one_is_refused_rather_than_compared(self):
+        with self.assertRaises(group_registry.GroupingError):
+            group_registry.group_for(mission("a", "yesterday", None), PIVOT)
+        with self.assertRaises(group_registry.GroupingError):
+            group_registry.group_for(mission("a", None, None), "soon")
+
 
 class Regroup(unittest.TestCase):
     def test_every_previous_group_is_recomputed_rather_than_kept(self):

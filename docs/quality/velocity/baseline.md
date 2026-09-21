@@ -15,8 +15,8 @@ by the number of requests, and **subagents make 82.5% of the requests and spend
 76.4% of the tokens**.
 
 **None of the seven merged optimizations can be given a token verdict.** Not
-one. The method's attribution places 0.4% of the period's tokens on a mission
-and leaves 99.6% unplaced, so every comparison returns `cannot_be_attributed`
+one. The method's attribution places 0.35% of the period's tokens on a mission
+and leaves 99.65% unplaced, so every comparison returns `cannot_be_attributed`
 — the correct answer, and the one the thresholds were fixed in advance to
 force. That is not a measurement failure to be worked around: sessions in this
 repository routinely run for days across dozens of branches, so there is no
@@ -35,10 +35,11 @@ What *can* be measured without attribution says this:
   `no_reduction` under the registered rule. The arithmetic explains why: what
   #546 removed from the frame a Claude Code session actually loads is about
   1,000 bytes, roughly 0.15% of a request.
-- **#556's own self-report is right.** Its 63,973 bytes never reached a model,
-  and the opening frame confirms it by not moving.
+- **#556's own self-report is right.** Its 63,973 bytes never reached a model.
+  The opening frame does not move, and a drop of that size would have been six
+  interquartile ranges — unmissable even at n = 3.
 
-The measured population-level trend across the whole optimization window is a
+The measured population-level trend across the whole optimization window is an
 **8.7% fall** in tokens per merged mission — *below* the registered 10%
 threshold, computed from a ratio that has no dispersion, over an after-period
 of 29 hours. It is not a result. It is reported because hiding it would be
@@ -101,6 +102,30 @@ contiguous later period:
 
 **Coverage period: 2026-09-11T15:16:05Z → 2026-09-21T03:21:13Z**, 821,069 s
 (9.50 days), 39 sessions.
+
+### The population, as a rule rather than a choice
+
+`docs/quality/mission-cost/missions.json` holds **87 missions**, selected
+mechanically so that no mission is in or out because of how it looked:
+
+> Every pull request merged into `main` or into a campaign branch whose head
+> branch begins `feat/`, `fix/`, `docs/`, `perf/`, `refactor/`, `chore/` or
+> `test/`, and whose first commit — GitHub's own commit list for that pull
+> request, section 1's default `started_at` — falls at or after
+> 2026-09-11T15:16:00Z.
+
+The prefix test keeps the unit "one branch, one pull request, one piece of
+work": it excludes the `sync/*` pull requests, which are mechanical base moves
+with no mission behind them, and the `campaign/*` integration pull requests,
+which are the landing of dozens of missions at once and would be counted twice.
+Two candidates fell outside the coverage test and are not in the registry: #360
+(first commit 2026-09-10T20:19) and #306 (2026-09-04T03:42), both of which
+began work in the pruned gap.
+
+Every record carries an explicit `started_at` and `ended_at` rather than
+leaving them null, so `gh` resolves nothing, the reading repeats offline, and a
+rebase cannot shrink a window behind the campaign's back (method E3). Every
+record's `sessions` list is empty; the next section says why.
 
 ### Two corrections to what T1 expected
 
@@ -415,9 +440,10 @@ Merged 2026-09-20T03:40:45Z. Per mission, `ci_wall_seconds` median 1,393 →
 
 **It did not claim a reduction and was never going to produce one.** #550 adds
 a measurement — a sticky comment, a ledger row, a bounded `pr-gate` advisory.
-Its cost is additive: 35 of the 87 registered missions now carry a read-cost
-row, each mission pays one bounded measurement on `gh pr create|ready|merge`,
-and every agent that reads the pull request now reads one more comment. Grading
+Its cost is additive: 35 of the 87 registered missions carry a read-cost row —
+most of them from #550's own backfill of the last 30 merged pull requests —
+each mission now pays one bounded measurement on `gh pr create|ready|merge`,
+and every agent that reads the pull request reads one more comment. Grading
 it as if it were an optimization would be a category error; the honest entry is
 that there is no reduction to attribute, and that whether the visibility it
 buys is worth its own cost is a question for #566.
@@ -617,7 +643,11 @@ report can explain it.
 - **These readings expire.** The transcript directory is pruned by the host and
   grows while it is read. Re-running any command in this report on a later day
   gives different totals and a different digest; that is the input moving, not
-  the harness.
+  the harness. It happened during this mission: re-running the #546 opening
+  frame after two more sessions had opened gave n = 8 after instead of 7 and a
+  median of 59,489 instead of 58,795 -- the same `no_reduction` verdict, and
+  further from a reduction, not nearer. The committed files are the readings as
+  taken, at the digests they carry.
 
 ## Baseline figures for the charter
 

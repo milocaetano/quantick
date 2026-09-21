@@ -78,6 +78,20 @@ class Build(unittest.TestCase):
         self.assertEqual(found["result"]["thresholds"]["min_group_n"], 5)
         self.assertEqual(found["result"]["verdict"], "inconclusive")
 
+    def test_the_same_moment_spelled_two_ways_splits_the_same_way(self):
+        rows = self.rows()
+        rows[1]["at"] = "2026-01-02T00:00:00Z"
+        with_zulu = opening_frame.build(rows, None, "2026-01-02T00:00:00+00:00")
+        self.assertEqual([r["session"] for r in with_zulu["sessions"]], ["a", "b", "c"])
+        kept = opening_frame.build(rows, "2026-01-02T00:00:00+00:00", None)
+        self.assertEqual([r["session"] for r in kept["sessions"]], ["b", "c"])
+
+    def test_an_instant_that_is_not_one_is_refused_rather_than_compared(self):
+        with self.assertRaises(opening_frame.ReadingError):
+            opening_frame.build(self.rows(), "yesterday", None)
+        with self.assertRaises(opening_frame.ReadingError):
+            opening_frame.build(self.rows(), None, "soon")
+
     def test_the_report_says_it_is_not_the_registered_comparison(self):
         found = opening_frame.build(self.rows(), None, None)
         self.assertIs(found["registered_comparison"], False)

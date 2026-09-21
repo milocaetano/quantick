@@ -38,7 +38,6 @@ import argparse
 import importlib.util
 import json
 import os
-import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -62,9 +61,35 @@ def _bootstrap():
 
 TRANSCRIPTS = _bootstrap()
 DISPERSION = TRANSCRIPTS.load("dispersion")
+CANONICAL = TRANSCRIPTS.load("canonical")
 
 VERSION = 1
 METHOD = "docs/quality/mission-cost/method.md"
+
+# Bound here, never redefined here: `canonical.py` owns section 7's byte
+# contract and `transcripts.py` owns where this host keeps its transcripts.
+render = CANONICAL.render
+emit = CANONICAL.emit
+default_transcripts = TRANSCRIPTS.default_transcripts
+
+
+class ReadingError(RuntimeError):
+    """An instant this tool was given is not an instant."""
+
+
+def instant(value, what):
+    """Parse an ISO-8601 instant, or refuse rather than compare its spelling.
+
+    ``Z`` sorts after ``+`` in ASCII, so ``2026-09-20T01:43:13Z`` and
+    ``2026-09-20T01:43:13+00:00`` -- the same moment -- land on opposite sides
+    of each other when compared as strings. A session's own instant comes from
+    ``datetime.isoformat``; a ``--since`` or ``--pivot`` comes from whoever
+    typed it. They are compared as instants or not at all.
+    """
+    found = TRANSCRIPTS.parse_timestamp(value)
+    if found is None:
+        raise ReadingError(f"{what} is not an ISO-8601 instant: {value!r}")
+    return found
 
 
 def first_record(path):
@@ -93,7 +118,11 @@ def prompt_tokens(record):
 
 
 def openings(roots):
-    """One row per session that has a main-thread transcript, oldest first."""
+    """One row per session that has a main-thread transcript, oldest first.
+
+    Ordered by the parsed instant, not by its spelling, for the same reason
+    :func:`instant` exists.
+    """
     rows = []
     for root in roots:
         name = os.path.basename(os.path.abspath(root))
@@ -111,19 +140,19 @@ def openings(roots):
                     "prompt_tokens": prompt_tokens(record),
                 }
             )
-    rows.sort(key=lambda row: (row["at"], row["session"]))
+    rows.sort(key=lambda row: (instant(row["at"], "an opening"), row["session"]))
     return rows
 
 
-def default_transcripts(repo):
-    """Where this host keeps the transcripts of sessions rooted at ``repo``."""
-    slug = re.sub(r"[^A-Za-z0-9]", "-", os.path.abspath(repo))
-    return os.path.join(os.path.expanduser("~"), ".claude", "projects", slug)
-
-
 def build(rows, since, pivot):
-    """The report: the rows kept, their dispersion, and the pivot split."""
-    kept = [row for row in rows if since is None or row["at"] >= since]
+    """The report: the rows kept, their dispersion, and the pivot split.
+
+    Every instant is parsed once, here, and only instants are compared.
+    """
+    dated = [(instant(row["at"], f"{row['session']}: at"), row) for row in rows]
+    floor = instant(since, "--since") if since is not None else None
+    split = instant(pivot, "--pivot") if pivot is not None else None
+    kept = [(at, row) for at, row in dated if floor is None or at >= floor]
     document = {
         "schema": VERSION,
         "method": METHOD,
@@ -131,35 +160,15 @@ def build(rows, since, pivot):
         "registered_comparison": False,
         "since": since,
         "pivot": pivot,
-        "sessions": kept,
-        "summary": DISPERSION.summary([row["prompt_tokens"] for row in kept]),
+        "sessions": [row for _, row in kept],
+        "summary": DISPERSION.summary([row["prompt_tokens"] for _, row in kept]),
     }
-    if pivot is not None:
+    if split is not None:
         document["result"] = DISPERSION.compare(
-            [row["prompt_tokens"] for row in kept if row["at"] < pivot],
-            [row["prompt_tokens"] for row in kept if row["at"] >= pivot],
+            [row["prompt_tokens"] for at, row in kept if at < split],
+            [row["prompt_tokens"] for at, row in kept if at >= split],
         )
     return document
-
-
-def render(document):
-    """Canonical JSON: sorted keys, ASCII, one trailing newline."""
-    return json.dumps(document, sort_keys=True, indent=2, ensure_ascii=True) + "\n"
-
-
-def emit(text, where):
-    """Write LF-terminated bytes, so standard output and ``--out`` agree."""
-    raw = text.encode("utf-8")
-    if where == "-":
-        stream = getattr(sys.stdout, "buffer", None)
-        if stream is None:
-            sys.stdout.write(text)
-            return
-        stream.write(raw)
-        stream.flush()
-        return
-    with open(where, "wb") as stream:
-        stream.write(raw)
 
 
 def main(argv=None):
@@ -192,7 +201,11 @@ def main(argv=None):
                 "the trader's machine and are not in the repository; see "
                 "tools/mission_cost/README.md"
             )
-    emit(render(build(openings(roots), options.since, options.pivot)), options.out)
+    try:
+        document = build(openings(roots), options.since, options.pivot)
+    except ReadingError as problem:
+        parser.error(str(problem))
+    emit(render(document), options.out)
     return 0
 
 

@@ -19,6 +19,7 @@ import datetime
 import importlib.util
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -48,6 +49,19 @@ def load(name, path=None):
     sys.modules[key] = module
     spec.loader.exec_module(module)
     return module
+
+
+def default_transcripts(repo):
+    """Where this host keeps the transcripts of sessions rooted at ``repo``.
+
+    The directory name is the absolute repository path with every character
+    outside ``[A-Za-z0-9]`` replaced by a dash, which is how the projects
+    directory is laid out. It lives beside `discover` because both answer the
+    same question -- where the transcripts are -- and a second copy in a second
+    command is a second place for the host's layout to be spelled wrong.
+    """
+    slug = re.sub(r"[^A-Za-z0-9]", "-", os.path.abspath(repo))
+    return os.path.join(os.path.expanduser("~"), ".claude", "projects", slug)
 
 
 # Section 4 of the method. A gap longer than this is idle, not work.
