@@ -23,4 +23,10 @@ The layout mirrors the real one: `<session>.jsonl` for a main thread and
 | `dddddddd-…0004` | main only, far outside every window | the unassigned bucket |
 | `eeeeeeee-…0005` | main only, far outside every window | a declared session overriding the window rule |
 
-`missions.json` beside them is the registry those cases are read against.
+Three registries sit beside them, each read against the same transcripts:
+
+| Registry | What it is for |
+| --- | --- |
+| `missions.json` | the original cases: a declared session, a window placement, the shared bucket and the unassigned bucket |
+| `missions-shared-session.json` | the shape #576 exists for: two missions dispatched under one coordinator session, each declaring its own subagent transcript, with the coordinator's own main thread declared by neither |
+| `missions-declared-all.json` | every transcript in the fixture declared, so the report's unplaced share is exactly zero |

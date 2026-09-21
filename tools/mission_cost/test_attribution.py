@@ -219,9 +219,7 @@ class EdgeCases(unittest.TestCase):
 class MainVersusSubagent(unittest.TestCase):
     def setUp(self):
         self.sessions, self.missions, self.placed = fixture_assignment()
-        self.totals = attribution.totals_by_mission(
-            self.sessions, self.missions, self.placed
-        )
+        self.totals = attribution.totals_by_mission(self.missions, self.placed)
 
     def test_the_two_threads_are_reported_separately(self):
         alpha = self.totals["feat/fixture-alpha"]
@@ -288,6 +286,287 @@ class MainVersusSubagent(unittest.TestCase):
         alpha = self.totals["feat/fixture-alpha"]
         self.assertEqual(alpha["first_timestamp_seen"], "2026-01-01T00:10:00+00:00")
         self.assertEqual(alpha["last_timestamp_seen"], "2026-02-01T00:02:00+00:00")
+
+SHARED_SESSION = os.path.join(FIXTURES, "missions-shared-session.json")
+DECLARED_ALL = os.path.join(FIXTURES, "missions-declared-all.json")
+
+ONE = f"{ALPHA}/subagents/agent-1111.jsonl"
+TWO = f"{ALPHA}/subagents/agent-2222.jsonl"
+
+
+def placement_over(registry):
+    found, _ = transcripts.discover(TRANSCRIPTS)
+    sessions = attribution.sessions_from(found)
+    missions = attribution.load_registry(registry)
+    return sessions, missions, attribution.assign(sessions, missions)
+
+
+class TranscriptPaths(unittest.TestCase):
+    """Section 2's layout rule, asked of a path a person wrote down."""
+
+    def test_a_root_file_and_a_subagent_file_are_addressable(self):
+        self.assertEqual(transcripts.classify(f"{ALPHA}.jsonl"), (ALPHA, "main"))
+        self.assertEqual(transcripts.classify(ONE), (ALPHA, "subagent"))
+
+    def test_anything_the_layout_cannot_address_is_not_a_transcript(self):
+        for path in (
+            "notes.txt",
+            "",
+            ".jsonl",
+            f"{ALPHA}/agents/agent-1111.jsonl",
+            f"../{ALPHA}.jsonl",
+            f"{ALPHA}//subagents/agent-1111.jsonl",
+            None,
+            17,
+        ):
+            self.assertIsNone(transcripts.classify(path), path)
+
+
+class DeclaredTranscriptRegistry(unittest.TestCase):
+    def registry(self, *entries):
+        return attribution.parse_registry({"schema": 1, "missions": list(entries)})
+
+    def test_a_declared_transcript_is_read_off_the_record(self):
+        missions = attribution.load_registry(SHARED_SESSION)
+        self.assertEqual(missions[0].transcripts, (ONE,))
+        self.assertEqual(missions[1].transcripts, (TWO,))
+        self.assertEqual(missions[1].sessions, (EPSILON,))
+
+    def test_a_record_may_declare_both_sessions_and_transcripts(self):
+        missions = self.registry(
+            {"branch": "feat/x", "pr": 1, "sessions": [BETA], "transcripts": [ONE]}
+        )
+        self.assertEqual(missions[0].sessions, (BETA,))
+        self.assertEqual(missions[0].transcripts, (ONE,))
+
+    def test_a_transcript_declared_twice_is_refused(self):
+        with self.assertRaises(attribution.RegistryError):
+            self.registry(
+                {"branch": "feat/x", "pr": 1, "transcripts": [ONE]},
+                {"branch": "feat/y", "pr": 2, "transcripts": [ONE]},
+            )
+
+    def test_a_transcript_of_a_session_another_mission_declares_is_refused(self):
+        # Both orders: the conflict is the claim, not the order it was written.
+        with self.assertRaises(attribution.RegistryError):
+            self.registry(
+                {"branch": "feat/x", "pr": 1, "sessions": [ALPHA]},
+                {"branch": "feat/y", "pr": 2, "transcripts": [ONE]},
+            )
+        with self.assertRaises(attribution.RegistryError):
+            self.registry(
+                {"branch": "feat/y", "pr": 2, "transcripts": [ONE]},
+                {"branch": "feat/x", "pr": 1, "sessions": [ALPHA]},
+            )
+
+    def test_one_mission_may_declare_a_session_and_a_transcript_inside_it(self):
+        missions = self.registry(
+            {"branch": "feat/x", "pr": 1, "sessions": [ALPHA], "transcripts": [ONE]}
+        )
+        self.assertEqual(missions[0].transcripts, (ONE,))
+
+    def test_a_path_the_layout_cannot_address_is_refused(self):
+        with self.assertRaises(attribution.RegistryError):
+            self.registry({"branch": "feat/x", "pr": 1, "transcripts": ["notes.txt"]})
+
+    def test_transcripts_must_be_a_list_of_strings(self):
+        with self.assertRaises(attribution.RegistryError):
+            self.registry({"branch": "feat/x", "pr": 1, "transcripts": ONE})
+        with self.assertRaises(attribution.RegistryError):
+            self.registry({"branch": "feat/x", "pr": 1, "transcripts": [3]})
+
+
+class SharedSessionDivided(unittest.TestCase):
+    """The shape #576 exists for: siblings dispatched under one session."""
+
+    def setUp(self):
+        self.sessions, self.missions, self.placed = placement_over(SHARED_SESSION)
+        self.totals = attribution.totals_by_mission(self.missions, self.placed)
+
+    def test_each_child_owns_the_transcript_it_declared(self):
+        self.assertEqual(self.placed.transcripts[ONE], "feat/child-one")
+        self.assertEqual(self.placed.transcripts[TWO], "feat/child-two")
+
+    def test_a_declared_transcript_reaches_a_mission_with_no_window(self):
+        # Neither child has a window. Under the session rule each would have
+        # had to declare the coordinator, and each would then have claimed the
+        # other. Declaration is rule one and needs no window.
+        self.assertEqual(
+            self.totals["feat/child-one"]["subagents"],
+            {
+                "requests": 2,
+                "input_tokens": 20,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 2000,
+                "output_tokens": 10,
+                "billable_tokens": 2030,
+            },
+        )
+        self.assertEqual(self.totals["feat/child-one"]["main_thread"]["requests"], 0)
+        self.assertTrue(self.totals["feat/child-one"]["partial_main_thread"])
+        self.assertEqual(self.totals["feat/child-one"]["agent_seconds"], 60.0)
+
+    def test_a_sibling_is_not_charged_for_the_other_child(self):
+        two = self.totals["feat/child-two"]
+        self.assertEqual(two["subagents"]["billable_tokens"], 23)
+        # Its own declared session, whole, on the same record.
+        self.assertEqual(two["main_thread"]["billable_tokens"], 4000)
+        self.assertFalse(two["partial_main_thread"])
+
+    def test_the_undeclared_remainder_is_placed_on_its_own_timestamps(self):
+        # The coordinator's own main thread belongs to neither child, and with
+        # no window anywhere it lands unassigned rather than on a sibling.
+        self.assertEqual(self.placed.unassigned, [ALPHA, BETA, GAMMA, DELTA])
+        self.assertEqual(self.placed.remainders[ALPHA].subagents, [])
+        unassigned = self.totals["<unassigned>"]
+        self.assertEqual(unassigned["main_thread"]["requests"], 7)
+        self.assertEqual(unassigned["subagents"]["requests"], 2)
+
+    def test_the_remainder_carries_only_what_is_left_of_it(self):
+        left = attribution.session_totals(self.placed.remainders[ALPHA])
+        self.assertEqual(left["total"]["billable_tokens"], 2170)
+        self.assertEqual(left["first_timestamp_seen"], "2026-01-01T00:10:00+00:00")
+
+    def test_every_transcript_lands_in_exactly_one_place(self):
+        placed = []
+        for mission in self.missions:
+            for parcel in self.placed.parcels_of(mission.branch):
+                placed.extend(item.relative for item in parcel.transcripts)
+        for uuid in list(self.placed.shared) + self.placed.unassigned:
+            parcel = self.placed.parcel_for(uuid)
+            placed.extend(item.relative for item in parcel.transcripts)
+        every = [
+            item.relative
+            for session in self.sessions.values()
+            for item in session.transcripts
+        ]
+        self.assertEqual(sorted(placed), sorted(every))
+        self.assertEqual(len(placed), len(set(placed)))
+
+
+class DeclaredTranscriptsPlaceEverything(unittest.TestCase):
+    def test_nothing_is_left_for_a_bucket_to_hold(self):
+        sessions, missions, placed = placement_over(DECLARED_ALL)
+        totals = attribution.totals_by_mission(missions, placed)
+        self.assertEqual(placed.unassigned, [])
+        self.assertEqual(dict(placed.shared), {})
+        self.assertEqual(totals["<unassigned>"]["total"]["billable_tokens"], 0)
+        self.assertEqual(totals["<shared>"]["total"]["billable_tokens"], 0)
+        self.assertEqual(
+            totals["feat/declared-contexts"]["total"]["billable_tokens"],
+            2170 + 2030 + 23,
+        )
+
+
+class MissingDeclaredTranscript(unittest.TestCase):
+    def test_a_transcript_no_root_holds_is_reported_rather_than_refused(self):
+        # E6: the host prunes transcripts and a committed registry outlives
+        # them. Refusing would make the registry unreadable a month from now.
+        found, _ = transcripts.discover(TRANSCRIPTS)
+        sessions = attribution.sessions_from(found)
+        gone = "ffffffff-0000-4000-8000-000000000006/subagents/agent-9999.jsonl"
+        missions = attribution.parse_registry(
+            {
+                "schema": 1,
+                "missions": [
+                    {"branch": "feat/pruned", "pr": 1, "transcripts": [gone, ONE]}
+                ],
+            }
+        )
+        placed = attribution.assign(sessions, missions)
+        self.assertEqual(placed.missing, [("feat/pruned", gone)])
+        self.assertEqual(placed.transcripts[ONE], "feat/pruned")
+
+
+class NoTranscriptsDeclaredChangesNothing(unittest.TestCase):
+    def test_the_original_registry_assigns_exactly_what_it_did(self):
+        # Section 9's own claim: a registry without the field assigns what it
+        # assigned before. Rules two and three see whole sessions, and no
+        # remainder is recorded.
+        sessions, _, placed = fixture_assignment()
+        self.assertEqual(dict(placed.remainders), {})
+        self.assertEqual(dict(placed.transcripts), {})
+        self.assertEqual(placed.missing, [])
+        for uuid in sessions:
+            self.assertIs(placed.parcel_for(uuid), sessions[uuid])
+
+class DeclarationOutranksTheWindow(unittest.TestCase):
+    """Rule one runs before rule three, and takes the transcript with it."""
+
+    def test_a_named_transcript_leaves_a_window_that_covers_its_session(self):
+        found, _ = transcripts.discover(TRANSCRIPTS)
+        sessions = attribution.sessions_from(found)
+        missions = attribution.parse_registry(
+            {
+                "schema": 1,
+                "missions": [
+                    {
+                        "branch": "feat/by-window",
+                        "pr": 1,
+                        "started_at": "2026-01-01T00:00:00Z",
+                        "ended_at": "2026-01-01T01:00:00Z",
+                    },
+                    {"branch": "feat/by-name", "pr": 2, "transcripts": [ONE]},
+                ],
+            }
+        )
+        placed = attribution.assign(sessions, missions)
+        self.assertEqual(placed.transcripts[ONE], "feat/by-name")
+        # The rest of the coordinator session still lands by its own
+        # timestamps, on the mission whose window covers it.
+        self.assertEqual(placed.assigned[ALPHA], ("feat/by-window", "window"))
+        totals = attribution.totals_by_mission(missions, placed)
+        self.assertEqual(totals["feat/by-name"]["total"]["billable_tokens"], 2030)
+        # The coordinator remainder's 2170 plus agent-2222's 23, and session
+        # beta's 8, which the same window also covers -- but not agent-1111's
+        # 2030, which rule one took before the window was ever consulted.
+        self.assertEqual(totals["feat/by-window"]["total"]["billable_tokens"], 2201)
+
+
+class OnePathUnderTwoRoots(unittest.TestCase):
+    def test_a_path_two_roots_hold_is_refused_rather_than_summed(self):
+        # A run may be given several transcript roots, and a declared path is
+        # relative to one of them. Summing both would charge the mission twice
+        # and read exactly like a mission that worked twice as long.
+        relative = f"{ALPHA}/subagents/agent-1111.jsonl"
+        twice = [
+            transcripts.Transcript(
+                f"{root}/{relative}", relative, ALPHA, "subagent", root
+            )
+            for root in ("C--src-quantick", "C--src-quantick-worktrees-one")
+        ]
+        sessions = attribution.sessions_from(twice)
+        missions = attribution.parse_registry(
+            {
+                "schema": 1,
+                "missions": [
+                    {"branch": "feat/x", "pr": 1, "transcripts": [relative]}
+                ],
+            }
+        )
+        with self.assertRaises(attribution.RegistryError):
+            attribution.assign(sessions, missions)
+
+class PlacementOwnsWhatItPlaced(unittest.TestCase):
+    def test_a_placement_carries_the_sessions_it_was_built_from(self):
+        # So no caller can hand it a second map that disagrees with the one
+        # the rules were applied to.
+        sessions, _, placed = fixture_assignment()
+        self.assertIs(placed.sessions, sessions)
+
+    def test_a_branch_index_is_built_while_placing_not_scanned_after(self):
+        sessions, missions, placed = placement_over(SHARED_SESSION)
+        self.assertEqual(placed.transcripts_of("feat/child-one"), [ONE])
+        self.assertEqual(placed.transcripts_of("feat/child-two"), [TWO])
+        self.assertEqual(placed.sessions_of("feat/child-two"), [EPSILON])
+        self.assertEqual(placed.sessions_of("feat/child-one"), [])
+        # An unknown branch answers empty without being recorded.
+        self.assertEqual(placed.sessions_of("feat/never-ran"), [])
+        self.assertEqual(placed.transcripts_of("feat/never-ran"), [])
+        self.assertEqual(
+            sorted(placed.transcripts_of(m.branch) for m in missions),
+            sorted([[ONE], [TWO]]),
+        )
 
 
 if __name__ == "__main__":

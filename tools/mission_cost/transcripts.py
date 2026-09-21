@@ -251,13 +251,32 @@ def read(path, relative, session, kind, root=""):
     return item
 
 
-def _classify(parts, name):
-    """Return ``(session, kind)`` for a transcript path, or ``None``."""
-    if not parts:
-        return name[: -len(".jsonl")], "main"
-    if len(parts) >= 2 and parts[1] == "subagents":
-        return parts[0], "subagent"
-    return None
+def classify(relative):
+    """Return ``(session, kind)`` for a relative transcript path, or ``None``.
+
+    The one owner of section 2's layout rule, asked by both of its callers:
+    :func:`locate`, of a path it walked to, and ``attribution``, of a path a
+    person wrote into the registry. It refuses by returning ``None`` rather
+    than raising, because the two callers want different words for the same
+    refusal -- one skips the file, the other names the registry line that
+    cannot address a transcript.
+
+    A session with no name is refused along with the rest: ``.jsonl`` at the
+    root would otherwise be a main thread of the empty session, and a registry
+    could declare it.
+    """
+    if not isinstance(relative, str) or not relative.endswith(".jsonl"):
+        return None
+    parts = relative.split("/")
+    if any(part in ("", ".", "..") or "\\" in part for part in parts):
+        return None
+    if len(parts) == 1:
+        session, kind = parts[0][: -len(".jsonl")], "main"
+    elif len(parts) >= 3 and parts[1] == "subagents":
+        session, kind = parts[0], "subagent"
+    else:
+        return None
+    return (session, kind) if session else None
 
 
 Located = collections.namedtuple(
@@ -273,8 +292,8 @@ def locate(root):
     its own fold -- ``shape.py``, which counts only the requests inside a
     window -- would otherwise pay for :func:`discover`'s fold as well and throw
     it away, reading every line of every file twice. Splitting the walk out
-    lets each file be read exactly once while ``_classify`` stays the one owner
-    of "which file is a main thread and which is a subagent".
+    lets each file be read exactly once while :func:`classify` stays the one
+    owner of "which file is a main thread and which is a subagent".
 
     Returns ``(located, skipped)`` with both ordered by relative path, so two
     runs over one directory agree. Each entry remembers the name of the root it
@@ -292,7 +311,7 @@ def locate(root):
             if not filename.endswith(".jsonl"):
                 continue
             relative = "/".join(parts + [filename])
-            placed = _classify(parts, filename)
+            placed = classify(relative)
             if placed is None:
                 skipped.append(relative)
                 continue

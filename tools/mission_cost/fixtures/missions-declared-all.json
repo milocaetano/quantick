@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "missions": [
+    {
+      "branch": "feat/declared-contexts",
+      "pr": 9201,
+      "sessions": [],
+      "transcripts": [
+        "aaaaaaaa-0000-4000-8000-000000000001.jsonl",
+        "aaaaaaaa-0000-4000-8000-000000000001/subagents/agent-1111.jsonl",
+        "aaaaaaaa-0000-4000-8000-000000000001/subagents/agent-2222.jsonl"
+      ],
+      "started_at": "2026-01-01T00:00:00Z",
+      "ended_at": "2026-01-01T01:00:00Z",
+      "group": "after",
+      "note": "Every context it owned, named outright: the unplaced share of its own window is zero."
+    },
+    {
+      "branch": "feat/declared-siblings",
+      "pr": 9202,
+      "sessions": [
+        "bbbbbbbb-0000-4000-8000-000000000002",
+        "cccccccc-0000-4000-8000-000000000003",
+        "dddddddd-0000-4000-8000-000000000004",
+        "eeeeeeee-0000-4000-8000-000000000005"
+      ],
+      "transcripts": [],
+      "started_at": null,
+      "ended_at": null,
+      "group": "before",
+      "note": "Everything else in the fixture, so nothing is left for a bucket to hold."
+    }
+  ]
+}

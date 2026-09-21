@@ -17,6 +17,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURES = os.path.join(HERE, "fixtures")
 TRANSCRIPTS = os.path.join(FIXTURES, "transcripts")
 REGISTRY = os.path.join(FIXTURES, "missions.json")
+DECLARED_ALL = os.path.join(FIXTURES, "missions-declared-all.json")
+ALPHA = "aaaaaaaa-0000-4000-8000-000000000001"
 MEASURE = os.path.join(HERE, "measure.py")
 
 BAIT = ("MUST-NOT-APPEAR", "SHOULD-NOT-BE-READ")
@@ -301,6 +303,7 @@ class Notes(unittest.TestCase):
                 branch="feat/no-window",
                 pr=None,
                 sessions=(),
+                transcripts=(),
                 started_at=None,
                 ended_at=None,
                 group=None,
@@ -561,6 +564,113 @@ class Delivery(unittest.TestCase):
         ledger = os.path.join(FIXTURES, "read-cost-ledger.md")
         self.assertEqual(delivery.read_cost_row(ledger, 9001), 17251)
         self.assertIsNone(delivery.read_cost_row(ledger, 4242))
+
+class DeclaredTranscripts(unittest.TestCase):
+    """Section 2 rule one, through the one documented command."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.found = json.loads(
+            run(
+                "report",
+                "--transcripts",
+                TRANSCRIPTS,
+                "--registry",
+                DECLARED_ALL,
+                "--no-gh",
+            )
+        )
+        cls.missions = {entry["branch"]: entry for entry in cls.found["missions"]}
+
+    def test_a_mission_that_declares_its_transcripts_leaves_nothing_unplaced(self):
+        # #576's third acceptance criterion, read off the report the method
+        # names: everything measured reached a mission.
+        self.assertEqual(self.found["unplaced"]["share_of_billable_tokens"], 0.0)
+        self.assertEqual(self.found["unplaced"]["billable_tokens"], 0)
+        self.assertEqual(self.found["unplaced"]["shared"]["sessions"], [])
+        self.assertEqual(self.found["unplaced"]["unassigned"]["sessions"], [])
+
+    def test_each_declared_transcript_names_the_rule_that_placed_it(self):
+        self.assertEqual(
+            self.missions["feat/declared-contexts"]["transcripts"],
+            [
+                {"transcript": f"{ALPHA}.jsonl", "method": "declared"},
+                {
+                    "transcript": f"{ALPHA}/subagents/agent-1111.jsonl",
+                    "method": "declared",
+                },
+                {
+                    "transcript": f"{ALPHA}/subagents/agent-2222.jsonl",
+                    "method": "declared",
+                },
+            ],
+        )
+
+    def test_a_mission_that_declared_no_transcript_reports_an_empty_list(self):
+        siblings = self.missions["feat/declared-siblings"]
+        self.assertEqual(siblings["transcripts"], [])
+        self.assertEqual(len(siblings["sessions"]), 4)
+
+    def test_a_transcript_placed_on_a_mission_is_not_also_a_session_of_it(self):
+        # The coordinator session is divided, so naming it under `sessions`
+        # would charge the mission with the whole of it a second time.
+        self.assertEqual(self.missions["feat/declared-contexts"]["sessions"], [])
+
+    def test_no_transcript_content_survives_a_declared_placement(self):
+        raw = run(
+            "report",
+            "--transcripts",
+            TRANSCRIPTS,
+            "--registry",
+            DECLARED_ALL,
+            "--no-gh",
+        ).decode("ascii")
+        for bait in BAIT:
+            self.assertNotIn(bait, raw)
+
+
+class MissingDeclaredTranscriptNote(unittest.TestCase):
+    def test_a_declared_transcript_no_root_holds_is_a_typed_note(self):
+        gone = "ffffffff-0000-4000-8000-000000000006/subagents/agent-9999.jsonl"
+        with tempfile.TemporaryDirectory() as folder:
+            registry = os.path.join(folder, "missions.json")
+            with open(registry, "w", encoding="utf-8") as stream:
+                json.dump(
+                    {
+                        "schema": 1,
+                        "missions": [
+                            {
+                                "branch": "feat/pruned",
+                                "pr": None,
+                                "transcripts": [gone],
+                                "started_at": "2026-01-01T00:00:00Z",
+                                "ended_at": "2026-01-01T01:00:00Z",
+                            }
+                        ],
+                    },
+                    stream,
+                )
+            found = json.loads(
+                run(
+                    "report",
+                    "--transcripts",
+                    TRANSCRIPTS,
+                    "--registry",
+                    registry,
+                    "--no-gh",
+                )
+            )
+        self.assertEqual(
+            found["notes"],
+            [
+                {
+                    "branch": "feat/pruned",
+                    "kind": "declared_transcript_missing",
+                    "detail": gone,
+                }
+            ],
+        )
+        self.assertIn("declared_transcript_missing", measure.NOTE_KINDS)
 
 
 if __name__ == "__main__":

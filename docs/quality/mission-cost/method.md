@@ -40,19 +40,39 @@ override is the authority.
 
 ## 2. How a transcript is assigned to a mission
 
-The unit of assignment is a **session**, identified by the session UUID that
-names the transcript file or its directory. A session is never split.
+A transcript is **addressed by its path** under a transcript root, and that path
+names its session: `<uuid>.jsonl` is a session's main thread and
+`<uuid>/subagents/<name>.jsonl` is one of its subagents. A path the layout
+cannot address is not a transcript, wherever it is written down.
 
-Two rules, applied in order:
+The unit of assignment is a **session**, and inference never divides one. A
+session is divided only where a record names one of its transcripts outright,
+because then a person wrote down which context belongs to which mission and no
+guess is involved.
 
-1. **Declared.** A registry record may list `sessions: ["<uuid>", …]`. Every
-   listed session — its root `<uuid>.jsonl` and every
-   `<uuid>/subagents/agent-*.jsonl` beneath it — is assigned to that mission.
-   Assignment method `declared`. A session declared by two missions is a
-   registry error and the harness refuses the run.
-2. **Window-inferred.** A session that no record declares is a *candidate* for
-   every mission whose work window overlaps the session's own
-   `[first timestamp, last timestamp]` interval by any amount. Then:
+Three rules, applied in order, each to what the rule before it left:
+
+1. **Declared transcript.** A registry record may list
+   `transcripts: ["<uuid>/subagents/agent-abc123.jsonl", …]`. Every located
+   transcript whose path is one of them is assigned to that mission, whatever
+   its session and whatever any window says. Assignment method `declared`.
+   A transcript declared by two missions is a registry error and the harness
+   refuses the run, exactly as a session declared twice is; so is a transcript
+   whose session a *different* mission declares, and so is a path the layout
+   above cannot address, and so is a path that more than one of the run's
+   transcript roots holds, since the declaration cannot say which of them it
+   meant and summing both would charge the mission twice. A declared transcript
+   that *no* transcript root holds is reported as a note rather than refused: a
+   host prunes transcripts (E6) and a committed registry outlives them.
+2. **Declared session.** A registry record may list `sessions: ["<uuid>", …]`.
+   Every listed session — its root `<uuid>.jsonl` and every
+   `<uuid>/subagents/agent-*.jsonl` beneath it that rule 1 did not already
+   place — is assigned to that mission. Assignment method `declared`. A session
+   declared by two missions is a registry error and the harness refuses the
+   run.
+3. **Window-inferred.** What is left of a session that no record declares is a
+   *candidate* for every mission whose work window overlaps that remainder's
+   own `[first timestamp, last timestamp]` interval by any amount. Then:
    - exactly one candidate → assigned to it, method `window`;
    - more than one candidate → assigned to none, counted in the **shared**
      bucket, with the candidate missions named;
@@ -63,10 +83,21 @@ a reader can always see how much of the measured cost the attribution failed to
 place. A report that places half its tokens is not a better report than one that
 says so.
 
-**Subagents inherit.** A subagent transcript is assigned by its parent session
-directory. Where a session directory has no root transcript, the directory name
-is still the session UUID and the same two rules apply to the subagent files'
-own timestamps.
+**Subagents inherit, unless they are named.** A subagent transcript is assigned
+by its parent session directory. Where a session directory has no root
+transcript, the directory name is still the session UUID and the rules above
+apply to the subagent files' own timestamps.
+
+**Why a transcript may be named at all.** The session stopped being the thing a
+mission owns. Missions are dispatched as agents under one coordinator session,
+so several missions share a session directory and their transcripts sit side by
+side beneath it; and a mission that caps a context and hands off to a fresh one
+owns several transcripts rather than one. Declaring the session would charge
+such a mission with its siblings' cost, which is worse than the shared bucket,
+because the shared bucket at least says it failed. Declaring the transcript is
+exact. The remainder — typically the coordinator's own main thread — keeps rule
+3 on its own timestamps and usually lands unplaced, which is the honest answer:
+the coordinator's context is not any one child's cost.
 
 ## 3. Which `usage` fields count
 
@@ -193,6 +224,9 @@ is not a result this method produces.
       "branch": "feat/example",
       "pr": 123,
       "sessions": ["8f14e45f-ceea-467a-9d1a-000000000000"],
+      "transcripts": [
+        "3fa85f64-5717-4562-b3fc-2c963f66afa6/subagents/agent-abc123.jsonl"
+      ],
       "started_at": null,
       "ended_at": null,
       "group": "before",
@@ -202,11 +236,20 @@ is not a result this method produces.
 }
 ```
 
-`sessions` may be empty, and then section 2's window rule applies. `started_at`
+`sessions` and `transcripts` may each be empty or absent, and then section 2's
+window rule applies to whatever they left. A record may carry both: a mission
+that owned one session outright and one context inside another is an ordinary
+shape, not a contradiction. A `transcripts` entry is the path exactly as
+section 2 addresses it, relative to a transcript root and never carrying the
+root's own name, because a session UUID is unique across roots. `started_at`
 and `ended_at` are `null` unless the default window is wrong. `group` is
 `"before"`, `"after"` or `null`. Every field is written by a person or by a
 mission recording itself; nothing infers a registry entry from transcript
 content.
+
+The schema number does not move for `transcripts`. The field is additive: a
+registry without it parses and assigns exactly as it did before, which is what
+makes the amendment below invalidate no earlier reading.
 
 ## 7. Determinism
 
@@ -264,3 +307,26 @@ a reading from this harness is allowed to claim.
 - **E11 — The harness measures cost, never quality.** Nothing here says whether
   the work was any good. #563's C5 counter-metric exists for that reason and is
   not this method's business.
+- **E12 — A declared transcript is a hand-written claim.** Nothing checks that
+  the named file is the mission's work; the harness checks only that the path is
+  addressable, that no two missions claim it, and that it exists where the run
+  can see it. E2's boundary is why: `cwd` and `gitBranch` would corroborate the
+  claim and are not read. A wrong path is therefore a wrong reading that looks
+  right, and the only defence is that the mission writes its own entry while it
+  runs rather than being reconstructed afterwards.
+- **E13 — Declaring part of a session raises the unplaced share.** The
+  remainder is placed on its own timestamps, and a coordinator's main thread
+  overlapping many windows lands in the shared bucket. That cost is real and it
+  belongs to nobody in particular, so it is reported rather than divided — but
+  it counts against `MAX_UNPLACED_SHARE` for every group whose window it
+  touches. A campaign that declares the children and not the coordinator is
+  measuring the children exactly and the campaign loosely, on purpose.
+
+## 9. Amendments
+
+Each row is a change to this document after a reading had been taken under the
+version before it, with what that change invalidated.
+
+| Date | Change | Readings invalidated |
+| --- | --- | --- |
+| 2026-09-21 | Section 2 gains rule 1, declared transcripts; section 6 gains the `transcripts` field; E12 and E13 added. [#576](https://github.com/milocaetano/quantick/issues/576) | **None.** The change adds a rule and moves no threshold. Rules 2 and 3 are the previous two rules verbatim, and they see the whole of every session in a registry that declares no transcript, so a registry without the field assigns exactly what it assigned before. `docs/quality/velocity/baseline.md` (#565) and `docs/quality/velocity/ranking.md` (#566) were both read from such a registry and stand unchanged. The harness's pre-existing offline suite, unaltered by this amendment, is the executable form of that claim. |

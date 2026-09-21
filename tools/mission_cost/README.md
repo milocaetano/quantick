@@ -167,10 +167,42 @@ runs on `python3`, which is the real interpreter on a runner.
 ## The registry
 
 `docs/quality/mission-cost/missions.json` says which branch and pull request a
-mission is, and may declare its sessions outright. A declared session is exact.
-A session nobody declared is placed by its timestamps, and a session two
-missions could claim goes to the shared bucket with both names on it — never
-divided, because timestamps cannot divide it fairly.
+mission is, and may declare what it owns outright — whole sessions, individual
+transcripts, or both:
+
+```json
+{
+  "branch": "fix/example",
+  "pr": 123,
+  "sessions": [],
+  "transcripts": ["3fa85f64-5717-4562-b3fc-2c963f66afa6/subagents/agent-abc.jsonl"],
+  "started_at": null,
+  "ended_at": null,
+  "group": null,
+  "note": "why this mission is in this group"
+}
+```
+
+Both are exact and both report method `declared`. `transcripts` exists because
+the session stopped being the thing a mission owns: missions are dispatched as
+agents under one coordinator session, so siblings share a session directory,
+and a mission that caps a context and hands off owns several transcripts.
+Declaring the session would charge a mission with its siblings' cost. A path is
+spelled the way the harness addresses it — `<uuid>.jsonl` or
+`<uuid>/subagents/<name>.jsonl`, relative to a transcript root and never
+carrying the root's own name.
+
+Two missions claiming one transcript, one claiming a transcript whose session
+another claims, and a path that more than one of the run's transcript roots
+holds are each a registry error and the run is refused. A declared transcript
+*no* root holds is a `declared_transcript_missing` note instead, because the
+host prunes transcripts and a committed registry outlives them.
+
+What nobody declared is placed by its timestamps, and a session two missions
+could claim goes to the shared bucket with both names on it — never divided,
+because timestamps cannot divide it fairly. The undeclared remainder of a
+partly declared session is placed the same way, on its own timestamps, so a
+coordinator's main thread stays out of its children's totals.
 
 The report always prints the shared and unassigned buckets with their full
 totals. A report that could not place half its tokens says so; that is the
@@ -183,7 +215,7 @@ point of the bucket.
 | `transcripts.py` | the privacy boundary: discovery, the five-field record, the 300-second idle bound, and the one rule for reading an instant |
 | | `locate` walks and classifies without opening a file; `discover` is `locate` plus the fold. A caller with its own fold — `shape.py`'s windowed one — takes `locate`, so no transcript is parsed twice |
 | `canonical.py` | section 7's byte contract: sorted keys, ASCII, LF, one trailing newline |
-| `attribution.py` | the registry, the two assignment rules, and the main/subagent split |
+| `attribution.py` | the registry, the three assignment rules, and the main/subagent split |
 | `dispersion.py` | quartiles, and the registered rule for when a fall counts as a reduction |
 | `delivery.py` | `gh` timings and the read-cost row, every call through an injectable runner |
 | `measure.py` | the command, the report and the comparison |

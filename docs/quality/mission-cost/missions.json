@@ -783,6 +783,18 @@
       "ended_at": "2026-09-21T03:12:41Z",
       "group": null,
       "note": "baseline population of #565; base campaign/mission-velocity"
+    },
+    {
+      "branch": "fix/mission-registry-transcripts",
+      "pr": 578,
+      "sessions": [],
+      "transcripts": [
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a43fda0a4f1148516.jsonl"
+      ],
+      "started_at": null,
+      "ended_at": null,
+      "group": null,
+      "note": "T6 of #563, recording itself while it ran. Dispatched as an agent under a coordinator session, so it names its transcript rather than that session: the first record written under section 2 rule one."
     }
   ]
 }

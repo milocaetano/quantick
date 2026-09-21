@@ -130,7 +130,12 @@ class Pulls:
 # baseline run of #565 above all -- can exclude the missions whose window never
 # resolved instead of reading prose and guessing. A mission with an unresolved
 # window otherwise reports near-zero cost and quietly drags a group median down.
-NOTE_KINDS = ("gh_lookup_failed", "no_window", "partial_window")
+NOTE_KINDS = (
+    "gh_lookup_failed",
+    "no_window",
+    "partial_window",
+    "declared_transcript_missing",
+)
 
 
 def _note(branch, kind, detail):
@@ -167,8 +172,8 @@ def resolve_windows(missions, pulls):
                 _note(
                     mission.branch,
                     "no_window" if both else "partial_window",
-                    "no usable window, so only declared sessions reach this "
-                    "mission: a window needs both of its ends",
+                    "no usable window, so only what this mission declares "
+                    "reaches it: a window needs both of its ends",
                 )
             )
     return resolved, notes
@@ -193,7 +198,13 @@ def build_report(roots, registry_path, repo, use_gh, as_of):
     pulls = Pulls(use_gh, as_of)
     missions, notes = resolve_windows(missions, pulls)
     placement = ATTRIBUTION.assign(sessions, missions)
-    totals = ATTRIBUTION.totals_by_mission(sessions, missions, placement)
+    totals = ATTRIBUTION.totals_by_mission(missions, placement)
+    # E6: a host prunes transcripts and a committed registry outlives them, so
+    # a declared path that no root holds is said rather than refused.
+    notes.extend(
+        _note(branch, "declared_transcript_missing", path)
+        for branch, path in placement.missing
+    )
 
     reported = []
     for mission in missions:
@@ -216,19 +227,30 @@ def build_report(roots, registry_path, repo, use_gh, as_of):
                     {"session": uuid, "method": placement.assigned[uuid][1]}
                     for uuid in placement.sessions_of(mission.branch)
                 ],
+                "transcripts": [
+                    {"transcript": path, "method": ATTRIBUTION.DECLARED}
+                    for path in placement.transcripts_of(mission.branch)
+                ],
                 "delivery": delivery_for(mission, repo, pulls),
             }
         )
         reported.append(entry)
 
+    # `parcel_for`, not `sessions[uuid]`: where a record named part of a
+    # session, what is unplaced is the part nobody named, and charging the
+    # buckets with the whole of it would count the named part twice.
     shared = dict(totals[ATTRIBUTION.SHARED])
     shared["sessions"] = [
-        dict(ATTRIBUTION.session_totals(sessions[uuid]), candidates=candidates)
+        dict(
+            ATTRIBUTION.session_totals(placement.parcel_for(uuid)),
+            candidates=candidates,
+        )
         for uuid, candidates in placement.shared.items()
     ]
     unassigned = dict(totals[ATTRIBUTION.UNASSIGNED])
     unassigned["sessions"] = [
-        ATTRIBUTION.session_totals(sessions[uuid]) for uuid in placement.unassigned
+        ATTRIBUTION.session_totals(placement.parcel_for(uuid))
+        for uuid in placement.unassigned
     ]
 
     measured = sum(item.totals()["billable_tokens"] for item in found)

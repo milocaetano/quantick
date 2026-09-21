@@ -526,7 +526,7 @@ def contexts(roots, since, until):
     throw that fold away and read the same lines again -- two passes over a
     directory that is append-only and never pruned. ``locate`` walks and
     classifies without opening anything, so each file is read exactly once and
-    ``transcripts._classify`` stays the one owner of the layout rule.
+    ``transcripts.classify`` stays the one owner of the layout rule.
     """
     rows = []
     for root in roots:

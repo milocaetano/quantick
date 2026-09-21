@@ -782,6 +782,18 @@
       "pr": 569,
       "sessions": [],
       "started_at": "2026-09-21T01:00:12Z"
+    },
+    {
+      "branch": "fix/mission-registry-transcripts",
+      "ended_at": null,
+      "group": null,
+      "note": "T6 of #563, recording itself while it ran. Dispatched as an agent under a coordinator session, so it names its transcript rather than that session: the first record written under section 2 rule one.",
+      "pr": 578,
+      "sessions": [],
+      "started_at": null,
+      "transcripts": [
+        "c0051ae6-c7d8-430b-9a78-18dbe264eaf6/subagents/agent-a43fda0a4f1148516.jsonl"
+      ]
     }
   ],
   "schema": 1
