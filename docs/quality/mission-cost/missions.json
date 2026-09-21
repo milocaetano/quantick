@@ -861,6 +861,18 @@
           "role": "subagent",
           "started_at": "2026-09-21T17:50:58Z",
           "ended_at": "2026-09-21T18:05:35Z"
+        },
+        {
+          "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
+          "role": "subagent",
+          "started_at": "2026-09-21T18:06:13Z",
+          "ended_at": "2026-09-21T18:49:39Z"
+        },
+        {
+          "session": "c0051ae6-c7d8-430b-9a78-18dbe264eaf6",
+          "role": "subagent",
+          "started_at": "2026-09-21T18:52:45Z",
+          "ended_at": null
         }
       ],
       "started_at": null,
