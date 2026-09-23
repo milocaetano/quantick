@@ -43,6 +43,8 @@ cargo build --workspace
 cargo test --workspace
 ```
 
+Between edits, `cargo check -p <crate>`, `cargo test -p <crate> <filter>` and `cargo test -p quantick-guards` are the fast loop; `check` never stands in for `clippy`. CI also runs `sh .claude/hooks/guardrails_test.sh`, `ruff check --select F` over `tools/mt5/` and `bridge/mt5/`, `python3 tools/mt5/test_export_session.py`, `python3 tools/outside_score/test_measure.py`, `python3 bridge/mt5/tests/test_*.py`, and `cargo deny check bans licenses` when `Cargo.lock` moves; run what your change touches and watch `gh pr checks <n> --watch`. The edit-time guard hook is silent until guards are built in that worktree, so silence is not a pass.
+
 There is no `-D warnings` on that clippy line, and its absence is deliberate.
 The lint levels live in `[workspace.lints]` in the root `Cargo.toml`, which
 every crate inherits, so a warning is an error for every cargo command —

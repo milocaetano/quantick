@@ -90,7 +90,7 @@
 # normative-contract scope and its mission-evidence exclusion.
 # +44 to say the budget leaves skills to their per-directory ceilings, and
 # +97 to say `/implement` owes one code-review instead of the mission's.
-CLAUDE.md 8680
+CLAUDE.md 6541
 #
 # +55 for `quantick-feed`. Generated, not written: five rows moved from
 # `feed/mod.rs`-style paths relative to the application's source root to the
@@ -159,7 +159,9 @@ CLAUDE.md 8680
 # the paper account, so it got a crate below all three rather than an edge
 # into the paper account for anyone who needs a timezone. One node in the
 # pure-domain group, the two edges that reach it, one row.
-AGENTS.md 4523
+# +38 to name CONTRIBUTING.md as the verification loop's owner, which left
+# CLAUDE.md for the skills that ship.
+AGENTS.md 4561
 
 # What a session's instructions weigh in total: every ceiling above, plus the
 # measured bytes of every tracked file too small to need one. Raising it means
@@ -253,5 +255,5 @@ docs/workflow/delivery.md 11361
 .claude/skills/implement/ 11467
 
 # Skills left the budget when the guard began charging them per invocation:
-# 250,150 with every skill summed on main, 75,698 for what every session pays.
-!budget 75698
+# 250,150 with every skill summed on main, 73,597 for what every session pays, after the process rules left CLAUDE.md for the skills.
+!budget 73597

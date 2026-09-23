@@ -1,6 +1,6 @@
 # AGENTS.md — quantick for AI agents
 
-The crate map. [`CLAUDE.md`](CLAUDE.md) owns the rules and verification loop,
+The crate map. [`CLAUDE.md`](CLAUDE.md) owns the rules, [`CONTRIBUTING.md`](CONTRIBUTING.md) the verification loop,
 [`docs/agentic-development.md`](docs/agentic-development.md) their reasons,
 [`docs/README.md`](docs/README.md) the docs index.
 
