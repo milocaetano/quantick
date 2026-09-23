@@ -26,10 +26,11 @@ Do: <change and essential contract>.
 Touch: <paths/symbols>.
 Done: <verifiable acceptance>.
 Check: <known checks or discovery location; performance if relevant>.
+Review: <low|medium|high; only when the request starts with small|medium|high>.
 No: <essential exclusion; optional>.
 ```
 
-Use concise, unambiguous English. Omit empty optional fields. Never invent commands or choose review depth.
+Use concise, unambiguous English. Omit empty optional fields. Never invent commands. Set `Review:` only from a leading `small` (low), `medium` or `high`; otherwise omit it.
 
 # Output
 Recheck and compact the saved plan. Ask if a blocking decision remains; otherwise output only:

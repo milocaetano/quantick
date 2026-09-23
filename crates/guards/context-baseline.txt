@@ -246,9 +246,11 @@ docs/workflow/delivery.md 11361
 
 # `implement`, a new explicit-only skill: its SKILL.md loads on `/implement`,
 # one reference when the goal runs and one at the PR stage; `execute.md`
-# carries the repository's `implement` tier and code-review marker. Its Codex adapter
+# carries the repository's `implement` tier and code-review marker, and the
+# review level comes from a leading `small|medium|high` or a short rubric
+# instead of the code-review skill's last-used level. Its Codex adapter
 # points at this copy instead of duplicating it.
-.claude/skills/implement/ 11167
+.claude/skills/implement/ 11467
 
 # Skills left the budget when the guard began charging them per invocation:
 # 250,150 with every skill summed on main, 75,698 for what every session pays.
