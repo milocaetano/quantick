@@ -989,6 +989,28 @@ set_tier "$root/wt" "smallish"
 run "an unrecognised tier grants nothing" \
     pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "delivery-review-ok"
 
+# --- pr-gate: the implement tier --------------------------------------------
+#
+# One review, owed before any PR, draft included; none of the mission's.
+set_tier "$root/wt" implement
+set_marker arch-review-ok ""
+set_marker code-review-ok ""
+run "an implement branch cannot open a draft before code-review" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --draft --fill")" deny "code-review-ok"
+set_marker code-review-ok "$(marker_key "$root/wt")"
+run "an implement branch opens its PR on code-review alone" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" silent
+run "an implement branch goes ready on code-review alone" \
+    pr-gate "$(json_bash "$root/wt" "gh pr ready 7")" silent
+run "an implement branch still leaves the merge to main to the user" \
+    pr-gate "$(json_bash "$root/wt" "gh pr merge 7 --squash")" deny "reserved exclusively for the user"
+set_marker code-review-ok "stale"
+run "a code-review of another change does not count" \
+    pr-gate "$(json_bash "$root/wt" "gh pr create --fill")" deny "code-review-ok"
+set_marker code-review-ok ""
+set_marker arch-review-ok "$(marker_key "$root/wt")"
+set_tier "$root/wt" small
+
 # The bound, on a branch that really is too big. Two cases rather than one: the
 # first pins that the exemption lapses, the second that it lapsed because the
 # size was *measured*. Without the second, a `declared_tier` that had stopped

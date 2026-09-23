@@ -94,7 +94,7 @@ impl std::fmt::Display for Unmeasured {
 
 /// One recorded ceiling, with the position that lets [`Policy::tighten`]
 /// rewrite it.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Entry {
     /// Workspace-relative path, with forward slashes.
     pub path: String,
@@ -107,7 +107,7 @@ pub struct Entry {
 
 /// The cap on the sum of every recorded ceiling, with the position that lets
 /// [`Policy::tighten`] rewrite it.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Budget {
     /// The signed total.
     pub allowed: usize,
@@ -408,6 +408,19 @@ impl Policy {
         counts: &[(String, usize)],
         unrecorded: usize,
     ) -> Result<Vec<String>, String> {
+        self.tighten_where(root, counts, unrecorded, &|_| true)
+    }
+
+    /// [`Policy::tighten`] for a ratchet whose budget covers only some of its
+    /// entries: every entry is still tightened, but only those `budgeted`
+    /// accepts count toward the budget written down.
+    pub fn tighten_where(
+        &self,
+        root: &Path,
+        counts: &[(String, usize)],
+        unrecorded: usize,
+        budgeted: &dyn Fn(&str) -> bool,
+    ) -> Result<Vec<String>, String> {
         let recorded = self.baseline(root)?;
         let file = root.join(self.baseline_file);
         let text = fs::read_to_string(&file)
@@ -429,14 +442,20 @@ impl Policy {
                 // spends it. The check reports it as stale; dropping it from
                 // the total here would let a deleted file's budget quietly
                 // finance the next raise.
-                tightened_total += entry.ceiling;
+                if budgeted(&entry.path) {
+                    tightened_total += entry.ceiling;
+                }
                 continue;
             };
             if entry.ceiling.saturating_sub(*actual) <= self.slack {
-                tightened_total += entry.ceiling;
+                if budgeted(&entry.path) {
+                    tightened_total += entry.ceiling;
+                }
                 continue;
             }
-            tightened_total += *actual;
+            if budgeted(&entry.path) {
+                tightened_total += *actual;
+            }
             applied.push(format!("  {}: {} -> {actual}", entry.path, entry.ceiling));
             lines[entry.line] = rewrite(&lines[entry.line], &entry.path, *actual);
         }

@@ -81,6 +81,9 @@ DELIVERY_MARKER_NAME="delivery-review-ok"
 # Completion is independent of finding disposition. This third review record
 # prefixes the shared key with its branch, so branch reuse cannot inherit it.
 AI_MARKER_NAME="ai-review-complete"
+# The one review an `implement` branch owes, recorded after the code-review
+# skill ran over the change and before any PR, draft included, is opened.
+IMPLEMENT_MARKER="code-review-ok"
 
 # The ignored local goal is mission bookkeeping rather than product change.
 # Goal archives are no longer created: durable summaries and reports live on
@@ -128,6 +131,9 @@ READ_COST_ADVISORY_SECONDS=10
 # anything else is treated as no declaration at all: an unrecognised word must
 # never be the difference between a graded branch and an ungraded one.
 TIERS="small medium high max"
+# Not a mission tier: the `implement` skill's goal declares it in the same file,
+# and it replaces the mission's reviews with a single code-review.
+IMPLEMENT_TIER="implement"
 # Changed lines — insertions plus deletions against origin/main — a `small`
 # branch may carry and keep its exemption. A fix, a tweak or a paragraph of
 # prose sits well under it; past it a branch carries enough separate asks that
@@ -333,7 +339,7 @@ declared_tier() {
     # lives — the suite and the mission skill are both checked against it. A
     # second exempt tier should not have to reintroduce validation that was
     # deleted for looking unused.
-    for tier_known in $TIERS; do
+    for tier_known in $TIERS $IMPLEMENT_TIER; do
         if [ "$tier" = "$tier_known" ]; then
             printf '%s' "$tier"
             return 0
@@ -792,6 +798,22 @@ pr_gate() {
     dir=$(effective_dir "$command" "$(normalize_path "$(json_string_field cwd)")")
     [ -d "$dir" ] || exit 0
 
+    # An `implement` branch trades the mission's reviews for one code-review,
+    # owed before any PR opens, draft included. Green CI and the user's own
+    # merge are what protect `main` past it.
+    if [ "$(declared_tier "$dir")" = "$IMPLEMENT_TIER" ]; then
+        implement_base=$(review_base "$dir") || deny '"The review base is invalid or unavailable, so the code-review cannot be matched to this change."'
+        implement_key=$(review_key "$dir")
+        [ -n "$implement_key" ] || implement_key=$(git -C "$dir" rev-parse HEAD 2>/dev/null) || exit 0
+        require_marker "$dir" "$implement_key" "$IMPLEMENT_MARKER" \
+            "an implement branch opens its PR only after code-review" \
+            "Run the code-review skill over \`git diff $implement_base...HEAD\` and fix its valid findings"
+        if [ "$gate_action" = merge ] && [ "$implement_base" = "origin/$MAIN_BRANCH" ]; then
+            deny '"Merge to main is reserved exclusively for the user; do not enable auto-merge or enqueue it."'
+        fi
+        pass_pr_gate "$dir"
+    fi
+
     if [ "$gate_action" = create ]; then
         gate_statement=$(gh_statement "$command" "gh pr create")
         if draft_flag "$gate_statement"; then
@@ -995,6 +1017,10 @@ commit_reminder() {
         else
             context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base and has outgrown its \`small\` tier: it carries $small_size changed lines against the $SMALL_TIER_MAX_CHANGED_LINES exemption, so non-draft PR creation needs architecture, delivery and AI evidence. Raise the tier in the goal file and run all reviews.\""
         fi
+    fi
+
+    if [ "$(declared_tier "$dir")" = "$IMPLEMENT_TIER" ]; then
+        context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base at the \`implement\` tier, so opening its PR needs a current \`$IMPLEMENT_MARKER\` from the code-review skill.\""
     fi
 
     context "\"Branch \`$branch\` is $ahead commit(s) ahead of $reminder_base. Non-draft PR creation needs current architecture, delivery and AI evidence; publish a draft first, then run all applicable reviews on the final branch.\""

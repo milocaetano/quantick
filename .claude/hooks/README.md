@@ -576,6 +576,18 @@ branch that was small and still deserved grading, and nothing here could. The
 bound holds the blast radius down to what the tier's honest use already allows.
 It is a limit on the damage, not a proof of good faith.
 
+## The `implement` tier
+
+The `implement` skill's goal writes `<branch> implement` into the same
+`mission-tier` file. It is not a mission tier and is kept out of `TIERS`, so the
+mission loops and the `small` bound never see it. A branch that declares it owes
+exactly one review: `code-review-ok`, the exact-diff key recorded after the
+code-review skill ran, required before **any** PR, draft included, and again at
+ready and merge. No arch, AI or delivery marker, durable report, thread count or
+full-CI check is asked for; a merge to `main` stays the user's alone. The trade
+is deliberate: the tier exists to make a goal cheap in tokens, and what protects
+`main` past the review is CI on the PR and the user's own merge.
+
 ## Tests
 
 ```sh
