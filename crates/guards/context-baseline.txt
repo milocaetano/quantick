@@ -237,4 +237,11 @@ docs/workflow/delivery.md 11361
 # -> 11,527 bytes) and the SKILL.md files (105,235 -> 62,657): reasoning moved
 # to docs/agentic-development.md and crates/mcp/README.md, outside this scope,
 # so the budget falls with it. Ceilings above were set to the measured bytes.
-!budget 250150
+#
+# +10,726 for `implement`, a new explicit-only skill: its SKILL.md, loaded on
+# `/implement`, two references it loads only when the goal runs and at the PR
+# stage, and a Codex adapter that points at the canonical copy instead of
+# duplicating it. A raise, not a trade: skills load on invocation, so
+# `implement` and `mission` never share a session, and nothing in the tree is
+# this branch's to cut.
+!budget 260876
