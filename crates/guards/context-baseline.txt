@@ -89,8 +89,8 @@
 # PR #345 review repair (Codex): +24 bytes declares the expanded
 # normative-contract scope and its mission-evidence exclusion.
 # +44 to say the budget leaves skills to their per-directory ceilings, and
-# +89 to say `/implement` owes one code-review instead of the mission's.
-CLAUDE.md 8672
+# +97 to say `/implement` owes one code-review instead of the mission's.
+CLAUDE.md 8680
 #
 # +55 for `quantick-feed`. Generated, not written: five rows moved from
 # `feed/mod.rs`-style paths relative to the application's source root to the
@@ -251,5 +251,5 @@ docs/workflow/delivery.md 11361
 .claude/skills/implement/ 11167
 
 # Skills left the budget when the guard began charging them per invocation:
-# 250,150 with every skill summed on main, 75,690 for what every session pays.
-!budget 75690
+# 250,150 with every skill summed on main, 75,698 for what every session pays.
+!budget 75698

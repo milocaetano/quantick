@@ -61,7 +61,7 @@ CI also runs — `sh .claude/hooks/guardrails_test.sh`, `ruff check --select F` 
   ```
 
   After the merge, from the main checkout: `git worktree remove ../quantick-worktrees/<prefix>-<slug>` then `git branch -d <prefix>/<slug>`.
-- **One mission, one tier** — `/mission` (Codex: `$mission`) takes `small` (default), `medium`, `high` or `max`; the skill owns the table, and `small` is the only tier the hooks see.
+- **One mission, one tier** — `/mission` (Codex: `$mission`) takes `small` (default), `medium`, `high` or `max`; the skill owns the table, and `small` is the only mission tier the hooks see.
 - **All review evidence before readiness** — `arch-review` with its bug pass, `ai-review` on the draft PR, then `delivery-review` last; each skill's producer publishes a durable current-review report before recording its private projection, and a marker alone is not evidence. `small` skips only delivery review, within its diff-size ceiling. `/implement` replaces all of this with one code-review before its PR (tier `implement`).
 - **Only the user merges to `main`.** Agents merge only into an explicitly authorized campaign branch under the integration contract — no auto-merge, merge queue, direct integration push or protection bypass. Hand off a ready PR.
 - **Two phases, and the PR carries the state.** Phase one ends at a draft PR with resolvable `ai-review` findings; phase two repairs them from fresh context, redesign included. [The delivery contract](docs/workflow/delivery.md) owns reconciliation, finding identity, bounded repair and delta follow-ups; no unresolved required finding passes by exhaustion or re-stamped markers.
