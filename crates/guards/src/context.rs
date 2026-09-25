@@ -25,6 +25,17 @@
 //! [`ratchet`](crate::ratchet), shared with the size guard; this module
 //! contributes the scan and the numbers.
 //!
+//! # Skills are charged per invocation
+//!
+//! A skill's body is loaded only when that skill is invoked, so two skills do
+//! not add up in any session that invokes one of them. Each skill directory is
+//! therefore measured as one unit — its `SKILL.md` plus every reference beside
+//! it, which keeps the split dodge closed inside the skill — and ratcheted
+//! against its own ceiling. The budget sums only what every session pays
+//! regardless of which skill runs: the root instructions, `.agents/references/`
+//! and the `docs/campaign/` and `docs/workflow/` contracts. A new skill is then
+//! a new signed ceiling when it is large, and no charge on the others.
+//!
 //! # Why bytes rather than lines
 //!
 //! Lines are what the size guard counts, and they are the wrong unit here.
@@ -109,6 +120,40 @@ const INSTRUCTION_DIRS: [&str; 4] = [
 /// The context files that are not skills, relative to the workspace root.
 const ROOT_FILES: [&str; 2] = ["CLAUDE.md", "AGENTS.md"];
 
+/// The directories whose children are skills, each loaded only on invocation.
+const SKILL_ROOTS: [&str; 2] = [".claude/skills/", ".agents/skills/"];
+
+/// The skill directory a path belongs to, with a trailing slash, or `None`
+/// for a path outside every skill. A skill directory's own path maps to
+/// itself, so a measured unit and a file inside it answer alike.
+pub fn skill_unit(relative: &str) -> Option<String> {
+    SKILL_ROOTS.iter().find_map(|root| {
+        let rest = relative.strip_prefix(root)?;
+        let (name, _) = rest.split_once('/')?;
+        (!name.is_empty()).then(|| format!("{root}{name}/"))
+    })
+}
+
+/// Whether a measured path is charged to the budget rather than only to its
+/// own ceiling.
+fn budgeted(path: &str) -> bool {
+    skill_unit(path).is_none()
+}
+
+/// The baseline as the budget sees it: every entry outside a skill, and the
+/// budget line itself.
+fn session(recorded: &Baseline) -> Baseline {
+    Baseline {
+        entries: recorded
+            .entries
+            .iter()
+            .filter(|entry| budgeted(&entry.path))
+            .cloned()
+            .collect(),
+        budget: recorded.budget.clone(),
+    }
+}
+
 /// What the guard asks for when a context file is over its ceiling.
 pub const REMEDY: &str = "A context file over its ceiling is a cost every session pays before it \
                           reads any code. The fix is the one PR #279 applied to CLAUDE.md: keep \
@@ -123,9 +168,11 @@ pub const REMEDY: &str = "A context file over its ceiling is a cost every sessio
                           --tighten` writes the new number.";
 
 /// What the guard asks for when the recorded total is over budget.
-pub const BUDGET_REMEDY: &str = "The context budget is what a session's instructions weigh in \
-                                 total: every recorded ceiling, plus the measured bytes of every \
-                                 tracked file too small to need one. Both halves are deliberate. \
+pub const BUDGET_REMEDY: &str = "The context budget is what every session's instructions weigh \
+                                 whichever skill runs: every recorded ceiling outside the skill \
+                                 directories, plus the measured bytes of every such file too \
+                                 small to need one. A skill is charged to its own ceiling \
+                                 instead, because it loads only when invoked. Both halves are deliberate. \
                                  Individually signed raises cannot say whether the instructions \
                                  are getting cheaper — every paragraph added to a skill was \
                                  defensible on its own, which is how one reached 48 KB. And a \
@@ -206,10 +253,10 @@ impl Measured {
     /// entry stale would delete a ceiling over a live file.
     fn seen(&self, path: &str) -> bool {
         self.counts.iter().any(|(scanned, _)| scanned == path)
-            || self
-                .unreadable
-                .iter()
-                .any(|line| line.starts_with(&format!("  {path}: ")))
+            || self.unreadable.iter().any(|line| {
+                line.starts_with(&format!("  {path}: "))
+                    || (path.ends_with('/') && line.starts_with(&format!("  {path}")))
+            })
             || self.blind.iter().any(|dir| path.starts_with(dir.as_str()))
     }
 }
@@ -335,7 +382,11 @@ pub fn measure(root: &Path) -> Measured {
             walk(&path, root, &mut found);
         }
     }
-    found.counts.sort();
+    let mut units: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for (path, bytes) in found.counts.drain(..) {
+        *units.entry(skill_unit(&path).unwrap_or(path)).or_default() += bytes;
+    }
+    found.counts = units.into_iter().collect();
     found
 }
 
@@ -355,7 +406,7 @@ fn unrecorded(recorded: &Baseline, found: &Measured) -> usize {
     found
         .counts
         .iter()
-        .filter(|(path, _)| recorded.entry(path).is_none())
+        .filter(|(path, _)| budgeted(path) && recorded.entry(path).is_none())
         .map(|(_, bytes)| bytes)
         .sum()
 }
@@ -393,12 +444,20 @@ pub fn check(root: &Path) -> Vec<Finding> {
         // because it gets followed.
         .map(|line| Finding::new(line.clone(), BASELINE_REMEDY))
         .collect();
-    violations.extend(POLICY.against(
-        &recorded,
-        &found.counts,
-        unrecorded(&recorded, &found),
-        &|path| found.seen(path),
-    ));
+    violations.extend(
+        found
+            .counts
+            .iter()
+            .filter_map(|(path, actual)| POLICY.verdict(recorded.entry(path), path, *actual)),
+    );
+    violations.extend(POLICY.budget_verdict(&session(&recorded), unrecorded(&recorded, &found)));
+    violations.extend(
+        recorded
+            .entries
+            .iter()
+            .filter(|entry| !found.seen(&entry.path))
+            .map(|entry| POLICY.stale(&entry.path)),
+    );
     violations
 }
 
@@ -419,7 +478,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
             Ok(recorded) => {
                 let found = measure(root);
                 POLICY
-                    .budget_verdict(&recorded, unrecorded(&recorded, &found))
+                    .budget_verdict(&session(&recorded), unrecorded(&recorded, &found))
                     .into_iter()
                     .collect()
             }
@@ -446,8 +505,22 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
         Ok(recorded) => recorded,
         Err(problem) => return vec![POLICY.unparsed(&problem)],
     };
+    let found = measure(root);
+    // A file inside a skill is judged as its whole skill, the unit an
+    // invocation loads and the one its ceiling is recorded for.
+    let (path, actual) = match skill_unit(relative) {
+        Some(unit) => {
+            let bytes = found
+                .counts
+                .iter()
+                .find(|(scanned, _)| *scanned == unit)
+                .map_or(actual, |(_, bytes)| *bytes);
+            (unit, bytes)
+        }
+        None => (relative.to_owned(), actual),
+    };
     let mut findings: Vec<Finding> = POLICY
-        .verdict(recorded.entry(relative), relative, actual)
+        .verdict(recorded.entry(&path), &path, actual)
         .into_iter()
         .collect();
     // And the budget, which is the whole point of counting unrecorded files.
@@ -456,8 +529,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     // edge case. Without this the hook reports clean on exactly the write
     // that puts the tree over budget, and the author meets it minutes later
     // as a failing suite with no idea which edit did it.
-    let found = measure(root);
-    findings.extend(POLICY.budget_verdict(&recorded, unrecorded(&recorded, &found)));
+    findings.extend(POLICY.budget_verdict(&session(&recorded), unrecorded(&recorded, &found)));
     findings
 }
 
@@ -516,7 +588,7 @@ pub fn tighten(root: &Path) -> Result<Vec<String>, String> {
         ));
     }
     let unrecorded = unrecorded(&recorded, &found);
-    POLICY.tighten(root, &found.counts, unrecorded)
+    POLICY.tighten_where(root, &found.counts, unrecorded, &budgeted)
 }
 
 #[cfg(test)]
@@ -610,7 +682,7 @@ mod tests {
         let skills = found
             .counts
             .iter()
-            .filter(|(path, _)| path.ends_with("/SKILL.md"))
+            .filter(|(path, _)| skill_unit(path).as_deref() == Some(path.as_str()))
             .count();
         assert!(skills >= 16, "found only {skills} skills across both hosts");
     }
@@ -689,15 +761,10 @@ mod tests {
         let root = scratch("split-bypass", 12_000, 10_000, 22_000);
         assert!(check(&root).is_empty(), "the scratch tree starts clean");
 
-        let one = root.join(".claude/skills/one/SKILL.md");
-        fs::write(&one, "x".repeat(2_000)).expect("scratch skill is writable");
-        fs::create_dir_all(root.join(".claude/skills/one/references"))
-            .expect("scratch dirs are creatable");
-        fs::write(
-            root.join(".claude/skills/one/references/detail.md"),
-            "x".repeat(9_000),
-        )
-        .expect("scratch reference is writable");
+        let one = root.join("docs/campaign/one.md");
+        fs::write(&one, "x".repeat(2_000)).expect("scratch contract is writable");
+        fs::write(root.join("docs/campaign/one-detail.md"), "x".repeat(9_000))
+            .expect("scratch contract is writable");
         // The entry is tightened, and the budget is lowered to the sum of the
         // ceilings the way a budget of permissions alone would have it —
         // 2,000 + 10,000. That is the bypass: it claims a 10,000-byte saving
@@ -706,10 +773,7 @@ mod tests {
         fs::write(
             root.join(BASELINE_FILE),
             baseline
-                .replace(
-                    ".claude/skills/one/SKILL.md 12000",
-                    ".claude/skills/one/SKILL.md 2000",
-                )
+                .replace("docs/campaign/one.md 12000", "docs/campaign/one.md 2000")
                 .replace("!budget 22000", "!budget 12000"),
         )
         .expect("scratch baseline is writable");
@@ -749,12 +813,12 @@ mod tests {
         // `!budget: 231950 -> 164886`, permanently, and every honest run
         // afterwards read 67k over budget.
         let root = scratch("tighten-partial", 12_000, 10_000, 22_000);
-        fs::remove_dir_all(root.join(".claude/skills/two")).expect("scratch skill is removable");
+        fs::remove_file(root.join("docs/workflow/two.md")).expect("scratch contract is removable");
 
         let problem = tighten(&root).expect_err("a partial tree is refused");
         assert!(
             problem.contains("not the one the baseline describes")
-                && problem.contains(".claude/skills/two/SKILL.md"),
+                && problem.contains("docs/workflow/two.md"),
             "{problem}"
         );
 
@@ -779,18 +843,97 @@ mod tests {
         // Grown in a file with no ceiling, so only the budget can answer —
         // a file over its own entry is the per-file ratchet's business, and
         // that one has no headroom by design.
-        fs::create_dir_all(root.join(".claude/skills/one/references"))
-            .expect("scratch dirs are creatable");
-        let note = root.join(".claude/skills/one/references/detail.md");
-        fs::write(&note, "x".repeat(300)).expect("scratch reference is writable");
+        let note = root.join("docs/campaign/note.md");
+        fs::write(&note, "x".repeat(300)).expect("scratch contract is writable");
         assert!(
             check(&root).is_empty(),
             "300 bytes must be absorbed, not filed"
         );
 
         // And the budget still bites on real growth.
-        fs::write(&note, "x".repeat(3_000)).expect("scratch reference is writable");
+        fs::write(&note, "x".repeat(3_000)).expect("scratch contract is writable");
         assert!(!check(&root).is_empty(), "3,000 bytes is not churn");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_skill_directory_is_one_unit_on_both_hosts() {
+        assert_eq!(
+            skill_unit(".claude/skills/mission/SKILL.md").as_deref(),
+            Some(".claude/skills/mission/")
+        );
+        assert_eq!(
+            skill_unit(".agents/skills/mission/references/why.md").as_deref(),
+            Some(".agents/skills/mission/")
+        );
+        assert_eq!(
+            skill_unit(".claude/skills/mission/").as_deref(),
+            Some(".claude/skills/mission/")
+        );
+        assert_eq!(
+            skill_unit(".agents/references/codex-compatibility.md"),
+            None
+        );
+        assert_eq!(skill_unit(".claude/skills/README.md"), None);
+        assert_eq!(skill_unit("CLAUDE.md"), None);
+    }
+
+    #[test]
+    fn a_new_skill_is_charged_to_its_own_ceiling_and_not_to_the_budget() {
+        // Skills load on invocation, so a new one costs no session that runs
+        // another. It is still rationed: past the threshold it needs a
+        // signed ceiling of its own.
+        let root = scratch("new-skill", 12_000, 10_000, 22_000);
+        let skill = root.join(".claude/skills/three");
+        fs::create_dir_all(skill.join("references")).expect("scratch dirs are creatable");
+        fs::write(skill.join("SKILL.md"), "x".repeat(2_000)).expect("scratch skill is writable");
+        fs::write(skill.join("references/detail.md"), "x".repeat(7_000))
+            .expect("scratch reference is writable");
+        let findings = check(&root);
+        assert!(findings.is_empty(), "{findings:?}");
+
+        fs::write(skill.join("references/detail.md"), "x".repeat(9_000))
+            .expect("scratch reference is writable");
+        let findings = check(&root);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(
+            findings[0].line.starts_with("  .claude/skills/three/: "),
+            "the skill's own unit answers, not the budget: {findings:?}"
+        );
+        assert_eq!(
+            check_file(&root, ".claude/skills/three/references/detail.md"),
+            findings,
+            "the hook judges a skill file as its whole skill"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn splitting_a_skill_into_references_buys_nothing() {
+        // The split dodge, inside a skill: the unit keeps every byte, so its
+        // ceiling still answers for the prose that moved.
+        let root = scratch("skill-split", 12_000, 10_000, 22_000);
+        let skill = root.join(".claude/skills/big");
+        fs::create_dir_all(skill.join("references")).expect("scratch dirs are creatable");
+        fs::write(skill.join("SKILL.md"), "x".repeat(12_000)).expect("scratch skill is writable");
+        let baseline = fs::read_to_string(root.join(BASELINE_FILE)).expect("baseline is readable");
+        fs::write(
+            root.join(BASELINE_FILE),
+            format!("{baseline}.claude/skills/big/ 12000\n"),
+        )
+        .expect("scratch baseline is writable");
+        assert!(check(&root).is_empty(), "the scratch tree starts clean");
+
+        fs::write(skill.join("SKILL.md"), "x".repeat(2_000)).expect("scratch skill is writable");
+        fs::write(skill.join("references/detail.md"), "x".repeat(10_500))
+            .expect("scratch reference is writable");
+        let findings = check(&root);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.line.starts_with("  .claude/skills/big/: ")),
+            "{findings:?}"
+        );
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -809,8 +952,8 @@ mod tests {
         );
     }
 
-    /// A scratch workspace whose baseline names two skill files, so a raise on
-    /// one can be paid for — or not — by the other.
+    /// A scratch workspace whose baseline names two budgeted contracts, so a
+    /// raise on one can be paid for — or not — by the other.
     fn scratch(
         test: &str,
         first: usize,
@@ -819,8 +962,7 @@ mod tests {
     ) -> crate::scratch_dir::ScratchDir {
         let root = crate::scratch_dir::ScratchDir::new(test);
         fs::create_dir_all(root.join("crates/guards")).expect("scratch dirs are creatable");
-        fs::create_dir_all(root.join(".claude/skills/one")).expect("scratch dirs are creatable");
-        fs::create_dir_all(root.join(".claude/skills/two")).expect("scratch dirs are creatable");
+        fs::create_dir_all(root.join(".claude/skills")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join(".agents/skills")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join("docs/campaign")).expect("scratch dirs are creatable");
         fs::create_dir_all(root.join("docs/workflow")).expect("scratch dirs are creatable");
@@ -828,17 +970,17 @@ mod tests {
             root.join(BASELINE_FILE),
             format!(
                 "!budget {budget}\n\
-                 .claude/skills/one/SKILL.md {first}\n\
-                 .claude/skills/two/SKILL.md {second}\n"
+                 docs/campaign/one.md {first}\n\
+                 docs/workflow/two.md {second}\n"
             ),
         )
         .expect("scratch baseline is writable");
         // Each file sits exactly at its ceiling, so the only finding a test
         // can see is the budget's.
-        fs::write(root.join(".claude/skills/one/SKILL.md"), "x".repeat(first))
-            .expect("scratch skill is writable");
-        fs::write(root.join(".claude/skills/two/SKILL.md"), "x".repeat(second))
-            .expect("scratch skill is writable");
+        fs::write(root.join("docs/campaign/one.md"), "x".repeat(first))
+            .expect("scratch contract is writable");
+        fs::write(root.join("docs/workflow/two.md"), "x".repeat(second))
+            .expect("scratch contract is writable");
         root
     }
 

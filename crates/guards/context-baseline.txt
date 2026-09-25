@@ -4,9 +4,12 @@
 #
 # These are costs, not targets. Every byte here is paid on every turn of every
 # session that loads the file, so the only direction an entry should move is
-# down. The `!budget` line caps the whole tracked weight — these ceilings plus
-# every tracked file too small to need one — so adding weight anywhere means
-# taking comparable weight out somewhere else in the same change.
+# down. The `!budget` line caps what every session pays whichever skill runs —
+# the ceilings outside the skill directories plus every such file too small to
+# need one — so adding weight there means taking comparable weight out
+# somewhere else in the same change. A skill loads only when invoked, so each
+# skill directory is one unit (`SKILL.md` plus its references) with its own
+# ceiling above the threshold, and is not charged to the budget.
 #
 # Kept as data rather than a Rust `const` for the reason the size baseline is:
 # a raise is then a data diff a reviewer can see, and `--tighten` can rewrite a
@@ -18,7 +21,7 @@
 # `references/` beside each skill, which a run reads only when it reaches that
 # dimension. Each of these three is still the single largest thing a session
 # loads when it invokes the skill, so each is debt, not a target.
-.claude/skills/mission/SKILL.md 14278
+.claude/skills/mission/ 14278
 # +1,361 for phase two: after the draft PR the main thread dispatches a fresh
 # agent per review, per CI watch and per repair round and reads one-line
 # verdicts, because 96-99% of the billed tokens in this project's five largest
@@ -38,8 +41,10 @@
 # close. Written as short as it can be and still name where the number comes
 # from; nothing else in this file is this change's to cut, and the tracked
 # tree stays under the budget line below without it being moved.
-.claude/skills/arch-review/SKILL.md 12209
-.claude/skills/delivery-review/SKILL.md 8686
+# Measured as whole skills since the guard charged skills per invocation:
+# the ceilings now include the references each skill loads on demand.
+.claude/skills/arch-review/ 41114
+.claude/skills/delivery-review/ 11363
 
 # Pre-existing debt this branch measured rather than paid. `ui-harness` and its
 # registry are the next cut and were deliberately out of its scope: the
@@ -83,7 +88,9 @@
 # fails on and which is the drift this whole tree exists to prevent.
 # PR #345 review repair (Codex): +24 bytes declares the expanded
 # normative-contract scope and its mission-evidence exclusion.
-CLAUDE.md 8539
+# +44 to say the budget leaves skills to their per-directory ceilings, and
+# +97 to say `/implement` owes one code-review instead of the mission's.
+CLAUDE.md 6541
 #
 # +55 for `quantick-feed`. Generated, not written: five rows moved from
 # `feed/mod.rs`-style paths relative to the application's source root to the
@@ -109,8 +116,7 @@ CLAUDE.md 8539
 # 90 bytes the new prose costs.
 # Raised by 305 bytes for the three hooks that make deal recording and the
 # unavailable trades-bar state reachable without a hand.
-.claude/skills/ui-harness/references/hook-registry.md 71122
-.claude/skills/ui-harness/SKILL.md 7976
+.claude/skills/ui-harness/ 82479
 # Raised by 54 bytes, for one line: `cargo deny check bans licenses` joined the
 # list of CI steps `cargo` cannot see, and a list that omits a step is worse
 # than a list that costs 54 bytes — an agent reading it would find the step in
@@ -153,7 +159,9 @@ CLAUDE.md 8539
 # the paper account, so it got a crate below all three rather than an edge
 # into the paper account for anyone who needs a timezone. One node in the
 # pure-domain group, the two edges that reach it, one row.
-AGENTS.md 4523
+# +38 to name CONTRIBUTING.md as the verification loop's owner, which left
+# CLAUDE.md for the skills that ship.
+AGENTS.md 4561
 
 # What a session's instructions weigh in total: every ceiling above, plus the
 # measured bytes of every tracked file too small to need one. Raising it means
@@ -237,4 +245,13 @@ docs/workflow/delivery.md 11361
 # -> 11,527 bytes) and the SKILL.md files (105,235 -> 62,657): reasoning moved
 # to docs/agentic-development.md and crates/mcp/README.md, outside this scope,
 # so the budget falls with it. Ceilings above were set to the measured bytes.
-!budget 250150
+
+# `implement` loads the plan entrypoint on invocation, execution rules when
+# the goal runs, and PR context at a real handoff. The review floor follows
+# changed behavior even when a leading `small` requests less. The Codex
+# adapter points here rather than duplicating these instructions.
+.claude/skills/implement/ 9438
+
+# Skills left the budget when the guard began charging them per invocation:
+# 250,150 with every skill summed on main, 73,597 for what every session pays, after the process rules left CLAUDE.md for the skills.
+!budget 73597

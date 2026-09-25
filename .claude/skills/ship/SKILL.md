@@ -16,7 +16,7 @@ settle it. Never manufacture review evidence.
 
 1. **Validate the frozen change.** Classify the delta under the delivery
    contract. Code/config/test/script changes run, stopping to fix the first
-   failure: `cargo fmt --all`, then `CLAUDE.md`'s four checks in order, then
+   failure: `cargo fmt --all`, then `CONTRIBUTING.md`'s four checks in order, then
    its affected non-Cargo checks. Prose-only changes and qualifying evidence
    corrections take the contract's targeted checks. Record commands, outputs
    and input identity; mark reused evidence as reused; never infer success
