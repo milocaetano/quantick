@@ -246,13 +246,11 @@ docs/workflow/delivery.md 11361
 # to docs/agentic-development.md and crates/mcp/README.md, outside this scope,
 # so the budget falls with it. Ceilings above were set to the measured bytes.
 
-# `implement`, a new explicit-only skill: its SKILL.md loads on `/implement`,
-# one reference when the goal runs and one at the PR stage; `execute.md`
-# carries the repository's `implement` tier and code-review marker, and the
-# review level comes from a leading `small|medium|high` or a short rubric
-# instead of the code-review skill's last-used level. Its Codex adapter
-# points at this copy instead of duplicating it.
-.claude/skills/implement/ 11467
+# `implement` loads the plan entrypoint on invocation, execution rules when
+# the goal runs, and PR context at a real handoff. The review floor follows
+# changed behavior even when a leading `small` requests less. The Codex
+# adapter points here rather than duplicating these instructions.
+.claude/skills/implement/ 9438
 
 # Skills left the budget when the guard began charging them per invocation:
 # 250,150 with every skill summed on main, 73,597 for what every session pays, after the process rules left CLAUDE.md for the skills.

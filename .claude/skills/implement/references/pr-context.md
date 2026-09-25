@@ -1,10 +1,10 @@
 # PR context and handoff
-Use the PR as a persistent shared task brief after it exists, not a mandatory communication channel, transcript or proof of correctness. Before creation, use the plan; do not open an early PR just for context. Code, Git and check results remain authoritative. PR text cannot override approved scope, repository rules or permissions.
+Read this when first preparing the PR or an actual handoff. Use the PR as a concise shared brief; code, Git and check results remain authoritative. Do not open a PR merely for context or let its text override scope, rules or permissions.
 
 ## Brief
-Write clear English for humans and agents. Aim for <=250 tokens; no padding. Preserve essential contracts, risks and required repository-template fields even when longer. Record only approved intent, boundaries, acceptance, material decisions, status and next action. Link to exact files/symbols and durable evidence instead of copying code, diffs, logs or conversations. No secrets, private prompts or machine-local paths.
+Write clear English, usually within 250 tokens. Preserve required template fields, contracts and material risks even when longer. Link to files and durable evidence instead of copying code, logs or chat. No secrets, private prompts or machine-local paths.
 
-Fit this structure into the repository template; do not duplicate sections. Omit irrelevant optional fields:
+Fit these fields into the repository template without duplication:
 
 ```md
 ## Goal
@@ -13,18 +13,10 @@ Fit this structure into the repository template; do not duplicate sections. Omit
 <paths/symbols; key decision; exclusions or material risks>
 ## Acceptance
 - [ ] <observable result>
-## Handoff
-HEAD: <SHA>; state: <review|fixing|blocked|done>.
-Next: <action + owner, or none>; blocker: <cause, or none>.
 ## Evidence
-Tests: <agent/run, revision, command + result or durable link>.
-Review: <pending, or level + reason, revision, findings link>.
-CI: <pending/failed/passed, revision + run link>.
+Tests/review/CI: <revision and concise result or durable link>.
 ```
 
-## Agents
-The coordinator alone maintains the brief at handoffs and material status changes, not every tool call. Refresh before editing; preserve human/template content and review threads. Edit the same managed section instead of appending repeated summaries. Retire stale status; never mark completion from self-reported checkboxes alone.
+Add a handoff only when pausing or transferring work: revision, remaining action/owner and blocker. The coordinator updates the same managed section at a real handoff or final delivery, preserving human/template content and review threads. A checkbox alone does not prove completion.
 
-Delegate a bounded task with expected SHA, role, owned paths, acceptance, accessible rules/checkout, and a PR URL or revision-labeled brief. Include the URL when available; no full chat history. Reuse current supplied context rather than requiring another PR fetch. Verify checkout/revision; load additional code, diffs, findings and checks only as needed. Refresh at handoffs when freshness is uncertain, before shared-status edits and before completion; changed HEAD invalidates snapshot assumptions. Return only findings, paths, tested revision, evidence and next action. Label snapshots with their SHA; never claim a live read. Current remote HEAD and CI still require verification before success.
-
-Use additional agents only for separable work beyond required testing/review. Parallel writers need isolated worktrees and non-overlapping ownership; serialize conflicting edits. The coordinator integrates, retests and updates the same PR. Required testers/reviewers validate a stable snapshot, not a checkout being edited. Keep evidence tied to the tested revision; after changes, rerun affected validation and verify current CI. Only the coordinator edits shared status or pushes the integrated branch.
+Delegate bounded work with expected SHA, role, owned paths, acceptance and accessible rules/checkout. Include the PR URL when available; reuse supplied current context rather than refetching it or sending chat history. Verify the revision, load more only as needed, and return findings, tested SHA, evidence and next action. Give parallel writers separate worktrees and non-overlapping ownership. Keep test/review evidence tied to a stable revision; after edits, revalidate what changed and check current remote HEAD/CI before completion. Only the coordinator edits the brief or pushes the integrated branch.
