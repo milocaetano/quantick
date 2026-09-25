@@ -250,10 +250,9 @@ docs/workflow/delivery.md 11361
 # the goal runs, and PR context at a real handoff. The review floor follows
 # changed behavior even when a leading `small` requests less. The Codex
 # adapter points here rather than duplicating these instructions.
-# +312 for the context cap (campaign #563 lever L1) and the handoff it needs:
-# what each dispatched agent returns and carries, so review and CI results
-# survive a fresh context. Paid only when the goal runs, not every session.
-.claude/skills/implement/ 9750
+# +275 for the context cap (campaign #563 lever L1): when a build hands off
+# and what the fresh agent carries. Paid only when the goal runs.
+.claude/skills/implement/ 9713
 
 # Skills left the budget when the guard began charging them per invocation:
 # 250,150 with every skill summed on main, 73,597 for what every session pays, after the process rules left CLAUDE.md for the skills.
