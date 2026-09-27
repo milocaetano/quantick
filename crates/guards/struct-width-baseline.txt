@@ -11,7 +11,7 @@
 # Recorded at main bcfb5f19 when the guard landed. `OrderflowHealthSnapshot`
 # was private in `app` then, and invisible to the report's old `pub struct`-only
 # rule.
-!budget 361
+!budget 362
 app::ChartPane 35
 app::PaperTrading 31
 app::Tab 67
@@ -21,6 +21,9 @@ app::ToolRail 32
 control-schema::OrderflowHealthSnapshot 31
 orderflow::BookEngine 31
 orderflow::BubbleStyle 30
-orderflow::HeatmapConfig 34
+# Raised by one for `bubble_overlap_merge`, the overlap fold's switch: a
+# projection behaviour that sits beside `bubble_candle_summary`, the switch it
+# mirrors, and is carried by the same presets and panel.
+orderflow::HeatmapConfig 35
 orderflow::OrderflowHealth 34
 sim::PerformanceReport 36

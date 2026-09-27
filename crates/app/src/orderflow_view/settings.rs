@@ -262,6 +262,7 @@ impl OrderflowView {
             bubble_cluster_ms: self.config.bubble_cluster_ms,
             bubble_dust_merge_ms: self.config.bubble_dust_merge_ms,
             bubble_candle_summary: self.config.bubble_candle_summary,
+            bubble_overlap_merge: self.config.bubble_overlap_merge,
             bubble_region_rows: self.config.bubble_region_rows,
             bubble_region_ms: self.config.bubble_region_ms,
             bubbles: self.config.bubbles.clone(),
@@ -358,6 +359,7 @@ impl OrderflowView {
         self.config.bubble_cluster_ms = defaults.bubble_cluster_ms;
         self.config.bubble_dust_merge_ms = defaults.bubble_dust_merge_ms;
         self.config.bubble_candle_summary = defaults.bubble_candle_summary;
+        self.config.bubble_overlap_merge = defaults.bubble_overlap_merge;
         self.config.bubble_region_rows = defaults.bubble_region_rows;
         self.config.bubble_region_ms = defaults.bubble_region_ms;
         self.config.bubbles = defaults.bubbles;

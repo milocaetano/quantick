@@ -1351,6 +1351,7 @@ mod tests {
             cluster_ms: 100,
             dust_merge_ms: 3_000,
             candle_summary: true,
+            overlap_merge: false,
             region_rows: 3,
             region_ms: 2_000,
             bubbles: BubbleStyle {
@@ -1466,11 +1467,25 @@ mod tests {
 
         let bars = [bar(900, 1_100)];
         // First call queues the projection; the frame appears after a flush.
-        let first = view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
+        let first = view.project_visible(
+            visible_timeline(&bars),
+            true,
+            true,
+            None,
+            (98.0, 102.0),
+            None,
+        );
         assert!(first.is_none());
         view.flush_for_test();
         let frame = view
-            .project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
+            .project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                (98.0, 102.0),
+                None,
+            )
             .expect("published frame");
         assert!(frame.projection.enabled);
         assert!(!frame.projection.cells.is_empty());
@@ -1493,9 +1508,23 @@ mod tests {
             ),
         });
         let bars = [bar(900, 1_100)];
-        view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
+        view.project_visible(
+            visible_timeline(&bars),
+            true,
+            true,
+            None,
+            (98.0, 102.0),
+            None,
+        );
         view.flush_for_test();
-        view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
+        view.project_visible(
+            visible_timeline(&bars),
+            true,
+            true,
+            None,
+            (98.0, 102.0),
+            None,
+        );
 
         let frame = view.published.frame.as_deref().expect("published frame");
         let cell = frame.projection.cells.last().expect("one displayed cell");
@@ -1596,7 +1625,14 @@ mod tests {
         // One 99 bid and one 101 ask (see `snapshot_event`).
         view.handle_depth_event(snapshot_event(10));
         let bars = [bar(900, 1_100)];
-        view.project_visible(visible_timeline(&bars), true, true, None, (100.0, 102.0));
+        view.project_visible(
+            visible_timeline(&bars),
+            true,
+            true,
+            None,
+            (100.0, 102.0),
+            None,
+        );
         view.flush_for_test();
 
         let ladder = view.published.ladder.as_ref().expect("published ladder");
@@ -1820,10 +1856,24 @@ mod tests {
         assert_eq!(view.health().aggression_count, 1);
 
         let bars = [bar(900, 1_100)];
-        view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
+        view.project_visible(
+            visible_timeline(&bars),
+            true,
+            true,
+            None,
+            (98.0, 102.0),
+            None,
+        );
         view.flush_for_test();
         let frame = view
-            .project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
+            .project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                (98.0, 102.0),
+                None,
+            )
             .expect("published frame");
         // One print, two marks, and both are meant: the tape draws it where it
         // landed, and the bar it belongs to counts it into the running summary
@@ -1859,8 +1909,15 @@ mod tests {
         view.set_bubbles_enabled(false);
         assert!(view.lane_bubbles_enabled(), "the tape kept them");
         assert!(
-            view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
-                .is_some(),
+            view.project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                (98.0, 102.0),
+                None
+            )
+            .is_some(),
             "a tape nobody switched off may not lose the frame that feeds it"
         );
 
@@ -1869,8 +1926,15 @@ mod tests {
         view.set_lane_bubbles_enabled(false);
         view.flush_for_test();
         assert!(
-            view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
-                .is_none()
+            view.project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                (98.0, 102.0),
+                None
+            )
+            .is_none()
         );
     }
 
@@ -1942,10 +2006,24 @@ mod tests {
         view.handle_depth_event(snapshot_event(10));
         view.flush_for_test();
         let bars = [bar(900, 1_100)];
-        view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
+        view.project_visible(
+            visible_timeline(&bars),
+            true,
+            true,
+            None,
+            (98.0, 102.0),
+            None,
+        );
         view.flush_for_test();
         let frame = view
-            .project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
+            .project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                (98.0, 102.0),
+                None,
+            )
             .expect("published frame");
 
         let text_of = |view: &OrderflowView, legend: bool| {
@@ -2031,10 +2109,24 @@ mod tests {
         assert_eq!(view.health().aggression_count, 1, "the print was retained");
 
         let bars = [bar(900, 1_100)];
-        view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
+        view.project_visible(
+            visible_timeline(&bars),
+            true,
+            true,
+            None,
+            (98.0, 102.0),
+            None,
+        );
         view.flush_for_test();
         let frame = view
-            .project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
+            .project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                (98.0, 102.0),
+                None,
+            )
             .expect("the strip's own frame");
         // The one print reaches the frame twice on purpose: once on the tape,
         // which exists here because the live edge comes from prints rather than
@@ -2062,8 +2154,15 @@ mod tests {
         // keeps running for a surface nobody is showing.
         view.set_projection_demand(false);
         assert!(
-            view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
-                .is_none()
+            view.project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                (98.0, 102.0),
+                None
+            )
+            .is_none()
         );
     }
 
@@ -2073,11 +2172,25 @@ mod tests {
         view.set_enabled(true, 10);
         view.handle_depth_event(snapshot_event(10));
         let bars = [bar(900, 1_100)];
-        view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0));
+        view.project_visible(
+            visible_timeline(&bars),
+            true,
+            true,
+            None,
+            (98.0, 102.0),
+            None,
+        );
         view.flush_for_test();
         assert!(
-            view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
-                .is_some()
+            view.project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                (98.0, 102.0),
+                None
+            )
+            .is_some()
         );
 
         // Capture stops. The tape is still drawing prints, and prints do not
@@ -2091,15 +2204,29 @@ mod tests {
             "the tape was never asked to stop"
         );
         assert!(
-            view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
-                .is_some()
+            view.project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                (98.0, 102.0),
+                None
+            )
+            .is_some()
         );
 
         // With the tape off as well nobody is reading, and the frame goes.
         view.set_lane_enabled(false);
         assert!(
-            view.project_visible(visible_timeline(&bars), true, true, None, (98.0, 102.0))
-                .is_none()
+            view.project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                (98.0, 102.0),
+                None
+            )
+            .is_none()
         );
         view.flush_for_test();
         assert!(view.published.frame.is_none());

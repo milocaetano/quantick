@@ -410,6 +410,26 @@ impl Default for BubbleStyle {
     }
 }
 
+/// On-screen radius, in pixels, of a bubble of normalized `size` drawn on the
+/// radius range `minimum..=maximum`.
+///
+/// Area, not radius, is proportional to quantity, so the radius interpolates
+/// on the square. It lives with the style rather than with the renderer
+/// because the overlap fold has to know how big a disc will be drawn before
+/// it is drawn — one function, so the fold and the painter cannot disagree
+/// about which discs touch.
+#[must_use]
+pub fn bubble_radius(size: f32, minimum: f32, maximum: f32) -> f32 {
+    let size = if size.is_finite() {
+        size.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let minimum = minimum.max(0.0);
+    let maximum = maximum.max(minimum);
+    (minimum.powi(2) + size.powi(2) * (maximum.powi(2) - minimum.powi(2))).sqrt()
+}
+
 impl BubbleStyle {
     /// Clamp every numeric field to a value that is safe for geometry and math.
     pub fn sanitize(&mut self) {

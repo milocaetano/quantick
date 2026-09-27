@@ -22,7 +22,7 @@ use crate::viewport::Viewport;
 use quantick_engine::Side;
 use quantick_orderflow::{
     AggressionPrimitive, BubbleRenderMode, ConsumptionMark, GOLDEN_ANGLE, HeatmapProjection,
-    INV_PHI_2, LiquidityEvidence,
+    INV_PHI_2, LiquidityEvidence, bubble_radius,
 };
 use rust_decimal::Decimal;
 

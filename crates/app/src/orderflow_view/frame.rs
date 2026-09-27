@@ -12,7 +12,7 @@ use std::sync::Arc;
 use eframe::egui;
 use quantick_orderbook::BookLevel;
 use quantick_orderflow::engine::{CaptureStatus, ProjectionRequest, VisibleOrderflow};
-use quantick_orderflow::projection::normalized_area_size;
+use quantick_orderflow::projection::{PaneGeometry, normalized_area_size};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
@@ -52,6 +52,7 @@ impl OrderflowView {
         on_newest_bar: bool,
         lane_reference_ms: Option<i64>,
         price_range: (f64, f64),
+        pane_geometry: Option<PaneGeometry>,
     ) -> Option<Arc<VisibleOrderflow>> {
         if !self.config.any_layer_enabled() {
             return None;
@@ -66,6 +67,7 @@ impl OrderflowView {
             on_newest_bar,
             lane_reference_ms,
             price_range,
+            pane_geometry,
         };
         // Every frame, with no gate of its own. The worker coalesces requests
         // latest-wins and decides for itself what is worth rebuilding, so the

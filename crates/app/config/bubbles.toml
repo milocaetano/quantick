@@ -45,6 +45,12 @@ active = "default"
 #     price range, drawn as a pie of the buy and sell shares. The pie is the
 #     only mark that shows both sides of one price at once, and it is what
 #     keeps history reading as a summary instead of as a wall of specks.
+# One more switch is off in every shipped look, and is there for a tape too
+# dense for the windows above:
+#   * overlap_merge — bubbles whose discs would overlap on the canvas fold
+#     into one mark, across sides and on the live lane too: the exact summed
+#     quantity, a buy/sell pie when both sides are in it, labelled as a fold
+#     (⊕n). Never across a bar or the lane's divider.
 [[presets]]
 name = "default"
 cluster_ms = 500

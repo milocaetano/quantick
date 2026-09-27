@@ -7,9 +7,9 @@
 
 use eframe::egui;
 use quantick_orderbook::BookSide;
-use quantick_orderflow::{BEFORE_CAPTURE, LiquidityEvidence};
+use quantick_orderflow::{BEFORE_CAPTURE, LiquidityEvidence, bubble_radius};
 
-use super::bubbles::{bubble_radius, side_offset_y};
+use super::bubbles::side_offset_y;
 use super::layout::{EventBand, RenderContext};
 use super::{
     OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, finite_unit,

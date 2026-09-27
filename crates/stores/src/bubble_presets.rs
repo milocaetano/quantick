@@ -75,6 +75,11 @@ pub struct BubblePreset {
     /// reads as a tape or as a summary.
     #[serde(default)]
     pub candle_summary: bool,
+    /// Whether bubbles whose discs would overlap fold into one mark. Off
+    /// unless a preset says so, so a file written before the switch existed
+    /// draws exactly what it drew.
+    #[serde(default)]
+    pub overlap_merge: bool,
     /// Height of one aggression region in visual price rows; one is off. A
     /// preset written before regions existed simply omits the key and keeps
     /// per-row marks.
@@ -102,6 +107,7 @@ impl BubblePreset {
             cluster_ms: config.bubble_cluster_ms,
             dust_merge_ms: config.bubble_dust_merge_ms,
             candle_summary: config.bubble_candle_summary,
+            overlap_merge: config.bubble_overlap_merge,
             region_rows: config.bubble_region_rows,
             region_ms: config.bubble_region_ms,
             bubbles: config.bubbles.clone(),
@@ -128,6 +134,7 @@ impl BubblePreset {
         config.bubble_cluster_ms = self.cluster_ms;
         config.bubble_dust_merge_ms = self.dust_merge_ms;
         config.bubble_candle_summary = self.candle_summary;
+        config.bubble_overlap_merge = self.overlap_merge;
         config.bubble_region_rows = self.region_rows;
         config.bubble_region_ms = self.region_ms;
         config.bubbles = self.bubbles.clone();
@@ -693,6 +700,7 @@ mod tests {
             cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
             dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,
             candle_summary: false,
+            overlap_merge: false,
             region_rows: 1,
             region_ms: DEFAULT_BUBBLE_REGION_MS,
             bubbles: BubbleStyle {

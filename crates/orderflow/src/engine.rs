@@ -16,7 +16,7 @@ use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::{
     BarTimeline, HeatmapConfig, HeatmapProjection, HistoryStatus, LiquidityHistory, LiveEdge,
-    PriceWindow, SettledProjection, project_live, project_settled, reserved_span_ms,
+    PaneGeometry, PriceWindow, SettledProjection, project_live, project_settled, reserved_span_ms,
 };
 
 /// Minimum interval between dirty rebuilds of the finished half of the chart.
@@ -208,6 +208,14 @@ pub struct ProjectionRequest {
     /// candles' viewport is not a statement about the tape.
     pub lane_reference_ms: Option<i64>,
     pub price_range: (f64, f64),
+    /// The pixels the frame will be drawn on, for the overlap fold
+    /// ([`HeatmapConfig::bubble_overlap_merge`]). `None` from a caller with no
+    /// canvas, which then gets the frame unfolded.
+    ///
+    /// Not part of [`Self::layout`]: the fold runs on every frame after the
+    /// halves are joined, so a resize never has to invalidate the settled
+    /// cache to be honoured.
+    pub pane_geometry: Option<PaneGeometry>,
 }
 
 impl ProjectionRequest {
@@ -1125,7 +1133,10 @@ impl BookEngine {
 
         let live_started = Instant::now();
         let live = project_live(&self.history, &timeline, prices, &settled);
-        let projection = settled.with_live(live, &self.config);
+        let mut projection = settled.with_live(live, &self.config);
+        if let Some(geometry) = request.pane_geometry {
+            projection.merge_overlapping_bubbles(geometry, &timeline, &self.config);
+        }
         self.last_live_ms = live_started.elapsed().as_secs_f32() * 1000.0;
         self.last_projection_aggressions = projection.aggressions.len();
         self.last_projection_liquidity_events = projection.liquidity_events.len();
@@ -1610,6 +1621,7 @@ mod tests {
             on_newest_bar: true,
             lane_reference_ms: None,
             price_range,
+            pane_geometry: None,
         }
     }
 
@@ -2019,6 +2031,60 @@ mod tests {
             Some(33),
             "mismatched, stale and rejected data cannot repopulate health"
         );
+    }
+
+    /// The overlap fold runs on the frame the engine publishes, and only when
+    /// both the trader opted in and the chart said how big its canvas is: off,
+    /// or with no canvas, the frame is exactly the unfolded one.
+    #[test]
+    fn the_overlap_fold_needs_the_setting_and_the_canvas() {
+        let geometry = PaneGeometry {
+            px_per_bar: 40.0,
+            lane_width_px: 200.0,
+            height_px: 400.0,
+        };
+        let frame = |merge: bool, pane_geometry: Option<PaneGeometry>| {
+            let mut engine = BookEngine::new("BTCUSDT");
+            engine.set_enabled(true, 10);
+            engine.handle_depth_event(snapshot_event(10));
+            engine.apply_visual_config(HeatmapConfig {
+                show_aggressions: true,
+                bubble_overlap_merge: merge,
+                ..engine.config.clone()
+            });
+            for (agg_id, timestamp_ms, quantity, side) in
+                [(1, 1_050, 3, Side::Buy), (2, 1_060, 2, Side::Sell)]
+            {
+                engine.record_trade(&Trade {
+                    agg_id,
+                    timestamp_ms,
+                    price: Decimal::from(101),
+                    quantity: Decimal::from(quantity),
+                    side,
+                });
+            }
+            let request = ProjectionRequest {
+                pane_geometry,
+                ..request(&[bar(900, 1_100)], (98.0, 102.0))
+            };
+            let frame = engine.project(&request).unwrap();
+            (*frame.projection).clone()
+        };
+        let unfolded = frame(false, None);
+        assert_eq!(unfolded.aggressions.len(), 2, "a buy and a sell, apart");
+        assert_eq!(
+            frame(false, Some(geometry)),
+            unfolded,
+            "off is today's frame"
+        );
+        assert_eq!(frame(true, None), unfolded, "no canvas, nothing to measure");
+        let folded = frame(true, Some(geometry));
+        assert_eq!(
+            folded.aggressions.len(),
+            1,
+            "on, the touching pair is one pie"
+        );
+        assert_eq!(folded.aggressions[0].quantity, Decimal::from(5));
     }
 
     /// A print the engine has accepted is drawable on the next projection, with

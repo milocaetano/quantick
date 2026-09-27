@@ -197,6 +197,12 @@ pub struct BubblesStateSnapshot {
     /// The exact quantity the trader's own display floor keeps off the canvas.
     /// Floored, not dropped: it is still in the totals.
     pub floored_quantity: CanonicalDecimal,
+    /// Bubbles whose discs would overlap on the canvas are folded into one
+    /// mark — across sides, and on the lane too — carrying the exact summed
+    /// quantity. The bubble setting `overlap_merge`; a folded mark is counted
+    /// in `health.summary`'s folded aggressions, never as a print.
+    #[serde(default)]
+    pub overlap_merge: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

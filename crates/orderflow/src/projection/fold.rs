@@ -81,8 +81,23 @@ fn merge_marks(
     other: &mut AggressionPrimitive,
     reference: Decimal,
 ) {
-    debug_assert_eq!(mark.live, other.live, "a fold may not cross the panes");
     debug_assert_eq!(mark.side, other.side, "a fold may not cross sides");
+    absorb(mark, other, reference);
+}
+
+/// The merge itself, for a fold that may put both sides in one mark.
+///
+/// The budget fold never does — [`merge_marks`] guards that — but the overlap
+/// fold does on purpose: two discs drawn over each other already read as one
+/// blot, and one pie says what the blot hid. Nothing here is side-specific:
+/// the buy share is quantity-weighted across the members, so a mixed fold
+/// carries both sides' exact proportion and the anchor keeps its own side.
+pub(super) fn absorb(
+    mark: &mut AggressionPrimitive,
+    other: &mut AggressionPrimitive,
+    reference: Decimal,
+) {
+    debug_assert_eq!(mark.live, other.live, "a fold may not cross the panes");
     let total = mark.quantity + other.quantity;
     let low = mark.price_bucket.min(other.price_bucket);
     let high = (mark.price_bucket + mark.price_span).max(other.price_bucket + other.price_span);
@@ -152,9 +167,16 @@ fn settle_ids(mark: &mut AggressionPrimitive) {
     mark.liquidity_event_ids.truncate(MAX_FOLD_IDS);
 }
 
+/// How one member is folded into the mark a chunk is anchored on.
+pub(super) type Merge = fn(&mut AggressionPrimitive, &mut AggressionPrimitive, Decimal);
+
 /// Merge one group of compatible marks into a single mark anchored on the
 /// heaviest of them — the group's point of control.
-fn fold_chunk(mut chunk: Vec<AggressionPrimitive>, reference: Decimal) -> AggressionPrimitive {
+pub(super) fn fold_chunk(
+    mut chunk: Vec<AggressionPrimitive>,
+    reference: Decimal,
+    merge: Merge,
+) -> AggressionPrimitive {
     let heaviest = chunk
         .iter()
         .enumerate()
@@ -168,7 +190,7 @@ fn fold_chunk(mut chunk: Vec<AggressionPrimitive>, reference: Decimal) -> Aggres
     let mut rest = chunk.split_off(1);
     let mut merged = chunk.pop().expect("a chunk is never empty");
     for other in &mut rest {
-        merge_marks(&mut merged, other, reference);
+        merge(&mut merged, other, reference);
     }
     if merged.folded_marks > 0 {
         settle_ids(&mut merged);
@@ -301,10 +323,10 @@ pub(super) fn fold_to_budget(
     for mut members in groups.into_values() {
         while members.len() > group {
             let rest = members.split_off(group);
-            folded.push(fold_chunk(members, reference));
+            folded.push(fold_chunk(members, reference, merge_marks));
             members = rest;
         }
-        folded.push(fold_chunk(members, reference));
+        folded.push(fold_chunk(members, reference, merge_marks));
     }
     folded.extend(tail);
     *marks = folded;

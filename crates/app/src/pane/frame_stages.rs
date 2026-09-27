@@ -15,7 +15,7 @@ use std::sync::Arc;
 use eframe::egui;
 use quantick_engine::BarFootprint;
 use quantick_orderflow::engine::VisibleOrderflow;
-use quantick_orderflow::reserved_span_ms;
+use quantick_orderflow::{PaneGeometry, reserved_span_ms};
 
 use crate::drawings::Drawings;
 use crate::indicator_render::{self, PlotX};
@@ -113,6 +113,11 @@ impl<'a> FlowFrame<'a> {
                 frame.end == frame.total,
                 Some(reserved_span_ms(frame.closed)),
                 frame.scale.range(),
+                Some(PaneGeometry {
+                    px_per_bar: self.viewport.px_per_bar(),
+                    lane_width_px: self.lane_width,
+                    height_px: self.rect.height(),
+                }),
             )
         });
     }

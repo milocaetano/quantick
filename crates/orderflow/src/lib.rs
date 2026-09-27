@@ -25,8 +25,8 @@ pub use config::{
     LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS,
     MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE,
     MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
-    MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms,
-    lane_lag_label, lane_window_label, same_lane_window,
+    MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, bubble_radius,
+    format_window_ms, lane_lag_label, lane_window_label, same_lane_window,
 };
 #[allow(unused_imports)]
 pub use grouping::{

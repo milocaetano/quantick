@@ -10,7 +10,7 @@ use eframe::egui;
 use quantick_engine::Side;
 use quantick_orderflow::{
     AggressionPrimitive, BubbleRenderMode, BubbleStyle, ConsumptionMark, GOLDEN_ANGLE, INV_PHI,
-    INV_PHI_2, INV_PHI_3,
+    INV_PHI_2, INV_PHI_3, bubble_radius,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
@@ -959,13 +959,6 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             }
         }
     }
-}
-
-pub(super) fn bubble_radius(size: f32, minimum: f32, maximum: f32) -> f32 {
-    let minimum = minimum.max(0.0);
-    let maximum = maximum.max(minimum);
-    let normalized_quantity = finite_unit(size).powi(2);
-    (minimum.powi(2) + normalized_quantity * (maximum.powi(2) - minimum.powi(2))).sqrt()
 }
 
 /// The text inside a bubble: what traded, and how many prints it stands for.

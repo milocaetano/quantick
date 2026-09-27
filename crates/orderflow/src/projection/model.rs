@@ -253,7 +253,8 @@ pub struct HeatmapProjection {
     pub summary_reference: Decimal,
     /// Cells omitted by the configured primitive cap.
     pub dropped_cells: usize,
-    /// Aggressions omitted by the configured primitive cap.
+    /// Aggressions folded into a neighbour: by the configured primitive cap,
+    /// and by the overlap fold when it is on.
     pub folded_aggressions: usize,
     /// Liquidity events omitted by the visible-cell safety cap.
     pub dropped_liquidity_events: usize,
@@ -404,14 +405,7 @@ impl SettledProjection {
         // Folded first, then ordered: a fold picks by size or by age, but what
         // a frame draws is ordered by time, so a chart that is over the budget
         // stacks its bubbles the same way as one that is under it.
-        aggressions.sort_by(|a, b| {
-            a.first_timestamp_ms
-                .cmp(&b.first_timestamp_ms)
-                .then_with(|| a.last_timestamp_ms.cmp(&b.last_timestamp_ms))
-                .then_with(|| a.live.cmp(&b.live))
-                .then_with(|| a.price_bucket.cmp(&b.price_bucket))
-                .then_with(|| a.agg_id.cmp(&b.agg_id))
-        });
+        aggressions.sort_by(frame_order);
 
         // The display switches — the aggression layer's master switch and the
         // per-side ones — are *not* applied here. A projection is the fact the
@@ -451,6 +445,18 @@ impl SettledProjection {
             dropped_liquidity_events,
         }
     }
+}
+
+/// The order a frame draws its bubbles in: by time, so later prints stack on
+/// top, whatever folded them. Every step that reorders the marks of a
+/// finished frame — the join, the overlap fold — puts them back in this one.
+pub(super) fn frame_order(a: &AggressionPrimitive, b: &AggressionPrimitive) -> std::cmp::Ordering {
+    a.first_timestamp_ms
+        .cmp(&b.first_timestamp_ms)
+        .then_with(|| a.last_timestamp_ms.cmp(&b.last_timestamp_ms))
+        .then_with(|| a.live.cmp(&b.live))
+        .then_with(|| a.price_bucket.cmp(&b.price_bucket))
+        .then_with(|| a.agg_id.cmp(&b.agg_id))
 }
 
 /// How the safety cap ranks reductions, wherever it is applied: aligned

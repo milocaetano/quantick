@@ -31,5 +31,10 @@
 # facade — and no line of logic was added: the three measured representatives
 # read 72%, 51% and 41% fewer lines (PR body, `tools/read_cost/measure.py`).
 # The lines bought read cost, which the size ratchet does not measure.
-!budget 104015
-crates/app 104015
+# Raised by 8 lines for the overlap fold (`feat/bubble-overlap-merge`): the
+# settings checkbox that switches it, the pane's pixel geometry handed to the
+# projection request, and the flag in the `orderflow.bubbles` scope. The fold
+# itself — geometry, radius and merge — lives in `orderflow`, and moving the
+# shared radius function there took six lines back out of `app`.
+!budget 104023
+crates/app 104023
