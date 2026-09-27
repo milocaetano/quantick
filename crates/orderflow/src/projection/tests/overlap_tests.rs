@@ -4,7 +4,9 @@
 
 use super::*;
 use crate::PaneGeometry;
+use crate::bubble_radius;
 use crate::history::AggressorSide;
+use rust_decimal::prelude::ToPrimitive as _;
 
 /// Four closed one-second bars and a tape covering the last 1.5 s of them.
 fn timeline() -> BarTimeline {
@@ -261,4 +263,50 @@ fn the_fold_is_deterministic() {
     first.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
     second.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
     assert_eq!(first, second);
+}
+
+/// A leg of prints, each touching the next but not the one after: a rally
+/// drawn as a string of beads. The fold merges a mark only into a neighbour
+/// its own disc touches, so the leg stays a leg — a fold that chained through
+/// the string swallowed a whole 180-point rally into one mark and hid where
+/// the aggression happened.
+#[test]
+fn a_chain_of_touching_marks_does_not_fold_into_one() {
+    let config = merging(true);
+    let (_, lane_max) = config.live_lane.scaled_radii(&config.bubbles);
+    // Full-size prints, so every disc is `lane_max` across; one price unit
+    // apart at 1.5 radii — a neighbour touches, the next one over does not.
+    let radius = f64::from(bubble_radius(1.0, 0.0, lane_max));
+    let row_px = 1.5 * radius;
+    let span = Decimal::from_f64(f64::from(GEOMETRY.height_px) / row_px)
+        .unwrap()
+        .round_dp(4);
+    let window = PriceWindow::new(dec("99"), dec("99") + span).unwrap();
+    let trades: Vec<(u64, i64, String)> = (0..5)
+        .map(|k| (k + 1, 3_100, (100 + k).to_string()))
+        .collect();
+    let trades: Vec<(u64, i64, &str, &str, Side)> = trades
+        .iter()
+        .map(|(id, ms, price)| (*id, *ms, price.as_str(), "5", Side::Buy))
+        .collect();
+    let mut projection = project(&tape(config.clone(), &trades), &timeline(), window);
+    assert_eq!(projection.aggressions.len(), 5, "five beads to start");
+
+    projection.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
+
+    assert!(
+        projection.aggressions.len() > 1,
+        "the leg must not collapse into one mark"
+    );
+    assert_eq!(total(&projection), dec("25"), "not a contract is lost");
+    let px_per_unit = f64::from(GEOMETRY.height_px) / span.to_f64().unwrap();
+    for mark in &projection.aggressions {
+        // The members' rows, edge to edge, are the whole band; a direct
+        // neighbour of the anchor is at most two radii away from it.
+        let reach = (mark.price_span - Decimal::ONE).to_f64().unwrap() * px_per_unit;
+        assert!(
+            reach < 2.0 * radius,
+            "a fold reached {reach:.1}px past its anchor, beyond one disc's touch"
+        );
+    }
 }
