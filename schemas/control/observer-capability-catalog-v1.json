@@ -12710,7 +12710,7 @@
               },
               "folded_aggressions": {
                 "$ref": "#/$defs/WireU64",
-                "description": "Aggressions the projection budget — or, when the trader opted in, the\noverlap fold — folded into a neighbour instead of drawing alone.\nFolded, not dropped: the quantity is still on the canvas."
+                "description": "Aggressions the projection budget folded into a neighbour instead of\ndrawing alone. Folded, not dropped: the quantity is still on the canvas."
               },
               "gaps": {
                 "$ref": "#/$defs/WireU64"
@@ -13741,7 +13741,7 @@
               },
               "overlap_merge": {
                 "default": false,
-                "description": "Bubbles whose discs would overlap on the canvas are folded into one\nmark — across sides, and on the lane too — carrying the exact summed\nquantity. The bubble setting `overlap_merge`; a folded mark is counted\nin `health.summary`'s folded aggressions, never as a print.",
+                "description": "Bubbles whose discs would overlap on the canvas are folded into one\nmark — across sides, and on the lane too — carrying the exact summed\nquantity. The bubble setting `overlap_merge`, switched by\n`layers.visibility.set` as layer `bubble_overlap_merge`. A drawing\ndecision only: the budget's folded count and every other reader keep\nthe unfolded marks.",
                 "type": "boolean"
               }
             },

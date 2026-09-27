@@ -262,8 +262,7 @@ pub struct HeatmapProjection {
     pub summary_reference: Decimal,
     /// Cells omitted by the configured primitive cap.
     pub dropped_cells: usize,
-    /// Aggressions folded into a neighbour: by the configured primitive cap,
-    /// and by the overlap fold when it is on.
+    /// Aggressions omitted by the configured primitive cap.
     pub folded_aggressions: usize,
     /// Liquidity events omitted by the visible-cell safety cap.
     pub dropped_liquidity_events: usize,

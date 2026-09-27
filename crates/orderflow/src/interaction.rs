@@ -836,7 +836,7 @@ fn decimal_fraction(numerator: Decimal, denominator: Decimal) -> f32 {
         .clamp(0.0, 1.0)
 }
 
-fn consumed_side(side: AggressorSide) -> RestingSide {
+pub(crate) fn consumed_side(side: AggressorSide) -> RestingSide {
     match side {
         Side::Buy => BookSide::Ask,
         Side::Sell => BookSide::Bid,

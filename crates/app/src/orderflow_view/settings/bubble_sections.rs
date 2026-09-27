@@ -102,10 +102,6 @@ impl ClusteringSection<'_> {
             .on_hover_text(
                 "fold every print of a bar and price range into one bubble carrying both sides, drawn as a pie whose sectors are the buy/sell proportion. The forming bar included: its pie is a running total that grows with each order, so the compressed left side reports what is happening now instead of only what already happened. Quantities, ids and matched evidence are summed exactly, and the tape still shows those same prints one by one",
             );
-        ui.checkbox(&mut config.bubble_overlap_merge, "merge overlapping bubbles")
-            .on_hover_text(
-                "fold bubbles whose discs would overlap on screen into one bubble — buy with sell, and on the live lane too — drawn as a pie of the two sides when both are in it and labelled ⊕n as a fold of n marks, not a print. Quantities, ids and matched evidence are summed exactly; a fold never crosses a bar or the lane's divider, and it follows the zoom, so zooming in pulls the marks apart again",
-            );
     }
 }
 
@@ -592,7 +588,7 @@ impl BubbleHealthSection<'_> {
                 "bubble carries the exact summed quantity and says how many ",
                 "marks it stands for. A fold never crosses a side, a pane or a ",
                 "bar, so a frame with more of those than it has budget draws ",
-                "the extra marks instead. Nothing is discarded",
+                "the extra marks instead. Nothing is discarded; overlap merges are not counted",
             ));
         }
     }

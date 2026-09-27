@@ -191,6 +191,25 @@ impl ChartLayer {
         default_on: true,
         projection_demand: false,
     });
+    pub const BubbleOverlapMerge: Self = Self(&LayerDescriptor {
+        id: "bubble_overlap_merge",
+        label: "merge overlapping bubbles",
+        hint: "bubbles whose discs would overlap are drawn as one: the exact summed quantity, a \
+                 buy/sell pie when both sides are in it, labelled as a fold of n marks rather than \
+                 a print. Never across a bar or the tape's divider; zooming in pulls them apart. \
+                 Only the drawing folds: the live strip and every count keep the prints as they \
+                 were. Saved with the order-flow preset, not with the other layers",
+        source: LayerSource::Orderflow(OrderflowSwitch::OverlapMerge),
+        scope: LayerScope::FlowPane,
+        persistence: Persistence::OrderflowPreset,
+        requirement: Requirement::Volume,
+        on_tape: false,
+        needs_tape: false,
+        needs_depth: false,
+        capture_gates_visibility: false,
+        default_on: false,
+        projection_demand: false,
+    });
     pub const Grid: Self = Self(&LayerDescriptor {
         id: "grid",
         label: "grid",
@@ -347,7 +366,7 @@ impl ChartLayer {
         projection_demand: false,
     });
 }
-pub const ALL: [ChartLayer; 21] = [
+pub const ALL: [ChartLayer; 22] = [
     ChartLayer::TapeChart,
     ChartLayer::TapeHeatmap,
     ChartLayer::TapeBubbles,
@@ -359,6 +378,7 @@ pub const ALL: [ChartLayer; 21] = [
     ChartLayer::FlowLegend,
     ChartLayer::BookStatus,
     ChartLayer::DepthGaps,
+    ChartLayer::BubbleOverlapMerge,
     ChartLayer::Grid,
     ChartLayer::LastPrice,
     ChartLayer::BackfillDivider,

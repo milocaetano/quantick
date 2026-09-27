@@ -199,8 +199,10 @@ pub struct BubblesStateSnapshot {
     pub floored_quantity: CanonicalDecimal,
     /// Bubbles whose discs would overlap on the canvas are folded into one
     /// mark — across sides, and on the lane too — carrying the exact summed
-    /// quantity. The bubble setting `overlap_merge`; a folded mark is counted
-    /// in `health.summary`'s folded aggressions, never as a print.
+    /// quantity. The bubble setting `overlap_merge`, switched by
+    /// `layers.visibility.set` as layer `bubble_overlap_merge`. A drawing
+    /// decision only: the budget's folded count and every other reader keep
+    /// the unfolded marks.
     #[serde(default)]
     pub overlap_merge: bool,
 }

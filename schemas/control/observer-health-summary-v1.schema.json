@@ -197,7 +197,7 @@
         },
         "folded_aggressions": {
           "$ref": "#/$defs/WireU64",
-          "description": "Aggressions the projection budget — or, when the trader opted in, the\noverlap fold — folded into a neighbour instead of drawing alone.\nFolded, not dropped: the quantity is still on the canvas."
+          "description": "Aggressions the projection budget folded into a neighbour instead of\ndrawing alone. Folded, not dropped: the quantity is still on the canvas."
         },
         "gaps": {
           "$ref": "#/$defs/WireU64"

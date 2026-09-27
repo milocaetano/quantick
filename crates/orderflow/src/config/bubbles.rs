@@ -430,6 +430,24 @@ pub fn bubble_radius(size: f32, minimum: f32, maximum: f32) -> f32 {
     (minimum.powi(2) + size.powi(2) * (maximum.powi(2) - minimum.powi(2))).sqrt()
 }
 
+/// How far, in pixels down the screen, a bubble's centre sits off its price
+/// row: toward the book half its dominant side ate — up for a buy, down for a
+/// sell on an upright chart — sliding with the buy share, so an even split
+/// sits on the exact price. `inverted` mirrors it with the chart.
+///
+/// Shared for the reason [`bubble_radius`] is: the overlap fold measures the
+/// disc the painter draws, and a lean restated on one side flipped sign.
+#[must_use]
+pub fn bubble_center_offset(buy_share: f32, side_offset: f32, inverted: bool) -> f32 {
+    let share = if buy_share.is_finite() {
+        buy_share.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let toward_price = if inverted { 1.0 } else { -1.0 };
+    toward_price * (share - 0.5) * 2.0 * side_offset
+}
+
 impl BubbleStyle {
     /// Clamp every numeric field to a value that is safe for geometry and math.
     pub fn sanitize(&mut self) {

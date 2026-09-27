@@ -14,6 +14,7 @@ pub(super) const PACKAGE: Package = Package {
         quantick_layers::ChartLayer::FlowLegend,
         quantick_layers::ChartLayer::BookStatus,
         quantick_layers::ChartLayer::DepthGaps,
+        quantick_layers::ChartLayer::BubbleOverlapMerge,
     ],
     contributions: &[
         Contribution::Heatmap(background),

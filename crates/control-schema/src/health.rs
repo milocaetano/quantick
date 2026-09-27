@@ -158,9 +158,8 @@ pub struct OrderflowHealthSnapshot {
     pub projection_aggressions: WireU64,
     pub projection_liquidity_events: WireU64,
     pub dropped_cells: WireU64,
-    /// Aggressions the projection budget — or, when the trader opted in, the
-    /// overlap fold — folded into a neighbour instead of drawing alone.
-    /// Folded, not dropped: the quantity is still on the canvas.
+    /// Aggressions the projection budget folded into a neighbour instead of
+    /// drawing alone. Folded, not dropped: the quantity is still on the canvas.
     pub folded_aggressions: WireU64,
     /// Exact quantity the trader's own display floor kept off the canvas.
     pub floored_quantity: CanonicalDecimal,

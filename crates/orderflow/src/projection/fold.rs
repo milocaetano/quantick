@@ -16,6 +16,7 @@ use crate::config::{
     DEFAULT_LIVE_LANE_SHARE, LiveLaneStyle, MAX_LIVE_LANE_SHARE, MIN_LIVE_LANE_SHARE,
 };
 use crate::history::AggressorSide;
+use crate::interaction::consumed_side;
 use crate::timeline::BarTimeline;
 
 /// A total order over sides, so a fold can sort and group by one.
@@ -189,6 +190,10 @@ fn fold_chunk(mut chunk: Vec<AggressionPrimitive>, reference: Decimal) -> Aggres
 
 /// Fold `members` into `anchor`, which the caller chose and which keeps its
 /// place — the overlap fold's merge, where the sides may differ.
+///
+/// A mixed fold reports the side that took more, as the cluster fold does
+/// (`interaction`): the anchor is the heaviest *mark*, not the heaviest side,
+/// and a 3-lot sell holding two 2-lot buys is a buy. A tie keeps the anchor's.
 pub(super) fn fold_onto(
     mut anchor: AggressionPrimitive,
     members: Vec<AggressionPrimitive>,
@@ -200,6 +205,12 @@ pub(super) fn fold_onto(
     for mut other in members {
         absorb(&mut anchor, &mut other, reference);
     }
+    if anchor.buy_share > 0.5 {
+        anchor.side = AggressorSide::Buy;
+    } else if anchor.buy_share < 0.5 {
+        anchor.side = AggressorSide::Sell;
+    }
+    anchor.consumed_side = consumed_side(anchor.side);
     settle_ids(&mut anchor);
     anchor
 }

@@ -5,7 +5,7 @@ struct Switch {
     read: fn(&OrderflowView) -> bool,
     write: fn(&mut OrderflowView, bool),
 }
-const SWITCHES: [Switch; 9] = [
+const SWITCHES: [Switch; 10] = [
     Switch {
         read: OrderflowView::lane_enabled,
         write: OrderflowView::set_lane_enabled,
@@ -41,6 +41,14 @@ const SWITCHES: [Switch; 9] = [
     Switch {
         read: OrderflowView::gaps_visible,
         write: OrderflowView::set_gaps_visible,
+    },
+    Switch {
+        read: |view| view.config.bubble_overlap_merge,
+        write: |view, on| {
+            let before = view.config.clone();
+            view.config.bubble_overlap_merge = on;
+            view.commit_config_changes(before);
+        },
     },
 ];
 impl OrderflowView {

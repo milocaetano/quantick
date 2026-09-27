@@ -28,8 +28,7 @@ use std::collections::BTreeMap;
 
 use rust_decimal::Decimal;
 
-use crate::config::{HeatmapConfig, bubble_radius};
-use crate::history::AggressorSide;
+use crate::config::{HeatmapConfig, bubble_center_offset, bubble_radius};
 use crate::timeline::BarTimeline;
 
 use super::fold::fold_onto;
@@ -80,55 +79,52 @@ fn unit(value: f64) -> f64 {
     }
 }
 
-/// What may fold with what: the pane, the bar a candle mark claims, and —
-/// only while one side is hidden — the side.
+/// What may fold with what: the pane, and the bar the prints belong to.
 ///
 /// A pane because a tape mark and a candle mark are clipped, sized and
-/// switched separately; a bar because a mark in a bar's slot says that bar
-/// traded it, the same reason the budget fold keys on it. The side is kept
-/// apart only when a side is hidden: the renderer withholds a two-sided mark
-/// then (a pie with a hidden half would state a quantity the canvas is not
-/// showing), so a pie there would delete the visible side's marks too.
-type GroupKey = (bool, Option<usize>, Option<u8>);
+/// switched separately. A bar because a mark claims its bar traded it — on
+/// the candles by where it is drawn, on the tape by when it printed — the same
+/// reason the budget fold keys on it; the tape is continuous, but a fold across
+/// a close would still credit one bar with its neighbour's volume.
+type GroupKey = (bool, Option<usize>);
 
 impl HeatmapProjection {
     /// Fold each bubble whose disc overlaps a heavier one's into it — one
-    /// greedy pass, never chained; see the module note.
+    /// greedy pass, never chained; see the module note — into
+    /// [`overlap_marks`](Self::overlap_marks), the painter's own list.
     ///
     /// Does nothing unless [`HeatmapConfig::bubble_overlap_merge`] is on, so
-    /// off is today's frame exactly. On, the marks come back in the frame's
-    /// drawing order and [`folded_aggressions`](Self::folded_aggressions)
-    /// counts the marks this removed on top of what the budget folded.
+    /// off is today's frame exactly. On, [`aggressions`](Self::aggressions)
+    /// and the budget's [`folded_aggressions`](Self::folded_aggressions) are
+    /// left as they were: every reader but the painter keeps the unfolded
+    /// per-price quantities. Both sides fold together; while one side is
+    /// hidden the painter draws the unfolded marks instead, since it withholds
+    /// a two-sided mark then.
     pub fn merge_overlapping_bubbles(
         &mut self,
         geometry: PaneGeometry,
         timeline: &BarTimeline,
         config: &HeatmapConfig,
     ) {
-        if !config.bubble_overlap_merge || self.aggressions.len() < 2 {
+        if !config.bubble_overlap_merge {
             return;
         }
-        let both_sides = config.show_buy_aggressions && config.show_sell_aggressions;
+        // The join already put the marks in frame order; grouping keeps that
+        // order, so which marks land in which fold never depends on arrival.
         let mut groups: BTreeMap<GroupKey, Vec<AggressionPrimitive>> = BTreeMap::new();
-        for mark in std::mem::take(&mut self.aggressions) {
-            let bar = if mark.live {
-                None
-            } else {
-                timeline
-                    .locate(mark.first_timestamp_ms)
-                    .map(|position| position.bar_index)
-            };
-            let side = (!both_sides).then_some(match mark.side {
-                AggressorSide::Buy => 0,
-                AggressorSide::Sell => 1,
-            });
-            groups.entry((mark.live, bar, side)).or_default().push(mark);
+        for mark in &self.aggressions {
+            let bar = timeline
+                .locate_in_slot(mark.first_timestamp_ms)
+                .map(|position| position.bar_index);
+            groups
+                .entry((mark.live, bar))
+                .or_default()
+                .push(mark.clone());
         }
 
         let scale = Scale::new(geometry, timeline.region_count(), config);
-        let before: usize = groups.values().map(Vec::len).sum();
-        let mut merged = Vec::with_capacity(before);
-        for ((live, _, _), members) in groups {
+        let mut merged = Vec::with_capacity(self.aggressions.len());
+        for ((live, _), members) in groups {
             // The scale each pane's marks were drawn on — a fold is sized
             // against it, never rescaling the marks it left alone.
             let reference = if live {
@@ -139,8 +135,22 @@ impl HeatmapProjection {
             merged.extend(fold_touching(members, reference, &scale));
         }
         merged.sort_by(frame_order);
-        self.folded_aggressions += before - merged.len();
-        self.aggressions = merged;
+        self.overlap_marks = Some(merged);
+    }
+}
+
+impl HeatmapProjection {
+    /// The marks the bubble painter draws: the overlap fold's list while both
+    /// sides are shown, the unfolded marks otherwise. With a side hidden the
+    /// painter withholds every two-sided mark — a pie with a hidden half would
+    /// state a quantity the canvas is not showing — so drawing the fold then
+    /// would delete the visible side's bubbles along with the pies.
+    #[must_use]
+    pub fn drawn_bubbles(&self, both_sides: bool) -> &[AggressionPrimitive] {
+        match &self.overlap_marks {
+            Some(folded) if both_sides => folded,
+            _ => &self.aggressions,
+        }
     }
 }
 
@@ -150,7 +160,7 @@ struct Scale {
     geometry: PaneGeometry,
     candle_radii: (f32, f32),
     lane_radii: (f32, f32),
-    side_offset: f64,
+    side_offset: f32,
 }
 
 impl Scale {
@@ -161,24 +171,24 @@ impl Scale {
             geometry,
             candle_radii: (bubbles.min_radius, bubbles.max_radius),
             lane_radii: config.live_lane.scaled_radii(bubbles),
-            side_offset: f64::from(bubbles.side_offset),
+            side_offset: bubbles.side_offset,
         }
     }
 
     /// Where the painter will put this mark and how big it will draw it —
-    /// the painter's own rules, restated without the offsets every disc
-    /// shares: the same radius function, and the same lean off the price
-    /// row by buy share.
+    /// the painter's own functions for the radius and the lean, without the
+    /// offsets every disc shares. Measured upright: flipping the chart
+    /// mirrors every centre together, so it cannot make two discs touch.
     fn disc(&self, mark: &AggressionPrimitive) -> Disc {
         let (px_per_region, (minimum, maximum)) = if mark.live {
             (f64::from(self.geometry.lane_width_px), self.lane_radii)
         } else {
             (f64::from(self.geometry.px_per_bar), self.candle_radii)
         };
-        let lean = (unit(f64::from(mark.buy_share)) - 0.5) * 2.0;
+        let lean = bubble_center_offset(mark.buy_share, self.side_offset, false);
         Disc {
             x: unit(mark.x) * self.regions * px_per_region,
-            y: unit(mark.y) * f64::from(self.geometry.height_px) + lean * self.side_offset,
+            y: unit(mark.y) * f64::from(self.geometry.height_px) + f64::from(lean),
             radius: f64::from(bubble_radius(mark.size, minimum, maximum)),
         }
     }
@@ -189,16 +199,13 @@ impl Scale {
 /// Each anchor takes the untaken marks whose disc overlaps its own, measured
 /// as projected: no chaining through a member, no re-measuring a grown fold.
 fn fold_touching(
-    mut marks: Vec<AggressionPrimitive>,
+    marks: Vec<AggressionPrimitive>,
     reference: Decimal,
     scale: &Scale,
 ) -> Vec<AggressionPrimitive> {
     if marks.len() < 2 {
         return marks;
     }
-    // A canonical order first, so which marks land in which fold never
-    // depends on the order they arrived in.
-    marks.sort_by(frame_order);
     let anchors = assign_anchors(&marks, scale);
     let mut folds: BTreeMap<usize, (Option<AggressionPrimitive>, Vec<AggressionPrimitive>)> =
         BTreeMap::new();

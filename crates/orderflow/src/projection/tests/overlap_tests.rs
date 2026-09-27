@@ -248,8 +248,9 @@ fn the_fold_never_crosses_the_divider() {
     assert_eq!(drawn(&projection), original.aggressions.as_slice());
 }
 
-/// Same trades in, same frame out: the fold is ordered by the marks
-/// themselves, never by the order they arrived in.
+/// Same trades in, same marks drawn: two independent projections of one
+/// tape fold identically. The fold reads the marks in the frame order the
+/// join already put them in, and ties between equal marks break on it.
 #[test]
 fn the_fold_is_deterministic() {
     let config = merging(true);
@@ -262,10 +263,10 @@ fn the_fold_is_deterministic() {
     ];
     let mut first = frame(&config, &trades);
     let mut second = frame(&config, &trades);
-    second.aggressions.reverse();
     first.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
     second.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
     assert_eq!(first, second);
+    assert!(first.overlap_marks.is_some());
 }
 
 /// A leg of prints, each touching the next but not the one after: a rally

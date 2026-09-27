@@ -10,7 +10,7 @@ use eframe::egui;
 use quantick_engine::Side;
 use quantick_orderflow::{
     AggressionPrimitive, BubbleRenderMode, BubbleStyle, ConsumptionMark, GOLDEN_ANGLE, INV_PHI,
-    INV_PHI_2, INV_PHI_3, bubble_radius,
+    INV_PHI_2, INV_PHI_3, bubble_center_offset, bubble_radius,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
@@ -840,22 +840,16 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     let colors = BubbleColors::resolve(&palette, bubbles);
     let clip = painter.with_clip_rect(context.layout.chart_rect);
 
-    // The side nudge generalizes to a bubble carrying both sides: it slides
-    // continuously with the buy share, so an even split sits on the exact
-    // price and a lopsided one leans the way its dominant side would.
+    // The side nudge is `bubble_center_offset`, the overlap fold's own.
     // A print is drawn only inside its own pane: one panned off the right of
     // the candles is out of sight, not on top of the tape.
-    // The lean is toward the dominant side's book half — a price direction,
-    // so it mirrors with the chart like side_offset_y does.
-    let lean_sign = if context.layout.inverted { 1.0 } else { -1.0 };
+    let inverted = context.layout.inverted;
     let center_of = |trade: &AggressionPrimitive| {
         let center = egui::pos2(context.layout.x(trade.x), context.layout.y(trade.y));
-        let lean = (finite_unit(trade.buy_share) - 0.5) * 2.0;
-        context
-            .layout
-            .pane(trade.x)
-            .contains(center)
-            .then(|| center + egui::vec2(0.0, lean_sign * lean * bubbles.side_offset))
+        let lean = bubble_center_offset(trade.buy_share, bubbles.side_offset, inverted);
+        let pane = context.layout.pane(trade.x);
+        pane.contains(center)
+            .then(|| center + egui::vec2(0.0, lean))
     };
     // The live lane has room the compressed history does not, which is the
     // whole reason it gets a radius range of its own.
