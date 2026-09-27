@@ -35,6 +35,6 @@ Use concise, unambiguous English. Omit empty optional fields. Never invent comma
 # Output
 Recheck and compact the saved plan. Ask if a blocking decision remains; otherwise output only:
 ```text
-/goal Implement "<absolute-plan-path>" under its Rules; done when its PR is open, reviewed, CI green at the current remote HEAD, not merged.
+/goal Implement "<absolute-plan-path>" under its Rules; done when its PR is open, tested, reviewed, CI green at the current remote HEAD, not merged.
 ```
-Do not execute this command.
+Do not run it.
