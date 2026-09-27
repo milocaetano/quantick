@@ -248,9 +248,8 @@ fn the_fold_never_crosses_the_divider() {
     assert_eq!(drawn(&projection), original.aggressions.as_slice());
 }
 
-/// Same trades in, same marks drawn: two independent projections of one
-/// tape fold identically. The fold reads the marks in the frame order the
-/// join already put them in, and ties between equal marks break on it.
+/// Same trades in, same marks drawn: the fold puts its input in frame order
+/// itself, so the order the marks arrived in never decides a fold.
 #[test]
 fn the_fold_is_deterministic() {
     let config = merging(true);
@@ -263,9 +262,10 @@ fn the_fold_is_deterministic() {
     ];
     let mut first = frame(&config, &trades);
     let mut second = frame(&config, &trades);
+    second.aggressions.reverse();
     first.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
     second.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
-    assert_eq!(first, second);
+    assert_eq!(first.overlap_marks, second.overlap_marks);
     assert!(first.overlap_marks.is_some());
 }
 
@@ -470,4 +470,151 @@ fn a_tape_fold_never_spans_two_bars() {
         2,
         "one mark per bar, touching or not"
     );
+}
+
+/// Candles panned into history: the tape still shows now, but the bars its
+/// prints belong to are off screen, so the timeline cannot say where one
+/// ends. Two prints either side of an unseen close stay two marks — a bar
+/// the fold cannot see is never guessed, and never clamped onto the last
+/// visible slot.
+#[test]
+fn a_panned_view_never_folds_tape_prints_across_an_unseen_close() {
+    let config = merging(true);
+    let closed = [bar(0, 999), bar(1_000, 1_999)];
+    let timeline = BarTimeline::from_bars(
+        0,
+        &closed,
+        None,
+        Some(crate::LiveEdge {
+            now_ms: 5_900,
+            window_ms: 1_500,
+            reference_ms: 1_500,
+            on_newest_bar: false,
+        }),
+    );
+    let trades = [
+        (1, 4_999, "100", "2", Side::Buy),
+        (2, 5_001, "100", "3", Side::Sell),
+    ];
+    let mut projection = project(&tape(config.clone(), &trades), &timeline, prices());
+    assert_eq!(
+        projection
+            .aggressions
+            .iter()
+            .filter(|mark| mark.live)
+            .count(),
+        2,
+        "both prints are on the tape"
+    );
+
+    projection.merge_overlapping_bubbles(GEOMETRY, &timeline, &config);
+
+    assert_eq!(
+        drawn(&projection).iter().filter(|mark| mark.live).count(),
+        2,
+        "no visible bar to put them in, so no fold"
+    );
+}
+
+/// A cluster that straddles a close is drawn at its midpoint, inside the
+/// later bar — and it folds with that bar's marks, not with the bar its
+/// first print happened to open in.
+#[test]
+fn a_cluster_straddling_a_close_folds_with_the_bar_it_is_drawn_in() {
+    let config = HeatmapConfig {
+        bubble_cluster_ms: 100,
+        ..merging(true)
+    };
+    let closed = [bar(0, 999), bar(1_000, 1_999)];
+    let timeline = BarTimeline::from_bars(
+        0,
+        &closed,
+        None,
+        Some(crate::LiveEdge {
+            now_ms: 1_900,
+            window_ms: 1_500,
+            reference_ms: 1_500,
+            on_newest_bar: true,
+        }),
+    );
+    let trades = [
+        (1, 990, "100", "1", Side::Buy),
+        (2, 1_030, "100", "1", Side::Buy),
+        (3, 1_040, "100", "1", Side::Sell),
+    ];
+    let mut projection = project(&tape(config.clone(), &trades), &timeline, prices());
+    let tape_marks: Vec<_> = projection
+        .aggressions
+        .iter()
+        .filter(|mark| mark.live)
+        .collect();
+    assert_eq!(
+        tape_marks.len(),
+        2,
+        "the two buys cluster, the sell does not"
+    );
+    assert!(
+        tape_marks
+            .iter()
+            .any(|mark| mark.first_timestamp_ms == 990 && mark.trade_count == 2),
+        "the buy cluster opens in bar 0 and is drawn at 1 010, in bar 1"
+    );
+
+    projection.merge_overlapping_bubbles(GEOMETRY, &timeline, &config);
+
+    let folded: Vec<_> = drawn(&projection).iter().filter(|m| m.live).collect();
+    assert_eq!(folded.len(), 1, "drawn in one bar, touching, one pie");
+    assert_eq!(folded[0].quantity, dec("3"));
+}
+
+/// The side a mixed fold reports is decided on exact quantities. A million
+/// sold against 1 000 000.0001 bought is a buy — a margin an f32 share of
+/// 0.500000025 rounds to an even split, which would keep the sell anchor.
+#[test]
+fn a_mixed_fold_decides_its_side_on_exact_quantities() {
+    let config = merging(true);
+    let mut projection = frame(
+        &config,
+        &[
+            (1, 3_100, "100", "1000000", Side::Sell),
+            (2, 3_110, "100", "500000.00005", Side::Buy),
+            (3, 3_120, "100", "500000.00005", Side::Buy),
+        ],
+    );
+    assert_eq!(projection.aggressions.len(), 3);
+
+    projection.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
+
+    assert_eq!(drawn(&projection).len(), 1);
+    let pie = &drawn(&projection)[0];
+    assert_eq!(pie.quantity, dec("2000000.0001"));
+    assert_eq!(pie.side, AggressorSide::Buy, "0.0001 more was bought");
+    assert_eq!(pie.consumed_side, RestingSide::Ask);
+}
+
+/// The painter ignores the fold while a side is hidden or no bubble layer is
+/// drawn, so the fold is not built then: nothing to draw, nothing to pay for.
+#[test]
+fn the_fold_is_not_built_when_the_painter_would_not_draw_it() {
+    let trades = [
+        (1, 3_100, "100", "2", Side::Buy),
+        (2, 3_120, "100", "3", Side::Sell),
+    ];
+    let one_side_hidden = HeatmapConfig {
+        show_sell_aggressions: false,
+        ..merging(true)
+    };
+    let no_bubbles = HeatmapConfig {
+        show_aggressions: false,
+        live_lane: LiveLaneStyle {
+            show_aggressions: false,
+            ..merging(true).live_lane
+        },
+        ..merging(true)
+    };
+    for config in [one_side_hidden, no_bubbles] {
+        let mut projection = frame(&merging(true), &trades);
+        projection.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
+        assert_eq!(projection.overlap_marks, None);
+    }
 }
