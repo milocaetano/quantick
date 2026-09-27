@@ -6,10 +6,18 @@
 //! disc half under a red one reads as neither, and ten specks inside a tenth
 //! of a second read as noise. The budget fold (`fold`) does not help, because
 //! a frame can be well inside its budget and still unreadable; the question
-//! here is geometric, not a count. So, when the trader opts in, every group of
-//! discs that would touch is folded into one mark: the exact summed quantity,
-//! the union of the evidence, a pie when both sides are in it, and the `⊕n`
-//! label that says the canvas did this, not the market.
+//! here is geometric, not a count. So, when the trader opts in, discs that
+//! would touch are folded into one mark: the exact summed quantity, the union
+//! of the evidence, a pie when both sides are in it, and the `⊕n` label that
+//! says the canvas did this, not the market.
+//!
+//! The fold is one greedy pass and it does not chain. The heaviest mark not yet
+//! taken anchors a fold and takes only the untaken marks whose own disc
+//! directly overlaps its own — both as projected, never as a fold grown bigger.
+//! Following touch transitively looked tidier and was wrong: a leg of prints
+//! where each touches the next folded a whole 180-point rally into one mark
+//! and hid where the aggression happened. The price of refusing the chain is
+//! accepted: a fold drawn at its summed size may still touch a neighbour.
 //!
 //! The decision needs pixels the normalized projection does not carry, so the
 //! chart hands them over as a [`PaneGeometry`] and the radius comes from the
@@ -24,7 +32,7 @@ use crate::config::{HeatmapConfig, bubble_radius};
 use crate::history::AggressorSide;
 use crate::timeline::BarTimeline;
 
-use super::fold::{absorb, fold_chunk};
+use super::fold::fold_onto;
 use super::model::{AggressionPrimitive, HeatmapProjection, frame_order};
 
 /// The pixel geometry of the pane a frame is drawn on.
@@ -42,14 +50,6 @@ pub struct PaneGeometry {
     /// Height of the chart, in pixels.
     pub height_px: f32,
 }
-
-/// How many times the fold re-measures after merging.
-///
-/// A fold is bigger than any of its members, so it can reach a neighbour none
-/// of them touched; each pass settles those, and a pile-up converges in two or
-/// three. The cap bounds a frame's cost on a pathological tape — what it can
-/// leave behind is at worst a touching pair, never a lost contract.
-const MAX_OVERLAP_PASSES: usize = 8;
 
 /// One mark's disc on screen, in pixels.
 ///
@@ -92,7 +92,8 @@ fn unit(value: f64) -> f64 {
 type GroupKey = (bool, Option<usize>, Option<u8>);
 
 impl HeatmapProjection {
-    /// Fold every group of bubbles whose discs would overlap into one mark.
+    /// Fold each bubble whose disc overlaps a heavier one's into it — one
+    /// greedy pass, never chained; see the module note.
     ///
     /// Does nothing unless [`HeatmapConfig::bubble_overlap_merge`] is on, so
     /// off is today's frame exactly. On, the marks come back in the frame's
@@ -183,74 +184,93 @@ impl Scale {
     }
 }
 
-/// Fold one group until no two of its discs touch, or the pass cap is spent.
+/// Fold one group in a single greedy pass, anchored heaviest first.
+///
+/// Each anchor takes the untaken marks whose disc overlaps its own, measured
+/// as projected: no chaining through a member, no re-measuring a grown fold.
 fn fold_touching(
     mut marks: Vec<AggressionPrimitive>,
     reference: Decimal,
     scale: &Scale,
 ) -> Vec<AggressionPrimitive> {
-    for _ in 0..MAX_OVERLAP_PASSES {
-        if marks.len() < 2 {
-            break;
-        }
-        // A canonical order first, so which marks land in which fold never
-        // depends on the order they arrived in.
-        marks.sort_by(frame_order);
-        let Some(mut roots) = touching_components(&marks, scale) else {
-            break;
-        };
-        let mut components: BTreeMap<usize, Vec<AggressionPrimitive>> = BTreeMap::new();
-        for (index, mark) in marks.into_iter().enumerate() {
-            let root = find(&mut roots, index);
-            components.entry(root).or_default().push(mark);
-        }
-        marks = components
-            .into_values()
-            .map(|members| {
-                if members.len() == 1 {
-                    members.into_iter().next().expect("one member")
-                } else {
-                    fold_chunk(members, reference, absorb)
-                }
-            })
-            .collect();
+    if marks.len() < 2 {
+        return marks;
     }
-    marks
+    // A canonical order first, so which marks land in which fold never
+    // depends on the order they arrived in.
+    marks.sort_by(frame_order);
+    let anchors = assign_anchors(&marks, scale);
+    let mut folds: BTreeMap<usize, (Option<AggressionPrimitive>, Vec<AggressionPrimitive>)> =
+        BTreeMap::new();
+    for (index, mark) in marks.into_iter().enumerate() {
+        let fold = folds.entry(anchors[index]).or_default();
+        if anchors[index] == index {
+            fold.0 = Some(mark);
+        } else {
+            fold.1.push(mark);
+        }
+    }
+    folds
+        .into_values()
+        .map(|(anchor, members)| {
+            fold_onto(
+                anchor.expect("every fold has its anchor"),
+                members,
+                reference,
+            )
+        })
+        .collect()
 }
 
-/// Union every pair of touching discs; `None` when no two touch.
+/// The anchor each mark folds into — itself when nothing heavier took it.
 ///
-/// Swept along x, so a pair is only measured when its centres are closer than
-/// the widest reach in the group — a dense tape is sorted once and compared
-/// against its neighbours, not against every other mark.
-fn touching_components(marks: &[AggressionPrimitive], scale: &Scale) -> Option<Vec<usize>> {
+/// Anchors are taken heaviest first, ties by the canonical order. The search
+/// for an anchor's members is swept along x, so only marks whose centres are
+/// within the anchor's reach plus the widest radius in the group are measured.
+fn assign_anchors(marks: &[AggressionPrimitive], scale: &Scale) -> Vec<usize> {
     let discs: Vec<Disc> = marks.iter().map(|mark| scale.disc(mark)).collect();
     let widest = discs.iter().map(|disc| disc.radius).fold(0.0, f64::max);
     let mut by_x: Vec<usize> = (0..discs.len()).collect();
     by_x.sort_by(|&a, &b| discs[a].x.total_cmp(&discs[b].x).then(a.cmp(&b)));
-    let mut roots: Vec<usize> = (0..discs.len()).collect();
-    let mut any = false;
-    for (position, &a) in by_x.iter().enumerate() {
-        for &b in &by_x[position + 1..] {
-            if discs[b].x - discs[a].x >= discs[a].radius + widest {
+    let mut rank = vec![0; discs.len()];
+    for (position, &index) in by_x.iter().enumerate() {
+        rank[index] = position;
+    }
+    let mut by_weight: Vec<usize> = (0..marks.len()).collect();
+    by_weight.sort_by(|&a, &b| marks[b].quantity.cmp(&marks[a].quantity).then(a.cmp(&b)));
+
+    let mut anchors: Vec<Option<usize>> = vec![None; marks.len()];
+    for anchor in by_weight {
+        if anchors[anchor].is_some() {
+            continue;
+        }
+        anchors[anchor] = Some(anchor);
+        let disc = discs[anchor];
+        let reach = disc.radius + widest;
+        // Walks outward from the anchor; `false` once past its reach.
+        let mut take = |other: usize| {
+            if (discs[other].x - disc.x).abs() >= reach {
+                return false;
+            }
+            if anchors[other].is_none() && disc.touches(discs[other]) {
+                anchors[other] = Some(anchor);
+            }
+            true
+        };
+        for &other in &by_x[rank[anchor] + 1..] {
+            if !take(other) {
                 break;
             }
-            if discs[a].touches(discs[b]) {
-                let (root_a, root_b) = (find(&mut roots, a), find(&mut roots, b));
-                // The lower index wins, so the root of a component is a
-                // property of the canonical order, not of the sweep.
-                roots[root_a.max(root_b)] = root_a.min(root_b);
-                any = true;
+        }
+        for &other in by_x[..rank[anchor]].iter().rev() {
+            if !take(other) {
+                break;
             }
         }
     }
-    any.then_some(roots)
-}
-
-fn find(roots: &mut [usize], mut index: usize) -> usize {
-    while roots[index] != index {
-        roots[index] = roots[roots[index]];
-        index = roots[index];
-    }
-    index
+    anchors
+        .into_iter()
+        .enumerate()
+        .map(|(index, anchor)| anchor.unwrap_or(index))
+        .collect()
 }

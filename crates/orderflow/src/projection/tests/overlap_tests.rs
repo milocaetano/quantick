@@ -113,8 +113,8 @@ fn a_buy_and_a_sell_that_overlap_on_the_tape_fold_into_one_pie() {
 }
 
 /// Six half-contract buys in under a tenth of a second pile up as six specks
-/// over each other. They fold into one bigger mark — and the merge keeps
-/// going as the fold grows, so it is one mark, not three pairs.
+/// over each other, all inside the first one's disc. They fold into one
+/// bigger mark anchored on it.
 #[test]
 fn small_same_side_prints_close_in_time_fold_into_one_bigger_mark() {
     let config = merging(true);

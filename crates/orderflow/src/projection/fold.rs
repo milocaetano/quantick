@@ -92,11 +92,7 @@ fn merge_marks(
 /// blot, and one pie says what the blot hid. Nothing here is side-specific:
 /// the buy share is quantity-weighted across the members, so a mixed fold
 /// carries both sides' exact proportion and the anchor keeps its own side.
-pub(super) fn absorb(
-    mark: &mut AggressionPrimitive,
-    other: &mut AggressionPrimitive,
-    reference: Decimal,
-) {
+fn absorb(mark: &mut AggressionPrimitive, other: &mut AggressionPrimitive, reference: Decimal) {
     debug_assert_eq!(mark.live, other.live, "a fold may not cross the panes");
     let total = mark.quantity + other.quantity;
     let low = mark.price_bucket.min(other.price_bucket);
@@ -167,16 +163,9 @@ fn settle_ids(mark: &mut AggressionPrimitive) {
     mark.liquidity_event_ids.truncate(MAX_FOLD_IDS);
 }
 
-/// How one member is folded into the mark a chunk is anchored on.
-pub(super) type Merge = fn(&mut AggressionPrimitive, &mut AggressionPrimitive, Decimal);
-
 /// Merge one group of compatible marks into a single mark anchored on the
 /// heaviest of them — the group's point of control.
-pub(super) fn fold_chunk(
-    mut chunk: Vec<AggressionPrimitive>,
-    reference: Decimal,
-    merge: Merge,
-) -> AggressionPrimitive {
+fn fold_chunk(mut chunk: Vec<AggressionPrimitive>, reference: Decimal) -> AggressionPrimitive {
     let heaviest = chunk
         .iter()
         .enumerate()
@@ -190,12 +179,29 @@ pub(super) fn fold_chunk(
     let mut rest = chunk.split_off(1);
     let mut merged = chunk.pop().expect("a chunk is never empty");
     for other in &mut rest {
-        merge(&mut merged, other, reference);
+        merge_marks(&mut merged, other, reference);
     }
     if merged.folded_marks > 0 {
         settle_ids(&mut merged);
     }
     merged
+}
+
+/// Fold `members` into `anchor`, which the caller chose and which keeps its
+/// place — the overlap fold's merge, where the sides may differ.
+pub(super) fn fold_onto(
+    mut anchor: AggressionPrimitive,
+    members: Vec<AggressionPrimitive>,
+    reference: Decimal,
+) -> AggressionPrimitive {
+    if members.is_empty() {
+        return anchor;
+    }
+    for mut other in members {
+        absorb(&mut anchor, &mut other, reference);
+    }
+    settle_ids(&mut anchor);
+    anchor
 }
 
 /// Which mark folds first, per pane.
@@ -323,10 +329,10 @@ pub(super) fn fold_to_budget(
     for mut members in groups.into_values() {
         while members.len() > group {
             let rest = members.split_off(group);
-            folded.push(fold_chunk(members, reference, merge_marks));
+            folded.push(fold_chunk(members, reference));
             members = rest;
         }
-        folded.push(fold_chunk(members, reference, merge_marks));
+        folded.push(fold_chunk(members, reference));
     }
     folded.extend(tail);
     *marks = folded;
