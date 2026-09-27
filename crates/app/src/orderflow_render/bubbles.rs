@@ -963,14 +963,14 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
 
 /// The text inside a bubble: what traded, and how many prints it stands for.
 ///
-/// `folded` is what the frame's budget merged into this mark, and it changes
-/// the *separator* rather than adding a second number. `×4` is a cluster — four
-/// prints that happened together at one price, which is a fact about the
-/// market. `⊕4` is a fold — four marks the frame put together to fit, which is
-/// a fact about the canvas. A trader sizing a position off the first would be
-/// right and off the second would be wrong, so they may not share a glyph. The
-/// ring around a folded disc says the same thing again, further out, for the
-/// dots too small to carry text.
+/// `folded` is what the frame merged into this mark, and it changes the
+/// *separator* rather than adding a second number. `×4` is a cluster: four
+/// prints that traded together at one price, a fact about the market. `⊕4` is
+/// a fold: four marks the frame put together, a fact about the canvas. A size
+/// read off the first is right and off the second wrong, so they may not share
+/// a glyph. The `⊕` is Phosphor's circled plus — the text font has none and
+/// drew a box. The ring around a folded disc says the same again, further out,
+/// for the dots too small to carry text.
 pub(super) fn bubble_label(
     quantity: Decimal,
     trade_count: usize,
@@ -978,7 +978,7 @@ pub(super) fn bubble_label(
     show_quantity: bool,
     show_count: bool,
 ) -> Option<String> {
-    let mark = if folded > 1 { '⊕' } else { '×' };
+    let mark = ["×", egui_phosphor::regular::PLUS_CIRCLE][usize::from(folded > 1)];
     match (show_quantity, show_count && trade_count > 1) {
         (false, false) => None,
         (true, false) => Some(format_quantity(quantity)),

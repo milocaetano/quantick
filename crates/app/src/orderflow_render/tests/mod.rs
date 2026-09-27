@@ -1726,11 +1726,35 @@ fn a_fold_and_a_cluster_do_not_share_a_glyph() {
     let fold =
         bubble_label(rust_decimal::Decimal::from(20), 4, 4, true, true).expect("labels are on");
     assert_eq!(cluster, "20 · ×4");
-    assert_eq!(fold, "20 · ⊕4");
+    assert_eq!(
+        fold,
+        format!("20 · {}4", egui_phosphor::regular::PLUS_CIRCLE)
+    );
     assert_ne!(
         cluster, fold,
         "a budget fold reads as four prints that traded"
     );
+}
+/// Both labels are made of glyphs the chart's fonts really carry.
+///
+/// The fold's mark used to be `⊕`, which no installed font has: every folded
+/// bubble said `□146`, a box a trader cannot read as "the canvas did this".
+#[test]
+fn a_fold_label_is_drawn_in_glyphs_the_chart_has() {
+    let context = egui::Context::default();
+    // The fonts `launch::boot` installs before the first frame.
+    let mut fonts = egui::FontDefinitions::default();
+    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+    context.set_fonts(fonts);
+    let _ = context.run(egui::RawInput::default(), |_| {});
+    let font = egui::FontId::proportional(12.0);
+    for folded in [0, 4] {
+        let label = bubble_label(Decimal::from(20), 4, folded, true, true).expect("labels are on");
+        assert!(
+            context.fonts(|fonts| fonts.has_glyphs(&font, &label)),
+            "`{label}` paints a missing glyph as a box"
+        );
+    }
 }
 /// A reduction kind switched off leaves the canvas, not just the legend.
 ///
