@@ -243,6 +243,16 @@ pub struct HeatmapConfig {
     /// one behind the other. Prints in the live lane are never summarized —
     /// they have not finished happening.
     pub bubble_candle_summary: bool,
+    /// Whether bubbles whose drawn discs would overlap on the canvas fold into
+    /// one mark, per pane and frame.
+    ///
+    /// Off by default, and off draws exactly what it drew before. On, a mark
+    /// touching another is folded into it — across sides, and on the tape
+    /// too — carrying the exact summed quantity and drawn as a buy/sell pie
+    /// when both sides are in it. It is labelled as a fold (`⊕n`), never as a
+    /// print, and it never crosses a pane or a bar: a candle mark is a claim
+    /// about the bar it sits in.
+    pub bubble_overlap_merge: bool,
     /// Everything else the aggression-bubble panel owns: geometry (including
     /// the alpha and largest radius this used to carry as two flat fields),
     /// colour, consumption marks and labels.
@@ -338,6 +348,7 @@ impl Default for HeatmapConfig {
             bubble_region_rows: 1,
             bubble_region_ms: DEFAULT_BUBBLE_REGION_MS,
             bubble_candle_summary: false,
+            bubble_overlap_merge: false,
             bubbles: BubbleStyle::default(),
             live_lane: LiveLaneStyle::default(),
             show_depth: true,

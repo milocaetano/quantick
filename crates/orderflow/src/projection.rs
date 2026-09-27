@@ -15,6 +15,7 @@ use super::timeline::BarTimeline;
 
 mod fold;
 mod model;
+mod overlap;
 mod tiers;
 
 pub use model::{
@@ -22,6 +23,7 @@ pub use model::{
     LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, normalized_area_size,
     normalized_log_intensity,
 };
+pub use overlap::PaneGeometry;
 
 use fold::{FoldOrder, fold_to_budget, pane_budgets};
 use model::event_cap_key;

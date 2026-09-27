@@ -46,8 +46,8 @@ pub use interaction::{
 #[allow(unused_imports)]
 pub use projection::{
     AggressionPrimitive, BEFORE_CAPTURE, GapPrimitive, HeatmapCell, HeatmapProjection,
-    LiquidityEventPrimitive, LiquidityEvidence, LiveMarks, PriceWindow, SettledProjection,
-    project_live, project_settled,
+    LiquidityEventPrimitive, LiquidityEvidence, LiveMarks, PaneGeometry, PriceWindow,
+    SettledProjection, project_live, project_settled,
 };
 #[allow(unused_imports)]
 pub use scale::SessionScale;

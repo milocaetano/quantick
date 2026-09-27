@@ -15,6 +15,8 @@ use quantick_orderbook::BookSide;
 use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
 use std::str::FromStr as _;
 
+mod overlap_tests;
+
 fn dec(value: &str) -> Decimal {
     Decimal::from_str(value).unwrap()
 }
