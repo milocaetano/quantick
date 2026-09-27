@@ -2166,6 +2166,70 @@ mod tests {
         );
     }
 
+    /// The overlap fold belongs to the painter: the live strip's histogram
+    /// reads the unfolded marks, so switching the fold on moves no contract
+    /// from one of its rows to another.
+    #[test]
+    fn the_overlap_fold_leaves_the_live_strip_rows_alone() {
+        let strip = |merge: bool| {
+            let mut view = OrderflowView::new("BTCUSDT");
+            view.set_projection_demand(true);
+            let before = view.config.clone();
+            view.config.bubble_overlap_merge = merge;
+            view.commit_config_changes(before);
+            for (agg_id, timestamp_ms, price, side) in [
+                (1, 1_000, 1_005, quantick_engine::Side::Buy),
+                (2, 1_010, 1_006, quantick_engine::Side::Sell),
+            ] {
+                view.record_trade(&Trade {
+                    agg_id,
+                    timestamp_ms,
+                    price: Decimal::new(price, 1),
+                    quantity: Decimal::ONE,
+                    side,
+                });
+            }
+            view.flush_for_test();
+            let bars = [bar(900, 1_100)];
+            let geometry = Some(quantick_orderflow::PaneGeometry {
+                px_per_bar: 40.0,
+                lane_width_px: 200.0,
+                height_px: 400.0,
+            });
+            view.project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                (98.0, 102.0),
+                geometry,
+            );
+            view.flush_for_test();
+            let frame = view
+                .project_visible(
+                    visible_timeline(&bars),
+                    true,
+                    true,
+                    None,
+                    (98.0, 102.0),
+                    geometry,
+                )
+                .expect("the strip's frame");
+            let rows = live_strip::aggression_rows(
+                &frame.projection.aggressions,
+                900,
+                frame.projection.summarized,
+                frame.projection.effective_grouping.bucket_width,
+            );
+            (rows, frame.projection.overlap_marks.is_some())
+        };
+        let (off, off_folded) = strip(false);
+        let (on, on_folded) = strip(true);
+        assert!(!off_folded && on_folded, "the fold ran only when on");
+        assert!(!off.is_empty(), "the fixture draws strip rows");
+        assert_eq!(on, off, "the strip reads the marks the fold never touched");
+    }
+
     #[test]
     fn disabling_capture_drops_the_published_frame() {
         let mut view = OrderflowView::new("BTCUSDT");

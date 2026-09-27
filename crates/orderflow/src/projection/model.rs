@@ -231,6 +231,15 @@ pub struct HeatmapProjection {
     pub cells: Arc<Vec<HeatmapCell>>,
     /// Visible aggressive executions.
     pub aggressions: Vec<AggressionPrimitive>,
+    /// The bubbles the painter draws when the overlap fold is on: the marks
+    /// above with every disc that overlaps a heavier one folded into it.
+    /// `None` when the fold is off or the frame had no canvas to measure.
+    ///
+    /// A list of its own, never a rewrite of [`aggressions`](Self::aggressions):
+    /// the fold is a fact about the canvas, and every other reader — the live
+    /// strip's histogram above all — keeps the per-price quantities it read
+    /// before the fold existed.
+    pub overlap_marks: Option<Vec<AggressionPrimitive>>,
     /// Visible factual displayed-liquidity reductions.
     pub liquidity_events: Vec<LiquidityEventPrimitive>,
     /// Visible continuity gaps. Shared for the reason [`cells`](Self::cells) is.
@@ -274,6 +283,7 @@ impl HeatmapProjection {
             floored_quantity: Decimal::ZERO,
             cells: Arc::new(Vec::new()),
             aggressions: Vec::new(),
+            overlap_marks: None,
             liquidity_events: Vec::new(),
             gaps: Arc::new(Vec::new()),
             live_now_x: None,
@@ -433,6 +443,7 @@ impl SettledProjection {
             floored_quantity: self.floored_quantity + live.floored_quantity,
             cells: Arc::clone(&self.cells),
             aggressions,
+            overlap_marks: None,
             liquidity_events,
             gaps: Arc::clone(&self.gaps),
             live_now_x: live.live_now_x,

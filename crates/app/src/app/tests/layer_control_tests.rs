@@ -198,3 +198,36 @@ fn omitted_pane_mutations_have_correlated_once_only_and_noop_journal_readback() 
     assert_eq!(events[0]["payload"]["result"]["changed"], false);
     disable_test_gateway(&mut app, &ctx);
 }
+
+/// The overlap fold is a registered display switch, so an agent reaches it by
+/// the same named call as every other one — no mouse, no second vocabulary —
+/// and reads the answer back from the bubbles scope.
+#[test]
+fn the_overlap_fold_is_switched_by_the_layer_call() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    let directory = gateway_test_directory("overlap-fold-switch");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut cockpit = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let merging = |app: &QuantickApp| {
+        let flow = app.active_tab().flow_pane.orderflow.as_ref();
+        flow.expect("the flow pane has an engine")
+            .cached_config()
+            .bubble_overlap_merge
+    };
+    assert!(!merging(&app), "off until someone asks");
+    for on in [true, false] {
+        let payload = layer_input(&app, "bubble_overlap_merge", on);
+        let (response, _) = unkeyed_call(&mut app, &mut cockpit, "layers.visibility.set", payload);
+        let result = success_result(&response);
+        assert_eq!(result["layer"]["requested"], on);
+        assert_eq!(result["layer"]["persistence"], "orderflow_preset");
+        assert_eq!(result["changed"], true);
+        assert_eq!(merging(&app), on, "the call set the pane's own switch");
+    }
+    disable_test_gateway(&mut app, &ctx);
+}

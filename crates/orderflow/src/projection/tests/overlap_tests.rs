@@ -5,7 +5,7 @@
 use super::*;
 use crate::PaneGeometry;
 use crate::bubble_radius;
-use crate::history::AggressorSide;
+use crate::history::{AggressorSide, RestingSide};
 use rust_decimal::prelude::ToPrimitive as _;
 
 /// Four closed one-second bars and a tape covering the last 1.5 s of them.
@@ -55,12 +55,16 @@ fn frame(config: &HeatmapConfig, trades: &[(u64, i64, &str, &str, Side)]) -> Hea
     project(&tape(config.clone(), trades), &timeline(), prices())
 }
 
-fn total(projection: &HeatmapProjection) -> Decimal {
+/// What the painter draws: the fold's own list when there is one.
+fn drawn(projection: &HeatmapProjection) -> &[AggressionPrimitive] {
     projection
-        .aggressions
-        .iter()
-        .map(|mark| mark.quantity)
-        .sum()
+        .overlap_marks
+        .as_deref()
+        .unwrap_or(&projection.aggressions)
+}
+
+fn total(projection: &HeatmapProjection) -> Decimal {
+    drawn(projection).iter().map(|mark| mark.quantity).sum()
 }
 
 /// A buy and a sell twenty milliseconds apart on the tape sit under three
@@ -85,8 +89,8 @@ fn a_buy_and_a_sell_that_overlap_on_the_tape_fold_into_one_pie() {
 
     projection.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
 
-    assert_eq!(projection.aggressions.len(), 1, "one pie, not two discs");
-    let pie = &projection.aggressions[0];
+    assert_eq!(drawn(&projection).len(), 1, "one pie, not two discs");
+    let pie = &drawn(&projection)[0];
     assert!(pie.live, "a tape fold stays on the tape");
     assert_eq!(pie.quantity, dec("5"), "the summed quantity is exact");
     assert_eq!(pie.trade_count, 2);
@@ -106,9 +110,8 @@ fn a_buy_and_a_sell_that_overlap_on_the_tape_fold_into_one_pie() {
     assert_eq!(pie.first_timestamp_ms, 3_100);
     assert_eq!(pie.last_timestamp_ms, 3_120);
     assert_eq!(
-        projection.folded_aggressions,
-        folded_before + 1,
-        "the frame counts the mark it folded"
+        projection.folded_aggressions, folded_before,
+        "the budget's own counter says nothing about the canvas's fold"
     );
 }
 
@@ -131,8 +134,8 @@ fn small_same_side_prints_close_in_time_fold_into_one_bigger_mark() {
 
     projection.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
 
-    assert_eq!(projection.aggressions.len(), 1);
-    let mark = &projection.aggressions[0];
+    assert_eq!(drawn(&projection).len(), 1);
+    let mark = &drawn(&projection)[0];
     assert_eq!(mark.quantity, dec("3"));
     assert_eq!(mark.trade_count, 6);
     assert_eq!(mark.folded_marks, 6);
@@ -161,7 +164,7 @@ fn marks_that_do_not_overlap_are_untouched() {
 
     projection.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
 
-    assert_eq!(projection, original);
+    assert_eq!(drawn(&projection), original.aggressions.as_slice());
 }
 
 /// Off draws today's frame, bit for bit, however crowded it is.
@@ -205,13 +208,13 @@ fn candle_marks_fold_inside_a_bar_and_never_across_one() {
     projection.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
 
     assert_eq!(total(&projection), before, "not a contract is lost");
-    assert_eq!(projection.aggressions.len(), 2, "one mark per bar");
-    let first = &projection.aggressions[0];
+    assert_eq!(drawn(&projection).len(), 2, "one mark per bar");
+    let first = &drawn(&projection)[0];
     assert_eq!(first.quantity, dec("5"));
     assert_eq!(first.agg_ids, vec![1, 2]);
     assert!((first.buy_share - 0.6).abs() < 1e-6);
     assert!(!first.live);
-    let second = &projection.aggressions[1];
+    let second = &drawn(&projection)[1];
     assert_eq!(second.quantity, dec("2"));
     assert_eq!(second.agg_ids, vec![3]);
     assert_eq!(second.folded_marks, 0, "untouched, still a print");
@@ -242,7 +245,7 @@ fn the_fold_never_crosses_the_divider() {
 
     projection.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
 
-    assert_eq!(projection, original);
+    assert_eq!(drawn(&projection), original.aggressions.as_slice());
 }
 
 /// Same trades in, same frame out: the fold is ordered by the marks
@@ -295,12 +298,12 @@ fn a_chain_of_touching_marks_does_not_fold_into_one() {
     projection.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
 
     assert!(
-        projection.aggressions.len() > 1,
+        drawn(&projection).len() > 1,
         "the leg must not collapse into one mark"
     );
     assert_eq!(total(&projection), dec("25"), "not a contract is lost");
     let px_per_unit = f64::from(GEOMETRY.height_px) / span.to_f64().unwrap();
-    for mark in &projection.aggressions {
+    for mark in drawn(&projection) {
         // The members' rows, edge to edge, are the whole band; a direct
         // neighbour of the anchor is at most two radii away from it.
         let reach = (mark.price_span - Decimal::ONE).to_f64().unwrap() * px_per_unit;
@@ -309,4 +312,161 @@ fn a_chain_of_touching_marks_does_not_fold_into_one() {
             "a fold reached {reach:.1}px past its anchor, beyond one disc's touch"
         );
     }
+}
+
+/// Raw prints drawn as 5 px discs, nudged 3 px toward their own book half —
+/// the numbers the lean bug was reported with.
+fn five_pixel_discs() -> HeatmapConfig {
+    let config = merging(true);
+    HeatmapConfig {
+        bubbles: BubbleStyle {
+            min_radius: 5.0,
+            max_radius: 5.0,
+            side_offset: 3.0,
+            ..config.bubbles.clone()
+        },
+        live_lane: LiveLaneStyle {
+            radius_scale: 1.0,
+            ..config.live_lane.clone()
+        },
+        ..config
+    }
+}
+
+/// A 50-point window on a 400 px chart: one price row is 8 px.
+fn eight_pixel_rows() -> PriceWindow {
+    PriceWindow::new(dec("80"), dec("130")).unwrap()
+}
+
+/// The fold measures a disc where the painter draws it. A buy leans up,
+/// toward the asks, and a sell leans down: a buy one row above a sell sits
+/// 8 + 3 + 3 = 14 px from it, clear of two 5 px radii, so they stay two marks.
+#[test]
+fn a_buy_a_row_above_a_sell_leans_away_and_does_not_fold() {
+    let config = five_pixel_discs();
+    let trades = [
+        (1, 3_100, "101", "2", Side::Buy),
+        (2, 3_100, "100", "2", Side::Sell),
+    ];
+    let mut projection = project(
+        &tape(config.clone(), &trades),
+        &timeline(),
+        eight_pixel_rows(),
+    );
+    assert_eq!(projection.aggressions.len(), 2);
+
+    projection.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
+
+    assert_eq!(drawn(&projection).len(), 2, "14 px apart, two marks");
+}
+
+/// A sell one row above a buy leans toward it: 8 - 3 - 3 = 2 px apart, well
+/// inside two 5 px radii. They are drawn over each other, so they are one pie.
+#[test]
+fn a_sell_a_row_above_a_buy_leans_into_it_and_folds() {
+    let config = five_pixel_discs();
+    let trades = [
+        (1, 3_100, "101", "2", Side::Sell),
+        (2, 3_100, "100", "2", Side::Buy),
+    ];
+    let mut projection = project(
+        &tape(config.clone(), &trades),
+        &timeline(),
+        eight_pixel_rows(),
+    );
+    assert_eq!(projection.aggressions.len(), 2);
+
+    projection.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
+
+    assert_eq!(drawn(&projection).len(), 1, "2 px apart, one pie");
+    assert_eq!(drawn(&projection)[0].quantity, dec("4"));
+}
+
+/// A mixed fold reports the side that took more, whichever mark anchored it
+/// — the rule the cluster fold already follows. A 3-lot sell anchors two
+/// 2-lot buys: 4 bought against 3 sold is a buy.
+#[test]
+fn a_mixed_fold_reports_the_side_that_took_more() {
+    let config = merging(true);
+    let mut projection = frame(
+        &config,
+        &[
+            (1, 3_100, "100", "3", Side::Sell),
+            (2, 3_110, "100", "2", Side::Buy),
+            (3, 3_120, "100", "2", Side::Buy),
+        ],
+    );
+    assert_eq!(projection.aggressions.len(), 3);
+
+    projection.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
+
+    assert_eq!(drawn(&projection).len(), 1);
+    let pie = &drawn(&projection)[0];
+    assert_eq!(pie.quantity, dec("7"));
+    assert_eq!(pie.side, AggressorSide::Buy, "4 of 7 were bought");
+    assert_eq!(pie.consumed_side, RestingSide::Ask);
+}
+
+/// Every reader but the painter sees the frame the fold never touched: the
+/// live strip sums quantities per price from `aggressions`, and a fold that
+/// rewrote them would move a sell's contracts onto the buy's row.
+#[test]
+fn the_fold_leaves_the_marks_other_readers_use_untouched() {
+    let config = merging(true);
+    let original = frame(
+        &config,
+        &[
+            (1, 3_100, "100", "2", Side::Buy),
+            (2, 3_120, "100", "3", Side::Sell),
+        ],
+    );
+    let mut projection = original.clone();
+
+    projection.merge_overlapping_bubbles(GEOMETRY, &timeline(), &config);
+
+    assert_eq!(projection.aggressions, original.aggressions);
+    assert_eq!(projection.folded_aggressions, original.folded_aggressions);
+    assert_eq!(drawn(&projection).len(), 1, "only the painter's list folds");
+}
+
+/// The tape is continuous, but its prints still belong to bars: a buy in the
+/// last millisecond of one bar and a sell in the first of the next touch on
+/// the tape and stay two marks, so no fold claims volume across a close.
+#[test]
+fn a_tape_fold_never_spans_two_bars() {
+    let config = merging(true);
+    let closed = [bar(0, 999), bar(1_000, 1_999)];
+    let timeline = BarTimeline::from_bars(
+        0,
+        &closed,
+        None,
+        Some(crate::LiveEdge {
+            now_ms: 1_900,
+            window_ms: 1_500,
+            reference_ms: 1_500,
+            on_newest_bar: true,
+        }),
+    );
+    let trades = [
+        (1, 999, "100", "2", Side::Buy),
+        (2, 1_001, "100", "3", Side::Sell),
+    ];
+    let mut projection = project(&tape(config.clone(), &trades), &timeline, prices());
+    assert_eq!(
+        projection
+            .aggressions
+            .iter()
+            .filter(|mark| mark.live)
+            .count(),
+        2,
+        "both prints are on the tape"
+    );
+
+    projection.merge_overlapping_bubbles(GEOMETRY, &timeline, &config);
+
+    assert_eq!(
+        drawn(&projection).iter().filter(|mark| mark.live).count(),
+        2,
+        "one mark per bar, touching or not"
+    );
 }

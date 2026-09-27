@@ -2080,11 +2080,12 @@ mod tests {
         assert_eq!(frame(true, None), unfolded, "no canvas, nothing to measure");
         let folded = frame(true, Some(geometry));
         assert_eq!(
-            folded.aggressions.len(),
-            1,
-            "on, the touching pair is one pie"
+            folded.aggressions, unfolded.aggressions,
+            "every reader but the painter sees the unfolded marks"
         );
-        assert_eq!(folded.aggressions[0].quantity, Decimal::from(5));
+        let folded = folded.overlap_marks.expect("the painter's own list");
+        assert_eq!(folded.len(), 1, "on, the touching pair is one pie");
+        assert_eq!(folded[0].quantity, Decimal::from(5));
     }
 
     /// A print the engine has accepted is drawable on the next projection, with
