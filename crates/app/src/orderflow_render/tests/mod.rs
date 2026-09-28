@@ -1847,6 +1847,67 @@ fn a_bare_bubble_draws_nothing_past_its_disc() {
         );
     }
 }
+/// The consumption trail runs to the right of a disc, into the next cell,
+/// so a mark the overlap grid placed wears none: the grid's promise is that
+/// nothing drawn for one mark reaches another's.
+#[test]
+fn a_grid_mark_draws_no_trail_into_its_neighbour() {
+    let viewport = Viewport::new();
+    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(600.0, 400.0));
+    let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 0.0);
+    let painted_with = |cell_radius_px: Option<f32>, trail_length: f32| {
+        let mut projection = HeatmapProjection::empty(
+            true,
+            quantick_orderflow::EffectiveGrouping::resolve(
+                quantick_orderflow::DisplayGrouping::Native,
+                rust_decimal::Decimal::ONE,
+                rust_decimal::Decimal::from(100),
+            ),
+        );
+        projection.aggressions.push(AggressionPrimitive {
+            agg_id: 1,
+            agg_ids: vec![1],
+            generation: None,
+            side: Side::Buy,
+            consumed_side: BookSide::Ask,
+            quantity: rust_decimal::Decimal::ONE,
+            buy_share: 1.0,
+            live: false,
+            price_bucket: rust_decimal::Decimal::ONE,
+            price_span: rust_decimal::Decimal::ONE,
+            trade_count: 1,
+            first_timestamp_ms: 0,
+            placed_ms: 0,
+            last_timestamp_ms: 0,
+            matched_quantity: rust_decimal::Decimal::ONE,
+            buy_quantity: rust_decimal::Decimal::ONE,
+            matched_fraction: 1.0,
+            liquidity_event_ids: vec![7],
+            x: 0.25,
+            y: 0.5,
+            size: 1.0,
+            folded_marks: 0,
+            cell_radius_px,
+        });
+        let mut style = OrderflowRenderStyle::default();
+        style.bubbles.trail_length = trail_length;
+        style.bubbles.trail_opacity = 0.8;
+        painted(|painter| {
+            draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
+        })
+    };
+    assert_ne!(
+        painted_with(None, 60.0),
+        painted_with(None, 0.0),
+        "off the grid a matched print still wears its trail"
+    );
+    assert_eq!(
+        painted_with(Some(40.0), 60.0),
+        painted_with(Some(40.0), 0.0),
+        "a grid mark drew a trail across its cell's edge"
+    );
+}
+
 /// A fold and a cluster may not read the same.
 ///
 /// `×4` says four prints happened together at one price — a fact about the

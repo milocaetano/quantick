@@ -597,12 +597,42 @@ fn a_price_pan_never_regroups_the_prints_it_already_folded() {
 
     let before = groups(&at("90", "112"), inside);
     assert!(before.len() > 20, "enough folds to compare");
-    for (low, high) in [("91", "113"), ("94", "116"), ("88", "110"), ("90", "122")] {
+    for (low, high) in [
+        ("91", "113"),
+        ("94", "116"),
+        ("88", "110"),
+        ("90", "122"),
+        // Windows no tick sits on, so any price rebuilt from a pixel carries
+        // float noise: a key that rounds it flips rows at a cell's edge.
+        ("90.37", "112.37"),
+        ("89.91", "111.91"),
+        ("90.123", "117.877"),
+    ] {
         assert_eq!(
             groups(&at(low, high), inside),
             before,
             "the chart panned to {low}..{high} and the past regrouped"
         );
+    }
+}
+
+/// A fold that leans hard toward the book it ate, in the top and bottom
+/// rows of the chart, is still drawn inside its own cell: the lean cannot
+/// carry a disc across the chart's edge and back into a neighbour's row.
+#[test]
+fn a_leaning_mark_at_the_chart_edge_stays_in_its_cell() {
+    let mut config = merging(true);
+    config.bubbles.side_offset = 30.0;
+    let (timeline, opens) = seconds(20, 0..20, 4_000);
+    let trades = dense(13, 900, 0, 19_900);
+    // A window whose edges cut through the traded range, so the top and
+    // bottom rows are crowded.
+    let prices = PriceWindow::new(dec("93"), dec("107")).unwrap();
+    for (px_per_bar, lane_width_px) in [(12.0, 300.0), (40.0, 600.0)] {
+        let geometry = geometry(px_per_bar, lane_width_px, opens.clone());
+        let mut projection = project(&tape(config.clone(), &borrowed(&trades)), &timeline, prices);
+        projection.merge_overlapping_bubbles(&geometry, &timeline, prices, &config);
+        assert_apart(&discs(&projection, &geometry, &timeline, &config));
     }
 }
 
