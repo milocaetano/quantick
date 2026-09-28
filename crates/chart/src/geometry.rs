@@ -764,9 +764,27 @@ mod tests {
     #[test]
     fn a_populated_view_scales_to_what_it_shows() {
         let bars = vec![bar("100.0", "110.0")];
-        let window = price_window(&bars, None, Some((1.0, 2.0)), None, 0.0, 100.0).unwrap();
+        let window = price_window(&bars, None, None, Some((1.0, 2.0)), None, 0.0, 100.0).unwrap();
         let expected = PriceScale::auto(&bars, None, 0.0, 100.0, AUTO_PAD_FRAC).unwrap();
         assert_eq!(window, expected, "the fallback must not shadow real bars");
+    }
+
+    /// With the tape on, the fit includes the tape's own price range, so the
+    /// live price never leaves the axis while the candles are panned into a
+    /// past that traded elsewhere. A tape inside the bars changes nothing.
+    #[test]
+    fn the_fit_keeps_the_tape_on_the_axis() {
+        let bars = vec![bar("100.0", "110.0")];
+        let window = price_window(&bars, None, Some((120.0, 125.0)), None, None, 0.0, 100.0)
+            .expect("bars in view");
+        let (lo, hi) = window.range();
+        assert!(lo < 100.0 && hi > 125.0, "bars and tape, padded: {lo}..{hi}");
+        let inside = price_window(&bars, None, Some((102.0, 104.0)), None, None, 0.0, 100.0);
+        assert_eq!(
+            inside,
+            PriceScale::auto(&bars, None, 0.0, 100.0, AUTO_PAD_FRAC),
+            "a tape inside the bars leaves the fit alone"
+        );
     }
 
     /// The regression behind the dark chart: an empty view used to yield no
@@ -775,7 +793,7 @@ mod tests {
     #[test]
     fn an_empty_view_holds_the_last_window_instead_of_going_blank() {
         let newest = bar("100.0", "110.0");
-        let window = price_window(&[], None, Some((50.0, 60.0)), Some(&newest), 0.0, 100.0)
+        let window = price_window(&[], None, None, Some((50.0, 60.0)), Some(&newest), 0.0, 100.0)
             .expect("an empty view still draws");
         assert_eq!(window.range(), (50.0, 60.0), "the axis holds still");
     }
@@ -784,7 +802,7 @@ mod tests {
     fn an_empty_view_with_no_history_falls_back_to_the_newest_bar() {
         let newest = bar("100.0", "110.0");
         let window =
-            price_window(&[], None, None, Some(&newest), 0.0, 100.0).expect("the market is there");
+            price_window(&[], None, None, None, Some(&newest), 0.0, 100.0).expect("the market is there");
         let (lo, hi) = window.range();
         assert!(
             lo < 100.0 && hi > 110.0,
@@ -794,7 +812,7 @@ mod tests {
 
     #[test]
     fn with_no_data_at_all_there_is_still_nothing_to_scale() {
-        assert!(price_window(&[], None, None, None, 0.0, 100.0).is_none());
+        assert!(price_window(&[], None, None, None, None, 0.0, 100.0).is_none());
     }
 
     #[test]

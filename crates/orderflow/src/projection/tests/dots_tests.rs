@@ -1,8 +1,9 @@
-//! Golden tests for Bookmap-style volume dots: every print lands in the dot
-//! keyed by its bar, a window of market time anchored at exchange epoch 0,
-//! and its native price level. Both sides share one dot, drawn as a pie.
-//! The key is market data, so a closed window's dot is the same fact on
-//! every frame, however the chart rolls, pans, refits or is cut.
+//! Golden tests for Bookmap-style volume dots. On the candles every print
+//! lands in the dot keyed by its bar and a price level of the candle axis; on
+//! the tape, by a window of market time anchored at exchange epoch 0 and a
+//! price level of the tape's own span. Both sides share one dot, drawn as a
+//! pie. The key is market data, so a closed dot is the same fact on every
+//! frame, however the chart rolls, pans, refits or is cut.
 
 use super::*;
 use crate::bubble_radius;
@@ -10,9 +11,10 @@ use crate::config::VolumeDotStyle;
 use crate::history::AggressorSide;
 use crate::projection::{
     DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_CELL_PX, DOT_WINDOW_LADDER_MS, DotRungMemory, PaneGeometry,
-    VolumeDots, calibrated_dot_full_quantity, dot_bar_window_ms, dot_level_ticks, dot_window_ms,
-    hold_rung, project_with_dots,
+    VolumeDots, dot_level_ticks, dot_window_ms, hold_rung, project_with_dots,
 };
+
+mod sizing_tests;
 
 /// Dots on, the budget out of the way, and a fixed scale where 10
 /// contracts is a full-size dot. The folds dots mode skips are all switched
@@ -40,28 +42,27 @@ fn dots_config() -> HeatmapConfig {
     }
 }
 
-/// Windows fixed by the test rather than by a zoom: `candle_window_ms` on
-/// every one-second bar of the candles, `tape_window_ms` on the tape.
-fn windows(candle_window_ms: i64, tape_window_ms: i64) -> VolumeDots {
-    coarse(candle_window_ms, tape_window_ms, 1)
+/// Dots keyed by the test rather than by a zoom: `tape_window_ms` on the
+/// tape, one-tick levels on both panes, over one-second bars.
+fn dots_at(tape_window_ms: i64) -> VolumeDots {
+    coarse(tape_window_ms, 1)
 }
 
-/// [`windows`], on price levels `level_ticks` native ticks tall.
-fn coarse(candle_window_ms: i64, tape_window_ms: i64, level_ticks: i64) -> VolumeDots {
+/// [`dots_at`], on price levels `level_ticks` native ticks tall on both
+/// panes.
+fn coarse(tape_window_ms: i64, level_ticks: i64) -> VolumeDots {
+    levels(tape_window_ms, level_ticks, level_ticks)
+}
+
+/// [`dots_at`], with the tape's and the candles' levels apart.
+fn levels(tape_window_ms: i64, tape_level_ticks: i64, candle_level_ticks: i64) -> VolumeDots {
     VolumeDots {
-        px_per_bar: px_for(candle_window_ms),
-        dot_px: 20.0,
         tape_window_ms,
-        level_ticks,
+        tape_level_ticks,
+        candle_level_ticks,
         bars: (0..40).map(|i| (i * 1_000, i * 1_000 + 999)).collect(),
         forming: None,
     }
-}
-
-/// The zoom that gives a one-second bar (1 024 ms after the doubling) a
-/// window of `candle_window_ms` for a 20 px dot.
-fn px_for(candle_window_ms: i64) -> f32 {
-    (1_024.0 * 20.0 / candle_window_ms as f64 * 1.001) as f32
 }
 
 /// A history of `trades` that began recording well before the chart's first
@@ -200,7 +201,7 @@ fn a_closed_window_is_the_same_dot_on_every_frame() {
     };
     let trades = dense(7, 3_000, 0, 20_000);
     let history = recorded(config.clone(), &borrowed(&trades));
-    let dots = windows(500, 250);
+    let dots = dots_at(250);
     let at = |now_ms: i64, lane_ms: i64, visible: Option<std::ops::Range<usize>>, window| {
         frame_at(&history, &chart(now_ms, lane_ms, visible), window, &dots)
     };
@@ -221,7 +222,7 @@ fn a_closed_window_is_the_same_dot_on_every_frame() {
             && mark.price_bucket <= dec("107")
     };
     let reference = facts(&frames[0], closed);
-    assert!(reference.len() > 100, "the fixture draws closed dots");
+    assert!(reference.len() > 50, "the fixture draws closed dots");
     assert!(
         reference
             .iter()
@@ -257,7 +258,7 @@ fn the_budget_never_folds_a_dot() {
     };
     let trades = dense(11, 3_000, 0, 20_000);
     let history = recorded(config.clone(), &borrowed(&trades));
-    let dots = windows(500, 250);
+    let dots = dots_at(250);
     for now_ms in [9_100, 12_700, 15_300] {
         let frame = frame_at(
             &history,
@@ -285,7 +286,7 @@ fn the_tape_zoom_never_changes_the_candle_dots() {
     let config = dots_config();
     let trades = dense(17, 3_000, 0, 20_000);
     let history = recorded(config.clone(), &borrowed(&trades));
-    let dots = windows(500, 250);
+    let dots = dots_at(250);
     let candles = |lane_ms: i64| {
         let timeline = chart(12_700, lane_ms, None);
         let frame = frame_at(&history, &timeline, prices("90", "110"), &dots);
@@ -322,7 +323,8 @@ fn the_tape_zoom_never_changes_the_candle_dots() {
     );
 }
 
-/// Every dot is one bar, one window and one native price level; the folds
+/// Every dot is one bar and one native price level, and on the tape one
+/// window of market time; the folds
 /// dots replace — dust, regions, the closed-bar summary — never run, so no
 /// contract is drawn twice and every one visible is drawn once. They paint
 /// smallest first, so the biggest dot is on top.
@@ -331,7 +333,7 @@ fn a_dense_frame_keys_every_print_once() {
     let config = dots_config();
     let trades = dense(11, 3_000, 0, 20_000);
     let history = recorded(config.clone(), &borrowed(&trades));
-    let dots = windows(500, 250);
+    let dots = dots_at(250);
     let timeline = chart(12_700, 1_500, None);
     let frame = frame_at(&history, &timeline, prices("90", "110"), &dots);
     let drawn: Decimal = frame
@@ -350,12 +352,13 @@ fn a_dense_frame_keys_every_print_once() {
         assert_eq!(dot.price_span, Decimal::ONE, "one native level");
         assert_eq!(dot.folded_marks, 0, "a dot is not a fold");
         assert_eq!(dot.trade_count, dot.agg_ids.len());
-        let window = if dot.live { 250 } else { 500 };
-        assert_eq!(
-            dot.first_timestamp_ms.div_euclid(window),
-            dot.last_timestamp_ms.div_euclid(window),
-            "one window: {dot:?}"
-        );
+        if dot.live {
+            assert_eq!(
+                dot.first_timestamp_ms.div_euclid(250),
+                dot.last_timestamp_ms.div_euclid(250),
+                "one tape window: {dot:?}"
+            );
+        }
         assert_eq!(
             dot.first_timestamp_ms.div_euclid(1_000),
             dot.last_timestamp_ms.div_euclid(1_000),
@@ -409,29 +412,6 @@ fn a_zoom_changes_the_window_only_at_ladder_steps() {
     assert_eq!(dot_window_ms(1_000.0, 20.0), 30_000);
 }
 
-/// The candles' window is chosen per bar, from the bar's own duration and
-/// the zoom: the smallest rung at least one dot wide inside the bar's slot,
-/// or the whole bar when no rung is shorter than the bar. The duration is
-/// taken to the next doubling, so a bar that closes keeps the rung it formed
-/// with, and a forming bar regroups only when its running duration doubles.
-#[test]
-fn the_candle_window_is_the_bars_own_and_survives_its_close() {
-    // A one-second bar 41 px wide: 1 024 ms × 20 px / 41 px ≈ 500 ms.
-    assert_eq!(dot_bar_window_ms(999, 41.0, 20.0), Some(500));
-    // Forming at 700 ms it is already on the same doubling: no regroup.
-    assert_eq!(dot_bar_window_ms(700, 41.0, 20.0), Some(500));
-    // Past 1 024 ms the doubling moves, and so may the rung.
-    assert_eq!(dot_bar_window_ms(1_100, 41.0, 20.0), Some(1_000));
-    // A bar 10 px wide needs 2 s a dot: longer than the bar, so the bar is one
-    // window.
-    assert_eq!(dot_bar_window_ms(999, 10.0, 20.0), None);
-    // A five-minute bar zoomed far out: longer than the top rung, still one
-    // window, the whole bar.
-    assert_eq!(dot_bar_window_ms(300_000, 1.0, 20.0), None);
-    // A long bar zoomed in reaches the long rungs.
-    assert_eq!(dot_bar_window_ms(600_000, 400.0, 20.0), Some(60_000));
-}
-
 /// The view holds its rungs: an ideal that differs only just is not enough
 /// to move one. A rung moves when its dot would be over 150 % of its cell, or
 /// under 70 % of the next smaller cell — so an autoscale wobbling across a
@@ -462,7 +442,8 @@ fn rungs_hold_through_a_wobble_at_a_boundary() {
     );
 
     // The memory the view keeps does the same with a wobbling autoscale, for
-    // the level and for the tape's window.
+    // both panes' levels and for the tape's window. With no tape span to go
+    // on, the tape's level falls back to the axis.
     let config = HeatmapConfig {
         bubbles: BubbleStyle {
             max_radius: 10.0,
@@ -479,29 +460,36 @@ fn rungs_hold_through_a_wobble_at_a_boundary() {
     };
     let mut memory = DotRungMemory::default();
     // 40 ticks over 400 px: 10 px a tick, the 2/5 boundary.
-    let first = memory.choose(geometry(1_500), &config, (60.0, 100.0));
+    let first = memory.choose(geometry(1_500), &config, (60.0, 100.0), None);
     for (low, high, lane) in [
         (60.0, 100.5, 1_450),
         (59.5, 100.0, 1_550),
         (60.0, 99.5, 1_500),
     ] {
-        let zoom = memory.choose(geometry(lane), &config, (low, high));
+        let zoom = memory.choose(geometry(lane), &config, (low, high), None);
         assert_eq!(
-            (zoom.level_ticks, zoom.tape_window_ms),
-            (first.level_ticks, first.tape_window_ms),
+            (
+                zoom.tape_level_ticks,
+                zoom.candle_level_ticks,
+                zoom.tape_window_ms
+            ),
+            (
+                first.tape_level_ticks,
+                first.candle_level_ticks,
+                first.tape_window_ms
+            ),
             "a wobble to {low}..{high} and a {lane} ms tape moved a rung"
         );
     }
-    assert_eq!(first.px_per_bar, 40.0, "the candles' zoom passes through");
     assert_eq!(first.lane_bars, vec![(0, 999), (1_000, 1_500)]);
 }
 
-/// A dot's window of market time is a thin column of screen, not the width
-/// of the biggest dot: at the default zoom a dot sits near the moment its
-/// prints traded, instead of every print of five seconds piling into one
-/// column far from the next. On the tape the column is at least the largest
-/// radius wide, half a full dot, so a dot fitted to it stays readable; only
-/// squeezing the time axis widens the window.
+/// A tape dot's window of market time is a thin column of screen, not the
+/// width of the biggest dot: at the default zoom a dot sits near the moment
+/// its prints traded, instead of every print of five seconds piling into one
+/// column far from the next. The column is at least the largest radius wide,
+/// half a full dot, so a dot fitted to it stays readable; only squeezing the
+/// time axis widens the window.
 #[test]
 fn time_windows_follow_a_thin_column_not_the_biggest_dot() {
     assert_eq!(DOT_WINDOW_CELL_PX, 8.0);
@@ -523,7 +511,7 @@ fn time_windows_follow_a_thin_column_not_the_biggest_dot() {
         };
         let tape = |lane_window_ms: i64| {
             DotRungMemory::default()
-                .choose(geometry(lane_window_ms), &config, (60.0, 100.0))
+                .choose(geometry(lane_window_ms), &config, (60.0, 100.0), None)
                 .tape_window_ms
         };
         // 8 px or the radius, whichever is wider: 400 or 750 ms at 15 s,
@@ -533,60 +521,7 @@ fn time_windows_follow_a_thin_column_not_the_biggest_dot() {
             rungs,
             "max radius {max_radius}"
         );
-
-        // A one-minute bar 108 px wide: 8 px of its 65 536 ms slot is 4.9 s.
-        let zoom = DotRungMemory::default().choose(geometry(15_000), &config, (60.0, 100.0));
-        let dots = VolumeDots::resolve(&zoom, &[], None);
-        assert_eq!(
-            dots.bar_windows(&[bar(0, 60_000)]),
-            vec![Some(5_000)],
-            "max radius {max_radius}"
-        );
     }
-}
-
-/// A tape dot is never wider than its window's column, so no two tape dots
-/// overlap however far the tape is squeezed: when the column is thinner than
-/// the style's largest dot, both radii shrink by one share, keeping every
-/// dot in proportion. A wide column leaves the style's radii alone.
-#[test]
-fn a_tape_dot_fits_its_column_and_shrinks_in_proportion() {
-    let config = dots_config();
-    let bubbles = BubbleStyle {
-        min_radius: 3.0,
-        max_radius: 15.0,
-        ..config.bubbles.clone()
-    };
-    let style = HeatmapConfig {
-        bubbles: bubbles.clone(),
-        ..config.clone()
-    };
-    let geometry = |lane_window_ms: i64| PaneGeometry {
-        px_per_bar: 40.0,
-        lane_width_px: 300.0,
-        lane_window_ms,
-        height_px: 400.0,
-        lane_bars: vec![(0, 59_999)],
-    };
-    let mut memory = DotRungMemory::default();
-    assert_eq!(memory.tape_dot_radii(&bubbles), None, "no zoom yet");
-
-    // Twenty minutes over 300 px: the minute rung, a 15 px column.
-    let zoom = memory.choose(geometry(1_200_000), &style, (60.0, 100.0));
-    assert_eq!(zoom.tape_window_ms, 60_000);
-    let (min, max) = memory.tape_dot_radii(&bubbles).expect("a zoom");
-    assert!((max - 7.5).abs() < 1e-4, "half the column: {max}");
-    assert!((min - 1.5).abs() < 1e-4, "the same share: {min}");
-
-    // 1.5 s over 300 px: the 100 ms rung, a 20 px column.
-    let mut memory = DotRungMemory::default();
-    memory.choose(geometry(1_500), &style, (60.0, 100.0));
-    assert_eq!(memory.tape_dot_radii(&bubbles), Some((2.0, 10.0)));
-
-    // 300 ms over 300 px: the 100 ms rung is 100 px, wider than any dot.
-    let mut memory = DotRungMemory::default();
-    memory.choose(geometry(300), &style, (60.0, 100.0));
-    assert_eq!(memory.tape_dot_radii(&bubbles), Some((3.0, 15.0)));
 }
 
 /// With dots on, squeezing the tape reaches twenty minutes and more, not the
@@ -611,111 +546,6 @@ fn dots_let_the_tape_squeeze_to_twenty_minutes() {
     off.live_lane.window = LaneWindow::Auto { zoom: 1.0 };
     off.zoom_lane_window(0.5);
     assert_eq!(off.live_lane.window, LaneWindow::Auto { zoom: 0.5 });
-}
-
-/// The automatic full size is read from the market once: the 99th
-/// percentile of what one of the cells being drawn — the tape's window at
-/// the level's height — traded, so only the top 1 % of those dots draws full
-/// size. Too few seconds recorded is no answer
-/// yet, and the prints' order never changes it.
-#[test]
-fn the_automatic_full_size_is_the_ninety_ninth_percentile_of_the_drawn_cells() {
-    assert!(dots_config().volume_dots.auto_full, "automatic by default");
-    let whole: Vec<(u64, i64, String, String, Side)> = (1..=1_000u64)
-        .map(|i| {
-            (
-                i,
-                i as i64 * 1_000,
-                "100".to_string(),
-                i.to_string(),
-                Side::Buy,
-            )
-        })
-        .collect();
-    let history = recorded(dots_config(), &borrowed(&whole));
-    assert_eq!(
-        calibrated_dot_full_quantity(&history, &dots_config(), 1_000, 1),
-        Some(Decimal::from(990))
-    );
-
-    // The same contracts in two prints per second, one each side, arriving
-    // newest first: one second at one tick is one sum.
-    let mut split: Vec<(u64, i64, String, String, Side)> = (1..=1_000u64)
-        .flat_map(|i| {
-            let ms = i as i64 * 1_000;
-            let half = Decimal::from(i) / Decimal::from(2);
-            [
-                (2 * i, ms, "100".to_string(), half.to_string(), Side::Buy),
-                (
-                    2 * i + 1,
-                    ms + 400,
-                    "100".to_string(),
-                    half.to_string(),
-                    Side::Sell,
-                ),
-            ]
-        })
-        .collect();
-    split.reverse();
-    let history = recorded(dots_config(), &borrowed(&split));
-    assert_eq!(
-        calibrated_dot_full_quantity(&history, &dots_config(), 1_000, 1),
-        Some(Decimal::from(990))
-    );
-
-    // Read on the cells being drawn: two-second windows five ticks tall
-    // hold two seconds each, so the same 99th rank is the pair 989 + 990.
-    let history = recorded(dots_config(), &borrowed(&whole));
-    let read = calibrated_dot_full_quantity(&history, &dots_config(), 2_000, 5);
-    assert!(read > Some(Decimal::from(990)), "{read:?}");
-
-    let few: Vec<_> = whole.iter().take(100).cloned().collect();
-    let history = recorded(dots_config(), &borrowed(&few));
-    assert_eq!(
-        calibrated_dot_full_quantity(&history, &dots_config(), 1_000, 1),
-        None
-    );
-}
-
-/// An automatic scale is read once per zoom and then frozen: the past keeps
-/// its sizes while the zoom holds, and a zoom that changes the rungs reads
-/// the scale again for the cells now drawn, so coarse cells never all
-/// saturate on a scale read on fine ones. A typed value is never replaced.
-#[test]
-fn an_automatic_scale_is_read_once_per_zoom() {
-    let mut style = VolumeDotStyle {
-        enabled: true,
-        full_quantity: 20_000.0,
-        ..VolumeDotStyle::default()
-    };
-    assert!(style.auto_full);
-    let fine = (500, 1);
-    assert!(style.wants_calibration(fine));
-    assert!(!style.adopt_calibration(None, fine), "no reading yet");
-    assert!(style.adopt_calibration(Some(Decimal::from(990)), fine));
-    assert_eq!(style.full_quantity, 990.0);
-    assert!(!style.wants_calibration(fine), "frozen at this zoom");
-    assert!(
-        !style.adopt_calibration(Some(Decimal::from(5_000)), fine),
-        "frozen"
-    );
-    assert_eq!(style.full_quantity, 990.0);
-
-    let coarse = (10_000, 20);
-    assert!(style.wants_calibration(coarse), "a new zoom reads again");
-    assert!(style.adopt_calibration(Some(Decimal::from(40_000)), coarse));
-    assert_eq!(style.full_quantity, 40_000.0);
-    assert!(style.auto_full, "still automatic");
-
-    let mut typed = VolumeDotStyle {
-        enabled: true,
-        full_quantity: 750.0,
-        auto_full: false,
-        ..VolumeDotStyle::default()
-    };
-    assert!(!typed.wants_calibration(fine));
-    assert!(!typed.adopt_calibration(Some(Decimal::from(990)), fine));
-    assert_eq!(typed.full_quantity, 750.0);
 }
 
 /// The price ladder works like the time ladder: the smallest level, in
@@ -772,36 +602,38 @@ fn a_refit_inside_a_ladder_step_keeps_every_dot() {
     let at = |low: &str, high: &str| {
         let window = prices(low, high);
         let range = (low.parse::<f64>().unwrap(), high.parse::<f64>().unwrap());
-        let zoom = memory.borrow_mut().choose(geometry.clone(), &config, range);
+        let zoom = memory
+            .borrow_mut()
+            .choose(geometry.clone(), &config, range, None);
         let dots = VolumeDots::resolve(&zoom, &closed_bars, Some(&forming));
         (
-            dots.level_ticks,
+            dots.candle_level_ticks,
             frame_at(&history, &timeline, window, &dots),
         )
     };
-    // 70 and 75 ticks over 400 px: 5.7 and 5.3 px a tick, five ticks a dot.
+    // 70 and 75 ticks over 400 px: 5.7 and 5.3 px a tick. A candle dot is
+    // 8 px (0.4 of a 20 px dot): two ticks a level. The tape, with no span of
+    // its own here, reads the axis at its full 20 px dot: five ticks.
     let (ticks, before) = at("60", "130");
     let (refit_ticks, refit) = at("58", "133");
-    assert_eq!((ticks, refit_ticks), (5, 5));
+    assert_eq!((ticks, refit_ticks), (2, 2));
     let closed = |mark: &AggressionPrimitive| !mark.live && mark.last_timestamp_ms < 6_000;
     assert!(facts(&before, closed).len() > 20);
     assert_eq!(facts(&refit, closed), facts(&before, closed));
     for dot in &before.aggressions {
-        assert_eq!(dot.price_span, dec("5"), "five-tick levels");
-        assert_eq!(
-            dot.price_bucket % dec("5"),
-            Decimal::ZERO,
-            "anchored at zero"
-        );
+        let span = if dot.live { dec("5") } else { dec("2") };
+        assert_eq!(dot.price_span, span, "each pane's own levels: {dot:?}");
+        assert_eq!(dot.price_bucket % span, Decimal::ZERO, "anchored at zero");
     }
-    // 200 ticks over 400 px: 2 px a tick, ten ticks a dot.
+    // 200 ticks over 400 px: 2 px a tick, five ticks a candle dot.
     let (zoomed_out, _) = at("0", "200");
-    assert_eq!(zoomed_out, 10);
+    assert_eq!(zoomed_out, 5);
 }
 
-/// A coarse level holds every native tick inside it. The dot sits at its
-/// quantity-weighted price rounded to the tick, inside the level, and is
-/// sized on the one session scale: full size at `size_reference_quantity`.
+/// A coarse level holds every native tick inside it. The dot is drawn at
+/// its level's centre, so neighbouring levels never crowd, and carries its
+/// quantity-weighted price rounded to the tick, inside the level. Its
+/// `size` reads the typed full size: full at `volume_dot_full_quantity`.
 #[test]
 fn a_coarse_level_places_at_its_weighted_tick_and_sizes_by_quantity() {
     let config = dots_config();
@@ -819,7 +651,7 @@ fn a_coarse_level_places_at_its_weighted_tick_and_sizes_by_quantity() {
         &history,
         &chart(3_900, 1_500, None),
         window,
-        &coarse(500, 250, 5),
+        &coarse(250, 5),
     );
     let dot = |id: u64| {
         frame
@@ -839,12 +671,10 @@ fn a_coarse_level_places_at_its_weighted_tick_and_sizes_by_quantity() {
     assert_eq!(level.price_bucket, dec("100"));
     assert_eq!(level.price_span, dec("5"));
     assert_eq!(level.buy_quantity, dec("1"));
-    // (100 × 1 + 103 × 3) / 4 = 102.25, drawn on the 102 tick.
-    assert_eq!(
-        level.y,
-        window.y(dec("102")).unwrap(),
-        "weighted, on a tick"
-    );
+    // (100 × 1 + 103 × 3) / 4 = 102.25, on the 102 tick; drawn at the
+    // level's centre, 102.5.
+    assert_eq!(level.price, dec("102"), "weighted, on a tick");
+    assert_eq!(level.y, window.y(dec("102.5")).unwrap(), "the level's centre");
     // 10 contracts is a full-size dot, whatever the level or the window.
     assert_eq!(level.size, (4.0f64 / 10.0).sqrt() as f32);
     assert_eq!(dot(3).price_bucket, dec("105"), "the next level up");
@@ -853,8 +683,9 @@ fn a_coarse_level_places_at_its_weighted_tick_and_sizes_by_quantity() {
     assert_eq!(dot(4).size, 1.0, "12.5 contracts are past full size");
 }
 
-/// A buy and a sell at one level inside one window are one dot: a pie with
-/// the exact quantities, labelled as the cluster it is (`×3`), not a fold.
+/// A buy and a sell at one level inside one bar are one candle dot: a pie
+/// with the exact quantities, labelled as the cluster it is (`×4`), not a
+/// fold.
 #[test]
 fn both_sides_at_one_level_and_window_are_one_pie() {
     let config = dots_config();
@@ -872,35 +703,35 @@ fn both_sides_at_one_level_and_window_are_one_pie() {
         &history,
         &chart(3_900, 1_500, None),
         prices("90", "110"),
-        &windows(250, 250),
+        &dots_at(250),
     );
     let pie = frame
         .aggressions
         .iter()
-        .find(|dot| dot.agg_ids == vec![1, 2, 3])
-        .expect("one dot for the three prints");
-    assert_eq!(pie.quantity, dec("4.0"));
+        .find(|dot| dot.agg_ids == vec![1, 2, 3, 5])
+        .expect("one dot for the bar's four prints at 100");
+    assert_eq!(pie.quantity, dec("5.0"));
     assert_eq!(pie.buy_quantity, dec("1.5"));
-    assert_eq!(pie.trade_count, 3);
+    assert_eq!(pie.trade_count, 4);
     assert_eq!(pie.folded_marks, 0, "a market fact, not a canvas fold");
     assert_eq!(pie.side, AggressorSide::Sell, "the side that took more");
-    assert!((pie.buy_share - 0.375).abs() < 1e-6);
+    assert!((pie.buy_share - 0.3).abs() < 1e-6);
     assert!(!pie.live);
-    assert_eq!(pie.y, prices("90", "110").y(dec("100")).unwrap(), "no lean");
+    assert_eq!(
+        pie.y,
+        prices("90", "110").y(dec("100.5")).unwrap(),
+        "the level's centre, no lean"
+    );
     let others: Vec<Vec<u64>> = frame
         .aggressions
         .iter()
         .map(|dot| dot.agg_ids.clone())
-        .filter(|ids| ids != &vec![1, 2, 3])
+        .filter(|ids| ids != &vec![1, 2, 3, 5])
         .collect();
-    assert_eq!(
-        others.len(),
-        2,
-        "another level and another window: {others:?}"
-    );
+    assert_eq!(others, vec![vec![4]], "another level");
 }
 
-/// A window that straddles a bar close is one dot per bar, each drawn in its
+/// Prints either side of a bar close are one dot per bar, each drawn in its
 /// own bar.
 #[test]
 fn a_window_splits_at_a_bar_close() {
@@ -925,13 +756,10 @@ fn a_window_splits_at_a_bar_close() {
             on_newest_bar: true,
         }),
     );
-    // 200 px a bar: 250 ms windows on both bars (2 048 and 1 024 ms after
-    // the doubling).
     let dots = VolumeDots {
-        px_per_bar: 200.0,
-        dot_px: 20.0,
         tape_window_ms: 1_000,
-        level_ticks: 1,
+        tape_level_ticks: 1,
+        candle_level_ticks: 1,
         bars: vec![(0, 1_129), (1_130, 1_999), (2_000, 2_999), (3_000, 3_900)],
         forming: None,
     };
@@ -963,7 +791,7 @@ fn deep_history_never_changes_and_the_tape_never_piles_at_its_edge() {
     let config = dots_config();
     let trades = dense(17, 4_000, 0, 20_000);
     let history = recorded(config.clone(), &borrowed(&trades));
-    let dots = windows(500, 250);
+    let dots = dots_at(250);
     let at = |now_ms: i64| {
         let timeline = chart(now_ms, 1_500, None);
         let frame = frame_at(&history, &timeline, prices("90", "110"), &dots);
@@ -999,9 +827,9 @@ fn deep_history_never_changes_and_the_tape_never_piles_at_its_edge() {
 }
 
 /// Where a dot sits never depends on the pan or on the latest print. A
-/// whole-bar dot sits at its bar's slot centre, however the slice is cut; a
-/// forming window's dot sits at the window's own centre, not at the newest
-/// print, so it does not slide as prints arrive.
+/// candle dot sits at its bar's slot centre, however the slice is cut; a
+/// forming tape window's dot sits at the window's own centre, not at the
+/// newest print, so it does not slide as prints arrive.
 #[test]
 fn dots_sit_still_through_a_pan_and_a_new_print() {
     let config = dots_config();
@@ -1012,15 +840,7 @@ fn dots_sit_still_through_a_pan_and_a_new_print() {
             (2, 3_050, "101", "1", Side::Buy),
         ],
     );
-    // 2 px a bar: every bar is one window.
-    let whole = VolumeDots {
-        px_per_bar: 2.0,
-        dot_px: 20.0,
-        tape_window_ms: 250,
-        level_ticks: 1,
-        bars: (0..40).map(|i| (i * 1_000, i * 1_000 + 999)).collect(),
-        forming: None,
-    };
+    let whole = dots_at(250);
     for visible in [None, Some(1..3), Some(2..4)] {
         let timeline = chart(3_900, 1_500, visible.clone());
         let frame = frame_at(&history, &timeline, prices("90", "110"), &whole);
@@ -1028,18 +848,18 @@ fn dots_sit_still_through_a_pan_and_a_new_print() {
             .aggressions
             .iter()
             .find(|dot| dot.agg_ids == vec![1])
-            .expect("the whole-bar dot");
+            .expect("the candle dot");
         let slot = timeline.slot_at(2_100).unwrap();
         let (left, right) = timeline.slot_bounds(slot.index);
         assert!(
             (dot.x - (left + right) / 2.0).abs() < 1e-9,
-            "the whole-bar dot left its slot's centre with {visible:?}"
+            "the candle dot left its slot's centre with {visible:?}"
         );
     }
     // The forming bar has run to 3 150 and then to 3 180: its tape dot, in
     // the window 3 000..3 250, stays where it was.
     let forming = |close_ms: i64| {
-        let mut dots = windows(500, 250);
+        let mut dots = dots_at(250);
         dots.bars.truncate(3);
         dots.bars.push((3_000, close_ms));
         let frame = frame_at(
@@ -1058,11 +878,11 @@ fn dots_sit_still_through_a_pan_and_a_new_print() {
     assert_eq!(forming(3_150), forming(3_180));
 }
 
-/// Candle windows are counted from their bar's open, so a bar shorter than
-/// its window is one window whatever the epoch grid does, and its dot sits at
-/// the slot's centre; no candle dot is pinned at a slot's edge.
+/// A candle dot is its whole bar at one level, whatever the epoch grid does
+/// and however long the bar ran, and sits at its slot's centre; no candle dot
+/// is pinned at a slot's edge.
 #[test]
-fn a_bar_shorter_than_its_window_is_one_dot_at_its_slot_centre() {
+fn a_candle_dot_is_one_bar_and_level_at_its_slot_centre() {
     let config = dots_config();
     let trades = dense(29, 3_000, 0, 9_000);
     let history = recorded(config.clone(), &borrowed(&trades));
@@ -1079,13 +899,10 @@ fn a_bar_shorter_than_its_window_is_one_dot_at_its_slot_centre() {
         .map(|pair| bar(pair[0], pair[1] - 1))
         .collect();
     let timeline = BarTimeline::from_bars(0, &bars, None, None);
-    // 21 px a bar: 1 000 ms windows for the bars up to 1 024 ms after the
-    // doubling, 500 ms for the ones up to 512 — never shorter than a bar.
     let dots = VolumeDots {
-        px_per_bar: 21.0,
-        dot_px: 20.0,
         tape_window_ms: 250,
-        level_ticks: 1,
+        tape_level_ticks: 1,
+        candle_level_ticks: 1,
         bars: bars
             .iter()
             .map(|bar| (bar.open_time, bar.close_time))
@@ -1128,7 +945,7 @@ fn eviction_never_shrinks_a_dot() {
             .collect();
         recorded(config.clone(), &borrowed(&so_far))
     };
-    let dots = windows(500, 250);
+    let dots = dots_at(250);
     let (before, after) = (up_to(8_000), up_to(9_300));
     assert!(
         after.counters().aggressions_evicted > before.counters().aggressions_evicted,
@@ -1184,7 +1001,7 @@ fn eviction_drops_only_the_windows_it_reached() {
         horizon > 8_000 && horizon < 8_400,
         "the horizon cuts bar 8: {horizon}"
     );
-    let dots = windows(500, 250);
+    let dots = dots_at(250);
     let frame = frame_at(
         &history,
         &chart(9_300, 3_000, None),
@@ -1206,7 +1023,8 @@ fn eviction_drops_only_the_windows_it_reached() {
         "and the forming bar"
     );
     for dot in &frame.aggressions {
-        let width = if dot.live { 250 } else { 500 };
+        // A candle dot's window is its whole one-second bar.
+        let width = if dot.live { 250 } else { 1_000 };
         let start = dot.first_timestamp_ms.div_euclid(width) * width;
         assert!(
             start > horizon,
@@ -1246,7 +1064,7 @@ fn the_window_recording_started_in_is_not_drawn() {
         &history,
         &chart(3_900, 1_500, None),
         prices("90", "110"),
-        &windows(500, 250),
+        &dots_at(250),
     );
     let ids: Vec<Vec<u64>> = frame
         .aggressions
@@ -1315,25 +1133,6 @@ fn dots_keep_the_tape_off_the_bars_but_let_it_zoom() {
     }
 }
 
-/// The forming bar's window only ever coarsens as the bar runs on: once it
-/// needs a wider window it never returns to a finer one, and once it is one
-/// whole window it stays one.
-#[test]
-fn a_forming_bar_only_ever_coarsens() {
-    let order = |window: Option<i64>| window.unwrap_or(i64::MAX);
-    for px_per_bar in [0.5, 2.0, 7.0, 13.0, 41.0, 120.0, 400.0, 2_000.0] {
-        let mut previous = order(dot_bar_window_ms(1, px_per_bar, 20.0));
-        for running_ms in (1..900_000).step_by(97) {
-            let now = order(dot_bar_window_ms(running_ms, px_per_bar, 20.0));
-            assert!(
-                now >= previous,
-                "at {px_per_bar} px a bar, {running_ms} ms went back to a finer window"
-            );
-            previous = now;
-        }
-    }
-}
-
 /// The price window is a view: every print in the time range is keyed, and
 /// a level the edge of the chart cuts through is the same dot either way.
 #[test]
@@ -1347,7 +1146,7 @@ fn a_price_pan_never_changes_a_dot() {
         ],
     );
     let timeline = chart(3_900, 1_500, None);
-    let dots = coarse(500, 250, 5);
+    let dots = coarse(250, 5);
     let cut = frame_at(&history, &timeline, prices("90", "108"), &dots);
     let whole = frame_at(&history, &timeline, prices("90", "112"), &dots);
     let facts_of = |frame: &HeatmapProjection| facts(frame, |_| true);
@@ -1395,10 +1194,9 @@ fn dots_carry_the_evidence_of_their_prints() {
             .apply_delta(900, &BookDelta::new(12, 12, vec![], vec![]))
             .unwrap();
         let dots = VolumeDots {
-            px_per_bar: 10.0,
-            dot_px: 20.0,
             tape_window_ms: 1_000,
-            level_ticks: 1,
+            tape_level_ticks: 1,
+            candle_level_ticks: 1,
             bars: vec![(0, 1_000)],
             forming: None,
         };
@@ -1433,7 +1231,7 @@ fn dots_carry_the_evidence_of_their_prints() {
     assert_eq!(dots.liquidity_events, plain.liquidity_events);
 }
 
-/// Zoomed out, a bar is one window and a level many ticks, so the dot count
+/// A bar is one dot a level and zoomed out a level is many ticks, so the dot count
 /// is bounded by the bars on screen times the levels in the price window,
 /// whatever the tape did.
 #[test]
@@ -1443,12 +1241,11 @@ fn the_dot_count_is_bounded_by_bars_and_levels() {
     let trades = dense(13, 6_000, 0, 20_000);
     let history = recorded(config.clone(), &borrowed(&trades));
     let timeline = chart(12_700, 1_500, None);
-    // 2 px a bar: every bar is one window. 10-tick levels over 91..=109.
+    // Every bar is one dot a level; 10-tick levels over 91..=109.
     let dots = VolumeDots {
-        px_per_bar: 2.0,
-        dot_px: 20.0,
         tape_window_ms: 1_000,
-        level_ticks: 10,
+        tape_level_ticks: 10,
+        candle_level_ticks: 10,
         bars: (0..13).map(|i| (i * 1_000, i * 1_000 + 999)).collect(),
         forming: None,
     };
@@ -1475,7 +1272,7 @@ fn dots_are_order_independent() {
         shuffled.swap(index, random.next(index as u64 + 1) as usize);
     }
     let timeline = chart(11_500, 1_500, None);
-    let dots = windows(500, 250);
+    let dots = dots_at(250);
     let project_all = |trades: &[(u64, i64, String, String, Side)]| {
         let history = recorded(config.clone(), &borrowed(trades));
         frame_at(&history, &timeline, prices("90", "110"), &dots)
@@ -1508,7 +1305,7 @@ fn the_min_quantity_floor_is_fixed_and_counted() {
             &history,
             &chart(3_900, 1_500, None),
             prices("90", "110"),
-            &windows(500, 250),
+            &dots_at(250),
         );
         let kept: Vec<_> = frame
             .aggressions
@@ -1525,13 +1322,14 @@ fn the_min_quantity_floor_is_fixed_and_counted() {
     }
 }
 
-/// Size is one absolute scale for the whole session: equal quantities are
-/// equal dots on one pane, in any bar, at any rung and any level, in any
-/// frame, whatever else traded. The candles draw that scale smaller.
-/// Radii are compared within a pane.
+/// With a typed full size, size is one absolute scale for the whole
+/// session: equal quantities are equal dots on one pane, in any bar, at any
+/// rung and any level, in any frame, whatever else traded. The candles draw
+/// that scale smaller. Radii are compared within a pane.
 #[test]
 fn equal_quantities_are_equal_radii_anywhere() {
-    let config = dots_config();
+    let mut config = dots_config();
+    config.volume_dots.auto_full = false;
     let prints = [
         (1, 1_100, "100", "3", Side::Buy),
         (2, 1_600, "95", "3", Side::Sell),
@@ -1544,9 +1342,9 @@ fn equal_quantities_are_equal_radii_anywhere() {
     for trades in [prints.to_vec(), with_a_giant] {
         let history = recorded(config.clone(), &trades);
         for dots in [
-            windows(500, 250),
-            coarse(250, 100, 5),
-            coarse(1_000, 1_000, 2),
+            dots_at(250),
+            coarse(100, 5),
+            coarse(1_000, 2),
         ] {
             let frame = frame_at(
                 &history,
@@ -1614,13 +1412,13 @@ fn a_merged_level_is_the_sum_and_never_smaller() {
         &history,
         &timeline,
         prices("90", "110"),
-        &coarse(500, 250, 1),
+        &coarse(250, 1),
     );
     let merged = frame_at(
         &history,
         &timeline,
         prices("90", "110"),
-        &coarse(500, 250, 2),
+        &coarse(250, 2),
     );
     let radius = |mark: &AggressionPrimitive| {
         let (minimum, maximum) = config
@@ -1696,7 +1494,7 @@ fn the_dot_scale_rescales_every_dot_alike() {
             &history,
             &chart(3_900, 1_500, None),
             prices("90", "110"),
-            &windows(500, 250),
+            &dots_at(250),
         );
         let radius = |id: u64| {
             let dot = frame
@@ -1744,7 +1542,7 @@ fn off_leaves_the_frame_unchanged() {
     let history = recorded(config.clone(), &borrowed(&trades));
     let timeline = chart(11_500, 1_500, None);
     let plain = project(&history, &timeline, prices("90", "110"));
-    let offered = frame_at(&history, &timeline, prices("90", "110"), &windows(500, 250));
+    let offered = frame_at(&history, &timeline, prices("90", "110"), &dots_at(250));
     assert!(!offered.volume_dots);
     assert_eq!(offered, plain);
 }

@@ -2092,15 +2092,16 @@ mod tests {
     /// Volume dots run on the frame the engine publishes, and only when both
     /// the trader opted in and the view handed over the rungs its zoom chose:
     /// off, or with no zoom, the frame is exactly the plain one. The engine is
-    /// a pure function of those rungs. The finished half keys on its bars'
-    /// windows and the level, so a new level rebuilds it; a new tape window
-    /// does not. The rungs and the size references reach the health report.
+    /// a pure function of those rungs. The finished half keys on the candles'
+    /// level alone, so a new candle level rebuilds it; a new tape window or
+    /// tape level does not. The rungs and the size references reach the
+    /// health report.
     #[test]
     fn volume_dots_need_the_setting_and_the_zoom() {
-        let zoom = |tape_window_ms: i64, level_ticks: i64| DotZoom {
-            px_per_bar: 40.0,
+        let zoom = |tape_window_ms: i64, tape_level_ticks: i64, candle_level_ticks: i64| DotZoom {
             tape_window_ms,
-            level_ticks,
+            tape_level_ticks,
+            candle_level_ticks,
             lane_bars: vec![(900, 1_100)],
         };
         let engine_with = |dots: bool| {
@@ -2139,7 +2140,7 @@ mod tests {
         let plain = frame(&mut engine_with(false), None);
         assert_eq!(plain.aggressions.len(), 2, "a buy and a sell, apart");
         assert_eq!(
-            frame(&mut engine_with(false), Some(zoom(100, 1))),
+            frame(&mut engine_with(false), Some(zoom(100, 1, 1))),
             plain,
             "off is today's frame"
         );
@@ -2156,37 +2157,45 @@ mod tests {
         assert_eq!(ids(&unzoomed), ids(&plain));
 
         let mut engine = engine_with(true);
-        let dots = frame(&mut engine, Some(zoom(100, 1)));
+        let dots = frame(&mut engine, Some(zoom(100, 1, 1)));
         assert!(dots.volume_dots);
         let tape: Vec<_> = dots.aggressions.iter().filter(|mark| mark.live).collect();
         assert_eq!(tape.len(), 1, "one level, one window: a pie");
         assert_eq!(tape[0].quantity, Decimal::from(5));
         assert_eq!(tape[0].buy_quantity, Decimal::from(3));
         let reported = ProjectionRequest {
-            dot_zoom: Some(zoom(100, 1)),
+            dot_zoom: Some(zoom(100, 1, 1)),
             ..request(&[bar(900, 1_100)], (98.0, 102.0))
         };
         let scale = engine.project(&reported).unwrap().volume_dots.clone();
         let scale = scale.expect("the rungs are reported");
-        assert_eq!((scale.tape_window_ms, scale.level_ticks), (100, 1));
-        assert_eq!(scale.px_per_bar, 40.0);
+        assert_eq!(
+            (
+                scale.tape_window_ms,
+                scale.tape_level_ticks,
+                scale.candle_level_ticks
+            ),
+            (100, 1, 1)
+        );
         assert_eq!(
             scale.volume_dot_full_quantity,
             Decimal::from(20_000),
-            "one absolute scale: the dots' own full-size quantity"
+            "the dots' own typed full-size quantity"
         );
+        assert!(scale.auto_full, "sized relative to each pane by default");
+        assert_eq!(scale.price_range, (98.0, 102.0));
         let builds = engine.health().projection_builds;
-        frame(&mut engine, Some(zoom(250, 1)));
+        frame(&mut engine, Some(zoom(250, 5, 1)));
         assert_eq!(
             engine.health().projection_builds,
             builds,
-            "the tape's rung leaves the finished half alone"
+            "the tape's rungs leave the finished half alone"
         );
-        frame(&mut engine, Some(zoom(250, 5)));
+        frame(&mut engine, Some(zoom(250, 5, 5)));
         assert_eq!(
             engine.health().projection_builds,
             builds + 1,
-            "a new level rebuilds it"
+            "a new candle level rebuilds it"
         );
     }
 

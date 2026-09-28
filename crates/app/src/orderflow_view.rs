@@ -2318,6 +2318,53 @@ mod tests {
         assert_eq!(view.live_lane_window_ms(&long), off_long);
     }
 
+    /// Moving the candles' price axis is a view change, never a setting: the
+    /// dots' levels and sizes are chosen per frame, so a refit sends no
+    /// configuration round trip that would rebuild and resize the tape.
+    #[test]
+    fn a_candle_price_refit_never_touches_the_config() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        view.set_projection_demand(true);
+        let before = view.config.clone();
+        view.config.volume_dots.enabled = true;
+        view.commit_config_changes(before);
+        for agg_id in 0..400_u64 {
+            let step = i64::try_from(agg_id).unwrap();
+            view.record_trade(&Trade {
+                agg_id,
+                timestamp_ms: 1_000 + step * 1_000,
+                price: Decimal::new(100_000 + (step % 40) * 10, 3),
+                quantity: Decimal::from(1 + agg_id % 7),
+                side: if agg_id % 2 == 0 {
+                    quantick_engine::Side::Buy
+                } else {
+                    quantick_engine::Side::Sell
+                },
+            });
+        }
+        view.flush_for_test();
+        let settled = view.config.clone();
+        let bars = [bar(1_000, 200_000), bar(200_000, 401_000)];
+        for price_range in [(98.0, 102.0), (99.5, 100.5), (90.0, 110.0)] {
+            view.project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                price_range,
+                Some(quantick_orderflow::PaneGeometry {
+                    px_per_bar: 40.0,
+                    lane_width_px: 200.0,
+                    lane_window_ms: 15_000,
+                    height_px: 400.0,
+                    lane_bars: vec![(1_000, 200_000), (200_000, 401_000)],
+                }),
+            );
+            view.flush_for_test();
+            assert_eq!(view.config, settled, "a refit to {price_range:?}");
+        }
+    }
+
     #[test]
     fn disabling_capture_drops_the_published_frame() {
         let mut view = OrderflowView::new("BTCUSDT");
