@@ -47,10 +47,11 @@ active = "default"
 #     keeps history reading as a summary instead of as a wall of specks.
 # One more switch is off in every shipped look:
 #   * overlap_merge — volume dots, Bookmap style: one dot per bar, window of
-#     market time and native price level, both sides in it as a buy/sell pie,
-#     on the lane too, sized on the fixed size_reference_quantity. Windows are
-#     anchored in market time, so a closed dot never moves; the zoom picks the
-#     window. It replaces dust_merge, region_rows and candle_summary while on.
+#     market time and price level of whole ticks, both sides in it as a
+#     buy/sell pie, on the lane too; full size at size_reference_quantity
+#     contracts a second per tick of the dot's cell. Windows and levels are
+#     anchored in time and price, so a closed dot never moves; the zoom picks
+#     them. It replaces dust_merge, region_rows and candle_summary while on.
 [[presets]]
 name = "default"
 cluster_ms = 500

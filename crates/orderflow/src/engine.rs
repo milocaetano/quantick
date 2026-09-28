@@ -250,10 +250,10 @@ struct ProjectionCache {
     /// where the tape starts, which is what lets this cache stay valid while
     /// the trader moves the tape's speed.
     seam_ms: Option<i64>,
-    /// The candles' volume-dot window this half was keyed on, `None` when it
-    /// holds no dots. Part of the key because a zoom across a ladder step
-    /// re-keys every closed dot.
-    dot_window_ms: Option<i64>,
+    /// The candles' volume-dot window and the level, in ticks, this half was
+    /// keyed on; `None` when it holds no dots. Part of the key because a zoom
+    /// across a ladder step re-keys every closed dot.
+    dot_rungs: Option<(i64, i64)>,
     /// The finished half of the chart, reused until the layout moves or a dirty
     /// revision is old enough to rebuild.
     settled: Arc<SettledProjection>,
@@ -1120,17 +1120,20 @@ impl BookEngine {
             .map(|geometry| {
                 VolumeDots::resolve(
                     geometry,
-                    &self.config.bubbles,
+                    &self.config,
                     &timeline,
                     typical_bar_ms(request),
+                    prices,
                 )
             });
-        let dot_window_ms = dots.as_ref().map(|dots| dots.candle_window_ms);
+        let dot_rungs = dots
+            .as_ref()
+            .map(|dots| (dots.candle_window_ms, dots.level_ticks));
 
         let settled = match &self.projection_cache {
             Some(cache)
                 if cache.layout == layout
-                    && cache.dot_window_ms == dot_window_ms
+                    && cache.dot_rungs == dot_rungs
                     && cache.seam_ms == timeline.live_boundary_ms()
                     && ((cache.settled_revision == self.settled_revision
                         && cache.timeline_revision == request.timeline_revision)
@@ -1160,7 +1163,7 @@ impl BookEngine {
                     timeline_revision: request.timeline_revision,
                     settled_revision: self.settled_revision,
                     seam_ms: timeline.live_boundary_ms(),
-                    dot_window_ms,
+                    dot_rungs,
                     settled: Arc::clone(&settled),
                 });
                 settled
@@ -2076,6 +2079,7 @@ mod tests {
         let geometry = |px_per_bar: f32, lane_width_px: f32| PaneGeometry {
             px_per_bar,
             lane_width_px,
+            height_px: 400.0,
             lane_bar_opens: vec![900],
         };
         let engine_with = |dots: bool| {

@@ -15,25 +15,41 @@
 //! counted as a cluster (`×n`), because a dot is a fact about the market, not
 //! a fold of the canvas.
 //!
-//! The window is the one thing the zoom picks: the smallest rung of
-//! [`DOT_WINDOW_LADDER_MS`] at least one full dot wide on screen, per pane.
-//! The chart hands its scale over as a [`PaneGeometry`]; nothing else — not
-//! time passing, a pan, a refit or a forming bar — changes the rung.
+//! The zoom picks two things: the window, the smallest rung of
+//! [`DOT_WINDOW_LADDER_MS`] at least one full dot wide on screen per pane,
+//! and the level, the smallest rung of [`DOT_LEVEL_LADDER_TICKS`] native
+//! ticks at least one full dot tall, anchored at price zero. The chart hands
+//! its scale over as a [`PaneGeometry`]; nothing else — not time passing, a
+//! pan, a forming bar or a refit inside one ladder step — changes a rung.
+//!
+//! A dot sits at its quantity-weighted price rounded to the native tick,
+//! inside its level, and is sized against its cell: full size at
+//! `size_reference_quantity` contracts a second per tick of the level
+//! ([`VolumeDots::size_reference`]), one scale per pane and zoom.
 
 use std::collections::BTreeMap;
 
 use quantick_engine::Bar;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive as _;
 
-use crate::config::{BubbleStyle, DisplayGrouping, HeatmapConfig};
-use crate::grouping::{EffectiveGrouping, bucket_for_price};
+use crate::config::{DisplayGrouping, HeatmapConfig};
+use crate::grouping::EffectiveGrouping;
 use crate::history::{Aggression, AggressorSide, CoverageSegment};
 use crate::interaction::{AggressionCluster, consumed_side, generation_at, sort_clusters};
 use crate::timeline::BarTimeline;
 
+use super::model::PriceWindow;
+
 /// The windows of market time a dot may cover, in exchange milliseconds,
 /// narrowest first.
-pub const DOT_WINDOW_LADDER_MS: [i64; 7] = [100, 250, 500, 1_000, 2_000, 5_000, 10_000];
+pub const DOT_WINDOW_LADDER_MS: [i64; 10] = [
+    100, 250, 500, 1_000, 2_000, 5_000, 10_000, 30_000, 60_000, 300_000,
+];
+
+/// The heights, in native ticks, a dot's price level may span, narrowest
+/// first.
+pub const DOT_LEVEL_LADDER_TICKS: [i64; 9] = [1, 2, 5, 10, 20, 50, 100, 200, 500];
 
 /// How the chart is zoomed: the pixels a bar and the tape take on screen, and
 /// the series' bar opens the tape's window may reach.
@@ -43,6 +59,8 @@ pub struct PaneGeometry {
     pub px_per_bar: f32,
     /// Width of the live lane, in pixels. Zero when no lane is drawn.
     pub lane_width_px: f32,
+    /// Height of the chart the price window is drawn over, in pixels.
+    pub height_px: f32,
     /// Open times, ascending, of the series' bars the tape's window may
     /// reach, whether or not the candles have them on screen: a tape dot is
     /// keyed by its true bar even while the candles are panned into history.
@@ -85,6 +103,20 @@ pub fn dot_window_ms(ms_per_px: f64, dot_px: f64) -> i64 {
         .unwrap_or(widest)
 }
 
+/// The smallest rung of [`DOT_LEVEL_LADDER_TICKS`] whose height on screen, at
+/// `px_per_tick`, is at least `dot_px` — the widest rung when none is.
+#[must_use]
+pub fn dot_level_ticks(px_per_tick: f64, dot_px: f64) -> i64 {
+    let widest = DOT_LEVEL_LADDER_TICKS[DOT_LEVEL_LADDER_TICKS.len() - 1];
+    if !(px_per_tick.is_finite() && px_per_tick > 0.0) {
+        return widest;
+    }
+    DOT_LEVEL_LADDER_TICKS
+        .into_iter()
+        .find(|rung| *rung as f64 * px_per_tick >= dot_px)
+        .unwrap_or(widest)
+}
+
 /// What one frame keys its dots on: a window per pane, and the bar opens the
 /// tape may need beyond the bars on screen.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,24 +127,32 @@ pub struct VolumeDots {
     /// pane: a dot is the tape's when its tape window starts at or after the
     /// tape does, and the candles' otherwise, whole.
     pub tape_window_ms: i64,
+    /// Native ticks per price level. One number for both panes: they share
+    /// the price axis and, in dots mode, the dot size.
+    pub level_ticks: i64,
     /// See [`PaneGeometry::lane_bar_opens`].
     pub lane_bar_opens: Vec<i64>,
 }
 
 impl VolumeDots {
-    /// The windows `geometry`'s zoom picks. A dot is `2 × max_radius`
-    /// across, on both panes (see `LiveLaneStyle::pane_radii`). The tape's
-    /// scale is its window over its width; the candles' is the series'
-    /// typical bar, `typical_bar_ms` — the reference the tape's window is
-    /// sized from, never the bars on screen — over the pixels a bar takes.
+    /// The windows and level `geometry`'s zoom picks. A dot is
+    /// `2 × max_radius` across, on both panes (see `LiveLaneStyle::pane_radii`).
+    /// The tape's scale is its window over its width; the candles' is the
+    /// series' typical bar, `typical_bar_ms` — the reference the tape's window
+    /// is sized from, never the bars on screen — over the pixels a bar takes.
+    /// The level's is the chart's height over the native ticks `prices` spans.
     #[must_use]
     pub fn resolve(
         geometry: &PaneGeometry,
-        bubbles: &BubbleStyle,
+        config: &HeatmapConfig,
         timeline: &BarTimeline,
         typical_bar_ms: i64,
+        prices: PriceWindow,
     ) -> Self {
-        let dot_px = 2.0 * f64::from(bubbles.max_radius);
+        let dot_px = 2.0 * f64::from(config.bubbles.max_radius);
+        let ticks = ((prices.high - prices.low) / native_grouping(config).bucket_width)
+            .to_f64()
+            .unwrap_or(0.0);
         let lane_ms = timeline
             .lane_bounds_ms()
             .map_or(0, |(start, end)| end.saturating_sub(start));
@@ -125,8 +165,24 @@ impl VolumeDots {
                 lane_ms as f64 / f64::from(geometry.lane_width_px),
                 dot_px,
             ),
+            level_ticks: dot_level_ticks(f64::from(geometry.height_px) / ticks, dot_px),
             lane_bar_opens: geometry.lane_bar_opens.clone(),
         }
+    }
+
+    /// The quantity a full-size dot holds on one pane at this zoom:
+    /// `full_quantity` (the preset's `size_reference_quantity`) for every
+    /// second of the pane's window and every tick of the level. Constant for
+    /// a pane until the zoom crosses a rung.
+    #[must_use]
+    pub fn size_reference(&self, live: bool, full_quantity: Decimal) -> Decimal {
+        let window_ms = if live {
+            self.tape_window_ms
+        } else {
+            self.candle_window_ms
+        };
+        full_quantity * Decimal::from(window_ms.max(1)) / Decimal::from(1_000)
+            * Decimal::from(self.level_ticks.max(1))
     }
 }
 
@@ -181,10 +237,19 @@ struct DotBuilder {
     last_timestamp_ms: i64,
     quantity: Decimal,
     buy_quantity: Decimal,
+    price_quantity: Decimal,
     agg_ids: Vec<u64>,
 }
 
-/// Key `prints` into dots of `window_ms` on `grouping`'s levels.
+/// A frame's price level: the native tick and the level's height.
+#[derive(Clone, Copy)]
+struct Level {
+    tick: Decimal,
+    width: Decimal,
+}
+
+/// Key `prints` into dots of `window_ms` on levels `level_ticks` of
+/// `native`'s ticks tall, anchored at price zero.
 ///
 /// A print whose bar no known open precedes is left out: it has no bar to
 /// belong to. The coverage generation stays in the key, as it does for every
@@ -192,11 +257,15 @@ struct DotBuilder {
 pub(super) fn dot_clusters<'a>(
     prints: impl IntoIterator<Item = &'a Aggression>,
     coverage: &[CoverageSegment],
-    grouping: EffectiveGrouping,
-    window_ms: i64,
+    native: EffectiveGrouping,
+    (window_ms, level_ticks): (i64, i64),
     bars: &BarOpens,
 ) -> Vec<AggressionCluster> {
     let window_ms = window_ms.max(1);
+    let level = Level {
+        tick: native.bucket_width,
+        width: native.bucket_width * Decimal::from(level_ticks.max(1)),
+    };
     let mut dots: BTreeMap<DotKey, DotBuilder> = BTreeMap::new();
     for print in prints {
         let Some((bar_open, next_open)) = bars.around(print.timestamp_ms) else {
@@ -206,7 +275,7 @@ pub(super) fn dot_clusters<'a>(
             print.timestamp_ms.div_euclid(window_ms),
             bar_open,
             generation_at(print.timestamp_ms, coverage),
-            bucket_for_price(print.price, grouping),
+            (print.price / level.width).floor() * level.width,
         );
         let bought = match print.side {
             AggressorSide::Buy => print.quantity,
@@ -218,24 +287,25 @@ pub(super) fn dot_clusters<'a>(
             last_timestamp_ms: print.timestamp_ms,
             quantity: Decimal::ZERO,
             buy_quantity: Decimal::ZERO,
+            price_quantity: Decimal::ZERO,
             agg_ids: Vec::new(),
         });
         dot.first_timestamp_ms = dot.first_timestamp_ms.min(print.timestamp_ms);
         dot.last_timestamp_ms = dot.last_timestamp_ms.max(print.timestamp_ms);
         dot.quantity += print.quantity;
         dot.buy_quantity += bought;
+        dot.price_quantity += print.price * print.quantity;
         dot.agg_ids.push(print.agg_id);
     }
     let mut clusters: Vec<AggressionCluster> = dots
         .into_iter()
-        .map(|((window, bar_open, generation, level), dot)| {
+        .map(|((window, bar_open, generation, bucket), dot)| {
             finish(
                 window * window_ms,
                 window_ms,
                 bar_open,
                 generation,
-                level,
-                grouping,
+                (bucket, level),
                 dot,
             )
         })
@@ -244,16 +314,16 @@ pub(super) fn dot_clusters<'a>(
     clusters
 }
 
-/// One finished dot. It sits exactly on its level, and at its window's
-/// centre held inside its own bar, so a window split by a bar close draws
-/// each part in the bar it traded in.
+/// One finished dot. It sits at its quantity-weighted price rounded to the
+/// native tick, inside its level, and at its window's centre held inside its
+/// own bar, so a window split by a bar close draws each part in the bar it
+/// traded in.
 fn finish(
     window_start_ms: i64,
     window_ms: i64,
     bar_open: i64,
     generation: Option<u64>,
-    level: Decimal,
-    grouping: EffectiveGrouping,
+    (bucket, level): (Decimal, Level),
     mut dot: DotBuilder,
 ) -> AggressionCluster {
     dot.agg_ids.sort_unstable();
@@ -273,6 +343,13 @@ fn finish(
         .min(window_start_ms + window_ms - 1)
         .max(low);
     let timestamp_ms = (window_start_ms + window_ms / 2).clamp(low, high);
+    let weighted = if dot.quantity > Decimal::ZERO {
+        dot.price_quantity / dot.quantity
+    } else {
+        bucket
+    };
+    let top_tick = (bucket + level.width - level.tick).max(bucket);
+    let price = ((weighted / level.tick).round() * level.tick).clamp(bucket, top_tick);
     AggressionCluster {
         agg_id: dot.agg_ids[0],
         trade_count: dot.agg_ids.len(),
@@ -280,11 +357,11 @@ fn finish(
         generation,
         side,
         consumed_side: consumed_side(side),
-        price_bucket: level,
-        price_span: grouping.bucket_width,
+        price_bucket: bucket,
+        price_span: level.width,
         quantity: dot.quantity,
         buy_quantity: dot.buy_quantity,
-        price: level,
+        price,
         timestamp_ms,
         first_timestamp_ms: dot.first_timestamp_ms,
         last_timestamp_ms: dot.last_timestamp_ms,

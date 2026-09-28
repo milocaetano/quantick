@@ -13741,7 +13741,7 @@
               },
               "overlap_merge": {
                 "default": false,
-                "description": "Bubbles are drawn as volume dots, Bookmap style: one dot per bar,\nwindow of market time and native price level, both sides in it as a\npie, sized on one fixed scale. The window is anchored at exchange\nepoch 0 and picked by the zoom, so a closed window's dot never\nchanges. The bubble setting `overlap_merge`, switched by\n`layers.visibility.set` as layer `bubble_overlap_merge`.",
+                "description": "Bubbles are drawn as volume dots, Bookmap style: one dot per bar,\nwindow of market time and price level of whole ticks, both sides in\nit as a pie, sized by the volume its cell holds. Windows and levels\nare anchored at exchange epoch 0 and price zero and picked by the\nzoom, so a closed dot never changes. The bubble setting `overlap_merge`, switched by\n`layers.visibility.set` as layer `bubble_overlap_merge`.",
                 "type": "boolean"
               }
             },

@@ -195,9 +195,10 @@ impl ChartLayer {
         id: "bubble_overlap_merge",
         label: "volume dots (Bookmap style)",
         hint: "every print lands in one dot per bar, window of market time and price level: the \
-                 exact summed quantity, a buy/sell pie when both sides traded there, sized on one \
-                 fixed scale. Windows are anchored in market time, so a closed dot never moves; \
-                 zooming picks a wider or narrower window. Dots may overlap, the biggest on top. \
+                 exact summed quantity, a buy/sell pie when both sides traded there, sized by the \
+                 volume its cell holds. Windows and levels are anchored in market time and price, \
+                 so a closed dot never moves; zooming picks wider or narrower cells. Dots may \
+                 overlap, the biggest on top. \
                  Saved with the order-flow preset, not with the other layers",
         source: LayerSource::Orderflow(OrderflowSwitch::OverlapMerge),
         scope: LayerScope::FlowPane,

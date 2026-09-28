@@ -248,15 +248,17 @@ pub struct HeatmapConfig {
     ///
     /// Off by default, and off draws exactly what it drew before. On, every
     /// print lands in the dot keyed by its bar, a window of market time
-    /// anchored at exchange epoch 0 and its native price level; both sides
-    /// share the dot, drawn as a pie. The key is market data, so a window
-    /// that has closed keeps its dot through every roll, pan, refit and zoom
-    /// of the other pane; only a zoom of its own pane picks another window
-    /// (`DOT_WINDOW_LADDER_MS`). Dots size on the fixed
-    /// [`BubbleStyle::size_reference_quantity`], draw on the candles' radius
-    /// range on both panes, sit exactly on their price and may overlap, the
-    /// biggest on top. The dust merge, the regional fold and the closed-bar
-    /// summary do not run; the [`BubbleStyle::min_quantity`] floor does.
+    /// anchored at exchange epoch 0 and a price level of whole native ticks
+    /// anchored at price zero; both sides share the dot, drawn as a pie. The
+    /// key is market data, so a window that has closed keeps its dot through
+    /// every roll, pan and refit; only a zoom across a ladder step picks
+    /// another window or level (`DOT_WINDOW_LADDER_MS`,
+    /// `DOT_LEVEL_LADDER_TICKS`). A dot is full size at
+    /// [`BubbleStyle::size_reference_quantity`] contracts a second per tick
+    /// of its cell, draws on the candles' radius range on both panes, sits at
+    /// its weighted price rounded to the tick and may overlap, the biggest on
+    /// top. The dust merge, the regional fold, the closed-bar summary and the
+    /// mark budget do not run; the [`BubbleStyle::min_quantity`] floor does.
     pub bubble_overlap_merge: bool,
     /// Everything else the aggression-bubble panel owns: geometry (including
     /// the alpha and largest radius this used to carry as two flat fields),

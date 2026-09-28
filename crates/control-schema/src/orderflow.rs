@@ -198,10 +198,10 @@ pub struct BubblesStateSnapshot {
     /// Floored, not dropped: it is still in the totals.
     pub floored_quantity: CanonicalDecimal,
     /// Bubbles are drawn as volume dots, Bookmap style: one dot per bar,
-    /// window of market time and native price level, both sides in it as a
-    /// pie, sized on one fixed scale. The window is anchored at exchange
-    /// epoch 0 and picked by the zoom, so a closed window's dot never
-    /// changes. The bubble setting `overlap_merge`, switched by
+    /// window of market time and price level of whole ticks, both sides in
+    /// it as a pie, sized by the volume its cell holds. Windows and levels
+    /// are anchored at exchange epoch 0 and price zero and picked by the
+    /// zoom, so a closed dot never changes. The bubble setting `overlap_merge`, switched by
     /// `layers.visibility.set` as layer `bubble_overlap_merge`.
     #[serde(default)]
     pub overlap_merge: bool,

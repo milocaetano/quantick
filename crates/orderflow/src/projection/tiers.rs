@@ -134,8 +134,20 @@ pub(super) fn cluster_tier(
         let native = native_grouping(config);
         let bars = BarOpens::new(timeline, dots);
         return TierClusters {
-            tape: dot_clusters(tape_prints, coverage, native, dots.tape_window_ms, &bars),
-            slot: dot_clusters(slot_prints, coverage, native, dots.candle_window_ms, &bars),
+            tape: dot_clusters(
+                tape_prints,
+                coverage,
+                native,
+                (dots.tape_window_ms, dots.level_ticks),
+                &bars,
+            ),
+            slot: dot_clusters(
+                slot_prints,
+                coverage,
+                native,
+                (dots.candle_window_ms, dots.level_ticks),
+                &bars,
+            ),
         };
     }
 

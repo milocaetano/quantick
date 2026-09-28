@@ -18,7 +18,10 @@ mod fold;
 mod model;
 mod tiers;
 
-pub use dots::{DOT_WINDOW_LADDER_MS, PaneGeometry, VolumeDots, dot_window_ms, lane_bar_opens};
+pub use dots::{
+    DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_LADDER_MS, PaneGeometry, VolumeDots, dot_level_ticks,
+    dot_window_ms, lane_bar_opens,
+};
 pub use model::{
     AggressionPrimitive, BEFORE_CAPTURE, GapPrimitive, HeatmapCell, HeatmapProjection,
     LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, normalized_area_size,
@@ -367,12 +370,12 @@ pub fn project_settled(
     // independent of the display filter below, so hiding small prints never
     // silently rescales the ones left on screen.
     //
-    // Volume dots go one step further: one fixed scale, the preset's pinned
-    // quantity, so a dot's size never depends on what else the session did.
-    let aggression_reference = if dots.is_some() {
-        config.bubbles.fixed_reference_decimal().unwrap_or_default()
-    } else {
-        history.bubble_size_reference()
+    // Volume dots go one step further: one fixed scale per pane and zoom,
+    // the preset's pinned quantity per second and tick of a dot's cell, so a
+    // dot's size never depends on what else the session did.
+    let (aggression_reference, dot_candle_reference) = match dots {
+        Some(dots) => dot_references(dots, config),
+        None => (history.bubble_size_reference(), Decimal::ZERO),
     };
 
     // A reduction is allocated by the half that owns the prints around it, so
@@ -425,6 +428,8 @@ pub fn project_settled(
     // user chose it precisely so that nothing on screen may rescale a mark.
     let summary_reference = if summarizing {
         history.bubble_summary_reference()
+    } else if dots.is_some() {
+        dot_candle_reference
     } else {
         aggression_reference
     };
@@ -633,12 +638,18 @@ pub fn project_live(
     // pane's own radius range and gates on the pane's own switch, so a merged
     // mark would be clipped into one pane, sized for the other, and hidden by
     // the wrong control.
+    // Dots read the tape's scale off this frame's zoom: the tape's window can
+    // change without the settled half being rebuilt.
+    let (print_reference, summary_reference) = match dots {
+        Some(dots) => dot_references(dots, config),
+        None => (settled.aggression_reference, settled.summary_reference),
+    };
     let (mut tape_marks, mut slot_marks): (Vec<_>, Vec<_>) = tier_primitives(
         marks,
         timeline,
         prices,
-        settled.aggression_reference,
-        settled.summary_reference,
+        print_reference,
+        summary_reference,
         dots.is_some(),
     )
     .into_iter()
@@ -681,6 +692,15 @@ pub fn project_live(
         floored_quantity,
         live_now_x,
     }
+}
+
+/// The full-size quantities of a dots frame: the tape's, then the candles'.
+fn dot_references(dots: &VolumeDots, config: &HeatmapConfig) -> (Decimal, Decimal) {
+    let full = config.bubbles.fixed_reference_decimal().unwrap_or_default();
+    (
+        dots.size_reference(true, full),
+        dots.size_reference(false, full),
+    )
 }
 
 /// Allocate `events` to the prints of one half of the chart.

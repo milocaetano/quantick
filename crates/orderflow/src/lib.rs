@@ -46,10 +46,10 @@ pub use interaction::{
 };
 #[allow(unused_imports)]
 pub use projection::{
-    AggressionPrimitive, BEFORE_CAPTURE, DOT_WINDOW_LADDER_MS, GapPrimitive, HeatmapCell,
-    HeatmapProjection, LiquidityEventPrimitive, LiquidityEvidence, LiveMarks, PaneGeometry,
-    PriceWindow, SettledProjection, VolumeDots, dot_window_ms, lane_bar_opens, project_live,
-    project_settled,
+    AggressionPrimitive, BEFORE_CAPTURE, DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_LADDER_MS,
+    GapPrimitive, HeatmapCell, HeatmapProjection, LiquidityEventPrimitive, LiquidityEvidence,
+    LiveMarks, PaneGeometry, PriceWindow, SettledProjection, VolumeDots, dot_level_ticks,
+    dot_window_ms, lane_bar_opens, project_live, project_settled,
 };
 #[allow(unused_imports)]
 pub use scale::SessionScale;

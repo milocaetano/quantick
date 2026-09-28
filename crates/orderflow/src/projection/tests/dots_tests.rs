@@ -411,7 +411,7 @@ fn a_refit_inside_a_ladder_step_keeps_every_dot() {
     let history = tape(config.clone(), &borrowed(&trades));
     let timeline = chart(12_700, 1_500, None);
     let geometry = PaneGeometry {
-        px_per_bar: 10.0,
+        px_per_bar: 40.0,
         lane_width_px: 300.0,
         height_px: 400.0,
         lane_bar_opens: (0..40).map(|i| i * 1_000).collect(),
@@ -429,7 +429,7 @@ fn a_refit_inside_a_ladder_step_keeps_every_dot() {
     let (refit_ticks, refit) = at("58", "133");
     assert_eq!((ticks, refit_ticks), (5, 5));
     let closed = |mark: &AggressionPrimitive| !mark.live && mark.last_timestamp_ms < 6_000;
-    assert!(facts(&before, closed).len() > 50);
+    assert!(facts(&before, closed).len() > 20);
     assert_eq!(facts(&refit, closed), facts(&before, closed));
     for dot in &before.aggressions {
         assert_eq!(dot.price_span, dec("5"), "five-tick levels");
@@ -674,7 +674,7 @@ fn equal_quantities_are_equal_radii_within_a_pane() {
     let config = dots_config();
     let prints = [
         (1, 1_100, "100", "3", Side::Buy),
-        (2, 2_600, "95", "3", Side::Sell),
+        (2, 1_600, "95", "3", Side::Sell),
         (3, 3_300, "100", "2", Side::Sell),
         (4, 3_700, "104", "2", Side::Buy),
     ];
