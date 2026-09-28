@@ -499,7 +499,9 @@ fn rungs_hold_through_a_wobble_at_a_boundary() {
 /// A dot's window of market time is a thin column of screen, not the width
 /// of the biggest dot: at the default zoom a dot sits near the moment its
 /// prints traded, instead of every print of five seconds piling into one
-/// column far from the next. Only squeezing the time axis widens the window.
+/// column far from the next. On the tape the column is at least the largest
+/// radius wide, half a full dot, so a dot fitted to it stays readable; only
+/// squeezing the time axis widens the window.
 #[test]
 fn time_windows_follow_a_thin_column_not_the_biggest_dot() {
     assert_eq!(DOT_WINDOW_CELL_PX, 8.0);
@@ -510,7 +512,8 @@ fn time_windows_follow_a_thin_column_not_the_biggest_dot() {
         height_px: 400.0,
         lane_bars: vec![(0, 59_999)],
     };
-    for max_radius in [6.0, 20.0, 40.0] {
+    // (max radius, rungs at 15 s, a minute and twenty minutes over 300 px)
+    for (max_radius, rungs) in [(6.0, [500, 2_000, 60_000]), (15.0, [1_000, 5_000, 60_000])] {
         let config = HeatmapConfig {
             bubbles: BubbleStyle {
                 max_radius,
@@ -523,12 +526,13 @@ fn time_windows_follow_a_thin_column_not_the_biggest_dot() {
                 .choose(geometry(lane_window_ms), &config, (60.0, 100.0))
                 .tape_window_ms
         };
-        // 300 px over 15 s: 8 px is 400 ms, the 500 ms rung.
-        assert_eq!(tape(15_000), 500, "max radius {max_radius}");
-        // Squeezed to a minute: 1.6 s, the 2 s rung.
-        assert_eq!(tape(60_000), 2_000, "max radius {max_radius}");
-        // Squeezed to twenty minutes: 32 s, the minute rung.
-        assert_eq!(tape(1_200_000), 60_000, "max radius {max_radius}");
+        // 8 px or the radius, whichever is wider: 400 or 750 ms at 15 s,
+        // 1.6 or 3 s at a minute, 32 or 60 s at twenty minutes.
+        assert_eq!(
+            [tape(15_000), tape(60_000), tape(1_200_000)],
+            rungs,
+            "max radius {max_radius}"
+        );
 
         // A one-minute bar 108 px wide: 8 px of its 65 536 ms slot is 4.9 s.
         let zoom = DotRungMemory::default().choose(geometry(15_000), &config, (60.0, 100.0));
