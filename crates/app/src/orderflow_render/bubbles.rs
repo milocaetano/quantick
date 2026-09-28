@@ -82,20 +82,6 @@ fn opaque_rgb(rgb: [u8; 3]) -> egui::Color32 {
     egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2])
 }
 
-/// Vertical nudge, in pixels, that keeps the two sides off the same row.
-///
-/// Buy aggression lifts the ask, sell aggression hits the bid, so buys sit
-/// on the ask's side of the print and sells on the bid's. That is a *price*
-/// direction: `inverted` mirrors the nudge with the chart, or the separation
-/// would assert the opposite book side upside down. Screen y grows downward.
-pub(super) const fn side_offset_y(side: Side, offset: f32, inverted: bool) -> f32 {
-    let toward_ask = match side {
-        Side::Buy => -offset,
-        Side::Sell => offset,
-    };
-    if inverted { -toward_ask } else { toward_ask }
-}
-
 /// Interior alpha of a hollow bubble, as a fraction of the configured fill
 /// alpha: enough tint to keep the disc's area readable, light enough that the
 /// ring is what the eye catches.
@@ -284,7 +270,7 @@ const CROWN_BACKING_ALPHA: u8 = 110;
 ///
 /// Buy aggression lifts the ask, so its crown sits above the print; sell
 /// aggression hits the bid and wears it below. Screen y grows downward. This
-/// is the same fact [`side_offset_y`] encodes, deliberately restated: on a
+/// is the same fact `bubble_center_offset` encodes, deliberately restated: on a
 /// dense tape the two reinforce each other rather than compete.
 const fn crown_center_angle(side: Side) -> f32 {
     match side {

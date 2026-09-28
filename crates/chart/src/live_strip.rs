@@ -187,8 +187,13 @@ mod tests {
             price_span: Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: last_ms,
+            placed_ms: last_ms,
             last_timestamp_ms: last_ms,
             matched_quantity: Decimal::ZERO,
+            buy_quantity: match side {
+                Side::Buy => dec(quantity),
+                Side::Sell => Decimal::ZERO,
+            },
             matched_fraction: 0.0,
             liquidity_event_ids: Vec::new(),
             x: 0.5,

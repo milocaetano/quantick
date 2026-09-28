@@ -298,6 +298,20 @@ impl BarTimeline {
             .then(|| self.slot_position(timestamp_ms))
     }
 
+    /// The bar a timestamp belongs to among the bars this timeline holds, or
+    /// `None` when none of them spans it. Unlike
+    /// [`locate_in_slot`](Self::locate_in_slot) it never clamps: a print past
+    /// the last visible bar — the tape while the candles are panned into
+    /// history — belongs to a bar this timeline does not know.
+    #[must_use]
+    pub fn bar_at(&self, timestamp_ms: i64) -> Option<usize> {
+        let partition = self
+            .slots
+            .partition_point(|slot| slot.start_ms <= timestamp_ms);
+        let slot = self.slots.get(partition.checked_sub(1)?)?;
+        (timestamp_ms <= slot.end_ms).then_some(slot.bar_index)
+    }
+
     fn slot_position(&self, timestamp_ms: i64) -> TimelinePosition {
         let partition = self
             .slots

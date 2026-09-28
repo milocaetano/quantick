@@ -108,10 +108,17 @@ pub struct AggressionPrimitive {
     pub trade_count: usize,
     /// Earliest exchange timestamp represented by this bubble.
     pub first_timestamp_ms: i64,
+    /// The instant that placed this mark on the chart: the cluster's
+    /// midpoint, which is where its x was read from. A fold keeps its
+    /// anchor's, since it keeps the anchor's place.
+    pub placed_ms: i64,
     /// Latest exchange timestamp represented by this bubble.
     pub last_timestamp_ms: i64,
     /// Exact bubble quantity aligned with compatible liquidity reductions.
     pub matched_quantity: Decimal,
+    /// The exact bought share of [`quantity`](Self::quantity), which
+    /// `buy_share` only approximates; the sold share is the rest.
+    pub buy_quantity: Decimal,
     /// `[0,1]` fraction of bubble quantity aligned with reductions.
     pub matched_fraction: f32,
     /// Factual liquidity-event ids receiving matched bubble quantity.

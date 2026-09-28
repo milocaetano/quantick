@@ -22,7 +22,7 @@ use crate::viewport::Viewport;
 use quantick_engine::Side;
 use quantick_orderflow::{
     AggressionPrimitive, BubbleRenderMode, ConsumptionMark, GOLDEN_ANGLE, HeatmapProjection,
-    INV_PHI_2, LiquidityEvidence, bubble_radius,
+    INV_PHI_2, LiquidityEvidence, bubble_center_offset, bubble_radius,
 };
 use rust_decimal::Decimal;
 
@@ -321,18 +321,20 @@ fn render_style_sanitizes_non_finite_geometry() {
 
 #[test]
 fn buy_and_sell_bubbles_are_nudged_to_opposite_sides() {
-    // Screen y grows downward: buys sit above the print, sells below.
-    assert!(side_offset_y(Side::Buy, 4.0, false) < 0.0);
-    assert!(side_offset_y(Side::Sell, 4.0, false) > 0.0);
-    assert_eq!(side_offset_y(Side::Buy, 0.0, false), 0.0);
+    // Screen y grows downward: buys sit above the print, sells below. The
+    // painter, the carve and the overlap fold share this one function.
+    let (buy, sell) = (1.0, 0.0);
+    assert!(bubble_center_offset(buy, 4.0, false) < 0.0);
+    assert!(bubble_center_offset(sell, 4.0, false) > 0.0);
+    assert_eq!(bubble_center_offset(buy, 0.0, false), 0.0);
     assert_eq!(
-        side_offset_y(Side::Buy, 4.0, false).abs(),
-        side_offset_y(Side::Sell, 4.0, false).abs()
+        bubble_center_offset(buy, 4.0, false).abs(),
+        bubble_center_offset(sell, 4.0, false).abs()
     );
     // The nudge names a book side, not a screen side: upside down it
     // mirrors with the chart.
-    assert!(side_offset_y(Side::Buy, 4.0, true) > 0.0);
-    assert!(side_offset_y(Side::Sell, 4.0, true) < 0.0);
+    assert!(bubble_center_offset(buy, 4.0, true) > 0.0);
+    assert!(bubble_center_offset(sell, 4.0, true) < 0.0);
 }
 
 /// Paint through `draw` off-screen and return the shapes it emitted.
@@ -401,7 +403,7 @@ fn the_preview_draws_a_bubble_exactly_the_way_the_chart_does() {
         draw_bubble(
             painter,
             BubbleMark {
-                center: at + egui::vec2(0.0, side_offset_y(Side::Buy, bubbles.side_offset, false)),
+                center: at + egui::vec2(0.0, bubble_center_offset(1.0, bubbles.side_offset, false)),
                 radius,
                 side: Side::Buy,
                 size: PREVIEW_LARGE_PRINT_SIZE,
@@ -795,7 +797,7 @@ fn the_preview_draws_a_sphere_bubble_exactly_the_way_the_chart_does() {
         draw_bubble(
             painter,
             BubbleMark {
-                center: at + egui::vec2(0.0, side_offset_y(Side::Buy, bubbles.side_offset, false)),
+                center: at + egui::vec2(0.0, bubble_center_offset(1.0, bubbles.side_offset, false)),
                 radius,
                 side: Side::Buy,
                 size: PREVIEW_LARGE_PRINT_SIZE,
@@ -1167,8 +1169,13 @@ fn hiding_the_bubble_layer_keeps_the_clusters_in_the_frame() {
             price_span: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
+            placed_ms: 0,
             last_timestamp_ms: 0,
             matched_quantity: rust_decimal::Decimal::ZERO,
+            buy_quantity: match side {
+                Side::Buy => rust_decimal::Decimal::ONE,
+                Side::Sell => rust_decimal::Decimal::ZERO,
+            },
             matched_fraction: 0.0,
             liquidity_event_ids: Vec::new(),
             x,
@@ -1271,8 +1278,10 @@ fn the_lane_scale_reaches_the_bubbles_and_stops_at_the_boundary() {
             price_span: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
+            placed_ms: 0,
             last_timestamp_ms: 0,
             matched_quantity: rust_decimal::Decimal::ZERO,
+            buy_quantity: rust_decimal::Decimal::ONE,
             matched_fraction: 0.0,
             liquidity_event_ids: Vec::new(),
             x: 0.5,
@@ -1344,8 +1353,10 @@ fn a_bubble_beside_the_divider_is_clipped_to_its_own_pane() {
             price_span: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
+            placed_ms: 0,
             last_timestamp_ms: 0,
             matched_quantity: rust_decimal::Decimal::ZERO,
+            buy_quantity: rust_decimal::Decimal::ONE,
             matched_fraction: 0.0,
             liquidity_event_ids: Vec::new(),
             x,
@@ -1414,8 +1425,10 @@ fn a_layer_switched_off_on_one_pane_still_draws_on_the_other() {
             price_span: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
+            placed_ms: 0,
             last_timestamp_ms: 0,
             matched_quantity: rust_decimal::Decimal::ZERO,
+            buy_quantity: rust_decimal::Decimal::ONE,
             matched_fraction: 0.0,
             liquidity_event_ids: Vec::new(),
             x,
@@ -1509,9 +1522,9 @@ fn the_depth_map_is_cut_at_the_divider_rather_than_dropped() {
 #[test]
 fn a_pie_leans_with_its_buy_share() {
     let offset = 4.0;
-    let lean = |buy_share: f32| -((finite_unit(buy_share) - 0.5) * 2.0) * offset;
-    assert_eq!(lean(1.0), side_offset_y(Side::Buy, offset, false));
-    assert_eq!(lean(0.0), side_offset_y(Side::Sell, offset, false));
+    let lean = |buy_share: f32| bubble_center_offset(buy_share, offset, false);
+    assert_eq!(lean(1.0), -offset, "a buy sits a full nudge above");
+    assert_eq!(lean(0.0), offset, "a sell a full nudge below");
     assert_eq!(lean(0.5), 0.0);
     assert!(lean(0.75) < 0.0 && lean(0.75) > lean(1.0));
 }

@@ -117,6 +117,7 @@ fn absorb(mark: &mut AggressionPrimitive, other: &mut AggressionPrimitive, refer
     mark.first_timestamp_ms = mark.first_timestamp_ms.min(other.first_timestamp_ms);
     mark.last_timestamp_ms = mark.last_timestamp_ms.max(other.last_timestamp_ms);
     mark.matched_quantity += other.matched_quantity;
+    mark.buy_quantity += other.buy_quantity;
     mark.matched_fraction = if total > Decimal::ZERO {
         (mark.matched_quantity / total)
             .to_f64()
@@ -205,9 +206,12 @@ pub(super) fn fold_onto(
     for mut other in members {
         absorb(&mut anchor, &mut other, reference);
     }
-    if anchor.buy_share > 0.5 {
+    // Exact quantities, not the f32 share: a margin of 0.0001 in two million
+    // rounds to an even split there, and would hand the side to the anchor.
+    let sold = anchor.quantity - anchor.buy_quantity;
+    if anchor.buy_quantity > sold {
         anchor.side = AggressorSide::Buy;
-    } else if anchor.buy_share < 0.5 {
+    } else if sold > anchor.buy_quantity {
         anchor.side = AggressorSide::Sell;
     }
     anchor.consumed_side = consumed_side(anchor.side);

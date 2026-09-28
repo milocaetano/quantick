@@ -7,9 +7,8 @@
 
 use eframe::egui;
 use quantick_orderbook::BookSide;
-use quantick_orderflow::{BEFORE_CAPTURE, LiquidityEvidence, bubble_radius};
+use quantick_orderflow::{BEFORE_CAPTURE, LiquidityEvidence, bubble_center_offset, bubble_radius};
 
-use super::bubbles::side_offset_y;
 use super::layout::{EventBand, RenderContext};
 use super::{
     OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, finite_unit,
@@ -362,12 +361,14 @@ impl<'c, 'a> EventPass<'c, 'a> {
             }
             // Follow the bubble's own vertical nudge, so the carved gap stays
             // centred on the bubble that will be drawn over it.
-            let center = center
-                + egui::vec2(
-                    0.0,
-                    side_offset_y(trade.side, bubbles.side_offset, layout.inverted),
-                );
-            let r = bubble_radius(trade.size, bubbles.min_radius, bubbles.max_radius);
+            let lean = bubble_center_offset(trade.buy_share, bubbles.side_offset, layout.inverted);
+            let center = center + egui::vec2(0.0, lean);
+            let (min, max) = if trade.live {
+                self.style.live_lane.scaled_radii(bubbles)
+            } else {
+                (bubbles.min_radius, bubbles.max_radius)
+            };
+            let r = bubble_radius(trade.size, min, max);
             // Carve from the bubble's midriff rightward: the eaten wall still
             // touches the bubble's left half (the bubble reads as biting into
             // it), while re-stacked liquidity cannot slide through to the right.

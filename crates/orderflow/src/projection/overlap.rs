@@ -79,14 +79,16 @@ fn unit(value: f64) -> f64 {
     }
 }
 
-/// What may fold with what: the pane, and the bar the prints belong to.
+/// What may fold with what: the pane, and the bar the mark is drawn in.
 ///
 /// A pane because a tape mark and a candle mark are clipped, sized and
-/// switched separately. A bar because a mark claims its bar traded it — on
-/// the candles by where it is drawn, on the tape by when it printed — the same
-/// reason the budget fold keys on it; the tape is continuous, but a fold across
-/// a close would still credit one bar with its neighbour's volume.
-type GroupKey = (bool, Option<usize>);
+/// switched separately. A bar because a mark claims its bar traded it, the
+/// same reason the budget fold keys on it; the tape is continuous, but a fold
+/// across a close would still credit one bar with its neighbour's volume. The
+/// bar is read at the instant that placed the mark, and a mark whose bar the
+/// timeline cannot see — the tape while the candles are panned into history —
+/// folds with nothing.
+type GroupKey = (bool, usize);
 
 impl HeatmapProjection {
     /// Fold each bubble whose disc overlaps a heavier one's into it — one
@@ -106,24 +108,28 @@ impl HeatmapProjection {
         timeline: &BarTimeline,
         config: &HeatmapConfig,
     ) {
-        if !config.bubble_overlap_merge {
+        self.overlap_marks = None;
+        // The painter draws the unfolded marks while a side is hidden, and
+        // nothing while no bubble layer is drawn: a fold then is pure cost.
+        let both_sides = config.show_buy_aggressions && config.show_sell_aggressions;
+        let any_layer = config.show_aggressions || config.lane_aggressions_drawn();
+        if !config.bubble_overlap_merge || !both_sides || !any_layer {
             return;
         }
-        // The join already put the marks in frame order; grouping keeps that
-        // order, so which marks land in which fold never depends on arrival.
+        // One canonical order, so which marks land in which fold never depends
+        // on the order they arrived in; grouping keeps it.
+        let mut marks = self.aggressions.clone();
+        marks.sort_by(frame_order);
         let mut groups: BTreeMap<GroupKey, Vec<AggressionPrimitive>> = BTreeMap::new();
-        for mark in &self.aggressions {
-            let bar = timeline
-                .locate_in_slot(mark.first_timestamp_ms)
-                .map(|position| position.bar_index);
-            groups
-                .entry((mark.live, bar))
-                .or_default()
-                .push(mark.clone());
+        let mut merged = Vec::with_capacity(marks.len());
+        for mark in marks {
+            match timeline.bar_at(mark.placed_ms) {
+                Some(bar) => groups.entry((mark.live, bar)).or_default().push(mark),
+                None => merged.push(mark),
+            }
         }
 
         let scale = Scale::new(geometry, timeline.region_count(), config);
-        let mut merged = Vec::with_capacity(self.aggressions.len());
         for ((live, _), members) in groups {
             // The scale each pane's marks were drawn on — a fold is sized
             // against it, never rescaling the marks it left alone.
