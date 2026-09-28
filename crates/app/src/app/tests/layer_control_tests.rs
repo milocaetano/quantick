@@ -31,7 +31,7 @@ fn additive_layer_traverses_discovery_admission_common_operation_and_real_chart(
     );
     let initial = snapshot(&mut app, &mut observer);
     let layers = initial["panes"][0]["layers"].as_array().unwrap();
-    assert_eq!(layers.len(), 23);
+    assert_eq!(layers.len(), 24);
     assert!(layers.iter().any(|layer| layer["id"] == "test_probe"
         && layer["requested"] == false
         && layer["effective"] == false));
@@ -229,6 +229,58 @@ fn volume_dots_are_switched_by_the_layer_call() {
         assert_eq!(result["layer"]["persistence"], "orderflow_preset");
         assert_eq!(result["changed"], true);
         assert_eq!(merging(&app), on, "the call set the pane's own switch");
+    }
+    disable_test_gateway(&mut app, &ctx);
+}
+
+/// Tape only is a registered display switch too: one named call turns a
+/// pane into the tape alone, the pane's own config carries it, and the
+/// bubbles scope reads it back.
+#[test]
+fn tape_only_is_switched_by_the_layer_call_and_read_back() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    let directory = gateway_test_directory("tape-only-switch");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut observer = connect(&directory, &options("observer", &[]));
+    let mut cockpit = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let pane_id = app.active_tab().flow_pane.id.to_string();
+    let tape_only = |app: &QuantickApp| {
+        let flow = app.active_tab().flow_pane.orderflow.as_ref();
+        flow.expect("the flow pane has an engine")
+            .cached_config()
+            .live_lane
+            .tape_only
+    };
+    assert!(!tape_only(&app), "off until someone asks");
+    for on in [true, false] {
+        let payload = layer_input(&app, "tape_only", on);
+        let (response, _) = unkeyed_call(&mut app, &mut cockpit, "layers.visibility.set", payload);
+        let result = success_result(&response);
+        assert_eq!(result["layer"]["requested"], on);
+        assert_eq!(result["layer"]["persistence"], "orderflow_preset");
+        assert_eq!(result["changed"], true);
+        assert_eq!(tape_only(&app), on, "the call set the pane's own switch");
+        let (read, _) = unkeyed_call(
+            &mut app,
+            &mut observer,
+            "snapshot.read",
+            json!({ "scopes": ["orderflow.bubbles"] }),
+        );
+        let value = success_result(&read)["scopes"]["orderflow.bubbles"]["value"].clone();
+        let pane = value["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|tab| tab["panes"].as_array().unwrap().iter())
+            .find(|pane| pane["pane_id"] == pane_id.as_str())
+            .expect("the flow pane is in the bubbles scope")
+            .clone();
+        assert_eq!(pane["bubbles"]["tape_only"], on, "{pane}");
     }
     disable_test_gateway(&mut app, &ctx);
 }

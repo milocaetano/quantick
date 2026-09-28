@@ -1077,4 +1077,66 @@ mod tests {
         assert!(max <= MAX_BUBBLE_MAX_RADIUS);
         assert!(min <= MAX_BUBBLE_MIN_RADIUS);
     }
+
+    /// Tape only: the tape is the whole pane, whatever share was asked for,
+    /// and a tape that is switched off still reserves nothing.
+    #[test]
+    fn a_tape_only_lane_takes_the_whole_chart() {
+        let tape_only = LiveLaneStyle {
+            tape_only: true,
+            width_share: MIN_LIVE_LANE_SHARE,
+            ..LiveLaneStyle::default()
+        };
+        assert_eq!(tape_only.resolved_width_px(1_000.0), 1_000.0);
+        assert_eq!(tape_only.resolved_width_px(0.0), 0.0);
+        assert_eq!(tape_only.resolved_width_px(f32::NAN), 0.0);
+        let off = LiveLaneStyle {
+            enabled: false,
+            ..tape_only
+        };
+        assert_eq!(off.resolved_width_px(1_000.0), 0.0);
+        // Off, the lane keeps its share.
+        let normal = LiveLaneStyle::default();
+        assert!(!normal.tape_only, "off until someone asks");
+        assert!((normal.resolved_width_px(1_000.0) - 350.0).abs() < 0.01);
+    }
+
+    /// A pane that never asked for tape only writes the file it always
+    /// wrote; one that did reads it back.
+    #[test]
+    fn tape_only_is_saved_only_when_on() {
+        let text = toml::to_string(&LiveLaneStyle::default()).unwrap();
+        assert!(!text.contains("tape_only"), "{text}");
+        let old: LiveLaneStyle = toml::from_str("width_share = 0.35
+").unwrap();
+        assert!(!old.tape_only);
+        let on = LiveLaneStyle {
+            tape_only: true,
+            ..LiveLaneStyle::default()
+        };
+        let text = toml::to_string(&on).unwrap();
+        assert!(text.contains("tape_only = true"), "{text}");
+        assert_eq!(toml::from_str::<LiveLaneStyle>(&text).unwrap(), on);
+    }
+
+    /// The tape's own clock labels: round instants inside the window, on the
+    /// finest step that fits the room, newest last.
+    #[test]
+    fn tape_time_ticks_fall_on_round_instants_inside_the_window() {
+        // 15 s ending at 100.5 s, room for four labels: every 5 s.
+        assert_eq!(
+            lane_time_ticks(100_500, 15_000, 4),
+            vec![90_000, 95_000, 100_000]
+        );
+        // More room, a finer step.
+        assert_eq!(
+            lane_time_ticks(100_500, 15_000, 8),
+            vec![86_000, 88_000, 90_000, 92_000, 94_000, 96_000, 98_000, 100_000]
+        );
+        // A window edge on a round instant is labelled, and counts.
+        assert_eq!(lane_time_ticks(60_000, 60_000, 2), vec![0, 60_000]);
+        // Nothing to label.
+        assert!(lane_time_ticks(100_000, 0, 4).is_empty());
+        assert!(lane_time_ticks(100_000, 15_000, 0).is_empty());
+    }
 }

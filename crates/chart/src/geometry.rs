@@ -1288,4 +1288,27 @@ mod tests {
         );
         assert!(label_fits(25.0, 50.0, 0.0, 200.0), "exactly flush is fine");
     }
+
+    /// A pane that shows only the tape fits its axis to where the tape
+    /// traded and the last price, padded like the candles' fit, and nothing
+    /// else: the candles it no longer draws have no say in it.
+    #[test]
+    fn a_tape_only_window_is_the_tapes_range_padded() {
+        let scale = tape_price_window(Some((995.0, 1_015.0)), Some(1_005.0), None, 0.0, 600.0)
+            .expect("a tape to fit");
+        let (lo, hi) = scale.range();
+        assert!((lo - 994.0).abs() < 1e-9, "{lo}");
+        assert!((hi - 1_016.0).abs() < 1e-9, "{hi}");
+        // The last price moving past the tape drags the axis with it.
+        let (lo, hi) = tape_price_window(Some((995.0, 1_015.0)), Some(1_035.0), None, 0.0, 600.0)
+            .unwrap()
+            .range();
+        assert!((lo - 993.0).abs() < 1e-9 && (hi - 1_037.0).abs() < 1e-9, "{lo} {hi}");
+        // No print on the tape: the last window holds still.
+        let held = tape_price_window(None, Some(1_005.0), Some((900.0, 1_100.0)), 0.0, 600.0)
+            .unwrap()
+            .range();
+        assert_eq!(held, (900.0, 1_100.0));
+        assert!(tape_price_window(None, None, None, 0.0, 600.0).is_none());
+    }
 }

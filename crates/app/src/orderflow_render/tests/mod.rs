@@ -27,6 +27,7 @@ use quantick_orderflow::{
 use rust_decimal::Decimal;
 
 mod dot_radii_tests;
+mod tape_only_tests;
 
 /// The dust threshold is defined by inverting this module's radius
 /// mapping, but lives in `config` beside the style it reads. This pins the
