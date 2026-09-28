@@ -449,16 +449,43 @@ pub fn bubble_center_offset(buy_share: f32, side_offset: f32, inverted: bool) ->
     toward_price * (share - 0.5) * 2.0 * side_offset
 }
 
-/// The furthest past its disc the painter draws a bubble's fixed-reach
-/// dressing, in pixels: the halo's widest gap, which also covers the crown
-/// (gap and stroke, under 5 px), the fold ring (2.5 px) and the dark
-/// separator hair (1.5 px). The impact ring and the rim add their configured
-/// widths on top — see [`BubbleStyle::dressing_margin`].
-pub const BUBBLE_DRESSING_PX: f32 = 5.0;
+/// Gap between a bubble's rim and the halo behind it, as a fraction of the
+/// radius, and the pixel range it is held to.
+const HALO_PADDING_SCALE: f32 = 0.2;
 
-/// The impact ring's widest gap from the rim, in pixels; its stroke adds
-/// half the configured width beyond it.
-pub const BUBBLE_IMPACT_RING_MAX_GAP_PX: f32 = 3.5;
+/// See [`HALO_PADDING_SCALE`].
+const HALO_MIN_PADDING_PX: f32 = 2.0;
+
+/// See [`HALO_PADDING_SCALE`]. Also the furthest past its disc the painter
+/// draws any fixed-reach dressing: the crown (gap and stroke, under 5 px),
+/// the fold ring (2.5 px) and the separator hair (1.5 px) all stay inside it.
+const HALO_MAX_PADDING_PX: f32 = 5.0;
+
+/// Halo gap for a bubble of this radius. Beside [`bubble_radius`] because
+/// the overlap grid reserves room for it — see
+/// [`BubbleStyle::dressing_margin`].
+#[must_use]
+pub fn bubble_halo_padding(radius: f32) -> f32 {
+    (radius * HALO_PADDING_SCALE).clamp(HALO_MIN_PADDING_PX, HALO_MAX_PADDING_PX)
+}
+
+/// Gap between a bubble's rim and its impact ring, as a fraction of the
+/// radius, and the pixel range it is held to.
+const IMPACT_RING_PADDING_SCALE: f32 = 0.16;
+
+/// See [`IMPACT_RING_PADDING_SCALE`].
+const IMPACT_RING_MIN_PADDING_PX: f32 = 1.6;
+
+/// See [`IMPACT_RING_PADDING_SCALE`].
+const IMPACT_RING_MAX_PADDING_PX: f32 = 3.5;
+
+/// Impact-ring gap for a bubble of this radius; its stroke adds half the
+/// configured width beyond it.
+#[must_use]
+pub fn bubble_impact_ring_padding(radius: f32) -> f32 {
+    (radius * IMPACT_RING_PADDING_SCALE)
+        .clamp(IMPACT_RING_MIN_PADDING_PX, IMPACT_RING_MAX_PADDING_PX)
+}
 
 impl BubbleStyle {
     /// How far past its disc the painter may draw a dressed bubble, in
@@ -468,8 +495,8 @@ impl BubbleStyle {
     /// that asks for it by name — is the one mark it does not cover.
     #[must_use]
     pub fn dressing_margin(&self) -> f32 {
-        BUBBLE_DRESSING_PX
-            .max(BUBBLE_IMPACT_RING_MAX_GAP_PX + self.impact_ring_width / 2.0)
+        HALO_MAX_PADDING_PX
+            .max(IMPACT_RING_MAX_PADDING_PX + self.impact_ring_width / 2.0)
             .max(self.outline_width / 2.0)
     }
 

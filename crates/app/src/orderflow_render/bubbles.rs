@@ -10,9 +10,8 @@ use eframe::egui;
 use quantick_engine::Side;
 use quantick_orderflow::{
     AggressionPrimitive, BubbleRenderMode, BubbleStyle, ConsumptionMark, GOLDEN_ANGLE, INV_PHI,
-    INV_PHI_2, INV_PHI_3, bubble_center_offset,
+    INV_PHI_2, INV_PHI_3, bubble_center_offset, bubble_halo_padding, bubble_impact_ring_padding,
 };
-use quantick_orderflow::{BUBBLE_DRESSING_PX, BUBBLE_IMPACT_RING_MAX_GAP_PX};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
@@ -130,40 +129,6 @@ const SEPARATOR_RING_ALPHA: u8 = 170;
 /// Separator-hair width for a bubble of this radius.
 fn separator_ring_width(radius: f32) -> f32 {
     (radius * SEPARATOR_RING_SCALE).clamp(SEPARATOR_MIN_RING_PX, SEPARATOR_MAX_RING_PX)
-}
-
-/// Gap between a bubble's rim and the halo behind it, as a fraction of the
-/// radius, and the pixel range it is held to.
-const HALO_PADDING_SCALE: f32 = 0.2;
-
-/// See [`HALO_PADDING_SCALE`].
-const HALO_MIN_PADDING_PX: f32 = 2.0;
-
-/// See [`HALO_PADDING_SCALE`].
-///
-/// The overlap grid reserves this much around every dressed disc, so it is
-/// the grid's constant: the painter may not draw further out than it.
-const HALO_MAX_PADDING_PX: f32 = BUBBLE_DRESSING_PX;
-
-/// Halo gap for a bubble of this radius.
-fn halo_padding(radius: f32) -> f32 {
-    (radius * HALO_PADDING_SCALE).clamp(HALO_MIN_PADDING_PX, HALO_MAX_PADDING_PX)
-}
-
-/// Gap between a bubble's rim and its impact ring, as a fraction of the
-/// radius, and the pixel range it is held to.
-const IMPACT_RING_PADDING_SCALE: f32 = 0.16;
-
-/// See [`IMPACT_RING_PADDING_SCALE`].
-const IMPACT_RING_MIN_PADDING_PX: f32 = 1.6;
-
-/// See [`IMPACT_RING_PADDING_SCALE`].
-const IMPACT_RING_MAX_PADDING_PX: f32 = BUBBLE_IMPACT_RING_MAX_GAP_PX;
-
-/// Impact-ring gap for a bubble of this radius.
-fn impact_ring_padding(radius: f32) -> f32 {
-    (radius * IMPACT_RING_PADDING_SCALE)
-        .clamp(IMPACT_RING_MIN_PADDING_PX, IMPACT_RING_MAX_PADDING_PX)
 }
 
 /// Pixels added beyond `front_length_scale × radius`, so the consumption mark
@@ -607,8 +572,7 @@ pub(super) struct BubbleMark {
     /// How many separate marks the frame's budget folded into this one; zero
     /// on a bubble that is what it looks like.
     pub(super) folded: u32,
-    /// Nothing but the disc: the overlap grid left no room around it for a
-    /// halo, a rim, a ring or a crown, which would reach a neighbour's.
+    /// Nothing but the disc: its grid cell left no room for any dressing.
     pub(super) bare: bool,
 }
 
@@ -672,7 +636,7 @@ pub(super) fn draw_bubble(
     if haloed && bubbles.halo_strength > 0.0 {
         painter.circle_filled(
             center,
-            radius + halo_padding(radius),
+            radius + bubble_halo_padding(radius),
             color.gamma_multiply(halo_alpha(size, bubbles)),
         );
     }
@@ -688,16 +652,8 @@ pub(super) fn draw_bubble(
     }
     if hollow {
         // A bare disc keeps its ring inside the radius even at a speck.
-        let ring = if bare {
-            hollow_ring_width(radius).min(radius)
-        } else {
-            hollow_ring_width(radius)
-        };
-        let ring_radius = if bare {
-            radius - ring / 2.0
-        } else {
-            (radius - ring / 2.0).max(0.5)
-        };
+        let ring = hollow_ring_width(radius).min(if bare { radius } else { f32::INFINITY });
+        let ring_radius = (radius - ring / 2.0).max(if bare { 0.0 } else { 0.5 });
         painter.circle_filled(
             center,
             radius,
@@ -762,24 +718,21 @@ pub(super) fn draw_bubble(
     // once, and sizing a position off it as if it had is exactly the harm this
     // whole change exists to prevent. So a fold wears a ring, and says how many
     // marks are under it wherever there is room to say it.
-    if folded > 1 && bare {
-        // No room outside the rim, so the ring goes inside it, in the label's
-        // colour: the side's own would vanish against the disc.
-        let width = FOLD_RING_WIDTH.min(radius);
-        painter.circle_stroke(
-            center,
-            radius - width / 2.0,
-            egui::Stroke::new(width, colors.text.gamma_multiply(FOLD_RING_ALPHA)),
-        );
-    } else if folded > 1 {
-        painter.circle_stroke(
-            center,
-            radius + FOLD_RING_GAP,
-            egui::Stroke::new(
+    if folded > 1 {
+        // Bare, the ring goes inside the rim, in the label's colour: the
+        // side's own would vanish against the disc.
+        let (ring_radius, width, ink) = if bare {
+            let width = FOLD_RING_WIDTH.min(radius);
+            (radius - width / 2.0, width, colors.text)
+        } else {
+            (
+                radius + FOLD_RING_GAP,
                 FOLD_RING_WIDTH,
-                color.gamma_multiply(FOLD_RING_ALPHA * bubbles.opacity),
-            ),
-        );
+                color.gamma_multiply(bubbles.opacity),
+            )
+        };
+        let ink = ink.gamma_multiply(FOLD_RING_ALPHA);
+        painter.circle_stroke(center, ring_radius, egui::Stroke::new(width, ink));
         // The count itself lives in the bubble's own label, where the eye
         // already is, as `⊕4` against a cluster's `×4` — see `bubble_label`.
         // Drawing it a second time here put two glyph runs on the same pixel,
@@ -787,8 +740,7 @@ pub(super) fn draw_bubble(
         // its label always draws too.
     }
 
-    // This print ate resting liquidity at this exact price. The marks for
-    // it are drawn outside the rim, so a bare disc goes without.
+    // This print ate resting liquidity here; a bare disc has no room to say so.
     let Some(matched_fraction) = matched.filter(|_| !bare) else {
         return;
     };
@@ -821,7 +773,7 @@ pub(super) fn draw_bubble(
     if dressed && bubbles.show_impact_ring {
         painter.circle_stroke(
             center,
-            radius + impact_ring_padding(radius),
+            radius + bubble_impact_ring_padding(radius),
             egui::Stroke::new(
                 bubbles.impact_ring_width,
                 colors
