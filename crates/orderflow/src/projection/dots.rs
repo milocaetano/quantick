@@ -239,11 +239,14 @@ impl DotRungMemory {
         let tick = native_grouping(config).bucket_width.to_f64().unwrap_or(0.0);
         let px_per_tick = f64::from(geometry.height_px) * tick / (price_range.1 - price_range.0);
         let px_per_ms = f64::from(geometry.lane_width_px) / geometry.lane_window_ms as f64;
+        // At least half a full dot wide, so a dot fitted to its column
+        // ([`Self::tape_dot_radii`]) stays readable.
+        let tape_column_px = f64::from(config.bubbles.max_radius).max(DOT_WINDOW_CELL_PX);
         let tape_window_ms = hold_rung(
             &DOT_WINDOW_LADDER_MS,
             self.tape_window_ms,
             px_per_ms,
-            DOT_WINDOW_CELL_PX,
+            tape_column_px,
         );
         let level_ticks = hold_rung(
             &DOT_LEVEL_LADDER_TICKS,
