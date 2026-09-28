@@ -574,9 +574,14 @@ fn a_tape_dot_fits_its_column_and_shrinks_in_proportion() {
     assert!((max - 7.5).abs() < 1e-4, "half the column: {max}");
     assert!((min - 1.5).abs() < 1e-4, "the same share: {min}");
 
-    // 15 s over 300 px: a 500 ms rung, 10 px; a minute: 2 s, 40 px.
+    // 1.5 s over 300 px: the 100 ms rung, a 20 px column.
     let mut memory = DotRungMemory::default();
-    memory.choose(geometry(60_000), &style, (60.0, 100.0));
+    memory.choose(geometry(1_500), &style, (60.0, 100.0));
+    assert_eq!(memory.tape_dot_radii(&bubbles), Some((2.0, 10.0)));
+
+    // 300 ms over 300 px: the 100 ms rung is 100 px, wider than any dot.
+    let mut memory = DotRungMemory::default();
+    memory.choose(geometry(300), &style, (60.0, 100.0));
     assert_eq!(memory.tape_dot_radii(&bubbles), Some((3.0, 15.0)));
 }
 
