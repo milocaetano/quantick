@@ -158,6 +158,7 @@ impl BubblePreset {
                 self.volume_dot_full_quantity,
             ),
             auto_full: self.volume_dot_auto_full,
+            calibrated_at: None,
         };
         config.bubble_region_rows = self.region_rows;
         config.bubble_region_ms = self.region_ms;
@@ -578,6 +579,7 @@ mod tests {
                 enabled: true,
                 full_quantity: 2_500.0,
                 auto_full: false,
+                calibrated_at: None,
             },
             bubbles: BubbleStyle {
                 side_offset: 9.0,

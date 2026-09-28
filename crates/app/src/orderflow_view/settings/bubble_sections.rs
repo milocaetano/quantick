@@ -115,17 +115,18 @@ impl ClusteringSection<'_> {
                 if typed.changed() {
                     config.volume_dots.auto_full = false;
                 }
-                let label = if config.volume_dots.auto_full {
-                    "auto: reading…"
-                } else {
-                    "auto"
+                let label = match (config.volume_dots.auto_full, config.volume_dots.calibrated_at) {
+                    (true, None) => "auto: reading…",
+                    (true, Some(_)) => "auto: on",
+                    (false, _) => "auto",
                 };
                 if ui
                     .button(label)
-                    .on_hover_text("read the full size from the market once — the 99th percentile of the tape dots being drawn — then keep it fixed so the past never changes size")
+                    .on_hover_text("read the full size from the market — the 99th percentile of the tape dots being drawn — and keep it fixed while the zoom holds; a zoom that changes the grouping reads it again")
                     .clicked()
                 {
                     config.volume_dots.auto_full = true;
+                    config.volume_dots.calibrated_at = None;
                 }
             });
         }

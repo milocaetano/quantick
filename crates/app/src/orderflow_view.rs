@@ -309,11 +309,16 @@ impl OrderflowView {
         self.published = self.worker.published();
         let base = self.published.base_price_grouping;
         self.adopt_base(base);
-        let calibrated = self
-            .dot_scale()
-            .and_then(|scale| scale.calibrated_full_quantity);
+        let Some((calibrated, rungs)) = self.dot_scale().map(|scale| {
+            (
+                scale.calibrated_full_quantity,
+                (scale.tape_window_ms, scale.level_ticks),
+            )
+        }) else {
+            return;
+        };
         let before = self.config.clone();
-        if self.config.volume_dots.adopt_calibration(calibrated) {
+        if self.config.volume_dots.adopt_calibration(calibrated, rungs) {
             self.commit_config_changes(before);
         }
     }

@@ -1189,13 +1189,13 @@ impl BookEngine {
     }
 
     /// A volume-dot full size read from the market while the style wants
-    /// one. It scans the retained prints, but only until the view adopts an
-    /// answer, which it does on the first one: while no answer exists the
-    /// history is still small, and a later reading is asked for by hand.
+    /// one at these rungs. It scans the retained prints, but only until the
+    /// view adopts an answer, which it does on the first one, once per
+    /// zoom.
     fn dot_calibration(&self, dots: &VolumeDots) -> Option<Decimal> {
         self.config
             .volume_dots
-            .auto_full
+            .wants_calibration((dots.tape_window_ms, dots.level_ticks))
             .then(|| {
                 crate::projection::calibrated_dot_full_quantity(
                     &self.history,
