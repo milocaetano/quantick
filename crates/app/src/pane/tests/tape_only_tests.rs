@@ -57,7 +57,7 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
     };
     let ctx = egui::Context::default();
     let painter = egui::Painter::new(ctx, egui::LayerId::background(), rect);
-    let fitted = |tape_only: bool| {
+    let fitted = |tape_only: bool, price_view: &PriceView| {
         let layout = layout(tape_only);
         layout
             .resolve(
@@ -69,15 +69,30 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
                 },
                 Some((995.0, 1_015.0)),
                 None,
-                &PriceView::new(),
+                price_view,
                 egui::Color32::BLACK,
             )
             .expect("a scale")
-            .1
+            .0.scale
     };
-    let (lo, hi) = fitted(true);
+    let (lo, hi) = fitted(true, &PriceView::new()).range();
     assert!((lo - 994.0).abs() < 1e-9, "{lo}");
     assert!((hi - 1_016.0).abs() < 1e-9, "{hi}");
-    let (lo, hi) = fitted(false);
-    assert!(lo < 400.0 && hi > 1_600.0, "the candles still decide: {lo} {hi}");
+    let (lo, hi) = fitted(false, &PriceView::new()).range();
+    assert!(
+        lo < 400.0 && hi > 1_600.0,
+        "the candles still decide: {lo} {hi}"
+    );
+
+    let mut candle_price_view = PriceView::new();
+    candle_price_view.pan(10_000.0, (400.0, 1_600.0));
+    candle_price_view.set_inverted(true);
+    let tape_scale = fitted(true, &candle_price_view);
+    assert_eq!(tape_scale.range(), (994.0, 1_016.0));
+    assert!(tape_scale.y(995.0) < tape_scale.y(1_015.0));
+    assert_eq!(
+        fitted(false, &candle_price_view).range(),
+        (10_400.0, 11_600.0),
+        "ordinary candle panes retain their manual price view"
+    );
 }

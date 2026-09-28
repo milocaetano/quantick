@@ -2075,6 +2075,7 @@ mod tests {
     #[test]
     fn volume_dots_need_the_setting_and_the_zoom() {
         let zoom = |tape_window_ms: i64, tape_level_ticks: i64, candle_level_ticks: i64| DotZoom {
+            tape_only: false,
             tape_window_ms,
             tape_level_ticks,
             candle_level_ticks,

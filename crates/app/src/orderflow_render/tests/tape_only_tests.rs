@@ -6,7 +6,7 @@ use super::*;
 use quantick_orderflow::DotSizing;
 
 /// A volume dot on `live`'s pane holding `quantity` contracts, at `(x, y)`.
-fn mark(agg_id: u64, live: bool, quantity: i64, x: f64, y: f64) -> AggressionPrimitive {
+pub(super) fn mark(agg_id: u64, live: bool, quantity: i64, x: f64, y: f64) -> AggressionPrimitive {
     AggressionPrimitive {
         agg_id,
         agg_ids: vec![agg_id],
@@ -35,7 +35,7 @@ fn mark(agg_id: u64, live: bool, quantity: i64, x: f64, y: f64) -> AggressionPri
 
 /// The painter's style for `config`, drawing cheap dots only (one circle
 /// each) on a fixed cell so the radii are comparable across panes.
-fn style_for(config: &quantick_orderflow::HeatmapConfig) -> OrderflowRenderStyle {
+pub(super) fn style_for(config: &quantick_orderflow::HeatmapConfig) -> OrderflowRenderStyle {
     let mut style = OrderflowRenderStyle::from_config(config, egui::Color32::BLACK);
     style.bubbles = BubbleStyle {
         min_radius: 2.0,
@@ -96,6 +96,7 @@ fn a_tape_only_pane_draws_the_tape_and_no_candle_marks() {
     ];
     let mut config = quantick_orderflow::HeatmapConfig::default();
     config.volume_dots.enabled = true;
+    config.show_aggressions = true;
     let normal = style_for(&config);
     config.live_lane.tape_only = true;
     let tape_only = style_for(&config);
@@ -130,7 +131,11 @@ fn a_tape_only_pane_draws_the_tape_and_no_candle_marks() {
     let normal_radii = paint(&normal, normal_layout);
     let tape_radii = paint(&tape_only, tape_layout);
     assert_eq!(normal_radii.len(), 4, "{normal_radii:?}");
-    assert_eq!(tape_radii, normal_radii[2..].to_vec(), "the tape's own sizes");
+    assert_eq!(
+        tape_radii,
+        normal_radii[2..].to_vec(),
+        "the tape's own sizes"
+    );
 }
 
 /// The divider sits on the chart's left edge when the tape takes the whole

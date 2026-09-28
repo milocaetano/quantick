@@ -1303,12 +1303,31 @@ mod tests {
         let (lo, hi) = tape_price_window(Some((995.0, 1_015.0)), Some(1_035.0), None, 0.0, 600.0)
             .unwrap()
             .range();
-        assert!((lo - 993.0).abs() < 1e-9 && (hi - 1_037.0).abs() < 1e-9, "{lo} {hi}");
+        assert!(
+            (lo - 993.0).abs() < 1e-9 && (hi - 1_037.0).abs() < 1e-9,
+            "{lo} {hi}"
+        );
         // No print on the tape: the last window holds still.
         let held = tape_price_window(None, Some(1_005.0), Some((900.0, 1_100.0)), 0.0, 600.0)
             .unwrap()
             .range();
         assert_eq!(held, (900.0, 1_100.0));
         assert!(tape_price_window(None, None, None, 0.0, 600.0).is_none());
+    }
+
+    #[test]
+    fn a_quiet_tape_keeps_a_new_last_price_inside_the_held_window() {
+        for price in [850.0, 1_150.0] {
+            let scale = tape_price_window(
+                None,
+                Some(price),
+                Some((900.0, 1_100.0)),
+                0.0,
+                600.0,
+            )
+            .expect("the newest price gives the tape a scale");
+            let (low, high) = scale.range();
+            assert!(low < price && price < high, "{price} outside {low}..{high}");
+        }
     }
 }

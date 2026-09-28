@@ -15,6 +15,7 @@ use crate::projection::{
 };
 
 mod sizing_tests;
+mod tape_tests;
 
 /// Dots on, the budget out of the way, and a fixed scale where 10
 /// contracts is a full-size dot. The folds dots mode skips are all switched
@@ -57,6 +58,7 @@ fn coarse(tape_window_ms: i64, level_ticks: i64) -> VolumeDots {
 /// [`dots_at`], with the tape's and the candles' levels apart.
 fn levels(tape_window_ms: i64, tape_level_ticks: i64, candle_level_ticks: i64) -> VolumeDots {
     VolumeDots {
+        tape_only: false,
         tape_window_ms,
         tape_level_ticks,
         candle_level_ticks,
@@ -761,6 +763,7 @@ fn a_window_splits_at_a_bar_close() {
         }),
     );
     let dots = VolumeDots {
+        tape_only: false,
         tape_window_ms: 1_000,
         tape_level_ticks: 1,
         candle_level_ticks: 1,
@@ -904,6 +907,7 @@ fn a_candle_dot_is_one_bar_and_level_at_its_slot_centre() {
         .collect();
     let timeline = BarTimeline::from_bars(0, &bars, None, None);
     let dots = VolumeDots {
+        tape_only: false,
         tape_window_ms: 250,
         tape_level_ticks: 1,
         candle_level_ticks: 1,
@@ -1194,6 +1198,7 @@ fn dots_carry_the_evidence_of_their_prints() {
             .apply_delta(900, &BookDelta::new(12, 12, vec![], vec![]))
             .unwrap();
         let dots = VolumeDots {
+            tape_only: false,
             tape_window_ms: 1_000,
             tape_level_ticks: 1,
             candle_level_ticks: 1,
@@ -1243,6 +1248,7 @@ fn the_dot_count_is_bounded_by_bars_and_levels() {
     let timeline = chart(12_700, 1_500, None);
     // Every bar is one dot a level; 10-tick levels over 91..=109.
     let dots = VolumeDots {
+        tape_only: false,
         tape_window_ms: 1_000,
         tape_level_ticks: 10,
         candle_level_ticks: 10,

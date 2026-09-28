@@ -618,6 +618,38 @@ mod tests {
         assert_ne!(BubblePreset::capture("mine", &config), preset);
     }
 
+    #[test]
+    fn tape_only_is_a_persisted_preset_mode_with_an_unchanged_default() {
+        let mut configured = HeatmapConfig::default();
+        assert!(!configured.live_lane.tape_only);
+        configured.live_lane.tape_only = true;
+        let preset = BubblePreset::capture("tape only", &configured);
+        assert!(preset.live_lane.tape_only, "the chosen mode is captured");
+        let mut file = BubblePresetFile::default();
+        file.upsert(preset);
+        let restored = parse(&render(&file).expect("serialize preset")).expect("read preset");
+        let mut target = HeatmapConfig::default();
+        restored.get("tape only").unwrap().apply_to(&mut target);
+        assert!(target.live_lane.tape_only, "the mode survives application");
+        embedded().get("default").unwrap().apply_to(&mut target);
+        assert!(!target.live_lane.tape_only, "the default restores candles");
+        assert!(!target.volume_dots.enabled, "the default keeps legacy bubbles");
+    }
+
+    #[test]
+    fn the_mini_index_preset_opens_the_tape_without_changing_other_presets() {
+        let presets = embedded();
+        let mut config = HeatmapConfig::default();
+        presets.get("mini index regions").unwrap().apply_to(&mut config);
+        assert!(config.live_lane.tape_only);
+        assert!(config.volume_dots.enabled);
+        for preset in &presets.presets {
+            if preset.name != "mini index regions" {
+                assert!(!preset.live_lane.tape_only, "{} keeps candles", preset.name);
+            }
+        }
+    }
+
     /// A presets file written before volume dots had a scale of their own
     /// loads unchanged, with the default full-size quantity.
     #[test]

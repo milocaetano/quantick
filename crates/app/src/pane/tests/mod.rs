@@ -311,6 +311,7 @@ fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
                 lane_strip: Some(strip),
                 window_ms: 30_000,
                 tape_age: age,
+                clock: None,
             }
             .paint()
         })
@@ -374,6 +375,7 @@ fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
                 lane_strip: Some(strip),
                 window_ms: 30_000,
                 tape_age: late_by(41_000),
+                clock: None,
             }
             .paint()
         })
@@ -423,6 +425,7 @@ fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
             lane_strip: Some(hair),
             window_ms: 30_000,
             tape_age: Some(quantick_orderflow::TapeAge::NothingYet(90_000)),
+            clock: None,
         }
         .paint()
     });
@@ -449,7 +452,8 @@ fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
             painter,
             lane_strip: None,
             window_ms: 30_000,
-            tape_age: late_by(41_000)
+            tape_age: late_by(41_000),
+            clock: None,
         }
         .paint()),
         painted(|_| {}),
