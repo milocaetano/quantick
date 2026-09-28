@@ -1165,6 +1165,7 @@ fn hiding_the_bubble_layer_keeps_the_clusters_in_the_frame() {
             live: false,
             price_bucket: rust_decimal::Decimal::ONE,
             price_span: rust_decimal::Decimal::ONE,
+            price: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
             last_timestamp_ms: 0,
@@ -1209,6 +1210,7 @@ fn hiding_the_bubble_layer_keeps_the_clusters_in_the_frame() {
         0,
         projection.summarized,
         projection.effective_grouping.bucket_width,
+        projection.volume_dots,
     );
     assert_eq!(rows.len(), 1, "both prints share one bucket");
     assert_eq!(rows[0].buy, rust_decimal::Decimal::ONE);
@@ -1273,6 +1275,7 @@ fn the_lane_scale_reaches_the_bubbles_and_stops_at_the_boundary() {
             live,
             price_bucket: rust_decimal::Decimal::ONE,
             price_span: rust_decimal::Decimal::ONE,
+            price: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
             last_timestamp_ms: 0,
@@ -1347,6 +1350,7 @@ fn a_bubble_beside_the_divider_is_clipped_to_its_own_pane() {
             live,
             price_bucket: rust_decimal::Decimal::ONE,
             price_span: rust_decimal::Decimal::ONE,
+            price: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
             last_timestamp_ms: 0,
@@ -1418,6 +1422,7 @@ fn a_layer_switched_off_on_one_pane_still_draws_on_the_other() {
             live,
             price_bucket: rust_decimal::Decimal::ONE,
             price_span: rust_decimal::Decimal::ONE,
+            price: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
             last_timestamp_ms: 0,

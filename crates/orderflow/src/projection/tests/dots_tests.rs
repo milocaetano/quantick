@@ -8,8 +8,8 @@ use super::*;
 use crate::bubble_radius;
 use crate::history::AggressorSide;
 use crate::projection::{
-    DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_LADDER_MS, PaneGeometry, VolumeDots, dot_level_ticks,
-    dot_window_ms, project_with_dots,
+    DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_LADDER_MS, DotRungMemory, PaneGeometry, VolumeDots,
+    dot_bar_window_ms, dot_level_ticks, dot_window_ms, hold_rung, project_with_dots,
 };
 
 /// Dots on, the budget out of the way, and a fixed scale where 10
@@ -34,8 +34,8 @@ fn dots_config() -> HeatmapConfig {
     }
 }
 
-/// Windows fixed by the test rather than by a zoom: 500 ms on the candles,
-/// 250 ms on the tape, and the series' one-second bar opens.
+/// Windows fixed by the test rather than by a zoom: `candle_window_ms` on
+/// every one-second bar of the candles, `tape_window_ms` on the tape.
 fn windows(candle_window_ms: i64, tape_window_ms: i64) -> VolumeDots {
     coarse(candle_window_ms, tape_window_ms, 1)
 }
@@ -43,11 +43,18 @@ fn windows(candle_window_ms: i64, tape_window_ms: i64) -> VolumeDots {
 /// [`windows`], on price levels `level_ticks` native ticks tall.
 fn coarse(candle_window_ms: i64, tape_window_ms: i64, level_ticks: i64) -> VolumeDots {
     VolumeDots {
-        candle_window_ms,
+        px_per_bar: px_for(candle_window_ms),
+        dot_px: 20.0,
         tape_window_ms,
         level_ticks,
-        lane_bar_opens: (0..40).map(|i| i * 1_000).collect(),
+        bars: (0..40).map(|i| (i * 1_000, i * 1_000 + 999)).collect(),
     }
+}
+
+/// The zoom that gives a one-second bar (1 024 ms after the doubling) a
+/// window of `candle_window_ms` for a 20 px dot.
+fn px_for(candle_window_ms: i64) -> f32 {
+    (1_024.0 * 20.0 / candle_window_ms as f64 * 1.001) as f32
 }
 
 /// A seeded linear congruential generator: random-looking, same every run.
@@ -331,10 +338,65 @@ fn a_zoom_changes_the_window_only_at_ladder_steps() {
         previous = window;
     }
 
-    // 10 px radius: a dot is 20 px. The tape shows 1.5 s over 300 px (5 ms a
-    // pixel, 100 ms a dot); a one-second bar is 10 px wide (100 ms a pixel,
-    // 2 s a dot), and zoomed in to 40 px a bar, 500 ms a dot. On a 400 px
-    // chart 70 one-point ticks are 5.7 px each: five of them make a dot.
+    // The long end of the ladder.
+    assert_eq!(dot_window_ms(3_600_000.0, 20.0), 300_000);
+    assert_eq!(dot_window_ms(1_000.0, 20.0), 30_000);
+}
+
+/// The candles' window is chosen per bar, from the bar's own duration and
+/// the zoom: the smallest rung at least one dot wide inside the bar's slot,
+/// or the whole bar when no rung is shorter than the bar. The duration is
+/// taken to the next doubling, so a bar that closes keeps the rung it formed
+/// with, and a forming bar regroups only when its running duration doubles.
+#[test]
+fn the_candle_window_is_the_bars_own_and_survives_its_close() {
+    // A one-second bar 41 px wide: 1 024 ms × 20 px / 41 px ≈ 500 ms.
+    assert_eq!(dot_bar_window_ms(999, 41.0, 20.0), Some(500));
+    // Forming at 700 ms it is already on the same doubling: no regroup.
+    assert_eq!(dot_bar_window_ms(700, 41.0, 20.0), Some(500));
+    // Past 1 024 ms the doubling moves, and so may the rung.
+    assert_eq!(dot_bar_window_ms(1_100, 41.0, 20.0), Some(1_000));
+    // A bar 10 px wide needs 2 s a dot: longer than the bar, so the bar is one
+    // window.
+    assert_eq!(dot_bar_window_ms(999, 10.0, 20.0), None);
+    // A five-minute bar zoomed far out: longer than the top rung, still one
+    // window, the whole bar.
+    assert_eq!(dot_bar_window_ms(300_000, 1.0, 20.0), None);
+    // A long bar zoomed in reaches the long rungs.
+    assert_eq!(dot_bar_window_ms(600_000, 400.0, 20.0), Some(60_000));
+}
+
+/// The view holds its rungs: an ideal that differs only just is not enough
+/// to move one. A rung moves when its dot would be over 150 % of its cell, or
+/// under 70 % of the next smaller cell — so an autoscale wobbling across a
+/// boundary never flips the levels back and forth.
+#[test]
+fn rungs_hold_through_a_wobble_at_a_boundary() {
+    let ladder = DOT_LEVEL_LADDER_TICKS;
+    // 20 px dots: 10 px a tick is the boundary between 2 and 5 ticks.
+    let mut level = hold_rung(&ladder, None, 9.9, 20.0);
+    assert_eq!(level, 5);
+    for px_per_tick in [10.1, 9.9, 10.4, 9.6, 11.0] {
+        level = hold_rung(&ladder, Some(level), px_per_tick, 20.0);
+        assert_eq!(level, 5, "held at {px_per_tick} px a tick");
+    }
+    level = hold_rung(&ladder, Some(level), 15.0, 20.0);
+    assert_eq!(
+        level, 2,
+        "a 2-tick cell is 30 px: the dot is under 70 % of it"
+    );
+    for px_per_tick in [9.9, 10.1, 8.0] {
+        level = hold_rung(&ladder, Some(level), px_per_tick, 20.0);
+        assert_eq!(level, 2, "held at {px_per_tick} px a tick");
+    }
+    level = hold_rung(&ladder, Some(level), 6.0, 20.0);
+    assert_eq!(
+        level, 5,
+        "a 2-tick cell is 12 px: the dot is over 150 % of it"
+    );
+
+    // The memory the view keeps does the same with a wobbling autoscale, for
+    // the level and for the tape's window.
     let config = HeatmapConfig {
         bubbles: BubbleStyle {
             max_radius: 10.0,
@@ -342,31 +404,30 @@ fn a_zoom_changes_the_window_only_at_ladder_steps() {
         },
         ..dots_config()
     };
-    let geometry = |px_per_bar: f32| PaneGeometry {
-        px_per_bar,
+    let geometry = |lane_window_ms: i64| PaneGeometry {
+        px_per_bar: 40.0,
         lane_width_px: 300.0,
+        lane_window_ms,
         height_px: 400.0,
-        lane_bar_opens: vec![0, 1_000],
+        lane_bars: vec![(0, 999), (1_000, 1_500)],
     };
-    let resolve = |px_per_bar: f32, timeline: &BarTimeline| {
-        let window = prices("0", "70");
-        let dots = VolumeDots::resolve(&geometry(px_per_bar), &config, timeline, 1_000, window);
-        (dots.candle_window_ms, dots.tape_window_ms, dots.level_ticks)
-    };
-    let now = chart(8_300, 1_500, None);
-    assert_eq!(resolve(10.0, &now), (2_000, 100, 5));
-    assert_eq!(resolve(40.0, &now), (500, 100, 5));
-    // Time passing, a pan and a forming bar are not a zoom.
-    for timeline in [
-        chart(8_950, 1_500, None),
-        chart(15_020, 1_500, None),
-        chart(15_020, 1_500, Some(3..9)),
+    let mut memory = DotRungMemory::default();
+    // 40 ticks over 400 px: 10 px a tick, the 2/5 boundary.
+    let first = memory.choose(geometry(1_500), &config, (60.0, 100.0));
+    for (low, high, lane) in [
+        (60.0, 100.5, 1_450),
+        (59.5, 100.0, 1_550),
+        (60.0, 99.5, 1_500),
     ] {
-        assert_eq!(resolve(10.0, &timeline), (2_000, 100, 5));
+        let zoom = memory.choose(geometry(lane), &config, (low, high));
+        assert_eq!(
+            (zoom.level_ticks, zoom.tape_window_ms),
+            (first.level_ticks, first.tape_window_ms),
+            "a wobble to {low}..{high} and a {lane} ms tape moved a rung"
+        );
     }
-    // The long end of the ladder: a bar 1 px wide over an hour-long bar.
-    assert_eq!(dot_window_ms(3_600_000.0 / 1.0, 20.0), 300_000);
-    assert_eq!(dot_window_ms(1_000.0, 20.0), 30_000);
+    assert_eq!(first.px_per_bar, 40.0, "the candles' zoom passes through");
+    assert_eq!(first.lane_bars, vec![(0, 999), (1_000, 1_500)]);
 }
 
 /// The price ladder works like the time ladder: the smallest level, in
@@ -410,15 +471,21 @@ fn a_refit_inside_a_ladder_step_keeps_every_dot() {
     let trades = dense(21, 3_000, 0, 20_000);
     let history = tape(config.clone(), &borrowed(&trades));
     let timeline = chart(12_700, 1_500, None);
+    let closed_bars: Vec<Bar> = (0..12).map(|i| bar(i * 1_000, i * 1_000 + 999)).collect();
+    let forming = bar(12_000, 12_700);
     let geometry = PaneGeometry {
         px_per_bar: 40.0,
         lane_width_px: 300.0,
+        lane_window_ms: 1_500,
         height_px: 400.0,
-        lane_bar_opens: (0..40).map(|i| i * 1_000).collect(),
+        lane_bars: vec![(11_000, 11_999), (12_000, 12_700)],
     };
+    let memory = std::cell::RefCell::new(DotRungMemory::default());
     let at = |low: &str, high: &str| {
         let window = prices(low, high);
-        let dots = VolumeDots::resolve(&geometry, &config, &timeline, 1_000, window);
+        let range = (low.parse::<f64>().unwrap(), high.parse::<f64>().unwrap());
+        let zoom = memory.borrow_mut().choose(geometry.clone(), &config, range);
+        let dots = VolumeDots::resolve(&zoom, &config, &closed_bars, Some(&forming));
         (
             dots.level_ticks,
             frame_at(&history, &timeline, window, &dots),
@@ -546,19 +613,15 @@ fn both_sides_at_one_level_and_window_are_one_pie() {
 }
 
 /// A window that straddles a bar close is one dot per bar, each drawn in its
-/// own bar; a tape window that straddles the tape's start leaves the tape
-/// whole, to the candles.
+/// own bar.
 #[test]
-fn a_window_splits_at_a_bar_close_and_leaves_the_tape_whole() {
+fn a_window_splits_at_a_bar_close() {
     let config = dots_config();
     let history = tape(
         config.clone(),
         &[
             (1, 1_100, "100", "1", Side::Buy),
             (2, 1_200, "100", "1", Side::Buy),
-            (3, 2_450, "100", "1", Side::Sell),
-            (4, 2_900, "100", "1", Side::Sell),
-            (5, 3_100, "100", "1", Side::Buy),
         ],
     );
     // Bars close at 1 130, 2 000, 3 000; the tape shows 2 400..3 900.
@@ -574,11 +637,14 @@ fn a_window_splits_at_a_bar_close_and_leaves_the_tape_whole() {
             on_newest_bar: true,
         }),
     );
+    // 200 px a bar: 250 ms windows on both bars (2 048 and 1 024 ms after
+    // the doubling).
     let dots = VolumeDots {
-        candle_window_ms: 250,
+        px_per_bar: 200.0,
+        dot_px: 20.0,
         tape_window_ms: 1_000,
         level_ticks: 1,
-        lane_bar_opens: vec![0, 1_130, 2_000, 3_000],
+        bars: vec![(0, 1_129), (1_130, 1_999), (2_000, 2_999), (3_000, 3_900)],
     };
     let frame = frame_at(&history, &timeline, prices("90", "110"), &dots);
     let dot = |id: u64| {
@@ -597,13 +663,169 @@ fn a_window_splits_at_a_bar_close_and_leaves_the_tape_whole() {
             "print {id} is drawn in its own bar"
         );
     }
-    // The tape window 2 000..3 000 began before the tape did: both its prints
-    // are candle marks, and the tape draws only the window after it.
-    assert!(
-        !dot(3).live && !dot(4).live,
-        "the window left the tape whole"
+}
+
+/// A candle window reaches the candles only once the tape has let go of the
+/// whole of it; until then its prints are tape dots. So a candle dot never
+/// grows after it appears: it arrives whole and stays as it arrived.
+#[test]
+fn a_candle_dot_arrives_whole_once_the_tape_releases_its_window() {
+    let config = dots_config();
+    let history = tape(
+        config.clone(),
+        &[
+            (1, 2_050, "100", "1", Side::Buy),
+            (2, 2_450, "100", "2", Side::Sell),
+        ],
     );
-    assert!(dot(5).live);
+    let dots = windows(500, 250);
+    let at = |now_ms: i64| {
+        frame_at(
+            &history,
+            &chart(now_ms, 1_500, None),
+            prices("90", "110"),
+            &dots,
+        )
+    };
+    // At 3 900 the tape starts at 2 400, inside the window 2 000..2 500.
+    let early = at(3_900);
+    assert!(
+        early.aggressions.iter().all(|dot| dot.live),
+        "the tape still holds the window: {:?}",
+        early.aggressions
+    );
+    assert_eq!(early.aggressions.len(), 2, "two tape windows");
+    let candles = |frame: &HeatmapProjection| facts(frame, |dot| !dot.live);
+    // At 4 000 the tape starts at 2 500: the window has left it whole.
+    let released = candles(&at(4_000));
+    assert_eq!(released.len(), 1);
+    assert_eq!(released[0].agg_ids, vec![1, 2], "the whole window at once");
+    assert_eq!(candles(&at(4_100)), released, "and it never grows");
+}
+
+/// The price window is a view: every print in the time range is keyed, and
+/// a level the edge of the chart cuts through is the same dot either way.
+#[test]
+fn a_price_pan_never_changes_a_dot() {
+    let config = dots_config();
+    let history = tape(
+        config.clone(),
+        &[
+            (1, 1_100, "107", "1", Side::Buy),
+            (2, 1_150, "109", "3", Side::Sell),
+        ],
+    );
+    let timeline = chart(3_900, 1_500, None);
+    let dots = coarse(500, 250, 5);
+    let cut = frame_at(&history, &timeline, prices("90", "108"), &dots);
+    let whole = frame_at(&history, &timeline, prices("90", "112"), &dots);
+    let facts_of = |frame: &HeatmapProjection| facts(frame, |_| true);
+    assert_eq!(facts_of(&cut), facts_of(&whole));
+    assert_eq!(
+        facts_of(&cut)[0].agg_ids,
+        vec![1, 2],
+        "the 109 print is in it"
+    );
+    assert_eq!(facts_of(&cut)[0].quantity, dec("4"));
+}
+
+/// Dots keep the evidence: prints are matched to the reductions they explain
+/// one by one, as they are without dots, and only then folded, so a dot
+/// carries its prints' matched quantity and every event they point at.
+#[test]
+fn dots_carry_the_evidence_of_their_prints() {
+    let frame = |dots_on: bool| {
+        let mut history = LiquidityHistory::new(HeatmapConfig {
+            bubble_overlap_merge: dots_on,
+            bubble_cluster_ms: 0,
+            ..config()
+        });
+        history.install_snapshot(100, 1, snapshot(10)).unwrap();
+        for (agg_id, timestamp_ms, quantity) in [(7, 400, "1"), (8, 420, "2")] {
+            history.record_aggression(&Trade {
+                agg_id,
+                timestamp_ms,
+                price: dec("101"),
+                quantity: dec(quantity),
+                side: Side::Buy,
+            });
+        }
+        // Ask 101: 4 -> 1, right after the prints.
+        history
+            .apply_delta(
+                450,
+                &BookDelta::new(11, 11, vec![], vec![level("101", "1")]),
+            )
+            .unwrap();
+        history
+            .apply_delta(900, &BookDelta::new(12, 12, vec![], vec![]))
+            .unwrap();
+        let dots = VolumeDots {
+            px_per_bar: 10.0,
+            dot_px: 20.0,
+            tape_window_ms: 1_000,
+            level_ticks: 1,
+            bars: vec![(0, 1_000)],
+        };
+        project_with_dots(
+            &history,
+            &BarTimeline::from_bars(0, &[bar(0, 1_000)], None, None),
+            PriceWindow::new(dec("98"), dec("103")).unwrap(),
+            Some(&dots),
+        )
+    };
+    let (plain, dots) = (frame(false), frame(true));
+    let evidence = |frame: &HeatmapProjection| {
+        let matched: Decimal = frame
+            .aggressions
+            .iter()
+            .map(|mark| mark.matched_quantity)
+            .sum();
+        let mut ids: Vec<u64> = frame
+            .aggressions
+            .iter()
+            .flat_map(|mark| mark.liquidity_event_ids.clone())
+            .collect();
+        ids.sort_unstable();
+        ids.dedup();
+        (matched, ids)
+    };
+    assert!(dots.volume_dots);
+    assert_eq!(dots.aggressions.len(), 1, "one dot");
+    assert!(evidence(&plain).0 > Decimal::ZERO, "the prints explain it");
+    assert!(!evidence(&plain).1.is_empty());
+    assert_eq!(evidence(&dots), evidence(&plain));
+    assert_eq!(dots.liquidity_events, plain.liquidity_events);
+}
+
+/// Zoomed out, a bar is one window and a level many ticks, so the dot count
+/// is bounded by the bars on screen times the levels in the price window,
+/// whatever the tape did.
+#[test]
+fn the_dot_count_is_bounded_by_bars_and_levels() {
+    assert!(DOT_LEVEL_LADDER_TICKS.ends_with(&[500, 1_000, 2_000, 5_000]));
+    let config = dots_config();
+    let trades = dense(13, 6_000, 0, 20_000);
+    let history = tape(config.clone(), &borrowed(&trades));
+    let timeline = chart(12_700, 1_500, None);
+    // 2 px a bar: every bar is one window. 10-tick levels over 91..=109.
+    let dots = VolumeDots {
+        px_per_bar: 2.0,
+        dot_px: 20.0,
+        tape_window_ms: 1_000,
+        level_ticks: 10,
+        bars: (0..13).map(|i| (i * 1_000, i * 1_000 + 999)).collect(),
+    };
+    let frame = frame_at(&history, &timeline, prices("90", "110"), &dots);
+    let bars = 13;
+    let tape_windows = 3;
+    let levels = 3;
+    assert!(
+        frame.aggressions.len() <= (bars + tape_windows) * levels,
+        "{} dots for {bars} bars and {levels} levels",
+        frame.aggressions.len()
+    );
+    assert!(frame.aggressions.len() >= bars, "and every bar is drawn");
 }
 
 /// The same prints in any order are the same frame.

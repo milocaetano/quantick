@@ -184,6 +184,7 @@ mod tests {
             },
             live: false,
             price_bucket: dec(bucket),
+            price: dec(bucket),
             price_span: Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: last_ms,
@@ -212,7 +213,7 @@ mod tests {
             cluster(Side::Buy, "100", "3", 1_200),
             cluster(Side::Sell, "99", "4", 1_150),
         ];
-        let rows = aggression_rows(&clusters, 1_000, false, Decimal::ONE);
+        let rows = aggression_rows(&clusters, 1_000, false, Decimal::ONE, false);
         assert_eq!(
             rows,
             vec![
@@ -243,10 +244,17 @@ mod tests {
         let mut pie = cluster(Side::Buy, "100", "10", 1_500);
         pie.live = false;
         pie.buy_share = 0.6;
+        pie.buy_quantity = dec("6");
         let mut tape = cluster(Side::Buy, "100", "6", 1_500);
         tape.live = true;
 
-        let summarized = aggression_rows(&[pie.clone(), tape.clone()], 1_000, true, Decimal::ONE);
+        let summarized = aggression_rows(
+            &[pie.clone(), tape.clone()],
+            1_000,
+            true,
+            Decimal::ONE,
+            false,
+        );
         assert_eq!(summarized.len(), 1);
         assert_eq!(
             summarized[0].buy + summarized[0].sell,
@@ -260,7 +268,7 @@ mod tests {
         );
 
         // Without the summary the two panes are disjoint, so both are read.
-        let raw = aggression_rows(&[pie, tape], 1_000, false, Decimal::ONE);
+        let raw = aggression_rows(&[pie, tape], 1_000, false, Decimal::ONE, false);
         assert_eq!(raw[0].buy + raw[0].sell, dec("16"));
     }
 
@@ -274,9 +282,35 @@ mod tests {
         fine.live = true;
         let mut coarse = cluster(Side::Buy, "100.00", "3", 1_500);
         coarse.live = false;
-        let rows = aggression_rows(&[fine, coarse], 1_000, false, dec("0.04"));
+        let rows = aggression_rows(&[fine, coarse], 1_000, false, dec("0.04"), false);
         assert_eq!(rows.len(), 1, "one price, one row");
         assert_eq!(rows[0].price_bucket, dec("100.00"));
         assert_eq!(rows[0].buy, dec("5"));
+    }
+
+    /// A pie is split by its exact bought quantity, never by the `f32` share,
+    /// which cannot hold a third of a contract.
+    #[test]
+    fn a_pie_splits_by_its_exact_buy_quantity() {
+        let mut pie = cluster(Side::Sell, "100", "3", 1_500);
+        pie.buy_quantity = Decimal::ONE;
+        pie.buy_share = 0.333_333_34;
+        let rows = aggression_rows(&[pie], 1_000, false, Decimal::ONE, false);
+        assert_eq!((rows[0].buy, rows[0].sell), (Decimal::ONE, dec("2")));
+    }
+
+    /// A volume dot names its level by the level's floor, but its prints
+    /// traded at its price: the strip files it there.
+    #[test]
+    fn a_volume_dot_is_filed_by_its_price_not_its_level() {
+        let mut dot = cluster(Side::Buy, "100", "4", 1_500);
+        dot.price_span = dec("5");
+        dot.price = dec("102");
+        let rows = aggression_rows(&[dot.clone()], 1_000, false, Decimal::ONE, true);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].price_bucket, dec("102"));
+        assert_eq!(rows[0].price_span, Decimal::ONE, "one row, not the level");
+        let off = aggression_rows(&[dot], 1_000, false, Decimal::ONE, false);
+        assert_eq!(off[0].price_bucket, dec("100"), "off, as it always was");
     }
 }

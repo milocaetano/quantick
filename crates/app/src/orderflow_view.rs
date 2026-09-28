@@ -2145,6 +2145,7 @@ mod tests {
                 900,
                 frame.projection.summarized,
                 frame.projection.effective_grouping.bucket_width,
+                frame.projection.volume_dots,
             )
             .is_empty(),
             "and they become histogram rows"
@@ -2164,6 +2165,70 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    /// The live strip reads volume dots at their prices and splits them by
+    /// their exact bought quantity, so at one-tick levels its per-side,
+    /// per-row totals are the same with dots on and off.
+    #[test]
+    fn volume_dots_leave_the_live_strip_totals_alone() {
+        let strip = |dots: bool| {
+            let mut view = OrderflowView::new("BTCUSDT");
+            view.set_projection_demand(true);
+            let before = view.config.clone();
+            view.config.bubble_overlap_merge = dots;
+            view.commit_config_changes(before);
+            for (agg_id, timestamp_ms, price, quantity, side) in [
+                (1, 1_000, 1_005, 1, quantick_engine::Side::Buy),
+                (2, 1_010, 1_005, 2, quantick_engine::Side::Sell),
+                (3, 1_020, 1_006, 3, quantick_engine::Side::Sell),
+                (4, 1_030, 1_006, 1, quantick_engine::Side::Buy),
+            ] {
+                view.record_trade(&Trade {
+                    agg_id,
+                    timestamp_ms,
+                    price: Decimal::new(price, 1),
+                    quantity: Decimal::from(quantity),
+                    side,
+                });
+            }
+            view.flush_for_test();
+            let bars = [bar(900, 1_100)];
+            // A chart tall enough that one tick is taller than a dot: k = 1.
+            let geometry = quantick_orderflow::PaneGeometry {
+                px_per_bar: 40.0,
+                lane_width_px: 200.0,
+                lane_window_ms: 4_000,
+                height_px: 10_000_000.0,
+                lane_bars: vec![(900, 1_100)],
+            };
+            let project = |view: &mut OrderflowView| {
+                view.project_visible(
+                    visible_timeline(&bars),
+                    true,
+                    true,
+                    None,
+                    (98.0, 102.0),
+                    Some(geometry.clone()),
+                )
+            };
+            project(&mut view);
+            view.flush_for_test();
+            let frame = project(&mut view).expect("the strip's frame");
+            let rows = live_strip::aggression_rows(
+                &frame.projection.aggressions,
+                900,
+                frame.projection.summarized,
+                frame.projection.effective_grouping.bucket_width,
+                frame.projection.volume_dots,
+            );
+            (rows, frame.projection.volume_dots)
+        };
+        let (off, off_dots) = strip(false);
+        let (on, on_dots) = strip(true);
+        assert!(!off_dots && on_dots, "dots only when on");
+        assert!(!off.is_empty(), "the fixture draws strip rows");
+        assert_eq!(on, off, "the same contracts in the same rows");
     }
 
     #[test]
