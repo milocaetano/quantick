@@ -439,18 +439,24 @@ pub fn project_settled(
     );
     let (chart_budget, _) = pane_budgets(config.max_aggression_primitives, &config.live_lane);
     let before_fold = aggressions.len();
-    fold_to_budget(
-        &mut aggressions,
-        chart_budget,
-        FoldOrder::SmallestFirst,
-        // The scale the marks were drawn on. With the summary on these are
-        // pies carrying whole bars, sized against `summary_reference`; folding
-        // them against the print scale pegs every one at the largest radius
-        // (`normalized_area_size` clamps the ratio), so a summarized chart over
-        // budget would fill with max-size pies beside honestly sized ones.
-        summary_reference,
-        Some(timeline),
-    );
+    // Dots are never folded to the budget: which dots a fold joins changes as
+    // prints arrive and the chart pans, and that was a blinking past. The
+    // window ladder already bounds how many dots a zoom can draw.
+    if dots.is_none() {
+        fold_to_budget(
+            &mut aggressions,
+            chart_budget,
+            FoldOrder::SmallestFirst,
+            // The scale the marks were drawn on. With the summary on these are
+            // pies carrying whole bars, sized against `summary_reference`;
+            // folding them against the print scale pegs every one at the
+            // largest radius (`normalized_area_size` clamps the ratio), so a
+            // summarized chart over budget would fill with max-size pies
+            // beside honestly sized ones.
+            summary_reference,
+            Some(timeline),
+        );
+    }
     let folded_aggressions = before_fold.saturating_sub(aggressions.len());
 
     let liquidity_events = event_primitives(events, timeline, prices, effective_grouping);
@@ -640,25 +646,30 @@ pub fn project_live(
     let before = tape_marks.len() + slot_marks.len();
     let (chart_budget, lane_budget) =
         pane_budgets(config.max_aggression_primitives, &config.live_lane);
-    fold_to_budget(
-        &mut tape_marks,
-        lane_budget,
-        FoldOrder::OldestFirst,
-        settled.aggression_reference,
-        None,
-    );
+    // Dots never fold to the budget; see `project_settled`.
+    if dots.is_none() {
+        fold_to_budget(
+            &mut tape_marks,
+            lane_budget,
+            FoldOrder::OldestFirst,
+            settled.aggression_reference,
+            None,
+        );
+    }
     // The forming bar's marks are candle marks and answer to the candles'
     // budget and the candles' ranking. Sized on the summary scale when there is
     // one, for the same reason `tier_primitives` drew them on it: a pie carries
     // a whole bar and a tape mark carries one print, so folding a pie against
     // the print scale would peg it at the largest radius.
-    fold_to_budget(
-        &mut slot_marks,
-        chart_budget,
-        FoldOrder::SmallestFirst,
-        settled.summary_reference,
-        Some(timeline),
-    );
+    if dots.is_none() {
+        fold_to_budget(
+            &mut slot_marks,
+            chart_budget,
+            FoldOrder::SmallestFirst,
+            settled.summary_reference,
+            Some(timeline),
+        );
+    }
     tape_marks.append(&mut slot_marks);
     let folded_aggressions = before.saturating_sub(tape_marks.len());
 

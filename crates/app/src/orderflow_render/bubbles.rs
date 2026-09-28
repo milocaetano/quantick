@@ -938,7 +938,8 @@ pub(super) fn bubble_label(
     show_quantity: bool,
     show_count: bool,
 ) -> Option<String> {
-    let mark = if folded > 1 { '⊕' } else { '×' };
+    // Phosphor's circled plus: the text font has no U+2295 and drew a box.
+    let mark = ["×", egui_phosphor::regular::PLUS_CIRCLE][usize::from(folded > 1)];
     match (show_quantity, show_count && trade_count > 1) {
         (false, false) => None,
         (true, false) => Some(format_quantity(quantity)),

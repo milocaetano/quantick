@@ -1733,7 +1733,10 @@ fn a_fold_and_a_cluster_do_not_share_a_glyph() {
     let fold =
         bubble_label(rust_decimal::Decimal::from(20), 4, 4, true, true).expect("labels are on");
     assert_eq!(cluster, "20 · ×4");
-    assert_eq!(fold, "20 · ⊕4");
+    assert_eq!(
+        fold,
+        format!("20 · {}4", egui_phosphor::regular::PLUS_CIRCLE)
+    );
     assert_ne!(
         cluster, fold,
         "a budget fold reads as four prints that traded"
