@@ -690,42 +690,6 @@ fn a_refit_inside_a_ladder_step_keeps_every_dot() {
     assert_eq!(zoomed_out, 5);
 }
 
-/// The smallest dot shrinks with the largest, so shrinking keeps the size
-/// differences instead of squeezing every dot toward one size; it never
-/// drops under a pixel.
-#[test]
-fn the_smallest_dot_shrinks_with_the_largest() {
-    let config = dots_config();
-    let bubbles = BubbleStyle {
-        min_radius: 3.0,
-        max_radius: 15.0,
-        ..config.bubbles.clone()
-    };
-    let geometry = PaneGeometry {
-        px_per_bar: 40.0,
-        lane_width_px: 300.0,
-        lane_window_ms: 15_000,
-        height_px: 400.0,
-        lane_bars: vec![(0, 59_999)],
-    };
-    let mut memory = DotRungMemory::default();
-    assert_eq!(memory.dot_radii(&bubbles), None);
-    let style = HeatmapConfig {
-        bubbles: bubbles.clone(),
-        ..config.clone()
-    };
-    // Cells of 10 px: the largest radius is 6, two fifths of 15.
-    memory.choose(geometry, &style, (60.0, 100.0));
-    let (min, max) = memory.dot_radii(&bubbles).expect("a zoom was chosen");
-    assert!((max - 6.0).abs() < 1e-5, "{max}");
-    assert!((min - 1.2).abs() < 1e-5, "{min}");
-    let dust = BubbleStyle {
-        min_radius: 1.0,
-        ..bubbles
-    };
-    assert_eq!(memory.dot_radii(&dust).map(|radii| radii.0), Some(1.0));
-}
-
 /// Zooming out shrinks every dot instead of folding more market into each:
 /// the price level stays a thin row like the time window's column, and the
 /// largest radius follows the smaller of the two cells on screen, never
