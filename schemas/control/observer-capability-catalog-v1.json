@@ -13848,17 +13848,13 @@
                 ],
                 "description": "Pixels a bar takes on the candles: each bar's window is the smallest\nrung at least one dot wide inside its slot, from the bar's own\nduration."
               },
-              "candle_size_reference_per_second": {
-                "$ref": "#/$defs/CanonicalDecimal",
-                "description": "The quantity of a full-size candle dot for each second of its window."
-              },
               "level_ticks": {
                 "$ref": "#/$defs/WireU64",
                 "description": "Native ticks per price level, on both panes."
               },
-              "tape_size_reference": {
+              "size_reference": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "description": "The quantity of a full-size tape dot."
+                "description": "The quantity of a full-size dot, on both panes: area is proportional\nto quantity against this one session scale."
               },
               "tape_window_ms": {
                 "$ref": "#/$defs/WireU64",
@@ -13868,8 +13864,7 @@
             "required": [
               "tape_window_ms",
               "level_ticks",
-              "tape_size_reference",
-              "candle_size_reference_per_second"
+              "size_reference"
             ],
             "type": "object"
           },

@@ -31,9 +31,11 @@
 //!   a boundary does not flip a rung back and forth.
 //!
 //! A dot sits at its quantity-weighted price rounded to the native tick,
-//! inside its level, and is sized against its cell: full size at
-//! `size_reference_quantity` contracts a second per tick of the cell
-//! ([`VolumeDots::size_reference`]).
+//! inside its level, and is sized on one absolute scale for the whole
+//! session, on both panes: area proportional to quantity, full size at the
+//! preset's `size_reference_quantity`, whatever the window, the level or the
+//! bar. A bigger volume is always a bigger dot, so levels merged by a zoom
+//! draw a dot as big as the sum they hold.
 //!
 //! A print is the tape's while its tape window starts at or after the tape
 //! does, and otherwise its candle window's, so the tape never draws a print
@@ -262,10 +264,9 @@ pub struct DotScale {
     pub tape_window_ms: i64,
     /// Native ticks per price level.
     pub level_ticks: i64,
-    /// Quantity of a full-size tape dot.
-    pub tape_size_reference: Decimal,
-    /// Quantity of a full-size candle dot per second of its window.
-    pub candle_size_reference_per_second: Decimal,
+    /// Quantity of a full-size dot, on both panes: the preset's
+    /// `size_reference_quantity`.
+    pub size_reference: Decimal,
 }
 
 /// One window a print is keyed into.
@@ -277,8 +278,6 @@ struct Window {
     /// The window's fixed centre, where a tape dot sits; a candle dot is
     /// placed by [`VolumeDots::candle_place`].
     centre_ms: i64,
-    /// The cell's duration, which the dot is sized against.
-    cell_ms: i64,
 }
 
 /// What one frame keys its dots on.
@@ -365,14 +364,12 @@ impl VolumeDots {
                     key: start,
                     bar_open: open,
                     centre_ms: start + width / 2,
-                    cell_ms: width,
                 }
             }
             None => Window {
                 key: i64::MIN,
                 bar_open: open,
                 centre_ms: open,
-                cell_ms: doubled(close - open),
             },
         })
     }
@@ -396,23 +393,6 @@ impl VolumeDots {
         Some((start + (end - start) / 2, start == open && end == bar_end))
     }
 
-    /// The quantity of a full-size dot of a cell `cell_ms` long: `full` for
-    /// every second of the cell and every tick of the level.
-    #[must_use]
-    pub fn size_reference(&self, cell_ms: i64, full: Decimal) -> Decimal {
-        full * Decimal::from(cell_ms.max(1)) / Decimal::from(1_000)
-            * Decimal::from(self.level_ticks.max(1))
-    }
-
-    /// The quantity of a full-size dot on the pane `live` names, for the dot
-    /// whose first print is at `timestamp_ms`.
-    pub(super) fn reference_at(&self, timestamp_ms: i64, live: bool, full: Decimal) -> Decimal {
-        let cell_ms = self
-            .window(timestamp_ms, live)
-            .map_or(self.tape_window_ms, |window| window.cell_ms);
-        self.size_reference(cell_ms, full)
-    }
-
     /// The rungs and scales, for the health report.
     #[must_use]
     pub fn scale(&self, full: Decimal) -> DotScale {
@@ -424,8 +404,7 @@ impl VolumeDots {
                 .and_then(|(open, close)| self.bar_window(close - open)),
             tape_window_ms: self.tape_window_ms,
             level_ticks: self.level_ticks,
-            tape_size_reference: self.size_reference(self.tape_window_ms, full),
-            candle_size_reference_per_second: self.size_reference(1_000, full),
+            size_reference: full,
         }
     }
 }

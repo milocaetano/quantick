@@ -1178,7 +1178,15 @@ fn equal_quantities_are_equal_radii_anywhere() {
 /// Grouping is never a size the market did not trade.
 #[test]
 fn a_merged_level_is_the_sum_and_never_smaller() {
-    let config = dots_config();
+    // A full-size dot at 1 000 contracts, so the fixture's dots stay below it
+    // and a merge has room to grow.
+    let config = HeatmapConfig {
+        bubbles: BubbleStyle {
+            size_reference_quantity: 1_000.0,
+            ..dots_config().bubbles
+        },
+        ..dots_config()
+    };
     let trades = dense(37, 3_000, 0, 12_000);
     let history = tape(config.clone(), &borrowed(&trades));
     let timeline = chart(11_500, 1_500, None);

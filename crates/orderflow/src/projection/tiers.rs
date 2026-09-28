@@ -292,18 +292,17 @@ pub(super) fn refine_tier(
 
 /// Place one tier's marks on the chart, each on the scale its view reads on.
 ///
-/// A volume dot (`dots`, with the full-size quantity per second and tick) is
-/// placed at its window's fixed centre on the tape, held inside the tape, and
-/// on the candles at the centre of the part of its window inside its bar —
-/// at its slot's centre when that part is the whole bar — and sized against
-/// its own cell.
+/// A volume dot (`dots`) is placed at its window's fixed centre on the tape,
+/// held inside the tape, and on the candles at the centre of the part of its
+/// window inside its bar — at its slot's centre when that part is the whole
+/// bar. It is sized on the reference it is handed, like any mark.
 pub(super) fn tier_primitives(
     marks: TierClusters,
     timeline: &BarTimeline,
     prices: PriceWindow,
     print_reference: Decimal,
     summary_reference: Decimal,
-    dots: Option<(&VolumeDots, Decimal)>,
+    dots: Option<&VolumeDots>,
 ) -> Vec<AggressionPrimitive> {
     marks
         .tape
@@ -326,9 +325,7 @@ pub(super) fn tier_primitives(
                 (false, true) => {
                     let slot = timeline.slot_at(cluster.first_timestamp_ms)?;
                     let (centre_ms, whole) = dots
-                        .and_then(|(dots, _)| {
-                            dots.candle_place(cluster.first_timestamp_ms, slot.end_ms)
-                        })
+                        .and_then(|dots| dots.candle_place(cluster.first_timestamp_ms, slot.end_ms))
                         .unwrap_or((cluster.timestamp_ms, false));
                     let last = slot.end_ms.saturating_sub(1).max(slot.start_ms);
                     let mut position =
@@ -341,9 +338,6 @@ pub(super) fn tier_primitives(
                 }
             };
             let y = prices.y(cluster.price)?;
-            let reference = dots.map_or(reference, |(dots, full)| {
-                dots.reference_at(cluster.first_timestamp_ms, live, full)
-            });
             let size = normalized_area_size(cluster.quantity, reference);
             Some(aggression_primitive(
                 cluster,

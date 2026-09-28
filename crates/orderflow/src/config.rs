@@ -255,8 +255,8 @@ pub struct HeatmapConfig {
     /// every roll, pan and refit; only a zoom across a ladder step picks
     /// another window or level (`DOT_WINDOW_LADDER_MS`,
     /// `DOT_LEVEL_LADDER_TICKS`). A dot is full size at
-    /// [`BubbleStyle::size_reference_quantity`] contracts a second per tick
-    /// of its cell, draws on the candles' radius range on both panes, sits at
+    /// [`BubbleStyle::size_reference_quantity`] contracts, one scale for every
+    /// dot, draws on the candles' radius range on both panes, sits at
     /// its weighted price rounded to the tick and may overlap, the biggest on
     /// top. The dust merge, the regional fold, the closed-bar summary and the
     /// mark budget do not run; the [`BubbleStyle::min_quantity`] floor does.

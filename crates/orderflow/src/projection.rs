@@ -370,9 +370,10 @@ pub fn project_settled(
     // independent of the display filter below, so hiding small prints never
     // silently rescales the ones left on screen.
     //
-    // Volume dots go one step further: the preset's pinned quantity per
-    // second and tick of each dot's own cell (`VolumeDots::size_reference`),
-    // so a dot's size never depends on what else the session did.
+    // Volume dots go one step further: the preset's pinned quantity, on both
+    // panes, whatever the window, the level or the bar, so a dot's size never
+    // depends on what else the session did and a bigger volume is always a
+    // bigger dot.
     let aggression_reference = if dots.is_some() {
         dot_full_quantity(config)
     } else {
@@ -439,7 +440,7 @@ pub fn project_settled(
         prices,
         aggression_reference,
         summary_reference,
-        dots.map(|dots| (dots, aggression_reference)),
+        dots,
     );
     let (chart_budget, _) = pane_budgets(config.max_aggression_primitives, &config.live_lane);
     let before_fold = aggressions.len();
@@ -645,7 +646,7 @@ pub fn project_live(
         prices,
         settled.aggression_reference,
         settled.summary_reference,
-        dots.map(|dots| (dots, dot_full_quantity(config))),
+        dots,
     )
     .into_iter()
     .partition(|mark| mark.live);

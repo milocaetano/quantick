@@ -225,10 +225,9 @@ pub struct VolumeDotsSnapshot {
     pub tape_window_ms: WireU64,
     /// Native ticks per price level, on both panes.
     pub level_ticks: WireU64,
-    /// The quantity of a full-size tape dot.
-    pub tape_size_reference: CanonicalDecimal,
-    /// The quantity of a full-size candle dot for each second of its window.
-    pub candle_size_reference_per_second: CanonicalDecimal,
+    /// The quantity of a full-size dot, on both panes: area is proportional
+    /// to quantity against this one session scale.
+    pub size_reference: CanonicalDecimal,
 }
 
 impl From<&quantick_orderflow::DotScale> for VolumeDotsSnapshot {
@@ -239,10 +238,7 @@ impl From<&quantick_orderflow::DotScale> for VolumeDotsSnapshot {
             candle_base_window_ms: scale.newest_bar_window_ms.map(wire),
             tape_window_ms: wire(scale.tape_window_ms),
             level_ticks: wire(scale.level_ticks),
-            tape_size_reference: canonical_decimal(scale.tape_size_reference),
-            candle_size_reference_per_second: canonical_decimal(
-                scale.candle_size_reference_per_second,
-            ),
+            size_reference: canonical_decimal(scale.size_reference),
         }
     }
 }
