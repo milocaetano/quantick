@@ -629,32 +629,44 @@ fn the_automatic_full_size_is_the_ninety_ninth_percentile_of_the_drawn_cells() {
     );
 }
 
-/// A calibration is adopted once, and then the full size is frozen: the past
-/// never changes size again unless the trader asks for a new reading. A
-/// value the trader typed is never overwritten.
+/// An automatic scale is read once per zoom and then frozen: the past keeps
+/// its sizes while the zoom holds, and a zoom that changes the rungs reads
+/// the scale again for the cells now drawn, so coarse cells never all
+/// saturate on a scale read on fine ones. A typed value is never replaced.
 #[test]
-fn a_calibration_is_adopted_once_and_then_frozen() {
+fn an_automatic_scale_is_read_once_per_zoom() {
     let mut style = VolumeDotStyle {
         enabled: true,
         full_quantity: 20_000.0,
-        auto_full: true,
+        ..VolumeDotStyle::default()
     };
-    assert!(!style.adopt_calibration(None), "no reading yet");
     assert!(style.auto_full);
-    assert!(style.adopt_calibration(Some(Decimal::from(990))));
-    assert_eq!((style.full_quantity, style.auto_full), (990.0, false));
+    let fine = (500, 1);
+    assert!(style.wants_calibration(fine));
+    assert!(!style.adopt_calibration(None, fine), "no reading yet");
+    assert!(style.adopt_calibration(Some(Decimal::from(990)), fine));
+    assert_eq!(style.full_quantity, 990.0);
+    assert!(!style.wants_calibration(fine), "frozen at this zoom");
     assert!(
-        !style.adopt_calibration(Some(Decimal::from(5_000))),
+        !style.adopt_calibration(Some(Decimal::from(5_000)), fine),
         "frozen"
     );
     assert_eq!(style.full_quantity, 990.0);
+
+    let coarse = (10_000, 20);
+    assert!(style.wants_calibration(coarse), "a new zoom reads again");
+    assert!(style.adopt_calibration(Some(Decimal::from(40_000)), coarse));
+    assert_eq!(style.full_quantity, 40_000.0);
+    assert!(style.auto_full, "still automatic");
 
     let mut typed = VolumeDotStyle {
         enabled: true,
         full_quantity: 750.0,
         auto_full: false,
+        ..VolumeDotStyle::default()
     };
-    assert!(!typed.adopt_calibration(Some(Decimal::from(990))));
+    assert!(!typed.wants_calibration(fine));
+    assert!(!typed.adopt_calibration(Some(Decimal::from(990)), fine));
     assert_eq!(typed.full_quantity, 750.0);
 }
 
@@ -1543,6 +1555,7 @@ fn a_merged_level_is_the_sum_and_never_smaller() {
             enabled: true,
             full_quantity: 1_000.0,
             auto_full: false,
+            ..VolumeDotStyle::default()
         },
         ..dots_config()
     };
@@ -1614,6 +1627,7 @@ fn the_dot_scale_rescales_every_dot_alike() {
                 enabled: true,
                 full_quantity,
                 auto_full: false,
+                ..VolumeDotStyle::default()
             },
             bubbles: BubbleStyle {
                 min_radius: 0.0,
