@@ -49,3 +49,20 @@ fn ordinary_btc_style_lane_keeps_its_event_anchored_clock() {
     assert_eq!(engine.live_edge(&request(Some(2_200))).unwrap().now_ms, 1_000);
     assert_eq!(engine.live_edge(&request(None)).unwrap().now_ms, 1_000);
 }
+
+#[test]
+fn a_published_frame_carries_the_clock_its_positions_were_projected_against() {
+    let mut engine = engine(true);
+    let input = request(Some(2_000));
+    let frame = engine
+        .project_at(&input, std::time::Instant::now())
+        .expect("the tape itself supplies a projection region");
+    let edge = frame.live_edge.expect("a tape frame declares its mapping");
+    assert_eq!(edge.now_ms, 2_000);
+    assert_eq!(edge.window_ms, engine.config.lane_window_ms(10_000));
+    let later = engine
+        .project_at(&request(Some(2_016)), std::time::Instant::now())
+        .expect("a later clock still projects the same tape");
+    assert_eq!(later.live_edge.unwrap().now_ms, 2_016);
+    assert_eq!(frame.live_edge.unwrap().now_ms, 2_000, "old frames remain coherent");
+}
