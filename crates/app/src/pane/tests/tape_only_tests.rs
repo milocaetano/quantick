@@ -57,7 +57,7 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
     };
     let ctx = egui::Context::default();
     let painter = egui::Painter::new(ctx, egui::LayerId::background(), rect);
-    let fitted = |tape_only: bool, price_view: &PriceView| {
+    let fitted = |tape_only: bool, price_view: &PriceView, tape_range| {
         let layout = layout(tape_only);
         layout
             .resolve(
@@ -67,7 +67,7 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
                     closed: &bars,
                     partial: None,
                 },
-                Some((995.0, 1_015.0)),
+                tape_range,
                 None,
                 price_view,
                 egui::Color32::BLACK,
@@ -75,23 +75,29 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
             .expect("a scale")
             .0.scale
     };
-    let (lo, hi) = fitted(true, &PriceView::new()).range();
+    let tape_range = Some((995.0, 1_015.0));
+    let (lo, hi) = fitted(true, &PriceView::new(), tape_range).range();
     assert!((lo - 994.0).abs() < 1e-9, "{lo}");
     assert!((hi - 1_016.0).abs() < 1e-9, "{hi}");
-    let (lo, hi) = fitted(false, &PriceView::new()).range();
+    let (lo, hi) = fitted(false, &PriceView::new(), tape_range).range();
     assert!(
         lo < 400.0 && hi > 1_600.0,
         "the candles still decide: {lo} {hi}"
+    );
+    assert_eq!(
+        fitted(false, &PriceView::new(), Some((-10_000.0, 20_000.0))).range(),
+        (lo, hi),
+        "the ordinary candle axis ignores tape prices outside the candles"
     );
 
     let mut candle_price_view = PriceView::new();
     candle_price_view.pan(10_000.0, (400.0, 1_600.0));
     candle_price_view.set_inverted(true);
-    let tape_scale = fitted(true, &candle_price_view);
+    let tape_scale = fitted(true, &candle_price_view, tape_range);
     assert_eq!(tape_scale.range(), (994.0, 1_016.0));
     assert!(tape_scale.y(995.0) < tape_scale.y(1_015.0));
     assert_eq!(
-        fitted(false, &candle_price_view).range(),
+        fitted(false, &candle_price_view, tape_range).range(),
         (10_400.0, 11_600.0),
         "ordinary candle panes retain their manual price view"
     );

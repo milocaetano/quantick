@@ -74,7 +74,7 @@ fn radii(shapes: &str) -> Vec<f32> {
 }
 
 /// The tape-only pane draws no candle mark and no candle dot; its tape
-/// marks are the ones a normal pane draws, at the same sizes.
+/// marks preserve their quantities, with area exactly proportional to volume.
 #[test]
 fn a_tape_only_pane_draws_the_tape_and_no_candle_marks() {
     let viewport = Viewport::new();
@@ -131,11 +131,7 @@ fn a_tape_only_pane_draws_the_tape_and_no_candle_marks() {
     let normal_radii = paint(&normal, normal_layout);
     let tape_radii = paint(&tape_only, tape_layout);
     assert_eq!(normal_radii.len(), 4, "{normal_radii:?}");
-    assert_eq!(
-        tape_radii,
-        normal_radii[2..].to_vec(),
-        "the tape's own sizes"
-    );
+    assert_eq!(tape_radii, vec![5.0, 10.0], "four times the volume has twice the radius");
 }
 
 /// The divider sits on the chart's left edge when the tape takes the whole

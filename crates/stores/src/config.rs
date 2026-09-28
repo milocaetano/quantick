@@ -1170,7 +1170,7 @@ mod tests {
         // rather than one list that half-resolves whoever is logged in.
         let b3 = config.feed("metatrader-b3").expect("B3 feed");
         assert_eq!(b3.provider, ProviderKind::MetaTrader);
-        assert_eq!(b3.symbols, ["WIN$N", "WDO$N"]);
+        assert_eq!(b3.symbols, ["WIN$N", "WDO$N", "WINV26"]);
         let tickmill = config.feed("metatrader-tickmill").expect("Tickmill feed");
         assert_eq!(tickmill.provider, ProviderKind::MetaTrader);
         assert_eq!(tickmill.symbols, ["XAUUSD", "US500", "US30"]);
@@ -1206,8 +1206,10 @@ mod tests {
         // falls back to the feed-wide look. That ladder is the whole point of
         // per-symbol declarations.
         assert_eq!(b3.bubble_preset_for("WIN$N"), Some("mini index regions"));
+        assert_eq!(b3.bubble_preset_for("WINV26"), Some("mini index regions"));
         assert_eq!(b3.bubble_preset_for("WDO$N"), Some("live lane pie"));
         assert_eq!(binance.bubble_preset_for("BTCUSDT"), None);
+        assert_eq!(hyperliquid.bubble_preset_for("BTC"), None);
 
         // The default open is the split: timeframe context beside the flow
         // chart (user decision 2026-08-06). The other feeds declare nothing
