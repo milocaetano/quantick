@@ -344,7 +344,12 @@ fn a_panned_tape_folds_inside_an_unseen_bar_and_never_across_its_close() {
     let mut projection = project(&tape(config.clone(), &trades), &timeline, prices());
     assert_eq!(projection.aggressions.iter().filter(|m| m.live).count(), 4);
 
-    projection.merge_overlapping_bubbles(&geometry(4.0, 200.0, opens), &timeline, prices(), &config);
+    projection.merge_overlapping_bubbles(
+        &geometry(4.0, 200.0, opens),
+        &timeline,
+        prices(),
+        &config,
+    );
 
     let mut tape: Vec<_> = drawn(&projection).iter().filter(|m| m.live).collect();
     tape.sort_by_key(|mark| mark.agg_id);
@@ -677,4 +682,19 @@ fn the_grid_is_not_built_when_the_painter_would_not_draw_it() {
         projection.merge_overlapping_bubbles(&small(), &timeline(), prices(), &config);
         assert_eq!(projection.overlap_marks, None);
     }
+}
+
+/// The chart hands the grid the bars the tape's window can reach, and one
+/// more before them for margin, from the whole series, not the slice the
+/// candles show.
+#[test]
+fn the_tape_bars_are_the_ones_its_window_reaches() {
+    let closed: Vec<Bar> = (0..10).map(|i| bar(i * 1_000, i * 1_000 + 999)).collect();
+    let partial = bar(10_000, 10_400);
+    assert_eq!(
+        crate::lane_bar_opens(&closed, Some(&partial), 2_500),
+        vec![6_000, 7_000, 8_000, 9_000, 10_000]
+    );
+    assert_eq!(crate::lane_bar_opens(&closed, None, 0), vec![8_000, 9_000]);
+    assert!(crate::lane_bar_opens(&[], None, 2_500).is_empty());
 }

@@ -189,8 +189,8 @@ fn fold_chunk(mut chunk: Vec<AggressionPrimitive>, reference: Decimal) -> Aggres
     merged
 }
 
-/// Fold `members` into `anchor`, which the caller chose and which keeps its
-/// place — the overlap fold's merge, where the sides may differ.
+/// Fold `members` into `anchor`, which the caller chose — the overlap grid's
+/// merge, where the sides may differ. The caller places the result.
 ///
 /// A mixed fold reports the side that took more, as the cluster fold does
 /// (`interaction`): the anchor is the heaviest *mark*, not the heaviest side,

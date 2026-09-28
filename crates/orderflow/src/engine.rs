@@ -1134,8 +1134,8 @@ impl BookEngine {
         let live_started = Instant::now();
         let live = project_live(&self.history, &timeline, prices, &settled);
         let mut projection = settled.with_live(live, &self.config);
-        if let Some(geometry) = request.pane_geometry {
-            projection.merge_overlapping_bubbles(geometry, &timeline, &self.config);
+        if let Some(geometry) = &request.pane_geometry {
+            projection.merge_overlapping_bubbles(geometry, &timeline, prices, &self.config);
         }
         self.last_live_ms = live_started.elapsed().as_secs_f32() * 1000.0;
         self.last_projection_aggressions = projection.aggressions.len();

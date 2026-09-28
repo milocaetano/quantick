@@ -7,7 +7,7 @@
 
 use eframe::egui;
 use quantick_orderbook::BookSide;
-use quantick_orderflow::{BEFORE_CAPTURE, LiquidityEvidence, bubble_center_offset, bubble_radius};
+use quantick_orderflow::{BEFORE_CAPTURE, LiquidityEvidence, bubble_center_offset};
 
 use super::layout::{EventBand, RenderContext};
 use super::{
@@ -368,7 +368,7 @@ impl<'c, 'a> EventPass<'c, 'a> {
             } else {
                 (bubbles.min_radius, bubbles.max_radius)
             };
-            let r = bubble_radius(trade.size, min, max);
+            let r = trade.drawn_radius(min, max);
             // Carve from the bubble's midriff rightward: the eaten wall still
             // touches the bubble's left half (the bubble reads as biting into
             // it), while re-stacked liquidity cannot slide through to the right.

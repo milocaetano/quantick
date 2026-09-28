@@ -38,7 +38,7 @@
         },
         "overlap_merge": {
           "default": false,
-          "description": "Bubbles whose discs would overlap on the canvas are folded into one\nmark — across sides, and on the lane too — carrying the exact summed\nquantity. The bubble setting `overlap_merge`, switched by\n`layers.visibility.set` as layer `bubble_overlap_merge`. A drawing\ndecision only: the budget's folded count and every other reader keep\nthe unfolded marks.",
+          "description": "Bubbles are binned on a grid whose cells are at most one full-size\ndisc across and never span a bar, and each cell's marks fold into one\n— across sides, and on the lane too — carrying the exact summed\nquantity, so no two drawn discs overlap. The bubble setting\n`overlap_merge`, switched by `layers.visibility.set` as layer\n`bubble_overlap_merge`. A drawing decision only: the budget's folded\ncount and every other reader keep the unfolded marks.",
           "type": "boolean"
         }
       },

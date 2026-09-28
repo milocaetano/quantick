@@ -75,7 +75,7 @@ pub struct BubblePreset {
     /// reads as a tape or as a summary.
     #[serde(default)]
     pub candle_summary: bool,
-    /// Whether bubbles whose discs would overlap fold into one mark. Off
+    /// Whether bubbles fold on the overlap grid, one mark per cell. Off
     /// unless a preset says so, so a file written before the switch existed
     /// draws exactly what it drew.
     #[serde(default)]

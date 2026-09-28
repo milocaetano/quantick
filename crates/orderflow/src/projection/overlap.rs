@@ -1,46 +1,55 @@
-//! The overlap fold: bubbles whose discs would touch on the canvas become one
-//! mark.
+//! The overlap grid: bubbles that share a cell of the canvas become one mark,
+//! so no two drawn discs overlap.
 //!
 //! A dense tape — an MT5 feed folding several deals into each tick is the
 //! case that asked for this — piles bubbles on top of each other: a green
 //! disc half under a red one reads as neither, and ten specks inside a tenth
 //! of a second read as noise. The budget fold (`fold`) does not help, because
 //! a frame can be well inside its budget and still unreadable; the question
-//! here is geometric, not a count. So, when the trader opts in, discs that
-//! would touch are folded into one mark: the exact summed quantity, the union
-//! of the evidence, a pie when both sides are in it, and the `⊕n` label that
-//! says the canvas did this, not the market.
+//! here is geometric, not a count. So, when the trader opts in, each pane is
+//! cut into cells and every mark in a cell folds into one: the exact summed
+//! quantity, the union of the evidence, a pie when both sides are in it, and
+//! the `⊕n` label that says the canvas did this, not the market.
 //!
-//! The fold is one greedy pass and it does not chain. The heaviest mark not yet
-//! taken anchors a fold and takes only the untaken marks whose own disc
-//! directly overlaps its own — both as projected, never as a fold grown bigger.
-//! Following touch transitively looked tidier and was wrong: a leg of prints
-//! where each touches the next folded a whole 180-point rally into one mark
-//! and hid where the aggression happened. The price of refusing the chain is
-//! accepted: a fold drawn at its summed size may still touch a neighbour.
+//! A grid rather than a search for touching discs, because the search was
+//! tried and failed both ways: folding only direct neighbours left a fold
+//! drawn at its summed size over the next one, and following touch chained a
+//! whole rally into one mark. A cell is at most one full-size disc wide and
+//! tall, a mark is drawn inside its cell, and so nothing overlaps by
+//! construction — at any zoom, panned or not.
+//!
+//! A cell never spans a bar, because a mark claims its bar traded it: on the
+//! candles the columns subdivide a bar's slot, and on the tape they
+//! subdivide each bar's stretch of the window, keyed by the true bar from the
+//! series ([`PaneGeometry::lane_bar_opens`]) so a tape whose bars are panned
+//! off the candles still bins. Rows are whole visual price rows. A slot
+//! narrower than a disc is one cell, and its disc is held to it.
 //!
 //! The decision needs pixels the normalized projection does not carry, so the
 //! chart hands them over as a [`PaneGeometry`] and the radius comes from the
 //! same [`bubble_radius`] the painter draws with. Nothing here reads a clock
-//! or iterates a hash: the same frame and the same geometry fold the same way.
+//! or iterates a hash: the same frame and the same geometry bin the same way.
 
 use std::collections::BTreeMap;
 
+use quantick_engine::Bar;
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::config::{HeatmapConfig, bubble_center_offset, bubble_radius};
 use crate::timeline::BarTimeline;
 
 use super::fold::fold_onto;
-use super::model::{AggressionPrimitive, HeatmapProjection, frame_order};
+use super::model::{AggressionPrimitive, HeatmapProjection, PriceWindow, frame_order};
 
 /// The pixel geometry of the pane a frame is drawn on.
 ///
-/// Only what an overlap test needs: how far apart two marks land on screen.
-/// The candles and the tape are measured separately because they are mapped
-/// separately — a bar slot is `px_per_bar` wide, the tape's one region is
-/// `lane_width_px` wide — and the fold never compares a mark across them.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Only what the grid needs: how wide a bar and the tape are on screen, how
+/// tall the chart is, and where the tape's bars begin. The candles and the
+/// tape are measured separately because they are mapped separately — a bar
+/// slot is `px_per_bar` wide, the tape's one region is `lane_width_px` wide —
+/// and the grid never puts a mark of one in a cell of the other.
+#[derive(Debug, Clone, PartialEq)]
 pub struct PaneGeometry {
     /// Pixels between two neighbouring bars on the candles.
     pub px_per_bar: f32,
@@ -48,27 +57,27 @@ pub struct PaneGeometry {
     pub lane_width_px: f32,
     /// Height of the chart, in pixels.
     pub height_px: f32,
+    /// Open times, ascending, of the series' bars the tape's window may
+    /// reach — whether or not the candles have them on screen. Empty bins the
+    /// tape as one bar.
+    pub lane_bar_opens: Vec<i64>,
 }
 
-/// One mark's disc on screen, in pixels.
-///
-/// Offsets that are the same for every mark of a pane — the chart's left and
-/// top edge, the viewport's scroll, which way up the chart is — are left out:
-/// they move every disc together and so cannot make two of them touch.
-#[derive(Debug, Clone, Copy)]
-struct Disc {
-    x: f64,
-    y: f64,
-    radius: f64,
-}
-
-impl Disc {
-    fn touches(self, other: Self) -> bool {
-        let dx = self.x - other.x;
-        let dy = self.y - other.y;
-        let reach = self.radius + other.radius;
-        dx * dx + dy * dy < reach * reach
-    }
+/// The open times [`PaneGeometry::lane_bar_opens`] wants: every bar that
+/// ends inside the last `window_ms` of the series, and the one before it,
+/// so the bar the window opens in is known too.
+#[must_use]
+pub fn lane_bar_opens(closed: &[Bar], partial: Option<&Bar>, window_ms: i64) -> Vec<i64> {
+    let bars: Vec<&Bar> = closed.iter().chain(partial).collect();
+    let Some(newest) = bars.last() else {
+        return Vec::new();
+    };
+    let start = newest.close_time.saturating_sub(window_ms.max(0));
+    let first = bars.partition_point(|bar| bar.close_time < start);
+    bars[first.saturating_sub(1)..]
+        .iter()
+        .map(|bar| bar.open_time)
+        .collect()
 }
 
 fn unit(value: f64) -> f64 {
@@ -79,21 +88,34 @@ fn unit(value: f64) -> f64 {
     }
 }
 
-/// What may fold with what: the pane, and the bar the mark is drawn in.
-///
-/// A pane because a tape mark and a candle mark are clipped, sized and
-/// switched separately. A bar because a mark claims its bar traded it, the
-/// same reason the budget fold keys on it; the tape is continuous, but a fold
-/// across a close would still credit one bar with its neighbour's volume. The
-/// bar is read at the instant that placed the mark, and a mark whose bar the
-/// timeline cannot see — the tape while the candles are panned into history —
-/// folds with nothing.
-type GroupKey = (bool, usize);
+/// Keeps a mark at the very start of a slot from reading as the end of the
+/// previous one after the normalized round trip.
+const SLOT_EPSILON: f64 = 1e-9;
+
+/// What may fold with what: the pane, the bar, and the column and row of the
+/// cell inside it.
+type CellKey = (bool, i64, i64, i64);
+
+/// One cell's rectangle, in pane pixels, upright.
+#[derive(Debug, Clone, Copy)]
+struct Cell {
+    left: f64,
+    right: f64,
+    top: f64,
+    bottom: f64,
+}
+
+impl Cell {
+    /// The largest radius a disc inside the cell may be drawn at.
+    fn radius_cap(self) -> f64 {
+        ((self.right - self.left).min(self.bottom - self.top) / 2.0).max(0.0)
+    }
+}
 
 impl HeatmapProjection {
-    /// Fold each bubble whose disc overlaps a heavier one's into it — one
-    /// greedy pass, never chained; see the module note — into
-    /// [`overlap_marks`](Self::overlap_marks), the painter's own list.
+    /// Bin the bubbles into the grid — see the module note — and fold each
+    /// cell into one mark, into [`overlap_marks`](Self::overlap_marks), the
+    /// painter's own list.
     ///
     /// Does nothing unless [`HeatmapConfig::bubble_overlap_merge`] is on, so
     /// off is today's frame exactly. On, [`aggressions`](Self::aggressions)
@@ -104,8 +126,9 @@ impl HeatmapProjection {
     /// a two-sided mark then.
     pub fn merge_overlapping_bubbles(
         &mut self,
-        geometry: PaneGeometry,
+        geometry: &PaneGeometry,
         timeline: &BarTimeline,
+        prices: PriceWindow,
         config: &HeatmapConfig,
     ) {
         self.overlap_marks = None;
@@ -116,21 +139,26 @@ impl HeatmapProjection {
         if !config.bubble_overlap_merge || !both_sides || !any_layer {
             return;
         }
-        // One canonical order, so which marks land in which fold never depends
-        // on the order they arrived in; grouping keeps it.
+        let grid = Grid::new(
+            geometry,
+            timeline,
+            prices,
+            self.effective_grouping.bucket_width,
+            config,
+        );
+        // One canonical order, so which mark anchors a cell never depends on
+        // the order the marks arrived in; binning keeps it.
         let mut marks = self.aggressions.clone();
         marks.sort_by(frame_order);
-        let mut groups: BTreeMap<GroupKey, Vec<AggressionPrimitive>> = BTreeMap::new();
+        let mut cells: BTreeMap<CellKey, (Cell, Vec<AggressionPrimitive>)> = BTreeMap::new();
         let mut merged = Vec::with_capacity(marks.len());
         for mark in marks {
-            match timeline.bar_at(mark.placed_ms) {
-                Some(bar) => groups.entry((mark.live, bar)).or_default().push(mark),
+            match grid.cell(&mark) {
+                Some((key, cell)) => cells.entry(key).or_insert((cell, Vec::new())).1.push(mark),
                 None => merged.push(mark),
             }
         }
-
-        let scale = Scale::new(geometry, timeline.region_count(), config);
-        for ((live, _), members) in groups {
+        for ((live, ..), (cell, members)) in cells {
             // The scale each pane's marks were drawn on — a fold is sized
             // against it, never rescaling the marks it left alone.
             let reference = if live {
@@ -138,16 +166,14 @@ impl HeatmapProjection {
             } else {
                 self.summary_reference
             };
-            merged.extend(fold_touching(members, reference, &scale));
+            merged.push(grid.settle(cell, members, reference));
         }
         merged.sort_by(frame_order);
         self.overlap_marks = Some(merged);
     }
-}
 
-impl HeatmapProjection {
-    /// The marks the bubble painter draws: the overlap fold's list while both
-    /// sides are shown, the unfolded marks otherwise. With a side hidden the
+    /// The marks the bubble painter draws: the grid's list while both sides
+    /// are shown, the unfolded marks otherwise. With a side hidden the
     /// painter withholds every two-sided mark — a pie with a hidden half would
     /// state a quantity the canvas is not showing — so drawing the fold then
     /// would delete the visible side's bubbles along with the pies.
@@ -160,130 +186,189 @@ impl HeatmapProjection {
     }
 }
 
-/// Everything that turns a normalized mark into its disc on screen.
-struct Scale {
+/// Everything that turns a normalized mark into its cell on screen.
+struct Grid<'a> {
+    timeline: &'a BarTimeline,
+    opens: &'a [i64],
     regions: f64,
-    geometry: PaneGeometry,
+    slots: f64,
+    px_per_bar: f64,
+    lane_width: f64,
+    height: f64,
+    high: f64,
+    span: f64,
+    row_price: f64,
     candle_radii: (f32, f32),
     lane_radii: (f32, f32),
     side_offset: f32,
 }
 
-impl Scale {
-    fn new(geometry: PaneGeometry, regions: usize, config: &HeatmapConfig) -> Self {
+impl<'a> Grid<'a> {
+    fn new(
+        geometry: &'a PaneGeometry,
+        timeline: &'a BarTimeline,
+        prices: PriceWindow,
+        row_price: Decimal,
+        config: &HeatmapConfig,
+    ) -> Self {
         let bubbles = &config.bubbles;
+        let high = prices.high.to_f64().unwrap_or(0.0);
+        let low = prices.low.to_f64().unwrap_or(0.0);
         Self {
-            regions: regions as f64,
-            geometry,
+            timeline,
+            opens: &geometry.lane_bar_opens,
+            regions: timeline.region_count() as f64,
+            slots: timeline.len() as f64,
+            px_per_bar: f64::from(geometry.px_per_bar),
+            lane_width: f64::from(geometry.lane_width_px),
+            height: f64::from(geometry.height_px),
+            high,
+            span: high - low,
+            row_price: row_price.to_f64().unwrap_or(0.0),
             candle_radii: (bubbles.min_radius, bubbles.max_radius),
             lane_radii: config.live_lane.scaled_radii(bubbles),
             side_offset: bubbles.side_offset,
         }
     }
 
-    /// Where the painter will put this mark and how big it will draw it —
-    /// the painter's own functions for the radius and the lean, without the
-    /// offsets every disc shares. Measured upright: flipping the chart
-    /// mirrors every centre together, so it cannot make two discs touch.
-    fn disc(&self, mark: &AggressionPrimitive) -> Disc {
-        let (px_per_region, (minimum, maximum)) = if mark.live {
-            (f64::from(self.geometry.lane_width_px), self.lane_radii)
+    fn radii(&self, live: bool) -> (f32, f32) {
+        if live {
+            self.lane_radii
         } else {
-            (f64::from(self.geometry.px_per_bar), self.candle_radii)
-        };
-        let lean = bubble_center_offset(mark.buy_share, self.side_offset, false);
-        Disc {
-            x: unit(mark.x) * self.regions * px_per_region,
-            y: unit(mark.y) * f64::from(self.geometry.height_px) + f64::from(lean),
-            radius: f64::from(bubble_radius(mark.size, minimum, maximum)),
+            self.candle_radii
         }
     }
-}
 
-/// Fold one group in a single greedy pass, anchored heaviest first.
-///
-/// Each anchor takes the untaken marks whose disc overlaps its own, measured
-/// as projected: no chaining through a member, no re-measuring a grown fold.
-fn fold_touching(
-    marks: Vec<AggressionPrimitive>,
-    reference: Decimal,
-    scale: &Scale,
-) -> Vec<AggressionPrimitive> {
-    if marks.len() < 2 {
-        return marks;
+    /// The mark's x in pane pixels, and the bar it belongs to with that
+    /// bar's stretch of the pane. `None` when the pane has no width.
+    fn bar(&self, mark: &AggressionPrimitive) -> Option<(f64, i64, f64, f64)> {
+        let region = unit(mark.x) * self.regions;
+        if mark.live {
+            if self.lane_width <= 0.0 {
+                return None;
+            }
+            let x = (region - (self.regions - 1.0)).clamp(0.0, 1.0) * self.lane_width;
+            if self.opens.is_empty() {
+                return Some((x, 0, 0.0, self.lane_width));
+            }
+            let bar = self.opens.partition_point(|open| *open <= mark.placed_ms);
+            let left = bar
+                .checked_sub(1)
+                .map_or(0.0, |i| self.lane_px(self.opens[i]));
+            let right = self
+                .opens
+                .get(bar)
+                .map_or(self.lane_width, |open| self.lane_px(*open));
+            return Some((x, bar as i64, left, right.max(left)));
+        }
+        if self.px_per_bar <= 0.0 || self.slots < 1.0 {
+            return None;
+        }
+        let slot = (region + SLOT_EPSILON).floor().clamp(0.0, self.slots - 1.0);
+        let left = slot * self.px_per_bar;
+        Some((
+            region * self.px_per_bar,
+            slot as i64,
+            left,
+            left + self.px_per_bar,
+        ))
     }
-    let anchors = assign_anchors(&marks, scale);
-    let mut folds: BTreeMap<usize, (Option<AggressionPrimitive>, Vec<AggressionPrimitive>)> =
-        BTreeMap::new();
-    for (index, mark) in marks.into_iter().enumerate() {
-        let fold = folds.entry(anchors[index]).or_default();
-        if anchors[index] == index {
-            fold.0 = Some(mark);
+
+    /// Where on the tape, in pixels, an instant is drawn.
+    fn lane_px(&self, timestamp_ms: i64) -> f64 {
+        self.timeline
+            .locate_in_lane_clamped(timestamp_ms)
+            .map_or(0.0, |position| position.fraction * self.lane_width)
+    }
+
+    /// The cell a mark falls in, or `None` when its pane is not drawn.
+    fn cell(&self, mark: &AggressionPrimitive) -> Option<(CellKey, Cell)> {
+        let (x, bar, left, right) = self.bar(mark)?;
+        let diameter = 2.0 * f64::from(self.radii(mark.live).1);
+        let width = right - left;
+        let columns = (width / diameter).floor().max(1.0);
+        let column_width = width / columns;
+        let column = if column_width > 0.0 {
+            ((x - left) / column_width)
+                .floor()
+                .clamp(0.0, columns - 1.0)
         } else {
-            fold.1.push(mark);
-        }
-    }
-    folds
-        .into_values()
-        .map(|(anchor, members)| {
-            fold_onto(
-                anchor.expect("every fold has its anchor"),
-                members,
-                reference,
-            )
-        })
-        .collect()
-}
-
-/// The anchor each mark folds into — itself when nothing heavier took it.
-///
-/// Anchors are taken heaviest first, ties by the canonical order. The search
-/// for an anchor's members is swept along x, so only marks whose centres are
-/// within the anchor's reach plus the widest radius in the group are measured.
-fn assign_anchors(marks: &[AggressionPrimitive], scale: &Scale) -> Vec<usize> {
-    let discs: Vec<Disc> = marks.iter().map(|mark| scale.disc(mark)).collect();
-    let widest = discs.iter().map(|disc| disc.radius).fold(0.0, f64::max);
-    let mut by_x: Vec<usize> = (0..discs.len()).collect();
-    by_x.sort_by(|&a, &b| discs[a].x.total_cmp(&discs[b].x).then(a.cmp(&b)));
-    let mut rank = vec![0; discs.len()];
-    for (position, &index) in by_x.iter().enumerate() {
-        rank[index] = position;
-    }
-    let mut by_weight: Vec<usize> = (0..marks.len()).collect();
-    by_weight.sort_by(|&a, &b| marks[b].quantity.cmp(&marks[a].quantity).then(a.cmp(&b)));
-
-    let mut anchors: Vec<Option<usize>> = vec![None; marks.len()];
-    for anchor in by_weight {
-        if anchors[anchor].is_some() {
-            continue;
-        }
-        anchors[anchor] = Some(anchor);
-        let disc = discs[anchor];
-        let reach = disc.radius + widest;
-        // Walks outward from the anchor; `false` once past its reach.
-        let mut take = |other: usize| {
-            if (discs[other].x - disc.x).abs() >= reach {
-                return false;
-            }
-            if anchors[other].is_none() && disc.touches(discs[other]) {
-                anchors[other] = Some(anchor);
-            }
-            true
+            0.0
         };
-        for &other in &by_x[rank[anchor] + 1..] {
-            if !take(other) {
-                break;
-            }
+        // Whole visual rows, as many as a full disc needs, centred on a row.
+        let row_px = self.row_price / self.span * self.height;
+        let cell_price = if row_px.is_finite() && row_px > 0.0 {
+            (diameter / row_px).ceil().max(1.0) * self.row_price
+        } else {
+            diameter / self.height * self.span
+        };
+        if !(cell_price.is_finite() && cell_price > 0.0) {
+            return None;
         }
-        for &other in by_x[..rank[anchor]].iter().rev() {
-            if !take(other) {
-                break;
-            }
-        }
+        let price = self.high - unit(mark.y) * self.span;
+        let row = (price / cell_price).round();
+        let y_of = |price: f64| (self.high - price) / self.span * self.height;
+        let cell = Cell {
+            left: left + column * column_width,
+            right: left + (column + 1.0) * column_width,
+            top: y_of((row + 0.5) * cell_price).max(0.0),
+            bottom: y_of((row - 0.5) * cell_price).min(self.height),
+        };
+        Some(((mark.live, bar, column as i64, row as i64), cell))
     }
-    anchors
-        .into_iter()
-        .enumerate()
-        .map(|(index, anchor)| anchor.unwrap_or(index))
-        .collect()
+
+    /// Fold one cell into a mark drawn inside it: at the column's centre and
+    /// the quantity-weighted price, no bigger than the cell. A lone mark keeps
+    /// its own place, held inside the cell the same way.
+    fn settle(
+        &self,
+        cell: Cell,
+        mut members: Vec<AggressionPrimitive>,
+        reference: Decimal,
+    ) -> AggressionPrimitive {
+        let live = members[0].live;
+        let lone = members.len() == 1;
+        let (weight, weighted_y) = members.iter().fold((0.0, 0.0), |(weight, sum), mark| {
+            let quantity = mark.quantity.to_f64().unwrap_or(0.0);
+            (weight + quantity, sum + quantity * unit(mark.y))
+        });
+        // The heaviest mark anchors the fold, the earliest on a tie.
+        let heaviest = members
+            .iter()
+            .enumerate()
+            .max_by(|(a, x), (b, y)| x.quantity.cmp(&y.quantity).then(b.cmp(a)))
+            .map_or(0, |(index, _)| index);
+        let anchor = members.remove(heaviest);
+        let own_x = self.bar(&anchor).map_or(0.0, |(x, ..)| x);
+        let mut mark = fold_onto(anchor, members, reference);
+
+        let cap = cell.radius_cap();
+        let (minimum, maximum) = self.radii(live);
+        let radius = f64::from(bubble_radius(mark.size, minimum, maximum)).min(cap);
+        let x = if lone {
+            own_x
+        } else {
+            (cell.left + cell.right) / 2.0
+        };
+        let x = x.max(cell.left + radius).min(cell.right - radius);
+        let y = if weight > 0.0 {
+            weighted_y / weight
+        } else {
+            unit(mark.y)
+        } * self.height;
+        let lean = f64::from(bubble_center_offset(
+            mark.buy_share,
+            self.side_offset,
+            false,
+        ));
+        let center = (y + lean).max(cell.top + radius).min(cell.bottom - radius);
+        mark.y = unit((center - lean) / self.height);
+        mark.x = if live {
+            (self.regions - 1.0 + x / self.lane_width) / self.regions
+        } else {
+            x / self.px_per_bar / self.regions
+        };
+        mark.radius_cap_px = Some(cap as f32);
+        mark
+    }
 }

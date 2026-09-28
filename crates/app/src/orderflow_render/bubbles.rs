@@ -10,7 +10,7 @@ use eframe::egui;
 use quantick_engine::Side;
 use quantick_orderflow::{
     AggressionPrimitive, BubbleRenderMode, BubbleStyle, ConsumptionMark, GOLDEN_ANGLE, INV_PHI,
-    INV_PHI_2, INV_PHI_3, bubble_center_offset, bubble_radius,
+    INV_PHI_2, INV_PHI_3, bubble_center_offset,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
@@ -842,9 +842,9 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     let (lane_min, lane_max) = style.live_lane.scaled_radii(bubbles);
     let radius_of = |trade: &AggressionPrimitive| {
         if trade.live {
-            bubble_radius(trade.size, lane_min, lane_max)
+            trade.drawn_radius(lane_min, lane_max)
         } else {
-            bubble_radius(trade.size, bubbles.min_radius, bubbles.max_radius)
+            trade.drawn_radius(bubbles.min_radius, bubbles.max_radius)
         }
     };
 

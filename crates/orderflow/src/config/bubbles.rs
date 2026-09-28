@@ -415,9 +415,9 @@ impl Default for BubbleStyle {
 ///
 /// Area, not radius, is proportional to quantity, so the radius interpolates
 /// on the square. It lives with the style rather than with the renderer
-/// because the overlap fold has to know how big a disc will be drawn before
-/// it is drawn — one function, so the fold and the painter cannot disagree
-/// about which discs touch.
+/// because the overlap grid has to know how big a disc will be drawn before
+/// it is drawn — one function, so the grid and the painter cannot disagree
+/// about whether a disc fits its cell.
 #[must_use]
 pub fn bubble_radius(size: f32, minimum: f32, maximum: f32) -> f32 {
     let size = if size.is_finite() {
@@ -435,8 +435,9 @@ pub fn bubble_radius(size: f32, minimum: f32, maximum: f32) -> f32 {
 /// sell on an upright chart — sliding with the buy share, so an even split
 /// sits on the exact price. `inverted` mirrors it with the chart.
 ///
-/// Shared for the reason [`bubble_radius`] is: the overlap fold measures the
-/// disc the painter draws, and a lean restated on one side flipped sign.
+/// Shared for the reason [`bubble_radius`] is: the overlap grid holds the
+/// disc the painter draws inside its cell, and a lean restated on one side
+/// flipped sign.
 #[must_use]
 pub fn bubble_center_offset(buy_share: f32, side_offset: f32, inverted: bool) -> f32 {
     let share = if buy_share.is_finite() {

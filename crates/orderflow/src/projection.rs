@@ -23,7 +23,7 @@ pub use model::{
     LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, normalized_area_size,
     normalized_log_intensity,
 };
-pub use overlap::PaneGeometry;
+pub use overlap::{PaneGeometry, lane_bar_opens};
 
 use fold::{FoldOrder, fold_to_budget, pane_budgets};
 use model::event_cap_key;

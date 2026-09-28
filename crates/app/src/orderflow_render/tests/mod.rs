@@ -1182,6 +1182,7 @@ fn hiding_the_bubble_layer_keeps_the_clusters_in_the_frame() {
             y: 0.5,
             size: 1.0,
             folded_marks: 0,
+            radius_cap_px: None,
         });
     }
 
@@ -1288,6 +1289,7 @@ fn the_lane_scale_reaches_the_bubbles_and_stops_at_the_boundary() {
             y: 0.5,
             size: 1.0,
             folded_marks: 0,
+            radius_cap_px: None,
         });
         painted(|painter| {
             draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
@@ -1363,6 +1365,7 @@ fn a_bubble_beside_the_divider_is_clipped_to_its_own_pane() {
             y: 0.5,
             size: 1.0,
             folded_marks: 0,
+            radius_cap_px: None,
         });
         painted(|painter| {
             draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
@@ -1435,6 +1438,7 @@ fn a_layer_switched_off_on_one_pane_still_draws_on_the_other() {
             y: 0.5,
             size: 1.0,
             folded_marks: 0,
+            radius_cap_px: None,
         });
     }
 

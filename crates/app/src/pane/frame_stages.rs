@@ -15,7 +15,7 @@ use std::sync::Arc;
 use eframe::egui;
 use quantick_engine::BarFootprint;
 use quantick_orderflow::engine::VisibleOrderflow;
-use quantick_orderflow::{PaneGeometry, reserved_span_ms};
+use quantick_orderflow::{PaneGeometry, lane_bar_opens, reserved_span_ms};
 
 use crate::drawings::Drawings;
 use crate::indicator_render::{self, PlotX};
@@ -104,6 +104,7 @@ impl<'a> FlowFrame<'a> {
         );
         self.projection = orderflow.and_then(|orderflow| {
             orderflow.set_projection_demand(demand);
+            let window_ms = orderflow.live_lane_window_ms(frame.closed);
             // The tape's automatic window comes from the newest bars of the
             // series, never from the slice on screen: panning the candles is
             // not a statement about how much market time the tape shows.
@@ -117,6 +118,7 @@ impl<'a> FlowFrame<'a> {
                     px_per_bar: self.viewport.px_per_bar(),
                     lane_width_px: self.lane_width,
                     height_px: self.rect.height(),
+                    lane_bar_opens: lane_bar_opens(frame.closed, frame.partial, window_ms),
                 }),
             )
         });

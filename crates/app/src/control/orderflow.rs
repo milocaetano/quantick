@@ -71,7 +71,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         module_id.clone(),
         SCHEMA_VERSION,
         "Aggression bubbles",
-        "Reports whether aggression bubbles are drawn over the chart and the lane, whether the overlap fold merges touching bubbles into one mark, and what the display floor keeps off the canvas.",
+        "Reports whether aggression bubbles are drawn over the chart and the lane, whether the overlap grid folds each cell's bubbles into one mark, and what the display floor keeps off the canvas.",
         &["observe", "observe.orderflow"],
         project_bubbles,
     )?;

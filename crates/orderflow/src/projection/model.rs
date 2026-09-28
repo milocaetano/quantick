@@ -110,7 +110,7 @@ pub struct AggressionPrimitive {
     pub first_timestamp_ms: i64,
     /// The instant that placed this mark on the chart: the cluster's
     /// midpoint, which is where its x was read from. A fold keeps its
-    /// anchor's, since it keeps the anchor's place.
+    /// anchor's, which is how the overlap grid finds the fold's bar.
     pub placed_ms: i64,
     /// Latest exchange timestamp represented by this bubble.
     pub last_timestamp_ms: i64,
@@ -138,6 +138,20 @@ pub struct AggressionPrimitive {
     /// to. Nothing is lost either way — the quantity is exact — but the two
     /// must not look the same.
     pub folded_marks: u32,
+    /// The largest radius, in pixels, the overlap grid lets this mark be
+    /// drawn at: half its cell's smaller side, so no disc reaches into a
+    /// neighbour's cell. `None` on every mark the grid did not place.
+    pub radius_cap_px: Option<f32>,
+}
+
+impl AggressionPrimitive {
+    /// The radius the painter draws this mark at, on the radius range
+    /// `minimum..=maximum` of its pane, held under the grid's cap.
+    #[must_use]
+    pub fn drawn_radius(&self, minimum: f32, maximum: f32) -> f32 {
+        crate::config::bubble_radius(self.size, minimum, maximum)
+            .min(self.radius_cap_px.unwrap_or(f32::INFINITY))
+    }
 }
 
 /// One factual displayed-liquidity reduction ready for an overlay.
@@ -238,8 +252,8 @@ pub struct HeatmapProjection {
     pub cells: Arc<Vec<HeatmapCell>>,
     /// Visible aggressive executions.
     pub aggressions: Vec<AggressionPrimitive>,
-    /// The bubbles the painter draws when the overlap fold is on: the marks
-    /// above with every disc that overlaps a heavier one folded into it.
+    /// The bubbles the painter draws when the overlap grid is on: the marks
+    /// above binned into cells, each cell folded into one mark drawn inside it.
     /// `None` when the fold is off or the frame had no canvas to measure.
     ///
     /// A list of its own, never a rewrite of [`aggressions`](Self::aggressions):

@@ -197,12 +197,13 @@ pub struct BubblesStateSnapshot {
     /// The exact quantity the trader's own display floor keeps off the canvas.
     /// Floored, not dropped: it is still in the totals.
     pub floored_quantity: CanonicalDecimal,
-    /// Bubbles whose discs would overlap on the canvas are folded into one
-    /// mark — across sides, and on the lane too — carrying the exact summed
-    /// quantity. The bubble setting `overlap_merge`, switched by
-    /// `layers.visibility.set` as layer `bubble_overlap_merge`. A drawing
-    /// decision only: the budget's folded count and every other reader keep
-    /// the unfolded marks.
+    /// Bubbles are binned on a grid whose cells are at most one full-size
+    /// disc across and never span a bar, and each cell's marks fold into one
+    /// — across sides, and on the lane too — carrying the exact summed
+    /// quantity, so no two drawn discs overlap. The bubble setting
+    /// `overlap_merge`, switched by `layers.visibility.set` as layer
+    /// `bubble_overlap_merge`. A drawing decision only: the budget's folded
+    /// count and every other reader keep the unfolded marks.
     #[serde(default)]
     pub overlap_merge: bool,
 }
