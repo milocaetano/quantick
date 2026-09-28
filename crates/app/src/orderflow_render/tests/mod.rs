@@ -1729,6 +1729,114 @@ fn a_folded_bubble_wears_a_ring_a_print_does_not() {
         "a folded dot is indistinguishable from a single print"
     );
 }
+/// Every shape a draw call painted, as the rectangle it can touch.
+fn painted_reach(draw: impl Fn(&egui::Painter)) -> egui::Rect {
+    let ctx = egui::Context::default();
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        draw(&ctx.layer_painter(egui::LayerId::background()));
+    });
+    output
+        .shapes
+        .iter()
+        .map(|clipped| clipped.shape.visual_bounding_rect())
+        .fold(egui::Rect::NOTHING, |reach, rect| reach.union(rect))
+}
+
+/// The overlap grid keeps a dressed bubble's centre `radius + margin` from
+/// its cell's edge, so everything `draw_bubble` puts around a disc — halo,
+/// separator, rim, fold ring, crown, impact ring — has to land inside
+/// [`BubbleStyle::dressing_margin`], at every size and every width the
+/// style allows. The front is a line the length of its own setting and is
+/// left out: see the margin's note.
+#[test]
+fn a_dressed_bubble_stays_inside_the_margin_the_grid_reserves() {
+    let center = egui::pos2(200.0, 200.0);
+    for (impact_ring_width, outline_width) in [(0.5, 0.0), (1.4, 1.0), (8.0, 6.0)] {
+        for render_mode in [BubbleRenderMode::Sphere, BubbleRenderMode::Flat] {
+            let bubbles = BubbleStyle {
+                impact_ring_width,
+                outline_width,
+                render_mode,
+                halo_strength: 1.0,
+                show_impact_ring: true,
+                consumption_mark: ConsumptionMark::Crown,
+                ..BubbleStyle::default()
+            };
+            let colors =
+                BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
+            let margin = bubbles.dressing_margin();
+            for step in 1..=160 {
+                let radius = step as f32 * 0.5;
+                for (buy_share, folded) in [(1.0, 0), (0.4, 5)] {
+                    let mark = BubbleMark {
+                        center,
+                        radius,
+                        side: Side::Buy,
+                        size: 1.0,
+                        matched: Some(1.0),
+                        buy_share,
+                        folded,
+                        bare: false,
+                    };
+                    let reach = painted_reach(|painter| {
+                        draw_bubble(painter, mark, &bubbles, &colors);
+                    });
+                    let allowed = egui::Rect::from_center_size(
+                        center,
+                        egui::Vec2::splat(2.0 * (radius + margin) + 1e-3),
+                    );
+                    assert!(
+                        allowed.contains_rect(reach),
+                        "radius {radius}, impact {impact_ring_width}, outline \
+                         {outline_width}: drew {reach:?} past {allowed:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Where the grid had no room for a dressing it draws a bare disc: nothing
+/// outside the radius, a fold still marked — its ring inside the rim.
+#[test]
+fn a_bare_bubble_draws_nothing_past_its_disc() {
+    let bubbles = BubbleStyle {
+        halo_strength: 1.0,
+        show_impact_ring: true,
+        outline_width: 2.0,
+        consumption_mark: ConsumptionMark::Crown,
+        ..BubbleStyle::default()
+    };
+    let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
+    let center = egui::pos2(100.0, 100.0);
+    for radius in [0.5, 1.0, 3.0, 12.0, 30.0] {
+        let print = BubbleMark {
+            center,
+            radius,
+            side: Side::Buy,
+            size: 1.0,
+            matched: Some(1.0),
+            buy_share: 0.4,
+            folded: 0,
+            bare: true,
+        };
+        let fold = BubbleMark { folded: 3, ..print };
+        for mark in [print, fold] {
+            let reach = painted_reach(|painter| draw_bubble(painter, mark, &bubbles, &colors));
+            let allowed =
+                egui::Rect::from_center_size(center, egui::Vec2::splat(2.0 * radius + 1e-3));
+            assert!(
+                allowed.contains_rect(reach),
+                "radius {radius}: a bare disc drew {reach:?} past {allowed:?}"
+            );
+        }
+        assert_ne!(
+            painted(|painter| draw_bubble(painter, print, &bubbles, &colors)),
+            painted(|painter| draw_bubble(painter, fold, &bubbles, &colors)),
+            "radius {radius}: a bare fold reads as a print"
+        );
+    }
+}
 /// A fold and a cluster may not read the same.
 ///
 /// `×4` says four prints happened together at one price — a fact about the

@@ -80,18 +80,21 @@ fn total(projection: &HeatmapProjection) -> Decimal {
     drawn(projection).iter().map(|mark| mark.quantity).sum()
 }
 
-/// One disc as the painter draws it, in pane pixels, upright.
+/// One bubble as the painter draws it, in pane pixels, upright: `reach` is
+/// the disc and everything drawn around it — halo, fold ring, crown, impact
+/// ring — which is what may not overlap a neighbour.
 #[derive(Debug, Clone, Copy)]
 struct Disc {
     live: bool,
     x: f64,
     y: f64,
-    radius: f64,
+    reach: f64,
 }
 
 /// The painter's own arithmetic: `layout.x`/`layout.y` without the offsets
-/// every disc of a pane shares, the lean, and the radius range per pane,
-/// held under the grid's cap.
+/// every disc of a pane shares, the lean, and the disc the painter draws
+/// through [`AggressionPrimitive::drawn_disc`], with the dressing margin it
+/// reserves around a dressed one.
 fn discs(
     projection: &HeatmapProjection,
     geometry: &PaneGeometry,
@@ -112,13 +115,17 @@ fn discs(
             };
             let lean = bubble_center_offset(mark.buy_share, config.bubbles.side_offset, false);
             let (minimum, maximum) = if mark.live { lane } else { candle };
-            let radius = bubble_radius(mark.size, minimum, maximum)
-                .min(mark.radius_cap_px.unwrap_or(f32::INFINITY));
+            let disc = mark.drawn_disc(minimum, maximum, &config.bubbles);
+            let dressing = if disc.dressed {
+                config.bubbles.dressing_margin()
+            } else {
+                0.0
+            };
             Disc {
                 live: mark.live,
                 x,
                 y: mark.y * f64::from(geometry.height_px) + f64::from(lean),
-                radius: f64::from(radius),
+                reach: f64::from(disc.radius + dressing),
             }
         })
         .collect()
@@ -134,7 +141,7 @@ fn assert_apart(discs: &[Disc]) {
             }
             let distance = ((a.x - b.x).powi(2) + (a.y - b.y).powi(2)).sqrt();
             assert!(
-                distance + 1e-3 >= a.radius + b.radius,
+                distance + 1e-3 >= a.reach + b.reach,
                 "discs overlap: {a:?} and {b:?}, {distance:.2}px apart"
             );
         }
@@ -277,7 +284,8 @@ fn a_dense_frame_draws_no_overlapping_discs_at_any_zoom() {
 
 /// Zoomed out the way the trader was: bars two pixels wide — narrower than
 /// the smallest disc — and a 16 s tape. A cell never spans a bar, so each
-/// slot is one cell and its disc is held to the slot; nothing overlaps.
+/// slot is one cell and its disc is held to the slot, bare: no room is left
+/// for a halo or a ring, so none is drawn. Nothing overlaps.
 #[test]
 fn a_zoomed_out_dense_frame_draws_no_overlapping_discs() {
     let config = merging(true);
@@ -296,9 +304,14 @@ fn a_zoomed_out_dense_frame_draws_no_overlapping_discs() {
     assert!(drawn(&projection).len() < before / 2, "the pile-up folded");
     for mark in drawn(&projection).iter().filter(|mark| !mark.live) {
         assert!(
-            mark.radius_cap_px.is_some_and(|cap| cap <= 1.0 + 1e-6),
+            mark.cell_radius_px.is_some_and(|cell| cell <= 1.0 + 1e-6),
             "a disc in a 2 px slot is held to it: {:?}",
-            mark.radius_cap_px
+            mark.cell_radius_px
+        );
+        let (minimum, maximum) = (config.bubbles.min_radius, config.bubbles.max_radius);
+        assert!(
+            !mark.drawn_disc(minimum, maximum, &config.bubbles).dressed,
+            "no dressing fits a 2 px slot"
         );
     }
     assert_dense_frame_is_clean(&projection, &geometry, &timeline, &config, &trades);
@@ -449,7 +462,37 @@ fn a_lone_mark_keeps_its_data() {
         assert_eq!(after.side, before.side);
         assert_eq!(after.size, before.size);
         assert_eq!(after.folded_marks, 0, "still a print");
-        assert!(after.radius_cap_px.is_some(), "held to its cell");
+        assert!(after.cell_radius_px.is_some(), "held to its cell");
+    }
+}
+
+/// Where the chart has room, the grid costs a print nothing: a cell is a
+/// full-size disc plus its dressing across, so a full-size print keeps its
+/// radius and its halo, rings and crown, instead of being shrunk to fit.
+#[test]
+fn a_full_size_print_keeps_its_radius_and_dressing_where_there_is_room() {
+    let config = merging(true);
+    let (timeline, opens) = seconds(20, 0..20, 4_000);
+    let geometry = geometry(40.0, 600.0, opens);
+    let trades = [
+        (1, 5_500, "100", "5", Side::Buy),
+        (2, 19_500, "100", "5", Side::Sell),
+    ];
+    let mut projection = project(&tape(config.clone(), &trades), &timeline, wide_prices());
+
+    projection.merge_overlapping_bubbles(&geometry, &timeline, wide_prices(), &config);
+
+    let marks = drawn(&projection);
+    assert_eq!(marks.len(), 2);
+    for mark in marks {
+        let (minimum, maximum) = if mark.live {
+            config.live_lane.scaled_radii(&config.bubbles)
+        } else {
+            (config.bubbles.min_radius, config.bubbles.max_radius)
+        };
+        let disc = mark.drawn_disc(minimum, maximum, &config.bubbles);
+        assert_eq!(disc.radius, bubble_radius(mark.size, minimum, maximum));
+        assert!(disc.dressed, "room for the dressing too");
     }
 }
 
