@@ -12,6 +12,7 @@ use crate::projection::{
     DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_LADDER_MS, DotRungMemory, PaneGeometry, VolumeDots,
     dot_bar_window_ms, dot_level_ticks, dot_window_ms, hold_rung, project_with_dots,
 };
+use rust_decimal::prelude::FromPrimitive as _;
 
 /// Dots on, the budget out of the way, and a fixed scale where 10
 /// contracts is a full-size dot. The folds dots mode skips are all switched
@@ -60,6 +61,15 @@ fn coarse(candle_window_ms: i64, tape_window_ms: i64, level_ticks: i64) -> Volum
 /// window of `candle_window_ms` for a 20 px dot.
 fn px_for(candle_window_ms: i64) -> f32 {
     (1_024.0 * 20.0 / candle_window_ms as f64 * 1.001) as f32
+}
+
+/// A history of `trades` that began recording well before the chart's first
+/// bar: a sentinel print at -5 s, off every timeline here, so the recording
+/// start cuts no window a test looks at.
+fn recorded(config: HeatmapConfig, trades: &[(u64, i64, &str, &str, Side)]) -> LiquidityHistory {
+    let mut all = vec![(u64::MAX, -5_000, "100", "1", Side::Buy)];
+    all.extend_from_slice(trades);
+    tape(config, &all)
 }
 
 /// A seeded linear congruential generator: random-looking, same every run.
@@ -188,7 +198,7 @@ fn a_closed_window_is_the_same_dot_on_every_frame() {
         ..dots_config()
     };
     let trades = dense(7, 3_000, 0, 20_000);
-    let history = tape(config.clone(), &borrowed(&trades));
+    let history = recorded(config.clone(), &borrowed(&trades));
     let dots = windows(500, 250);
     let at = |now_ms: i64, lane_ms: i64, visible: Option<std::ops::Range<usize>>, window| {
         frame_at(&history, &chart(now_ms, lane_ms, visible), window, &dots)
@@ -245,7 +255,7 @@ fn the_budget_never_folds_a_dot() {
         ..dots_config()
     };
     let trades = dense(11, 3_000, 0, 20_000);
-    let history = tape(config.clone(), &borrowed(&trades));
+    let history = recorded(config.clone(), &borrowed(&trades));
     let dots = windows(500, 250);
     for now_ms in [9_100, 12_700, 15_300] {
         let frame = frame_at(
@@ -274,7 +284,7 @@ fn the_budget_never_folds_a_dot() {
 fn a_dense_frame_keys_every_print_once() {
     let config = dots_config();
     let trades = dense(11, 3_000, 0, 20_000);
-    let history = tape(config.clone(), &borrowed(&trades));
+    let history = recorded(config.clone(), &borrowed(&trades));
     let dots = windows(500, 250);
     let timeline = chart(12_700, 1_500, None);
     let frame = frame_at(&history, &timeline, prices("90", "110"), &dots);
@@ -474,7 +484,7 @@ fn a_refit_inside_a_ladder_step_keeps_every_dot() {
         ..dots_config()
     };
     let trades = dense(21, 3_000, 0, 20_000);
-    let history = tape(config.clone(), &borrowed(&trades));
+    let history = recorded(config.clone(), &borrowed(&trades));
     let timeline = chart(12_700, 1_500, None);
     let closed_bars: Vec<Bar> = (0..12).map(|i| bar(i * 1_000, i * 1_000 + 999)).collect();
     let forming = bar(12_000, 12_700);
@@ -522,7 +532,7 @@ fn a_refit_inside_a_ladder_step_keeps_every_dot() {
 #[test]
 fn a_coarse_level_places_at_its_weighted_tick_and_sizes_by_quantity() {
     let config = dots_config();
-    let history = tape(
+    let history = recorded(
         config.clone(),
         &[
             (1, 1_100, "100", "1", Side::Buy),
@@ -573,7 +583,7 @@ fn a_coarse_level_places_at_its_weighted_tick_and_sizes_by_quantity() {
 #[test]
 fn both_sides_at_one_level_and_window_are_one_pie() {
     let config = dots_config();
-    let history = tape(
+    let history = recorded(
         config.clone(),
         &[
             (1, 1_100, "100", "0.3", Side::Buy),
@@ -620,7 +630,7 @@ fn both_sides_at_one_level_and_window_are_one_pie() {
 #[test]
 fn a_window_splits_at_a_bar_close() {
     let config = dots_config();
-    let history = tape(
+    let history = recorded(
         config.clone(),
         &[
             (1, 1_100, "100", "1", Side::Buy),
@@ -677,7 +687,7 @@ fn a_window_splits_at_a_bar_close() {
 fn deep_history_never_changes_and_the_tape_never_piles_at_its_edge() {
     let config = dots_config();
     let trades = dense(17, 4_000, 0, 20_000);
-    let history = tape(config.clone(), &borrowed(&trades));
+    let history = recorded(config.clone(), &borrowed(&trades));
     let dots = windows(500, 250);
     let at = |now_ms: i64| {
         let timeline = chart(now_ms, 1_500, None);
@@ -720,7 +730,7 @@ fn deep_history_never_changes_and_the_tape_never_piles_at_its_edge() {
 #[test]
 fn dots_sit_still_through_a_pan_and_a_new_print() {
     let config = dots_config();
-    let history = tape(
+    let history = recorded(
         config.clone(),
         &[
             (1, 2_100, "100", "1", Side::Buy),
@@ -780,7 +790,7 @@ fn dots_sit_still_through_a_pan_and_a_new_print() {
 fn a_bar_shorter_than_its_window_is_one_dot_at_its_slot_centre() {
     let config = dots_config();
     let trades = dense(29, 3_000, 0, 9_000);
-    let history = tape(config.clone(), &borrowed(&trades));
+    let history = recorded(config.clone(), &borrowed(&trades));
     // Bars 300 to 900 ms long, opening off the epoch's second grid.
     let lengths = [
         700, 450, 900, 600, 800, 550, 300, 850, 650, 750, 500, 900, 600,
@@ -841,7 +851,7 @@ fn eviction_never_shrinks_a_dot() {
             .filter(|trade| trade.1 <= now_ms)
             .cloned()
             .collect();
-        tape(config.clone(), &borrowed(&recorded))
+        recorded(config.clone(), &borrowed(&recorded))
     };
     let dots = windows(500, 250);
     let (before, after) = (up_to(8_000), up_to(9_300));
@@ -876,6 +886,131 @@ fn eviction_never_shrinks_a_dot() {
         }
     }
     assert!(same > 0 && gone > 0, "{same} kept and {gone} gone");
+}
+
+/// Eviction drops a dot only when its own window may have lost prints. With
+/// the horizon inside the bar before the forming one, the tape keeps drawing
+/// that bar's windows after the horizon, instead of going blank from its
+/// open on.
+#[test]
+fn eviction_drops_only_the_windows_it_reached() {
+    let config = HeatmapConfig {
+        retention_ms: 1_000,
+        ..dots_config()
+    };
+    let trades: Vec<_> = dense(41, 4_000, 0, 10_000)
+        .into_iter()
+        .filter(|trade| trade.1 <= 9_300)
+        .collect();
+    let history = recorded(config.clone(), &borrowed(&trades));
+    let horizon = history.evicted_through_ms().expect("the history evicted");
+    assert!(
+        horizon > 8_000 && horizon < 8_400,
+        "the horizon cuts bar 8: {horizon}"
+    );
+    let dots = windows(500, 250);
+    let frame = frame_at(
+        &history,
+        &chart(9_300, 3_000, None),
+        prices("90", "110"),
+        &dots,
+    );
+    assert!(
+        frame
+            .aggressions
+            .iter()
+            .any(|dot| dot.live && (8_500..9_000).contains(&dot.first_timestamp_ms)),
+        "the tape keeps the cut bar's windows after the horizon"
+    );
+    assert!(
+        frame
+            .aggressions
+            .iter()
+            .any(|dot| dot.first_timestamp_ms >= 9_000),
+        "and the forming bar"
+    );
+    for dot in &frame.aggressions {
+        let width = if dot.live { 250 } else { 500 };
+        let start = dot.first_timestamp_ms.div_euclid(width) * width;
+        assert!(
+            start > horizon,
+            "a window the eviction reached was drawn: {dot:?}"
+        );
+    }
+}
+
+/// A price-grouping reset drops every print; the horizon moves to the newest
+/// one dropped, so nothing recorded before it can come back as a short dot.
+#[test]
+fn a_grouping_reset_moves_the_horizon_to_the_newest_dropped_print() {
+    let mut history = recorded(
+        dots_config(),
+        &[
+            (1, 1_100, "100", "1", Side::Buy),
+            (2, 1_700, "101", "2", Side::Sell),
+        ],
+    );
+    history.reset_price_grouping(dec("0.5")).unwrap();
+    assert_eq!(history.evicted_through_ms(), Some(1_700));
+}
+
+/// Recording starts mid-window: the window it starts in holds only the prints
+/// seen since, so it is not drawn; the next window is.
+#[test]
+fn the_window_recording_started_in_is_not_drawn() {
+    let config = dots_config();
+    let history = tape(
+        config.clone(),
+        &[
+            (1, 1_100, "100", "1", Side::Buy),
+            (2, 1_600, "100", "1", Side::Sell),
+        ],
+    );
+    let frame = frame_at(
+        &history,
+        &chart(3_900, 1_500, None),
+        prices("90", "110"),
+        &windows(500, 250),
+    );
+    let ids: Vec<Vec<u64>> = frame
+        .aggressions
+        .iter()
+        .map(|dot| dot.agg_ids.clone())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![vec![2]],
+        "only the window after the recording start"
+    );
+}
+
+/// While dots are on, the tape's window is not the lane setting's to choose:
+/// the surfaces that edit it say so instead of offering edits that do nothing.
+#[test]
+fn the_tape_window_says_it_is_fixed_while_dots_are_on() {
+    let on = dots_config();
+    let hint = on.lane_window_locked().expect("locked while dots are on");
+    assert!(hint.contains("fixed while volume dots are on"), "{hint}");
+    let off = HeatmapConfig {
+        volume_dots: VolumeDotStyle {
+            enabled: false,
+            ..on.volume_dots
+        },
+        ..on.clone()
+    };
+    assert_eq!(off.lane_window_locked(), None);
+}
+
+/// A full-size quantity that is not a number falls back to the dots' own
+/// default, never to a constant of its own.
+#[test]
+fn a_broken_dot_scale_falls_back_to_the_default() {
+    let mut config = dots_config();
+    config.volume_dots.full_quantity = f64::NAN;
+    assert_eq!(
+        crate::projection::dot_full_quantity(&config),
+        Decimal::from_f64(crate::config::DEFAULT_VOLUME_DOT_FULL_QUANTITY).unwrap()
+    );
 }
 
 /// With dots on the tape is a fixed 15 s, whatever the bars do, so it never
@@ -938,7 +1073,7 @@ fn a_forming_bar_only_ever_coarsens() {
 #[test]
 fn a_price_pan_never_changes_a_dot() {
     let config = dots_config();
-    let history = tape(
+    let history = recorded(
         config.clone(),
         &[
             (1, 1_100, "107", "1", Side::Buy),
@@ -973,7 +1108,7 @@ fn dots_carry_the_evidence_of_their_prints() {
             bubble_cluster_ms: 0,
             ..config()
         });
-        history.install_snapshot(100, 1, snapshot(10)).unwrap();
+        history.install_snapshot(0, 1, snapshot(10)).unwrap();
         for (agg_id, timestamp_ms, quantity) in [(7, 400, "1"), (8, 420, "2")] {
             history.record_aggression(&Trade {
                 agg_id,
@@ -1040,7 +1175,7 @@ fn the_dot_count_is_bounded_by_bars_and_levels() {
     assert!(DOT_LEVEL_LADDER_TICKS.ends_with(&[500, 1_000, 2_000, 5_000]));
     let config = dots_config();
     let trades = dense(13, 6_000, 0, 20_000);
-    let history = tape(config.clone(), &borrowed(&trades));
+    let history = recorded(config.clone(), &borrowed(&trades));
     let timeline = chart(12_700, 1_500, None);
     // 2 px a bar: every bar is one window. 10-tick levels over 91..=109.
     let dots = VolumeDots {
@@ -1076,7 +1211,7 @@ fn dots_are_order_independent() {
     let timeline = chart(11_500, 1_500, None);
     let dots = windows(500, 250);
     let project_all = |trades: &[(u64, i64, String, String, Side)]| {
-        let history = tape(config.clone(), &borrowed(trades));
+        let history = recorded(config.clone(), &borrowed(trades));
         frame_at(&history, &timeline, prices("90", "110"), &dots)
     };
     assert_eq!(project_all(&shuffled), project_all(&trades));
@@ -1102,7 +1237,7 @@ fn the_min_quantity_floor_is_fixed_and_counted() {
     let mut with_a_giant = small.to_vec();
     with_a_giant.push((4, 2_100, "105", "5000", Side::Buy));
     for trades in [small.to_vec(), with_a_giant] {
-        let history = tape(config.clone(), &trades);
+        let history = recorded(config.clone(), &trades);
         let frame = frame_at(
             &history,
             &chart(3_900, 1_500, None),
@@ -1140,7 +1275,7 @@ fn equal_quantities_are_equal_radii_anywhere() {
     with_a_giant.push((5, 3_500, "108", "9000", Side::Sell));
     let mut radii = Vec::new();
     for trades in [prints.to_vec(), with_a_giant] {
-        let history = tape(config.clone(), &trades);
+        let history = recorded(config.clone(), &trades);
         for dots in [
             windows(500, 250),
             coarse(250, 100, 5),
@@ -1198,7 +1333,7 @@ fn a_merged_level_is_the_sum_and_never_smaller() {
         ..dots_config()
     };
     let trades = dense(37, 3_000, 0, 12_000);
-    let history = tape(config.clone(), &borrowed(&trades));
+    let history = recorded(config.clone(), &borrowed(&trades));
     let timeline = chart(11_500, 1_500, None);
     let fine = frame_at(
         &history,
@@ -1271,7 +1406,7 @@ fn the_dot_scale_rescales_every_dot_alike() {
             },
             ..dots_config()
         };
-        let history = tape(
+        let history = recorded(
             config.clone(),
             &[
                 (1, 1_100, "100", "4", Side::Buy),
@@ -1327,7 +1462,7 @@ fn off_leaves_the_frame_unchanged() {
         ..dots_config()
     };
     let trades = dense(5, 1_500, 0, 12_000);
-    let history = tape(config.clone(), &borrowed(&trades));
+    let history = recorded(config.clone(), &borrowed(&trades));
     let timeline = chart(11_500, 1_500, None);
     let plain = project(&history, &timeline, prices("90", "110"));
     let offered = frame_at(&history, &timeline, prices("90", "110"), &windows(500, 250));
