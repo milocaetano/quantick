@@ -712,6 +712,89 @@ fn a_regional_mark_is_binned_at_the_price_it_is_drawn_at() {
     }
 }
 
+/// A long forming bar — 2,000 ticks can stay open for minutes — keeps
+/// stretching its slot to the live edge, so a column cut as a share of the
+/// slot slid under its prints every frame and regrouped them. Candle
+/// columns are stretches of market time from the bar's open too, so its
+/// past holds still while the bar grows.
+#[test]
+fn a_forming_bar_never_regroups_its_past_on_the_candles() {
+    let config = merging(true);
+    let closed: Vec<Bar> = (0..10).map(|i| bar(i * 1_000, i * 1_000 + 999)).collect();
+    let trades = dense(21, 800, 10_000, 36_000);
+    let time_of: BTreeMap<u64, i64> = trades.iter().map(|(id, ms, ..)| (*id, *ms)).collect();
+    let at = |now_ms: i64| {
+        let partial = bar(10_000, now_ms);
+        let timeline = BarTimeline::from_bars(
+            0,
+            &closed,
+            Some(&partial),
+            Some(crate::LiveEdge {
+                now_ms,
+                window_ms: 2_000,
+                reference_ms: 2_000,
+                on_newest_bar: true,
+            }),
+        );
+        let opens: Vec<i64> = (0..=10).map(|i| i * 1_000).collect();
+        // Wide candles, so the forming bar is cut into several columns.
+        let geometry = geometry(240.0, 200.0, opens);
+        let mut projection = project(
+            &tape(config.clone(), &borrowed(&trades)),
+            &timeline,
+            wide_prices(),
+        );
+        projection.merge_overlapping_bubbles(&geometry, &timeline, wide_prices(), &config);
+        projection
+    };
+    let in_the_bar = |mark: &AggressionPrimitive| {
+        !mark.live && mark.agg_ids.iter().all(|id| time_of[id] >= 10_000)
+    };
+
+    let before = groups(&at(40_000), in_the_bar);
+    assert!(before.len() > 10, "enough folds to compare");
+    assert!(
+        before.iter().any(|(_, ids)| ids.len() > 1),
+        "the bar holds folds"
+    );
+    for later in [40_300, 40_700, 41_100, 42_000] {
+        assert_eq!(
+            groups(&at(later), in_the_bar),
+            before,
+            "the forming bar grew to {later} ms and its past regrouped"
+        );
+    }
+}
+
+/// A cell smaller than a full-size disc shrinks every disc in it by the same
+/// share, never cuts them all to one size: a bigger print still reads
+/// bigger, so a crowded, zoomed-out chart does not look like a row of equal
+/// aggressions.
+#[test]
+fn a_capped_cell_keeps_bigger_prints_bigger() {
+    let config = merging(true);
+    let (minimum, maximum) = (config.bubbles.min_radius, config.bubbles.max_radius);
+    let mark = |size: f32| AggressionPrimitive {
+        size,
+        // Room for the dressing and a disc a third of the full size.
+        cell_radius_px: Some(config.bubbles.dressing_margin() + maximum / 3.0),
+        ..frame(&config, &[(1, 3_100, "100", "1", Side::Buy)]).aggressions[0].clone()
+    };
+    let radii: Vec<f32> = [0.2_f32, 0.5, 1.0]
+        .into_iter()
+        .map(|size| {
+            mark(size)
+                .drawn_disc(minimum, maximum, &config.bubbles)
+                .radius
+        })
+        .collect();
+    assert!(
+        radii.windows(2).all(|pair| pair[0] < pair[1]),
+        "sizes collapsed under the cap: {radii:?}"
+    );
+    assert!(radii[2] <= maximum / 3.0 + 1e-4, "the cap still holds");
+}
+
 /// Off draws today's frame, bit for bit, however crowded it is.
 #[test]
 fn off_reproduces_the_frame_unchanged() {
