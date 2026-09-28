@@ -43,10 +43,10 @@ const SWITCHES: [Switch; 10] = [
         write: OrderflowView::set_gaps_visible,
     },
     Switch {
-        read: |view| view.config.bubble_overlap_merge,
+        read: |view| view.config.volume_dots.enabled,
         write: |view, on| {
             let before = view.config.clone();
-            view.config.bubble_overlap_merge = on;
+            view.config.volume_dots.enabled = on;
             view.commit_config_changes(before);
         },
     },

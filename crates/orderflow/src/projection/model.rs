@@ -238,7 +238,7 @@ pub struct HeatmapProjection {
     /// Visible aggressive executions.
     pub aggressions: Vec<AggressionPrimitive>,
     /// Whether [`aggressions`](Self::aggressions) are volume dots
-    /// ([`HeatmapConfig::bubble_overlap_merge`]): one mark per bar, window of
+    /// ([`HeatmapConfig::volume_dots`]): one mark per bar, window of
     /// market time and price level, both sides in it, on one per-pane
     /// size scale and one radius range for both panes, listed smallest first
     /// so the biggest paints on top.

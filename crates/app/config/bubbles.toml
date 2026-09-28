@@ -48,8 +48,8 @@ active = "default"
 # One more switch is off in every shipped look:
 #   * overlap_merge — volume dots, Bookmap style: one dot per bar, window of
 #     market time and price level of whole ticks, both sides in it as a
-#     buy/sell pie, on the lane too; full size at size_reference_quantity
-#     contracts, one scale for every dot. Windows and levels are
+#     buy/sell pie, on the lane too; full size at volume_dot_full_quantity
+#     contracts (default 1000), one scale for every dot. Windows and levels are
 #     anchored in time and price, so a closed dot never moves; the zoom picks
 #     them. It replaces dust_merge, region_rows and candle_summary while on.
 [[presets]]

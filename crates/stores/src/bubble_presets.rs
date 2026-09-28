@@ -50,6 +50,10 @@ const fn default_region_ms() -> i64 {
     DEFAULT_BUBBLE_REGION_MS
 }
 
+const fn default_volume_dot_full_quantity() -> f64 {
+    quantick_orderflow::DEFAULT_VOLUME_DOT_FULL_QUANTITY
+}
+
 /// One named snapshot of the aggression-bubble panel's *appearance*.
 ///
 /// Deliberately not a switch: whether the layer draws at all stays a live
@@ -80,6 +84,10 @@ pub struct BubblePreset {
     /// exactly what it drew.
     #[serde(default)]
     pub overlap_merge: bool,
+    /// Contracts a volume dot holds at the largest radius. A file written
+    /// before dots had a scale of their own loads the default.
+    #[serde(default = "default_volume_dot_full_quantity")]
+    pub volume_dot_full_quantity: f64,
     /// Height of one aggression region in visual price rows; one is off. A
     /// preset written before regions existed simply omits the key and keeps
     /// per-row marks.
@@ -107,7 +115,8 @@ impl BubblePreset {
             cluster_ms: config.bubble_cluster_ms,
             dust_merge_ms: config.bubble_dust_merge_ms,
             candle_summary: config.bubble_candle_summary,
-            overlap_merge: config.bubble_overlap_merge,
+            overlap_merge: config.volume_dots.enabled,
+            volume_dot_full_quantity: config.volume_dots.full_quantity,
             region_rows: config.bubble_region_rows,
             region_ms: config.bubble_region_ms,
             bubbles: config.bubbles.clone(),
@@ -134,7 +143,12 @@ impl BubblePreset {
         config.bubble_cluster_ms = self.cluster_ms;
         config.bubble_dust_merge_ms = self.dust_merge_ms;
         config.bubble_candle_summary = self.candle_summary;
-        config.bubble_overlap_merge = self.overlap_merge;
+        config.volume_dots = quantick_orderflow::VolumeDotStyle {
+            enabled: self.overlap_merge,
+            full_quantity: quantick_orderflow::sane_volume_dot_full_quantity(
+                self.volume_dot_full_quantity,
+            ),
+        };
         config.bubble_region_rows = self.region_rows;
         config.bubble_region_ms = self.region_ms;
         config.bubbles = self.bubbles.clone();
@@ -211,6 +225,8 @@ impl BubblePresetFile {
             preset.cluster_ms = preset
                 .cluster_ms
                 .clamp(0, quantick_orderflow::config::MAX_BUBBLE_CLUSTER_MS);
+            preset.volume_dot_full_quantity =
+                quantick_orderflow::sane_volume_dot_full_quantity(preset.volume_dot_full_quantity);
             preset.region_rows = preset
                 .region_rows
                 .clamp(1, quantick_orderflow::config::MAX_BUBBLE_REGION_ROWS);

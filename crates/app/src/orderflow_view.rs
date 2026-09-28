@@ -1360,6 +1360,7 @@ mod tests {
             dust_merge_ms: 3_000,
             candle_summary: true,
             overlap_merge: false,
+            volume_dot_full_quantity: 1_000.0,
             region_rows: 3,
             region_ms: 2_000,
             bubbles: BubbleStyle {

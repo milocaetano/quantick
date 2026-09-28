@@ -98,6 +98,15 @@ impl ClusteringSection<'_> {
         .on_hover_text(
             "fold same-side bubbles landing in a price region this many rows tall into one bubble at their volume-weighted price — aggression read per zone, the Bookmap way, instead of one mark per row. Quantities, ids and matched evidence are summed exactly; buy and sell regions stay separate marks",
         );
+        if config.volume_dots.enabled {
+            ui.add(
+                egui::DragValue::new(&mut config.volume_dots.full_quantity)
+                    .range(1.0..=10_000_000.0)
+                    .speed(10.0)
+                    .prefix("dot full size qty "),
+            )
+            .on_hover_text("contracts a volume dot holds at the largest radius; area follows quantity below it, on both panes");
+        }
         ui.checkbox(&mut config.bubble_candle_summary, "summarize closed bars")
             .on_hover_text(
                 "fold every print of a bar and price range into one bubble carrying both sides, drawn as a pie whose sectors are the buy/sell proportion. The forming bar included: its pie is a running total that grows with each order, so the compressed left side reports what is happening now instead of only what already happened. Quantities, ids and matched evidence are summed exactly, and the tape still shows those same prints one by one",

@@ -213,7 +213,7 @@ pub struct ProjectionRequest {
     pub lane_reference_ms: Option<i64>,
     pub price_range: (f64, f64),
     /// The rungs the view chose for volume dots
-    /// ([`HeatmapConfig::bubble_overlap_merge`]). `None` from a caller with no
+    /// ([`HeatmapConfig::volume_dots`]). `None` from a caller with no
     /// canvas, which then gets the plain frame.
     ///
     /// Not part of [`Self::layout`]: the finished half depends only on its
@@ -1115,7 +1115,7 @@ impl BookEngine {
         let dots = request
             .dot_zoom
             .as_ref()
-            .filter(|_| self.config.bubble_overlap_merge)
+            .filter(|_| self.config.volume_dots.enabled)
             .map(|zoom| {
                 VolumeDots::resolve(
                     zoom,

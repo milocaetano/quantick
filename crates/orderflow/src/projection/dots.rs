@@ -33,8 +33,9 @@
 //! A dot sits at its quantity-weighted price rounded to the native tick,
 //! inside its level, and is sized on one absolute scale for the whole
 //! session, on both panes: area proportional to quantity, full size at the
-//! preset's `size_reference_quantity`, whatever the window, the level or the
-//! bar. A bigger volume is always a bigger dot, so levels merged by a zoom
+//! dots' own `volume_dot_full_quantity` — a dot sums many prints, so the
+//! prints' `size_reference_quantity` would saturate it — whatever the window,
+//! the level or the bar. A bigger volume is always a bigger dot, so levels merged by a zoom
 //! draw a dot as big as the sum they hold.
 //!
 //! A print is the tape's while its tape window starts at or after the tape
@@ -264,9 +265,9 @@ pub struct DotScale {
     pub tape_window_ms: i64,
     /// Native ticks per price level.
     pub level_ticks: i64,
-    /// Quantity of a full-size dot, on both panes: the preset's
-    /// `size_reference_quantity`.
-    pub size_reference: Decimal,
+    /// Quantity of a full-size dot, on both panes: the dots' own
+    /// `volume_dot_full_quantity`.
+    pub volume_dot_full_quantity: Decimal,
 }
 
 /// One window a print is keyed into.
@@ -404,7 +405,7 @@ impl VolumeDots {
                 .and_then(|(open, close)| self.bar_window(close - open)),
             tape_window_ms: self.tape_window_ms,
             level_ticks: self.level_ticks,
-            size_reference: full,
+            volume_dot_full_quantity: full,
         }
     }
 }

@@ -13852,19 +13852,19 @@
                 "$ref": "#/$defs/WireU64",
                 "description": "Native ticks per price level, on both panes."
               },
-              "size_reference": {
-                "$ref": "#/$defs/CanonicalDecimal",
-                "description": "The quantity of a full-size dot, on both panes: area is proportional\nto quantity against this one session scale."
-              },
               "tape_window_ms": {
                 "$ref": "#/$defs/WireU64",
                 "description": "The tape's window, in milliseconds."
+              },
+              "volume_dot_full_quantity": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Contracts a dot holds at the largest radius, on both panes: area is\nproportional to quantity against this one session scale. The bubble\nsetting `volume_dot_full_quantity`."
               }
             },
             "required": [
               "tape_window_ms",
               "level_ticks",
-              "size_reference"
+              "volume_dot_full_quantity"
             ],
             "type": "object"
           },

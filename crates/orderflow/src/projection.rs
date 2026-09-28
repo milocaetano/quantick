@@ -105,7 +105,7 @@ pub fn project_with_dots(
 /// until the layout moves under it.
 ///
 /// `dots` keys the bubbles as volume dots when the configuration turns them
-/// on ([`HeatmapConfig::bubble_overlap_merge`]); off, it is ignored.
+/// on ([`HeatmapConfig::volume_dots`]); off, it is ignored.
 #[must_use]
 pub fn project_settled(
     history: &LiquidityHistory,
@@ -114,7 +114,7 @@ pub fn project_settled(
     dots: Option<&VolumeDots>,
 ) -> SettledProjection {
     let config = history.config();
-    let dots = dots.filter(|_| config.bubble_overlap_merge);
+    let dots = dots.filter(|_| config.volume_dots.enabled);
     let effective_grouping = EffectiveGrouping::resolve(
         config.display_grouping,
         config.price_grouping,
@@ -370,7 +370,7 @@ pub fn project_settled(
     // independent of the display filter below, so hiding small prints never
     // silently rescales the ones left on screen.
     //
-    // Volume dots go one step further: the preset's pinned quantity, on both
+    // Volume dots go one step further: their own pinned quantity, on both
     // panes, whatever the window, the level or the bar, so a dot's size never
     // depends on what else the session did and a bigger volume is always a
     // bigger dot.
@@ -690,11 +690,12 @@ pub fn project_live(
     }
 }
 
-/// The quantity a full-size volume dot holds per second and tick of its cell:
-/// the preset's pinned `size_reference_quantity`.
+/// The quantity a full-size volume dot holds: the dots' own
+/// [`VolumeDotStyle::full_quantity`](crate::config::VolumeDotStyle::full_quantity),
+/// never the prints' `size_reference_quantity`.
 #[must_use]
 pub fn dot_full_quantity(config: &HeatmapConfig) -> Decimal {
-    config.bubbles.fixed_reference_decimal().unwrap_or_default()
+    Decimal::from_f64(config.volume_dots.full_quantity).unwrap_or(Decimal::ONE_THOUSAND)
 }
 
 /// Allocate `events` to the prints of one half of the chart.

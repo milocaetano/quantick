@@ -225,9 +225,10 @@ pub struct VolumeDotsSnapshot {
     pub tape_window_ms: WireU64,
     /// Native ticks per price level, on both panes.
     pub level_ticks: WireU64,
-    /// The quantity of a full-size dot, on both panes: area is proportional
-    /// to quantity against this one session scale.
-    pub size_reference: CanonicalDecimal,
+    /// Contracts a dot holds at the largest radius, on both panes: area is
+    /// proportional to quantity against this one session scale. The bubble
+    /// setting `volume_dot_full_quantity`.
+    pub volume_dot_full_quantity: CanonicalDecimal,
 }
 
 impl From<&quantick_orderflow::DotScale> for VolumeDotsSnapshot {
@@ -238,7 +239,7 @@ impl From<&quantick_orderflow::DotScale> for VolumeDotsSnapshot {
             candle_base_window_ms: scale.newest_bar_window_ms.map(wire),
             tape_window_ms: wire(scale.tape_window_ms),
             level_ticks: wire(scale.level_ticks),
-            size_reference: canonical_decimal(scale.size_reference),
+            volume_dot_full_quantity: canonical_decimal(scale.volume_dot_full_quantity),
         }
     }
 }

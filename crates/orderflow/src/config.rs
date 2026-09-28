@@ -23,6 +23,50 @@ pub use lane::{
     lane_window_label, same_lane_window,
 };
 
+/// Contracts a volume dot holds at the largest radius, by default: a dot
+/// sums many prints, so it is drawn on a scale of its own, not on the
+/// prints' `size_reference_quantity`.
+pub const DEFAULT_VOLUME_DOT_FULL_QUANTITY: f64 = 1_000.0;
+
+/// See [`sane_volume_dot_full_quantity`].
+const MIN_VOLUME_DOT_FULL_QUANTITY: f64 = 1.0;
+
+/// See [`sane_volume_dot_full_quantity`].
+const MAX_VOLUME_DOT_FULL_QUANTITY: f64 = 10_000_000.0;
+
+/// Volume dots: whether bubbles are drawn as dots, and how many contracts a
+/// dot holds at the largest radius.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VolumeDotStyle {
+    /// Bubbles are drawn as volume dots. The layer `bubble_overlap_merge`,
+    /// the preset key `overlap_merge`.
+    pub enabled: bool,
+    /// Contracts a dot holds at the largest radius; area is proportional to
+    /// quantity below it, on both panes. The preset key
+    /// `volume_dot_full_quantity`.
+    pub full_quantity: f64,
+}
+
+impl Default for VolumeDotStyle {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            full_quantity: DEFAULT_VOLUME_DOT_FULL_QUANTITY,
+        }
+    }
+}
+
+/// A dot's full-size quantity kept to `1..=10_000_000`, the default when it
+/// is not a number.
+#[must_use]
+pub fn sane_volume_dot_full_quantity(quantity: f64) -> f64 {
+    if quantity.is_finite() {
+        quantity.clamp(MIN_VOLUME_DOT_FULL_QUANTITY, MAX_VOLUME_DOT_FULL_QUANTITY)
+    } else {
+        DEFAULT_VOLUME_DOT_FULL_QUANTITY
+    }
+}
+
 /// Shortest history window accepted by the UI.
 pub const MIN_RETENTION_MS: i64 = 1_000;
 /// Longest in-memory history window accepted by the UI.
@@ -245,7 +289,8 @@ pub struct HeatmapConfig {
     /// one behind the other. Prints in the live lane are never summarized —
     /// they have not finished happening.
     pub bubble_candle_summary: bool,
-    /// Whether bubbles are drawn as volume dots, Bookmap style.
+    /// Whether bubbles are drawn as volume dots, Bookmap style, and how big a
+    /// dot is drawn.
     ///
     /// Off by default, and off draws exactly what it drew before. On, every
     /// print lands in the dot keyed by its bar, a window of market time
@@ -255,12 +300,12 @@ pub struct HeatmapConfig {
     /// every roll, pan and refit; only a zoom across a ladder step picks
     /// another window or level (`DOT_WINDOW_LADDER_MS`,
     /// `DOT_LEVEL_LADDER_TICKS`). A dot is full size at
-    /// [`BubbleStyle::size_reference_quantity`] contracts, one scale for every
-    /// dot, draws on the candles' radius range on both panes, sits at
+    /// [`VolumeDotStyle::full_quantity`] contracts, one scale for every dot,
+    /// draws on the candles' radius range on both panes, sits at
     /// its weighted price rounded to the tick and may overlap, the biggest on
     /// top. The dust merge, the regional fold, the closed-bar summary and the
     /// mark budget do not run; the [`BubbleStyle::min_quantity`] floor does.
-    pub bubble_overlap_merge: bool,
+    pub volume_dots: VolumeDotStyle,
     /// Everything else the aggression-bubble panel owns: geometry (including
     /// the alpha and largest radius this used to carry as two flat fields),
     /// colour, consumption marks and labels.
@@ -356,7 +401,7 @@ impl Default for HeatmapConfig {
             bubble_region_rows: 1,
             bubble_region_ms: DEFAULT_BUBBLE_REGION_MS,
             bubble_candle_summary: false,
-            bubble_overlap_merge: false,
+            volume_dots: VolumeDotStyle::default(),
             bubbles: BubbleStyle::default(),
             live_lane: LiveLaneStyle::default(),
             show_depth: true,
@@ -388,7 +433,7 @@ impl HeatmapConfig {
     /// rescales when a bar closes. The one place the window is resolved.
     #[must_use]
     pub fn lane_window(&self) -> LaneWindow {
-        if self.bubble_overlap_merge {
+        if self.volume_dots.enabled {
             LaneWindow::Fixed {
                 ms: DOT_TAPE_WINDOW_MS,
             }
@@ -538,6 +583,8 @@ impl HeatmapConfig {
         self.bubble_region_rows = self.bubble_region_rows.clamp(1, MAX_BUBBLE_REGION_ROWS);
         self.bubble_region_ms = self.bubble_region_ms.clamp(0, MAX_BUBBLE_REGION_MS);
         self.bubbles.sanitize();
+        self.volume_dots.full_quantity =
+            sane_volume_dot_full_quantity(self.volume_dots.full_quantity);
         self.live_lane.sanitize();
         self.liquidity_correlation_ms = self
             .liquidity_correlation_ms
