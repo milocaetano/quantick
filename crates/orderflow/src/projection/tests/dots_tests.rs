@@ -293,19 +293,33 @@ fn the_tape_zoom_never_changes_the_candle_dots() {
             .aggressions
             .iter()
             .filter(|dot| !dot.live)
-            .map(|dot| (dot.timestamp_ms, dot.price, dot.quantity, dot.buy_quantity))
+            .map(|dot| {
+                (
+                    dot.first_timestamp_ms,
+                    dot.price_bucket,
+                    dot.quantity,
+                    dot.buy_quantity,
+                )
+            })
             .collect();
         facts
     };
     let short = candles(1_500);
-    assert_eq!(candles(12_000), short, "a long tape leaves the candles alone");
+    assert_eq!(
+        candles(12_000),
+        short,
+        "a long tape leaves the candles alone"
+    );
     let drawn: Decimal = short.iter().map(|dot| dot.2).sum();
     let traded: Decimal = trades
         .iter()
         .filter(|trade| trade.1 <= 12_700)
         .map(|trade| dec(&trade.3))
         .sum();
-    assert_eq!(drawn, traded, "the candles hold every contract of their bars");
+    assert_eq!(
+        drawn, traded,
+        "the candles hold every contract of their bars"
+    );
 }
 
 /// Every dot is one bar, one window and one native price level; the folds
@@ -320,13 +334,18 @@ fn a_dense_frame_keys_every_print_once() {
     let dots = windows(500, 250);
     let timeline = chart(12_700, 1_500, None);
     let frame = frame_at(&history, &timeline, prices("90", "110"), &dots);
-    let drawn: Decimal = frame.aggressions.iter().map(|dot| dot.quantity).sum();
+    let drawn: Decimal = frame
+        .aggressions
+        .iter()
+        .filter(|dot| !dot.live)
+        .map(|dot| dot.quantity)
+        .sum();
     let traded: Decimal = trades
         .iter()
         .filter(|trade| trade.1 <= 12_700)
         .map(|trade| dec(&trade.3))
         .sum();
-    assert_eq!(drawn, traded, "every contract, once");
+    assert_eq!(drawn, traded, "every contract, once on the candles");
     for dot in &frame.aggressions {
         assert_eq!(dot.price_span, Decimal::ONE, "one native level");
         assert_eq!(dot.folded_marks, 0, "a dot is not a fold");
@@ -746,7 +765,9 @@ fn a_coarse_level_places_at_its_weighted_tick_and_sizes_by_quantity() {
         frame
             .aggressions
             .iter()
-            .find(|dot| dot.agg_ids.contains(&id))
+            .filter(|dot| dot.agg_ids.contains(&id))
+            // The tape's copy when the tape holds the print.
+            .max_by_key(|dot| dot.live)
             .expect("drawn")
     };
     let level = dot(1);
@@ -1065,8 +1086,9 @@ fn eviction_never_shrinks_a_dot() {
         prices("90", "110"),
         &dots,
     );
-    let candles = facts(&early, |mark| !mark.live);
-    let late_facts = facts(&late, |_| true);
+    // The bar forming at 8 s still grows; every closed bar's dot is final.
+    let candles = facts(&early, |mark| !mark.live && mark.first_timestamp_ms < 8_000);
+    let late_facts = facts(&late, |mark| !mark.live);
     let (mut same, mut gone) = (0, 0);
     for dot in &candles {
         let sharing: Vec<_> = late_facts
@@ -1444,8 +1466,9 @@ fn the_min_quantity_floor_is_fixed_and_counted() {
 }
 
 /// Size is one absolute scale for the whole session: equal quantities are
-/// equal dots on the tape and on the candles, in any bar, at any rung and
-/// any level, in any frame, whatever else traded.
+/// equal dots on one pane, in any bar, at any rung and any level, in any
+/// frame, whatever else traded. The candles draw that scale smaller.
+/// Radii are compared within a pane.
 #[test]
 fn equal_quantities_are_equal_radii_anywhere() {
     let config = dots_config();
@@ -1473,26 +1496,32 @@ fn equal_quantities_are_equal_radii_anywhere() {
             );
             assert!(frame.volume_dots);
             for id in 1..=4 {
-                let dot = frame
+                let alone: Vec<_> = frame
                     .aggressions
                     .iter()
-                    .find(|dot| dot.agg_ids == vec![id])
-                    .expect("drawn alone");
-                let (minimum, maximum) =
-                    config
-                        .live_lane
-                        .pane_radii(&config.bubbles, dot.live, frame.volume_dots);
-                radii.push((id, dot.live, bubble_radius(dot.size, minimum, maximum)));
+                    .filter(|dot| dot.agg_ids == vec![id])
+                    .collect();
+                assert!(!alone.is_empty(), "print {id} drawn alone");
+                for dot in alone {
+                    let (minimum, maximum) =
+                        config
+                            .live_lane
+                            .pane_radii(&config.bubbles, dot.live, frame.volume_dots);
+                    radii.push((id, dot.live, bubble_radius(dot.size, minimum, maximum)));
+                }
             }
         }
     }
     assert!(radii.iter().any(|(_, live, _)| *live) && radii.iter().any(|(_, live, _)| !live));
-    let first = radii[0].2;
-    for (id, live, radius) in &radii {
-        assert_eq!(
-            *radius, first,
-            "print {id} (tape: {live}) drawn at another size"
-        );
+    for pane in [true, false] {
+        let mut sizes = radii.iter().filter(|(_, live, _)| *live == pane);
+        let first = sizes.next().expect("a dot on each pane").2;
+        for (id, live, radius) in sizes {
+            assert_eq!(
+                *radius, first,
+                "print {id} (tape: {live}) drawn at another size"
+            );
+        }
     }
     assert_eq!(
         config.live_lane.pane_radii(&config.bubbles, true, false),
@@ -1543,7 +1572,9 @@ fn a_merged_level_is_the_sum_and_never_smaller() {
         let parts: Vec<&AggressionPrimitive> = fine
             .aggressions
             .iter()
-            .filter(|part| part.agg_ids.iter().all(|id| dot.agg_ids.contains(id)))
+            .filter(|part| {
+                part.live == dot.live && part.agg_ids.iter().all(|id| dot.agg_ids.contains(id))
+            })
             .collect();
         let covered: usize = parts.iter().map(|part| part.agg_ids.len()).sum();
         assert_eq!(

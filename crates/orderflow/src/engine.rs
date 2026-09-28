@@ -2158,9 +2158,10 @@ mod tests {
         let mut engine = engine_with(true);
         let dots = frame(&mut engine, Some(zoom(100, 1)));
         assert!(dots.volume_dots);
-        assert_eq!(dots.aggressions.len(), 1, "one level, one window: a pie");
-        assert_eq!(dots.aggressions[0].quantity, Decimal::from(5));
-        assert_eq!(dots.aggressions[0].buy_quantity, Decimal::from(3));
+        let tape: Vec<_> = dots.aggressions.iter().filter(|mark| mark.live).collect();
+        assert_eq!(tape.len(), 1, "one level, one window: a pie");
+        assert_eq!(tape[0].quantity, Decimal::from(5));
+        assert_eq!(tape[0].buy_quantity, Decimal::from(3));
         let reported = ProjectionRequest {
             dot_zoom: Some(zoom(100, 1)),
             ..request(&[bar(900, 1_100)], (98.0, 102.0))

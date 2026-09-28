@@ -2160,7 +2160,7 @@ mod tests {
             !live_strip::aggression_rows(
                 &frame.projection.aggressions,
                 900,
-                frame.projection.summarized,
+                frame.projection.candles_hold_every_print(),
                 frame.projection.effective_grouping.bucket_width,
             )
             .is_empty(),
@@ -2237,7 +2237,7 @@ mod tests {
             let rows = live_strip::aggression_rows(
                 &frame.projection.aggressions,
                 900,
-                frame.projection.summarized,
+                frame.projection.candles_hold_every_print(),
                 frame.projection.effective_grouping.bucket_width,
             );
             (rows, frame.projection.volume_dots, tick)

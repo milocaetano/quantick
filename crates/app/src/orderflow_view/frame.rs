@@ -252,7 +252,7 @@ impl OrderflowView {
             (Some(frame), Some(open_ms)) => live_strip::aggression_rows(
                 &frame.projection.aggressions,
                 open_ms,
-                frame.projection.summarized,
+                frame.projection.candles_hold_every_print(),
                 frame.projection.effective_grouping.bucket_width,
             ),
             _ => Vec::new(),

@@ -117,7 +117,11 @@ pub(super) fn cluster_tier(
         if on_tape {
             tape_prints.push(trade);
         }
-        // Exactly one pane draws a print, and which one is the tape's window:
+        // With volume dots on, the tape is a zoom of its own and the candles
+        // draw every print of their bars, so the tape's length never empties
+        // or changes the tick chart: the trader reads them as two views.
+        // Without dots, exactly one pane draws a print, and which one is the
+        // tape's window:
         // while a print is inside it the tape has it, and when it falls out of
         // the window it lands in the slot of the bar it happened in. Widening
         // the tape therefore *moves* marks from the candles to the tape and
@@ -126,7 +130,7 @@ pub(super) fn cluster_tier(
         // the dishonesty this whole change exists to remove. The summary is the
         // one exception: a pie is an aggregate of the bar, not a second copy of
         // a print, so the bar keeps counting prints the tape is still showing.
-        if (summarizing || !on_tape)
+        if (summarizing || !on_tape || dots.is_some())
             && (dots.is_none() || timeline.slot_at(trade.timestamp_ms).is_some())
         {
             slot_prints.push(trade);

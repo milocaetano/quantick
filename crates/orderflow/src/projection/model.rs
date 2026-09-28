@@ -272,6 +272,15 @@ pub struct HeatmapProjection {
 }
 
 impl HeatmapProjection {
+    /// Whether the candles hold every print their bars traded while the tape
+    /// also shows the newest ones: a bar summary, or volume dots, whose tape
+    /// is a zoom of its own. A consumer summing a bar reads the candles
+    /// alone, or it counts the tape's contracts twice.
+    #[must_use]
+    pub fn candles_hold_every_print(&self) -> bool {
+        self.summarized || self.volume_dots
+    }
+
     /// A frame with nothing to draw: the seed the chart's render tests build a
     /// projection from, so they exercise the same struct the pipeline emits.
     /// Not `cfg(test)`: those tests live in the crate that links this one.

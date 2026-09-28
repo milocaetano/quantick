@@ -14,6 +14,10 @@ use super::bubbles::{
 use super::{MAX_BUBBLE_CLUSTER_MS, finite_clamp};
 use crate::history::TapeAge;
 
+/// The largest radius of a volume dot on the candles, as a share of the
+/// style's: the candle is what reads there, the dots only mark the flow.
+pub const CANDLE_DOT_RADIUS_SHARE: f32 = 0.4;
+
 /// Default share of the chart width taken by the live lane. Enough room for
 /// the tape to be read as a tape, with two thirds of the chart left for the
 /// history it is read against.
@@ -560,15 +564,19 @@ impl LiveLaneStyle {
     }
 
     /// The radius range a pane draws its bubbles on: the tape's own scaled
-    /// range for a `live` mark, the style's for a candle mark — and the
-    /// style's on both panes for volume dots, whose one fixed size scale is
-    /// the promise that equal quantities are equal discs anywhere.
+    /// range for a `live` mark, the style's for a candle mark. Volume dots
+    /// keep the style's range on the tape and shrink on the candles to
+    /// [`CANDLE_DOT_RADIUS_SHARE`] of it, never under the smallest radius, so
+    /// the candle stays the thing that reads there.
     #[must_use]
     pub fn pane_radii(&self, bubbles: &BubbleStyle, live: bool, volume_dots: bool) -> (f32, f32) {
-        if live && !volume_dots {
-            self.scaled_radii(bubbles)
-        } else {
-            (bubbles.min_radius, bubbles.max_radius)
+        match (live, volume_dots) {
+            (true, false) => self.scaled_radii(bubbles),
+            (false, true) => {
+                let max = (bubbles.max_radius * CANDLE_DOT_RADIUS_SHARE).max(bubbles.min_radius);
+                (bubbles.min_radius, max)
+            }
+            _ => (bubbles.min_radius, bubbles.max_radius),
         }
     }
 }
