@@ -1118,14 +1118,7 @@ impl BookEngine {
             .dot_zoom
             .as_ref()
             .filter(|_| self.config.volume_dots.enabled)
-            .map(|zoom| {
-                VolumeDots::resolve(
-                    zoom,
-                    &self.config,
-                    &request.closed,
-                    request.partial.as_ref(),
-                )
-            });
+            .map(|zoom| VolumeDots::resolve(zoom, &request.closed, request.partial.as_ref()));
         let dot_rungs = dots
             .as_ref()
             .map(|dots| (dots.level_ticks, dots.bar_windows(&request.closed)));

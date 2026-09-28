@@ -691,7 +691,7 @@ impl OrderflowView {
             return;
         }
         let before = self.config.clone();
-        self.config.live_lane.window.zoom_by(factor);
+        self.config.zoom_lane_window(factor);
         self.commit_config_changes(before);
     }
 

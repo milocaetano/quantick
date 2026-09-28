@@ -451,6 +451,21 @@ impl HeatmapConfig {
         }
     }
 
+    /// Zoom the tape's time window by `factor` (`> 1` shows less market
+    /// time). With volume dots on, an automatic window is first pinned at
+    /// what it resolves to, so a squeeze goes past the automatic zoom's floor
+    /// up to [`MAX_LIVE_LANE_WINDOW_MS`]; otherwise the gesture speaks the
+    /// window's own language ([`LaneWindow::zoom_by`]).
+    pub fn zoom_lane_window(&mut self, factor: f32) {
+        if !factor.is_finite() || factor <= 0.0 {
+            return;
+        }
+        if self.volume_dots.enabled {
+            self.live_lane.window = self.lane_window();
+        }
+        self.live_lane.window.zoom_by(factor);
+    }
+
     /// The tape's window in exchange milliseconds, against the bars' typical
     /// duration `reference_ms`. See [`Self::lane_window`].
     #[must_use]

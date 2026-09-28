@@ -480,7 +480,7 @@ fn time_windows_follow_a_thin_column_not_the_biggest_dot() {
 
         // A one-minute bar 108 px wide: 8 px of its 65 536 ms slot is 4.9 s.
         let zoom = DotRungMemory::default().choose(geometry(15_000), &config, (60.0, 100.0));
-        let dots = VolumeDots::resolve(&zoom, &config, &[], None);
+        let dots = VolumeDots::resolve(&zoom, &[], None);
         assert_eq!(
             dots.bar_windows(&[bar(0, 60_000)]),
             vec![Some(5_000)],
@@ -495,7 +495,7 @@ fn time_windows_follow_a_thin_column_not_the_biggest_dot() {
 #[test]
 fn dots_let_the_tape_squeeze_to_twenty_minutes() {
     use crate::config::{LaneWindow, MAX_LIVE_LANE_WINDOW_MS};
-    assert!(MAX_LIVE_LANE_WINDOW_MS >= 1_200_000);
+    const { assert!(MAX_LIVE_LANE_WINDOW_MS >= 1_200_000) };
     let mut config = dots_config();
     config.live_lane.window = LaneWindow::Auto { zoom: 1.0 };
     config.zoom_lane_window(0.5);
@@ -568,7 +568,7 @@ fn a_refit_inside_a_ladder_step_keeps_every_dot() {
         let window = prices(low, high);
         let range = (low.parse::<f64>().unwrap(), high.parse::<f64>().unwrap());
         let zoom = memory.borrow_mut().choose(geometry.clone(), &config, range);
-        let dots = VolumeDots::resolve(&zoom, &config, &closed_bars, Some(&forming));
+        let dots = VolumeDots::resolve(&zoom, &closed_bars, Some(&forming));
         (
             dots.level_ticks,
             frame_at(&history, &timeline, window, &dots),

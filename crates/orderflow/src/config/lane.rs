@@ -40,8 +40,8 @@ pub const MAX_LIVE_LANE_ZOOM: f32 = 8.0;
 /// tape left, whatever the zoom asked for.
 pub const MIN_LIVE_LANE_WINDOW_MS: i64 = 200;
 /// Most market time a zoomed-out lane will show. A tape is the recent past;
-/// past a quarter of an hour the chart's own history says it better.
-pub const MAX_LIVE_LANE_WINDOW_MS: i64 = 900_000;
+/// past half an hour the chart's own history says it better.
+pub const MAX_LIVE_LANE_WINDOW_MS: i64 = 1_800_000;
 /// The fixed tape windows the lane's menu offers, in exchange milliseconds.
 ///
 /// Round durations a trader already thinks in, not a sample of the accepted

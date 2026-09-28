@@ -19,9 +19,9 @@
 //!
 //! What the zoom picks:
 //! - the candles' window, per bar: the smallest rung of
-//!   [`DOT_WINDOW_LADDER_MS`] at least one dot wide inside that bar's slot,
+//!   [`DOT_WINDOW_LADDER_MS`] at least [`DOT_WINDOW_CELL_PX`] wide inside that bar's slot,
 //!   from the bar's own duration taken to the next doubling, or the whole bar
-//!   when the slot is no wider than a dot or the bar outgrows the top rung
+//!   when the slot is no wider than that or the bar outgrows the top rung
 //!   ([`dot_bar_window_ms`]). A closed bar's duration never changes, so its
 //!   rung does not move when it closes or when another bar does; a forming
 //!   bar's rung only ever coarsens, when its duration doubles;
@@ -86,6 +86,11 @@ pub const DOT_WINDOW_LADDER_MS: [i64; 10] = [
 /// first.
 pub const DOT_LEVEL_LADDER_TICKS: [i64; 12] =
     [1, 2, 5, 10, 20, 50, 100, 200, 500, 1_000, 2_000, 5_000];
+
+/// The screen width, in pixels, a dot's window of market time is at least
+/// on either pane: a thin column, not the biggest dot, so a dot sits near the
+/// moment its prints traded and only squeezing the time axis widens it.
+pub const DOT_WINDOW_CELL_PX: f64 = 8.0;
 
 /// A held rung moves down once the dot would be under this share of the next
 /// smaller cell.
@@ -236,7 +241,7 @@ impl DotRungMemory {
             &DOT_WINDOW_LADDER_MS,
             self.tape_window_ms,
             px_per_ms,
-            dot_px,
+            DOT_WINDOW_CELL_PX,
         );
         let level_ticks = hold_rung(
             &DOT_LEVEL_LADDER_TICKS,
@@ -317,7 +322,8 @@ impl DotHorizon {
 pub struct VolumeDots {
     /// Pixels a bar takes on the candles.
     pub px_per_bar: f32,
-    /// A dot's diameter, in pixels.
+    /// The least screen width of a candle window, in pixels
+    /// ([`DOT_WINDOW_CELL_PX`] in a real frame).
     pub dot_px: f64,
     /// The tape's window, in exchange milliseconds.
     pub tape_window_ms: i64,
@@ -333,12 +339,7 @@ impl VolumeDots {
     /// The dots `zoom` asks for over the frame's bars and the ones the tape
     /// reaches.
     #[must_use]
-    pub fn resolve(
-        zoom: &DotZoom,
-        config: &HeatmapConfig,
-        closed: &[Bar],
-        partial: Option<&Bar>,
-    ) -> Self {
+    pub fn resolve(zoom: &DotZoom, closed: &[Bar], partial: Option<&Bar>) -> Self {
         let mut bars: Vec<(i64, i64)> = closed
             .iter()
             .chain(partial)
@@ -351,7 +352,7 @@ impl VolumeDots {
         bars.dedup_by_key(|bar| bar.0);
         Self {
             px_per_bar: zoom.px_per_bar,
-            dot_px: 2.0 * f64::from(config.bubbles.max_radius),
+            dot_px: DOT_WINDOW_CELL_PX,
             tape_window_ms: zoom.tape_window_ms,
             level_ticks: zoom.level_ticks,
             bars,
