@@ -50,6 +50,11 @@
 //! Never at its newest print, so a forming dot does not slide as prints
 //! arrive and a closed one does not move on a pan.
 //!
+//! Retention evicts the oldest prints one by one. A bar that opened at or
+//! before the newest evicted print may have lost some of its prints, so it
+//! draws no dots at all: a dot at the retention edge disappears whole rather
+//! than shrinking, and bars older than the retention draw none.
+//!
 //! Known limitation: a print stamped with the same millisecond as a bar's
 //! open belongs to the new bar, which is the timeline's rule for every mark.
 //! A venue that stamps the closing print of one bar and the opening print of
@@ -445,19 +450,25 @@ pub(super) fn native_grouping(config: &HeatmapConfig) -> EffectiveGrouping {
 /// Fold one pane's clusters — one per print, already matched to the
 /// reductions they explain — into dots by bar, window and level, summing
 /// quantity, bought quantity and matched quantity and uniting the event ids.
-/// A cluster no known bar holds is left out.
+/// A cluster no known bar holds is left out, and so is every cluster of a
+/// bar that opened at or before `evicted_through_ms`: eviction may have taken
+/// some of that bar's prints, and a dot is drawn whole or not at all.
 pub(super) fn fold_dots(
     clusters: Vec<AggressionCluster>,
     live: bool,
     dots: &VolumeDots,
     native: EffectiveGrouping,
+    evicted_through_ms: Option<i64>,
 ) -> Vec<AggressionCluster> {
     let tick = native.bucket_width;
     let width = tick * Decimal::from(dots.level_ticks.max(1));
     let level_of = |price: Decimal| (price / width).floor() * width;
     let keyed: Vec<AggressionCluster> = clusters
         .into_iter()
-        .filter(|cluster| dots.window(cluster.timestamp_ms, live).is_some())
+        .filter(|cluster| {
+            dots.bar_around(cluster.timestamp_ms)
+                .is_some_and(|(open, _)| evicted_through_ms.is_none_or(|horizon| open > horizon))
+        })
         .collect();
     let key_of = |cluster: &AggressionCluster| {
         dots.window(cluster.timestamp_ms, live).map(|window| {

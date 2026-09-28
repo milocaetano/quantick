@@ -266,6 +266,9 @@ pub struct LiquidityHistory {
     /// own to be late. Without it a chart opened into a quiet stretch can say
     /// nothing at all about why its tape is empty.
     first_stream_ms: Option<i64>,
+    /// The newest timestamp among the prints retention or a cap has evicted:
+    /// every print at or before it may be gone, none after it is.
+    evicted_through_ms: Option<i64>,
     archived: VecDeque<LiquidityRun>,
     active: BTreeMap<LevelKey, LiquidityRun>,
     aggressions: VecDeque<Aggression>,
@@ -300,6 +303,7 @@ impl LiquidityHistory {
             latest_book_ms: None,
             latest_print_ms: None,
             first_stream_ms: None,
+            evicted_through_ms: None,
             archived: VecDeque::new(),
             active: BTreeMap::new(),
             aggressions: VecDeque::new(),
@@ -457,6 +461,14 @@ impl LiquidityHistory {
                 .filter(|watched| *watched > 0)
                 .map(TapeAge::NothingYet),
         }
+    }
+
+    /// The newest timestamp among the prints evicted so far: a print at or
+    /// before it may be gone, and none after it is. `None` until the first
+    /// eviction, and again after a reset.
+    #[must_use]
+    pub fn evicted_through_ms(&self) -> Option<i64> {
+        self.evicted_through_ms
     }
 
     /// Oldest timestamp still renderable under the configured retention
@@ -765,6 +777,7 @@ impl LiquidityHistory {
         // tape's clock has nothing left to point at either.
         self.latest_print_ms = None;
         self.first_stream_ms = None;
+        self.evicted_through_ms = None;
         self.archived.clear();
         self.active.clear();
         self.aggressions.clear();
@@ -971,7 +984,13 @@ impl LiquidityHistory {
     }
 
     fn pop_aggression_front(&mut self) {
-        if self.aggressions.pop_front().is_some() {
+        if let Some(evicted) = self.aggressions.pop_front() {
+            self.evicted_through_ms = Some(
+                self.evicted_through_ms
+                    .map_or(evicted.timestamp_ms, |horizon| {
+                        horizon.max(evicted.timestamp_ms)
+                    }),
+            );
             self.aggression_max_ms.pop_front();
             self.counters.aggressions_evicted += 1;
         }

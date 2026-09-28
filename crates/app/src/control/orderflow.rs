@@ -209,7 +209,7 @@ fn tape_state(tab: &Tab, view: &OrderflowView, context: CaptureContext) -> TapeS
         age_ms: tab.tape_age_at(context.captured_at_unix_ms),
         live_end_unix_ms: view.cached_live_end_ms(),
         live_lane_enabled: view.lane_enabled(),
-        live_lane_window: lane_window(view.live_lane_window()),
+        live_lane_window: lane_window(view.cached_config().lane_window()),
     }
 }
 

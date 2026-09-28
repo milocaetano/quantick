@@ -20,9 +20,9 @@ pub mod timeline;
 // the public DTOs here gives later renderers one stable import surface.
 #[allow(unused_imports)]
 pub use config::{
-    BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, DisplayGrouping,
-    GOLDEN_ANGLE, HeatmapConfig, HeatmapTheme, INV_PHI, INV_PHI_2, INV_PHI_3, IntensityMode,
-    LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS,
+    BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, DOT_TAPE_WINDOW_MS,
+    DisplayGrouping, GOLDEN_ANGLE, HeatmapConfig, HeatmapTheme, INV_PHI, INV_PHI_2, INV_PHI_3,
+    IntensityMode, LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS,
     MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE,
     MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
     MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, bubble_halo_padding,

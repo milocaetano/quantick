@@ -63,6 +63,9 @@ pub(super) struct TierClusters {
     pub(super) tape: Vec<AggressionCluster>,
     /// Prints read against the bar they belong to.
     pub(super) slot: Vec<AggressionCluster>,
+    /// See [`LiquidityHistory::evicted_through_ms`]: volume dots leave out
+    /// every bar that opened at or before it, which eviction may have cut.
+    pub(super) evicted_through_ms: Option<i64>,
 }
 
 /// Cluster the retained prints timestamped inside `range`, as `[from, until)`.
@@ -137,6 +140,7 @@ pub(super) fn cluster_tier(
         return TierClusters {
             tape: cluster_aggressions(tape_prints, coverage, grouping.lane, 0),
             slot: cluster_aggressions(slot_prints, coverage, grouping.slots, 0),
+            evicted_through_ms: history.evicted_through_ms(),
         };
     }
 
@@ -161,6 +165,7 @@ pub(super) fn cluster_tier(
             grouping.slots,
             config.bubble_cluster_ms,
         ),
+        evicted_through_ms: None,
     }
 }
 
@@ -181,8 +186,9 @@ pub(super) fn refine_tier(
 ) -> (TierClusters, Decimal) {
     if let Some(dots) = dots {
         let native = native_grouping(config);
-        tier.tape = fold_dots(std::mem::take(&mut tier.tape), true, dots, native);
-        tier.slot = fold_dots(std::mem::take(&mut tier.slot), false, dots, native);
+        let evicted = tier.evicted_through_ms;
+        tier.tape = fold_dots(std::mem::take(&mut tier.tape), true, dots, native, evicted);
+        tier.slot = fold_dots(std::mem::take(&mut tier.slot), false, dots, native, evicted);
     }
     let dots = dots.is_some();
     let regionalizing = !dots && config.bubble_region_rows > 1;

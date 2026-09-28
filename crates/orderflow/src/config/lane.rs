@@ -56,6 +56,10 @@ pub const MIN_LIVE_LANE_RADIUS_SCALE: f32 = 0.25;
 /// See [`MIN_LIVE_LANE_RADIUS_SCALE`].
 pub const MAX_LIVE_LANE_RADIUS_SCALE: f32 = 4.0;
 
+/// The tape's window while bubbles are volume dots, in exchange
+/// milliseconds: fixed, so the tape never rescales when a bar closes.
+pub const DOT_TAPE_WINDOW_MS: i64 = 15_000;
+
 /// How much market time the tape shows.
 ///
 /// One number, one owner. The lane is a fixed band of screen, so its window is

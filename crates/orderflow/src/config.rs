@@ -16,10 +16,11 @@ pub use bubbles::{
 };
 pub use lane::{
     DEFAULT_LIVE_LANE_RADIUS_SCALE, DEFAULT_LIVE_LANE_SHARE, DEFAULT_LIVE_LANE_ZOOM,
-    LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle, MAX_LIVE_LANE_RADIUS_SCALE,
-    MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_LIVE_LANE_RADIUS_SCALE,
-    MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WIDTH_PX, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM,
-    format_window_ms, lane_lag_label, lane_window_label, same_lane_window,
+    DOT_TAPE_WINDOW_MS, LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle,
+    MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM,
+    MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WIDTH_PX,
+    MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms, lane_lag_label,
+    lane_window_label, same_lane_window,
 };
 
 /// Shortest history window accepted by the UI.
@@ -382,6 +383,27 @@ impl Default for HeatmapConfig {
 }
 
 impl HeatmapConfig {
+    /// How the tape's window is decided: the lane's own setting, or with
+    /// volume dots on a fixed [`DOT_TAPE_WINDOW_MS`], so the tape never
+    /// rescales when a bar closes. The one place the window is resolved.
+    #[must_use]
+    pub fn lane_window(&self) -> LaneWindow {
+        if self.bubble_overlap_merge {
+            LaneWindow::Fixed {
+                ms: DOT_TAPE_WINDOW_MS,
+            }
+        } else {
+            self.live_lane.window
+        }
+    }
+
+    /// The tape's window in exchange milliseconds, against the bars' typical
+    /// duration `reference_ms`. See [`Self::lane_window`].
+    #[must_use]
+    pub fn lane_window_ms(&self, reference_ms: i64) -> i64 {
+        self.lane_window().resolve_ms(reference_ms)
+    }
+
     /// Whether the depth map has both something recorded and permission to
     /// draw it. Everything the depth layer projects hangs off this.
     #[must_use]

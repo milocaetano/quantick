@@ -718,7 +718,7 @@ impl OrderflowView {
     /// under it, and the only readout of what the zoom is worth.
     #[must_use]
     pub fn live_lane_window_ms(&self, closed: &[Bar]) -> i64 {
-        self.config.live_lane.window_ms(reserved_span_ms(closed))
+        self.config.lane_window_ms(reserved_span_ms(closed))
     }
 
     /// How old the newest aggression on the tape is, against the instant the

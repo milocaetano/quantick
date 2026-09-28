@@ -1075,7 +1075,7 @@ impl BookEngine {
             // Whichever stream is running. Reading this off the book alone is
             // what left a prints-only feed with no live edge, and so no tape.
             now_ms: self.history.latest_ms()?,
-            window_ms: self.config.live_lane.window_ms(reference_ms),
+            window_ms: self.config.lane_window_ms(reference_ms),
             reference_ms,
             on_newest_bar: request.on_newest_bar,
         })
@@ -2122,11 +2122,17 @@ mod tests {
             plain,
             "off is today's frame"
         );
-        assert_eq!(
-            frame(&mut engine_with(true), None),
-            plain,
-            "no zoom, no rungs to key on"
-        );
+        // No zoom, no rungs to key on: the marks are the plain ones, though
+        // the tape is already the fixed dots tape.
+        let unzoomed = frame(&mut engine_with(true), None);
+        assert!(!unzoomed.volume_dots, "no zoom, no rungs to key on");
+        let ids = |frame: &HeatmapProjection| {
+            let marks = frame.aggressions.iter();
+            marks
+                .map(|mark| (mark.agg_ids.clone(), mark.quantity))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&unzoomed), ids(&plain));
 
         let mut engine = engine_with(true);
         let dots = frame(&mut engine, Some(zoom(100, 1)));
