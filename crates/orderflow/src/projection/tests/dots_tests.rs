@@ -215,6 +215,38 @@ fn a_closed_window_is_the_same_dot_on_every_frame() {
     assert_eq!(facts(&later, closed_on_tape), on_tape);
 }
 
+/// The mark budget never folds a dot. A fold over budget picks by size and
+/// age, so which dots it joins changes as prints arrive and the chart pans:
+/// on a dense tape that was the blinking past. The ladder already bounds how
+/// many dots a zoom can draw, so dots are drawn as they are, every one.
+#[test]
+fn the_budget_never_folds_a_dot() {
+    let config = HeatmapConfig {
+        max_aggression_primitives: 40,
+        ..dots_config()
+    };
+    let trades = dense(11, 3_000, 0, 20_000);
+    let history = tape(config.clone(), &borrowed(&trades));
+    let dots = windows(500, 250);
+    for now_ms in [9_100, 12_700, 15_300] {
+        let frame = frame_at(
+            &history,
+            &chart(now_ms, 1_500, None),
+            prices("90", "110"),
+            &dots,
+        );
+        assert!(frame.aggressions.len() > 40, "over the budget at {now_ms}");
+        assert_eq!(
+            frame.folded_aggressions, 0,
+            "the budget folded dots at {now_ms}"
+        );
+        assert!(
+            frame.aggressions.iter().all(|mark| mark.folded_marks <= 1),
+            "a dot drawn as a fold at {now_ms}"
+        );
+    }
+}
+
 /// Every dot is one bar, one window and one native price level; the folds
 /// dots replace — dust, regions, the closed-bar summary — never run, so no
 /// contract is drawn twice and every one visible is drawn once. They paint
