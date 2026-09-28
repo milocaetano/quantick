@@ -1210,7 +1210,6 @@ fn hiding_the_bubble_layer_keeps_the_clusters_in_the_frame() {
         0,
         projection.summarized,
         projection.effective_grouping.bucket_width,
-        projection.volume_dots,
     );
     assert_eq!(rows.len(), 1, "both prints share one bucket");
     assert_eq!(rows[0].buy, rust_decimal::Decimal::ONE);

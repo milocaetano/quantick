@@ -665,42 +665,126 @@ fn a_window_splits_at_a_bar_close() {
     }
 }
 
-/// A candle window reaches the candles only once the tape has let go of the
-/// whole of it; until then its prints are tape dots. So a candle dot never
-/// grows after it appears: it arrives whole and stays as it arrived.
+/// A print is the tape's while its tape window starts at or after the tape;
+/// otherwise it is in its candle window's dot. A candle window wholly older
+/// than the tape never changes again, and the tape never piles prints at its
+/// left edge: every tape dot sits inside the tape, right of where it starts.
 #[test]
-fn a_candle_dot_arrives_whole_once_the_tape_releases_its_window() {
+fn deep_history_never_changes_and_the_tape_never_piles_at_its_edge() {
+    let config = dots_config();
+    let trades = dense(17, 4_000, 0, 20_000);
+    let history = tape(config.clone(), &borrowed(&trades));
+    let dots = windows(500, 250);
+    let at = |now_ms: i64| {
+        let timeline = chart(now_ms, 1_500, None);
+        let frame = frame_at(&history, &timeline, prices("90", "110"), &dots);
+        (timeline, frame)
+    };
+    // Candle windows ending by 9 000 are older than every tape below.
+    let deep = |mark: &AggressionPrimitive| !mark.live && mark.last_timestamp_ms < 9_000;
+    let (_, reference) = at(10_600);
+    let reference = facts(&reference, deep);
+    assert!(reference.len() > 50, "the fixture draws deep dots");
+    for now_ms in [10_620, 10_900, 11_350, 12_700, 15_020] {
+        let (timeline, frame) = at(now_ms);
+        assert_eq!(
+            facts(&frame, deep),
+            reference,
+            "deep history moved at {now_ms}"
+        );
+        let (lane_start, _) = timeline.lane_bounds_ms().unwrap();
+        let edge = timeline.locate(lane_start).unwrap().normalized;
+        let on_tape: Vec<_> = frame.aggressions.iter().filter(|mark| mark.live).collect();
+        assert!(!on_tape.is_empty(), "the tape draws dots at {now_ms}");
+        for mark in on_tape {
+            assert!(
+                mark.first_timestamp_ms >= lane_start,
+                "a print older than the tape was drawn on it at {now_ms}: {mark:?}"
+            );
+            assert!(
+                mark.x > edge,
+                "a tape dot piled at the tape's left edge at {now_ms}: {mark:?}"
+            );
+        }
+    }
+}
+
+/// Where a dot sits never depends on the pan or on the latest print. A
+/// whole-bar dot sits at its bar's slot centre, however the slice is cut; a
+/// forming window's dot sits at the window's own centre, not at the newest
+/// print, so it does not slide as prints arrive.
+#[test]
+fn dots_sit_still_through_a_pan_and_a_new_print() {
     let config = dots_config();
     let history = tape(
         config.clone(),
         &[
-            (1, 2_050, "100", "1", Side::Buy),
-            (2, 2_450, "100", "2", Side::Sell),
+            (1, 2_100, "100", "1", Side::Buy),
+            (2, 3_050, "101", "1", Side::Buy),
         ],
     );
-    let dots = windows(500, 250);
-    let at = |now_ms: i64| {
-        frame_at(
+    // 2 px a bar: every bar is one window.
+    let whole = VolumeDots {
+        px_per_bar: 2.0,
+        dot_px: 20.0,
+        tape_window_ms: 250,
+        level_ticks: 1,
+        bars: (0..40).map(|i| (i * 1_000, i * 1_000 + 999)).collect(),
+    };
+    for visible in [None, Some(1..3), Some(2..4)] {
+        let timeline = chart(3_900, 1_500, visible.clone());
+        let frame = frame_at(&history, &timeline, prices("90", "110"), &whole);
+        let dot = frame
+            .aggressions
+            .iter()
+            .find(|dot| dot.agg_ids == vec![1])
+            .expect("the whole-bar dot");
+        let slot = timeline.slot_at(2_100).unwrap();
+        let (left, right) = timeline.slot_bounds(slot.index);
+        assert!(
+            (dot.x - (left + right) / 2.0).abs() < 1e-9,
+            "the whole-bar dot left its slot's centre with {visible:?}"
+        );
+    }
+    // The forming bar has run to 3 150 and then to 3 180: its tape dot, in
+    // the window 3 000..3 250, stays where it was.
+    let forming = |close_ms: i64| {
+        let mut dots = windows(500, 250);
+        dots.bars.truncate(3);
+        dots.bars.push((3_000, close_ms));
+        let frame = frame_at(
             &history,
-            &chart(now_ms, 1_500, None),
+            &chart(3_900, 1_500, None),
             prices("90", "110"),
             &dots,
-        )
+        );
+        frame
+            .aggressions
+            .iter()
+            .find(|dot| dot.agg_ids == vec![2])
+            .expect("the forming dot")
+            .x
     };
-    // At 3 900 the tape starts at 2 400, inside the window 2 000..2 500.
-    let early = at(3_900);
-    assert!(
-        early.aggressions.iter().all(|dot| dot.live),
-        "the tape still holds the window: {:?}",
-        early.aggressions
-    );
-    assert_eq!(early.aggressions.len(), 2, "two tape windows");
-    let candles = |frame: &HeatmapProjection| facts(frame, |dot| !dot.live);
-    // At 4 000 the tape starts at 2 500: the window has left it whole.
-    let released = candles(&at(4_000));
-    assert_eq!(released.len(), 1);
-    assert_eq!(released[0].agg_ids, vec![1, 2], "the whole window at once");
-    assert_eq!(candles(&at(4_100)), released, "and it never grows");
+    assert_eq!(forming(3_150), forming(3_180));
+}
+
+/// The forming bar's window only ever coarsens as the bar runs on: once it
+/// needs a wider window it never returns to a finer one, and once it is one
+/// whole window it stays one.
+#[test]
+fn a_forming_bar_only_ever_coarsens() {
+    let order = |window: Option<i64>| window.unwrap_or(i64::MAX);
+    for px_per_bar in [0.5, 2.0, 7.0, 13.0, 41.0, 120.0, 400.0, 2_000.0] {
+        let mut previous = order(dot_bar_window_ms(1, px_per_bar, 20.0));
+        for running_ms in (1..900_000).step_by(97) {
+            let now = order(dot_bar_window_ms(running_ms, px_per_bar, 20.0));
+            assert!(
+                now >= previous,
+                "at {px_per_bar} px a bar, {running_ms} ms went back to a finer window"
+            );
+            previous = now;
+        }
+    }
 }
 
 /// The price window is a view: every print in the time range is keyed, and

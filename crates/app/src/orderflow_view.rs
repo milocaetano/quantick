@@ -2153,7 +2153,6 @@ mod tests {
                 900,
                 frame.projection.summarized,
                 frame.projection.effective_grouping.bucket_width,
-                frame.projection.volume_dots,
             )
             .is_empty(),
             "and they become histogram rows"
@@ -2175,39 +2174,42 @@ mod tests {
         );
     }
 
-    /// The live strip reads volume dots at their prices and splits them by
-    /// their exact bought quantity, so at one-tick levels its per-side,
-    /// per-row totals are the same with dots on and off.
+    /// The live strip reads volume dots split by their exact bought quantity
+    /// and filed across their level. At one-tick levels its per-side, per-row
+    /// totals are the same with dots on and off; at five-tick levels every
+    /// row is one level, holding exactly what traded inside it and nothing
+    /// outside it.
     #[test]
     fn volume_dots_leave_the_live_strip_totals_alone() {
-        let strip = |dots: bool| {
+        let strip = |dots: bool, px_per_tick: f64| {
             let mut view = OrderflowView::new("BTCUSDT");
             view.set_projection_demand(true);
             let before = view.config.clone();
             view.config.bubble_overlap_merge = dots;
             view.commit_config_changes(before);
             for (agg_id, timestamp_ms, price, quantity, side) in [
-                (1, 1_000, 1_005, 1, quantick_engine::Side::Buy),
-                (2, 1_010, 1_005, 2, quantick_engine::Side::Sell),
-                (3, 1_020, 1_006, 3, quantick_engine::Side::Sell),
-                (4, 1_030, 1_006, 1, quantick_engine::Side::Buy),
+                (1, 1_000, 100_050, 1, quantick_engine::Side::Buy),
+                (2, 1_010, 100_050, 2, quantick_engine::Side::Sell),
+                (3, 1_020, 100_060, 3, quantick_engine::Side::Sell),
+                (4, 1_030, 100_061, 1, quantick_engine::Side::Buy),
+                (5, 1_040, 100_072, 4, quantick_engine::Side::Buy),
             ] {
                 view.record_trade(&Trade {
                     agg_id,
                     timestamp_ms,
-                    price: Decimal::new(price, 1),
+                    price: Decimal::new(price, 3),
                     quantity: Decimal::from(quantity),
                     side,
                 });
             }
             view.flush_for_test();
             let bars = [bar(900, 1_100)];
-            // A chart tall enough that one tick is taller than a dot: k = 1.
+            let tick = view.config.price_grouping;
             let geometry = quantick_orderflow::PaneGeometry {
                 px_per_bar: 40.0,
                 lane_width_px: 200.0,
                 lane_window_ms: 4_000,
-                height_px: 10_000_000.0,
+                height_px: (4.0 / tick.to_f64().unwrap() * px_per_tick) as f32,
                 lane_bars: vec![(900, 1_100)],
             };
             let project = |view: &mut OrderflowView| {
@@ -2228,15 +2230,50 @@ mod tests {
                 900,
                 frame.projection.summarized,
                 frame.projection.effective_grouping.bucket_width,
-                frame.projection.volume_dots,
             );
-            (rows, frame.projection.volume_dots)
+            (rows, frame.projection.volume_dots, tick)
         };
-        let (off, off_dots) = strip(false);
-        let (on, on_dots) = strip(true);
+        let dot_px = 2.0 * f64::from(OrderflowView::new("BTCUSDT").config.bubbles.max_radius);
+        // One tick taller than a dot: one-tick levels.
+        let (off, off_dots, tick) = strip(false, dot_px * 2.0);
+        let (on, on_dots, _) = strip(true, dot_px * 2.0);
         assert!(!off_dots && on_dots, "dots only when on");
         assert!(!off.is_empty(), "the fixture draws strip rows");
         assert_eq!(on, off, "the same contracts in the same rows");
+
+        // A dot a quarter of a tick: five-tick levels.
+        let (coarse, _, _) = strip(true, dot_px / 4.0);
+        let level = tick * Decimal::from(5);
+        let sum = |rows: &[live_strip::HistogramRow],
+                   side: fn(&live_strip::HistogramRow) -> Decimal| {
+            rows.iter().map(side).sum::<Decimal>()
+        };
+        assert_eq!(
+            sum(&coarse, |row| row.buy),
+            sum(&off, |row| row.buy),
+            "buys conserved"
+        );
+        assert_eq!(
+            sum(&coarse, |row| row.sell),
+            sum(&off, |row| row.sell),
+            "sells conserved"
+        );
+        for row in &coarse {
+            assert_eq!(row.price_span, level, "one row per level: {row:?}");
+            let inside = |fine: &&live_strip::HistogramRow| {
+                fine.price_bucket >= row.price_bucket
+                    && fine.price_bucket < row.price_bucket + row.price_span
+            };
+            let traded: Vec<_> = off.iter().filter(inside).collect();
+            assert_eq!(
+                (row.buy, row.sell),
+                (
+                    traded.iter().map(|fine| fine.buy).sum(),
+                    traded.iter().map(|fine| fine.sell).sum()
+                ),
+                "a level holds what traded inside it and nothing else: {row:?}"
+            );
+        }
     }
 
     #[test]
