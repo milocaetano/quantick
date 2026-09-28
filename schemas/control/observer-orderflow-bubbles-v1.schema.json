@@ -40,6 +40,18 @@
           "default": false,
           "description": "Bubbles are drawn as volume dots, Bookmap style: one dot per bar,\nwindow of market time and price level of whole ticks, both sides in\nit as a pie, sized by the volume its cell holds. Windows and levels\nare anchored at exchange epoch 0 and price zero and picked by the\nzoom, so a closed dot never changes. The bubble setting `overlap_merge`, switched by\n`layers.visibility.set` as layer `bubble_overlap_merge`.",
           "type": "boolean"
+        },
+        "volume_dots": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VolumeDotsSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The rungs and size scales the last volume-dots frame was built on;\nabsent when the pane last drew no dots."
         }
       },
       "required": [
@@ -105,6 +117,56 @@
       "required": [
         "tab_id",
         "panes"
+      ],
+      "type": "object"
+    },
+    "VolumeDotsSnapshot": {
+      "description": "What a volume-dots frame was keyed and sized on.",
+      "properties": {
+        "candle_base_window_ms": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The newest bar's candle window in milliseconds, the base rung at this\nzoom; absent when that bar is one window."
+        },
+        "candle_px_per_bar": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Pixels a bar takes on the candles: each bar's window is the smallest\nrung at least one dot wide inside its slot, from the bar's own\nduration."
+        },
+        "candle_size_reference_per_second": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "The quantity of a full-size candle dot for each second of its window."
+        },
+        "level_ticks": {
+          "$ref": "#/$defs/WireU64",
+          "description": "Native ticks per price level, on both panes."
+        },
+        "tape_size_reference": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "The quantity of a full-size tape dot."
+        },
+        "tape_window_ms": {
+          "$ref": "#/$defs/WireU64",
+          "description": "The tape's window, in milliseconds."
+        }
+      },
+      "required": [
+        "tape_window_ms",
+        "level_ticks",
+        "tape_size_reference",
+        "candle_size_reference_per_second"
       ],
       "type": "object"
     },

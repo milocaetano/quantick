@@ -713,7 +713,7 @@ impl Book {
             on_newest_bar: true,
             lane_reference_ms: None,
             price_range: (175_700.0, 176_300.0),
-            pane_geometry: None,
+            dot_zoom: None,
         }
     }
 

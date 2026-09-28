@@ -15,9 +15,9 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::{
-    BarTimeline, HeatmapConfig, HeatmapProjection, HistoryStatus, LiquidityHistory, LiveEdge,
-    PaneGeometry, PriceWindow, SettledProjection, VolumeDots, project_live, project_settled,
-    reserved_span_ms,
+    BarTimeline, DotScale, DotZoom, HeatmapConfig, HeatmapProjection, HistoryStatus,
+    LiquidityHistory, LiveEdge, PriceWindow, SettledProjection, VolumeDots, project_live,
+    project_settled, reserved_span_ms,
 };
 
 /// Minimum interval between dirty rebuilds of the finished half of the chart.
@@ -115,6 +115,9 @@ pub struct VisibleOrderflow {
     pub projection: Arc<HeatmapProjection>,
     pub first_bar_index: usize,
     pub slot_count: usize,
+    /// The rungs and size scales this frame's volume dots were built on;
+    /// `None` when the frame holds no dots.
+    pub volume_dots: Option<DotScale>,
 }
 
 impl VisibleOrderflow {
@@ -209,15 +212,14 @@ pub struct ProjectionRequest {
     /// candles' viewport is not a statement about the tape.
     pub lane_reference_ms: Option<i64>,
     pub price_range: (f64, f64),
-    /// How the chart is zoomed, for volume dots
-    /// ([`HeatmapConfig::bubble_overlap_merge`]): the zoom picks each pane's
-    /// dot window. `None` from a caller with no canvas, which then gets the
-    /// plain frame.
+    /// The rungs the view chose for volume dots
+    /// ([`HeatmapConfig::bubble_overlap_merge`]). `None` from a caller with no
+    /// canvas, which then gets the plain frame.
     ///
-    /// Not part of [`Self::layout`]: only the candles' window decides the
-    /// finished half, and the cache keys on that window itself, so a zoom of
-    /// the tape alone never rebuilds it.
-    pub pane_geometry: Option<PaneGeometry>,
+    /// Not part of [`Self::layout`]: the finished half depends only on its
+    /// bars' windows and the level, and the cache keys on those, so a new
+    /// tape window never rebuilds it.
+    pub dot_zoom: Option<DotZoom>,
 }
 
 impl ProjectionRequest {
@@ -250,18 +252,17 @@ struct ProjectionCache {
     /// where the tape starts, which is what lets this cache stay valid while
     /// the trader moves the tape's speed.
     seam_ms: Option<i64>,
-    /// The candles' volume-dot window and the level, in ticks, this half was
+    /// The level, in ticks, and each closed bar's candle window this half was
     /// keyed on; `None` when it holds no dots. Part of the key because a zoom
     /// across a ladder step re-keys every closed dot.
-    dot_rungs: Option<(i64, i64)>,
+    dot_rungs: Option<(i64, Vec<Option<i64>>)>,
     /// The finished half of the chart, reused until the layout moves or a dirty
     /// revision is old enough to rebuild.
     settled: Arc<SettledProjection>,
 }
 
 /// The series' typical bar duration a request carries, or failing that the
-/// one its own closed bars suggest: what the lane's window is sized from and
-/// what the candles' zoom is measured in.
+/// one its own closed bars suggest: what the lane's window is sized from.
 fn typical_bar_ms(request: &ProjectionRequest) -> i64 {
     request
         .lane_reference_ms
@@ -1110,25 +1111,22 @@ impl BookEngine {
         if timeline.is_empty() {
             return None;
         }
-        // The bar the candles' zoom is measured in is the lane's reference —
-        // the series' typical bar — for the reason the lane uses it: the bars
-        // on screen are not a statement about the series.
+        // The view chose the rungs; the engine only applies them.
         let dots = request
-            .pane_geometry
+            .dot_zoom
             .as_ref()
             .filter(|_| self.config.bubble_overlap_merge)
-            .map(|geometry| {
+            .map(|zoom| {
                 VolumeDots::resolve(
-                    geometry,
+                    zoom,
                     &self.config,
-                    &timeline,
-                    typical_bar_ms(request),
-                    prices,
+                    &request.closed,
+                    request.partial.as_ref(),
                 )
             });
         let dot_rungs = dots
             .as_ref()
-            .map(|dots| (dots.candle_window_ms, dots.level_ticks));
+            .map(|dots| (dots.level_ticks, dots.bar_windows(&request.closed)));
 
         let settled = match &self.projection_cache {
             Some(cache)
@@ -1183,6 +1181,9 @@ impl BookEngine {
             projection: Arc::new(projection),
             first_bar_index: request.first_bar_index,
             slot_count: timeline.region_count(),
+            volume_dots: dots
+                .as_ref()
+                .map(|dots| dots.scale(crate::projection::dot_full_quantity(&self.config))),
         });
         self.last_frame = Some(Arc::clone(&frame));
         Some(frame)
@@ -1495,6 +1496,7 @@ mod tests {
             projection: Arc::new(projection),
             first_bar_index: 40,
             slot_count: 10,
+            volume_dots: None,
         };
 
         // No cells: no boundary — the paint must not invent a cut.
@@ -1657,7 +1659,7 @@ mod tests {
             on_newest_bar: true,
             lane_reference_ms: None,
             price_range,
-            pane_geometry: None,
+            dot_zoom: None,
         }
     }
 
@@ -2132,7 +2134,12 @@ mod tests {
         assert_eq!(dots.aggressions.len(), 1, "one level, one window: a pie");
         assert_eq!(dots.aggressions[0].quantity, Decimal::from(5));
         assert_eq!(dots.aggressions[0].buy_quantity, Decimal::from(3));
-        let scale = engine.health().volume_dots.expect("the rungs are reported");
+        let reported = ProjectionRequest {
+            dot_zoom: Some(zoom(100, 1)),
+            ..request(&[bar(900, 1_100)], (98.0, 102.0))
+        };
+        let scale = engine.project(&reported).unwrap().volume_dots.clone();
+        let scale = scale.expect("the rungs are reported");
         assert_eq!((scale.tape_window_ms, scale.level_ticks), (100, 1));
         assert_eq!(scale.px_per_bar, 40.0);
         assert!(scale.tape_size_reference > Decimal::ZERO);

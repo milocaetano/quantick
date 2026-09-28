@@ -16,7 +16,6 @@
 //! histogram); painting lives in `OrderflowView::draw_live_strip`, which
 //! reads the published ladder's best bid/ask and the frame.
 
-use quantick_engine::Side;
 use rust_decimal::Decimal;
 
 use quantick_orderflow::projection::AggressionPrimitive;
@@ -58,33 +57,11 @@ pub struct HistogramRow {
     pub sell: Decimal,
 }
 
-/// Split one mark's quantity into the two sides it actually carries.
-///
-/// Single-sided marks — every tape print — land wholly on their own side, with
-/// no arithmetic and no rounding. Only a two-sided summary is divided, by the
-/// buy share the projection already computed.
+/// Split one mark's quantity into the two sides it actually carries, by its
+/// exact bought quantity: a pie's `f32` share cannot hold a third of a
+/// contract, and the projection carries the exact figure beside it.
 fn split_by_side(cluster: &AggressionPrimitive) -> (Decimal, Decimal) {
-    let share = f64::from(cluster.buy_share);
-    if !share.is_finite() || share >= 1.0 {
-        return match cluster.side {
-            Side::Buy => (cluster.quantity, Decimal::ZERO),
-            Side::Sell => (Decimal::ZERO, cluster.quantity),
-        };
-    }
-    if share <= 0.0 {
-        return (Decimal::ZERO, cluster.quantity);
-    }
-    let Ok(buy_share) = Decimal::try_from(share) else {
-        return match cluster.side {
-            Side::Buy => (cluster.quantity, Decimal::ZERO),
-            Side::Sell => (Decimal::ZERO, cluster.quantity),
-        };
-    };
-    // Rounded to the quantity's own scale: the share is an `f32`, so the raw
-    // product carries float noise a contract count never has. The remainder is
-    // taken by subtraction, so the two sides still add up to exactly what
-    // traded whatever the rounding did.
-    let buy = (cluster.quantity * buy_share).round_dp(cluster.quantity.scale());
+    let buy = cluster.buy_quantity.clamp(Decimal::ZERO, cluster.quantity);
     (buy, cluster.quantity - buy)
 }
 
@@ -104,11 +81,16 @@ fn split_by_side(cluster: &AggressionPrimitive) -> (Decimal, Decimal) {
 /// the display grouping, so without this one price arrives as two keys and the
 /// strip draws two rows for it, each sized against a width that matches
 /// neither.
+///
+/// `volume_dots` says the marks are volume dots, whose `price_bucket` is a
+/// level many rows tall: a dot is filed in the row of the price it traded at,
+/// not at its level's floor.
 pub fn aggression_rows(
     aggressions: &[AggressionPrimitive],
     bar_open_ms: i64,
     summarized: bool,
     grouping: Decimal,
+    volume_dots: bool,
 ) -> Vec<HistogramRow> {
     let mut buckets: std::collections::BTreeMap<Decimal, (Decimal, Decimal, Decimal)> =
         std::collections::BTreeMap::new();
@@ -124,7 +106,12 @@ pub fn aggression_rows(
         if summarized && cluster.live {
             continue;
         }
-        let row = (cluster.price_bucket / width).floor() * width;
+        let filed_at = if volume_dots {
+            cluster.price
+        } else {
+            cluster.price_bucket
+        };
+        let row = (filed_at / width).floor() * width;
         let entry = buckets
             .entry(row)
             .or_insert((Decimal::ZERO, Decimal::ZERO, Decimal::ZERO));
@@ -134,7 +121,12 @@ pub fn aggression_rows(
         let (buy, sell) = split_by_side(cluster);
         entry.0 += buy;
         entry.1 += sell;
-        entry.2 = entry.2.max(cluster.price_span.max(width));
+        let span = if volume_dots {
+            width
+        } else {
+            cluster.price_span.max(width)
+        };
+        entry.2 = entry.2.max(span);
     }
     buckets
         .into_iter()
@@ -160,6 +152,7 @@ pub fn histogram_reference(rows: &[HistogramRow]) -> Decimal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quantick_engine::Side;
     use std::str::FromStr as _;
 
     fn dec(value: &str) -> Decimal {

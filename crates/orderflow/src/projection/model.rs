@@ -104,6 +104,9 @@ pub struct AggressionPrimitive {
     /// bubble, the whole region for a regional fold. Range-drawing consumers
     /// (the live strip's histogram) read this instead of assuming one row.
     pub price_span: Decimal,
+    /// The price the mark is drawn at: the cluster's quantity-weighted price,
+    /// a volume dot's rounded to the tick. Always inside the range above.
+    pub price: Decimal,
     /// Number of aggregate trades represented by this bubble.
     pub trade_count: usize,
     /// Earliest exchange timestamp represented by this bubble.

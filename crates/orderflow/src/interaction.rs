@@ -511,6 +511,18 @@ fn fold_clusters<K: Ord>(
     merged
 }
 
+/// Fold every cluster sharing a key into one, however far apart in time:
+/// the volume dots' fold, whose key already holds the window. It sums what
+/// every fold sums — quantity, the bought share, matched evidence, ids — so a
+/// dot built from clusters already matched to reductions keeps their evidence.
+/// A cluster with no key passes through untouched.
+pub(crate) fn fold_by_key<K: Ord>(
+    clusters: Vec<AggressionCluster>,
+    key_of: impl Fn(&AggressionCluster) -> Option<K>,
+) -> Vec<AggressionCluster> {
+    fold_clusters(clusters, key_of, |_| false, i64::MAX, ClusterFold::finish)
+}
+
 /// Deterministic order every clustering and folding step emits its result in.
 ///
 /// Also what the projection restores after clustering the live lane and the

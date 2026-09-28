@@ -198,7 +198,7 @@ impl Rig {
             on_newest_bar: true,
             lane_reference_ms: None,
             price_range: (90.0, 110.0),
-            pane_geometry: None,
+            dot_zoom: None,
         }));
         self.read();
     }

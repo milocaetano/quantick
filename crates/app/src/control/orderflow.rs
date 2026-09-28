@@ -275,6 +275,7 @@ fn project_bubbles<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> B
                                 view.cached_health().floored_quantity,
                             ),
                             overlap_merge: view.cached_config().bubble_overlap_merge,
+                            volume_dots: view.dot_scale().map(Into::into),
                         }),
                     })
                     .collect(),

@@ -19,8 +19,8 @@ mod model;
 mod tiers;
 
 pub use dots::{
-    DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_LADDER_MS, PaneGeometry, VolumeDots, dot_level_ticks,
-    dot_window_ms, lane_bar_opens,
+    DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_LADDER_MS, DotRungMemory, DotScale, DotZoom, PaneGeometry,
+    VolumeDots, dot_bar_window_ms, dot_level_ticks, dot_window_ms, hold_rung, lane_bars,
 };
 pub use model::{
     AggressionPrimitive, BEFORE_CAPTURE, GapPrimitive, HeatmapCell, HeatmapProjection,
@@ -370,12 +370,13 @@ pub fn project_settled(
     // independent of the display filter below, so hiding small prints never
     // silently rescales the ones left on screen.
     //
-    // Volume dots go one step further: one fixed scale per pane and zoom,
-    // the preset's pinned quantity per second and tick of a dot's cell, so a
-    // dot's size never depends on what else the session did.
-    let (aggression_reference, dot_candle_reference) = match dots {
-        Some(dots) => dot_references(dots, config),
-        None => (history.bubble_size_reference(), Decimal::ZERO),
+    // Volume dots go one step further: the preset's pinned quantity per
+    // second and tick of each dot's own cell (`VolumeDots::size_reference`),
+    // so a dot's size never depends on what else the session did.
+    let aggression_reference = if dots.is_some() {
+        dot_full_quantity(config)
+    } else {
+        history.bubble_size_reference()
     };
 
     // A reduction is allocated by the half that owns the prints around it, so
@@ -412,7 +413,7 @@ pub fn project_settled(
         timeline,
         effective_grouping,
         summarizing,
-        dots.is_some(),
+        dots,
     );
     // While every mark is a raw print they share the session print scale
     // above, so an area means the same thing everywhere. The summary breaks
@@ -428,8 +429,6 @@ pub fn project_settled(
     // user chose it precisely so that nothing on screen may rescale a mark.
     let summary_reference = if summarizing {
         history.bubble_summary_reference()
-    } else if dots.is_some() {
-        dot_candle_reference
     } else {
         aggression_reference
     };
@@ -440,7 +439,7 @@ pub fn project_settled(
         prices,
         aggression_reference,
         summary_reference,
-        dots.is_some(),
+        dots.map(|dots| (dots, aggression_reference)),
     );
     let (chart_budget, _) = pane_budgets(config.max_aggression_primitives, &config.live_lane);
     let before_fold = aggressions.len();
@@ -629,7 +628,7 @@ pub fn project_live(
         timeline,
         settled.effective_grouping,
         summarizing,
-        dots.is_some(),
+        dots,
     );
     // This half carries marks for *both* panes: the prints rolling through the
     // tape, and — while the summary is on — the forming bar's own slot marks.
@@ -638,19 +637,15 @@ pub fn project_live(
     // pane's own radius range and gates on the pane's own switch, so a merged
     // mark would be clipped into one pane, sized for the other, and hidden by
     // the wrong control.
-    // Dots read the tape's scale off this frame's zoom: the tape's window can
+    // Dots read their scale off this frame's own rungs: the tape's window can
     // change without the settled half being rebuilt.
-    let (print_reference, summary_reference) = match dots {
-        Some(dots) => dot_references(dots, config),
-        None => (settled.aggression_reference, settled.summary_reference),
-    };
     let (mut tape_marks, mut slot_marks): (Vec<_>, Vec<_>) = tier_primitives(
         marks,
         timeline,
         prices,
-        print_reference,
-        summary_reference,
-        dots.is_some(),
+        settled.aggression_reference,
+        settled.summary_reference,
+        dots.map(|dots| (dots, dot_full_quantity(config))),
     )
     .into_iter()
     .partition(|mark| mark.live);
@@ -694,13 +689,11 @@ pub fn project_live(
     }
 }
 
-/// The full-size quantities of a dots frame: the tape's, then the candles'.
-fn dot_references(dots: &VolumeDots, config: &HeatmapConfig) -> (Decimal, Decimal) {
-    let full = config.bubbles.fixed_reference_decimal().unwrap_or_default();
-    (
-        dots.size_reference(true, full),
-        dots.size_reference(false, full),
-    )
+/// The quantity a full-size volume dot holds per second and tick of its cell:
+/// the preset's pinned `size_reference_quantity`.
+#[must_use]
+pub fn dot_full_quantity(config: &HeatmapConfig) -> Decimal {
+    config.bubbles.fixed_reference_decimal().unwrap_or_default()
 }
 
 /// Allocate `events` to the prints of one half of the chart.

@@ -205,6 +205,46 @@ pub struct BubblesStateSnapshot {
     /// `layers.visibility.set` as layer `bubble_overlap_merge`.
     #[serde(default)]
     pub overlap_merge: bool,
+    /// The rungs and size scales the last volume-dots frame was built on;
+    /// absent when the pane last drew no dots.
+    #[serde(default)]
+    pub volume_dots: Option<VolumeDotsSnapshot>,
+}
+
+/// What a volume-dots frame was keyed and sized on.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct VolumeDotsSnapshot {
+    /// Pixels a bar takes on the candles: each bar's window is the smallest
+    /// rung at least one dot wide inside its slot, from the bar's own
+    /// duration.
+    pub candle_px_per_bar: Option<CanonicalDecimal>,
+    /// The newest bar's candle window in milliseconds, the base rung at this
+    /// zoom; absent when that bar is one window.
+    pub candle_base_window_ms: Option<WireU64>,
+    /// The tape's window, in milliseconds.
+    pub tape_window_ms: WireU64,
+    /// Native ticks per price level, on both panes.
+    pub level_ticks: WireU64,
+    /// The quantity of a full-size tape dot.
+    pub tape_size_reference: CanonicalDecimal,
+    /// The quantity of a full-size candle dot for each second of its window.
+    pub candle_size_reference_per_second: CanonicalDecimal,
+}
+
+impl From<&quantick_orderflow::DotScale> for VolumeDotsSnapshot {
+    fn from(scale: &quantick_orderflow::DotScale) -> Self {
+        let wire = |value: i64| WireU64::new(u64::try_from(value.max(0)).unwrap_or(0));
+        Self {
+            candle_px_per_bar: canonical_f32(scale.px_per_bar, 2),
+            candle_base_window_ms: scale.newest_bar_window_ms.map(wire),
+            tape_window_ms: wire(scale.tape_window_ms),
+            level_ticks: wire(scale.level_ticks),
+            tape_size_reference: canonical_decimal(scale.tape_size_reference),
+            candle_size_reference_per_second: canonical_decimal(
+                scale.candle_size_reference_per_second,
+            ),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

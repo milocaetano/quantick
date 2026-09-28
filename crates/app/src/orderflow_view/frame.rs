@@ -67,7 +67,8 @@ impl OrderflowView {
             on_newest_bar,
             lane_reference_ms,
             price_range,
-            pane_geometry,
+            dot_zoom: pane_geometry
+                .map(|geometry| self.dot_rungs.choose(geometry, &self.config, price_range)),
         };
         // Every frame, with no gate of its own. The worker coalesces requests
         // latest-wins and decides for itself what is worth rebuilding, so the
@@ -253,6 +254,7 @@ impl OrderflowView {
                 open_ms,
                 frame.projection.summarized,
                 frame.projection.effective_grouping.bucket_width,
+                frame.projection.volume_dots,
             ),
             _ => Vec::new(),
         };

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use eframe::egui;
 use quantick_engine::BarFootprint;
 use quantick_orderflow::engine::VisibleOrderflow;
-use quantick_orderflow::{PaneGeometry, lane_bar_opens, reserved_span_ms};
+use quantick_orderflow::{PaneGeometry, lane_bars, reserved_span_ms};
 
 use crate::drawings::Drawings;
 use crate::indicator_render::{self, PlotX};
@@ -117,8 +117,9 @@ impl<'a> FlowFrame<'a> {
                 Some(PaneGeometry {
                     px_per_bar: self.viewport.px_per_bar(),
                     lane_width_px: self.lane_width,
+                    lane_window_ms: window_ms,
                     height_px: self.rect.height(),
-                    lane_bar_opens: lane_bar_opens(frame.closed, frame.partial, window_ms),
+                    lane_bars: lane_bars(frame.closed, frame.partial, window_ms),
                 }),
             )
         });

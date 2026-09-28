@@ -367,7 +367,7 @@ fn book_request(
         on_newest_bar: true,
         lane_reference_ms: None,
         price_range,
-        pane_geometry: None,
+        dot_zoom: None,
     }
 }
 

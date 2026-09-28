@@ -10,8 +10,9 @@ use eframe::egui;
 use quantick_engine::Side;
 use quantick_orderflow::{
     AggressionPrimitive, BubbleRenderMode, BubbleStyle, ConsumptionMark, GOLDEN_ANGLE, INV_PHI,
-    INV_PHI_2, INV_PHI_3,
+    INV_PHI_2, INV_PHI_3, bubble_halo_padding, bubble_impact_ring_padding,
 };
+pub(super) use quantick_orderflow::{bubble_radius, side_offset_y};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
@@ -81,9 +82,6 @@ impl BubbleColors {
 fn opaque_rgb(rgb: [u8; 3]) -> egui::Color32 {
     egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2])
 }
-
-use quantick_orderflow::{bubble_halo_padding, bubble_impact_ring_padding};
-pub(super) use quantick_orderflow::{bubble_radius, side_offset_y};
 
 /// Interior alpha of a hollow bubble, as a fraction of the configured fill
 /// alpha: enough tint to keep the disc's area readable, light enough that the

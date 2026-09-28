@@ -95,7 +95,7 @@ fn request(first_bar_index: usize) -> ProjectionRequest {
         on_newest_bar: true,
         lane_reference_ms: None,
         price_range: (98.0, 102.0),
-        pane_geometry: None,
+        dot_zoom: None,
     }
 }
 fn replay(worker: &BookWorker) -> Receiver<()> {

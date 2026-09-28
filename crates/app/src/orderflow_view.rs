@@ -117,6 +117,8 @@ pub struct OrderflowView {
     /// Instant of the first print this view ever saw, the starvation clock's
     /// zero. Read only when the hook above is set.
     first_print_ms: Option<i64>,
+    /// The volume-dot rungs in use, held through an autoscale wobble.
+    dot_rungs: quantick_orderflow::DotRungMemory,
 }
 
 impl OrderflowView {
@@ -168,6 +170,7 @@ impl OrderflowView {
             preset_status,
             starve_tape_after_ms: None,
             first_print_ms: None,
+            dot_rungs: Default::default(),
         }
     }
 
@@ -207,6 +210,11 @@ impl OrderflowView {
     #[must_use]
     pub(crate) fn cached_live_end_ms(&self) -> Option<i64> {
         self.published.live_end_ms
+    }
+
+    /// The rungs and scales of the last published volume-dots frame.
+    pub(crate) fn dot_scale(&self) -> Option<&quantick_orderflow::DotScale> {
+        self.published.frame.as_deref()?.volume_dots.as_ref()
     }
 
     /// The heatmap setup this chart is drawing with, for a control capture.
