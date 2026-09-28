@@ -48,6 +48,7 @@ fn coarse(candle_window_ms: i64, tape_window_ms: i64, level_ticks: i64) -> Volum
         tape_window_ms,
         level_ticks,
         bars: (0..40).map(|i| (i * 1_000, i * 1_000 + 999)).collect(),
+        forming: None,
     }
 }
 
@@ -645,6 +646,7 @@ fn a_window_splits_at_a_bar_close() {
         tape_window_ms: 1_000,
         level_ticks: 1,
         bars: vec![(0, 1_129), (1_130, 1_999), (2_000, 2_999), (3_000, 3_900)],
+        forming: None,
     };
     let frame = frame_at(&history, &timeline, prices("90", "110"), &dots);
     let dot = |id: u64| {
@@ -730,6 +732,7 @@ fn dots_sit_still_through_a_pan_and_a_new_print() {
         tape_window_ms: 250,
         level_ticks: 1,
         bars: (0..40).map(|i| (i * 1_000, i * 1_000 + 999)).collect(),
+        forming: None,
     };
     for visible in [None, Some(1..3), Some(2..4)] {
         let timeline = chart(3_900, 1_500, visible.clone());
@@ -766,6 +769,58 @@ fn dots_sit_still_through_a_pan_and_a_new_print() {
             .x
     };
     assert_eq!(forming(3_150), forming(3_180));
+}
+
+/// Candle windows are counted from their bar's open, so a bar shorter than
+/// its window is one window whatever the epoch grid does, and its dot sits at
+/// the slot's centre; no candle dot is pinned at a slot's edge.
+#[test]
+fn a_bar_shorter_than_its_window_is_one_dot_at_its_slot_centre() {
+    let config = dots_config();
+    let trades = dense(29, 3_000, 0, 9_000);
+    let history = tape(config.clone(), &borrowed(&trades));
+    // Bars 300 to 900 ms long, opening off the epoch's second grid.
+    let lengths = [
+        700, 450, 900, 600, 800, 550, 300, 850, 650, 750, 500, 900, 600,
+    ];
+    let mut opens = vec![0_i64];
+    for length in lengths {
+        opens.push(opens.last().unwrap() + length);
+    }
+    let bars: Vec<Bar> = opens
+        .windows(2)
+        .map(|pair| bar(pair[0], pair[1] - 1))
+        .collect();
+    let timeline = BarTimeline::from_bars(0, &bars, None, None);
+    // 21 px a bar: 1 000 ms windows for the bars up to 1 024 ms after the
+    // doubling, 500 ms for the ones up to 512 — never shorter than a bar.
+    let dots = VolumeDots {
+        px_per_bar: 21.0,
+        dot_px: 20.0,
+        tape_window_ms: 250,
+        level_ticks: 1,
+        bars: bars
+            .iter()
+            .map(|bar| (bar.open_time, bar.close_time))
+            .collect(),
+        forming: None,
+    };
+    let frame = frame_at(&history, &timeline, prices("90", "110"), &dots);
+    assert!(frame.aggressions.len() > 100, "the fixture draws dots");
+    let mut seen = std::collections::BTreeSet::new();
+    for dot in &frame.aggressions {
+        assert!(!dot.live, "no tape in this chart");
+        let slot = timeline.slot_at(dot.first_timestamp_ms).unwrap();
+        assert!(
+            seen.insert((slot.index, dot.price_bucket)),
+            "two dots for one bar and level: {dot:?}"
+        );
+        let (left, right) = timeline.slot_bounds(slot.index);
+        assert!(
+            (dot.x - (left + right) / 2.0).abs() < 1e-9,
+            "a dot off its slot's centre: {dot:?} in {left}..{right}"
+        );
+    }
 }
 
 /// The forming bar's window only ever coarsens as the bar runs on: once it
@@ -850,6 +905,7 @@ fn dots_carry_the_evidence_of_their_prints() {
             tape_window_ms: 1_000,
             level_ticks: 1,
             bars: vec![(0, 1_000)],
+            forming: None,
         };
         project_with_dots(
             &history,
@@ -899,6 +955,7 @@ fn the_dot_count_is_bounded_by_bars_and_levels() {
         tape_window_ms: 1_000,
         level_ticks: 10,
         bars: (0..13).map(|i| (i * 1_000, i * 1_000 + 999)).collect(),
+        forming: None,
     };
     let frame = frame_at(&history, &timeline, prices("90", "110"), &dots);
     let bars = 13;
