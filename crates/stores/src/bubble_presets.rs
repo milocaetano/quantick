@@ -548,6 +548,10 @@ mod tests {
     fn a_preset_round_trips_through_the_panel_state() {
         let mut config = HeatmapConfig {
             bubble_cluster_ms: 50,
+            volume_dots: quantick_orderflow::VolumeDotStyle {
+                enabled: true,
+                full_quantity: 2_500.0,
+            },
             bubbles: BubbleStyle {
                 side_offset: 9.0,
                 size_reference: BubbleSizeReference::VisibleMax,
@@ -562,6 +566,10 @@ mod tests {
         preset.apply_to(&mut other);
         assert_eq!(other.bubbles, config.bubbles);
         assert_eq!(other.bubble_cluster_ms, 50);
+        assert_eq!(
+            other.volume_dots, config.volume_dots,
+            "the dots' look travels"
+        );
         // Nothing outside the bubble panel moves — least of all the switch that
         // would start recording trades.
         assert_eq!(
@@ -581,6 +589,20 @@ mod tests {
 
         config.bubbles.side_offset = 0.0;
         assert_ne!(BubblePreset::capture("mine", &config), preset);
+    }
+
+    /// A presets file written before volume dots had a scale of their own
+    /// loads unchanged, with the default full-size quantity.
+    #[test]
+    fn a_preset_without_the_dot_scale_loads_the_default() {
+        let file = parse("active = \"old\"\n\n[[presets]]\nname = \"old\"\noverlap_merge = true\n")
+            .expect("an old file");
+        let preset = file.get("old").expect("the preset");
+        assert_eq!(preset.volume_dot_full_quantity, 1_000.0);
+        let mut config = HeatmapConfig::default();
+        preset.apply_to(&mut config);
+        assert!(config.volume_dots.enabled);
+        assert_eq!(config.volume_dots.full_quantity, 1_000.0);
     }
 
     /// A preset is a look. Now that the tape's visibility lives in the same
@@ -701,6 +723,7 @@ mod tests {
             dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,
             candle_summary: false,
             overlap_merge: false,
+            volume_dot_full_quantity: quantick_orderflow::DEFAULT_VOLUME_DOT_FULL_QUANTITY,
             region_rows: 1,
             region_ms: DEFAULT_BUBBLE_REGION_MS,
             bubbles: BubbleStyle {

@@ -217,7 +217,8 @@ fn volume_dots_are_switched_by_the_layer_call() {
         let flow = app.active_tab().flow_pane.orderflow.as_ref();
         flow.expect("the flow pane has an engine")
             .cached_config()
-            .bubble_overlap_merge
+            .volume_dots
+            .enabled
     };
     assert!(!merging(&app), "off until someone asks");
     for on in [true, false] {

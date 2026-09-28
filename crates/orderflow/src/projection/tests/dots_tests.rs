@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::bubble_radius;
+use crate::config::VolumeDotStyle;
 use crate::history::AggressorSide;
 use crate::projection::{
     DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_LADDER_MS, DotRungMemory, PaneGeometry, VolumeDots,
@@ -18,7 +19,10 @@ use crate::projection::{
 fn dots_config() -> HeatmapConfig {
     let base = bubbles_only();
     HeatmapConfig {
-        bubble_overlap_merge: true,
+        volume_dots: VolumeDotStyle {
+            enabled: true,
+            full_quantity: 10.0,
+        },
         bubble_candle_summary: true,
         bubble_region_rows: 3,
         bubble_dust_merge_ms: 3_000,
@@ -895,7 +899,10 @@ fn dots_fix_the_tape_at_fifteen_seconds() {
                 }
             );
             let off = HeatmapConfig {
-                bubble_overlap_merge: false,
+                volume_dots: VolumeDotStyle {
+                    enabled: false,
+                    ..dots_config().volume_dots
+                },
                 ..config.clone()
             };
             assert_eq!(off.lane_window(), window);
@@ -959,7 +966,10 @@ fn a_price_pan_never_changes_a_dot() {
 fn dots_carry_the_evidence_of_their_prints() {
     let frame = |dots_on: bool| {
         let mut history = LiquidityHistory::new(HeatmapConfig {
-            bubble_overlap_merge: dots_on,
+            volume_dots: VolumeDotStyle {
+                enabled: dots_on,
+                ..dots_config().volume_dots
+            },
             bubble_cluster_ms: 0,
             ..config()
         });
@@ -1181,9 +1191,9 @@ fn a_merged_level_is_the_sum_and_never_smaller() {
     // A full-size dot at 1 000 contracts, so the fixture's dots stay below it
     // and a merge has room to grow.
     let config = HeatmapConfig {
-        bubbles: BubbleStyle {
-            size_reference_quantity: 1_000.0,
-            ..dots_config().bubbles
+        volume_dots: VolumeDotStyle {
+            enabled: true,
+            full_quantity: 1_000.0,
         },
         ..dots_config()
     };
@@ -1242,11 +1252,78 @@ fn a_merged_level_is_the_sum_and_never_smaller() {
     assert!(grew > 20, "the fixture merges levels ({grew})");
 }
 
+/// Dots are sized against their own full-size quantity, not the prints'
+/// `size_reference_quantity`. Changing it rescales every dot alike: the ratio
+/// between two dots' radii holds, and the preset's print scale plays no part.
+#[test]
+fn the_dot_scale_rescales_every_dot_alike() {
+    let sizes = |full_quantity: f64, print_reference: f64| {
+        let config = HeatmapConfig {
+            volume_dots: VolumeDotStyle {
+                enabled: true,
+                full_quantity,
+            },
+            bubbles: BubbleStyle {
+                min_radius: 0.0,
+                size_reference: BubbleSizeReference::Fixed,
+                size_reference_quantity: print_reference,
+                ..dots_config().bubbles
+            },
+            ..dots_config()
+        };
+        let history = tape(
+            config.clone(),
+            &[
+                (1, 1_100, "100", "4", Side::Buy),
+                (2, 1_600, "101", "9", Side::Sell),
+            ],
+        );
+        let frame = frame_at(
+            &history,
+            &chart(3_900, 1_500, None),
+            prices("90", "110"),
+            &windows(500, 250),
+        );
+        let radius = |id: u64| {
+            let dot = frame
+                .aggressions
+                .iter()
+                .find(|dot| dot.agg_ids == vec![id])
+                .expect("drawn");
+            let (minimum, maximum) = config.live_lane.pane_radii(&config.bubbles, dot.live, true);
+            bubble_radius(dot.size, minimum, maximum)
+        };
+        (radius(1), radius(2))
+    };
+    let (small_100, big_100) = sizes(100.0, 100.0);
+    let (small_1000, big_1000) = sizes(1_000.0, 100.0);
+    assert!(
+        small_1000 < small_100 && big_1000 < big_100,
+        "a bigger scale draws smaller"
+    );
+    assert!(
+        ((small_100 / big_100) - (small_1000 / big_1000)).abs() < 1e-6,
+        "alike"
+    );
+    assert!(
+        ((small_100 / big_100) - 2.0 / 3.0).abs() < 1e-6,
+        "area follows quantity"
+    );
+    assert_eq!(
+        sizes(100.0, 5.0),
+        sizes(100.0, 100_000.0),
+        "the print scale plays no part"
+    );
+}
+
 /// Off, the dots never run: the frame is exactly the one built without them.
 #[test]
 fn off_leaves_the_frame_unchanged() {
     let config = HeatmapConfig {
-        bubble_overlap_merge: false,
+        volume_dots: VolumeDotStyle {
+            enabled: false,
+            ..dots_config().volume_dots
+        },
         ..dots_config()
     };
     let trades = dense(5, 1_500, 0, 12_000);

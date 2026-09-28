@@ -2185,7 +2185,7 @@ mod tests {
             let mut view = OrderflowView::new("BTCUSDT");
             view.set_projection_demand(true);
             let before = view.config.clone();
-            view.config.bubble_overlap_merge = dots;
+            view.config.volume_dots.enabled = dots;
             view.commit_config_changes(before);
             for (agg_id, timestamp_ms, price, quantity, side) in [
                 (1, 1_000, 100_050, 1, quantick_engine::Side::Buy),
@@ -2288,7 +2288,7 @@ mod tests {
             view.live_lane_window_ms(&long),
         );
         let before = view.config.clone();
-        view.config.bubble_overlap_merge = true;
+        view.config.volume_dots.enabled = true;
         view.commit_config_changes(before);
         assert_eq!(view.live_lane_window_ms(&short), 15_000);
         assert_eq!(view.live_lane_window_ms(&long), 15_000);
@@ -2297,7 +2297,7 @@ mod tests {
             quantick_orderflow::LaneWindow::Fixed { ms: 15_000 }
         );
         let before = view.config.clone();
-        view.config.bubble_overlap_merge = false;
+        view.config.volume_dots.enabled = false;
         view.commit_config_changes(before);
         assert_eq!(view.live_lane_window_ms(&short), off_short);
         assert_eq!(view.live_lane_window_ms(&long), off_long);

@@ -556,6 +556,35 @@ impl HeatmapConfig {
 mod tests {
     use super::*;
 
+    /// Volume dots have a full-size quantity of their own, 1 000 contracts by
+    /// default, kept to a range a dot can be drawn against.
+    #[test]
+    fn volume_dots_have_their_own_bounded_scale() {
+        let config = HeatmapConfig::default();
+        assert!(!config.volume_dots.enabled);
+        assert_eq!(
+            config.volume_dots.full_quantity,
+            DEFAULT_VOLUME_DOT_FULL_QUANTITY
+        );
+        assert_eq!(DEFAULT_VOLUME_DOT_FULL_QUANTITY, 1_000.0);
+        for (asked, kept) in [
+            (0.0, 1.0),
+            (-5.0, 1.0),
+            (f64::NAN, DEFAULT_VOLUME_DOT_FULL_QUANTITY),
+            (f64::INFINITY, DEFAULT_VOLUME_DOT_FULL_QUANTITY),
+            (1e12, 10_000_000.0),
+            (250.0, 250.0),
+        ] {
+            let mut config = HeatmapConfig::default();
+            config.volume_dots.full_quantity = asked;
+            assert_eq!(
+                config.sanitized().volume_dots.full_quantity,
+                kept,
+                "{asked}"
+            );
+        }
+    }
+
     #[test]
     fn defaults_are_off_and_bounded() {
         let config = HeatmapConfig::default();

@@ -2091,7 +2091,10 @@ mod tests {
             engine.handle_depth_event(snapshot_event(10));
             engine.apply_visual_config(HeatmapConfig {
                 show_aggressions: true,
-                bubble_overlap_merge: dots,
+                volume_dots: crate::config::VolumeDotStyle {
+                    enabled: dots,
+                    ..crate::config::VolumeDotStyle::default()
+                },
                 ..engine.config.clone()
             });
             for (agg_id, timestamp_ms, quantity, side) in
@@ -2149,9 +2152,9 @@ mod tests {
         assert_eq!((scale.tape_window_ms, scale.level_ticks), (100, 1));
         assert_eq!(scale.px_per_bar, 40.0);
         assert_eq!(
-            scale.size_reference,
-            engine.config.bubbles.fixed_reference_decimal().unwrap(),
-            "one absolute scale: the preset's full-size quantity"
+            scale.volume_dot_full_quantity,
+            Decimal::from(1_000),
+            "one absolute scale: the dots' own full-size quantity"
         );
         let builds = engine.health().projection_builds;
         frame(&mut engine, Some(zoom(250, 1)));
