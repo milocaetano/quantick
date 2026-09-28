@@ -121,6 +121,14 @@ fn unit(value: f64) -> f64 {
     }
 }
 
+/// The most visual rows one cell may span; a chart asking for more is
+/// degenerate for the frame, and draws it unmerged rather than overflow.
+const MAX_ROWS_PER_CELL: f64 = 1_048_576.0;
+
+/// Keeps a price on a bucket's exact floor in that bucket after the float
+/// round trip through the chart's y, in buckets.
+const BUCKET_NUDGE: f64 = 1e-6;
+
 /// Keeps a mark at the very start of a slot from reading as the end of the
 /// previous one after the normalized round trip.
 const SLOT_EPSILON: f64 = 1e-9;
@@ -228,8 +236,11 @@ struct PaneCells {
     /// may be, so a mark drawn whole still fits.
     diameter: f64,
     /// How tall a cell is, in price: whole rows, as many as the diameter
-    /// needs rounded up to a doubling. `None` when the chart has no height.
+    /// needs rounded up to a doubling. `None` when the chart has no height,
+    /// or a degenerate one that asks for an absurd number of rows.
     cell_price: Option<Decimal>,
+    /// How many visual rows one cell is tall.
+    rows: i64,
     /// How long a tape cell is, in milliseconds, rounded up to a doubling.
     /// Unused on the candles.
     cell_ms: i64,
@@ -249,6 +260,7 @@ struct Grid<'a> {
     height: f64,
     high: f64,
     span: f64,
+    row_price: f64,
     candles: PaneCells,
     lane: PaneCells,
     bubbles: &'a BubbleStyle,
@@ -278,12 +290,16 @@ impl<'a> Grid<'a> {
             let diameter = 2.0 * (f64::from(radii.1) + margin);
             // Rows counted in doublings, so the axis refitting a little does
             // not regroup; and in exact prices, so no float decides a row.
-            let cell_price = (row_px.is_finite() && row_px > 0.0 && row_price > Decimal::ZERO)
-                .then(|| row_price * Decimal::from(doubling((diameter / row_px).ceil()) as i64));
+            let rows = doubling((diameter / row_px).ceil());
+            let cell_price = (row_px.is_finite() && row_px > 0.0 && rows <= MAX_ROWS_PER_CELL)
+                .then(|| row_price.checked_mul(Decimal::from(rows as i64)))
+                .flatten()
+                .filter(|price| *price > Decimal::ZERO);
             PaneCells {
                 radii,
                 diameter,
                 cell_price,
+                rows: rows as i64,
                 cell_ms: doubling((diameter * lane_ms_per_px).ceil()) as i64,
                 width,
             }
@@ -299,6 +315,7 @@ impl<'a> Grid<'a> {
             height,
             high,
             span,
+            row_price: row_price.to_f64().unwrap_or(0.0),
             candles: pane((bubbles.min_radius, bubbles.max_radius), slots * px_per_bar),
             lane: pane(config.live_lane.scaled_radii(bubbles), lane_width),
             bubbles,
@@ -372,9 +389,16 @@ impl<'a> Grid<'a> {
         let pane = self.pane(mark.live);
         let cell_price = pane.cell_price?;
         let (bar, column, left, right) = self.column(mark, pane)?;
-        // Counted from price zero on the mark's exact bucket, so panning
-        // never moves a print to another row.
-        let row = (mark.price_bucket / cell_price).floor();
+        // The bucket the mark is drawn in — a regional or budget fold is
+        // drawn at its point of control, not at its range's floor — counted
+        // from price zero, so panning never moves a print to another row.
+        // The nudge keeps a price on a bucket's exact floor in that bucket.
+        let price = self.high - unit(mark.y) * self.span;
+        let bucket = (price / self.row_price + BUCKET_NUDGE).floor();
+        if !bucket.is_finite() {
+            return None;
+        }
+        let row = Decimal::from((bucket as i64).div_euclid(pane.rows));
         let y_of = |price: Decimal| {
             (self.high - price.to_f64().unwrap_or(self.high)) / self.span * self.height
         };
@@ -383,8 +407,8 @@ impl<'a> Grid<'a> {
         let cell = Cell {
             left: left.max(0.0),
             right: right.min(pane.width),
-            top: y_of((row + Decimal::ONE) * cell_price).max(0.0),
-            bottom: y_of(row * cell_price).min(self.height),
+            top: y_of((row + Decimal::ONE).checked_mul(cell_price)?).max(0.0),
+            bottom: y_of(row.checked_mul(cell_price)?).min(self.height),
         };
         Some(((mark.live, bar, column, row.to_i64()?), cell))
     }

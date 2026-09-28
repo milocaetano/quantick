@@ -855,10 +855,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     if bubbles.trail_length > 0.0 {
         let mut trail_mesh = egui::Mesh::default();
         for trade in context.bubbles() {
-            // The trail runs right into the next cell, so a grid mark has none.
-            if trade.cell_radius_px.is_some()
-                || (trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty())
-            {
+            if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
                 continue;
             }
             let Some(center) = center_of(trade) else {
@@ -866,9 +863,13 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             };
             let pane = context.layout.pane(trade.x);
             let half_height = trail_half_height(disc_of(trade).radius);
+            // A grid mark's trail stops at its cell's reach, short of the next.
+            let right = trade
+                .cell_radius_px
+                .map_or(pane.right(), |reach| pane.right().min(center.x + reach));
             add_gradient_rect(
                 &mut trail_mesh,
-                trail_rect(center, half_height, bubbles.trail_length, pane.right()).intersect(pane),
+                trail_rect(center, half_height, bubbles.trail_length, right).intersect(pane),
                 colors.trail.gamma_multiply(bubbles.trail_opacity),
                 egui::Color32::TRANSPARENT,
             );
