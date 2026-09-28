@@ -287,9 +287,10 @@ pub(super) fn refine_tier(
 /// Place one tier's marks on the chart, each on the scale its view reads on.
 ///
 /// A volume dot (`dots`, with the full-size quantity per second and tick) is
-/// placed at its window's fixed centre, held inside its own bar's slot on the
-/// candles and inside the tape on the tape — a whole-bar dot at its slot's
-/// centre — and sized against its own cell.
+/// placed at its window's fixed centre on the tape, held inside the tape, and
+/// on the candles at the centre of the part of its window inside its bar —
+/// at its slot's centre when that part is the whole bar — and sized against
+/// its own cell.
 pub(super) fn tier_primitives(
     marks: TierClusters,
     timeline: &BarTimeline,
@@ -318,11 +319,14 @@ pub(super) fn tier_primitives(
                 (true, true) => timeline.locate_in_lane_clamped(cluster.timestamp_ms)?,
                 (false, true) => {
                     let slot = timeline.slot_at(cluster.first_timestamp_ms)?;
-                    let whole =
-                        dots.is_some_and(|(dots, _)| dots.whole_bar(cluster.first_timestamp_ms));
+                    let (centre_ms, whole) = dots
+                        .and_then(|(dots, _)| {
+                            dots.candle_place(cluster.first_timestamp_ms, slot.end_ms)
+                        })
+                        .unwrap_or((cluster.timestamp_ms, false));
                     let last = slot.end_ms.saturating_sub(1).max(slot.start_ms);
                     let mut position =
-                        timeline.locate_in_slot(cluster.timestamp_ms.clamp(slot.start_ms, last))?;
+                        timeline.locate_in_slot(centre_ms.clamp(slot.start_ms, last))?;
                     if whole {
                         let (left, right) = timeline.slot_bounds(slot.index);
                         position.normalized = (left + right) / 2.0;

@@ -42,9 +42,13 @@
 //! lets go of its prints, the way a forming bar does. A candle window wholly
 //! older than the tape never changes again.
 //!
-//! A dot is placed at its window's fixed centre — a whole-bar dot at its
-//! bar's slot centre — never at its newest print, so a forming dot does not
-//! slide as prints arrive and a closed one does not move on a pan.
+//! A candle window is counted from its bar's open, so a bar shorter than its
+//! window is one window, whatever the epoch grid does; a tape window from
+//! epoch 0. A tape dot sits at its window's fixed centre; a candle dot at the
+//! centre of the part of its window inside its bar — its slot's centre when
+//! that part is the whole bar — where a forming bar ends at its slot's end.
+//! Never at its newest print, so a forming dot does not slide as prints
+//! arrive and a closed one does not move on a pan.
 //!
 //! Known limitation: a print stamped with the same millisecond as a bar's
 //! open belongs to the new bar, which is the timeline's rule for every mark.
@@ -265,12 +269,9 @@ struct Window {
     /// Distinguishes the windows of one bar.
     key: i64,
     bar_open: i64,
-    /// Where a dot of this window is placed: the window's fixed centre, or
-    /// the bar's open for a whole-bar window, whose dot sits at its slot's
-    /// centre instead.
+    /// The window's fixed centre, where a tape dot sits; a candle dot is
+    /// placed by [`VolumeDots::candle_place`].
     centre_ms: i64,
-    /// The window is the whole bar.
-    whole: bool,
     /// The cell's duration, which the dot is sized against.
     cell_ms: i64,
 }
@@ -288,6 +289,8 @@ pub struct VolumeDots {
     pub level_ticks: i64,
     /// `(open, close)` of every bar the frame may key, ascending by open.
     pub bars: Vec<(i64, i64)>,
+    /// Open of the bar still forming, whose close is only its latest print.
+    pub forming: Option<i64>,
 }
 
 impl VolumeDots {
@@ -316,6 +319,7 @@ impl VolumeDots {
             tape_window_ms: zoom.tape_window_ms,
             level_ticks: zoom.level_ticks,
             bars,
+            forming: partial.map(|bar| bar.open_time),
         }
     }
 
@@ -348,12 +352,14 @@ impl VolumeDots {
         };
         Some(match width {
             Some(width) => {
-                let start = timestamp_ms.div_euclid(width) * width;
+                // The tape's grid is the epoch's; a candle's is its bar's own,
+                // so a bar shorter than its window is one window.
+                let origin = if live { 0 } else { open };
+                let start = origin + (timestamp_ms - origin).div_euclid(width) * width;
                 Window {
                     key: start,
                     bar_open: open,
                     centre_ms: start + width / 2,
-                    whole: false,
                     cell_ms: width,
                 }
             }
@@ -361,17 +367,28 @@ impl VolumeDots {
                 key: i64::MIN,
                 bar_open: open,
                 centre_ms: open,
-                whole: true,
                 cell_ms: doubled(close - open),
             },
         })
     }
 
-    /// Whether the candle dot whose first print is at `timestamp_ms` is its
-    /// bar's one window, drawn at the slot's centre.
-    pub(super) fn whole_bar(&self, timestamp_ms: i64) -> bool {
-        self.window(timestamp_ms, false)
-            .is_some_and(|window| window.whole)
+    /// Where the candle dot whose first print is at `timestamp_ms` sits: the
+    /// centre of the part of its window inside its bar, and whether that part
+    /// is the whole bar. The bar ends at its close once closed, and at
+    /// `slot_end_ms` while forming — never at its latest print.
+    pub(super) fn candle_place(&self, timestamp_ms: i64, slot_end_ms: i64) -> Option<(i64, bool)> {
+        let (open, close) = self.bar_around(timestamp_ms)?;
+        let bar_end = if self.forming == Some(open) {
+            slot_end_ms
+        } else {
+            close.saturating_add(1)
+        };
+        let Some(width) = self.bar_window(close - open) else {
+            return Some((open, true));
+        };
+        let start = open + (timestamp_ms - open).div_euclid(width) * width;
+        let end = start.saturating_add(width).min(bar_end).max(start + 1);
+        Some((start + (end - start) / 2, start == open && end == bar_end))
     }
 
     /// The quantity of a full-size dot of a cell `cell_ms` long: `full` for
