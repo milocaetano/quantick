@@ -368,7 +368,7 @@ impl<'c, 'a> EventPass<'c, 'a> {
             } else {
                 (bubbles.min_radius, bubbles.max_radius)
             };
-            let r = trade.drawn_radius(min, max);
+            let r = trade.drawn_disc(min, max, bubbles).radius;
             // Carve from the bubble's midriff rightward: the eaten wall still
             // touches the bubble's left half (the bubble reads as biting into
             // it), while re-stacked liquidity cannot slide through to the right.

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
-use crate::config::HeatmapConfig;
+use crate::config::{BubbleStyle, HeatmapConfig};
 use crate::grouping::EffectiveGrouping;
 use crate::history::{AggressorSide, RestingSide};
 use crate::interaction::{LiquidityEvent, LiquidityEvidence};
@@ -138,19 +138,53 @@ pub struct AggressionPrimitive {
     /// to. Nothing is lost either way — the quantity is exact — but the two
     /// must not look the same.
     pub folded_marks: u32,
-    /// The largest radius, in pixels, the overlap grid lets this mark be
-    /// drawn at: half its cell's smaller side, so no disc reaches into a
-    /// neighbour's cell. `None` on every mark the grid did not place.
-    pub radius_cap_px: Option<f32>,
+    /// How far, in pixels, everything drawn for this mark — the disc and
+    /// its dressing — may reach from its centre: half its overlap-grid
+    /// cell's smaller side, so nothing reaches into a neighbour's cell.
+    /// `None` on every mark the grid did not place.
+    pub cell_radius_px: Option<f32>,
+}
+
+/// The disc the painter draws for a mark, and whether its dressing fits.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DrawnDisc {
+    /// Radius of the disc, in pixels.
+    pub radius: f32,
+    /// Whether the halo, rim, rings and crown may be drawn around the disc.
+    /// `false` is a bare disc: its grid cell left no room for them.
+    pub dressed: bool,
 }
 
 impl AggressionPrimitive {
-    /// The radius the painter draws this mark at, on the radius range
-    /// `minimum..=maximum` of its pane, held under the grid's cap.
+    /// The disc the painter draws for this mark, on the radius range
+    /// `minimum..=maximum` of its pane.
+    ///
+    /// Off the grid a mark is drawn at its own size, dressed. On it, the
+    /// disc and the [`dressing_margin`](BubbleStyle::dressing_margin) share
+    /// the cell's reach: the disc gives way first, down to the pane's
+    /// smallest radius; below that the dressing goes and the bare disc takes
+    /// the whole cell.
     #[must_use]
-    pub fn drawn_radius(&self, minimum: f32, maximum: f32) -> f32 {
-        crate::config::bubble_radius(self.size, minimum, maximum)
-            .min(self.radius_cap_px.unwrap_or(f32::INFINITY))
+    pub fn drawn_disc(&self, minimum: f32, maximum: f32, bubbles: &BubbleStyle) -> DrawnDisc {
+        let natural = crate::config::bubble_radius(self.size, minimum, maximum);
+        let Some(cell) = self.cell_radius_px else {
+            return DrawnDisc {
+                radius: natural,
+                dressed: true,
+            };
+        };
+        let room = cell - bubbles.dressing_margin();
+        if room > 0.0 && room >= minimum {
+            DrawnDisc {
+                radius: natural.min(room),
+                dressed: true,
+            }
+        } else {
+            DrawnDisc {
+                radius: natural.min(cell.max(0.0)),
+                dressed: false,
+            }
+        }
     }
 }
 

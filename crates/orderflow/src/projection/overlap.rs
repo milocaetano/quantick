@@ -14,9 +14,12 @@
 //! A grid rather than a search for touching discs, because the search was
 //! tried and failed both ways: folding only direct neighbours left a fold
 //! drawn at its summed size over the next one, and following touch chained a
-//! whole rally into one mark. A cell is at most one full-size disc wide and
-//! tall, a mark is drawn inside its cell, and so nothing overlaps by
-//! construction — at any zoom, panned or not.
+//! whole rally into one mark. A cell is at most one full-size disc and its
+//! dressing wide and tall — halo, rings and crown, the painter's own
+//! [`BubbleStyle::dressing_margin`] — everything drawn for a mark stays
+//! inside its cell, and so nothing overlaps by construction, at any zoom,
+//! panned or not. Where a cell is too small for the dressing (a bar slot a
+//! few pixels wide) the mark is drawn bare, a disc and nothing around it.
 //!
 //! A cell never spans a bar, because a mark claims its bar traded it: on the
 //! candles the columns subdivide a bar's slot, and on the tape they
@@ -36,7 +39,7 @@ use quantick_engine::Bar;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
-use crate::config::{HeatmapConfig, bubble_center_offset, bubble_radius};
+use crate::config::{BubbleStyle, HeatmapConfig, bubble_center_offset};
 use crate::timeline::BarTimeline;
 
 use super::fold::fold_onto;
@@ -106,8 +109,8 @@ struct Cell {
 }
 
 impl Cell {
-    /// The largest radius a disc inside the cell may be drawn at.
-    fn radius_cap(self) -> f64 {
+    /// How far from its centre a mark inside the cell may reach.
+    fn reach(self) -> f64 {
         ((self.right - self.left).min(self.bottom - self.top) / 2.0).max(0.0)
     }
 }
@@ -200,7 +203,8 @@ struct Grid<'a> {
     row_price: f64,
     candle_radii: (f32, f32),
     lane_radii: (f32, f32),
-    side_offset: f32,
+    bubbles: &'a BubbleStyle,
+    margin: f64,
 }
 
 impl<'a> Grid<'a> {
@@ -209,7 +213,7 @@ impl<'a> Grid<'a> {
         timeline: &'a BarTimeline,
         prices: PriceWindow,
         row_price: Decimal,
-        config: &HeatmapConfig,
+        config: &'a HeatmapConfig,
     ) -> Self {
         let bubbles = &config.bubbles;
         let high = prices.high.to_f64().unwrap_or(0.0);
@@ -227,7 +231,8 @@ impl<'a> Grid<'a> {
             row_price: row_price.to_f64().unwrap_or(0.0),
             candle_radii: (bubbles.min_radius, bubbles.max_radius),
             lane_radii: config.live_lane.scaled_radii(bubbles),
-            side_offset: bubbles.side_offset,
+            bubbles,
+            margin: f64::from(bubbles.dressing_margin()),
         }
     }
 
@@ -284,7 +289,8 @@ impl<'a> Grid<'a> {
     /// The cell a mark falls in, or `None` when its pane is not drawn.
     fn cell(&self, mark: &AggressionPrimitive) -> Option<(CellKey, Cell)> {
         let (x, bar, left, right) = self.bar(mark)?;
-        let diameter = 2.0 * f64::from(self.radii(mark.live).1);
+        // A full-size disc and its dressing, so a mark drawn whole still fits.
+        let diameter = 2.0 * (f64::from(self.radii(mark.live).1) + self.margin);
         let width = right - left;
         let columns = (width / diameter).floor().max(1.0);
         let column_width = width / columns;
@@ -318,8 +324,9 @@ impl<'a> Grid<'a> {
     }
 
     /// Fold one cell into a mark drawn inside it: at the column's centre and
-    /// the quantity-weighted price, no bigger than the cell. A lone mark keeps
-    /// its own place, held inside the cell the same way.
+    /// the quantity-weighted price, its disc and dressing no bigger than the
+    /// cell. A lone mark keeps its own place, held inside the cell the same
+    /// way.
     fn settle(
         &self,
         cell: Cell,
@@ -342,9 +349,12 @@ impl<'a> Grid<'a> {
         let own_x = self.bar(&anchor).map_or(0.0, |(x, ..)| x);
         let mut mark = fold_onto(anchor, members, reference);
 
-        let cap = cell.radius_cap();
+        let reach = cell.reach();
+        mark.cell_radius_px = Some(reach as f32);
         let (minimum, maximum) = self.radii(live);
-        let radius = f64::from(bubble_radius(mark.size, minimum, maximum)).min(cap);
+        let disc = mark.drawn_disc(minimum, maximum, self.bubbles);
+        let dressing = if disc.dressed { self.margin } else { 0.0 };
+        let radius = (f64::from(disc.radius) + dressing).min(reach);
         let x = if lone {
             own_x
         } else {
@@ -358,7 +368,7 @@ impl<'a> Grid<'a> {
         } * self.height;
         let lean = f64::from(bubble_center_offset(
             mark.buy_share,
-            self.side_offset,
+            self.bubbles.side_offset,
             false,
         ));
         let center = (y + lean).max(cell.top + radius).min(cell.bottom - radius);
@@ -368,7 +378,6 @@ impl<'a> Grid<'a> {
         } else {
             x / self.px_per_bar / self.regions
         };
-        mark.radius_cap_px = Some(cap as f32);
         mark
     }
 }

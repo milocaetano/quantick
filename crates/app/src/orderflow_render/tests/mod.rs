@@ -85,6 +85,7 @@ fn a_low_detail_radius_does_not_disarm_the_readability_floor() {
         matched: None,
         buy_share: 1.0,
         folded: 0,
+        bare: false,
     };
     let solid = BubbleStyle {
         hollow_small_buys: false,
@@ -369,6 +370,7 @@ fn a_cheap_dot_stays_a_single_circle() {
                 matched: None,
                 buy_share: 0.0,
                 folded: 0,
+                bare: false,
             },
             &bubbles,
             &colors,
@@ -410,6 +412,7 @@ fn the_preview_draws_a_bubble_exactly_the_way_the_chart_does() {
                 matched: Some(PREVIEW_MATCHED_FRACTION),
                 buy_share: 1.0,
                 folded: 0,
+                bare: false,
             },
             &bubbles,
             &colors,
@@ -640,6 +643,7 @@ fn the_crown_replaces_the_front_and_leaves_the_disc_alone() {
         matched: Some(0.7),
         buy_share: 1.0,
         folded: 0,
+        bare: false,
     };
     let crowned = painted(|painter| draw_bubble(painter, mark, &bubbles, &colors));
     let fronted = painted(|painter| {
@@ -742,6 +746,7 @@ fn sphere_mode_swaps_the_flat_fill_for_a_shaded_mesh() {
         matched: None,
         buy_share: 1.0,
         folded: 0,
+        bare: false,
     };
     let palette = Palette::for_theme(HeatmapTheme::Bookmap);
     // Both modes are named explicitly: the shipped default is the sphere
@@ -804,6 +809,7 @@ fn the_preview_draws_a_sphere_bubble_exactly_the_way_the_chart_does() {
                 matched: Some(PREVIEW_MATCHED_FRACTION),
                 buy_share: 1.0,
                 folded: 0,
+                bare: false,
             },
             &bubbles,
             &colors,
@@ -853,6 +859,7 @@ fn hollow_small_buys_opens_the_dot_and_leaves_dressed_bubbles_alone() {
         matched: None,
         buy_share: 1.0,
         folded: 0,
+        bare: false,
     };
 
     // Below the readability floor — where colour alone stops working —
@@ -1031,6 +1038,7 @@ fn a_two_sided_bubble_draws_both_sides_and_a_small_one_falls_back() {
         matched: None,
         buy_share,
         folded: 0,
+        bare: false,
     };
     // Compared after the fill alpha, which is what actually lands in the
     // mesh vertices.
@@ -1098,6 +1106,7 @@ fn a_pie_needs_the_readability_floor_on_the_shipped_presets() {
         matched: None,
         buy_share: 0.5,
         folded: 0,
+        bare: false,
     };
     let sell_ink = format!("{:?}", colors.sell.gamma_multiply(dense_tape_btc.opacity));
 
@@ -1182,7 +1191,7 @@ fn hiding_the_bubble_layer_keeps_the_clusters_in_the_frame() {
             y: 0.5,
             size: 1.0,
             folded_marks: 0,
-            radius_cap_px: None,
+            cell_radius_px: None,
         });
     }
 
@@ -1289,7 +1298,7 @@ fn the_lane_scale_reaches_the_bubbles_and_stops_at_the_boundary() {
             y: 0.5,
             size: 1.0,
             folded_marks: 0,
-            radius_cap_px: None,
+            cell_radius_px: None,
         });
         painted(|painter| {
             draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
@@ -1365,7 +1374,7 @@ fn a_bubble_beside_the_divider_is_clipped_to_its_own_pane() {
             y: 0.5,
             size: 1.0,
             folded_marks: 0,
-            radius_cap_px: None,
+            cell_radius_px: None,
         });
         painted(|painter| {
             draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
@@ -1438,7 +1447,7 @@ fn a_layer_switched_off_on_one_pane_still_draws_on_the_other() {
             y: 0.5,
             size: 1.0,
             folded_marks: 0,
-            radius_cap_px: None,
+            cell_radius_px: None,
         });
     }
 
@@ -1698,6 +1707,7 @@ fn a_folded_bubble_wears_a_ring_a_print_does_not() {
         matched: None,
         buy_share: 1.0,
         folded: 0,
+        bare: false,
     };
     let print = painted(|painter| draw_bubble(painter, mark, &bubbles, &colors));
     let fold = painted(|painter| {

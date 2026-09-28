@@ -381,6 +381,7 @@ pub(super) fn draw_preview_bubble(
             matched: linked_reduction.then_some(PREVIEW_MATCHED_FRACTION),
             buy_share,
             folded: 0,
+            bare: false,
         },
         bubbles,
         colors,

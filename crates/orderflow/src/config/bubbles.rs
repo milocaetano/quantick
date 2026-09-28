@@ -449,7 +449,30 @@ pub fn bubble_center_offset(buy_share: f32, side_offset: f32, inverted: bool) ->
     toward_price * (share - 0.5) * 2.0 * side_offset
 }
 
+/// The furthest past its disc the painter draws a bubble's fixed-reach
+/// dressing, in pixels: the halo's widest gap, which also covers the crown
+/// (gap and stroke, under 5 px), the fold ring (2.5 px) and the dark
+/// separator hair (1.5 px). The impact ring and the rim add their configured
+/// widths on top — see [`BubbleStyle::dressing_margin`].
+pub const BUBBLE_DRESSING_PX: f32 = 5.0;
+
+/// The impact ring's widest gap from the rim, in pixels; its stroke adds
+/// half the configured width beyond it.
+pub const BUBBLE_IMPACT_RING_MAX_GAP_PX: f32 = 3.5;
+
 impl BubbleStyle {
+    /// How far past its disc the painter may draw a dressed bubble, in
+    /// pixels: the margin the overlap grid reserves around every disc, so a
+    /// neighbour's halo or ring never lands on it. The consumption front — a
+    /// vertical line as long as its own setting, drawn only by the preset
+    /// that asks for it by name — is the one mark it does not cover.
+    #[must_use]
+    pub fn dressing_margin(&self) -> f32 {
+        BUBBLE_DRESSING_PX
+            .max(BUBBLE_IMPACT_RING_MAX_GAP_PX + self.impact_ring_width / 2.0)
+            .max(self.outline_width / 2.0)
+    }
+
     /// Clamp every numeric field to a value that is safe for geometry and math.
     pub fn sanitize(&mut self) {
         self.min_radius = finite_clamp(

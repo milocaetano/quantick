@@ -314,6 +314,6 @@ fn aggression_primitive(
         y,
         size,
         folded_marks: 0,
-        radius_cap_px: None,
+        cell_radius_px: None,
     }
 }

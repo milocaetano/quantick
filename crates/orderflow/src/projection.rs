@@ -19,7 +19,7 @@ mod overlap;
 mod tiers;
 
 pub use model::{
-    AggressionPrimitive, BEFORE_CAPTURE, GapPrimitive, HeatmapCell, HeatmapProjection,
+    AggressionPrimitive, BEFORE_CAPTURE, DrawnDisc, GapPrimitive, HeatmapCell, HeatmapProjection,
     LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, normalized_area_size,
     normalized_log_intensity,
 };

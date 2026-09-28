@@ -200,7 +200,7 @@ mod tests {
             y: 0.5,
             size: 0.5,
             folded_marks: 0,
-            radius_cap_px: None,
+            cell_radius_px: None,
         }
     }
 
