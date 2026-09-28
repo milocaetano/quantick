@@ -2033,24 +2033,25 @@ mod tests {
         );
     }
 
-    /// The overlap fold runs on the frame the engine publishes, and only when
-    /// both the trader opted in and the chart said how big its canvas is: off,
-    /// or with no canvas, the frame is exactly the unfolded one.
+    /// Volume dots run on the frame the engine publishes, and only when both
+    /// the trader opted in and the chart said how it is zoomed: off, or with
+    /// no canvas, the frame is exactly the plain one. The candles' window is
+    /// part of the finished half, so a zoom that moves it rebuilds that half;
+    /// a zoom of the tape alone does not.
     #[test]
-    fn the_overlap_fold_needs_the_setting_and_the_canvas() {
-        let geometry = PaneGeometry {
-            px_per_bar: 40.0,
-            lane_width_px: 200.0,
-            height_px: 400.0,
+    fn volume_dots_need_the_setting_and_the_zoom() {
+        let geometry = |px_per_bar: f32, lane_width_px: f32| PaneGeometry {
+            px_per_bar,
+            lane_width_px,
             lane_bar_opens: vec![900],
         };
-        let frame = |merge: bool, pane_geometry: Option<PaneGeometry>| {
+        let engine_with = |dots: bool| {
             let mut engine = BookEngine::new("BTCUSDT");
             engine.set_enabled(true, 10);
             engine.handle_depth_event(snapshot_event(10));
             engine.apply_visual_config(HeatmapConfig {
                 show_aggressions: true,
-                bubble_overlap_merge: merge,
+                bubble_overlap_merge: dots,
                 ..engine.config.clone()
             });
             for (agg_id, timestamp_ms, quantity, side) in
@@ -2064,6 +2065,9 @@ mod tests {
                     side,
                 });
             }
+            engine
+        };
+        let frame = |engine: &mut BookEngine, pane_geometry: Option<PaneGeometry>| {
             let request = ProjectionRequest {
                 pane_geometry,
                 ..request(&[bar(900, 1_100)], (98.0, 102.0))
@@ -2071,22 +2075,38 @@ mod tests {
             let frame = engine.project(&request).unwrap();
             (*frame.projection).clone()
         };
-        let unfolded = frame(false, None);
-        assert_eq!(unfolded.aggressions.len(), 2, "a buy and a sell, apart");
+        let plain = frame(&mut engine_with(false), None);
+        assert_eq!(plain.aggressions.len(), 2, "a buy and a sell, apart");
         assert_eq!(
-            frame(false, Some(geometry.clone())),
-            unfolded,
+            frame(&mut engine_with(false), Some(geometry(40.0, 200.0))),
+            plain,
             "off is today's frame"
         );
-        assert_eq!(frame(true, None), unfolded, "no canvas, nothing to measure");
-        let folded = frame(true, Some(geometry));
         assert_eq!(
-            folded.aggressions, unfolded.aggressions,
-            "every reader but the painter sees the unfolded marks"
+            frame(&mut engine_with(true), None),
+            plain,
+            "no zoom, no window to key on"
         );
-        let folded = folded.overlap_marks.expect("the painter's own list");
-        assert_eq!(folded.len(), 1, "on, the touching pair is one pie");
-        assert_eq!(folded[0].quantity, Decimal::from(5));
+
+        let mut engine = engine_with(true);
+        let dots = frame(&mut engine, Some(geometry(40.0, 200.0)));
+        assert!(dots.volume_dots);
+        assert_eq!(dots.aggressions.len(), 1, "one level, one window: a pie");
+        assert_eq!(dots.aggressions[0].quantity, Decimal::from(5));
+        assert_eq!(dots.aggressions[0].buy_quantity, Decimal::from(3));
+        let builds = engine.health().projection_builds;
+        frame(&mut engine, Some(geometry(40.0, 400.0)));
+        assert_eq!(
+            engine.health().projection_builds,
+            builds,
+            "the tape's zoom leaves the finished half alone"
+        );
+        frame(&mut engine, Some(geometry(4_000.0, 400.0)));
+        assert_eq!(
+            engine.health().projection_builds,
+            builds + 1,
+            "a new candle window rebuilds it"
+        );
     }
 
     /// A print the engine has accepted is drawable on the next projection, with
