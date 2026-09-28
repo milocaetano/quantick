@@ -636,7 +636,8 @@ fn a_zoom_changes_the_level_only_at_ladder_steps() {
 }
 
 /// An axis refit inside one ladder step changes no level, so it moves no
-/// dot; zooming the axis out past a step coarsens the levels.
+/// dot; zooming the axis out past a step coarsens the levels. A level is a
+/// thin row of screen, like a window's column, whatever the dots' radius.
 #[test]
 fn a_refit_inside_a_ladder_step_keeps_every_dot() {
     let config = HeatmapConfig {
@@ -669,24 +670,73 @@ fn a_refit_inside_a_ladder_step_keeps_every_dot() {
             frame_at(&history, &timeline, window, &dots),
         )
     };
-    // 70 and 75 ticks over 400 px: 5.7 and 5.3 px a tick, five ticks a dot.
+    // 70 and 75 ticks over 400 px: 5.7 and 5.3 px a tick, two ticks a dot.
     let (ticks, before) = at("60", "130");
     let (refit_ticks, refit) = at("58", "133");
-    assert_eq!((ticks, refit_ticks), (5, 5));
+    assert_eq!((ticks, refit_ticks), (2, 2));
     let closed = |mark: &AggressionPrimitive| !mark.live && mark.last_timestamp_ms < 6_000;
     assert!(facts(&before, closed).len() > 20);
     assert_eq!(facts(&refit, closed), facts(&before, closed));
     for dot in &before.aggressions {
-        assert_eq!(dot.price_span, dec("5"), "five-tick levels");
+        assert_eq!(dot.price_span, dec("2"), "two-tick levels");
         assert_eq!(
-            dot.price_bucket % dec("5"),
+            dot.price_bucket % dec("2"),
             Decimal::ZERO,
             "anchored at zero"
         );
     }
-    // 200 ticks over 400 px: 2 px a tick, ten ticks a dot.
+    // 200 ticks over 400 px: 2 px a tick, five ticks a dot.
     let (zoomed_out, _) = at("0", "200");
-    assert_eq!(zoomed_out, 10);
+    assert_eq!(zoomed_out, 5);
+}
+
+/// Zooming out shrinks every dot instead of folding more market into each:
+/// the price level stays a thin row like the time window's column, and the
+/// largest radius follows the smaller of the two cells on screen, never
+/// past the style's own. Nothing is drawn with a radius before a zoom is
+/// chosen.
+#[test]
+fn zooming_out_shrinks_the_dots_instead_of_coarsening_the_levels() {
+    use crate::projection::DOT_RADIUS_PER_CELL;
+    assert_eq!(DOT_RADIUS_PER_CELL, 0.6);
+    let config = dots_config();
+    assert_eq!(config.bubbles.max_radius, 15.0);
+    let geometry = |lane_window_ms: i64| PaneGeometry {
+        px_per_bar: 40.0,
+        lane_width_px: 300.0,
+        lane_window_ms,
+        height_px: 400.0,
+        lane_bars: vec![(0, 59_999)],
+    };
+    let mut memory = DotRungMemory::default();
+    assert_eq!(memory.dot_max_radius(), None);
+
+    // 10 px a tick, 500 ms over 10 px: one-tick levels, 0.6 of 10 px.
+    let zoom = memory.choose(geometry(15_000), &config, (60.0, 100.0));
+    assert_eq!((zoom.level_ticks, zoom.tape_window_ms), (1, 500));
+    assert_eq!(memory.dot_max_radius(), Some(6.0));
+
+    // Zoomed in, 40 px a tick and 100 ms over 20 px: 0.6 of 20 px.
+    let mut memory = DotRungMemory::default();
+    memory.choose(geometry(1_500), &config, (60.0, 70.0));
+    assert_eq!(memory.dot_max_radius(), Some(12.0));
+
+    // Zoomed in further, the style's own largest radius holds.
+    let mut memory = DotRungMemory::default();
+    memory.choose(geometry(300), &config, (60.0, 62.0));
+    assert_eq!(memory.dot_max_radius(), Some(15.0));
+
+    // Never below the style's smallest radius either.
+    let tiny = HeatmapConfig {
+        bubbles: BubbleStyle {
+            min_radius: 9.0,
+            ..config.bubbles.clone()
+        },
+        ..config.clone()
+    };
+    let mut memory = DotRungMemory::default();
+    memory.choose(geometry(15_000), &tiny, (60.0, 100.0));
+    assert_eq!(memory.dot_max_radius(), Some(9.0));
 }
 
 /// A coarse level holds every native tick inside it. The dot sits at its
