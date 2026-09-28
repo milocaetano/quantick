@@ -2148,8 +2148,11 @@ mod tests {
         let scale = scale.expect("the rungs are reported");
         assert_eq!((scale.tape_window_ms, scale.level_ticks), (100, 1));
         assert_eq!(scale.px_per_bar, 40.0);
-        assert!(scale.tape_size_reference > Decimal::ZERO);
-        assert!(scale.candle_size_reference_per_second > Decimal::ZERO);
+        assert_eq!(
+            scale.size_reference,
+            engine.config.bubbles.fixed_reference_decimal().unwrap(),
+            "one absolute scale: the preset's full-size quantity"
+        );
         let builds = engine.health().projection_builds;
         frame(&mut engine, Some(zoom(250, 1)));
         assert_eq!(

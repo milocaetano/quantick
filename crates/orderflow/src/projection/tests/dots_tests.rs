@@ -514,10 +514,9 @@ fn a_refit_inside_a_ladder_step_keeps_every_dot() {
 
 /// A coarse level holds every native tick inside it. The dot sits at its
 /// quantity-weighted price rounded to the tick, inside the level, and is
-/// sized against the pane's rung: full size at `size_reference_quantity`
-/// contracts a second per tick of its cell.
+/// sized on the one session scale: full size at `size_reference_quantity`.
 #[test]
-fn a_coarse_level_places_at_its_weighted_tick_and_sizes_by_its_cell() {
+fn a_coarse_level_places_at_its_weighted_tick_and_sizes_by_quantity() {
     let config = dots_config();
     let history = tape(
         config.clone(),
@@ -557,13 +556,12 @@ fn a_coarse_level_places_at_its_weighted_tick_and_sizes_by_its_cell() {
         window.y(dec("102")).unwrap(),
         "weighted, on a tick"
     );
-    // The candles' cell: 10 contracts × 0.5 s × 5 ticks = 25 for full size.
-    assert_eq!(level.size, (4.0f64 / 25.0).sqrt() as f32);
+    // 10 contracts is a full-size dot, whatever the level or the window.
+    assert_eq!(level.size, (4.0f64 / 10.0).sqrt() as f32);
     assert_eq!(dot(3).price_bucket, dec("105"), "the next level up");
-    assert_eq!(dot(3).size, 1.0, "25 contracts fill the candles' cell");
-    // The tape's cell: 10 × 0.25 s × 5 = 12.5.
+    assert_eq!(dot(3).size, 1.0, "25 contracts are past full size");
     assert!(dot(4).live);
-    assert_eq!(dot(4).size, 1.0, "12.5 contracts fill the tape's cell");
+    assert_eq!(dot(4).size, 1.0, "12.5 contracts are past full size");
 }
 
 /// A buy and a sell at one level inside one window are one dot: a pie with
@@ -1109,63 +1107,131 @@ fn the_min_quantity_floor_is_fixed_and_counted() {
             .collect();
         assert_eq!(
             kept,
-            vec![(vec![1, 2], dec("2"), (0.4f64).sqrt() as f32)],
+            vec![(vec![1, 2], dec("2"), (0.2f64).sqrt() as f32)],
             "two small prints make a dot the floor keeps, sized on the fixed scale"
         );
         assert_eq!(frame.floored_quantity, Decimal::ONE, "the lone contract");
     }
 }
 
-/// Size is one fixed scale per pane and zoom: equal quantities are equal
-/// dots anywhere within a pane, in any frame, whatever else traded.
+/// Size is one absolute scale for the whole session: equal quantities are
+/// equal dots on the tape and on the candles, in any bar, at any rung and
+/// any level, in any frame, whatever else traded.
 #[test]
-fn equal_quantities_are_equal_radii_within_a_pane() {
+fn equal_quantities_are_equal_radii_anywhere() {
     let config = dots_config();
     let prints = [
         (1, 1_100, "100", "3", Side::Buy),
         (2, 1_600, "95", "3", Side::Sell),
-        (3, 3_300, "100", "2", Side::Sell),
-        (4, 3_700, "104", "2", Side::Buy),
+        (3, 3_300, "100", "3", Side::Sell),
+        (4, 3_700, "104", "3", Side::Buy),
     ];
     let mut with_a_giant = prints.to_vec();
     with_a_giant.push((5, 3_500, "108", "9000", Side::Sell));
-    let mut sizes = Vec::new();
+    let mut radii = Vec::new();
     for trades in [prints.to_vec(), with_a_giant] {
         let history = tape(config.clone(), &trades);
-        let frame = frame_at(
-            &history,
-            &chart(3_900, 1_500, None),
-            prices("90", "110"),
-            &windows(500, 250),
-        );
-        assert!(frame.volume_dots);
-        let dot = |id: u64| {
-            frame
-                .aggressions
-                .iter()
-                .find(|dot| dot.agg_ids == vec![id])
-                .expect("drawn")
-                .clone()
-        };
-        let radius = |mark: &AggressionPrimitive| {
-            let (minimum, maximum) =
-                config
-                    .live_lane
-                    .pane_radii(&config.bubbles, mark.live, frame.volume_dots);
-            bubble_radius(mark.size, minimum, maximum)
-        };
-        let (a, b, c, d) = (dot(1), dot(2), dot(3), dot(4));
-        assert!(!a.live && !b.live && c.live && d.live, "two on each pane");
-        assert_eq!(radius(&a), radius(&b), "the candles");
-        assert_eq!(radius(&c), radius(&d), "the tape");
-        sizes.push((a.size, c.size));
+        for dots in [
+            windows(500, 250),
+            coarse(250, 100, 5),
+            coarse(1_000, 1_000, 2),
+        ] {
+            let frame = frame_at(
+                &history,
+                &chart(3_900, 1_500, None),
+                prices("90", "110"),
+                &dots,
+            );
+            assert!(frame.volume_dots);
+            for id in 1..=4 {
+                let dot = frame
+                    .aggressions
+                    .iter()
+                    .find(|dot| dot.agg_ids == vec![id])
+                    .expect("drawn alone");
+                let (minimum, maximum) =
+                    config
+                        .live_lane
+                        .pane_radii(&config.bubbles, dot.live, frame.volume_dots);
+                radii.push((id, dot.live, bubble_radius(dot.size, minimum, maximum)));
+            }
+        }
     }
-    assert_eq!(sizes[0], sizes[1], "a giant elsewhere rescales nothing");
+    assert!(radii.iter().any(|(_, live, _)| *live) && radii.iter().any(|(_, live, _)| !live));
+    let first = radii[0].2;
+    for (id, live, radius) in &radii {
+        assert_eq!(
+            *radius, first,
+            "print {id} (tape: {live}) drawn at another size"
+        );
+    }
     assert_eq!(
         config.live_lane.pane_radii(&config.bubbles, true, false),
         config.live_lane.scaled_radii(&config.bubbles),
         "off, the tape keeps its own range"
     );
+}
+
+/// Zooming the price axis out merges levels, and a merged dot holds the
+/// exact sum of the dots it replaced, so it is drawn at least as big as each
+/// of them — bigger whenever it merged two and was not already at full size.
+/// Grouping is never a size the market did not trade.
+#[test]
+fn a_merged_level_is_the_sum_and_never_smaller() {
+    let config = dots_config();
+    let trades = dense(37, 3_000, 0, 12_000);
+    let history = tape(config.clone(), &borrowed(&trades));
+    let timeline = chart(11_500, 1_500, None);
+    let fine = frame_at(
+        &history,
+        &timeline,
+        prices("90", "110"),
+        &coarse(500, 250, 1),
+    );
+    let merged = frame_at(
+        &history,
+        &timeline,
+        prices("90", "110"),
+        &coarse(500, 250, 2),
+    );
+    let radius = |mark: &AggressionPrimitive| {
+        let (minimum, maximum) = config
+            .live_lane
+            .pane_radii(&config.bubbles, mark.live, true);
+        bubble_radius(mark.size, minimum, maximum)
+    };
+    let mut grew = 0;
+    for dot in &merged.aggressions {
+        let parts: Vec<&AggressionPrimitive> = fine
+            .aggressions
+            .iter()
+            .filter(|part| part.agg_ids.iter().all(|id| dot.agg_ids.contains(id)))
+            .collect();
+        let covered: usize = parts.iter().map(|part| part.agg_ids.len()).sum();
+        assert_eq!(
+            covered,
+            dot.agg_ids.len(),
+            "the merge is a union of dots: {dot:?}"
+        );
+        let sum: Decimal = parts.iter().map(|part| part.quantity).sum();
+        assert_eq!(dot.quantity, sum, "the exact sum");
+        for part in &parts {
+            assert!(
+                radius(dot) >= radius(part),
+                "a merged dot drew smaller: {dot:?}"
+            );
+        }
+        let biggest = parts.iter().map(|part| part.size).fold(0.0_f32, f32::max);
+        if parts.len() > 1 && biggest < 1.0 {
+            assert!(
+                dot.size > biggest,
+                "a merge of {} dots did not grow: {dot:?}",
+                parts.len()
+            );
+            grew += 1;
+        }
+    }
+    assert!(grew > 20, "the fixture merges levels ({grew})");
 }
 
 /// Off, the dots never run: the frame is exactly the one built without them.
