@@ -26,7 +26,10 @@ pub use lane::{
 /// Contracts a volume dot holds at the largest radius, by default: a dot
 /// sums many prints, so it is drawn on a scale of its own, not on the
 /// prints' `size_reference_quantity`.
-pub const DEFAULT_VOLUME_DOT_FULL_QUANTITY: f64 = 1_000.0;
+/// 20 000 is tuned on the WINV26 replay with 2,000-tick bars, where a dot
+/// holds from tens to tens of thousands of contracts; a lighter market wants
+/// a smaller value, set per preset.
+pub const DEFAULT_VOLUME_DOT_FULL_QUANTITY: f64 = 20_000.0;
 
 /// See [`sane_volume_dot_full_quantity`].
 const MIN_VOLUME_DOT_FULL_QUANTITY: f64 = 1.0;

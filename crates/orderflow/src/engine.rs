@@ -2153,7 +2153,7 @@ mod tests {
         assert_eq!(scale.px_per_bar, 40.0);
         assert_eq!(
             scale.volume_dot_full_quantity,
-            Decimal::from(1_000),
+            Decimal::from(20_000),
             "one absolute scale: the dots' own full-size quantity"
         );
         let builds = engine.health().projection_builds;
