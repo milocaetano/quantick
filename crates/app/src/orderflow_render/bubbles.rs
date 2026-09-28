@@ -774,6 +774,12 @@ pub(super) fn draw_bubble(
     }
 }
 
+/// `center_x` moved left just enough that a disc of `radius` ends at
+/// `right`; unchanged when it already does.
+pub(super) fn inside_right_edge(center_x: f32, radius: f32, right: f32) -> f32 {
+    center_x.min(right - radius)
+}
+
 /// Draw clustered factual executions over the candle layer.
 ///
 /// A print that aligned with a resting-liquidity reduction is drawn eating the
@@ -806,15 +812,6 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     let lean_sign = if context.layout.inverted { 1.0 } else { -1.0 };
     let dots = context.projection.volume_dots;
     let side_offset = bubbles.side_offset_for(dots);
-    let center_of = |trade: &AggressionPrimitive| {
-        let center = egui::pos2(context.layout.x(trade.x), context.layout.y(trade.y));
-        let lean = (finite_unit(trade.buy_share) - 0.5) * 2.0;
-        context
-            .layout
-            .pane(trade.x)
-            .contains(center)
-            .then(|| center + egui::vec2(0.0, lean_sign * lean * side_offset))
-    };
     // The live lane has room the compressed history does not, which is the
     // whole reason it gets a radius range of its own (volume dots excepted).
     let (lane_min, lane_max) = style.live_lane.pane_radii(bubbles, true, dots);
@@ -824,6 +821,21 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         } else {
             bubble_radius(trade.size, bubbles.min_radius, bubbles.max_radius)
         }
+    };
+    // A volume dot still forming sits at its window's centre, which can be
+    // under a radius from its pane's right edge: it slides in to be drawn
+    // whole rather than cut there.
+    let center_of = |trade: &AggressionPrimitive| {
+        let mut center = egui::pos2(context.layout.x(trade.x), context.layout.y(trade.y));
+        let lean = (finite_unit(trade.buy_share) - 0.5) * 2.0;
+        let pane = context.layout.pane(trade.x);
+        if !pane.contains(center) {
+            return None;
+        }
+        if dots {
+            center.x = inside_right_edge(center.x, radius_of(trade), pane.right());
+        }
+        Some(center + egui::vec2(0.0, lean_sign * lean * side_offset))
     };
 
     // A bubble is a disc, not a rect, so its own pane has to clip it: keeping
