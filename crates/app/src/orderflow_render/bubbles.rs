@@ -814,7 +814,10 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     let side_offset = bubbles.side_offset_for(dots);
     // The live lane has room the compressed history does not, which is the
     // whole reason it gets a radius range of its own (volume dots excepted).
-    let (lane_min, lane_max) = style.live_lane.pane_radii(bubbles, true, dots);
+    let (lane_min, lane_max) = style
+        .tape_dot_radii
+        .filter(|_| dots)
+        .unwrap_or_else(|| style.live_lane.pane_radii(bubbles, true, dots));
     let (candle_min, candle_max) = style.live_lane.pane_radii(bubbles, false, dots);
     let radius_of = |trade: &AggressionPrimitive| {
         if trade.live {

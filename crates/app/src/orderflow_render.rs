@@ -74,6 +74,9 @@ pub(crate) struct OrderflowRenderStyle {
     /// The live lane's own choices: how wide the reserved band is, how its
     /// prints cluster, and how much bigger their bubbles read.
     pub(crate) live_lane: LiveLaneStyle,
+    /// Volume dots' radius range on the tape at this zoom, so a dot fits its
+    /// column; `None` draws the style's.
+    pub(crate) tape_dot_radii: Option<(f32, f32)>,
     pub(crate) show_gap_labels: bool,
     pub(crate) show_legend: bool,
     /// Whether the L2 depth layer is active over the candles. The legend only
@@ -135,6 +138,7 @@ impl Default for OrderflowRenderStyle {
             edge_glow: 0.0,
             bubbles: BubbleStyle::default(),
             live_lane: LiveLaneStyle::default(),
+            tape_dot_radii: None,
             show_gap_labels: true,
             show_legend: true,
             depth_layer: true,
@@ -164,6 +168,7 @@ impl OrderflowRenderStyle {
         Self {
             theme: config.theme,
             bubbles: config.bubbles.clone(),
+            tape_dot_radii: None,
             live_lane: config.live_lane.clone(),
             show_legend: config.show_legend,
             depth_layer: config.depth_visible(),

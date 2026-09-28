@@ -71,7 +71,7 @@ use rust_decimal::prelude::ToPrimitive as _;
 
 use quantick_engine::Bar;
 
-use crate::config::{DisplayGrouping, HeatmapConfig};
+use crate::config::{BubbleStyle, DisplayGrouping, HeatmapConfig};
 use crate::grouping::EffectiveGrouping;
 use crate::history::LiquidityHistory;
 use crate::interaction::{AggressionCluster, fold_by_key, sort_clusters};
@@ -221,6 +221,8 @@ pub struct DotZoom {
 pub struct DotRungMemory {
     tape_window_ms: Option<i64>,
     level_ticks: Option<i64>,
+    /// Screen width of the tape's window at the last chosen zoom.
+    tape_column_px: Option<f64>,
 }
 
 impl DotRungMemory {
@@ -251,6 +253,7 @@ impl DotRungMemory {
         );
         self.tape_window_ms = Some(tape_window_ms);
         self.level_ticks = Some(level_ticks);
+        self.tape_column_px = Some(tape_window_ms as f64 * px_per_ms);
         DotZoom {
             px_per_bar: geometry.px_per_bar,
             tape_window_ms,
@@ -259,6 +262,30 @@ impl DotRungMemory {
         }
     }
 }
+
+impl DotRungMemory {
+    /// The `(smallest, largest)` radius tape dots are drawn with in `bubbles`
+    /// at the last chosen zoom: a dot is never wider than its window's
+    /// column, so no two tape dots overlap. When the column is thinner than
+    /// the style's largest dot both radii shrink by one share, keeping every
+    /// dot in proportion, and the smallest keeps [`MIN_DOT_RADIUS_PX`].
+    /// `None` before a zoom is chosen.
+    #[must_use]
+    pub fn tape_dot_radii(&self, bubbles: &BubbleStyle) -> Option<(f32, f32)> {
+        let column = self.tape_column_px? as f32;
+        let max = bubbles.max_radius.min(column / 2.0).max(0.0);
+        let share = if bubbles.max_radius > 0.0 {
+            max / bubbles.max_radius
+        } else {
+            1.0
+        };
+        let min = (bubbles.min_radius * share).max(MIN_DOT_RADIUS_PX).min(max);
+        Some((min, max))
+    }
+}
+
+/// The smallest radius a shrunk tape dot keeps, in pixels.
+pub const MIN_DOT_RADIUS_PX: f32 = 1.0;
 
 /// The rungs and scales a dots frame was built on, for the health report
 /// and the `orderflow.bubbles` snapshot.

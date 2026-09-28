@@ -135,7 +135,8 @@ impl OrderflowView {
             lane_width_px,
         )
         .with_inverted(inverted);
-        let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
+        let mut style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
+        style.tape_dot_radii = self.dot_rungs.tape_dot_radii(&style.bubbles);
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_aggression_bubbles(painter, &context);
     }
