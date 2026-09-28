@@ -164,7 +164,8 @@ impl AggressionPrimitive {
     /// disc and the [`dressing_margin`](BubbleStyle::dressing_margin) share
     /// the cell's reach: the disc gives way first, down to the pane's
     /// smallest radius; below that the dressing goes and the bare disc takes
-    /// the whole cell.
+    /// the whole cell. Giving way is a share of the whole radius range, never
+    /// a cut, so under any cap a bigger print is still drawn bigger.
     #[must_use]
     pub fn drawn_disc(&self, minimum: f32, maximum: f32, bubbles: &BubbleStyle) -> DrawnDisc {
         let natural = crate::config::bubble_radius(self.size, minimum, maximum);
@@ -174,15 +175,23 @@ impl AggressionPrimitive {
                 dressed: true,
             };
         };
+        let within = |room: f32| {
+            let share = if maximum > 0.0 {
+                (room / maximum).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            natural * share
+        };
         let room = cell - bubbles.dressing_margin();
         if room > 0.0 && room >= minimum {
             DrawnDisc {
-                radius: natural.min(room),
+                radius: within(room),
                 dressed: true,
             }
         } else {
             DrawnDisc {
-                radius: natural.min(cell.max(0.0)),
+                radius: within(cell.max(0.0)),
                 dressed: false,
             }
         }

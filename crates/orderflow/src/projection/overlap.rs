@@ -250,6 +250,7 @@ struct PaneCells {
 
 /// Everything that turns a normalized mark into its cell on screen.
 struct Grid<'a> {
+    timeline: &'a BarTimeline,
     opens: &'a [i64],
     regions: f64,
     slots: f64,
@@ -305,6 +306,7 @@ impl<'a> Grid<'a> {
             }
         };
         Self {
+            timeline,
             opens: &geometry.lane_bar_opens,
             regions: timeline.region_count() as f64,
             slots,
@@ -351,10 +353,10 @@ impl<'a> Grid<'a> {
     /// bar's open, as long as a full disc is wide rounded up to a doubling of
     /// milliseconds: a print keeps its column while the tape rolls on and
     /// while the forming bar grows, so a fold already drawn never regroups.
-    /// On the candles it is a share of the bar's slot. A slot is one column
-    /// at any zoom where a bar is narrower than two discs; wider, a column
-    /// follows the slot's span, which can move with the forming bar or with
-    /// a pan that makes a bar the rightmost one shown.
+    /// On the candles it is the same, counted from the slot's open and as
+    /// long as a full disc is wide at the slot's own scale, rounded up to a
+    /// doubling: a forming bar that keeps stretching its slot regroups its
+    /// past only when that length doubles, and then pairwise.
     fn column(&self, mark: &AggressionPrimitive, pane: PaneCells) -> Option<(i64, i64, f64, f64)> {
         let x = self.x_px(mark)?;
         if mark.live {
@@ -373,14 +375,18 @@ impl<'a> Grid<'a> {
             .floor()
             .clamp(0.0, self.slots - 1.0);
         let left = slot * self.px_per_bar;
-        let columns = (self.px_per_bar / pane.diameter).floor().max(1.0);
-        let width = self.px_per_bar / columns;
-        let column = ((x - left) / width).floor().clamp(0.0, columns - 1.0);
+        let span = self.timeline.slot_span(slot as usize)?;
+        let ms_per_px = (span.end_ms - span.start_ms).max(1) as f64 / self.px_per_bar;
+        let cell_ms = doubling((pane.diameter * ms_per_px).ceil()) as i64;
+        let column =
+            (mark.placed_ms - span.start_ms).clamp(0, span.end_ms - span.start_ms) / cell_ms;
+        let from = column * cell_ms;
+        let to = from.saturating_add(cell_ms);
         Some((
             slot as i64,
-            column as i64,
-            left + column * width,
-            left + (column + 1.0) * width,
+            column,
+            left + from as f64 / ms_per_px,
+            (left + to as f64 / ms_per_px).min(left + self.px_per_bar),
         ))
     }
 

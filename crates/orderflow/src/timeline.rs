@@ -356,6 +356,18 @@ impl BarTimeline {
             })
     }
 
+    /// The slot at `index` and the market time it spans. `None` past the
+    /// last slot.
+    #[must_use]
+    pub fn slot_span(&self, index: usize) -> Option<SlotSpan> {
+        self.slots.get(index).map(|slot| SlotSpan {
+            index,
+            bar_index: slot.bar_index,
+            start_ms: slot.start_ms,
+            end_ms: slot.end_ms,
+        })
+    }
+
     /// Normalized x of a whole slot: `[left, right)` of its region.
     #[must_use]
     pub fn slot_bounds(&self, index: usize) -> (f64, f64) {
