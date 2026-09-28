@@ -573,7 +573,10 @@ fn the_automatic_full_size_is_the_ninety_ninth_percentile_of_the_drawn_cells() {
 
     let few: Vec<_> = whole.iter().take(100).cloned().collect();
     let history = recorded(dots_config(), &borrowed(&few));
-    assert_eq!(calibrated_dot_full_quantity(&history, &dots_config(), 1_000, 1), None);
+    assert_eq!(
+        calibrated_dot_full_quantity(&history, &dots_config(), 1_000, 1),
+        None
+    );
 }
 
 /// A calibration is adopted once, and then the full size is frozen: the past

@@ -448,29 +448,32 @@ impl VolumeDots {
     }
 }
 
-/// Seconds at one native tick a calibration needs before it answers.
+/// Drawn cells a calibration needs before it answers.
 const CALIBRATION_MIN_CELLS: usize = 300;
 
 /// The full size read from the market: the 99th percentile (nearest rank)
-/// of what one second at one native tick traded, both sides together, over
-/// the retained prints — so only the top 1 % of those dots draws full size.
+/// of what one cell — `window_ms` of market time, `level_ticks` native ticks
+/// tall, the rungs being drawn — traded, both sides together, over the
+/// retained prints, so only the top 1 % of those dots draws full size.
 /// `None` until [`CALIBRATION_MIN_CELLS`] such cells exist. Keyed by market
 /// data alone, so the prints' order never changes it.
 #[must_use]
 pub fn calibrated_dot_full_quantity(
     history: &LiquidityHistory,
     config: &HeatmapConfig,
+    window_ms: i64,
+    level_ticks: i64,
 ) -> Option<Decimal> {
-    let tick = native_grouping(config).bucket_width;
-    if tick <= Decimal::ZERO {
+    let level = native_grouping(config).bucket_width * Decimal::from(level_ticks);
+    if level <= Decimal::ZERO || window_ms <= 0 {
         return None;
     }
     let mut cells: std::collections::BTreeMap<(i64, Decimal), Decimal> =
         std::collections::BTreeMap::new();
     for print in history.aggressions() {
         let key = (
-            print.timestamp_ms.div_euclid(1_000),
-            (print.price / tick).floor(),
+            print.timestamp_ms.div_euclid(window_ms),
+            (print.price / level).floor(),
         );
         *cells.entry(key).or_default() += print.quantity;
     }

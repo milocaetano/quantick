@@ -122,7 +122,7 @@ impl ClusteringSection<'_> {
                 };
                 if ui
                     .button(label)
-                    .on_hover_text("read the full size from the market once — the 99th percentile of one second at one tick — then keep it fixed so the past never changes size")
+                    .on_hover_text("read the full size from the market once — the 99th percentile of the tape dots being drawn — then keep it fixed so the past never changes size")
                     .clicked()
                 {
                     config.volume_dots.auto_full = true;
