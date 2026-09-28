@@ -541,6 +541,45 @@ fn time_windows_follow_a_thin_column_not_the_biggest_dot() {
     }
 }
 
+/// A tape dot is never wider than its window's column, so no two tape dots
+/// overlap however far the tape is squeezed: when the column is thinner than
+/// the style's largest dot, both radii shrink by one share, keeping every
+/// dot in proportion. A wide column leaves the style's radii alone.
+#[test]
+fn a_tape_dot_fits_its_column_and_shrinks_in_proportion() {
+    let config = dots_config();
+    let bubbles = BubbleStyle {
+        min_radius: 3.0,
+        max_radius: 15.0,
+        ..config.bubbles.clone()
+    };
+    let style = HeatmapConfig {
+        bubbles: bubbles.clone(),
+        ..config.clone()
+    };
+    let geometry = |lane_window_ms: i64| PaneGeometry {
+        px_per_bar: 40.0,
+        lane_width_px: 300.0,
+        lane_window_ms,
+        height_px: 400.0,
+        lane_bars: vec![(0, 59_999)],
+    };
+    let mut memory = DotRungMemory::default();
+    assert_eq!(memory.tape_dot_radii(&bubbles), None, "no zoom yet");
+
+    // Twenty minutes over 300 px: the minute rung, a 15 px column.
+    let zoom = memory.choose(geometry(1_200_000), &style, (60.0, 100.0));
+    assert_eq!(zoom.tape_window_ms, 60_000);
+    let (min, max) = memory.tape_dot_radii(&bubbles).expect("a zoom");
+    assert!((max - 7.5).abs() < 1e-4, "half the column: {max}");
+    assert!((min - 1.5).abs() < 1e-4, "the same share: {min}");
+
+    // 15 s over 300 px: a 500 ms rung, 10 px; a minute: 2 s, 40 px.
+    let mut memory = DotRungMemory::default();
+    memory.choose(geometry(60_000), &style, (60.0, 100.0));
+    assert_eq!(memory.tape_dot_radii(&bubbles), Some((3.0, 15.0)));
+}
+
 /// With dots on, squeezing the tape reaches twenty minutes and more, not the
 /// automatic zoom's floor: the first squeeze pins the window it resolves to,
 /// and the pinned window goes as far as the lane allows.
