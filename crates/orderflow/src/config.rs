@@ -603,7 +603,7 @@ impl HeatmapConfig {
 mod tests {
     use super::*;
 
-    /// Volume dots have a full-size quantity of their own, 1 000 contracts by
+    /// Volume dots have a full-size quantity of their own, 20 000 contracts by
     /// default, kept to a range a dot can be drawn against.
     #[test]
     fn volume_dots_have_their_own_bounded_scale() {
@@ -613,7 +613,7 @@ mod tests {
             config.volume_dots.full_quantity,
             DEFAULT_VOLUME_DOT_FULL_QUANTITY
         );
-        assert_eq!(DEFAULT_VOLUME_DOT_FULL_QUANTITY, 1_000.0);
+        assert_eq!(DEFAULT_VOLUME_DOT_FULL_QUANTITY, 20_000.0);
         for (asked, kept) in [
             (0.0, 1.0),
             (-5.0, 1.0),

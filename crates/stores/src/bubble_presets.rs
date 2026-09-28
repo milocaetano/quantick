@@ -614,11 +614,11 @@ mod tests {
         let file = parse("active = \"old\"\n\n[[presets]]\nname = \"old\"\noverlap_merge = true\n")
             .expect("an old file");
         let preset = file.get("old").expect("the preset");
-        assert_eq!(preset.volume_dot_full_quantity, 1_000.0);
+        assert_eq!(preset.volume_dot_full_quantity, 20_000.0);
         let mut config = HeatmapConfig::default();
         preset.apply_to(&mut config);
         assert!(config.volume_dots.enabled);
-        assert_eq!(config.volume_dots.full_quantity, 1_000.0);
+        assert_eq!(config.volume_dots.full_quantity, 20_000.0);
     }
 
     /// A preset is a look. Now that the tape's visibility lives in the same
