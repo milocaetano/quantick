@@ -496,6 +496,116 @@ fn a_full_size_print_keeps_its_radius_and_dressing_where_there_is_room() {
     }
 }
 
+/// Twenty one-second bars, all on screen, and a tape `window_ms` long that
+/// ends at `now_ms`: the same chart a moment earlier or later.
+fn tape_at(now_ms: i64, window_ms: i64) -> BarTimeline {
+    let all: Vec<Bar> = (0..20).map(|i| bar(i * 1_000, i * 1_000 + 999)).collect();
+    BarTimeline::from_bars(
+        0,
+        &all,
+        None,
+        Some(crate::LiveEdge {
+            now_ms,
+            window_ms,
+            reference_ms: window_ms,
+            on_newest_bar: true,
+        }),
+    )
+}
+
+/// Which prints each drawn mark holds, for the marks made only of `keep`.
+fn groups(
+    projection: &HeatmapProjection,
+    keep: impl Fn(&AggressionPrimitive) -> bool,
+) -> Vec<(bool, Vec<u64>)> {
+    let mut groups: Vec<(bool, Vec<u64>)> = drawn(projection)
+        .iter()
+        .filter(|mark| keep(mark))
+        .map(|mark| (mark.live, mark.agg_ids.clone()))
+        .collect();
+    groups.sort();
+    groups
+}
+
+/// The past does not move. As the tape rolls on, a print that has not left
+/// the window stays in the fold it was in: the cells are anchored to market
+/// time and to price, never to where the window happens to begin on screen.
+#[test]
+fn a_rolling_tape_never_regroups_the_prints_it_already_folded() {
+    let config = merging(true);
+    let trades = dense(5, 900, 0, 19_400);
+    let opens: Vec<i64> = (0..20).map(|i| i * 1_000).collect();
+    let geometry = geometry(12.0, 600.0, opens);
+    let at = |now_ms: i64| {
+        let timeline = tape_at(now_ms, 3_000);
+        let mut projection = project(
+            &tape(config.clone(), &borrowed(&trades)),
+            &timeline,
+            wide_prices(),
+        );
+        projection.merge_overlapping_bubbles(&geometry, &timeline, wide_prices(), &config);
+        projection
+    };
+    let time_of: BTreeMap<u64, i64> = trades.iter().map(|(id, ms, ..)| (*id, *ms)).collect();
+    // Inside both windows — the forming bar included, which grows as the
+    // tape rolls — so no fold there is cut by the window's edge.
+    let settled = |mark: &AggressionPrimitive| {
+        mark.live
+            && mark
+                .agg_ids
+                .iter()
+                .all(|id| (17_000..19_400).contains(&time_of[id]))
+    };
+
+    let before = groups(&at(19_400), settled);
+    for later in [19_430, 19_517, 19_690, 19_999] {
+        assert!(before.len() > 10, "enough folds to compare");
+        assert_eq!(
+            groups(&at(later), settled),
+            before,
+            "the tape rolled to {later} ms and the past regrouped"
+        );
+    }
+}
+
+/// The same for price: panning the chart up or down does not regroup a
+/// print, because a cell's rows are counted from price zero, not from the
+/// edge of the window — nor does the axis refitting a point wider, because
+/// a cell grows only in doublings.
+#[test]
+fn a_price_pan_never_regroups_the_prints_it_already_folded() {
+    let config = merging(true);
+    let trades = dense(9, 900, 0, 19_900);
+    let opens: Vec<i64> = (0..20).map(|i| i * 1_000).collect();
+    let geometry = geometry(12.0, 600.0, opens);
+    let timeline = tape_at(19_900, 6_000);
+    let at = |low: &str, high: &str| {
+        let prices = PriceWindow::new(dec(low), dec(high)).unwrap();
+        let mut projection = project(&tape(config.clone(), &borrowed(&trades)), &timeline, prices);
+        projection.merge_overlapping_bubbles(&geometry, &timeline, prices, &config);
+        projection
+    };
+    let price_of: BTreeMap<u64, Decimal> = trades
+        .iter()
+        .map(|(id, _, price, ..)| (*id, dec(price)))
+        .collect();
+    let inside = |mark: &AggressionPrimitive| {
+        mark.agg_ids
+            .iter()
+            .all(|id| (dec("96")..=dec("106")).contains(&price_of[id]))
+    };
+
+    let before = groups(&at("90", "110"), inside);
+    assert!(before.len() > 20, "enough folds to compare");
+    for (low, high) in [("91", "111"), ("93", "113"), ("88", "108"), ("90", "111")] {
+        assert_eq!(
+            groups(&at(low, high), inside),
+            before,
+            "the chart panned to {low}..{high} and the past regrouped"
+        );
+    }
+}
+
 /// Off draws today's frame, bit for bit, however crowded it is.
 #[test]
 fn off_reproduces_the_frame_unchanged() {
