@@ -10,8 +10,8 @@ use quantick_orderflow::config::labels::{
 };
 use quantick_orderflow::engine::OrderflowHealth;
 use quantick_orderflow::{
-    BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, DOT_TAPE_WINDOW_MS,
-    HeatmapConfig, LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS,
+    BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, HeatmapConfig,
+    LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS,
     MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE,
     MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
     MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms,
@@ -124,8 +124,6 @@ pub(super) struct LiveLaneSection<'a> {
     pub(super) lane: &'a mut LiveLaneStyle,
     /// History's cluster window, which "same as history" follows.
     pub(super) inherited_cluster_ms: i64,
-    /// Why the window setting does nothing now, while volume dots fix it.
-    pub(super) locked: Option<&'static str>,
 }
 
 impl LiveLaneSection<'_> {
@@ -133,7 +131,6 @@ impl LiveLaneSection<'_> {
         let Self {
             lane,
             inherited_cluster_ms: inherited,
-            locked,
         } = self;
         egui::CollapsingHeader::new("live lane")
             .id_salt("bubble_live_lane_section")
@@ -153,7 +150,7 @@ impl LiveLaneSection<'_> {
                 .on_hover_text(
                     "how much of the chart the rolling tape takes, up to half of it. Also set by dragging the divider on the chart; measured against the chart, not the candle, so zooming the time axis changes how many bars fit beside the tape and never how much room it gets",
                 );
-                window_rows(ui, lane, locked);
+                window_rows(ui, lane);
                 ui.horizontal(|ui| {
                     ui.label("cluster");
                     egui::ComboBox::from_id_salt("bubble_live_lane_cluster")
@@ -197,15 +194,7 @@ impl LiveLaneSection<'_> {
 
 /// The lane's window picker, and the one row that tunes whichever mode it
 /// is in: the zoom while it follows the bars, the duration while pinned.
-fn window_rows(ui: &mut egui::Ui, lane: &mut LiveLaneStyle, locked: Option<&str>) {
-    if let Some(hint) = locked {
-        ui.add_enabled(
-            false,
-            egui::Label::new(format!("window: {}", format_window_ms(DOT_TAPE_WINDOW_MS))),
-        )
-        .on_disabled_hover_text(hint);
-        return;
-    }
+fn window_rows(ui: &mut egui::Ui, lane: &mut LiveLaneStyle) {
     ui.horizontal(|ui| {
         ui.label("window");
         egui::ComboBox::from_id_salt("bubble_live_lane_window")

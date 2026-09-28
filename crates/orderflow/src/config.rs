@@ -432,27 +432,23 @@ impl Default for HeatmapConfig {
 }
 
 impl HeatmapConfig {
-    /// How the tape's window is decided: the lane's own setting, or with
-    /// volume dots on a fixed [`DOT_TAPE_WINDOW_MS`], so the tape never
-    /// rescales when a bar closes. The one place the window is resolved.
+    /// How the tape's window is decided: the lane's own setting. With volume
+    /// dots on, automatic no longer follows the bars, so the tape never
+    /// rescales when a bar closes: it is [`DOT_TAPE_WINDOW_MS`] divided by
+    /// the lane's zoom, which the time-axis gesture still edits. A pinned
+    /// window is kept as it is. The one place the window is resolved.
     #[must_use]
     pub fn lane_window(&self) -> LaneWindow {
-        if self.volume_dots.enabled {
-            LaneWindow::Fixed {
-                ms: DOT_TAPE_WINDOW_MS,
+        match self.live_lane.window {
+            LaneWindow::Auto { zoom } if self.volume_dots.enabled => {
+                let mut window = LaneWindow::Fixed {
+                    ms: DOT_TAPE_WINDOW_MS,
+                };
+                window.zoom_by(zoom);
+                window
             }
-        } else {
-            self.live_lane.window
+            window => window,
         }
-    }
-
-    /// Why the lane's window setting does nothing right now, for the surfaces
-    /// that edit it: `Some` while volume dots fix the tape.
-    #[must_use]
-    pub fn lane_window_locked(&self) -> Option<&'static str> {
-        self.volume_dots
-            .enabled
-            .then_some("fixed while volume dots are on: the tape shows 15 s")
     }
 
     /// The tape's window in exchange milliseconds, against the bars' typical

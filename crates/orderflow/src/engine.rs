@@ -215,8 +215,8 @@ pub struct ProjectionRequest {
     /// The rungs the view chose for volume dots
     /// ([`HeatmapConfig::volume_dots`]). `None` from a caller with no
     /// canvas, which then gets plain marks — though with volume dots enabled
-    /// the tape is still the fixed 15 s one (`DOT_TAPE_WINDOW_MS`), since the
-    /// lane window follows the setting, not the zoom.
+    /// the tape still keeps off the bars (`HeatmapConfig::lane_window`), since
+    /// the lane window follows the setting, not the dot zoom.
     ///
     /// Not part of [`Self::layout`]: the finished half depends only on its
     /// bars' windows and the level, and the cache keys on those, so a new

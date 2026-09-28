@@ -2277,8 +2277,9 @@ mod tests {
         }
     }
 
-    /// With volume dots on the tape the chart draws is a fixed 15 s whatever
-    /// the bars on screen, and the control snapshot reads that window.
+    /// With volume dots on, the automatic tape the chart draws is 15 s at zoom
+    /// 1 whatever the bars on screen, and the control snapshot reads that
+    /// window.
     #[test]
     fn volume_dots_draw_a_fixed_tape() {
         let mut view = OrderflowView::new("BTCUSDT");
