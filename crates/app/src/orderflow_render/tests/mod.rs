@@ -336,6 +336,17 @@ fn buy_and_sell_bubbles_are_nudged_to_opposite_sides() {
 }
 
 /// Paint through `draw` off-screen and return the shapes it emitted.
+/// A tape dot still forming sits at its window's centre, which can be less
+/// than a radius from the tape's right edge: it slides left just enough to be
+/// drawn whole instead of being cut by the edge. A dot already inside is
+/// left where it is.
+#[test]
+fn a_forming_dot_at_the_live_edge_is_drawn_whole() {
+    assert_eq!(inside_right_edge(995.0, 8.0, 1_000.0), 992.0);
+    assert_eq!(inside_right_edge(1_003.0, 8.0, 1_000.0), 992.0);
+    assert_eq!(inside_right_edge(900.0, 8.0, 1_000.0), 900.0);
+}
+
 fn painted(draw: impl Fn(&egui::Painter)) -> String {
     let ctx = egui::Context::default();
     let output = ctx.run(egui::RawInput::default(), |ctx| {
