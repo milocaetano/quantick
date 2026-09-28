@@ -578,6 +578,29 @@ mod tests {
     use super::*;
     use crate::config::DEFAULT_BUBBLE_CLUSTER_MS;
 
+    /// Volume dots on the candles stay small, so the candle is what reads
+    /// there: the largest radius is a share of the style's, never under the
+    /// smallest. The tape keeps the full range.
+    #[test]
+    fn candle_dots_are_small_and_tape_dots_are_not() {
+        use crate::config::CANDLE_DOT_RADIUS_SHARE;
+        assert_eq!(CANDLE_DOT_RADIUS_SHARE, 0.4);
+        let lane = LiveLaneStyle::default();
+        let bubbles = BubbleStyle {
+            min_radius: 2.0,
+            max_radius: 15.0,
+            ..BubbleStyle::default()
+        };
+        assert_eq!(lane.pane_radii(&bubbles, false, true), (2.0, 6.0));
+        assert_eq!(lane.pane_radii(&bubbles, true, true), (2.0, 15.0));
+        assert_eq!(lane.pane_radii(&bubbles, false, false), (2.0, 15.0));
+        let fat_min = BubbleStyle {
+            min_radius: 9.0,
+            ..bubbles
+        };
+        assert_eq!(lane.pane_radii(&fat_min, false, true), (9.0, 9.0));
+    }
+
     /// The lane is a pane of the chart, so its width is a share of the chart
     /// and nothing else — the candle zoom has no say in it at all.
     #[test]

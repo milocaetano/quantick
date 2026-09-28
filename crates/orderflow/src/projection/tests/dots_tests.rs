@@ -277,6 +277,37 @@ fn the_budget_never_folds_a_dot() {
     }
 }
 
+/// The tape is a zoom of its own: with volume dots on, the candles draw every
+/// print of their bars whatever the tape's length, so squeezing the tape
+/// never empties or changes the tick chart.
+#[test]
+fn the_tape_zoom_never_changes_the_candle_dots() {
+    let config = dots_config();
+    let trades = dense(17, 3_000, 0, 20_000);
+    let history = recorded(config.clone(), &borrowed(&trades));
+    let dots = windows(500, 250);
+    let candles = |lane_ms: i64| {
+        let timeline = chart(12_700, lane_ms, None);
+        let frame = frame_at(&history, &timeline, prices("90", "110"), &dots);
+        let facts: Vec<_> = frame
+            .aggressions
+            .iter()
+            .filter(|dot| !dot.live)
+            .map(|dot| (dot.timestamp_ms, dot.price, dot.quantity, dot.buy_quantity))
+            .collect();
+        facts
+    };
+    let short = candles(1_500);
+    assert_eq!(candles(12_000), short, "a long tape leaves the candles alone");
+    let drawn: Decimal = short.iter().map(|dot| dot.2).sum();
+    let traded: Decimal = trades
+        .iter()
+        .filter(|trade| trade.1 <= 12_700)
+        .map(|trade| dec(&trade.3))
+        .sum();
+    assert_eq!(drawn, traded, "the candles hold every contract of their bars");
+}
+
 /// Every dot is one bar, one window and one native price level; the folds
 /// dots replace — dust, regions, the closed-bar summary — never run, so no
 /// contract is drawn twice and every one visible is drawn once. They paint
