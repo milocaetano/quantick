@@ -10,7 +10,8 @@ use crate::config::VolumeDotStyle;
 use crate::history::AggressorSide;
 use crate::projection::{
     DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_CELL_PX, DOT_WINDOW_LADDER_MS, DotRungMemory, PaneGeometry,
-    VolumeDots, dot_bar_window_ms, dot_level_ticks, dot_window_ms, hold_rung, project_with_dots,
+    VolumeDots, calibrated_dot_full_quantity, dot_bar_window_ms, dot_level_ticks, dot_window_ms,
+    hold_rung, project_with_dots,
 };
 
 /// Dots on, the budget out of the way, and a fixed scale where 10
@@ -22,6 +23,7 @@ fn dots_config() -> HeatmapConfig {
         volume_dots: VolumeDotStyle {
             enabled: true,
             full_quantity: 10.0,
+            ..VolumeDotStyle::default()
         },
         bubble_candle_summary: true,
         bubble_region_rows: 3,
@@ -511,6 +513,72 @@ fn dots_let_the_tape_squeeze_to_twenty_minutes() {
     off.live_lane.window = LaneWindow::Auto { zoom: 1.0 };
     off.zoom_lane_window(0.5);
     assert_eq!(off.live_lane.window, LaneWindow::Auto { zoom: 0.5 });
+}
+
+/// The automatic full size is read from the market once: the 99th
+/// percentile of what one second at one native tick traded, so only the top
+/// 1 % of those dots draws full size. Too few seconds recorded is no answer
+/// yet, and the prints' order never changes it.
+#[test]
+fn the_automatic_full_size_is_the_ninety_ninth_percentile_of_a_second_at_a_tick() {
+    assert!(dots_config().volume_dots.auto_full, "automatic by default");
+    let whole: Vec<(u64, i64, String, String, Side)> = (1..=1_000u64)
+        .map(|i| (i, i as i64 * 1_000, "100".to_string(), i.to_string(), Side::Buy))
+        .collect();
+    let history = recorded(dots_config(), &borrowed(&whole));
+    assert_eq!(
+        calibrated_dot_full_quantity(&history, &dots_config()),
+        Some(Decimal::from(990))
+    );
+
+    // The same contracts in two prints per second, one each side, arriving
+    // newest first: one second at one tick is one sum.
+    let mut split: Vec<(u64, i64, String, String, Side)> = (1..=1_000u64)
+        .flat_map(|i| {
+            let ms = i as i64 * 1_000;
+            let half = Decimal::from(i) / Decimal::from(2);
+            [
+                (2 * i, ms, "100".to_string(), half.to_string(), Side::Buy),
+                (2 * i + 1, ms + 400, "100".to_string(), half.to_string(), Side::Sell),
+            ]
+        })
+        .collect();
+    split.reverse();
+    let history = recorded(dots_config(), &borrowed(&split));
+    assert_eq!(
+        calibrated_dot_full_quantity(&history, &dots_config()),
+        Some(Decimal::from(990))
+    );
+
+    let few: Vec<_> = whole.iter().take(100).cloned().collect();
+    let history = recorded(dots_config(), &borrowed(&few));
+    assert_eq!(calibrated_dot_full_quantity(&history, &dots_config()), None);
+}
+
+/// A calibration is adopted once, and then the full size is frozen: the past
+/// never changes size again unless the trader asks for a new reading. A
+/// value the trader typed is never overwritten.
+#[test]
+fn a_calibration_is_adopted_once_and_then_frozen() {
+    let mut style = VolumeDotStyle {
+        enabled: true,
+        full_quantity: 20_000.0,
+        auto_full: true,
+    };
+    assert!(!style.adopt_calibration(None), "no reading yet");
+    assert!(style.auto_full);
+    assert!(style.adopt_calibration(Some(Decimal::from(990))));
+    assert_eq!((style.full_quantity, style.auto_full), (990.0, false));
+    assert!(!style.adopt_calibration(Some(Decimal::from(5_000))), "frozen");
+    assert_eq!(style.full_quantity, 990.0);
+
+    let mut typed = VolumeDotStyle {
+        enabled: true,
+        full_quantity: 750.0,
+        auto_full: false,
+    };
+    assert!(!typed.adopt_calibration(Some(Decimal::from(990))));
+    assert_eq!(typed.full_quantity, 750.0);
 }
 
 /// The price ladder works like the time ladder: the smallest level, in
