@@ -71,7 +71,7 @@ use rust_decimal::prelude::ToPrimitive as _;
 
 use quantick_engine::Bar;
 
-use crate::config::{BubbleStyle, DisplayGrouping, HeatmapConfig};
+use crate::config::{DisplayGrouping, HeatmapConfig};
 use crate::grouping::EffectiveGrouping;
 use crate::history::LiquidityHistory;
 use crate::interaction::{AggressionCluster, fold_by_key, sort_clusters};
@@ -282,28 +282,7 @@ impl DotRungMemory {
     pub fn dot_max_radius(&self) -> Option<f32> {
         self.max_radius_px
     }
-
-    /// The `(smallest, largest)` radius volume dots are drawn with in
-    /// `bubbles` at the last chosen zoom: both shrink by the same share, so
-    /// the size differences survive a zoom out, and the smallest stays at
-    /// least [`MIN_DOT_RADIUS_PX`]. `None` before a zoom is chosen.
-    #[must_use]
-    pub fn dot_radii(&self, bubbles: &BubbleStyle) -> Option<(f32, f32)> {
-        let max = self.max_radius_px?;
-        let share = if bubbles.max_radius > 0.0 {
-            max / bubbles.max_radius
-        } else {
-            1.0
-        };
-        Some((
-            (bubbles.min_radius * share).max(MIN_DOT_RADIUS_PX).min(max),
-            max,
-        ))
-    }
 }
-
-/// The smallest radius a shrunk volume dot keeps, in pixels.
-pub const MIN_DOT_RADIUS_PX: f32 = 1.0;
 
 /// The rungs and scales a dots frame was built on, for the health report
 /// and the `orderflow.bubbles` snapshot.
