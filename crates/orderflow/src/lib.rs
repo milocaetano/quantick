@@ -81,3 +81,6 @@ mod tests {
         assert_eq!(feed_lag_ms(500, Some(600)), Some(-100));
     }
 }
+
+#[cfg(test)]
+mod tape_clock_tests;
