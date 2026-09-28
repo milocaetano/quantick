@@ -1847,9 +1847,9 @@ fn a_bare_bubble_draws_nothing_past_its_disc() {
         );
     }
 }
-/// The consumption trail runs to the right of a disc, into the next cell,
-/// so a mark the overlap grid placed wears none: the grid's promise is that
-/// nothing drawn for one mark reaches another's.
+/// The consumption trail runs to the right of a disc, toward the next cell,
+/// so on a mark the overlap grid placed it stops at the cell's reach: the
+/// grid's promise is that nothing drawn for one mark reaches another's.
 #[test]
 fn a_grid_mark_draws_no_trail_into_its_neighbour() {
     let viewport = Viewport::new();
@@ -1892,19 +1892,22 @@ fn a_grid_mark_draws_no_trail_into_its_neighbour() {
         let mut style = OrderflowRenderStyle::default();
         style.bubbles.trail_length = trail_length;
         style.bubbles.trail_opacity = 0.8;
-        painted(|painter| {
+        let draw = |painter: &egui::Painter| {
             draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
-        })
+        };
+        (painted(draw), painted_reach(draw))
     };
     assert_ne!(
-        painted_with(None, 60.0),
-        painted_with(None, 0.0),
-        "off the grid a matched print still wears its trail"
+        painted_with(None, 60.0).0,
+        painted_with(None, 0.0).0,
+        "off the grid a matched print wears its trail"
     );
-    assert_eq!(
-        painted_with(Some(40.0), 60.0),
-        painted_with(Some(40.0), 0.0),
-        "a grid mark drew a trail across its cell's edge"
+    let (trailed, trailed_reach) = painted_with(Some(8.0), 60.0);
+    let (bare, bare_reach) = painted_with(Some(8.0), 0.0);
+    assert_ne!(trailed, bare, "a grid mark keeps its trail");
+    assert!(
+        trailed_reach.right() <= bare_reach.center().x + 8.0 + 1e-3,
+        "a grid mark drew a trail past its cell's reach: {trailed_reach:?}"
     );
 }
 

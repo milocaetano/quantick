@@ -641,6 +641,77 @@ fn a_leaning_mark_at_the_chart_edge_stays_in_its_cell() {
     }
 }
 
+/// A regional fold is drawn at its point of control, not at its range's
+/// floor: the grid keys a mark on the price it is drawn at, so a lone mark
+/// stays within its reach of where it traded.
+#[test]
+fn a_regional_mark_is_binned_at_the_price_it_is_drawn_at() {
+    let mut config = merging(true);
+    config.bubble_region_rows = 10;
+    config.bubble_region_ms = 2_000;
+    let (timeline, opens) = seconds(20, 0..20, 4_000);
+    // One heavy level at the top of a ten-row region, a light one at its
+    // floor, bar after bar.
+    let trades: Vec<(u64, i64, String, String, Side)> = (0..16)
+        .flat_map(|bar| {
+            let ms = bar * 1_000 + 100;
+            [
+                (
+                    bar as u64 * 2 + 1,
+                    ms,
+                    "108".to_owned(),
+                    "9".to_owned(),
+                    Side::Buy,
+                ),
+                (
+                    bar as u64 * 2 + 2,
+                    ms + 10,
+                    "100".to_owned(),
+                    "1".to_owned(),
+                    Side::Buy,
+                ),
+            ]
+        })
+        .collect();
+    let geometry = geometry(40.0, 600.0, opens);
+    let original = project(
+        &tape(config.clone(), &borrowed(&trades)),
+        &timeline,
+        wide_prices(),
+    );
+    assert!(
+        original
+            .aggressions
+            .iter()
+            .any(|mark| mark.price_span > Decimal::ONE),
+        "regional marks to bin"
+    );
+    let mut projection = original.clone();
+    projection.merge_overlapping_bubbles(&geometry, &timeline, wide_prices(), &config);
+
+    for mark in drawn(&projection) {
+        let Some(before) = original
+            .aggressions
+            .iter()
+            .find(|b| b.agg_ids == mark.agg_ids)
+        else {
+            continue;
+        };
+        let moved = (mark.y - before.y).abs() * f64::from(HEIGHT_PX);
+        let lean = f64::from(bubble_center_offset(
+            mark.buy_share,
+            config.bubbles.side_offset,
+            false,
+        ))
+        .abs();
+        let reach = f64::from(mark.cell_radius_px.unwrap_or(0.0));
+        assert!(
+            moved <= reach + lean + 1e-3,
+            "a lone mark was drawn {moved:.1}px from its price, reach {reach:.1}"
+        );
+    }
+}
+
 /// Off draws today's frame, bit for bit, however crowded it is.
 #[test]
 fn off_reproduces_the_frame_unchanged() {
