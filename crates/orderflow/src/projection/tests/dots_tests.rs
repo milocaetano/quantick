@@ -8,7 +8,8 @@ use super::*;
 use crate::bubble_radius;
 use crate::history::AggressorSide;
 use crate::projection::{
-    DOT_WINDOW_LADDER_MS, PaneGeometry, VolumeDots, dot_window_ms, project_with_dots,
+    DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_LADDER_MS, PaneGeometry, VolumeDots, dot_level_ticks,
+    dot_window_ms, project_with_dots,
 };
 
 /// Dots on, the budget out of the way, and a fixed scale where 10
@@ -36,9 +37,15 @@ fn dots_config() -> HeatmapConfig {
 /// Windows fixed by the test rather than by a zoom: 500 ms on the candles,
 /// 250 ms on the tape, and the series' one-second bar opens.
 fn windows(candle_window_ms: i64, tape_window_ms: i64) -> VolumeDots {
+    coarse(candle_window_ms, tape_window_ms, 1)
+}
+
+/// [`windows`], on price levels `level_ticks` native ticks tall.
+fn coarse(candle_window_ms: i64, tape_window_ms: i64, level_ticks: i64) -> VolumeDots {
     VolumeDots {
         candle_window_ms,
         tape_window_ms,
+        level_ticks,
         lane_bar_opens: (0..40).map(|i| i * 1_000).collect(),
     }
 }
@@ -326,31 +333,169 @@ fn a_zoom_changes_the_window_only_at_ladder_steps() {
 
     // 10 px radius: a dot is 20 px. The tape shows 1.5 s over 300 px (5 ms a
     // pixel, 100 ms a dot); a one-second bar is 10 px wide (100 ms a pixel,
-    // 2 s a dot), and zoomed in to 40 px a bar, 500 ms a dot.
-    let bubbles = BubbleStyle {
-        max_radius: 10.0,
-        ..BubbleStyle::default()
+    // 2 s a dot), and zoomed in to 40 px a bar, 500 ms a dot. On a 400 px
+    // chart 70 one-point ticks are 5.7 px each: five of them make a dot.
+    let config = HeatmapConfig {
+        bubbles: BubbleStyle {
+            max_radius: 10.0,
+            ..BubbleStyle::default()
+        },
+        ..dots_config()
     };
     let geometry = |px_per_bar: f32| PaneGeometry {
         px_per_bar,
         lane_width_px: 300.0,
+        height_px: 400.0,
         lane_bar_opens: vec![0, 1_000],
     };
     let resolve = |px_per_bar: f32, timeline: &BarTimeline| {
-        let dots = VolumeDots::resolve(&geometry(px_per_bar), &bubbles, timeline, 1_000);
-        (dots.candle_window_ms, dots.tape_window_ms)
+        let window = prices("0", "70");
+        let dots = VolumeDots::resolve(&geometry(px_per_bar), &config, timeline, 1_000, window);
+        (dots.candle_window_ms, dots.tape_window_ms, dots.level_ticks)
     };
     let now = chart(8_300, 1_500, None);
-    assert_eq!(resolve(10.0, &now), (2_000, 100));
-    assert_eq!(resolve(40.0, &now), (500, 100));
+    assert_eq!(resolve(10.0, &now), (2_000, 100, 5));
+    assert_eq!(resolve(40.0, &now), (500, 100, 5));
     // Time passing, a pan and a forming bar are not a zoom.
     for timeline in [
         chart(8_950, 1_500, None),
         chart(15_020, 1_500, None),
         chart(15_020, 1_500, Some(3..9)),
     ] {
-        assert_eq!(resolve(10.0, &timeline), (2_000, 100));
+        assert_eq!(resolve(10.0, &timeline), (2_000, 100, 5));
     }
+    // The long end of the ladder: a bar 1 px wide over an hour-long bar.
+    assert_eq!(dot_window_ms(3_600_000.0 / 1.0, 20.0), 300_000);
+    assert_eq!(dot_window_ms(1_000.0, 20.0), 30_000);
+}
+
+/// The price ladder works like the time ladder: the smallest level, in
+/// native ticks, at least one full dot tall on screen.
+#[test]
+fn a_zoom_changes_the_level_only_at_ladder_steps() {
+    let dot_px = 20.0;
+    let mut previous = DOT_LEVEL_LADDER_TICKS[0];
+    for step in (1..4_000).rev() {
+        let px_per_tick = f64::from(step) * 0.05;
+        let ticks = dot_level_ticks(px_per_tick, dot_px);
+        assert!(DOT_LEVEL_LADDER_TICKS.contains(&ticks), "{ticks} is a rung");
+        assert!(ticks >= previous, "zooming out never shrinks the level");
+        let fits = |rung: i64| rung as f64 * px_per_tick >= dot_px;
+        if fits(ticks) {
+            assert!(
+                DOT_LEVEL_LADDER_TICKS
+                    .iter()
+                    .filter(|rung| **rung < ticks)
+                    .all(|rung| !fits(*rung)),
+                "{ticks} ticks at {px_per_tick} px a tick is not the smallest that fits"
+            );
+        } else {
+            assert_eq!(ticks, *DOT_LEVEL_LADDER_TICKS.last().unwrap(), "the widest");
+        }
+        previous = ticks;
+    }
+}
+
+/// An axis refit inside one ladder step changes no level, so it moves no
+/// dot; zooming the axis out past a step coarsens the levels.
+#[test]
+fn a_refit_inside_a_ladder_step_keeps_every_dot() {
+    let config = HeatmapConfig {
+        bubbles: BubbleStyle {
+            max_radius: 10.0,
+            ..dots_config().bubbles
+        },
+        ..dots_config()
+    };
+    let trades = dense(21, 3_000, 0, 20_000);
+    let history = tape(config.clone(), &borrowed(&trades));
+    let timeline = chart(12_700, 1_500, None);
+    let geometry = PaneGeometry {
+        px_per_bar: 10.0,
+        lane_width_px: 300.0,
+        height_px: 400.0,
+        lane_bar_opens: (0..40).map(|i| i * 1_000).collect(),
+    };
+    let at = |low: &str, high: &str| {
+        let window = prices(low, high);
+        let dots = VolumeDots::resolve(&geometry, &config, &timeline, 1_000, window);
+        (
+            dots.level_ticks,
+            frame_at(&history, &timeline, window, &dots),
+        )
+    };
+    // 70 and 75 ticks over 400 px: 5.7 and 5.3 px a tick, five ticks a dot.
+    let (ticks, before) = at("60", "130");
+    let (refit_ticks, refit) = at("58", "133");
+    assert_eq!((ticks, refit_ticks), (5, 5));
+    let closed = |mark: &AggressionPrimitive| !mark.live && mark.last_timestamp_ms < 6_000;
+    assert!(facts(&before, closed).len() > 50);
+    assert_eq!(facts(&refit, closed), facts(&before, closed));
+    for dot in &before.aggressions {
+        assert_eq!(dot.price_span, dec("5"), "five-tick levels");
+        assert_eq!(
+            dot.price_bucket % dec("5"),
+            Decimal::ZERO,
+            "anchored at zero"
+        );
+    }
+    // 200 ticks over 400 px: 2 px a tick, ten ticks a dot.
+    let (zoomed_out, _) = at("0", "200");
+    assert_eq!(zoomed_out, 10);
+}
+
+/// A coarse level holds every native tick inside it. The dot sits at its
+/// quantity-weighted price rounded to the tick, inside the level, and is
+/// sized against the pane's rung: full size at `size_reference_quantity`
+/// contracts a second per tick of its cell.
+#[test]
+fn a_coarse_level_places_at_its_weighted_tick_and_sizes_by_its_cell() {
+    let config = dots_config();
+    let history = tape(
+        config.clone(),
+        &[
+            (1, 1_100, "100", "1", Side::Buy),
+            (2, 1_200, "103", "3", Side::Sell),
+            (3, 1_300, "105", "25", Side::Buy),
+            (4, 3_300, "100", "12.5", Side::Sell),
+        ],
+    );
+    let window = prices("90", "110");
+    let frame = frame_at(
+        &history,
+        &chart(3_900, 1_500, None),
+        window,
+        &coarse(500, 250, 5),
+    );
+    let dot = |id: u64| {
+        frame
+            .aggressions
+            .iter()
+            .find(|dot| dot.agg_ids.contains(&id))
+            .expect("drawn")
+    };
+    let level = dot(1);
+    assert_eq!(
+        level.agg_ids,
+        vec![1, 2],
+        "100 and 103 share the 100..105 level"
+    );
+    assert_eq!(level.price_bucket, dec("100"));
+    assert_eq!(level.price_span, dec("5"));
+    assert_eq!(level.buy_quantity, dec("1"));
+    // (100 × 1 + 103 × 3) / 4 = 102.25, drawn on the 102 tick.
+    assert_eq!(
+        level.y,
+        window.y(dec("102")).unwrap(),
+        "weighted, on a tick"
+    );
+    // The candles' cell: 10 contracts × 0.5 s × 5 ticks = 25 for full size.
+    assert_eq!(level.size, (4.0f64 / 25.0).sqrt() as f32);
+    assert_eq!(dot(3).price_bucket, dec("105"), "the next level up");
+    assert_eq!(dot(3).size, 1.0, "25 contracts fill the candles' cell");
+    // The tape's cell: 10 × 0.25 s × 5 = 12.5.
+    assert!(dot(4).live);
+    assert_eq!(dot(4).size, 1.0, "12.5 contracts fill the tape's cell");
 }
 
 /// A buy and a sell at one level inside one window are one dot: a pie with
@@ -432,6 +577,7 @@ fn a_window_splits_at_a_bar_close_and_leaves_the_tape_whole() {
     let dots = VolumeDots {
         candle_window_ms: 250,
         tape_window_ms: 1_000,
+        level_ticks: 1,
         lane_bar_opens: vec![0, 1_130, 2_000, 3_000],
     };
     let frame = frame_at(&history, &timeline, prices("90", "110"), &dots);
@@ -514,51 +660,58 @@ fn the_min_quantity_floor_is_fixed_and_counted() {
             .collect();
         assert_eq!(
             kept,
-            vec![(vec![1, 2], dec("2"), (0.2f64).sqrt() as f32)],
+            vec![(vec![1, 2], dec("2"), (0.4f64).sqrt() as f32)],
             "two small prints make a dot the floor keeps, sized on the fixed scale"
         );
         assert_eq!(frame.floored_quantity, Decimal::ONE, "the lone contract");
     }
 }
 
-/// Size is one fixed session scale: equal quantities are equal dots on the
-/// tape and on the candles, in any frame.
+/// Size is one fixed scale per pane and zoom: equal quantities are equal
+/// dots anywhere within a pane, in any frame, whatever else traded.
 #[test]
-fn equal_quantities_are_equal_radii_anywhere() {
+fn equal_quantities_are_equal_radii_within_a_pane() {
     let config = dots_config();
-    let history = tape(
-        config.clone(),
-        &[
-            (1, 1_100, "100", "3", Side::Buy),
-            (2, 3_300, "100", "3", Side::Sell),
-            (3, 3_600, "104", "900", Side::Sell),
-        ],
-    );
-    let frame = frame_at(
-        &history,
-        &chart(3_900, 1_500, None),
-        prices("90", "110"),
-        &windows(500, 250),
-    );
-    assert!(frame.volume_dots);
-    let dot = |id: u64| {
-        frame
-            .aggressions
-            .iter()
-            .find(|dot| dot.agg_ids == vec![id])
-            .expect("drawn")
-    };
-    let (candle, tape_dot) = (dot(1), dot(2));
-    assert!(!candle.live && tape_dot.live, "one on each pane");
-    assert_eq!(candle.size, tape_dot.size);
-    let radius = |mark: &AggressionPrimitive| {
-        let (minimum, maximum) =
-            config
-                .live_lane
-                .pane_radii(&config.bubbles, mark.live, frame.volume_dots);
-        bubble_radius(mark.size, minimum, maximum)
-    };
-    assert_eq!(radius(candle), radius(tape_dot));
+    let prints = [
+        (1, 1_100, "100", "3", Side::Buy),
+        (2, 2_600, "95", "3", Side::Sell),
+        (3, 3_300, "100", "2", Side::Sell),
+        (4, 3_700, "104", "2", Side::Buy),
+    ];
+    let mut with_a_giant = prints.to_vec();
+    with_a_giant.push((5, 3_500, "108", "9000", Side::Sell));
+    let mut sizes = Vec::new();
+    for trades in [prints.to_vec(), with_a_giant] {
+        let history = tape(config.clone(), &trades);
+        let frame = frame_at(
+            &history,
+            &chart(3_900, 1_500, None),
+            prices("90", "110"),
+            &windows(500, 250),
+        );
+        assert!(frame.volume_dots);
+        let dot = |id: u64| {
+            frame
+                .aggressions
+                .iter()
+                .find(|dot| dot.agg_ids == vec![id])
+                .expect("drawn")
+                .clone()
+        };
+        let radius = |mark: &AggressionPrimitive| {
+            let (minimum, maximum) =
+                config
+                    .live_lane
+                    .pane_radii(&config.bubbles, mark.live, frame.volume_dots);
+            bubble_radius(mark.size, minimum, maximum)
+        };
+        let (a, b, c, d) = (dot(1), dot(2), dot(3), dot(4));
+        assert!(!a.live && !b.live && c.live && d.live, "two on each pane");
+        assert_eq!(radius(&a), radius(&b), "the candles");
+        assert_eq!(radius(&c), radius(&d), "the tape");
+        sizes.push((a.size, c.size));
+    }
+    assert_eq!(sizes[0], sizes[1], "a giant elsewhere rescales nothing");
     assert_eq!(
         config.live_lane.pane_radii(&config.bubbles, true, false),
         config.live_lane.scaled_radii(&config.bubbles),
