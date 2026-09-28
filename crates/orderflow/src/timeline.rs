@@ -188,6 +188,13 @@ impl BarTimeline {
         Some(self.lane?.start_ms)
     }
 
+    /// Exchange timestamps where the live lane begins and ends. `None` when
+    /// this timeline follows no live edge.
+    #[must_use]
+    pub fn lane_bounds_ms(&self) -> Option<(i64, i64)> {
+        self.lane.map(|lane| (lane.start_ms, lane.end_ms))
+    }
+
     /// The automatic reference the lane's window was resolved against, for
     /// whoever has to scale something by how far the tape is from following
     /// the bars. `None` when this timeline follows no live edge.

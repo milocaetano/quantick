@@ -570,8 +570,8 @@ fn a_rolling_tape_never_regroups_the_prints_it_already_folded() {
 
 /// The same for price: panning the chart up or down does not regroup a
 /// print, because a cell's rows are counted from price zero, not from the
-/// edge of the window — nor does the axis refitting a point wider, because
-/// a cell grows only in doublings.
+/// edge of the window — nor does the axis refitting wider, while a full
+/// disc still needs the same doubling of rows (three rows or four, here).
 #[test]
 fn a_price_pan_never_regroups_the_prints_it_already_folded() {
     let config = merging(true);
@@ -595,9 +595,9 @@ fn a_price_pan_never_regroups_the_prints_it_already_folded() {
             .all(|id| (dec("96")..=dec("106")).contains(&price_of[id]))
     };
 
-    let before = groups(&at("90", "110"), inside);
+    let before = groups(&at("90", "112"), inside);
     assert!(before.len() > 20, "enough folds to compare");
-    for (low, high) in [("91", "111"), ("93", "113"), ("88", "108"), ("90", "111")] {
+    for (low, high) in [("91", "113"), ("94", "116"), ("88", "110"), ("90", "122")] {
         assert_eq!(
             groups(&at(low, high), inside),
             before,
