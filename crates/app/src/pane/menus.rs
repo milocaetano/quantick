@@ -134,6 +134,13 @@ impl ChartPane {
         let Some(orderflow) = self.orderflow.as_mut() else {
             return;
         };
+        let config = orderflow.cached_config();
+        if let Some(hint) = config.lane_window_locked() {
+            let label = lane_window_label(config.lane_window(), reference_ms);
+            ui.add_enabled(false, egui::Button::new(format!("tape window: {label}")))
+                .on_disabled_hover_text(hint);
+            return;
+        }
         let current = orderflow.live_lane_window();
         let mut chosen = None;
         ui.menu_button(

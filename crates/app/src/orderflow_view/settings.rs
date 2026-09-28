@@ -333,6 +333,7 @@ impl OrderflowView {
         // this frame is the one the live lane's "Same as history" inherits.
         LiveLaneSection {
             inherited_cluster_ms: config.bubble_cluster_ms,
+            locked: config.lane_window_locked(),
             lane: &mut config.live_lane,
         }
         .show(ui);

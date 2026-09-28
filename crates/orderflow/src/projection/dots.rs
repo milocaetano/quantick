@@ -53,10 +53,12 @@
 //! Never at its newest print, so a forming dot does not slide as prints
 //! arrive and a closed one does not move on a pan.
 //!
-//! Retention evicts the oldest prints one by one. A bar that opened at or
-//! before the newest evicted print may have lost some of its prints, so it
-//! draws no dots at all: a dot at the retention edge disappears whole rather
-//! than shrinking, and bars older than the retention draw none.
+//! Retention evicts the oldest prints one by one, and recording starts at
+//! some instant. A window that starts at or before the newest evicted print,
+//! or before recording started, may have lost prints, so it draws no dot at
+//! all: a dot at the retention edge disappears whole rather than shrinking,
+//! and the window recording started in is not drawn. Every other window —
+//! the tape's, and a cut bar's windows after the horizon — draws as usual.
 //!
 //! Known limitation: a print stamped with the same millisecond as a bar's
 //! open belongs to the new bar, which is the timeline's rule for every mark.
@@ -71,6 +73,7 @@ use quantick_engine::Bar;
 
 use crate::config::{DisplayGrouping, HeatmapConfig};
 use crate::grouping::EffectiveGrouping;
+use crate::history::LiquidityHistory;
 use crate::interaction::{AggressionCluster, fold_by_key, sort_clusters};
 
 /// The windows of market time a dot may cover, in exchange milliseconds,
@@ -276,9 +279,37 @@ struct Window {
     /// Distinguishes the windows of one bar.
     key: i64,
     bar_open: i64,
+    /// Where the window's market time starts inside its bar.
+    start_ms: i64,
     /// The window's fixed centre, where a tape dot sits; a candle dot is
     /// placed by [`VolumeDots::candle_place`].
     centre_ms: i64,
+}
+
+/// What the history holds whole: nothing before recording started, nothing
+/// at or before the newest evicted print. A dot is drawn only when its window
+/// starts inside that, so it is drawn whole or not at all.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct DotHorizon {
+    recorded_from_ms: Option<i64>,
+    evicted_through_ms: Option<i64>,
+}
+
+impl DotHorizon {
+    pub(super) fn of(history: &LiquidityHistory) -> Self {
+        Self {
+            recorded_from_ms: history.recorded_from_ms(),
+            evicted_through_ms: history.evicted_through_ms(),
+        }
+    }
+
+    /// Whether a window starting at `start_ms` can have lost no print.
+    fn keeps(self, start_ms: i64) -> bool {
+        self.recorded_from_ms.is_none_or(|from| start_ms >= from)
+            && self
+                .evicted_through_ms
+                .is_none_or(|horizon| start_ms > horizon)
+    }
 }
 
 /// What one frame keys its dots on.
@@ -364,12 +395,14 @@ impl VolumeDots {
                 Window {
                     key: start,
                     bar_open: open,
+                    start_ms: start.max(open),
                     centre_ms: start + width / 2,
                 }
             }
             None => Window {
                 key: i64::MIN,
                 bar_open: open,
+                start_ms: open,
                 centre_ms: open,
             },
         })
@@ -430,15 +463,15 @@ pub(super) fn native_grouping(config: &HeatmapConfig) -> EffectiveGrouping {
 /// Fold one pane's clusters — one per print, already matched to the
 /// reductions they explain — into dots by bar, window and level, summing
 /// quantity, bought quantity and matched quantity and uniting the event ids.
-/// A cluster no known bar holds is left out, and so is every cluster of a
-/// bar that opened at or before `evicted_through_ms`: eviction may have taken
-/// some of that bar's prints, and a dot is drawn whole or not at all.
+/// A cluster no known bar holds is left out, and so is every cluster whose
+/// window `horizon` says may have lost prints — to eviction or to recording
+/// starting inside it: a dot is drawn whole or not at all.
 pub(super) fn fold_dots(
     clusters: Vec<AggressionCluster>,
     live: bool,
     dots: &VolumeDots,
     native: EffectiveGrouping,
-    evicted_through_ms: Option<i64>,
+    horizon: DotHorizon,
 ) -> Vec<AggressionCluster> {
     let tick = native.bucket_width;
     let width = tick * Decimal::from(dots.level_ticks.max(1));
@@ -446,8 +479,8 @@ pub(super) fn fold_dots(
     let keyed: Vec<AggressionCluster> = clusters
         .into_iter()
         .filter(|cluster| {
-            dots.bar_around(cluster.timestamp_ms)
-                .is_some_and(|(open, _)| evicted_through_ms.is_none_or(|horizon| open > horizon))
+            dots.window(cluster.timestamp_ms, live)
+                .is_some_and(|window| horizon.keeps(window.start_ms))
         })
         .collect();
     let key_of = |cluster: &AggressionCluster| {

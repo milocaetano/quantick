@@ -463,12 +463,19 @@ impl LiquidityHistory {
         }
     }
 
-    /// The newest timestamp among the prints evicted so far: a print at or
-    /// before it may be gone, and none after it is. `None` until the first
-    /// eviction, and again after a reset.
+    /// The newest timestamp among the prints evicted so far — by retention, a
+    /// cap or a price-grouping reset: a print at or before it may be gone, and
+    /// none after it is. `None` until the first eviction.
     #[must_use]
     pub fn evicted_through_ms(&self) -> Option<i64> {
         self.evicted_through_ms
+    }
+
+    /// The first instant any stream reached this history: nothing before it
+    /// was recorded, so a window that starts earlier is incomplete.
+    #[must_use]
+    pub fn recorded_from_ms(&self) -> Option<i64> {
+        self.first_stream_ms
     }
 
     /// Oldest timestamp still renderable under the configured retention
@@ -777,7 +784,11 @@ impl LiquidityHistory {
         // tape's clock has nothing left to point at either.
         self.latest_print_ms = None;
         self.first_stream_ms = None;
-        self.evicted_through_ms = None;
+        // Every print goes, so the horizon moves to the newest of them.
+        if let Some(&newest) = self.aggression_max_ms.back() {
+            self.evicted_through_ms =
+                Some(self.evicted_through_ms.map_or(newest, |h| h.max(newest)));
+        }
         self.archived.clear();
         self.active.clear();
         self.aggressions.clear();

@@ -4,10 +4,14 @@
 //! `show`; the tab composes them in order and commits whatever changed once.
 
 use eframe::egui;
+use quantick_orderflow::config::labels::{
+    cluster_label, consumption_mark_label, dust_label, lane_cluster_label, region_label,
+    region_window_label, render_mode_label, size_reference_label,
+};
 use quantick_orderflow::engine::OrderflowHealth;
 use quantick_orderflow::{
-    BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, HeatmapConfig,
-    LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS,
+    BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, DOT_TAPE_WINDOW_MS,
+    HeatmapConfig, LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS,
     MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE,
     MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
     MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms,
@@ -120,6 +124,8 @@ pub(super) struct LiveLaneSection<'a> {
     pub(super) lane: &'a mut LiveLaneStyle,
     /// History's cluster window, which "same as history" follows.
     pub(super) inherited_cluster_ms: i64,
+    /// Why the window setting does nothing now, while volume dots fix it.
+    pub(super) locked: Option<&'static str>,
 }
 
 impl LiveLaneSection<'_> {
@@ -127,6 +133,7 @@ impl LiveLaneSection<'_> {
         let Self {
             lane,
             inherited_cluster_ms: inherited,
+            locked,
         } = self;
         egui::CollapsingHeader::new("live lane")
             .id_salt("bubble_live_lane_section")
@@ -146,7 +153,7 @@ impl LiveLaneSection<'_> {
                 .on_hover_text(
                     "how much of the chart the rolling tape takes, up to half of it. Also set by dragging the divider on the chart; measured against the chart, not the candle, so zooming the time axis changes how many bars fit beside the tape and never how much room it gets",
                 );
-                window_rows(ui, lane);
+                window_rows(ui, lane, locked);
                 ui.horizontal(|ui| {
                     ui.label("cluster");
                     egui::ComboBox::from_id_salt("bubble_live_lane_cluster")
@@ -190,7 +197,15 @@ impl LiveLaneSection<'_> {
 
 /// The lane's window picker, and the one row that tunes whichever mode it
 /// is in: the zoom while it follows the bars, the duration while pinned.
-fn window_rows(ui: &mut egui::Ui, lane: &mut LiveLaneStyle) {
+fn window_rows(ui: &mut egui::Ui, lane: &mut LiveLaneStyle, locked: Option<&str>) {
+    if let Some(hint) = locked {
+        ui.add_enabled(
+            false,
+            egui::Label::new(format!("window: {}", format_window_ms(DOT_TAPE_WINDOW_MS))),
+        )
+        .on_disabled_hover_text(hint);
+        return;
+    }
     ui.horizontal(|ui| {
         ui.label("window");
         egui::ComboBox::from_id_salt("bubble_live_lane_window")
@@ -600,71 +615,6 @@ impl BubbleHealthSection<'_> {
                 "the extra marks instead. Nothing is discarded",
             ));
         }
-    }
-}
-
-fn cluster_label(milliseconds: i64) -> String {
-    if milliseconds == 0 {
-        "Raw".to_owned()
-    } else {
-        format!("{milliseconds} ms")
-    }
-}
-
-fn lane_cluster_label(window: Option<i64>, inherited: i64) -> String {
-    match window {
-        None => format!("Same as history · {}", dust_label(inherited)),
-        Some(0) => "Raw · one bubble per print".to_owned(),
-        Some(milliseconds) => dust_label(milliseconds),
-    }
-}
-
-fn region_label(rows: u32) -> String {
-    if rows <= 1 {
-        "Off · one mark per row".to_owned()
-    } else {
-        format!("{rows} rows")
-    }
-}
-
-fn region_window_label(milliseconds: i64) -> String {
-    if milliseconds % 1_000 == 0 {
-        format!("{} s", milliseconds / 1_000)
-    } else {
-        format!("{milliseconds} ms")
-    }
-}
-
-fn dust_label(milliseconds: i64) -> String {
-    if milliseconds == 0 {
-        "Off · draw every print".to_owned()
-    } else if milliseconds % 1_000 == 0 {
-        format!("{} s", milliseconds / 1_000)
-    } else {
-        format!("{milliseconds} ms")
-    }
-}
-
-const fn size_reference_label(reference: BubbleSizeReference) -> &'static str {
-    match reference {
-        BubbleSizeReference::VisibleP99 => "Auto · session P99",
-        BubbleSizeReference::VisibleMax => "Auto · largest in session",
-        BubbleSizeReference::Fixed => "Fixed quantity",
-    }
-}
-
-const fn render_mode_label(mode: BubbleRenderMode) -> &'static str {
-    match mode {
-        BubbleRenderMode::Flat => "Flat · 2D disc",
-        BubbleRenderMode::Sphere => "Sphere · 3D shaded",
-    }
-}
-
-const fn consumption_mark_label(mark: ConsumptionMark) -> &'static str {
-    match mark {
-        ConsumptionMark::Crown => "Crown · arc outside the rim",
-        ConsumptionMark::Front => "Front · line through the bubble",
-        ConsumptionMark::None => "None",
     }
 }
 

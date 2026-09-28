@@ -12,7 +12,6 @@ use crate::projection::{
     DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_LADDER_MS, DotRungMemory, PaneGeometry, VolumeDots,
     dot_bar_window_ms, dot_level_ticks, dot_window_ms, hold_rung, project_with_dots,
 };
-use rust_decimal::prelude::FromPrimitive as _;
 
 /// Dots on, the budget out of the way, and a fixed scale where 10
 /// contracts is a full-size dot. The folds dots mode skips are all switched
@@ -846,12 +845,12 @@ fn eviction_never_shrinks_a_dot() {
     };
     let trades = dense(31, 4_000, 0, 10_000);
     let up_to = |now_ms: i64| {
-        let recorded: Vec<_> = trades
+        let so_far: Vec<_> = trades
             .iter()
             .filter(|trade| trade.1 <= now_ms)
             .cloned()
             .collect();
-        recorded(config.clone(), &borrowed(&recorded))
+        recorded(config.clone(), &borrowed(&so_far))
     };
     let dots = windows(500, 250);
     let (before, after) = (up_to(8_000), up_to(9_300));

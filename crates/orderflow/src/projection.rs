@@ -28,6 +28,7 @@ pub use model::{
     normalized_log_intensity,
 };
 
+use dots::DotHorizon;
 use fold::{FoldOrder, fold_to_budget, pane_budgets};
 use model::event_cap_key;
 use tiers::{TierClusters, TierCut, TierGrouping, cluster_tier, refine_tier, tier_primitives};
@@ -414,7 +415,7 @@ pub fn project_settled(
         timeline,
         effective_grouping,
         summarizing,
-        dots,
+        dots.map(|dots| (dots, DotHorizon::of(history))),
     );
     // While every mark is a raw print they share the session print scale
     // above, so an area means the same thing everywhere. The summary breaks
@@ -629,7 +630,7 @@ pub fn project_live(
         timeline,
         settled.effective_grouping,
         summarizing,
-        dots,
+        dots.map(|dots| (dots, DotHorizon::of(history))),
     );
     // This half carries marks for *both* panes: the prints rolling through the
     // tape, and — while the summary is on — the forming bar's own slot marks.
@@ -638,8 +639,8 @@ pub fn project_live(
     // pane's own radius range and gates on the pane's own switch, so a merged
     // mark would be clipped into one pane, sized for the other, and hidden by
     // the wrong control.
-    // Dots read their scale off this frame's own rungs: the tape's window can
-    // change without the settled half being rebuilt.
+    // Dots are all sized on the one session scale the settled half carries;
+    // this frame's rungs only place them.
     let (mut tape_marks, mut slot_marks): (Vec<_>, Vec<_>) = tier_primitives(
         marks,
         timeline,
@@ -695,7 +696,9 @@ pub fn project_live(
 /// never the prints' `size_reference_quantity`.
 #[must_use]
 pub fn dot_full_quantity(config: &HeatmapConfig) -> Decimal {
-    Decimal::from_f64(config.volume_dots.full_quantity).unwrap_or(Decimal::ONE_THOUSAND)
+    Decimal::from_f64(config.volume_dots.full_quantity)
+        .or_else(|| Decimal::from_f64(crate::config::DEFAULT_VOLUME_DOT_FULL_QUANTITY))
+        .unwrap_or_default()
 }
 
 /// Allocate `events` to the prints of one half of the chart.

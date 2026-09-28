@@ -3,6 +3,7 @@
 use rust_decimal::Decimal;
 
 mod bubbles;
+pub mod labels;
 mod lane;
 
 pub use bubbles::{
@@ -443,6 +444,15 @@ impl HeatmapConfig {
         } else {
             self.live_lane.window
         }
+    }
+
+    /// Why the lane's window setting does nothing right now, for the surfaces
+    /// that edit it: `Some` while volume dots fix the tape.
+    #[must_use]
+    pub fn lane_window_locked(&self) -> Option<&'static str> {
+        self.volume_dots
+            .enabled
+            .then_some("fixed while volume dots are on: the tape shows 15 s")
     }
 
     /// The tape's window in exchange milliseconds, against the bars' typical
