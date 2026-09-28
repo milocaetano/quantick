@@ -120,10 +120,12 @@ impl FrameLayout {
     /// The visible slices and the price scale, as the [`DrawFrame`] every
     /// painter reads, plus the auto-fitted range the next frame's input
     /// handler converts pixels with. `None` when nothing yields a scale.
+    /// The fit keeps `tape_range`, where the tape traded, on the axis.
     pub(super) fn resolve<'a>(
         &'a self,
         painter: &'a egui::Painter,
         series: Series<'a>,
+        tape_range: Option<(f64, f64)>,
         last_auto_range: Option<(f64, f64)>,
         price_view: &PriceView,
         canvas_background: egui::Color32,
@@ -156,7 +158,8 @@ impl FrameLayout {
             ..closed_end.saturating_sub(prefix.len()).min(closed.len())];
         let partial_visible = partial.filter(|_| closed_total >= start && closed_total < end);
 
-        // Auto-fit the visible bars, then apply any manual price pan/zoom. A
+        // Auto-fit the visible bars and the tape, then apply any manual
+        // price pan/zoom. A
         // window with no bars in it still gets a scale (the last one, then the
         // newest bar), because a chart that draws nothing at all is
         // indistinguishable from a hung app — which is exactly how the blank
@@ -164,6 +167,7 @@ impl FrameLayout {
         let auto_scale = chart::price_window(
             visible_prefix.iter().chain(visible_state),
             partial_visible,
+            tape_range.filter(|_| self.lane_width_px() > 0.0),
             last_auto_range,
             partial.or_else(|| closed.last()),
             chart_rect.top(),

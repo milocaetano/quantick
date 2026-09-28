@@ -67,8 +67,12 @@ impl OrderflowView {
             on_newest_bar,
             lane_reference_ms,
             price_range,
-            dot_zoom: pane_geometry
-                .map(|geometry| self.dot_rungs.choose(geometry, &self.config, price_range)),
+            // The tape's level follows its own prints, never the candle axis.
+            dot_zoom: pane_geometry.map(|geometry| {
+                let tape_span = self.tape_price_range().map(|(low, high)| high - low);
+                self.dot_rungs
+                    .choose(geometry, &self.config, price_range, tape_span)
+            }),
         };
         // Every frame, with no gate of its own. The worker coalesces requests
         // latest-wins and decides for itself what is worth rebuilding, so the
@@ -136,7 +140,10 @@ impl OrderflowView {
         )
         .with_inverted(inverted);
         let mut style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
-        style.tape_dot_radii = self.dot_rungs.tape_dot_radii(&style.bubbles);
+        style.dot_sizing = frame
+            .volume_dots
+            .as_ref()
+            .and_then(|scale| self.dot_rungs.sizing(scale, chart_rect.height()));
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_aggression_bubbles(painter, &context);
     }

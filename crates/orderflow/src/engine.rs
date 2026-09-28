@@ -218,9 +218,9 @@ pub struct ProjectionRequest {
     /// the tape still keeps off the bars (`HeatmapConfig::lane_window`), since
     /// the lane window follows the setting, not the dot zoom.
     ///
-    /// Not part of [`Self::layout`]: the finished half depends only on its
-    /// bars' windows and the level, and the cache keys on those, so a new
-    /// tape window never rebuilds it.
+    /// Not part of [`Self::layout`]: the finished half depends only on the
+    /// candles' level, and the cache keys on it, so a new tape window or tape
+    /// level never rebuilds it.
     pub dot_zoom: Option<DotZoom>,
 }
 
@@ -254,10 +254,11 @@ struct ProjectionCache {
     /// where the tape starts, which is what lets this cache stay valid while
     /// the trader moves the tape's speed.
     seam_ms: Option<i64>,
-    /// The level, in ticks, and each closed bar's candle window this half was
-    /// keyed on; `None` when it holds no dots. Part of the key because a zoom
-    /// across a ladder step re-keys every closed dot.
-    dot_rungs: Option<(i64, Vec<Option<i64>>)>,
+    /// The candles' level, in ticks, this half was keyed on; `None` when it
+    /// holds no dots. Part of the key because a zoom across a ladder step
+    /// re-keys every closed dot. The tape's rungs are not: the tape is the
+    /// live half's.
+    dot_rungs: Option<i64>,
     /// The finished half of the chart, reused until the layout moves or a dirty
     /// revision is old enough to rebuild.
     settled: Arc<SettledProjection>,
@@ -1119,9 +1120,7 @@ impl BookEngine {
             .as_ref()
             .filter(|_| self.config.volume_dots.enabled)
             .map(|zoom| VolumeDots::resolve(zoom, &request.closed, request.partial.as_ref()));
-        let dot_rungs = dots
-            .as_ref()
-            .map(|dots| (dots.level_ticks, dots.bar_windows(&request.closed)));
+        let dot_rungs = dots.as_ref().map(|dots| dots.candle_level_ticks);
 
         let settled = match &self.projection_cache {
             Some(cache)
@@ -1176,35 +1175,12 @@ impl BookEngine {
             projection: Arc::new(projection),
             first_bar_index: request.first_bar_index,
             slot_count: timeline.region_count(),
-            volume_dots: dots.as_ref().map(|dots| {
-                let calibrated = self.dot_calibration(dots);
-                dots.scale(
-                    crate::projection::dot_full_quantity(&self.config),
-                    calibrated,
-                )
-            }),
+            volume_dots: dots
+                .as_ref()
+                .map(|dots| dots.scale(&self.config, request.price_range)),
         });
         self.last_frame = Some(Arc::clone(&frame));
         Some(frame)
-    }
-
-    /// A volume-dot full size read from the market while the style wants
-    /// one at these rungs. It scans the retained prints, but only until the
-    /// view adopts an answer, which it does on the first one, once per
-    /// zoom.
-    fn dot_calibration(&self, dots: &VolumeDots) -> Option<Decimal> {
-        self.config
-            .volume_dots
-            .wants_calibration((dots.tape_window_ms, dots.level_ticks))
-            .then(|| {
-                crate::projection::calibrated_dot_full_quantity(
-                    &self.history,
-                    &self.config,
-                    dots.tape_window_ms,
-                    dots.level_ticks,
-                )
-            })
-            .flatten()
     }
 
     fn invalidate_projection(&mut self) {

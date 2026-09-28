@@ -20,8 +20,8 @@ mod tiers;
 
 pub use dots::{
     DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_CELL_PX, DOT_WINDOW_LADDER_MS, DotRungMemory, DotScale,
-    DotZoom, PaneGeometry, VolumeDots, calibrated_dot_full_quantity, dot_bar_window_ms,
-    dot_level_ticks, dot_window_ms, hold_rung, lane_bars,
+    DotSizing, DotZoom, MIN_DOT_RADIUS_PX, PaneGeometry, VolumeDots, candle_dot_px,
+    dot_level_ticks, dot_radius_range, dot_window_ms, hold_rung, lane_bars, tape_price_range,
 };
 pub use model::{
     AggressionPrimitive, BEFORE_CAPTURE, GapPrimitive, HeatmapCell, HeatmapProjection,
@@ -372,10 +372,9 @@ pub fn project_settled(
     // independent of the display filter below, so hiding small prints never
     // silently rescales the ones left on screen.
     //
-    // Volume dots go one step further: their own pinned quantity, on both
-    // panes, whatever the window, the level or the bar, so a dot's size never
-    // depends on what else the session did and a bigger volume is always a
-    // bigger dot.
+    // Volume dots go one step further: `size` reads their own typed full
+    // quantity, and the painter sizes each pane against its own biggest dot
+    // when the scale is automatic ([`DotSizing`]).
     let aggression_reference = if dots.is_some() {
         dot_full_quantity(config)
     } else {
@@ -640,8 +639,8 @@ pub fn project_live(
     // pane's own radius range and gates on the pane's own switch, so a merged
     // mark would be clipped into one pane, sized for the other, and hidden by
     // the wrong control.
-    // Dots are all sized on the one session scale the settled half carries;
-    // this frame's rungs only place them.
+    // Dots carry the typed scale the settled half carries; the painter sizes
+    // each pane on screen.
     let (mut tape_marks, mut slot_marks): (Vec<_>, Vec<_>) = tier_primitives(
         marks,
         timeline,

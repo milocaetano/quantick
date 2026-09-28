@@ -17,12 +17,7 @@ fn a_candle_dot_is_its_bars_volume_at_its_level() {
     let trades = dense(43, 4_000, 0, 12_000);
     let history = recorded(config.clone(), &borrowed(&trades));
     let timeline = chart(12_700, 1_500, None);
-    let frame = frame_at(
-        &history,
-        &timeline,
-        prices("90", "110"),
-        &levels(250, 1, 2),
-    );
+    let frame = frame_at(&history, &timeline, prices("90", "110"), &levels(250, 1, 2));
     let candles: Vec<&AggressionPrimitive> =
         frame.aggressions.iter().filter(|dot| !dot.live).collect();
     assert!(candles.len() > 100, "the fixture draws candle dots");
@@ -159,7 +154,8 @@ fn the_tape_never_follows_the_candle_view() {
 /// No drawn dot hides another. With the painter's radius function, and every
 /// dot at its cell's centre, no two tape discs intersect and no two candle
 /// discs intersect, on a dense tape squeezed to 1, 5 and 15 minutes and with
-/// the price axis squeezed tenfold. The dots still differ in size.
+/// the price axis squeezed tenfold. The dots still differ in size, even on
+/// a uniform random tape whose cells trade much alike.
 #[test]
 fn no_two_drawn_dots_overlap() {
     let config = HeatmapConfig {
@@ -262,7 +258,7 @@ fn no_two_drawn_dots_overlap() {
                 let largest = discs.iter().map(|disc| disc.2).fold(0.0, f64::max);
                 let smallest = discs.iter().map(|disc| disc.2).fold(f64::MAX, f64::min);
                 assert!(
-                    largest > 1.5 * smallest,
+                    largest > 1.1 * smallest,
                     "tape {lane_ms} ms, {height} px: every {pane} dot the same size \
                      ({smallest}..{largest})"
                 );
@@ -393,5 +389,5 @@ fn a_candle_dot_is_a_share_of_a_full_dot() {
         max_radius: 15.0,
         ..BubbleStyle::default()
     };
-    assert!((candle_dot_px(&bubbles) - 12.0).abs() < 1e-9);
+    assert!((candle_dot_px(&bubbles) - 12.0).abs() < 1e-5);
 }

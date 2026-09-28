@@ -8,13 +8,13 @@
 
 use eframe::egui;
 use quantick_engine::Side;
+pub(super) use quantick_orderflow::config::labels::format_quantity;
 use quantick_orderflow::{
     AggressionPrimitive, BubbleRenderMode, BubbleStyle, ConsumptionMark, GOLDEN_ANGLE, INV_PHI,
     INV_PHI_2, INV_PHI_3, bubble_halo_padding, bubble_impact_ring_padding,
 };
 pub(super) use quantick_orderflow::{bubble_radius, side_offset_y};
 use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive as _;
 
 use super::layout::RenderContext;
 use super::{Palette, add_gradient_rect, finite_unit, mix_rgb};
@@ -814,23 +814,36 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     let side_offset = bubbles.side_offset_for(dots);
     // The live lane has room the compressed history does not, which is the
     // whole reason it gets a radius range of its own (volume dots excepted).
-    let (lane_min, lane_max) = style
-        .tape_dot_radii
-        .filter(|_| dots)
-        .unwrap_or_else(|| style.live_lane.pane_radii(bubbles, true, dots));
+    let (lane_min, lane_max) = style.live_lane.pane_radii(bubbles, true, dots);
     let (candle_min, candle_max) = style.live_lane.pane_radii(bubbles, false, dots);
-    let radius_of = |trade: &AggressionPrimitive| {
-        if trade.live {
-            bubble_radius(trade.size, lane_min, lane_max)
-        } else {
-            bubble_radius(trade.size, candle_min, candle_max)
-        }
+    // Volume dots: each pane sized against its biggest dot on screen when
+    // automatic, each dot inside its own cell ([`DotSizing`]).
+    let center_at = |trade: &AggressionPrimitive| {
+        egui::pos2(
+            context.layout.x(trade.x),
+            context.layout.y_unclamped(trade.y),
+        )
     };
+    let on_screen =
+        |trade: &&AggressionPrimitive| context.layout.pane(trade.x).contains(center_at(trade));
+    let dot_sizing = style.dot_sizing.filter(|_| dots).map(|sizing| {
+        let shown: Vec<_> = context.bubbles().filter(on_screen).collect();
+        (sizing, sizing.pane_fulls(&shown))
+    });
+    let drawn = |trade: &AggressionPrimitive| match dot_sizing {
+        Some((sizing, fulls)) => sizing.draw(bubbles, &style.live_lane, trade, fulls),
+        None if trade.live => (trade.size, bubble_radius(trade.size, lane_min, lane_max)),
+        None => (
+            trade.size,
+            bubble_radius(trade.size, candle_min, candle_max),
+        ),
+    };
+    let radius_of = |trade: &AggressionPrimitive| drawn(trade).1;
     // A volume dot still forming sits at its window's centre, which can be
     // under a radius from its pane's right edge: it slides in to be drawn
     // whole rather than cut there.
     let center_of = |trade: &AggressionPrimitive| {
-        let mut center = egui::pos2(context.layout.x(trade.x), context.layout.y(trade.y));
+        let mut center = center_at(trade);
         let lean = (finite_unit(trade.buy_share) - 0.5) * 2.0;
         let pane = context.layout.pane(trade.x);
         if !pane.contains(center) {
@@ -898,7 +911,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 center,
                 radius,
                 side: trade.side,
-                size: trade.size,
+                size: drawn(trade).0,
                 matched: linked_reduction.then_some(trade.matched_fraction),
                 buy_share: trade.buy_share,
                 folded: trade.folded_marks,
@@ -962,36 +975,5 @@ pub(super) fn bubble_label(
             "{} · {mark}{trade_count}",
             format_quantity(quantity)
         )),
-    }
-}
-
-pub(super) fn format_quantity(quantity: Decimal) -> String {
-    let value = quantity.to_f64().unwrap_or(0.0);
-    let absolute = value.abs();
-    let (scaled, suffix) = if absolute >= 1_000_000_000.0 {
-        (value / 1_000_000_000.0, "B")
-    } else if absolute >= 1_000_000.0 {
-        (value / 1_000_000.0, "M")
-    } else if absolute >= 1_000.0 {
-        (value / 1_000.0, "K")
-    } else {
-        (value, "")
-    };
-    let decimals = if scaled.abs() >= 100.0 {
-        0
-    } else if scaled.abs() >= 10.0 {
-        1
-    } else {
-        2
-    };
-    let formatted = format!("{scaled:.decimals$}");
-    format!("{}{suffix}", trim_decimal_zeros(&formatted))
-}
-
-fn trim_decimal_zeros(value: &str) -> &str {
-    if value.contains('.') {
-        value.trim_end_matches('0').trim_end_matches('.')
-    } else {
-        value
     }
 }

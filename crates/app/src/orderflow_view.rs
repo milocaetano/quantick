@@ -217,6 +217,13 @@ impl OrderflowView {
         self.published.frame.as_deref()?.volume_dots.as_ref()
     }
 
+    /// Where the last published tape traded, `(low, high)`.
+    #[must_use]
+    pub(crate) fn tape_price_range(&self) -> Option<(f64, f64)> {
+        let frame = self.published.frame.as_deref()?;
+        quantick_orderflow::projection::tape_price_range(&frame.projection.aggressions)
+    }
+
     /// The heatmap setup this chart is drawing with, for a control capture.
     #[must_use]
     pub(crate) fn cached_config(&self) -> &HeatmapConfig {
@@ -309,18 +316,6 @@ impl OrderflowView {
         self.published = self.worker.published();
         let base = self.published.base_price_grouping;
         self.adopt_base(base);
-        let Some((calibrated, rungs)) = self.dot_scale().map(|scale| {
-            (
-                scale.calibrated_full_quantity,
-                (scale.tape_window_ms, scale.level_ticks),
-            )
-        }) else {
-            return;
-        };
-        let before = self.config.clone();
-        if self.config.volume_dots.adopt_calibration(calibrated, rungs) {
-            self.commit_config_changes(before);
-        }
     }
 
     /// Take an engine-chosen capture bucket into the UI mirror.
@@ -2217,14 +2212,16 @@ mod tests {
                 });
             }
             view.flush_for_test();
-            let bars = [bar(900, 1_100)];
+            // The bar opens as recording starts: a candle dot is its whole
+            // bar, and a bar recording started inside is not drawn.
+            let bars = [bar(1_000, 1_100)];
             let tick = view.config.price_grouping;
             let geometry = quantick_orderflow::PaneGeometry {
                 px_per_bar: 40.0,
                 lane_width_px: 200.0,
                 lane_window_ms: 4_000,
                 height_px: (4.0 / tick.to_f64().unwrap() * px_per_tick) as f32,
-                lane_bars: vec![(900, 1_100)],
+                lane_bars: vec![(1_000, 1_100)],
             };
             let project = |view: &mut OrderflowView| {
                 view.project_visible(
@@ -2241,7 +2238,7 @@ mod tests {
             let frame = project(&mut view).expect("the strip's frame");
             let rows = live_strip::aggression_rows(
                 &frame.projection.aggressions,
-                900,
+                1_000,
                 frame.projection.candles_hold_every_print(),
                 frame.projection.effective_grouping.bucket_width,
             );
@@ -2255,8 +2252,9 @@ mod tests {
         assert!(!off.is_empty(), "the fixture draws strip rows");
         assert_eq!(on, off, "the same contracts in the same rows");
 
-        // A dot a quarter of a tick: five-tick levels.
-        let (coarse, _, _) = strip(true, dot_px / 4.0);
+        // A tick a tenth of a dot: five-tick candle levels, a candle dot
+        // being 0.4 of a dot.
+        let (coarse, _, _) = strip(true, dot_px / 10.0);
         let level = tick * Decimal::from(5);
         let sum = |rows: &[live_strip::HistogramRow],
                    side: fn(&live_strip::HistogramRow) -> Decimal| {

@@ -13741,7 +13741,7 @@
               },
               "overlap_merge": {
                 "default": false,
-                "description": "Bubbles are drawn as volume dots, Bookmap style: one dot per bar,\nwindow of market time and price level of whole ticks, both sides in\nit as a pie, sized by the volume its cell holds. Windows and levels\nare anchored at exchange epoch 0 and price zero and picked by the\nzoom, so a closed dot never changes. The bubble setting `overlap_merge`, switched by\n`layers.visibility.set` as layer `bubble_overlap_merge`.",
+                "description": "Bubbles are drawn as volume dots, Bookmap style: on the candles one\ndot per bar and price level, on the tape one per window of market time\nand price level, both sides in it as a pie, sized by the volume its\ncell holds. Windows and levels are anchored at exchange epoch 0 and\nprice zero and picked by each pane's own zoom, so a closed dot never\nchanges. The bubble setting `overlap_merge`, switched by\n`layers.visibility.set` as layer `bubble_overlap_merge`.",
                 "type": "boolean"
               },
               "volume_dots": {
@@ -13826,31 +13826,17 @@
           "VolumeDotsSnapshot": {
             "description": "What a volume-dots frame was keyed and sized on.",
             "properties": {
-              "candle_base_window_ms": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/WireU64"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "The newest bar's candle window in milliseconds, the base rung at this\nzoom; absent when that bar is one window."
+              "auto_full": {
+                "description": "Each pane sizes its dots relative to its own biggest dot on screen\ninstead of `volume_dot_full_quantity`. The bubble setting\n`volume_dot_auto_full`.",
+                "type": "boolean"
               },
-              "candle_px_per_bar": {
-                "anyOf": [
-                  {
-                    "$ref": "#/$defs/CanonicalDecimal"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "Pixels a bar takes on the candles: each bar's window is the smallest\nrung at least one dot wide inside its slot, from the bar's own\nduration."
-              },
-              "level_ticks": {
+              "candle_level_ticks": {
                 "$ref": "#/$defs/WireU64",
-                "description": "Native ticks per price level, on both panes."
+                "description": "Native ticks per candle level, chosen from the candle price axis. A\ncandle dot is its whole bar at one level."
+              },
+              "tape_level_ticks": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Native ticks per tape level, chosen from the price span of the tape's\nown prints."
               },
               "tape_window_ms": {
                 "$ref": "#/$defs/WireU64",
@@ -13858,13 +13844,15 @@
               },
               "volume_dot_full_quantity": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "description": "Contracts a dot holds at the largest radius, on both panes: area is\nproportional to quantity against this one session scale. The bubble\nsetting `volume_dot_full_quantity`."
+                "description": "Contracts a dot holds at the largest radius when the size is typed:\narea is proportional to quantity against it. The bubble setting\n`volume_dot_full_quantity`."
               }
             },
             "required": [
               "tape_window_ms",
-              "level_ticks",
-              "volume_dot_full_quantity"
+              "tape_level_ticks",
+              "candle_level_ticks",
+              "volume_dot_full_quantity",
+              "auto_full"
             ],
             "type": "object"
           },

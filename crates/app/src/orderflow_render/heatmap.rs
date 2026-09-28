@@ -356,7 +356,7 @@ impl<'c, 'a> EventPass<'c, 'a> {
             if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
                 continue;
             }
-            let center = egui::pos2(layout.x(trade.x), layout.y(trade.y));
+            let center = egui::pos2(layout.x(trade.x), layout.y_unclamped(trade.y));
             let pane = layout.pane(trade.x);
             if !pane.contains(center) {
                 continue;

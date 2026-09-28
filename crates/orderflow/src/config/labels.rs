@@ -1,6 +1,9 @@
 //! The words the bubble panel shows for its settings: plain formatting,
 //! kept beside the settings they name rather than in the UI crate.
 
+use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive as _;
+
 use super::{BubbleRenderMode, BubbleSizeReference, ConsumptionMark};
 
 /// The cluster window, or raw.
@@ -81,5 +84,39 @@ pub const fn consumption_mark_label(mark: ConsumptionMark) -> &'static str {
         ConsumptionMark::Crown => "Crown · arc outside the rim",
         ConsumptionMark::Front => "Front · line through the bubble",
         ConsumptionMark::None => "None",
+    }
+}
+
+/// A quantity as a bubble labels it: three significant figures at most,
+/// thousands as `K`, millions as `M`, billions as `B`.
+#[must_use]
+pub fn format_quantity(quantity: Decimal) -> String {
+    let value = quantity.to_f64().unwrap_or(0.0);
+    let absolute = value.abs();
+    let (scaled, suffix) = if absolute >= 1_000_000_000.0 {
+        (value / 1_000_000_000.0, "B")
+    } else if absolute >= 1_000_000.0 {
+        (value / 1_000_000.0, "M")
+    } else if absolute >= 1_000.0 {
+        (value / 1_000.0, "K")
+    } else {
+        (value, "")
+    };
+    let decimals = if scaled.abs() >= 100.0 {
+        0
+    } else if scaled.abs() >= 10.0 {
+        1
+    } else {
+        2
+    };
+    let formatted = format!("{scaled:.decimals$}");
+    format!("{}{suffix}", trim_decimal_zeros(&formatted))
+}
+
+fn trim_decimal_zeros(value: &str) -> &str {
+    if value.contains('.') {
+        value.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        value
     }
 }

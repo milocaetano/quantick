@@ -197,11 +197,12 @@ pub struct BubblesStateSnapshot {
     /// The exact quantity the trader's own display floor keeps off the canvas.
     /// Floored, not dropped: it is still in the totals.
     pub floored_quantity: CanonicalDecimal,
-    /// Bubbles are drawn as volume dots, Bookmap style: one dot per bar,
-    /// window of market time and price level of whole ticks, both sides in
-    /// it as a pie, sized by the volume its cell holds. Windows and levels
-    /// are anchored at exchange epoch 0 and price zero and picked by the
-    /// zoom, so a closed dot never changes. The bubble setting `overlap_merge`, switched by
+    /// Bubbles are drawn as volume dots, Bookmap style: on the candles one
+    /// dot per bar and price level, on the tape one per window of market time
+    /// and price level, both sides in it as a pie, sized by the volume its
+    /// cell holds. Windows and levels are anchored at exchange epoch 0 and
+    /// price zero and picked by each pane's own zoom, so a closed dot never
+    /// changes. The bubble setting `overlap_merge`, switched by
     /// `layers.visibility.set` as layer `bubble_overlap_merge`.
     #[serde(default)]
     pub overlap_merge: bool,
@@ -214,32 +215,33 @@ pub struct BubblesStateSnapshot {
 /// What a volume-dots frame was keyed and sized on.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct VolumeDotsSnapshot {
-    /// Pixels a bar takes on the candles: each bar's window is the smallest
-    /// rung at least one dot wide inside its slot, from the bar's own
-    /// duration.
-    pub candle_px_per_bar: Option<CanonicalDecimal>,
-    /// The newest bar's candle window in milliseconds, the base rung at this
-    /// zoom; absent when that bar is one window.
-    pub candle_base_window_ms: Option<WireU64>,
     /// The tape's window, in milliseconds.
     pub tape_window_ms: WireU64,
-    /// Native ticks per price level, on both panes.
-    pub level_ticks: WireU64,
-    /// Contracts a dot holds at the largest radius, on both panes: area is
-    /// proportional to quantity against this one session scale. The bubble
-    /// setting `volume_dot_full_quantity`.
+    /// Native ticks per tape level, chosen from the price span of the tape's
+    /// own prints.
+    pub tape_level_ticks: WireU64,
+    /// Native ticks per candle level, chosen from the candle price axis. A
+    /// candle dot is its whole bar at one level.
+    pub candle_level_ticks: WireU64,
+    /// Contracts a dot holds at the largest radius when the size is typed:
+    /// area is proportional to quantity against it. The bubble setting
+    /// `volume_dot_full_quantity`.
     pub volume_dot_full_quantity: CanonicalDecimal,
+    /// Each pane sizes its dots relative to its own biggest dot on screen
+    /// instead of `volume_dot_full_quantity`. The bubble setting
+    /// `volume_dot_auto_full`.
+    pub auto_full: bool,
 }
 
 impl From<&quantick_orderflow::DotScale> for VolumeDotsSnapshot {
     fn from(scale: &quantick_orderflow::DotScale) -> Self {
         let wire = |value: i64| WireU64::new(u64::try_from(value.max(0)).unwrap_or(0));
         Self {
-            candle_px_per_bar: canonical_f32(scale.px_per_bar, 2),
-            candle_base_window_ms: scale.newest_bar_window_ms.map(wire),
             tape_window_ms: wire(scale.tape_window_ms),
-            level_ticks: wire(scale.level_ticks),
+            tape_level_ticks: wire(scale.tape_level_ticks),
+            candle_level_ticks: wire(scale.candle_level_ticks),
             volume_dot_full_quantity: canonical_decimal(scale.volume_dot_full_quantity),
+            auto_full: scale.auto_full,
         }
     }
 }

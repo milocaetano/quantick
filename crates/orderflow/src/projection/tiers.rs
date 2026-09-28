@@ -291,9 +291,11 @@ pub(super) fn refine_tier(
 /// Place one tier's marks on the chart, each on the scale its view reads on.
 ///
 /// A volume dot (`dots`) is placed at its window's fixed centre on the tape,
-/// held inside the tape, and on the candles at the centre of the part of its
-/// window inside its bar — at its slot's centre when that part is the whole
-/// bar. It is sized on the reference it is handed, like any mark.
+/// held inside the tape, and on the candles at its bar's slot centre; in
+/// price at its level's centre. A tape dot off the price window keeps a y
+/// outside `[0, 1]` rather than being dropped — the painter clips — so the
+/// candle axis never blanks the tape. It is sized on the reference it is
+/// handed, like any mark.
 pub(super) fn tier_primitives(
     marks: TierClusters,
     timeline: &BarTimeline,
@@ -316,36 +318,34 @@ pub(super) fn tier_primitives(
             // A tape mark is placed by the live edge it is measured from; a
             // slot mark by the bar it belongs to. `locate` answers the first,
             // so a settled mark has to ask for its bar's slot explicitly.
-            let position = match (live, dots.is_some()) {
-                (true, false) => timeline.locate(cluster.timestamp_ms)?,
-                (false, false) => timeline.locate_in_slot(cluster.timestamp_ms)?,
-                (true, true) => timeline.locate_in_lane_clamped(cluster.timestamp_ms)?,
+            let x = match (live, dots.is_some()) {
+                (true, false) => timeline.locate(cluster.timestamp_ms)?.normalized,
+                (false, false) => timeline.locate_in_slot(cluster.timestamp_ms)?.normalized,
+                (true, true) => {
+                    timeline
+                        .locate_in_lane_clamped(cluster.timestamp_ms)?
+                        .normalized
+                }
                 (false, true) => {
                     let slot = timeline.slot_at(cluster.first_timestamp_ms)?;
-                    let (centre_ms, whole) = dots
-                        .and_then(|dots| dots.candle_place(cluster.first_timestamp_ms, slot.end_ms))
-                        .unwrap_or((cluster.timestamp_ms, false));
-                    let last = slot.end_ms.saturating_sub(1).max(slot.start_ms);
-                    let mut position =
-                        timeline.locate_in_slot(centre_ms.clamp(slot.start_ms, last))?;
-                    if whole {
-                        let (left, right) = timeline.slot_bounds(slot.index);
-                        position.normalized = (left + right) / 2.0;
-                    }
-                    position
+                    let (left, right) = timeline.slot_bounds(slot.index);
+                    (left + right) / 2.0
                 }
             };
-            let y = prices.y(cluster.price)?;
+            let y = match (live, dots.is_some()) {
+                (_, false) => prices.y(cluster.price)?,
+                (true, true) => prices.y_unclamped(level_centre(&cluster))?,
+                (false, true) => prices.y(level_centre(&cluster))?,
+            };
             let size = normalized_area_size(cluster.quantity, reference);
-            Some(aggression_primitive(
-                cluster,
-                position.normalized,
-                y,
-                size,
-                live,
-            ))
+            Some(aggression_primitive(cluster, x, y, size, live))
         })
         .collect()
+}
+
+/// The centre of a dot's level: where it is drawn, on its cell's grid.
+fn level_centre(cluster: &AggressionCluster) -> Decimal {
+    cluster.price_bucket + cluster.price_span / Decimal::TWO
 }
 
 fn aggression_primitive(

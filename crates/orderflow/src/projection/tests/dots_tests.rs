@@ -674,7 +674,11 @@ fn a_coarse_level_places_at_its_weighted_tick_and_sizes_by_quantity() {
     // (100 × 1 + 103 × 3) / 4 = 102.25, on the 102 tick; drawn at the
     // level's centre, 102.5.
     assert_eq!(level.price, dec("102"), "weighted, on a tick");
-    assert_eq!(level.y, window.y(dec("102.5")).unwrap(), "the level's centre");
+    assert_eq!(
+        level.y,
+        window.y(dec("102.5")).unwrap(),
+        "the level's centre"
+    );
     // 10 contracts is a full-size dot, whatever the level or the window.
     assert_eq!(level.size, (4.0f64 / 10.0).sqrt() as f32);
     assert_eq!(dot(3).price_bucket, dec("105"), "the next level up");
@@ -1048,8 +1052,8 @@ fn a_grouping_reset_moves_the_horizon_to_the_newest_dropped_print() {
     assert_eq!(history.evicted_through_ms(), Some(1_700));
 }
 
-/// Recording starts mid-window: the window it starts in holds only the prints
-/// seen since, so it is not drawn; the next window is.
+/// Recording starts mid-bar: the bar it starts in holds only the prints seen
+/// since, so its candle dot is not drawn; the next bar's is.
 #[test]
 fn the_window_recording_started_in_is_not_drawn() {
     let config = dots_config();
@@ -1057,7 +1061,7 @@ fn the_window_recording_started_in_is_not_drawn() {
         config.clone(),
         &[
             (1, 1_100, "100", "1", Side::Buy),
-            (2, 1_600, "100", "1", Side::Sell),
+            (2, 2_100, "100", "1", Side::Sell),
         ],
     );
     let frame = frame_at(
@@ -1071,11 +1075,7 @@ fn the_window_recording_started_in_is_not_drawn() {
         .iter()
         .map(|dot| dot.agg_ids.clone())
         .collect();
-    assert_eq!(
-        ids,
-        vec![vec![2]],
-        "only the window after the recording start"
-    );
+    assert_eq!(ids, vec![vec![2]], "only the bar after the recording start");
 }
 
 /// A full-size quantity that is not a number falls back to the dots' own
@@ -1341,11 +1341,7 @@ fn equal_quantities_are_equal_radii_anywhere() {
     let mut radii = Vec::new();
     for trades in [prints.to_vec(), with_a_giant] {
         let history = recorded(config.clone(), &trades);
-        for dots in [
-            dots_at(250),
-            coarse(100, 5),
-            coarse(1_000, 2),
-        ] {
+        for dots in [dots_at(250), coarse(100, 5), coarse(1_000, 2)] {
             let frame = frame_at(
                 &history,
                 &chart(3_900, 1_500, None),
@@ -1401,25 +1397,14 @@ fn a_merged_level_is_the_sum_and_never_smaller() {
             enabled: true,
             full_quantity: 1_000.0,
             auto_full: false,
-            ..VolumeDotStyle::default()
         },
         ..dots_config()
     };
     let trades = dense(37, 3_000, 0, 12_000);
     let history = recorded(config.clone(), &borrowed(&trades));
     let timeline = chart(11_500, 1_500, None);
-    let fine = frame_at(
-        &history,
-        &timeline,
-        prices("90", "110"),
-        &coarse(250, 1),
-    );
-    let merged = frame_at(
-        &history,
-        &timeline,
-        prices("90", "110"),
-        &coarse(250, 2),
-    );
+    let fine = frame_at(&history, &timeline, prices("90", "110"), &coarse(250, 1));
+    let merged = frame_at(&history, &timeline, prices("90", "110"), &coarse(250, 2));
     let radius = |mark: &AggressionPrimitive| {
         let (minimum, maximum) = config
             .live_lane
@@ -1473,7 +1458,6 @@ fn the_dot_scale_rescales_every_dot_alike() {
                 enabled: true,
                 full_quantity,
                 auto_full: false,
-                ..VolumeDotStyle::default()
             },
             bubbles: BubbleStyle {
                 min_radius: 0.0,

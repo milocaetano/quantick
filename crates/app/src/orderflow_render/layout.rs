@@ -213,7 +213,18 @@ impl<'a> ProjectedLayout<'a> {
 
     #[must_use]
     pub(super) fn y(self, normalized: f64) -> f32 {
-        let unit = finite_unit_f64(normalized) as f32;
+        self.y_unclamped(finite_unit_f64(normalized))
+    }
+
+    /// [`Self::y`] off the chart too: a volume dot off the price window is
+    /// hidden by its pane's clip rather than piled on the edge.
+    #[must_use]
+    pub(super) fn y_unclamped(self, normalized: f64) -> f32 {
+        let unit = if normalized.is_finite() {
+            normalized as f32
+        } else {
+            0.0
+        };
         let unit = if self.inverted { 1.0 - unit } else { unit };
         self.chart_rect.top() + unit * self.chart_rect.height()
     }

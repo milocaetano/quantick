@@ -46,6 +46,20 @@ impl PriceScale {
         bottom: f32,
         pad_frac: f64,
     ) -> Option<Self> {
+        Self::auto_including(bars, partial, None, top, bottom, pad_frac)
+    }
+
+    /// [`Self::auto`] over the bars and, when there are bars at all, the
+    /// `(lo, hi)` price range `also` covers too.
+    #[must_use]
+    pub fn auto_including<'a>(
+        bars: impl IntoIterator<Item = &'a Bar>,
+        partial: Option<&'a Bar>,
+        also: Option<(f64, f64)>,
+        top: f32,
+        bottom: f32,
+        pad_frac: f64,
+    ) -> Option<Self> {
         let mut lo = f64::INFINITY;
         let mut hi = f64::NEG_INFINITY;
         for bar in bars.into_iter().chain(partial) {
@@ -54,6 +68,12 @@ impl PriceScale {
         }
         if !lo.is_finite() || !hi.is_finite() {
             return None;
+        }
+        if let Some((also_lo, also_hi)) =
+            also.filter(|(also_lo, also_hi)| also_lo.is_finite() && also_hi.is_finite())
+        {
+            lo = lo.min(also_lo);
+            hi = hi.max(also_hi);
         }
         // Pad; guarantee a non-zero span even when hi == lo (a flat range).
         let span = (hi - lo).max(f64::EPSILON);
@@ -177,7 +197,9 @@ impl PriceScale {
 
 /// The price window to draw a frame with, given what is in view.
 ///
-/// Normally that is [`PriceScale::auto`] over the visible bars. When the view
+/// Normally that is [`PriceScale::auto`] over the visible bars and, with the
+/// tape on, the `tape` price range its window covers, so the live price never
+/// leaves the axis while the candles are panned elsewhere. When the view
 /// holds none of them — a rebuild re-cut the series under a panned viewport,
 /// or the user panned into the empty space past the newest bar — the chart
 /// still has to read as a chart, with its axis, its tape and its badges, so
@@ -188,12 +210,13 @@ impl PriceScale {
 pub fn price_window<'a>(
     visible: impl IntoIterator<Item = &'a Bar>,
     visible_partial: Option<&'a Bar>,
+    tape: Option<(f64, f64)>,
     last: Option<(f64, f64)>,
     newest: Option<&Bar>,
     top: f32,
     bottom: f32,
 ) -> Option<PriceScale> {
-    PriceScale::auto(visible, visible_partial, top, bottom, AUTO_PAD_FRAC)
+    PriceScale::auto_including(visible, visible_partial, tape, top, bottom, AUTO_PAD_FRAC)
         .or_else(|| last.map(|(lo, hi)| PriceScale::from_range(lo, hi, top, bottom)))
         .or_else(|| PriceScale::auto(&[], newest, top, bottom, AUTO_PAD_FRAC))
 }
@@ -778,7 +801,10 @@ mod tests {
         let window = price_window(&bars, None, Some((120.0, 125.0)), None, None, 0.0, 100.0)
             .expect("bars in view");
         let (lo, hi) = window.range();
-        assert!(lo < 100.0 && hi > 125.0, "bars and tape, padded: {lo}..{hi}");
+        assert!(
+            lo < 100.0 && hi > 125.0,
+            "bars and tape, padded: {lo}..{hi}"
+        );
         let inside = price_window(&bars, None, Some((102.0, 104.0)), None, None, 0.0, 100.0);
         assert_eq!(
             inside,
@@ -793,16 +819,24 @@ mod tests {
     #[test]
     fn an_empty_view_holds_the_last_window_instead_of_going_blank() {
         let newest = bar("100.0", "110.0");
-        let window = price_window(&[], None, None, Some((50.0, 60.0)), Some(&newest), 0.0, 100.0)
-            .expect("an empty view still draws");
+        let window = price_window(
+            &[],
+            None,
+            None,
+            Some((50.0, 60.0)),
+            Some(&newest),
+            0.0,
+            100.0,
+        )
+        .expect("an empty view still draws");
         assert_eq!(window.range(), (50.0, 60.0), "the axis holds still");
     }
 
     #[test]
     fn an_empty_view_with_no_history_falls_back_to_the_newest_bar() {
         let newest = bar("100.0", "110.0");
-        let window =
-            price_window(&[], None, None, None, Some(&newest), 0.0, 100.0).expect("the market is there");
+        let window = price_window(&[], None, None, None, Some(&newest), 0.0, 100.0)
+            .expect("the market is there");
         let (lo, hi) = window.range();
         assert!(
             lo < 100.0 && hi > 110.0,

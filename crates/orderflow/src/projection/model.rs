@@ -42,6 +42,14 @@ impl PriceWindow {
         if price < self.low || price > self.high {
             return None;
         }
+        self.y_unclamped(price)
+    }
+
+    /// Map any price to normalized screen y, outside `[0, 1]` when it is off
+    /// the window: for a mark the painter clips rather than the projection
+    /// drops.
+    #[must_use]
+    pub fn y_unclamped(&self, price: Decimal) -> Option<f64> {
         ((self.high - price) / (self.high - self.low)).to_f64()
     }
 }
@@ -104,8 +112,9 @@ pub struct AggressionPrimitive {
     /// bubble, the whole region for a regional fold. Range-drawing consumers
     /// (the live strip's histogram) read this instead of assuming one row.
     pub price_span: Decimal,
-    /// The price the mark is drawn at: the cluster's quantity-weighted price,
-    /// a volume dot's rounded to the tick. Always inside the range above.
+    /// The cluster's quantity-weighted price, a volume dot's rounded to the
+    /// tick; the price a plain mark is drawn at. A volume dot is drawn at its
+    /// level's centre instead. Always inside the range above.
     pub price: Decimal,
     /// Number of aggregate trades represented by this bubble.
     pub trade_count: usize,

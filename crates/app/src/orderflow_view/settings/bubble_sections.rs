@@ -111,22 +111,21 @@ impl ClusteringSection<'_> {
                             .speed(10.0)
                             .prefix("dot full size qty "),
                     )
-                    .on_hover_text("contracts a volume dot holds at the largest radius; area follows quantity below it, on both panes");
+                    .on_hover_text("contracts a volume dot holds at the largest radius; area follows quantity below it, on both panes. Typing a value turns auto off");
                 if typed.changed() {
                     config.volume_dots.auto_full = false;
                 }
-                let label = match (config.volume_dots.auto_full, config.volume_dots.calibrated_at) {
-                    (true, None) => "auto: reading…",
-                    (true, Some(_)) => "auto: on",
-                    (false, _) => "auto",
+                let label = if config.volume_dots.auto_full {
+                    "auto: on"
+                } else {
+                    "auto"
                 };
                 if ui
                     .button(label)
-                    .on_hover_text("read the full size from the market — the 99th percentile of the tape dots being drawn — and keep it fixed while the zoom holds; a zoom that changes the grouping reads it again")
+                    .on_hover_text("size relative to the biggest dot on screen, per pane: the tape's biggest dot and the candles' biggest dot are each drawn full size, the rest by their volume")
                     .clicked()
                 {
                     config.volume_dots.auto_full = true;
-                    config.volume_dots.calibrated_at = None;
                 }
             });
         }

@@ -49,14 +49,10 @@ pub struct VolumeDotStyle {
     /// quantity below it, on both panes. The preset key
     /// `volume_dot_full_quantity`.
     pub full_quantity: f64,
-    /// `full_quantity` is read from the market: the engine offers a
-    /// calibration for the cells being drawn, and adopting it freezes the
-    /// scale until the zoom changes the rungs ([`Self::adopt_calibration`]).
-    /// The preset key `volume_dot_auto_full`.
+    /// Each pane sizes its dots against its own biggest dot on screen
+    /// instead of `full_quantity`, so the biggest is always full size and the
+    /// rest differ. The preset key `volume_dot_auto_full`.
     pub auto_full: bool,
-    /// `(tape window ms, level ticks)` the automatic full size was read at;
-    /// `None` until one is. Not saved: a restored chart reads it again.
-    pub calibrated_at: Option<(i64, i64)>,
 }
 
 impl Default for VolumeDotStyle {
@@ -65,33 +61,7 @@ impl Default for VolumeDotStyle {
             enabled: false,
             full_quantity: DEFAULT_VOLUME_DOT_FULL_QUANTITY,
             auto_full: true,
-            calibrated_at: None,
         }
-    }
-}
-
-impl VolumeDotStyle {
-    /// Whether an automatic full size is still to be read at `rungs`, the
-    /// `(tape window ms, level ticks)` being drawn: once per zoom.
-    #[must_use]
-    pub fn wants_calibration(&self, rungs: (i64, i64)) -> bool {
-        self.auto_full && self.calibrated_at != Some(rungs)
-    }
-
-    /// Take a full size calibrated at `rungs` while one is wanted there, and
-    /// freeze it until the rungs change: `true` when the style changed. A
-    /// value the trader typed is never overwritten, and while the zoom holds
-    /// the past keeps its sizes.
-    pub fn adopt_calibration(&mut self, calibrated: Option<Decimal>, rungs: (i64, i64)) -> bool {
-        let Some(full) = calibrated
-            .filter(|_| self.wants_calibration(rungs))
-            .and_then(|full| rust_decimal::prelude::ToPrimitive::to_f64(&full))
-        else {
-            return false;
-        };
-        self.full_quantity = sane_volume_dot_full_quantity(full);
-        self.calibrated_at = Some(rungs);
-        true
     }
 }
 

@@ -54,6 +54,10 @@ impl ChartPane {
         let Some(layout) = self.lay_out(painter, area, chrome) else {
             return;
         };
+        let tape_range = self
+            .orderflow
+            .as_ref()
+            .and_then(OrderflowView::tape_price_range);
         // Field borrows, not `self` borrows: the tape below needs `&mut
         // self.orderflow` while these are alive.
         let series = Series {
@@ -64,6 +68,7 @@ impl ChartPane {
         let Some((frame, auto_range)) = layout.resolve(
             painter,
             series,
+            tape_range,
             self.frame.auto_range,
             &self.price_view,
             start.canvas_background,
