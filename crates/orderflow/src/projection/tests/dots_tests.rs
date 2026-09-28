@@ -823,6 +823,92 @@ fn a_bar_shorter_than_its_window_is_one_dot_at_its_slot_centre() {
     }
 }
 
+/// Retention evicts the oldest prints one by one as time passes. A bar that
+/// has lost any print to it draws no dots at all, so eviction never shrinks
+/// a dot: across an eviction every dot is either the same or gone.
+#[test]
+fn eviction_never_shrinks_a_dot() {
+    let config = HeatmapConfig {
+        retention_ms: 4_000,
+        ..dots_config()
+    };
+    let trades = dense(31, 4_000, 0, 10_000);
+    let up_to = |now_ms: i64| {
+        let recorded: Vec<_> = trades
+            .iter()
+            .filter(|trade| trade.1 <= now_ms)
+            .cloned()
+            .collect();
+        tape(config.clone(), &borrowed(&recorded))
+    };
+    let dots = windows(500, 250);
+    let (before, after) = (up_to(8_000), up_to(9_300));
+    assert!(
+        after.counters().aggressions_evicted > before.counters().aggressions_evicted,
+        "the later history evicted more"
+    );
+    let early = frame_at(
+        &before,
+        &chart(8_000, 1_500, None),
+        prices("90", "110"),
+        &dots,
+    );
+    let late = frame_at(
+        &after,
+        &chart(9_300, 1_500, None),
+        prices("90", "110"),
+        &dots,
+    );
+    let candles = facts(&early, |mark| !mark.live);
+    let late_facts = facts(&late, |_| true);
+    let (mut same, mut gone) = (0, 0);
+    for dot in &candles {
+        let sharing: Vec<_> = late_facts
+            .iter()
+            .filter(|later| later.agg_ids.iter().any(|id| dot.agg_ids.contains(id)))
+            .collect();
+        match sharing.as_slice() {
+            [] => gone += 1,
+            [later] if *later == dot => same += 1,
+            _ => panic!("eviction changed a dot: {dot:?} became {sharing:?}"),
+        }
+    }
+    assert!(same > 0 && gone > 0, "{same} kept and {gone} gone");
+}
+
+/// With dots on the tape is a fixed 15 s, whatever the bars do, so it never
+/// rescales when a bar closes; off, the lane's own setting is untouched.
+#[test]
+fn dots_fix_the_tape_at_fifteen_seconds() {
+    use crate::config::{DOT_TAPE_WINDOW_MS, LaneWindow};
+    assert_eq!(DOT_TAPE_WINDOW_MS, 15_000);
+    for window in [
+        LaneWindow::Auto { zoom: 1.0 },
+        LaneWindow::Fixed { ms: 60_000 },
+    ] {
+        let mut config = dots_config();
+        config.live_lane.window = window;
+        for reference_ms in [1_000, 4_000, 90_000] {
+            assert_eq!(config.lane_window_ms(reference_ms), DOT_TAPE_WINDOW_MS);
+            assert_eq!(
+                config.lane_window(),
+                LaneWindow::Fixed {
+                    ms: DOT_TAPE_WINDOW_MS
+                }
+            );
+            let off = HeatmapConfig {
+                bubble_overlap_merge: false,
+                ..config.clone()
+            };
+            assert_eq!(off.lane_window(), window);
+            assert_eq!(
+                off.lane_window_ms(reference_ms),
+                off.live_lane.window_ms(reference_ms)
+            );
+        }
+    }
+}
+
 /// The forming bar's window only ever coarsens as the bar runs on: once it
 /// needs a wider window it never returns to a finer one, and once it is one
 /// whole window it stays one.

@@ -2276,6 +2276,33 @@ mod tests {
         }
     }
 
+    /// With volume dots on the tape the chart draws is a fixed 15 s whatever
+    /// the bars on screen, and the control snapshot reads that window.
+    #[test]
+    fn volume_dots_draw_a_fixed_tape() {
+        let mut view = OrderflowView::new("BTCUSDT");
+        let short = [bar(0, 1_000), bar(1_000, 2_000)];
+        let long = [bar(0, 60_000), bar(60_000, 120_000)];
+        let (off_short, off_long) = (
+            view.live_lane_window_ms(&short),
+            view.live_lane_window_ms(&long),
+        );
+        let before = view.config.clone();
+        view.config.bubble_overlap_merge = true;
+        view.commit_config_changes(before);
+        assert_eq!(view.live_lane_window_ms(&short), 15_000);
+        assert_eq!(view.live_lane_window_ms(&long), 15_000);
+        assert_eq!(
+            view.cached_config().lane_window(),
+            quantick_orderflow::LaneWindow::Fixed { ms: 15_000 }
+        );
+        let before = view.config.clone();
+        view.config.bubble_overlap_merge = false;
+        view.commit_config_changes(before);
+        assert_eq!(view.live_lane_window_ms(&short), off_short);
+        assert_eq!(view.live_lane_window_ms(&long), off_long);
+    }
+
     #[test]
     fn disabling_capture_drops_the_published_frame() {
         let mut view = OrderflowView::new("BTCUSDT");
