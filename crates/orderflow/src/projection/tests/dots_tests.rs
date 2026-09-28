@@ -523,7 +523,15 @@ fn dots_let_the_tape_squeeze_to_twenty_minutes() {
 fn the_automatic_full_size_is_the_ninety_ninth_percentile_of_a_second_at_a_tick() {
     assert!(dots_config().volume_dots.auto_full, "automatic by default");
     let whole: Vec<(u64, i64, String, String, Side)> = (1..=1_000u64)
-        .map(|i| (i, i as i64 * 1_000, "100".to_string(), i.to_string(), Side::Buy))
+        .map(|i| {
+            (
+                i,
+                i as i64 * 1_000,
+                "100".to_string(),
+                i.to_string(),
+                Side::Buy,
+            )
+        })
         .collect();
     let history = recorded(dots_config(), &borrowed(&whole));
     assert_eq!(
@@ -539,7 +547,13 @@ fn the_automatic_full_size_is_the_ninety_ninth_percentile_of_a_second_at_a_tick(
             let half = Decimal::from(i) / Decimal::from(2);
             [
                 (2 * i, ms, "100".to_string(), half.to_string(), Side::Buy),
-                (2 * i + 1, ms + 400, "100".to_string(), half.to_string(), Side::Sell),
+                (
+                    2 * i + 1,
+                    ms + 400,
+                    "100".to_string(),
+                    half.to_string(),
+                    Side::Sell,
+                ),
             ]
         })
         .collect();
@@ -569,7 +583,10 @@ fn a_calibration_is_adopted_once_and_then_frozen() {
     assert!(style.auto_full);
     assert!(style.adopt_calibration(Some(Decimal::from(990))));
     assert_eq!((style.full_quantity, style.auto_full), (990.0, false));
-    assert!(!style.adopt_calibration(Some(Decimal::from(5_000))), "frozen");
+    assert!(
+        !style.adopt_calibration(Some(Decimal::from(5_000))),
+        "frozen"
+    );
     assert_eq!(style.full_quantity, 990.0);
 
     let mut typed = VolumeDotStyle {
@@ -1455,6 +1472,7 @@ fn a_merged_level_is_the_sum_and_never_smaller() {
         volume_dots: VolumeDotStyle {
             enabled: true,
             full_quantity: 1_000.0,
+            auto_full: false,
         },
         ..dots_config()
     };
@@ -1523,6 +1541,7 @@ fn the_dot_scale_rescales_every_dot_alike() {
             volume_dots: VolumeDotStyle {
                 enabled: true,
                 full_quantity,
+                auto_full: false,
             },
             bubbles: BubbleStyle {
                 min_radius: 0.0,

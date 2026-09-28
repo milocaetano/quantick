@@ -103,13 +103,31 @@ impl ClusteringSection<'_> {
             "fold same-side bubbles landing in a price region this many rows tall into one bubble at their volume-weighted price — aggression read per zone, the Bookmap way, instead of one mark per row. Quantities, ids and matched evidence are summed exactly; buy and sell regions stay separate marks",
         );
         if config.volume_dots.enabled {
-            ui.add(
-                egui::DragValue::new(&mut config.volume_dots.full_quantity)
-                    .range(1.0..=10_000_000.0)
-                    .speed(10.0)
-                    .prefix("dot full size qty "),
-            )
-            .on_hover_text("contracts a volume dot holds at the largest radius; area follows quantity below it, on both panes");
+            ui.horizontal(|ui| {
+                let typed = ui
+                    .add(
+                        egui::DragValue::new(&mut config.volume_dots.full_quantity)
+                            .range(1.0..=10_000_000.0)
+                            .speed(10.0)
+                            .prefix("dot full size qty "),
+                    )
+                    .on_hover_text("contracts a volume dot holds at the largest radius; area follows quantity below it, on both panes");
+                if typed.changed() {
+                    config.volume_dots.auto_full = false;
+                }
+                let label = if config.volume_dots.auto_full {
+                    "auto: reading…"
+                } else {
+                    "auto"
+                };
+                if ui
+                    .button(label)
+                    .on_hover_text("read the full size from the market once — the 99th percentile of one second at one tick — then keep it fixed so the past never changes size")
+                    .clicked()
+                {
+                    config.volume_dots.auto_full = true;
+                }
+            });
         }
         ui.checkbox(&mut config.bubble_candle_summary, "summarize closed bars")
             .on_hover_text(

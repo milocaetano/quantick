@@ -309,6 +309,13 @@ impl OrderflowView {
         self.published = self.worker.published();
         let base = self.published.base_price_grouping;
         self.adopt_base(base);
+        let calibrated = self
+            .dot_scale()
+            .and_then(|scale| scale.calibrated_full_quantity);
+        let before = self.config.clone();
+        if self.config.volume_dots.adopt_calibration(calibrated) {
+            self.commit_config_changes(before);
+        }
     }
 
     /// Take an engine-chosen capture bucket into the UI mirror.
@@ -1361,6 +1368,7 @@ mod tests {
             candle_summary: true,
             overlap_merge: false,
             volume_dot_full_quantity: 1_000.0,
+            volume_dot_auto_full: false,
             region_rows: 3,
             region_ms: 2_000,
             bubbles: BubbleStyle {

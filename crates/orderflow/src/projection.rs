@@ -20,8 +20,8 @@ mod tiers;
 
 pub use dots::{
     DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_CELL_PX, DOT_WINDOW_LADDER_MS, DotRungMemory, DotScale,
-    DotZoom, PaneGeometry, VolumeDots, dot_bar_window_ms, dot_level_ticks, dot_window_ms,
-    hold_rung, lane_bars,
+    DotZoom, PaneGeometry, VolumeDots, calibrated_dot_full_quantity, dot_bar_window_ms,
+    dot_level_ticks, dot_window_ms, hold_rung, lane_bars,
 };
 pub use model::{
     AggressionPrimitive, BEFORE_CAPTURE, GapPrimitive, HeatmapCell, HeatmapProjection,

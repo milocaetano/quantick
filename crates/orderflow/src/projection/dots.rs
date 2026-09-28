@@ -276,6 +276,9 @@ pub struct DotScale {
     /// Quantity of a full-size dot, on both panes: the dots' own
     /// `volume_dot_full_quantity`.
     pub volume_dot_full_quantity: Decimal,
+    /// A full size read from the market, while the style still wants one
+    /// ([`calibrated_dot_full_quantity`]).
+    pub calibrated_full_quantity: Option<Decimal>,
 }
 
 /// One window a print is keyed into.
@@ -430,7 +433,7 @@ impl VolumeDots {
 
     /// The rungs and scales, for the health report.
     #[must_use]
-    pub fn scale(&self, full: Decimal) -> DotScale {
+    pub fn scale(&self, full: Decimal, calibrated: Option<Decimal>) -> DotScale {
         DotScale {
             px_per_bar: self.px_per_bar,
             newest_bar_window_ms: self
@@ -440,8 +443,44 @@ impl VolumeDots {
             tape_window_ms: self.tape_window_ms,
             level_ticks: self.level_ticks,
             volume_dot_full_quantity: full,
+            calibrated_full_quantity: calibrated,
         }
     }
+}
+
+/// Seconds at one native tick a calibration needs before it answers.
+const CALIBRATION_MIN_CELLS: usize = 300;
+
+/// The full size read from the market: the 99th percentile (nearest rank)
+/// of what one second at one native tick traded, both sides together, over
+/// the retained prints — so only the top 1 % of those dots draws full size.
+/// `None` until [`CALIBRATION_MIN_CELLS`] such cells exist. Keyed by market
+/// data alone, so the prints' order never changes it.
+#[must_use]
+pub fn calibrated_dot_full_quantity(
+    history: &LiquidityHistory,
+    config: &HeatmapConfig,
+) -> Option<Decimal> {
+    let tick = native_grouping(config).bucket_width;
+    if tick <= Decimal::ZERO {
+        return None;
+    }
+    let mut cells: std::collections::BTreeMap<(i64, Decimal), Decimal> =
+        std::collections::BTreeMap::new();
+    for print in history.aggressions() {
+        let key = (
+            print.timestamp_ms.div_euclid(1_000),
+            (print.price / tick).floor(),
+        );
+        *cells.entry(key).or_default() += print.quantity;
+    }
+    if cells.len() < CALIBRATION_MIN_CELLS {
+        return None;
+    }
+    let mut sums: Vec<Decimal> = cells.into_values().collect();
+    sums.sort_unstable();
+    let rank = (sums.len() * 99).div_ceil(100);
+    sums.get(rank.checked_sub(1)?).copied()
 }
 
 /// Where the window of `window_ms` holding `timestamp_ms` starts, counted

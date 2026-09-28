@@ -50,6 +50,10 @@ const fn default_region_ms() -> i64 {
     DEFAULT_BUBBLE_REGION_MS
 }
 
+const fn default_true() -> bool {
+    true
+}
+
 const fn default_volume_dot_full_quantity() -> f64 {
     quantick_orderflow::DEFAULT_VOLUME_DOT_FULL_QUANTITY
 }
@@ -88,6 +92,10 @@ pub struct BubblePreset {
     /// before dots had a scale of their own loads the default.
     #[serde(default = "default_volume_dot_full_quantity")]
     pub volume_dot_full_quantity: f64,
+    /// The full size is still to be read from the market once. A file
+    /// written before the automatic scale existed loads it on.
+    #[serde(default = "default_true")]
+    pub volume_dot_auto_full: bool,
     /// Height of one aggression region in visual price rows; one is off. A
     /// preset written before regions existed simply omits the key and keeps
     /// per-row marks.
@@ -117,6 +125,7 @@ impl BubblePreset {
             candle_summary: config.bubble_candle_summary,
             overlap_merge: config.volume_dots.enabled,
             volume_dot_full_quantity: config.volume_dots.full_quantity,
+            volume_dot_auto_full: config.volume_dots.auto_full,
             region_rows: config.bubble_region_rows,
             region_ms: config.bubble_region_ms,
             bubbles: config.bubbles.clone(),
@@ -148,6 +157,7 @@ impl BubblePreset {
             full_quantity: quantick_orderflow::sane_volume_dot_full_quantity(
                 self.volume_dot_full_quantity,
             ),
+            auto_full: self.volume_dot_auto_full,
         };
         config.bubble_region_rows = self.region_rows;
         config.bubble_region_ms = self.region_ms;
@@ -567,6 +577,7 @@ mod tests {
             volume_dots: quantick_orderflow::VolumeDotStyle {
                 enabled: true,
                 full_quantity: 2_500.0,
+                auto_full: false,
             },
             bubbles: BubbleStyle {
                 side_offset: 9.0,
@@ -740,6 +751,7 @@ mod tests {
             candle_summary: false,
             overlap_merge: false,
             volume_dot_full_quantity: quantick_orderflow::DEFAULT_VOLUME_DOT_FULL_QUANTITY,
+            volume_dot_auto_full: true,
             region_rows: 1,
             region_ms: DEFAULT_BUBBLE_REGION_MS,
             bubbles: BubbleStyle {

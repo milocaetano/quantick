@@ -1176,12 +1176,28 @@ impl BookEngine {
             projection: Arc::new(projection),
             first_bar_index: request.first_bar_index,
             slot_count: timeline.region_count(),
-            volume_dots: dots
-                .as_ref()
-                .map(|dots| dots.scale(crate::projection::dot_full_quantity(&self.config))),
+            volume_dots: dots.as_ref().map(|dots| {
+                let calibrated = self.dot_calibration();
+                dots.scale(
+                    crate::projection::dot_full_quantity(&self.config),
+                    calibrated,
+                )
+            }),
         });
         self.last_frame = Some(Arc::clone(&frame));
         Some(frame)
+    }
+
+    /// A volume-dot full size read from the market while the style wants
+    /// one. It scans the retained prints, but only until the view adopts an
+    /// answer, which it does on the first one: while no answer exists the
+    /// history is still small, and a later reading is asked for by hand.
+    fn dot_calibration(&self) -> Option<Decimal> {
+        self.config
+            .volume_dots
+            .auto_full
+            .then(|| crate::projection::calibrated_dot_full_quantity(&self.history, &self.config))
+            .flatten()
     }
 
     fn invalidate_projection(&mut self) {

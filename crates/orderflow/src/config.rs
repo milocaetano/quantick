@@ -49,6 +49,11 @@ pub struct VolumeDotStyle {
     /// quantity below it, on both panes. The preset key
     /// `volume_dot_full_quantity`.
     pub full_quantity: f64,
+    /// `full_quantity` is still to be read from the market: the engine offers
+    /// a calibration once enough has traded, and adopting it freezes the
+    /// scale ([`Self::adopt_calibration`]). The preset key
+    /// `volume_dot_auto_full`.
+    pub auto_full: bool,
 }
 
 impl Default for VolumeDotStyle {
@@ -56,7 +61,25 @@ impl Default for VolumeDotStyle {
         Self {
             enabled: false,
             full_quantity: DEFAULT_VOLUME_DOT_FULL_QUANTITY,
+            auto_full: true,
         }
+    }
+}
+
+impl VolumeDotStyle {
+    /// Take a calibrated full size while one is still wanted, and freeze it:
+    /// `true` when the style changed. A value the trader typed, or one
+    /// already adopted, is never overwritten, so the past keeps its sizes.
+    pub fn adopt_calibration(&mut self, calibrated: Option<Decimal>) -> bool {
+        let Some(full) = calibrated
+            .filter(|_| self.auto_full)
+            .and_then(|full| rust_decimal::prelude::ToPrimitive::to_f64(&full))
+        else {
+            return false;
+        };
+        self.full_quantity = sane_volume_dot_full_quantity(full);
+        self.auto_full = false;
+        true
     }
 }
 
