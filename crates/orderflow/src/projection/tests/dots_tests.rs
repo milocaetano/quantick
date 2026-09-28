@@ -9,8 +9,8 @@ use crate::bubble_radius;
 use crate::config::VolumeDotStyle;
 use crate::history::AggressorSide;
 use crate::projection::{
-    DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_LADDER_MS, DotRungMemory, PaneGeometry, VolumeDots,
-    dot_bar_window_ms, dot_level_ticks, dot_window_ms, hold_rung, project_with_dots,
+    DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_CELL_PX, DOT_WINDOW_LADDER_MS, DotRungMemory, PaneGeometry,
+    VolumeDots, dot_bar_window_ms, dot_level_ticks, dot_window_ms, hold_rung, project_with_dots,
 };
 
 /// Dots on, the budget out of the way, and a fixed scale where 10
@@ -442,6 +442,75 @@ fn rungs_hold_through_a_wobble_at_a_boundary() {
     }
     assert_eq!(first.px_per_bar, 40.0, "the candles' zoom passes through");
     assert_eq!(first.lane_bars, vec![(0, 999), (1_000, 1_500)]);
+}
+
+/// A dot's window of market time is a thin column of screen, not the width
+/// of the biggest dot: at the default zoom a dot sits near the moment its
+/// prints traded, instead of every print of five seconds piling into one
+/// column far from the next. Only squeezing the time axis widens the window.
+#[test]
+fn time_windows_follow_a_thin_column_not_the_biggest_dot() {
+    assert_eq!(DOT_WINDOW_CELL_PX, 8.0);
+    let geometry = |lane_window_ms: i64| PaneGeometry {
+        px_per_bar: 108.0,
+        lane_width_px: 300.0,
+        lane_window_ms,
+        height_px: 400.0,
+        lane_bars: vec![(0, 59_999)],
+    };
+    for max_radius in [6.0, 20.0, 40.0] {
+        let config = HeatmapConfig {
+            bubbles: BubbleStyle {
+                max_radius,
+                ..dots_config().bubbles
+            },
+            ..dots_config()
+        };
+        let tape = |lane_window_ms: i64| {
+            DotRungMemory::default()
+                .choose(geometry(lane_window_ms), &config, (60.0, 100.0))
+                .tape_window_ms
+        };
+        // 300 px over 15 s: 8 px is 400 ms, the 500 ms rung.
+        assert_eq!(tape(15_000), 500, "max radius {max_radius}");
+        // Squeezed to a minute: 1.6 s, the 2 s rung.
+        assert_eq!(tape(60_000), 2_000, "max radius {max_radius}");
+        // Squeezed to twenty minutes: 32 s, the minute rung.
+        assert_eq!(tape(1_200_000), 60_000, "max radius {max_radius}");
+
+        // A one-minute bar 108 px wide: 8 px of its 65 536 ms slot is 4.9 s.
+        let zoom = DotRungMemory::default().choose(geometry(15_000), &config, (60.0, 100.0));
+        let dots = VolumeDots::resolve(&zoom, &config, &[], None);
+        assert_eq!(
+            dots.bar_windows(&[bar(0, 60_000)]),
+            vec![Some(5_000)],
+            "max radius {max_radius}"
+        );
+    }
+}
+
+/// With dots on, squeezing the tape reaches twenty minutes and more, not the
+/// automatic zoom's floor: the first squeeze pins the window it resolves to,
+/// and the pinned window goes as far as the lane allows.
+#[test]
+fn dots_let_the_tape_squeeze_to_twenty_minutes() {
+    use crate::config::{LaneWindow, MAX_LIVE_LANE_WINDOW_MS};
+    assert!(MAX_LIVE_LANE_WINDOW_MS >= 1_200_000);
+    let mut config = dots_config();
+    config.live_lane.window = LaneWindow::Auto { zoom: 1.0 };
+    config.zoom_lane_window(0.5);
+    assert_eq!(config.live_lane.window, LaneWindow::Fixed { ms: 30_000 });
+    for _ in 0..8 {
+        config.zoom_lane_window(0.5);
+    }
+    assert_eq!(config.lane_window_ms(1_000), MAX_LIVE_LANE_WINDOW_MS);
+
+    // Dots off, the gesture keeps speaking the automatic zoom.
+    let mut off = dots_config();
+    off.volume_dots.enabled = false;
+    off.live_lane.window = LaneWindow::Auto { zoom: 1.0 };
+    off.zoom_lane_window(0.5);
+    assert_eq!(off.live_lane.window, LaneWindow::Auto { zoom: 0.5 });
 }
 
 /// The price ladder works like the time ladder: the smallest level, in
