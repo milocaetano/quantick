@@ -516,11 +516,12 @@ fn dots_let_the_tape_squeeze_to_twenty_minutes() {
 }
 
 /// The automatic full size is read from the market once: the 99th
-/// percentile of what one second at one native tick traded, so only the top
-/// 1 % of those dots draws full size. Too few seconds recorded is no answer
+/// percentile of what one of the cells being drawn — the tape's window at
+/// the level's height — traded, so only the top 1 % of those dots draws full
+/// size. Too few seconds recorded is no answer
 /// yet, and the prints' order never changes it.
 #[test]
-fn the_automatic_full_size_is_the_ninety_ninth_percentile_of_a_second_at_a_tick() {
+fn the_automatic_full_size_is_the_ninety_ninth_percentile_of_the_drawn_cells() {
     assert!(dots_config().volume_dots.auto_full, "automatic by default");
     let whole: Vec<(u64, i64, String, String, Side)> = (1..=1_000u64)
         .map(|i| {
@@ -535,7 +536,7 @@ fn the_automatic_full_size_is_the_ninety_ninth_percentile_of_a_second_at_a_tick(
         .collect();
     let history = recorded(dots_config(), &borrowed(&whole));
     assert_eq!(
-        calibrated_dot_full_quantity(&history, &dots_config()),
+        calibrated_dot_full_quantity(&history, &dots_config(), 1_000, 1),
         Some(Decimal::from(990))
     );
 
@@ -560,13 +561,19 @@ fn the_automatic_full_size_is_the_ninety_ninth_percentile_of_a_second_at_a_tick(
     split.reverse();
     let history = recorded(dots_config(), &borrowed(&split));
     assert_eq!(
-        calibrated_dot_full_quantity(&history, &dots_config()),
+        calibrated_dot_full_quantity(&history, &dots_config(), 1_000, 1),
         Some(Decimal::from(990))
     );
 
+    // Read on the cells being drawn: two-second windows five ticks tall
+    // hold two seconds each, so the same 99th rank is the pair 989 + 990.
+    let history = recorded(dots_config(), &borrowed(&whole));
+    let read = calibrated_dot_full_quantity(&history, &dots_config(), 2_000, 5);
+    assert!(read > Some(Decimal::from(990)), "{read:?}");
+
     let few: Vec<_> = whole.iter().take(100).cloned().collect();
     let history = recorded(dots_config(), &borrowed(&few));
-    assert_eq!(calibrated_dot_full_quantity(&history, &dots_config()), None);
+    assert_eq!(calibrated_dot_full_quantity(&history, &dots_config(), 1_000, 1), None);
 }
 
 /// A calibration is adopted once, and then the full size is frozen: the past
