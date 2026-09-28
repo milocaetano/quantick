@@ -361,7 +361,11 @@ impl<'c, 'a> EventPass<'c, 'a> {
             }
             // Follow the bubble's own vertical nudge, so the carved gap stays
             // centred on the bubble that will be drawn over it.
-            let lean = bubble_center_offset(trade.buy_share, bubbles.side_offset, layout.inverted);
+            let lean = if trade.cell_radius_px.is_some() {
+                0.0
+            } else {
+                bubble_center_offset(trade.buy_share, bubbles.side_offset, layout.inverted)
+            };
             let center = center + egui::vec2(0.0, lean);
             let (min, max) = if trade.live {
                 self.style.live_lane.scaled_radii(bubbles)

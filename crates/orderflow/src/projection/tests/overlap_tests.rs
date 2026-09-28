@@ -113,7 +113,12 @@ fn discs(
             } else {
                 region * f64::from(geometry.px_per_bar)
             };
-            let lean = bubble_center_offset(mark.buy_share, config.bubbles.side_offset, false);
+            // A grid mark's centre carries its lean; the painter adds none.
+            let lean = if mark.cell_radius_px.is_some() {
+                0.0
+            } else {
+                bubble_center_offset(mark.buy_share, config.bubbles.side_offset, false)
+            };
             let (minimum, maximum) = if mark.live { lane } else { candle };
             let disc = mark.drawn_disc(minimum, maximum, &config.bubbles);
             let dressing = if disc.dressed {
@@ -876,7 +881,7 @@ fn the_tape_bars_are_the_ones_its_window_reaches() {
     let partial = bar(10_000, 10_400);
     assert_eq!(
         crate::lane_bar_opens(&closed, Some(&partial), 2_500),
-        vec![6_000, 7_000, 8_000, 9_000, 10_000]
+        vec![4_000, 5_000, 6_000, 7_000, 8_000, 9_000, 10_000]
     );
     assert_eq!(crate::lane_bar_opens(&closed, None, 0), vec![8_000, 9_000]);
     assert!(crate::lane_bar_opens(&[], None, 2_500).is_empty());

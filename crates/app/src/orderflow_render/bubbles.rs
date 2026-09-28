@@ -812,7 +812,12 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     let inverted = context.layout.inverted;
     let center_of = |trade: &AggressionPrimitive| {
         let center = egui::pos2(context.layout.x(trade.x), context.layout.y(trade.y));
-        let lean = bubble_center_offset(trade.buy_share, bubbles.side_offset, inverted);
+        // A mark the overlap grid placed carries its lean already.
+        let lean = if trade.cell_radius_px.is_some() {
+            0.0
+        } else {
+            bubble_center_offset(trade.buy_share, bubbles.side_offset, inverted)
+        };
         let pane = context.layout.pane(trade.x);
         pane.contains(center)
             .then(|| center + egui::vec2(0.0, lean))
@@ -850,8 +855,8 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     if bubbles.trail_length > 0.0 {
         let mut trail_mesh = egui::Mesh::default();
         for trade in context.bubbles() {
-            let disc = disc_of(trade);
-            if !disc.dressed
+            // The trail runs right into the next cell, so a grid mark has none.
+            if trade.cell_radius_px.is_some()
                 || (trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty())
             {
                 continue;
@@ -860,7 +865,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 continue;
             };
             let pane = context.layout.pane(trade.x);
-            let half_height = trail_half_height(disc.radius);
+            let half_height = trail_half_height(disc_of(trade).radius);
             add_gradient_rect(
                 &mut trail_mesh,
                 trail_rect(center, half_height, bubbles.trail_length, pane.right()).intersect(pane),

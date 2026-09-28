@@ -33,7 +33,14 @@
 //! never to where the window begins on screen, so a fold already drawn keeps
 //! its prints while the tape rolls, the forming bar grows or the chart pans.
 //! Cell sizes grow only in doublings, so the axis refitting a little does
-//! not regroup either; only a zoom — or a refit past a doubling — does.
+//! not regroup either; a zoom or a refit past a doubling does. On the
+//! candles a bar is one column until it is wider than two discs; past that
+//! its columns follow its slot, whose span can move with the forming bar.
+//!
+//! The grid owns a placed mark's centre, side lean included: the painter
+//! adds no lean of its own to it, so a lean can never push a disc out of its
+//! cell at the chart's edge. A lone print is held inside its cell too, so it
+//! may sit up to its reach — disc and dressing — from where it traded.
 //!
 //! The decision needs pixels the normalized projection does not carry, so the
 //! chart hands them over as a [`PaneGeometry`] and the radius comes from the
@@ -75,18 +82,22 @@ pub struct PaneGeometry {
 }
 
 /// The open times [`PaneGeometry::lane_bar_opens`] wants: every bar that
-/// ends inside the last `window_ms` of the series, and the one before it,
-/// so the bar the window opens in is known too.
+/// ends inside the last two `window_ms` of the series, and the one before
+/// it. Twice the window because the view and the engine each resolve the
+/// tape's window; a bar the engine's window reaches must be in this list, or
+/// its prints would be binned as if they belonged to the bar after it.
 #[must_use]
 pub fn lane_bar_opens(closed: &[Bar], partial: Option<&Bar>, window_ms: i64) -> Vec<i64> {
-    let bars: Vec<&Bar> = closed.iter().chain(partial).collect();
-    let Some(newest) = bars.last() else {
+    let Some(newest) = partial.or(closed.last()) else {
         return Vec::new();
     };
-    let start = newest.close_time.saturating_sub(window_ms.max(0));
-    let first = bars.partition_point(|bar| bar.close_time < start);
-    bars[first.saturating_sub(1)..]
+    let start = newest
+        .close_time
+        .saturating_sub(window_ms.max(0).saturating_mul(2));
+    let first = closed.partition_point(|bar| bar.close_time < start);
+    closed[first.saturating_sub(1)..]
         .iter()
+        .chain(partial)
         .map(|bar| bar.open_time)
         .collect()
 }
@@ -208,6 +219,24 @@ impl HeatmapProjection {
     }
 }
 
+/// One pane's cell size, worked out once per frame.
+#[derive(Debug, Clone, Copy)]
+struct PaneCells {
+    /// The radius range marks of this pane are drawn on.
+    radii: (f32, f32),
+    /// A full-size disc and its dressing across, in pixels: the least a cell
+    /// may be, so a mark drawn whole still fits.
+    diameter: f64,
+    /// How tall a cell is, in price: whole rows, as many as the diameter
+    /// needs rounded up to a doubling. `None` when the chart has no height.
+    cell_price: Option<Decimal>,
+    /// How long a tape cell is, in milliseconds, rounded up to a doubling.
+    /// Unused on the candles.
+    cell_ms: i64,
+    /// Width of the pane, in pixels.
+    width: f64,
+}
+
 /// Everything that turns a normalized mark into its cell on screen.
 struct Grid<'a> {
     opens: &'a [i64],
@@ -220,9 +249,8 @@ struct Grid<'a> {
     height: f64,
     high: f64,
     span: f64,
-    row_price: f64,
-    candle_radii: (f32, f32),
-    lane_radii: (f32, f32),
+    candles: PaneCells,
+    lane: PaneCells,
     bubbles: &'a BubbleStyle,
     margin: f64,
 }
@@ -237,35 +265,49 @@ impl<'a> Grid<'a> {
     ) -> Self {
         let bubbles = &config.bubbles;
         let high = prices.high.to_f64().unwrap_or(0.0);
-        let low = prices.low.to_f64().unwrap_or(0.0);
+        let span = high - prices.low.to_f64().unwrap_or(0.0);
+        let height = f64::from(geometry.height_px);
+        let lane_width = f64::from(geometry.lane_width_px);
         let lane = timeline.lane_bounds_ms();
+        let lane_ms_per_px = lane.map_or(0.0, |(start, end)| (end - start) as f64 / lane_width);
+        let margin = f64::from(bubbles.dressing_margin());
+        let row_px = row_price.to_f64().unwrap_or(0.0) / span * height;
+        let slots = timeline.len() as f64;
+        let px_per_bar = f64::from(geometry.px_per_bar);
+        let pane = |radii: (f32, f32), width: f64| {
+            let diameter = 2.0 * (f64::from(radii.1) + margin);
+            // Rows counted in doublings, so the axis refitting a little does
+            // not regroup; and in exact prices, so no float decides a row.
+            let cell_price = (row_px.is_finite() && row_px > 0.0 && row_price > Decimal::ZERO)
+                .then(|| row_price * Decimal::from(doubling((diameter / row_px).ceil()) as i64));
+            PaneCells {
+                radii,
+                diameter,
+                cell_price,
+                cell_ms: doubling((diameter * lane_ms_per_px).ceil()) as i64,
+                width,
+            }
+        };
         Self {
             opens: &geometry.lane_bar_opens,
             regions: timeline.region_count() as f64,
-            slots: timeline.len() as f64,
-            px_per_bar: f64::from(geometry.px_per_bar),
-            lane_width: f64::from(geometry.lane_width_px),
+            slots,
+            px_per_bar,
+            lane_width,
             lane_start_ms: lane.map_or(0.0, |(start, _)| start as f64),
-            lane_ms_per_px: lane.map_or(0.0, |(start, end)| {
-                (end - start) as f64 / f64::from(geometry.lane_width_px)
-            }),
-            height: f64::from(geometry.height_px),
+            lane_ms_per_px,
+            height,
             high,
-            span: high - low,
-            row_price: row_price.to_f64().unwrap_or(0.0),
-            candle_radii: (bubbles.min_radius, bubbles.max_radius),
-            lane_radii: config.live_lane.scaled_radii(bubbles),
+            span,
+            candles: pane((bubbles.min_radius, bubbles.max_radius), slots * px_per_bar),
+            lane: pane(config.live_lane.scaled_radii(bubbles), lane_width),
             bubbles,
-            margin: f64::from(bubbles.dressing_margin()),
+            margin,
         }
     }
 
-    fn radii(&self, live: bool) -> (f32, f32) {
-        if live {
-            self.lane_radii
-        } else {
-            self.candle_radii
-        }
+    fn pane(&self, live: bool) -> PaneCells {
+        if live { self.lane } else { self.candles }
     }
 
     /// The mark's x in pane pixels. `None` when its pane has no width.
@@ -292,9 +334,11 @@ impl<'a> Grid<'a> {
     /// bar's open, as long as a full disc is wide rounded up to a doubling of
     /// milliseconds: a print keeps its column while the tape rolls on and
     /// while the forming bar grows, so a fold already drawn never regroups.
-    /// On the candles it is a share of the bar's slot, which only a zoom
-    /// changes.
-    fn column(&self, mark: &AggressionPrimitive, diameter: f64) -> Option<(i64, i64, f64, f64)> {
+    /// On the candles it is a share of the bar's slot. A slot is one column
+    /// at any zoom where a bar is narrower than two discs; wider, a column
+    /// follows the slot's span, which can move with the forming bar or with
+    /// a pan that makes a bar the rightmost one shown.
+    fn column(&self, mark: &AggressionPrimitive, pane: PaneCells) -> Option<(i64, i64, f64, f64)> {
         let x = self.x_px(mark)?;
         if mark.live {
             if !(self.lane_ms_per_px.is_finite() && self.lane_ms_per_px > 0.0) {
@@ -303,17 +347,16 @@ impl<'a> Grid<'a> {
             let bar = self.opens.partition_point(|open| *open <= mark.placed_ms);
             let open = bar.checked_sub(1).map_or(0, |i| self.opens[i]);
             let close = self.opens.get(bar).copied().unwrap_or(i64::MAX);
-            let cell_ms = doubling((diameter * self.lane_ms_per_px).ceil()) as i64;
-            let column = (mark.placed_ms - open).div_euclid(cell_ms);
-            let from = open + column * cell_ms;
-            let to = from.saturating_add(cell_ms).min(close);
+            let column = (mark.placed_ms - open).div_euclid(pane.cell_ms);
+            let from = open + column * pane.cell_ms;
+            let to = from.saturating_add(pane.cell_ms).min(close);
             return Some((bar as i64, column, self.lane_px(from), self.lane_px(to)));
         }
         let slot = ((x / self.px_per_bar) + SLOT_EPSILON)
             .floor()
             .clamp(0.0, self.slots - 1.0);
         let left = slot * self.px_per_bar;
-        let columns = (self.px_per_bar / diameter).floor().max(1.0);
+        let columns = (self.px_per_bar / pane.diameter).floor().max(1.0);
         let width = self.px_per_bar / columns;
         let column = ((x - left) / width).floor().clamp(0.0, columns - 1.0);
         Some((
@@ -326,44 +369,30 @@ impl<'a> Grid<'a> {
 
     /// The cell a mark falls in, or `None` when its pane is not drawn.
     fn cell(&self, mark: &AggressionPrimitive) -> Option<(CellKey, Cell)> {
-        // A full-size disc and its dressing, so a mark drawn whole still fits.
-        let diameter = 2.0 * (f64::from(self.radii(mark.live).1) + self.margin);
-        let (bar, column, left, right) = self.column(mark, diameter)?;
-        // Whole visual rows, as many as a full disc needs rounded up to a
-        // doubling — so the axis refitting a little does not regroup — and
-        // counted from price zero, so panning does not either.
-        let row_px = self.row_price / self.span * self.height;
-        let cell_price = if row_px.is_finite() && row_px > 0.0 {
-            doubling((diameter / row_px).ceil()) * self.row_price
-        } else {
-            diameter / self.height * self.span
+        let pane = self.pane(mark.live);
+        let cell_price = pane.cell_price?;
+        let (bar, column, left, right) = self.column(mark, pane)?;
+        // Counted from price zero on the mark's exact bucket, so panning
+        // never moves a print to another row.
+        let row = (mark.price_bucket / cell_price).floor();
+        let y_of = |price: Decimal| {
+            (self.high - price.to_f64().unwrap_or(self.high)) / self.span * self.height
         };
-        if !(cell_price.is_finite() && cell_price > 0.0) {
-            return None;
-        }
-        let price = self.high - unit(mark.y) * self.span;
-        let row = (price / cell_price).round();
-        let y_of = |price: f64| (self.high - price) / self.span * self.height;
-        // The key above is anchored; the rectangle a mark is drawn in is
-        // what of the cell is on screen, so an edge cell holds a smaller disc.
-        let width = if mark.live {
-            self.lane_width
-        } else {
-            self.slots * self.px_per_bar
-        };
+        // The key is anchored; the rectangle a mark is drawn in is what of
+        // the cell is on screen, so an edge cell holds a smaller disc.
         let cell = Cell {
             left: left.max(0.0),
-            right: right.min(width),
-            top: y_of((row + 0.5) * cell_price).max(0.0),
-            bottom: y_of((row - 0.5) * cell_price).min(self.height),
+            right: right.min(pane.width),
+            top: y_of((row + Decimal::ONE) * cell_price).max(0.0),
+            bottom: y_of(row * cell_price).min(self.height),
         };
-        Some(((mark.live, bar, column, row as i64), cell))
+        Some(((mark.live, bar, column, row.to_i64()?), cell))
     }
 
     /// Fold one cell into a mark drawn inside it: at the column's centre and
     /// the quantity-weighted price, its disc and dressing no bigger than the
     /// cell. A lone mark keeps its own place, held inside the cell the same
-    /// way.
+    /// way — so its traded level is at most its reach from the centre.
     fn settle(
         &self,
         cell: Cell,
@@ -396,7 +425,7 @@ impl<'a> Grid<'a> {
 
         let reach = cell.reach();
         mark.cell_radius_px = Some(reach as f32);
-        let (minimum, maximum) = self.radii(live);
+        let (minimum, maximum) = self.pane(live).radii;
         let disc = mark.drawn_disc(minimum, maximum, self.bubbles);
         let dressing = if disc.dressed { self.margin } else { 0.0 };
         let radius = (f64::from(disc.radius) + dressing).min(reach);
@@ -420,13 +449,22 @@ impl<'a> Grid<'a> {
             self.bubbles.side_offset,
             false,
         ));
+        // The grid owns the placement: the lean goes into the centre where
+        // the cell has room for it, and the painter adds none of its own.
         let center = (y + lean).max(cell.top + radius).min(cell.bottom - radius);
-        mark.y = unit((center - lean) / self.height);
+        mark.y = unit(center / self.height);
         mark.x = if live {
             (self.regions - 1.0 + x / self.lane_width) / self.regions
         } else {
             x / self.px_per_bar / self.regions
         };
+        let fit = reach
+            .min(x - cell.left)
+            .min(cell.right - x)
+            .min(center - cell.top)
+            .min(cell.bottom - center)
+            .max(0.0);
+        mark.cell_radius_px = Some(fit as f32);
         mark
     }
 }

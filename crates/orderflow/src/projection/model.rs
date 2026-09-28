@@ -141,7 +141,8 @@ pub struct AggressionPrimitive {
     /// How far, in pixels, everything drawn for this mark — the disc and
     /// its dressing — may reach from its centre: half its overlap-grid
     /// cell's smaller side, so nothing reaches into a neighbour's cell.
-    /// `None` on every mark the grid did not place.
+    /// `None` on every mark the grid did not place. On one it did, the
+    /// centre already carries the side lean, so no reader adds it again.
     pub cell_radius_px: Option<f32>,
 }
 
