@@ -135,7 +135,13 @@ impl OrderflowView {
             lane_width_px,
         )
         .with_inverted(inverted);
-        let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
+        let mut style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
+        // Volume dots shrink with the zoom instead of folding more market in.
+        if self.config.volume_dots.enabled
+            && let Some(radius) = self.dot_rungs.dot_max_radius()
+        {
+            style.bubbles.max_radius = radius;
+        }
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_aggression_bubbles(painter, &context);
     }

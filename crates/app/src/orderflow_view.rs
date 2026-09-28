@@ -2242,16 +2242,16 @@ mod tests {
             );
             (rows, frame.projection.volume_dots, tick)
         };
-        let dot_px = 2.0 * f64::from(OrderflowView::new("BTCUSDT").config.bubbles.max_radius);
-        // One tick taller than a dot: one-tick levels.
-        let (off, off_dots, tick) = strip(false, dot_px * 2.0);
-        let (on, on_dots, _) = strip(true, dot_px * 2.0);
+        let cell_px = quantick_orderflow::DOT_WINDOW_CELL_PX;
+        // One tick taller than a level's row: one-tick levels.
+        let (off, off_dots, tick) = strip(false, cell_px * 2.0);
+        let (on, on_dots, _) = strip(true, cell_px * 2.0);
         assert!(!off_dots && on_dots, "dots only when on");
         assert!(!off.is_empty(), "the fixture draws strip rows");
         assert_eq!(on, off, "the same contracts in the same rows");
 
-        // A dot a quarter of a tick: five-tick levels.
-        let (coarse, _, _) = strip(true, dot_px / 4.0);
+        // A tick under a quarter of a row: five-tick levels.
+        let (coarse, _, _) = strip(true, cell_px / 4.5);
         let level = tick * Decimal::from(5);
         let sum = |rows: &[live_strip::HistogramRow],
                    side: fn(&live_strip::HistogramRow) -> Decimal| {

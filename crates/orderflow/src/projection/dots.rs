@@ -92,6 +92,11 @@ pub const DOT_LEVEL_LADDER_TICKS: [i64; 12] =
 /// moment its prints traded and only squeezing the time axis widens it.
 pub const DOT_WINDOW_CELL_PX: f64 = 8.0;
 
+/// The largest dot radius as a share of the smaller of a cell's width and
+/// height on screen: zooming out shrinks every dot rather than folding more
+/// market into each, and only the biggest dots reach past their own cell.
+pub const DOT_RADIUS_PER_CELL: f32 = 0.6;
+
 /// A held rung moves down once the dot would be under this share of the next
 /// smaller cell.
 const HOLD_BELOW: f64 = 0.7;
@@ -221,19 +226,21 @@ pub struct DotZoom {
 pub struct DotRungMemory {
     tape_window_ms: Option<i64>,
     level_ticks: Option<i64>,
+    max_radius_px: Option<f32>,
 }
 
 impl DotRungMemory {
     /// The rungs for this frame: the tape's window at its width over its
     /// window, the level at the chart's height over the native ticks
-    /// `price_range` spans, each held with [`hold_rung`].
+    /// `price_range` spans, each held with [`hold_rung`] at
+    /// [`DOT_WINDOW_CELL_PX`]. Records the dots' largest radius for them
+    /// ([`Self::dot_max_radius`]).
     pub fn choose(
         &mut self,
         geometry: PaneGeometry,
         config: &HeatmapConfig,
         price_range: (f64, f64),
     ) -> DotZoom {
-        let dot_px = 2.0 * f64::from(config.bubbles.max_radius);
         let tick = native_grouping(config).bucket_width.to_f64().unwrap_or(0.0);
         let px_per_tick = f64::from(geometry.height_px) * tick / (price_range.1 - price_range.0);
         let px_per_ms = f64::from(geometry.lane_width_px) / geometry.lane_window_ms as f64;
@@ -247,16 +254,33 @@ impl DotRungMemory {
             &DOT_LEVEL_LADDER_TICKS,
             self.level_ticks,
             px_per_tick,
-            dot_px,
+            DOT_WINDOW_CELL_PX,
         );
         self.tape_window_ms = Some(tape_window_ms);
         self.level_ticks = Some(level_ticks);
+        let cell_px = (tape_window_ms as f64 * px_per_ms).min(level_ticks as f64 * px_per_tick);
+        let bubbles = &config.bubbles;
+        self.max_radius_px = Some(
+            (DOT_RADIUS_PER_CELL * cell_px as f32)
+                .min(bubbles.max_radius)
+                .max(bubbles.min_radius),
+        );
         DotZoom {
             px_per_bar: geometry.px_per_bar,
             tape_window_ms,
             level_ticks,
             lane_bars: geometry.lane_bars,
         }
+    }
+}
+
+impl DotRungMemory {
+    /// The largest radius a volume dot is drawn with at the last chosen
+    /// zoom: [`DOT_RADIUS_PER_CELL`] of the smaller cell side, inside the
+    /// style's own radius range. `None` before a zoom is chosen.
+    #[must_use]
+    pub fn dot_max_radius(&self) -> Option<f32> {
+        self.max_radius_px
     }
 }
 
