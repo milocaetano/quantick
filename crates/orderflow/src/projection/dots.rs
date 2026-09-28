@@ -21,9 +21,10 @@
 //! - the candles' window, per bar: the smallest rung of
 //!   [`DOT_WINDOW_LADDER_MS`] at least one dot wide inside that bar's slot,
 //!   from the bar's own duration taken to the next doubling, or the whole bar
-//!   when no rung is shorter than it ([`dot_bar_window_ms`]). A closed bar's
-//!   duration never changes, so its rung does not move when it closes or when
-//!   another bar does; a forming bar regroups only when its duration doubles;
+//!   when the slot is no wider than a dot or the bar outgrows the top rung
+//!   ([`dot_bar_window_ms`]). A closed bar's duration never changes, so its
+//!   rung does not move when it closes or when another bar does; a forming
+//!   bar's rung only ever coarsens, when its duration doubles;
 //! - the tape's window and the level, chosen by the view with hysteresis
 //!   ([`DotRungMemory`]) and handed to the engine as a [`DotZoom`], so the
 //!   engine stays a pure function of its inputs and an autoscale wobbling at
@@ -34,9 +35,16 @@
 //! `size_reference_quantity` contracts a second per tick of the cell
 //! ([`VolumeDots::size_reference`]).
 //!
-//! A candle window is drawn on the candles only once the tape has let go of
-//! the whole of it; until then its prints are tape dots. A candle dot
-//! therefore arrives whole and never grows.
+//! A print is the tape's while its tape window starts at or after the tape
+//! does, and otherwise its candle window's, so the tape never draws a print
+//! older than itself at its left edge. The price of that rule is at the seam:
+//! a candle window the tape is still releasing keeps growing as the tape
+//! lets go of its prints, the way a forming bar does. A candle window wholly
+//! older than the tape never changes again.
+//!
+//! A dot is placed at its window's fixed centre — a whole-bar dot at its
+//! bar's slot centre — never at its newest print, so a forming dot does not
+//! slide as prints arrive and a closed one does not move on a pan.
 //!
 //! Known limitation: a print stamped with the same millisecond as a bar's
 //! open belongs to the new bar, which is the timeline's rule for every mark.
@@ -159,15 +167,20 @@ fn doubled(duration_ms: i64) -> i64 {
 
 /// The window, in milliseconds, a bar `bar_ms` long keys its candle dots on
 /// at `px_per_bar`, for dots `dot_px` across: the smallest rung at least one
-/// dot wide inside the bar's slot. `None` is the whole bar — when no rung is
-/// shorter than the bar. The duration is taken to the next doubling first.
+/// dot wide inside the bar's slot. `None` is the whole bar: a slot no wider
+/// than a dot, or a bar that needs more than the top rung. The duration is
+/// taken to the next doubling first, so as a forming bar runs on its window
+/// only ever coarsens — never back to a finer rung, never out of the whole
+/// bar once in it.
 #[must_use]
 pub fn dot_bar_window_ms(bar_ms: i64, px_per_bar: f64, dot_px: f64) -> Option<i64> {
-    let bar_ms = doubled(bar_ms);
-    let px_per_ms = px_per_bar / bar_ms as f64;
-    let rung = ideal_rung(&DOT_WINDOW_LADDER_MS, px_per_ms, dot_px);
-    let fits = rung as f64 * px_per_ms >= dot_px;
-    (fits && rung < bar_ms).then_some(rung)
+    if !(px_per_bar.is_finite() && px_per_bar > dot_px) {
+        return None;
+    }
+    let need_ms = dot_px * doubled(bar_ms) as f64 / px_per_bar;
+    DOT_WINDOW_LADDER_MS
+        .into_iter()
+        .find(|rung| *rung as f64 >= need_ms)
 }
 
 /// The rungs the view chose, handed to the engine.
@@ -252,12 +265,12 @@ struct Window {
     /// Distinguishes the windows of one bar.
     key: i64,
     bar_open: i64,
-    /// Where the window starts, cut at the bar's open.
-    start: i64,
-    /// Where the window ends, exclusive, cut at the next bar's open.
-    end: i64,
-    /// Where a dot of this window is placed at the latest.
-    last_ms: i64,
+    /// Where a dot of this window is placed: the window's fixed centre, or
+    /// the bar's open for a whole-bar window, whose dot sits at its slot's
+    /// centre instead.
+    centre_ms: i64,
+    /// The window is the whole bar.
+    whole: bool,
     /// The cell's duration, which the dot is sized against.
     cell_ms: i64,
 }
@@ -319,18 +332,15 @@ impl VolumeDots {
         dot_bar_window_ms(bar_ms, f64::from(self.px_per_bar), self.dot_px)
     }
 
-    /// The bar `timestamp_ms` is in, and the next bar's open when known.
-    fn bar_around(&self, timestamp_ms: i64) -> Option<((i64, i64), Option<i64>)> {
+    /// The bar `timestamp_ms` is in, as `(open, close)`.
+    fn bar_around(&self, timestamp_ms: i64) -> Option<(i64, i64)> {
         let partition = self.bars.partition_point(|bar| bar.0 <= timestamp_ms);
-        let bar = *self.bars.get(partition.checked_sub(1)?)?;
-        Some((bar, self.bars.get(partition).map(|next| next.0)))
+        self.bars.get(partition.checked_sub(1)?).copied()
     }
 
     /// The window `timestamp_ms` falls in on one pane.
     fn window(&self, timestamp_ms: i64, live: bool) -> Option<Window> {
-        let ((open, close), next_open) = self.bar_around(timestamp_ms)?;
-        let bar_end = next_open.unwrap_or(i64::MAX);
-        let last_ms = next_open.map_or(close, |next| next - 1).max(open);
+        let (open, close) = self.bar_around(timestamp_ms)?;
         let width = if live {
             Some(self.tape_window_ms.max(1))
         } else {
@@ -342,31 +352,26 @@ impl VolumeDots {
                 Window {
                     key: start,
                     bar_open: open,
-                    start: start.max(open),
-                    end: start.saturating_add(width).min(bar_end),
-                    last_ms: (start + width - 1).min(last_ms),
+                    centre_ms: start + width / 2,
+                    whole: false,
                     cell_ms: width,
                 }
             }
             None => Window {
                 key: i64::MIN,
                 bar_open: open,
-                start: open,
-                end: bar_end,
-                last_ms,
+                centre_ms: open,
+                whole: true,
                 cell_ms: doubled(close - open),
             },
         })
     }
 
-    /// Whether the tape, starting at `tape_from_ms`, has let go of the whole
-    /// candle window `timestamp_ms` is in. A print no known bar holds goes by
-    /// its own time.
-    pub(super) fn released(&self, timestamp_ms: i64, tape_from_ms: i64) -> bool {
+    /// Whether the candle dot whose first print is at `timestamp_ms` is its
+    /// bar's one window, drawn at the slot's centre.
+    pub(super) fn whole_bar(&self, timestamp_ms: i64) -> bool {
         self.window(timestamp_ms, false)
-            .map_or(timestamp_ms < tape_from_ms, |window| {
-                window.end <= tape_from_ms
-            })
+            .is_some_and(|window| window.whole)
     }
 
     /// The quantity of a full-size dot of a cell `cell_ms` long: `full` for
@@ -401,6 +406,14 @@ impl VolumeDots {
             candle_size_reference_per_second: self.size_reference(1_000, full),
         }
     }
+}
+
+/// Where the window of `window_ms` holding `timestamp_ms` starts, counted
+/// from exchange epoch 0.
+#[must_use]
+pub(super) fn window_start(timestamp_ms: i64, window_ms: i64) -> i64 {
+    let window_ms = window_ms.max(1);
+    timestamp_ms.div_euclid(window_ms) * window_ms
 }
 
 /// The instrument's native price grouping: the tick a level is counted in.
@@ -448,8 +461,7 @@ pub(super) fn fold_dots(
             dot.price = ((dot.price / tick).round() * tick).clamp(level, top_tick);
             dot.price_bucket = level;
             dot.price_span = width;
-            let last = window.last_ms.max(window.start);
-            dot.timestamp_ms = window.start + (last - window.start) / 2;
+            dot.timestamp_ms = window.centre_ms;
             Some(dot)
         })
         .collect();

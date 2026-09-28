@@ -254,7 +254,6 @@ impl OrderflowView {
                 open_ms,
                 frame.projection.summarized,
                 frame.projection.effective_grouping.bucket_width,
-                frame.projection.volume_dots,
             ),
             _ => Vec::new(),
         };

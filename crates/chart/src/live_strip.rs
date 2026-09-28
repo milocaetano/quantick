@@ -82,15 +82,14 @@ fn split_by_side(cluster: &AggressionPrimitive) -> (Decimal, Decimal) {
 /// strip draws two rows for it, each sized against a width that matches
 /// neither.
 ///
-/// `volume_dots` says the marks are volume dots, whose `price_bucket` is a
-/// level many rows tall: a dot is filed in the row of the price it traded at,
-/// not at its level's floor.
+/// A mark spanning several rows — a regional fold, a volume dot many ticks
+/// tall — is one row covering its whole range, never its quantity in the
+/// row of its weighted price, where nothing may have traded.
 pub fn aggression_rows(
     aggressions: &[AggressionPrimitive],
     bar_open_ms: i64,
     summarized: bool,
     grouping: Decimal,
-    volume_dots: bool,
 ) -> Vec<HistogramRow> {
     let mut buckets: std::collections::BTreeMap<Decimal, (Decimal, Decimal, Decimal)> =
         std::collections::BTreeMap::new();
@@ -106,12 +105,7 @@ pub fn aggression_rows(
         if summarized && cluster.live {
             continue;
         }
-        let filed_at = if volume_dots {
-            cluster.price
-        } else {
-            cluster.price_bucket
-        };
-        let row = (filed_at / width).floor() * width;
+        let row = (cluster.price_bucket / width).floor() * width;
         let entry = buckets
             .entry(row)
             .or_insert((Decimal::ZERO, Decimal::ZERO, Decimal::ZERO));
@@ -121,12 +115,7 @@ pub fn aggression_rows(
         let (buy, sell) = split_by_side(cluster);
         entry.0 += buy;
         entry.1 += sell;
-        let span = if volume_dots {
-            width
-        } else {
-            cluster.price_span.max(width)
-        };
-        entry.2 = entry.2.max(span);
+        entry.2 = entry.2.max(cluster.price_span.max(width));
     }
     buckets
         .into_iter()

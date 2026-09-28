@@ -9,7 +9,7 @@
 
 use rust_decimal::Decimal;
 
-use super::dots::{VolumeDots, fold_dots, native_grouping};
+use super::dots::{VolumeDots, fold_dots, native_grouping, window_start};
 use super::model::{AggressionPrimitive, PriceWindow, normalized_area_size};
 use crate::config::HeatmapConfig;
 use crate::grouping::EffectiveGrouping;
@@ -79,9 +79,9 @@ pub(super) struct TierClusters {
 /// With [`TierCut::dots`] every print in the range is kept whatever the price
 /// window shows — the painter clips, a dot must not change on a price pan —
 /// and clustered alone, to be matched to reductions print by print and folded
-/// into dots afterwards (`refine_tier`). A print is the tape's until the tape
-/// has let go of the whole candle window it is in, so a candle dot arrives
-/// whole; a candle dot needs its bar on screen.
+/// into dots afterwards (`refine_tier`). A print is the tape's while its tape
+/// window starts at or after the tape does, so a tape window never straddles
+/// the divider; a candle dot needs its bar on screen.
 pub(super) fn cluster_tier(
     history: &LiquidityHistory,
     timeline: &BarTimeline,
@@ -111,7 +111,7 @@ pub(super) fn cluster_tier(
             continue;
         }
         let on_tape = tape_from_ms.is_some_and(|start| match dots {
-            Some(dots) => !dots.released(trade.timestamp_ms, start),
+            Some(dots) => window_start(trade.timestamp_ms, dots.tape_window_ms) >= start,
             None => trade.timestamp_ms >= start,
         });
         if on_tape {
@@ -287,9 +287,9 @@ pub(super) fn refine_tier(
 /// Place one tier's marks on the chart, each on the scale its view reads on.
 ///
 /// A volume dot (`dots`, with the full-size quantity per second and tick) is
-/// placed at the instant its keying chose, held inside its own bar's slot on
-/// the candles and inside the tape on the tape, and sized against its own
-/// cell.
+/// placed at its window's fixed centre, held inside its own bar's slot on the
+/// candles and inside the tape on the tape — a whole-bar dot at its slot's
+/// centre — and sized against its own cell.
 pub(super) fn tier_primitives(
     marks: TierClusters,
     timeline: &BarTimeline,
@@ -318,8 +318,16 @@ pub(super) fn tier_primitives(
                 (true, true) => timeline.locate_in_lane_clamped(cluster.timestamp_ms)?,
                 (false, true) => {
                     let slot = timeline.slot_at(cluster.first_timestamp_ms)?;
+                    let whole =
+                        dots.is_some_and(|(dots, _)| dots.whole_bar(cluster.first_timestamp_ms));
                     let last = slot.end_ms.saturating_sub(1).max(slot.start_ms);
-                    timeline.locate_in_slot(cluster.timestamp_ms.clamp(slot.start_ms, last))?
+                    let mut position =
+                        timeline.locate_in_slot(cluster.timestamp_ms.clamp(slot.start_ms, last))?;
+                    if whole {
+                        let (left, right) = timeline.slot_bounds(slot.index);
+                        position.normalized = (left + right) / 2.0;
+                    }
+                    position
                 }
             };
             let y = prices.y(cluster.price)?;
