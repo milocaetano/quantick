@@ -2195,6 +2195,7 @@ mod tests {
                 px_per_bar: 40.0,
                 lane_width_px: 200.0,
                 height_px: 400.0,
+                lane_bar_opens: vec![900],
             });
             view.project_visible(
                 visible_timeline(&bars),
@@ -2202,7 +2203,7 @@ mod tests {
                 true,
                 None,
                 (98.0, 102.0),
-                geometry,
+                geometry.clone(),
             );
             view.flush_for_test();
             let frame = view

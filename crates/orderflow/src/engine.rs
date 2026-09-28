@@ -2042,6 +2042,7 @@ mod tests {
             px_per_bar: 40.0,
             lane_width_px: 200.0,
             height_px: 400.0,
+            lane_bar_opens: vec![900],
         };
         let frame = |merge: bool, pane_geometry: Option<PaneGeometry>| {
             let mut engine = BookEngine::new("BTCUSDT");
@@ -2073,7 +2074,7 @@ mod tests {
         let unfolded = frame(false, None);
         assert_eq!(unfolded.aggressions.len(), 2, "a buy and a sell, apart");
         assert_eq!(
-            frame(false, Some(geometry)),
+            frame(false, Some(geometry.clone())),
             unfolded,
             "off is today's frame"
         );
