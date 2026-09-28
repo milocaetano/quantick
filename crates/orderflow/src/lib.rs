@@ -25,9 +25,9 @@ pub use config::{
     LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS,
     MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE,
     MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
-    MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, bubble_center_offset,
-    bubble_halo_padding, bubble_impact_ring_padding, bubble_radius, format_window_ms,
-    lane_lag_label, lane_window_label, same_lane_window,
+    MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, bubble_halo_padding,
+    bubble_impact_ring_padding, bubble_radius, format_window_ms, lane_lag_label, lane_window_label,
+    same_lane_window, side_offset_y,
 };
 #[allow(unused_imports)]
 pub use grouping::{
@@ -46,9 +46,10 @@ pub use interaction::{
 };
 #[allow(unused_imports)]
 pub use projection::{
-    AggressionPrimitive, BEFORE_CAPTURE, DrawnDisc, GapPrimitive, HeatmapCell, HeatmapProjection,
-    LiquidityEventPrimitive, LiquidityEvidence, LiveMarks, PaneGeometry, PriceWindow,
-    SettledProjection, lane_bar_opens, project_live, project_settled,
+    AggressionPrimitive, BEFORE_CAPTURE, DOT_WINDOW_LADDER_MS, GapPrimitive, HeatmapCell,
+    HeatmapProjection, LiquidityEventPrimitive, LiquidityEvidence, LiveMarks, PaneGeometry,
+    PriceWindow, SettledProjection, VolumeDots, dot_window_ms, lane_bar_opens, project_live,
+    project_settled,
 };
 #[allow(unused_imports)]
 pub use scale::SessionScale;

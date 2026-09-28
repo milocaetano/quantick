@@ -193,13 +193,12 @@ impl ChartLayer {
     });
     pub const BubbleOverlapMerge: Self = Self(&LayerDescriptor {
         id: "bubble_overlap_merge",
-        label: "merge overlapping bubbles",
-        hint: "bubbles are binned on a grid no finer than one disc, and each cell is drawn as one \
-                 mark: the exact summed quantity, a buy/sell pie when both sides are in it, labelled \
-                 as a fold of n marks rather than a print, so no two discs overlap. A cell never \
-                 spans a bar or the tape's divider; zooming in splits the cells. \
-                 Only the drawing folds: the live strip and every count keep the prints as they \
-                 were. Saved with the order-flow preset, not with the other layers",
+        label: "volume dots (Bookmap style)",
+        hint: "every print lands in one dot per bar, window of market time and price level: the \
+                 exact summed quantity, a buy/sell pie when both sides traded there, sized on one \
+                 fixed scale. Windows are anchored in market time, so a closed dot never moves; \
+                 zooming picks a wider or narrower window. Dots may overlap, the biggest on top. \
+                 Saved with the order-flow preset, not with the other layers",
         source: LayerSource::Orderflow(OrderflowSwitch::OverlapMerge),
         scope: LayerScope::FlowPane,
         persistence: Persistence::OrderflowPreset,

@@ -11,6 +11,7 @@ use rust_decimal::prelude::FromPrimitive as _;
 use serde::{Deserialize, Serialize};
 
 use super::finite_clamp;
+use crate::history::AggressorSide;
 
 /// The golden ratio, φ.
 ///
@@ -414,10 +415,9 @@ impl Default for BubbleStyle {
 /// radius range `minimum..=maximum`.
 ///
 /// Area, not radius, is proportional to quantity, so the radius interpolates
-/// on the square. It lives with the style rather than with the renderer
-/// because the overlap grid has to know how big a disc will be drawn before
-/// it is drawn — one function, so the grid and the painter cannot disagree
-/// about whether a disc fits its cell.
+/// on the square. It lives with the style rather than with the renderer so
+/// the projection's tests can prove that equal volume dots are equal discs
+/// with the painter's own arithmetic.
 #[must_use]
 pub fn bubble_radius(size: f32, minimum: f32, maximum: f32) -> f32 {
     let size = if size.is_finite() {
@@ -430,25 +430,6 @@ pub fn bubble_radius(size: f32, minimum: f32, maximum: f32) -> f32 {
     (minimum.powi(2) + size.powi(2) * (maximum.powi(2) - minimum.powi(2))).sqrt()
 }
 
-/// How far, in pixels down the screen, a bubble's centre sits off its price
-/// row: toward the book half its dominant side ate — up for a buy, down for a
-/// sell on an upright chart — sliding with the buy share, so an even split
-/// sits on the exact price. `inverted` mirrors it with the chart.
-///
-/// Shared for the reason [`bubble_radius`] is: the overlap grid holds the
-/// disc the painter draws inside its cell, and a lean restated on one side
-/// flipped sign.
-#[must_use]
-pub fn bubble_center_offset(buy_share: f32, side_offset: f32, inverted: bool) -> f32 {
-    let share = if buy_share.is_finite() {
-        buy_share.clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    let toward_price = if inverted { 1.0 } else { -1.0 };
-    toward_price * (share - 0.5) * 2.0 * side_offset
-}
-
 /// Gap between a bubble's rim and the halo behind it, as a fraction of the
 /// radius, and the pixel range it is held to.
 const HALO_PADDING_SCALE: f32 = 0.2;
@@ -456,14 +437,10 @@ const HALO_PADDING_SCALE: f32 = 0.2;
 /// See [`HALO_PADDING_SCALE`].
 const HALO_MIN_PADDING_PX: f32 = 2.0;
 
-/// See [`HALO_PADDING_SCALE`]. Also the furthest past its disc the painter
-/// draws any fixed-reach dressing: the crown (gap and stroke, under 5 px),
-/// the fold ring (2.5 px) and the separator hair (1.5 px) all stay inside it.
+/// See [`HALO_PADDING_SCALE`].
 const HALO_MAX_PADDING_PX: f32 = 5.0;
 
-/// Halo gap for a bubble of this radius. Beside [`bubble_radius`] because
-/// the overlap grid reserves room for it — see
-/// [`BubbleStyle::dressing_margin`].
+/// Halo gap for a bubble of this radius.
 #[must_use]
 pub fn bubble_halo_padding(radius: f32) -> f32 {
     (radius * HALO_PADDING_SCALE).clamp(HALO_MIN_PADDING_PX, HALO_MAX_PADDING_PX)
@@ -479,25 +456,34 @@ const IMPACT_RING_MIN_PADDING_PX: f32 = 1.6;
 /// See [`IMPACT_RING_PADDING_SCALE`].
 const IMPACT_RING_MAX_PADDING_PX: f32 = 3.5;
 
-/// Impact-ring gap for a bubble of this radius; its stroke adds half the
-/// configured width beyond it.
+/// Impact-ring gap for a bubble of this radius.
 #[must_use]
 pub fn bubble_impact_ring_padding(radius: f32) -> f32 {
     (radius * IMPACT_RING_PADDING_SCALE)
         .clamp(IMPACT_RING_MIN_PADDING_PX, IMPACT_RING_MAX_PADDING_PX)
 }
 
+/// Vertical nudge, in pixels, that keeps the two sides off the same row.
+///
+/// Buy aggression lifts the ask, sell aggression hits the bid, so buys sit
+/// on the ask's side of the print and sells on the bid's. That is a *price*
+/// direction: `inverted` mirrors the nudge with the chart, or the separation
+/// would assert the opposite book side upside down. Screen y grows downward.
+#[must_use]
+pub const fn side_offset_y(side: AggressorSide, offset: f32, inverted: bool) -> f32 {
+    let toward_ask = match side {
+        AggressorSide::Buy => -offset,
+        AggressorSide::Sell => offset,
+    };
+    if inverted { -toward_ask } else { toward_ask }
+}
+
 impl BubbleStyle {
-    /// How far past its disc the painter may draw a dressed bubble, in
-    /// pixels: the margin the overlap grid reserves around every disc, so a
-    /// neighbour's halo or ring never lands on it. The consumption front — a
-    /// vertical line as long as its own setting, drawn only by the preset
-    /// that asks for it by name — is the one mark it does not cover.
+    /// The side nudge a frame's bubbles take: [`side_offset`](Self::side_offset),
+    /// or none for volume dots, which sit exactly on their level.
     #[must_use]
-    pub fn dressing_margin(&self) -> f32 {
-        HALO_MAX_PADDING_PX
-            .max(IMPACT_RING_MAX_PADDING_PX + self.impact_ring_width / 2.0)
-            .max(self.outline_width / 2.0)
+    pub fn side_offset_for(&self, volume_dots: bool) -> f32 {
+        if volume_dots { 0.0 } else { self.side_offset }
     }
 
     /// Clamp every numeric field to a value that is safe for geometry and math.

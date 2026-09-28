@@ -9,9 +9,11 @@
 use eframe::egui;
 use quantick_engine::Side;
 use quantick_orderbook::BookSide;
-use quantick_orderflow::{BubbleStyle, HeatmapConfig, HeatmapTheme, bubble_radius};
+use quantick_orderflow::{BubbleStyle, HeatmapConfig, HeatmapTheme};
 
-use super::bubbles::{BubbleColors, BubbleMark, draw_bubble, front_half_length, trail_rect};
+use super::bubbles::{
+    BubbleColors, BubbleMark, bubble_radius, draw_bubble, front_half_length, trail_rect,
+};
 use super::layout::EventBand;
 use super::{
     OrderflowRenderStyle, Palette, add_gradient_rect, finite_unit, resting_rgb, rgba, thermal_rgb,
@@ -381,7 +383,6 @@ pub(super) fn draw_preview_bubble(
             matched: linked_reduction.then_some(PREVIEW_MATCHED_FRACTION),
             buy_share,
             folded: 0,
-            bare: false,
         },
         bubbles,
         colors,

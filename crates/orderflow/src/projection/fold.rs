@@ -16,7 +16,6 @@ use crate::config::{
     DEFAULT_LIVE_LANE_SHARE, LiveLaneStyle, MAX_LIVE_LANE_SHARE, MIN_LIVE_LANE_SHARE,
 };
 use crate::history::AggressorSide;
-use crate::interaction::consumed_side;
 use crate::timeline::BarTimeline;
 
 /// A total order over sides, so a fold can sort and group by one.
@@ -82,19 +81,8 @@ fn merge_marks(
     other: &mut AggressionPrimitive,
     reference: Decimal,
 ) {
-    debug_assert_eq!(mark.side, other.side, "a fold may not cross sides");
-    absorb(mark, other, reference);
-}
-
-/// The merge itself, for a fold that may put both sides in one mark.
-///
-/// The budget fold never does — [`merge_marks`] guards that — but the overlap
-/// fold does on purpose: two discs drawn over each other already read as one
-/// blot, and one pie says what the blot hid. Nothing here is side-specific:
-/// the buy share is quantity-weighted across the members, so a mixed fold
-/// carries both sides' exact proportion and the anchor keeps its own side.
-fn absorb(mark: &mut AggressionPrimitive, other: &mut AggressionPrimitive, reference: Decimal) {
     debug_assert_eq!(mark.live, other.live, "a fold may not cross the panes");
+    debug_assert_eq!(mark.side, other.side, "a fold may not cross sides");
     let total = mark.quantity + other.quantity;
     let low = mark.price_bucket.min(other.price_bucket);
     let high = (mark.price_bucket + mark.price_span).max(other.price_bucket + other.price_span);
@@ -187,36 +175,6 @@ fn fold_chunk(mut chunk: Vec<AggressionPrimitive>, reference: Decimal) -> Aggres
         settle_ids(&mut merged);
     }
     merged
-}
-
-/// Fold `members` into `anchor`, which the caller chose — the overlap grid's
-/// merge, where the sides may differ. The caller places the result.
-///
-/// A mixed fold reports the side that took more, as the cluster fold does
-/// (`interaction`): the anchor is the heaviest *mark*, not the heaviest side,
-/// and a 3-lot sell holding two 2-lot buys is a buy. A tie keeps the anchor's.
-pub(super) fn fold_onto(
-    mut anchor: AggressionPrimitive,
-    members: Vec<AggressionPrimitive>,
-    reference: Decimal,
-) -> AggressionPrimitive {
-    if members.is_empty() {
-        return anchor;
-    }
-    for mut other in members {
-        absorb(&mut anchor, &mut other, reference);
-    }
-    // Exact quantities, not the f32 share: a margin of 0.0001 in two million
-    // rounds to an even split there, and would hand the side to the anchor.
-    let sold = anchor.quantity - anchor.buy_quantity;
-    if anchor.buy_quantity > sold {
-        anchor.side = AggressorSide::Buy;
-    } else if sold > anchor.buy_quantity {
-        anchor.side = AggressorSide::Sell;
-    }
-    anchor.consumed_side = consumed_side(anchor.side);
-    settle_ids(&mut anchor);
-    anchor
 }
 
 /// Which mark folds first, per pane.

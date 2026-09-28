@@ -11,8 +11,8 @@ pub use bubbles::{
     DEFAULT_FRONT_LENGTH_SCALE, DEFAULT_LABEL_MIN_RADIUS, DEFAULT_LABEL_MIN_RADIUS_SHARE,
     DEFAULT_READABLE_MIN_RADIUS, DEFAULT_SPHERE_HIGHLIGHT, DEFAULT_SPHERE_SHADING, GOLDEN_ANGLE,
     INV_PHI, INV_PHI_2, INV_PHI_3, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS,
-    MAX_READABLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS, PHI, bubble_center_offset, bubble_halo_padding,
-    bubble_impact_ring_padding, bubble_radius,
+    MAX_READABLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS, PHI, bubble_halo_padding,
+    bubble_impact_ring_padding, bubble_radius, side_offset_y,
 };
 pub use lane::{
     DEFAULT_LIVE_LANE_RADIUS_SCALE, DEFAULT_LIVE_LANE_SHARE, DEFAULT_LIVE_LANE_ZOOM,
@@ -244,16 +244,19 @@ pub struct HeatmapConfig {
     /// one behind the other. Prints in the live lane are never summarized —
     /// they have not finished happening.
     pub bubble_candle_summary: bool,
-    /// Whether bubbles are binned on the overlap grid, one mark per cell, so
-    /// no two drawn discs overlap.
+    /// Whether bubbles are drawn as volume dots, Bookmap style.
     ///
-    /// Off by default, and off draws exactly what it drew before. On, each
-    /// pane is cut into cells at most one full-size disc across, and every
-    /// mark in a cell — both sides, on the tape too — folds into one carrying
-    /// the exact summed quantity, drawn as a buy/sell pie when both sides are
-    /// in it and held inside its cell. It is labelled as a fold (`⊕n`), never
-    /// as a print, and a cell never crosses a pane or a bar: a candle mark is
-    /// a claim about the bar it sits in.
+    /// Off by default, and off draws exactly what it drew before. On, every
+    /// print lands in the dot keyed by its bar, a window of market time
+    /// anchored at exchange epoch 0 and its native price level; both sides
+    /// share the dot, drawn as a pie. The key is market data, so a window
+    /// that has closed keeps its dot through every roll, pan, refit and zoom
+    /// of the other pane; only a zoom of its own pane picks another window
+    /// (`DOT_WINDOW_LADDER_MS`). Dots size on the fixed
+    /// [`BubbleStyle::size_reference_quantity`], draw on the candles' radius
+    /// range on both panes, sit exactly on their price and may overlap, the
+    /// biggest on top. The dust merge, the regional fold and the closed-bar
+    /// summary do not run; the [`BubbleStyle::min_quantity`] floor does.
     pub bubble_overlap_merge: bool,
     /// Everything else the aggression-bubble panel owns: geometry (including
     /// the alpha and largest radius this used to carry as two flat fields),

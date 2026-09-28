@@ -7,8 +7,9 @@
 
 use eframe::egui;
 use quantick_orderbook::BookSide;
-use quantick_orderflow::{BEFORE_CAPTURE, LiquidityEvidence, bubble_center_offset};
+use quantick_orderflow::{BEFORE_CAPTURE, LiquidityEvidence};
 
+use super::bubbles::{bubble_radius, side_offset_y};
 use super::layout::{EventBand, RenderContext};
 use super::{
     OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, finite_unit,
@@ -350,6 +351,7 @@ impl<'c, 'a> EventPass<'c, 'a> {
     fn carve_bubble_gaps(&self, hole_mesh: &mut egui::Mesh) {
         let layout = &self.context.layout;
         let bubbles = &self.style.bubbles;
+        let dots = self.context.projection.volume_dots;
         for trade in self.context.bubbles() {
             if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
                 continue;
@@ -361,18 +363,12 @@ impl<'c, 'a> EventPass<'c, 'a> {
             }
             // Follow the bubble's own vertical nudge, so the carved gap stays
             // centred on the bubble that will be drawn over it.
-            let lean = if trade.cell_radius_px.is_some() {
-                0.0
-            } else {
-                bubble_center_offset(trade.buy_share, bubbles.side_offset, layout.inverted)
-            };
-            let center = center + egui::vec2(0.0, lean);
-            let (min, max) = if trade.live {
-                self.style.live_lane.scaled_radii(bubbles)
-            } else {
-                (bubbles.min_radius, bubbles.max_radius)
-            };
-            let r = trade.drawn_disc(min, max, bubbles).radius;
+            let center = center
+                + egui::vec2(
+                    0.0,
+                    side_offset_y(trade.side, bubbles.side_offset_for(dots), layout.inverted),
+                );
+            let r = bubble_radius(trade.size, bubbles.min_radius, bubbles.max_radius);
             // Carve from the bubble's midriff rightward: the eaten wall still
             // touches the bubble's left half (the bubble reads as biting into
             // it), while re-stacked liquidity cannot slide through to the right.

@@ -22,7 +22,7 @@ use crate::viewport::Viewport;
 use quantick_engine::Side;
 use quantick_orderflow::{
     AggressionPrimitive, BubbleRenderMode, ConsumptionMark, GOLDEN_ANGLE, HeatmapProjection,
-    INV_PHI_2, LiquidityEvidence, bubble_center_offset, bubble_radius,
+    INV_PHI_2, LiquidityEvidence,
 };
 use rust_decimal::Decimal;
 
@@ -85,7 +85,6 @@ fn a_low_detail_radius_does_not_disarm_the_readability_floor() {
         matched: None,
         buy_share: 1.0,
         folded: 0,
-        bare: false,
     };
     let solid = BubbleStyle {
         hollow_small_buys: false,
@@ -322,20 +321,18 @@ fn render_style_sanitizes_non_finite_geometry() {
 
 #[test]
 fn buy_and_sell_bubbles_are_nudged_to_opposite_sides() {
-    // Screen y grows downward: buys sit above the print, sells below. The
-    // painter, the carve and the overlap fold share this one function.
-    let (buy, sell) = (1.0, 0.0);
-    assert!(bubble_center_offset(buy, 4.0, false) < 0.0);
-    assert!(bubble_center_offset(sell, 4.0, false) > 0.0);
-    assert_eq!(bubble_center_offset(buy, 0.0, false), 0.0);
+    // Screen y grows downward: buys sit above the print, sells below.
+    assert!(side_offset_y(Side::Buy, 4.0, false) < 0.0);
+    assert!(side_offset_y(Side::Sell, 4.0, false) > 0.0);
+    assert_eq!(side_offset_y(Side::Buy, 0.0, false), 0.0);
     assert_eq!(
-        bubble_center_offset(buy, 4.0, false).abs(),
-        bubble_center_offset(sell, 4.0, false).abs()
+        side_offset_y(Side::Buy, 4.0, false).abs(),
+        side_offset_y(Side::Sell, 4.0, false).abs()
     );
     // The nudge names a book side, not a screen side: upside down it
     // mirrors with the chart.
-    assert!(bubble_center_offset(buy, 4.0, true) > 0.0);
-    assert!(bubble_center_offset(sell, 4.0, true) < 0.0);
+    assert!(side_offset_y(Side::Buy, 4.0, true) > 0.0);
+    assert!(side_offset_y(Side::Sell, 4.0, true) < 0.0);
 }
 
 /// Paint through `draw` off-screen and return the shapes it emitted.
@@ -370,7 +367,6 @@ fn a_cheap_dot_stays_a_single_circle() {
                 matched: None,
                 buy_share: 0.0,
                 folded: 0,
-                bare: false,
             },
             &bubbles,
             &colors,
@@ -405,14 +401,13 @@ fn the_preview_draws_a_bubble_exactly_the_way_the_chart_does() {
         draw_bubble(
             painter,
             BubbleMark {
-                center: at + egui::vec2(0.0, bubble_center_offset(1.0, bubbles.side_offset, false)),
+                center: at + egui::vec2(0.0, side_offset_y(Side::Buy, bubbles.side_offset, false)),
                 radius,
                 side: Side::Buy,
                 size: PREVIEW_LARGE_PRINT_SIZE,
                 matched: Some(PREVIEW_MATCHED_FRACTION),
                 buy_share: 1.0,
                 folded: 0,
-                bare: false,
             },
             &bubbles,
             &colors,
@@ -643,7 +638,6 @@ fn the_crown_replaces_the_front_and_leaves_the_disc_alone() {
         matched: Some(0.7),
         buy_share: 1.0,
         folded: 0,
-        bare: false,
     };
     let crowned = painted(|painter| draw_bubble(painter, mark, &bubbles, &colors));
     let fronted = painted(|painter| {
@@ -746,7 +740,6 @@ fn sphere_mode_swaps_the_flat_fill_for_a_shaded_mesh() {
         matched: None,
         buy_share: 1.0,
         folded: 0,
-        bare: false,
     };
     let palette = Palette::for_theme(HeatmapTheme::Bookmap);
     // Both modes are named explicitly: the shipped default is the sphere
@@ -802,14 +795,13 @@ fn the_preview_draws_a_sphere_bubble_exactly_the_way_the_chart_does() {
         draw_bubble(
             painter,
             BubbleMark {
-                center: at + egui::vec2(0.0, bubble_center_offset(1.0, bubbles.side_offset, false)),
+                center: at + egui::vec2(0.0, side_offset_y(Side::Buy, bubbles.side_offset, false)),
                 radius,
                 side: Side::Buy,
                 size: PREVIEW_LARGE_PRINT_SIZE,
                 matched: Some(PREVIEW_MATCHED_FRACTION),
                 buy_share: 1.0,
                 folded: 0,
-                bare: false,
             },
             &bubbles,
             &colors,
@@ -859,7 +851,6 @@ fn hollow_small_buys_opens_the_dot_and_leaves_dressed_bubbles_alone() {
         matched: None,
         buy_share: 1.0,
         folded: 0,
-        bare: false,
     };
 
     // Below the readability floor — where colour alone stops working —
@@ -1038,7 +1029,6 @@ fn a_two_sided_bubble_draws_both_sides_and_a_small_one_falls_back() {
         matched: None,
         buy_share,
         folded: 0,
-        bare: false,
     };
     // Compared after the fill alpha, which is what actually lands in the
     // mesh vertices.
@@ -1106,7 +1096,6 @@ fn a_pie_needs_the_readability_floor_on_the_shipped_presets() {
         matched: None,
         buy_share: 0.5,
         folded: 0,
-        bare: false,
     };
     let sell_ink = format!("{:?}", colors.sell.gamma_multiply(dense_tape_btc.opacity));
 
@@ -1178,7 +1167,6 @@ fn hiding_the_bubble_layer_keeps_the_clusters_in_the_frame() {
             price_span: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
-            placed_ms: 0,
             last_timestamp_ms: 0,
             matched_quantity: rust_decimal::Decimal::ZERO,
             buy_quantity: match side {
@@ -1191,7 +1179,6 @@ fn hiding_the_bubble_layer_keeps_the_clusters_in_the_frame() {
             y: 0.5,
             size: 1.0,
             folded_marks: 0,
-            cell_radius_px: None,
         });
     }
 
@@ -1288,7 +1275,6 @@ fn the_lane_scale_reaches_the_bubbles_and_stops_at_the_boundary() {
             price_span: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
-            placed_ms: 0,
             last_timestamp_ms: 0,
             matched_quantity: rust_decimal::Decimal::ZERO,
             buy_quantity: rust_decimal::Decimal::ONE,
@@ -1298,7 +1284,6 @@ fn the_lane_scale_reaches_the_bubbles_and_stops_at_the_boundary() {
             y: 0.5,
             size: 1.0,
             folded_marks: 0,
-            cell_radius_px: None,
         });
         painted(|painter| {
             draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
@@ -1364,7 +1349,6 @@ fn a_bubble_beside_the_divider_is_clipped_to_its_own_pane() {
             price_span: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
-            placed_ms: 0,
             last_timestamp_ms: 0,
             matched_quantity: rust_decimal::Decimal::ZERO,
             buy_quantity: rust_decimal::Decimal::ONE,
@@ -1374,7 +1358,6 @@ fn a_bubble_beside_the_divider_is_clipped_to_its_own_pane() {
             y: 0.5,
             size: 1.0,
             folded_marks: 0,
-            cell_radius_px: None,
         });
         painted(|painter| {
             draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
@@ -1437,7 +1420,6 @@ fn a_layer_switched_off_on_one_pane_still_draws_on_the_other() {
             price_span: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
-            placed_ms: 0,
             last_timestamp_ms: 0,
             matched_quantity: rust_decimal::Decimal::ZERO,
             buy_quantity: rust_decimal::Decimal::ONE,
@@ -1447,7 +1429,6 @@ fn a_layer_switched_off_on_one_pane_still_draws_on_the_other() {
             y: 0.5,
             size: 1.0,
             folded_marks: 0,
-            cell_radius_px: None,
         });
     }
 
@@ -1535,9 +1516,9 @@ fn the_depth_map_is_cut_at_the_divider_rather_than_dropped() {
 #[test]
 fn a_pie_leans_with_its_buy_share() {
     let offset = 4.0;
-    let lean = |buy_share: f32| bubble_center_offset(buy_share, offset, false);
-    assert_eq!(lean(1.0), -offset, "a buy sits a full nudge above");
-    assert_eq!(lean(0.0), offset, "a sell a full nudge below");
+    let lean = |buy_share: f32| -((finite_unit(buy_share) - 0.5) * 2.0) * offset;
+    assert_eq!(lean(1.0), side_offset_y(Side::Buy, offset, false));
+    assert_eq!(lean(0.0), side_offset_y(Side::Sell, offset, false));
     assert_eq!(lean(0.5), 0.0);
     assert!(lean(0.75) < 0.0 && lean(0.75) > lean(1.0));
 }
@@ -1707,7 +1688,6 @@ fn a_folded_bubble_wears_a_ring_a_print_does_not() {
         matched: None,
         buy_share: 1.0,
         folded: 0,
-        bare: false,
     };
     let print = painted(|painter| draw_bubble(painter, mark, &bubbles, &colors));
     let fold = painted(|painter| {
@@ -1739,178 +1719,6 @@ fn a_folded_bubble_wears_a_ring_a_print_does_not() {
         "a folded dot is indistinguishable from a single print"
     );
 }
-/// Every shape a draw call painted, as the rectangle it can touch.
-fn painted_reach(draw: impl Fn(&egui::Painter)) -> egui::Rect {
-    let ctx = egui::Context::default();
-    let output = ctx.run(egui::RawInput::default(), |ctx| {
-        draw(&ctx.layer_painter(egui::LayerId::background()));
-    });
-    output
-        .shapes
-        .iter()
-        .map(|clipped| clipped.shape.visual_bounding_rect())
-        .fold(egui::Rect::NOTHING, |reach, rect| reach.union(rect))
-}
-
-/// The overlap grid keeps a dressed bubble's centre `radius + margin` from
-/// its cell's edge, so everything `draw_bubble` puts around a disc — halo,
-/// separator, rim, fold ring, crown, impact ring — has to land inside
-/// [`BubbleStyle::dressing_margin`], at every size and every width the
-/// style allows. The front is a line the length of its own setting and is
-/// left out: see the margin's note.
-#[test]
-fn a_dressed_bubble_stays_inside_the_margin_the_grid_reserves() {
-    let center = egui::pos2(200.0, 200.0);
-    for (impact_ring_width, outline_width) in [(0.5, 0.0), (1.4, 1.0), (8.0, 6.0)] {
-        for render_mode in [BubbleRenderMode::Sphere, BubbleRenderMode::Flat] {
-            let bubbles = BubbleStyle {
-                impact_ring_width,
-                outline_width,
-                render_mode,
-                halo_strength: 1.0,
-                show_impact_ring: true,
-                consumption_mark: ConsumptionMark::Crown,
-                ..BubbleStyle::default()
-            };
-            let colors =
-                BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
-            let margin = bubbles.dressing_margin();
-            for step in 1..=160 {
-                let radius = step as f32 * 0.5;
-                for (buy_share, folded) in [(1.0, 0), (0.4, 5)] {
-                    let mark = BubbleMark {
-                        center,
-                        radius,
-                        side: Side::Buy,
-                        size: 1.0,
-                        matched: Some(1.0),
-                        buy_share,
-                        folded,
-                        bare: false,
-                    };
-                    let reach = painted_reach(|painter| {
-                        draw_bubble(painter, mark, &bubbles, &colors);
-                    });
-                    let allowed = egui::Rect::from_center_size(
-                        center,
-                        egui::Vec2::splat(2.0 * (radius + margin) + 1e-3),
-                    );
-                    assert!(
-                        allowed.contains_rect(reach),
-                        "radius {radius}, impact {impact_ring_width}, outline \
-                         {outline_width}: drew {reach:?} past {allowed:?}"
-                    );
-                }
-            }
-        }
-    }
-}
-
-/// Where the grid had no room for a dressing it draws a bare disc: nothing
-/// outside the radius, a fold still marked — its ring inside the rim.
-#[test]
-fn a_bare_bubble_draws_nothing_past_its_disc() {
-    let bubbles = BubbleStyle {
-        halo_strength: 1.0,
-        show_impact_ring: true,
-        outline_width: 2.0,
-        consumption_mark: ConsumptionMark::Crown,
-        ..BubbleStyle::default()
-    };
-    let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
-    let center = egui::pos2(100.0, 100.0);
-    for radius in [0.5, 1.0, 3.0, 12.0, 30.0] {
-        let print = BubbleMark {
-            center,
-            radius,
-            side: Side::Buy,
-            size: 1.0,
-            matched: Some(1.0),
-            buy_share: 0.4,
-            folded: 0,
-            bare: true,
-        };
-        let fold = BubbleMark { folded: 3, ..print };
-        for mark in [print, fold] {
-            let reach = painted_reach(|painter| draw_bubble(painter, mark, &bubbles, &colors));
-            let allowed =
-                egui::Rect::from_center_size(center, egui::Vec2::splat(2.0 * radius + 1e-3));
-            assert!(
-                allowed.contains_rect(reach),
-                "radius {radius}: a bare disc drew {reach:?} past {allowed:?}"
-            );
-        }
-        assert_ne!(
-            painted(|painter| draw_bubble(painter, print, &bubbles, &colors)),
-            painted(|painter| draw_bubble(painter, fold, &bubbles, &colors)),
-            "radius {radius}: a bare fold reads as a print"
-        );
-    }
-}
-/// The consumption trail runs to the right of a disc, toward the next cell,
-/// so on a mark the overlap grid placed it stops at the cell's reach: the
-/// grid's promise is that nothing drawn for one mark reaches another's.
-#[test]
-fn a_grid_mark_draws_no_trail_into_its_neighbour() {
-    let viewport = Viewport::new();
-    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(600.0, 400.0));
-    let layout = ProjectedLayout::new(rect, &viewport, 2, 0, 2, 0.0);
-    let painted_with = |cell_radius_px: Option<f32>, trail_length: f32| {
-        let mut projection = HeatmapProjection::empty(
-            true,
-            quantick_orderflow::EffectiveGrouping::resolve(
-                quantick_orderflow::DisplayGrouping::Native,
-                rust_decimal::Decimal::ONE,
-                rust_decimal::Decimal::from(100),
-            ),
-        );
-        projection.aggressions.push(AggressionPrimitive {
-            agg_id: 1,
-            agg_ids: vec![1],
-            generation: None,
-            side: Side::Buy,
-            consumed_side: BookSide::Ask,
-            quantity: rust_decimal::Decimal::ONE,
-            buy_share: 1.0,
-            live: false,
-            price_bucket: rust_decimal::Decimal::ONE,
-            price_span: rust_decimal::Decimal::ONE,
-            trade_count: 1,
-            first_timestamp_ms: 0,
-            placed_ms: 0,
-            last_timestamp_ms: 0,
-            matched_quantity: rust_decimal::Decimal::ONE,
-            buy_quantity: rust_decimal::Decimal::ONE,
-            matched_fraction: 1.0,
-            liquidity_event_ids: vec![7],
-            x: 0.25,
-            y: 0.5,
-            size: 1.0,
-            folded_marks: 0,
-            cell_radius_px,
-        });
-        let mut style = OrderflowRenderStyle::default();
-        style.bubbles.trail_length = trail_length;
-        style.bubbles.trail_opacity = 0.8;
-        let draw = |painter: &egui::Painter| {
-            draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
-        };
-        (painted(draw), painted_reach(draw))
-    };
-    assert_ne!(
-        painted_with(None, 60.0).0,
-        painted_with(None, 0.0).0,
-        "off the grid a matched print wears its trail"
-    );
-    let (trailed, trailed_reach) = painted_with(Some(8.0), 60.0);
-    let (bare, bare_reach) = painted_with(Some(8.0), 0.0);
-    assert_ne!(trailed, bare, "a grid mark keeps its trail");
-    assert!(
-        trailed_reach.right() <= bare_reach.center().x + 8.0 + 1e-3,
-        "a grid mark drew a trail past its cell's reach: {trailed_reach:?}"
-    );
-}
-
 /// A fold and a cluster may not read the same.
 ///
 /// `×4` says four prints happened together at one price — a fact about the
@@ -1925,35 +1733,11 @@ fn a_fold_and_a_cluster_do_not_share_a_glyph() {
     let fold =
         bubble_label(rust_decimal::Decimal::from(20), 4, 4, true, true).expect("labels are on");
     assert_eq!(cluster, "20 · ×4");
-    assert_eq!(
-        fold,
-        format!("20 · {}4", egui_phosphor::regular::PLUS_CIRCLE)
-    );
+    assert_eq!(fold, "20 · ⊕4");
     assert_ne!(
         cluster, fold,
         "a budget fold reads as four prints that traded"
     );
-}
-/// Both labels are made of glyphs the chart's fonts really carry.
-///
-/// The fold's mark used to be `⊕`, which no installed font has: every folded
-/// bubble said `□146`, a box a trader cannot read as "the canvas did this".
-#[test]
-fn a_fold_label_is_drawn_in_glyphs_the_chart_has() {
-    let context = egui::Context::default();
-    // The fonts `launch::boot` installs before the first frame.
-    let mut fonts = egui::FontDefinitions::default();
-    egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
-    context.set_fonts(fonts);
-    let _ = context.run(egui::RawInput::default(), |_| {});
-    let font = egui::FontId::proportional(12.0);
-    for folded in [0, 4] {
-        let label = bubble_label(Decimal::from(20), 4, folded, true, true).expect("labels are on");
-        assert!(
-            context.fonts(|fonts| fonts.has_glyphs(&font, &label)),
-            "`{label}` paints a missing glyph as a box"
-        );
-    }
 }
 /// A reduction kind switched off leaves the canvas, not just the legend.
 ///

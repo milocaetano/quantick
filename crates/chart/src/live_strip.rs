@@ -187,7 +187,6 @@ mod tests {
             price_span: Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: last_ms,
-            placed_ms: last_ms,
             last_timestamp_ms: last_ms,
             matched_quantity: Decimal::ZERO,
             buy_quantity: match side {
@@ -200,7 +199,6 @@ mod tests {
             y: 0.5,
             size: 0.5,
             folded_marks: 0,
-            cell_radius_px: None,
         }
     }
 

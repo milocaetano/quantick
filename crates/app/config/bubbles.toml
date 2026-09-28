@@ -45,13 +45,12 @@ active = "default"
 #     price range, drawn as a pie of the buy and sell shares. The pie is the
 #     only mark that shows both sides of one price at once, and it is what
 #     keeps history reading as a summary instead of as a wall of specks.
-# One more switch is off in every shipped look, and is there for a tape too
-# dense for the windows above:
-#   * overlap_merge — bubbles are binned on a grid of cells one disc across
-#     and every cell is drawn as one mark, across sides and on the live lane
-#     too: the exact summed quantity, a buy/sell pie when both sides are in
-#     it, labelled as a fold (⊕n). No two discs overlap; a cell never spans a
-#     bar or the lane's divider.
+# One more switch is off in every shipped look:
+#   * overlap_merge — volume dots, Bookmap style: one dot per bar, window of
+#     market time and native price level, both sides in it as a buy/sell pie,
+#     on the lane too, sized on the fixed size_reference_quantity. Windows are
+#     anchored in market time, so a closed dot never moves; the zoom picks the
+#     window. It replaces dust_merge, region_rows and candle_summary while on.
 [[presets]]
 name = "default"
 cluster_ms = 500

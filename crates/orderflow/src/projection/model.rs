@@ -15,7 +15,7 @@ use std::sync::Arc;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
-use crate::config::{BubbleStyle, HeatmapConfig};
+use crate::config::HeatmapConfig;
 use crate::grouping::EffectiveGrouping;
 use crate::history::{AggressorSide, RestingSide};
 use crate::interaction::{LiquidityEvent, LiquidityEvidence};
@@ -108,10 +108,6 @@ pub struct AggressionPrimitive {
     pub trade_count: usize,
     /// Earliest exchange timestamp represented by this bubble.
     pub first_timestamp_ms: i64,
-    /// The instant that placed this mark on the chart: the cluster's
-    /// midpoint, which is where its x was read from. A fold keeps its
-    /// anchor's, which is how the overlap grid finds the fold's bar.
-    pub placed_ms: i64,
     /// Latest exchange timestamp represented by this bubble.
     pub last_timestamp_ms: i64,
     /// Exact bubble quantity aligned with compatible liquidity reductions.
@@ -138,64 +134,6 @@ pub struct AggressionPrimitive {
     /// to. Nothing is lost either way — the quantity is exact — but the two
     /// must not look the same.
     pub folded_marks: u32,
-    /// How far, in pixels, everything drawn for this mark — the disc and
-    /// its dressing — may reach from its centre: half its overlap-grid
-    /// cell's smaller side, so nothing reaches into a neighbour's cell.
-    /// `None` on every mark the grid did not place. On one it did, the
-    /// centre already carries the side lean, so no reader adds it again.
-    pub cell_radius_px: Option<f32>,
-}
-
-/// The disc the painter draws for a mark, and whether its dressing fits.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DrawnDisc {
-    /// Radius of the disc, in pixels.
-    pub radius: f32,
-    /// Whether the halo, rim, rings and crown may be drawn around the disc.
-    /// `false` is a bare disc: its grid cell left no room for them.
-    pub dressed: bool,
-}
-
-impl AggressionPrimitive {
-    /// The disc the painter draws for this mark, on the radius range
-    /// `minimum..=maximum` of its pane.
-    ///
-    /// Off the grid a mark is drawn at its own size, dressed. On it, the
-    /// disc and the [`dressing_margin`](BubbleStyle::dressing_margin) share
-    /// the cell's reach: the disc gives way first, down to the pane's
-    /// smallest radius; below that the dressing goes and the bare disc takes
-    /// the whole cell. Giving way is a share of the whole radius range, never
-    /// a cut, so under any cap a bigger print is still drawn bigger.
-    #[must_use]
-    pub fn drawn_disc(&self, minimum: f32, maximum: f32, bubbles: &BubbleStyle) -> DrawnDisc {
-        let natural = crate::config::bubble_radius(self.size, minimum, maximum);
-        let Some(cell) = self.cell_radius_px else {
-            return DrawnDisc {
-                radius: natural,
-                dressed: true,
-            };
-        };
-        let within = |room: f32| {
-            let share = if maximum > 0.0 {
-                (room / maximum).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            natural * share
-        };
-        let room = cell - bubbles.dressing_margin();
-        if room > 0.0 && room >= minimum {
-            DrawnDisc {
-                radius: within(room),
-                dressed: true,
-            }
-        } else {
-            DrawnDisc {
-                radius: within(cell.max(0.0)),
-                dressed: false,
-            }
-        }
-    }
 }
 
 /// One factual displayed-liquidity reduction ready for an overlay.
@@ -296,15 +234,12 @@ pub struct HeatmapProjection {
     pub cells: Arc<Vec<HeatmapCell>>,
     /// Visible aggressive executions.
     pub aggressions: Vec<AggressionPrimitive>,
-    /// The bubbles the painter draws when the overlap grid is on: the marks
-    /// above binned into cells, each cell folded into one mark drawn inside it.
-    /// `None` when the fold is off or the frame had no canvas to measure.
-    ///
-    /// A list of its own, never a rewrite of [`aggressions`](Self::aggressions):
-    /// the fold is a fact about the canvas, and every other reader — the live
-    /// strip's histogram above all — keeps the per-price quantities it read
-    /// before the fold existed.
-    pub overlap_marks: Option<Vec<AggressionPrimitive>>,
+    /// Whether [`aggressions`](Self::aggressions) are volume dots
+    /// ([`HeatmapConfig::bubble_overlap_merge`]): one mark per bar, window of
+    /// market time and native price level, both sides in it, on one fixed
+    /// size scale and one radius range for both panes, listed smallest first
+    /// so the biggest paints on top.
+    pub volume_dots: bool,
     /// Visible factual displayed-liquidity reductions.
     pub liquidity_events: Vec<LiquidityEventPrimitive>,
     /// Visible continuity gaps. Shared for the reason [`cells`](Self::cells) is.
@@ -347,7 +282,7 @@ impl HeatmapProjection {
             floored_quantity: Decimal::ZERO,
             cells: Arc::new(Vec::new()),
             aggressions: Vec::new(),
-            overlap_marks: None,
+            volume_dots: false,
             liquidity_events: Vec::new(),
             gaps: Arc::new(Vec::new()),
             live_now_x: None,
@@ -379,6 +314,9 @@ pub struct SettledProjection {
     /// Whether this half's marks are bar summaries. See
     /// [`HeatmapProjection::summarized`].
     pub summarized: bool,
+    /// Whether this half's marks are volume dots. See
+    /// [`HeatmapProjection::volume_dots`].
+    pub volume_dots: bool,
     /// Whether the feature was enabled in sanitized configuration.
     pub enabled: bool,
     /// Visible heatmap rectangles.
@@ -444,6 +382,7 @@ impl SettledProjection {
         Self {
             enabled,
             summarized: false,
+            volume_dots: false,
             floored_quantity: Decimal::ZERO,
             cells: Arc::new(Vec::new()),
             aggressions: Vec::new(),
@@ -479,7 +418,19 @@ impl SettledProjection {
         // Folded first, then ordered: a fold picks by size or by age, but what
         // a frame draws is ordered by time, so a chart that is over the budget
         // stacks its bubbles the same way as one that is under it.
-        aggressions.sort_by(frame_order);
+        aggressions.sort_by(|a, b| {
+            a.first_timestamp_ms
+                .cmp(&b.first_timestamp_ms)
+                .then_with(|| a.last_timestamp_ms.cmp(&b.last_timestamp_ms))
+                .then_with(|| a.live.cmp(&b.live))
+                .then_with(|| a.price_bucket.cmp(&b.price_bucket))
+                .then_with(|| a.agg_id.cmp(&b.agg_id))
+        });
+        // Dots overlap by design, so the smallest paints first and the biggest
+        // stays on top; a tie keeps the time order above.
+        if self.volume_dots {
+            aggressions.sort_by_key(|mark| mark.quantity);
+        }
 
         // The display switches — the aggression layer's master switch and the
         // per-side ones — are *not* applied here. A projection is the fact the
@@ -507,7 +458,7 @@ impl SettledProjection {
             floored_quantity: self.floored_quantity + live.floored_quantity,
             cells: Arc::clone(&self.cells),
             aggressions,
-            overlap_marks: None,
+            volume_dots: self.volume_dots,
             liquidity_events,
             gaps: Arc::clone(&self.gaps),
             live_now_x: live.live_now_x,
@@ -520,18 +471,6 @@ impl SettledProjection {
             dropped_liquidity_events,
         }
     }
-}
-
-/// The order a frame draws its bubbles in: by time, so later prints stack on
-/// top, whatever folded them. Every step that reorders the marks of a
-/// finished frame — the join, the overlap fold — puts them back in this one.
-pub(super) fn frame_order(a: &AggressionPrimitive, b: &AggressionPrimitive) -> std::cmp::Ordering {
-    a.first_timestamp_ms
-        .cmp(&b.first_timestamp_ms)
-        .then_with(|| a.last_timestamp_ms.cmp(&b.last_timestamp_ms))
-        .then_with(|| a.live.cmp(&b.live))
-        .then_with(|| a.price_bucket.cmp(&b.price_bucket))
-        .then_with(|| a.agg_id.cmp(&b.agg_id))
 }
 
 /// How the safety cap ranks reductions, wherever it is applied: aligned

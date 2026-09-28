@@ -197,13 +197,12 @@ pub struct BubblesStateSnapshot {
     /// The exact quantity the trader's own display floor keeps off the canvas.
     /// Floored, not dropped: it is still in the totals.
     pub floored_quantity: CanonicalDecimal,
-    /// Bubbles are binned on a grid whose cells are at most one full-size
-    /// disc across and never span a bar, and each cell's marks fold into one
-    /// — across sides, and on the lane too — carrying the exact summed
-    /// quantity, so no two drawn discs overlap. The bubble setting
-    /// `overlap_merge`, switched by `layers.visibility.set` as layer
-    /// `bubble_overlap_merge`. A drawing decision only: the budget's folded
-    /// count and every other reader keep the unfolded marks.
+    /// Bubbles are drawn as volume dots, Bookmap style: one dot per bar,
+    /// window of market time and native price level, both sides in it as a
+    /// pie, sized on one fixed scale. The window is anchored at exchange
+    /// epoch 0 and picked by the zoom, so a closed window's dot never
+    /// changes. The bubble setting `overlap_merge`, switched by
+    /// `layers.visibility.set` as layer `bubble_overlap_merge`.
     #[serde(default)]
     pub overlap_merge: bool,
 }

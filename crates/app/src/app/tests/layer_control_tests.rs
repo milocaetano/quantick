@@ -199,14 +199,14 @@ fn omitted_pane_mutations_have_correlated_once_only_and_noop_journal_readback() 
     disable_test_gateway(&mut app, &ctx);
 }
 
-/// The overlap fold is a registered display switch, so an agent reaches it by
+/// Volume dots are a registered display switch, so an agent reaches them by
 /// the same named call as every other one — no mouse, no second vocabulary —
 /// and reads the answer back from the bubbles scope.
 #[test]
-fn the_overlap_fold_is_switched_by_the_layer_call() {
+fn volume_dots_are_switched_by_the_layer_call() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(4);
-    let directory = gateway_test_directory("overlap-fold-switch");
+    let directory = gateway_test_directory("volume-dots-switch");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
     enable_test_gateway(&mut app, &ctx, &directory, 4);
     let mut cockpit = connect(

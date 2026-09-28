@@ -75,9 +75,9 @@ pub struct BubblePreset {
     /// reads as a tape or as a summary.
     #[serde(default)]
     pub candle_summary: bool,
-    /// Whether bubbles fold on the overlap grid, one mark per cell. Off
-    /// unless a preset says so, so a file written before the switch existed
-    /// draws exactly what it drew.
+    /// Whether bubbles are drawn as Bookmap-style volume dots. Off unless a
+    /// preset says so, so a file written before the switch existed draws
+    /// exactly what it drew.
     #[serde(default)]
     pub overlap_merge: bool,
     /// Height of one aggression region in visual price rows; one is off. A

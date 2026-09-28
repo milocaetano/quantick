@@ -311,8 +311,7 @@ impl<'a> RenderContext<'a> {
         let style = self.style;
         let projection = self.projection;
         let both_sides = style.show_buy && style.show_sell;
-        let marks = projection.drawn_bubbles(both_sides);
-        marks.iter().filter(move |mark| {
+        projection.aggressions.iter().filter(move |mark| {
             // Which pane a print belongs to is the projection's own answer —
             // the same one that clustered it on the tape's window rather than
             // history's — so the switch is read from the mark, never inferred

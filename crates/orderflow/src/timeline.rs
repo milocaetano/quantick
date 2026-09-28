@@ -305,18 +305,29 @@ impl BarTimeline {
             .then(|| self.slot_position(timestamp_ms))
     }
 
-    /// The bar a timestamp belongs to among the bars this timeline holds, or
-    /// `None` when none of them spans it. Unlike
-    /// [`locate_in_slot`](Self::locate_in_slot) it never clamps: a print past
-    /// the last visible bar — the tape while the candles are panned into
-    /// history — belongs to a bar this timeline does not know.
+    /// The bar slot a timestamp falls in, or `None` when no slot this
+    /// timeline holds spans it. Unlike [`locate_in_slot`](Self::locate_in_slot)
+    /// it never clamps: a print past the last bar on screen — the tape while
+    /// the candles are panned into history — is in a bar this timeline does
+    /// not have.
     #[must_use]
-    pub fn bar_at(&self, timestamp_ms: i64) -> Option<usize> {
+    pub fn slot_at(&self, timestamp_ms: i64) -> Option<SlotSpan> {
         let partition = self
             .slots
             .partition_point(|slot| slot.start_ms <= timestamp_ms);
-        let slot = self.slots.get(partition.checked_sub(1)?)?;
-        (timestamp_ms <= slot.end_ms).then_some(slot.bar_index)
+        let index = partition.checked_sub(1)?;
+        let slot = self.slots[index];
+        (timestamp_ms <= slot.end_ms).then_some(SlotSpan {
+            index,
+            bar_index: slot.bar_index,
+            start_ms: slot.start_ms,
+            end_ms: slot.end_ms,
+        })
+    }
+
+    /// Open times of the bar slots, ascending.
+    pub fn bar_opens(&self) -> impl Iterator<Item = i64> + '_ {
+        self.slots.iter().map(|slot| slot.start_ms)
     }
 
     fn slot_position(&self, timestamp_ms: i64) -> TimelinePosition {
@@ -354,18 +365,6 @@ impl BarTimeline {
                 start_ms: slot.start_ms,
                 end_ms: slot.end_ms,
             })
-    }
-
-    /// The slot at `index` and the market time it spans. `None` past the
-    /// last slot.
-    #[must_use]
-    pub fn slot_span(&self, index: usize) -> Option<SlotSpan> {
-        self.slots.get(index).map(|slot| SlotSpan {
-            index,
-            bar_index: slot.bar_index,
-            start_ms: slot.start_ms,
-            end_ms: slot.end_ms,
-        })
     }
 
     /// Normalized x of a whole slot: `[left, right)` of its region.

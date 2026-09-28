@@ -588,7 +588,7 @@ impl BubbleHealthSection<'_> {
                 "bubble carries the exact summed quantity and says how many ",
                 "marks it stands for. A fold never crosses a side, a pane or a ",
                 "bar, so a frame with more of those than it has budget draws ",
-                "the extra marks instead. Nothing is discarded; overlap merges are not counted",
+                "the extra marks instead. Nothing is discarded",
             ));
         }
     }

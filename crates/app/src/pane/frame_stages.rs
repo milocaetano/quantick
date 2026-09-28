@@ -117,7 +117,6 @@ impl<'a> FlowFrame<'a> {
                 Some(PaneGeometry {
                     px_per_bar: self.viewport.px_per_bar(),
                     lane_width_px: self.lane_width,
-                    height_px: self.rect.height(),
                     lane_bar_opens: lane_bar_opens(frame.closed, frame.partial, window_ms),
                 }),
             )

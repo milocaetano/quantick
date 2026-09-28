@@ -553,6 +553,19 @@ impl LiveLaneStyle {
         let max = (bubbles.max_radius * scale).clamp(MIN_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MAX_RADIUS);
         (min.min(max), max)
     }
+
+    /// The radius range a pane draws its bubbles on: the tape's own scaled
+    /// range for a `live` mark, the style's for a candle mark — and the
+    /// style's on both panes for volume dots, whose one fixed size scale is
+    /// the promise that equal quantities are equal discs anywhere.
+    #[must_use]
+    pub fn pane_radii(&self, bubbles: &BubbleStyle, live: bool, volume_dots: bool) -> (f32, f32) {
+        if live && !volume_dots {
+            self.scaled_radii(bubbles)
+        } else {
+            (bubbles.min_radius, bubbles.max_radius)
+        }
+    }
 }
 
 #[cfg(test)]

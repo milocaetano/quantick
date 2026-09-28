@@ -10,7 +10,7 @@ use eframe::egui;
 use quantick_engine::Side;
 use quantick_orderflow::{
     AggressionPrimitive, BubbleRenderMode, BubbleStyle, ConsumptionMark, GOLDEN_ANGLE, INV_PHI,
-    INV_PHI_2, INV_PHI_3, bubble_center_offset, bubble_halo_padding, bubble_impact_ring_padding,
+    INV_PHI_2, INV_PHI_3,
 };
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
@@ -81,6 +81,9 @@ impl BubbleColors {
 fn opaque_rgb(rgb: [u8; 3]) -> egui::Color32 {
     egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2])
 }
+
+use quantick_orderflow::{bubble_halo_padding, bubble_impact_ring_padding};
+pub(super) use quantick_orderflow::{bubble_radius, side_offset_y};
 
 /// Interior alpha of a hollow bubble, as a fraction of the configured fill
 /// alpha: enough tint to keep the disc's area readable, light enough that the
@@ -239,7 +242,7 @@ const CROWN_BACKING_ALPHA: u8 = 110;
 ///
 /// Buy aggression lifts the ask, so its crown sits above the print; sell
 /// aggression hits the bid and wears it below. Screen y grows downward. This
-/// is the same fact `bubble_center_offset` encodes, deliberately restated: on a
+/// is the same fact [`side_offset_y`] encodes, deliberately restated: on a
 /// dense tape the two reinforce each other rather than compete.
 const fn crown_center_angle(side: Side) -> f32 {
     match side {
@@ -572,8 +575,6 @@ pub(super) struct BubbleMark {
     /// How many separate marks the frame's budget folded into this one; zero
     /// on a bubble that is what it looks like.
     pub(super) folded: u32,
-    /// Nothing but the disc: its grid cell left no room for any dressing.
-    pub(super) bare: bool,
 }
 
 /// Draw one bubble: halo, fill, rim and — when the print ate resting
@@ -598,7 +599,6 @@ pub(super) fn draw_bubble(
         matched,
         buy_share,
         folded,
-        bare,
     } = mark;
     let color = colors.for_side(side);
 
@@ -632,7 +632,7 @@ pub(super) fn draw_bubble(
     // merely scaled with it: the top rung of the φ ladder, `max / φ`. Under a
     // gate it is a handful of prints a minute; under none it was a fog beneath
     // every speck on the tape, which is the same ink spent to say nothing.
-    let haloed = !bare && !hollow && dressed && radius >= bubbles.max_radius * INV_PHI;
+    let haloed = !hollow && dressed && radius >= bubbles.max_radius * INV_PHI;
     if haloed && bubbles.halo_strength > 0.0 {
         painter.circle_filled(
             center,
@@ -642,7 +642,7 @@ pub(super) fn draw_bubble(
     }
     // The dark hair between the mark and the heat behind it. Skipped on the
     // cheap-dot path, which stays a single circle per print.
-    if !bare && (dressed || hollow) {
+    if dressed || hollow {
         let hair = separator_ring_width(radius);
         painter.circle_stroke(
             center,
@@ -651,9 +651,7 @@ pub(super) fn draw_bubble(
         );
     }
     if hollow {
-        // A bare disc keeps its ring inside the radius even at a speck.
-        let ring = hollow_ring_width(radius).min(if bare { radius } else { f32::INFINITY });
-        let ring_radius = (radius - ring / 2.0).max(if bare { 0.0 } else { 0.5 });
+        let ring = hollow_ring_width(radius);
         painter.circle_filled(
             center,
             radius,
@@ -663,7 +661,7 @@ pub(super) fn draw_bubble(
         // exactly the area its quantity earned.
         painter.circle_stroke(
             center,
-            ring_radius,
+            (radius - ring / 2.0).max(0.5),
             egui::Stroke::new(ring, color.gamma_multiply(bubbles.opacity)),
         );
     } else if mixed || sphere {
@@ -697,7 +695,7 @@ pub(super) fn draw_bubble(
     } else {
         painter.circle_filled(center, radius, color.gamma_multiply(bubbles.opacity));
     }
-    if !bare && !hollow && dressed && bubbles.outline_width > 0.0 {
+    if !hollow && dressed && bubbles.outline_width > 0.0 {
         // A sphere's rim adopts the darkened edge colour: the dark separator
         // is what keeps two overlapping same-side bubbles readable as two.
         let rim = if sphere {
@@ -719,20 +717,14 @@ pub(super) fn draw_bubble(
     // whole change exists to prevent. So a fold wears a ring, and says how many
     // marks are under it wherever there is room to say it.
     if folded > 1 {
-        // Bare, the ring goes inside the rim, in the label's colour: the
-        // side's own would vanish against the disc.
-        let (ring_radius, width, ink) = if bare {
-            let width = FOLD_RING_WIDTH.min(radius);
-            (radius - width / 2.0, width, colors.text)
-        } else {
-            (
-                radius + FOLD_RING_GAP,
+        painter.circle_stroke(
+            center,
+            radius + FOLD_RING_GAP,
+            egui::Stroke::new(
                 FOLD_RING_WIDTH,
-                color.gamma_multiply(bubbles.opacity),
-            )
-        };
-        let ink = ink.gamma_multiply(FOLD_RING_ALPHA);
-        painter.circle_stroke(center, ring_radius, egui::Stroke::new(width, ink));
+                color.gamma_multiply(FOLD_RING_ALPHA * bubbles.opacity),
+            ),
+        );
         // The count itself lives in the bubble's own label, where the eye
         // already is, as `⊕4` against a cluster's `×4` — see `bubble_label`.
         // Drawing it a second time here put two glyph runs on the same pixel,
@@ -740,8 +732,8 @@ pub(super) fn draw_bubble(
         // its label always draws too.
     }
 
-    // This print ate resting liquidity here; a bare disc has no room to say so.
-    let Some(matched_fraction) = matched.filter(|_| !bare) else {
+    // This print ate resting liquidity at this exact price.
+    let Some(matched_fraction) = matched else {
         return;
     };
     match bubbles.consumption_mark {
@@ -806,30 +798,33 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     let colors = BubbleColors::resolve(&palette, bubbles);
     let clip = painter.with_clip_rect(context.layout.chart_rect);
 
-    // The side nudge is `bubble_center_offset`, the overlap fold's own.
+    // The side nudge generalizes to a bubble carrying both sides: it slides
+    // continuously with the buy share, so an even split sits on the exact
+    // price and a lopsided one leans the way its dominant side would.
     // A print is drawn only inside its own pane: one panned off the right of
     // the candles is out of sight, not on top of the tape.
-    let inverted = context.layout.inverted;
+    // The lean is toward the dominant side's book half — a price direction,
+    // so it mirrors with the chart like side_offset_y does.
+    let lean_sign = if context.layout.inverted { 1.0 } else { -1.0 };
+    let dots = context.projection.volume_dots;
+    let side_offset = bubbles.side_offset_for(dots);
     let center_of = |trade: &AggressionPrimitive| {
         let center = egui::pos2(context.layout.x(trade.x), context.layout.y(trade.y));
-        // A mark the overlap grid placed carries its lean already.
-        let lean = if trade.cell_radius_px.is_some() {
-            0.0
-        } else {
-            bubble_center_offset(trade.buy_share, bubbles.side_offset, inverted)
-        };
-        let pane = context.layout.pane(trade.x);
-        pane.contains(center)
-            .then(|| center + egui::vec2(0.0, lean))
+        let lean = (finite_unit(trade.buy_share) - 0.5) * 2.0;
+        context
+            .layout
+            .pane(trade.x)
+            .contains(center)
+            .then(|| center + egui::vec2(0.0, lean_sign * lean * side_offset))
     };
     // The live lane has room the compressed history does not, which is the
-    // whole reason it gets a radius range of its own.
-    let (lane_min, lane_max) = style.live_lane.scaled_radii(bubbles);
-    let disc_of = |trade: &AggressionPrimitive| {
+    // whole reason it gets a radius range of its own (volume dots excepted).
+    let (lane_min, lane_max) = style.live_lane.pane_radii(bubbles, true, dots);
+    let radius_of = |trade: &AggressionPrimitive| {
         if trade.live {
-            trade.drawn_disc(lane_min, lane_max, bubbles)
+            bubble_radius(trade.size, lane_min, lane_max)
         } else {
-            trade.drawn_disc(bubbles.min_radius, bubbles.max_radius, bubbles)
+            bubble_radius(trade.size, bubbles.min_radius, bubbles.max_radius)
         }
     };
 
@@ -862,14 +857,10 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 continue;
             };
             let pane = context.layout.pane(trade.x);
-            let half_height = trail_half_height(disc_of(trade).radius);
-            // A grid mark's trail stops at its cell's reach, short of the next.
-            let right = trade
-                .cell_radius_px
-                .map_or(pane.right(), |reach| pane.right().min(center.x + reach));
+            let half_height = trail_half_height(radius_of(trade));
             add_gradient_rect(
                 &mut trail_mesh,
-                trail_rect(center, half_height, bubbles.trail_length, right).intersect(pane),
+                trail_rect(center, half_height, bubbles.trail_length, pane.right()).intersect(pane),
                 colors.trail.gamma_multiply(bubbles.trail_opacity),
                 egui::Color32::TRANSPARENT,
             );
@@ -884,8 +875,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             continue;
         };
         let clip = clip_for(trade);
-        let disc = disc_of(trade);
-        let radius = disc.radius;
+        let radius = radius_of(trade);
         let linked_reduction =
             trade.matched_fraction > 0.0 || !trade.liquidity_event_ids.is_empty();
         draw_bubble(
@@ -898,7 +888,6 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 matched: linked_reduction.then_some(trade.matched_fraction),
                 buy_share: trade.buy_share,
                 folded: trade.folded_marks,
-                bare: !disc.dressed,
             },
             bubbles,
             &colors,
@@ -934,14 +923,14 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
 
 /// The text inside a bubble: what traded, and how many prints it stands for.
 ///
-/// `folded` is what the frame merged into this mark, and it changes the
-/// *separator* rather than adding a second number. `×4` is a cluster: four
-/// prints that traded together at one price, a fact about the market. `⊕4` is
-/// a fold: four marks the frame put together, a fact about the canvas. A size
-/// read off the first is right and off the second wrong, so they may not share
-/// a glyph. The `⊕` is Phosphor's circled plus — the text font has none and
-/// drew a box. The ring around a folded disc says the same again, further out,
-/// for the dots too small to carry text.
+/// `folded` is what the frame's budget merged into this mark, and it changes
+/// the *separator* rather than adding a second number. `×4` is a cluster — four
+/// prints that happened together at one price, which is a fact about the
+/// market. `⊕4` is a fold — four marks the frame put together to fit, which is
+/// a fact about the canvas. A trader sizing a position off the first would be
+/// right and off the second would be wrong, so they may not share a glyph. The
+/// ring around a folded disc says the same thing again, further out, for the
+/// dots too small to carry text.
 pub(super) fn bubble_label(
     quantity: Decimal,
     trade_count: usize,
@@ -949,7 +938,7 @@ pub(super) fn bubble_label(
     show_quantity: bool,
     show_count: bool,
 ) -> Option<String> {
-    let mark = ["×", egui_phosphor::regular::PLUS_CIRCLE][usize::from(folded > 1)];
+    let mark = if folded > 1 { '⊕' } else { '×' };
     match (show_quantity, show_count && trade_count > 1) {
         (false, false) => None,
         (true, false) => Some(format_quantity(quantity)),

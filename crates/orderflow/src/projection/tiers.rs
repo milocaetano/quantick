@@ -9,6 +9,7 @@
 
 use rust_decimal::Decimal;
 
+use super::dots::{BarOpens, VolumeDots, dot_clusters, native_grouping, window_start};
 use super::model::{AggressionPrimitive, PriceWindow, normalized_area_size};
 use crate::config::HeatmapConfig;
 use crate::grouping::EffectiveGrouping;
@@ -25,7 +26,7 @@ use crate::timeline::BarTimeline;
 /// from both ends: which prints this tier owns at all, and which of the ones it
 /// owns belong on the tape rather than in a bar slot.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct TierCut {
+pub(super) struct TierCut<'a> {
     /// Half-open `[from, until)` in exchange milliseconds.
     pub(super) range: (Option<i64>, Option<i64>),
     // Where the tape begins, for the half that owns the tape — `None` for the
@@ -37,6 +38,9 @@ pub(super) struct TierCut {
     // not rebuilt drew a print in a bar slot while the live half drew the same
     // print on the tape.
     pub(super) tape_from_ms: Option<i64>,
+    /// The volume-dot windows, when the tier keys dots: the tape's window
+    /// is also what decides which prints are the tape's.
+    pub(super) dots: Option<&'a VolumeDots>,
 }
 
 /// The price resolutions the two views cluster on.
@@ -71,19 +75,25 @@ pub(super) struct TierClusters {
 /// tape. The tape is only *almost* ordered by timestamp; the start is found on
 /// the running newest timestamp, so one print delivered out of order can
 /// neither hide a print behind it nor send the walk back to the oldest print.
+///
+/// With [`TierCut::dots`] the prints are keyed into volume dots instead of
+/// clustered, and a print is the tape's when its tape window starts at or
+/// after the tape does — so a window leaves the tape whole, never split
+/// across the divider. A candle dot needs its bar on screen.
 pub(super) fn cluster_tier(
     history: &LiquidityHistory,
     timeline: &BarTimeline,
     prices: PriceWindow,
     coverage: &[CoverageSegment],
     grouping: TierGrouping,
-    cut: TierCut,
+    cut: TierCut<'_>,
     summarizing: bool,
 ) -> TierClusters {
     let config = history.config();
     let TierCut {
         range: (from_ms, until_ms),
         tape_from_ms,
+        dots,
     } = cut;
     let mut tape_prints = Vec::new();
     let mut slot_prints = Vec::new();
@@ -96,7 +106,11 @@ pub(super) fn cluster_tier(
         if timeline.locate(trade.timestamp_ms).is_none() || prices.y(trade.price).is_none() {
             continue;
         }
-        let on_tape = tape_from_ms.is_some_and(|start| trade.timestamp_ms >= start);
+        let tape_from = match dots {
+            Some(dots) => window_start(trade.timestamp_ms, dots.tape_window_ms),
+            None => trade.timestamp_ms,
+        };
+        let on_tape = tape_from_ms.is_some_and(|start| tape_from >= start);
         if on_tape {
             tape_prints.push(trade);
         }
@@ -109,9 +123,20 @@ pub(super) fn cluster_tier(
         // the dishonesty this whole change exists to remove. The summary is the
         // one exception: a pie is an aggregate of the bar, not a second copy of
         // a print, so the bar keeps counting prints the tape is still showing.
-        if summarizing || !on_tape {
+        if (summarizing || !on_tape)
+            && (dots.is_none() || timeline.slot_at(trade.timestamp_ms).is_some())
+        {
             slot_prints.push(trade);
         }
+    }
+
+    if let Some(dots) = dots {
+        let native = native_grouping(config);
+        let bars = BarOpens::new(timeline, dots);
+        return TierClusters {
+            tape: dot_clusters(tape_prints, coverage, native, dots.tape_window_ms, &bars),
+            slot: dot_clusters(slot_prints, coverage, native, dots.candle_window_ms, &bars),
+        };
     }
 
     // Each view clusters on its own window: the tape has room the compressed
@@ -139,6 +164,10 @@ pub(super) fn cluster_tier(
 }
 
 /// Apply the display floors, fold what is too small to read, and summarize.
+///
+/// Volume dots (`dots`) take the fixed floor only: the dust merge's moving
+/// reference made marks blink, and the regional fold and the summary are
+/// what a dot replaces.
 pub(super) fn refine_tier(
     mut tier: TierClusters,
     config: &HeatmapConfig,
@@ -146,8 +175,9 @@ pub(super) fn refine_tier(
     timeline: &BarTimeline,
     grouping: EffectiveGrouping,
     summarizing: bool,
+    dots: bool,
 ) -> (TierClusters, Decimal) {
-    let regionalizing = config.bubble_region_rows > 1;
+    let regionalizing = !dots && config.bubble_region_rows > 1;
     // What the trader's own display floor takes off the canvas. Counted rather
     // than merely applied: it is the one discard left in this pipeline, it is a
     // setting the trader chose, and a setting that quietly removes contracts
@@ -188,7 +218,11 @@ pub(super) fn refine_tier(
     // Sized against the reference computed above, which is deliberately *not*
     // recomputed — merging is a drawing decision and must not rescale the
     // bubbles that were already readable.
-    if let Some(dust) = config.bubbles.dust_quantity(print_reference) {
+    if let Some(dust) = config
+        .bubbles
+        .dust_quantity(print_reference)
+        .filter(|_| !dots)
+    {
         tier.tape = merge_dust_clusters(tier.tape, dust, config.bubble_dust_merge_ms);
         tier.slot = merge_dust_clusters(tier.slot, dust, config.bubble_dust_merge_ms);
     }
@@ -243,12 +277,17 @@ pub(super) fn refine_tier(
 }
 
 /// Place one tier's marks on the chart, each on the scale its view reads on.
+///
+/// A volume dot (`dots`) is placed at the instant its keying chose, held
+/// inside its own bar's slot on the candles and inside the tape's window on
+/// the tape — the window of a forming dot may reach past the live edge.
 pub(super) fn tier_primitives(
     marks: TierClusters,
     timeline: &BarTimeline,
     prices: PriceWindow,
     print_reference: Decimal,
     summary_reference: Decimal,
+    dots: bool,
 ) -> Vec<AggressionPrimitive> {
     marks
         .tape
@@ -264,10 +303,15 @@ pub(super) fn tier_primitives(
             // A tape mark is placed by the live edge it is measured from; a
             // slot mark by the bar it belongs to. `locate` answers the first,
             // so a settled mark has to ask for its bar's slot explicitly.
-            let position = if live {
-                timeline.locate(cluster.timestamp_ms)?
-            } else {
-                timeline.locate_in_slot(cluster.timestamp_ms)?
+            let position = match (live, dots) {
+                (true, false) => timeline.locate(cluster.timestamp_ms)?,
+                (false, false) => timeline.locate_in_slot(cluster.timestamp_ms)?,
+                (true, true) => timeline.locate_clamped(cluster.timestamp_ms)?,
+                (false, true) => {
+                    let slot = timeline.slot_at(cluster.first_timestamp_ms)?;
+                    let last = slot.end_ms.saturating_sub(1).max(slot.start_ms);
+                    timeline.locate_in_slot(cluster.timestamp_ms.clamp(slot.start_ms, last))?
+                }
             };
             let y = prices.y(cluster.price)?;
             let size = normalized_area_size(cluster.quantity, reference);
@@ -304,7 +348,6 @@ fn aggression_primitive(
         price_span: cluster.price_span,
         trade_count: cluster.trade_count,
         first_timestamp_ms: cluster.first_timestamp_ms,
-        placed_ms: cluster.timestamp_ms,
         last_timestamp_ms: cluster.last_timestamp_ms,
         matched_quantity: cluster.matched_quantity,
         buy_quantity: cluster.buy_quantity,
@@ -314,6 +357,5 @@ fn aggression_primitive(
         y,
         size,
         folded_marks: 0,
-        cell_radius_px: None,
     }
 }

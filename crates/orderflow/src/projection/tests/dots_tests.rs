@@ -182,10 +182,13 @@ fn a_closed_window_is_the_same_dot_on_every_frame() {
         at(12_700, 1_500, None, prices("70", "130")),
         at(12_700, 1_500, Some(2..10), prices("90", "110")),
     ];
-    // Bars 2..6, which every frame shows, and windows the tape of every frame
-    // has let go of.
+    // Bars 2..6, which every frame shows, windows the tape of every frame has
+    // let go of, and levels every price window shows.
     let closed = |mark: &AggressionPrimitive| {
-        !mark.live && mark.first_timestamp_ms >= 2_000 && mark.last_timestamp_ms < 6_000
+        !mark.live
+            && mark.first_timestamp_ms >= 2_000
+            && mark.last_timestamp_ms < 6_000
+            && mark.price_bucket <= dec("107")
     };
     let reference = facts(&frames[0], closed);
     assert!(reference.len() > 100, "the fixture draws closed dots");

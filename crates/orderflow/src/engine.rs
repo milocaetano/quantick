@@ -16,7 +16,8 @@ use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::{
     BarTimeline, HeatmapConfig, HeatmapProjection, HistoryStatus, LiquidityHistory, LiveEdge,
-    PaneGeometry, PriceWindow, SettledProjection, project_live, project_settled, reserved_span_ms,
+    PaneGeometry, PriceWindow, SettledProjection, VolumeDots, project_live, project_settled,
+    reserved_span_ms,
 };
 
 /// Minimum interval between dirty rebuilds of the finished half of the chart.
@@ -208,13 +209,14 @@ pub struct ProjectionRequest {
     /// candles' viewport is not a statement about the tape.
     pub lane_reference_ms: Option<i64>,
     pub price_range: (f64, f64),
-    /// The pixels the frame will be drawn on, for the overlap fold
-    /// ([`HeatmapConfig::bubble_overlap_merge`]). `None` from a caller with no
-    /// canvas, which then gets the frame unfolded.
+    /// How the chart is zoomed, for volume dots
+    /// ([`HeatmapConfig::bubble_overlap_merge`]): the zoom picks each pane's
+    /// dot window. `None` from a caller with no canvas, which then gets the
+    /// plain frame.
     ///
-    /// Not part of [`Self::layout`]: the fold runs on every frame after the
-    /// halves are joined, so a resize never has to invalidate the settled
-    /// cache to be honoured.
+    /// Not part of [`Self::layout`]: only the candles' window decides the
+    /// finished half, and the cache keys on that window itself, so a zoom of
+    /// the tape alone never rebuilds it.
     pub pane_geometry: Option<PaneGeometry>,
 }
 
@@ -248,9 +250,22 @@ struct ProjectionCache {
     /// where the tape starts, which is what lets this cache stay valid while
     /// the trader moves the tape's speed.
     seam_ms: Option<i64>,
+    /// The candles' volume-dot window this half was keyed on, `None` when it
+    /// holds no dots. Part of the key because a zoom across a ladder step
+    /// re-keys every closed dot.
+    dot_window_ms: Option<i64>,
     /// The finished half of the chart, reused until the layout moves or a dirty
     /// revision is old enough to rebuild.
     settled: Arc<SettledProjection>,
+}
+
+/// The series' typical bar duration a request carries, or failing that the
+/// one its own closed bars suggest: what the lane's window is sized from and
+/// what the candles' zoom is measured in.
+fn typical_bar_ms(request: &ProjectionRequest) -> i64 {
+    request
+        .lane_reference_ms
+        .unwrap_or_else(|| reserved_span_ms(&request.closed))
 }
 
 /// Health data consumed by the periodic AI-first application summary.
@@ -1054,9 +1069,7 @@ impl BookEngine {
         if !request.lane {
             return None;
         }
-        let reference_ms = request
-            .lane_reference_ms
-            .unwrap_or_else(|| reserved_span_ms(&request.closed));
+        let reference_ms = typical_bar_ms(request);
         Some(LiveEdge {
             // Whichever stream is running. Reading this off the book alone is
             // what left a prints-only feed with no live edge, and so no tape.
@@ -1097,10 +1110,27 @@ impl BookEngine {
         if timeline.is_empty() {
             return None;
         }
+        // The bar the candles' zoom is measured in is the lane's reference —
+        // the series' typical bar — for the reason the lane uses it: the bars
+        // on screen are not a statement about the series.
+        let dots = request
+            .pane_geometry
+            .as_ref()
+            .filter(|_| self.config.bubble_overlap_merge)
+            .map(|geometry| {
+                VolumeDots::resolve(
+                    geometry,
+                    &self.config.bubbles,
+                    &timeline,
+                    typical_bar_ms(request),
+                )
+            });
+        let dot_window_ms = dots.as_ref().map(|dots| dots.candle_window_ms);
 
         let settled = match &self.projection_cache {
             Some(cache)
                 if cache.layout == layout
+                    && cache.dot_window_ms == dot_window_ms
                     && cache.seam_ms == timeline.live_boundary_ms()
                     && ((cache.settled_revision == self.settled_revision
                         && cache.timeline_revision == request.timeline_revision)
@@ -1112,7 +1142,12 @@ impl BookEngine {
             }
             _ => {
                 let projection_started = Instant::now();
-                let settled = Arc::new(project_settled(&self.history, &timeline, prices));
+                let settled = Arc::new(project_settled(
+                    &self.history,
+                    &timeline,
+                    prices,
+                    dots.as_ref(),
+                ));
                 self.last_projection_ms = projection_started.elapsed().as_secs_f32() * 1000.0;
                 self.last_projection_cells = settled.cells.len();
                 self.last_dropped_cells = settled.dropped_cells;
@@ -1125,6 +1160,7 @@ impl BookEngine {
                     timeline_revision: request.timeline_revision,
                     settled_revision: self.settled_revision,
                     seam_ms: timeline.live_boundary_ms(),
+                    dot_window_ms,
                     settled: Arc::clone(&settled),
                 });
                 settled
@@ -1132,11 +1168,8 @@ impl BookEngine {
         };
 
         let live_started = Instant::now();
-        let live = project_live(&self.history, &timeline, prices, &settled);
-        let mut projection = settled.with_live(live, &self.config);
-        if let Some(geometry) = &request.pane_geometry {
-            projection.merge_overlapping_bubbles(geometry, &timeline, prices, &self.config);
-        }
+        let live = project_live(&self.history, &timeline, prices, &settled, dots.as_ref());
+        let projection = settled.with_live(live, &self.config);
         self.last_live_ms = live_started.elapsed().as_secs_f32() * 1000.0;
         self.last_projection_aggressions = projection.aggressions.len();
         self.last_projection_liquidity_events = projection.liquidity_events.len();
