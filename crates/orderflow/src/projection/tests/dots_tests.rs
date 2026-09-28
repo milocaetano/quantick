@@ -983,23 +983,6 @@ fn the_window_recording_started_in_is_not_drawn() {
     );
 }
 
-/// While dots are on, the tape's window is not the lane setting's to choose:
-/// the surfaces that edit it say so instead of offering edits that do nothing.
-#[test]
-fn the_tape_window_says_it_is_fixed_while_dots_are_on() {
-    let on = dots_config();
-    let hint = on.lane_window_locked().expect("locked while dots are on");
-    assert!(hint.contains("fixed while volume dots are on"), "{hint}");
-    let off = HeatmapConfig {
-        volume_dots: VolumeDotStyle {
-            enabled: false,
-            ..on.volume_dots
-        },
-        ..on.clone()
-    };
-    assert_eq!(off.lane_window_locked(), None);
-}
-
 /// A full-size quantity that is not a number falls back to the dots' own
 /// default, never to a constant of its own.
 #[test]
@@ -1012,32 +995,39 @@ fn a_broken_dot_scale_falls_back_to_the_default() {
     );
 }
 
-/// With dots on the tape is a fixed 15 s, whatever the bars do, so it never
-/// rescales when a bar closes; off, the lane's own setting is untouched.
+/// With dots on the tape never follows the bars, so it never rescales when a
+/// bar closes: automatic is 15 s at zoom 1, scaled by the zoom alone, and a
+/// pinned window is the trader's. Squeezing the tape's time axis still shows
+/// more market time, which the tape rung then groups into wider windows.
 #[test]
-fn dots_fix_the_tape_at_fifteen_seconds() {
+fn dots_keep_the_tape_off_the_bars_but_let_it_zoom() {
     use crate::config::{DOT_TAPE_WINDOW_MS, LaneWindow};
     assert_eq!(DOT_TAPE_WINDOW_MS, 15_000);
-    for window in [
-        LaneWindow::Auto { zoom: 1.0 },
-        LaneWindow::Fixed { ms: 60_000 },
-    ] {
+    let with = |window: LaneWindow| {
         let mut config = dots_config();
         config.live_lane.window = window;
-        for reference_ms in [1_000, 4_000, 90_000] {
-            assert_eq!(config.lane_window_ms(reference_ms), DOT_TAPE_WINDOW_MS);
-            assert_eq!(
-                config.lane_window(),
-                LaneWindow::Fixed {
-                    ms: DOT_TAPE_WINDOW_MS
-                }
-            );
+        config
+    };
+    for reference_ms in [1_000, 4_000, 90_000] {
+        let auto = with(LaneWindow::Auto { zoom: 1.0 });
+        assert_eq!(auto.lane_window_ms(reference_ms), DOT_TAPE_WINDOW_MS);
+        let squeezed = with(LaneWindow::Auto { zoom: 0.25 });
+        assert_eq!(squeezed.lane_window_ms(reference_ms), 60_000);
+        let pinned = with(LaneWindow::Fixed { ms: 120_000 });
+        assert_eq!(pinned.lane_window_ms(reference_ms), 120_000);
+        let mut dragged = with(LaneWindow::Auto { zoom: 1.0 });
+        dragged.live_lane.window.zoom_by(0.5);
+        assert_eq!(dragged.lane_window_ms(reference_ms), 30_000);
+        for window in [
+            LaneWindow::Auto { zoom: 1.0 },
+            LaneWindow::Fixed { ms: 60_000 },
+        ] {
             let off = HeatmapConfig {
                 volume_dots: VolumeDotStyle {
                     enabled: false,
                     ..dots_config().volume_dots
                 },
-                ..config.clone()
+                ..with(window)
             };
             assert_eq!(off.lane_window(), window);
             assert_eq!(
