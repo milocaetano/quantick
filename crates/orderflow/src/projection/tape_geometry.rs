@@ -1,5 +1,6 @@
 //! Shared tape radius limits and insets for dots, clock labels and price fit.
 
+use crate::HeatmapConfig;
 use crate::config::{BubbleStyle, bubble_halo_padding};
 
 /// Decoration may consume at most this fraction of the pane at each edge.
@@ -52,6 +53,21 @@ impl TapeHorizontalGeometry {
             inset_px,
             span_px: (width - 2.0 * inset_px).max(0.0),
         }
+    }
+
+    /// The inset the native tape pads the price axis fit with, on a chart
+    /// this wide and tall; `0` when the pane does not draw the native tape.
+    ///
+    /// Measured on the lane setting's own band, never on a divider already
+    /// laid out: before the tape has a live edge no band is on screen, and a
+    /// fit padded for no band would step the moment the band appears.
+    #[must_use]
+    pub fn native_price_inset_px(config: &HeatmapConfig, chart_width: f32, height: f32) -> f32 {
+        if !config.native_tape() {
+            return 0.0;
+        }
+        let width = config.live_lane.resolved_width_px(chart_width);
+        Self::resolve(width, height, &config.bubbles).price_inset_px
     }
 
     /// Pixel coordinate relative to the pane's left edge for this time

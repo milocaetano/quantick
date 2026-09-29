@@ -546,14 +546,20 @@ impl HeatmapConfig {
         self.lane_enabled() && self.live_lane.tape_only
     }
 
-    /// Whether the tape on the canvas is the native tape
-    /// ([`LiveLaneStyle::native`]): execution coordinates, the market clock,
-    /// the whole window and a price axis fitted by its prints, beside the
-    /// candles or alone. Every processing site asks this, never
-    /// [`tape_only`](Self::tape_only).
+    /// Whether the tape on the canvas is the native tape: execution
+    /// coordinates, the market clock, the whole window and a price axis
+    /// fitted by its prints, beside the candles or alone. Every processing
+    /// site asks this, never [`tape_only`](Self::tape_only).
+    ///
+    /// Tape only always draws it. Beside the candles it is a tape of
+    /// execution-coordinate volume dots, so the switch
+    /// ([`LiveLaneStyle::native_tape`]) builds it only with volume dots on;
+    /// without them the pane keeps the ordinary lane.
     #[must_use]
     pub fn native_tape(&self) -> bool {
-        self.lane_enabled() && self.live_lane.native()
+        self.lane_enabled()
+            && (self.live_lane.tape_only
+                || (self.live_lane.native_tape && self.volume_dots.enabled))
     }
 
     /// Whether any pane still draws the depth map.

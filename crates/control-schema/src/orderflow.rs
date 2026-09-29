@@ -296,8 +296,11 @@ pub struct BubblesStateSnapshot {
     /// and price, on the market clock over the whole window, with one price
     /// axis fitted by its prints (manual Y allowed). Beside the tick candles
     /// it keeps its share of the pane behind a draggable divider, and moving
-    /// or zooming the candles never changes it. True whenever `tape_only` is.
-    /// The lane setting `native_tape`, saved with the order-flow preset.
+    /// or zooming the candles never changes it. The tape the pane builds, not
+    /// the switch: true whenever `tape_only` is, and beside the candles only
+    /// with the tape on and `overlap_merge` (volume dots) on. The request is
+    /// the lane setting `native_tape`, saved with the order-flow preset and
+    /// read back by `layers.visibility` as layer `native_tape`.
     #[serde(default)]
     pub native_tape: bool,
     /// The pane shows the tape alone, Bookmap style: the native tape takes
@@ -334,7 +337,7 @@ impl BubblesStateSnapshot {
             aggression_provenance: AGGRESSION_PROVENANCE.to_owned(),
             floored_quantity: canonical_decimal(floored_quantity),
             overlap_merge: config.volume_dots.enabled,
-            native_tape: config.live_lane.native(),
+            native_tape: config.native_tape(),
             tape_only: config.live_lane.tape_only,
             ignore_opening_burst_in_scale: config.volume_dots.ignore_opening_burst_in_scale,
             recorded_opening_windows_ms: opening_bursts.to_vec(),
