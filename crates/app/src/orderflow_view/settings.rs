@@ -24,6 +24,9 @@ mod l2_sections;
 #[cfg(test)]
 #[path = "settings/tests/source_preset_persistence.rs"]
 mod source_preset_persistence;
+#[cfg(test)]
+#[path = "settings/tests/tape_only_controls.rs"]
+mod tape_only_controls;
 
 use bubble_sections::{
     BubbleHealthSection, ClusteringSection, ColoursSection, ConsumptionMarksSection, LabelsSection,
