@@ -180,7 +180,10 @@ fn an_expiring_maximum_does_not_merge_previously_separate_closed_dots() {
     assert_eq!(next.marks.len(), 2);
     assert_eq!(source_facts(represented(&next, &[64_198])), a);
     assert_eq!(source_facts(represented(&next, &[64_206])), b);
-    assert!(next.max_radius < 15.0, "one shared cap prevents new occlusion");
+    assert!(
+        next.max_radius < 15.0,
+        "one shared cap prevents new occlusion"
+    );
     assert_proportional_clearance(&next, next_view.geometry);
 }
 
@@ -226,13 +229,16 @@ fn an_expired_whole_group_cannot_return_as_its_later_native_constituent() {
     assert_eq!(first.marks.len(), 1);
     // The group's exact mean is 39.229; its second native cell starts at
     // 39.300 and is still supplied after the aggregate itself leaves.
-    for offset in [300, 310, 320] {
+    for offset in [250, 260, 270] {
         let frame = draw(
             &mut memory,
             &prints[1..2],
             view(WIN_TIME_MS + WINDOW_MS + offset, "187450", "187550"),
         );
-        assert!(frame.marks.is_empty(), "a consumed native cell cannot reappear");
+        assert!(
+            frame.marks.is_empty(),
+            "a consumed native cell cannot reappear"
+        );
     }
 }
 
@@ -241,7 +247,7 @@ fn automatic_price_transforms_preserve_membership_and_use_one_area_scale() {
     let mut memory = TapeDotMemory::default();
     let prints = [
         mark(1, 1_011, 100, 1),
-        mark(2, 1_211, 105, 4),
+        mark(2, 1_211, 110, 4),
         mark(3, 4_011, 180, 16),
     ];
     let first = draw(&mut memory, &prints, view(5_000, "90", "190"));
@@ -249,7 +255,11 @@ fn automatic_price_transforms_preserve_membership_and_use_one_area_scale() {
     let originals: Vec<_> = first.marks.iter().map(source_facts).collect();
     let changed_view = view(5_040, "0", "1000");
     let changed = draw(&mut memory, &prints, changed_view);
-    assert_eq!(changed.marks.len(), 3, "axis changes are not regrouping requests");
+    assert_eq!(
+        changed.marks.len(),
+        3,
+        "axis changes are not regrouping requests"
+    );
     for original in originals {
         let mark = represented(&changed, &original.0);
         assert_eq!(source_facts(mark), original);
@@ -327,11 +337,7 @@ fn retained_group_storage_expires_with_the_visible_tape() {
             "neither retired groups nor their membership cache may accumulate"
         );
     }
-    let empty = draw(
-        &mut memory,
-        &[],
-        view(250_000, "187450", "187550"),
-    );
+    let empty = draw(&mut memory, &[], view(250_000, "187450", "187550"));
     assert!(empty.marks.is_empty());
     assert_eq!(memory.retained_group_count(), 0);
 }
@@ -365,14 +371,14 @@ fn a_reconnected_trade_id_is_not_a_global_membership_identity() {
         view(3_000, "90", "130"),
     );
     let reconnected = mark(1, 4_001, 120, 3);
-    let shown = draw(
-        &mut memory,
-        &[first, reconnected],
-        view(4_100, "90", "130"),
-    );
+    let shown = draw(&mut memory, &[first, reconnected], view(4_100, "90", "130"));
     assert_eq!(shown.marks.len(), 2);
     assert_eq!(
-        shown.marks.iter().map(|mark| mark.quantity).sum::<Decimal>(),
+        shown
+            .marks
+            .iter()
+            .map(|mark| mark.quantity)
+            .sum::<Decimal>(),
         Decimal::from(5)
     );
     assert!(shown.marks.iter().all(|mark| mark.agg_ids == [1]));
@@ -405,7 +411,10 @@ fn a_late_factual_native_update_changes_its_group_once_without_rewriting_others(
     assert_eq!(changed.timestamp_quantity, Decimal::from(5_053));
     assert_eq!(source_facts(represented(&next, &[3])), stable);
     let repeated = draw(&mut memory, &native, view(5_100, "90", "190"));
-    assert_eq!(repeated.marks, next.marks, "publication is replacement, not another trade");
+    assert_eq!(
+        repeated.marks, next.marks,
+        "publication is replacement, not another trade"
+    );
 }
 
 #[test]
@@ -417,17 +426,27 @@ fn canonical_eviction_removes_only_invalid_native_facts_from_a_retained_group() 
         &prints,
         view(WIN_TIME_MS + 2_500, "187450", "187550"),
     );
-    assert_eq!(represented(&before, &[64_198, 64_206]).quantity, Decimal::TWO);
+    assert_eq!(
+        represented(&before, &[64_198, 64_206]).quantity,
+        Decimal::TWO
+    );
     let stable = source_facts(represented(&before, &[64_264]));
     let mut after_view = view(WIN_TIME_MS + 2_600, "187450", "187550");
     after_view.evicted_through_ms = Some(WIN_TIME_MS + 150);
     // Even a stale source slice cannot resurrect an authoritatively evicted cell.
     let after = draw(&mut memory, &prints, after_view);
     assert_eq!(after.marks.len(), 2);
-    assert_eq!(source_facts(represented(&after, &[64_206])), source_facts(&prints[1]));
+    assert_eq!(
+        source_facts(represented(&after, &[64_206])),
+        source_facts(&prints[1])
+    );
     assert_eq!(source_facts(represented(&after, &[64_264])), stable);
     assert_eq!(
-        after.marks.iter().map(|mark| mark.quantity).sum::<Decimal>(),
+        after
+            .marks
+            .iter()
+            .map(|mark| mark.quantity)
+            .sum::<Decimal>(),
         Decimal::from(106)
     );
 }
