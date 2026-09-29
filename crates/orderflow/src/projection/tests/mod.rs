@@ -18,6 +18,7 @@ use std::str::FromStr as _;
 mod candle_dots_tests;
 mod dots_tests;
 mod pending_tests;
+mod tier_geometry_tests;
 
 fn dec(value: &str) -> Decimal {
     Decimal::from_str(value).unwrap()
