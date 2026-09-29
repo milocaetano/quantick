@@ -219,6 +219,17 @@ fn dense_113_second_tape_worker_and_warmed_memory_cost() {
                 phase == "forming"
             );
             let fingerprint = complete_fingerprint(&frame);
+            let expected = match (phase, policy) {
+                ("closed", "none" | "expired") => 0xcc0d_2472_d8fb_773a,
+                ("closed", "present") => 0xf89a_0aa3_7b2c_663e,
+                ("forming", "none" | "expired") => 0x7dae_4a0e_115d_5d73,
+                ("forming", "present") => 0x49ae_a2b6_e727_1d18,
+                _ => unreachable!("the measurement matrix is fixed"),
+            };
+            assert_eq!(
+                fingerprint, expected,
+                "complete baseline for {phase}/{policy}"
+            );
             eprintln!(
                 "DENSE_TAPE_MEMORY phase={phase} opening={policy} native_input={} rendered_output={} max_radius={:.3} full_quantity={} fingerprint={fingerprint:#018x}",
                 native.len(),

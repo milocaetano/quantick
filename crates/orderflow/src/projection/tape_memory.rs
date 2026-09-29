@@ -15,6 +15,10 @@ use super::{
 };
 use crate::config::{BubbleStyle, LiveLaneStyle};
 
+#[cfg(test)]
+#[path = "tests/dots_tests/tape_tests/native_fact_tests.rs"]
+mod native_fact_tests;
+
 /// Drawing inputs. Automatic price changes transform the retained facts;
 /// explicit time-window or pixel-geometry changes start a new display epoch.
 #[derive(Debug, Clone, Copy)]
