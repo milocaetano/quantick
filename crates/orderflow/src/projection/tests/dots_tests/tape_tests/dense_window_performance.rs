@@ -237,6 +237,13 @@ fn dense_113_second_tape_worker_and_warmed_memory_cost() {
                 frame.max_radius,
                 frame.full_quantity
             );
+            if phase == "forming" && policy == "expired" {
+                let mut style = crate::config::theme::OrderflowRenderStyle::from_config(history.config(), [0, 0, 0, 255]);
+                style.dot_sizing = Some(sizing);
+                memory.measure_native_stages(&native, current, &frame, &style, openings);
+                let after = memory.project(&native, current, sizing, &style.bubbles, &style.live_lane, openings);
+                assert_eq!(complete_fingerprint(&after), expected, "stage measurement preserves retained facts");
+            }
             if policy == "expired" {
                 let expected: &TapeDotFrame = without_opening.as_ref().unwrap();
                 assert_eq!(frame.marks, expected.marks);

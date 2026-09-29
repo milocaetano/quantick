@@ -1,11 +1,18 @@
 //! Borrowed native facts obey the former normalized-clone equality contract.
 
-use super::{AggressionPrimitive, TapeDotMemory, TapeDotView, same_native_fact};
+use super::{
+    AggressionPrimitive, Group, TapeDotMemory, TapeDotView, TapeReference, merge_groups,
+    native_facts, normalized_native_fact, reference_quantities, same_native_fact,
+};
 use crate::config::HeatmapConfig;
+use crate::config::theme::OrderflowRenderStyle;
 use crate::history::RestingSide;
 use crate::projection::{DotSizing, PriceWindow, TapeDotGeometry};
 use quantick_engine::Side;
 use rust_decimal::Decimal;
+use std::collections::BTreeMap;
+use std::hint::black_box;
+use std::time::Instant;
 
 fn native() -> AggressionPrimitive {
     AggressionPrimitive {
@@ -210,4 +217,90 @@ fn retained_native_provenance_changes_refresh_without_changing_execution_geometr
     mark.size = f32::NAN;
     let reprojected = draw(&mut memory, &mark);
     assert_eq!(reprojected.marks, adopted.marks);
+}
+
+/// Setup and result destruction are outside the timed interval. Index
+/// construction includes its node allocation; replacement includes removal
+/// and node release. This measures CPU stages, not an allocation count.
+fn measure_stage<Input, Output>(
+    label: &str,
+    mut setup: impl FnMut() -> Input,
+    mut run: impl FnMut(Input) -> Output,
+) -> Output {
+    const SAMPLES: usize = 30;
+    for _ in 0..3 {
+        black_box(run(setup()));
+    }
+    let mut times = Vec::with_capacity(SAMPLES);
+    let mut last = None;
+    for _ in 0..SAMPLES {
+        let input = setup();
+        let started = Instant::now();
+        let output = black_box(run(input));
+        times.push(started.elapsed().as_secs_f64() * 1_000.0);
+        last = Some(output);
+    }
+    let mean = times.iter().sum::<f64>() / SAMPLES as f64;
+    times.sort_by(f64::total_cmp);
+    let median = (times[SAMPLES / 2 - 1] + times[SAMPLES / 2]) / 2.0;
+    eprintln!("TAPE_MEMORY_STAGE {label}: mean_ms={mean:.3} median_ms={median:.3} samples={SAMPLES} warmups=3");
+    last.unwrap()
+}
+
+impl TapeDotMemory {
+    /// Called only by the existing ignored dense fixture. No production
+    /// instrumentation or public-domain API is compiled into the app.
+    pub(crate) fn measure_native_stages(
+        &mut self,
+        marks: &[AggressionPrimitive],
+        view: TapeDotView,
+        frame: &crate::projection::TapeDotFrame,
+        style: &OrderflowRenderStyle,
+        openings: &[i64],
+    ) {
+        let sizing = style.dot_sizing.unwrap();
+        let index = measure_stage("native_index_construction", || (), |_| native_facts(marks, view));
+        assert_eq!(index.len(), marks.len());
+        let (changed, remaining) = measure_stage(
+            "retained_source_replacement",
+            || native_facts(marks, view),
+            |mut index| {
+                let changed = self.replace_facts(&mut index, view.evicted_through_ms);
+                (changed, index)
+            },
+        );
+        assert!(!changed, "the measured prefix is already retained");
+        assert!(remaining.keys().all(|key| key.0 + view.dot_window_ms > view.now_ms));
+        assert!(!remaining.is_empty(), "the benchmark includes a forming window");
+        let _ = measure_stage("frontier_clone_and_forming_preview", || (), |_| {
+            let mut active = self.frontier.clone();
+            active.extend(remaining.iter().map(|(key, mark)| {
+                Group::of(BTreeMap::from([(*key, normalized_native_fact(mark))]))
+            }));
+            let quantities = reference_quantities(&active, openings);
+            let reference = TapeReference {
+                minimum_full: self.reference(&active, sizing, view.now_ms, view.window_ms, openings),
+                quantities: &quantities,
+            };
+            merge_groups(active, view, sizing, &style.bubbles, &style.live_lane, reference, Some(view.now_ms))
+        });
+        let _ = measure_stage("rendered_group_clone", || (), |_| frame.marks.clone());
+        let (_, radius) = measure_stage("coordinates_area_and_radius_cap", || frame.marks.clone(), |mut shown| {
+            crate::projection::position_tape_at(&mut shown, view.now_ms, view.window_ms, view.geometry.left_x, view.dot_window_ms);
+            for mark in &mut shown {
+                mark.y = view.prices.y_unclamped(mark.price).unwrap_or(mark.y);
+                mark.size = crate::projection::normalized_area_size(mark.quantity, frame.full_quantity);
+            }
+            let radius = super::tape_radius_limit(
+                &shown,
+                DotSizing { typed_full: Some(frame.full_quantity), ..sizing },
+                &style.bubbles,
+                &style.live_lane,
+                view.geometry,
+            );
+            (shown, radius)
+        });
+        assert_eq!(radius, frame.max_radius);
+        eprintln!("TAPE_MEMORY_STAGE_BOUNDARY native={} retained_groups={} forming_keys={} rendered={}; fixed warmed forming frame; excludes epoch prep, seal/coincidence passes, final reference selection/sort, input clone, UI/pending/GPU; stages are not a total", marks.len(), self.retained_group_count(), remaining.len(), frame.marks.len());
+    }
 }
