@@ -29,31 +29,39 @@ fn win_marks(count: usize) -> Vec<AggressionPrimitive> {
             mark.agg_id = index as u64 * 2 + 1;
             mark.agg_ids = vec![mark.agg_id, mark.agg_id + 1];
             mark.quantity = quantity;
-            mark.buy_quantity = if index.is_multiple_of(2) { first_quantity } else { last_quantity };
+            mark.buy_quantity = if index.is_multiple_of(2) {
+                first_quantity
+            } else {
+                last_quantity
+            };
             mark.buy_share = (mark.buy_quantity / quantity).to_string().parse().unwrap();
             mark.side = if mark.buy_quantity >= quantity / Decimal::TWO {
                 Side::Buy
             } else {
                 Side::Sell
             };
-            mark.consumed_side = if mark.side == Side::Buy { BookSide::Ask } else { BookSide::Bid };
+            mark.consumed_side = if mark.side == Side::Buy {
+                BookSide::Ask
+            } else {
+                BookSide::Bid
+            };
             mark.price = price;
             mark.price_bucket = price;
             mark.price_span = Decimal::from(5);
             mark.trade_count = 2;
             mark.first_timestamp_ms = first_ms;
             mark.last_timestamp_ms = last_ms;
-            mark.timestamp_quantity = Decimal::from(first_ms) * first_quantity
-                + Decimal::from(last_ms) * last_quantity;
-            mark.y = prices.y(price).expect("the native price is inside the fixture axis");
+            mark.timestamp_quantity =
+                Decimal::from(first_ms) * first_quantity + Decimal::from(last_ms) * last_quantity;
+            mark.y = prices
+                .y(price)
+                .expect("the native price is inside the fixture axis");
             mark
         })
         .collect()
 }
 
-#[test]
-#[ignore = "opt-in measurement; timings are reported, never used as a pass threshold"]
-fn per_frame_tape_positioning_and_merge_cost() {
+fn tape_frame_parameters() -> (HeatmapConfig, DotSizing, TapeDotGeometry) {
     let config = tape_config();
     let sizing = DotSizing {
         tape_column_px: 1.0,
@@ -68,14 +76,54 @@ fn per_frame_tape_positioning_and_merge_cost() {
         width_px: horizontal.span_px,
         height_px: 600.0,
     };
+    (config, sizing, geometry)
+}
+
+/// Fingerprint the complete Debug record, including every exact Decimal,
+/// primitive coordinate, side, execution id and evidence id. The fixed FNV
+/// constants make this independent of process hash seeds.
+fn complete_fingerprint(marks: &[AggressionPrimitive]) -> u64 {
+    const OFFSET_BASIS: u64 = 14_695_981_039_346_656_037;
+    const PRIME: u64 = 1_099_511_628_211;
+    format!("{marks:?}").bytes().fold(OFFSET_BASIS, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(PRIME)
+    })
+}
+
+#[test]
+fn tape_merge_preserves_complete_fixture_outputs() {
+    let (config, sizing, geometry) = tape_frame_parameters();
+    let outputs = [600, 6_000].map(|count| {
+        let mut marks = win_marks(count);
+        position_tape_at(&mut marks, NOW_MS, WINDOW_MS, 0.0, 100);
+        let merged = merge_tape_dots(
+            &marks,
+            sizing,
+            &config.bubbles,
+            &config.live_lane,
+            geometry,
+        );
+        let fingerprint = complete_fingerprint(&merged);
+        eprintln!("tape baseline: {count} input, {} output, fingerprint {fingerprint:#018x}", merged.len());
+        (count, merged.len(), fingerprint)
+    });
+    assert_eq!(
+        outputs,
+        [(600, 271, 0xfe3f_a4e6_88f5_c2dc), (6_000, 587, 0xb16d_5bc3_764b_b568)]
+    );
+}
+
+#[test]
+#[ignore = "opt-in measurement; timings are reported, never used as a pass threshold"]
+fn per_frame_tape_positioning_and_merge_cost() {
+    let (config, sizing, geometry) = tape_frame_parameters();
     for (count, iterations) in [(600, 100_u32), (6_000, 10)] {
         let marks = win_marks(count);
         let quantity: Decimal = marks.iter().map(|mark| mark.quantity).sum();
         let bought: Decimal = marks.iter().map(|mark| mark.buy_quantity).sum();
         let moment: Decimal = marks.iter().map(|mark| mark.timestamp_quantity).sum();
         assert!(marks.iter().all(|mark| {
-            mark.first_timestamp_ms >= NOW_MS - WINDOW_MS
-                && mark.last_timestamp_ms <= NOW_MS
+            mark.first_timestamp_ms >= NOW_MS - WINDOW_MS && mark.last_timestamp_ms <= NOW_MS
         }));
         let mut positioned = marks.clone();
         position_tape_at(&mut positioned, NOW_MS, WINDOW_MS, 0.0, 100);
@@ -105,10 +153,25 @@ fn per_frame_tape_positioning_and_merge_cost() {
              {ms_per_frame:.3} ms/frame over {iterations} measured frames (3 warm-ups)",
             result.len()
         );
-        assert_eq!(result.iter().map(|mark| mark.quantity).sum::<Decimal>(), quantity);
-        assert_eq!(result.iter().map(|mark| mark.buy_quantity).sum::<Decimal>(), bought);
-        assert_eq!(result.iter().map(|mark| mark.timestamp_quantity).sum::<Decimal>(), moment);
-        assert!(result.len() < count, "the dense fixture exercises collision merges");
+        assert_eq!(
+            result.iter().map(|mark| mark.quantity).sum::<Decimal>(),
+            quantity
+        );
+        assert_eq!(
+            result.iter().map(|mark| mark.buy_quantity).sum::<Decimal>(),
+            bought
+        );
+        assert_eq!(
+            result
+                .iter()
+                .map(|mark| mark.timestamp_quantity)
+                .sum::<Decimal>(),
+            moment
+        );
+        assert!(
+            result.len() < count,
+            "the dense fixture exercises collision merges"
+        );
         black_box(result);
     }
 }
