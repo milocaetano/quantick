@@ -262,28 +262,41 @@ impl ChartPane {
                     gaps: chrome.feed_gaps,
                 });
         }
-        if self.layer_visible(ChartLayer::DaySeparator, chrome.style) {
-            // The bar before the first visible one seeds the comparison, so a
-            // day that opens on the leftmost bar is still marked.
-            let series = self.series_read();
-            let starts = quantick_civil::day_starts(
+        // Before the time labels, which stand aside for the dates it writes.
+        // The bar before the first visible one seeds the comparison, so a day
+        // that opens on the leftmost bar is still marked. The forming bar
+        // counts: a day is marked the moment its first bar opens.
+        let days_on = self.layer_visible(ChartLayer::DaySeparator, chrome.style);
+        let series = self.series_read();
+        let starts = if days_on {
+            quantick_civil::day_starts(
                 (start.saturating_sub(1)..end)
                     .filter_map(|slot| Some((slot, series.slot_open_time(slot)?))),
                 chrome.tz,
-            );
-            self.layer_renderers.day_separator(
-                &mut crate::pane::render_registry::DaySeparatorPass {
-                    painter,
-                    pane: history_rect,
-                    strip: areas.time_strip,
-                    total,
-                    candle_width: cw,
-                    viewport: &self.viewport,
-                    starts: &starts,
-                },
-            );
+            )
+        } else {
+            Vec::new()
+        };
+        let mut day_pass = crate::pane::render_registry::DaySeparatorPass {
+            painter,
+            history: history_rect,
+            strip: areas.time_strip,
+            total,
+            candle_width: cw,
+            viewport: &self.viewport,
+            starts: &starts,
+            first_visible: (start < end)
+                .then(|| series.slot_open_time(start))
+                .flatten()
+                .map(|ms| quantick_civil::CivilDate::from_ms(ms, chrome.tz)),
+            claims: time_claims,
+            reserved: Vec::new(),
+        };
+        if days_on {
+            self.layer_renderers.day_separator(&mut day_pass);
         }
         crate::pane::render_registry::TimeStripPass {
+            reserved: &day_pass.reserved,
             painter,
             strip: areas.time_strip,
             start,

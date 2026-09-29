@@ -1,110 +1,136 @@
-//! Where the display day turns over: a faint rule through the candles, a tick
-//! on the time strip and the date the new day opens. The time labels carry a
-//! clock time only, so without it a chart spanning midnight reads as one day.
-use super::super::{SEAM_LABEL_INSET_PX, SEAM_LABEL_PT};
+//! Where the display day turns over, written on the time strip only: a tick
+//! across the strip at the boundary and the date the new day opens, plus the
+//! date of the leftmost bar pinned to the strip's left edge. The time labels
+//! carry a clock time only, so without it a chart spanning midnight reads as
+//! one day. Nothing is drawn over the candles.
 use super::{Contribution, Package};
-use crate::{theme, viewport::Viewport};
+use crate::{pointer_compass, theme, viewport::Viewport};
 use eframe::egui;
 use quantick_civil::{CivilDate, weekday_abbr};
-/// How far the tick reaches down into the time strip from its top rule.
-const DAY_TICK_PX: f32 = 5.0;
+/// Space between the tick and the date it opens, and between two dates.
+const DAY_LABEL_GAP_PX: f32 = 3.0;
 pub(super) const PACKAGE: Package = Package {
     layers: &[quantick_layers::ChartLayer::DaySeparator],
     contributions: &[Contribution::DaySeparator(day_separator)],
 };
 pub(in crate::pane) struct DaySeparatorPass<'a> {
     pub painter: &'a egui::Painter,
-    pub pane: egui::Rect,
+    /// The candles' horizontal extent; the strip's own height.
+    pub history: egui::Rect,
     pub strip: egui::Rect,
     pub total: usize,
     pub candle_width: f32,
     pub viewport: &'a Viewport,
     /// Slots whose bar opens a new display day, from `quantick_civil::day_starts`.
     pub starts: &'a [(usize, CivilDate)],
+    /// The date of the leftmost visible bar, pinned to the strip's left edge.
+    pub first_visible: Option<CivilDate>,
+    /// The pointer's chip outranks a date: it is where the trader is looking.
+    pub claims: &'a pointer_compass::AxisClaims,
+    /// Written here: the spans the dates took, which the time labels avoid.
+    pub reserved: Vec<(f32, f32)>,
 }
 fn day_separator(p: &mut DaySeparatorPass<'_>) {
-    let DaySeparatorPass {
-        painter,
-        pane,
-        strip,
-        total,
-        candle_width,
-        viewport,
-        starts,
-    } = *p;
-    // Right edge of the last date written: zoomed out, midnights sit closer
-    // than a date is wide, and the rule and tick still mark every one.
+    let font = egui::FontId::monospace(crate::chart::TIME_LABEL_FONT_PX);
+    let (left, right) = (p.history.left(), p.history.right());
+    let y = p.strip.center().y;
+    let chip_width = p
+        .painter
+        .layout_no_wrap(
+            crate::chart::TimeLabelFormat::Full.sample().to_owned(),
+            font.clone(),
+            theme::TEXT_MUTED,
+        )
+        .size()
+        .x;
     let mut written_right = f32::NEG_INFINITY;
-    for &(slot, date) in starts {
-        // The left edge of the first bar of the day, like the seam: the rule
-        // separates two bars rather than crossing one.
-        let x = viewport.x_center(slot, pane.right(), total) - candle_width / 2.0;
-        if x < pane.left() || x > pane.right() {
-            continue; // off-screen
+    let mut write = |p: &mut DaySeparatorPass<'_>, start: f32, text: String, color| {
+        let galley = p.painter.layout_no_wrap(text, font.clone(), color);
+        let width = galley.size().x;
+        let fits = start >= written_right + DAY_LABEL_GAP_PX && start + width <= right;
+        let centre = start + width / 2.0;
+        if !fits || pointer_compass::claimed(centre, width, chip_width, p.claims.iter().copied()) {
+            return;
         }
-        painter.line_segment(
-            [egui::pos2(x, pane.top()), egui::pos2(x, pane.bottom())],
-            egui::Stroke::new(1.0_f32, theme::SEAM_LINE),
-        );
-        painter.line_segment(
+        p.painter
+            .galley(egui::pos2(start, y - galley.size().y / 2.0), galley, color);
+        p.reserved.push((start, start + width));
+        written_right = start + width;
+    };
+    // Pinned first, so a boundary date close to the left edge wins by
+    // pushing it out rather than being pushed itself.
+    let ticks: Vec<(f32, CivilDate)> = p
+        .starts
+        .iter()
+        .map(|&(slot, date)| {
+            // The left edge of the first bar of the day: between the two
+            // days' bars rather than on either.
+            let x = p.viewport.x_center(slot, right, p.total) - p.candle_width / 2.0;
+            (x, date)
+        })
+        .filter(|&(x, _)| x >= left && x <= right)
+        .collect();
+    if let Some(date) = p.first_visible {
+        let pinned = left + DAY_LABEL_GAP_PX;
+        let text = format!("{} {}", weekday_abbr(date.weekday()), date.short());
+        let width = p
+            .painter
+            .layout_no_wrap(text.clone(), font.clone(), theme::TEXT_MUTED)
+            .size()
+            .x;
+        let clear = ticks
+            .first()
+            .is_none_or(|&(x, _)| pinned + width + DAY_LABEL_GAP_PX <= x);
+        if clear {
+            write(p, pinned, text, theme::TEXT_MUTED);
+        }
+    }
+    for (x, date) in ticks {
+        p.painter.line_segment(
             [
-                egui::pos2(x, strip.top()),
-                egui::pos2(x, strip.top() + DAY_TICK_PX),
+                egui::pos2(x, p.strip.top()),
+                egui::pos2(x, p.strip.bottom()),
             ],
             egui::Stroke::new(1.0_f32, theme::TEXT_MUTED),
         );
-        let galley = painter.layout_no_wrap(
-            format!("{} {}", weekday_abbr(date.weekday()), date.short()),
-            egui::FontId::proportional(SEAM_LABEL_PT),
-            theme::SEAM_LABEL,
-        );
-        let width = galley.size().x;
-        if let Some(left) = label_left(x, width, pane.left(), pane.right(), written_right) {
-            painter.galley(
-                egui::pos2(left, pane.top() + SEAM_LABEL_INSET_PX),
-                galley,
-                theme::SEAM_LABEL,
-            );
-            written_right = left + width;
-        }
+        // No time label is written across the tick either.
+        p.reserved.push((x, x));
+        write(p, x + DAY_LABEL_GAP_PX, day_text(date), theme::TEXT_PRIMARY);
     }
 }
-/// Where a date `width` wide starts beside the rule at `x`: right of it, or
-/// left of it when the pane ends first, never past either pane edge nor over
-/// the date written before it (whose right edge is `written_right`).
-fn label_left(x: f32, width: f32, left: f32, right: f32, written_right: f32) -> Option<f32> {
-    [x + SEAM_LABEL_INSET_PX, x - SEAM_LABEL_INSET_PX - width]
-        .into_iter()
-        .find(|&start| {
-            start >= left.max(written_right + SEAM_LABEL_INSET_PX) && start + width <= right
-        })
+/// `Tue 29`; the month joins it on the first of the month, where the month
+/// is what changed.
+fn day_text(date: CivilDate) -> String {
+    let (_, _, day) = date.ymd();
+    if day == 1 {
+        format!("{} {}", weekday_abbr(date.weekday()), date.short())
+    } else {
+        format!("{} {day}", weekday_abbr(date.weekday()))
+    }
+}
+/// Whether a time label spanning `from..to` would touch a date's span.
+pub(super) fn reserved_by(from: f32, to: f32, reserved: &[(f32, f32)]) -> bool {
+    reserved
+        .iter()
+        .any(|&(start, end)| from < end + DAY_LABEL_GAP_PX && to > start - DAY_LABEL_GAP_PX)
 }
 #[cfg(test)]
 mod days_tests {
     use super::*;
 
     #[test]
-    fn a_date_sits_right_of_its_rule_when_the_pane_has_room() {
-        let start = label_left(100.0, 60.0, 0.0, 500.0, f32::NEG_INFINITY);
-        assert_eq!(start, Some(100.0 + SEAM_LABEL_INSET_PX));
+    fn a_day_reads_weekday_and_date_and_names_the_month_when_it_turns() {
+        assert_eq!(day_text(CivilDate::from_ymd(2026, 9, 29)), "Tue 29");
+        assert_eq!(day_text(CivilDate::from_ymd(2026, 10, 1)), "Thu 01 Oct");
     }
 
     #[test]
-    fn a_date_near_the_right_edge_flips_left_of_its_rule() {
-        let start = label_left(480.0, 60.0, 0.0, 500.0, f32::NEG_INFINITY);
-        assert_eq!(start, Some(480.0 - SEAM_LABEL_INSET_PX - 60.0));
-    }
-
-    #[test]
-    fn a_date_that_fits_neither_side_is_not_written() {
-        assert_eq!(label_left(30.0, 60.0, 0.0, 80.0, f32::NEG_INFINITY), None);
-    }
-
-    #[test]
-    fn a_date_never_overlaps_the_one_written_before_it() {
-        // The previous rule at 100 wrote its date to 164; a rule 12 px later
-        // has no room on either side, one past it does.
-        assert_eq!(label_left(112.0, 60.0, 0.0, 500.0, 164.0), None);
-        assert!(label_left(200.0, 60.0, 0.0, 500.0, 164.0).is_some());
+    fn a_time_label_stands_aside_only_where_a_date_is_written() {
+        let reserved = [(100.0, 140.0)];
+        assert!(reserved_by(120.0, 150.0, &reserved), "overlapping");
+        assert!(reserved_by(141.0, 170.0, &reserved), "inside the gap");
+        assert!(!reserved_by(150.0, 190.0, &reserved), "clear of it");
+        assert!(!reserved_by(40.0, 90.0, &reserved), "clear before it");
+        assert!(!reserved_by(120.0, 150.0, &[]), "no dates, no gaps");
     }
 }

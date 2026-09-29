@@ -255,9 +255,10 @@ impl ChartLayer {
     pub const DaySeparator: Self = Self(&LayerDescriptor {
         id: "day_separator",
         label: "day separator",
-        hint: "a faint line and a tick on the time axis where the display day turns over, \
-                 dated with the day it opens. A day with no bars is not drawn: the mark lands \
-                 on the first bar that exists",
+        hint: "a tick across the time axis where the display day turns over, dated with the \
+                 day it opens, and the leftmost bar's date pinned to the axis's left edge. \
+                 Nothing is drawn over the candles. A day with no bars is not drawn: the mark \
+                 lands on the first bar that exists",
         source: LayerSource::Local,
         scope: LayerScope::Pane,
         persistence: Persistence::Layers,
