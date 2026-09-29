@@ -37,7 +37,7 @@ pub(super) fn mark(agg_id: u64, live: bool, quantity: i64, x: f64, y: f64) -> Ag
 /// The painter's style for `config`, drawing cheap dots only (one circle
 /// each) on a fixed cell so the radii are comparable across panes.
 pub(super) fn style_for(config: &quantick_orderflow::HeatmapConfig) -> OrderflowRenderStyle {
-    let mut style = OrderflowRenderStyle::from_config(config, egui::Color32::BLACK);
+    let mut style = OrderflowRenderStyle::from_config(config, egui::Color32::BLACK.to_array());
     style.bubbles = BubbleStyle {
         min_radius: 2.0,
         max_radius: 10.0,
@@ -132,7 +132,11 @@ fn a_tape_only_pane_draws_the_tape_and_no_candle_marks() {
     let normal_radii = paint(&normal, normal_layout);
     let tape_radii = paint(&tape_only, tape_layout);
     assert_eq!(normal_radii.len(), 4, "{normal_radii:?}");
-    assert_eq!(tape_radii, vec![5.0, 10.0], "four times the volume has twice the radius");
+    assert_eq!(
+        tape_radii,
+        vec![5.0, 10.0],
+        "four times the volume has twice the radius"
+    );
 }
 
 /// The divider sits on the chart's left edge when the tape takes the whole
@@ -143,4 +147,67 @@ fn a_whole_width_lane_puts_the_divider_on_the_left_edge() {
     assert_eq!(lane_divider_x(rect, 1_000.0), Some(60.0));
     assert_eq!(lane_divider_x(rect, 1_000.5), None);
     assert_eq!(lane_divider_x(rect, 350.0), Some(710.0));
+}
+
+#[test]
+fn the_tape_key_fits_the_external_header_without_covering_any_print() {
+    let viewport = Viewport::new();
+    let projection = HeatmapProjection::empty(
+        true,
+        quantick_orderflow::EffectiveGrouping::resolve(
+            quantick_orderflow::DisplayGrouping::Native,
+            Decimal::ONE,
+            Decimal::from(100),
+        ),
+    );
+    let mut config = quantick_orderflow::HeatmapConfig::default();
+    config.live_lane.tape_only = true;
+    config.live_lane.show_aggressions = true;
+    config.live_lane.show_depth = false;
+    config.bubbles.buy_color = Some([31, 141, 229]);
+    config.bubbles.sell_color = Some([247, 117, 24]);
+    let mut style = style_for(&config);
+    style.bubbles.buy_color = config.bubbles.buy_color;
+    style.bubbles.sell_color = config.bubbles.sell_color;
+    for (width, height) in [(281.0, 700.0), (500.0, 200.0)] {
+        let area = egui::Rect::from_min_size(egui::pos2(30.0, 50.0), egui::vec2(width, height));
+        let plot = crate::plot_area::plot_split(area, 0.0, &[]).chart;
+        let header = egui::Rect::from_min_max(
+            egui::pos2(plot.left(), area.top()),
+            plot.left_top() + egui::vec2(plot.width(), 0.0),
+        );
+        let layout = ProjectedLayout::new(header, &viewport, 2, 0, 2, header.width());
+        let ctx = egui::Context::default();
+        let mut bounds = None;
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            bounds = draw_compact_legend(
+                &ctx.layer_painter(egui::LayerId::background()),
+                &RenderContext::new(&projection, layout, &style),
+            );
+        });
+        let bounds = bounds.expect("the narrow tape keeps its buy/sell key visible");
+        assert!(header.contains_rect(bounds), "{header:?} / {bounds:?}");
+        assert!(bounds.bottom() <= plot.top(), "the key never covers a print");
+        let labels: Vec<_> = output.shapes.iter().filter_map(|shape| {
+            match &shape.shape {
+                egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
+                _ => None,
+            }
+        }).collect();
+        assert_eq!(labels, ["Buy", "Sell"]);
+        for color in [config.bubbles.buy_color.unwrap(), config.bubbles.sell_color.unwrap()] {
+            let expected = egui::Color32::from_rgb(color[0], color[1], color[2]);
+            assert!(output.shapes.iter().any(|shape| matches!(
+                &shape.shape,
+                egui::epaint::Shape::Circle(circle)
+                    if circle.fill == expected || circle.stroke.color == expected
+            )), "the key follows the trader's bubble colors");
+        }
+        for shape in &output.shapes {
+            let painted = shape.shape.visual_bounding_rect().intersect(shape.clip_rect);
+            if painted.is_positive() {
+                assert!(header.contains_rect(painted), "all key ink stays outside the plot");
+            }
+        }
+    }
 }

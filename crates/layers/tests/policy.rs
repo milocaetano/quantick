@@ -139,3 +139,29 @@ fn scope_and_persistence_filter_restores_without_overwriting_other_owners() {
     assert!(!L::LaneMarks.persisted());
     assert_eq!(LayerRegistry::default().resolve("future_layer"), None);
 }
+
+#[test]
+fn tape_only_reports_candle_layers_hidden_without_erasing_their_choices() {
+    let ordinary = LayerFacts {
+        flow_pane: true,
+        tape_on: true,
+        book_capture: true,
+        traded_volume: true,
+        capture_enabled: true,
+        depth_visible: true,
+        ..Default::default()
+    };
+    let tape = LayerFacts { tape_only: true, ..ordinary };
+    for layer in [L::Footprint, L::Drawings, L::TradePaint, L::Heatmap, L::Bubbles] {
+        assert!(LayerState::effective(layer, true, ordinary), "{layer:?}");
+        assert!(LayerState::restorable(layer, tape), "the requested choice can still be restored");
+        assert!(!LayerState::effective(layer, true, tape), "{layer:?} is not painted in tape only");
+        assert_eq!(LayerState::blocked(layer, tape).map(|reason| reason.code),
+            Some("candle_layer_hidden_in_tape_only"));
+        assert!(LayerState::effective(layer, true, ordinary), "leaving the mode restores {layer:?}");
+    }
+    for layer in [L::TapeBubbles, L::TapeHeatmap, L::FlowLegend] {
+        assert!(LayerState::effective(layer, true, tape), "the tape keeps {layer:?}");
+        assert!(!LayerState::effective(layer, false, tape), "its own switch still applies");
+    }
+}
