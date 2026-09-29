@@ -257,7 +257,10 @@ impl DotRungMemory {
         // At least half a full dot wide, so a dot fitted to its column
         // ([`DotSizing`]) stays readable.
         let tape_column_px = f64::from(config.bubbles.max_radius).max(DOT_WINDOW_CELL_PX);
-        let tape_window_ms = if config.live_lane.native() {
+        // The tape the pane builds, never the switch alone: with the tape
+        // off or without volume dots the candles key as the tick chart does.
+        let native_tape = config.native_tape();
+        let tape_window_ms = if native_tape {
             DOT_WINDOW_LADDER_MS[0]
         } else {
             hold_rung(
@@ -267,7 +270,7 @@ impl DotRungMemory {
                 tape_column_px,
             )
         };
-        let tape_level_ticks = if config.live_lane.native() {
+        let tape_level_ticks = if native_tape {
             1
         } else {
             hold_rung(
@@ -289,7 +292,7 @@ impl DotRungMemory {
         self.tape_px_per_ms = Some(px_per_ms);
         self.px_per_bar = Some(geometry.px_per_bar);
         DotZoom {
-            native_tape: config.live_lane.native(),
+            native_tape,
             tape_window_ms,
             tape_level_ticks,
             candle_level_ticks,
@@ -306,6 +309,7 @@ impl DotRungMemory {
         let tape_px_per_ms = self.tape_px_per_ms?;
         let span = scale.price_range.1 - scale.price_range.0;
         Some(DotSizing {
+            native_tape: scale.native_tape,
             tape_column_px: (scale.tape_window_ms as f64 * tape_px_per_ms) as f32,
             candle_column_px: self.px_per_bar?,
             px_per_price: f64::from(chart_height_px) / span,
@@ -318,6 +322,10 @@ impl DotRungMemory {
 /// and the quantity a full-size dot holds.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DotSizing {
+    /// The frame's tape is the native tape ([`DotScale::native_tape`]): its
+    /// dots are sized and merged on execution coordinates, never fitted to
+    /// a cell.
+    pub native_tape: bool,
     /// Screen width of one tape window, in pixels.
     pub tape_column_px: f32,
     /// Screen width of one bar on the candles, in pixels.
@@ -399,7 +407,7 @@ impl DotSizing {
         mark: &AggressionPrimitive,
         full: Decimal,
     ) -> f32 {
-        if mark.live && lane.native() {
+        if mark.live && self.native_tape {
             return bubbles.max_radius * normalized_area_size(mark.quantity, full);
         }
         let (minimum, maximum) = dot_radius_range(bubbles, lane, mark.live, self.cell(mark));
@@ -452,6 +460,8 @@ pub fn tape_price_range(marks: &[AggressionPrimitive]) -> Option<(f64, f64)> {
 /// report and the `orderflow.bubbles` snapshot.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DotScale {
+    /// The frame was built as the native tape ([`VolumeDots::native_tape`]).
+    pub native_tape: bool,
     /// The tape's window, in milliseconds.
     pub tape_window_ms: i64,
     /// Native ticks per tape level.
@@ -595,6 +605,7 @@ impl VolumeDots {
     #[must_use]
     pub fn scale(&self, config: &HeatmapConfig, price_range: (f64, f64)) -> DotScale {
         DotScale {
+            native_tape: self.native_tape,
             tape_window_ms: self.tape_window_ms,
             tape_level_ticks: self.tape_level_ticks,
             candle_level_ticks: self.candle_level_ticks,

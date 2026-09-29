@@ -45,6 +45,7 @@ fn a_candle_dot_is_its_bars_volume_at_its_level() {
         );
     }
     let sizing = DotSizing {
+        native_tape: config.native_tape(),
         tape_column_px: 100.0,
         candle_column_px: 100.0,
         px_per_price: 100.0,
@@ -293,6 +294,7 @@ fn each_pane_sizes_its_dots_against_its_own_biggest() {
         ],
     );
     let roomy = DotSizing {
+        native_tape: config.native_tape(),
         tape_column_px: 100.0,
         candle_column_px: 100.0,
         px_per_price: 100.0,

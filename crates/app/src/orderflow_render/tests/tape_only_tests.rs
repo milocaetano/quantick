@@ -50,6 +50,7 @@ pub(super) fn style_for(config: &quantick_orderflow::HeatmapConfig) -> Orderflow
         ..BubbleStyle::default()
     };
     style.dot_sizing = Some(DotSizing {
+        native_tape: config.native_tape(),
         tape_column_px: 100.0,
         candle_column_px: 100.0,
         px_per_price: 100.0,

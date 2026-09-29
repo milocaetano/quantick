@@ -176,6 +176,7 @@ fn only_a_built_native_tape_chooses_a_native_zoom() {
 fn tape_area_is_proportional_without_a_cell_size_or_minimum_radius_floor() {
     let (config, _, mut marks) = fixture(3_400);
     let sizing = DotSizing {
+        native_tape: config.native_tape(),
         tape_column_px: 1.0,
         candle_column_px: 1.0,
         px_per_price: 0.1,
@@ -187,9 +188,13 @@ fn tape_area_is_proportional_without_a_cell_size_or_minimum_radius_floor() {
     let quarter = sizing.radius(&config.bubbles, &config.live_lane, &marks[0], biggest);
     assert_eq!(big, 15.0, "the cell never makes the tape tiny");
     assert!((quarter / big - 0.5).abs() < 1e-6, "area follows quantity");
-    let mut legacy = config.live_lane;
-    legacy.tape_only = false;
-    assert!(sizing.radius(&config.bubbles, &legacy, &marks[0], biggest) <= 0.5);
+    let mut legacy = config.clone();
+    legacy.live_lane.tape_only = false;
+    let ordinary = DotSizing {
+        native_tape: legacy.native_tape(),
+        ..sizing
+    };
+    assert!(ordinary.radius(&legacy.bubbles, &legacy.live_lane, &marks[0], biggest) <= 0.5);
 }
 
 fn collision_fixture() -> (
@@ -228,6 +233,7 @@ fn collision_fixture() -> (
         marks.push(mark);
     }
     let sizing = DotSizing {
+        native_tape: config.native_tape(),
         tape_column_px: 1.0,
         candle_column_px: 10.0,
         px_per_price: 10.0,

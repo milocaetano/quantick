@@ -165,7 +165,7 @@ impl TapeDotMemory {
         lane: &LiveLaneStyle,
         opening_bursts: &[i64],
     ) -> TapeDotFrame {
-        if !lane.native() || !view.geometry.valid() || view.window_ms <= 0 {
+        if !sizing.native_tape || !view.geometry.valid() || view.window_ms <= 0 {
             return TapeDotFrame {
                 marks: marks.to_vec(),
                 max_radius: bubbles.max_radius,

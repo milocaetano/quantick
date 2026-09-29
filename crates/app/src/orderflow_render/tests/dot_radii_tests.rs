@@ -91,6 +91,7 @@ fn the_biggest_dot_of_each_pane_is_clearly_the_biggest() {
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
     let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, 300.0);
     let style = dots_style(DotSizing {
+        native_tape: false,
         tape_column_px: 100.0,
         candle_column_px: 100.0,
         px_per_price: 100.0,
@@ -124,6 +125,7 @@ fn a_squeezed_axis_shrinks_the_dots_in_proportion() {
     let projection = dots_frame(vec![dot(true, 5, 0.85, 0.3), dot(true, 20, 0.85, 0.7)]);
     let paint = |px_per_price: f64| {
         let style = dots_style(DotSizing {
+            native_tape: false,
             tape_column_px: 100.0,
             candle_column_px: 100.0,
             px_per_price,

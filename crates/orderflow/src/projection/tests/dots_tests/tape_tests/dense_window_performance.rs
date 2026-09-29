@@ -185,6 +185,7 @@ fn dense_113_second_tape_worker_and_warmed_memory_cost() {
         },
     };
     let sizing = DotSizing {
+        native_tape: history.config().native_tape(),
         tape_column_px: 1.0,
         candle_column_px: 8.0,
         px_per_price: 2.27,

@@ -566,7 +566,8 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     }
     let mut style = context.style.sanitized();
     let dots = context.projection.volume_dots;
-    let factual_tape = dots && style.live_lane.native();
+    // The frame's own tape, never the switch: tape off keeps the tick chart.
+    let factual_tape = dots && style.dot_sizing.is_some_and(|sizing| sizing.native_tape);
     let tape_rect = context.layout.lane_rect();
     let tape_geometry = quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
         tape_rect.width(),

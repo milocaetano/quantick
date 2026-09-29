@@ -60,6 +60,7 @@ fn draw(
 ) -> TapeDotFrame {
     let config = tape_config();
     let sizing = DotSizing {
+        native_tape: config.native_tape(),
         tape_column_px: 1.0,
         candle_column_px: 1.0,
         px_per_price: 1.0,
@@ -351,6 +352,7 @@ fn ordinary_lanes_keep_the_existing_projection_and_do_not_read_tape_memory() {
     let mut config = tape_config();
     config.live_lane.tape_only = false;
     let sizing = DotSizing {
+        native_tape: config.native_tape(),
         tape_column_px: 1.0,
         candle_column_px: 1.0,
         px_per_price: 1.0,

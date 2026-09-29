@@ -69,6 +69,7 @@ fn project(
             },
         },
         DotSizing {
+            native_tape: config.native_tape(),
             tape_column_px: 1.0,
             candle_column_px: 1.0,
             px_per_price: 1.0,

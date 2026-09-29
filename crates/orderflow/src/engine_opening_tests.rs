@@ -124,6 +124,7 @@ fn inferred_grid_does_not_tombstone_the_initial_native_tape_window() {
                 },
             },
             DotSizing {
+                native_tape: engine.config.native_tape(),
                 tape_column_px: 1.0,
                 candle_column_px: 1.0,
                 px_per_price: 1.0,

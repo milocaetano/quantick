@@ -29,6 +29,7 @@ fn borrowed_and_owned_tape_input_keep_the_same_complete_retained_frame() {
     let original = native.aggressions.clone();
     let mut style = OrderflowRenderStyle::from_config(&config, [0, 0, 0, 255]);
     style.dot_sizing = Some(DotSizing {
+        native_tape: config.native_tape(),
         tape_column_px: 1.0,
         candle_column_px: 8.0,
         px_per_price: 20.0,
@@ -106,6 +107,7 @@ fn stateless_tape_preview_copies_borrowed_input_before_repositioning() {
     let original = marks.clone();
     let mut style = OrderflowRenderStyle::from_config(&config, [0, 0, 0, 255]);
     style.dot_sizing = Some(DotSizing {
+        native_tape: config.native_tape(),
         tape_column_px: 1.0,
         candle_column_px: 8.0,
         px_per_price: 20.0,

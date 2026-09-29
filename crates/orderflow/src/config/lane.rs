@@ -548,10 +548,13 @@ impl LiveLaneStyle {
             .map(|window| window.clamp(0, MAX_BUBBLE_CLUSTER_MS));
     }
 
-    /// Whether the tape is asked to be native: the switch, or tape only,
-    /// whose full-width pane has always drawn the native tape. The lane's
-    /// own sites, which only run with volume dots, ask this; whether the
-    /// pane builds it is [`HeatmapConfig::native_tape`](crate::HeatmapConfig::native_tape).
+    /// Whether the tape is *asked* to be native: the switch, or tape only,
+    /// whose full-width pane has always drawn the native tape. A request
+    /// only, blind to the tape's own switch and to volume dots, so it is
+    /// what the settings box shows and never what builds or draws a frame:
+    /// that is [`HeatmapConfig::native_tape`](crate::HeatmapConfig::native_tape),
+    /// which reaches the frame through `DotZoom`, `VolumeDots`, `DotScale`
+    /// and `DotSizing`.
     #[must_use]
     pub fn native(&self) -> bool {
         self.native_tape || self.tape_only

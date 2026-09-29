@@ -91,6 +91,7 @@ fn draw(memory: &mut TapeDotMemory, native: &[AggressionPrimitive], now_ms: i64)
         native,
         view(now_ms),
         DotSizing {
+            native_tape: config.native_tape(),
             tape_column_px: 1.0,
             candle_column_px: 1.0,
             px_per_price: 1.0,
@@ -106,6 +107,7 @@ fn report_drawn_radii(label: &str, frame: &TapeDotFrame) {
     let mut config = tape_config();
     config.bubbles.max_radius = frame.max_radius;
     let sizing = DotSizing {
+        native_tape: config.native_tape(),
         tape_column_px: 1.0,
         candle_column_px: 1.0,
         px_per_price: 1.0,
@@ -297,6 +299,7 @@ fn real_native_tape_stateless_and_warmed_memory_cost() {
     let config = tape_config();
     let current = view(AFTER_MS);
     let sizing = DotSizing {
+        native_tape: config.native_tape(),
         tape_column_px: 1.0,
         candle_column_px: 1.0,
         px_per_price: 1.0,

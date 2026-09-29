@@ -64,6 +64,7 @@ fn win_marks(count: usize) -> Vec<AggressionPrimitive> {
 fn tape_frame_parameters() -> (HeatmapConfig, DotSizing, TapeDotGeometry) {
     let config = tape_config();
     let sizing = DotSizing {
+        native_tape: config.native_tape(),
         tape_column_px: 1.0,
         candle_column_px: 10.0,
         px_per_price: 600.0 / 350.0,
