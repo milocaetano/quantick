@@ -124,7 +124,10 @@ fn the_live_painter_keeps_closed_membership_when_a_large_print_arrives_on_this_f
     let current = retained(&view, &next, WIN_PRICES);
     let worker_has_no_frame = view.worker.published().frame.is_none();
     hold.release();
-    assert!(worker_has_no_frame, "receipt must not wait for a worker frame");
+    assert!(
+        worker_has_no_frame,
+        "receipt must not wait for a worker frame"
+    );
     assert_eq!(old.marks.len(), 1);
     assert_eq!(old.marks[0].agg_ids, vec![64_198, 64_206]);
     let previous = current
@@ -135,12 +138,19 @@ fn the_live_painter_keeps_closed_membership_when_a_large_print_arrives_on_this_f
     for member in [&old.marks[0], previous] {
         assert_eq!(member.quantity, Decimal::TWO);
         assert_eq!(member.price, Decimal::new(1_875_075, 1));
-        assert_eq!(member.timestamp_quantity, Decimal::from(3_580_157_718_458_i64));
+        assert_eq!(
+            member.timestamp_quantity,
+            Decimal::from(3_580_157_718_458_i64)
+        );
     }
     assert_eq!(current.marks.len(), 2);
     assert_eq!(shapes.len(), 2, "the new print paints on this frame");
     assert_eq!(
-        current.marks.iter().map(|mark| mark.quantity).sum::<Decimal>(),
+        current
+            .marks
+            .iter()
+            .map(|mark| mark.quantity)
+            .sum::<Decimal>(),
         Decimal::from(107)
     );
 }
@@ -168,7 +178,10 @@ fn tape_history_is_cleared_by_source_replay_mode_and_explicit_visual_changes() {
         }
         let after_count = view.tape_dots.borrow().retained_group_count();
         hold.release();
-        assert!(before_count > 0, "fixture has painted history before {change}");
+        assert!(
+            before_count > 0,
+            "fixture has painted history before {change}"
+        );
         assert_eq!(after_count, 0, "{change} starts a fresh display epoch");
     }
 }
@@ -196,7 +209,7 @@ fn a_clearance_radius_change_never_moves_the_tape_time_inset() {
     let (mut view, hold) = memory_view();
     let prints = [
         print(1, 1_011, 100, 1, Side::Buy),
-        print(2, 1_211, 105, 4, Side::Buy),
+        print(2, 1_211, 110, 4, Side::Buy),
         print(3, 4_011, 180, 16, Side::Buy),
     ];
     for trade in &prints {
@@ -211,7 +224,10 @@ fn a_clearance_radius_change_never_moves_the_tape_time_inset() {
     assert_eq!(after.len(), 3, "axis changes cannot regroup closed dots");
     let shift = 40.0 / WINDOW_MS as f32 * horizontal.span_px;
     let radius_ratio = after[2].1 / before[2].1;
-    assert!(radius_ratio < 1.0, "the compressed axis needs a uniform smaller cap");
+    assert!(
+        radius_ratio < 1.0,
+        "the compressed axis needs a uniform smaller cap"
+    );
     for (old, new) in before.iter().zip(&after) {
         assert!((old.0.x - new.0.x - shift).abs() < 0.001);
         assert!((new.1 / old.1 - radius_ratio).abs() < 0.0001);
@@ -227,5 +243,8 @@ fn hiding_a_side_cannot_repaint_its_retained_historical_members() {
     view.commit_config_changes(before);
     let shapes = paint(&mut view, &shown, WIN_TIME_MS + 2_100, WIN_PRICES);
     hold.release();
-    assert!(shapes.is_empty(), "a visibility edit cannot leak cached buy dots");
+    assert!(
+        shapes.is_empty(),
+        "a visibility edit cannot leak cached buy dots"
+    );
 }
