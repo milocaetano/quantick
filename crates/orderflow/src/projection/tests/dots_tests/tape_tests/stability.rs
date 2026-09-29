@@ -42,6 +42,7 @@ fn view(now_ms: i64, low: &str, high: &str) -> TapeDotView {
         now_ms,
         window_ms: WINDOW_MS,
         dot_window_ms: 100,
+        evicted_through_ms: None,
         prices: prices(low, high),
         geometry: TapeDotGeometry {
             left_x: 0.0,
@@ -383,4 +384,28 @@ fn a_late_factual_native_update_changes_its_group_once_without_rewriting_others(
     assert_eq!(source_facts(represented(&next, &[3])), stable);
     let repeated = draw(&mut memory, &native, view(5_100, "90", "190"));
     assert_eq!(repeated.marks, next.marks, "publication is replacement, not another trade");
+}
+
+#[test]
+fn canonical_eviction_removes_only_invalid_native_facts_from_a_retained_group() {
+    let mut memory = TapeDotMemory::default();
+    let prints = real_win_prints();
+    let before = draw(
+        &mut memory,
+        &prints,
+        view(WIN_TIME_MS + 2_500, "187450", "187550"),
+    );
+    assert_eq!(represented(&before, &[64_198, 64_206]).quantity, Decimal::TWO);
+    let stable = source_facts(represented(&before, &[64_264]));
+    let mut after_view = view(WIN_TIME_MS + 2_600, "187450", "187550");
+    after_view.evicted_through_ms = Some(WIN_TIME_MS + 150);
+    // Even a stale source slice cannot resurrect an authoritatively evicted cell.
+    let after = draw(&mut memory, &prints, after_view);
+    assert_eq!(after.marks.len(), 2);
+    assert_eq!(source_facts(represented(&after, &[64_206])), source_facts(&prints[1]));
+    assert_eq!(source_facts(represented(&after, &[64_264])), stable);
+    assert_eq!(
+        after.marks.iter().map(|mark| mark.quantity).sum::<Decimal>(),
+        Decimal::from(106)
+    );
 }

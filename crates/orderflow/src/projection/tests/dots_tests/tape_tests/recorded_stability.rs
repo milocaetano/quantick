@@ -46,6 +46,7 @@ fn view(now_ms: i64) -> TapeDotView {
         now_ms,
         window_ms: WINDOW_MS,
         dot_window_ms: 100,
+        evicted_through_ms: None,
         prices: prices("187400", "187550"),
         geometry: TapeDotGeometry {
             left_x: 0.0,

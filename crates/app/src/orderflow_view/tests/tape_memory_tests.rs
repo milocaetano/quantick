@@ -82,6 +82,7 @@ fn retained(view: &OrderflowView, shown: &VisibleOrderflow, prices: (f64, f64)) 
             now_ms: view.lane_now_ms().unwrap(),
             window_ms: WINDOW_MS,
             dot_window_ms: scale.tape_window_ms,
+            evicted_through_ms: None,
             prices: PriceWindow::new(
                 Decimal::from_f64(prices.0).unwrap(),
                 Decimal::from_f64(prices.1).unwrap(),
