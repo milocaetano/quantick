@@ -5,10 +5,25 @@ use quantick_orderflow::{BubbleSizeReference, LaneWindow};
 
 type PaintedText = Vec<(String, egui::Rect)>;
 
+fn collect_text(shape: egui::Shape, text: &mut PaintedText) {
+    match shape {
+        egui::Shape::Text(shape) => text.push((
+            shape.galley.job.text.clone(),
+            egui::Rect::from_min_size(shape.pos, shape.galley.size()),
+        )),
+        egui::Shape::Vec(shapes) => {
+            for shape in shapes {
+                collect_text(shape, text);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn paint(view: &mut OrderflowView, ctx: &egui::Context, events: Vec<egui::Event>) -> PaintedText {
     let output = ctx.run(
         egui::RawInput {
-            time: Some(ctx.input(|input| input.time) + 0.25),
+            time: Some(ctx.input(|input| input.time) + 1.0 / 60.0),
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
                 egui::vec2(1_200.0, 3_000.0),
@@ -20,17 +35,11 @@ fn paint(view: &mut OrderflowView, ctx: &egui::Context, events: Vec<egui::Event>
             egui::CentralPanel::default().show(ctx, |ui| view.draw_bubble_controls(ui));
         },
     );
-    output
-        .shapes
-        .into_iter()
-        .filter_map(|shape| match shape.shape {
-            egui::Shape::Text(text) => Some((
-                text.galley.job.text.clone(),
-                egui::Rect::from_min_size(text.pos, text.galley.size()),
-            )),
-            _ => None,
-        })
-        .collect()
+    let mut text = Vec::new();
+    for shape in output.shapes {
+        collect_text(shape.shape, &mut text);
+    }
+    text
 }
 
 fn open_controls(view: &mut OrderflowView) -> (egui::Context, PaintedText) {
@@ -170,7 +179,16 @@ fn the_tape_quantity_tooltip_does_not_claim_to_resize_the_independent_candle_ove
         .expect("the typed tape reference is visible")
         .1
         .center();
-    let _ = paint(&mut view, &ctx, vec![egui::Event::PointerMoved(pos)]);
+    // egui suppresses tooltips after a click until it observes movement.
+    // Its velocity history requires three samples, not a single re-entry
+    // after PointerGone, so approach the control over real frame intervals.
+    for offset in [-3.0, -1.0, 0.0] {
+        let _ = paint(
+            &mut view,
+            &ctx,
+            vec![egui::Event::PointerMoved(pos + egui::vec2(offset, 0.0))],
+        );
+    }
     // Hit testing uses the previous frame; a tooltip Area then needs its
     // invisible sizing frame before its text can be painted. Keep hovering
     // through those frames with an explicit, deterministic UI clock.
@@ -178,6 +196,9 @@ fn the_tape_quantity_tooltip_does_not_claim_to_resize_the_independent_candle_ove
         let _ = paint(&mut view, &ctx, Vec::new());
     }
     let text = paint(&mut view, &ctx, Vec::new());
+    let hovered =
+        ctx.interaction_snapshot(|state| state.hovered.iter().copied().collect::<Vec<_>>());
+    let responses: Vec<_> = hovered.iter().map(|id| ctx.read_response(*id)).collect();
     let tooltip = text
         .iter()
         .map(|(text, _)| text.as_str())
@@ -185,7 +206,7 @@ fn the_tape_quantity_tooltip_does_not_claim_to_resize_the_independent_candle_ove
         .join("\n");
     assert!(
         tooltip.contains("Typing a value turns auto off"),
-        "hover must expose the reference tooltip; painted text: {tooltip}"
+        "hover must expose the reference tooltip at {pos:?}; hovered: {responses:?}; painted text: {tooltip}"
     );
     assert!(!tooltip.contains("both panes"));
     assert!(tooltip.contains("tape"));
