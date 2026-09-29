@@ -15,6 +15,10 @@ use super::{AggressionPrimitive, DotSizing, normalized_area_size};
 use crate::config::{BubbleStyle, LiveLaneStyle};
 use crate::history::{AggressorSide, RestingSide};
 
+#[cfg(test)]
+#[path = "tests/dots_tests/tape_tests/radius_limit_tests.rs"]
+mod radius_limit_tests;
+
 /// Allowed intersection depth as a share of the smaller disc's radius.
 const SMALLER_DOT_OVERLAP_SHARE: f32 = 0.1;
 
