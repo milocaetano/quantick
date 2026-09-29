@@ -6,6 +6,8 @@ use crate::projection::{TapeDotFrame, TapeDotMemory, TapeDotView};
 
 const DAY_MS: i64 = 86_400_000;
 
+mod reference_tests;
+
 #[test]
 fn recorded_opening_metadata_saturates_unrepresentable_timestamp_floors() {
     let mut openings = crate::history::RecordedOpenings::default();

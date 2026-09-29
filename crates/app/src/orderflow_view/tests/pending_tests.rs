@@ -9,6 +9,8 @@ use quantick_orderflow::engine::VisibleOrderflow;
 use quantick_orderflow::projection::PaneGeometry;
 use std::sync::Arc;
 
+#[path = "dense_frame_performance.rs"]
+mod dense_frame_performance;
 #[path = "tape_memory_tests.rs"]
 mod tape_memory_tests;
 

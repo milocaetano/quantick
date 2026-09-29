@@ -1,7 +1,7 @@
 //! Opt-in synthetic density matching the long WIN tape QA workload.
 
 use super::*;
-use crate::projection::{project_live, project_settled, TapeDotMemory, TapeDotView};
+use crate::projection::{TapeDotFrame, TapeDotMemory, TapeDotView, project_live, project_settled};
 use std::hint::black_box;
 use std::time::Instant;
 
@@ -81,7 +81,9 @@ fn timed<T>(label: &str, mut project: impl FnMut() -> T) -> T {
     let mean = samples.iter().sum::<f64>() / SAMPLES as f64;
     samples.sort_by(f64::total_cmp);
     let median = (samples[SAMPLES / 2 - 1] + samples[SAMPLES / 2]) / 2.0;
-    eprintln!("DENSE_TAPE_PERF synthetic_{label}: raw_input={PRINTS} window_ms={WINDOW_MS} mean_ms={mean:.3} median_ms={median:.3} samples={SAMPLES} warmups=3");
+    eprintln!(
+        "DENSE_TAPE_PERF synthetic_{label}: raw_input={PRINTS} window_ms={WINDOW_MS} mean_ms={mean:.3} median_ms={median:.3} samples={SAMPLES} warmups=3"
+    );
     last.unwrap()
 }
 
@@ -120,14 +122,27 @@ fn assert_conserved(marks: &[AggressionPrimitive], prints: &[Trade]) {
     );
 }
 
+fn complete_fingerprint(frame: &TapeDotFrame) -> u64 {
+    format!(
+        "{:?}|{:?}|{:?}",
+        frame.marks, frame.max_radius, frame.full_quantity
+    )
+    .bytes()
+    .fold(14_695_981_039_346_656_037, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(1_099_511_628_211)
+    })
+}
+
 #[test]
 #[ignore = "opt-in 40k-print worker and warmed-memory measurement; no timing threshold"]
 fn dense_113_second_tape_worker_and_warmed_memory_cost() {
     let (history, timeline, dots, prints) = dense_window();
     let prices = prices("186900", "187400");
-    assert!(prints
-        .iter()
-        .all(|trade| (NOW_MS - WINDOW_MS..NOW_MS).contains(&trade.timestamp_ms)));
+    assert!(
+        prints
+            .iter()
+            .all(|trade| (NOW_MS - WINDOW_MS..NOW_MS).contains(&trade.timestamp_ms))
+    );
     assert_eq!(history.aggressions_since(FIRST_MS).count(), PRINTS);
     let settled = project_settled(&history, &timeline, prices, Some(&dots));
     // The worker's live timer includes raw clustering, native folding and
@@ -175,24 +190,51 @@ fn dense_113_second_tape_worker_and_warmed_memory_cost() {
         px_per_price: 2.27,
         typed_full: None,
     };
-    let mut memory = TapeDotMemory::default();
-    let frame = timed("warmed_memory_with_input_clone", || {
-        let shown = black_box(native.clone());
-        memory.project(
-            &shown,
-            view,
-            sizing,
-            &history.config().bubbles,
-            &history.config().live_lane,
-            &[],
-        )
-    });
-    assert_conserved(&frame.marks, &prints);
-    eprintln!(
-        "DENSE_TAPE_MEMORY native_input={} rendered_output={} max_radius={:.3} full_quantity={}",
-        native.len(),
-        frame.marks.len(),
-        frame.max_radius,
-        frame.full_quantity
-    );
+    // Hold the same genuine native input for both paths. At NOW_MS - 1 the
+    // latest executions have arrived but their 100 ms window is still open.
+    for (phase, now_ms) in [("closed", NOW_MS), ("forming", NOW_MS - 1)] {
+        let current = TapeDotView { now_ms, ..view };
+        let mut without_opening = None;
+        for (policy, openings) in [
+            ("none", &[][..]),
+            ("expired", &[FIRST_MS - 100][..]),
+            ("present", &[FIRST_MS][..]),
+        ] {
+            let mut memory = TapeDotMemory::default();
+            let label = format!("warmed_memory_with_input_clone_{phase}_opening_{policy}");
+            let frame = timed(&label, || {
+                let shown = black_box(native.clone());
+                memory.project(
+                    &shown,
+                    current,
+                    sizing,
+                    &history.config().bubbles,
+                    &history.config().live_lane,
+                    openings,
+                )
+            });
+            assert_conserved(&frame.marks, &prints);
+            assert_eq!(
+                frame.marks.iter().any(|mark| mark.x == 1.0),
+                phase == "forming"
+            );
+            let fingerprint = complete_fingerprint(&frame);
+            eprintln!(
+                "DENSE_TAPE_MEMORY phase={phase} opening={policy} native_input={} rendered_output={} max_radius={:.3} full_quantity={} fingerprint={fingerprint:#018x}",
+                native.len(),
+                frame.marks.len(),
+                frame.max_radius,
+                frame.full_quantity
+            );
+            if policy == "expired" {
+                let expected: &TapeDotFrame = without_opening.as_ref().unwrap();
+                assert_eq!(frame.marks, expected.marks);
+                assert_eq!(frame.max_radius, expected.max_radius);
+                assert_eq!(frame.full_quantity, expected.full_quantity);
+            }
+            if policy == "none" {
+                without_opening = Some(frame);
+            }
+        }
+    }
 }

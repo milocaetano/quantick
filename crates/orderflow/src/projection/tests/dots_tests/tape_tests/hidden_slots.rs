@@ -2,8 +2,8 @@
 
 use super::*;
 use crate::projection::dots::DotHorizon;
-use crate::projection::tiers::{cluster_tier, refine_tier, tier_primitives, TierCut, TierGrouping};
-use crate::projection::{project_settled, PendingTape};
+use crate::projection::tiers::{TierCut, TierGrouping, cluster_tier, refine_tier, tier_primitives};
+use crate::projection::{PendingTape, project_settled};
 
 fn live_marks(frame: &HeatmapProjection) -> Vec<AggressionPrimitive> {
     frame
@@ -133,14 +133,18 @@ fn ordinary_dot_slots_survive_a_tape_mode_roundtrip_with_identical_output() {
     );
     let timeline = chart(3_400, 1_000, None);
     let before = frame_at(&history, &timeline, prices("90", "110"), &coarse(100, 1));
-    assert!(before
-        .aggressions
-        .iter()
-        .any(|mark| !mark.live && mark.agg_ids.contains(&1)));
-    assert!(before
-        .aggressions
-        .iter()
-        .any(|mark| !mark.live && mark.agg_ids.contains(&4)));
+    assert!(
+        before
+            .aggressions
+            .iter()
+            .any(|mark| !mark.live && mark.agg_ids.contains(&1))
+    );
+    assert!(
+        before
+            .aggressions
+            .iter()
+            .any(|mark| !mark.live && mark.agg_ids.contains(&4))
+    );
     history.update_config(tape_config()).unwrap();
     let taped = frame_at(&history, &timeline, prices("90", "110"), &tape_dots(100, 1));
     assert!(taped.aggressions.iter().all(|mark| mark.live));
