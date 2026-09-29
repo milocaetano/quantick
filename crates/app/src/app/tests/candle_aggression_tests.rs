@@ -199,9 +199,15 @@ fn candle_aggression_keeps_same_millisecond_tick_ownership_and_current_partial()
     let scale = PriceScale::from_range(range.0, range.1, chart.top(), chart.bottom());
     let x = left.viewport.x_center(6, chart.right(), left.slots());
     assert!(
-        circle_at(&output, egui::pos2(x, scale.y(145.0))),
-        "the current native-price print is painted in its actual tick-bar slot this frame"
+        circle_at(&output, egui::pos2(x, scale.y(143.2))),
+        "this frame paints the forming candle's exact quantity-weighted price: (9*140 + 16*145)/25"
     );
+    for price in [140.0, 145.0] {
+        assert!(
+            !circle_at(&output, egui::pos2(x, scale.y(price))),
+            "one candle owns one dot, not one dot per native row"
+        );
+    }
 }
 
 #[test]
@@ -303,4 +309,48 @@ fn candle_aggression_paints_after_co_enabled_footprint_plates() {
         witnessed,
         "the fixture must exercise overlapping footprint plates and aggression dots"
     );
+}
+
+#[test]
+fn a_tick_context_header_names_the_applied_bars_and_time_controls_return_for_time_bars() {
+    let ctx = egui::Context::default();
+    let (mut app, _events, _commands) = context_fixture(&ctx);
+    let texts = painted_text(&run_frame(&mut app, &ctx));
+    assert!(
+        texts.iter().any(|text| text == "tick(4)"),
+        "the left header must report its applied tick bars: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|text| text == "1m"),
+        "the tick chart must not claim the retained time preset is active"
+    );
+    assert!(
+        !app.active_tab().time_header_chip(0).unwrap().is_positive(),
+        "a hidden time chip has no live hit rectangle"
+    );
+    app.active_tab_mut().time_panes[0]
+        .spec
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Replace(BarSpec::Time(60_000).into()),
+            quantick_engine::bar_selection::BarInputAvailability::PRINTS,
+        )
+        .unwrap();
+    app.active_tab_mut().apply_spec_changes();
+    app.active_tab_mut().apply_spec_changes();
+    let texts = painted_text(&run_frame(&mut app, &ctx));
+    assert!(texts.iter().any(|text| text == "1m"));
+    let chip = app.active_tab().time_header_chip(1).unwrap();
+    assert!(
+        chip.is_positive(),
+        "time bars retain their timeframe controls"
+    );
+    let flow = *app.active_tab().flow_pane.state.spec();
+    click_chart(&mut app, &ctx, chip.center());
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab().time_panes[0].state.spec(),
+        &BarSpec::Time(300_000)
+    );
+    assert_eq!(app.active_tab().flow_pane.state.spec(), &flow);
 }
