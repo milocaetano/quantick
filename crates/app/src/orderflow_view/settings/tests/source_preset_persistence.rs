@@ -111,3 +111,22 @@ fn a_failed_automatic_save_keeps_the_active_win_view_and_its_return_look() {
     assert!(view.apply_source_preset(None));
     assert_eq!(appearance(&view), previous);
 }
+
+#[test]
+fn an_automatic_win_save_cannot_overwrite_its_other_markets_default_name() {
+    let (mut view, previous) = crypto_view();
+    assert!(view.apply_source_preset(Some("mini index regions")));
+    assert!(view.set_ignore_opening_burst_in_scale(true));
+    let win = appearance(&view);
+    view.preset_name_draft = previous.name.clone();
+
+    view.save_preset_with(|_| panic!("a conflicting name must not reach the writer"));
+
+    assert_eq!(appearance(&view), win);
+    assert_eq!(view.presets.get(&previous.name), Some(&previous));
+    let status = view.preset_status.as_deref().expect("explain the conflicting name");
+    assert!(status.contains(&previous.name));
+    assert!(status.contains("another preset name"));
+    assert!(view.apply_source_preset(None));
+    assert_eq!(appearance(&view), previous);
+}
