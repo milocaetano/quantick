@@ -252,6 +252,23 @@ impl ChartLayer {
         default_on: true,
         projection_demand: false,
     });
+    pub const DaySeparator: Self = Self(&LayerDescriptor {
+        id: "day_separator",
+        label: "day separator",
+        hint: "a faint line and a tick on the time axis where the display day turns over, \
+                 dated with the day it opens. A day with no bars is not drawn: the mark lands \
+                 on the first bar that exists",
+        source: LayerSource::Local,
+        scope: LayerScope::Pane,
+        persistence: Persistence::Layers,
+        requirement: Requirement::None,
+        on_tape: false,
+        needs_tape: false,
+        needs_depth: false,
+        capture_gates_visibility: false,
+        default_on: false,
+        projection_demand: false,
+    });
     pub const Crosshair: Self = Self(&LayerDescriptor {
         id: "crosshair",
         label: "crosshair",
@@ -347,7 +364,7 @@ impl ChartLayer {
         projection_demand: false,
     });
 }
-pub const ALL: [ChartLayer; 21] = [
+pub const ALL: [ChartLayer; 22] = [
     ChartLayer::TapeChart,
     ChartLayer::TapeHeatmap,
     ChartLayer::TapeBubbles,
@@ -363,6 +380,7 @@ pub const ALL: [ChartLayer; 21] = [
     ChartLayer::LastPrice,
     ChartLayer::BackfillDivider,
     ChartLayer::SeamDivider,
+    ChartLayer::DaySeparator,
     ChartLayer::Crosshair,
     ChartLayer::PointerPrice,
     ChartLayer::PointerTime,

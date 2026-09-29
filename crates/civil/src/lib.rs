@@ -330,8 +330,16 @@ pub fn day_starts(
     open_times: impl IntoIterator<Item = (usize, i64)>,
     tz: TzOffset,
 ) -> Vec<(usize, CivilDate)> {
-    let _ = (open_times, tz);
-    Vec::new()
+    let mut previous: Option<CivilDate> = None;
+    let mut starts = Vec::new();
+    for (slot, open_ms) in open_times {
+        let date = CivilDate::from_ms(open_ms, tz);
+        if previous.is_some_and(|before| before != date) {
+            starts.push((slot, date));
+        }
+        previous = Some(date);
+    }
+    starts
 }
 
 /// An inclusive span of civil days.

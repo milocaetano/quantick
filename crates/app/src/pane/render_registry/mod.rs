@@ -3,9 +3,11 @@
 use eframe::egui;
 use quantick_layers::{ChartLayer, LayerRegistry, RegistrationError};
 mod candles;
+mod days;
 mod dividers;
 mod flow;
 mod indicators;
+pub(super) use days::DaySeparatorPass;
 pub(super) use dividers::DividerPass;
 mod axes;
 use axes::LastPricePass;
@@ -61,6 +63,7 @@ pub(super) enum Contribution {
     Seam(for<'a> fn(&mut DividerPass<'a>)),
     Backfill(for<'a> fn(&mut DividerPass<'a>)),
     FeedGaps(for<'a> fn(&mut DividerPass<'a>)),
+    DaySeparator(for<'a> fn(&mut DaySeparatorPass<'a>)),
     Grid(for<'a, 'b> fn(&mut GridPass<'a, 'b>)),
     LastPrice(for<'a> fn(&mut LastPricePass<'a>)),
     Crosshair(for<'a> fn(&mut CrosshairPass<'a>)),
@@ -133,6 +136,7 @@ pass!(status, Status, StatusPass<'_>);
 pass!(seam, Seam, DividerPass<'_>);
 pass!(backfill, Backfill, DividerPass<'_>);
 pass!(feed_gaps, FeedGaps, DividerPass<'_>);
+pass!(day_separator, DaySeparator, DaySeparatorPass<'_>);
 pass!(grid, Grid, GridPass<'_, '_>);
 pass!(last_price, LastPrice, LastPricePass<'_>);
 pass!(crosshair, Crosshair, CrosshairPass<'_>);
@@ -145,6 +149,7 @@ pass!(drawing_draft, DrawingDraft, DrawingPass<'_>);
 const PACKAGES: &[Package] = &[
     candles::PACKAGE,
     dividers::PACKAGE,
+    days::PACKAGE,
     axes::PACKAGE,
     paper::PACKAGE,
     drawings::PACKAGE,
