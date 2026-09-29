@@ -83,6 +83,10 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
         write(p, left + DAY_LABEL_GAP_PX, limit, text, theme::TEXT_MUTED);
     }
     for (index, &(x, date)) in ticks.iter().enumerate() {
+        // Under the pointer's chip the chip wins, tick and date alike.
+        if pointer_compass::claimed(x, 0.0, chip_width, p.claims.iter().copied()) {
+            continue;
+        }
         p.painter.line_segment(
             [
                 egui::pos2(x, p.strip.top()),
