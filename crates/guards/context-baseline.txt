@@ -116,7 +116,9 @@ CLAUDE.md 6541
 # 90 bytes the new prose costs.
 # Raised by 305 bytes for the three hooks that make deal recording and the
 # unavailable trades-bar state reachable without a hand.
-.claude/skills/ui-harness/ 82479
+# Raised by 163 bytes for `QUANTICK_BAR_SWITCH`, the hook that opens the
+# quick bar switch, which only a typed digit reaches otherwise.
+.claude/skills/ui-harness/ 82642
 # Raised by 54 bytes, for one line: `cargo deny check bans licenses` joined the
 # list of CI steps `cargo` cannot see, and a list that omits a step is worse
 # than a list that costs 54 bytes — an agent reading it would find the step in

@@ -39,7 +39,11 @@ fn readings(definition: &'static BarDefinition, number: u64) -> Vec<BarConfigura
     let choices: Vec<Option<&str>> = if definition.choices.is_empty() {
         vec![None]
     } else {
-        definition.choices.iter().map(|choice| Some(choice.id)).collect()
+        definition
+            .choices
+            .iter()
+            .map(|choice| Some(choice.id))
+            .collect()
     };
     values
         .into_iter()
