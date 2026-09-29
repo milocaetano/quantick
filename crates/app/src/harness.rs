@@ -771,6 +771,10 @@ impl Harness {
         self.pointer = Some(fraction);
     }
 
+    pub(crate) fn arm_candle_width(&mut self, px: f32) {
+        self.candle_width = Some(px);
+    }
+
     pub(crate) fn arm_pan_px(&mut self, px: f32) {
         self.pan_px = Some(px);
     }

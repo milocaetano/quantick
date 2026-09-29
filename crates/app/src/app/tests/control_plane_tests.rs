@@ -488,11 +488,13 @@ fn the_scripted_pan_settles_on_the_projection_margin() {
     let slots = app.active_tab().flow_pane.slots();
     let newest = (slots - 1) as f32;
 
+    app.chrome.harness.arm_candle_width(40.0);
     app.chrome.harness.arm_pan_px(-9_000.0);
     for _ in 0..3 {
         run_frame(&mut app, &ctx);
     }
     let settled = app.active_tab().flow_pane.viewport.right_edge_bar(slots);
+    assert_eq!(app.active_tab().flow_pane.viewport.px_per_bar(), 40.0);
     assert!(!app.active_tab().flow_pane.viewport.follows_live());
     assert!(
         settled > newest + 1.0,
@@ -506,6 +508,48 @@ fn the_scripted_pan_settles_on_the_projection_margin() {
     }
     let again = app.active_tab().flow_pane.viewport.right_edge_bar(slots);
     assert!((again - settled).abs() < 0.001, "{again} vs {settled}");
+}
+
+/// A tape-only right pane has no candles to pan: the same launch hooks must
+/// exercise the visible context candles without moving the tape's own view.
+#[test]
+fn the_scripted_view_targets_visible_tick_candles_beside_an_independent_tape() {
+    let (mut app, _commands) = app_with_history(400);
+    let ctx = egui::Context::default();
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut().time_panes[0]
+        .spec
+        .retain(crate::state::BarSpec::Tick(2));
+    for layer in [ChartLayer::TapeChart, ChartLayer::TapeOnly] {
+        app.active_tab_mut()
+            .flow_pane
+            .set_layer_visible(layer, true, &mut Default::default());
+    }
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(app.active_tab().shows_context_charts());
+    assert!(app.active_tab().tape().cached_config().tape_only());
+    assert!(app.active_tab().time_panes[0].slots() > 0);
+    let flow_before = crate::control::chart::viewport_snapshot(&app.active_tab().flow_pane);
+    let candles_before = crate::control::chart::viewport_snapshot(&app.active_tab().time_panes[0]);
+    let tape_before = app.active_tab().tape().cached_config().clone();
+
+    app.chrome.harness.arm_candle_width(40.0);
+    app.chrome.harness.arm_pan_px(-160.0);
+    app.chrome.harness.apply_scripted_view(&mut app.tabs);
+
+    let candles_after = crate::control::chart::viewport_snapshot(&app.active_tab().time_panes[0]);
+    assert_eq!(candles_after.pixels_per_bar.as_str(), "40");
+    assert!(!candles_after.follows_live);
+    assert_ne!(candles_after.right_edge_bar, candles_before.right_edge_bar);
+    assert_eq!(
+        crate::control::chart::viewport_snapshot(&app.active_tab().flow_pane),
+        flow_before,
+        "candle hooks cannot alter the right tape viewport"
+    );
+    assert_eq!(app.active_tab().tape().cached_config(), &tape_before);
 }
 
 #[test]
