@@ -11,6 +11,8 @@ use std::sync::Arc;
 
 #[path = "dense_frame_performance.rs"]
 mod dense_frame_performance;
+#[path = "recorded_frame_performance.rs"]
+mod recorded_frame_performance;
 #[path = "tape_memory_tests.rs"]
 mod tape_memory_tests;
 
