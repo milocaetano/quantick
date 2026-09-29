@@ -32,6 +32,9 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
         viewport,
         starts,
     } = *p;
+    // Right edge of the last date written: zoomed out, midnights sit closer
+    // than a date is wide, and the rule and tick still mark every one.
+    let mut written_right = f32::NEG_INFINITY;
     for &(slot, date) in starts {
         // The left edge of the first bar of the day, like the seam: the rule
         // separates two bars rather than crossing one.
@@ -50,12 +53,58 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
             ],
             egui::Stroke::new(1.0_f32, theme::TEXT_MUTED),
         );
-        painter.text(
-            egui::pos2(x + SEAM_LABEL_INSET_PX, pane.top() + SEAM_LABEL_INSET_PX),
-            egui::Align2::LEFT_TOP,
+        let galley = painter.layout_no_wrap(
             format!("{} {}", weekday_abbr(date.weekday()), date.short()),
             egui::FontId::proportional(SEAM_LABEL_PT),
             theme::SEAM_LABEL,
         );
+        let width = galley.size().x;
+        if let Some(left) = label_left(x, width, pane.left(), pane.right(), written_right) {
+            painter.galley(
+                egui::pos2(left, pane.top() + SEAM_LABEL_INSET_PX),
+                galley,
+                theme::SEAM_LABEL,
+            );
+            written_right = left + width;
+        }
+    }
+}
+/// Where a date `width` wide starts beside the rule at `x`: right of it, or
+/// left of it when the pane ends first, never past either pane edge nor over
+/// the date written before it (whose right edge is `written_right`).
+fn label_left(x: f32, width: f32, left: f32, right: f32, written_right: f32) -> Option<f32> {
+    [x + SEAM_LABEL_INSET_PX, x - SEAM_LABEL_INSET_PX - width]
+        .into_iter()
+        .find(|&start| {
+            start >= left.max(written_right + SEAM_LABEL_INSET_PX) && start + width <= right
+        })
+}
+#[cfg(test)]
+mod days_tests {
+    use super::*;
+
+    #[test]
+    fn a_date_sits_right_of_its_rule_when_the_pane_has_room() {
+        let start = label_left(100.0, 60.0, 0.0, 500.0, f32::NEG_INFINITY);
+        assert_eq!(start, Some(100.0 + SEAM_LABEL_INSET_PX));
+    }
+
+    #[test]
+    fn a_date_near_the_right_edge_flips_left_of_its_rule() {
+        let start = label_left(480.0, 60.0, 0.0, 500.0, f32::NEG_INFINITY);
+        assert_eq!(start, Some(480.0 - SEAM_LABEL_INSET_PX - 60.0));
+    }
+
+    #[test]
+    fn a_date_that_fits_neither_side_is_not_written() {
+        assert_eq!(label_left(30.0, 60.0, 0.0, 80.0, f32::NEG_INFINITY), None);
+    }
+
+    #[test]
+    fn a_date_never_overlaps_the_one_written_before_it() {
+        // The previous rule at 100 wrote its date to 164; a rule 12 px later
+        // has no room on either side, one past it does.
+        assert_eq!(label_left(112.0, 60.0, 0.0, 500.0, 164.0), None);
+        assert!(label_left(200.0, 60.0, 0.0, 500.0, 164.0).is_some());
     }
 }
