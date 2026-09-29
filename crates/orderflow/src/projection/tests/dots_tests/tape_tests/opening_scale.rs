@@ -6,6 +6,16 @@ use crate::projection::{TapeDotFrame, TapeDotMemory, TapeDotView};
 
 const DAY_MS: i64 = 86_400_000;
 
+#[test]
+fn recorded_opening_metadata_saturates_unrepresentable_timestamp_floors() {
+    let mut openings = crate::history::RecordedOpenings::default();
+    openings.observe(i64::MIN);
+    openings.observe(i64::MIN + 200);
+    assert_eq!(openings.windows(), &[i64::MIN]);
+    openings.observe(i64::MAX);
+    assert_eq!(openings.windows(), &[i64::MAX.div_euclid(100) * 100]);
+}
+
 fn native(id: u64, time: i64, price: i64, quantity: i64, buy: i64) -> AggressionPrimitive {
     let (_, _, source) = fixture(3_400);
     let mut mark = source[0].clone();
