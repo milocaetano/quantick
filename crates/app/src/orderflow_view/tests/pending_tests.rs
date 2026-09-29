@@ -624,3 +624,46 @@ fn a_subfloor_price_extreme_keeps_the_same_fit_after_worker_acknowledgement() {
         "acknowledgement cannot shrink away a recent factual price"
     );
 }
+
+#[test]
+fn worker_byte_eviction_cannot_resurrect_a_partial_window_in_the_pending_frame() {
+    let (mut view, gate, initial) = held_view(true);
+    let before = view.config.clone();
+    view.config.max_history_bytes = 1_024;
+    view.config.max_aggressions = 10_000;
+    view.commit_config_changes(before);
+    let mut prints: Vec<_> = (1..=32)
+        .map(|id| print(id, 1_000 + id as i64, 100 + id as i64, 1, Side::Buy))
+        .collect();
+    for trade in &prints {
+        view.record_trade(trade);
+    }
+    let _ = frame(&mut view, &prints);
+    initial.release();
+    view.flush_for_test();
+    let prefix = tape(&frame(&mut view, &prints).unwrap());
+    assert!(
+        view.cached_health().aggressions_evicted > 0,
+        "the byte budget, not count or time retention, evicted facts"
+    );
+    assert!(
+        prefix.is_empty(),
+        "the canonical projector excludes the partly evicted native window"
+    );
+    assert!(view.pending_tape.is_empty());
+
+    let held = gate.hold(Phase::Applying);
+    let next = print(33, 1_090, 180, 3, Side::Sell);
+    view.record_trade(&next);
+    prints.push(next);
+    held.reached();
+    let immediate = tape(&frame(&mut view, &prints).unwrap());
+    held.release();
+    view.flush_for_test();
+    let settled = tape(&frame(&mut view, &prints).unwrap());
+    assert!(settled.is_empty());
+    assert_eq!(
+        immediate, settled,
+        "a new suffix in an excluded window cannot bypass the worker byte horizon"
+    );
+}
