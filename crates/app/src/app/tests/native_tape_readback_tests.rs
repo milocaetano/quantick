@@ -63,10 +63,51 @@ fn the_bubbles_scope_reads_back_the_native_tape_and_tape_only() {
     disable_test_gateway(&mut app, &ctx);
 }
 
+fn set_layer(app: &mut QuantickApp, cockpit: &mut LocalClient, layer: &str, on: bool) -> Value {
+    let payload = json!({
+        "tab_id": app.tabs.active_id().to_string(),
+        "pane_id": app.active_tab().flow_pane.id.to_string(),
+        "layer_id": layer,
+        "visible": on,
+    });
+    let (response, _) = unkeyed_call(app, cockpit, "layers.visibility.set", payload);
+    success_result(&response)["layer"].clone()
+}
+
+/// The native tape the bubbles scope says the pane builds.
+fn built(app: &mut QuantickApp, observer: &mut LocalClient) -> Value {
+    let scopes = json!({ "scopes": ["orderflow.bubbles"] });
+    let (read, _) = unkeyed_call(app, observer, "snapshot.read", scopes);
+    let value = success_result(&read)["scopes"]["orderflow.bubbles"]["value"].clone();
+    let pane_id = app.active_tab().flow_pane.id.to_string();
+    value["tabs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|tab| tab["panes"].as_array().unwrap().iter())
+        .find(|pane| pane["pane_id"] == pane_id.as_str())
+        .expect("the flow pane is in the bubbles scope")["bubbles"]["native_tape"]
+        .clone()
+}
+
+/// The native tape layer as the layers scope reads it back.
+fn native_layer(app: &mut QuantickApp, observer: &mut LocalClient) -> Value {
+    let scopes = json!({ "scopes": ["layers.visibility"] });
+    let (read, _) = unkeyed_call(app, observer, "snapshot.read", scopes);
+    let value = success_result(&read)["scopes"]["layers.visibility"]["value"].clone();
+    value["panes"][0]["layers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|layer| layer["id"] == "native_tape")
+        .expect("the native tape layer is read back")
+        .clone()
+}
+
 /// The native tape is switched by the layer call exactly like tape only, and
 /// read back twice: the layer readback carries the request, the bubbles scope
 /// the tape the pane actually builds. Asked for without volume dots, or with
-/// the tape off, the pane builds the ordinary lane and says so.
+/// the tape off, the pane builds the ordinary lane and says why.
 #[test]
 fn the_native_tape_is_switched_by_the_layer_call_and_read_back_as_built() {
     let ctx = egui::Context::default();
@@ -79,35 +120,6 @@ fn the_native_tape_is_switched_by_the_layer_call_and_read_back_as_built() {
         &directory,
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
-    let pane_id = app.active_tab().flow_pane.id.to_string();
-    let mut set = |app: &mut QuantickApp, layer: &str, visible: bool| {
-        let payload = json!({
-            "tab_id": app.tabs.active_id().to_string(),
-            "pane_id": pane_id,
-            "layer_id": layer,
-            "visible": visible,
-        });
-        let (response, _) = unkeyed_call(app, &mut cockpit, "layers.visibility.set", payload);
-        success_result(&response)["layer"].clone()
-    };
-    let mut built = |app: &mut QuantickApp| {
-        let (read, _) = unkeyed_call(
-            app,
-            &mut observer,
-            "snapshot.read",
-            json!({ "scopes": ["orderflow.bubbles"] }),
-        );
-        let value = success_result(&read)["scopes"]["orderflow.bubbles"]["value"].clone();
-        let pane_id = app.active_tab().flow_pane.id.to_string();
-        value["tabs"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .flat_map(|tab| tab["panes"].as_array().unwrap().iter())
-            .find(|pane| pane["pane_id"] == pane_id.as_str())
-            .expect("the flow pane is in the bubbles scope")["bubbles"]["native_tape"]
-            .clone()
-    };
     let requested = |app: &QuantickApp| {
         let flow = app.active_tab().flow_pane.orderflow.as_ref();
         flow.expect("the flow pane has an engine")
@@ -115,29 +127,45 @@ fn the_native_tape_is_switched_by_the_layer_call_and_read_back_as_built() {
             .live_lane
             .native_tape
     };
-    set(&mut app, "bubble_overlap_merge", true);
+    set_layer(&mut app, &mut cockpit, "bubble_overlap_merge", true);
     for on in [true, false] {
-        let layer = set(&mut app, "native_tape", on);
+        let layer = set_layer(&mut app, &mut cockpit, "native_tape", on);
         assert_eq!(layer["requested"], on, "{layer}");
         assert_eq!(layer["effective"], on, "{layer}");
         assert_eq!(layer["persistence"], "orderflow_preset", "{layer}");
         assert_eq!(requested(&app), on, "the call set the pane's own switch");
-        assert_eq!(built(&mut app), on);
+        assert_eq!(built(&mut app, &mut observer), on);
     }
 
-    set(&mut app, "native_tape", true);
-    let layer = set(&mut app, "bubble_overlap_merge", false);
-    assert_eq!(layer["requested"], false);
-    let layer = set(&mut app, "native_tape", true);
+    set_layer(&mut app, &mut cockpit, "native_tape", true);
+    set_layer(&mut app, &mut cockpit, "bubble_overlap_merge", false);
+    let layer = native_layer(&mut app, &mut observer);
     assert_eq!(layer["requested"], true, "the request is kept: {layer}");
     assert_eq!(layer["effective"], false, "no execution tape: {layer}");
-    assert_eq!(built(&mut app), false, "the ordinary lane is what is built");
-
-    set(&mut app, "bubble_overlap_merge", true);
-    assert_eq!(built(&mut app), true);
-    set(&mut app, "tape_chart", false);
+    assert_eq!(layer["blocked_reason"], "native_tape_needs_volume_dots");
     assert_eq!(
-        built(&mut app),
+        built(&mut app, &mut observer),
+        false,
+        "the ordinary lane is what is built"
+    );
+    let payload = json!({
+        "tab_id": app.tabs.active_id().to_string(),
+        "pane_id": app.active_tab().flow_pane.id.to_string(),
+        "layer_id": "native_tape",
+        "visible": false,
+    });
+    let (refused, _) = unkeyed_call(&mut app, &mut cockpit, "layers.visibility.set", payload);
+    assert_eq!(
+        error_code(&refused),
+        Some(codes::CAPABILITY_UNAVAILABLE),
+        "a blocked switch names why instead of moving"
+    );
+
+    set_layer(&mut app, &mut cockpit, "bubble_overlap_merge", true);
+    assert_eq!(built(&mut app, &mut observer), true);
+    set_layer(&mut app, &mut cockpit, "tape_chart", false);
+    assert_eq!(
+        built(&mut app, &mut observer),
         false,
         "with the tape off nothing is native"
     );

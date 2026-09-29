@@ -99,14 +99,24 @@ fn tape_only_shows_the_native_tape_checked_and_locked() {
         );
     }
     assert_eq!(view.config, before, "locked while tape only is on");
-    let mut hover = Vec::new();
-    for _ in 0..3 {
-        hover = paint(&mut view, &ctx, vec![egui::Event::PointerMoved(at)]);
+    // As the tape quantity tooltip test does: approach after the click, so
+    // egui's post-click grace and velocity history let the tooltip open, then
+    // hold still through the tooltip's sizing frame.
+    for offset in [-7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0] {
+        let _ = paint(
+            &mut view,
+            &ctx,
+            vec![egui::Event::PointerMoved(at + egui::vec2(offset, 0.0))],
+        );
     }
+    for _ in 0..3 {
+        let _ = paint(&mut view, &ctx, Vec::new());
+    }
+    let hover = paint(&mut view, &ctx, Vec::new());
     assert!(
         hover
             .iter()
             .any(|(painted, _)| painted.contains("tape only") && painted.contains("native tape")),
-        "the hover text says tape only implies it"
+        "the hover text says tape only implies it: {hover:?}"
     );
 }
