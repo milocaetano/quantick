@@ -1197,20 +1197,20 @@ mod tests {
             "127.0.0.1:9100"
         );
 
-        // Both MetaTrader feeds open on the pie summary. Built-in crypto
-        // feeds declare their preexisting default so WIN cannot follow them.
+        // Both MetaTrader feeds open on the pie summary. Crypto keeps the
+        // trader's existing look; automatic tape scopes restore it on exit.
         assert_eq!(b3.bubble_preset.as_deref(), Some("live lane pie"));
         assert_eq!(tickmill.bubble_preset.as_deref(), Some("live lane pie"));
-        assert_eq!(binance.bubble_preset.as_deref(), Some("default"));
-        assert_eq!(hyperliquid.bubble_preset.as_deref(), Some("default"));
+        assert_eq!(binance.bubble_preset.as_deref(), None);
+        assert_eq!(hyperliquid.bubble_preset.as_deref(), None);
         // The mini index alone reads regionally; the mini dollar beside it
         // falls back to the feed-wide look. That ladder is the whole point of
         // per-symbol declarations.
         assert_eq!(b3.bubble_preset_for("WIN$N"), Some("mini index regions"));
         assert_eq!(b3.bubble_preset_for("WINV26"), Some("mini index regions"));
         assert_eq!(b3.bubble_preset_for("WDO$N"), Some("live lane pie"));
-        assert_eq!(binance.bubble_preset_for("BTCUSDT"), Some("default"));
-        assert_eq!(hyperliquid.bubble_preset_for("BTC"), Some("default"));
+        assert_eq!(binance.bubble_preset_for("BTCUSDT"), None);
+        assert_eq!(hyperliquid.bubble_preset_for("BTC"), None);
 
         // The default open is the split: timeframe context beside the flow
         // chart (user decision 2026-08-06). The other feeds declare nothing
