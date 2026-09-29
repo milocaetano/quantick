@@ -3,6 +3,7 @@
 //! over that lane now zooms the lane, where a hairline once could not say
 //! which chart a roll meant: over the candles they move the candles, over the
 //! tape its window, its time and the shared price axis, never the other side.
+//! Tape only is the tape across the whole canvas.
 use eframe::egui;
 use quantick_orderflow::projection::TapeHorizontalGeometry;
 use quantick_orderflow::tape_view::TapeEnd;
@@ -36,7 +37,7 @@ impl ChartPane {
             plot_area::gesture_hits_lane_divider(divider, position.x, LANE_HANDLE_HALF_WIDTH_PX)
         };
         let over_tape = |position: egui::Pos2| {
-            native_tape && !tape_only && divider.is_some_and(|x| position.x > x)
+            native_tape && (tape_only || divider.is_some_and(|x| position.x > x))
         };
         let (press, middle_down, delta, scroll) = ui.input(|i| {
             let p = &i.pointer;
@@ -60,6 +61,7 @@ impl ChartPane {
         }
         // The middle button pans always, mid-placement included: a trader who
         // drops one end of a trend line must be able to go find the other.
+        // Like the primary drag, it pans the side it was pressed on.
         let hover = chart
             .hover_pos()
             .filter(|position| area.contains(*position) && !on_divider(*position));
@@ -68,7 +70,7 @@ impl ChartPane {
             && middle_down
             && let Some(position) = hover
         {
-            self.pan_canvas(delta, total, over_tape(position));
+            self.pan_canvas(delta, total, over_tape(press.unwrap_or(position)));
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         }
         // Not with a tool armed: two placement clicks are two anchors. Over
