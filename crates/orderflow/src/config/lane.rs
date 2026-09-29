@@ -14,6 +14,10 @@ use super::bubbles::{
 use super::{MAX_BUBBLE_CLUSTER_MS, finite_clamp};
 use crate::history::TapeAge;
 
+/// The largest radius of a volume dot on the candles, as a share of the
+/// style's: the candle is what reads there, the dots only mark the flow.
+pub const CANDLE_DOT_RADIUS_SHARE: f32 = 0.4;
+
 /// Default share of the chart width taken by the live lane. Enough room for
 /// the tape to be read as a tape, with two thirds of the chart left for the
 /// history it is read against.
@@ -40,8 +44,8 @@ pub const MAX_LIVE_LANE_ZOOM: f32 = 8.0;
 /// tape left, whatever the zoom asked for.
 pub const MIN_LIVE_LANE_WINDOW_MS: i64 = 200;
 /// Most market time a zoomed-out lane will show. A tape is the recent past;
-/// past a quarter of an hour the chart's own history says it better.
-pub const MAX_LIVE_LANE_WINDOW_MS: i64 = 900_000;
+/// past half an hour the chart's own history says it better.
+pub const MAX_LIVE_LANE_WINDOW_MS: i64 = 1_800_000;
 /// The fixed tape windows the lane's menu offers, in exchange milliseconds.
 ///
 /// Round durations a trader already thinks in, not a sample of the accepted
@@ -55,6 +59,11 @@ pub const DEFAULT_LIVE_LANE_RADIUS_SCALE: f32 = 1.0;
 pub const MIN_LIVE_LANE_RADIUS_SCALE: f32 = 0.25;
 /// See [`MIN_LIVE_LANE_RADIUS_SCALE`].
 pub const MAX_LIVE_LANE_RADIUS_SCALE: f32 = 4.0;
+
+/// The automatic tape window at zoom 1 while bubbles are volume dots, in
+/// exchange milliseconds: it follows the zoom, never the bars, so the tape
+/// never rescales when a bar closes.
+pub const DOT_TAPE_WINDOW_MS: i64 = 15_000;
 
 /// How much market time the tape shows.
 ///
@@ -262,6 +271,38 @@ pub fn lane_lag_label(window_ms: i64, tape_age: Option<TapeAge>) -> Option<Strin
     Some(format!("last print {} back", format_window_ms(age)))
 }
 
+/// Clock steps the tape's axis labels on, finest first, in milliseconds.
+const LANE_TICK_STEPS_MS: [i64; 15] = [
+    100, 200, 500, 1_000, 2_000, 5_000, 10_000, 15_000, 30_000, 60_000, 120_000, 300_000, 600_000,
+    900_000, 1_800_000,
+];
+
+/// The instants the tape's clock labels sit on: multiples of the finest
+/// step in [`LANE_TICK_STEPS_MS`] that puts at most `max_labels` of them in
+/// `[end_ms - window_ms, end_ms]`, oldest first. Empty when nothing fits.
+#[must_use]
+pub fn lane_time_ticks(end_ms: i64, window_ms: i64, max_labels: usize) -> Vec<i64> {
+    if window_ms <= 0 || max_labels == 0 {
+        return Vec::new();
+    }
+    let start_ms = end_ms.saturating_sub(window_ms);
+    // The first multiple of `step` at or after the window's start.
+    let first_at = |step: i64| {
+        let floor = start_ms.div_euclid(step) * step;
+        if floor < start_ms {
+            floor + step
+        } else {
+            floor
+        }
+    };
+    let ticks = |step: i64| (first_at(step)..=end_ms).step_by(usize::try_from(step).unwrap_or(1));
+    LANE_TICK_STEPS_MS
+        .into_iter()
+        .find(|step| ticks(*step).nth(max_labels).is_none())
+        .map(|step| ticks(step).collect())
+        .unwrap_or_default()
+}
+
 /// How a tape window reads in a menu.
 ///
 /// `reference_ms` is the automatic reference, when the caller knows it. The
@@ -358,6 +399,19 @@ pub struct LiveLaneStyle {
     /// Whether aggression bubbles are drawn *on the tape*. Same rule as
     /// [`show_depth`](Self::show_depth), and on by default for the same reason.
     pub show_aggressions: bool,
+    /// The tape is built from each execution's own time and price, on the
+    /// market clock and over its whole window, and the price axis follows
+    /// its prints: the approved WIN tape. How the tape is *processed*, not
+    /// how much of the pane it takes — beside the candles it keeps its
+    /// share and the candles keep theirs. Off by default, and built only
+    /// with volume dots on: [`HeatmapConfig::native_tape`](crate::HeatmapConfig::native_tape)
+    /// is the question every processing site asks.
+    pub native_tape: bool,
+    /// The pane shows the tape alone, Bookmap style: the lane takes the
+    /// whole canvas and no candle and no candle mark is drawn. Presentation
+    /// only, and always on the native tape. Off by default, so every other
+    /// pane keeps its candles.
+    pub tape_only: bool,
 }
 
 impl Default for LiveLaneStyle {
@@ -371,6 +425,8 @@ impl Default for LiveLaneStyle {
             enabled: true,
             show_depth: true,
             show_aggressions: true,
+            native_tape: false,
+            tape_only: false,
         }
     }
 }
@@ -406,6 +462,12 @@ struct LiveLaneStyleRepr {
     enabled: bool,
     show_depth: Option<bool>,
     show_aggressions: Option<bool>,
+    /// Written only when on, so a pane that never asked keeps its file.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    native_tape: bool,
+    /// Written only when on, like `native_tape`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    tape_only: bool,
 }
 
 impl Default for LiveLaneStyleRepr {
@@ -434,6 +496,8 @@ impl From<LiveLaneStyleRepr> for LiveLaneStyle {
             // default. See `LiveLaneStyleRepr`.
             show_depth: repr.show_depth.unwrap_or(true),
             show_aggressions: repr.show_aggressions.unwrap_or(true),
+            native_tape: repr.native_tape,
+            tape_only: repr.tape_only,
         }
     }
 }
@@ -457,6 +521,8 @@ impl From<LiveLaneStyle> for LiveLaneStyleRepr {
             enabled: style.enabled,
             show_depth: Some(style.show_depth),
             show_aggressions: Some(style.show_aggressions),
+            native_tape: style.native_tape,
+            tape_only: style.tape_only,
         }
     }
 }
@@ -482,6 +548,18 @@ impl LiveLaneStyle {
             .map(|window| window.clamp(0, MAX_BUBBLE_CLUSTER_MS));
     }
 
+    /// Whether the tape is *asked* to be native: the switch, or tape only,
+    /// whose full-width pane has always drawn the native tape. A request
+    /// only, blind to the tape's own switch and to volume dots, so it is
+    /// what the settings box shows and never what builds or draws a frame:
+    /// that is [`HeatmapConfig::native_tape`](crate::HeatmapConfig::native_tape),
+    /// which reaches the frame through `DotZoom`, `VolumeDots`, `DotScale`
+    /// and `DotSizing`.
+    #[must_use]
+    pub fn native(&self) -> bool {
+        self.native_tape || self.tape_only
+    }
+
     /// Lane width in pixels for a chart this wide.
     ///
     /// The lane is a pane, not a number of candle slots: it takes
@@ -499,6 +577,9 @@ impl LiveLaneStyle {
         }
         if !chart_width.is_finite() || chart_width <= 0.0 {
             return 0.0;
+        }
+        if self.tape_only {
+            return chart_width;
         }
         let share = if self.width_share.is_finite() {
             self.width_share
@@ -553,12 +634,52 @@ impl LiveLaneStyle {
         let max = (bubbles.max_radius * scale).clamp(MIN_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MAX_RADIUS);
         (min.min(max), max)
     }
+
+    /// The radius range a pane draws its bubbles on: the tape's own scaled
+    /// range for a `live` mark, the style's for a candle mark. Volume dots
+    /// keep the style's range on the tape and shrink on the candles to
+    /// [`CANDLE_DOT_RADIUS_SHARE`] of it, never under the smallest radius, so
+    /// the candle stays the thing that reads there.
+    #[must_use]
+    pub fn pane_radii(&self, bubbles: &BubbleStyle, live: bool, volume_dots: bool) -> (f32, f32) {
+        match (live, volume_dots) {
+            (true, false) => self.scaled_radii(bubbles),
+            (false, true) => {
+                let max = (bubbles.max_radius * CANDLE_DOT_RADIUS_SHARE).max(bubbles.min_radius);
+                (bubbles.min_radius, max)
+            }
+            _ => (bubbles.min_radius, bubbles.max_radius),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::DEFAULT_BUBBLE_CLUSTER_MS;
+
+    /// Volume dots on the candles stay small, so the candle is what reads
+    /// there: the largest radius is a share of the style's, never under the
+    /// smallest. The tape keeps the full range.
+    #[test]
+    fn candle_dots_are_small_and_tape_dots_are_not() {
+        use crate::config::CANDLE_DOT_RADIUS_SHARE;
+        assert_eq!(CANDLE_DOT_RADIUS_SHARE, 0.4);
+        let lane = LiveLaneStyle::default();
+        let bubbles = BubbleStyle {
+            min_radius: 2.0,
+            max_radius: 15.0,
+            ..BubbleStyle::default()
+        };
+        assert_eq!(lane.pane_radii(&bubbles, false, true), (2.0, 6.0));
+        assert_eq!(lane.pane_radii(&bubbles, true, true), (2.0, 15.0));
+        assert_eq!(lane.pane_radii(&bubbles, false, false), (2.0, 15.0));
+        let fat_min = BubbleStyle {
+            min_radius: 9.0,
+            ..bubbles
+        };
+        assert_eq!(lane.pane_radii(&fat_min, false, true), (9.0, 9.0));
+    }
 
     /// The lane is a pane of the chart, so its width is a share of the chart
     /// and nothing else — the candle zoom has no say in it at all.
@@ -1027,5 +1148,124 @@ mod tests {
         assert!(min <= max);
         assert!(max <= MAX_BUBBLE_MAX_RADIUS);
         assert!(min <= MAX_BUBBLE_MIN_RADIUS);
+    }
+
+    /// Tape only: the tape is the whole pane, whatever share was asked for,
+    /// and a tape that is switched off still reserves nothing.
+    #[test]
+    fn a_tape_only_lane_takes_the_whole_chart() {
+        let tape_only = LiveLaneStyle {
+            tape_only: true,
+            width_share: MIN_LIVE_LANE_SHARE,
+            ..LiveLaneStyle::default()
+        };
+        assert_eq!(tape_only.resolved_width_px(1_000.0), 1_000.0);
+        assert_eq!(tape_only.resolved_width_px(0.0), 0.0);
+        assert_eq!(tape_only.resolved_width_px(f32::NAN), 0.0);
+        let off = LiveLaneStyle {
+            enabled: false,
+            ..tape_only
+        };
+        assert_eq!(off.resolved_width_px(1_000.0), 0.0);
+        // Off, the lane keeps its share.
+        let normal = LiveLaneStyle::default();
+        assert!(!normal.tape_only, "off until someone asks");
+        assert!((normal.resolved_width_px(1_000.0) - 350.0).abs() < 0.01);
+    }
+
+    /// A pane that never asked for tape only writes the file it always
+    /// wrote; one that did reads it back.
+    #[test]
+    fn tape_only_is_saved_only_when_on() {
+        let text = toml::to_string(&LiveLaneStyle::default()).unwrap();
+        assert!(!text.contains("tape_only"), "{text}");
+        let old: LiveLaneStyle = toml::from_str(
+            "width_share = 0.35
+",
+        )
+        .unwrap();
+        assert!(!old.tape_only);
+        let on = LiveLaneStyle {
+            tape_only: true,
+            ..LiveLaneStyle::default()
+        };
+        let text = toml::to_string(&on).unwrap();
+        assert!(text.contains("tape_only = true"), "{text}");
+        assert_eq!(toml::from_str::<LiveLaneStyle>(&text).unwrap(), on);
+    }
+
+    /// The native tape is how the tape is processed, not how much of the pane
+    /// it takes: beside the candles it keeps its share of the chart, and only
+    /// tape only claims the whole canvas. Tape only implies the native tape,
+    /// so the full-width pane keeps drawing exactly what it drew.
+    #[test]
+    fn a_native_tape_beside_the_candles_keeps_its_share_of_the_chart() {
+        let ordinary = LiveLaneStyle::default();
+        assert!(!ordinary.native_tape, "off until someone asks");
+        assert!(!ordinary.native());
+        let beside = LiveLaneStyle {
+            native_tape: true,
+            ..LiveLaneStyle::default()
+        };
+        assert!(beside.native());
+        assert!(!beside.tape_only);
+        assert!(
+            (beside.resolved_width_px(1_000.0) - 350.0).abs() < 0.01,
+            "the candles keep the rest of the chart"
+        );
+        let full = LiveLaneStyle {
+            tape_only: true,
+            ..LiveLaneStyle::default()
+        };
+        assert!(full.native(), "tape only is always the native tape");
+        assert_eq!(full.resolved_width_px(1_000.0), 1_000.0);
+        let off = LiveLaneStyle {
+            enabled: false,
+            ..beside
+        };
+        assert_eq!(off.resolved_width_px(1_000.0), 0.0);
+    }
+
+    /// A pane that never asked for the native tape writes the file it always
+    /// wrote; one that did reads it back, and a file from before the switch
+    /// opens without it.
+    #[test]
+    fn native_tape_is_saved_only_when_on() {
+        let text = toml::to_string(&LiveLaneStyle::default()).unwrap();
+        assert!(!text.contains("native_tape"), "{text}");
+        let old: LiveLaneStyle = toml::from_str("tape_only = true\n").unwrap();
+        assert!(!old.native_tape, "tape only never writes the native switch");
+        assert!(old.native(), "yet it still processes the tape natively");
+        let on = LiveLaneStyle {
+            native_tape: true,
+            ..LiveLaneStyle::default()
+        };
+        let text = toml::to_string(&on).unwrap();
+        assert!(text.contains("native_tape = true"), "{text}");
+        assert!(!text.contains("tape_only"), "{text}");
+        assert_eq!(toml::from_str::<LiveLaneStyle>(&text).unwrap(), on);
+    }
+
+    /// The tape's own clock labels: round instants inside the window, on the
+    /// finest step that fits the room, newest last.
+    #[test]
+    fn tape_time_ticks_fall_on_round_instants_inside_the_window() {
+        // 15 s ending at 100.5 s, room for four labels: every 5 s.
+        assert_eq!(
+            lane_time_ticks(100_500, 15_000, 4),
+            vec![90_000, 95_000, 100_000]
+        );
+        // More room, a finer step.
+        assert_eq!(
+            lane_time_ticks(100_500, 15_000, 8),
+            vec![
+                86_000, 88_000, 90_000, 92_000, 94_000, 96_000, 98_000, 100_000
+            ]
+        );
+        // A window edge on a round instant is labelled, and counts.
+        assert_eq!(lane_time_ticks(60_000, 60_000, 2), vec![0, 60_000]);
+        // Nothing to label.
+        assert!(lane_time_ticks(100_000, 0, 4).is_empty());
+        assert!(lane_time_ticks(100_000, 15_000, 0).is_empty());
     }
 }

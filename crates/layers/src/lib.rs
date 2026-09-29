@@ -3,6 +3,7 @@
 //! writes instead of mirroring those owners' state.
 
 mod builtins;
+mod candle_aggression;
 mod descriptor;
 mod document;
 mod persistence;

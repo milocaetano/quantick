@@ -1,5 +1,5 @@
-//! The tape switch: the chip in the canvas's top-right corner that takes the
-//! live lane off the canvas and puts it back.
+//! The tape switch: the top-right chip that takes the live lane off the canvas
+//! and puts it back. Tape-only panes keep it in the outer header.
 //!
 //! The chip's geometry, its click in the input pass and its paint in the draw
 //! pass live together so the pixel a press lands on is the pixel the chip is
@@ -46,23 +46,27 @@ const TAPE_SWITCH_DOT_RADIUS_PX: f32 = 3.0;
 const TAPE_SWITCH_LABEL_X_PX: f32 = 17.0;
 /// Label size, matching the status badge's.
 const TAPE_SWITCH_FONT_PX: f32 = 11.0;
-/// The label itself. Short by necessity: the chip sits over market data.
+/// The label itself. Short enough for both the canvas and compact header.
 const TAPE_SWITCH_LABEL: &str = "tape";
 
 /// Where the tape switch sits on a canvas this size.
 ///
-/// The canvas's top-right corner: the tape's own corner, so the switch that
-/// puts it there and takes it away is on it. One function, read by the input
-/// pass and the paint pass alike.
+/// Tape-only panes use the outer header, leaving every plot pixel for prints.
+/// Input, paint and modifier arbitration share this rectangle.
 #[must_use]
-pub(crate) fn tape_switch_rect(chart_rect: egui::Rect) -> egui::Rect {
-    egui::Rect::from_min_size(
+pub(crate) fn tape_switch_rect(chart_rect: egui::Rect, tape_only: bool) -> egui::Rect {
+    let mut rect = egui::Rect::from_min_size(
         egui::pos2(
             chart_rect.right() - TAPE_SWITCH_INSET.x - TAPE_SWITCH_SIZE.x,
             chart_rect.top() + TAPE_SWITCH_INSET.y,
         ),
         TAPE_SWITCH_SIZE,
-    )
+    );
+    if tape_only {
+        rect.set_top(chart_rect.top() - crate::plot_area::PLOT_PADDING_PX + 1.0);
+        rect.set_bottom(chart_rect.top() - 1.0);
+    }
+    rect
 }
 
 /// The chip's state between the input pass and the paint pass. See the
@@ -101,8 +105,13 @@ impl TapeSwitch {
         chart_rect: egui::Rect,
         id: egui::Id,
         on: bool,
+        tape_only: bool,
     ) -> bool {
-        let response = ui.interact(tape_switch_rect(chart_rect), id, egui::Sense::click());
+        let response = ui.interact(
+            tape_switch_rect(chart_rect, tape_only),
+            id,
+            egui::Sense::click(),
+        );
         self.hovered = response.hovered();
         if response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -132,8 +141,9 @@ pub(super) fn paint_switch(
     chart_rect: egui::Rect,
     on: bool,
     hovered: bool,
+    tape_only: bool,
 ) {
-    let rect = tape_switch_rect(chart_rect);
+    let rect = tape_switch_rect(chart_rect, tape_only);
     let accent = if on { theme::ACCENT } else { theme::TEXT_MUTED };
     let rounding = egui::Rounding::same(TAPE_SWITCH_ROUNDING_PX);
     painter.rect_filled(

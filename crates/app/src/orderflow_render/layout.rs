@@ -7,8 +7,10 @@
 //! pointer resolver cannot grow two pixel mappings. Nothing here paints.
 
 use eframe::egui;
-use quantick_engine::Side;
-use quantick_orderflow::{AggressionPrimitive, HeatmapProjection};
+use quantick_orderflow::projection::{PastTape, PastTapeMemory};
+use quantick_orderflow::{AggressionPrimitive, HeatmapProjection, PriceWindow};
+use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive as _;
 
 use crate::viewport::Viewport;
 
@@ -19,11 +21,12 @@ use super::OrderflowRenderStyle;
 /// The lane is a pane pinned to the right edge of the chart, so the divider is
 /// a property of the chart rect alone — no viewport, no bars. That is exactly
 /// what makes panning and zooming the candles leave the tape where it is.
-/// `None` when the frame has no lane, or when the lane would take the whole
-/// chart and leave the candles nowhere to go.
+/// `None` when the frame has no lane, or when the lane would be wider than
+/// the chart. A lane exactly as wide as the chart is a tape-only pane: the
+/// divider sits on the chart's left edge and the candles get no room.
 #[must_use]
 pub(crate) fn lane_divider_x(chart_rect: egui::Rect, lane_width_px: f32) -> Option<f32> {
-    (lane_width_px.is_finite() && lane_width_px > 0.0 && lane_width_px < chart_rect.width())
+    (lane_width_px.is_finite() && lane_width_px > 0.0 && lane_width_px <= chart_rect.width())
         .then(|| chart_rect.right() - lane_width_px)
 }
 
@@ -213,7 +216,18 @@ impl<'a> ProjectedLayout<'a> {
 
     #[must_use]
     pub(super) fn y(self, normalized: f64) -> f32 {
-        let unit = finite_unit_f64(normalized) as f32;
+        self.y_unclamped(finite_unit_f64(normalized))
+    }
+
+    /// [`Self::y`] off the chart too: a volume dot off the price window is
+    /// hidden by its pane's clip rather than piled on the edge.
+    #[must_use]
+    pub(super) fn y_unclamped(self, normalized: f64) -> f32 {
+        let unit = if normalized.is_finite() {
+            normalized as f32
+        } else {
+            0.0
+        };
         let unit = if self.inverted { 1.0 - unit } else { unit };
         self.chart_rect.top() + unit * self.chart_rect.height()
     }
@@ -254,16 +268,7 @@ impl<'a> ProjectedLayout<'a> {
 
     #[must_use]
     pub(super) fn event_band(self, x: f64, y0: f64, y1: f64, min_height: f32) -> EventBand {
-        let top = self.y(y0);
-        let bottom = self.y(y1);
-        let row = readable_band(
-            egui::Rect::from_min_max(
-                egui::pos2(self.x(x), top.min(bottom)),
-                egui::pos2(self.x(x), top.max(bottom)),
-            ),
-            min_height,
-            self.pane(x),
-        );
+        let row = self.band(x, x, y0, y1, min_height);
         EventBand {
             x: self.x(x),
             top: row.top(),
@@ -278,6 +283,12 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) projection: &'a HeatmapProjection,
     pub(crate) layout: ProjectedLayout<'a>,
     pub(crate) style: &'a OrderflowRenderStyle,
+    pub(super) tape_time: Option<(quantick_orderflow::LiveEdge, i64)>,
+    pub(super) tape_prices: Option<PriceWindow>,
+    pub(super) tape_memory:
+        Option<&'a std::cell::RefCell<quantick_orderflow::projection::TapeDotMemory>>,
+    pub(super) past_tape: Option<(&'a std::cell::RefCell<PastTapeMemory>, &'a PastTape)>,
+    pub(super) tape_overlay: Option<&'a quantick_orderflow::projection::TapeOverlay>,
 }
 
 impl<'a> RenderContext<'a> {
@@ -291,53 +302,65 @@ impl<'a> RenderContext<'a> {
             projection,
             layout,
             style,
+            tape_time: None,
+            tape_prices: None,
+            tape_memory: None,
+            past_tape: None,
+            tape_overlay: None,
         }
     }
 
-    /// The aggressions this canvas draws as bubbles, in projection order.
-    ///
-    /// The display switches live here rather than in the projection: the
-    /// clusters are a fact several surfaces read (bubbles, the consumption
-    /// carve behind them, the live strip's histogram), so hiding the bubble
-    /// layer has to hide bubbles — not empty the frame everyone else reads.
-    /// The size reference, the dust merge and the liquidity association all
-    /// saw both sides upstream, so hiding one side never rescales or
-    /// re-associates the other.
-    ///
-    /// Reads the raw style rather than the sanitized copy on purpose:
-    /// `sanitized` clamps numbers and never touches a display flag, so the two
-    /// answer identically and the filter costs no second clone per frame.
+    /// Draw the tape held in the past from its frozen blocks instead.
+    pub(crate) fn with_past_tape(
+        mut self,
+        past: Option<(&'a std::cell::RefCell<PastTapeMemory>, &'a PastTape)>,
+    ) -> Self {
+        self.past_tape = past;
+        self
+    }
+
+    /// Reproject factual tape prices against the axis being painted now,
+    /// before visibility and overlap decisions use their screen positions.
+    pub(crate) fn with_tape_price_range(mut self, range: (f64, f64)) -> Self {
+        self.tape_prices = Decimal::from_f64(range.0)
+            .zip(Decimal::from_f64(range.1))
+            .and_then(|(low, high)| PriceWindow::new(low, high));
+        self
+    }
+
+    /// Reposition a cached tape against this frame's supplied market clock.
+    pub(crate) fn with_tape_time(
+        mut self,
+        edge: quantick_orderflow::LiveEdge,
+        dot_window_ms: i64,
+    ) -> Self {
+        self.tape_time = Some((edge, dot_window_ms));
+        self
+    }
+
+    /// Keep closed tape membership in the pane that owns its source lifetime,
+    /// with the accepted prints the frame carries beside its tape.
+    pub(crate) fn with_tape_memory(
+        mut self,
+        memory: &'a std::cell::RefCell<quantick_orderflow::projection::TapeDotMemory>,
+        overlay: Option<&'a quantick_orderflow::projection::TapeOverlay>,
+    ) -> Self {
+        self.tape_memory = Some(memory);
+        self.tape_overlay = overlay;
+        self
+    }
+
+    /// The aggressions this canvas draws as bubbles, in projection order:
+    /// the display switches live in the painter, never in the projection
+    /// ([`quantick_orderflow::projection::draws_bubble`]). Reads the raw style
+    /// rather than the sanitized copy on purpose: `sanitized` never touches a
+    /// display flag, so the filter costs no second clone per frame.
     pub(crate) fn bubbles(&self) -> impl Iterator<Item = &'a AggressionPrimitive> {
         let style = self.style;
-        let projection = self.projection;
-        let both_sides = style.show_buy && style.show_sell;
-        projection.aggressions.iter().filter(move |mark| {
-            // Which pane a print belongs to is the projection's own answer —
-            // the same one that clustered it on the tape's window rather than
-            // history's — so the switch is read from the mark, never inferred
-            // a second time from its position.
-            if !(if mark.live {
-                style.lane_aggression_layer
-            } else {
-                style.aggression_layer
-            }) {
-                return false;
-            }
-            // A mark carrying both sides — a merged cluster, or a bar summary
-            // — is sized by the two together, so with one side hidden its area
-            // would state a quantity the canvas is not showing. It is withheld
-            // rather than drawn at a lie of a size. The projection used to
-            // decide this by refusing to summarize at all; it now builds the
-            // same clusters whatever is on screen, which is what keeps the
-            // live strip's histogram steady while a bubble switch moves.
-            if !both_sides && mark.buy_share > 0.0 && mark.buy_share < 1.0 {
-                return false;
-            }
-            match mark.side {
-                Side::Buy => style.show_buy,
-                Side::Sell => style.show_sell,
-            }
-        })
+        self.projection
+            .aggressions
+            .iter()
+            .filter(move |mark| quantick_orderflow::projection::draws_bubble(style, mark))
     }
 }
 

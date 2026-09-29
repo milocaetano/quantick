@@ -12,21 +12,27 @@ pub mod engine;
 pub mod grouping;
 pub mod history;
 pub mod interaction;
+mod native_tape;
 pub mod projection;
 pub mod scale;
+pub mod tape_clock;
+pub mod tape_view;
 pub mod timeline;
 
 // This facade is intentionally wider than the first UI integration. Keeping
 // the public DTOs here gives later renderers one stable import surface.
 #[allow(unused_imports)]
 pub use config::{
-    BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, DisplayGrouping,
-    GOLDEN_ANGLE, HeatmapConfig, HeatmapTheme, INV_PHI, INV_PHI_2, INV_PHI_3, IntensityMode,
+    BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark,
+    DEFAULT_VOLUME_DOT_FULL_QUANTITY, DOT_TAPE_WINDOW_MS, DisplayGrouping, GOLDEN_ANGLE,
+    HeatmapConfig, HeatmapTheme, INV_PHI, INV_PHI_2, INV_PHI_3, IntensityMode,
     LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS,
     MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE,
     MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
-    MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms,
-    lane_lag_label, lane_window_label, same_lane_window,
+    MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, VolumeDotStyle,
+    bubble_halo_padding, bubble_impact_ring_padding, bubble_radius, format_window_ms,
+    lane_lag_label, lane_time_ticks, lane_window_label, same_lane_window,
+    sane_volume_dot_full_quantity, side_offset_y,
 };
 #[allow(unused_imports)]
 pub use grouping::{
@@ -45,8 +51,10 @@ pub use interaction::{
 };
 #[allow(unused_imports)]
 pub use projection::{
-    AggressionPrimitive, BEFORE_CAPTURE, GapPrimitive, HeatmapCell, HeatmapProjection,
-    LiquidityEventPrimitive, LiquidityEvidence, LiveMarks, PriceWindow, SettledProjection,
+    AggressionPrimitive, BEFORE_CAPTURE, DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_CELL_PX,
+    DOT_WINDOW_LADDER_MS, DotRungMemory, DotScale, DotSizing, DotZoom, GapPrimitive, HeatmapCell,
+    HeatmapProjection, LiquidityEventPrimitive, LiquidityEvidence, LiveMarks, PaneGeometry,
+    PriceWindow, SettledProjection, VolumeDots, dot_level_ticks, dot_window_ms, lane_bars,
     project_live, project_settled,
 };
 #[allow(unused_imports)]
@@ -76,3 +84,9 @@ mod tests {
         assert_eq!(feed_lag_ms(500, Some(600)), Some(-100));
     }
 }
+
+#[cfg(test)]
+mod tape_clock_tests;
+
+#[cfg(test)]
+mod tape_view_tests;

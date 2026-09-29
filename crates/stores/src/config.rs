@@ -56,8 +56,9 @@ pub struct FeedConfig {
     ///
     /// A market dictates how its tape reads — the B3 mini index wants the
     /// candle summary that a dense BTC tape does not — so a feed may declare
-    /// the look it opens with. Absent, nothing changes: the panel keeps
-    /// whatever preset is active, exactly as before the field existed. The
+    /// the look it opens with. Absent, the panel keeps the trader's active
+    /// appearance; leaving an automatically declared tape-only look restores
+    /// the appearance from before that source was selected. The
     /// name must exist in the bubble presets file; an unknown name is reported
     /// and ignored rather than silently altering the panel.
     #[serde(default)]
@@ -1170,7 +1171,7 @@ mod tests {
         // rather than one list that half-resolves whoever is logged in.
         let b3 = config.feed("metatrader-b3").expect("B3 feed");
         assert_eq!(b3.provider, ProviderKind::MetaTrader);
-        assert_eq!(b3.symbols, ["WIN$N", "WDO$N"]);
+        assert_eq!(b3.symbols, ["WIN$N", "WDO$N", "WINV26"]);
         let tickmill = config.feed("metatrader-tickmill").expect("Tickmill feed");
         assert_eq!(tickmill.provider, ProviderKind::MetaTrader);
         assert_eq!(tickmill.symbols, ["XAUUSD", "US500", "US30"]);
@@ -1197,17 +1198,20 @@ mod tests {
             "127.0.0.1:9100"
         );
 
-        // Both MetaTrader feeds open on the pie summary; Binance declares
-        // nothing and keeps whatever the presets file says.
+        // Both MetaTrader feeds open on the pie summary. Crypto keeps the
+        // trader's existing look; automatic tape scopes restore it on exit.
         assert_eq!(b3.bubble_preset.as_deref(), Some("live lane pie"));
         assert_eq!(tickmill.bubble_preset.as_deref(), Some("live lane pie"));
-        assert_eq!(binance.bubble_preset, None);
+        assert_eq!(binance.bubble_preset.as_deref(), None);
+        assert_eq!(hyperliquid.bubble_preset.as_deref(), None);
         // The mini index alone reads regionally; the mini dollar beside it
         // falls back to the feed-wide look. That ladder is the whole point of
         // per-symbol declarations.
         assert_eq!(b3.bubble_preset_for("WIN$N"), Some("mini index regions"));
+        assert_eq!(b3.bubble_preset_for("WINV26"), Some("mini index regions"));
         assert_eq!(b3.bubble_preset_for("WDO$N"), Some("live lane pie"));
         assert_eq!(binance.bubble_preset_for("BTCUSDT"), None);
+        assert_eq!(hyperliquid.bubble_preset_for("BTC"), None);
 
         // The default open is the split: timeframe context beside the flow
         // chart (user decision 2026-08-06). The other feeds declare nothing

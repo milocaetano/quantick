@@ -70,26 +70,30 @@ pub(super) fn legend_entries(
     entries
 }
 
-/// Draw a responsive legend inside the chart. Labels deliberately distinguish
-/// confirmed aggression from aligned or unattributed L2 reductions.
+/// Draw the canvas key, or a compact buy/sell key in the tape-only header.
 pub(crate) fn draw_compact_legend(
     painter: &egui::Painter,
     context: &RenderContext<'_>,
 ) -> Option<egui::Rect> {
     let style = context.style.sanitized();
-    if !style.show_legend || context.layout.chart_rect.width() < 150.0 {
+    let tape_header = style.live_lane.tape_only && style.live_lane.enabled;
+    if !style.show_legend
+        || context.layout.chart_rect.width() < if tape_header { 90.0 } else { 150.0 }
+    {
         return None;
     }
     // The corner may already be full — a tall stack of indicator chips over a
     // short canvas. The key stands down rather than printing over them: it is
     // chrome, everything it names keeps drawing, and it comes back the moment
     // there is room (or a chip goes away).
-    if style.legend_top_inset > context.layout.chart_rect.height() * MAX_LEGEND_TOP_INSET_FRAC {
+    if !tape_header
+        && style.legend_top_inset > context.layout.chart_rect.height() * MAX_LEGEND_TOP_INSET_FRAC
+    {
         return None;
     }
     // The legend is a key for what is on screen, so the aggression swatches
     // follow the bubble panel's colour overrides.
-    let mut palette = Palette::for_theme(style.theme);
+    let mut palette = super::palette_for_theme(style.theme);
     let colors = BubbleColors::resolve(&palette, &style.bubbles);
     palette.buy = colors.buy;
     palette.sell = colors.sell;
@@ -100,7 +104,18 @@ pub(crate) fn draw_compact_legend(
     } else {
         "liquidity".to_owned()
     };
-    let entries = legend_entries(&style, liquidity_label);
+    let entries = if tape_header {
+        [
+            (style.show_buy, LegendGlyph::Buy, "Buy"),
+            (style.show_sell, LegendGlyph::Sell, "Sell"),
+        ]
+        .into_iter()
+        .filter(|(shown, _, _)| *shown && style.lane_aggression_layer)
+        .map(|(_, glyph, label)| (glyph, label.to_owned()))
+        .collect()
+    } else {
+        legend_entries(&style, liquidity_label)
+    };
     if entries.is_empty() {
         return None;
     }
@@ -115,13 +130,18 @@ pub(crate) fn draw_compact_legend(
         .map(|((glyph, _), galley)| glyph.width() + 5.0 + galley.size().x + 10.0)
         .collect();
 
-    let outer_margin = 6.0;
-    let inner_margin = 7.0;
+    let outer_margin = if tape_header { 0.0 } else { 6.0 };
+    let inner_margin = if tape_header { 0.0 } else { 7.0 };
     let max_panel_width = style
         .legend_max_width
         .min((context.layout.chart_rect.width() - outer_margin * 2.0).max(120.0));
     let max_content_width = (max_panel_width - inner_margin * 2.0).max(100.0);
-    let flow = flow_layout(&widths, max_content_width, 17.0, 3.0);
+    let flow = flow_layout(
+        &widths,
+        max_content_width,
+        if tape_header { 14.0 } else { 17.0 },
+        3.0,
+    );
     let panel_size = egui::vec2(
         (flow.size.x + inner_margin * 2.0).min(max_panel_width),
         flow.size.y + inner_margin * 2.0,
@@ -130,19 +150,29 @@ pub(crate) fn draw_compact_legend(
     // may have stacked indicator chips under it. Keep the legend below all of
     // it, so symbol/bar metadata and every chip remain readable at every
     // width — nothing at this corner prints over anything else.
+    let top_inset = if tape_header {
+        (context.layout.chart_rect.height() - panel_size.y).max(0.0) / 2.0
+    } else {
+        style.legend_top_inset
+    };
     let panel = egui::Rect::from_min_size(
-        context.layout.chart_rect.left_top()
-            + egui::vec2(outer_margin, outer_margin + style.legend_top_inset),
+        context.layout.chart_rect.left_top() + egui::vec2(outer_margin, outer_margin + top_inset),
         panel_size,
     );
-    clip.rect_filled(panel, egui::Rounding::same(4.0), palette.legend_background);
-    clip.rect_stroke(
-        panel,
-        egui::Rounding::same(4.0),
-        egui::Stroke::new(LEGEND_BORDER_WIDTH_PX, palette.legend_border),
-    );
+    if !tape_header {
+        clip.rect_filled(panel, egui::Rounding::same(4.0), palette.legend_background);
+        clip.rect_stroke(
+            panel,
+            egui::Rounding::same(4.0),
+            egui::Stroke::new(LEGEND_BORDER_WIDTH_PX, palette.legend_border),
+        );
+    }
 
-    let mut footprint = panel.expand(LEGEND_BORDER_WIDTH_PX / 2.0);
+    let mut footprint = panel.expand(if tape_header {
+        0.0
+    } else {
+        LEGEND_BORDER_WIDTH_PX / 2.0
+    });
     let origin = panel.left_top() + egui::vec2(inner_margin, inner_margin);
     for (((glyph, _), galley), offset) in entries.iter().zip(galleys).zip(flow.positions) {
         let item = origin + offset;

@@ -42,6 +42,34 @@ pub struct LayerSnapshot {
     pub blocked_reason: Option<String>,
 }
 
+impl LayerSnapshot {
+    pub fn from_policy(
+        layer: quantick_layers::ChartLayer,
+        requested: bool,
+        facts: quantick_layers::LayerFacts,
+    ) -> Self {
+        use quantick_layers::{LayerScope, LayerState, Persistence};
+        Self {
+            id: layer.id().to_owned(),
+            label: layer.label().to_owned(),
+            scope: match layer.0.scope {
+                LayerScope::Window => "window",
+                LayerScope::Pane => "pane",
+                LayerScope::FlowPane => "flow_pane",
+            }
+            .to_owned(),
+            persistence: match layer.0.persistence {
+                Persistence::Layers => "chart_layers",
+                Persistence::OrderflowPreset => "orderflow_preset",
+            }
+            .to_owned(),
+            requested,
+            effective: LayerState::effective(layer, requested, facts),
+            blocked_reason: LayerState::blocked(layer, facts).map(|block| block.code.to_owned()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PaneLayersSnapshot {
     pub tab_id: WireU64,

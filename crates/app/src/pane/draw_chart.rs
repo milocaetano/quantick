@@ -28,6 +28,7 @@ use crate::orderflow_view::{LiveLane, OrderflowView};
 use crate::plot_area::split_time_strip;
 use crate::theme;
 use quantick_layers::ChartLayer;
+use quantick_orderflow::projection::TapeHorizontalGeometry;
 use quantick_orderflow::reserved_span_ms;
 
 use super::draw_frame::{AxisChips, DrawFrame};
@@ -54,6 +55,10 @@ impl ChartPane {
         let Some(layout) = self.lay_out(painter, area, chrome) else {
             return;
         };
+        let tape_range = self
+            .orderflow
+            .as_ref()
+            .and_then(OrderflowView::tape_price_range);
         // Field borrows, not `self` borrows: the tape below needs `&mut
         // self.orderflow` while these are alive.
         let series = Series {
@@ -64,6 +69,7 @@ impl ChartPane {
         let Some((frame, auto_range)) = layout.resolve(
             painter,
             series,
+            tape_range,
             self.frame.auto_range,
             &self.price_view,
             start.canvas_background,
@@ -146,37 +152,57 @@ impl ChartPane {
         };
         let mut carved = std::mem::take(&mut self.frame.bands);
         let clear_depth = flow.projected() && depth_visible;
-        let mut candle_pass =
-            history.candle_pass(&self.indicators, clear_depth, &chrome.style.candles);
-        renderers.candle_clear(&mut candle_pass);
-        // Only price-band background drawings may precede candle/indicator scales.
-        self.carve_bands(&layout, &mut carved);
-        let price_band = carved.get(..1).unwrap_or_default();
-        self.paint_drawing_bands(&frame, price_band, DrawPass::UnderCandles);
-        renderers.candles(&mut candle_pass);
-        if start.footprint_paints {
-            history.footprint(
-                &mut self.footprint,
-                self.state.bar_footprints(),
-                chrome,
-                depth_visible,
-            );
+        if !layout.tape_only {
+            let mut candle_pass =
+                history.candle_pass(&self.indicators, clear_depth, &chrome.style.candles);
+            renderers.candle_clear(&mut candle_pass);
+            // Only price-band background drawings may precede candle/indicator scales.
+            self.carve_bands(&layout, &mut carved);
+            let price_band = carved.get(..1).unwrap_or_default();
+            self.paint_drawing_bands(&frame, price_band, DrawPass::UnderCandles);
+            renderers.candles(&mut candle_pass);
+            if start.footprint_paints || start.candle_aggression {
+                history.footprint(
+                    &mut self.footprint,
+                    &self.state,
+                    chrome,
+                    depth_visible,
+                    &start,
+                );
+            }
+            history.overlay(&self.indicators);
         }
-        history.overlay(&self.indicators);
         let lane = self.pane_lane(&layout, &frame);
         let grid = grid_color(chrome.style);
         history.indicator_panes(&mut self.indicators, lane, layout.indicator_guide_x, grid);
         flow.aggressions(self.orderflow.as_ref());
-        self.frame.flow_legend = flow.legend(self.orderflow.as_ref(), self.legend_inset(chrome));
+        self.frame.flow_legend = flow.legend(
+            self.orderflow.as_ref(),
+            self.legend_inset(chrome),
+            layout.tape_only.then(|| {
+                egui::Rect::from_min_max(
+                    egui::pos2(chart_rect.left(), area.top()),
+                    chart_rect.right_top(),
+                )
+            }),
+        );
         flow.strip(self.orderflow.as_mut(), &frame);
 
-        self.paint_drawings_over(&frame, &layout, &mut carved, chrome);
+        if layout.tape_only {
+            carved.clear();
+        } else {
+            self.paint_drawings_over(&frame, &layout, &mut carved, chrome);
+            self.paint_band_hint(painter);
+            self.paint_trade_marks(&frame, chrome);
+        }
         self.frame.bands = carved;
-        self.paint_band_hint(painter);
-        self.paint_trade_marks(&frame, chrome);
         self.paper_hud_anchor = self.paint_paper(&frame, axis_x, chrome);
         self.paint_axis_marks(&frame, axis_x, &levels, &time_claims, chrome);
-        if let Some(reference_ms) = self.paint_lane_time_axis(&frame) {
+        let clock = layout
+            .native_tape
+            .then(|| layout.live_lane.map(|lane| (lane.end_ms, chrome.tz)))
+            .flatten();
+        if let Some(reference_ms) = self.paint_lane_time_axis(&frame, clock) {
             self.frame.lane_reference_ms = Some(reference_ms);
         }
         let nothing_in_view = nothing_in_view(&frame);
@@ -221,8 +247,14 @@ impl ChartPane {
         let footprint_blocked = self
             .layer_blocked(ChartLayer::Footprint, chrome.capabilities)
             .is_some();
-        let footprint_on =
-            (self.footprint.visible || self.wants_range_profile()) && !footprint_blocked;
+        let candle_aggression = quantick_layers::LayerState::candle_summary(
+            self.layer_facts(Some(chrome.capabilities)),
+            self.layer_switched_on(ChartLayer::Bubbles, chrome.style),
+            self.layers.requested(ChartLayer::CandleAggression),
+        );
+        let footprint_on = ((self.footprint.visible || self.wants_range_profile())
+            && !footprint_blocked)
+            || candle_aggression;
         self.state.set_footprint_enabled(footprint_on);
         // Accumulating is not painting, and the candles answer to the second.
         // A range profile turns the ladders *on* without ever asking for the
@@ -238,6 +270,11 @@ impl ChartPane {
                 .orderflow
                 .as_mut()
                 .map(OrderflowView::capture_grouping_now)
+                .or_else(|| {
+                    candle_aggression
+                        .then(|| self.state.tape_price_step())
+                        .flatten()
+                })
         {
             self.state.set_footprint_group(base);
         }
@@ -255,6 +292,7 @@ impl ChartPane {
             canvas_background,
             footprint_blocked,
             footprint_paints,
+            candle_aggression,
         }
     }
 
@@ -267,6 +305,7 @@ impl ChartPane {
         area: egui::Rect,
         chrome: &PaneChrome<'_>,
     ) -> Option<FrameLayout> {
+        self.sync_price_axis_mode();
         let closed_total = self.history_prefix.len() + self.state.bars().len();
         let total = closed_total + usize::from(self.state.partial().is_some());
         let areas = self.plot_areas(area, chrome.capabilities);
@@ -285,15 +324,19 @@ impl ChartPane {
             return None;
         }
 
-        let live_lane = self.lay_out_lane(chart_rect);
+        // Tape only: the tape is the whole canvas and the candles get none of
+        // it, even before the tape has a live edge to run to. The native tape
+        // beside the candles keeps its share and fits the shared price axis.
+        let (tape_only, native_tape) = self.tape_modes();
+        if tape_only {
+            // No candles to have panned away from: the pane is the live tape.
+            self.viewport.snap_to_live();
+        }
+        let live_lane = self.lay_out_lane(chart_rect, tape_only);
+        let history_right = self.frame.lane_divider_x.unwrap_or(chart_rect.right());
         let history_rect = egui::Rect::from_min_max(
             chart_rect.min,
-            egui::pos2(
-                self.frame
-                    .lane_divider_x
-                    .unwrap_or_else(|| chart_rect.right()),
-                chart_rect.bottom(),
-            ),
+            egui::pos2(history_right, chart_rect.bottom()),
         );
 
         // The projection margin is enforced here, against the rect the candles
@@ -317,6 +360,13 @@ impl ChartPane {
             end,
             cw: self.viewport.candle_width(),
             indicator_guide_x,
+            tape_only,
+            native_tape,
+            // The lane setting's band, on screen yet or not.
+            tape_padding_px: self.orderflow.as_ref().map_or(0.0, |view| {
+                let (width, height) = (chart_rect.width(), chart_rect.height());
+                TapeHorizontalGeometry::native_price_inset_px(view.cached_config(), width, height)
+            }),
         })
     }
 
@@ -332,7 +382,7 @@ impl ChartPane {
     /// movement out of it: panning, zooming and dragging move the candles
     /// beside the tape and never the tape itself, so the most recent prints
     /// are on screen whatever the rest of the chart is doing.
-    fn lay_out_lane(&mut self, chart_rect: egui::Rect) -> Option<LiveLane> {
+    fn lay_out_lane(&mut self, chart_rect: egui::Rect, tape_only: bool) -> Option<LiveLane> {
         // Band and live edge in one look at the published book: the panes need
         // the instant the band's right edge stands for, and reading it again
         // further down would put a second worker-mutex wait on the render
@@ -341,7 +391,11 @@ impl ChartPane {
             .orderflow
             .as_mut()
             .and_then(|orderflow| orderflow.live_lane(chart_rect.width()));
-        let lane_width_px = live_lane.map_or(0.0, |lane| lane.width_px);
+        let lane_width_px = if tape_only {
+            chart_rect.width()
+        } else {
+            live_lane.map_or(0.0, |lane| lane.width_px)
+        };
         // Everything left of the divider is the candles' pane. They pan and
         // zoom inside it exactly as they did when it was the whole chart.
         self.frame.lane_divider_x =
@@ -476,7 +530,11 @@ impl ChartPane {
         chrome: &PaneChrome<'_>,
         levels: &mut Vec<PriceAxisLevel>,
     ) {
-        if self.layer_visible(ChartLayer::Drawings, chrome.style) {
+        if self.layer_effective(
+            ChartLayer::Drawings,
+            self.layer_switched_on(ChartLayer::Drawings, chrome.style),
+            chrome.capabilities,
+        ) {
             self.drawing_projection().price_axis_levels(
                 &self.drawings,
                 frame.chart_rect,
@@ -587,14 +645,29 @@ impl ChartPane {
     /// "follows the bars" has to be able to say what that works out to, and
     /// the menu is drawn without the bars in reach. Recorded from the same
     /// bars the axis was just drawn from, so the label and the axis can never
-    /// disagree. `None` without a tape.
-    fn paint_lane_time_axis(&self, frame: &DrawFrame<'_>) -> Option<i64> {
+    /// disagree. `None` without a tape. `clock`, the live edge and the
+    /// zone, labels the tape's own clock under the native tape.
+    fn paint_lane_time_axis(
+        &self,
+        frame: &DrawFrame<'_>,
+        clock: Option<(i64, crate::timezone::TzOffset)>,
+    ) -> Option<i64> {
         let orderflow = self.orderflow.as_ref()?;
+        let lane_strip = split_time_strip(frame.areas.time_strip, self.frame.lane_divider_x).1;
+        let clock = clock.map(|(end_ms, tz)| {
+            let geometry = quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
+                lane_strip.map_or(0.0, |strip| strip.width()),
+                frame.chart_rect.height(),
+                &orderflow.cached_config().bubbles,
+            );
+            (end_ms, tz, geometry)
+        });
         LaneTimeAxisPass {
             painter: frame.painter,
-            lane_strip: split_time_strip(frame.areas.time_strip, self.frame.lane_divider_x).1,
+            lane_strip,
             window_ms: orderflow.live_lane_window_ms(frame.closed),
             tape_age: orderflow.tape_age(),
+            clock,
         }
         .paint();
         Some(reserved_span_ms(frame.closed))

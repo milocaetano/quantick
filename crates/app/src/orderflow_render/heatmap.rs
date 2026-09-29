@@ -19,7 +19,7 @@ use super::{
 /// Draw resting liquidity and explicit L2 coverage gaps behind the chart.
 pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderContext<'_>) {
     let style = context.style.sanitized();
-    let palette = Palette::for_theme(style.theme);
+    let palette = super::palette_for_theme(style.theme);
     // Each pane answers for its own canvas, and a run that crosses the divider
     // is cut at it rather than dropped.
     let Some(region) = context
@@ -173,7 +173,7 @@ pub(crate) fn draw_live_lane_marks(painter: &egui::Painter, context: &RenderCont
         return;
     };
     let rect = context.layout.chart_rect;
-    let palette = Palette::for_theme(style.theme);
+    let palette = super::palette_for_theme(style.theme);
     let clip = painter.with_clip_rect(rect);
     for (x, dash, gap, color) in [
         (
@@ -255,7 +255,7 @@ struct EventPass<'c, 'a> {
 impl<'c, 'a> EventPass<'c, 'a> {
     fn new(context: &'c RenderContext<'a>) -> Self {
         let style = context.style.sanitized();
-        let palette = Palette::for_theme(style.theme);
+        let palette = super::palette_for_theme(style.theme);
         Self {
             context,
             style,
@@ -324,8 +324,8 @@ impl<'c, 'a> EventPass<'c, 'a> {
                     egui::pos2((band.x + hole_w).min(pane.right()), band.bottom),
                 )
                 .intersect(pane),
-                style.canvas_background,
-                style.canvas_background,
+                super::premultiplied(style.canvas_background),
+                super::premultiplied(style.canvas_background),
             );
 
             match event.evidence {
@@ -351,11 +351,12 @@ impl<'c, 'a> EventPass<'c, 'a> {
     fn carve_bubble_gaps(&self, hole_mesh: &mut egui::Mesh) {
         let layout = &self.context.layout;
         let bubbles = &self.style.bubbles;
+        let dots = self.context.projection.volume_dots;
         for trade in self.context.bubbles() {
             if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
                 continue;
             }
-            let center = egui::pos2(layout.x(trade.x), layout.y(trade.y));
+            let center = egui::pos2(layout.x(trade.x), layout.y_unclamped(trade.y));
             let pane = layout.pane(trade.x);
             if !pane.contains(center) {
                 continue;
@@ -365,7 +366,7 @@ impl<'c, 'a> EventPass<'c, 'a> {
             let center = center
                 + egui::vec2(
                     0.0,
-                    side_offset_y(trade.side, bubbles.side_offset, layout.inverted),
+                    side_offset_y(trade.side, bubbles.side_offset_for(dots), layout.inverted),
                 );
             let r = bubble_radius(trade.size, bubbles.min_radius, bubbles.max_radius);
             // Carve from the bubble's midriff rightward: the eaten wall still
@@ -378,8 +379,8 @@ impl<'c, 'a> EventPass<'c, 'a> {
                     egui::pos2((center.x + r + 4.0).min(pane.right()), center.y + r + 2.0),
                 )
                 .intersect(pane),
-                self.style.canvas_background,
-                self.style.canvas_background,
+                super::premultiplied(self.style.canvas_background),
+                super::premultiplied(self.style.canvas_background),
             );
         }
     }

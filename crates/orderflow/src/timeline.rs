@@ -131,6 +131,7 @@ pub struct LiveEdge {
 pub struct BarTimeline {
     slots: Vec<Slot>,
     lane: Option<Lane>,
+    full_lane_coverage: bool,
 }
 
 impl BarTimeline {
@@ -174,7 +175,19 @@ impl BarTimeline {
             end_ms: edge.now_ms,
             reference_ms: edge.reference_ms,
         });
-        Self { slots, lane }
+        Self {
+            slots,
+            lane,
+            full_lane_coverage: false,
+        }
+    }
+
+    /// Keep the complete rolling tape when its earliest prints precede the
+    /// supplied candle slice. Candle slots and their coverage stay unchanged.
+    #[must_use]
+    pub fn with_full_lane_coverage(mut self) -> Self {
+        self.full_lane_coverage = true;
+        self
     }
 
     /// Exchange timestamp where the live lane begins.
@@ -186,6 +199,13 @@ impl BarTimeline {
     #[must_use]
     pub fn lane_start_ms(&self) -> Option<i64> {
         Some(self.lane?.start_ms)
+    }
+
+    /// Exchange timestamps where the live lane begins and ends. `None` when
+    /// this timeline follows no live edge.
+    #[must_use]
+    pub fn lane_bounds_ms(&self) -> Option<(i64, i64)> {
+        self.lane.map(|lane| (lane.start_ms, lane.end_ms))
     }
 
     /// The automatic reference the lane's window was resolved against, for
@@ -210,16 +230,30 @@ impl BarTimeline {
     /// comes before it is finished — its bars are closed and their prints are
     /// all in — so it can be reused until the layout itself changes.
     ///
-    /// The answer is snapped back to a bar's own open time, never left at the
-    /// lane's edge: a bar split across the two halves would be summarized
-    /// twice, once per half, and draw two partial marks where the chart owes
-    /// one whole one.
+    /// Where a bar covers the boundary, the answer snaps back to its open
+    /// time so that the two halves never summarize partial copies of that bar.
+    /// Full lane coverage can begin before the supplied bars; that earlier
+    /// tape begins at its own edge. Once the supplied bars end before the
+    /// tape — candles panned back into history — the half rebuilt every
+    /// frame is the tape alone, however far back the candles are: cut on the
+    /// window's own grid, so the seam holds still while the tape rolls and
+    /// steps once per window, and never back into the candles on screen.
     #[must_use]
     pub fn live_boundary_ms(&self) -> Option<i64> {
         let newest = self.slots.last()?;
+        if let Some(lane) = self.lane.filter(|_| self.full_lane_coverage)
+            && newest.end_ms <= lane.start_ms
+        {
+            let window = (lane.end_ms - lane.start_ms).max(1);
+            let grid = lane.start_ms - lane.start_ms.rem_euclid(window);
+            return Some(grid.max(newest.end_ms));
+        }
         let from = self
             .lane
             .map_or(newest.start_ms, |lane| lane.start_ms.min(newest.start_ms));
+        if self.full_lane_coverage && from < self.slots.first()?.start_ms {
+            return Some(from);
+        }
         let partition = self.slots.partition_point(|slot| slot.start_ms <= from);
         Some(self.slots[partition.saturating_sub(1)].start_ms)
     }
@@ -248,6 +282,11 @@ impl BarTimeline {
     #[must_use]
     pub fn timestamp_range(&self) -> Option<(i64, i64)> {
         let start = self.slots.first()?.start_ms;
+        let start = if self.full_lane_coverage {
+            self.lane.map_or(start, |lane| start.min(lane.start_ms))
+        } else {
+            start
+        };
         let end = self.slots.last()?.end_ms;
         Some((start, self.lane.map_or(end, |lane| end.max(lane.end_ms))))
     }
@@ -296,6 +335,31 @@ impl BarTimeline {
     pub fn locate_in_slot(&self, timestamp_ms: i64) -> Option<TimelinePosition> {
         self.covers(timestamp_ms)
             .then(|| self.slot_position(timestamp_ms))
+    }
+
+    /// The bar slot a timestamp falls in, or `None` when no slot this
+    /// timeline holds spans it. Unlike [`locate_in_slot`](Self::locate_in_slot)
+    /// it never clamps: a print past the last bar on screen — the tape while
+    /// the candles are panned into history — is in a bar this timeline does
+    /// not have.
+    #[must_use]
+    pub fn slot_at(&self, timestamp_ms: i64) -> Option<SlotSpan> {
+        let partition = self
+            .slots
+            .partition_point(|slot| slot.start_ms <= timestamp_ms);
+        let index = partition.checked_sub(1)?;
+        let slot = self.slots[index];
+        (timestamp_ms <= slot.end_ms).then_some(SlotSpan {
+            index,
+            bar_index: slot.bar_index,
+            start_ms: slot.start_ms,
+            end_ms: slot.end_ms,
+        })
+    }
+
+    /// Open times of the bar slots, ascending.
+    pub fn bar_opens(&self) -> impl Iterator<Item = i64> + '_ {
+        self.slots.iter().map(|slot| slot.start_ms)
     }
 
     fn slot_position(&self, timestamp_ms: i64) -> TimelinePosition {
@@ -664,5 +728,68 @@ mod tests {
         let position = timeline.locate(101).unwrap();
         assert!(position.normalized.is_finite());
         assert_eq!(position.normalized, 1.0);
+    }
+
+    /// The native tape's live half is the tape: panning the candles back
+    /// through history must not drag the seam with them, or every frame
+    /// rewalks every print between the candles on screen and now. Once the
+    /// candles end before the tape begins, the seam is at the tape, however
+    /// far back they are; following the live edge it is unchanged.
+    #[test]
+    fn a_native_tape_seam_stays_at_the_tape_however_far_the_candles_pan() {
+        // One-second bars from 0 to 100 s; the tape shows the last 10 s.
+        let bars: Vec<Bar> = (0..100)
+            .map(|second| bar(second * 1_000, second * 1_000 + 900))
+            .collect();
+        let edge = |on_newest_bar| LiveEdge {
+            now_ms: 100_000,
+            window_ms: 10_000,
+            reference_ms: 1_000,
+            on_newest_bar,
+        };
+        let seam = |first: usize, last: usize, on_newest_bar: bool| {
+            BarTimeline::from_bars(first, &bars[first..last], None, Some(edge(on_newest_bar)))
+                .with_full_lane_coverage()
+                .live_boundary_ms()
+        };
+        assert_eq!(
+            seam(60, 100, true),
+            Some(90_000),
+            "following live, the bar the tape opens in"
+        );
+        for (first, last) in [(40, 80), (10, 50), (0, 20)] {
+            assert_eq!(
+                seam(first, last, false),
+                Some(90_000),
+                "candles {first}..{last} end before the tape: the seam is the tape's edge"
+            );
+        }
+        assert_eq!(
+            seam(60, 95, false),
+            Some(90_000),
+            "candles that reach into the tape keep the bar it opens in"
+        );
+
+        // The native clock moves the tape's edge every frame. The seam sits on
+        // the window's own grid instead, so it holds still while the tape
+        // rolls and the settled half stays cached between frames, and it
+        // never reaches back past the candles on screen.
+        let panned = |last: usize, now_ms: i64| {
+            let edge = LiveEdge {
+                now_ms,
+                ..edge(false)
+            };
+            BarTimeline::from_bars(40, &bars[40..last], None, Some(edge))
+                .with_full_lane_coverage()
+                .live_boundary_ms()
+        };
+        assert_eq!(panned(80, 100_016), Some(90_000));
+        assert_eq!(panned(80, 109_999), Some(90_000), "still while it rolls");
+        assert_eq!(panned(80, 110_000), Some(100_000), "one step per window");
+        assert_eq!(
+            panned(93, 105_500),
+            Some(92_900),
+            "never back into the candles on screen"
+        );
     }
 }

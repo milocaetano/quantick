@@ -6,7 +6,7 @@
 // integration test: a child sees its ancestor's private items and, through
 // `use super::*`, the root's own. The renderer has since been split into
 // sibling modules, and an item a test names in one of them is `pub(super)`
-// so this sidecar can still reach it - `bubbles::crown_geometry`,
+// so this sidecar can still reach it - `bubbles::sphere_segments`,
 // `heatmap::gap_marks`, `legend::flow_layout` and their like have no
 // production caller outside their own file and carry that visibility for
 // these tests alone. The five glob imports below are how the sidecar sees
@@ -21,10 +21,19 @@ use super::*;
 use crate::viewport::Viewport;
 use quantick_engine::Side;
 use quantick_orderflow::{
-    AggressionPrimitive, BubbleRenderMode, ConsumptionMark, GOLDEN_ANGLE, HeatmapProjection,
-    INV_PHI_2, LiquidityEvidence,
+    AggressionPrimitive, BubbleRenderMode, BubbleStyle, ConsumptionMark, HeatmapProjection,
+    LiquidityEvidence, LiveLaneStyle,
 };
 use rust_decimal::Decimal;
+
+fn luminance(rgb: [u8; 3]) -> f32 {
+    0.2126 * f32::from(rgb[0]) + 0.7152 * f32::from(rgb[1]) + 0.0722 * f32::from(rgb[2])
+}
+
+mod dot_radii_tests;
+mod tape_only_tests;
+mod tape_path_tests;
+mod tape_price_tests;
 
 /// The dust threshold is defined by inverting this module's radius
 /// mapping, but lives in `config` beside the style it reads. This pins the
@@ -76,7 +85,10 @@ fn a_low_detail_radius_does_not_disarm_the_readability_floor() {
         "prints must still be foldable when the dressing radius is low"
     );
 
-    let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &dense_tape_btc);
+    let colors = BubbleColors::resolve(
+        &super::palette_for_theme(HeatmapTheme::Bookmap),
+        &dense_tape_btc,
+    );
     let mark = BubbleMark {
         center: egui::pos2(40.0, 40.0),
         radius: dense_tape_btc.min_radius,
@@ -110,77 +122,6 @@ fn nothing_is_dust_without_a_reference_or_a_readability_floor() {
         flat.dust_quantity(rust_decimal::Decimal::from(400))
             .is_none()
     );
-}
-
-fn luminance(rgb: [u8; 3]) -> f32 {
-    0.2126 * f32::from(rgb[0]) + 0.7152 * f32::from(rgb[1]) + 0.0722 * f32::from(rgb[2])
-}
-
-#[test]
-fn every_theme_moves_from_dark_to_bright() {
-    for theme in [
-        HeatmapTheme::Bookmap,
-        HeatmapTheme::HighContrast,
-        HeatmapTheme::ColorBlind,
-    ] {
-        let dark = thermal_rgb(theme, 0.0);
-        let middle = thermal_rgb(theme, 0.55);
-        let bright = thermal_rgb(theme, 1.0);
-        assert!(
-            luminance(dark) < luminance(middle),
-            "{theme:?} dark={dark:?} middle={middle:?}",
-        );
-        assert!(
-            luminance(middle) < luminance(bright),
-            "{theme:?} middle={middle:?} bright={bright:?}",
-        );
-    }
-}
-
-#[test]
-fn thermal_ramp_clamps_invalid_and_out_of_range_values() {
-    assert_eq!(
-        thermal_rgb(HeatmapTheme::Bookmap, -10.0),
-        BOOKMAP_RAMP[0].rgb
-    );
-    assert_eq!(
-        thermal_rgb(HeatmapTheme::Bookmap, 10.0),
-        BOOKMAP_RAMP.last().unwrap().rgb
-    );
-    assert_eq!(
-        thermal_rgb(HeatmapTheme::Bookmap, f32::NAN),
-        BOOKMAP_RAMP[0].rgb
-    );
-}
-
-#[test]
-fn bookmap_ramp_spans_black_to_warm_white_through_green() {
-    // The refined Bookmap ramp starts at pure black so quiet liquidity
-    // fades into the canvas, and ends warm-white for the strongest walls.
-    assert_eq!(thermal_rgb(HeatmapTheme::Bookmap, 0.0), [0, 0, 0]);
-    let top = thermal_rgb(HeatmapTheme::Bookmap, 1.0);
-    assert!(top.iter().all(|&channel| channel > 220), "top={top:?}");
-    // It passes through a green phase (restored versus the older ramp, which
-    // jumped cyan straight to yellow), so mid magnitudes stay separable.
-    let mid_high = thermal_rgb(HeatmapTheme::Bookmap, 0.70);
-    assert!(
-        mid_high[1] > mid_high[0] && mid_high[1] > mid_high[2],
-        "expected a green-dominant phase, got {mid_high:?}",
-    );
-}
-
-#[test]
-fn strong_walls_converge_to_same_brightness_on_both_sides() {
-    for theme in [
-        HeatmapTheme::Bookmap,
-        HeatmapTheme::HighContrast,
-        HeatmapTheme::ColorBlind,
-    ] {
-        assert_eq!(
-            resting_rgb(theme, BookSide::Bid, 1.0),
-            resting_rgb(theme, BookSide::Ask, 1.0)
-        );
-    }
 }
 
 #[test]
@@ -336,6 +277,17 @@ fn buy_and_sell_bubbles_are_nudged_to_opposite_sides() {
 }
 
 /// Paint through `draw` off-screen and return the shapes it emitted.
+/// A tape dot still forming sits at its window's centre, which can be less
+/// than a radius from the tape's right edge: it slides left just enough to be
+/// drawn whole instead of being cut by the edge. A dot already inside is
+/// left where it is.
+#[test]
+fn a_forming_dot_at_the_live_edge_is_drawn_whole() {
+    assert_eq!(inside_right_edge(995.0, 8.0, 1_000.0), 992.0);
+    assert_eq!(inside_right_edge(1_003.0, 8.0, 1_000.0), 992.0);
+    assert_eq!(inside_right_edge(900.0, 8.0, 1_000.0), 900.0);
+}
+
 fn painted(draw: impl Fn(&egui::Painter)) -> String {
     let ctx = egui::Context::default();
     let output = ctx.run(egui::RawInput::default(), |ctx| {
@@ -355,7 +307,7 @@ fn a_cheap_dot_stays_a_single_circle() {
         hollow_small_buys: false,
         ..BubbleStyle::default()
     };
-    let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
+    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
     let shapes = painted(|painter| {
         draw_bubble(
             painter,
@@ -389,7 +341,7 @@ fn the_preview_draws_a_bubble_exactly_the_way_the_chart_does() {
         trail_length: 0.0,
         ..BubbleStyle::default()
     };
-    let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
+    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
     let at = egui::pos2(120.0, 80.0);
     let radius = bubble_radius(
         PREVIEW_LARGE_PRINT_SIZE,
@@ -436,34 +388,8 @@ fn the_preview_draws_a_bubble_exactly_the_way_the_chart_does() {
 }
 
 #[test]
-fn bubble_marks_scale_with_size_and_matched_share() {
-    let bubbles = BubbleStyle::default();
-    // The front grows with the radius, and never collapses to nothing on
-    // the smallest bubble.
-    assert!(front_half_length(10.0, &bubbles) > front_half_length(2.0, &bubbles));
-    assert!(front_half_length(0.0, &bubbles) >= FRONT_END_PADDING_PX);
-    // A sweep haloes brighter than a routine print, and alpha stays legal.
-    assert!(halo_alpha(1.0, &bubbles) > halo_alpha(0.0, &bubbles));
-    assert!(halo_alpha(1.0, &bubbles) <= 1.0);
-    assert_eq!(
-        halo_alpha(0.0, &bubbles),
-        bubbles.halo_strength,
-        "an unsized print gets the plain halo"
-    );
-    assert!(
-        halo_alpha(f32::NAN, &bubbles).is_finite(),
-        "a non-finite size must not poison the alpha"
-    );
-    // The ring brightens with the share of the print that matched, from a
-    // floor that keeps a nibble visible.
-    assert!(impact_ring_alpha(1.0) > impact_ring_alpha(0.0));
-    assert!(impact_ring_alpha(0.0) >= IMPACT_RING_BASE_ALPHA);
-    assert!(impact_ring_alpha(1.0) <= 1.0);
-}
-
-#[test]
 fn bubble_colours_fall_back_to_the_theme_and_the_trail_follows_the_front() {
-    let palette = Palette::for_theme(HeatmapTheme::Bookmap);
+    let palette = super::palette_for_theme(HeatmapTheme::Bookmap);
     let default = BubbleColors::resolve(&palette, &BubbleStyle::default());
     assert_eq!(default.buy, palette.buy);
     assert_eq!(default.sell, palette.sell);
@@ -578,58 +504,10 @@ fn a_sector_covers_only_its_own_slice() {
 }
 
 #[test]
-fn the_crown_never_touches_the_disc_and_never_closes_a_circle() {
-    // The two properties the mark exists for. The first is why it replaced
-    // the vertical front: a bubble's area is its quantity, so nothing may
-    // be drawn over it. The second is why it is an arc and not a ring: a
-    // closed circle concentric with the disc makes the disc's own edge
-    // ambiguous, which is what the impact ring did.
-    for radius in [1.0_f32, 2.2, 3.5, 5.7, 9.3, 15.0, 22.0, 48.0] {
-        for matched in [0.0_f32, 0.1, 0.5, 0.99, 1.0] {
-            let geometry = crown_geometry(radius, matched);
-            assert!(
-                geometry.arc_radius - geometry.width / 2.0 > radius,
-                "at r={radius} m={matched} the crown's inner edge \
-                     {} is not clear of the rim",
-                geometry.arc_radius - geometry.width / 2.0
-            );
-            assert!(
-                geometry.sweep <= GOLDEN_ANGLE + 1e-5,
-                "at r={radius} m={matched} the sweep {} exceeds the golden angle",
-                geometry.sweep
-            );
-            assert!(
-                geometry.sweep >= GOLDEN_ANGLE * INV_PHI_2 - 1e-5,
-                "a print that ate anything still shows a mark"
-            );
-        }
-    }
-}
-
-#[test]
-fn the_crown_grows_with_the_matched_share() {
-    // Arc length is the channel a trader reads ordinally without a
-    // reference beside it, so it has to be monotone in what it encodes.
-    let radius = 12.0;
-    let mut previous = f32::NEG_INFINITY;
-    for matched in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
-        let length = crown_geometry(radius, matched).arc_length();
-        assert!(
-            length > previous,
-            "matched={matched} must draw a longer arc than the share below it"
-        );
-        previous = length;
-    }
-    // A full sweep reaches the golden angle exactly, and a nibble 1/φ² of it.
-    assert!((crown_geometry(radius, 1.0).sweep - GOLDEN_ANGLE).abs() < 1e-5);
-    assert!((crown_geometry(radius, 0.0).sweep - GOLDEN_ANGLE * INV_PHI_2).abs() < 1e-5);
-}
-
-#[test]
 fn the_crown_replaces_the_front_and_leaves_the_disc_alone() {
     let bubbles = BubbleStyle::default();
     assert_eq!(bubbles.consumption_mark, ConsumptionMark::Crown);
-    let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
+    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
     let mark = BubbleMark {
         center: egui::pos2(60.0, 60.0),
         radius: 10.0,
@@ -698,7 +576,7 @@ fn the_crown_replaces_the_front_and_leaves_the_disc_alone() {
 
 #[test]
 fn a_crown_follows_its_own_side_unless_the_panel_overrode_it() {
-    let palette = Palette::for_theme(HeatmapTheme::Bookmap);
+    let palette = super::palette_for_theme(HeatmapTheme::Bookmap);
     let bubbles = BubbleStyle::default();
     let colors = BubbleColors::resolve(&palette, &bubbles);
     // Derived from the side colour, and brighter than it: consumption is
@@ -741,7 +619,7 @@ fn sphere_mode_swaps_the_flat_fill_for_a_shaded_mesh() {
         buy_share: 1.0,
         folded: 0,
     };
-    let palette = Palette::for_theme(HeatmapTheme::Bookmap);
+    let palette = super::palette_for_theme(HeatmapTheme::Bookmap);
     // Both modes are named explicitly: the shipped default is the sphere
     // now, and a test comparing the two must not depend on which one that
     // happens to be.
@@ -783,7 +661,7 @@ fn the_preview_draws_a_sphere_bubble_exactly_the_way_the_chart_does() {
         trail_length: 0.0,
         ..BubbleStyle::default()
     };
-    let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
+    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
     let at = egui::pos2(120.0, 80.0);
     let radius = bubble_radius(
         PREVIEW_LARGE_PRINT_SIZE,
@@ -842,7 +720,7 @@ fn hollow_small_buys_opens_the_dot_and_leaves_dressed_bubbles_alone() {
         hollow_small_buys: false,
         ..hollow.clone()
     };
-    let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &hollow);
+    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &hollow);
     let mark = |radius| BubbleMark {
         center: egui::pos2(40.0, 40.0),
         radius,
@@ -1020,7 +898,7 @@ fn a_two_sided_bubble_draws_both_sides_and_a_small_one_falls_back() {
         render_mode: BubbleRenderMode::Flat,
         ..BubbleStyle::default()
     };
-    let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
+    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
     let mark = |radius: f32, buy_share: f32| BubbleMark {
         center: egui::pos2(60.0, 60.0),
         radius,
@@ -1087,7 +965,10 @@ fn a_pie_needs_the_readability_floor_on_the_shipped_presets() {
         ..BubbleStyle::default()
     };
     assert!(dense_tape_btc.detail_min_radius < dense_tape_btc.min_radius);
-    let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &dense_tape_btc);
+    let colors = BubbleColors::resolve(
+        &super::palette_for_theme(HeatmapTheme::Bookmap),
+        &dense_tape_btc,
+    );
     let mark = |radius: f32| BubbleMark {
         center: egui::pos2(60.0, 60.0),
         radius,
@@ -1165,10 +1046,16 @@ fn hiding_the_bubble_layer_keeps_the_clusters_in_the_frame() {
             live: false,
             price_bucket: rust_decimal::Decimal::ONE,
             price_span: rust_decimal::Decimal::ONE,
+            price: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
             last_timestamp_ms: 0,
+            timestamp_quantity: rust_decimal::Decimal::ZERO,
             matched_quantity: rust_decimal::Decimal::ZERO,
+            buy_quantity: match side {
+                Side::Buy => rust_decimal::Decimal::ONE,
+                Side::Sell => rust_decimal::Decimal::ZERO,
+            },
             matched_fraction: 0.0,
             liquidity_event_ids: Vec::new(),
             x,
@@ -1269,10 +1156,13 @@ fn the_lane_scale_reaches_the_bubbles_and_stops_at_the_boundary() {
             live,
             price_bucket: rust_decimal::Decimal::ONE,
             price_span: rust_decimal::Decimal::ONE,
+            price: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
             last_timestamp_ms: 0,
+            timestamp_quantity: rust_decimal::Decimal::ZERO,
             matched_quantity: rust_decimal::Decimal::ZERO,
+            buy_quantity: rust_decimal::Decimal::ONE,
             matched_fraction: 0.0,
             liquidity_event_ids: Vec::new(),
             x: 0.5,
@@ -1342,10 +1232,13 @@ fn a_bubble_beside_the_divider_is_clipped_to_its_own_pane() {
             live,
             price_bucket: rust_decimal::Decimal::ONE,
             price_span: rust_decimal::Decimal::ONE,
+            price: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
             last_timestamp_ms: 0,
+            timestamp_quantity: rust_decimal::Decimal::ZERO,
             matched_quantity: rust_decimal::Decimal::ZERO,
+            buy_quantity: rust_decimal::Decimal::ONE,
             matched_fraction: 0.0,
             liquidity_event_ids: Vec::new(),
             x,
@@ -1412,10 +1305,13 @@ fn a_layer_switched_off_on_one_pane_still_draws_on_the_other() {
             live,
             price_bucket: rust_decimal::Decimal::ONE,
             price_span: rust_decimal::Decimal::ONE,
+            price: rust_decimal::Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: 0,
             last_timestamp_ms: 0,
+            timestamp_quantity: rust_decimal::Decimal::ZERO,
             matched_quantity: rust_decimal::Decimal::ZERO,
+            buy_quantity: rust_decimal::Decimal::ONE,
             matched_fraction: 0.0,
             liquidity_event_ids: Vec::new(),
             x,
@@ -1672,7 +1568,7 @@ fn a_candle_panned_behind_the_tape_is_clipped_to_its_own_pane() {
 #[test]
 fn a_folded_bubble_wears_a_ring_a_print_does_not() {
     let bubbles = BubbleStyle::default();
-    let colors = BubbleColors::resolve(&Palette::for_theme(HeatmapTheme::Bookmap), &bubbles);
+    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &bubbles);
     let mark = BubbleMark {
         center: egui::pos2(40.0, 40.0),
         radius: 10.0,
@@ -1726,7 +1622,10 @@ fn a_fold_and_a_cluster_do_not_share_a_glyph() {
     let fold =
         bubble_label(rust_decimal::Decimal::from(20), 4, 4, true, true).expect("labels are on");
     assert_eq!(cluster, "20 · ×4");
-    assert_eq!(fold, "20 · ⊕4");
+    assert_eq!(
+        fold,
+        format!("20 · {}4", egui_phosphor::regular::PLUS_CIRCLE)
+    );
     assert_ne!(
         cluster, fold,
         "a budget fold reads as four prints that traded"

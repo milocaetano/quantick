@@ -19,11 +19,13 @@ mod health;
 mod indicator_guide;
 mod interaction;
 pub(crate) mod inventory;
+mod price_axis;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
 mod layers;
 mod layout;
 mod notify;
+mod opening_scale;
 mod orderflow;
 mod recovery;
 pub(crate) use interaction::drawing_band_name;

@@ -25,16 +25,57 @@
           "type": "string"
         },
         "enabled": {
-          "description": "Aggression bubbles are drawn over the chart.",
+          "description": "Aggression bubbles are drawn over the chart. Beside the native tape\nthey are one summary bubble per tick candle, as layer\n`candle_aggression` draws it; `layers.visibility` names any block.",
           "type": "boolean"
         },
         "floored_quantity": {
           "$ref": "#/$defs/CanonicalDecimal",
           "description": "The exact quantity the trader's own display floor keeps off the canvas.\nFloored, not dropped: it is still in the totals."
         },
+        "ignore_opening_burst_in_scale": {
+          "default": false,
+          "description": "Exclude the first recorded 100 ms burst from automatic tape-only\nsizing; its factual volume is retained and its drawn radius capped.",
+          "type": "boolean"
+        },
         "lane_enabled": {
           "description": "And over the live lane, which is a separate switch.",
           "type": "boolean"
+        },
+        "native_tape": {
+          "default": false,
+          "description": "The tape is the native tape: each print at its own execution time\nand price, on the market clock over the whole window, with one price\naxis fitted by its prints (manual Y allowed). Beside the tick candles\nit keeps its share of the pane behind a draggable divider, and moving\nor zooming the candles never changes it. The tape the pane builds, not\nthe switch: true whenever `tape_only` is, and beside the candles only\nwith the tape on and `overlap_merge` (volume dots) on. The request is\nthe lane setting `native_tape`, saved with the order-flow preset and\nread back by `layers.visibility` as layer `native_tape`.",
+          "type": "boolean"
+        },
+        "overlap_merge": {
+          "default": false,
+          "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nOn the native tape, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Explicit display changes\nstart a new grouping. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
+          "type": "boolean"
+        },
+        "recorded_opening_windows_ms": {
+          "default": [],
+          "description": "First recorded native window of each retained UTC day. For daytime\nWIN sessions, this identifies the first available burst, not a proven\nexchange auction. Empty until executions have been observed.",
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "tape_only": {
+          "default": false,
+          "description": "The pane shows the tape alone, Bookmap style: the native tape takes\nthe whole canvas, no candle or candle mark is drawn and time runs\nacross the full width on the tape's own window. The lane setting\n`tape_only`, switched by `layers.visibility.set` as layer `tape_only`.",
+          "type": "boolean"
+        },
+        "volume_dots": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VolumeDotsSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The rungs and size scales the last volume-dots frame was built on;\nabsent when the pane last drew no dots."
         }
       },
       "required": [
@@ -100,6 +141,39 @@
       "required": [
         "tab_id",
         "panes"
+      ],
+      "type": "object"
+    },
+    "VolumeDotsSnapshot": {
+      "description": "What a volume-dots frame was keyed and sized on.",
+      "properties": {
+        "auto_full": {
+          "description": "Each pane sizes its dots relative to its own biggest dot on screen\ninstead of `volume_dot_full_quantity`. The bubble setting\n`volume_dot_auto_full`.",
+          "type": "boolean"
+        },
+        "candle_level_ticks": {
+          "$ref": "#/$defs/WireU64",
+          "description": "Native ticks per candle level, chosen from the candle price axis. A\ncandle dot is its whole bar at one level."
+        },
+        "tape_level_ticks": {
+          "$ref": "#/$defs/WireU64",
+          "description": "Native ticks per tape level, chosen from the price span of the tape's\nown prints."
+        },
+        "tape_window_ms": {
+          "$ref": "#/$defs/WireU64",
+          "description": "The tape's window, in milliseconds."
+        },
+        "volume_dot_full_quantity": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Contracts a dot holds at the largest radius when the size is typed:\narea is proportional to quantity against it. The bubble setting\n`volume_dot_full_quantity`."
+        }
+      },
+      "required": [
+        "tape_window_ms",
+        "tape_level_ticks",
+        "candle_level_ticks",
+        "volume_dot_full_quantity",
+        "auto_full"
       ],
       "type": "object"
     },

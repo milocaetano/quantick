@@ -294,6 +294,8 @@ pub struct FootprintLod {
     /// its own dead band, so the boundary is crossed once and the stale answer
     /// survives a single frame of a gesture.
     drawn_style: Option<crate::footprint_config::FootprintStyle>,
+    /// Candles per aggression-summary mark, held through a steady zoom.
+    pub(crate) candle_groups: quantick_orderflow::projection::CandleGroupMemory,
 }
 
 impl FootprintLod {

@@ -60,6 +60,9 @@ pub struct AggressionCluster {
     pub price: Decimal,
     /// Deterministic visual timestamp centered in the cluster interval.
     pub timestamp_ms: i64,
+    /// Exact sum of execution timestamp multiplied by execution quantity.
+    /// Dividing by `quantity` preserves a fractional-millisecond mean.
+    pub timestamp_quantity: Decimal,
     /// Earliest exchange trade timestamp represented.
     pub first_timestamp_ms: i64,
     /// Latest exchange trade timestamp represented.
@@ -135,6 +138,7 @@ struct ClusterBuilder {
     last_timestamp_ms: i64,
     quantity: Decimal,
     price_quantity: Decimal,
+    timestamp_quantity: Decimal,
     first_price: Decimal,
     price_span: Decimal,
     agg_ids: Vec<u64>,
@@ -158,6 +162,7 @@ impl ClusterBuilder {
             last_timestamp_ms: trade.timestamp_ms,
             quantity: trade.quantity,
             price_quantity: trade.price * trade.quantity,
+            timestamp_quantity: Decimal::from(trade.timestamp_ms) * trade.quantity,
             first_price: trade.price,
             price_span,
             agg_ids: vec![trade.agg_id],
@@ -168,6 +173,7 @@ impl ClusterBuilder {
         self.last_timestamp_ms = self.last_timestamp_ms.max(trade.timestamp_ms);
         self.quantity += trade.quantity;
         self.price_quantity += trade.price * trade.quantity;
+        self.timestamp_quantity += Decimal::from(trade.timestamp_ms) * trade.quantity;
         self.agg_ids.push(trade.agg_id);
     }
 
@@ -198,6 +204,7 @@ impl ClusterBuilder {
             buy_quantity,
             price,
             timestamp_ms,
+            timestamp_quantity: self.timestamp_quantity,
             first_timestamp_ms: self.first_timestamp_ms,
             last_timestamp_ms: self.last_timestamp_ms,
             trade_count: 0, // Filled from the preserved id vector below.
@@ -350,6 +357,9 @@ impl ClusterFold {
     }
 
     fn push(&mut self, other: AggressionCluster) {
+        if self.cluster.generation != other.generation {
+            self.cluster.generation = None;
+        }
         let other_price_quantity = other.price * other.quantity;
         self.price_quantity += other_price_quantity;
         let entry = self
@@ -359,6 +369,7 @@ impl ClusterFold {
         entry.0 += other.quantity;
         entry.1 += other_price_quantity;
         self.cluster.quantity += other.quantity;
+        self.cluster.timestamp_quantity += other.timestamp_quantity;
         self.cluster.buy_quantity += other.buy_quantity;
         self.cluster.matched_quantity += other.matched_quantity;
         self.cluster.price_span = self.cluster.price_span.max(other.price_span);
@@ -509,6 +520,18 @@ fn fold_clusters<K: Ord>(
 
     sort_clusters(&mut merged);
     merged
+}
+
+/// Fold every cluster sharing a key into one, however far apart in time:
+/// the volume dots' fold, whose key already holds the window. It sums what
+/// every fold sums — quantity, the bought share, matched evidence, ids — so a
+/// dot built from clusters already matched to reductions keeps their evidence.
+/// A cluster with no key passes through untouched.
+pub(crate) fn fold_by_key<K: Ord>(
+    clusters: Vec<AggressionCluster>,
+    key_of: impl Fn(&AggressionCluster) -> Option<K>,
+) -> Vec<AggressionCluster> {
+    fold_clusters(clusters, key_of, |_| false, i64::MAX, ClusterFold::finish)
 }
 
 /// Deterministic order every clustering and folding step emits its result in.
@@ -836,7 +859,7 @@ fn decimal_fraction(numerator: Decimal, denominator: Decimal) -> f32 {
         .clamp(0.0, 1.0)
 }
 
-fn consumed_side(side: AggressorSide) -> RestingSide {
+pub(crate) fn consumed_side(side: AggressorSide) -> RestingSide {
     match side {
         Side::Buy => BookSide::Ask,
         Side::Sell => BookSide::Bid,

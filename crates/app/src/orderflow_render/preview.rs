@@ -88,9 +88,12 @@ struct PreviewCanvas {
 
 impl PreviewCanvas {
     fn new(ui: &egui::Ui, rect: egui::Rect, config: &HeatmapConfig) -> Self {
-        let style = OrderflowRenderStyle::from_config(config, egui::Color32::from_rgb(19, 23, 34))
-            .sanitized();
-        let palette = Palette::for_theme(style.theme);
+        let style = OrderflowRenderStyle::from_config(
+            config,
+            egui::Color32::from_rgb(19, 23, 34).to_array(),
+        )
+        .sanitized();
+        let palette = super::palette_for_theme(style.theme);
         let painter = ui.painter().with_clip_rect(rect);
         let chart = egui::Rect::from_min_max(
             rect.left_top() + egui::vec2(8.0, 24.0),
@@ -119,7 +122,7 @@ impl PreviewCanvas {
         painter.rect_filled(
             rect,
             egui::Rounding::same(4.0),
-            self.style.canvas_background,
+            super::premultiplied(self.style.canvas_background),
         );
         painter.rect_stroke(
             rect,

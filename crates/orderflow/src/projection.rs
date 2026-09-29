@@ -13,16 +13,54 @@ pub use super::interaction::LiquidityEvidence;
 use super::interaction::{LiquidityEvent, correlate_liquidity, liquidity_events};
 use super::timeline::BarTimeline;
 
+mod candle_dots;
+mod dots;
 mod fold;
 mod model;
+mod past_tape;
+mod pending;
+mod tape;
+mod tape_frame;
+mod tape_geometry;
+mod tape_memory;
+mod tape_reuse;
+mod tape_seal;
 mod tiers;
 
+pub use candle_dots::{
+    CANDLE_GROUP_HOLD_BAND, CANDLE_GROUP_MIN_WIDTH_PX, CANDLE_MARK_MAX_RADIUS_PX, CandleDot,
+    CandleDotFrame, CandleDotGrid, CandleDotView, CandleFootprint, CandleFootprintSource,
+    CandleGroupMemory, project_candle_dots,
+};
+pub(crate) use dots::native_grouping;
+pub use dots::{
+    DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_CELL_PX, DOT_WINDOW_LADDER_MS, DotRungMemory, DotScale,
+    DotSizing, DotZoom, MIN_DOT_RADIUS_PX, PaneGeometry, VolumeDots, candle_dot_px,
+    dot_level_ticks, dot_radius_range, dot_window_ms, hold_rung, lane_bars, tape_price_range,
+};
 pub use model::{
     AggressionPrimitive, BEFORE_CAPTURE, GapPrimitive, HeatmapCell, HeatmapProjection,
-    LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, normalized_area_size,
-    normalized_log_intensity,
+    LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, TapeFacts,
+    normalized_area_size, normalized_log_intensity,
 };
+pub use past_tape::{PastBars, PastTape, past_block_ms, past_span, project_past_tape};
+pub use pending::PendingTape;
+pub use tape::{TapeDotGeometry, merge_tape_dots, position_tape_at};
+pub use tape_frame::{
+    project_past_tape_frame, project_tape_frame, project_tape_frame_with_overlay,
+};
+pub use tape_geometry::TapeHorizontalGeometry;
+pub use tape_memory::{
+    MAX_PAST_BLOCKS, PAST_PRICE_SPAN_BAND, PastTapeMemory, TapeDotFrame, TapeDotMemory,
+    TapeDotView, TapeSource,
+};
+pub use tape_reuse::TapeReuse;
+#[cfg(test)]
+pub(crate) use tape_reuse::reusable_through;
+pub(crate) use tape_seal::{PendingInputs, SealInputs, into_lane_of, lane_relabel, seal_tape};
+pub use tape_seal::{TapeLineage, TapeOverlay, TapeSeal, draws_bubble};
 
+use dots::DotHorizon;
 use fold::{FoldOrder, fold_to_budget, pane_budgets};
 use model::event_cap_key;
 use tiers::{TierClusters, TierCut, TierGrouping, cluster_tier, refine_tier, tier_primitives};
@@ -74,8 +112,21 @@ pub fn project(
     timeline: &BarTimeline,
     prices: PriceWindow,
 ) -> HeatmapProjection {
-    let settled = project_settled(history, timeline, prices);
-    let live = project_live(history, timeline, prices, &settled);
+    project_with_dots(history, timeline, prices, None)
+}
+
+/// [`project`], keyed as volume dots on `dots` when the configuration asks
+/// for them.
+#[cfg(test)]
+#[must_use]
+pub fn project_with_dots(
+    history: &LiquidityHistory,
+    timeline: &BarTimeline,
+    prices: PriceWindow,
+    dots: Option<&VolumeDots>,
+) -> HeatmapProjection {
+    let settled = project_settled(history, timeline, prices, dots);
+    let live = project_live(history, timeline, prices, &settled, dots);
     settled.with_live(live, history.config())
 }
 
@@ -85,13 +136,18 @@ pub fn project(
 /// liquidity as it was, the reductions it went through, and the bubbles of bars
 /// whose prints are all in. It is what a caller may keep and redraw unchanged
 /// until the layout moves under it.
+///
+/// `dots` keys the bubbles as volume dots when the configuration turns them
+/// on ([`HeatmapConfig::volume_dots`]); off, it is ignored.
 #[must_use]
 pub fn project_settled(
     history: &LiquidityHistory,
     timeline: &BarTimeline,
     prices: PriceWindow,
+    dots: Option<&VolumeDots>,
 ) -> SettledProjection {
     let config = history.config();
+    let dots = dots.filter(|_| config.volume_dots.enabled);
     let effective_grouping = EffectiveGrouping::resolve(
         config.display_grouping,
         config.price_grouping,
@@ -313,7 +369,8 @@ pub fn project_settled(
     // presets turn the summary on). The honesty it protected is enforced where
     // the ink is now: `RenderContext::bubbles` refuses to draw a two-sided
     // mark while a side is hidden.
-    let summarizing = config.bubble_candle_summary;
+    // Volume dots replace the summary: a dot already holds both sides.
+    let summarizing = config.bubble_candle_summary && dots.is_none();
 
     // The chart is cut in two at the oldest bar still taking orders. What
     // follows that instant is redrawn from the tape every frame, so this half
@@ -332,6 +389,8 @@ pub fn project_settled(
         TierCut {
             range: (None, live_from_ms),
             tape_from_ms: None,
+            reach_ms: None,
+            dots,
         },
         summarizing,
     );
@@ -344,7 +403,15 @@ pub fn project_settled(
     // costs the same whether ten prints are retained or a million — and it is
     // independent of the display filter below, so hiding small prints never
     // silently rescales the ones left on screen.
-    let aggression_reference = history.bubble_size_reference();
+    //
+    // Volume dots go one step further: `size` reads their own typed full
+    // quantity, and the painter sizes each pane against its own biggest dot
+    // when the scale is automatic ([`DotSizing`]).
+    let aggression_reference = if dots.is_some() {
+        dot_full_quantity(config)
+    } else {
+        history.bubble_size_reference()
+    };
 
     // A reduction is allocated by the half that owns the prints around it, so
     // the same removed quantity is never claimed as evidence twice. Cut at the
@@ -380,6 +447,7 @@ pub fn project_settled(
         timeline,
         effective_grouping,
         summarizing,
+        dots.map(|dots| (dots, DotHorizon::of(history))),
     );
     // While every mark is a raw print they share the session print scale
     // above, so an area means the same thing everywhere. The summary breaks
@@ -405,21 +473,28 @@ pub fn project_settled(
         prices,
         aggression_reference,
         summary_reference,
+        dots,
     );
     let (chart_budget, _) = pane_budgets(config.max_aggression_primitives, &config.live_lane);
     let before_fold = aggressions.len();
-    fold_to_budget(
-        &mut aggressions,
-        chart_budget,
-        FoldOrder::SmallestFirst,
-        // The scale the marks were drawn on. With the summary on these are
-        // pies carrying whole bars, sized against `summary_reference`; folding
-        // them against the print scale pegs every one at the largest radius
-        // (`normalized_area_size` clamps the ratio), so a summarized chart over
-        // budget would fill with max-size pies beside honestly sized ones.
-        summary_reference,
-        Some(timeline),
-    );
+    // Dots are never folded to the budget: which dots a fold joins changes as
+    // prints arrive and the chart pans, and that was a blinking past. The
+    // window ladder already bounds how many dots a zoom can draw.
+    if dots.is_none() {
+        fold_to_budget(
+            &mut aggressions,
+            chart_budget,
+            FoldOrder::SmallestFirst,
+            // The scale the marks were drawn on. With the summary on these are
+            // pies carrying whole bars, sized against `summary_reference`;
+            // folding them against the print scale pegs every one at the
+            // largest radius (`normalized_area_size` clamps the ratio), so a
+            // summarized chart over budget would fill with max-size pies
+            // beside honestly sized ones.
+            summary_reference,
+            Some(timeline),
+        );
+    }
     let folded_aggressions = before_fold.saturating_sub(aggressions.len());
 
     let liquidity_events = event_primitives(events, timeline, prices, effective_grouping);
@@ -488,6 +563,7 @@ pub fn project_settled(
     SettledProjection {
         enabled: true,
         summarized: summarizing,
+        volume_dots: dots.is_some(),
         floored_quantity,
         cells: Arc::new(cells),
         aggressions,
@@ -516,12 +592,32 @@ pub fn project_settled(
 /// exactly the scale the settled bubbles beside it were drawn on. Those scales
 /// are as old as the settled half; a print large enough to move them therefore
 /// resizes the chart when that half is next rebuilt, not the instant it lands.
+///
+/// `dots` keys volume dots exactly when `settled` was keyed as dots, so the
+/// two halves never disagree about what a bubble is.
 #[must_use]
 pub fn project_live(
     history: &LiquidityHistory,
     timeline: &BarTimeline,
     prices: PriceWindow,
     settled: &SettledProjection,
+    dots: Option<&VolumeDots>,
+) -> LiveMarks {
+    project_live_after(history, timeline, prices, settled, dots, None)
+}
+
+/// [`project_live`], continuing the native tape of the publication in
+/// `reuse` where that is exact: its cells before its seal are copied and only
+/// the prints after the seal are folded, so a wide tape window costs a pass
+/// what a narrow one does. The marks are the ones [`project_live`] builds.
+#[must_use]
+pub fn project_live_after(
+    history: &LiquidityHistory,
+    timeline: &BarTimeline,
+    prices: PriceWindow,
+    settled: &SettledProjection,
+    dots: Option<&VolumeDots>,
+    reuse: Option<TapeReuse<'_>>,
 ) -> LiveMarks {
     let config = history.config();
     if !settled.enabled || !config.any_layer_enabled() {
@@ -547,7 +643,8 @@ pub fn project_live(
     // pies and raw prints — two halves disagreeing about what a bar is. The
     // renderer is where a one-sided frame is handled (`RenderContext::bubbles`
     // refuses to draw a two-sided mark while a side is hidden).
-    let summarizing = config.bubble_candle_summary;
+    let dots = dots.filter(|_| settled.volume_dots);
+    let summarizing = config.bubble_candle_summary && dots.is_none();
     // Same rule as the settled half: this is the *tape's* projection, so a
     // switch on the candles may not empty it.
     let coverage: Vec<_> = if config.depth_visible_anywhere() {
@@ -555,6 +652,18 @@ pub fn project_live(
     } else {
         Vec::new()
     };
+    let lane_from_ms = timeline.lane_start_ms();
+    let through_ms = reuse.and_then(|reuse| {
+        tape_reuse::reusable_through(
+            reuse,
+            history,
+            lane_from_ms,
+            settled,
+            dots,
+            &coverage,
+            live_from_ms,
+        )
+    });
     let mut tier = cluster_tier(
         history,
         timeline,
@@ -565,22 +674,55 @@ pub fn project_live(
             lane: lane_grouping(config),
         },
         TierCut {
-            range: (Some(live_from_ms), None),
-            tape_from_ms: timeline.lane_start_ms(),
+            range: (
+                Some(through_ms.map_or(live_from_ms, |through| through.max(live_from_ms))),
+                None,
+            ),
+            tape_from_ms: lane_from_ms,
+            reach_ms: None,
+            dots,
         },
         summarizing,
     );
     let mut events = settled.live_events.clone();
     correlate_tier(&mut events, &mut tier, config, summarizing);
     let dropped_liquidity_events = filter_events(&mut events, config, settled.liquidity_reference);
-    let (marks, floored_quantity) = refine_tier(
+    let (mut marks, mut floored_quantity) = refine_tier(
         tier,
         config,
         settled.aggression_reference,
         timeline,
         settled.effective_grouping,
         summarizing,
+        dots.map(|dots| (dots, DotHorizon::of(history))),
     );
+    if let (Some(reuse), Some(through_ms), Some(dots)) = (reuse, through_ms, dots) {
+        floored_quantity += tape_reuse::continue_tape(
+            &mut marks,
+            reuse.previous,
+            through_ms,
+            lane_from_ms,
+            history.evicted_through_ms(),
+            dots.tape_window_ms,
+            config,
+        );
+    }
+    let tape_facts = marks.tape_facts.take().map(|clusters| {
+        let floor = config.bubbles.min_quantity_decimal().unwrap_or_default();
+        let floored_quantity = clusters
+            .iter()
+            .filter(|cluster| cluster.quantity < floor)
+            .map(|cluster| cluster.quantity)
+            .sum();
+        Arc::new(TapeFacts {
+            clusters,
+            evicted_through_ms: history.evicted_through_ms(),
+            floored_quantity,
+            opening_bursts: history.opening_bursts().to_vec(),
+            floor,
+            seal: None,
+        })
+    });
     // This half carries marks for *both* panes: the prints rolling through the
     // tape, and — while the summary is on — the forming bar's own slot marks.
     // They are folded apart, because a fold that mixed them would draw one
@@ -588,48 +730,67 @@ pub fn project_live(
     // pane's own radius range and gates on the pane's own switch, so a merged
     // mark would be clipped into one pane, sized for the other, and hidden by
     // the wrong control.
+    // Dots carry the typed scale the settled half carries; the painter sizes
+    // each pane on screen.
     let (mut tape_marks, mut slot_marks): (Vec<_>, Vec<_>) = tier_primitives(
         marks,
         timeline,
         prices,
         settled.aggression_reference,
         settled.summary_reference,
+        dots,
     )
     .into_iter()
     .partition(|mark| mark.live);
     let before = tape_marks.len() + slot_marks.len();
     let (chart_budget, lane_budget) =
         pane_budgets(config.max_aggression_primitives, &config.live_lane);
-    fold_to_budget(
-        &mut tape_marks,
-        lane_budget,
-        FoldOrder::OldestFirst,
-        settled.aggression_reference,
-        None,
-    );
+    // Dots never fold to the budget; see `project_settled`.
+    if dots.is_none() {
+        fold_to_budget(
+            &mut tape_marks,
+            lane_budget,
+            FoldOrder::OldestFirst,
+            settled.aggression_reference,
+            None,
+        );
+    }
     // The forming bar's marks are candle marks and answer to the candles'
     // budget and the candles' ranking. Sized on the summary scale when there is
     // one, for the same reason `tier_primitives` drew them on it: a pie carries
     // a whole bar and a tape mark carries one print, so folding a pie against
     // the print scale would peg it at the largest radius.
-    fold_to_budget(
-        &mut slot_marks,
-        chart_budget,
-        FoldOrder::SmallestFirst,
-        settled.summary_reference,
-        Some(timeline),
-    );
+    if dots.is_none() {
+        fold_to_budget(
+            &mut slot_marks,
+            chart_budget,
+            FoldOrder::SmallestFirst,
+            settled.summary_reference,
+            Some(timeline),
+        );
+    }
     tape_marks.append(&mut slot_marks);
     let folded_aggressions = before.saturating_sub(tape_marks.len());
 
     LiveMarks {
         aggressions: tape_marks,
+        tape_facts,
         liquidity_events: event_primitives(events, timeline, prices, settled.effective_grouping),
         dropped_liquidity_events,
         folded_aggressions,
         floored_quantity,
         live_now_x,
     }
+}
+
+/// The quantity a full-size volume dot holds: the dots' own
+/// [`VolumeDotStyle::full_quantity`](crate::config::VolumeDotStyle::full_quantity),
+/// never the prints' `size_reference_quantity`.
+#[must_use]
+pub fn dot_full_quantity(config: &HeatmapConfig) -> Decimal {
+    Decimal::from_f64(config.volume_dots.full_quantity)
+        .or_else(|| Decimal::from_f64(crate::config::DEFAULT_VOLUME_DOT_FULL_QUANTITY))
+        .unwrap_or_default()
 }
 
 /// Allocate `events` to the prints of one half of the chart.

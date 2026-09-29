@@ -13,9 +13,8 @@
 use std::sync::Arc;
 
 use eframe::egui;
-use quantick_engine::BarFootprint;
 use quantick_orderflow::engine::VisibleOrderflow;
-use quantick_orderflow::reserved_span_ms;
+use quantick_orderflow::{PaneGeometry, lane_bars, reserved_span_ms};
 
 use crate::drawings::Drawings;
 use crate::indicator_render::{self, PlotX};
@@ -27,7 +26,7 @@ use crate::viewport::Viewport;
 use super::PaneChrome;
 use super::draw_frame::DrawFrame;
 use super::footprint::PaneFootprint;
-use super::frame_layout::CandleDress;
+use super::frame_layout::{CandleDress, FrameStart};
 use super::render_registry::{
     CandlePass, FlowPass, FootprintPass, IndicatorPanePass, LegendPass, OverlayPass,
     RenderRegistry, StripPass,
@@ -47,6 +46,7 @@ pub(super) struct FlowFrame<'a> {
     background: egui::Color32,
     lane_width: f32,
     inverted: bool,
+    price_range: (f64, f64),
     projection: Option<Arc<VisibleOrderflow>>,
 }
 
@@ -67,6 +67,7 @@ impl<'a> FlowFrame<'a> {
             background: frame.canvas_background,
             lane_width,
             inverted,
+            price_range: frame.scale.range(),
             projection: None,
         }
     }
@@ -104,6 +105,7 @@ impl<'a> FlowFrame<'a> {
         );
         self.projection = orderflow.and_then(|orderflow| {
             orderflow.set_projection_demand(demand);
+            let window_ms = orderflow.live_lane_window_ms(frame.closed);
             // The tape's automatic window comes from the newest bars of the
             // series, never from the slice on screen: panning the candles is
             // not a statement about how much market time the tape shows.
@@ -113,6 +115,13 @@ impl<'a> FlowFrame<'a> {
                 frame.end == frame.total,
                 Some(reserved_span_ms(frame.closed)),
                 frame.scale.range(),
+                Some(PaneGeometry {
+                    px_per_bar: self.viewport.px_per_bar(),
+                    lane_width_px: self.lane_width,
+                    lane_window_ms: window_ms,
+                    height_px: self.rect.height(),
+                    lane_bars: lane_bars(frame.closed, frame.partial, window_ms),
+                }),
             )
         });
     }
@@ -146,6 +155,7 @@ impl<'a> FlowFrame<'a> {
             background: self.background,
             lane_width: self.lane_width,
             inverted: self.inverted,
+            price_range: self.price_range,
         }
     }
 
@@ -174,6 +184,7 @@ impl<'a> FlowFrame<'a> {
         &self,
         owner: Option<&OrderflowView>,
         legend_inset: f32,
+        header: Option<egui::Rect>,
     ) -> Option<egui::Rect> {
         let mut bounds = None;
         if let Some(owner) = owner
@@ -182,7 +193,7 @@ impl<'a> FlowFrame<'a> {
             self.renderers.legend(&mut LegendPass {
                 owner,
                 painter: self.painter,
-                rect: self.rect,
+                rect: header.unwrap_or(self.rect),
                 viewport: self.viewport,
                 total: self.total,
                 projection,
@@ -328,9 +339,10 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
     pub(super) fn footprint(
         &self,
         footprint: &mut PaneFootprint,
-        footprints: &[BarFootprint],
+        state: &crate::state::ChartState,
         chrome: &PaneChrome<'_>,
         depth_visible: bool,
+        start: &FrameStart,
     ) {
         let frame = self.frame;
         let (viewport, right, total) = (self.viewport, frame.right, frame.total);
@@ -341,7 +353,7 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
             painter: &self.clip,
             chart_rect: frame.history_rect,
             scale: &frame.scale,
-            footprints,
+            footprints: state.bar_footprints(),
             first_state_slot: frame.prefix.len(),
             visible: (frame.start, frame.end),
             // Field access, not `live_ladder`: the draw below needs the
@@ -371,6 +383,18 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
         self.renderers.footprint(&mut FootprintPass {
             frame: &layer,
             lod: &mut footprint.lod,
+            footprint_visible: start.footprint_paints,
+            candle_aggression: start.candle_aggression,
+            native_grid: state
+                .tape_price_step()
+                .zip(state.tape_reference_price())
+                .map(
+                    |(step, reference_price)| quantick_orderflow::projection::CandleDotGrid {
+                        step,
+                        reference_price,
+                    },
+                ),
+            current_partial: state.partial_footprint(),
         });
     }
 

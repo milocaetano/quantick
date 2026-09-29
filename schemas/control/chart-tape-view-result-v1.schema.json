@@ -1,0 +1,107 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "LaneWindowSnapshot": {
+      "description": "How wide the live lane's window is, said the way the setting says it. An\n`auto` window follows the recent bars' typical duration, so publishing one\nresolved number would report a measurement as a setting.",
+      "properties": {
+        "fixed_ms": {
+          "description": "Present for `fixed`: the exchange milliseconds shown in the band.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "milliseconds"
+        },
+        "mode": {
+          "description": "`auto` or `fixed`.",
+          "type": "string"
+        },
+        "zoom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present for `auto`: `1.0` fits about one bar's worth of market time.",
+          "x-unit": "ratio"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
+    "TapeViewSnapshot": {
+      "description": "The tape's time frame as a pane reports it.",
+      "properties": {
+        "end_unix_ms": {
+          "description": "The past instant the right edge is held at; absent while it follows\nlive, where the edge is the moving tape clock.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "follows_live": {
+          "description": "The right edge is now. False while the tape is held in the past.",
+          "type": "boolean"
+        },
+        "retained_from_unix_ms": {
+          "description": "First instant the retained tape is complete from: a past end cannot\nhold the window further back than half of it before this.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "window": {
+          "$ref": "#/$defs/LaneWindowSnapshot"
+        },
+        "window_ms": {
+          "description": "The market time the tape shows now, resolved.",
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "milliseconds"
+        }
+      },
+      "required": [
+        "follows_live",
+        "window",
+        "window_ms"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tape": {
+      "$ref": "#/$defs/TapeViewSnapshot"
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "tape"
+  ],
+  "title": "TapeViewResult",
+  "type": "object"
+}

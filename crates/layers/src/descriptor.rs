@@ -16,6 +16,9 @@ pub enum OrderflowSwitch {
     Legend,
     Status,
     Gaps,
+    OverlapMerge,
+    TapeOnly,
+    NativeTape,
 }
 
 /// The authority that already owns a requested visibility value.
@@ -72,7 +75,7 @@ pub struct LayerDescriptor {
 pub struct ChartLayer(pub &'static LayerDescriptor);
 
 impl ChartLayer {
-    pub const ALL: [Self; 22] = builtins::ALL;
+    pub const ALL: [Self; 26] = builtins::ALL;
     pub const fn id(self) -> &'static str {
         self.0.id
     }
@@ -189,6 +192,23 @@ pub mod blocks {
         "the_tape_is_off",
         "the tape is off — the switch in the canvas's top-right corner puts it back, \
          and this layer is waiting exactly as it was left",
+    );
+    pub const TAPE_ONLY_STRIP: LayerBlock = LayerBlock::new(
+        "live_strip_hidden_in_tape_only",
+        "the forming-bar profile is hidden while this pane shows only the tape",
+    );
+    pub const TAPE_ONLY_CANDLES: LayerBlock = LayerBlock::new(
+        "candle_layer_hidden_in_tape_only",
+        "this candle-chart layer is hidden while the pane shows only the tape",
+    );
+    pub const TAPE_ONLY_DRAWS_NATIVE_TAPE: LayerBlock = LayerBlock::new(
+        "tape_only_always_draws_the_native_tape",
+        "tape only always draws the native tape; switch tape only off to choose it here",
+    );
+    pub const NATIVE_TAPE_NEEDS_VOLUME_DOTS: LayerBlock = LayerBlock::new(
+        "native_tape_needs_volume_dots",
+        "the native tape draws every print as a volume dot at its own time and price; \
+         switch volume dots on and the tape beside the candles becomes the native tape",
     );
     pub const NO_BOOK: LayerBlock = LayerBlock::new(
         "source_captures_no_order_book",

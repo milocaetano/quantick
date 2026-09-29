@@ -24,7 +24,6 @@ pub(crate) use quantick_control_schema::orderflow::*;
 use crate::app::TabsPort;
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
-    limits::CONTROL_SNAPSHOT_MAX_BOOK_LEVELS_PER_SIDE,
     registry::ModuleDescriptor,
     wire::WireU64,
 };
@@ -33,9 +32,7 @@ use crate::{orderflow_view::OrderflowView, pane::ChartPane, tab::Tab};
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
-    types::{
-        AvailabilitySnapshot, available, canonical_decimal, canonical_f32, unavailable, wire_usize,
-    },
+    types::{AvailabilitySnapshot, available, unavailable},
 };
 
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
@@ -71,7 +68,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
         module_id.clone(),
         SCHEMA_VERSION,
         "Aggression bubbles",
-        "Reports whether aggression bubbles are drawn over the chart and the lane, and what the display floor keeps off the canvas.",
+        "Reports whether aggression bubbles are drawn over the chart and the lane, whether they are drawn as Bookmap-style volume dots, and what the display floor keeps off the canvas.",
         &["observe", "observe.orderflow"],
         project_bubbles,
     )?;
@@ -122,54 +119,12 @@ fn revision<P: TabsPort + ?Sized>(app: &P) -> Vec<OrderflowRevisionKey> {
                     ),
                     engine: pane.orderflow.as_ref().map(|view| {
                         let (status, _ladder, grouping) = view.cached_book();
-                        EngineRevisionKey {
-                            enabled: view.enabled(),
-                            depth_visible: view.depth_visible(),
-                            lane_depth_visible: view.lane_depth_visible(),
-                            bubbles: view.bubbles_enabled(),
-                            lane_bubbles: view.lane_bubbles_enabled(),
-                            lane_enabled: view.lane_enabled(),
-                            status: status.code(),
-                            grouping,
-                            config: format!("{:?}", view.cached_config()),
-                        }
+                        EngineRevisionKey::from_config(view.cached_config(), status, grouping)
                     }),
                 })
                 .collect(),
         })
         .collect()
-}
-
-/// The revision key's rows. Their only contract is [`Eq`]: they are never
-/// serialized and never leave the registry. The two setups are compared
-/// through their `Debug` rendering because both hold `f32` fields and so are
-/// `PartialEq` but not `Eq`; the rendering is exact for every field.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct OrderflowRevisionKey {
-    tab_id: u64,
-    panes: Vec<PaneOrderflowRevisionKey>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PaneOrderflowRevisionKey {
-    pane_id: u64,
-    footprint_visible: bool,
-    footprint_overridden: bool,
-    footprint_setup: String,
-    engine: Option<EngineRevisionKey>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct EngineRevisionKey {
-    enabled: bool,
-    depth_visible: bool,
-    lane_depth_visible: bool,
-    bubbles: bool,
-    lane_bubbles: bool,
-    lane_enabled: bool,
-    status: &'static str,
-    grouping: rust_decimal::Decimal,
-    config: String,
 }
 
 fn project_tape<P: TabsPort + ?Sized>(app: &P, context: CaptureContext) -> TapeSnapshot {
@@ -198,19 +153,15 @@ fn project_tape<P: TabsPort + ?Sized>(app: &P, context: CaptureContext) -> TapeS
 }
 
 fn tape_state(tab: &Tab, view: &OrderflowView, context: CaptureContext) -> TapeStateSnapshot {
-    let health = view.cached_health();
-    TapeStateSnapshot {
-        enabled: health.enabled,
-        aggression_provenance: AGGRESSION_PROVENANCE.to_owned(),
-        last_event_unix_ms: health.last_event_ms,
+    TapeStateSnapshot::from_published(
+        view.cached_config(),
+        view.cached_health(),
         // Measured against the instant the capture was taken, which is the
         // only clock an age can be read off. Handing the newest event in as
         // "now" would compare it with itself and answer zero forever.
-        age_ms: tab.tape_age_at(context.captured_at_unix_ms),
-        live_end_unix_ms: view.cached_live_end_ms(),
-        live_lane_enabled: view.lane_enabled(),
-        live_lane_window: lane_window(view.live_lane_window()),
-    }
+        tab.tape_age_at(context.captured_at_unix_ms),
+        view.cached_live_end_ms(),
+    )
 }
 
 fn project_footprint<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> FootprintSnapshot {
@@ -229,27 +180,11 @@ fn project_footprint<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) ->
                         side: side.into(),
                         visible: pane.footprint.visible,
                         overridden: pane.footprint.config.is_some(),
-                        setup: footprint_setup(pane, window),
+                        setup: pane.footprint_config(window).into(),
                     })
                     .collect(),
             })
             .collect(),
-    }
-}
-
-fn footprint_setup(
-    pane: &ChartPane,
-    window: &crate::footprint_config::FootprintConfig,
-) -> FootprintSetupSnapshot {
-    let config = pane.footprint_config(window);
-    FootprintSetupSnapshot {
-        style: footprint_style_name(config.style).to_owned(),
-        imbalance_ratio: canonical_decimal(config.imbalance_ratio),
-        imbalance_minimum_quantity: config.imbalance_min_qty.map(canonical_decimal),
-        stacked_count: wire_usize(config.stacked_count),
-        show_point_of_control: config.show_poc,
-        show_numbers: config.show_numbers,
-        show_delta_totals: config.show_delta_totals,
     }
 }
 
@@ -267,13 +202,13 @@ fn project_bubbles<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> B
                         pane_id: WireU64::new(pane.id),
                         side: side.into(),
                         engine: engine_availability(pane),
-                        bubbles: pane.orderflow.as_ref().map(|view| BubblesStateSnapshot {
-                            enabled: view.bubbles_enabled(),
-                            lane_enabled: view.lane_bubbles_enabled(),
-                            aggression_provenance: AGGRESSION_PROVENANCE.to_owned(),
-                            floored_quantity: canonical_decimal(
+                        bubbles: pane.orderflow.as_ref().map(|view| {
+                            BubblesStateSnapshot::from_config(
+                                view.cached_config(),
                                 view.cached_health().floored_quantity,
-                            ),
+                                view.dot_scale(),
+                                &view.recorded_opening_bursts(),
+                            )
                         }),
                     })
                     .collect(),
@@ -305,18 +240,8 @@ fn project_heatmap<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> H
 }
 
 fn heatmap_state(view: &OrderflowView) -> HeatmapStateSnapshot {
-    let config = view.cached_config();
     let (_status, _ladder, grouping) = view.cached_book();
-    HeatmapStateSnapshot {
-        visible: view.depth_visible(),
-        lane_visible: view.lane_depth_visible(),
-        retention_ms: config.retention_ms,
-        capture_price_grouping: canonical_decimal(grouping),
-        display_grouping: display_grouping_name(config.display_grouping),
-        opacity: canonical_f32(config.opacity, SETTING_DECIMAL_PLACES),
-        gamma: canonical_f32(config.gamma, SETTING_DECIMAL_PLACES),
-        show_aggressions: config.show_aggressions,
-    }
+    HeatmapStateSnapshot::from_config(view.cached_config(), grouping)
 }
 
 fn project_l2<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> L2Snapshot {
@@ -343,32 +268,7 @@ fn project_l2<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> L2Snap
 
 fn book_snapshot(view: &OrderflowView) -> BookSnapshot {
     let (status, ladder, grouping) = view.cached_book();
-    let best_bid = ladder.and_then(|ladder| ladder.best_bid).map(level);
-    let best_ask = ladder.and_then(|ladder| ladder.best_ask).map(level);
-    let bids = ladder.map(|ladder| ladder.bids.as_slice()).unwrap_or(&[]);
-    let asks = ladder.map(|ladder| ladder.asks.as_slice()).unwrap_or(&[]);
-    BookSnapshot {
-        status: status.code().to_owned(),
-        provenance: BOOK_PROVENANCE.to_owned(),
-        price_grouping: canonical_decimal(grouping),
-        spread: ladder
-            .and_then(|ladder| ladder.best_bid.zip(ladder.best_ask))
-            .map(|(bid, ask)| canonical_decimal(ask.price() - bid.price())),
-        best_bid,
-        best_ask,
-        bids: bids
-            .iter()
-            .take(CONTROL_SNAPSHOT_MAX_BOOK_LEVELS_PER_SIDE)
-            .map(|value| level(*value))
-            .collect(),
-        asks: asks
-            .iter()
-            .take(CONTROL_SNAPSHOT_MAX_BOOK_LEVELS_PER_SIDE)
-            .map(|value| level(*value))
-            .collect(),
-        bids_truncated: bids.len() > CONTROL_SNAPSHOT_MAX_BOOK_LEVELS_PER_SIDE,
-        asks_truncated: asks.len() > CONTROL_SNAPSHOT_MAX_BOOK_LEVELS_PER_SIDE,
-    }
+    BookSnapshot::from_ladder(status, ladder, grouping)
 }
 
 /// Whether this pane has an order-flow engine at all. A pane without one

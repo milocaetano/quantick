@@ -2938,6 +2938,568 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Sets an explicit manual price range or resumes the pane's own automatic fit. Applies to the chart or independent tape without changing its time window or other panes.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "chart.price_axis.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "PriceAxisMode": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "Resume the pane's own automatic price fit.",
+                "properties": {
+                  "kind": {
+                    "const": "auto",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Hold this range until the operator changes or resets it.",
+                "properties": {
+                  "high": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  "kind": {
+                    "const": "manual",
+                    "type": "string"
+                  },
+                  "low": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "low",
+                  "high"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "$ref": "#/$defs/PriceAxisMode"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "mode"
+        ],
+        "title": "PriceAxisInput",
+        "type": "object"
+      },
+      "module": "chart",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "DecimalRange": {
+            "properties": {
+              "high": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "low": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "low",
+              "high"
+            ],
+            "type": "object"
+          },
+          "LaneWindowSnapshot": {
+            "description": "How wide the live lane's window is, said the way the setting says it. An\n`auto` window follows the recent bars' typical duration, so publishing one\nresolved number would report a measurement as a setting.",
+            "properties": {
+              "fixed_ms": {
+                "description": "Present for `fixed`: the exchange milliseconds shown in the band.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "milliseconds"
+              },
+              "mode": {
+                "description": "`auto` or `fixed`.",
+                "type": "string"
+              },
+              "zoom": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Present for `auto`: `1.0` fits about one bar's worth of market time.",
+                "x-unit": "ratio"
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "type": "object"
+          },
+          "TapeViewSnapshot": {
+            "description": "The tape's time frame as a pane reports it.",
+            "properties": {
+              "end_unix_ms": {
+                "description": "The past instant the right edge is held at; absent while it follows\nlive, where the edge is the moving tape clock.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "follows_live": {
+                "description": "The right edge is now. False while the tape is held in the past.",
+                "type": "boolean"
+              },
+              "retained_from_unix_ms": {
+                "description": "First instant the retained tape is complete from: a past end cannot\nhold the window further back than half of it before this.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "window": {
+                "$ref": "#/$defs/LaneWindowSnapshot"
+              },
+              "window_ms": {
+                "description": "The market time the tape shows now, resolved.",
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "milliseconds"
+              }
+            },
+            "required": [
+              "follows_live",
+              "window",
+              "window_ms"
+            ],
+            "type": "object"
+          },
+          "ViewportSnapshot": {
+            "properties": {
+              "chart_width_px": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-unit": "pixels"
+              },
+              "follows_live": {
+                "type": "boolean"
+              },
+              "geometry_available": {
+                "type": "boolean"
+              },
+              "pixels_per_bar": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "x-unit": "pixels_per_bar"
+              },
+              "price_auto_fit": {
+                "type": "boolean"
+              },
+              "price_axis_inverted": {
+                "type": "boolean"
+              },
+              "price_range": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/DecimalRange"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "right_edge_bar": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "tape": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TapeViewSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The native tape's own time frame; absent without a native tape."
+              },
+              "visible_end_slot_exclusive": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "visible_start_slot": {
+                "$ref": "#/$defs/WireU64",
+                "description": "The slots the viewport asks the renderer to paint: generous by one bar\nat each edge, so a bar partly off screen is drawn rather than clipped.\nThis is the pane's own notion of \"visible\", not the exact pixel set."
+              }
+            },
+            "required": [
+              "geometry_available",
+              "visible_start_slot",
+              "visible_end_slot_exclusive",
+              "pixels_per_bar",
+              "right_edge_bar",
+              "follows_live",
+              "price_auto_fit",
+              "price_axis_inverted"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "viewport": {
+            "$ref": "#/$defs/ViewportSnapshot"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "viewport"
+        ],
+        "title": "PriceAxisResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs select one price axis; setting the same range or automatic mode is harmless, and the result reports the actual framing.",
+      "title": "Set a pane's price axis",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Holds the native tape's right edge at a past instant or pins it to live, and sets how much market time it shows. Never moves the candles beside it.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "chart.tape_view.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "TapeEndInput": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "Pin the right edge to now again.",
+                "properties": {
+                  "kind": {
+                    "const": "live",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Hold the right edge at this instant. Clamped to the retained tape and\nto now; the result reports where it landed.",
+                "properties": {
+                  "end_unix_ms": {
+                    "format": "int64",
+                    "type": "integer",
+                    "x-unit": "unix_milliseconds"
+                  },
+                  "kind": {
+                    "const": "past",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "end_unix_ms"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "TapeWindowInput": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "Follow the recent bars' typical duration again.",
+                "properties": {
+                  "kind": {
+                    "const": "auto",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Show this many exchange milliseconds.",
+                "properties": {
+                  "kind": {
+                    "const": "fixed",
+                    "type": "string"
+                  },
+                  "ms": {
+                    "format": "int64",
+                    "type": "integer",
+                    "x-unit": "milliseconds"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "ms"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TapeEndInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Where the right edge goes; absent keeps it."
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "window": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TapeWindowInput"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "How much market time the tape shows; absent keeps it."
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id"
+        ],
+        "title": "TapeViewInput",
+        "type": "object"
+      },
+      "module": "chart",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "LaneWindowSnapshot": {
+            "description": "How wide the live lane's window is, said the way the setting says it. An\n`auto` window follows the recent bars' typical duration, so publishing one\nresolved number would report a measurement as a setting.",
+            "properties": {
+              "fixed_ms": {
+                "description": "Present for `fixed`: the exchange milliseconds shown in the band.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "milliseconds"
+              },
+              "mode": {
+                "description": "`auto` or `fixed`.",
+                "type": "string"
+              },
+              "zoom": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Present for `auto`: `1.0` fits about one bar's worth of market time.",
+                "x-unit": "ratio"
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "type": "object"
+          },
+          "TapeViewSnapshot": {
+            "description": "The tape's time frame as a pane reports it.",
+            "properties": {
+              "end_unix_ms": {
+                "description": "The past instant the right edge is held at; absent while it follows\nlive, where the edge is the moving tape clock.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "follows_live": {
+                "description": "The right edge is now. False while the tape is held in the past.",
+                "type": "boolean"
+              },
+              "retained_from_unix_ms": {
+                "description": "First instant the retained tape is complete from: a past end cannot\nhold the window further back than half of it before this.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "window": {
+                "$ref": "#/$defs/LaneWindowSnapshot"
+              },
+              "window_ms": {
+                "description": "The market time the tape shows now, resolved.",
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "milliseconds"
+              }
+            },
+            "required": [
+              "follows_live",
+              "window",
+              "window_ms"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tape": {
+            "$ref": "#/$defs/TapeViewSnapshot"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "tape"
+        ],
+        "title": "TapeViewResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs select one tape; the same end or window again is harmless, and the result reports the end after clamping.",
+      "title": "Move the native tape through time",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Reads a bounded append-only page of chart bars with an optional continuation cursor.",
       "destructive": false,
       "dry_run_supported": false,
@@ -3298,6 +3860,40 @@
             "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
             "type": "string"
           },
+          "LaneWindowSnapshot": {
+            "description": "How wide the live lane's window is, said the way the setting says it. An\n`auto` window follows the recent bars' typical duration, so publishing one\nresolved number would report a measurement as a setting.",
+            "properties": {
+              "fixed_ms": {
+                "description": "Present for `fixed`: the exchange milliseconds shown in the band.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "milliseconds"
+              },
+              "mode": {
+                "description": "`auto` or `fixed`.",
+                "type": "string"
+              },
+              "zoom": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Present for `auto`: `1.0` fits about one bar's worth of market time.",
+                "x-unit": "ratio"
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "type": "object"
+          },
           "ModuleId": {
             "description": "A module contributing control-plane behavior.",
             "maxLength": 128,
@@ -3391,6 +3987,48 @@
             "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
             "type": "string"
           },
+          "TapeViewSnapshot": {
+            "description": "The tape's time frame as a pane reports it.",
+            "properties": {
+              "end_unix_ms": {
+                "description": "The past instant the right edge is held at; absent while it follows\nlive, where the edge is the moving tape clock.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "follows_live": {
+                "description": "The right edge is now. False while the tape is held in the past.",
+                "type": "boolean"
+              },
+              "retained_from_unix_ms": {
+                "description": "First instant the retained tape is complete from: a past end cannot\nhold the window further back than half of it before this.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "window": {
+                "$ref": "#/$defs/LaneWindowSnapshot"
+              },
+              "window_ms": {
+                "description": "The market time the tape shows now, resolved.",
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "milliseconds"
+              }
+            },
+            "required": [
+              "follows_live",
+              "window",
+              "window_ms"
+            ],
+            "type": "object"
+          },
           "ViewportSnapshot": {
             "properties": {
               "chart_width_px": {
@@ -3432,6 +4070,17 @@
               },
               "right_edge_bar": {
                 "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "tape": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TapeViewSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The native tape's own time frame; absent without a native tape."
               },
               "visible_end_slot_exclusive": {
                 "$ref": "#/$defs/WireU64"
@@ -9268,6 +9917,98 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Optionally excludes the first recorded 100 ms burst of each day from automatic tape-only dot scaling. Executions, prices and pies remain exact; the opening dot is capped at full radius. Uses the first available recorded burst if session-opening data is missing. Transient until the bubble preset is explicitly saved; defaults off and has no effect on ordinary chart/BTC rendering or a typed size reference.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.tape.opening_scale.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "ignore_opening_burst_in_scale": {
+            "description": "Exclude each day's first recorded 100 ms burst from the automatic\ntape size reference. Preserve its exact volume and cap its radius.",
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "ignore_opening_burst_in_scale"
+        ],
+        "title": "OpeningScaleInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "ignore_opening_burst_in_scale": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "ignore_opening_burst_in_scale",
+          "changed"
+        ],
+        "title": "OpeningScaleResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs are resolved before changing only a reversible display preference; the result and orderflow.bubbles report its actual value.",
+      "title": "Set opening burst size reference",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Names every control on screen with a frame-stable ID, its owner, whether it is selected, and the coded reason when it cannot be operated.",
       "destructive": false,
       "dry_run_supported": false,
@@ -11980,12 +12721,88 @@
             ],
             "type": "object"
           },
+          "LaneWindowSnapshot": {
+            "description": "How wide the live lane's window is, said the way the setting says it. An\n`auto` window follows the recent bars' typical duration, so publishing one\nresolved number would report a measurement as a setting.",
+            "properties": {
+              "fixed_ms": {
+                "description": "Present for `fixed`: the exchange milliseconds shown in the band.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "milliseconds"
+              },
+              "mode": {
+                "description": "`auto` or `fixed`.",
+                "type": "string"
+              },
+              "zoom": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Present for `auto`: `1.0` fits about one bar's worth of market time.",
+                "x-unit": "ratio"
+              }
+            },
+            "required": [
+              "mode"
+            ],
+            "type": "object"
+          },
           "PaneSideDto": {
             "enum": [
               "flow",
               "time"
             ],
             "type": "string"
+          },
+          "TapeViewSnapshot": {
+            "description": "The tape's time frame as a pane reports it.",
+            "properties": {
+              "end_unix_ms": {
+                "description": "The past instant the right edge is held at; absent while it follows\nlive, where the edge is the moving tape clock.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "follows_live": {
+                "description": "The right edge is now. False while the tape is held in the past.",
+                "type": "boolean"
+              },
+              "retained_from_unix_ms": {
+                "description": "First instant the retained tape is complete from: a past end cannot\nhold the window further back than half of it before this.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "window": {
+                "$ref": "#/$defs/LaneWindowSnapshot"
+              },
+              "window_ms": {
+                "description": "The market time the tape shows now, resolved.",
+                "format": "int64",
+                "type": "integer",
+                "x-unit": "milliseconds"
+              }
+            },
+            "required": [
+              "follows_live",
+              "window",
+              "window_ms"
+            ],
+            "type": "object"
           },
           "ViewportSnapshot": {
             "properties": {
@@ -12028,6 +12845,17 @@
               },
               "right_edge_bar": {
                 "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "tape": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TapeViewSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The native tape's own time frame; absent without a native tape."
               },
               "visible_end_slot_exclusive": {
                 "$ref": "#/$defs/WireU64"
@@ -13694,7 +14522,7 @@
       "title": "Layer visibility"
     },
     {
-      "description": "Reports whether aggression bubbles are drawn over the chart and the lane, and what the display floor keeps off the canvas.",
+      "description": "Reports whether aggression bubbles are drawn over the chart and the lane, whether they are drawn as Bookmap-style volume dots, and what the display floor keeps off the canvas.",
       "id": "orderflow.bubbles",
       "module_id": "orderflow",
       "required_permissions": [
@@ -13728,16 +14556,57 @@
                 "type": "string"
               },
               "enabled": {
-                "description": "Aggression bubbles are drawn over the chart.",
+                "description": "Aggression bubbles are drawn over the chart. Beside the native tape\nthey are one summary bubble per tick candle, as layer\n`candle_aggression` draws it; `layers.visibility` names any block.",
                 "type": "boolean"
               },
               "floored_quantity": {
                 "$ref": "#/$defs/CanonicalDecimal",
                 "description": "The exact quantity the trader's own display floor keeps off the canvas.\nFloored, not dropped: it is still in the totals."
               },
+              "ignore_opening_burst_in_scale": {
+                "default": false,
+                "description": "Exclude the first recorded 100 ms burst from automatic tape-only\nsizing; its factual volume is retained and its drawn radius capped.",
+                "type": "boolean"
+              },
               "lane_enabled": {
                 "description": "And over the live lane, which is a separate switch.",
                 "type": "boolean"
+              },
+              "native_tape": {
+                "default": false,
+                "description": "The tape is the native tape: each print at its own execution time\nand price, on the market clock over the whole window, with one price\naxis fitted by its prints (manual Y allowed). Beside the tick candles\nit keeps its share of the pane behind a draggable divider, and moving\nor zooming the candles never changes it. The tape the pane builds, not\nthe switch: true whenever `tape_only` is, and beside the candles only\nwith the tape on and `overlap_merge` (volume dots) on. The request is\nthe lane setting `native_tape`, saved with the order-flow preset and\nread back by `layers.visibility` as layer `native_tape`.",
+                "type": "boolean"
+              },
+              "overlap_merge": {
+                "default": false,
+                "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nOn the native tape, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Explicit display changes\nstart a new grouping. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
+                "type": "boolean"
+              },
+              "recorded_opening_windows_ms": {
+                "default": [],
+                "description": "First recorded native window of each retained UTC day. For daytime\nWIN sessions, this identifies the first available burst, not a proven\nexchange auction. Empty until executions have been observed.",
+                "items": {
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "tape_only": {
+                "default": false,
+                "description": "The pane shows the tape alone, Bookmap style: the native tape takes\nthe whole canvas, no candle or candle mark is drawn and time runs\nacross the full width on the tape's own window. The lane setting\n`tape_only`, switched by `layers.visibility.set` as layer `tape_only`.",
+                "type": "boolean"
+              },
+              "volume_dots": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/VolumeDotsSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The rungs and size scales the last volume-dots frame was built on;\nabsent when the pane last drew no dots."
               }
             },
             "required": [
@@ -13803,6 +14672,39 @@
             "required": [
               "tab_id",
               "panes"
+            ],
+            "type": "object"
+          },
+          "VolumeDotsSnapshot": {
+            "description": "What a volume-dots frame was keyed and sized on.",
+            "properties": {
+              "auto_full": {
+                "description": "Each pane sizes its dots relative to its own biggest dot on screen\ninstead of `volume_dot_full_quantity`. The bubble setting\n`volume_dot_auto_full`.",
+                "type": "boolean"
+              },
+              "candle_level_ticks": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Native ticks per candle level, chosen from the candle price axis. A\ncandle dot is its whole bar at one level."
+              },
+              "tape_level_ticks": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Native ticks per tape level, chosen from the price span of the tape's\nown prints."
+              },
+              "tape_window_ms": {
+                "$ref": "#/$defs/WireU64",
+                "description": "The tape's window, in milliseconds."
+              },
+              "volume_dot_full_quantity": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Contracts a dot holds at the largest radius when the size is typed:\narea is proportional to quantity against it. The bubble setting\n`volume_dot_full_quantity`."
+              }
+            },
+            "required": [
+              "tape_window_ms",
+              "tape_level_ticks",
+              "candle_level_ticks",
+              "volume_dot_full_quantity",
+              "auto_full"
             ],
             "type": "object"
           },

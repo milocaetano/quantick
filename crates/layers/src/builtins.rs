@@ -76,8 +76,9 @@ impl ChartLayer {
         id: "bubbles",
         label: "aggression bubbles",
         hint: "confirmed executions from the trade stream, drawn where they printed, on the \
-                 candles. The tape has a switch of its own and this one never moves it — \
-                 right-click the tape to reach it",
+                 candles. Beside the native tape, one summary bubble per tick candle, as \
+                 candle aggression draws it. The tape has a switch of its own and this one \
+                 never moves it — right-click the tape to reach it",
         source: LayerSource::Orderflow(OrderflowSwitch::Bubbles),
         scope: LayerScope::FlowPane,
         persistence: Persistence::Layers,
@@ -142,9 +143,9 @@ impl ChartLayer {
     pub const FlowLegend: Self = Self(&LayerDescriptor {
         id: "flow_legend",
         label: "chart legend",
-        hint: "the key at the top-left naming every flow layer that is on. Hiding it changes \
-                 nothing about what is drawn — the layers keep drawing, and the key comes back \
-                 with the same entries. The same switch as the L2 panel's 'show chart legend'",
+        hint: "the key naming visible flow layers, or the compact buy/sell key above a tape-only \
+                 plot. Hiding the key leaves the layers drawing. The same switch as the L2 \
+                 panel's 'show chart legend'",
         source: LayerSource::Orderflow(OrderflowSwitch::Legend),
         scope: LayerScope::FlowPane,
         persistence: Persistence::Layers,
@@ -189,6 +190,63 @@ impl ChartLayer {
         needs_depth: false,
         capture_gates_visibility: false,
         default_on: true,
+        projection_demand: false,
+    });
+    pub const BubbleOverlapMerge: Self = Self(&LayerDescriptor {
+        id: "bubble_overlap_merge",
+        label: "volume dots (Bookmap style)",
+        hint: "every print lands in one dot per bar, window of market time and price level: the \
+                 exact summed quantity, a buy/sell pie when both sides traded there, sized by the \
+                 volume its cell holds. Windows and levels are anchored in market time and price, \
+                 so a closed dot never moves; zooming picks wider or narrower cells. Dots may \
+                 overlap, the biggest on top. \
+                 Saved with the order-flow preset, not with the other layers",
+        source: LayerSource::Orderflow(OrderflowSwitch::OverlapMerge),
+        scope: LayerScope::FlowPane,
+        persistence: Persistence::OrderflowPreset,
+        requirement: Requirement::Volume,
+        on_tape: false,
+        needs_tape: false,
+        needs_depth: false,
+        capture_gates_visibility: false,
+        default_on: false,
+        projection_demand: false,
+    });
+    pub const TapeOnly: Self = Self(&LayerDescriptor {
+        id: "tape_only",
+        label: "tape only (hide candles)",
+        hint: "the tape takes the whole canvas, Bookmap style: no candles and no candle marks, \
+               time runs across the full width on the tape's own window, and the price axis \
+               follows the tape's prints. Scrolling zooms the tape's window. \
+               Saved with the order-flow preset, not with the other layers",
+        source: LayerSource::Orderflow(OrderflowSwitch::TapeOnly),
+        scope: LayerScope::FlowPane,
+        persistence: Persistence::OrderflowPreset,
+        requirement: Requirement::None,
+        on_tape: true,
+        needs_tape: true,
+        needs_depth: false,
+        capture_gates_visibility: false,
+        default_on: false,
+        projection_demand: false,
+    });
+    pub const NativeTape: Self = Self(&LayerDescriptor {
+        id: "native_tape",
+        label: "native tape (execution time and price)",
+        hint: "the tape draws each print at its own execution time and price, on the market \
+               clock, and the one price axis follows the tape's prints; manual Y still \
+               applies. Beside the candles it keeps its share behind the draggable divider and \
+               moving or zooming the candles never changes it. Needs volume dots; tape only \
+               always draws it. Saved with the order-flow preset, not with the other layers",
+        source: LayerSource::Orderflow(OrderflowSwitch::NativeTape),
+        scope: LayerScope::FlowPane,
+        persistence: Persistence::OrderflowPreset,
+        requirement: Requirement::None,
+        on_tape: true,
+        needs_tape: true,
+        needs_depth: false,
+        capture_gates_visibility: false,
+        default_on: false,
         projection_demand: false,
     });
     pub const Grid: Self = Self(&LayerDescriptor {
@@ -365,7 +423,7 @@ impl ChartLayer {
         projection_demand: false,
     });
 }
-pub const ALL: [ChartLayer; 22] = [
+pub const ALL: [ChartLayer; 26] = [
     ChartLayer::TapeChart,
     ChartLayer::TapeHeatmap,
     ChartLayer::TapeBubbles,
@@ -377,6 +435,9 @@ pub const ALL: [ChartLayer; 22] = [
     ChartLayer::FlowLegend,
     ChartLayer::BookStatus,
     ChartLayer::DepthGaps,
+    ChartLayer::BubbleOverlapMerge,
+    ChartLayer::TapeOnly,
+    ChartLayer::NativeTape,
     ChartLayer::Grid,
     ChartLayer::LastPrice,
     ChartLayer::BackfillDivider,
@@ -388,4 +449,5 @@ pub const ALL: [ChartLayer; 22] = [
     ChartLayer::PaperTrading,
     ChartLayer::TradePaint,
     ChartLayer::Drawings,
+    ChartLayer::CandleAggression,
 ];

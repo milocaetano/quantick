@@ -21,7 +21,7 @@ use quantick_control::{
     wire::{ActorContext, WireU64},
 };
 
-use quantick_layers::{ChartLayer, LayerScope, Persistence};
+use quantick_layers::ChartLayer;
 
 use serde_json::Value;
 
@@ -31,29 +31,11 @@ fn read_layer<P: TabsPort + ChromePort + ?Sized>(
     pane: &ChartPane,
     layer: ChartLayer,
 ) -> LayerSnapshot {
-    let blocked = pane.layer_blocked(layer, tab.capabilities(app.tab_reads().config()));
-    LayerSnapshot {
-        id: layer.id().to_owned(),
-        label: layer.label().to_owned(),
-        scope: match layer.0.scope {
-            LayerScope::Window => "window",
-            LayerScope::Pane => "pane",
-            LayerScope::FlowPane => "flow_pane",
-        }
-        .to_owned(),
-        persistence: match layer.0.persistence {
-            Persistence::Layers => "chart_layers",
-            Persistence::OrderflowPreset => "orderflow_preset",
-        }
-        .to_owned(),
-        requested: pane.layer_switched_on(layer, app.chrome_reads().style()),
-        effective: pane.layer_effective(
-            layer,
-            pane.layer_switched_on(layer, app.chrome_reads().style()),
-            tab.capabilities(app.tab_reads().config()),
-        ),
-        blocked_reason: blocked.map(|block| block.code.to_owned()),
-    }
+    LayerSnapshot::from_policy(
+        layer,
+        pane.layer_switched_on(layer, app.chrome_reads().style()),
+        pane.layer_facts(Some(tab.capabilities(app.tab_reads().config()))),
+    )
 }
 
 pub(crate) fn snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> LayersSnapshot {

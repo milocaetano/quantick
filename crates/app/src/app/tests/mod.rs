@@ -2706,3 +2706,8 @@ fn add_library_for_test(app: &mut QuantickApp, index: usize) -> Option<SlotId> {
     app.indicators.watch_attachment(added.watch);
     Some(slot)
 }
+
+mod tape_clock_tests;
+
+mod feed_tape_scope_tests;
+mod native_split_pane_tests;

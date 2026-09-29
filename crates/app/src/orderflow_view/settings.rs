@@ -9,7 +9,7 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_orderflow::HeatmapConfig;
+use quantick_orderflow::{HeatmapConfig, LiveLaneStyle};
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::bubble_presets;
@@ -21,6 +21,12 @@ use super::frame::status_color;
 
 mod bubble_sections;
 mod l2_sections;
+#[cfg(test)]
+#[path = "settings/tests/source_preset_persistence.rs"]
+mod source_preset_persistence;
+#[cfg(test)]
+#[path = "settings/tests/tape_only_controls.rs"]
+mod tape_only_controls;
 
 use bubble_sections::{
     BubbleHealthSection, ClusteringSection, ColoursSection, ConsumptionMarksSection, LabelsSection,
@@ -34,8 +40,8 @@ use l2_sections::{
 impl OrderflowView {
     /// Picker, save and reload for the named bubble looks.
     ///
-    /// Saving writes the whole presets file, so what the panel shows and what
-    /// the repository holds never drift apart.
+    /// Saving stores the edited look. A source-owned look does not replace
+    /// the default that unrelated markets will open with.
     fn draw_bubble_presets(&mut self, ui: &mut egui::Ui) {
         // The picker reads the stored presets while the closure below wants to
         // mutate them, so it hands back an index and the name is read after.
@@ -91,7 +97,7 @@ impl OrderflowView {
             {
                 let name = self.preset_name_draft.trim().to_owned();
                 self.presets.remove(&name);
-                self.persist_presets(format!("preset '{name}' removed"));
+                self.persist_presets(format!("preset '{name}' removed"), bubble_presets::save);
             }
         });
         if let Some(index) = chosen
@@ -111,13 +117,14 @@ impl OrderflowView {
 
     /// Apply the stored preset called `name`, reporting whether it exists.
     ///
-    /// The panel's picker and a feed's declared preset both land here, so a
-    /// preset applies identically no matter who asked. An unknown name changes
-    /// nothing and returns `false`; the caller decides how loudly to say so.
+    /// A manual choice ends a temporary source-owned look. An unknown name
+    /// changes nothing and returns `false`; the caller decides how loudly to
+    /// say so. Source declarations have their own scoped application path.
     pub(crate) fn apply_preset(&mut self, name: &str) -> bool {
         let Some(preset) = self.presets.get(name).cloned() else {
             return false;
         };
+        self.source_preset_restore = None;
         preset.apply_to(&mut self.config);
         self.presets.active = preset.name.clone();
         self.preset_name_draft = preset.name.clone();
@@ -126,19 +133,44 @@ impl OrderflowView {
     }
 
     fn save_preset(&mut self) {
+        self.save_preset_with(bubble_presets::save);
+    }
+
+    fn save_preset_with(
+        &mut self,
+        writer: impl FnOnce(&bubble_presets::BubblePresetFile) -> Result<std::path::PathBuf, String>,
+    ) {
         let name = self.preset_name_draft.trim().to_owned();
         if name.is_empty() {
             self.preset_status = Some("name the preset before saving".to_owned());
             return;
         }
+        if self
+            .source_preset_restore
+            .as_ref()
+            .is_some_and(|previous| previous.name == name)
+        {
+            self.preset_status = Some(format!(
+                "use another preset name to keep '{name}' as the default for other markets"
+            ));
+            return;
+        }
         self.presets
             .upsert(BubblePreset::capture(&name, &self.config));
         self.presets.active = name.clone();
-        self.persist_presets(format!("'{name}' saved"));
+        self.persist_presets(format!("'{name}' saved"), writer);
     }
 
-    fn persist_presets(&mut self, success: String) {
-        match bubble_presets::save(&self.presets) {
+    fn persist_presets(
+        &mut self,
+        success: String,
+        writer: impl FnOnce(&bubble_presets::BubblePresetFile) -> Result<std::path::PathBuf, String>,
+    ) {
+        let mut stored = self.presets.clone();
+        if let Some(previous) = &self.source_preset_restore {
+            stored.active = previous.name.clone();
+        }
+        match writer(&stored) {
             Ok(path) => {
                 self.presets_source = PresetSource::WorkingDir(path.clone());
                 self.preset_status = Some(format!("{success} → {}", path.display()));
@@ -158,8 +190,23 @@ impl OrderflowView {
     }
 
     fn reload_presets(&mut self) {
-        let (presets, source, error) = bubble_presets::load();
+        self.reload_presets_from(bubble_presets::load());
+    }
+
+    fn reload_presets_from(
+        &mut self,
+        (presets, source, error): (
+            bubble_presets::BubblePresetFile,
+            PresetSource,
+            Option<String>,
+        ),
+    ) {
+        let previous_scope = self.source_preset_restore.take();
+        let scoped_name = previous_scope.as_ref().map(|_| self.presets.active.clone());
         self.presets = presets;
+        if let Some(name) = scoped_name {
+            self.presets.active = name;
+        }
         self.presets_source = source;
         match error {
             Some(message) => {
@@ -183,6 +230,7 @@ impl OrderflowView {
                 }
             }
         }
+        self.source_preset_restore = previous_scope;
     }
 
     /// The L2 dock tab's body: everything the depth map owns. Returns
@@ -262,6 +310,7 @@ impl OrderflowView {
             bubble_cluster_ms: self.config.bubble_cluster_ms,
             bubble_dust_merge_ms: self.config.bubble_dust_merge_ms,
             bubble_candle_summary: self.config.bubble_candle_summary,
+            volume_dots: self.config.volume_dots,
             bubble_region_rows: self.config.bubble_region_rows,
             bubble_region_ms: self.config.bubble_region_ms,
             bubbles: self.config.bubbles.clone(),
@@ -332,12 +381,16 @@ impl OrderflowView {
         // this frame is the one the live lane's "Same as history" inherits.
         LiveLaneSection {
             inherited_cluster_ms: config.bubble_cluster_ms,
+            volume_dots: config.volume_dots.enabled,
+            native_block: OrderflowView::native_tape_block(config),
             lane: &mut config.live_lane,
         }
         .show(ui);
+        let native_tape = config.native_tape() && config.volume_dots.enabled;
         let bubbles = &mut config.bubbles;
         SizePlacementSection {
             bubbles: &mut *bubbles,
+            native_tape,
         }
         .show(ui);
         ConsumptionMarksSection {
@@ -358,10 +411,16 @@ impl OrderflowView {
         self.config.bubble_cluster_ms = defaults.bubble_cluster_ms;
         self.config.bubble_dust_merge_ms = defaults.bubble_dust_merge_ms;
         self.config.bubble_candle_summary = defaults.bubble_candle_summary;
+        self.config.volume_dots = defaults.volume_dots;
         self.config.bubble_region_rows = defaults.bubble_region_rows;
         self.config.bubble_region_ms = defaults.bubble_region_ms;
         self.config.bubbles = defaults.bubbles;
-        self.config.live_lane = defaults.live_lane;
+        // The native tape and tape only are the pane's mode, not its look.
+        self.config.live_lane = LiveLaneStyle {
+            native_tape: self.config.live_lane.native_tape,
+            tape_only: self.config.live_lane.tape_only,
+            ..defaults.live_lane
+        };
         // No stored preset is on screen any more, so the
         // picker must not keep claiming one.
         self.presets.active.clear();
