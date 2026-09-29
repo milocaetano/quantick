@@ -139,6 +139,39 @@ fn tape_only_keeps_short_native_price_windows_at_every_tape_zoom() {
     }
 }
 
+/// The zoom asks for the native tape only where the pane builds one. With
+/// the tape switched off, or without volume dots, the native switch keys
+/// nothing: the zoom is the one the same config chooses without it.
+#[test]
+fn only_a_built_native_tape_chooses_a_native_zoom() {
+    let geometry = PaneGeometry {
+        px_per_bar: 3.0,
+        lane_width_px: 300.0,
+        lane_window_ms: 15_000,
+        height_px: 400.0,
+        lane_bars: Vec::new(),
+    };
+    let chosen = |config: &HeatmapConfig| {
+        DotRungMemory::default().choose(geometry.clone(), config, (0.0, 1_000.0), Some(80.0))
+    };
+    let mut switched = dots_config();
+    switched.live_lane.native_tape = true;
+    assert!(chosen(&switched).native_tape, "the tape beside the candles");
+    let offs: [fn(&mut HeatmapConfig); 2] = [
+        |config| config.live_lane.enabled = false,
+        |config| config.volume_dots.enabled = false,
+    ];
+    for off in offs {
+        let mut native = switched.clone();
+        off(&mut native);
+        let mut ordinary = native.clone();
+        ordinary.live_lane.native_tape = false;
+        assert!(!native.native_tape());
+        assert!(!chosen(&native).native_tape, "no native tape is built");
+        assert_eq!(chosen(&native), chosen(&ordinary));
+    }
+}
+
 #[test]
 fn tape_area_is_proportional_without_a_cell_size_or_minimum_radius_floor() {
     let (config, _, mut marks) = fixture(3_400);

@@ -120,3 +120,99 @@ fn tape_only_shows_the_native_tape_checked_and_locked() {
         "the hover text says tape only implies it: {hover:?}"
     );
 }
+
+/// What the layer policy says of the native tape switch for `view`, from the
+/// facts the pane hands it.
+fn native_block(view: &OrderflowView) -> Option<quantick_layers::LayerBlock> {
+    quantick_layers::LayerState::blocked(
+        quantick_layers::ChartLayer::NativeTape,
+        quantick_layers::LayerFacts {
+            flow_pane: true,
+            tape_on: view.config.lane_enabled(),
+            tape_only: view.config.tape_only(),
+            native_tape: view.config.native_tape(),
+            volume_dots: view.config.volume_dots.enabled,
+            ..Default::default()
+        },
+    )
+}
+
+/// Click the native tape box, then hover it until its tooltip paints, and
+/// return the text painted then.
+fn click_then_hover(view: &mut OrderflowView) -> PaintedText {
+    let (ctx, text) = open_controls(view);
+    let at = text
+        .iter()
+        .find(|(painted, _)| painted == NATIVE_TAPE)
+        .expect("the native tape control")
+        .1
+        .center();
+    for pressed in [true, false] {
+        let _ = paint(
+            view,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(at),
+                egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+    }
+    for offset in [-7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0] {
+        let _ = paint(
+            view,
+            &ctx,
+            vec![egui::Event::PointerMoved(at + egui::vec2(offset, 0.0))],
+        );
+    }
+    for _ in 0..3 {
+        let _ = paint(view, &ctx, Vec::new());
+    }
+    paint(view, &ctx, Vec::new())
+}
+
+/// The box is the layer's second door and opens only where the layer call
+/// does. Blocked — tape only, the tape off, volume dots off — it can be
+/// neither ticked nor unticked, and its hover text is the reason the layer
+/// call names; open, a click moves the request.
+#[test]
+fn a_blocked_native_tape_layer_locks_its_box_with_the_layers_reason() {
+    let beside = || {
+        let mut view = view(true);
+        view.config.live_lane.tape_only = false;
+        view.config.live_lane.native_tape = true;
+        view
+    };
+    let mut open = beside();
+    assert_eq!(native_block(&open), None);
+    let _ = click_then_hover(&mut open);
+    assert!(
+        !open.config.live_lane.native_tape,
+        "an open box moves the request"
+    );
+    let blocks: [(&str, fn(&mut HeatmapConfig)); 3] = [
+        ("tape only", |config| config.live_lane.tape_only = true),
+        ("the tape off", |config| config.live_lane.enabled = false),
+        ("volume dots off", |config| {
+            config.volume_dots.enabled = false
+        }),
+    ];
+    for (why, block) in blocks {
+        let mut view = beside();
+        block(&mut view.config);
+        let reason = native_block(&view)
+            .unwrap_or_else(|| panic!("{why} blocks the layer"))
+            .explanation;
+        let before = view.config.clone();
+        let hover = click_then_hover(&mut view);
+        assert_eq!(view.config, before, "{why}: the box is locked");
+        assert!(
+            hover.iter().any(|(painted, _)| painted == reason),
+            "{why}: the hover text is the layer's reason {reason:?}: {hover:?}"
+        );
+    }
+}

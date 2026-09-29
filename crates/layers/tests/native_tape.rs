@@ -115,15 +115,30 @@ fn the_native_tape_is_a_layer_switch_like_tape_only() {
         ),
         Some(blocks::TAPE_OFF)
     );
-    assert_eq!(
-        LayerState::blocked(
-            layer,
-            LayerFacts {
-                tape_only: true,
-                ..ordinary()
-            }
-        ),
-        None,
-        "tape only draws the native tape, dots or not"
-    );
+    // Tape only draws the native tape, dots or not, so the switch has
+    // nothing to change there: it is blocked, and the reason says so.
+    for tape_only in [
+        LayerFacts {
+            tape_only: true,
+            native_tape: true,
+            ..ordinary()
+        },
+        LayerFacts {
+            tape_only: true,
+            native_tape: true,
+            ..dots
+        },
+    ] {
+        assert_eq!(
+            LayerState::blocked(layer, tape_only).map(|block| block.code),
+            Some("tape_only_always_draws_the_native_tape")
+        );
+        let block = LayerState::blocked(layer, tape_only).expect("blocked");
+        assert!(
+            block.explanation.contains("tape only") && block.explanation.contains("native tape"),
+            "{}",
+            block.explanation
+        );
+        assert!(!LayerState::effective(layer, true, tape_only));
+    }
 }

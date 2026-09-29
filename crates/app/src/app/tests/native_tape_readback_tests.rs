@@ -172,3 +172,55 @@ fn the_native_tape_is_switched_by_the_layer_call_and_read_back_as_built() {
     assert!(requested(&app), "and the request waits for the tape");
     disable_test_gateway(&mut app, &ctx);
 }
+
+/// Under tape only the surfaces tell one story: the pane builds the native
+/// tape (bubbles scope), and the switch has nothing to change there, so the
+/// layer is blocked and names why (layers scope), the call is refused in
+/// either direction with that reason, and the request is left as it was.
+/// The settings box is locked with the same reason
+/// (`a_blocked_native_tape_layer_locks_its_box_with_the_layers_reason`).
+#[test]
+fn under_tape_only_the_native_tape_layer_is_blocked_and_says_why() {
+    const REASON: &str = "tape_only_always_draws_the_native_tape";
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    let directory = gateway_test_directory("native-tape-under-tape-only");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut observer = connect(&directory, &options("observer", &[]));
+    let mut cockpit = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let requested = |app: &QuantickApp| {
+        let flow = app.active_tab().flow_pane.orderflow.as_ref();
+        flow.expect("the flow pane has an engine")
+            .cached_config()
+            .live_lane
+            .native_tape
+    };
+    native_split(&mut app);
+    set_layer(&mut app, &mut cockpit, "tape_only", true);
+    assert_eq!(built(&mut app, &mut observer), true, "tape only is native");
+    let layer = native_layer(&mut app, &mut observer);
+    assert_eq!(layer["blocked_reason"], REASON, "{layer}");
+    assert_eq!(layer["requested"], true, "the preset's request: {layer}");
+    assert_eq!(layer["effective"], false, "{layer}");
+    for visible in [false, true] {
+        let payload = json!({
+            "tab_id": app.tabs.active_id().to_string(),
+            "pane_id": app.active_tab().flow_pane.id.to_string(),
+            "layer_id": "native_tape",
+            "visible": visible,
+        });
+        let (refused, _) = unkeyed_call(&mut app, &mut cockpit, "layers.visibility.set", payload);
+        assert_eq!(error_code(&refused), Some(codes::CAPABILITY_UNAVAILABLE));
+        let ResponseOutcome::Failure { error } = refused.outcome else {
+            panic!("a blocked switch is refused");
+        };
+        assert_eq!(error.context.details.unwrap()["reason"], REASON);
+        assert!(requested(&app), "the request is not moved");
+    }
+    assert_eq!(built(&mut app, &mut observer), true);
+    disable_test_gateway(&mut app, &ctx);
+}

@@ -69,6 +69,17 @@ fn frame(
     partial: Option<&Bar>,
     px_per_bar: f32,
 ) -> Arc<VisibleOrderflow> {
+    frame_with_lane(view, closed, partial, px_per_bar, LANE_PX)
+}
+
+/// [`frame`] with a lane `lane_px` wide; `0` is the pane with the tape off.
+fn frame_with_lane(
+    view: &mut OrderflowView,
+    closed: &[Bar],
+    partial: Option<&Bar>,
+    px_per_bar: f32,
+    lane_px: f32,
+) -> Arc<VisibleOrderflow> {
     let lane_bars: Vec<_> = closed
         .iter()
         .chain(partial)
@@ -77,13 +88,13 @@ fn frame(
     let ask = |view: &mut OrderflowView| {
         view.project_visible(
             VisibleBarTimeline::new(1, 0, closed, partial),
-            true,
+            lane_px > 0.0,
             partial.is_some(),
             Some(3_000),
             PRICES,
             Some(PaneGeometry {
                 px_per_bar,
-                lane_width_px: LANE_PX,
+                lane_width_px: lane_px,
                 lane_window_ms: WINDOW_MS,
                 height_px: HEIGHT_PX,
                 lane_bars: lane_bars.clone(),
@@ -104,6 +115,19 @@ fn drawn_tape(
     total: usize,
     px_per_bar: f32,
 ) -> Vec<[f32; 4]> {
+    drawn_with_lane(view, frame, chart_px, total, px_per_bar, LANE_PX)
+}
+
+/// [`drawn_tape`] with a lane `lane_px` wide; `0` is the pane with the tape
+/// off, whose bounds are then measured from the chart's right edge.
+fn drawn_with_lane(
+    view: &OrderflowView,
+    frame: &VisibleOrderflow,
+    chart_px: f32,
+    total: usize,
+    px_per_bar: f32,
+    lane_px: f32,
+) -> Vec<[f32; 4]> {
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(chart_px, HEIGHT_PX));
     let mut viewport = Viewport::new();
     viewport.set_px_per_bar(px_per_bar);
@@ -116,12 +140,12 @@ fn drawn_tape(
             total,
             frame,
             egui::Color32::BLACK,
-            LANE_PX,
+            lane_px,
             false,
             PRICES,
         );
     });
-    let lane_left = chart_px - LANE_PX;
+    let lane_left = chart_px - lane_px;
     let mut bounds: Vec<[f32; 4]> = output
         .shapes
         .iter()
@@ -247,5 +271,44 @@ fn the_mini_index_preset_keeps_candles_beside_a_resizable_native_tape() {
         view.lane_width_px(1_000.0),
         1_000.0,
         "tape only has no divider"
+    );
+}
+
+/// Tape off is the original tick chart. The WIN preset's native switch,
+/// still set while the tape is off, changes none of the candles' volume
+/// dots: not the frame's marks, not their rungs, not what is painted.
+#[test]
+fn with_the_tape_off_the_native_switch_leaves_the_tick_chart_as_it_was() {
+    let tape_off = |native_tape: bool| {
+        let mut view = win_view(false);
+        let before = view.config.clone();
+        view.config.live_lane.native_tape = native_tape;
+        view.commit_config_changes(before);
+        view.set_bubbles_enabled(true);
+        view.set_lane_enabled(false);
+        assert!(!view.config.native_tape() && !view.lane_enabled());
+        view
+    };
+    let mut switched = tape_off(true);
+    let mut ordinary = tape_off(false);
+    let (closed, forming) = session(&mut ordinary);
+    let _ = session(&mut switched);
+    let total = closed.len() + 1;
+    let expected = frame_with_lane(&mut ordinary, &closed, Some(&forming), 10.0, 0.0);
+    let actual = frame_with_lane(&mut switched, &closed, Some(&forming), 10.0, 0.0);
+    assert!(
+        expected
+            .projection
+            .aggressions
+            .iter()
+            .any(|mark| !mark.live),
+        "the tick chart carries volume dots on its candles"
+    );
+    assert_eq!(*actual.projection, *expected.projection);
+    assert_eq!(actual.volume_dots, expected.volume_dots);
+    assert_same_marks(
+        &drawn_with_lane(&switched, &actual, SPLIT_CHART_PX, total, 10.0, 0.0),
+        &drawn_with_lane(&ordinary, &expected, SPLIT_CHART_PX, total, 10.0, 0.0),
+        "the candles with the native switch set against the candles without it",
     );
 }
