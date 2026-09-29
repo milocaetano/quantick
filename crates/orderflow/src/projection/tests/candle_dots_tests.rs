@@ -143,6 +143,12 @@ fn fine_aligned_rows_are_exact_but_offset_or_incompatible_grids_are_not() {
     let fine = ladder("1", &[print(1, "105", "3", Side::Buy)]);
     let frame = project_candle_dots([factual(0, &fine)], grid(), view());
     assert_eq!(frame.marks[0].price, dec("105"));
+    let native = ladder("5", &[print(1, "105", "3", Side::Buy)]);
+    assert_eq!(
+        frame,
+        project_candle_dots([factual(0, &native)], grid(), view()),
+        "empty sub-tick capture buckets cannot shrink native-price dots"
+    );
     let incompatible = ladder("2", &[print(1, "105", "3", Side::Buy)]);
     assert!(
         project_candle_dots([factual(0, &incompatible)], grid(), view())
