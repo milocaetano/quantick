@@ -180,9 +180,10 @@ fn the_tape_quantity_tooltip_does_not_claim_to_resize_the_independent_candle_ove
         .1
         .center();
     // egui suppresses tooltips after a click until it observes movement.
-    // Its velocity history requires three samples, not a single re-entry
-    // after PointerGone, so approach the control over real frame intervals.
-    for offset in [-3.0, -1.0, 0.0] {
+    // Its velocity history needs three samples and its post-click grace is
+    // 100 ms. Approach for eight 60 Hz frames, rather than teleporting back
+    // after PointerGone, then let the tooltip's sizing frame settle.
+    for offset in [-7.0, -6.0, -5.0, -4.0, -3.0, -2.0, -1.0, 0.0] {
         let _ = paint(
             &mut view,
             &ctx,
