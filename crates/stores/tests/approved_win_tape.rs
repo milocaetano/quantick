@@ -45,12 +45,12 @@ use quantick_engine::{Bar, BarSpec, Side, Trade};
 use quantick_orderflow::config::theme::OrderflowRenderStyle;
 use quantick_orderflow::engine::{BookEngine, BookPublished, ProjectionRequest, VisibleOrderflow};
 use quantick_orderflow::projection::{
-    AggressionPrimitive, PendingTape, TapeDotGeometry, TapeDotMemory, TapeHorizontalGeometry,
-    draws_bubble, project_tape_frame, project_tape_frame_with_overlay,
+    AggressionPrimitive, PendingTape, TapeDotFrame, TapeDotGeometry, TapeDotMemory,
+    TapeHorizontalGeometry, draws_bubble, project_tape_frame, project_tape_frame_with_overlay,
 };
 use quantick_orderflow::tape_clock::TapeClock;
 use quantick_orderflow::{
-    DotRungMemory, HeatmapConfig, PaneGeometry, PriceWindow, lane_bars, lane_time_ticks,
+    DotRungMemory, HeatmapConfig, LiveEdge, PaneGeometry, PriceWindow, lane_bars, lane_time_ticks,
     reserved_span_ms,
 };
 use quantick_stores::bubble_presets;
@@ -125,6 +125,36 @@ impl Path {
         match self {
             Self::Overlay => "overlay",
             Self::Complete => "complete",
+        }
+    }
+
+    /// The painter's tape frame for `frame`, through this path's call.
+    #[allow(clippy::too_many_arguments)]
+    fn tape_frame(
+        self,
+        marks: Vec<AggressionPrimitive>,
+        memory: &mut TapeDotMemory,
+        style: &OrderflowRenderStyle,
+        geometry: TapeDotGeometry,
+        time: Option<(LiveEdge, i64)>,
+        prices: Option<PriceWindow>,
+        frame: &VisibleOrderflow,
+    ) -> Option<TapeDotFrame> {
+        let facts = frame.projection.tape_facts.as_deref();
+        match self {
+            Self::Overlay => project_tape_frame_with_overlay(
+                marks,
+                Some(memory),
+                style,
+                geometry,
+                time,
+                prices,
+                facts,
+                frame.tape_overlay.as_deref(),
+            ),
+            Self::Complete => {
+                project_tape_frame(marks, Some(memory), style, geometry, time, prices, facts)
+            }
         }
     }
 }
@@ -657,37 +687,21 @@ impl Pane {
             TapeHorizontalGeometry::resolve(chart_width - lane_left, chart_height, &style.bubbles);
         style.bubbles.max_radius = geometry.max_radius;
         let lane_start = 1.0 - 1.0 / frame.slot_count.max(1) as f64;
-        let tape_geometry = TapeDotGeometry {
-            left_x: lane_start,
-            right_x: 1.0,
-            width_px: geometry.span_px,
-            height_px: chart_height,
-        };
-        let facts = frame.projection.tape_facts.as_deref();
-        let tape = match path {
-            Path::Overlay => {
-                *overlaid += usize::from(frame.tape_overlay.is_some());
-                project_tape_frame_with_overlay(
-                    marks,
-                    Some(&mut view.tape_dots),
-                    &style,
-                    tape_geometry,
-                    tape_time,
-                    tape_prices,
-                    facts,
-                    frame.tape_overlay.as_deref(),
-                )
-            }
-            Path::Complete => project_tape_frame(
-                marks,
-                Some(&mut view.tape_dots),
-                &style,
-                tape_geometry,
-                tape_time,
-                tape_prices,
-                facts,
-            ),
-        }?;
+        *overlaid += usize::from(*path == Path::Overlay && frame.tape_overlay.is_some());
+        let tape = path.tape_frame(
+            marks,
+            &mut view.tape_dots,
+            &style,
+            TapeDotGeometry {
+                left_x: lane_start,
+                right_x: 1.0,
+                width_px: geometry.span_px,
+                height_px: chart_height,
+            },
+            tape_time,
+            tape_prices,
+            &frame,
+        )?;
         style.bubbles.max_radius = tape.max_radius;
         let sizing = style.dot_sizing.expect("a factual tape has its sizing");
 
