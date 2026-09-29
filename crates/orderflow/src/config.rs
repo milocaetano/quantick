@@ -942,6 +942,8 @@ mod tests {
         let mut config = HeatmapConfig::default();
         assert!(!config.native_tape() && !config.tape_only());
 
+        // The native tape is drawn in execution-coordinate volume dots.
+        config.volume_dots.enabled = true;
         config.live_lane.native_tape = true;
         assert!(config.native_tape(), "beside the candles");
         assert!(!config.tape_only(), "the candles stay on the pane");
@@ -970,6 +972,32 @@ mod tests {
             !config.native_tape() && !config.tape_only(),
             "with the tape off the original chart returns"
         );
+    }
+
+    /// The native tape is a tape of execution-coordinate volume dots. Asked
+    /// for without them there is no such tape to build, so nothing about the
+    /// pane changes: the ordinary lane, its clock, and the candle bubbles it
+    /// always had. Tape only keeps drawing what it drew, dots or not.
+    #[test]
+    fn the_native_switch_without_volume_dots_leaves_the_ordinary_lane() {
+        let mut config = HeatmapConfig::default();
+        config.live_lane.native_tape = true;
+        assert!(!config.volume_dots.enabled);
+        assert!(!config.native_tape(), "no execution tape to build");
+        let style = theme::OrderflowRenderStyle::from_config(&config, [0, 0, 0, 255]);
+        assert_eq!(
+            style.aggression_layer, config.show_aggressions,
+            "the candles keep their bubbles"
+        );
+
+        config.live_lane.native_tape = false;
+        config.live_lane.tape_only = true;
+        assert!(
+            config.native_tape(),
+            "tape only is the native tape, dots or not"
+        );
+        let style = theme::OrderflowRenderStyle::from_config(&config, [0, 0, 0, 255]);
+        assert!(!style.aggression_layer);
     }
 
     #[test]

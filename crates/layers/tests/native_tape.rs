@@ -1,6 +1,8 @@
 //! Beside the candles, the native tape keeps every candle layer available but
 //! the candle-slot bubbles it replaces, and says why.
-use quantick_layers::{ChartLayer as L, LayerFacts, LayerState, blocks};
+use quantick_layers::{
+    ChartLayer as L, LayerFacts, LayerSource, LayerState, OrderflowSwitch, Persistence, blocks,
+};
 
 fn ordinary() -> LayerFacts {
     LayerFacts {
@@ -68,5 +70,60 @@ fn the_native_tape_reports_the_candle_slot_bubbles_it_replaces() {
     assert_eq!(
         LayerState::blocked(L::Bubbles, tape_only),
         Some(blocks::TAPE_ONLY_CANDLES)
+    );
+}
+
+/// The native tape is a switch of its own beside tape only: one registry
+/// entry the layer menu, the settings checkbox and `layers.visibility.set`
+/// share, saved with the order-flow preset exactly like tape only.
+#[test]
+fn the_native_tape_is_a_layer_switch_like_tape_only() {
+    let layer = L::NativeTape;
+    assert_eq!(layer.0.id, "native_tape");
+    assert_eq!(
+        layer.0.source,
+        LayerSource::Orderflow(OrderflowSwitch::NativeTape)
+    );
+    assert_eq!(layer.0.scope, L::TapeOnly.0.scope);
+    assert_eq!(layer.0.persistence, Persistence::OrderflowPreset);
+    assert!(!layer.0.default_on, "off until someone asks");
+    assert!(
+        layer.0.hint.contains("execution time and price"),
+        "{}",
+        layer.0.hint
+    );
+    assert!(L::ALL.contains(&layer));
+
+    let dots = LayerFacts {
+        volume_dots: true,
+        ..ordinary()
+    };
+    assert!(LayerState::effective(layer, true, dots));
+    assert_eq!(
+        LayerState::blocked(layer, ordinary()),
+        Some(blocks::NATIVE_TAPE_NEEDS_VOLUME_DOTS),
+        "without volume dots there is no execution tape to build"
+    );
+    assert!(!LayerState::effective(layer, true, ordinary()));
+    assert_eq!(
+        LayerState::blocked(
+            layer,
+            LayerFacts {
+                tape_on: false,
+                ..dots
+            }
+        ),
+        Some(blocks::TAPE_OFF)
+    );
+    assert_eq!(
+        LayerState::blocked(
+            layer,
+            LayerFacts {
+                tape_only: true,
+                ..ordinary()
+            }
+        ),
+        None,
+        "tape only draws the native tape, dots or not"
     );
 }

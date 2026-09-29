@@ -55,16 +55,19 @@ fn the_native_tape_sits_beside_the_candles_behind_a_draggable_divider() {
         Some("candle_bubbles_replaced_by_native_tape")
     );
 
+    // The divider is laid out by the first frame's draw, after that frame's
+    // gestures ran, so its handle is first registered by the second frame. A
+    // press is hit-tested against the handles of the frame before it: one
+    // frame with the handle on screen is what a trader always has.
+    run_frame(&mut app, &ctx);
     let y = chart.center().y;
-    let at = |dx: f32| egui::pos2(divider + dx, y);
-    // Hover first, as a mouse does: the handle answers the pointer it is under.
-    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at(0.0))]);
-    run_frame_with_events(&mut app, &ctx, vec![pointer_button(at(0.0), true)]);
-    for step in 1..=5 {
-        let dx = -20.0 * step as f32;
-        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at(dx))]);
-    }
-    run_frame_with_events(&mut app, &ctx, vec![pointer_button(at(-100.0), false)]);
+    drag_sized(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        egui::pos2(divider, y),
+        egui::pos2(divider - 100.0, y),
+    );
     run_frame(&mut app, &ctx);
     let wider = app.active_tab().tape().lane_width_px(chart.width());
     assert!(
@@ -133,4 +136,33 @@ fn the_native_split_tape_runs_on_the_market_clock() {
     assert!(first.is_some(), "the native tape has a clock");
     app.active_tab_mut().update_tape_clock_at(12_000);
     assert!(app.active_tab().tape().lane_now_ms() > first);
+}
+
+/// Each mode starts at its own fit. A manual Y set beside the candles
+/// belongs to the split; entering tape only from it starts the full tape at
+/// its own fit, as entering it from the ordinary lane always did.
+#[test]
+fn entering_tape_only_from_the_split_starts_at_the_tapes_own_fit() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    native_split(&mut app);
+    run_frame(&mut app, &ctx);
+    let auto = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .auto_range
+        .expect("the split fits its axis");
+    app.active_tab_mut().flow_pane.price_view.pan(25.0, auto);
+    run_frame(&mut app, &ctx);
+    assert!(
+        !app.active_tab().flow_pane.price_view.is_auto(),
+        "the split keeps the trader's own Y"
+    );
+    switch_layer(&mut app, ChartLayer::TapeOnly, true);
+    run_frame(&mut app, &ctx);
+    assert!(
+        app.active_tab().flow_pane.price_view.is_auto(),
+        "tape only opens at the tape's own fit"
+    );
 }

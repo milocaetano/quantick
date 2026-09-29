@@ -164,3 +164,103 @@ fn panning_the_candles_leaves_the_native_tape_unchanged() {
         "the tape's facts do not depend on the candles on screen"
     );
 }
+
+/// However far back the candles are panned, the native tape is the same
+/// tape: the live half is cut at the tape's own edge once the candles end
+/// before it, so the prints it rebuilds every frame never grow with the pan.
+#[test]
+fn the_native_tape_does_not_depend_on_how_far_the_candles_pan() {
+    let now = std::time::Instant::now();
+    for clock in [30_000, 42_000] {
+        let mut following = engine(true, false);
+        let at_live = following
+            .project_at(&request(closed(), Some(forming()), clock), now)
+            .expect("the tape projects");
+        for visible in [1, 2] {
+            let mut panned = engine(true, false);
+            let in_history = panned
+                .project_at(&request(closed()[..visible].to_vec(), None, clock), now)
+                .expect("the tape projects while the candles look back");
+            assert_eq!(
+                in_history.projection.tape_facts, at_live.projection.tape_facts,
+                "{visible} bars on screen at {clock}"
+            );
+            let key = |mark: &AggressionPrimitive| {
+                (
+                    mark.agg_ids.clone(),
+                    mark.quantity,
+                    mark.buy_quantity,
+                    mark.price,
+                    mark.timestamp_quantity,
+                )
+            };
+            assert_eq!(
+                live(&in_history).iter().map(key).collect::<Vec<_>>(),
+                live(&at_live).iter().map(key).collect::<Vec<_>>(),
+                "{visible} bars on screen at {clock}"
+            );
+        }
+    }
+}
+
+/// Between worker publications the pending tape completes the published
+/// frame. That frame's depth map, liquidity events and candle marks are
+/// normalized over the bar slice it was built on, so the completed frame
+/// keeps that slice's geometry and puts the pending prints in its lane:
+/// panning, zooming or a new bar cannot shift or stretch the map behind the
+/// candles before the worker republishes, and the tape lands where it would
+/// have landed anyway.
+#[test]
+fn a_pending_tape_keeps_the_published_frames_bar_geometry() {
+    let now = std::time::Instant::now();
+    let mut worker = engine(true, false);
+    let config = worker.config.clone();
+    let published = worker
+        .project_at(&request(closed(), Some(forming()), 30_000), now)
+        .expect("the worker publishes");
+    let mut pending = crate::projection::PendingTape::default();
+    pending.record(&print(6, 30_010, 102, 2, Side::Buy), &config);
+    let complete = |request: &ProjectionRequest| {
+        VisibleOrderflow::with_pending_tape(&pending, &config, request, Some(&published))
+            .expect("the pending tape completes the frame")
+    };
+    let unchanged = complete(&request(closed(), Some(forming()), 30_016));
+    let panned = complete(&request(closed()[..1].to_vec(), None, 30_016));
+    let mut shifted = request(closed()[1..].to_vec(), Some(forming()), 30_016);
+    shifted.first_bar_index = 1;
+    let shifted = complete(&shifted);
+    let place = |frame: &VisibleOrderflow| {
+        let mut marks: Vec<_> = live(frame)
+            .into_iter()
+            .map(|mark| (mark.agg_ids.clone(), mark.x, mark.y))
+            .collect();
+        marks.sort_by(|a, b| a.0.cmp(&b.0));
+        marks
+    };
+    let expected = place(&unchanged);
+    assert!(
+        expected.iter().any(|(ids, _, _)| ids.contains(&6)),
+        "the pending print is on the tape"
+    );
+    for (frame, why) in [(&panned, "panned"), (&shifted, "shifted by a bar")] {
+        assert_eq!(
+            (frame.first_bar_index, frame.slot_count),
+            (published.first_bar_index, published.slot_count),
+            "{why}: the published cells keep the slice they were normalized over"
+        );
+        assert!(Arc::ptr_eq(
+            &frame.projection.cells,
+            &published.projection.cells
+        ));
+        let actual = place(frame);
+        assert_eq!(actual.len(), expected.len(), "{why}");
+        for ((ids, x, y), (expected_ids, expected_x, expected_y)) in actual.iter().zip(&expected) {
+            assert_eq!(ids, expected_ids, "{why}");
+            assert!(
+                (x - expected_x).abs() < 1e-9,
+                "{why}: {x} against {expected_x}"
+            );
+            assert_eq!(y, expected_y, "{why}");
+        }
+    }
+}

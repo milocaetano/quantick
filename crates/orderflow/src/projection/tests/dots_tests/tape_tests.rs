@@ -345,3 +345,38 @@ fn a_tape_with_only_room_for_one_diameter_still_resolves_collisions() {
     );
     assert_eq!(merged[0].quantity, dec("0.4"));
 }
+
+/// The shared price axis is padded for the tape's own band, and that band's
+/// width is the lane setting's, not whatever divider the last frame laid out.
+/// Before the tape has a live edge no band is on screen yet; padding the fit
+/// for a band that wide from the first frame is what keeps the axis from
+/// stepping when the band appears.
+#[test]
+fn the_native_price_inset_is_measured_on_the_lanes_own_width() {
+    let mut config = dots_config();
+    config.bubbles.max_radius = 15.0;
+    config.live_lane.native_tape = true;
+    let beside = TapeHorizontalGeometry::native_price_inset_px(&config, 1_000.0, 600.0);
+    let lane = config.live_lane.resolved_width_px(1_000.0);
+    assert!(lane > 0.0 && lane < 1_000.0);
+    assert_eq!(
+        beside,
+        TapeHorizontalGeometry::resolve(lane, 600.0, &config.bubbles).price_inset_px
+    );
+    assert!(beside > TapeHorizontalGeometry::resolve(0.0, 600.0, &config.bubbles).price_inset_px);
+
+    config.live_lane.tape_only = true;
+    assert_eq!(
+        TapeHorizontalGeometry::native_price_inset_px(&config, 1_000.0, 600.0),
+        TapeHorizontalGeometry::resolve(1_000.0, 600.0, &config.bubbles).price_inset_px,
+        "tape only measures the whole chart"
+    );
+
+    config.live_lane.tape_only = false;
+    config.live_lane.native_tape = false;
+    assert_eq!(
+        TapeHorizontalGeometry::native_price_inset_px(&config, 1_000.0, 600.0),
+        0.0,
+        "the candles fit their own axis"
+    );
+}

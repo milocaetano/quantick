@@ -718,4 +718,45 @@ mod tests {
         assert!(position.normalized.is_finite());
         assert_eq!(position.normalized, 1.0);
     }
+
+    /// The native tape's live half is the tape: panning the candles back
+    /// through history must not drag the seam with them, or every frame
+    /// rewalks every print between the candles on screen and now. Once the
+    /// candles end before the tape begins, the seam is the tape's own edge,
+    /// however far back they are; following the live edge it is unchanged.
+    #[test]
+    fn a_native_tape_seam_stays_at_the_tape_however_far_the_candles_pan() {
+        // One-second bars from 0 to 100 s; the tape shows the last 10 s.
+        let bars: Vec<Bar> = (0..100)
+            .map(|second| bar(second * 1_000, second * 1_000 + 900))
+            .collect();
+        let edge = |on_newest_bar| LiveEdge {
+            now_ms: 100_000,
+            window_ms: 10_000,
+            reference_ms: 1_000,
+            on_newest_bar,
+        };
+        let seam = |first: usize, last: usize, on_newest_bar: bool| {
+            BarTimeline::from_bars(first, &bars[first..last], None, Some(edge(on_newest_bar)))
+                .with_full_lane_coverage()
+                .live_boundary_ms()
+        };
+        assert_eq!(
+            seam(60, 100, true),
+            Some(90_000),
+            "following live, the bar the tape opens in"
+        );
+        for (first, last) in [(40, 80), (10, 50), (0, 20)] {
+            assert_eq!(
+                seam(first, last, false),
+                Some(90_000),
+                "candles {first}..{last} end before the tape: the seam is the tape's edge"
+            );
+        }
+        assert_eq!(
+            seam(60, 95, false),
+            Some(90_000),
+            "candles that reach into the tape keep the bar it opens in"
+        );
+    }
 }
