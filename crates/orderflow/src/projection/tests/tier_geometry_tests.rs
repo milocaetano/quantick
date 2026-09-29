@@ -7,6 +7,8 @@ use crate::projection::dots::{DotHorizon, fold_dots, native_grouping, window_sta
 use crate::projection::tiers::{TierClusters, tier_primitives};
 use rust_decimal::prelude::ToPrimitive as _;
 
+mod relative_projection;
+
 /// Preserve the original per-cluster placement operations and their order.
 /// In particular, convert to floating point only after Decimal subtraction
 /// and division, even for modern epoch timestamps with fractional means.
