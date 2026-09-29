@@ -7,8 +7,9 @@
 //! [`TapeLineage`] carries them unchanged, so the painter reconciles only what
 //! lies after the seal. The seal is proven rather than assumed — each
 //! publication is compared with the one before it below that one's seal, and
-//! any difference (a late print, a late reduction, a new configuration) starts
-//! a new lineage, which makes the painter reread everything once.
+//! any difference (a late print, a late reduction, a new configuration, a
+//! new price grid) starts a new lineage, which makes the painter reread
+//! everything once.
 //!
 //! The accepted prints the worker has not published yet travel beside the
 //! published frame as a [`TapeOverlay`]: the cells they touch, folded exactly
@@ -45,6 +46,10 @@ pub struct TapeSeal {
     pub revision: u64,
     /// The native window the cells are keyed on.
     pub window_ms: i64,
+    /// The native price bucket the cells are keyed on. The capture grid can
+    /// change without a configuration revision — auto-sized from the tape's
+    /// prints — and cells on another grid are other cells.
+    pub native_width: Decimal,
     /// Whether any cell carries depth evidence. Such a cell is drawn by the
     /// depth map too, at the frame's own placement, so only a complete
     /// frame may carry pending prints beside it.
@@ -62,6 +67,8 @@ pub(crate) struct SealInputs {
     pub(crate) revision: u64,
     /// The native window the cells are keyed on.
     pub(crate) window_ms: i64,
+    /// The native price bucket the cells are keyed on.
+    pub(crate) native_width: Decimal,
     /// Cells before this instant's window are sealed; `None` seals nothing.
     pub(crate) seal_from_ms: Option<i64>,
     /// Where the tape began.
@@ -80,6 +87,7 @@ pub(crate) fn seal_tape(next: &mut TapeFacts, previous: Option<&TapeFacts>, inpu
     let SealInputs {
         revision,
         window_ms,
+        native_width,
         seal_from_ms,
         lane_from_ms,
         recorded,
@@ -98,6 +106,7 @@ pub(crate) fn seal_tape(next: &mut TapeFacts, previous: Option<&TapeFacts>, inpu
             let seal = previous.seal.as_ref()?;
             (seal.revision == revision
                 && seal.window_ms == window_ms
+                && seal.native_width == native_width
                 && sealed_cells(previous, next.clusters.first(), seal.through_ms, window_ms)
                     == sealed_cells(next, next.clusters.first(), seal.through_ms, window_ms))
             .then(|| Arc::clone(&seal.lineage))
@@ -108,6 +117,7 @@ pub(crate) fn seal_tape(next: &mut TapeFacts, previous: Option<&TapeFacts>, inpu
         through_ms,
         revision,
         window_ms,
+        native_width,
         evidence,
         lane_from_ms,
         recorded,

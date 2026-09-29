@@ -625,7 +625,7 @@ pub(super) fn window_start(timestamp_ms: i64, window_ms: i64) -> i64 {
 }
 
 /// The instrument's native price grouping: the tick a level is counted in.
-pub(super) fn native_grouping(config: &HeatmapConfig) -> EffectiveGrouping {
+pub(crate) fn native_grouping(config: &HeatmapConfig) -> EffectiveGrouping {
     EffectiveGrouping::resolve(
         DisplayGrouping::Native,
         config.price_grouping,

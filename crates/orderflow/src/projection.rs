@@ -32,6 +32,7 @@ pub use candle_dots::{
     CandleDotFrame, CandleDotGrid, CandleDotView, CandleFootprint, CandleFootprintSource,
     CandleGroupMemory, project_candle_dots,
 };
+pub(crate) use dots::native_grouping;
 pub use dots::{
     DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_CELL_PX, DOT_WINDOW_LADDER_MS, DotRungMemory, DotScale,
     DotSizing, DotZoom, MIN_DOT_RADIUS_PX, PaneGeometry, VolumeDots, candle_dot_px,

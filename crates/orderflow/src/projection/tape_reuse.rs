@@ -4,13 +4,13 @@
 //! so the cells before the previous publication's seal are final: the live
 //! pass copies them and folds only the prints after the seal. Everything that
 //! could make an old cell differ sends the pass back over the whole tape:
-//! another configuration or window, depth evidence to correlate, a tape that
-//! reaches further back than before, a horizon that moved back, or a print
-//! that arrived behind the seal.
+//! another configuration, window or price grid, depth evidence to correlate,
+//! a tape that reaches further back than before, a horizon that moved back,
+//! or a print that arrived behind the seal.
 
 use rust_decimal::Decimal;
 
-use super::dots::window_start;
+use super::dots::{native_grouping, window_start};
 use super::tiers::TierClusters;
 use super::{SettledProjection, TapeFacts, VolumeDots};
 use crate::HeatmapConfig;
@@ -45,6 +45,7 @@ pub(crate) fn reusable_through(
     let retained = history.aggression_count();
     (seal.revision == reuse.revision
         && seal.window_ms == dots.tape_window_ms
+        && seal.native_width == native_grouping(history.config()).bucket_width
         && dots.native_tape
         && dots.tape_level_ticks == 1
         && coverage.is_empty()

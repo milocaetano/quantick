@@ -1,6 +1,6 @@
 //! The live half of a frame, continuing the last publication's sealed tape.
 use super::BookEngine;
-use crate::projection::{SealInputs, TapeReuse, project_live_after, seal_tape};
+use crate::projection::{SealInputs, TapeReuse, native_grouping, project_live_after, seal_tape};
 use crate::{BarTimeline, HeatmapProjection, PriceWindow, SettledProjection, VolumeDots};
 use std::sync::Arc;
 
@@ -39,6 +39,7 @@ impl BookEngine {
             let inputs = SealInputs {
                 revision: self.config_revision,
                 window_ms: dots.tape_window_ms,
+                native_width: native_grouping(self.history.config()).bucket_width,
                 seal_from_ms: self
                     .history
                     .latest_ms()

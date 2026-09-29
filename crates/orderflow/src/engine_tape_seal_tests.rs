@@ -409,6 +409,7 @@ fn the_worker_continues_its_sealed_tape_and_builds_the_complete_live_pass() {
             SealInputs {
                 revision: 0,
                 window_ms: 100,
+                native_width: crate::projection::native_grouping(history.config()).bucket_width,
                 seal_from_ms: history.latest_ms(),
                 lane_from_ms: timeline.lane_start_ms(),
                 recorded: history.counters().aggressions_recorded,
