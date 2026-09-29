@@ -389,3 +389,101 @@ fn a_cap_cut_inside_a_published_window_matches_the_workers_whole_window_eviction
     );
     assert_eq!(settled[0].agg_ids, vec![3]);
 }
+
+#[test]
+fn an_acknowledged_subfloor_prefix_counts_when_pending_volume_crosses_the_floor() {
+    let (mut view, gate, initial) = held_view(true);
+    let before = view.config.clone();
+    view.config.bubbles.min_quantity = 10.0;
+    view.commit_config_changes(before);
+    let first = print(1, 1_001, 100, 6, Side::Buy);
+    view.record_trade(&first);
+    let _ = frame(&mut view, std::slice::from_ref(&first));
+    initial.release();
+    view.flush_for_test();
+    let hidden = frame(&mut view, std::slice::from_ref(&first)).unwrap();
+    assert!(
+        tape(&hidden).is_empty(),
+        "the prefix alone is below the floor"
+    );
+    assert!(
+        view.pending_tape.is_empty(),
+        "the worker acknowledged the prefix"
+    );
+
+    let held = gate.hold(Phase::Applying);
+    let next = print(2, 1_017, 100, 6, Side::Sell);
+    view.record_trade(&next);
+    held.reached();
+    let prints = [first, next];
+    let immediate = tape(&frame(&mut view, &prints).unwrap());
+    held.release();
+    view.flush_for_test();
+    let settled = tape(&frame(&mut view, &prints).unwrap());
+    assert_eq!(
+        settled.len(),
+        1,
+        "the native cell now crosses the display floor"
+    );
+    assert_eq!(settled[0].quantity, Decimal::from(12));
+    assert_eq!(settled[0].buy_quantity, Decimal::from(6));
+    assert_eq!(settled[0].agg_ids, vec![1, 2]);
+    assert_eq!(
+        immediate, settled,
+        "acknowledged hidden facts must join the pending suffix on the first frame"
+    );
+}
+
+#[test]
+fn a_book_covered_pending_suffix_keeps_the_same_native_dot_on_handoff() {
+    use quantick_orderbook::{BookCoverage, BookLevel, BookSnapshot};
+
+    let (mut view, gate, initial) = held_view(true);
+    view.set_enabled(true, 7);
+    view.handle_depth_event(DepthEvent::Snapshot {
+        symbol: "WINV26".to_owned(),
+        generation: 7,
+        observed_at_ms: 1_000,
+        effective_at_ms: 999,
+        price_step: None,
+        snapshot: BookSnapshot::new(
+            10,
+            vec![BookLevel::new(Decimal::from(99), Decimal::from(100)).unwrap()],
+            vec![BookLevel::new(Decimal::from(101), Decimal::from(100)).unwrap()],
+            BookCoverage::Limited {
+                levels_per_side: 1_000,
+            },
+        ),
+    });
+    let first = print(1, 1_001, 100, 2, Side::Buy);
+    view.record_trade(&first);
+    let _ = frame(&mut view, std::slice::from_ref(&first));
+    initial.release();
+    view.flush_for_test();
+    let prefix = tape(&frame(&mut view, std::slice::from_ref(&first)).unwrap());
+    assert_eq!(prefix.len(), 1);
+    assert_eq!(
+        prefix[0].generation,
+        Some(7),
+        "the fixture has live book coverage"
+    );
+    assert!(view.pending_tape.is_empty());
+
+    let held = gate.hold(Phase::Applying);
+    let next = print(2, 1_017, 100, 3, Side::Sell);
+    view.record_trade(&next);
+    held.reached();
+    let prints = [first, next];
+    let immediate = tape(&frame(&mut view, &prints).unwrap());
+    held.release();
+    view.flush_for_test();
+    let settled = tape(&frame(&mut view, &prints).unwrap());
+    assert_eq!(settled.len(), 1);
+    assert_eq!(settled[0].generation, Some(7));
+    assert_eq!(settled[0].quantity, Decimal::from(5));
+    assert_eq!(settled[0].buy_quantity, Decimal::from(2));
+    assert_eq!(
+        immediate, settled,
+        "the live-book prefix and pending suffix share their factual coverage key"
+    );
+}
