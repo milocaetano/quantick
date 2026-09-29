@@ -55,7 +55,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "layer.candle_aggression.toggle",
         title: "Show discreet aggression dots over tick candles",
-        reach: "pane right-click layer menu; QUANTICK_CHART_LAYERS scratch configuration",
+        reach: "pane right-click layer menu, off until switched on",
         keys: &[(
             Source::Authored,
             "the per-pane candle aggression layer is opt-in and has no toolbar duplicate",

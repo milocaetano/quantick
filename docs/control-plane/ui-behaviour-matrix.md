@@ -81,7 +81,7 @@ The three exclusion classes are closed:
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, View menu, Ctrl+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `layer.bubbles.toggle` | Switch the aggression bubbles on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.footprint.settings.open` | Open the footprint's settings window | right-click the toolbar's footprint button | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
-| `layer.candle_aggression.toggle` | Show discreet aggression dots over tick candles | pane right-click layer menu; QUANTICK_CHART_LAYERS scratch configuration | `layers.visibility.set` | — |
+| `layer.candle_aggression.toggle` | Show discreet aggression dots over tick candles | pane right-click layer menu, off until switched on | `layers.visibility.set` | — |
 | `layer.footprint.toggle` | Switch the candle footprint on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.heatmap.toggle` | Switch the L2 depth map on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.live_strip.toggle` | Switch the live depth strip on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
