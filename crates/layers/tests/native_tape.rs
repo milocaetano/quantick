@@ -1,5 +1,5 @@
-//! Beside the candles, the native tape keeps every candle layer available but
-//! the candle-slot bubbles it replaces, and says why.
+//! Beside the candles, the native tape keeps every candle layer available; the
+//! candles' aggression bubbles are their per-candle summary there.
 use quantick_layers::{
     ChartLayer as L, LayerFacts, LayerSource, LayerState, OrderflowSwitch, Persistence, blocks,
 };
@@ -29,6 +29,7 @@ fn the_native_tape_beside_the_candles_keeps_the_candle_layers() {
         L::Drawings,
         L::TradePaint,
         L::Heatmap,
+        L::Bubbles,
         L::CandleAggression,
         L::LiveStrip,
         L::TapeBubbles,
@@ -42,26 +43,54 @@ fn the_native_tape_beside_the_candles_keeps_the_candle_layers() {
     }
 }
 
+/// The candles' one aggression bubbles switch stays theirs beside the native
+/// tape, where it draws the per-candle summary: it waits on what the summary
+/// waits on, and nowhere else does the native tape touch it.
 #[test]
-fn the_native_tape_reports_the_candle_slot_bubbles_it_replaces() {
+fn beside_the_native_tape_the_bubbles_are_the_candle_summary() {
     let beside = LayerFacts {
         native_tape: true,
         ..ordinary()
     };
     assert!(LayerState::effective(L::Bubbles, true, ordinary()));
-    assert!(!LayerState::effective(L::Bubbles, true, beside));
-    assert_eq!(
-        LayerState::blocked(L::Bubbles, beside),
-        Some(blocks::NATIVE_TAPE_CANDLE_BUBBLES)
-    );
-    assert_eq!(
-        blocks::NATIVE_TAPE_CANDLE_BUBBLES.code,
-        "candle_bubbles_replaced_by_native_tape"
-    );
-    assert!(
-        LayerState::restorable(L::Bubbles, beside),
-        "the trader's own choice is kept for when the native tape goes"
-    );
+    assert!(LayerState::effective(L::Bubbles, true, beside));
+    assert!(!LayerState::effective(L::Bubbles, false, beside));
+    assert_eq!(LayerState::blocked(L::Bubbles, beside), None);
+    // The summary is drawn on tick candles at their native prices only.
+    for (facts, code) in [
+        (
+            LayerFacts {
+                tick_bars: false,
+                ..beside
+            },
+            "candle_aggression_requires_tick_bars",
+        ),
+        (
+            LayerFacts {
+                native_candle_prices: false,
+                ..beside
+            },
+            "candle_aggression_requires_native_prices",
+        ),
+    ] {
+        assert_eq!(
+            LayerState::blocked(L::Bubbles, facts).map(|block| block.code),
+            Some(code)
+        );
+        assert_eq!(
+            LayerState::blocked(L::Bubbles, facts),
+            LayerState::blocked(L::CandleAggression, facts),
+            "one summary, one reason"
+        );
+        assert!(LayerState::restorable(L::Bubbles, facts));
+    }
+    // Without the native tape the candles' own bubbles need neither.
+    let volume_bars = LayerFacts {
+        tick_bars: false,
+        native_candle_prices: false,
+        ..ordinary()
+    };
+    assert_eq!(LayerState::blocked(L::Bubbles, volume_bars), None);
     // Tape only keeps its own, wider reason.
     let tape_only = LayerFacts {
         tape_only: true,

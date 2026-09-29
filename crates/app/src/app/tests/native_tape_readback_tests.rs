@@ -92,6 +92,11 @@ fn built(app: &mut QuantickApp, observer: &mut LocalClient) -> Value {
 
 /// The native tape layer as the layers scope reads it back.
 fn native_layer(app: &mut QuantickApp, observer: &mut LocalClient) -> Value {
+    read_layer(app, observer, "native_tape")
+}
+
+/// The flow pane's layer `id` as the layers scope reads it back.
+fn read_layer(app: &mut QuantickApp, observer: &mut LocalClient, id: &str) -> Value {
     let scopes = json!({ "scopes": ["layers.visibility"] });
     let (read, _) = unkeyed_call(app, observer, "snapshot.read", scopes);
     let value = success_result(&read)["scopes"]["layers.visibility"]["value"].clone();
@@ -99,8 +104,8 @@ fn native_layer(app: &mut QuantickApp, observer: &mut LocalClient) -> Value {
         .as_array()
         .unwrap()
         .iter()
-        .find(|layer| layer["id"] == "native_tape")
-        .expect("the native tape layer is read back")
+        .find(|layer| layer["id"] == id)
+        .unwrap_or_else(|| panic!("layer {id} is read back"))
         .clone()
 }
 
@@ -222,5 +227,133 @@ fn under_tape_only_the_native_tape_layer_is_blocked_and_says_why() {
         assert!(requested(&app), "the request is not moved");
     }
     assert_eq!(built(&mut app, &mut observer), true);
+    disable_test_gateway(&mut app, &ctx);
+}
+
+/// A frame after the order-flow worker has answered the one before it.
+fn settled_frame(app: &mut QuantickApp, ctx: &egui::Context) -> egui::FullOutput {
+    run_frame(app, ctx);
+    app.active_tab_mut().tape_mut().flush_for_test();
+    run_frame(app, ctx)
+}
+
+/// The per-candle summary's marks a frame painted: its one translucent colour
+/// per side, as a disc or as a pie.
+fn summary_marks(output: &egui::FullOutput) -> Vec<egui::Shape> {
+    let colours = [crate::theme::BUY, crate::theme::SELL].map(|colour| colour.gamma_multiply(0.35));
+    output
+        .shapes
+        .iter()
+        .map(|shape| &shape.shape)
+        .filter(|shape| match shape {
+            egui::Shape::Circle(disc) => colours.contains(&disc.fill),
+            egui::Shape::Mesh(mesh) => {
+                !mesh.vertices.is_empty()
+                    && mesh
+                        .vertices
+                        .iter()
+                        .all(|vertex| colours.contains(&vertex.color))
+            }
+            _ => false,
+        })
+        .cloned()
+        .collect()
+}
+
+/// Every other disc a frame painted left of `x`: the candles' own per-print
+/// bubbles, and whatever the frame draws there with them switched off.
+fn other_discs_left_of(output: &egui::FullOutput, x: f32) -> usize {
+    let summary = summary_marks(output);
+    output
+        .shapes
+        .iter()
+        .filter(|shape| matches!(&shape.shape, egui::Shape::Circle(disc) if disc.center.x < x))
+        .filter(|shape| !summary.contains(&shape.shape))
+        .count()
+}
+
+/// The trader's one candle switch beside the native tape. The aggression
+/// bubbles stay available there and draw the per-candle summary on the tick
+/// candles, once, whether or not candle aggression asks too; the layer call,
+/// the readback, the settings switch and the paint agree. Off, the candles
+/// carry nothing; with the tape off, their own per-print bubbles return.
+#[test]
+fn beside_the_native_tape_the_bubbles_switch_draws_the_candle_summary() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    let directory = gateway_test_directory("native-tape-candle-bubbles");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut observer = connect(&directory, &options("observer", &[]));
+    let mut cockpit = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    native_split(&mut app);
+    let switched_on = |app: &QuantickApp| app.active_tab().tape().cached_config().show_aggressions;
+    assert!(switched_on(&app), "the trader's candle switch is on");
+
+    // Beside the native tape: available, effective, and drawn as the summary.
+    let bubbles = read_layer(&mut app, &mut observer, "bubbles");
+    assert_eq!(bubbles["requested"], true, "{bubbles}");
+    assert_eq!(bubbles["effective"], true, "{bubbles}");
+    assert_eq!(bubbles["blocked_reason"], Value::Null, "{bubbles}");
+    let candle_aggression = read_layer(&mut app, &mut observer, "candle_aggression");
+    assert_eq!(candle_aggression["requested"], false, "{candle_aggression}");
+    let frame = settled_frame(&mut app, &ctx);
+    let summary = summary_marks(&frame);
+    assert!(
+        !summary.is_empty(),
+        "the bubbles switch draws the per-candle summary on the candles"
+    );
+    let divider = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .lane_divider_x
+        .expect("the tape beside the candles");
+    let beside = other_discs_left_of(&frame, divider);
+
+    // Candle aggression asked for too: the same marks, drawn once.
+    let layer = set_layer(&mut app, &mut cockpit, "candle_aggression", true);
+    assert_eq!(layer["effective"], true, "{layer}");
+    assert_eq!(
+        summary_marks(&settled_frame(&mut app, &ctx)),
+        summary,
+        "one summary whichever switch asks for it, never two"
+    );
+    set_layer(&mut app, &mut cockpit, "candle_aggression", false);
+
+    // Off: the call moves the settings switch, and the candles carry nothing.
+    let layer = set_layer(&mut app, &mut cockpit, "bubbles", false);
+    assert_eq!(layer["requested"], false, "{layer}");
+    assert_eq!(layer["effective"], false, "{layer}");
+    assert!(!switched_on(&app), "the settings switch is the layer's own");
+    let frame = settled_frame(&mut app, &ctx);
+    assert!(
+        summary_marks(&frame).is_empty(),
+        "bubbles off draws nothing"
+    );
+    assert_eq!(
+        other_discs_left_of(&frame, divider),
+        beside,
+        "beside the native tape the candles never carry per-print bubbles"
+    );
+
+    // The tape off: the original tick chart, with its own per-print bubbles.
+    set_layer(&mut app, &mut cockpit, "tape_chart", false);
+    let right = app.active_tab().flow_pane.frame.chart_rect.unwrap().right();
+    let without = other_discs_left_of(&settled_frame(&mut app, &ctx), right);
+    let layer = set_layer(&mut app, &mut cockpit, "bubbles", true);
+    assert_eq!(layer["effective"], true, "{layer}");
+    let frame = settled_frame(&mut app, &ctx);
+    assert!(
+        summary_marks(&frame).is_empty(),
+        "without the native tape the switch draws main's bubbles, not the summary"
+    );
+    assert!(
+        other_discs_left_of(&frame, right) > without,
+        "the candles' per-print bubbles return with the tape off"
+    );
     disable_test_gateway(&mut app, &ctx);
 }

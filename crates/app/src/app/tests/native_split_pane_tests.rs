@@ -43,6 +43,7 @@ fn the_native_tape_sits_beside_the_candles_behind_a_draggable_divider() {
         ChartLayer::Footprint,
         ChartLayer::Drawings,
         ChartLayer::TradePaint,
+        ChartLayer::Bubbles,
         ChartLayer::CandleAggression,
     ] {
         assert!(
@@ -50,10 +51,6 @@ fn the_native_tape_sits_beside_the_candles_behind_a_draggable_divider() {
             "{layer:?} still paints left of the divider"
         );
     }
-    assert_eq!(
-        LayerState::blocked(ChartLayer::Bubbles, facts).map(|block| block.code),
-        Some("candle_bubbles_replaced_by_native_tape")
-    );
 
     // The divider is laid out by the first frame's draw, after that frame's
     // gestures ran, so its handle is first registered by the second frame. A
