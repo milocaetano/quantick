@@ -39,7 +39,12 @@ fn context_fixture(
     run_frame(&mut app, ctx);
     app.active_tab_mut().time_panes[0]
         .spec
-        .retain(BarSpec::Tick(4));
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Replace(BarSpec::Tick(4).into()),
+            quantick_engine::bar_selection::BarInputAvailability::PRINTS,
+        )
+        .unwrap();
+    app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().time_panes[0].set_layer_visible(
         ChartLayer::Footprint,
@@ -47,6 +52,10 @@ fn context_fixture(
         &mut Default::default(),
     );
     run_frame(&mut app, ctx);
+    assert_eq!(
+        app.active_tab().time_panes[0].state.spec(),
+        &BarSpec::Tick(4).into()
+    );
     assert_eq!(
         app.active_tab().time_panes[0].state.tape_price_step(),
         Some(Decimal::from(5))
@@ -238,4 +247,60 @@ fn candle_aggression_is_reachable_by_the_existing_named_layer_action() {
         assert!(app.active_tab().time_panes[0].orderflow.is_none());
     }
     disable_test_gateway(&mut app, &ctx);
+}
+
+#[test]
+fn candle_aggression_paints_after_co_enabled_footprint_plates() {
+    let ctx = egui::Context::default();
+    let (mut app, _events, _commands) = context_fixture(&ctx);
+    let left = &mut app.active_tab_mut().time_panes[0];
+    left.viewport.zoom(5.0);
+    left.set_footprint_override(Some(crate::footprint_config::FootprintConfig {
+        style: crate::footprint_config::FootprintStyle::Split,
+        show_numbers: false,
+        show_delta_totals: false,
+        ..Default::default()
+    }));
+    for layer in [ChartLayer::Footprint, ChartLayer::CandleAggression] {
+        left.set_layer_visible(layer, true, &mut Default::default());
+    }
+    run_frame(&mut app, &ctx);
+    let output = run_frame(&mut app, &ctx);
+    let chart = app.active_tab().time_panes[0].frame.chart_rect.unwrap();
+    let mut witnessed = false;
+    for (dot_index, shape) in output
+        .shapes
+        .iter()
+        .enumerate()
+        .filter(|(_, shape)| shape.clip_rect == chart)
+    {
+        let egui::Shape::Circle(dot) = &shape.shape else {
+            continue;
+        };
+        if dot.fill.a() != 89 {
+            continue;
+        }
+        for (plate_index, shape) in output
+            .shapes
+            .iter()
+            .enumerate()
+            .filter(|(_, shape)| shape.clip_rect == chart)
+        {
+            if let egui::Shape::Rect(plate) = &shape.shape
+                && plate.rounding == egui::Rounding::same(2.0)
+                && plate.fill != egui::Color32::TRANSPARENT
+                && plate.rect.contains(dot.center)
+            {
+                witnessed = true;
+                assert!(
+                    plate_index < dot_index,
+                    "a footprint plate must never cover an enabled native-price dot"
+                );
+            }
+        }
+    }
+    assert!(
+        witnessed,
+        "the fixture must exercise overlapping footprint plates and aggression dots"
+    );
 }
