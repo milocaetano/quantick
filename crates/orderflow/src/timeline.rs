@@ -729,8 +729,8 @@ mod tests {
     /// The native tape's live half is the tape: panning the candles back
     /// through history must not drag the seam with them, or every frame
     /// rewalks every print between the candles on screen and now. Once the
-    /// candles end before the tape begins, the seam is the tape's own edge,
-    /// however far back they are; following the live edge it is unchanged.
+    /// candles end before the tape begins, the seam is at the tape, however
+    /// far back they are; following the live edge it is unchanged.
     #[test]
     fn a_native_tape_seam_stays_at_the_tape_however_far_the_candles_pan() {
         // One-second bars from 0 to 100 s; the tape shows the last 10 s.
@@ -764,6 +764,28 @@ mod tests {
             seam(60, 95, false),
             Some(90_000),
             "candles that reach into the tape keep the bar it opens in"
+        );
+
+        // The native clock moves the tape's edge every frame. The seam sits on
+        // the window's own grid instead, so it holds still while the tape
+        // rolls and the settled half stays cached between frames, and it
+        // never reaches back past the candles on screen.
+        let panned = |last: usize, now_ms: i64| {
+            let edge = LiveEdge {
+                now_ms,
+                ..edge(false)
+            };
+            BarTimeline::from_bars(40, &bars[40..last], None, Some(edge))
+                .with_full_lane_coverage()
+                .live_boundary_ms()
+        };
+        assert_eq!(panned(80, 100_016), Some(90_000));
+        assert_eq!(panned(80, 109_999), Some(90_000), "still while it rolls");
+        assert_eq!(panned(80, 110_000), Some(100_000), "one step per window");
+        assert_eq!(
+            panned(93, 105_500),
+            Some(92_900),
+            "never back into the candles on screen"
         );
     }
 }
