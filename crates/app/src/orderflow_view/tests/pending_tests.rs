@@ -364,7 +364,7 @@ fn a_cap_cut_inside_a_published_window_matches_the_workers_whole_window_eviction
     view.commit_config_changes(before);
     let mut prints = vec![
         print(1, 1_001, 100, 1, Side::Buy),
-        print(2, 1_017, 100, 2, Side::Sell),
+        print(2, 1_017, 101, 2, Side::Sell),
     ];
     for trade in &prints {
         view.record_trade(trade);
@@ -378,10 +378,17 @@ fn a_cap_cut_inside_a_published_window_matches_the_workers_whole_window_eviction
     prints.push(next);
     held.reached();
     let immediate = tape(&frame(&mut view, &prints).unwrap());
+    let immediate_range = view.tape_price_range();
     held.release();
     view.flush_for_test();
     let settled = tape(&frame(&mut view, &prints).unwrap());
     assert_eq!(immediate, settled);
+    assert_eq!(immediate_range, Some((105.0, 105.0)));
+    assert_eq!(
+        view.tape_price_range(),
+        immediate_range,
+        "a partly evicted native window must not keep stretching the price axis"
+    );
     assert_eq!(
         settled.len(),
         1,
@@ -434,17 +441,14 @@ fn an_acknowledged_subfloor_prefix_counts_when_pending_volume_crosses_the_floor(
     );
 }
 
-#[test]
-fn a_book_covered_pending_suffix_keeps_the_same_native_dot_on_handoff() {
+fn book_snapshot(generation: u64, effective_at_ms: i64) -> DepthEvent {
     use quantick_orderbook::{BookCoverage, BookLevel, BookSnapshot};
 
-    let (mut view, gate, initial) = held_view(true);
-    view.set_enabled(true, 7);
-    view.handle_depth_event(DepthEvent::Snapshot {
+    DepthEvent::Snapshot {
         symbol: "WINV26".to_owned(),
-        generation: 7,
-        observed_at_ms: 1_000,
-        effective_at_ms: 999,
+        generation,
+        observed_at_ms: effective_at_ms + 1,
+        effective_at_ms,
         price_step: None,
         snapshot: BookSnapshot::new(
             10,
@@ -454,7 +458,23 @@ fn a_book_covered_pending_suffix_keeps_the_same_native_dot_on_handoff() {
                 levels_per_side: 1_000,
             },
         ),
-    });
+    }
+}
+
+fn without_book_generation(
+    mut marks: Vec<quantick_orderflow::AggressionPrimitive>,
+) -> Vec<quantick_orderflow::AggressionPrimitive> {
+    for mark in &mut marks {
+        mark.generation = None;
+    }
+    marks
+}
+
+#[test]
+fn a_book_covered_pending_suffix_keeps_the_same_native_dot_on_handoff() {
+    let (mut view, gate, initial) = held_view(true);
+    view.set_enabled(true, 7);
+    view.handle_depth_event(book_snapshot(7, 999));
     let first = print(1, 1_001, 100, 2, Side::Buy);
     view.record_trade(&first);
     let _ = frame(&mut view, std::slice::from_ref(&first));
@@ -478,12 +498,129 @@ fn a_book_covered_pending_suffix_keeps_the_same_native_dot_on_handoff() {
     held.release();
     view.flush_for_test();
     let settled = tape(&frame(&mut view, &prints).unwrap());
+    assert_eq!(immediate.len(), 1);
+    assert_eq!(
+        immediate[0].generation, None,
+        "unvalidated pending coverage stays provisional"
+    );
     assert_eq!(settled.len(), 1);
     assert_eq!(settled[0].generation, Some(7));
     assert_eq!(settled[0].quantity, Decimal::from(5));
     assert_eq!(settled[0].buy_quantity, Decimal::from(2));
+    assert_eq!(settled[0].agg_ids, vec![1, 2]);
     assert_eq!(
-        immediate, settled,
-        "the live-book prefix and pending suffix share their factual coverage key"
+        without_book_generation(immediate),
+        without_book_generation(settled),
+        "validated book attribution must not move, resize, split or recolor the tape dot"
+    );
+}
+
+#[test]
+fn queued_book_generation_changes_leave_tape_facts_stable_and_legacy_keys_separate() {
+    use quantick_orderbook::BookDelta;
+
+    for tape_only in [true, false] {
+        let (mut view, gate, initial) = held_view(tape_only);
+        view.set_enabled(true, 7);
+        view.handle_depth_event(book_snapshot(7, 299_999));
+        // Align recording with every legacy ladder window so retention is not the subject.
+        let first = print(1, 300_000, 100, 2, Side::Buy);
+        view.record_trade(&first);
+        // Keep the first print inside generation 7 after its replacement opens a gap.
+        view.handle_depth_event(DepthEvent::Update {
+            symbol: "WINV26".to_owned(),
+            generation: 7,
+            event_time_ms: 300_005,
+            delta: BookDelta::new(11, 11, Vec::new(), Vec::new()),
+        });
+        let _ = frame(&mut view, std::slice::from_ref(&first));
+        initial.release();
+        view.flush_for_test();
+        let prefix = tape(&frame(&mut view, std::slice::from_ref(&first)).unwrap());
+        assert_eq!(prefix.len(), 1);
+        assert_eq!(prefix[0].generation, Some(7));
+
+        let held = gate.hold(Phase::Applying);
+        view.handle_depth_event(book_snapshot(8, 300_010));
+        let next = print(2, 300_017, 100, 3, Side::Sell);
+        view.record_trade(&next);
+        held.reached();
+        let prints = [first, next];
+        let immediate = tape(&frame(&mut view, &prints).unwrap());
+        held.release();
+        view.flush_for_test();
+        let settled = tape(&frame(&mut view, &prints).unwrap());
+        if tape_only {
+            assert_eq!(immediate.len(), 1);
+            assert_eq!(immediate[0].generation, None);
+            assert_eq!(settled.len(), 1);
+            assert_eq!(
+                settled[0].generation, None,
+                "mixed validated generations are not attributed to either book"
+            );
+            assert_eq!(settled[0].quantity, Decimal::from(5));
+            assert_eq!(settled[0].buy_quantity, Decimal::from(2));
+            assert_eq!(settled[0].agg_ids, vec![1, 2]);
+            assert_eq!(
+                immediate, settled,
+                "book generation cannot change native tape geometry or source facts"
+            );
+        } else {
+            assert_eq!(
+                settled.len(),
+                2,
+                "ordinary lanes preserve book-generation grouping"
+            );
+            assert_eq!(
+                settled
+                    .iter()
+                    .map(|mark| mark.generation)
+                    .collect::<Vec<_>>(),
+                vec![Some(7), Some(8)]
+            );
+            assert_eq!(
+                settled.iter().map(|mark| mark.quantity).sum::<Decimal>(),
+                Decimal::from(5)
+            );
+        }
+    }
+}
+
+#[test]
+fn a_subfloor_price_extreme_keeps_the_same_fit_after_worker_acknowledgement() {
+    let (mut view, gate, initial) = held_view(true);
+    let before = view.config.clone();
+    view.config.bubbles.min_quantity = 10.0;
+    view.commit_config_changes(before);
+    let first = print(1, 1_001, 100, 10, Side::Buy);
+    view.record_trade(&first);
+    let _ = frame(&mut view, std::slice::from_ref(&first));
+    initial.release();
+    view.flush_for_test();
+
+    let held = gate.hold(Phase::Applying);
+    let extreme = print(2, 1_101, 200, 6, Side::Sell);
+    view.record_trade(&extreme);
+    held.reached();
+    view.set_replay_clock_at(extreme.timestamp_ms, Some(extreme.timestamp_ms), None);
+    let immediate_range = view.tape_price_range();
+    let prints = [first, extreme];
+    let immediate = tape(&frame(&mut view, &prints).unwrap());
+    held.release();
+    view.flush_for_test();
+    let settled = tape(&frame(&mut view, &prints).unwrap());
+    assert!(view.pending_tape.is_empty());
+    assert_eq!(immediate, settled);
+    assert_eq!(
+        settled.len(),
+        1,
+        "the extreme print is below the display floor"
+    );
+    assert_eq!(settled[0].price, Decimal::from(100));
+    assert_eq!(immediate_range, Some((100.0, 200.0)));
+    assert_eq!(
+        view.tape_price_range(),
+        immediate_range,
+        "acknowledgement cannot shrink away a recent factual price"
     );
 }
