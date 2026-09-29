@@ -5416,7 +5416,15 @@ fn observer_schemas(update: bool) {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 53);
+    assert_eq!(documents.len(), 57);
+    for file_name in [
+        "chart-price-axis-input-v1.schema.json",
+        "chart-price-axis-result-v1.schema.json",
+        "orderflow-opening-scale-input-v1.schema.json",
+        "orderflow-opening-scale-result-v1.schema.json",
+    ] {
+        assert!(documents.iter().any(|document| document.file_name == file_name));
+    }
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join("schemas/control");
