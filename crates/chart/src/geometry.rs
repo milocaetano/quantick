@@ -1330,4 +1330,99 @@ mod tests {
             assert!(low < price && price < high, "{price} outside {low}..{high}");
         }
     }
+    #[test]
+    fn the_tape_axis_holds_small_changes_inside_its_radius_safe_range() {
+        // At this height, the prior 90..130 axis has 96..124 available for
+        // factual prices after reserving 18 pixels for the extreme discs.
+        let prior = (90.0, 130.0);
+        let previous = PriceScale::from_range(prior.0, prior.1, 20.0, 140.0);
+        for recent in [
+            (100.0, 120.0),
+            (100.5, 119.5),
+            (101.0, 121.0),
+            (102.9, 117.1),
+        ] {
+            let scale =
+                tape_price_window(Some(recent), Some(110.0), Some(prior), 20.0, 140.0, 18.0)
+                    .expect("recent tape prices remain available");
+            assert_eq!(
+                scale.range(),
+                prior,
+                "small changes and expired extrema keep the axis still"
+            );
+            assert_eq!(
+                scale.y(105.0),
+                previous.y(105.0),
+                "unchanged historical price stays on its row"
+            );
+        }
+    }
+
+    #[test]
+    fn the_tape_axis_refits_when_the_recent_span_halves_or_a_candle_axis_was_inherited() {
+        // The prior useful span is 28 points; contraction to half of it
+        // should release the spare space instead of keeping an ever wider axis.
+        let contracted = tape_price_window(
+            Some((103.0, 117.0)),
+            Some(110.0),
+            Some((90.0, 130.0)),
+            20.0,
+            140.0,
+            18.0,
+        )
+        .unwrap();
+        assert_eq!(contracted.range(), (100.0, 120.0));
+
+        let inherited = tape_price_window(
+            Some((995.0, 1_015.0)),
+            Some(1_005.0),
+            Some((400.0, 1_600.0)),
+            0.0,
+            600.0,
+            0.0,
+        )
+        .unwrap();
+        assert_eq!(
+            inherited.range(),
+            (994.0, 1_016.0),
+            "a candle-wide range cannot make the tape tiny"
+        );
+    }
+
+    #[test]
+    fn a_tape_axis_deadband_never_clips_a_forming_disc_at_either_boundary() {
+        for last_price in [95.0, 125.0] {
+            for recent in [Some((100.0, 120.0)), None] {
+                let scale = tape_price_window(
+                    recent,
+                    Some(last_price),
+                    Some((90.0, 130.0)),
+                    20.0,
+                    140.0,
+                    18.0,
+                )
+                .unwrap();
+                assert_ne!(
+                    scale.range(),
+                    (90.0, 130.0),
+                    "a price inside the outer bounds can still breach the safe margin"
+                );
+                for inverted in [false, true] {
+                    let y = scale.with_inverted(inverted).y(last_price);
+                    assert!(
+                        y - 18.0 >= 20.0 - 1e-4 && y + 18.0 <= 140.0 + 1e-4,
+                        "the factual forming price keeps its whole disc: {y}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ordinary_candle_autofit_does_not_inherit_the_tape_deadband() {
+        let bars = [bar("100", "120")];
+        let scale =
+            price_window(&bars, None, None, Some((90.0, 130.0)), None, 20.0, 140.0).unwrap();
+        assert_eq!(scale.range(), (99.0, 121.0));
+    }
 }
