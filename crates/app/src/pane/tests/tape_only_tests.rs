@@ -73,7 +73,8 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
                 egui::Color32::BLACK,
             )
             .expect("a scale")
-            .0.scale
+            .0
+            .scale
     };
     let tape_range = Some((995.0, 1_015.0));
     let (lo, hi) = fitted(true, &PriceView::new(), tape_range).range();
@@ -101,4 +102,26 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
         (10_400.0, 11_600.0),
         "ordinary candle panes retain their manual price view"
     );
+}
+
+#[test]
+fn tape_only_reserves_no_forming_candle_volume_profile_strip() {
+    use quantick_layers::{ChartLayer, LayerActions};
+
+    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
+    let capabilities = crate::config::FeedCapabilities {
+        traded_volume: true,
+        ..crate::config::FeedCapabilities::none()
+    };
+    let mut effects = LayerActions::default();
+    pane.set_layer_visible(ChartLayer::LiveStrip, true, &mut effects);
+    let ordinary_width = pane.live_strip_width(capabilities);
+    assert!(ordinary_width > 0.0, "ordinary charts retain their live profile");
+    pane.set_layer_visible(ChartLayer::TapeOnly, true, &mut effects);
+    assert_eq!(pane.live_strip_width(capabilities), 0.0);
+    let rect = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1_000.0, 600.0));
+    assert!(pane.plot_areas(rect, capabilities).live_strip.is_none());
+    assert!(pane.layers.requested(ChartLayer::LiveStrip), "the user's ordinary setting is retained");
+    pane.set_layer_visible(ChartLayer::TapeOnly, false, &mut effects);
+    assert_eq!(pane.live_strip_width(capabilities), ordinary_width);
 }
