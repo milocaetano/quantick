@@ -156,10 +156,15 @@ impl LayerState {
         if layer == ChartLayer::Bubbles && facts.native_tape {
             return Some(blocks::NATIVE_TAPE_CANDLE_BUBBLES);
         }
+        // Tape only draws the native tape whatever the switch says, so the
+        // switch has nothing to change there.
+        if layer == ChartLayer::NativeTape && facts.tape_only {
+            return Some(blocks::TAPE_ONLY_DRAWS_NATIVE_TAPE);
+        }
         if layer.0.needs_tape && !facts.tape_on {
             return Some(blocks::TAPE_OFF);
         }
-        if layer == ChartLayer::NativeTape && !facts.volume_dots && !facts.tape_only {
+        if layer == ChartLayer::NativeTape && !facts.volume_dots {
             return Some(blocks::NATIVE_TAPE_NEEDS_VOLUME_DOTS);
         }
         let missing = match layer.0.requirement {

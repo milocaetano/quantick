@@ -206,6 +206,10 @@ pub mod blocks {
         "the native tape draws every print at its own time and price beside the candles; \
          candle aggression summarizes each candle",
     );
+    pub const TAPE_ONLY_DRAWS_NATIVE_TAPE: LayerBlock = LayerBlock::new(
+        "tape_only_always_draws_the_native_tape",
+        "tape only always draws the native tape; switch tape only off to choose it here",
+    );
     pub const NATIVE_TAPE_NEEDS_VOLUME_DOTS: LayerBlock = LayerBlock::new(
         "native_tape_needs_volume_dots",
         "the native tape draws every print as a volume dot at its own time and price; \

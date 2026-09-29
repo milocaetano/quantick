@@ -149,10 +149,6 @@ impl ClusteringSection<'_> {
     }
 }
 
-/// Why the native-tape box is locked while tape only is on.
-const TAPE_ONLY_IMPLIES_NATIVE: &str =
-    "tape only always draws the native tape; switch tape only off to choose it here";
-
 /// The live lane's own settings: the reserved band right of the forming
 /// bar, which has room the compressed history does not.
 pub(super) struct LiveLaneSection<'a> {
@@ -160,6 +156,8 @@ pub(super) struct LiveLaneSection<'a> {
     /// History's cluster window, which "same as history" follows.
     pub(super) inherited_cluster_ms: i64,
     pub(super) volume_dots: bool,
+    /// Why the native tape layer cannot move, which locks its box too.
+    pub(super) native_block: Option<quantick_layers::LayerBlock>,
 }
 
 impl LiveLaneSection<'_> {
@@ -168,15 +166,15 @@ impl LiveLaneSection<'_> {
             lane,
             inherited_cluster_ms: inherited,
             volume_dots,
+            native_block,
         } = self;
-        // Tape only always draws the native tape, so there the box reads
-        // checked and is locked; the write is the layer switch's field.
+        // The layer's second door: shut, with its reason, where the call refuses.
         let mut native = lane.native();
         let native_box = egui::Checkbox::new(&mut native, "Native tape (execution time and price)");
         if ui
-            .add_enabled(!lane.tape_only, native_box)
+            .add_enabled(native_block.is_none(), native_box)
             .on_hover_text(ChartLayer::NativeTape.hint())
-            .on_disabled_hover_text(TAPE_ONLY_IMPLIES_NATIVE)
+            .on_disabled_hover_text(native_block.map_or("", |block| block.explanation))
             .changed()
         {
             lane.native_tape = native;

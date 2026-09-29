@@ -1,11 +1,12 @@
 //! Layer operations dock directly on the order-flow owner.
 use super::OrderflowView;
 use super::OrderflowView as V;
-use quantick_layers::OrderflowSwitch;
+use quantick_layers::{ChartLayer, LayerBlock, LayerFacts, LayerState, OrderflowSwitch};
+use quantick_orderflow::HeatmapConfig;
 /// How one switch reads its owner and writes through it: `(read, write)`.
 struct Switch(fn(&OrderflowView) -> bool, fn(&mut OrderflowView, bool));
 /// A preset switch: one config field, through the one door every change uses.
-fn commit(view: &mut OrderflowView, change: impl FnOnce(&mut quantick_orderflow::HeatmapConfig)) {
+fn commit(view: &mut OrderflowView, change: impl FnOnce(&mut HeatmapConfig)) {
     let before = view.config.clone();
     change(&mut view.config);
     view.commit_config_changes(before);
@@ -42,5 +43,23 @@ impl OrderflowView {
     }
     pub(crate) fn set_layer_switch(&mut self, switch: OrderflowSwitch, visible: bool) {
         (SWITCHES[switch as usize].1)(self, visible);
+    }
+    /// The layer policy's facts `config` holds, one reading for the layer
+    /// call, the menu and the settings box; the pane adds its own.
+    pub(crate) fn layer_facts(config: &HeatmapConfig) -> LayerFacts {
+        LayerFacts {
+            flow_pane: true,
+            tape_on: config.lane_enabled(),
+            tape_only: config.tape_only(),
+            native_tape: config.native_tape(),
+            volume_dots: config.volume_dots.enabled,
+            capture_enabled: config.enabled,
+            depth_visible: config.depth_visible(),
+            ..LayerFacts::default()
+        }
+    }
+    /// Why the native tape switch cannot move for `config`, as the layer call says.
+    pub(crate) fn native_tape_block(config: &HeatmapConfig) -> Option<LayerBlock> {
+        LayerState::blocked(ChartLayer::NativeTape, Self::layer_facts(config))
     }
 }

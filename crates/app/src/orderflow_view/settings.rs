@@ -382,6 +382,7 @@ impl OrderflowView {
         LiveLaneSection {
             inherited_cluster_ms: config.bubble_cluster_ms,
             volume_dots: config.volume_dots.enabled,
+            native_block: OrderflowView::native_tape_block(config),
             lane: &mut config.live_lane,
         }
         .show(ui);
