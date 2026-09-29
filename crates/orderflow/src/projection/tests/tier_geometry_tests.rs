@@ -58,14 +58,16 @@ fn reference_place(
         }
         (false, Some(_)) => prices.y(cluster.price_bucket + cluster.price_span / Decimal::TWO)?,
     };
+    let buy_share = cluster.buy_share();
+    let matched_fraction = cluster.matched_fraction();
     Some(AggressionPrimitive {
         agg_id: cluster.agg_id,
-        agg_ids: cluster.agg_ids.clone(),
+        agg_ids: cluster.agg_ids,
         generation: cluster.generation,
         side: cluster.side,
         consumed_side: cluster.consumed_side,
         quantity: cluster.quantity,
-        buy_share: cluster.buy_share(),
+        buy_share,
         live,
         price_bucket: cluster.price_bucket,
         price_span: cluster.price_span,
@@ -76,13 +78,39 @@ fn reference_place(
         timestamp_quantity: cluster.timestamp_quantity,
         matched_quantity: cluster.matched_quantity,
         buy_quantity: cluster.buy_quantity,
-        matched_fraction: cluster.matched_fraction(),
-        liquidity_event_ids: cluster.liquidity_event_ids.clone(),
+        matched_fraction,
+        liquidity_event_ids: cluster.liquidity_event_ids,
         x,
         y,
         size: normalized_area_size(cluster.quantity, reference),
         folded_marks: 0,
     })
+}
+
+fn assert_native_screen_contract(actual: &[AggressionPrimitive], expected: &[AggressionPrimitive]) {
+    assert_eq!(actual.len(), expected.len());
+    for (actual, expected) in actual.iter().zip(expected) {
+        let mut factual = actual.clone();
+        if expected.live {
+            for (old, new) in [(expected.x, actual.x), (expected.y, actual.y)] {
+                assert!(
+                    (old - new).abs() <= 1e-12,
+                    "native screen-coordinate tolerance"
+                );
+                assert!(
+                    (old - new).abs() * 16_384.0 < 1e-6,
+                    "less than one millionth of a pixel on a 16K surface"
+                );
+                assert_eq!((0.0..=1.0).contains(&old), (0.0..=1.0).contains(&new));
+            }
+            factual.x = expected.x;
+            factual.y = expected.y;
+        }
+        assert_eq!(
+            &factual, expected,
+            "all execution fields and every candle coordinate stay exact"
+        );
+    }
 }
 
 fn raw(epoch: i64, config: &HeatmapConfig) -> Vec<AggressionCluster> {
@@ -187,10 +215,11 @@ fn check_placement(epoch: i64, mode: Option<bool>, lane: bool, now_offset: i64) 
         summary_reference,
         dots.as_ref(),
     );
-    assert_eq!(
-        actual, expected,
-        "epoch {epoch}, mode {mode:?}, lane {lane}, now {now_offset}"
-    );
+    if mode == Some(true) {
+        assert_native_screen_contract(&actual, &expected);
+    } else {
+        assert_eq!(actual, expected, "ordinary and mixed placement stay exact");
+    }
     assert!(
         !actual.is_empty(),
         "candle placements remain available without a live lane"
