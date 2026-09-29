@@ -101,6 +101,30 @@ fn draw(memory: &mut TapeDotMemory, native: &[AggressionPrimitive], now_ms: i64)
     )
 }
 
+fn report_drawn_radii(label: &str, frame: &TapeDotFrame) {
+    let mut config = tape_config();
+    config.bubbles.max_radius = frame.max_radius;
+    let sizing = DotSizing {
+        tape_column_px: 1.0,
+        candle_column_px: 1.0,
+        px_per_price: 1.0,
+        typed_full: None,
+    };
+    let full = sizing.full_quantity(&frame.marks, true);
+    let mut radii: Vec<_> = frame.marks.iter().filter(|mark| mark.live)
+        .map(|mark| sizing.radius(&config.bubbles, &config.live_lane, mark, full)).collect();
+    radii.sort_by(f32::total_cmp);
+    let median = if radii.is_empty() {
+        0.0
+    } else {
+        (radii[(radii.len() - 1) / 2] + radii[radii.len() / 2]) / 2.0
+    };
+    eprintln!(
+        "WIN_STABILITY {label}: marks={} max_radius_cap={:.3}px min_radius={:.3}px median_radius={:.3}px quantity_max={full}",
+        radii.len(), frame.max_radius, radii.first().copied().unwrap_or_default(), median
+    );
+}
+
 fn identities(marks: &[AggressionPrimitive]) -> BTreeSet<u64> {
     let mut ids = BTreeSet::new();
     for mark in marks {
@@ -113,14 +137,25 @@ fn identities(marks: &[AggressionPrimitive]) -> BTreeSet<u64> {
 
 fn assert_exact_source_facts(marks: &[AggressionPrimitive], prints: &[Trade]) {
     for mark in marks {
-        let members: Vec<_> = mark.agg_ids.iter()
-            .map(|id| &prints[(*id - FIRST_SOURCE_ID) as usize]).collect();
+        let members: Vec<_> = mark
+            .agg_ids
+            .iter()
+            .map(|id| &prints[(*id - FIRST_SOURCE_ID) as usize])
+            .collect();
         let quantity: Decimal = members.iter().map(|trade| trade.quantity).sum();
-        let buys: Decimal = members.iter().filter(|trade| trade.side == Side::Buy)
-            .map(|trade| trade.quantity).sum();
-        let time: Decimal = members.iter()
-            .map(|trade| Decimal::from(trade.timestamp_ms) * trade.quantity).sum();
-        let price: Decimal = members.iter().map(|trade| trade.price * trade.quantity).sum();
+        let buys: Decimal = members
+            .iter()
+            .filter(|trade| trade.side == Side::Buy)
+            .map(|trade| trade.quantity)
+            .sum();
+        let time: Decimal = members
+            .iter()
+            .map(|trade| Decimal::from(trade.timestamp_ms) * trade.quantity)
+            .sum();
+        let price: Decimal = members
+            .iter()
+            .map(|trade| trade.price * trade.quantity)
+            .sum();
         assert_eq!(mark.quantity, quantity);
         assert_eq!(mark.buy_quantity, buys);
         assert_eq!(mark.timestamp_quantity, time);
@@ -139,6 +174,8 @@ fn real_win_prefixes_do_not_regroup_ten_second_old_history_when_the_left_maximum
     let mut memory = TapeDotMemory::default();
     let before = draw(&mut memory, &before_native, BEFORE_MS);
     let after = draw(&mut memory, &after_native, AFTER_MS);
+    report_drawn_radii("before", &before);
+    report_drawn_radii("after", &after);
     assert_eq!(identities(&before.marks), identities(&before_native));
 
     let left = Decimal::from(AFTER_MS - WINDOW_MS);
@@ -148,32 +185,64 @@ fn real_win_prefixes_do_not_regroup_ten_second_old_history_when_the_left_maximum
             expected_ids.extend(old.agg_ids.iter().copied());
         }
     }
-    for expired in before.marks.iter()
+    for expired in before
+        .marks
+        .iter()
         .filter(|old| old.timestamp_quantity / old.quantity < left)
     {
         for id in &expired.agg_ids {
             expected_ids.remove(id);
         }
     }
-    assert_eq!(identities(&after.marks), expected_ids,
-        "retain or expire whole left-edge groups without losing or duplicating executions");
+    assert_eq!(
+        identities(&after.marks),
+        expected_ids,
+        "retain or expire whole left-edge groups without losing or duplicating executions"
+    );
     assert_exact_source_facts(&before.marks, &prints);
     assert_exact_source_facts(&after.marks, &prints);
 
-    let closed: Vec<_> = before.marks.iter().filter(|mark| {
-        mark.last_timestamp_ms < BEFORE_MS - 2_000
-            && mark.timestamp_quantity / mark.quantity >= left
-    }).collect();
+    let closed: Vec<_> = before
+        .marks
+        .iter()
+        .filter(|mark| {
+            mark.last_timestamp_ms < BEFORE_MS - 2_000
+                && mark.timestamp_quantity / mark.quantity >= left
+        })
+        .collect();
     assert!(closed.iter().any(|mark| mark.agg_ids.contains(&63_755)));
     assert!(closed.iter().any(|mark| mark.agg_ids.contains(&63_761)));
     for old in closed {
-        let current = after.marks.iter().find(|mark| mark.agg_ids == old.agg_ids)
+        let current = after
+            .marks
+            .iter()
+            .find(|mark| mark.agg_ids == old.agg_ids)
             .expect("closed source membership survives unrelated arrivals and expiration");
-        assert_eq!((current.quantity, current.buy_quantity, current.timestamp_quantity, current.price),
-            (old.quantity, old.buy_quantity, old.timestamp_quantity, old.price));
+        assert_eq!(
+            (
+                current.quantity,
+                current.buy_quantity,
+                current.timestamp_quantity,
+                current.price
+            ),
+            (
+                old.quantity,
+                old.buy_quantity,
+                old.timestamp_quantity,
+                old.price
+            )
+        );
         let expected_x = ((current.timestamp_quantity / current.quantity - left)
-            / Decimal::from(WINDOW_MS)).to_f64().unwrap();
-        assert!((current.x - expected_x).abs() < 1e-12, "only ordinary time scrolling is allowed");
-        assert_eq!(current.y, view(AFTER_MS).prices.y_unclamped(current.price).unwrap());
+            / Decimal::from(WINDOW_MS))
+        .to_f64()
+        .unwrap();
+        assert!(
+            (current.x - expected_x).abs() < 1e-12,
+            "only ordinary time scrolling is allowed"
+        );
+        assert_eq!(
+            current.y,
+            view(AFTER_MS).prices.y_unclamped(current.price).unwrap()
+        );
     }
 }
