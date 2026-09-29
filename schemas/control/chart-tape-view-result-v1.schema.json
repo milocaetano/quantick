@@ -4,21 +4,6 @@
       "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
       "type": "string"
     },
-    "DecimalRange": {
-      "properties": {
-        "high": {
-          "$ref": "#/$defs/CanonicalDecimal"
-        },
-        "low": {
-          "$ref": "#/$defs/CanonicalDecimal"
-        }
-      },
-      "required": [
-        "low",
-        "high"
-      ],
-      "type": "object"
-    },
     "LaneWindowSnapshot": {
       "description": "How wide the live lane's window is, said the way the setting says it. An\n`auto` window follows the recent bars' typical duration, so publishing one\nresolved number would report a measurement as a setting.",
       "properties": {
@@ -95,79 +80,6 @@
       ],
       "type": "object"
     },
-    "ViewportSnapshot": {
-      "properties": {
-        "chart_width_px": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/CanonicalDecimal"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "x-unit": "pixels"
-        },
-        "follows_live": {
-          "type": "boolean"
-        },
-        "geometry_available": {
-          "type": "boolean"
-        },
-        "pixels_per_bar": {
-          "$ref": "#/$defs/CanonicalDecimal",
-          "x-unit": "pixels_per_bar"
-        },
-        "price_auto_fit": {
-          "type": "boolean"
-        },
-        "price_axis_inverted": {
-          "type": "boolean"
-        },
-        "price_range": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DecimalRange"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "right_edge_bar": {
-          "$ref": "#/$defs/CanonicalDecimal"
-        },
-        "tape": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/TapeViewSnapshot"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The native tape's own time frame; absent without a native tape."
-        },
-        "visible_end_slot_exclusive": {
-          "$ref": "#/$defs/WireU64"
-        },
-        "visible_start_slot": {
-          "$ref": "#/$defs/WireU64",
-          "description": "The slots the viewport asks the renderer to paint: generous by one bar\nat each edge, so a bar partly off screen is drawn rather than clipped.\nThis is the pane's own notion of \"visible\", not the exact pixel set."
-        }
-      },
-      "required": [
-        "geometry_available",
-        "visible_start_slot",
-        "visible_end_slot_exclusive",
-        "pixels_per_bar",
-        "right_edge_bar",
-        "follows_live",
-        "price_auto_fit",
-        "price_axis_inverted"
-      ],
-      "type": "object"
-    },
     "WireU64": {
       "pattern": "^(0|[1-9][0-9]*)$",
       "type": "string"
@@ -181,15 +93,15 @@
     "tab_id": {
       "$ref": "#/$defs/WireU64"
     },
-    "viewport": {
-      "$ref": "#/$defs/ViewportSnapshot"
+    "tape": {
+      "$ref": "#/$defs/TapeViewSnapshot"
     }
   },
   "required": [
     "tab_id",
     "pane_id",
-    "viewport"
+    "tape"
   ],
-  "title": "PriceAxisResult",
+  "title": "TapeViewResult",
   "type": "object"
 }

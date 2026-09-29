@@ -6,6 +6,8 @@ use super::*;
 use quantick_orderflow::tape_view::TapeEnd;
 
 const CAPABILITY: &str = "chart.tape_view.set";
+/// The first print the fixture's tape retains: `trade(201)`.
+const RETAINED_FROM: i64 = 21_100;
 
 fn native_split(app: &mut QuantickApp) {
     assert!(
@@ -21,7 +23,15 @@ fn native_split(app: &mut QuantickApp) {
 fn split_app(ctx: &egui::Context) -> (QuantickApp, egui::Pos2, egui::Pos2) {
     let (mut app, _commands) = app_with_history(200);
     native_split(&mut app);
+    // The backfill sized the capture grid, and that reset took its prints:
+    // the tape retains what arrives from here, 21_100 onwards.
+    for agg_id in 201..=400 {
+        app.active_tab_mut()
+            .ingest_live_trade_at(&trade(agg_id), 10_000 + agg_id as i64);
+    }
     run_frame(&mut app, ctx);
+    // The worker publishes what it retains; wait for it, then read it.
+    app.active_tab_mut().tape_mut().flush_for_test();
     run_frame(&mut app, ctx);
     let pane = &app.active_tab().flow_pane;
     let chart = pane.frame.chart_rect.expect("the canvas laid out");
@@ -121,7 +131,7 @@ fn a_horizontal_drag_pans_the_tape_through_time_and_never_the_candles() {
     let TapeEnd::Past { end_ms } = end else {
         panic!("the drag took the tape into the past: {end:?}");
     };
-    assert!(end_ms < 21_000, "{end_ms}");
+    assert!(end_ms < 41_000, "{end_ms}");
     assert_eq!(candles_view(&app), before, "the candles stayed put");
     assert!(app.active_tab().flow_pane.price_view.is_auto());
 
@@ -185,8 +195,10 @@ fn a_drag_far_into_the_past_stops_at_the_retained_tape() {
     }
     let view = app.active_tab().tape();
     let window = view.live_lane_window_ms(app.active_tab().flow_pane.state.bars());
-    let retained = view.tape_retained_from_ms().expect("the tape reports retention");
-    assert_eq!(retained, 1_100, "the first backfilled print");
+    let retained = view
+        .tape_retained_from_ms()
+        .expect("the tape reports retention");
+    assert_eq!(retained, RETAINED_FROM, "the first retained print");
     assert_eq!(
         view.tape_end(),
         TapeEnd::Past {
@@ -237,12 +249,12 @@ fn the_tape_view_call_moves_the_tape_end_and_window_and_reads_them_back() {
     );
     let live = read_tape(&mut app, &mut client);
     assert_eq!(live["follows_live"], true);
-    assert_eq!(live["retained_from_unix_ms"], 1_100);
+    assert_eq!(live["retained_from_unix_ms"], RETAINED_FROM);
 
     let payload = input(
         &app,
         json!({
-            "end": {"kind":"past","end_unix_ms":15_000},
+            "end": {"kind":"past","end_unix_ms":35_000},
             "window": {"kind":"fixed","ms":3_000},
         }),
     );
@@ -265,21 +277,28 @@ fn the_tape_view_call_moves_the_tape_end_and_window_and_reads_them_back() {
     assert_eq!(response.outcome, retry.outcome);
     let result = success_result(&response);
     assert_eq!(result["tape"]["follows_live"], false);
-    assert_eq!(result["tape"]["end_unix_ms"], 15_000);
+    assert_eq!(result["tape"]["end_unix_ms"], 35_000);
     assert_eq!(result["tape"]["window"]["fixed_ms"], 3_000);
     assert_eq!(result["tape"]["window_ms"], 3_000);
     run_frame(&mut app, &ctx);
     assert_eq!(read_tape(&mut app, &mut client), result["tape"]);
     assert_eq!(
         app.active_tab().tape().tape_end(),
-        TapeEnd::Past { end_ms: 15_000 }
+        TapeEnd::Past { end_ms: 35_000 }
     );
-    assert_eq!(candles_view(&app), before, "the call never moves the candles");
+    assert_eq!(
+        candles_view(&app),
+        before,
+        "the call never moves the candles"
+    );
 
     // Asked for an end before the retained tape, it reports where it held.
     let early = input(&app, json!({"end": {"kind":"past","end_unix_ms":0}}));
     let (held, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, early);
-    assert_eq!(success_result(&held)["tape"]["end_unix_ms"], 1_100 + 1_500);
+    assert_eq!(
+        success_result(&held)["tape"]["end_unix_ms"],
+        RETAINED_FROM + 1_500
+    );
 
     let back = input(&app, json!({"end": {"kind":"live"}}));
     let (live, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, back);
@@ -294,7 +313,8 @@ fn the_tape_view_call_moves_the_tape_end_and_window_and_reads_them_back() {
         json!({"window": {"kind":"fixed","ms":-5}}),
         json!({}),
     ] {
-        let (invalid, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, input(&app, fields));
+        let payload = input(&app, fields);
+        let (invalid, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, payload);
         assert_eq!(error_code(&invalid), Some(codes::INVALID_REQUEST));
     }
     let mut stale = input(&app, json!({"end": {"kind":"live"}}));

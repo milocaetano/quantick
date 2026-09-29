@@ -140,6 +140,10 @@ pub(crate) fn viewport_snapshot(pane: &ChartPane) -> ViewportSnapshot {
             })
         }),
         chart_width_px: chart_width_px.and_then(|width| canonical_f32(width, PIXEL_DECIMAL_PLACES)),
+        tape: pane
+            .orderflow
+            .as_ref()
+            .and_then(|tape| tape.tape_view_snapshot()),
     }
 }
 

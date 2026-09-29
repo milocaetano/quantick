@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use quantick_engine::Bar;
+use rust_decimal::prelude::ToPrimitive as _;
 
 use super::{
     DotHorizon, HeatmapProjection, PriceWindow, SettledProjection, TapeFacts, TierCut,
@@ -21,6 +22,19 @@ pub fn past_block_ms(window_ms: i64, dot_window_ms: i64) -> i64 {
     (window_ms.max(1) + dot - 1)
         .div_euclid(dot)
         .saturating_mul(dot)
+}
+
+/// The grid block and the half-open stretch of whole blocks a window ending
+/// at `end_ms` touches: `(block_ms, from_ms, until_ms)`.
+#[must_use]
+pub fn past_span(end_ms: i64, window_ms: i64, dot_window_ms: i64) -> (i64, i64, i64) {
+    let block_ms = past_block_ms(window_ms, dot_window_ms);
+    let from_ms = end_ms.saturating_sub(window_ms).div_euclid(block_ms) * block_ms;
+    (
+        block_ms,
+        from_ms,
+        (end_ms.div_euclid(block_ms) + 1) * block_ms,
+    )
 }
 
 /// One past tape window and the native facts of every block it touches.
@@ -40,8 +54,60 @@ pub struct PastTape {
     pub settled_through_ms: i64,
     /// First instant the retained tape is complete from.
     pub retained_from_ms: Option<i64>,
+    /// The dot rungs the facts were folded on: tape window and level ticks.
+    pub rungs: (i64, i64),
     /// The native facts (`live` marks) and their exact tape facts.
     pub projection: Arc<HeatmapProjection>,
+}
+
+impl PastTape {
+    /// This stretch again for a window ending at `end_ms`, when nothing in it
+    /// can change: the same blocks and rungs, every print that could join
+    /// them delivered, none evicted. A held drag re-reads no history.
+    #[must_use]
+    pub fn reused_at(
+        &self,
+        end_ms: i64,
+        window_ms: i64,
+        dots: &VolumeDots,
+        retained_from_ms: Option<i64>,
+    ) -> Option<Self> {
+        let (block_ms, from_ms, until_ms) = past_span(end_ms, window_ms, dots.tape_window_ms);
+        let rungs = (dots.tape_window_ms, dots.tape_level_ticks);
+        let same = (block_ms, from_ms, until_ms, window_ms, rungs)
+            == (
+                self.block_ms,
+                self.from_ms,
+                self.until_ms,
+                self.window_ms,
+                self.rungs,
+            );
+        let frozen = self.settled_through_ms >= until_ms
+            && retained_from_ms.is_none_or(|retained| retained <= from_ms);
+        (same && frozen).then(|| Self {
+            end_ms,
+            retained_from_ms,
+            ..self.clone()
+        })
+    }
+
+    /// Where the window's prints traded, `(low, high)`: the axis a held tape
+    /// fits, from the same facts it draws.
+    #[must_use]
+    pub fn price_range(&self) -> Option<(f64, f64)> {
+        let from = self.end_ms.saturating_sub(self.window_ms);
+        let mut prices = self
+            .projection
+            .aggressions
+            .iter()
+            .filter(|mark| mark.last_timestamp_ms >= from && mark.first_timestamp_ms <= self.end_ms)
+            .map(|mark| mark.price);
+        let first = prices.next()?;
+        let (low, high) = prices.fold((first, first), |(low, high), price| {
+            (low.min(price), high.max(price))
+        });
+        Some((low.to_f64()?, high.to_f64()?))
+    }
 }
 
 /// Where the visible candles are, for the timeline the facts are placed on.
@@ -69,9 +135,7 @@ pub fn project_past_tape(
     let latest = history.latest_ms()?;
     let end_ms = end_ms.min(latest);
     let window_ms = window_ms.max(1);
-    let block_ms = past_block_ms(window_ms, dots.tape_window_ms);
-    let from_ms = end_ms.saturating_sub(window_ms).div_euclid(block_ms) * block_ms;
-    let until_ms = (end_ms.div_euclid(block_ms) + 1) * block_ms;
+    let (block_ms, from_ms, until_ms) = past_span(end_ms, window_ms, dots.tape_window_ms);
     let edge = LiveEdge {
         now_ms: until_ms,
         window_ms: until_ms - from_ms,
@@ -151,6 +215,7 @@ pub fn project_past_tape(
         until_ms,
         settled_through_ms: latest.saturating_sub(window_ms),
         retained_from_ms: history.tape_retained_from_ms(),
+        rungs: (dots.tape_window_ms, dots.tape_level_ticks),
         projection: Arc::new(projection),
     })
 }

@@ -29,6 +29,7 @@ pub mod retry_matrix;
 pub mod scene;
 pub mod script;
 pub mod session;
+pub mod tape_view;
 pub mod trace_replay;
 pub mod trade;
 pub mod workspace;

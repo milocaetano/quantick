@@ -50,6 +50,26 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
         mapping: capability!("chart.price_axis.set"),
     },
     UiBehaviour {
+        id: "chart.tape.pan",
+        title: "Drag the tape beside the candles through time and price",
+        reach: "primary or middle drag over the native tape; double-click it to return to live",
+        keys: &[(
+            Source::Authored,
+            "a pointer drag over the tape the canvas handles directly; no registry names it",
+        )],
+        mapping: capability!("chart.tape_view.set", "chart.price_axis.set"),
+    },
+    UiBehaviour {
+        id: "chart.tape.zoom",
+        title: "Zoom the tape's time window in or out",
+        reach: "wheel over the native tape; drag or wheel on its time strip; its window menu",
+        keys: &[(
+            Source::Authored,
+            "a wheel over the tape and its time strip the canvas handles directly",
+        )],
+        mapping: capability!("chart.tape_view.set"),
+    },
+    UiBehaviour {
         id: "chart.zoom",
         title: "Zoom the chart's time window in or out",
         reach: "wheel on the canvas; drag on the time axis",

@@ -8,6 +8,7 @@
 
 use eframe::egui;
 use quantick_engine::Side;
+use quantick_orderflow::projection::{PastTape, PastTapeMemory};
 use quantick_orderflow::{AggressionPrimitive, HeatmapProjection, PriceWindow};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive as _;
@@ -287,6 +288,7 @@ pub(crate) struct RenderContext<'a> {
     pub(super) tape_prices: Option<PriceWindow>,
     pub(super) tape_memory:
         Option<&'a std::cell::RefCell<quantick_orderflow::projection::TapeDotMemory>>,
+    pub(super) past_tape: Option<(&'a std::cell::RefCell<PastTapeMemory>, &'a PastTape)>,
 }
 
 impl<'a> RenderContext<'a> {
@@ -303,7 +305,17 @@ impl<'a> RenderContext<'a> {
             tape_time: None,
             tape_prices: None,
             tape_memory: None,
+            past_tape: None,
         }
+    }
+
+    /// Draw the tape held in the past from its frozen blocks instead.
+    pub(crate) fn with_past_tape(
+        mut self,
+        past: Option<(&'a std::cell::RefCell<PastTapeMemory>, &'a PastTape)>,
+    ) -> Self {
+        self.past_tape = past;
+        self
     }
 
     /// Reproject factual tape prices against the axis being painted now,

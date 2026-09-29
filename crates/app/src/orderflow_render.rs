@@ -24,6 +24,7 @@ pub(crate) use heatmap::{draw_heatmap_background, draw_liquidity_events, draw_li
 pub(crate) use layout::{ProjectedLayout, RenderContext, lane_divider_x};
 pub(crate) use legend::draw_compact_legend;
 pub(crate) use preview::draw_preview;
+pub(crate) use tape_path::draw_past_tape_edge;
 
 pub(crate) use quantick_orderflow::config::theme::{
     LEGEND_HEADER_CLEARANCE_PX, OrderflowRenderStyle, ThemeBubbleRgb, theme_bubble_rgb,

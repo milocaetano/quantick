@@ -303,9 +303,10 @@ fn the_past_walk_reads_its_window_and_not_the_history_after_it() {
 
 #[test]
 fn retention_is_reported_where_the_first_complete_print_is() {
-    let mut config = HeatmapConfig::default();
-    config.max_aggressions = 100;
-    let mut history = LiquidityHistory::new(config);
+    let mut history = LiquidityHistory::new(HeatmapConfig {
+        max_aggressions: 100,
+        ..Default::default()
+    });
     assert_eq!(history.tape_retained_from_ms(), None);
     for trade in tape().into_iter().take(300) {
         history.record_aggression(&trade);
@@ -320,4 +321,35 @@ fn retention_is_reported_where_the_first_complete_print_is() {
         history.tape_retained_from_ms()
     };
     assert_eq!(fresh, Some(tape()[3].timestamp_ms));
+}
+
+/// A settled stretch is read once: a drag inside the same blocks reuses its
+/// facts and only moves the end, and crossing a block reads the new stretch.
+#[test]
+fn a_drag_inside_settled_blocks_rereads_no_history() {
+    let trades = tape();
+    let mut engine = engine(&trades);
+    let block = past_block_ms(WINDOW_MS, DOT_MS);
+    let first = 6 * block + 2_000;
+    let input = request(&trades);
+    let mut past_at = |end_ms: i64| {
+        engine.set_tape_end(Some(end_ms));
+        engine.project_at(&input, Instant::now()).unwrap();
+        engine.published().past_tape.unwrap()
+    };
+    let (a, b, c) = (
+        past_at(first),
+        past_at(first - 1_000),
+        past_at(first - 3_000),
+    );
+    assert!(
+        Arc::ptr_eq(&a.projection, &b.projection),
+        "same blocks, same facts"
+    );
+    assert_eq!(b.end_ms, first - 1_000);
+    assert!(
+        !Arc::ptr_eq(&b.projection, &c.projection),
+        "a new block is read"
+    );
+    assert_eq!(*c, *past_tape(&trades, first - 3_000));
 }

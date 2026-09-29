@@ -559,15 +559,9 @@ pub struct BookEngine {
     /// UI never flashes to an empty heatmap between rebuilds; cleared by hard
     /// resets (symbol change, grouping reset, capture off).
     last_frame: Option<Arc<VisibleOrderflow>>,
-    /// Price window of the newest projection request, kept so published
-    /// ladders clip to what the user is looking at. `None` until the first
-    /// request (or after a symbol reset): the ladder then falls back to the
-    /// best levels of each side.
-    visible_price_window: Option<(Decimal, Decimal)>,
-    /// Where the native tape's right edge is held; `None` follows live.
-    tape_end_ms: Option<i64>,
-    /// The native tape at `tape_end_ms`, rebuilt with every projection.
-    past_tape: Option<Arc<crate::projection::PastTape>>,
+    /// What the view last asked beside its frame: the price window published
+    /// ladders clip to, and where the native tape is held.
+    view: past_tape::ViewAsk,
 }
 
 impl BookEngine {
@@ -605,9 +599,7 @@ impl BookEngine {
             settled_revision: 0,
             projection_cache: None,
             last_frame: None,
-            visible_price_window: None,
-            tape_end_ms: None,
-            past_tape: None,
+            view: past_tape::ViewAsk::default(),
         }
     }
 
@@ -673,7 +665,7 @@ impl BookEngine {
         self.last_frame = None;
         // A new market has a new price scale; the old view window would clip
         // the ladder to prices that no longer exist.
-        self.visible_price_window = None;
+        self.view.price_window = None;
     }
 
     /// Commit a capture toggle only after its feed command was accepted.
@@ -734,6 +726,7 @@ impl BookEngine {
         if config == self.config {
             return;
         }
+        self.view.past_tape = None;
         self.config = config;
         self.invalidate_projection();
         if !self.config.any_layer_enabled() {
@@ -1073,7 +1066,7 @@ impl BookEngine {
     /// worker notes the window for every request, so the ladder keeps
     /// following the view even while every heatmap layer is toggled off.
     pub fn note_price_window(&mut self, price_range: (f64, f64)) {
-        self.visible_price_window = match (
+        self.view.price_window = match (
             Decimal::from_f64(price_range.0),
             Decimal::from_f64(price_range.1),
         ) {
@@ -1127,7 +1120,7 @@ impl BookEngine {
         request: &ProjectionRequest,
         cache_now: Instant,
     ) -> Option<Arc<VisibleOrderflow>> {
-        self.past_tape = None;
+        let held = self.view.past_tape.take();
         if !self.config.any_layer_enabled() {
             return None;
         }
@@ -1216,7 +1209,7 @@ impl BookEngine {
                 .as_ref()
                 .map(|dots| dots.scale(&self.config, request.price_range)),
         });
-        self.past_tape = self.project_past(request, &settled, dots.as_ref(), prices);
+        self.view.past_tape = self.project_past(request, &settled, dots.as_ref(), prices, held);
         self.last_frame = Some(Arc::clone(&frame));
         Some(frame)
     }
@@ -1413,7 +1406,7 @@ impl BookEngine {
             },
             base_price_grouping: self.config.price_grouping,
             frame: self.last_frame.clone(),
-            past_tape: self.past_tape.clone(),
+            past_tape: self.view.past_tape.clone(),
             tape_retained_from_ms: self.history.tape_retained_from_ms(),
             ladder: self.ladder(),
         }
@@ -1436,7 +1429,7 @@ impl BookEngine {
         // to say so.
         let level =
             |(&price, &quantity): (&Decimal, &Decimal)| BookLevel::new(price, quantity).ok();
-        let (bids, asks): (Vec<BookLevel>, Vec<BookLevel>) = match self.visible_price_window {
+        let (bids, asks): (Vec<BookLevel>, Vec<BookLevel>) = match self.view.price_window {
             Some((low, high)) => (
                 book.bids()
                     .range(low..=high)

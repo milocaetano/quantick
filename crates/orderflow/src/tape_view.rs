@@ -8,6 +8,25 @@
 /// view — an empty stretch the trader can see is history the chart never had.
 pub const RETAINED_EDGE_SHARE: f64 = 0.5;
 
+/// What a held tape says on its top edge: it is not now.
+pub const PAST_TAPE_LABEL: &str = "past · double-click for live";
+
+/// What the retained tape's first instant says inside a past window.
+pub const RETAINED_EDGE_LABEL: &str = "no tape retained before";
+
+/// Where the first complete retained instant falls across a window ending at
+/// `end_ms`, as a fraction of it; `None` while the whole window is retained.
+#[must_use]
+pub fn retained_edge_fraction(
+    end_ms: i64,
+    window_ms: i64,
+    retained_from_ms: Option<i64>,
+) -> Option<f64> {
+    let start = end_ms.saturating_sub(window_ms);
+    let from = retained_from_ms.filter(|from| window_ms > 0 && *from > start)?;
+    Some(((from - start) as f64 / window_ms as f64).min(1.0))
+}
+
 /// The instant the tape's right edge stands for.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TapeEnd {

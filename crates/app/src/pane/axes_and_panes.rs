@@ -1,12 +1,9 @@
-//! The gestures on the axes and on the indicator panes, and the free
-//! functions they share.
+//! The gestures on the axes and on the indicator panes, and the free functions they share.
 //!
-//! Every gesture here follows one grammar: an axis zooms its axis, a pane's
-//! body pans the scale its gutter scales, and the later egui claim wins the
-//! overlap — which is why the arms are registered in the order they are and
-//! after the chart body. Two arms of [`ChartPane::handle_navigation`] plus the
-//! `pane_*_gesture` and `axis_zoom_gesture` helpers only they call, cut out of
-//! `pane.rs` as a pure move at the same indentation.
+//! One grammar: an axis zooms its axis, a pane's body pans the scale its gutter scales, and the
+//! later egui claim wins the overlap, so arms register in this order and after the chart body. Two
+//! arms of [`ChartPane::handle_navigation`] plus the `pane_*_gesture` and `axis_zoom_gesture`
+//! helpers only they call.
 
 use eframe::egui;
 
@@ -19,42 +16,30 @@ use quantick_layers::ChartLayer;
 
 use super::{ChartPane, LANE_HANDLE_HALF_WIDTH_PX, PaneChrome, SCROLL_ZOOM_PX, live_chip_rect};
 
-/// Pixels of drag on the lane's own time strip that double or halve its window.
-///
-/// Matches the candles' own feel: dragging the time axis zooms it by
-/// `exp(dx / 120)`, so the two panes answer a drag at the same rate even
-/// though they are zooming different things.
+/// Pixels of drag on the lane's own time strip that double or halve its window; matches the
+/// candles' `exp(dx / 120)` time-axis zoom so both panes answer a drag at the same rate.
 const LANE_ZOOM_DRAG_PX: f32 = 120.0;
 
-/// Half-height of the grab band over a pane's top edge, in pixels.
-///
-/// The rule itself stays a hairline — a thick bar between a chart and its
-/// indicator reads as a wall in the data. The handle around it is what makes
-/// it catchable, and the resize cursor is the only thing that announces it:
-/// the same bargain the live lane's divider and the canvas split already
-/// strike.
+/// Half-height of the grab band over a pane's top edge, in pixels. The rule stays a hairline (a
+/// thick bar reads as a wall in the data); the handle around it makes it catchable and the resize
+/// cursor announces it, the same bargain the live lane's divider and the canvas split strike.
 pub(super) const PANE_DIVIDER_HANDLE_PX: f32 = 4.0;
 
-/// Pixels of drag on a vertical axis that change its span by a factor of `e`.
-///
-/// One number for the price gutter and for every indicator pane's gutter: the
-/// axes stretch at the same rate, so the gesture feels the same wherever the
-/// numbers being dragged happen to live.
+/// Pixels of drag on a vertical axis that change its span by a factor of `e`. One number for the
+/// price gutter and every indicator pane's gutter, so the axes stretch at the same rate wherever
+/// the dragged numbers live.
 const AXIS_ZOOM_DRAG_PX: f32 = 150.0;
 /// The same, for a scroll over an axis rather than a drag. One wheel notch
 /// reports far more units than a pointer travels in a frame, so each unit has
 /// to count for less — a larger divisor, not a smaller one.
 const AXIS_ZOOM_SCROLL_PX: f32 = 200.0;
 
-/// The divider along a pane's top edge, as a resize handle.
+/// The divider along a pane's top edge, as a resize handle. The band it opens is the pane *below*
+/// it: drag up and that pane grows into the chart, drag down and it gives the room back. Double
+/// click hands the pane back to the automatic layout, the same escape the price axis and every
+/// pane's own scale offer.
 ///
-/// The band it opens is the pane *below* it, which is what a top edge means:
-/// drag it up and that pane grows into the chart, drag it down and it gives
-/// the room back. Double click hands the pane to the automatic layout again —
-/// the same escape the price axis and every pane's own scale offer.
-///
-/// Returns the sizing the pane should now have, or `None` when the divider was
-/// not touched this frame.
+/// Returns the sizing the pane should now have, or `None` if the divider was untouched this frame.
 fn pane_divider_gesture(
     ui: &egui::Ui,
     id: egui::Id,
@@ -79,31 +64,25 @@ fn pane_divider_gesture(
     if handle.dragged() {
         let delta = handle.drag_delta().y;
         if delta != 0.0 {
-            // Dragging the top edge upwards makes the band below it taller.
-            // The floor is not applied here: `PaneSizing::desired` owns it, so
-            // a drag and the automatic layout cannot disagree about how short
-            // a pane may be.
+            // Dragging the top edge upwards makes the band below it taller. The floor is not
+            // applied here: `PaneSizing::desired` owns it, so a drag and the automatic layout
+            // cannot disagree about how short a pane may be.
             return Some(PaneSizing::Manual(slot.rect.height() - delta));
         }
     }
     None
 }
 
-/// The gesture that pans a pane's own scale: press inside the pane and drag it
-/// up or down, exactly as a press on the candles drags price.
+/// The gesture that pans a pane's own scale: press inside the pane and drag up or down, as a press
+/// on the candles drags price. Separate from [`axis_zoom_gesture`] because they are different verbs
+/// on the same axis (the gutter *scales* it, the body *moves* it), and a pane whose body did
+/// nothing left the axis reachable only from the gutter at the far side of the chart.
 ///
-/// Separate from [`axis_zoom_gesture`] because they are different verbs on the
-/// same axis — the gutter *scales* it, the body *moves* it — and the candles
-/// already split them that way. A pane whose body did nothing left the axis
-/// reachable only from the gutter at the far side of the chart, which is a
-/// long way to travel to move a curve out of its own way.
-///
-/// `auto` is the range the last frame fitted; without one there is nothing to
-/// take manual control *from*, and only the reset stays available.
-/// `primary_free` is false while the primary button belongs to something else
-/// — a drawing tool placing an object, or a drawing being dragged. The wheel
-/// and the axis still answer then: an armed tool takes the *button*, not the
-/// pane (audit S2).
+/// `auto` is the range the last frame fitted; without one there is nothing to take manual control
+/// *from*, and only the reset stays available. `primary_free` is false while the primary button
+/// belongs to something else (a drawing tool placing an object, or a drawing being dragged); the
+/// wheel and the axis still answer, since an armed tool takes the *button*, not the pane (audit
+/// S2).
 fn pane_pan_gesture(
     ui: &egui::Ui,
     id: egui::Id,
@@ -151,14 +130,11 @@ fn pane_pan_gesture(
     (gesture, response)
 }
 
-/// What a drag or scroll over a pane body owes the *chart* — the pane's own
-/// axis has already been moved by the time this is returned.
-///
-/// A pane is a band of the same time axis the candles draw, so the gestures
-/// that mean "time" there mean time here too: drag sideways to pan it, scroll
-/// to zoom it. Collected rather than applied on the spot because the viewport
-/// belongs to the pane's owner, and because every stacked pane would otherwise
-/// apply its own copy of the same drag.
+/// What a drag or scroll over a pane body owes the *chart*; the pane's own axis has already been
+/// moved by the time this is returned. A pane is a band of the same time axis the candles draw, so
+/// a sideways drag pans it and scroll zooms it. Collected rather than applied on the spot because
+/// the viewport belongs to the pane's owner, and every stacked pane would otherwise apply its own
+/// copy of the same drag.
 #[derive(Default)]
 struct PaneGesture {
     /// Horizontal drag, in pixels.
@@ -167,26 +143,21 @@ struct PaneGesture {
     scroll_y: f32,
 }
 
-/// The gesture that scales a vertical axis, wherever its numbers live: drag up
-/// to compress the span, down to expand, scroll to zoom, double-click to hand
-/// the axis back to auto-fit.
+/// The gesture that scales a vertical axis, wherever its numbers live: drag up to compress the
+/// span, down to expand, scroll to zoom, double-click to hand the axis back to auto-fit. One
+/// implementation for the price gutter and every indicator pane's, so a new band that wants an axis
+/// (a volume profile, the tape) registers it rather than copying it and no two axes drift apart in
+/// feel.
 ///
-/// One implementation for the price gutter and for every indicator pane's, so
-/// a third band that wants an axis — a volume profile, the tape — registers it
-/// rather than copying it, and no two axes can drift apart in feel. Lives here
-/// with the panes that use it: every axis in the window belongs to one.
+/// `auto` is the range the last frame fitted; `None` means nothing is computed to scale yet, and
+/// only the reset stays available.
 ///
-/// `auto` is the range the last frame fitted; `None` means nothing has been
-/// computed to scale yet, and only the reset stays available.
+/// `flips` is the price gutter's privilege: an expanding drag past the flip threshold turns the
+/// chart upside down ([`PriceView::drag_zoom`]) and the drag's sense mirrors with it. Indicator
+/// gutters pass `false`: a pane's values have no upside down. The wheel never flips.
 ///
-/// `flips` is the price gutter's privilege: an expanding drag past the flip
-/// threshold turns the chart upside down ([`PriceView::drag_zoom`]), and the
-/// drag's sense mirrors with it — the same downward drag that flattened the
-/// chart grows it again past the flip. Indicator gutters pass `false`: a
-/// pane's values have no upside down. The wheel never flips on either.
-///
-/// Returns the band's response, so the price gutter can hang its context menu
-/// off the very region the gesture owns.
+/// Returns the band's response, so the price gutter can hang its context menu off the region the
+/// gesture owns.
 fn axis_zoom_gesture(
     ui: &egui::Ui,
     id: egui::Id,
@@ -208,10 +179,9 @@ fn axis_zoom_gesture(
     let Some(auto) = auto else {
         return response;
     };
-    // Primary only: the band now also answers a right-click with its context
-    // menu, and egui's `dragged()` counts any button — an unfiltered check
-    // would let a slipped right-press zoom (or, on the price gutter, flip)
-    // the chart while swallowing the menu it was aiming for.
+    // Primary only: the band also answers a right-click with its context menu, and egui's
+    // `dragged()` counts any button, so an unfiltered check would let a slipped right-press zoom
+    // (or flip) the chart and swallow the menu it aimed for.
     if response.dragged_by(egui::PointerButton::Primary) {
         // Drag up → compress the span (a taller trace); down → expand it —
         // mirrored once the chart is upside down.
@@ -257,12 +227,10 @@ impl ChartPane {
         }
     }
 
-    /// The gestures on the frame around the candles: the lane divider, the
-    /// time strip and its jump-to-live chip, the lane's own strip, and the
-    /// price gutter with its menu.
-    ///
-    /// One arm of [`ChartPane::handle_navigation`], registered after the chart
-    /// body so each handle takes the drag that would otherwise pan behind it.
+    /// The gestures on the frame around the candles: the lane divider, the time strip and its
+    /// jump-to-live chip, the lane's own strip, and the price gutter with its menu. One arm of
+    /// [`ChartPane::handle_navigation`], registered after the chart body so each handle takes the
+    /// drag that would otherwise pan behind it.
     pub(super) fn handle_axis_gestures(
         &mut self,
         ui: &egui::Ui,
@@ -271,10 +239,9 @@ impl ChartPane {
     ) {
         let auto = self.frame.auto_range;
         let (tape_only, _) = self.tape_modes();
-        // The lane's divider, as a resize handle. Registered after the chart
-        // body so it takes the drag that would otherwise pan the candles
-        // behind it, and it is the only place the pointer changes shape: the
-        // line stays a hairline, the cursor is what says it can be moved.
+        // The lane's divider, as a resize handle. Registered after the chart body so it takes the
+        // drag that would otherwise pan the candles behind it; the line stays a hairline and the
+        // cursor says it can be moved.
         let divider = self.frame.lane_divider_x.filter(|_| !tape_only).map(|x| {
             ui.interact(
                 egui::Rect::from_min_max(
@@ -331,10 +298,8 @@ impl ChartPane {
             self.layer_menu_rects.clear();
             let _ = self.layer_checkbox(ui, ChartLayer::PointerTime, chrome);
         });
-        // Jump-to-live (audit F6): panned into history, the way back is one
-        // click at the axis' live end. Registered after the strip gesture so
-        // the click is the chip's, not a zoom-drag's — the lane divider's
-        // own registration rule.
+        // Jump-to-live (audit F6): panned into history, the way back is one click at the axis' live
+        // end. Registered after the strip gesture so the click is the chip's, not a zoom-drag's.
         if !self.viewport.follows_live() {
             let chip = ui.interact(
                 live_chip_rect(history_strip),
@@ -381,12 +346,10 @@ impl ChartPane {
             auto,
             true,
         );
-        // The axis's own menu: about the scale and about what is written on
-        // it, not about the canvas — the layer menu stays the canvas's
-        // right-click. The compass's price half is offered here rather than
-        // only in the layer menu because this is where a trader looks for
-        // something about *this* axis, and where the mark it switches
-        // actually appears.
+        // The axis's own menu: about the scale and what is written on it, not the canvas (the layer
+        // menu stays the canvas's right-click). The compass's price half is offered here because
+        // this is where a trader looks for something about *this* axis, and where the mark it
+        // switches appears.
         price_gutter.context_menu(|ui| {
             #[cfg(test)]
             self.layer_menu_rects.clear();
@@ -408,11 +371,9 @@ impl ChartPane {
         });
     }
 
-    /// The indicator panes' own handles: the gutter zoom, the body pan, the
-    /// disclosure, the header, and the dividers between them.
-    ///
-    /// One arm of [`ChartPane::handle_navigation`], registered last so the
-    /// later claim wins every overlap with the pan that covers the band.
+    /// The indicator panes' own handles: the gutter zoom, the body pan, the disclosure, the header,
+    /// and the dividers between them. One arm of [`ChartPane::handle_navigation`], registered last
+    /// so the later claim wins every overlap with the pan that covers the band.
     pub(super) fn handle_indicator_pane_gestures(
         &mut self,
         ui: &egui::Ui,
@@ -421,10 +382,9 @@ impl ChartPane {
         primary_free: bool,
     ) {
         let total = self.slots();
-        // The same gesture, once per pane, over the gutter band beside it.
-        // Keyed by slot *and* pane id: slots are allocated per pane, so a
-        // split's two charts can hold the same slot number and a slot-only id
-        // would make one pane's axis answer for the other's.
+        // The same gesture, once per pane, over the gutter band beside it. Keyed by slot *and* pane
+        // id: slots are allocated per pane, so a split's two charts can hold the same slot number
+        // and a slot-only id would make one pane's axis answer for the other's.
         let pane_id = self.id;
         let mut pane_time_gesture = PaneGesture::default();
         // Collected here and parked on the pane below: the loop holds a mutable
@@ -451,10 +411,8 @@ impl ChartPane {
                 false,
             );
             if !body.collapsed {
-                // The body moves the scale the gutter scales. Registered after
-                // the gutter so the two never fight over the same pixel: the
-                // gutter is a band beside the pane, and egui gives an overlap
-                // to the later claim.
+                // The body moves the scale the gutter scales. Registered after the gutter so the
+                // two never fight over a pixel: egui gives an overlap to the later claim.
                 let (gesture, response) = pane_pan_gesture(
                     ui,
                     egui::Id::new(("pane_pan", pane_id, view.slot)),
@@ -471,11 +429,9 @@ impl ChartPane {
                     guide_request = Some((view.slot, enabled));
                 }
             }
-            // The disclosure, in both directions: a control that only opens is
-            // half a control, so the square that brings a pane back is what
-            // puts it away. Registered *last* for the same reason the body is
-            // registered after the gutter — the later claim wins the overlap,
-            // and this corner has to beat the pan that covers the whole band.
+            // The disclosure, in both directions: a control that only opens is half a control, so
+            // the square that brings a pane back also puts it away. Registered last, like the body
+            // after the gutter, so this corner beats the pan that covers the band.
             let disclosure = ui.interact(
                 indicator_render::pane_disclosure_rect(body.rect, body.collapsed),
                 egui::Id::new(("pane_disclosure", pane_id, view.slot)),
@@ -484,10 +440,8 @@ impl ChartPane {
             if disclosure.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
-            // The pane's own handle into its settings when it is open: the
-            // header row. Registered after the pan so it takes the double click
-            // the body would otherwise spend resetting the scale; the pan keeps
-            // every other pixel of the band.
+            // The pane's own handle into its settings when open: the header row. Registered after
+            // the pan so it takes the double click the body would spend resetting the scale.
             if !body.collapsed {
                 let header = ui.interact(
                     indicator_render::pane_header_rect(body.rect, body.collapsed),
@@ -501,20 +455,13 @@ impl ChartPane {
                     settings_request = Some(view.slot);
                 }
             }
-            // A collapsed strip is the fourth handle, and it needs the two
-            // clicks of a double click read *across the frames between them*:
-            // the first one expands the pane, so by the time the second arrives
-            // the strip is gone, the pointer sits somewhere in the body of a
-            // pane that is now a hundred pixels tall, and `body.collapsed` is
-            // already false.
-            //
-            // Before this, that second click simply collapsed the pane again —
-            // so double-clicking a collapsed strip expanded it and put it back,
-            // and did nothing at all. It opens the settings instead, which is
-            // the only reading that leaves the gesture worth making. What
-            // carries it across the frames is `strip_expanded`: the slot whose
-            // strip opened this pane, set by the click that opened it and spent
-            // by the one that follows.
+            // A collapsed strip is the fourth handle, and its double click must be read *across the
+            // frames between the clicks*: the first expands the pane, so by the second the strip is
+            // gone, the pointer is somewhere in the body of a now-tall pane, and `body.collapsed`
+            // is already false. That second click used to collapse the pane again, so
+            // double-clicking a strip did nothing; it opens the settings instead. What carries it
+            // across the frames is `strip_expanded`: the slot whose strip opened this pane, set by
+            // the click that opened it and spent by the one that follows.
             if disclosure.double_clicked() && strip_expanded == Some(view.slot) {
                 settings_request = Some(view.slot);
                 opened_from_strip = None;
@@ -524,10 +471,9 @@ impl ChartPane {
                 // gesture is over and any flag it left is spent.
                 opened_from_strip = None;
                 if body.collapsed {
-                    // Manual, not Auto: the automatic rule is what collapsed
-                    // it, so handing it back would undo the click on the very
-                    // next frame. An explicit height is served before the
-                    // automatic ones and therefore always fits.
+                    // Manual, not Auto: the automatic rule is what collapsed it, so handing it back
+                    // would undo the click on the next frame. An explicit height is served first
+                    // and always fits.
                     view.sizing = PaneSizing::Manual(MIN_PANE_HEIGHT_PX);
                     opened_from_strip = Some(view.slot);
                 } else {
@@ -542,10 +488,8 @@ impl ChartPane {
         if let Some(request) = guide_request {
             self.pending_indicator_guide = Some(request);
         }
-        // Time, once, whichever pane the pointer was over: the panes share the
-        // candles' x axis, so a sideways drag or a scroll there has to move the
-        // same viewport the candles do — otherwise the same gesture would mean
-        // one thing over the bars and nothing one pane below them.
+        // Time, once, whichever pane the pointer was over: the panes share the candles' x axis, so
+        // a sideways drag or scroll there must move the same viewport the candles do.
         if total > 0 && pane_time_gesture.pan_x != 0.0 {
             self.viewport.pan_pixels(pane_time_gesture.pan_x, total);
         }
@@ -555,10 +499,9 @@ impl ChartPane {
             self.viewport
                 .zoom(2.0_f32.powf(pane_time_gesture.scroll_y / SCROLL_ZOOM_PX));
         }
-        // The dividers last of all: registered after every pane body so the
-        // grab band takes the drag that would otherwise pan the pane behind
-        // it, exactly as the canvas split's divider is registered after both
-        // its panes and the lane's after the candles.
+        // The dividers last of all: registered after every pane body so the grab band takes the
+        // drag that would otherwise pan the pane behind it, as the canvas split's divider is
+        // registered after both its panes.
         let plot = areas.chart;
         for (view, slot) in self
             .indicators

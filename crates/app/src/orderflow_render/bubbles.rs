@@ -579,24 +579,37 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     }
     let merged = factual_tape
         .then(|| {
-            let mut memory = context.tape_memory.map(std::cell::RefCell::borrow_mut);
             let marks = if context.bubbles().count() == context.projection.aggressions.len() {
                 std::borrow::Cow::Borrowed(context.projection.aggressions.as_slice())
             } else {
                 std::borrow::Cow::Owned(context.bubbles().cloned().collect::<Vec<_>>())
             };
+            let geometry = quantick_orderflow::projection::TapeDotGeometry {
+                left_x: 1.0 - 1.0 / context.layout.slot_count.max(1) as f64,
+                right_x: 1.0,
+                width_px: tape_geometry.span_px,
+                height_px: context.layout.chart_rect.height(),
+            };
+            let (time, prices) = (context.tape_time, context.tape_prices);
+            if let Some((memory, past)) = context.past_tape {
+                return quantick_orderflow::projection::project_past_tape_frame(
+                    &marks,
+                    &mut memory.borrow_mut(),
+                    past,
+                    &style,
+                    geometry,
+                    time,
+                    prices,
+                );
+            }
+            let mut memory = context.tape_memory.map(std::cell::RefCell::borrow_mut);
             quantick_orderflow::projection::project_tape_frame(
                 marks,
                 memory.as_deref_mut(),
                 &style,
-                quantick_orderflow::projection::TapeDotGeometry {
-                    left_x: 1.0 - 1.0 / context.layout.slot_count.max(1) as f64,
-                    right_x: 1.0,
-                    width_px: tape_geometry.span_px,
-                    height_px: context.layout.chart_rect.height(),
-                },
-                context.tape_time,
-                context.tape_prices,
+                geometry,
+                time,
+                prices,
                 context.projection.tape_facts.as_deref(),
             )
         })

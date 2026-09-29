@@ -10,9 +10,11 @@
 use std::sync::Arc;
 
 use eframe::egui;
+use quantick_control_schema::tape_view::TapeViewSnapshot;
 use quantick_orderbook::BookLevel;
 use quantick_orderflow::engine::{CaptureStatus, ProjectionRequest, VisibleOrderflow};
 use quantick_orderflow::projection::{PaneGeometry, normalized_area_size};
+use quantick_orderflow::tape_view::TapeEnd;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
@@ -58,6 +60,8 @@ impl OrderflowView {
             return None;
         }
         self.sync_published();
+        // Zoom, retention and the live edge all move under a held end.
+        self.set_tape_end(self.tape_end);
         let request = ProjectionRequest {
             timeline_revision: timeline.revision,
             first_bar_index: timeline.first_bar_index,
@@ -110,10 +114,13 @@ impl OrderflowView {
         )
         .with_inverted(inverted);
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
+        // The book beside a past tape is today's: it stays with the candles.
+        let right = chart_rect.right() - lane_width_px * f32::from(!self.tape_end.is_live());
+        let depth = painter.with_clip_rect(chart_rect.with_max_x(right));
         let context = RenderContext::new(&frame.projection, layout, &style);
-        draw_heatmap_background(painter, &context);
+        draw_heatmap_background(&depth, &context);
         draw_live_lane_marks(painter, &context);
-        draw_liquidity_events(painter, &context);
+        draw_liquidity_events(&depth, &context);
     }
 
     /// Draw factual aggressive prints over the candles. The canvas's key is
@@ -148,22 +155,93 @@ impl OrderflowView {
             .volume_dots
             .as_ref()
             .and_then(|scale| self.dot_rungs.sizing(scale, chart_rect.height()));
-        let context = RenderContext::new(&frame.projection, layout, &style)
+        // A held tape draws its own frozen past, and nothing until it has one.
+        let past = match self.published.past_tape.as_deref() {
+            _ if self.tape_end.is_live() || !self.config.native_tape() => None,
+            Some(past) => Some(past),
+            None => return,
+        };
+        let projection = past.map_or(&*frame.projection, |past| &*past.projection);
+        let context = RenderContext::new(projection, layout, &style)
             .with_tape_price_range(price_range)
-            .with_tape_memory(&self.tape_dots);
+            .with_tape_memory(&self.tape_dots)
+            .with_past_tape(past.map(|past| (&self.past_dots, past)));
         let context = match (
             self.config.native_tape(),
             frame.live_edge,
             frame.volume_dots.as_ref(),
         ) {
             (true, Some(mut edge), Some(dots)) => {
-                edge.now_ms = self.lane_now_ms().unwrap_or(edge.now_ms);
+                edge.now_ms = self
+                    .tape_end
+                    .end_ms(self.lane_now_ms().unwrap_or(edge.now_ms));
                 edge.window_ms = self.config.lane_window_ms(edge.reference_ms);
                 context.with_tape_time(edge, dots.tape_window_ms)
             }
             _ => context,
         };
         draw_aggression_bubbles(painter, &context);
+        crate::orderflow_render::draw_past_tape_edge(painter, &context, past);
+    }
+
+    /// Where the tape's right edge is held.
+    #[must_use]
+    pub fn tape_end(&self) -> TapeEnd {
+        self.tape_end
+    }
+
+    /// Hold the tape at `end`, clamped to now and the retained tape; the
+    /// engine hears only a move.
+    pub fn set_tape_end(&mut self, end: TapeEnd) {
+        let live = self
+            .cached_live_end_ms()
+            .filter(|_| self.config.native_tape());
+        let (window, retained) = self.tape_bounds();
+        let end = live.map_or(TapeEnd::Live, |live| end.reclamped(live, window, retained));
+        if std::mem::replace(&mut self.tape_end, end) != end {
+            self.worker.send(BookCommand::TapeEnd(end.past_ms()));
+        }
+    }
+
+    /// A horizontal drag of `delta_px` over a tape `span_px` wide.
+    pub fn pan_tape(&mut self, delta_px: f32, span_px: f32) {
+        let ((window, retained), live) = (self.tape_bounds(), self.cached_live_end_ms());
+        let end = self.tape_end.panned(
+            delta_px,
+            span_px,
+            live.unwrap_or_default(),
+            window,
+            retained,
+        );
+        self.set_tape_end(end);
+    }
+
+    /// First instant the retained tape is complete from, as last published.
+    #[must_use]
+    pub fn tape_retained_from_ms(&self) -> Option<i64> {
+        self.published.tape_retained_from_ms
+    }
+
+    /// The tape's window, resolved against its last frame's reference, and
+    /// where its retained tape begins.
+    fn tape_bounds(&self) -> (i64, Option<i64>) {
+        let edge = self
+            .published
+            .frame
+            .as_ref()
+            .and_then(|frame| frame.live_edge);
+        let reference = edge.map_or(15_000, |edge| edge.reference_ms);
+        (
+            self.config.lane_window_ms(reference),
+            self.tape_retained_from_ms(),
+        )
+    }
+
+    /// The tape's time frame for a control readback; `None` without one.
+    pub(crate) fn tape_view_snapshot(&self) -> Option<TapeViewSnapshot> {
+        let ((window_ms, retained), window) = (self.tape_bounds(), self.config.live_lane.window);
+        let snapshot = TapeViewSnapshot::new(self.tape_end(), window, window_ms, retained);
+        self.config.native_tape().then_some(snapshot)
     }
 
     /// Draw the canvas's compact visual key.

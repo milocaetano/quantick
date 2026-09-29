@@ -40,7 +40,7 @@ pub use model::{
     LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, TapeFacts,
     normalized_area_size, normalized_log_intensity,
 };
-pub use past_tape::{PastBars, PastTape, past_block_ms, project_past_tape};
+pub use past_tape::{PastBars, PastTape, past_block_ms, past_span, project_past_tape};
 pub use pending::PendingTape;
 pub use tape::{TapeDotGeometry, merge_tape_dots, position_tape_at};
 pub use tape_frame::{project_past_tape_frame, project_tape_frame};

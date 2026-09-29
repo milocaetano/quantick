@@ -1,0 +1,124 @@
+{
+  "$defs": {
+    "TapeEndInput": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Pin the right edge to now again.",
+          "properties": {
+            "kind": {
+              "const": "live",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Hold the right edge at this instant. Clamped to the retained tape and\nto now; the result reports where it landed.",
+          "properties": {
+            "end_unix_ms": {
+              "format": "int64",
+              "type": "integer",
+              "x-unit": "unix_milliseconds"
+            },
+            "kind": {
+              "const": "past",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "end_unix_ms"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "TapeWindowInput": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Follow the recent bars' typical duration again.",
+          "properties": {
+            "kind": {
+              "const": "auto",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Show this many exchange milliseconds.",
+          "properties": {
+            "kind": {
+              "const": "fixed",
+              "type": "string"
+            },
+            "ms": {
+              "format": "int64",
+              "type": "integer",
+              "x-unit": "milliseconds"
+            }
+          },
+          "required": [
+            "kind",
+            "ms"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "end": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TapeEndInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Where the right edge goes; absent keeps it."
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "window": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TapeWindowInput"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "How much market time the tape shows; absent keeps it."
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id"
+  ],
+  "title": "TapeViewInput",
+  "type": "object"
+}

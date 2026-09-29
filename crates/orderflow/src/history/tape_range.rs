@@ -28,14 +28,16 @@ impl LiquidityHistory {
     }
 
     /// The first instant the retained tape is complete from: where recording
-    /// began, or just after the newest print retention or a cap evicted.
-    /// `None` before any stream reached this history.
+    /// began, or just after the newest print retention, a cap or a grid reset
+    /// evicted. `None` before any stream reached this history.
     #[must_use]
     pub fn tape_retained_from_ms(&self) -> Option<i64> {
-        let recorded = self.first_stream_ms?;
-        Some(
-            self.evicted_through_ms
-                .map_or(recorded, |horizon| recorded.max(horizon.saturating_add(1))),
-        )
+        let after_eviction = self
+            .evicted_through_ms
+            .map(|horizon| horizon.saturating_add(1));
+        match (self.first_stream_ms, after_eviction) {
+            (Some(recorded), after) => Some(after.map_or(recorded, |after| recorded.max(after))),
+            (None, after) => after,
+        }
     }
 }

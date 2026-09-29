@@ -84,6 +84,8 @@ pub struct ViewportSnapshot {
     pub price_range: Option<DecimalRange>,
     #[schemars(extend("x-unit" = "pixels"))]
     pub chart_width_px: Option<CanonicalDecimal>,
+    /// The native tape's own time frame; absent without a native tape.
+    pub tape: Option<crate::tape_view::TapeViewSnapshot>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

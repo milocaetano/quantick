@@ -586,6 +586,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
     vec![
         ("layers.visibility.set", 1, Value::Null, Readback::Moves),
         ("chart.price_axis.set", 1, Value::Null, Readback::Moves),
+        ("chart.tape_view.set", 1, Value::Null, Readback::Moves),
         (
             "orderflow.tape.opening_scale.set",
             1,
@@ -769,6 +770,16 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "mode": { "kind": "manual", "low": "80", "high": "120" },
             }),
+            "chart.tape_view.set" => {
+                // The call moves a native tape: give the flow pane one.
+                let tape = app.active_tab_mut().tape_mut();
+                assert!(tape.apply_source_preset(Some("mini index regions")));
+                json!({
+                    "tab_id": app.tabs.active_id().to_string(),
+                    "pane_id": app.active_tab().flow_pane.id.to_string(),
+                    "window": { "kind": "fixed", "ms": 7_000 },
+                })
+            }
             "orderflow.tape.opening_scale.set" => json!({
                 "tab_id": app.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),

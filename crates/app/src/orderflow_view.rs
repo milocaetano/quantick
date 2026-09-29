@@ -1,11 +1,9 @@
 //! egui facade for the asynchronous order-flow heatmap.
 //!
-//! All book state (history, synchronization, projection) lives in
-//! [`quantick_orderflow::engine::BookEngine`] on the worker thread owned by
-//! [`crate::orderflow_worker::BookWorker`]. This layer only forwards commands,
-//! mirrors the published snapshot for the current frame and converts
-//! normalized primitives into egui shapes. Nothing here can block the UI on a
-//! dense book: drawing always uses the latest already-built frame.
+//! All book state lives in [`quantick_orderflow::engine::BookEngine`] on the worker thread owned by
+//! [`crate::orderflow_worker::BookWorker`]. This layer forwards commands, mirrors the published
+//! snapshot and converts normalized primitives into egui shapes, always drawing the latest
+//! already-built frame so a dense book never blocks the UI.
 
 use eframe::egui;
 use quantick_engine::{Bar, Trade};
@@ -37,10 +35,8 @@ mod source_presets;
 #[path = "orderflow_view/tests/tape_frame_tests.rs"]
 mod tape_frame_tests;
 
-/// Borrowed chart timeline handed to one order-flow projection request.
-///
-/// Keeping the boundary revision beside the exact bar slice prevents callers
-/// from accidentally pairing a new timeline with an old cache identity.
+/// Borrowed chart timeline for one order-flow projection request; the boundary revision sits beside
+/// the exact bar slice so a new timeline never pairs with an old cache identity.
 #[derive(Clone, Copy)]
 pub(crate) struct VisibleBarTimeline<'a> {
     revision: u64,
@@ -66,10 +62,8 @@ impl<'a> VisibleBarTimeline<'a> {
     }
 }
 
-/// The live lane's band and the instant it runs to, read together.
-///
-/// A pane draws inside this band in tape time, so it needs both numbers from
-/// the same frame's published book — see [`OrderflowView::live_lane`].
+/// The live lane's band and the instant it runs to, read together from one frame's published book -
+/// see [`OrderflowView::live_lane`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LiveLane {
     /// Width of the band, in pixels, taken off the chart's right edge.
@@ -78,11 +72,9 @@ pub struct LiveLane {
     pub end_ms: i64,
 }
 
-/// A displayed resting-liquidity cell resolved under the pointer.
-///
-/// This is an application-internal semantic result. The control module maps
-/// it into its owned wire DTO, so no renderer or `egui` type crosses the
-/// control boundary.
+/// A displayed resting-liquidity cell resolved under the pointer. Application-internal: the control
+/// module maps it into its own wire DTO, so no renderer or `egui` type crosses the control
+/// boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FlowCellHit {
     pub generation: u64,
@@ -106,12 +98,9 @@ pub struct OrderflowView {
     published: BookPublished,
     /// Engine bucket last adopted into the mirror, to detect auto-base moves.
     last_seen_base: Decimal,
-    /// The `(step, reference_price)` pair last sent to the engine, so the
-    /// per-trade path sends one command per change rather than one per print.
-    ///
-    /// Both halves are in the key: either one moving is a different answer,
-    /// and keying on the step alone would swallow the first magnitude a chart
-    /// ever learns whenever the grid happened to settle first.
+    /// The `(step, reference_price)` pair last sent to the engine, so the per-trade path sends one
+    /// command per change. Both halves are in the key: keying on the step alone would swallow the
+    /// first magnitude a chart learns whenever the grid settled first.
     last_tape_price_grid: Option<(Decimal, Option<Decimal>)>,
     capture_grouping_draft: f64,
     pending_capture_grouping_previous: Option<Decimal>,
@@ -138,6 +127,9 @@ pub struct OrderflowView {
     pending_tape: quantick_orderflow::projection::PendingTape,
     pending_frame: Option<std::sync::Arc<quantick_orderflow::engine::VisibleOrderflow>>,
     tape_dots: std::cell::RefCell<quantick_orderflow::projection::TapeDotMemory>,
+    /// Where the tape's right edge is held, and the frozen past it draws.
+    tape_end: quantick_orderflow::tape_view::TapeEnd,
+    past_dots: std::cell::RefCell<quantick_orderflow::projection::PastTapeMemory>,
 }
 
 impl OrderflowView {
@@ -195,28 +187,22 @@ impl OrderflowView {
             pending_tape: Default::default(),
             pending_frame: None,
             tape_dots: Default::default(),
+            tape_end: Default::default(),
+            past_dots: Default::default(),
         }
     }
 
-    /// The health mirror already used by the last application frame.
-    ///
-    /// Unlike [`Self::health`], this does not synchronize with the worker. A
-    /// coherent control capture reads the same published frame the user saw,
-    /// without letting one requested scope advance another scope underneath
-    /// the capture.
+    /// The health mirror already used by the last application frame. Unlike [`Self::health`] it
+    /// does not synchronize with the worker, so a control capture reads the frame the user saw and
+    /// one scope cannot advance another underneath it.
     #[must_use]
     pub(crate) fn cached_health(&self) -> &OrderflowHealth {
         &self.published.health
     }
 
-    /// The book frame the last application frame published, for a control
-    /// capture.
-    ///
-    /// Same contract as [`Self::cached_health`], and for the same reason: it
-    /// does not synchronize with the worker, so one requested scope cannot
-    /// advance another scope underneath the capture. The ladder is `None`
-    /// while capture is off or the book has no snapshot yet — an honest
-    /// absence, never an empty book.
+    /// The book frame the last application frame published, for a control capture. Same no-sync
+    /// contract as [`Self::cached_health`]. The ladder is `None` while capture is off or the book
+    /// has no snapshot yet: an honest absence, never an empty book.
     #[must_use]
     pub(crate) fn cached_book(&self) -> (&CaptureStatus, Option<&BookLadder>, Decimal) {
         (
@@ -226,11 +212,9 @@ impl OrderflowView {
         )
     }
 
-    /// The live lane's right edge as the last application frame published it,
-    /// under the same no-sync contract as [`Self::cached_health`].
-    ///
-    /// `None` when no flow layer is drawn: a chart with no lane has no edge to
-    /// report, and the newest print the engine happens to have seen is not one.
+    /// The live lane's right edge as the last application frame published it, under the same
+    /// no-sync contract as [`Self::cached_health`]. `None` when no flow layer is drawn: a chart
+    /// with no lane has no edge to report.
     #[must_use]
     pub(crate) fn cached_live_end_ms(&self) -> Option<i64> {
         self.lane_now_ms().or(self.published.live_end_ms)
@@ -248,6 +232,9 @@ impl OrderflowView {
     /// Where the last published tape traded, `(low, high)`.
     #[must_use]
     pub(crate) fn tape_price_range(&self) -> Option<(f64, f64)> {
+        if let (Some(_), Some(past)) = (self.tape_end.past_ms(), &self.published.past_tape) {
+            return past.price_range();
+        }
         if self.immediate_tape() {
             let window_ms = self.config.lane_window_ms(15_000);
             let retained = self
@@ -279,12 +266,9 @@ impl OrderflowView {
         &self.config
     }
 
-    /// Resolve the topmost displayed L2 heat cell under `position` from the
-    /// frame the chart most recently painted.
-    ///
-    /// Projection and hit testing share [`ProjectedLayout`]. The lookup is
-    /// O(visible cells), runs only for an explicit cursor snapshot, and never
-    /// participates in painting or ingestion.
+    /// Resolve the topmost displayed L2 heat cell under `position` from the frame the chart most
+    /// recently painted. Projection and hit testing share [`ProjectedLayout`]; the lookup is
+    /// O(visible cells) and runs only for an explicit cursor snapshot.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn control_flow_cell_at(
         &self,
@@ -370,17 +354,16 @@ impl OrderflowView {
             self.pending_tape.acknowledge(receipt.through_ordinal);
         } else {
             publication.book.frame = None;
+            publication.book.past_tape = None;
         }
         self.published = publication.book;
         let base = self.published.base_price_grouping;
         self.adopt_base(base);
     }
 
-    /// Take an engine-chosen capture bucket into the UI mirror.
-    ///
-    /// Split out of [`Self::sync_published`] because the footprint's row width
-    /// needs the bucket without the rest of the published state, and the
-    /// adoption rule is the same either way.
+    /// Take an engine-chosen capture bucket into the UI mirror. Split out of
+    /// [`Self::sync_published`] because the footprint's row width needs the bucket without the rest
+    /// of the published state.
     fn adopt_base(&mut self, base: Decimal) {
         if base != self.last_seen_base {
             self.last_seen_base = base;
@@ -393,34 +376,24 @@ impl OrderflowView {
         }
     }
 
-    /// The capture bucket, taking whatever the engine has published since the
-    /// last look.
-    ///
-    /// [`base_capture_grouping`](Self::base_capture_grouping) reads the mirror
-    /// as it stands, which is right for a caller that has already synced this
-    /// frame. The footprint's row width has no such caller: every
-    /// `sync_published` site is gated on a layer or a dock tab being open, and
-    /// the ladder is drawn when all of them are off — the very case this
-    /// sizing exists for. Reading through here rather than off the mirror is
-    /// what keeps the rows from depending on a diagnostics log having run.
+    /// The capture bucket, taking whatever the engine has published since the last look.
+    /// [`base_capture_grouping`](Self::base_capture_grouping) reads the mirror as it stands, which
+    /// is stale for the footprint's row width: every `sync_published` site is gated on a layer or
+    /// dock tab being open, yet the ladder draws with all of them off. Reading through here keeps
+    /// the rows from depending on a diagnostics log having run.
     pub fn capture_grouping_now(&mut self) -> Decimal {
         let base = self.worker.published_base_grouping();
-        // The mirror takes it too. A split's *other* pane is handed the row
-        // width through `base_capture_grouping`, which reads the mirror and
-        // takes `&self` — so leaving the mirror behind here would let the two
-        // panes of one chart draw the same market on different rows, which is
-        // the divergence this whole sizing path exists to prevent. Cheap: the
-        // field is a `Decimal`, and the rest of the published snapshot is
-        // untouched because nothing here has read it.
+        // The mirror takes it too: a split's other pane reads the row width through
+        // `base_capture_grouping` (`&self`), so leaving the mirror behind would let two panes of
+        // one chart draw the same market on different rows.
         self.published.base_price_grouping = base;
         self.adopt_base(base);
         base
     }
 
-    /// The capture bucket the book engine derived for this instrument — the
-    /// declared `price_step` where the feed reports one, else the auto-sized
-    /// base. The footprint adopts it as its row grid, so the two ladders can
-    /// never disagree about what one row of price means.
+    /// The capture bucket the book engine derived for this instrument: the declared `price_step`
+    /// where the feed reports one, else the auto-sized base. The footprint adopts it as its row
+    /// grid so the two ladders never disagree.
     #[must_use]
     pub fn base_capture_grouping(&self) -> Decimal {
         self.published.base_price_grouping
@@ -440,15 +413,11 @@ impl OrderflowView {
         self.config.depth_visible()
     }
 
-    /// Show or hide the depth map over the candles, without touching L2
-    /// capture.
+    /// Show or hide the depth map over the candles, without touching L2 capture. No feed command is
+    /// involved: the recorder keeps running, so turning the map back on repaints the retained past.
     ///
-    /// No feed command is involved: the recorder keeps running, so turning the
-    /// map back on repaints the retained past instead of opening a gap in it.
-    ///
-    /// **The tape is not touched, in either direction.** This is the toolbar's
-    /// switch and it governs the candles; the tape holds a value of its own
-    /// ([`Self::set_lane_depth_visible`]), reached by right-clicking it.
+    /// **The tape is not touched, in either direction.** This is the toolbar's switch and it
+    /// governs the candles; the tape holds a value of its own ([`Self::set_lane_depth_visible`]).
     pub fn set_depth_visible(&mut self, visible: bool) {
         if self.config.show_depth == visible {
             return;
@@ -469,10 +438,9 @@ impl OrderflowView {
         self.config.show_aggressions
     }
 
-    /// Toggle the aggression layer over the candles, without touching L2
-    /// capture. No feed command is needed — aggregate trades already flow for
-    /// the candles. The tape is not touched in either direction, as with the
-    /// depth map.
+    /// Toggle the aggression layer over the candles, without touching L2 capture (aggregate trades
+    /// already flow for the candles). The tape is untouched in either direction, as with the depth
+    /// map.
     pub fn set_bubbles_enabled(&mut self, enabled: bool) {
         if self.config.show_aggressions == enabled {
             return;
@@ -482,14 +450,9 @@ impl OrderflowView {
         self.commit_config_changes(before);
     }
 
-    /// Squeeze the frame's bubble budget, through the same field the
-    /// projection reads.
-    ///
-    /// The scripted way to reach a folded frame. The fold is the one bubble
-    /// state a capture cannot otherwise arrange: it needs a tape dense enough
-    /// to exhaust the budget, which is a market condition rather than a
-    /// setting. One path, never two — the projection reads this field whoever
-    /// wrote it.
+    /// Squeeze the frame's bubble budget through the field the projection reads. The scripted way
+    /// to reach a folded frame, which needs a tape dense enough to exhaust the budget and so cannot
+    /// otherwise be arranged.
     #[cfg(any(feature = "scenario-harness", test))]
     pub fn set_primitive_budget(&mut self, budget: usize) {
         if budget == 0 || self.config.max_aggression_primitives == budget {
@@ -506,12 +469,9 @@ impl OrderflowView {
         self.config.lane_enabled()
     }
 
-    /// Put the tape on the canvas, or take it off.
-    ///
-    /// Off, the lane reserves no width and asks for no projection; the candles
-    /// take the whole canvas. Its two layer switches are left exactly as they
-    /// were, so switching the tape back on returns the tape that was switched
-    /// off rather than a fresh one.
+    /// Put the tape on the canvas, or take it off. Off, the lane reserves no width and asks for no
+    /// projection; its two layer switches stay as they were, so switching it back on returns the
+    /// same tape.
     pub fn set_lane_enabled(&mut self, enabled: bool) {
         if self.config.live_lane.enabled == enabled {
             return;
@@ -525,26 +485,19 @@ impl OrderflowView {
         self.commit_config_changes(before);
     }
 
-    /// The band's width on a canvas this wide — zero when the tape is off.
-    ///
-    /// The one number the tape switch reaches the canvas through, and the one
-    /// [`Self::live_lane`] reports when there is a live edge to anchor the band
-    /// on. Asking for it directly is how a caller — or a test — knows whether a
-    /// band is reserved at all, without needing a market to have printed yet.
+    /// The band's width on a canvas this wide, zero when the tape is off. The number the tape
+    /// switch reaches the canvas through, and the one [`Self::live_lane`] reports when there is a
+    /// live edge to anchor the band on.
     #[must_use]
     pub fn lane_width_px(&self, chart_width: f32) -> f32 {
         self.config.live_lane.resolved_width_px(chart_width)
     }
 
-    /// The candles' depth switch alone, whatever capture lets through it.
-    ///
-    /// [`Self::depth_visible`] answers "is it drawn", which is what a renderer
-    /// needs; this answers "did anyone ask for it", which is what persistence
-    /// needs. On a source with no book the map is undrawn however the switch
-    /// stands, and writing that down as the trader's answer would turn a
-    /// capability into a choice they never made — and one that then outranks
-    /// the shipped default on every market, including the ones with a book.
-    /// The same rule [`Self::set_depth_visible`] already compares against.
+    /// The candles' depth switch alone, whatever capture lets through it. [`Self::depth_visible`]
+    /// answers "is it drawn" (renderer); this answers "did anyone ask for it" (persistence). On a
+    /// source with no book the map is undrawn however the switch stands, and saving that as the
+    /// trader's answer would outrank the shipped default on every market. The rule
+    /// [`Self::set_depth_visible`] uses.
     #[must_use]
     pub fn depth_switched_on(&self) -> bool {
         self.config.show_depth
@@ -560,10 +513,9 @@ impl OrderflowView {
     /// Show or hide the depth map on the tape alone. Capture is untouched, and
     /// so are the candles.
     pub fn set_lane_depth_visible(&mut self, visible: bool) {
-        // Compared against the switch, not against what capture allows through
-        // it — same rule as the candles' `set_depth_visible`. A source with no
-        // book would otherwise swallow "off" and spring the layer back the
-        // moment a source with one arrived.
+        // Compared against the switch, not what capture allows through it (as in the candles'
+        // `set_depth_visible`), or a source with no book would swallow "off" and spring the layer
+        // back when one arrived.
         if self.config.live_lane.show_depth == visible {
             return;
         }
@@ -591,14 +543,10 @@ impl OrderflowView {
         self.commit_config_changes(before);
     }
 
-    /// State that a surface other than the bubbles is reading the aggression
-    /// clusters this frame — the live strip beside the price axis.
-    ///
-    /// The pane says this every frame from the layer it owns, so the two can
-    /// never drift apart. With the bubbles hidden and the strip shown, this is
-    /// what keeps prints being retained and projected: the strip draws the
-    /// same clusters, from the same engine path, and stopping the pipeline
-    /// under it would blank a live surface nobody switched off.
+    /// State that a surface other than the bubbles (the live strip beside the price axis) reads the
+    /// aggression clusters this frame. The pane says it every frame from the layer it owns; with
+    /// the bubbles hidden and the strip shown it keeps prints retained and projected, so a live
+    /// surface nobody switched off does not blank.
     pub fn set_projection_demand(&mut self, wanted: bool) {
         if self.config.projection_demand == wanted {
             return;
@@ -632,10 +580,8 @@ impl OrderflowView {
         self.config.show_legend
     }
 
-    /// Show or hide it — the very field the L2 panel's "show chart legend"
-    /// checkbox writes, so the canvas's right-click menu and the panel can
-    /// never disagree about it. Chrome only: every layer it names keeps
-    /// drawing while the key is hidden.
+    /// Show or hide the chart legend: the field the L2 panel's checkbox writes, so the right-click
+    /// menu and the panel never disagree. Chrome only: every layer it names keeps drawing.
     pub fn set_legend_visible(&mut self, visible: bool) {
         if self.config.show_legend == visible {
             return;
@@ -669,10 +615,9 @@ impl OrderflowView {
         self.config.show_gaps
     }
 
-    /// Show or hide the gap boundaries — the same field as the dock's "L2 gap"
-    /// checkbox. This one hides a *statement about missing data* rather than
-    /// data itself, which is why the layer menu's entry spells out that an
-    /// unrecorded stretch will then look like a recorded one.
+    /// Show or hide the gap boundaries, the field behind the dock's "L2 gap" checkbox. It hides a
+    /// statement about missing data rather than data, so the menu entry warns that an unrecorded
+    /// stretch will then look recorded.
     pub fn set_gaps_visible(&mut self, visible: bool) {
         if self.config.show_gaps == visible {
             return;
@@ -686,12 +631,9 @@ impl OrderflowView {
     /// map is on screen. Marks the live edge inside the forming bar's lane.
     #[must_use]
     pub fn live_end_ms(&mut self) -> Option<i64> {
-        // Any flow layer, not the depth map: this instant is the tape's
-        // anchor, and asking the *map* for it made the tape a hostage of L2.
-        // Switching both maps off used to delete the band, its bubbles, its
-        // strip and the menu that configures it — and a feed that streams no
-        // book never had a tape at all, in any configuration. Each pane
-        // answers for its own canvas; the tape answers for its own existence.
+        // Any flow layer, not the depth map: this instant anchors the tape, and asking the map made
+        // the tape a hostage of L2 (both maps off deleted the band; a feed with no book never had
+        // one). Each pane answers for its own canvas; the tape for its own existence.
         if !self.config.any_layer_enabled() {
             return None;
         }
@@ -699,24 +641,16 @@ impl OrderflowView {
         self.cached_live_end_ms()
     }
 
-    /// The live lane as the chart needs it: how wide its band is, and the
-    /// instant its right edge stands for.
+    /// The live lane as the chart needs it: how wide its band is, and the instant its right edge
+    /// stands for. The candles own everything left of the band and the lane owns it whatever they
+    /// do, so panning or zooming never moves the tape and the newest prints stay on screen.
     ///
-    /// A pane, not a slot: the candles own everything left of the band and the
-    /// lane owns it whatever they do. Panning or zooming them changes how many
-    /// bars fit beside the tape and never the tape itself, which is what keeps
-    /// the newest prints on screen through every chart movement.
-    ///
-    /// One call because it is one look at the published book. Reading the two
-    /// separately sends the render thread back through the worker's mutex for
-    /// a number the first read already had — a lock per frame for nothing, on
-    /// the one thread that must never wait.
-    ///
-    /// `None` when there is no live edge to run to, which is the same thing as
-    /// "this chart has no lane".
+    /// One call because it is one look at the published book; two reads would send the render
+    /// thread back through the worker's mutex for a number it already had. `None` when there is no
+    /// live edge, i.e. this chart has no lane.
     #[must_use]
     pub fn live_lane(&mut self, chart_width: f32) -> Option<LiveLane> {
-        let end_ms = self.live_end_ms()?;
+        let end_ms = self.tape_end.end_ms(self.live_end_ms()?);
         Some(LiveLane {
             width_px: self.lane_width_px(chart_width),
             end_ms,
@@ -741,14 +675,10 @@ impl OrderflowView {
         self.commit_config_changes(before);
     }
 
-    /// Zoom the lane's time window by a multiplicative factor: `> 1` shows
-    /// less market time in the same band (prints run faster and further
-    /// apart), `< 1` shows more (prints crowd together and cluster).
-    ///
-    /// The gesture speaks whichever language the window is in — the zoom while
-    /// it follows the bars, the milliseconds while it is pinned — and never
-    /// changes which one that is. Dragging a pinned tape gives a different
-    /// pinned tape, not a silent return to automatic.
+    /// Zoom the lane's time window by a multiplicative factor: `> 1` shows less market time in the
+    /// same band (prints run faster and further apart), `< 1` shows more. The gesture speaks
+    /// whichever language the window is in (zoom while following the bars, milliseconds while
+    /// pinned) and never switches it: dragging a pinned tape gives a different pinned tape.
     pub fn zoom_live_lane(&mut self, factor: f32) {
         if !factor.is_finite() || factor <= 0.0 {
             return;
@@ -784,25 +714,16 @@ impl OrderflowView {
         self.config.lane_window_ms(reserved_span_ms(closed))
     }
 
-    /// How old the newest aggression on the tape is, against the instant the
-    /// lane's right edge stands for.
-    ///
-    /// The lane's edge follows the newer of the book clock and the print
-    /// clock, and only the print clock places bubbles. When the book runs
-    /// ahead — a quiet stretch with a busy book, or prints held up between the
-    /// venue and this process — every bubble is drawn this far left of the
-    /// edge, and past the lane's own window none is drawn on the tape at all.
-    /// The axis under the tape says so rather than letting an empty tape read
-    /// as a market that stopped trading.
-    ///
-    /// `None` also when no pane draws the bubbles: an empty tape the trader
-    /// emptied themselves needs no explanation.
+    /// How old the newest aggression on the tape is, against the instant the lane's right edge
+    /// stands for. The edge follows the newer of the book clock and the print clock, but only the
+    /// print clock places bubbles, so when the book runs ahead every bubble is drawn this far left
+    /// of the edge and past the lane's window none is drawn. The axis says so rather than letting
+    /// an empty tape read as a market that stopped trading. `None` also when no pane draws the
+    /// bubbles.
     #[must_use]
     pub fn tape_age(&self) -> Option<quantick_orderflow::TapeAge> {
-        // Asked only when a pane still draws the bubbles. The depth map and
-        // the aggression layer switch apart, so a tape showing liquidity with
-        // its bubbles deliberately off has no missing marks to explain —
-        // warning about them there is the caption inventing a problem.
+        // Asked only when a pane still draws the bubbles: a tape showing liquidity with its bubbles
+        // deliberately off has no missing marks to explain.
         if !self.config.aggressions_visible_anywhere() {
             return None;
         }
@@ -852,17 +773,14 @@ impl OrderflowView {
         self.tape_clock.reset();
         self.config.enabled = false;
         self.pending_capture_grouping_previous = None;
-        // The send-once cache is keyed on what was *sent*, so a new market
-        // whose tape prints on the same grid would be suppressed — and a grid
-        // the engine refused while the trader had picked a bucket by hand
-        // would never be re-offered once auto sizing is re-armed here.
+        // The send-once cache is keyed on what was sent, so a new market printing on the same grid
+        // would be suppressed, and a grid the engine refused after a manual bucket would never be
+        // re-offered.
         self.last_tape_price_grid = None;
         self.published = BookPublished::initial();
         self.pending_tape.clear_opening_bursts();
-        // The starvation clock is per market, like the history it starves.
-        // Carrying the old symbol's zero across would open the new one on a
-        // tape that is already dead — the capture hook would be photographing
-        // its own leftovers instead of the state it was asked for.
+        // The starvation clock is per market, like the history it starves; carrying the old zero
+        // across would open the new symbol on an already-dead tape.
         self.first_print_ms = None;
         self.worker
             .send(BookCommand::ResetForSymbol(self.symbol.clone()));
@@ -944,26 +862,17 @@ impl OrderflowView {
         }
     }
 
-    /// Tell the engine the price grid the tape prints on, and the magnitude
-    /// it prints at.
+    /// Tell the engine the price grid the tape prints on, and the magnitude it prints at. Both,
+    /// because a tick alone does not size a row (BTCUSDT's tick is a cent, its rows are dollars); a
+    /// chart with no L2 otherwise fell back to raw cents.
     ///
-    /// Both, because a tick alone does not size a row: BTCUSDT's real tick is
-    /// a cent and its rows are dollars. The engine folds the one toward the
-    /// other; it only ever had the price when a *book snapshot* carried one,
-    /// so a chart with no L2 fell back to raw cents.
-    ///
-    /// Sent only when the answer changes, which a running GCD makes rare: it
-    /// starts as nothing, names a grid once the tape has shown one, and only
-    /// ever narrows from there. The magnitude is frozen at the chart's first
-    /// print and never moves at all. On the trader's own recordings the pair
-    /// settles within about thirty prints and never moves again, so a session
-    /// pays for one regroup rather than one per trade — which matters, because
-    /// this is called from the per-trade path.
+    /// Sent only when the answer changes, which a running GCD makes rare: it only narrows, and the
+    /// magnitude freezes at the first print, so a session pays for one regroup rather than one per
+    /// trade (this is the per-trade path).
     ///
     /// Deliberately *not* gated on a layer being enabled, unlike
-    /// [`record_trade`](Self::record_trade): the grid sizes the footprint
-    /// ladder as well as the liquidity map, and a trader reading a ladder with
-    /// the heatmap switched off needs its rows the right width just the same.
+    /// [`record_trade`](Self::record_trade): the grid also sizes the footprint ladder, which needs
+    /// right-width rows with the heatmap off.
     pub fn observe_tape_price_grid(&mut self, step: Decimal, reference_price: Option<Decimal>) {
         let grid = (step, reference_price);
         if self.last_tape_price_grid == Some(grid) {
@@ -976,10 +885,8 @@ impl OrderflowView {
         });
     }
 
-    /// Whether the scripted starvation hook is holding this print back.
-    ///
-    /// Off by default and free when off: the option is `None` outside a
-    /// capture run, so a live tape pays one `is_some` per print.
+    /// Whether the scripted starvation hook is holding this print back. Free when off: the option
+    /// is `None` outside a capture run, so a live tape pays one `is_some` per print.
     fn starved_at(&mut self, timestamp_ms: i64) -> bool {
         let Some(after_ms) = self.starve_tape_after_ms else {
             return false;
@@ -988,20 +895,12 @@ impl OrderflowView {
         timestamp_ms.saturating_sub(first) > after_ms
     }
 
-    /// Stop feeding the tape once the session is `after_ms` old, leaving the
-    /// book running.
-    ///
-    /// The scripted way to reach a starved tape. A tape whose newest mark has
-    /// drifted off the lane is a *market* state — a book that keeps changing
-    /// while nothing prints — so no setting produces it and no capture can
-    /// wait for one to happen. This withholds prints from the tape through the
-    /// same call the feed uses, rather than forging a number into the caption:
-    /// the axis then reports the age it genuinely observes, and a screenshot
-    /// shows what the trader's own chart would show.
-    ///
-    /// The bars, the indicators and the simulator are untouched — they are fed
-    /// upstream of here — which is exactly right: the candles keep their
-    /// prints, the tape loses them, and that contrast is the thing under test.
+    /// Stop feeding the tape once the session is `after_ms` old, leaving the book running. The
+    /// scripted way to reach a starved tape, a market state (a book that changes while nothing
+    /// prints) no setting produces. It withholds prints through the same call the feed uses rather
+    /// than forging the caption, so the axis reports the age it genuinely observes. Bars,
+    /// indicators and the simulator are fed upstream and untouched, which is the contrast under
+    /// test.
     #[cfg(any(feature = "scenario-harness", test))]
     pub fn set_starve_tape_after_ms(&mut self, after_ms: i64) {
         self.starve_tape_after_ms = Some(after_ms.max(0));
@@ -1033,23 +932,17 @@ impl OrderflowView {
         self.published.health.clone()
     }
 
-    /// Timestamp of the newest accepted book event, from the frame's mirror.
-    ///
-    /// Read-only twin of [`Self::health`] for callers that only need this one
-    /// figure and hold `&self` — the status bar's tape-age readout, which
-    /// runs while the frame is already borrowing the app immutably.
+    /// Timestamp of the newest accepted book event, from the frame's mirror. Read-only twin of
+    /// [`Self::health`] for callers holding `&self`, like the status bar's tape-age readout.
     #[must_use]
     pub fn last_event_ms(&self) -> Option<i64> {
         self.published.health.last_event_ms
     }
 
-    /// Whether the map is open but not yet (or no longer) backed by a live
-    /// book. What the app's loading overlay mirrors. Reads the frame's mirror,
-    /// refreshed by the panel/projection calls the frame already made; which
-    /// statuses count as a wait is [`CaptureStatus::is_syncing`]'s call.
-    ///
-    /// Visibility-gated: the recorder synchronizing in the background is not
-    /// something to hold a loading overlay up for.
+    /// Whether the map is open but not yet (or no longer) backed by a live book, which the app's
+    /// loading overlay mirrors. Reads the frame's mirror; which statuses count as a wait is
+    /// [`CaptureStatus::is_syncing`]'s call. Visibility-gated: the recorder synchronizing in the
+    /// background is not worth a loading overlay.
     #[must_use]
     pub fn is_syncing(&self) -> bool {
         self.config.depth_visible() && self.published.status.is_syncing()
@@ -1063,6 +956,7 @@ impl OrderflowView {
         // Explicit display changes begin a new epoch; advancing the clock,
         // changing book generations or following prices never clears it.
         self.tape_dots.get_mut().clear();
+        self.past_dots.get_mut().clear();
         if self.config.native_tape() != before.native_tape()
             || self.config.volume_dots.enabled != before.volume_dots.enabled
         {

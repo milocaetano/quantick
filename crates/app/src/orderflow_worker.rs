@@ -1,18 +1,11 @@
 //! Background thread that owns the [`BookEngine`].
 //!
-//! The UI thread never touches book state directly: it sends commands through
-//! a channel bounded by [`BOOK_COMMAND_QUEUE`] and reads the latest
-//! [`BookPublished`] snapshot from a shared mailbox. A full queue parks
-//! commands on the UI side, in order, and folds only superseded layouts
-//! ([`fold_parked`]); nothing blocks and nothing is dropped. Projection requests are coalesced latest-wins — when the
-//! worker falls behind (a dense book can take tens of milliseconds per
-//! projection), intermediate layouts are dropped and only the newest one is
-//! built. The UI keeps drawing the last published frame, so a slow projection
-//! can never block a frame.
-//!
-//! The worker blocks on `recv` while idle and exits when the last sender is
-//! dropped. The UI repaints on its own ~60 fps cadence, so no egui handle is
-//! needed here.
+//! The UI thread never touches book state: it sends commands through a channel
+//! bounded by [`BOOK_COMMAND_QUEUE`] and reads the latest [`BookPublished`] from
+//! a shared mailbox. A full queue parks commands UI-side, in order, folding only
+//! superseded layouts ([`fold_parked`]); nothing blocks or is dropped. Projection
+//! requests coalesce latest-wins, so a slow projection never blocks a frame.
+//! The worker blocks on `recv` while idle and exits with the last sender.
 
 use crate::live_envelope::BOOK_COMMAND_QUEUE;
 use crate::worker_progress::{
@@ -67,6 +60,8 @@ pub(crate) enum BookCommand {
     },
     ResetForSymbol(String),
     ResetSummaryCounters,
+    /// Hold the native tape at a past instant, or `None` for live.
+    TapeEnd(Option<i64>),
     Project(ProjectionRequest),
     /// Test barrier: acknowledged only after every earlier command in the
     /// queue has been applied and its effects published.
@@ -161,12 +156,8 @@ impl BookWorker {
         self.publication().book
     }
 
-    /// Just the capture bucket from the published mailbox.
-    ///
-    /// The footprint's row width needs this every frame, including when every
-    /// order-flow layer is off and nothing else syncs. Cloning the whole
-    /// published state — a ladder and a projected frame — to read one
-    /// `Decimal` would be paying for the map in order to size a ladder.
+    /// Just the capture bucket from the published mailbox: the footprint needs
+    /// it every frame, even with every layer off, without cloning the frame.
     pub(crate) fn published_base_grouping(&self) -> Decimal {
         // Read every frame even with every layer off, so it pumps too.
         self.commands.pump();
@@ -198,13 +189,10 @@ impl BookWorker {
     }
 }
 
-/// The superseding rule for commands parked behind a full queue: only a
-/// layout request folds, into a layout request parked right before it —
-/// the batch loop builds only the newest layout anyway. Prints and depth
-/// events keep their place and their order (parked prints *are* the kept
-/// batch the next frame retries); configuration changes keep theirs too,
-/// because applying one can prune retained history that the next one would
-/// not have.
+/// The superseding rule for commands parked behind a full queue: only a layout
+/// request folds, into one parked right before it (only the newest is built).
+/// Prints, depth and configuration keep their place and order: applying a
+/// configuration can prune history the next one would not have.
 pub(crate) fn fold_parked(older: &mut BookCommand, newer: BookCommand) -> Option<BookCommand> {
     match (&mut *older, newer) {
         (BookCommand::Project(request), BookCommand::Project(next)) => {
@@ -284,6 +272,7 @@ fn run(
                     engine.reset_for_symbol(symbol);
                 }
                 BookCommand::ResetSummaryCounters => engine.reset_summary_counters(),
+                BookCommand::TapeEnd(end_ms) => engine.set_tape_end(end_ms),
                 // Latest-wins: only the newest layout of this batch is built.
                 BookCommand::Project(request) => {
                     coalescing.projects += usize::from(incoming_request.is_some());
