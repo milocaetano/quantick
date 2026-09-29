@@ -9,6 +9,9 @@ use quantick_orderflow::engine::VisibleOrderflow;
 use quantick_orderflow::projection::PaneGeometry;
 use std::sync::Arc;
 
+#[path = "tape_memory_tests.rs"]
+mod tape_memory_tests;
+
 fn held_view(tape_only: bool) -> (OrderflowView, Arc<Gate>, Hold) {
     let gate = Gate::new();
     let hold = gate.hold(Phase::Applying);

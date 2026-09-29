@@ -331,3 +331,56 @@ fn ordinary_lanes_keep_the_existing_projection_and_do_not_read_tape_memory() {
     assert_eq!(legacy.marks, prints);
     assert_eq!(legacy.max_radius, config.bubbles.max_radius);
 }
+
+#[test]
+fn a_reconnected_trade_id_is_not_a_global_membership_identity() {
+    let mut memory = TapeDotMemory::default();
+    let first = mark(1, 1_001, 100, 2);
+    let _ = draw(
+        &mut memory,
+        std::slice::from_ref(&first),
+        view(3_000, "90", "130"),
+    );
+    let reconnected = mark(1, 4_001, 120, 3);
+    let shown = draw(
+        &mut memory,
+        &[first, reconnected],
+        view(4_100, "90", "130"),
+    );
+    assert_eq!(shown.marks.len(), 2);
+    assert_eq!(
+        shown.marks.iter().map(|mark| mark.quantity).sum::<Decimal>(),
+        Decimal::from(5)
+    );
+    assert!(shown.marks.iter().all(|mark| mark.agg_ids == [1]));
+}
+
+#[test]
+fn a_late_factual_native_update_changes_its_group_once_without_rewriting_others() {
+    let mut memory = TapeDotMemory::default();
+    let first = mark(1, 1_001, 100, 2);
+    let unrelated = mark(3, 2_001, 180, 7);
+    let before = draw(
+        &mut memory,
+        &[first.clone(), unrelated.clone()],
+        view(5_000, "90", "190"),
+    );
+    let stable = source_facts(represented(&before, &[3]));
+    let mut updated = first;
+    updated.agg_ids = vec![1, 2];
+    updated.quantity = Decimal::from(5);
+    updated.buy_quantity = Decimal::TWO;
+    updated.buy_share = 0.4;
+    updated.last_timestamp_ms = 1_017;
+    updated.timestamp_quantity = Decimal::from(5_053);
+    updated.trade_count = 2;
+    let native = [updated, unrelated];
+    let next = draw(&mut memory, &native, view(5_100, "90", "190"));
+    let changed = represented(&next, &[1, 2]);
+    assert_eq!(changed.quantity, Decimal::from(5));
+    assert_eq!(changed.buy_quantity, Decimal::TWO);
+    assert_eq!(changed.timestamp_quantity, Decimal::from(5_053));
+    assert_eq!(source_facts(represented(&next, &[3])), stable);
+    let repeated = draw(&mut memory, &native, view(5_100, "90", "190"));
+    assert_eq!(repeated.marks, next.marks, "publication is replacement, not another trade");
+}
