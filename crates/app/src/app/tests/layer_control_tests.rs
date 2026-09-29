@@ -31,7 +31,7 @@ fn additive_layer_traverses_discovery_admission_common_operation_and_real_chart(
     );
     let initial = snapshot(&mut app, &mut observer);
     let layers = initial["panes"][0]["layers"].as_array().unwrap();
-    assert_eq!(layers.len(), 25);
+    assert_eq!(layers.len(), 26);
     assert!(layers.iter().any(|layer| layer["id"] == "test_probe"
         && layer["requested"] == false
         && layer["effective"] == false));

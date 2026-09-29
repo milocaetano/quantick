@@ -23,6 +23,8 @@ fn each_layer_switch_moves_exactly_one_owner() {
         // opt-in, like the market layers above it.
         (ChartLayer::BackfillDivider, false),
         (ChartLayer::SeamDivider, true),
+        // A dated rule at every midnight: opt-in, for the same reason.
+        (ChartLayer::DaySeparator, false),
         (ChartLayer::Crosshair, true),
         (ChartLayer::PaperTrading, true),
         (ChartLayer::Drawings, true),

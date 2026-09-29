@@ -31,5 +31,11 @@
 # facade — and no line of logic was added: the three measured representatives
 # read 72%, 51% and 41% fewer lines (PR body, `tools/read_cost/measure.py`).
 # The lines bought read cost, which the size ratchet does not measure.
-!budget 104015
-crates/app 104015
+# Raised by 169 lines for the day separator (`feat/day-separator`): one new
+# render package, `pane/render_registry/days.rs`, docked through the existing
+# layer port, plus its call site and the time strip standing aside for the
+# dates it writes. All of it is drawing and label placement; the rule for
+# where a day starts is `quantick_civil::day_starts`, below `app`, with its
+# tests.
+!budget 104184
+crates/app 104184
