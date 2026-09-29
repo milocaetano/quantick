@@ -98,6 +98,7 @@ fn draw(memory: &mut TapeDotMemory, native: &[AggressionPrimitive], now_ms: i64)
         },
         &config.bubbles,
         &config.live_lane,
+        &[],
     )
 }
 
@@ -332,6 +333,7 @@ fn real_native_tape_stateless_and_warmed_memory_cost() {
                 sizing,
                 &config.bubbles,
                 &config.live_lane,
+                &[],
             )
             .marks
     });

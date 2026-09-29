@@ -65,7 +65,7 @@ fn draw(
         px_per_price: 1.0,
         typed_full: None,
     };
-    memory.project(marks, view, sizing, &config.bubbles, &config.live_lane)
+    memory.project(marks, view, sizing, &config.bubbles, &config.live_lane, &[])
 }
 
 fn source_facts(mark: &AggressionPrimitive) -> (Vec<u64>, Decimal, Decimal, Decimal, Decimal) {
@@ -356,7 +356,7 @@ fn ordinary_lanes_keep_the_existing_projection_and_do_not_read_tape_memory() {
         px_per_price: 1.0,
         typed_full: None,
     };
-    let legacy = memory.project(&prints, current, sizing, &config.bubbles, &config.live_lane);
+    let legacy = memory.project(&prints, current, sizing, &config.bubbles, &config.live_lane, &[]);
     assert_eq!(legacy.marks, prints);
     assert_eq!(legacy.max_radius, config.bubbles.max_radius);
 }
@@ -482,7 +482,11 @@ fn an_exactly_coincident_late_execution_joins_facts_without_collapsing_every_rad
     assert_current_coordinates(combined, &current_view);
     assert_eq!(source_facts(represented(&after, &[9])), stable);
     assert_eq!(
-        after.marks.iter().map(|mark| mark.quantity).sum::<Decimal>(),
+        after
+            .marks
+            .iter()
+            .map(|mark| mark.quantity)
+            .sum::<Decimal>(),
         Decimal::from(6)
     );
     assert_proportional_clearance(&after, current_view.geometry);

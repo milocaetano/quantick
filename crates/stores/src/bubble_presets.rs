@@ -633,14 +633,20 @@ mod tests {
         assert!(target.live_lane.tape_only, "the mode survives application");
         embedded().get("default").unwrap().apply_to(&mut target);
         assert!(!target.live_lane.tape_only, "the default restores candles");
-        assert!(!target.volume_dots.enabled, "the default keeps legacy bubbles");
+        assert!(
+            !target.volume_dots.enabled,
+            "the default keeps legacy bubbles"
+        );
     }
 
     #[test]
     fn the_mini_index_preset_opens_the_tape_without_changing_other_presets() {
         let presets = embedded();
         let mut config = HeatmapConfig::default();
-        presets.get("mini index regions").unwrap().apply_to(&mut config);
+        presets
+            .get("mini index regions")
+            .unwrap()
+            .apply_to(&mut config);
         assert!(config.live_lane.tape_only);
         assert!(config.volume_dots.enabled);
         for preset in &presets.presets {
@@ -662,6 +668,33 @@ mod tests {
         preset.apply_to(&mut config);
         assert!(config.volume_dots.enabled);
         assert_eq!(config.volume_dots.full_quantity, 20_000.0);
+    }
+
+    #[test]
+    fn opening_burst_scale_is_opt_in_and_roundtrips_with_the_chosen_look() {
+        let old = parse(r#"active = "old"
+
+[[presets]]
+name = "old"
+"#)
+            .expect("an older file remains readable");
+        let mut config = HeatmapConfig::default();
+        old.get("old").unwrap().apply_to(&mut config);
+        assert!(!config.volume_dots.ignore_opening_burst_in_scale);
+        for preset in &embedded().presets {
+            assert!(!preset.volume_dot_ignore_opening_burst_in_scale, "{} remains unchanged until explicitly chosen", preset.name);
+        }
+        config.volume_dots.ignore_opening_burst_in_scale = true;
+        let mut file = BubblePresetFile::default();
+        file.upsert(BubblePreset::capture("opening scale", &config));
+        let text = render(&file).unwrap();
+        assert!(text.contains("volume_dot_ignore_opening_burst_in_scale = true"));
+        let restored = parse(&text).unwrap();
+        let mut target = HeatmapConfig::default();
+        restored.get("opening scale").unwrap().apply_to(&mut target);
+        assert!(target.volume_dots.ignore_opening_burst_in_scale);
+        old.get("old").unwrap().apply_to(&mut target);
+        assert!(!target.volume_dots.ignore_opening_burst_in_scale, "an older/default look restores its explicit default");
     }
 
     /// A preset is a look. Now that the tape's visibility lives in the same

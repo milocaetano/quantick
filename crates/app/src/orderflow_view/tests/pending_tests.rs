@@ -76,6 +76,34 @@ fn tape(frame: &VisibleOrderflow) -> Vec<quantick_orderflow::AggressionPrimitive
 }
 
 #[test]
+fn recorded_opening_metadata_survives_mode_changes_but_resets_with_the_source() {
+    let (mut view, _, held) = held_view(false);
+    view.record_trade(&print(1, 1_017, 100, 74_365, Side::Buy));
+    let ordinary_mode = view.recorded_opening_bursts();
+    let before = view.config.clone();
+    view.config.live_lane.tape_only = true;
+    view.commit_config_changes(before);
+    view.record_trade(&print(1, 2_017, 110, 25, Side::Sell));
+    let enabled_later = view.recorded_opening_bursts();
+    view.set_ignore_opening_burst_in_scale(true);
+    view.stage_capture_grouping_for_test(Decimal::from(5));
+    let regrouped = view.recorded_opening_bursts();
+    let shown = frame(&mut view, &[print(1, 2_017, 110, 25, Side::Sell)]).unwrap();
+    let same_frame = shown.projection.tape_facts.as_ref().unwrap().opening_bursts.clone();
+    view.reset_for_symbol("WINV26");
+    let reset = view.recorded_opening_bursts();
+    view.record_trade(&print(1, 4_017, 120, 2, Side::Buy));
+    let restarted = view.recorded_opening_bursts();
+    held.release();
+    assert_eq!(ordinary_mode, [1_000]);
+    assert_eq!(enabled_later, [1_000], "the first visible print after enabling tape is not the recorded opening");
+    assert_eq!(regrouped, [1_000]);
+    assert_eq!(same_frame, [1_000], "pending metadata reaches the same frame before publication");
+    assert!(reset.is_empty());
+    assert_eq!(restarted, [4_000]);
+}
+
+#[test]
 fn an_accepted_tape_print_is_drawable_on_the_same_frame_with_the_worker_held() {
     let (mut view, _, hold) = held_view(true);
     let trade = print(1, 1_001, 100, 3, Side::Buy);

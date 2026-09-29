@@ -98,6 +98,7 @@ fn retained(view: &OrderflowView, shown: &VisibleOrderflow, prices: (f64, f64)) 
         sizing,
         &bubbles,
         &view.config.live_lane,
+        &[],
     )
 }
 

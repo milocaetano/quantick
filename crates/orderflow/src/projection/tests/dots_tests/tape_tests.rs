@@ -6,6 +6,7 @@ use crate::projection::{
 };
 
 mod performance;
+mod opening_scale;
 mod recorded_stability;
 mod stability;
 
