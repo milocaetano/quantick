@@ -233,6 +233,94 @@ fn a_horizontal_drag_pans_the_tape_through_time_and_never_the_candles() {
     assert!(app.active_tab().flow_pane.price_view.is_auto());
 }
 
+/// A press and release of the middle button at `from` and `to`, moving
+/// between them in one frame.
+fn middle_drag(app: &mut QuantickApp, ctx: &egui::Context, from: egui::Pos2, to: egui::Pos2) {
+    let middle = |position: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Middle,
+        pressed,
+        modifiers: egui::Modifiers::default(),
+    };
+    run_frame_with_events(
+        app,
+        ctx,
+        vec![egui::Event::PointerMoved(from), middle(from, true)],
+    );
+    run_frame_with_events(app, ctx, vec![egui::Event::PointerMoved(to)]);
+    run_frame_with_events(
+        app,
+        ctx,
+        vec![egui::Event::PointerMoved(to), middle(to, false)],
+    );
+    run_frame(app, ctx);
+}
+
+/// The middle button pans the side it was pressed on, as the primary drag
+/// does: a pan pressed on the candles that crosses the divider never moves
+/// the tape, and one pressed on the tape never moves the candles.
+#[test]
+fn a_middle_drag_pans_the_side_it_was_pressed_on() {
+    let ctx = egui::Context::default();
+    let (mut app, tape, candles) = split_app(&ctx);
+    let before = candles_view(&app);
+    middle_drag(&mut app, &ctx, candles, tape);
+    assert_eq!(
+        app.active_tab().tape().tape_end(),
+        TapeEnd::Live,
+        "pressed on the candles, the pan never moves the tape"
+    );
+    let panned = candles_view(&app);
+    assert_ne!(panned, before, "it pans the candles");
+
+    middle_drag(&mut app, &ctx, tape, candles);
+    assert_eq!(
+        candles_view(&app),
+        panned,
+        "pressed on the tape, the pan never moves the candles"
+    );
+}
+
+/// Tape only is the tape across the whole canvas: a double click anywhere
+/// on it returns a held tape to live and the axis to automatic Y, as a
+/// double click over the tape beside the candles does.
+#[test]
+fn a_double_click_in_tape_only_returns_the_tape_to_live() {
+    let ctx = egui::Context::default();
+    let (mut app, tape, _) = split_app(&ctx);
+    drag_sized(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        tape,
+        tape + egui::vec2(120.0, 0.0),
+    );
+    run_frame(&mut app, &ctx);
+    let held = app.active_tab().tape().tape_end();
+    assert!(!held.is_live(), "the drag held the tape in the past");
+    app.active_tab_mut()
+        .tape_mut()
+        .set_layer_switch(quantick_layers::OrderflowSwitch::TapeOnly, true);
+    run_frame(&mut app, &ctx);
+    assert!(app.active_tab().tape().cached_config().tape_only());
+    assert_eq!(app.active_tab().tape().tape_end(), held);
+    let pane = &mut app.active_tab_mut().flow_pane;
+    let auto = pane.frame.auto_range.expect("fitted");
+    pane.price_view.pan_screen(40.0, 0.5, auto);
+    assert!(!pane.price_view.is_auto());
+    let chart = pane.frame.chart_rect.expect("the canvas laid out");
+    let at = chart.center() - egui::vec2(chart.width() / 4.0, 0.0);
+    click_sized(&mut app, &ctx, TEST_WINDOW, at);
+    click_sized(&mut app, &ctx, TEST_WINDOW, at);
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab().tape().tape_end(),
+        TapeEnd::Live,
+        "the double click returned the tape to live"
+    );
+    assert!(app.active_tab().flow_pane.price_view.is_auto());
+}
+
 /// A past end stops where the retained tape begins, never before it.
 #[test]
 fn a_drag_far_into_the_past_stops_at_the_retained_tape() {

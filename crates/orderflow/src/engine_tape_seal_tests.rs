@@ -425,3 +425,166 @@ fn the_worker_continues_its_sealed_tape_and_builds_the_complete_live_pass() {
         "the late print folded the whole tape again"
     );
 }
+
+/// Prints a quarter apart, on the cent grid a chart opens on and off the
+/// whole-number grid the tape later names.
+fn quarter_prints() -> Vec<Trade> {
+    (0..400_i64)
+        .map(|index| Trade {
+            agg_id: index as u64 + 1,
+            timestamp_ms: 1_000 + index * 25,
+            price: Decimal::new(10_000 + index % 7 * 25, 2),
+            quantity: Decimal::from(1 + index % 5),
+            side: if index % 3 == 0 {
+                Side::Sell
+            } else {
+                Side::Buy
+            },
+        })
+        .collect()
+}
+
+fn grid_request(bars: &TickBarBuilder, closed: &[Bar], now_ms: i64) -> ProjectionRequest {
+    ProjectionRequest {
+        timeline_revision: closed.len() as u64,
+        first_bar_index: 0,
+        closed: closed.to_vec(),
+        partial: bars.partial().cloned(),
+        lane: true,
+        on_newest_bar: true,
+        lane_reference_ms: Some(6_000),
+        lane_now_ms: Some(now_ms),
+        price_range: (90.0, 110.0),
+        dot_zoom: Some(DotZoom {
+            native_tape: true,
+            tape_window_ms: 100,
+            tape_level_ticks: 1,
+            candle_level_ticks: 1,
+            lane_bars: Vec::new(),
+        }),
+    }
+}
+
+/// The worker's tape after [`quarter_prints`], its capture grid sized from
+/// the tape (cent to whole number) at print 210 — and, when `sealed_first`,
+/// a publication at print 200 that sealed the cent-grid cells. Returns that
+/// first tape, if any, and the last one.
+fn tape_across_a_grid_change(sealed_first: bool) -> (Option<TapeFacts>, TapeFacts) {
+    let mut worker = BookEngine::new("WINV26");
+    worker.apply_visual_config(config(60_000, 100_000));
+    let prints = quarter_prints();
+    let mut bars = TickBarBuilder::new(50);
+    let mut closed: Vec<Bar> = Vec::new();
+    let started = std::time::Instant::now();
+    let mut first = None;
+    for (index, trade) in prints.iter().enumerate() {
+        worker.record_trade(trade);
+        if let Some(bar) = bars.push(trade) {
+            closed.push(bar);
+        }
+        if index == 200 && sealed_first {
+            let frame = worker
+                .project_at(&grid_request(&bars, &closed, trade.timestamp_ms), started)
+                .expect("the first publication");
+            first = frame.projection.tape_facts.as_deref().cloned();
+        }
+        if index == 210 {
+            worker.size_from_tape(Decimal::ONE, Some(Decimal::from(100)));
+        }
+    }
+    let now_ms = prints.last().expect("prints").timestamp_ms;
+    let last = worker
+        .project_at(
+            &grid_request(&bars, &closed, now_ms),
+            started + std::time::Duration::from_secs(10),
+        )
+        .expect("the last publication");
+    let facts = last.projection.tape_facts.as_deref().cloned();
+    (first, facts.expect("the last publication has a tape"))
+}
+
+/// A grid the tape names after a sealed publication rekeys every native
+/// cell. The worker kept copying the cells below its seal, folded on the old
+/// grid: the tape mixed two grids, what it drew depended on when the worker
+/// had last published, and the painter kept the old cells as sealed. After
+/// the change the worker folds the whole tape again, exactly as a worker
+/// that never published before it, and the painter rereads it.
+#[test]
+fn a_grid_change_after_a_sealed_publication_folds_the_whole_tape_again() {
+    let (first, continued) = tape_across_a_grid_change(true);
+    let (_, complete) = tape_across_a_grid_change(false);
+    let first = first.expect("the first publication has a tape");
+    let seal = first.seal.as_ref().expect("the first publication sealed");
+    let cent = Decimal::new(1, 2);
+    assert!(
+        first
+            .clusters
+            .iter()
+            .any(|cell| cell.price_span == cent && cell.first_timestamp_ms < seal.through_ms),
+        "the first publication sealed cells on the cent grid"
+    );
+    assert!(
+        complete
+            .clusters
+            .iter()
+            .all(|cell| cell.price_span == Decimal::ONE)
+    );
+    let spans: std::collections::BTreeSet<Decimal> = continued
+        .clusters
+        .iter()
+        .map(|cell| cell.price_span)
+        .collect();
+    assert_eq!(spans, [Decimal::ONE].into(), "one grid on the whole tape");
+    assert_eq!(
+        continued.clusters, complete.clusters,
+        "the tape is the full fold on the new grid"
+    );
+    let now = continued
+        .seal
+        .as_ref()
+        .expect("the last publication sealed");
+    assert!(
+        !Arc::ptr_eq(&seal.lineage, &now.lineage),
+        "cells on another grid start a new lineage"
+    );
+}
+
+/// The lineage is the seal's promise that no sealed cell changed. Cells on
+/// another grid are other cells even where the sealed stretch the two
+/// publications share holds none of them.
+#[test]
+fn a_seal_on_another_native_grid_starts_a_new_lineage() {
+    use crate::projection::{SealInputs, seal_tape};
+    let inputs = |native_width: Decimal| SealInputs {
+        revision: 0,
+        window_ms: 100,
+        native_width,
+        seal_from_ms: Some(5_000),
+        lane_from_ms: Some(0),
+        recorded: 0,
+    };
+    let empty = TapeFacts {
+        clusters: Vec::new(),
+        evicted_through_ms: None,
+        floored_quantity: Decimal::ZERO,
+        opening_bursts: Vec::new(),
+        floor: Decimal::ZERO,
+        seal: None,
+    };
+    let cent = Decimal::new(1, 2);
+    let mut previous = empty.clone();
+    seal_tape(&mut previous, None, inputs(cent));
+    let (mut same, mut regridded) = (empty.clone(), empty);
+    seal_tape(&mut same, Some(&previous), inputs(cent));
+    seal_tape(&mut regridded, Some(&previous), inputs(Decimal::ONE));
+    let lineage = |facts: &TapeFacts| Arc::clone(&facts.seal.as_ref().expect("sealed").lineage);
+    assert!(Arc::ptr_eq(&lineage(&previous), &lineage(&same)));
+    assert!(
+        !Arc::ptr_eq(&lineage(&previous), &lineage(&regridded)),
+        "a new grid is a new lineage"
+    );
+    assert_eq!(
+        regridded.seal.as_ref().map(|seal| seal.native_width),
+        Some(Decimal::ONE)
+    );
+}

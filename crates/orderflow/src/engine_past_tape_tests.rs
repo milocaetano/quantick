@@ -353,3 +353,41 @@ fn a_drag_inside_settled_blocks_rereads_no_history() {
     );
     assert_eq!(*c, *past_tape(&trades, first - 3_000));
 }
+
+/// A frozen block draws only while its prints are retained. Eviction moves
+/// the retained tape's start forward, and a block frozen before it would
+/// keep drawing evicted prints left of "no tape retained before"; what is
+/// left is exactly what a memory that never froze them draws.
+#[test]
+fn a_frozen_block_leaves_the_past_once_its_prints_are_evicted() {
+    let trades = tape();
+    let end = latest(&trades) - 100_000;
+    let past = past_tape(&trades, end);
+    let mut memory = PastTapeMemory::default();
+    let before = frame(&mut memory, &past, end);
+    assert!(memory.cached_block_count() > 0, "the fixture froze blocks");
+    let retained_from = (end - WINDOW_MS / 2).div_euclid(DOT_MS) * DOT_MS;
+    assert!(
+        before
+            .iter()
+            .any(|mark| mark.first_timestamp_ms < retained_from)
+    );
+    let mut projection = (*past.projection).clone();
+    projection
+        .aggressions
+        .retain(|mark| mark.first_timestamp_ms >= retained_from);
+    let evicted = PastTape {
+        retained_from_ms: Some(retained_from),
+        projection: Arc::new(projection),
+        ..(*past).clone()
+    };
+    let after = frame(&mut memory, &evicted, end);
+    assert!(
+        after
+            .iter()
+            .all(|mark| mark.first_timestamp_ms >= retained_from),
+        "no evicted print is drawn"
+    );
+    assert!(!after.is_empty());
+    assert_eq!(after, frame(&mut PastTapeMemory::default(), &evicted, end));
+}

@@ -2,7 +2,7 @@
 
 use super::*;
 use quantick_orderflow::projection::{
-    PriceWindow, TapeDotFrame, TapeDotGeometry, TapeDotView, TapeHorizontalGeometry,
+    PastTape, PriceWindow, TapeDotFrame, TapeDotGeometry, TapeDotView, TapeHorizontalGeometry,
 };
 use rust_decimal::prelude::FromPrimitive as _;
 
@@ -156,12 +156,61 @@ fn the_live_painter_keeps_closed_membership_when_a_large_print_arrives_on_this_f
     );
 }
 
+/// Freeze the block holding `shown`'s prints in the pane's past memory, as
+/// a held tape's paint does; returns the blocks it froze.
+fn freeze_past(view: &OrderflowView, shown: &VisibleOrderflow) -> usize {
+    let block_ms = 10_000;
+    let from_ms = WIN_TIME_MS.div_euclid(block_ms) * block_ms;
+    let past = PastTape {
+        end_ms: from_ms + block_ms,
+        window_ms: block_ms,
+        block_ms,
+        from_ms,
+        until_ms: from_ms + block_ms,
+        settled_through_ms: from_ms + block_ms,
+        retained_from_ms: Some(from_ms),
+        rungs: (100, 1),
+        projection: Arc::clone(&shown.projection),
+    };
+    let scale = shown.volume_dots.as_ref().unwrap();
+    let sizing = view.dot_rungs.sizing(scale, 400.0).unwrap();
+    let mut memory = view.past_dots.borrow_mut();
+    let frame = memory.project(
+        &past.projection.aggressions,
+        &past,
+        TapeDotView {
+            now_ms: past.end_ms,
+            window_ms: block_ms,
+            dot_window_ms: scale.tape_window_ms,
+            evicted_through_ms: None,
+            prices: PriceWindow::new(
+                Decimal::from_f64(WIN_PRICES.0).unwrap(),
+                Decimal::from_f64(WIN_PRICES.1).unwrap(),
+            )
+            .unwrap(),
+            geometry: TapeDotGeometry {
+                left_x: 0.0,
+                right_x: 1.0,
+                width_px: 640.0,
+                height_px: 400.0,
+            },
+        },
+        sizing,
+        &view.config.bubbles,
+        &view.config.live_lane,
+        &[],
+    );
+    assert!(!frame.marks.is_empty(), "the frozen block draws the prints");
+    memory.cached_block_count()
+}
+
 #[test]
 fn tape_history_is_cleared_by_source_replay_mode_and_explicit_visual_changes() {
     for change in ["source", "replay", "mode", "side", "full", "style"] {
         let (mut view, hold) = memory_view();
-        let _ = seed_closed_history(&mut view);
+        let shown = seed_closed_history(&mut view);
         let before_count = view.tape_dots.borrow().retained_group_count();
+        let frozen = freeze_past(&view, &shown);
         match change {
             "source" => view.reset_for_symbol("WINV26"),
             "replay" => view.reset_pending_tape(),
@@ -178,12 +227,15 @@ fn tape_history_is_cleared_by_source_replay_mode_and_explicit_visual_changes() {
             }
         }
         let after_count = view.tape_dots.borrow().retained_group_count();
+        let past_after = view.past_dots.borrow().cached_block_count();
         hold.release();
         assert!(
             before_count > 0,
             "fixture has painted history before {change}"
         );
+        assert!(frozen > 0, "fixture has a frozen past before {change}");
         assert_eq!(after_count, 0, "{change} starts a fresh display epoch");
+        assert_eq!(past_after, 0, "{change} forgets the frozen past too");
     }
 }
 
