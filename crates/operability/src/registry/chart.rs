@@ -18,7 +18,7 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "chart.bars.set_spec",
         title: "Change what one bar is — kind and size",
-        reach: "toolbar bar controls",
+        reach: "toolbar bar controls, typing a number over the chart",
         keys: &[(
             Source::Authored,
             "the bar-kind and size controls are toolbar widgets, not entries in its action enum",

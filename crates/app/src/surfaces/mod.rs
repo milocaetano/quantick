@@ -42,6 +42,7 @@
 //! surface already implements is what makes that a local change.
 
 pub(crate) mod agent_popup;
+pub(crate) mod bar_switch;
 pub(crate) mod drawing_chrome;
 pub(crate) mod footprint_settings;
 pub(crate) mod indicator_preview;
@@ -56,6 +57,7 @@ use std::time::Instant;
 use eframe::egui;
 
 pub(crate) use agent_popup::AgentPopupSurface;
+pub(crate) use bar_switch::{BarSwitchRequest, BarSwitchSurface};
 pub(crate) use drawing_chrome::{DrawingChromeSurface, DrawingEnv};
 pub(crate) use footprint_settings::FootprintSettingsSurface;
 pub(crate) use indicator_preview::IndicatorPreviewSurface;
@@ -220,6 +222,7 @@ pub(crate) struct SurfaceResponse {
     /// A sound was auditioned. The host owns the one speaker every armed
     /// instance shares, so it plays this and reports what happened.
     pub test_alert: Option<crate::audio::Cue>,
+    pub bar_switch: Option<BarSwitchRequest>,
 }
 
 /// Ask the host to arm a strategy instance.
@@ -312,6 +315,7 @@ impl SurfaceResponse {
         self.market = self.market.take().or(other.market);
         self.arm_strategy = self.arm_strategy.take().or(other.arm_strategy);
         self.test_alert = self.test_alert.take().or(other.test_alert);
+        self.bar_switch = self.bar_switch.take().or(other.bar_switch);
     }
 }
 
@@ -359,6 +363,8 @@ pub(crate) struct Surfaces {
     /// The assistant's popup — raised by `quantick_notify` over the control
     /// plane, dismissed by the trader.
     pub agent_popup: AgentPopupSurface,
+    /// The quick bar switch, opened by typing a number over the chart.
+    pub bar_switch: BarSwitchSurface,
     /// The banner over a pane whose indicator is previewing an unapplied
     /// draft.
     pub indicator_preview: IndicatorPreviewSurface,
@@ -422,6 +428,7 @@ impl Surfaces {
         if !self.hooks_applied {
             self.hooks_applied = true;
             self.agent_popup.apply_env_hook(env);
+            self.bar_switch.apply_env_hook(env);
             self.footprint_settings.apply_env_hook(env);
             self.indicator_preview.apply_env_hook(env);
             self.source_picker.apply_env_hook(env);
@@ -432,6 +439,7 @@ impl Surfaces {
         }
         let mut response = SurfaceResponse::default();
         response.merge(self.agent_popup.draw(ctx, env));
+        response.merge(self.bar_switch.draw(ctx, env));
         response.merge(self.footprint_settings.draw(ctx, env));
         response.merge(self.indicator_preview.draw(ctx, env));
         response.merge(self.source_picker.draw(ctx, env));
@@ -581,6 +589,7 @@ mod tests {
                 symbol: "SECOND".to_owned(),
             }),
             arm_strategy: None,
+            bar_switch: None,
             test_alert: Some(crate::audio::Cue::new(
                 crate::audio::AlertSound::Critical,
                 None,
