@@ -124,6 +124,8 @@ impl Tab {
         area: egui::Rect,
         chrome: &mut CanvasChrome<'_>,
     ) {
+        let monotonic_ms = (ui.input(|input| input.time).max(0.0) * 1_000.0) as u64;
+        self.update_tape_clock_at(monotonic_ms);
         let frame = self.canvas_frame(area);
         let rects = self.draw_context_column(ui, &frame);
 

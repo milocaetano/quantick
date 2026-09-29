@@ -2938,6 +2938,218 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Sets an explicit manual price range or resumes the pane's own automatic fit. Applies to the chart or independent tape without changing its time window or other panes.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "chart.price_axis.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "PriceAxisMode": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "description": "Resume the pane's own automatic price fit.",
+                "properties": {
+                  "kind": {
+                    "const": "auto",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "description": "Hold this range until the operator changes or resets it.",
+                "properties": {
+                  "high": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  "kind": {
+                    "const": "manual",
+                    "type": "string"
+                  },
+                  "low": {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "low",
+                  "high"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "$ref": "#/$defs/PriceAxisMode"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "mode"
+        ],
+        "title": "PriceAxisInput",
+        "type": "object"
+      },
+      "module": "chart",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "DecimalRange": {
+            "properties": {
+              "high": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "low": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              }
+            },
+            "required": [
+              "low",
+              "high"
+            ],
+            "type": "object"
+          },
+          "ViewportSnapshot": {
+            "properties": {
+              "chart_width_px": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "x-unit": "pixels"
+              },
+              "follows_live": {
+                "type": "boolean"
+              },
+              "geometry_available": {
+                "type": "boolean"
+              },
+              "pixels_per_bar": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "x-unit": "pixels_per_bar"
+              },
+              "price_auto_fit": {
+                "type": "boolean"
+              },
+              "price_axis_inverted": {
+                "type": "boolean"
+              },
+              "price_range": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/DecimalRange"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "right_edge_bar": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "visible_end_slot_exclusive": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "visible_start_slot": {
+                "$ref": "#/$defs/WireU64",
+                "description": "The slots the viewport asks the renderer to paint: generous by one bar\nat each edge, so a bar partly off screen is drawn rather than clipped.\nThis is the pane's own notion of \"visible\", not the exact pixel set."
+              }
+            },
+            "required": [
+              "geometry_available",
+              "visible_start_slot",
+              "visible_end_slot_exclusive",
+              "pixels_per_bar",
+              "right_edge_bar",
+              "follows_live",
+              "price_auto_fit",
+              "price_axis_inverted"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "viewport": {
+            "$ref": "#/$defs/ViewportSnapshot"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "viewport"
+        ],
+        "title": "PriceAxisResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs select one price axis; setting the same range or automatic mode is harmless, and the result reports the actual framing.",
+      "title": "Set a pane's price axis",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Reads a bounded append-only page of chart bars with an optional continuation cursor.",
       "destructive": false,
       "dry_run_supported": false,
@@ -9268,6 +9480,98 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Optionally excludes the first recorded 100 ms burst of each day from automatic tape-only dot scaling. Executions, prices and pies remain exact; the opening dot is capped at full radius. Uses the first available recorded burst if session-opening data is missing. Transient until the bubble preset is explicitly saved; defaults off and has no effect on ordinary chart/BTC rendering or a typed size reference.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.tape.opening_scale.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "ignore_opening_burst_in_scale": {
+            "description": "Exclude each day's first recorded 100 ms burst from the automatic\ntape size reference. Preserve its exact volume and cap its radius.",
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "ignore_opening_burst_in_scale"
+        ],
+        "title": "OpeningScaleInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "ignore_opening_burst_in_scale": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "ignore_opening_burst_in_scale",
+          "changed"
+        ],
+        "title": "OpeningScaleResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs are resolved before changing only a reversible display preference; the result and orderflow.bubbles report its actual value.",
+      "title": "Set opening burst size reference",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Names every control on screen with a frame-stable ID, its owner, whether it is selected, and the coded reason when it cannot be operated.",
       "destructive": false,
       "dry_run_supported": false,
@@ -13735,13 +14039,32 @@
                 "$ref": "#/$defs/CanonicalDecimal",
                 "description": "The exact quantity the trader's own display floor keeps off the canvas.\nFloored, not dropped: it is still in the totals."
               },
+              "ignore_opening_burst_in_scale": {
+                "default": false,
+                "description": "Exclude the first recorded 100 ms burst from automatic tape-only\nsizing; its factual volume is retained and its drawn radius capped.",
+                "type": "boolean"
+              },
               "lane_enabled": {
                 "description": "And over the live lane, which is a separate switch.",
                 "type": "boolean"
               },
               "overlap_merge": {
                 "default": false,
-                "description": "Bubbles are drawn as volume dots, Bookmap style: on the candles one\ndot per bar and price level, on the tape one per window of market time\nand price level, both sides in it as a pie, sized by the volume its\ncell holds. Windows and levels are anchored at exchange epoch 0 and\nprice zero and picked by each pane's own zoom, so a closed dot never\nchanges. The bubble setting `overlap_merge`, switched by\n`layers.visibility.set` as layer `bubble_overlap_merge`.",
+                "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nIn `tape_only` mode, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Explicit display changes\nstart a new grouping. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
+                "type": "boolean"
+              },
+              "recorded_opening_windows_ms": {
+                "default": [],
+                "description": "First recorded native window of each retained UTC day. For daytime\nWIN sessions, this identifies the first available burst, not a proven\nexchange auction. Empty until executions have been observed.",
+                "items": {
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              "tape_only": {
+                "default": false,
+                "description": "The pane shows the tape alone, Bookmap style: the tape takes the\nwhole canvas, no candle or candle mark is drawn, time runs across the\nfull width on the tape's own window and the price axis follows the\ntape's prints. The lane setting `tape_only`, switched by\n`layers.visibility.set` as layer `tape_only`.",
                 "type": "boolean"
               },
               "volume_dots": {

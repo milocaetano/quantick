@@ -131,6 +131,7 @@ pub struct LiveEdge {
 pub struct BarTimeline {
     slots: Vec<Slot>,
     lane: Option<Lane>,
+    full_lane_coverage: bool,
 }
 
 impl BarTimeline {
@@ -174,7 +175,19 @@ impl BarTimeline {
             end_ms: edge.now_ms,
             reference_ms: edge.reference_ms,
         });
-        Self { slots, lane }
+        Self {
+            slots,
+            lane,
+            full_lane_coverage: false,
+        }
+    }
+
+    /// Keep the complete rolling tape when its earliest prints precede the
+    /// supplied candle slice. Candle slots and their coverage stay unchanged.
+    #[must_use]
+    pub fn with_full_lane_coverage(mut self) -> Self {
+        self.full_lane_coverage = true;
+        self
     }
 
     /// Exchange timestamp where the live lane begins.
@@ -217,16 +230,19 @@ impl BarTimeline {
     /// comes before it is finished — its bars are closed and their prints are
     /// all in — so it can be reused until the layout itself changes.
     ///
-    /// The answer is snapped back to a bar's own open time, never left at the
-    /// lane's edge: a bar split across the two halves would be summarized
-    /// twice, once per half, and draw two partial marks where the chart owes
-    /// one whole one.
+    /// Where a bar covers the boundary, the answer snaps back to its open
+    /// time so that the two halves never summarize partial copies of that bar.
+    /// Full lane coverage can begin before the supplied bars; that earlier
+    /// tape begins at its own edge.
     #[must_use]
     pub fn live_boundary_ms(&self) -> Option<i64> {
         let newest = self.slots.last()?;
         let from = self
             .lane
             .map_or(newest.start_ms, |lane| lane.start_ms.min(newest.start_ms));
+        if self.full_lane_coverage && from < self.slots.first()?.start_ms {
+            return Some(from);
+        }
         let partition = self.slots.partition_point(|slot| slot.start_ms <= from);
         Some(self.slots[partition.saturating_sub(1)].start_ms)
     }
@@ -255,6 +271,11 @@ impl BarTimeline {
     #[must_use]
     pub fn timestamp_range(&self) -> Option<(i64, i64)> {
         let start = self.slots.first()?.start_ms;
+        let start = if self.full_lane_coverage {
+            self.lane.map_or(start, |lane| start.min(lane.start_ms))
+        } else {
+            start
+        };
         let end = self.slots.last()?.end_ms;
         Some((start, self.lane.map_or(end, |lane| end.max(lane.end_ms))))
     }

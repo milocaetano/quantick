@@ -237,6 +237,19 @@ fn axis_zoom_gesture(
 }
 
 impl ChartPane {
+    /// Every mode-entry path starts at its own fit, including source presets.
+    pub(crate) fn sync_price_axis_mode(&mut self) {
+        let tape_only = self
+            .orderflow
+            .as_ref()
+            .is_some_and(|view| view.cached_config().tape_only());
+        if self.frame.price_tape_only != tape_only {
+            self.price_view.reset();
+            self.frame.auto_range = None;
+            self.frame.price_tape_only = tape_only;
+        }
+    }
+
     /// The gestures on the frame around the candles: the lane divider, the
     /// time strip and its jump-to-live chip, the lane's own strip, and the
     /// price gutter with its menu.
@@ -250,11 +263,15 @@ impl ChartPane {
         chrome: &mut PaneChrome<'_>,
     ) {
         let auto = self.frame.auto_range;
+        let tape_only = self
+            .orderflow
+            .as_ref()
+            .is_some_and(|orderflow| orderflow.cached_config().tape_only());
         // The lane's divider, as a resize handle. Registered after the chart
         // body so it takes the drag that would otherwise pan the candles
         // behind it, and it is the only place the pointer changes shape: the
         // line stays a hairline, the cursor is what says it can be moved.
-        let divider = self.frame.lane_divider_x.map(|x| {
+        let divider = self.frame.lane_divider_x.filter(|_| !tape_only).map(|x| {
             ui.interact(
                 egui::Rect::from_min_max(
                     egui::pos2(x - LANE_HANDLE_HALF_WIDTH_PX, areas.chart.top()),

@@ -10,6 +10,9 @@ use rust_decimal::Decimal;
 use super::config::{BubbleSizeReference, HeatmapConfig};
 use super::scale::{SessionScale, SummaryScale};
 
+mod openings;
+pub(crate) use openings::RecordedOpenings;
+
 /// Resting side represented by a liquidity run.
 pub type RestingSide = BookSide;
 /// Aggressor side represented by an execution.
@@ -266,6 +269,7 @@ pub struct LiquidityHistory {
     /// own to be late. Without it a chart opened into a quiet stretch can say
     /// nothing at all about why its tape is empty.
     first_stream_ms: Option<i64>,
+    opening_bursts: RecordedOpenings,
     /// The newest timestamp among the prints retention or a cap has evicted:
     /// every print at or before it may be gone, none after it is.
     evicted_through_ms: Option<i64>,
@@ -303,6 +307,7 @@ impl LiquidityHistory {
             latest_book_ms: None,
             latest_print_ms: None,
             first_stream_ms: None,
+            opening_bursts: RecordedOpenings::default(),
             evicted_through_ms: None,
             archived: VecDeque::new(),
             active: BTreeMap::new(),
@@ -728,6 +733,7 @@ impl LiquidityHistory {
 
     /// Retain one trade for the aggression overlay without touching the book.
     pub fn record_aggression(&mut self, trade: &Trade) {
+        self.opening_bursts.observe(trade.timestamp_ms);
         self.scale
             .record(trade.timestamp_ms, trade.price, trade.quantity, trade.side);
         self.summary_scale
@@ -757,6 +763,12 @@ impl LiquidityHistory {
         self.prune(prune_at);
     }
 
+    /// First recorded 100 ms window per recent UTC date. Book events, viewport
+    /// changes, retention and capture regrouping never redefine a day's first print.
+    pub fn opening_bursts(&self) -> &[i64] {
+        self.opening_bursts.windows()
+    }
+
     /// Explicitly discard all history before changing the exact price bucket.
     ///
     /// There is intentionally no ordinary grouping setter: old RLE runs cannot
@@ -765,6 +777,23 @@ impl LiquidityHistory {
         &mut self,
         grouping: Decimal,
     ) -> Result<GroupingReset, HistoryError> {
+        self.change_price_grouping(grouping, false)
+    }
+
+    /// Rebuild capture buckets while retaining the tape's exact executions.
+    /// Automatic inference can arrive after the opening burst but before L2.
+    pub(crate) fn resize_capture_grouping(
+        &mut self,
+        grouping: Decimal,
+    ) -> Result<GroupingReset, HistoryError> {
+        self.change_price_grouping(grouping, true)
+    }
+
+    fn change_price_grouping(
+        &mut self,
+        grouping: Decimal,
+        preserve_tape: bool,
+    ) -> Result<GroupingReset, HistoryError> {
         if grouping <= Decimal::ZERO {
             return Err(HistoryError::InvalidPriceGrouping(grouping));
         }
@@ -772,7 +801,11 @@ impl LiquidityHistory {
             previous: self.config.price_grouping,
             current: grouping,
             dropped_runs: self.runs().count(),
-            dropped_aggressions: self.aggressions.len(),
+            dropped_aggressions: if preserve_tape {
+                0
+            } else {
+                self.aggressions.len()
+            },
         };
         self.config.price_grouping = grouping;
         self.scale = SessionScale::new(grouping, self.config.bubble_cluster_ms);
@@ -780,19 +813,28 @@ impl LiquidityHistory {
         self.book = OrderBook::new();
         self.generation = None;
         self.latest_book_ms = None;
-        // The prints go with the runs: a grouping change discards both, so the
-        // tape's clock has nothing left to point at either.
-        self.latest_print_ms = None;
-        self.first_stream_ms = None;
-        // Every print goes, so the horizon moves to the newest of them.
-        if let Some(&newest) = self.aggression_max_ms.back() {
-            self.evicted_through_ms =
-                Some(self.evicted_through_ms.map_or(newest, |h| h.max(newest)));
+        if preserve_tape {
+            // Raw prices, quantities, sides and provenance never depended on
+            // the capture grid. Only the bucketed scale accumulators did.
+            for trade in &self.aggressions {
+                self.scale
+                    .record(trade.timestamp_ms, trade.price, trade.quantity, trade.side);
+                self.summary_scale
+                    .record(trade.timestamp_ms, trade.price, trade.quantity);
+            }
+        } else {
+            self.latest_print_ms = None;
+            self.first_stream_ms = None;
+            // Every print goes, so the horizon moves to the newest of them.
+            if let Some(&newest) = self.aggression_max_ms.back() {
+                self.evicted_through_ms =
+                    Some(self.evicted_through_ms.map_or(newest, |h| h.max(newest)));
+            }
+            self.aggressions.clear();
+            self.aggression_max_ms.clear();
         }
         self.archived.clear();
         self.active.clear();
-        self.aggressions.clear();
-        self.aggression_max_ms.clear();
         self.coverage.clear();
         self.gaps.clear();
         self.pending_gap = None;

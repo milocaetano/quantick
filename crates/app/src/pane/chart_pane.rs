@@ -540,6 +540,7 @@ impl ChartPane {
         area: egui::Rect,
         chrome: &mut PaneChrome<'_>,
     ) {
+        self.sync_price_axis_mode();
         self.unhide_layer_for_armed_tool(chrome);
         // The magnet applies to every anchor gesture, placement and re-drag
         // alike: a handle that snaps only while you first draw it would make
@@ -647,11 +648,16 @@ impl ChartPane {
         // the jump-to-live chip's rule — and it is the *only* way back once the
         // tape is off: with no band there is no tape to right-click, so a
         // switch that lived only in that menu would be a one-way door.
+        let tape_only = self.layer_facts(None).tape_only;
         if self.orderflow.is_some() {
             let on = self.layer_visible(ChartLayer::TapeChart, chrome.style);
-            let clicked =
-                self.tape_switch
-                    .handle(ui, areas.chart, self.interaction_id("tape_switch"), on);
+            let clicked = self.tape_switch.handle(
+                ui,
+                areas.chart,
+                self.interaction_id("tape_switch"),
+                on,
+                tape_only,
+            );
             if self.tape_switch.hovered() {
                 // The chip is chrome on top of the canvas. A crosshair chasing
                 // the pointer underneath it would say the chart is being
@@ -712,6 +718,7 @@ impl ChartPane {
             projection: &self.drawing_projection(),
             drawings: &self.drawings,
             layer_visible: paper_layer_visible,
+            tape_switch: super::tape_switch_rect(areas.chart, tape_only),
         }
         .handle(ui, chrome, &areas, &bands, &pointer, tool_armed);
         let projection = drawing_projection::DrawingProjection {
@@ -778,7 +785,14 @@ impl ChartPane {
         // range onto its first anchor. The middle button pans below, in its
         // own block; answering it here as well doubled its speed.
         let grabbing_divider = chart.interact_pointer_pos().is_some_and(&on_divider);
+        // Tape only follows market time and its own recent price range.
+        // The wheel zooms the tape's window.
+        let tape_only = self
+            .orderflow
+            .as_ref()
+            .is_some_and(|orderflow| orderflow.cached_config().tape_only());
         if total > 0
+            && !tape_only
             && chart.dragged_by(egui::PointerButton::Primary)
             && !grabbing_divider
             && primary_free
@@ -833,7 +847,11 @@ impl ChartPane {
                 // below it (drag or scroll), which is the grammar every other
                 // axis here already follows: an axis zooms its axis, the canvas
                 // zooms the chart.
-                self.viewport.zoom(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
+                let factor = 2.0_f32.powf(scroll / SCROLL_ZOOM_PX);
+                match self.orderflow.as_mut().filter(|_| tape_only) {
+                    Some(orderflow) => orderflow.zoom_live_lane(factor),
+                    None => self.viewport.zoom(factor),
+                }
             }
         }
         // The middle button pans, always — including mid-placement, which is
@@ -842,7 +860,7 @@ impl ChartPane {
         // trader who drops one end of a trend line and finds the other end
         // off screen would otherwise have to cancel the object to go look for
         // it. Same axes, same feel, a button the tools never take.
-        if total > 0 {
+        if total > 0 && !tape_only {
             let (middle_down, delta) =
                 ui.input(|input| (input.pointer.middle_down(), input.pointer.delta()));
             if middle_down

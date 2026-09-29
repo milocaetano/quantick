@@ -167,6 +167,7 @@ const PACKAGES: &[Package] = &[
                     pass.rect,
                     pass.visible(ChartLayer::TapeChart, on),
                     pass.tape_hovered,
+                    pass.facts.tape_only,
                 );
             }
         })],

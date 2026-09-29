@@ -51,7 +51,10 @@ fn inferred_tape_grid_preserves_the_exact_opening_prefix_and_its_clock() {
     let counters = engine.history.counters();
     engine.size_from_tape(Decimal::from(5), Some(Decimal::from(187_225)));
     assert_eq!(engine.base_capture_grouping(), Decimal::from(5));
-    assert_eq!(engine.history.aggressions().cloned().collect::<Vec<_>>(), before);
+    assert_eq!(
+        engine.history.aggressions().cloned().collect::<Vec<_>>(),
+        before
+    );
     assert_eq!(engine.history.latest_print_ms(), Some(727));
     assert_eq!(engine.history.recorded_from_ms(), Some(717));
     assert_eq!(engine.history.evicted_through_ms(), None);
@@ -130,9 +133,27 @@ fn inferred_grid_does_not_tombstone_the_initial_native_tape_window() {
             &engine.config.live_lane,
             openings,
         );
-        assert_eq!(drawn.marks.iter().map(|mark| mark.quantity).sum::<Decimal>(), Decimal::from(78_296));
-        assert_eq!(drawn.marks.iter().map(|mark| mark.buy_quantity).sum::<Decimal>(), Decimal::from(78_196));
-        let mut ids: Vec<_> = drawn.marks.iter().flat_map(|mark| mark.agg_ids.iter().copied()).collect();
+        assert_eq!(
+            drawn
+                .marks
+                .iter()
+                .map(|mark| mark.quantity)
+                .sum::<Decimal>(),
+            Decimal::from(78_296)
+        );
+        assert_eq!(
+            drawn
+                .marks
+                .iter()
+                .map(|mark| mark.buy_quantity)
+                .sum::<Decimal>(),
+            Decimal::from(78_196)
+        );
+        let mut ids: Vec<_> = drawn
+            .marks
+            .iter()
+            .flat_map(|mark| mark.agg_ids.iter().copied())
+            .collect();
         ids.sort_unstable();
         assert_eq!(ids, [1, 2, 3]);
     }
@@ -148,7 +169,10 @@ fn inferred_grid_preserves_an_existing_retention_horizon_without_advancing_it() 
     assert_eq!(engine.history.evicted_through_ms(), Some(100));
     let counters = engine.history.counters();
     engine.size_from_tape(Decimal::from(5), Some(Decimal::from(187_225)));
-    assert_eq!(engine.history.aggressions().cloned().collect::<Vec<_>>(), before);
+    assert_eq!(
+        engine.history.aggressions().cloned().collect::<Vec<_>>(),
+        before
+    );
     assert_eq!(engine.history.evicted_through_ms(), Some(100));
     assert_eq!(engine.history.opening_bursts(), &[100]);
     assert_eq!(engine.history.counters(), counters);

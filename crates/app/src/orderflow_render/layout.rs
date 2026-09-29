@@ -8,7 +8,9 @@
 
 use eframe::egui;
 use quantick_engine::Side;
-use quantick_orderflow::{AggressionPrimitive, HeatmapProjection};
+use quantick_orderflow::{AggressionPrimitive, HeatmapProjection, PriceWindow};
+use rust_decimal::Decimal;
+use rust_decimal::prelude::FromPrimitive as _;
 
 use crate::viewport::Viewport;
 
@@ -19,11 +21,12 @@ use super::OrderflowRenderStyle;
 /// The lane is a pane pinned to the right edge of the chart, so the divider is
 /// a property of the chart rect alone — no viewport, no bars. That is exactly
 /// what makes panning and zooming the candles leave the tape where it is.
-/// `None` when the frame has no lane, or when the lane would take the whole
-/// chart and leave the candles nowhere to go.
+/// `None` when the frame has no lane, or when the lane would be wider than
+/// the chart. A lane exactly as wide as the chart is a tape-only pane: the
+/// divider sits on the chart's left edge and the candles get no room.
 #[must_use]
 pub(crate) fn lane_divider_x(chart_rect: egui::Rect, lane_width_px: f32) -> Option<f32> {
-    (lane_width_px.is_finite() && lane_width_px > 0.0 && lane_width_px < chart_rect.width())
+    (lane_width_px.is_finite() && lane_width_px > 0.0 && lane_width_px <= chart_rect.width())
         .then(|| chart_rect.right() - lane_width_px)
 }
 
@@ -289,6 +292,10 @@ pub(crate) struct RenderContext<'a> {
     pub(crate) projection: &'a HeatmapProjection,
     pub(crate) layout: ProjectedLayout<'a>,
     pub(crate) style: &'a OrderflowRenderStyle,
+    pub(super) tape_time: Option<(quantick_orderflow::LiveEdge, i64)>,
+    pub(super) tape_prices: Option<PriceWindow>,
+    pub(super) tape_memory:
+        Option<&'a std::cell::RefCell<quantick_orderflow::projection::TapeDotMemory>>,
 }
 
 impl<'a> RenderContext<'a> {
@@ -302,7 +309,38 @@ impl<'a> RenderContext<'a> {
             projection,
             layout,
             style,
+            tape_time: None,
+            tape_prices: None,
+            tape_memory: None,
         }
+    }
+
+    /// Reproject factual tape prices against the axis being painted now,
+    /// before visibility and overlap decisions use their screen positions.
+    pub(crate) fn with_tape_price_range(mut self, range: (f64, f64)) -> Self {
+        self.tape_prices = Decimal::from_f64(range.0)
+            .zip(Decimal::from_f64(range.1))
+            .and_then(|(low, high)| PriceWindow::new(low, high));
+        self
+    }
+
+    /// Reposition a cached tape against this frame's supplied market clock.
+    pub(crate) fn with_tape_time(
+        mut self,
+        edge: quantick_orderflow::LiveEdge,
+        dot_window_ms: i64,
+    ) -> Self {
+        self.tape_time = Some((edge, dot_window_ms));
+        self
+    }
+
+    /// Keep closed tape membership in the pane that owns its source lifetime.
+    pub(crate) fn with_tape_memory(
+        mut self,
+        memory: &'a std::cell::RefCell<quantick_orderflow::projection::TapeDotMemory>,
+    ) -> Self {
+        self.tape_memory = Some(memory);
+        self
     }
 
     /// The aggressions this canvas draws as bubbles, in projection order.

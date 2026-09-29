@@ -47,6 +47,7 @@ pub(super) struct FlowFrame<'a> {
     background: egui::Color32,
     lane_width: f32,
     inverted: bool,
+    price_range: (f64, f64),
     projection: Option<Arc<VisibleOrderflow>>,
 }
 
@@ -67,6 +68,7 @@ impl<'a> FlowFrame<'a> {
             background: frame.canvas_background,
             lane_width,
             inverted,
+            price_range: frame.scale.range(),
             projection: None,
         }
     }
@@ -154,6 +156,7 @@ impl<'a> FlowFrame<'a> {
             background: self.background,
             lane_width: self.lane_width,
             inverted: self.inverted,
+            price_range: self.price_range,
         }
     }
 
@@ -182,6 +185,7 @@ impl<'a> FlowFrame<'a> {
         &self,
         owner: Option<&OrderflowView>,
         legend_inset: f32,
+        header: Option<egui::Rect>,
     ) -> Option<egui::Rect> {
         let mut bounds = None;
         if let Some(owner) = owner
@@ -190,7 +194,7 @@ impl<'a> FlowFrame<'a> {
             self.renderers.legend(&mut LegendPass {
                 owner,
                 painter: self.painter,
-                rect: self.rect,
+                rect: header.unwrap_or(self.rect),
                 viewport: self.viewport,
                 total: self.total,
                 projection,

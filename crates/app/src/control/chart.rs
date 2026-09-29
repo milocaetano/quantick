@@ -4,10 +4,9 @@ pub(crate) use quantick_control_schema::chart::*;
 
 use crate::app::TabsPort;
 use quantick_control::{
-    cursor::{PageContext, PageCursor, PaginationConsistency},
+    cursor::PageCursor,
     error::ControlError,
     id::{InstanceId, ModuleId, SnapshotScopeId},
-    limits::CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS,
     registry::ModuleDescriptor,
     wire::WireU64,
 };
@@ -22,7 +21,7 @@ use crate::{
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
-    types::{DecimalRange, canonical_decimal, canonical_f32, wire_usize},
+    types::{DecimalRange, canonical_f32, wire_usize},
 };
 
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
@@ -118,10 +117,7 @@ fn pane_snapshot(
 pub(crate) fn viewport_snapshot(pane: &ChartPane) -> ViewportSnapshot {
     let total = pane.slots();
     let (start, end) = visible_slots(pane);
-    let price_range = pane
-        .frame
-        .auto_range
-        .map(|auto| pane.price_view.resolve(auto));
+    let price_range = pane.price_view.manual_range().or(pane.frame.auto_range);
     let chart_width_px = pane.frame.chart_area.map(|chart| {
         let right = pane.frame.lane_divider_x.unwrap_or_else(|| chart.right());
         (right - chart.left()).max(0.0)
@@ -173,17 +169,11 @@ fn coverage(tab: &Tab, pane: &ChartPane, config: &AppConfig) -> ChartCoverage {
     }
 }
 
-struct ProvenanceContext {
-    engine_price: String,
-    engine_volume: String,
-    engine_side: String,
-}
-
-fn provenance_context(tab: &Tab, config: &AppConfig) -> ProvenanceContext {
+fn provenance_context(tab: &Tab, config: &AppConfig) -> BarProvenanceContext {
     // One vocabulary with the feed scope: the same tab must never be
     // described two ways.
     let provenance = super::feed::market_data_provenance(tab, config);
-    ProvenanceContext {
+    BarProvenanceContext {
         engine_price: provenance.price,
         engine_volume: provenance.volume,
         engine_side: provenance.aggressor_side,
@@ -199,74 +189,24 @@ pub(crate) fn bar_snapshot(
     config: &AppConfig,
 ) -> BarSnapshot {
     let provenance = provenance_context(tab, config);
-    bar_snapshot_with(tab, pane, slot, bar, state, &provenance)
+    bar_snapshot_with(pane, slot, bar, state, &provenance)
 }
 
 fn bar_snapshot_with(
-    _tab: &Tab,
     pane: &ChartPane,
     slot: usize,
     bar: &Bar,
     state: BarStateDto,
-    context: &ProvenanceContext,
+    context: &BarProvenanceContext,
 ) -> BarSnapshot {
-    let seam = pane.seam_slot();
-    let venue_prefix = slot < seam;
-    let source = if venue_prefix {
-        "venue_ohlcv"
-    } else {
-        let engine_slot = slot - seam;
-        match pane.state.backfill_boundary() {
-            Some(boundary) if engine_slot < boundary => "trade_backfill",
-            Some(boundary) if engine_slot == boundary => "live_or_backfill_live_boundary",
-            _ => "live_trades",
-        }
-    };
-    BarSnapshot {
-        slot: wire_usize(slot),
+    BarSnapshot::from_bar(
+        slot,
+        bar,
         state,
-        open_time_unix_ms: bar.open_time,
-        close_time_unix_ms: bar.close_time,
-        open: canonical_decimal(bar.open),
-        high: canonical_decimal(bar.high),
-        low: canonical_decimal(bar.low),
-        close: canonical_decimal(bar.close),
-        volume: canonical_decimal(bar.volume()),
-        buy_volume: canonical_decimal(bar.buy_volume),
-        sell_volume: canonical_decimal(bar.sell_volume),
-        delta: canonical_decimal(bar.delta()),
-        trade_count: WireU64::new(bar.trade_count),
-        provenance: BarProvenance {
-            source: source.to_owned(),
-            completeness: match state {
-                BarStateDto::Closed => "complete",
-                BarStateDto::InProgress => "in_progress",
-            }
-            .to_owned(),
-            price: if venue_prefix {
-                "venue_candle".to_owned()
-            } else {
-                context.engine_price.clone()
-            },
-            volume: if venue_prefix {
-                "venue_reported".to_owned()
-            } else {
-                context.engine_volume.clone()
-            },
-            aggressor_side: if venue_prefix {
-                "unavailable_or_venue_dependent".to_owned()
-            } else {
-                context.engine_side.clone()
-            },
-            trade_count: if venue_prefix && bar.trade_count == 0 {
-                "unavailable".to_owned()
-            } else if venue_prefix {
-                "venue_reported".to_owned()
-            } else {
-                "derived_from_trades".to_owned()
-            },
-        },
-    }
+        pane.seam_slot(),
+        pane.state.backfill_boundary(),
+        context,
+    )
 }
 
 /// Read one append-only page of closed chart bars. A live append is allowed;
@@ -293,11 +233,7 @@ pub(crate) fn chart_window_prevalidated<P: TabsPort + ?Sized>(
     canonical_query: &serde_json::Value,
     cursor: Option<&PageCursor>,
 ) -> Result<ChartWindowPage, ControlError> {
-    if query.page_size == 0 || query.page_size > CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS {
-        return Err(ControlError::invalid_request(format!(
-            "chart page size must be in 1..={CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS}"
-        )));
-    }
+    query.validate_page_size()?;
     let tab = app
         .tab_reads()
         .tabs()
@@ -309,120 +245,29 @@ pub(crate) fn chart_window_prevalidated<P: TabsPort + ?Sized>(
         ));
     };
     let closed = pane.closed_slots();
-    let scope_id = SnapshotScopeId::new(WINDOW_SCOPE_ID).expect("static scope ID is valid");
     let consistency_revision = WireU64::new(pane.pagination_revision());
-
-    let (position, high_water, context) = if let Some(cursor) = cursor {
-        let high_water = cursor.high_water_position.ok_or_else(|| {
-            ControlError::invalid_request("append-only chart cursor has no high-water position")
-        })?;
-        let context = PageContext {
-            instance_id,
-            scope_id: &scope_id,
-            query: canonical_query,
-            consistency_mode: PaginationConsistency::AppendOnly,
-            consistency_revision,
-            high_water_position: Some(high_water),
-            resource_id: None,
-            resource_available: true,
-        };
-        cursor.validate_next(&context)?;
-        let high_water_usize = usize::try_from(high_water.get()).unwrap_or(usize::MAX);
-        if high_water_usize > closed {
-            return Err(ControlError::page_stale(
-                "the chart no longer contains the cursor's high-water prefix",
-            ));
-        }
-        (cursor.next_position, high_water, context)
-    } else {
-        let (start, requested_end) = match &query.range {
-            ChartWindowRange::Visible => {
-                if pane.frame.chart_area.is_none() {
-                    // A well-formed query the pane cannot answer yet: say so
-                    // with a retryable code and a next step, not as a malformed
-                    // request the client would have to guess about.
-                    let mut error = ControlError::new(
-                        quantick_control::id::ErrorCode::new(
-                            quantick_control::error::codes::CAPABILITY_UNAVAILABLE,
-                        )
-                        .expect("static error code is valid"),
-                        "visible chart range is unavailable before the pane has painted",
-                        true,
-                    );
-                    error.context.next_steps = vec![
-                        "Retry after the pane's first frame, or ask for an explicit slot range."
-                            .to_owned(),
-                    ];
-                    return Err(error);
-                }
-                let (start, end) = visible_slots(pane);
-                (start.min(closed), end.min(closed))
-            }
-            ChartWindowRange::Slots {
-                start_slot,
-                end_slot_exclusive,
-            } => (
-                usize::try_from(start_slot.get()).unwrap_or(usize::MAX),
-                usize::try_from(end_slot_exclusive.get()).unwrap_or(usize::MAX),
-            ),
-        };
-        if start > requested_end || start > closed {
-            return Err(ControlError::invalid_request(
-                "chart slot range is reversed or starts beyond loaded closed bars",
-            ));
-        }
-        let high_water = wire_usize(requested_end.min(closed));
-        let context = PageContext {
-            instance_id,
-            scope_id: &scope_id,
-            query: canonical_query,
-            consistency_mode: PaginationConsistency::AppendOnly,
-            consistency_revision,
-            high_water_position: Some(high_water),
-            resource_id: None,
-            resource_available: true,
-        };
-        (wire_usize(start), high_water, context)
-    };
-
-    let start = usize::try_from(position.get()).unwrap_or(usize::MAX);
-    let stop = usize::try_from(high_water.get()).unwrap_or(usize::MAX);
-    if start > stop {
-        return Err(ControlError::invalid_request(
-            "chart cursor position exceeds its high-water mark",
-        ));
-    }
-    let end = start.saturating_add(query.page_size).min(stop);
+    let selection = ChartWindowSelection::resolve(
+        query,
+        instance_id,
+        canonical_query,
+        cursor,
+        consistency_revision,
+        closed,
+        pane.frame.chart_area.map(|_| visible_slots(pane)),
+    )?;
     let provenance = provenance_context(tab, app.tab_reads().config());
-    let items = (start..end)
+    let items = selection
+        .slots
+        .clone()
         .filter_map(|slot| {
-            pane.closed_bar(slot).map(|bar| {
-                bar_snapshot_with(tab, pane, slot, bar, BarStateDto::Closed, &provenance)
-            })
+            pane.closed_bar(slot)
+                .map(|bar| bar_snapshot_with(pane, slot, bar, BarStateDto::Closed, &provenance))
         })
         .collect::<Vec<_>>();
-    if items.len() != end.saturating_sub(start) {
-        return Err(ControlError::page_stale(
-            "the chart's closed-bar prefix changed during pagination",
-        ));
-    }
-    let next_cursor = if end < stop {
-        let next_position = wire_usize(end);
-        Some(if let Some(cursor) = cursor {
-            let mut next = cursor.clone();
-            next.next_position = next_position;
-            next
-        } else {
-            PageCursor::first(&context, next_position)?
-        })
-    } else {
-        None
-    };
-    let bars = ChartBarPage::new(items, next_cursor)?;
+    let bars = selection.complete(items)?;
     let partial_slot = pane.closed_slots();
     let in_progress_bar = pane.state.partial().map(|bar| {
         bar_snapshot_with(
-            tab,
             pane,
             partial_slot,
             bar,
@@ -439,7 +284,7 @@ pub(crate) fn chart_window_prevalidated<P: TabsPort + ?Sized>(
         feed_id: tab.feed_id.clone(),
         symbol: tab.symbol.clone(),
         consistency_revision,
-        high_water_slot_exclusive: high_water,
+        high_water_slot_exclusive: selection.high_water,
         viewport: viewport_snapshot(pane),
         bars,
         in_progress_bar,

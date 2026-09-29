@@ -96,6 +96,10 @@ pub struct BubblePreset {
     /// written before the automatic scale existed loads it on.
     #[serde(default = "default_true")]
     pub volume_dot_auto_full: bool,
+    /// Exclude the first recorded native burst from the tape's automatic
+    /// reference while retaining all its executions. Older looks leave it off.
+    #[serde(default)]
+    pub volume_dot_ignore_opening_burst_in_scale: bool,
     /// Height of one aggression region in visual price rows; one is off. A
     /// preset written before regions existed simply omits the key and keeps
     /// per-row marks.
@@ -126,6 +130,9 @@ impl BubblePreset {
             overlap_merge: config.volume_dots.enabled,
             volume_dot_full_quantity: config.volume_dots.full_quantity,
             volume_dot_auto_full: config.volume_dots.auto_full,
+            volume_dot_ignore_opening_burst_in_scale: config
+                .volume_dots
+                .ignore_opening_burst_in_scale,
             region_rows: config.bubble_region_rows,
             region_ms: config.bubble_region_ms,
             bubbles: config.bubbles.clone(),
@@ -158,6 +165,7 @@ impl BubblePreset {
                 self.volume_dot_full_quantity,
             ),
             auto_full: self.volume_dot_auto_full,
+            ignore_opening_burst_in_scale: self.volume_dot_ignore_opening_burst_in_scale,
         };
         config.bubble_region_rows = self.region_rows;
         config.bubble_region_ms = self.region_ms;
@@ -578,6 +586,7 @@ mod tests {
                 enabled: true,
                 full_quantity: 2_500.0,
                 auto_full: false,
+                ignore_opening_burst_in_scale: false,
             },
             bubbles: BubbleStyle {
                 side_offset: 9.0,
@@ -672,17 +681,23 @@ mod tests {
 
     #[test]
     fn opening_burst_scale_is_opt_in_and_roundtrips_with_the_chosen_look() {
-        let old = parse(r#"active = "old"
+        let old = parse(
+            r#"active = "old"
 
 [[presets]]
 name = "old"
-"#)
-            .expect("an older file remains readable");
+"#,
+        )
+        .expect("an older file remains readable");
         let mut config = HeatmapConfig::default();
         old.get("old").unwrap().apply_to(&mut config);
         assert!(!config.volume_dots.ignore_opening_burst_in_scale);
         for preset in &embedded().presets {
-            assert!(!preset.volume_dot_ignore_opening_burst_in_scale, "{} remains unchanged until explicitly chosen", preset.name);
+            assert!(
+                !preset.volume_dot_ignore_opening_burst_in_scale,
+                "{} remains unchanged until explicitly chosen",
+                preset.name
+            );
         }
         config.volume_dots.ignore_opening_burst_in_scale = true;
         let mut file = BubblePresetFile::default();
@@ -694,7 +709,10 @@ name = "old"
         restored.get("opening scale").unwrap().apply_to(&mut target);
         assert!(target.volume_dots.ignore_opening_burst_in_scale);
         old.get("old").unwrap().apply_to(&mut target);
-        assert!(!target.volume_dots.ignore_opening_burst_in_scale, "an older/default look restores its explicit default");
+        assert!(
+            !target.volume_dots.ignore_opening_burst_in_scale,
+            "an older/default look restores its explicit default"
+        );
     }
 
     /// A preset is a look. Now that the tape's visibility lives in the same
@@ -817,6 +835,7 @@ name = "old"
             overlap_merge: false,
             volume_dot_full_quantity: quantick_orderflow::DEFAULT_VOLUME_DOT_FULL_QUANTITY,
             volume_dot_auto_full: true,
+            volume_dot_ignore_opening_burst_in_scale: false,
             region_rows: 1,
             region_ms: DEFAULT_BUBBLE_REGION_MS,
             bubbles: BubbleStyle {

@@ -3,8 +3,11 @@
 use rust_decimal::Decimal;
 
 mod bubbles;
+pub mod crown;
+pub mod dressing;
 pub mod labels;
 mod lane;
+pub mod theme;
 
 pub use bubbles::{
     BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, DEFAULT_BUBBLE_MAX_RADIUS,
@@ -20,7 +23,7 @@ pub use lane::{
     DEFAULT_LIVE_LANE_ZOOM, DOT_TAPE_WINDOW_MS, LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle,
     MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM,
     MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WIDTH_PX,
-    MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms, lane_lag_label,
+    MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms, lane_lag_label, lane_time_ticks,
     lane_window_label, same_lane_window,
 };
 
@@ -53,6 +56,10 @@ pub struct VolumeDotStyle {
     /// instead of `full_quantity`, so the biggest is always full size and the
     /// rest differ. The preset key `volume_dot_auto_full`.
     pub auto_full: bool,
+    /// Ignore the first recorded 100 ms burst per UTC date in the optional
+    /// tape's automatic size reference. Executions remain visible and factual;
+    /// an oversized opening-containing dot is capped at the full radius.
+    pub ignore_opening_burst_in_scale: bool,
 }
 
 impl Default for VolumeDotStyle {
@@ -61,6 +68,7 @@ impl Default for VolumeDotStyle {
             enabled: false,
             full_quantity: DEFAULT_VOLUME_DOT_FULL_QUANTITY,
             auto_full: true,
+            ignore_opening_burst_in_scale: false,
         }
     }
 }
@@ -530,6 +538,13 @@ impl HeatmapConfig {
         self.lane_enabled() && self.lane_aggressions_visible()
     }
 
+    /// Whether the pane shows the tape alone ([`LiveLaneStyle::tape_only`]):
+    /// asked for, and there is a tape to show.
+    #[must_use]
+    pub fn tape_only(&self) -> bool {
+        self.lane_enabled() && self.live_lane.tape_only
+    }
+
     /// Whether any pane still draws the depth map.
     ///
     /// What decides that the projection has to keep building depth primitives:
@@ -768,6 +783,7 @@ mod tests {
                 enabled: true,
                 show_depth: true,
                 show_aggressions: true,
+                tape_only: false,
             },
             liquidity_correlation_ms: i64::MIN,
             max_history_runs: 0,

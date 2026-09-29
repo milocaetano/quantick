@@ -142,9 +142,9 @@ impl ChartLayer {
     pub const FlowLegend: Self = Self(&LayerDescriptor {
         id: "flow_legend",
         label: "chart legend",
-        hint: "the key at the top-left naming every flow layer that is on. Hiding it changes \
-                 nothing about what is drawn — the layers keep drawing, and the key comes back \
-                 with the same entries. The same switch as the L2 panel's 'show chart legend'",
+        hint: "the key naming visible flow layers, or the compact buy/sell key above a tape-only \
+                 plot. Hiding the key leaves the layers drawing. The same switch as the L2 \
+                 panel's 'show chart legend'",
         source: LayerSource::Orderflow(OrderflowSwitch::Legend),
         scope: LayerScope::FlowPane,
         persistence: Persistence::Layers,
@@ -206,6 +206,24 @@ impl ChartLayer {
         requirement: Requirement::Volume,
         on_tape: false,
         needs_tape: false,
+        needs_depth: false,
+        capture_gates_visibility: false,
+        default_on: false,
+        projection_demand: false,
+    });
+    pub const TapeOnly: Self = Self(&LayerDescriptor {
+        id: "tape_only",
+        label: "tape only (hide candles)",
+        hint: "the tape takes the whole canvas, Bookmap style: no candles and no candle marks, \
+               time runs across the full width on the tape's own window, and the price axis \
+               follows the tape's prints. Scrolling zooms the tape's window. \
+               Saved with the order-flow preset, not with the other layers",
+        source: LayerSource::Orderflow(OrderflowSwitch::TapeOnly),
+        scope: LayerScope::FlowPane,
+        persistence: Persistence::OrderflowPreset,
+        requirement: Requirement::None,
+        on_tape: true,
+        needs_tape: true,
         needs_depth: false,
         capture_gates_visibility: false,
         default_on: false,
@@ -367,7 +385,7 @@ impl ChartLayer {
         projection_demand: false,
     });
 }
-pub const ALL: [ChartLayer; 22] = [
+pub const ALL: [ChartLayer; 23] = [
     ChartLayer::TapeChart,
     ChartLayer::TapeHeatmap,
     ChartLayer::TapeBubbles,
@@ -380,6 +398,7 @@ pub const ALL: [ChartLayer; 22] = [
     ChartLayer::BookStatus,
     ChartLayer::DepthGaps,
     ChartLayer::BubbleOverlapMerge,
+    ChartLayer::TapeOnly,
     ChartLayer::Grid,
     ChartLayer::LastPrice,
     ChartLayer::BackfillDivider,

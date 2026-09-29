@@ -4,14 +4,23 @@
 //!
 //! [`draw_bubble`] is the one door both the live chart and the settings
 //! preview draw through, which is what keeps the preview honest. Every
-//! constant that shapes a bubble lives beside the code that reads it.
+//! crown calculation is shared with the headless order-flow configuration.
 
 use eframe::egui;
 use quantick_engine::Side;
+use quantick_orderflow::config::crown::{
+    CROWN_BACKING_ALPHA, CROWN_BACKING_PX, CROWN_MIN_ARC_PX, CROWN_PIP_RADIUS_PX, CROWN_WHITE_MIX,
+    crown_alpha, crown_center_angle, crown_geometry,
+};
+pub(super) use quantick_orderflow::config::dressing::{
+    HOLLOW_FILL_ALPHA, RIM_ALPHA, SEPARATOR_RING_ALPHA, SPHERE_CORE_RADIUS, SPHERE_LIGHT_OFFSET,
+    front_half_length, halo_alpha, hollow_ring_width, impact_ring_alpha, separator_ring_width,
+    sphere_segments, trail_half_height,
+};
 pub(super) use quantick_orderflow::config::labels::format_quantity;
 use quantick_orderflow::{
-    AggressionPrimitive, BubbleRenderMode, BubbleStyle, ConsumptionMark, GOLDEN_ANGLE, INV_PHI,
-    INV_PHI_2, INV_PHI_3, bubble_halo_padding, bubble_impact_ring_padding,
+    AggressionPrimitive, BubbleRenderMode, BubbleStyle, ConsumptionMark, INV_PHI,
+    bubble_halo_padding, bubble_impact_ring_padding,
 };
 pub(super) use quantick_orderflow::{bubble_radius, side_offset_y};
 use rust_decimal::Decimal;
@@ -81,210 +90,6 @@ impl BubbleColors {
 
 fn opaque_rgb(rgb: [u8; 3]) -> egui::Color32 {
     egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2])
-}
-
-/// Interior alpha of a hollow bubble, as a fraction of the configured fill
-/// alpha: enough tint to keep the disc's area readable, light enough that the
-/// ring is what the eye catches.
-const HOLLOW_FILL_ALPHA: f32 = 0.22;
-
-/// Ring thickness of a hollow bubble as a fraction of its radius, and the
-/// pixel range it is held to — thin enough to stay a ring on a full-size
-/// sweep, thick enough to survive at dot size.
-const HOLLOW_RING_SCALE: f32 = 0.42;
-
-/// See [`HOLLOW_RING_SCALE`].
-const HOLLOW_MIN_RING_PX: f32 = 1.2;
-
-/// See [`HOLLOW_RING_SCALE`].
-const HOLLOW_MAX_RING_PX: f32 = 3.0;
-
-/// Ring thickness of a hollow bubble of this radius.
-fn hollow_ring_width(radius: f32) -> f32 {
-    (radius * HOLLOW_RING_SCALE).clamp(HOLLOW_MIN_RING_PX, HOLLOW_MAX_RING_PX)
-}
-
-/// Width of the dark separator hair drawn just outside a bubble's rim, as a
-/// fraction of the radius, and the pixel range it is held to.
-///
-/// The heat ramp passes through greens the buy side almost matches, so without
-/// a dark hair between them "aggression" and "liquidity" melt into one layer
-/// wherever a bubble sits on warm heat — the hair is what keeps them two.
-///
-/// Proportional rather than fixed: at a flat 1.2px the hair was over half the
-/// radius of a routine 2px print and under a tenth of a full sweep's, so small
-/// prints wore a heavy black collar and large ones a thread. One ratio makes
-/// every bubble the same drawing at a different size.
-const SEPARATOR_RING_SCALE: f32 = 0.14;
-
-/// See [`SEPARATOR_RING_SCALE`].
-const SEPARATOR_MIN_RING_PX: f32 = 0.5;
-
-/// See [`SEPARATOR_RING_SCALE`].
-const SEPARATOR_MAX_RING_PX: f32 = 1.5;
-
-/// Alpha of that hair: translucent black, so it darkens whatever heat is
-/// behind it instead of assuming one canvas colour.
-const SEPARATOR_RING_ALPHA: u8 = 170;
-
-/// Separator-hair width for a bubble of this radius.
-fn separator_ring_width(radius: f32) -> f32 {
-    (radius * SEPARATOR_RING_SCALE).clamp(SEPARATOR_MIN_RING_PX, SEPARATOR_MAX_RING_PX)
-}
-
-/// Pixels added beyond `front_length_scale × radius`, so the consumption mark
-/// on even the smallest bubble is long enough to read as a mark.
-pub(super) const FRONT_END_PADDING_PX: f32 = 6.0;
-
-/// How far the halo opens up at full print size, as a fraction of
-/// `halo_strength`: a sweep reads heavier than a routine print of the same
-/// colour, without needing a second colour for it.
-const HALO_SIZE_BOOST: f32 = 0.5;
-
-/// Rim alpha relative to the fill. A hair below opaque keeps the rim reading
-/// as the bubble's edge rather than as a separate ring on a dark canvas.
-const RIM_ALPHA: f32 = 0.96;
-
-/// Impact-ring alpha every consuming print gets, before the matched share.
-pub(super) const IMPACT_RING_BASE_ALPHA: f32 = 0.75;
-
-/// Share of the impact ring's alpha that tracks how much of the print actually
-/// matched resting liquidity, so a full sweep rings brighter than a nibble.
-const IMPACT_RING_MATCH_ALPHA: f32 = 0.25;
-
-/// Matched-fraction floor for the consumption marks: a barely matched print
-/// still ate something, so it still leaves a visible mark.
-const MIN_MATCH_STRENGTH: f32 = 0.25;
-
-/// Fraction of the radius the sphere's lit core is offset toward the upper
-/// left. One fixed light direction keeps every bubble shaded identically, so
-/// the eye reads the gradient as volume instead of as data.
-pub(super) const SPHERE_LIGHT_OFFSET: f32 = 0.35;
-
-/// Radius of the sphere's full-brightness core ring, as a fraction of the
-/// bubble radius. Vertex colours interpolate highlight → side colour inside
-/// it and side colour → darkened rim outside it; that gradient is the whole
-/// shading model.
-const SPHERE_CORE_RADIUS: f32 = 0.62;
-
-/// Ring segments per pixel of radius on a sphere-shaded bubble, bounded by
-/// [`SPHERE_MIN_SEGMENTS`] and [`SPHERE_MAX_SEGMENTS`]: a small dressed
-/// bubble stays cheap, a full-size sweep stays round.
-const SPHERE_SEGMENTS_PER_RADIUS_PX: f32 = 2.0;
-
-/// See [`SPHERE_SEGMENTS_PER_RADIUS_PX`].
-const SPHERE_MIN_SEGMENTS: usize = 12;
-
-/// See [`SPHERE_SEGMENTS_PER_RADIUS_PX`].
-const SPHERE_MAX_SEGMENTS: usize = 32;
-
-/// Tessellation of a sphere-shaded bubble of this radius.
-pub(super) fn sphere_segments(radius: f32) -> usize {
-    ((radius * SPHERE_SEGMENTS_PER_RADIUS_PX) as usize)
-        .clamp(SPHERE_MIN_SEGMENTS, SPHERE_MAX_SEGMENTS)
-}
-
-/// Gap between the rim and the consumption crown, as a fraction of the radius,
-/// and the pixel range it is held to. `1/φ³` — the innermost step of the
-/// nested `1/φ³` gap + `1/φ²` stroke that lands the whole crown apparatus at
-/// about `r/φ²` beyond the rim on a full-size print.
-const CROWN_GAP_SCALE: f32 = INV_PHI_3;
-
-/// See [`CROWN_GAP_SCALE`].
-const CROWN_MIN_GAP_PX: f32 = 1.4;
-
-/// See [`CROWN_GAP_SCALE`].
-const CROWN_MAX_GAP_PX: f32 = 3.0;
-
-/// Stroke width of the crown as a fraction of the radius, and the pixel range
-/// it is held to. `1/φ²`.
-const CROWN_WIDTH_SCALE: f32 = INV_PHI_2;
-
-/// See [`CROWN_WIDTH_SCALE`].
-const CROWN_MIN_WIDTH_PX: f32 = 1.0;
-
-/// See [`CROWN_WIDTH_SCALE`].
-const CROWN_MAX_WIDTH_PX: f32 = 2.4;
-
-/// Arc length, in pixels, below which an arc has stopped reading as an arc.
-/// Under it the crown collapses to a pip at the pole — a print small enough to
-/// be a speck still gets to say it ate something, for about four pixels of ink.
-const CROWN_MIN_ARC_PX: f32 = 4.0;
-
-/// Radius of that pip, in pixels.
-const CROWN_PIP_RADIUS_PX: f32 = 1.2;
-
-/// How far the crown's colour is pushed from its side colour toward white.
-///
-/// `1/φ`. Consumption is the same event, hotter — deriving the crown from the
-/// side keeps a third hue off the canvas, and means N stacked crowns saturate
-/// toward their own green or red instead of toward glare or toward mud.
-const CROWN_WHITE_MIX: f32 = INV_PHI;
-
-/// Crown alpha before the matched share.
-const CROWN_BASE_ALPHA: f32 = 0.62;
-
-/// Share of the crown's alpha that tracks the matched fraction. Secondary to
-/// arc length, which is the channel actually carrying the reading.
-const CROWN_MATCH_ALPHA: f32 = 0.38;
-
-/// Extra width of the dark stroke laid under the crown, so the arc survives
-/// over a bright heat band without assuming one canvas colour. A hairline each
-/// side, never a mass.
-const CROWN_BACKING_PX: f32 = 1.0;
-
-/// See [`CROWN_BACKING_PX`].
-const CROWN_BACKING_ALPHA: u8 = 110;
-
-/// The pole a crown is centred on.
-///
-/// Buy aggression lifts the ask, so its crown sits above the print; sell
-/// aggression hits the bid and wears it below. Screen y grows downward. This
-/// is the same fact [`side_offset_y`] encodes, deliberately restated: on a
-/// dense tape the two reinforce each other rather than compete.
-const fn crown_center_angle(side: Side) -> f32 {
-    match side {
-        Side::Buy => -std::f32::consts::FRAC_PI_2,
-        Side::Sell => std::f32::consts::FRAC_PI_2,
-    }
-}
-
-/// The crown's geometry for a bubble of this radius and matched share.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct CrownGeometry {
-    /// Radius of the arc itself — outside the rim, never on it.
-    pub(super) arc_radius: f32,
-    /// Stroke width.
-    pub(super) width: f32,
-    /// Angular length, in radians. Never exceeds the [`GOLDEN_ANGLE`], so the
-    /// crown cannot close into a second circle around the bubble.
-    pub(super) sweep: f32,
-}
-
-impl CrownGeometry {
-    /// Length of the arc in pixels — what decides whether it can be drawn as
-    /// an arc at all.
-    pub(super) fn arc_length(self) -> f32 {
-        self.arc_radius * self.sweep
-    }
-}
-
-/// Crown geometry for a print of this radius that matched this fraction of
-/// resting liquidity.
-pub(super) fn crown_geometry(radius: f32, matched: f32) -> CrownGeometry {
-    let gap = (radius * CROWN_GAP_SCALE).clamp(CROWN_MIN_GAP_PX, CROWN_MAX_GAP_PX);
-    CrownGeometry {
-        arc_radius: radius + gap,
-        width: (radius * CROWN_WIDTH_SCALE).clamp(CROWN_MIN_WIDTH_PX, CROWN_MAX_WIDTH_PX),
-        // A `1/φ²` floor plus a `1/φ` span: a nibble still shows a mark, a
-        // full sweep reaches the golden angle and no further.
-        sweep: GOLDEN_ANGLE * (INV_PHI_2 + INV_PHI * finite_unit(matched)),
-    }
-}
-
-/// The crown's colour for a print that matched this fraction.
-fn crown_alpha(matched: f32) -> f32 {
-    CROWN_BASE_ALPHA + CROWN_MATCH_ALPHA * finite_unit(matched)
 }
 
 /// Draw the consumption crown: an open arc outside the rim, on the side of the
@@ -366,43 +171,6 @@ const LABEL_SHADOW_OFFSET_PX: egui::Vec2 = egui::vec2(1.0, 1.0);
 
 /// See [`LABEL_SHADOW_OFFSET_PX`].
 const LABEL_SHADOW_ALPHA: u8 = 190;
-
-/// Half-length, in pixels, of the vertical consumption front on a bubble of
-/// this radius.
-pub(super) fn front_half_length(radius: f32, bubbles: &BubbleStyle) -> f32 {
-    radius * bubbles.front_length_scale + FRONT_END_PADDING_PX
-}
-
-/// Halo alpha for a print of this normalized size.
-pub(super) fn halo_alpha(size: f32, bubbles: &BubbleStyle) -> f32 {
-    (bubbles.halo_strength * (1.0 + HALO_SIZE_BOOST * finite_unit(size))).min(1.0)
-}
-
-/// Impact-ring alpha for a print that matched this fraction of resting
-/// liquidity.
-pub(super) fn impact_ring_alpha(matched_fraction: f32) -> f32 {
-    IMPACT_RING_BASE_ALPHA
-        + finite_unit(matched_fraction).max(MIN_MATCH_STRENGTH) * IMPACT_RING_MATCH_ALPHA
-}
-
-/// Half-height of the trail behind a bubble of this radius, and the pixel
-/// range it is held to.
-///
-/// `1/φ` of the radius, so the trail stays strictly *smaller* than the bubble
-/// it belongs to. It used to borrow the consumption front's half-length, which
-/// carries a fixed 6px addition — on a routine 2px print that made the trail a
-/// 17px-tall bar behind a 4px disc, and a chart whose signal is horizontal
-/// bands does not need decorative horizontal bands eight times the ink of the
-/// mark they decorate.
-fn trail_half_height(radius: f32) -> f32 {
-    (radius * INV_PHI).clamp(TRAIL_MIN_HALF_HEIGHT_PX, TRAIL_MAX_HALF_HEIGHT_PX)
-}
-
-/// See [`trail_half_height`].
-const TRAIL_MIN_HALF_HEIGHT_PX: f32 = 1.5;
-
-/// See [`trail_half_height`].
-const TRAIL_MAX_HALF_HEIGHT_PX: f32 = 9.0;
 
 /// The consumption trail leaking to the right of a bubble, stopped at
 /// `right_edge` so it never paints past the chart.
@@ -796,9 +564,43 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     if !context.style.aggression_layer && !context.style.lane_aggression_layer {
         return;
     }
-    let style = context.style.sanitized();
+    let mut style = context.style.sanitized();
+    let dots = context.projection.volume_dots;
+    let factual_tape = dots && style.live_lane.tape_only;
+    let tape_rect = context.layout.lane_rect();
+    let tape_geometry = quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
+        tape_rect.width(),
+        tape_rect.height(),
+        &style.bubbles,
+    );
+    if factual_tape {
+        style.bubbles.max_radius = tape_geometry.max_radius;
+    }
+    let merged = factual_tape
+        .then(|| {
+            let mut memory = context.tape_memory.map(std::cell::RefCell::borrow_mut);
+            quantick_orderflow::projection::project_tape_frame(
+                context.bubbles().cloned().collect(),
+                memory.as_deref_mut(),
+                &style,
+                quantick_orderflow::projection::TapeDotGeometry {
+                    left_x: 1.0 - 1.0 / context.layout.slot_count.max(1) as f64,
+                    right_x: 1.0,
+                    width_px: tape_geometry.span_px,
+                    height_px: context.layout.chart_rect.height(),
+                },
+                context.tape_time,
+                context.tape_prices,
+                context.projection.tape_facts.as_deref(),
+            )
+        })
+        .flatten();
+    if let Some(frame) = &merged {
+        // Clearance changes disc area uniformly, never the configured time inset.
+        style.bubbles.max_radius = frame.max_radius;
+    }
     let bubbles = &style.bubbles;
-    let palette = Palette::for_theme(style.theme);
+    let palette = super::palette_for_theme(style.theme);
     let colors = BubbleColors::resolve(&palette, bubbles);
     let clip = painter.with_clip_rect(context.layout.chart_rect);
 
@@ -810,25 +612,37 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     // The lean is toward the dominant side's book half — a price direction,
     // so it mirrors with the chart like side_offset_y does.
     let lean_sign = if context.layout.inverted { 1.0 } else { -1.0 };
-    let dots = context.projection.volume_dots;
     let side_offset = bubbles.side_offset_for(dots);
     // The live lane has room the compressed history does not, which is the
     // whole reason it gets a radius range of its own (volume dots excepted).
     let (lane_min, lane_max) = style.live_lane.pane_radii(bubbles, true, dots);
     let (candle_min, candle_max) = style.live_lane.pane_radii(bubbles, false, dots);
-    // Volume dots: each pane sized against its biggest dot on screen when
-    // automatic, each dot inside its own cell ([`DotSizing`]).
+    let lane_start = 1.0 - 1.0 / context.layout.slot_count.max(1) as f64;
     let center_at = |trade: &AggressionPrimitive| {
-        egui::pos2(
-            context.layout.x(trade.x),
-            context.layout.y_unclamped(trade.y),
-        )
+        let x = if factual_tape && trade.live {
+            let fraction = (trade.x - lane_start) / (1.0 - lane_start);
+            tape_rect.left() + tape_geometry.x(fraction)
+        } else {
+            context.layout.x(trade.x)
+        };
+        egui::pos2(x, context.layout.y_unclamped(trade.y))
     };
     let on_screen =
         |trade: &&AggressionPrimitive| context.layout.pane(trade.x).contains(center_at(trade));
+    let marks = || {
+        merged.iter().flat_map(|frame| &frame.marks).chain(
+            context
+                .bubbles()
+                .take(if merged.is_none() { usize::MAX } else { 0 }),
+        )
+    };
     let dot_sizing = style.dot_sizing.filter(|_| dots).map(|sizing| {
-        let shown: Vec<_> = context.bubbles().filter(on_screen).collect();
-        (sizing, sizing.pane_fulls(&shown))
+        let shown: Vec<_> = marks().filter(on_screen).collect();
+        let mut fulls = sizing.pane_fulls(&shown);
+        if let Some(frame) = &merged {
+            fulls.0 = frame.full_quantity;
+        }
+        (sizing, fulls)
     });
     let drawn = |trade: &AggressionPrimitive| match dot_sizing {
         Some((sizing, fulls)) => sizing.draw(bubbles, &style.live_lane, trade, fulls),
@@ -839,9 +653,9 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         ),
     };
     let radius_of = |trade: &AggressionPrimitive| drawn(trade).1;
-    // A volume dot still forming sits at its window's centre, which can be
-    // under a radius from its pane's right edge: it slides in to be drawn
-    // whole rather than cut there.
+    // Legacy dots keep their edge clamp. Factual tape dots use the common
+    // inset above, so the forming dot remains whole at NOW and closed dots
+    // continue to move linearly with their execution times.
     let center_of = |trade: &AggressionPrimitive| {
         let mut center = center_at(trade);
         let lean = (finite_unit(trade.buy_share) - 0.5) * 2.0;
@@ -849,7 +663,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         if !pane.contains(center) {
             return None;
         }
-        if dots {
+        if dots && !factual_tape {
             center.x = inside_right_edge(center.x, radius_of(trade), pane.right());
         }
         Some(center + egui::vec2(0.0, lean_sign * lean * side_offset))
@@ -873,10 +687,17 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         }
     };
 
+    if factual_tape {
+        super::tape_path::draw(
+            &lane_clip,
+            marks().filter(|trade| trade.live).map(center_at),
+        );
+    }
+
     // Consumption trail behind the bubbles, so a bubble's own fill never hides it.
     if bubbles.trail_length > 0.0 {
         let mut trail_mesh = egui::Mesh::default();
-        for trade in context.bubbles() {
+        for trade in marks() {
             if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
                 continue;
             }
@@ -897,7 +718,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         }
     }
 
-    for trade in context.bubbles() {
+    for trade in marks() {
         let Some(center) = center_of(trade) else {
             continue;
         };

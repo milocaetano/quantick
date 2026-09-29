@@ -27,30 +27,40 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
     },
     UiBehaviour {
         id: "chart.pan",
-        title: "Drag the chart back through the tape",
-        reach: "primary drag on the canvas; the price and time axes",
+        title: "Drag the chart horizontally through history",
+        reach: "horizontal primary drag on the canvas",
         keys: &[(
             Source::Authored,
             "a pointer drag the canvas handles directly; no registry names it",
         )],
         mapping: excluded!(
             PendingCapability,
-            "`chart.window.read` reports the visible window; nothing sets it, so an operator \
-             reads where the trader is looking and cannot look elsewhere. Tracked in issue 401"
+            "`chart.window.read` reports the visible time window; no capability pans that \
+             window. Price framing has its own capability below. Tracked in issue 401"
         ),
     },
     UiBehaviour {
+        id: "chart.price_axis.set",
+        title: "Set a pane's price range or resume automatic fitting",
+        reach: "drag or wheel on the price axis; double-click it to reset",
+        keys: &[(
+            Source::Authored,
+            "price-axis gestures update the pane's PriceView directly",
+        )],
+        mapping: capability!("chart.price_axis.set"),
+    },
+    UiBehaviour {
         id: "chart.zoom",
-        title: "Zoom the chart in or out",
-        reach: "wheel on the canvas; drag on either axis",
+        title: "Zoom the chart's time window in or out",
+        reach: "wheel on the canvas; drag on the time axis",
         keys: &[(
             Source::Authored,
             "a wheel and an axis drag the canvas handles directly; no registry names it",
         )],
         mapping: excluded!(
             PendingCapability,
-            "the read half exists as `chart.window.read` and the write half does not. Tracked \
-             in issue 401"
+            "`chart.window.read` reports the time window; no capability changes its zoom. \
+             Price-axis zoom has its own capability above. Tracked in issue 401"
         ),
     },
     UiBehaviour {

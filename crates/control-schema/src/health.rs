@@ -28,6 +28,45 @@ pub struct HealthSnapshot {
     pub saves_off_unread_hooks: Option<Vec<String>>,
 }
 
+impl HealthSnapshot {
+    /// The module's revision key: per-tab subsystem state, without frame
+    /// averages. Those move on every painted frame, and a revision that
+    /// advanced on every capture would mark nothing.
+    ///
+    /// Tape figures are coarsened for the same reason: arrival latency is
+    /// rewritten on every drained print, so carrying it verbatim would wake
+    /// every change waiter on every trade. The key reports that the tape
+    /// became late or that its dominant hop changed. Exact milliseconds stay
+    /// in the snapshot. The caller supplies the chart's own late threshold.
+    pub fn revision_keys(self, high_lag_ms: i64) -> Vec<TabHealthRevisionKey> {
+        self.tabs
+            .into_iter()
+            .map(|mut tab| {
+                let tape = tab.tape.as_ref().map(|tape| TapeRevisionKey {
+                    dominant_hop: tape.dominant_hop.clone(),
+                    late: tape.arrival_latency_ms.is_some_and(|ms| ms > high_lag_ms),
+                });
+                tab.tape = None;
+                TabHealthRevisionKey { tab, tape }
+            })
+            .collect()
+    }
+}
+
+/// Never serialized: per-print milliseconds are replaced with a coarse
+/// readiness reading so ordinary trade arrival does not invalidate watchers.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TabHealthRevisionKey {
+    tab: TabHealthSnapshot,
+    tape: Option<TapeRevisionKey>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TapeRevisionKey {
+    dominant_hop: Option<String>,
+    late: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FrameHealthSnapshot {
     #[schemars(extend("x-unit" = "milliseconds"))]
@@ -40,6 +79,27 @@ pub struct FrameHealthSnapshot {
     pub cpu_average_ms: Option<CanonicalDecimal>,
     #[schemars(extend("x-unit" = "milliseconds"))]
     pub cpu_worst_ms: Option<CanonicalDecimal>,
+}
+
+impl FrameHealthSnapshot {
+    pub fn from_measurements(
+        wall_average_ms: Option<f32>,
+        wall_worst_ms: Option<f32>,
+        frames_per_second: Option<f32>,
+        cpu_average_ms: Option<f32>,
+        cpu_worst_ms: Option<f32>,
+    ) -> Self {
+        let canonical = |value: Option<f32>| {
+            value.and_then(|value| canonical_f32(value, METRIC_DECIMAL_PLACES))
+        };
+        Self {
+            wall_average_ms: canonical(wall_average_ms),
+            wall_worst_ms: canonical(wall_worst_ms),
+            frames_per_second: canonical(frames_per_second),
+            cpu_average_ms: canonical(cpu_average_ms),
+            cpu_worst_ms: canonical(cpu_worst_ms),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -125,6 +185,67 @@ pub struct PaneHealthSnapshot {
     pub indicator_stale_count: WireU64,
     pub indicator_issues: Vec<IndicatorIssueSnapshot>,
     pub orderflow: Option<OrderflowHealthSnapshot>,
+}
+
+/// Borrowed indicator facts; diagnostics never carry private script text.
+pub struct IndicatorHealthRead<'a> {
+    pub slot_id: u64,
+    pub kind: &'a str,
+    pub error_bar_index: Option<usize>,
+    pub stale: bool,
+}
+
+impl PaneHealthSnapshot {
+    pub fn from_indicators<'a>(
+        pane_id: u64,
+        side: PaneSideDto,
+        indicators: impl IntoIterator<Item = IndicatorHealthRead<'a>>,
+        orderflow: Option<&OrderflowHealth>,
+    ) -> Self {
+        let mut count = 0;
+        let mut errors = 0;
+        let mut stale = 0;
+        let mut issues = Vec::new();
+        for indicator in indicators {
+            count += 1;
+            let source_kind = if indicator.kind.starts_with("native.") {
+                "native"
+            } else {
+                "script"
+            };
+            let mut issue = |state: &str, detail: &str, bar_index| {
+                issues.push(IndicatorIssueSnapshot {
+                    slot_id: WireU64::new(indicator.slot_id),
+                    source_kind: source_kind.to_owned(),
+                    state: state.to_owned(),
+                    detail: detail.to_owned(),
+                    user_text_redacted: source_kind == "script",
+                    bar_index,
+                });
+            };
+            if let Some(bar_index) = indicator.error_bar_index {
+                errors += 1;
+                issue(
+                    "error",
+                    "runtime_evaluation_failed",
+                    Some(wire_usize(bar_index)),
+                );
+            }
+            if indicator.stale {
+                stale += 1;
+                issue("stale", "reload_failed_running_version_retained", None);
+            }
+        }
+        Self {
+            pane_id: WireU64::new(pane_id),
+            side,
+            indicator_count: wire_usize(count),
+            indicator_error_count: wire_usize(errors),
+            indicator_stale_count: wire_usize(stale),
+            indicator_issues: issues,
+            orderflow: orderflow.map(orderflow_health),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

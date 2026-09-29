@@ -82,4 +82,24 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         ],
         mapping: LAYER_SWITCH,
     },
+    UiBehaviour {
+        id: "layer.tape_only.toggle",
+        title: "Give the tape its own canvas without candles",
+        reach: "pane right-click layer menu; Bubbles settings, Tape only (hide candles)",
+        keys: &[(
+            Source::Authored,
+            "the per-pane order-flow menu and settings checkbox are not toolbar LayerToggle entries",
+        )],
+        mapping: LAYER_SWITCH,
+    },
+    UiBehaviour {
+        id: "orderflow.tape.opening_scale.set",
+        title: "Choose whether the opening burst sets the tape's automatic dot scale",
+        reach: "Bubbles settings, Ignore opening burst in scale, in tape-only mode with automatic sizing",
+        keys: &[(
+            Source::Authored,
+            "the opening-scale preference is a checkbox inside the volume-dot settings",
+        )],
+        mapping: capability!("orderflow.tape.opening_scale.set"),
+    },
 ];

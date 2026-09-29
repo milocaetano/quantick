@@ -16,6 +16,11 @@ use super::timeline::BarTimeline;
 mod dots;
 mod fold;
 mod model;
+mod pending;
+mod tape;
+mod tape_frame;
+mod tape_geometry;
+mod tape_memory;
 mod tiers;
 
 pub use dots::{
@@ -25,9 +30,14 @@ pub use dots::{
 };
 pub use model::{
     AggressionPrimitive, BEFORE_CAPTURE, GapPrimitive, HeatmapCell, HeatmapProjection,
-    LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, normalized_area_size,
-    normalized_log_intensity,
+    LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, TapeFacts,
+    normalized_area_size, normalized_log_intensity,
 };
+pub use pending::PendingTape;
+pub use tape::{TapeDotGeometry, merge_tape_dots, position_tape_at};
+pub use tape_frame::project_tape_frame;
+pub use tape_geometry::TapeHorizontalGeometry;
+pub use tape_memory::{TapeDotFrame, TapeDotMemory, TapeDotView};
 
 use dots::DotHorizon;
 use fold::{FoldOrder, fold_to_budget, pane_budgets};
@@ -623,7 +633,7 @@ pub fn project_live(
     let mut events = settled.live_events.clone();
     correlate_tier(&mut events, &mut tier, config, summarizing);
     let dropped_liquidity_events = filter_events(&mut events, config, settled.liquidity_reference);
-    let (marks, floored_quantity) = refine_tier(
+    let (mut marks, floored_quantity) = refine_tier(
         tier,
         config,
         settled.aggression_reference,
@@ -632,6 +642,20 @@ pub fn project_live(
         summarizing,
         dots.map(|dots| (dots, DotHorizon::of(history))),
     );
+    let tape_facts = marks.tape_facts.take().map(|clusters| {
+        let floor = config.bubbles.min_quantity_decimal().unwrap_or_default();
+        let floored_quantity = clusters
+            .iter()
+            .filter(|cluster| cluster.quantity < floor)
+            .map(|cluster| cluster.quantity)
+            .sum();
+        Arc::new(TapeFacts {
+            clusters,
+            evicted_through_ms: history.evicted_through_ms(),
+            floored_quantity,
+            opening_bursts: history.opening_bursts().to_vec(),
+        })
+    });
     // This half carries marks for *both* panes: the prints rolling through the
     // tape, and — while the summary is on — the forming bar's own slot marks.
     // They are folded apart, because a fold that mixed them would draw one
@@ -683,6 +707,7 @@ pub fn project_live(
 
     LiveMarks {
         aggressions: tape_marks,
+        tape_facts,
         liquidity_events: event_primitives(events, timeline, prices, settled.effective_grouping),
         dropped_liquidity_events,
         folded_aggressions,

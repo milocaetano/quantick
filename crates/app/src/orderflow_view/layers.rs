@@ -5,7 +5,7 @@ struct Switch {
     read: fn(&OrderflowView) -> bool,
     write: fn(&mut OrderflowView, bool),
 }
-const SWITCHES: [Switch; 10] = [
+const SWITCHES: [Switch; 11] = [
     Switch {
         read: OrderflowView::lane_enabled,
         write: OrderflowView::set_lane_enabled,
@@ -47,6 +47,14 @@ const SWITCHES: [Switch; 10] = [
         write: |view, on| {
             let before = view.config.clone();
             view.config.volume_dots.enabled = on;
+            view.commit_config_changes(before);
+        },
+    },
+    Switch {
+        read: |view| view.config.live_lane.tape_only,
+        write: |view, on| {
+            let before = view.config.clone();
+            view.config.live_lane.tape_only = on;
             view.commit_config_changes(before);
         },
     },

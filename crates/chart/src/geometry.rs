@@ -221,9 +221,79 @@ pub fn price_window<'a>(
         .or_else(|| PriceScale::auto(&[], newest, top, bottom, AUTO_PAD_FRAC))
 }
 
+/// The price window of a pane that shows only the tape.
+///
+/// Where the tape's prints traded and the last traded price, padded like
+/// [`price_window`]: no bar range enters it, so the axis follows the tape
+/// rather than the candles the pane no longer draws, and a last price past
+/// the prints still drags the axis with it. With no print on the tape the
+/// previous frame's window `last` holds while its radius-safe interior contains
+/// the recent prices. It refits after a margin breach or a contraction to half
+/// the prior useful span. With no recent prints it holds until the latest
+/// price breaches that margin; without a prior window, use the last price alone.
+/// `min_padding_px` reserves room for the largest tape dot without moving its
+/// centre away from its factual price. Zero keeps the standard five-percent fit.
+#[must_use]
+pub fn tape_price_window(
+    tape: Option<(f64, f64)>,
+    last_price: Option<f64>,
+    last: Option<(f64, f64)>,
+    top: f32,
+    bottom: f32,
+    min_padding_px: f32,
+) -> Option<PriceScale> {
+    let height = f64::from((bottom - top).max(0.0));
+    let inset = if height > 0.0 && min_padding_px.is_finite() {
+        (f64::from(min_padding_px.max(0.0)) / height).min(MAX_TAPE_PADDING_SHARE)
+    } else {
+        0.0
+    };
+    let pad_fraction = AUTO_PAD_FRAC.max(inset / (1.0 - 2.0 * inset));
+    let safe_range = |(lo, hi): (f64, f64)| {
+        let guard = (hi - lo) * inset;
+        (lo + guard, hi - guard)
+    };
+    let last_price = last_price.filter(|price| price.is_finite());
+    let Some((low, high)) = tape.filter(|(low, high)| low.is_finite() && high.is_finite()) else {
+        return last
+            .map(|(lo, hi)| {
+                let (safe_lo, safe_hi) = safe_range((lo, hi));
+                if let Some(price) = last_price
+                    && (price < safe_lo || price > safe_hi)
+                {
+                    let (lo, hi) = (lo.min(price), hi.max(price));
+                    let pad = (hi - lo).max(f64::EPSILON) * pad_fraction;
+                    PriceScale::from_range(lo - pad, hi + pad, top, bottom)
+                } else {
+                    PriceScale::from_range(lo, hi, top, bottom)
+                }
+            })
+            .or_else(|| {
+                let price = last_price?;
+                Some(PriceScale::from_range(price, price, top, bottom))
+            });
+    };
+    let (mut lo, mut hi) = (low.min(high), low.max(high));
+    if let Some(price) = last_price {
+        lo = lo.min(price);
+        hi = hi.max(price);
+    }
+    if let Some(previous) = last {
+        let (safe_lo, safe_hi) = safe_range(previous);
+        if lo >= safe_lo && hi <= safe_hi && hi - lo > (safe_hi - safe_lo) * 0.5 {
+            return Some(PriceScale::from_range(previous.0, previous.1, top, bottom));
+        }
+    }
+    let pad = (hi - lo).max(f64::EPSILON) * pad_fraction;
+    Some(PriceScale::from_range(lo - pad, hi + pad, top, bottom))
+}
+
 /// Fraction of the price span left as breathing room above and below the
 /// candles, so they never touch the edges of the plot.
 pub const AUTO_PAD_FRAC: f64 = 0.05;
+
+/// Keep a positive price span between the two decorated tape edges.
+const MAX_TAPE_PADDING_SHARE: f64 = 0.45;
 
 /// An axis-aligned candle body in pixel coordinates.
 ///
@@ -1294,42 +1364,39 @@ mod tests {
     /// else: the candles it no longer draws have no say in it.
     #[test]
     fn a_tape_only_window_is_the_tapes_range_padded() {
-        let scale = tape_price_window(Some((995.0, 1_015.0)), Some(1_005.0), None, 0.0, 600.0)
+        let scale = tape_price_window(Some((995.0, 1_015.0)), Some(1_005.0), None, 0.0, 600.0, 0.0)
             .expect("a tape to fit");
         let (lo, hi) = scale.range();
         assert!((lo - 994.0).abs() < 1e-9, "{lo}");
         assert!((hi - 1_016.0).abs() < 1e-9, "{hi}");
         // The last price moving past the tape drags the axis with it.
-        let (lo, hi) = tape_price_window(Some((995.0, 1_015.0)), Some(1_035.0), None, 0.0, 600.0)
-            .unwrap()
-            .range();
+        let (lo, hi) =
+            tape_price_window(Some((995.0, 1_015.0)), Some(1_035.0), None, 0.0, 600.0, 0.0)
+                .unwrap()
+                .range();
         assert!(
             (lo - 993.0).abs() < 1e-9 && (hi - 1_037.0).abs() < 1e-9,
             "{lo} {hi}"
         );
         // No print on the tape: the last window holds still.
-        let held = tape_price_window(None, Some(1_005.0), Some((900.0, 1_100.0)), 0.0, 600.0)
+        let held = tape_price_window(None, Some(1_005.0), Some((900.0, 1_100.0)), 0.0, 600.0, 0.0)
             .unwrap()
             .range();
         assert_eq!(held, (900.0, 1_100.0));
-        assert!(tape_price_window(None, None, None, 0.0, 600.0).is_none());
+        assert!(tape_price_window(None, None, None, 0.0, 600.0, 0.0).is_none());
     }
 
     #[test]
     fn a_quiet_tape_keeps_a_new_last_price_inside_the_held_window() {
         for price in [850.0, 1_150.0] {
-            let scale = tape_price_window(
-                None,
-                Some(price),
-                Some((900.0, 1_100.0)),
-                0.0,
-                600.0,
-            )
-            .expect("the newest price gives the tape a scale");
+            let scale =
+                tape_price_window(None, Some(price), Some((900.0, 1_100.0)), 0.0, 600.0, 0.0)
+                    .expect("the newest price gives the tape a scale");
             let (low, high) = scale.range();
             assert!(low < price && price < high, "{price} outside {low}..{high}");
         }
     }
+
     #[test]
     fn the_tape_axis_holds_small_changes_inside_its_radius_safe_range() {
         // At this height, the prior 90..130 axis has 96..124 available for

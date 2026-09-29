@@ -2,6 +2,13 @@
 //! keyed by its bar and a price level; on the tape, by a window of market
 //! time and a price level.
 //!
+//! The optional tape-only pane uses short native-price windows as keys and
+//! retains quantity-weighted execution coordinates. Its open window rides
+//! NOW; its closed windows move with elapsed time. Its dots keep proportional
+//! areas independently of cell size; overlapping neighbours are combined by
+//! [`super::merge_tape_dots`]. The cell-centred rules below describe the
+//! original mixed candle-and-tape view, which retains its existing behaviour.
+//!
 //! The key is market data and nothing else. A tape window is
 //! `floor(exchange_ts / window_ms)`, anchored at exchange epoch 0 — never at
 //! the screen, the seam, the tape's start or a cut — and cut at its bar's
@@ -75,7 +82,16 @@ use crate::interaction::{AggressionCluster, fold_by_key, sort_clusters};
 /// The windows of market time a tape dot may cover, in exchange
 /// milliseconds, narrowest first.
 pub const DOT_WINDOW_LADDER_MS: [i64; 10] = [
-    100, 250, 500, 1_000, 2_000, 5_000, 10_000, 30_000, 60_000, 300_000,
+    crate::native_tape::NATIVE_TAPE_WINDOW_MS,
+    250,
+    500,
+    1_000,
+    2_000,
+    5_000,
+    10_000,
+    30_000,
+    60_000,
+    300_000,
 ];
 
 /// The heights, in native ticks, a dot's price level may span, narrowest
@@ -189,6 +205,8 @@ pub fn candle_dot_px(bubbles: &BubbleStyle) -> f64 {
 /// The rungs the view chose, handed to the engine.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DotZoom {
+    /// Use execution coordinates on the optional tape-only pane.
+    pub tape_only: bool,
     /// The tape's window, in exchange milliseconds.
     pub tape_window_ms: i64,
     /// Native ticks per tape level, from the tape's own price span.
@@ -238,18 +256,26 @@ impl DotRungMemory {
         // At least half a full dot wide, so a dot fitted to its column
         // ([`DotSizing`]) stays readable.
         let tape_column_px = f64::from(config.bubbles.max_radius).max(DOT_WINDOW_CELL_PX);
-        let tape_window_ms = hold_rung(
-            &DOT_WINDOW_LADDER_MS,
-            self.tape_window_ms,
-            px_per_ms,
-            tape_column_px,
-        );
-        let tape_level_ticks = hold_rung(
-            &DOT_LEVEL_LADDER_TICKS,
-            self.tape_level_ticks,
-            height * tick / tape_span,
-            dot_px,
-        );
+        let tape_window_ms = if config.live_lane.tape_only {
+            DOT_WINDOW_LADDER_MS[0]
+        } else {
+            hold_rung(
+                &DOT_WINDOW_LADDER_MS,
+                self.tape_window_ms,
+                px_per_ms,
+                tape_column_px,
+            )
+        };
+        let tape_level_ticks = if config.live_lane.tape_only {
+            1
+        } else {
+            hold_rung(
+                &DOT_LEVEL_LADDER_TICKS,
+                self.tape_level_ticks,
+                height * tick / tape_span,
+                dot_px,
+            )
+        };
         let candle_level_ticks = hold_rung(
             &DOT_LEVEL_LADDER_TICKS,
             self.candle_level_ticks,
@@ -262,6 +288,7 @@ impl DotRungMemory {
         self.tape_px_per_ms = Some(px_per_ms);
         self.px_per_bar = Some(geometry.px_per_bar);
         DotZoom {
+            tape_only: config.live_lane.tape_only,
             tape_window_ms,
             tape_level_ticks,
             candle_level_ticks,
@@ -371,6 +398,9 @@ impl DotSizing {
         mark: &AggressionPrimitive,
         full: Decimal,
     ) -> f32 {
+        if mark.live && lane.tape_only {
+            return bubbles.max_radius * normalized_area_size(mark.quantity, full);
+        }
         let (minimum, maximum) = dot_radius_range(bubbles, lane, mark.live, self.cell(mark));
         bubble_radius(normalized_area_size(mark.quantity, full), minimum, maximum)
     }
@@ -440,8 +470,8 @@ pub struct DotScale {
 /// starts inside that, so it is drawn whole or not at all.
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct DotHorizon {
-    recorded_from_ms: Option<i64>,
-    evicted_through_ms: Option<i64>,
+    pub(super) recorded_from_ms: Option<i64>,
+    pub(super) evicted_through_ms: Option<i64>,
 }
 
 impl DotHorizon {
@@ -478,6 +508,8 @@ struct Window {
 /// What one frame keys its dots on.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VolumeDots {
+    /// The tape retains execution coordinates and its open window follows NOW.
+    pub tape_only: bool,
     /// The tape's window, in exchange milliseconds.
     pub tape_window_ms: i64,
     /// Native ticks per tape level.
@@ -506,6 +538,7 @@ impl VolumeDots {
         bars.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
         bars.dedup_by_key(|bar| bar.0);
         Self {
+            tape_only: zoom.tape_only,
             tape_window_ms: zoom.tape_window_ms,
             tape_level_ticks: zoom.tape_level_ticks,
             candle_level_ticks: zoom.candle_level_ticks,
@@ -521,11 +554,13 @@ impl VolumeDots {
     }
 
     /// The window `timestamp_ms` falls in on one pane: its tape window on the
-    /// tape, its whole bar on the candles. `None` for a print no known bar
-    /// holds.
+    /// tape, its whole bar on the candles. Only the independent tape can keep
+    /// a print whose bar is outside the supplied candle slice.
     fn window(&self, timestamp_ms: i64, live: bool) -> Option<Window> {
-        let (open, _) = self.bar_around(timestamp_ms)?;
         Some(if live {
+            if !self.tape_only {
+                self.bar_around(timestamp_ms)?;
+            }
             let width = self.tape_window_ms.max(1);
             let start = window_start(timestamp_ms, width);
             Window {
@@ -534,6 +569,7 @@ impl VolumeDots {
                 stamp_ms: start + width / 2,
             }
         } else {
+            let (open, _) = self.bar_around(timestamp_ms)?;
             Window {
                 key: open,
                 start_ms: open,
@@ -588,9 +624,9 @@ pub(super) fn native_grouping(config: &HeatmapConfig) -> EffectiveGrouping {
 /// reductions they explain — into dots by window (a tape window or a candle
 /// dot's bar) and level, summing
 /// quantity, bought quantity and matched quantity and uniting the event ids.
-/// A cluster no known bar holds is left out, and so is every cluster whose
-/// window `horizon` says may have lost prints — to eviction or to recording
-/// starting inside it: a dot is drawn whole or not at all.
+/// Candle dots and ordinary lane dots need a known bar; independent tape dots
+/// need only their market-time window. A window whose `horizon` may have lost
+/// prints to eviction is excluded.
 pub(super) fn fold_dots(
     clusters: Vec<AggressionCluster>,
     live: bool,
@@ -605,12 +641,27 @@ pub(super) fn fold_dots(
         .into_iter()
         .filter(|cluster| {
             dots.window(cluster.timestamp_ms, live)
-                .is_some_and(|window| horizon.keeps(window.start_ms))
+                .is_some_and(|window| {
+                    if live && dots.tape_only {
+                        // Capture begins with a visible print, even inside an
+                        // open window. A partially evicted window stays out.
+                        horizon
+                            .evicted_through_ms
+                            .is_none_or(|evicted| window.start_ms > evicted)
+                    } else {
+                        horizon.keeps(window.start_ms)
+                    }
+                })
         })
         .collect();
     let key_of = |cluster: &AggressionCluster| {
+        let generation = if live && dots.tape_only {
+            None
+        } else {
+            cluster.generation
+        };
         dots.window(cluster.timestamp_ms, live)
-            .map(|window| (window.key, cluster.generation, level_of(cluster.price)))
+            .map(|window| (window.key, generation, level_of(cluster.price)))
     };
     let mut folded: Vec<AggressionCluster> = fold_by_key(keyed, key_of)
         .into_iter()
@@ -618,10 +669,16 @@ pub(super) fn fold_dots(
             let window = dots.window(dot.first_timestamp_ms, live)?;
             let level = level_of(dot.price);
             let top_tick = (level + width - tick).max(level);
-            dot.price = ((dot.price / tick).round() * tick).clamp(level, top_tick);
+            if !live || !dots.tape_only {
+                dot.price = ((dot.price / tick).round() * tick).clamp(level, top_tick);
+            }
             dot.price_bucket = level;
             dot.price_span = width;
-            dot.timestamp_ms = window.stamp_ms;
+            dot.timestamp_ms = if live && dots.tape_only && dot.quantity > Decimal::ZERO {
+                (dot.timestamp_quantity / dot.quantity).round().to_i64()?
+            } else {
+                window.stamp_ms
+            };
             Some(dot)
         })
         .collect();

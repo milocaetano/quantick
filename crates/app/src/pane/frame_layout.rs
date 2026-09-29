@@ -11,6 +11,7 @@
 
 use eframe::egui;
 use quantick_engine::{Bar, BarFootprint};
+use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::chart;
 use crate::orderflow_view::LiveLane;
@@ -100,6 +101,9 @@ pub(super) struct FrameLayout {
     /// Where the indicator panes' vertical guide goes: the pointer's x while
     /// it is over the chart.
     pub(super) indicator_guide_x: Option<f32>,
+    /// The pane shows the tape alone: the price axis follows the tape.
+    pub(super) tape_only: bool,
+    pub(super) tape_padding_px: f32,
 }
 
 /// Both bar series the frame reads: the venue prefix, the engine's closed
@@ -114,13 +118,17 @@ impl FrameLayout {
     /// The width the live lane takes off the chart's right edge, `0` without
     /// one.
     pub(super) fn lane_width_px(&self) -> f32 {
-        self.live_lane.map_or(0.0, |lane| lane.width_px)
+        if self.tape_only {
+            self.chart_rect.width()
+        } else {
+            self.live_lane.map_or(0.0, |lane| lane.width_px)
+        }
     }
 
     /// The visible slices and the price scale, as the [`DrawFrame`] every
     /// painter reads, plus the auto-fitted range the next frame's input
     /// handler converts pixels with. `None` when nothing yields a scale.
-    /// The fit keeps `tape_range`, where the tape traded, on the axis.
+    /// A tape-only pane fits `tape_range`; candle panes fit their own bars.
     pub(super) fn resolve<'a>(
         &'a self,
         painter: &'a egui::Painter,
@@ -158,21 +166,33 @@ impl FrameLayout {
             ..closed_end.saturating_sub(prefix.len()).min(closed.len())];
         let partial_visible = partial.filter(|_| closed_total >= start && closed_total < end);
 
-        // Auto-fit the visible bars and the tape, then apply any manual
-        // price pan/zoom. A
+        // Auto-fit the pane's own source, then apply explicit price pan/zoom. A
         // window with no bars in it still gets a scale (the last one, then the
         // newest bar), because a chart that draws nothing at all is
         // indistinguishable from a hung app — which is exactly how the blank
         // frame after a rebuild read.
-        let auto_scale = chart::price_window(
-            visible_prefix.iter().chain(visible_state),
-            partial_visible,
-            tape_range.filter(|_| self.lane_width_px() > 0.0),
-            last_auto_range,
-            partial.or_else(|| closed.last()),
-            chart_rect.top(),
-            chart_rect.bottom(),
-        )?;
+        let newest = partial.or_else(|| closed.last());
+        let auto_scale = if self.tape_only {
+            // The tape's prints and the last price, never a bar's range.
+            chart::tape_price_window(
+                tape_range,
+                newest.and_then(|bar| bar.close.to_f64()),
+                last_auto_range,
+                chart_rect.top(),
+                chart_rect.bottom(),
+                self.tape_padding_px,
+            )
+        } else {
+            chart::price_window(
+                visible_prefix.iter().chain(visible_state),
+                partial_visible,
+                None,
+                last_auto_range,
+                newest,
+                chart_rect.top(),
+                chart_rect.bottom(),
+            )
+        }?;
         let auto_range = auto_scale.range();
         let scale = price_view.scale(auto_range, chart_rect.top(), chart_rect.bottom());
         let frame = DrawFrame {

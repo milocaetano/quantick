@@ -12,8 +12,10 @@ pub mod engine;
 pub mod grouping;
 pub mod history;
 pub mod interaction;
+mod native_tape;
 pub mod projection;
 pub mod scale;
+pub mod tape_clock;
 pub mod timeline;
 
 // This facade is intentionally wider than the first UI integration. Keeping
@@ -28,8 +30,8 @@ pub use config::{
     MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
     MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, VolumeDotStyle,
     bubble_halo_padding, bubble_impact_ring_padding, bubble_radius, format_window_ms,
-    lane_lag_label, lane_window_label, same_lane_window, sane_volume_dot_full_quantity,
-    side_offset_y,
+    lane_lag_label, lane_time_ticks, lane_window_label, same_lane_window,
+    sane_volume_dot_full_quantity, side_offset_y,
 };
 #[allow(unused_imports)]
 pub use grouping::{

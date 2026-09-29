@@ -66,6 +66,7 @@ impl OrderflowView {
             lane,
             on_newest_bar,
             lane_reference_ms,
+            lane_now_ms: self.lane_now_ms(),
             price_range,
             // The tape's level follows its own prints, never the candle axis.
             dot_zoom: pane_geometry.map(|geometry| {
@@ -79,8 +80,9 @@ impl OrderflowView {
         // only thing a gate here could add is a bar snapshot older than the
         // prints it is supposed to place — which is how a fresh print ends up
         // outside the timeline and drawn nowhere.
+        let frame = self.complete_pending_frame(&request);
         self.worker.send(BookCommand::Project(request));
-        self.published.frame.clone()
+        frame
     }
 
     /// Draw resting liquidity, coverage gaps and factual liquidity changes
@@ -107,7 +109,7 @@ impl OrderflowView {
             lane_width_px,
         )
         .with_inverted(inverted);
-        let style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
+        let style = OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_heatmap_background(painter, &context);
         draw_live_lane_marks(painter, &context);
@@ -129,6 +131,7 @@ impl OrderflowView {
         canvas_background: egui::Color32,
         lane_width_px: f32,
         inverted: bool,
+        price_range: (f64, f64),
     ) {
         let layout = ProjectedLayout::new(
             chart_rect,
@@ -139,12 +142,27 @@ impl OrderflowView {
             lane_width_px,
         )
         .with_inverted(inverted);
-        let mut style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
+        let mut style =
+            OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
         style.dot_sizing = frame
             .volume_dots
             .as_ref()
             .and_then(|scale| self.dot_rungs.sizing(scale, chart_rect.height()));
-        let context = RenderContext::new(&frame.projection, layout, &style);
+        let context = RenderContext::new(&frame.projection, layout, &style)
+            .with_tape_price_range(price_range)
+            .with_tape_memory(&self.tape_dots);
+        let context = match (
+            self.config.tape_only(),
+            frame.live_edge,
+            frame.volume_dots.as_ref(),
+        ) {
+            (true, Some(mut edge), Some(dots)) => {
+                edge.now_ms = self.lane_now_ms().unwrap_or(edge.now_ms);
+                edge.window_ms = self.config.lane_window_ms(edge.reference_ms);
+                context.with_tape_time(edge, dots.tape_window_ms)
+            }
+            _ => context,
+        };
         draw_aggression_bubbles(painter, &context);
     }
 
@@ -175,7 +193,8 @@ impl OrderflowView {
             frame.slot_count,
             lane_width_px,
         );
-        let mut style = OrderflowRenderStyle::from_config(&self.config, canvas_background);
+        let mut style =
+            OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
         style.legend_top_inset = top_inset_px;
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_compact_legend(painter, &context)

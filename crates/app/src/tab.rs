@@ -47,6 +47,7 @@ mod history;
 mod layout;
 mod panes;
 mod strategies;
+mod tape_clock;
 
 pub use canvas::CanvasChrome;
 pub use feed::HistoryPolicy;

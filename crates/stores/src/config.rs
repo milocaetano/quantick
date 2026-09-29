@@ -56,8 +56,9 @@ pub struct FeedConfig {
     ///
     /// A market dictates how its tape reads — the B3 mini index wants the
     /// candle summary that a dense BTC tape does not — so a feed may declare
-    /// the look it opens with. Absent, nothing changes: the panel keeps
-    /// whatever preset is active, exactly as before the field existed. The
+    /// the look it opens with. Absent, the panel keeps the trader's active
+    /// appearance; leaving an automatically declared tape-only look restores
+    /// the appearance from before that source was selected. The
     /// name must exist in the bubble presets file; an unknown name is reported
     /// and ignored rather than silently altering the panel.
     #[serde(default)]

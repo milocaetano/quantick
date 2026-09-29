@@ -8,6 +8,7 @@
 //! `fold`; the reduction markers stay with the pipeline in the parent.
 
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive as _;
 
 use super::dots::{DotHorizon, VolumeDots, fold_dots, native_grouping, window_start};
 use super::model::{AggressionPrimitive, PriceWindow, normalized_area_size};
@@ -63,6 +64,7 @@ pub(super) struct TierClusters {
     pub(super) tape: Vec<AggressionCluster>,
     /// Prints read against the bar they belong to.
     pub(super) slot: Vec<AggressionCluster>,
+    pub(super) tape_facts: Option<Vec<AggressionCluster>>,
 }
 
 /// Cluster the retained prints timestamped inside `range`, as `[from, until)`.
@@ -141,6 +143,7 @@ pub(super) fn cluster_tier(
         return TierClusters {
             tape: cluster_aggressions(tape_prints, coverage, grouping.lane, 0),
             slot: cluster_aggressions(slot_prints, coverage, grouping.slots, 0),
+            tape_facts: None,
         };
     }
 
@@ -148,6 +151,7 @@ pub(super) fn cluster_tier(
     // slots do not, and the split is also what keeps a cluster from straddling
     // the boundary between them.
     TierClusters {
+        tape_facts: None,
         tape: cluster_aggressions(
             tape_prints,
             coverage,
@@ -187,6 +191,9 @@ pub(super) fn refine_tier(
         let native = native_grouping(config);
         tier.tape = fold_dots(std::mem::take(&mut tier.tape), true, dots, native, horizon);
         tier.slot = fold_dots(std::mem::take(&mut tier.slot), false, dots, native, horizon);
+        if dots.tape_only {
+            tier.tape_facts = Some(tier.tape.clone());
+        }
     }
     let dots = dots.is_some();
     let regionalizing = !dots && config.bubble_region_rows > 1;
@@ -290,9 +297,9 @@ pub(super) fn refine_tier(
 
 /// Place one tier's marks on the chart, each on the scale its view reads on.
 ///
-/// A volume dot (`dots`) is placed at its window's fixed centre on the tape,
-/// held inside the tape, and on the candles at its bar's slot centre; in
-/// price at its level's centre. A tape dot off the price window keeps a y
+/// A tape-only volume dot uses its quantity-weighted time and price, with
+/// the open window at NOW. Mixed panes retain the original cell centres;
+/// candle dots remain at their bar's slot centre. A tape dot off the price window keeps a y
 /// outside `[0, 1]` rather than being dropped — the painter clips — so the
 /// candle axis never blanks the tape. It is sized on the reference it is
 /// handed, like any mark.
@@ -321,6 +328,9 @@ pub(super) fn tier_primitives(
             let x = match (live, dots.is_some()) {
                 (true, false) => timeline.locate(cluster.timestamp_ms)?.normalized,
                 (false, false) => timeline.locate_in_slot(cluster.timestamp_ms)?.normalized,
+                (true, true) if dots.is_some_and(|dots| dots.tape_only) => {
+                    tape_execution_x(&cluster, timeline, dots?)?
+                }
                 (true, true) => {
                     timeline
                         .locate_in_lane_clamped(cluster.timestamp_ms)?
@@ -334,6 +344,9 @@ pub(super) fn tier_primitives(
             };
             let y = match (live, dots.is_some()) {
                 (_, false) => prices.y(cluster.price)?,
+                (true, true) if dots.is_some_and(|dots| dots.tape_only) => {
+                    prices.y_unclamped(cluster.price)?
+                }
                 (true, true) => prices.y_unclamped(level_centre(&cluster))?,
                 (false, true) => prices.y(level_centre(&cluster))?,
             };
@@ -341,6 +354,26 @@ pub(super) fn tier_primitives(
             Some(aggression_primitive(cluster, x, y, size, live))
         })
         .collect()
+}
+
+/// Map the exact time moment onto the lane without rounding to milliseconds.
+fn tape_execution_x(
+    cluster: &AggressionCluster,
+    timeline: &BarTimeline,
+    dots: &VolumeDots,
+) -> Option<f64> {
+    let (from, now) = timeline.lane_bounds_ms()?;
+    let right = timeline.live_now_position()?.normalized;
+    if window_start(cluster.last_timestamp_ms, dots.tape_window_ms)
+        == window_start(now, dots.tape_window_ms)
+    {
+        return Some(right);
+    }
+    let left = timeline.locate_in_lane_clamped(from)?.normalized;
+    let mean = cluster.timestamp_quantity / cluster.quantity;
+    let fraction =
+        ((mean - Decimal::from(from)) / Decimal::from(now.saturating_sub(from).max(1))).to_f64()?;
+    Some(left + (right - left) * fraction.clamp(0.0, 1.0))
 }
 
 /// The centre of a dot's level: where it is drawn, on its cell's grid.
@@ -372,6 +405,7 @@ fn aggression_primitive(
         trade_count: cluster.trade_count,
         first_timestamp_ms: cluster.first_timestamp_ms,
         last_timestamp_ms: cluster.last_timestamp_ms,
+        timestamp_quantity: cluster.timestamp_quantity,
         matched_quantity: cluster.matched_quantity,
         buy_quantity: cluster.buy_quantity,
         matched_fraction,

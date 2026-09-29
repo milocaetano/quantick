@@ -85,6 +85,7 @@ pub(super) fn apply_launch_phase(
         layout(app, env);
         replay(app, env);
         dock_and_report(app, env);
+        price_axis(app, env);
         workspace(app, env);
     }
     // An env var is not a user edit: what the autostart hooks switched on
@@ -94,6 +95,19 @@ pub(super) fn apply_launch_phase(
     app.workspace.layers_mut().record(staged_layers);
     #[cfg(any(feature = "scenario-harness", test))]
     toast(app, env);
+}
+
+#[cfg(any(feature = "scenario-harness", test))]
+fn price_axis(app: &mut QuantickApp, env: &ScenarioInputs) {
+    let Some((low, high)) = env
+        .var("QUANTICK_PRICE_RANGE")
+        .and_then(|value| quantick_control_schema::price_axis::PriceAxisMode::parse_range(&value))
+    else {
+        return;
+    };
+    let pane = &mut app.active_tab_mut().flow_pane;
+    pane.sync_price_axis_mode();
+    pane.price_view.set_manual_range(low, high);
 }
 
 /// The order book and the live strip: the two the map opens with.
@@ -822,6 +836,7 @@ crate::hooks::declare_hooks![
     "QUANTICK_PAPER_CALENDAR",
     "QUANTICK_PAPER_REPORT_AUTOSTART",
     "QUANTICK_PAPER_REPORT_LIST",
+    "QUANTICK_PRICE_RANGE",
     "QUANTICK_PROGRESSIVE_HISTORY",
     "QUANTICK_REPLAY_AUTOSTART",
     "QUANTICK_REPLAY_BROWSER",

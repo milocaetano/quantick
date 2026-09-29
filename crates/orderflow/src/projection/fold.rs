@@ -104,6 +104,7 @@ fn merge_marks(
     mark.trade_count = mark.trade_count.saturating_add(other.trade_count);
     mark.first_timestamp_ms = mark.first_timestamp_ms.min(other.first_timestamp_ms);
     mark.last_timestamp_ms = mark.last_timestamp_ms.max(other.last_timestamp_ms);
+    mark.timestamp_quantity += other.timestamp_quantity;
     mark.matched_quantity += other.matched_quantity;
     mark.buy_quantity += other.buy_quantity;
     mark.matched_fraction = if total > Decimal::ZERO {

@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 40 |
+| Reachable by capability | 43 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
 | Excluded: `pending_capability` | 55 |
-| **Total** | **103** |
+| **Total** | **106** |
 
-81 of the 103 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 22 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+81 of the 106 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 25 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -67,8 +67,9 @@ The three exclusion classes are closed:
 | `layout.tab.rename.cancel` | Abandon a rename in progress | Escape, or clicking away from the strip's rename box | — | `ui_only_by_decision` — `layout.tab.rename` is atomic: a caller sends the new name or sends nothing, so there is no half-finished rename for it to abandon. The begin/cancel pair is the in-place editor's own state and has no remote counterpart by construction |
 | `layout.tab.switch` | Show another layout on the focused chart | layout strip, View → Layouts, Alt+1 … Alt+9 | `layout.tab.switch` | — |
 | `chart.bars.set_spec` | Change what one bar is — kind and size | toolbar bar controls | `layout.pane.set_bar_spec`, `layout.pane.set_interval` | — |
-| `chart.pan` | Drag the chart back through the tape | primary drag on the canvas; the price and time axes | — | `pending_capability` — `chart.window.read` reports the visible window; nothing sets it, so an operator reads where the trader is looking and cannot look elsewhere. Tracked in issue 401 |
-| `chart.zoom` | Zoom the chart in or out | wheel on the canvas; drag on either axis | — | `pending_capability` — the read half exists as `chart.window.read` and the write half does not. Tracked in issue 401 |
+| `chart.pan` | Drag the chart horizontally through history | horizontal primary drag on the canvas | — | `pending_capability` — `chart.window.read` reports the visible time window; no capability pans that window. Price framing has its own capability below. Tracked in issue 401 |
+| `chart.price_axis.set` | Set a pane's price range or resume automatic fitting | drag or wheel on the price axis; double-click it to reset | `chart.price_axis.set` | — |
+| `chart.zoom` | Zoom the chart's time window in or out | wheel on the canvas; drag on the time axis | — | `pending_capability` — `chart.window.read` reports the time window; no capability changes its zoom. Price-axis zoom has its own capability above. Tracked in issue 401 |
 | `layout.context.collapse` | Put the context charts away, or bring them back | View menu, Ctrl+0 | `layout.pane.collapse`, `layout.pane.expand` | — |
 | `layout.pane.focus` | Make another chart the focused one | click anywhere on a chart | `layout.focus.set` | — |
 | `layout.pane.move` | Move a context chart up or down the column | View → Move chart, and the drag the menu entry exists to replace | `layout.pane.move` | — |
@@ -81,6 +82,8 @@ The three exclusion classes are closed:
 | `layer.footprint.toggle` | Switch the candle footprint on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.heatmap.toggle` | Switch the L2 depth map on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.live_strip.toggle` | Switch the live depth strip on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
+| `layer.tape_only.toggle` | Give the tape its own canvas without candles | pane right-click layer menu; Bubbles settings, Tape only (hide candles) | `layers.visibility.set` | — |
+| `orderflow.tape.opening_scale.set` | Choose whether the opening burst sets the tape's automatic dot scale | Bubbles settings, Ignore opening burst in scale, in tape-only mode with automatic sizing | `orderflow.tape.opening_scale.set` | — |
 | `history.candles.load_older` | Fetch another span of older venue candles | toolbar history caret | — | `pending_capability` — no capability pages history; `chart.window.read` reads what is already loaded. Tracked in issue 401 |
 | `history.progressive.toggle` | Build venue history backwards a week at a time, or in one request | View menu | — | `pending_capability` — no capability pages history; `chart.window.read` reads what is already loaded. Tracked in issue 401 |
 | `history.reach.set` | Choose how far back the chart reaches, and the page size | toolbar history caret menu, reachable by the `history` scripted-menu hook | — | `pending_capability` — no capability pages history; `chart.window.read` reads what is already loaded. Tracked in issue 401 |
@@ -179,7 +182,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 22 |
+| `authored` | 25 |
 
 ## Appendix: rows no registry stands behind
 
@@ -193,9 +196,12 @@ declares nothing here is a guard failure.
 | --- | --- |
 | `chart.bars.set_spec` | the bar-kind and size controls are toolbar widgets, not entries in its action enum |
 | `chart.pan` | a pointer drag the canvas handles directly; no registry names it |
+| `chart.price_axis.set` | price-axis gestures update the pane's PriceView directly |
 | `chart.zoom` | a wheel and an axis drag the canvas handles directly; no registry names it |
 | `layout.pane.focus` | a click anywhere on a pane; the focus follows it without a named control |
 | `layout.pane.resize` | a drag on the divider between two panes |
+| `layer.tape_only.toggle` | the per-pane order-flow menu and settings checkbox are not toolbar LayerToggle entries |
+| `orderflow.tape.opening_scale.set` | the opening-scale preference is a checkbox inside the volume-dot settings |
 | `history.reach.set` | the reach chips and page size inside the toolbar caret menu, drawn per frame |
 | `indicator.mouse_vertical_line.toggle` | the indicator pane's Mouse vertical line checkbox |
 | `indicator.native.remove` | the legend row close, which the toolbar enum sees only as `RemoveIndicator` |

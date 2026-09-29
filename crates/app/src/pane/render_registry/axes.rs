@@ -329,6 +329,13 @@ pub(in crate::pane) struct LaneTimeAxisPass<'a> {
     pub lane_strip: Option<egui::Rect>,
     pub window_ms: i64,
     pub tape_age: Option<quantick_orderflow::TapeAge>,
+    /// The live edge's instant and the zone, when the tape is the whole pane
+    /// and its axis labels the tape's own clock.
+    pub clock: Option<(
+        i64,
+        crate::timezone::TzOffset,
+        quantick_orderflow::projection::TapeHorizontalGeometry,
+    )>,
 }
 impl LaneTimeAxisPass<'_> {
     pub fn paint(&self) {
@@ -337,6 +344,7 @@ impl LaneTimeAxisPass<'_> {
             lane_strip,
             window_ms,
             tape_age,
+            clock,
         } = *self;
         let Some(strip) = lane_strip else {
             return;
@@ -377,14 +385,22 @@ impl LaneTimeAxisPass<'_> {
         // It applies with no warning up too, so a lane narrower than this
         // label draws no axis at all rather than a clipped one. Half a word
         // under a tape is not a shorter way of saying the same thing.
+        let mut labelled = Vec::new();
         if window_galley.size().x + taken <= strip.width() {
-            painter.galley(
-                egui::Align2::CENTER_CENTER
-                    .align_size_within_rect(window_galley.size(), strip)
-                    .min,
-                window_galley,
-                theme::TEXT_MUTED,
-            );
+            let rect =
+                egui::Align2::CENTER_CENTER.align_size_within_rect(window_galley.size(), strip);
+            labelled.push(rect);
+            painter.galley(rect.min, window_galley, theme::TEXT_MUTED);
+        }
+        if let Some((end_ms, tz, geometry)) = clock {
+            if let Some(galley) = warning.as_ref() {
+                let right = strip.right() - super::super::LANE_AXIS_GAP_PX;
+                labelled.push(egui::Rect::from_min_max(
+                    egui::pos2(right - galley.size().x, strip.top()),
+                    egui::pos2(right, strip.bottom()),
+                ));
+            }
+            paint_tape_clock(painter, strip, end_ms, window_ms, tz, &labelled, geometry);
         }
         if let Some(galley) = warning {
             // Right, under the edge the missing marks should have reached —
@@ -471,5 +487,55 @@ impl AxisMarksPass<'_> {
                 theme::ink_on(level.color),
             );
         }
+    }
+}
+
+/// The tape's own clock under a tape-only pane: round instants of its window
+/// at their place on the strip, newest at the right edge, none over a label
+/// already drawn there.
+fn paint_tape_clock(
+    painter: &egui::Painter,
+    strip: egui::Rect,
+    end_ms: i64,
+    window_ms: i64,
+    tz: crate::timezone::TzOffset,
+    labelled: &[egui::Rect],
+    geometry: quantick_orderflow::projection::TapeHorizontalGeometry,
+) {
+    let format = crate::chart::TimeLabelFormat::Full;
+    let font = egui::FontId::monospace(crate::chart::TIME_LABEL_FONT_PX);
+    let label_width = painter
+        .layout_no_wrap(format.sample().to_owned(), font.clone(), theme::TEXT_MUTED)
+        .size()
+        .x;
+    let slot = label_width + 2.0 * super::super::LANE_AXIS_GAP_PX;
+    let room = (geometry.span_px / slot).floor();
+    if window_ms <= 0 || !room.is_finite() || room < 1.0 {
+        return;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let max_labels = room as usize;
+    let start_ms = end_ms.saturating_sub(window_ms);
+    #[allow(clippy::cast_precision_loss)]
+    let x_of =
+        |instant: i64| strip.left() + geometry.x((instant - start_ms) as f64 / window_ms as f64);
+    for instant in quantick_orderflow::lane_time_ticks(end_ms, window_ms, max_labels) {
+        let x = x_of(instant);
+        let rect = egui::Rect::from_center_size(
+            egui::pos2(x, strip.center().y),
+            egui::vec2(label_width, strip.height()),
+        );
+        if !crate::chart::label_fits(x, label_width, strip.left(), strip.right())
+            || labelled.iter().any(|taken| taken.intersects(rect))
+        {
+            continue;
+        }
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            crate::plot_area::fmt_time_as(instant, tz, format),
+            font.clone(),
+            theme::TEXT_MUTED,
+        );
     }
 }

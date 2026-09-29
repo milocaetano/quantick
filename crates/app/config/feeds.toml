@@ -21,8 +21,9 @@ default_symbol = "BTCUSDT"
 #   symbols       — the assets offered for this feed (first is its fallback).
 #   bubble_preset — optional: a bubble preset (by name, from bubbles.toml)
 #                   applied whenever this feed is selected. Leave it out and
-#                   the panel keeps whatever preset is active. An unknown name
-#                   is reported and ignored.
+#                   the panel keeps the trader's active look. Leaving an automatic
+#                   tape-only preset restores the appearance from before it.
+#                   An unknown name is reported and ignored.
 #   default_layout — optional: the canvas layout a tab on this feed opens
 #                   showing — "flow" (the default), "time" (a full-window
 #                   timeframe chart) or "time+flow" (the split). Startup-only:
@@ -109,17 +110,15 @@ bubble_preset = "live lane pie"
 id = "metatrader-b3"
 name = "MetaTrader 5 — B3"
 provider = "metatrader"
-symbols = ["WIN$N", "WDO$N"]
+symbols = ["WIN$N", "WDO$N", "WINV26"]
 # The B3 mini index reads best as per-bar pie summaries: bars close in seconds
 # and the candle summary keeps the last bars carrying marks instead of leaving
 # the lane window bare.
 bubble_preset = "live lane pie"
-# The mini index itself goes one step further: its dense 5-point tape reads
-# as aggression per price *region*, not per row — the "mini index regions"
-# preset folds same-side marks landing in a four-row zone into one bubble
-# sized by the zone's summed volume. Per symbol because WDO$N on this same
-# feed keeps the feed-wide look above.
-symbol_bubble_presets = { "WIN$N" = "mini index regions" }
+# The mini index opens the flow pane as a tape with volume dots. Both the
+# continuous alias and the recorded September contract select that look;
+# the mini dollar keeps the feed-wide look above.
+symbol_bubble_presets = { "WIN$N" = "mini index regions", "WINV26" = "mini index regions" }
 # MetaTrader folds several B3 deals into one tick and keeps no count per
 # tick, so a chart cut by deals — the Trades chart the trader reads on
 # ProfitChart — exists only for days somebody recorded the counter. Record

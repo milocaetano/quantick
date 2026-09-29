@@ -5,6 +5,7 @@ use crate::{ChartLayer, LayerBlock, LayerRegistry, LayerScope, LayerSource, Requ
 pub struct LayerFacts {
     pub flow_pane: bool,
     pub tape_on: bool,
+    pub tape_only: bool,
     pub book_capture: bool,
     pub traded_volume: bool,
     pub capture_enabled: bool,
@@ -129,6 +130,21 @@ impl LayerState {
     pub fn blocked(layer: ChartLayer, facts: LayerFacts) -> Option<LayerBlock> {
         if !Self::draws(layer, facts) {
             return Some(blocks::WRONG_PANE);
+        }
+        if layer == ChartLayer::LiveStrip && facts.tape_only {
+            return Some(blocks::TAPE_ONLY_STRIP);
+        }
+        if facts.tape_only
+            && [
+                ChartLayer::Footprint,
+                ChartLayer::Drawings,
+                ChartLayer::TradePaint,
+                ChartLayer::Heatmap,
+                ChartLayer::Bubbles,
+            ]
+            .contains(&layer)
+        {
+            return Some(blocks::TAPE_ONLY_CANDLES);
         }
         if layer.0.needs_tape && !facts.tape_on {
             return Some(blocks::TAPE_OFF);

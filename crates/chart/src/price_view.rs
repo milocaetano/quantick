@@ -59,6 +59,21 @@ impl PriceView {
         self.manual.is_none()
     }
 
+    /// Explicit price framing, independent of whether a first auto-fit exists.
+    #[must_use]
+    pub fn manual_range(&self) -> Option<(f64, f64)> {
+        self.manual
+    }
+
+    /// Set an exact finite price range, preserving orientation.
+    pub fn set_manual_range(&mut self, low: f64, high: f64) -> bool {
+        if !low.is_finite() || !high.is_finite() || low >= high || !(high - low).is_finite() {
+            return false;
+        }
+        self.manual = Some((low, high));
+        true
+    }
+
     /// Whether the chart is upside down.
     #[must_use]
     pub fn is_inverted(&self) -> bool {

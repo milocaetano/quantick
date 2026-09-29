@@ -20,10 +20,18 @@ use crate::orderflow_render::{OrderflowRenderStyle, ProjectedLayout};
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
+mod clock;
 mod frame;
 mod layers;
-mod settings;
+mod opening_scale;
+mod pending;
 #[cfg(test)]
+#[path = "orderflow_view/tests/pending_tests.rs"]
+mod pending_tests;
+mod settings;
+mod source_presets;
+#[cfg(test)]
+#[path = "orderflow_view/tests/tape_frame_tests.rs"]
 mod tape_frame_tests;
 
 /// Borrowed chart timeline handed to one order-flow projection request.
@@ -112,6 +120,8 @@ pub struct OrderflowView {
     preset_name_draft: String,
     /// Last preset action (or failure), shown verbatim in the panel.
     preset_status: Option<String>,
+    /// Appearance to restore after an automatically declared tape-only look.
+    source_preset_restore: Option<bubble_presets::BubblePreset>,
     /// Scripted tape starvation: prints stop reaching the tape this many
     /// milliseconds after the first one, while the book keeps arriving.
     /// `None` — always, outside a capture run — feeds the tape every print.
@@ -121,6 +131,10 @@ pub struct OrderflowView {
     first_print_ms: Option<i64>,
     /// The volume-dot rungs in use, held through an autoscale wobble.
     dot_rungs: quantick_orderflow::DotRungMemory,
+    tape_clock: quantick_orderflow::tape_clock::TapeClock,
+    pending_tape: quantick_orderflow::projection::PendingTape,
+    pending_frame: Option<std::sync::Arc<quantick_orderflow::engine::VisibleOrderflow>>,
+    tape_dots: std::cell::RefCell<quantick_orderflow::projection::TapeDotMemory>,
 }
 
 impl OrderflowView {
@@ -170,9 +184,14 @@ impl OrderflowView {
             presets_source,
             preset_name_draft,
             preset_status,
+            source_preset_restore: None,
             starve_tape_after_ms: None,
             first_print_ms: None,
             dot_rungs: Default::default(),
+            tape_clock: quantick_orderflow::tape_clock::TapeClock::default(),
+            pending_tape: Default::default(),
+            pending_frame: None,
+            tape_dots: Default::default(),
         }
     }
 
@@ -211,17 +230,42 @@ impl OrderflowView {
     /// report, and the newest print the engine happens to have seen is not one.
     #[must_use]
     pub(crate) fn cached_live_end_ms(&self) -> Option<i64> {
-        self.published.live_end_ms
+        self.lane_now_ms().or(self.published.live_end_ms)
     }
 
     /// The rungs and scales of the last published volume-dots frame.
     pub(crate) fn dot_scale(&self) -> Option<&quantick_orderflow::DotScale> {
-        self.published.frame.as_deref()?.volume_dots.as_ref()
+        self.pending_frame
+            .as_ref()
+            .or(self.published.frame.as_ref())?
+            .volume_dots
+            .as_ref()
     }
 
     /// Where the last published tape traded, `(low, high)`.
     #[must_use]
     pub(crate) fn tape_price_range(&self) -> Option<(f64, f64)> {
+        if self.immediate_tape() {
+            let window_ms = self.config.lane_window_ms(15_000);
+            let retained = self
+                .lane_now_ms()
+                .and_then(|now| self.tape_dots.borrow().price_range(now, window_ms));
+            return self
+                .pending_tape
+                .price_range(
+                    self.published
+                        .frame
+                        .as_ref()
+                        .map(|frame| frame.projection.as_ref()),
+                    self.lane_now_ms(),
+                    window_ms,
+                )
+                .into_iter()
+                .chain(retained)
+                .reduce(|(low, high), (next_low, next_high)| {
+                    (low.min(next_low), high.max(next_high))
+                });
+        }
         let frame = self.published.frame.as_deref()?;
         quantick_orderflow::projection::tape_price_range(&frame.projection.aggressions)
     }
@@ -270,7 +314,8 @@ impl OrderflowView {
             return None;
         }
 
-        let style = OrderflowRenderStyle::from_config(&self.config, egui::Color32::TRANSPARENT);
+        let style =
+            OrderflowRenderStyle::from_config(&self.config, egui::Color32::TRANSPARENT.to_array());
         let cell = frame.projection.cells.iter().rev().find(|cell| {
             layout
                 .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)
@@ -315,7 +360,15 @@ impl OrderflowView {
     /// Pull the newest worker snapshot into this frame's mirror. Cheap: one
     /// mutex lock and a small clone (frames are shared through `Arc`).
     fn sync_published(&mut self) {
-        self.published = self.worker.published();
+        let mut publication = self.worker.publication();
+        if let Some(receipt) = publication.tape_receipt
+            && receipt.epoch == self.pending_tape.epoch()
+        {
+            self.pending_tape.acknowledge(receipt.through_ordinal);
+        } else {
+            publication.book.frame = None;
+        }
+        self.published = publication.book;
         let base = self.published.base_price_grouping;
         self.adopt_base(base);
     }
@@ -480,13 +533,6 @@ impl OrderflowView {
         self.config.live_lane.resolved_width_px(chart_width)
     }
 
-    /// Whether the depth map is switched on for the tape. Says nothing about
-    /// whether there is a tape — see [`Self::lane_enabled`].
-    #[must_use]
-    pub fn lane_depth_visible(&self) -> bool {
-        self.config.lane_depth_visible()
-    }
-
     /// The candles' depth switch alone, whatever capture lets through it.
     ///
     /// [`Self::depth_visible`] answers "is it drawn", which is what a renderer
@@ -647,7 +693,7 @@ impl OrderflowView {
             return None;
         }
         self.sync_published();
-        self.published.live_end_ms
+        self.cached_live_end_ms()
     }
 
     /// The live lane as the chart needs it: how wide its band is, and the
@@ -678,7 +724,12 @@ impl OrderflowView {
     /// (negative `delta_px`) gives the tape more room, at the expense of the
     /// history beside it.
     pub fn resize_live_lane(&mut self, delta_px: f32, chart_width: f32) {
-        if !delta_px.is_finite() || !chart_width.is_finite() || chart_width <= 0.0 {
+        // A tape-only pane is all tape: there is no divider to move.
+        if !delta_px.is_finite()
+            || !chart_width.is_finite()
+            || chart_width <= 0.0
+            || self.config.tape_only()
+        {
             return;
         }
         let before = self.config.clone();
@@ -795,6 +846,7 @@ impl OrderflowView {
     /// provider task only after the new feed handle is installed.
     pub fn reset_for_symbol(&mut self, symbol: impl Into<String>) {
         self.symbol = symbol.into();
+        self.tape_clock.reset();
         self.config.enabled = false;
         self.pending_capture_grouping_previous = None;
         // The send-once cache is keyed on what was *sent*, so a new market
@@ -803,6 +855,7 @@ impl OrderflowView {
         // would never be re-offered once auto sizing is re-armed here.
         self.last_tape_price_grid = None;
         self.published = BookPublished::initial();
+        self.pending_tape.clear_opening_bursts();
         // The starvation clock is per market, like the history it starves.
         // Carrying the old symbol's zero across would open the new one on a
         // tape that is already dead — the capture hook would be photographing
@@ -810,6 +863,7 @@ impl OrderflowView {
         self.first_print_ms = None;
         self.worker
             .send(BookCommand::ResetForSymbol(self.symbol.clone()));
+        self.reset_pending_tape();
     }
 
     /// Commit a capture toggle only after its feed command was accepted.
@@ -879,7 +933,12 @@ impl OrderflowView {
         if !self.config.any_layer_enabled() || self.starved_at(trade.timestamp_ms) {
             return;
         }
-        self.worker.send(BookCommand::Trade(trade.clone()));
+        self.pending_tape.observe_opening_burst(trade.timestamp_ms);
+        if self.immediate_tape() {
+            self.record_pending_trade(trade);
+        } else {
+            self.worker.send(BookCommand::Trade(trade.clone()));
+        }
     }
 
     /// Tell the engine the price grid the tape prints on, and the magnitude
@@ -998,6 +1057,14 @@ impl OrderflowView {
         if self.config == before {
             return false;
         }
+        // Explicit display changes begin a new epoch; advancing the clock,
+        // changing book generations or following prices never clears it.
+        self.tape_dots.get_mut().clear();
+        if self.config.tape_only() != before.tape_only()
+            || self.config.volume_dots.enabled != before.volume_dots.enabled
+        {
+            self.reset_pending_tape();
+        }
         let capture_grouping_changed = self.config.price_grouping != before.price_grouping;
         let restart_required = capture_grouping_changed && self.config.enabled;
         if restart_required {
@@ -1070,14 +1137,14 @@ mod tests {
         view.config.show_aggressions = true;
         // The tape opens with both layers, whatever the candles are doing.
         assert!(view.lane_enabled(), "and with a band to draw them on");
-        assert!(view.lane_depth_visible() && view.lane_bubbles_enabled());
+        assert!(view.config.lane_depth_visible() && view.lane_bubbles_enabled());
 
         // Movement 1 and 2: both layers off on the candles.
         view.set_depth_visible(false);
         view.set_bubbles_enabled(false);
         assert!(!view.depth_visible() && !view.bubbles_enabled());
         assert!(
-            view.lane_depth_visible(),
+            view.config.lane_depth_visible(),
             "the tape still has the book — the whole point"
         );
         assert!(view.lane_bubbles_enabled(), "and the prints");
@@ -1095,7 +1162,7 @@ mod tests {
         view.set_bubbles_enabled(true);
         assert!(view.depth_visible() && view.bubbles_enabled());
         assert!(
-            !view.lane_depth_visible() && !view.lane_bubbles_enabled(),
+            !view.config.lane_depth_visible() && !view.lane_bubbles_enabled(),
             "the candles come back alone: the toolbar is not the tape's switch"
         );
 
@@ -1134,14 +1201,14 @@ mod tests {
             "and nothing is projected for a tape that is not there"
         );
         assert!(
-            view.lane_bubbles_enabled() && !view.lane_depth_visible(),
+            view.lane_bubbles_enabled() && !view.config.lane_depth_visible(),
             "the tape's own layer switches are not touched"
         );
 
         view.set_lane_enabled(true);
         assert!(view.lane_enabled());
         assert!(
-            view.lane_bubbles_enabled() && !view.lane_depth_visible(),
+            view.lane_bubbles_enabled() && !view.config.lane_depth_visible(),
             "the tape that comes back is the tape that went away"
         );
     }
@@ -1371,6 +1438,7 @@ mod tests {
             overlap_merge: false,
             volume_dot_full_quantity: 1_000.0,
             volume_dot_auto_full: false,
+            volume_dot_ignore_opening_burst_in_scale: false,
             region_rows: 3,
             region_ms: 2_000,
             bubbles: BubbleStyle {
@@ -1387,6 +1455,7 @@ mod tests {
                 enabled: true,
                 show_depth: true,
                 show_aggressions: true,
+                tape_only: false,
             },
         });
         assert!(view.apply_preset("wide"), "a stored name applies");
@@ -1557,7 +1626,8 @@ mod tests {
             frame.slot_count,
             0.0,
         );
-        let style = OrderflowRenderStyle::from_config(&view.config, egui::Color32::TRANSPARENT);
+        let style =
+            OrderflowRenderStyle::from_config(&view.config, egui::Color32::TRANSPARENT.to_array());
         let position = layout
             .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)
             .center();
@@ -2069,6 +2139,7 @@ mod tests {
                             egui::Color32::BLACK,
                             0.0,
                             false,
+                            (90.0, 110.0),
                         );
                     }
                 });

@@ -388,32 +388,6 @@ fn the_preview_draws_a_bubble_exactly_the_way_the_chart_does() {
 }
 
 #[test]
-fn bubble_marks_scale_with_size_and_matched_share() {
-    let bubbles = BubbleStyle::default();
-    // The front grows with the radius, and never collapses to nothing on
-    // the smallest bubble.
-    assert!(front_half_length(10.0, &bubbles) > front_half_length(2.0, &bubbles));
-    assert!(front_half_length(0.0, &bubbles) >= FRONT_END_PADDING_PX);
-    // A sweep haloes brighter than a routine print, and alpha stays legal.
-    assert!(halo_alpha(1.0, &bubbles) > halo_alpha(0.0, &bubbles));
-    assert!(halo_alpha(1.0, &bubbles) <= 1.0);
-    assert_eq!(
-        halo_alpha(0.0, &bubbles),
-        bubbles.halo_strength,
-        "an unsized print gets the plain halo"
-    );
-    assert!(
-        halo_alpha(f32::NAN, &bubbles).is_finite(),
-        "a non-finite size must not poison the alpha"
-    );
-    // The ring brightens with the share of the print that matched, from a
-    // floor that keeps a nibble visible.
-    assert!(impact_ring_alpha(1.0) > impact_ring_alpha(0.0));
-    assert!(impact_ring_alpha(0.0) >= IMPACT_RING_BASE_ALPHA);
-    assert!(impact_ring_alpha(1.0) <= 1.0);
-}
-
-#[test]
 fn bubble_colours_fall_back_to_the_theme_and_the_trail_follows_the_front() {
     let palette = super::palette_for_theme(HeatmapTheme::Bookmap);
     let default = BubbleColors::resolve(&palette, &BubbleStyle::default());

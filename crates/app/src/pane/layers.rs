@@ -9,11 +9,12 @@ use quantick_layers::{ChartLayer, LayerActions, LayerBlock};
 use quantick_layers::{LayerEffect, LayerFacts, LayerSource, LayerState, VisibilityWrite};
 
 impl ChartPane {
-    pub(super) fn layer_facts(&self, capabilities: Option<FeedCapabilities>) -> LayerFacts {
+    pub(crate) fn layer_facts(&self, capabilities: Option<FeedCapabilities>) -> LayerFacts {
         let tape = self.orderflow.as_ref();
         LayerFacts {
             flow_pane: tape.is_some(),
             tape_on: tape.is_some_and(OrderflowView::lane_enabled),
+            tape_only: tape.is_some_and(|view| view.cached_config().tape_only()),
             capture_enabled: tape.is_some_and(OrderflowView::enabled),
             depth_visible: tape.is_some_and(OrderflowView::depth_visible),
             book_capture: capabilities.is_some_and(|value| value.book_capture),

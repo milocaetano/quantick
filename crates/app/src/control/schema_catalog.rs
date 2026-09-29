@@ -58,6 +58,18 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<TapeSnapshot>("observer-orderflow-tape-v1.schema.json"),
         document::<FootprintSnapshot>("observer-orderflow-footprint-v1.schema.json"),
         document::<BubblesSnapshot>("observer-orderflow-bubbles-v1.schema.json"),
+        document::<quantick_control_schema::price_axis::PriceAxisInput>(
+            "chart-price-axis-input-v1.schema.json",
+        ),
+        document::<quantick_control_schema::price_axis::PriceAxisResult>(
+            "chart-price-axis-result-v1.schema.json",
+        ),
+        document::<quantick_control_schema::opening_scale::OpeningScaleInput>(
+            "orderflow-opening-scale-input-v1.schema.json",
+        ),
+        document::<quantick_control_schema::opening_scale::OpeningScaleResult>(
+            "orderflow-opening-scale-result-v1.schema.json",
+        ),
         document::<HeatmapSnapshot>("observer-orderflow-heatmap-v1.schema.json"),
         document::<L2Snapshot>("observer-orderflow-l2-v1.schema.json"),
         document::<ReplaySnapshot>("observer-session-replay-v1.schema.json"),

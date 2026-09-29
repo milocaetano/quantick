@@ -20,6 +20,9 @@ use crate::{
     project_settled, reserved_span_ms,
 };
 
+#[path = "engine_pending.rs"]
+mod pending;
+
 /// Minimum interval between dirty rebuilds of the finished half of the chart.
 ///
 /// History or bar-boundary changes mark the projection dirty. This cadence
@@ -115,6 +118,9 @@ pub struct VisibleOrderflow {
     pub projection: Arc<HeatmapProjection>,
     pub first_bar_index: usize,
     pub slot_count: usize,
+    /// The market-time edge used to project this frame. A painter can advance
+    /// its cached tape positions between worker publications from this clock.
+    pub live_edge: Option<LiveEdge>,
     /// The rungs and size scales this frame's volume dots were built on;
     /// `None` when the frame holds no dots.
     pub volume_dots: Option<DotScale>,
@@ -211,6 +217,9 @@ pub struct ProjectionRequest {
     /// bars were visible, changed how much market time the tape showed. The
     /// candles' viewport is not a statement about the tape.
     pub lane_reference_ms: Option<i64>,
+    /// Current market time supplied by the caller for an independent tape.
+    /// Ordinary lanes retain their event-anchored clock when this is `None`.
+    pub lane_now_ms: Option<i64>,
     pub price_range: (f64, f64),
     /// The rungs the view chose for volume dots
     /// ([`HeatmapConfig::volume_dots`]). `None` from a caller with no
@@ -1074,10 +1083,16 @@ impl BookEngine {
             return None;
         }
         let reference_ms = typical_bar_ms(request);
+        // Both print-only and book-backed feeds have a factual latest event.
+        // Only the independent tape advances on the supplied market clock.
+        let latest_ms = self.history.latest_ms()?;
+        let now_ms = if self.config.tape_only() {
+            request.lane_now_ms.unwrap_or(latest_ms).max(latest_ms)
+        } else {
+            latest_ms
+        };
         Some(LiveEdge {
-            // Whichever stream is running. Reading this off the book alone is
-            // what left a prints-only feed with no live edge, and so no tape.
-            now_ms: self.history.latest_ms()?,
+            now_ms,
             window_ms: self.config.lane_window_ms(reference_ms),
             reference_ms,
             on_newest_bar: request.on_newest_bar,
@@ -1105,12 +1120,18 @@ impl BookEngine {
         let low = Decimal::from_f64(request.price_range.0)?;
         let high = Decimal::from_f64(request.price_range.1)?;
         let prices = PriceWindow::new(low, high)?;
+        let live_edge = self.live_edge(request);
         let timeline = BarTimeline::from_bars(
             request.first_bar_index,
             &request.closed,
             request.partial.as_ref(),
-            self.live_edge(request),
+            live_edge,
         );
+        let timeline = if self.config.tape_only() {
+            timeline.with_full_lane_coverage()
+        } else {
+            timeline
+        };
         if timeline.is_empty() {
             return None;
         }
@@ -1175,6 +1196,7 @@ impl BookEngine {
             projection: Arc::new(projection),
             first_bar_index: request.first_bar_index,
             slot_count: timeline.region_count(),
+            live_edge,
             volume_dots: dots
                 .as_ref()
                 .map(|dots| dots.scale(&self.config, request.price_range)),
@@ -1200,13 +1222,18 @@ impl BookEngine {
         }
     }
 
-    /// Adopt a price-derived capture bucket while history is still empty (so no
-    /// data is discarded), keeping config and history in sync.
+    /// Adopt a price-derived capture bucket before synchronized book history.
+    /// The independent tape may already contain its opening executions.
     fn apply_auto_base(&mut self, base: Decimal, source: &'static str) {
         if base <= Decimal::ZERO || base == self.config.price_grouping {
             return;
         }
-        match self.history.reset_price_grouping(base) {
+        let reset = if self.config.tape_only() {
+            self.history.resize_capture_grouping(base)
+        } else {
+            self.history.reset_price_grouping(base)
+        };
+        match reset {
             Ok(_) => {
                 self.config.price_grouping = base;
                 tracing::info!(
@@ -1255,16 +1282,10 @@ impl BookEngine {
     /// Goes through `capture_base`, so the ladder and the liquidity map are
     /// sized by one rule rather than by two that have to be kept in step.
     pub fn size_from_tape(&mut self, step: Decimal, reference_price: Option<Decimal>) {
-        // `apply_auto_base` resizes by *discarding* history — the bucket width
-        // is the grid every run and aggression was recorded against, and there
-        // is no reindexing them. Its own doc says "while history is still empty
-        // (so no data is discarded)" and the snapshot caller honours that; this
-        // has to as well. The cost of not doing so is not a wrong number: the
-        // grid only ever narrows, so one later print would resize mid-session,
-        // clear the run store, and leave every delta after it unsynchronized —
-        // a heat map blank until the venue happens to resync. The chart this
-        // exists for has no depth at all, so its history never leaves `Empty`
-        // and the gate costs it nothing.
+        // A capture resize discards L2 runs, so never infer a different grid
+        // after synchronized depth arrives. `Empty` describes book coverage,
+        // not the tape: its opening executions can precede this inference and
+        // the tape-only path retains those exact facts in `apply_auto_base`.
         if !self.auto_base
             || self.venue_price_step.is_some()
             || !matches!(self.history.status(), HistoryStatus::Empty)
@@ -1490,6 +1511,7 @@ mod tests {
             projection: Arc::new(projection),
             first_bar_index: 40,
             slot_count: 10,
+            live_edge: None,
             volume_dots: None,
         };
 
@@ -1652,6 +1674,7 @@ mod tests {
             lane: true,
             on_newest_bar: true,
             lane_reference_ms: None,
+            lane_now_ms: None,
             price_range,
             dot_zoom: None,
         }

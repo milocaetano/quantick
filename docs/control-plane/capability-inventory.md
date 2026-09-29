@@ -33,6 +33,7 @@ capability that cannot change application state.
 | `annotate.remove` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.zone.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `attention.mark.create` | 1 | `attention` | no | `annotate`, `annotate.attention` |
+| `chart.price_axis.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.window.read` | 1 | `chart` | yes | `observe`, `observe.chart`, `observe.market` |
 | `control.describe` | 1 | `control` | yes | `observe` |
 | `events.read` | 1 | `events` | yes | `observe`, `observe.events` |
@@ -70,6 +71,7 @@ capability that cannot change application state.
 | `notify.popup` | 1 | `notify` | no | `annotate`, `annotate.notification` |
 | `notify.sound` | 1 | `notify` | no | `annotate`, `annotate.sound` |
 | `notify.toast` | 1 | `notify` | no | `annotate`, `annotate.notification` |
+| `orderflow.tape.opening_scale.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `scene.read` | 1 | `scene` | yes | `observe`, `observe.attention`, `observe.market`, `observe.workspace` |
 | `snapshot.read` | 1 | `snapshot` | yes | `observe` |
 | `trade.instrument.set_money` | 1 | `trade` | no | `trade` |
@@ -80,4 +82,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-55 capabilities registered.
+57 capabilities registered.

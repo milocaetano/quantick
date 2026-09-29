@@ -336,11 +336,8 @@ impl Tab {
     /// panel tweaks, exactly as before per-symbol declarations existed: the
     /// declared look belongs to the feed, and to the symbols that state one.
     ///
-    /// One asymmetry is deliberate: hopping *off* a declared symbol onto one
-    /// that declares nothing (on a feed that also declares nothing) keeps the
-    /// look just left on screen — nothing remembers what the panel wore
-    /// before the declaration applied, and inventing a "previous look" store
-    /// for that one hop would be a second owner for the panel's state.
+    /// Ordinary declarations remain sticky. A tape-only declaration is scoped:
+    /// leaving it for an undeclared market restores the prior panel appearance.
     pub fn apply_feed_bubble_preset_after_switch(
         &mut self,
         config: &AppConfig,
@@ -351,7 +348,7 @@ impl Tab {
             let feed = config.feed(&self.feed_id);
             let arrived = feed.and_then(|feed| feed.bubble_preset_for(&self.symbol));
             let left = feed.and_then(|feed| feed.bubble_preset_for(previous_symbol));
-            if arrived.is_none() || arrived == left {
+            if arrived == left {
                 return;
             }
         }
@@ -362,19 +359,18 @@ impl Tab {
     /// one is declared ([`FeedConfig::bubble_preset_for`]'s ladder: the
     /// symbol's own entry first, the feed-wide declaration behind it).
     ///
-    /// A feed declaring nothing changes nothing: the panel keeps the look the
-    /// user last chose. An unknown name is reported and ignored — the presets
-    /// file is user-edited, and a typo there must not silently restyle the
-    /// chart.
+    /// An undeclared feed keeps the user's look, restoring it if a source had
+    /// temporarily declared a tape-only preset. Unknown names are ignored —
+    /// the presets file is user-edited, and a typo must not silently restyle it.
     pub fn apply_feed_bubble_preset(&mut self, config: &AppConfig) {
-        let Some(name) = config
+        let name = config
             .feed(&self.feed_id)
             .and_then(|feed| feed.bubble_preset_for(&self.symbol))
-            .map(str::to_owned)
-        else {
+            .map(str::to_owned);
+        let applied = self.tape_mut().apply_source_preset(name.as_deref());
+        let Some(name) = name else {
             return;
         };
-        let applied = self.tape_mut().apply_preset(&name);
         if applied {
             tracing::info!(
                 target: "quantick::app",

@@ -112,9 +112,9 @@ pub struct AggressionPrimitive {
     /// bubble, the whole region for a regional fold. Range-drawing consumers
     /// (the live strip's histogram) read this instead of assuming one row.
     pub price_span: Decimal,
-    /// The cluster's quantity-weighted price, a volume dot's rounded to the
-    /// tick; the price a plain mark is drawn at. A volume dot is drawn at its
-    /// level's centre instead. Always inside the range above.
+    /// The cluster's quantity-weighted price. Tape-only dots retain it without
+    /// rounding and draw at this price. Legacy mixed-pane volume dots retain
+    /// their tick-rounded price and draw at their level's centre.
     pub price: Decimal,
     /// Number of aggregate trades represented by this bubble.
     pub trade_count: usize,
@@ -122,6 +122,9 @@ pub struct AggressionPrimitive {
     pub first_timestamp_ms: i64,
     /// Latest exchange timestamp represented by this bubble.
     pub last_timestamp_ms: i64,
+    /// Exact sum of exchange timestamp times quantity. This retains execution
+    /// time even while a forming dot's displayed position follows NOW.
+    pub timestamp_quantity: Decimal,
     /// Exact bubble quantity aligned with compatible liquidity reductions.
     pub matched_quantity: Decimal,
     /// The exact bought share of [`quantity`](Self::quantity), which
@@ -246,6 +249,8 @@ pub struct HeatmapProjection {
     pub cells: Arc<Vec<HeatmapCell>>,
     /// Visible aggressive executions.
     pub aggressions: Vec<AggressionPrimitive>,
+    /// Native tape facts before the user floor, for exact pending handoff.
+    pub tape_facts: Option<Arc<TapeFacts>>,
     /// Whether [`aggressions`](Self::aggressions) are volume dots
     /// ([`HeatmapConfig::volume_dots`]): one mark per bar, window of
     /// market time and price level, both sides in it, on one per-pane
@@ -280,6 +285,16 @@ pub struct HeatmapProjection {
     pub dropped_liquidity_events: usize,
 }
 
+/// Exact native dots and their retention horizon across an asynchronous swap.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TapeFacts {
+    pub clusters: Vec<crate::interaction::AggressionCluster>,
+    pub evicted_through_ms: Option<i64>,
+    pub floored_quantity: Decimal,
+    /// First recorded native window per recent UTC date, not the visible front.
+    pub opening_bursts: Vec<i64>,
+}
+
 impl HeatmapProjection {
     /// Whether the candles hold every print their bars traded while the tape
     /// also shows the newest ones: a bar summary, or volume dots, whose tape
@@ -303,6 +318,7 @@ impl HeatmapProjection {
             floored_quantity: Decimal::ZERO,
             cells: Arc::new(Vec::new()),
             aggressions: Vec::new(),
+            tape_facts: None,
             volume_dots: false,
             liquidity_events: Vec::new(),
             gaps: Arc::new(Vec::new()),
@@ -385,6 +401,8 @@ pub struct SettledProjection {
 pub struct LiveMarks {
     /// Bubbles for the prints after [`SettledProjection::live_from_ms`].
     pub aggressions: Vec<AggressionPrimitive>,
+    /// Native facts for the independent tape, before its display floor.
+    pub tape_facts: Option<Arc<TapeFacts>>,
     /// Markers for the reductions those same prints were matched against.
     pub liquidity_events: Vec<LiquidityEventPrimitive>,
     /// Reductions the safety cap left out of this half.
@@ -479,6 +497,7 @@ impl SettledProjection {
             floored_quantity: self.floored_quantity + live.floored_quantity,
             cells: Arc::clone(&self.cells),
             aggressions,
+            tape_facts: live.tape_facts,
             volume_dots: self.volume_dots,
             liquidity_events,
             gaps: Arc::clone(&self.gaps),

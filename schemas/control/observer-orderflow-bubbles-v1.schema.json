@@ -32,13 +32,32 @@
           "$ref": "#/$defs/CanonicalDecimal",
           "description": "The exact quantity the trader's own display floor keeps off the canvas.\nFloored, not dropped: it is still in the totals."
         },
+        "ignore_opening_burst_in_scale": {
+          "default": false,
+          "description": "Exclude the first recorded 100 ms burst from automatic tape-only\nsizing; its factual volume is retained and its drawn radius capped.",
+          "type": "boolean"
+        },
         "lane_enabled": {
           "description": "And over the live lane, which is a separate switch.",
           "type": "boolean"
         },
         "overlap_merge": {
           "default": false,
-          "description": "Bubbles are drawn as volume dots, Bookmap style: on the candles one\ndot per bar and price level, on the tape one per window of market time\nand price level, both sides in it as a pie, sized by the volume its\ncell holds. Windows and levels are anchored at exchange epoch 0 and\nprice zero and picked by each pane's own zoom, so a closed dot never\nchanges. The bubble setting `overlap_merge`, switched by\n`layers.visibility.set` as layer `bubble_overlap_merge`.",
+          "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nIn `tape_only` mode, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Explicit display changes\nstart a new grouping. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
+          "type": "boolean"
+        },
+        "recorded_opening_windows_ms": {
+          "default": [],
+          "description": "First recorded native window of each retained UTC day. For daytime\nWIN sessions, this identifies the first available burst, not a proven\nexchange auction. Empty until executions have been observed.",
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "tape_only": {
+          "default": false,
+          "description": "The pane shows the tape alone, Bookmap style: the tape takes the\nwhole canvas, no candle or candle mark is drawn, time runs across the\nfull width on the tape's own window and the price axis follows the\ntape's prints. The lane setting `tape_only`, switched by\n`layers.visibility.set` as layer `tape_only`.",
           "type": "boolean"
         },
         "volume_dots": {

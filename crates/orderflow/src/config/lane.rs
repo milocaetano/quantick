@@ -271,6 +271,38 @@ pub fn lane_lag_label(window_ms: i64, tape_age: Option<TapeAge>) -> Option<Strin
     Some(format!("last print {} back", format_window_ms(age)))
 }
 
+/// Clock steps the tape's axis labels on, finest first, in milliseconds.
+const LANE_TICK_STEPS_MS: [i64; 15] = [
+    100, 200, 500, 1_000, 2_000, 5_000, 10_000, 15_000, 30_000, 60_000, 120_000, 300_000, 600_000,
+    900_000, 1_800_000,
+];
+
+/// The instants the tape's clock labels sit on: multiples of the finest
+/// step in [`LANE_TICK_STEPS_MS`] that puts at most `max_labels` of them in
+/// `[end_ms - window_ms, end_ms]`, oldest first. Empty when nothing fits.
+#[must_use]
+pub fn lane_time_ticks(end_ms: i64, window_ms: i64, max_labels: usize) -> Vec<i64> {
+    if window_ms <= 0 || max_labels == 0 {
+        return Vec::new();
+    }
+    let start_ms = end_ms.saturating_sub(window_ms);
+    // The first multiple of `step` at or after the window's start.
+    let first_at = |step: i64| {
+        let floor = start_ms.div_euclid(step) * step;
+        if floor < start_ms {
+            floor + step
+        } else {
+            floor
+        }
+    };
+    let ticks = |step: i64| (first_at(step)..=end_ms).step_by(usize::try_from(step).unwrap_or(1));
+    LANE_TICK_STEPS_MS
+        .into_iter()
+        .find(|step| ticks(*step).nth(max_labels).is_none())
+        .map(|step| ticks(step).collect())
+        .unwrap_or_default()
+}
+
 /// How a tape window reads in a menu.
 ///
 /// `reference_ms` is the automatic reference, when the caller knows it. The
@@ -367,6 +399,11 @@ pub struct LiveLaneStyle {
     /// Whether aggression bubbles are drawn *on the tape*. Same rule as
     /// [`show_depth`](Self::show_depth), and on by default for the same reason.
     pub show_aggressions: bool,
+    /// The pane shows the tape alone, Bookmap style: the lane takes the
+    /// whole canvas, no candle and no candle mark is drawn, and the price
+    /// axis follows the tape's own prints. Off by default, so every other
+    /// pane keeps its candles.
+    pub tape_only: bool,
 }
 
 impl Default for LiveLaneStyle {
@@ -380,6 +417,7 @@ impl Default for LiveLaneStyle {
             enabled: true,
             show_depth: true,
             show_aggressions: true,
+            tape_only: false,
         }
     }
 }
@@ -415,6 +453,9 @@ struct LiveLaneStyleRepr {
     enabled: bool,
     show_depth: Option<bool>,
     show_aggressions: Option<bool>,
+    /// Written only when on, so a pane that never asked keeps its file.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    tape_only: bool,
 }
 
 impl Default for LiveLaneStyleRepr {
@@ -443,6 +484,7 @@ impl From<LiveLaneStyleRepr> for LiveLaneStyle {
             // default. See `LiveLaneStyleRepr`.
             show_depth: repr.show_depth.unwrap_or(true),
             show_aggressions: repr.show_aggressions.unwrap_or(true),
+            tape_only: repr.tape_only,
         }
     }
 }
@@ -466,6 +508,7 @@ impl From<LiveLaneStyle> for LiveLaneStyleRepr {
             enabled: style.enabled,
             show_depth: Some(style.show_depth),
             show_aggressions: Some(style.show_aggressions),
+            tape_only: style.tape_only,
         }
     }
 }
@@ -508,6 +551,9 @@ impl LiveLaneStyle {
         }
         if !chart_width.is_finite() || chart_width <= 0.0 {
             return 0.0;
+        }
+        if self.tape_only {
+            return chart_width;
         }
         let share = if self.width_share.is_finite() {
             self.width_share
@@ -1107,8 +1153,11 @@ mod tests {
     fn tape_only_is_saved_only_when_on() {
         let text = toml::to_string(&LiveLaneStyle::default()).unwrap();
         assert!(!text.contains("tape_only"), "{text}");
-        let old: LiveLaneStyle = toml::from_str("width_share = 0.35
-").unwrap();
+        let old: LiveLaneStyle = toml::from_str(
+            "width_share = 0.35
+",
+        )
+        .unwrap();
         assert!(!old.tape_only);
         let on = LiveLaneStyle {
             tape_only: true,
@@ -1131,7 +1180,9 @@ mod tests {
         // More room, a finer step.
         assert_eq!(
             lane_time_ticks(100_500, 15_000, 8),
-            vec![86_000, 88_000, 90_000, 92_000, 94_000, 96_000, 98_000, 100_000]
+            vec![
+                86_000, 88_000, 90_000, 92_000, 94_000, 96_000, 98_000, 100_000
+            ]
         );
         // A window edge on a round instant is labelled, and counts.
         assert_eq!(lane_time_ticks(60_000, 60_000, 2), vec![0, 60_000]);

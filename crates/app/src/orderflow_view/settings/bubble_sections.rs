@@ -20,6 +20,7 @@ use quantick_orderflow::{
 use rust_decimal::Decimal;
 
 use crate::orderflow_render::ThemeBubbleRgb;
+use quantick_layers::ChartLayer;
 
 /// How prints fold together before they are drawn: the cluster window, the
 /// dust fold, price regions and the closed-bar summary.
@@ -128,6 +129,12 @@ impl ClusteringSection<'_> {
                     config.volume_dots.auto_full = true;
                 }
             });
+            if config.tape_only() {
+                ui.add_enabled_ui(config.volume_dots.auto_full, |ui| {
+                    ui.checkbox(&mut config.volume_dots.ignore_opening_burst_in_scale, "Ignore opening burst in scale")
+                        .on_hover_text("Exclude the first recorded 100 ms burst of each day from automatic sizing. Its volume and buy/sell pie stay exact, but its dot is capped. If opening data is missing, this uses the first available recorded burst. Save the preset to retain this preference.");
+                });
+            }
         }
         ui.checkbox(&mut config.bubble_candle_summary, "summarize closed bars")
             .on_hover_text(
@@ -150,6 +157,8 @@ impl LiveLaneSection<'_> {
             lane,
             inherited_cluster_ms: inherited,
         } = self;
+        ui.checkbox(&mut lane.tape_only, "Tape only (hide candles)")
+            .on_hover_text(ChartLayer::TapeOnly.hint());
         egui::CollapsingHeader::new("live lane")
             .id_salt("bubble_live_lane_section")
             .default_open(false)
