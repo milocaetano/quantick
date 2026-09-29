@@ -6,7 +6,7 @@
 // integration test: a child sees its ancestor's private items and, through
 // `use super::*`, the root's own. The renderer has since been split into
 // sibling modules, and an item a test names in one of them is `pub(super)`
-// so this sidecar can still reach it - `bubbles::crown_geometry`,
+// so this sidecar can still reach it - `bubbles::sphere_segments`,
 // `heatmap::gap_marks`, `legend::flow_layout` and their like have no
 // production caller outside their own file and carry that visibility for
 // these tests alone. The five glob imports below are how the sidecar sees
@@ -21,8 +21,8 @@ use super::*;
 use crate::viewport::Viewport;
 use quantick_engine::Side;
 use quantick_orderflow::{
-    AggressionPrimitive, BubbleRenderMode, BubbleStyle, LiveLaneStyle, ConsumptionMark, GOLDEN_ANGLE, HeatmapProjection,
-    INV_PHI_2, LiquidityEvidence,
+    AggressionPrimitive, BubbleRenderMode, BubbleStyle, ConsumptionMark, HeatmapProjection,
+    LiquidityEvidence, LiveLaneStyle,
 };
 use rust_decimal::Decimal;
 
@@ -85,7 +85,10 @@ fn a_low_detail_radius_does_not_disarm_the_readability_floor() {
         "prints must still be foldable when the dressing radius is low"
     );
 
-    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &dense_tape_btc);
+    let colors = BubbleColors::resolve(
+        &super::palette_for_theme(HeatmapTheme::Bookmap),
+        &dense_tape_btc,
+    );
     let mark = BubbleMark {
         center: egui::pos2(40.0, 40.0),
         radius: dense_tape_btc.min_radius,
@@ -524,54 +527,6 @@ fn a_sector_covers_only_its_own_slice() {
         "a quarter must not paint the other three: {:?}",
         quarter.vertices.iter().map(|v| v.pos).collect::<Vec<_>>()
     );
-}
-
-#[test]
-fn the_crown_never_touches_the_disc_and_never_closes_a_circle() {
-    // The two properties the mark exists for. The first is why it replaced
-    // the vertical front: a bubble's area is its quantity, so nothing may
-    // be drawn over it. The second is why it is an arc and not a ring: a
-    // closed circle concentric with the disc makes the disc's own edge
-    // ambiguous, which is what the impact ring did.
-    for radius in [1.0_f32, 2.2, 3.5, 5.7, 9.3, 15.0, 22.0, 48.0] {
-        for matched in [0.0_f32, 0.1, 0.5, 0.99, 1.0] {
-            let geometry = crown_geometry(radius, matched);
-            assert!(
-                geometry.arc_radius - geometry.width / 2.0 > radius,
-                "at r={radius} m={matched} the crown's inner edge \
-                     {} is not clear of the rim",
-                geometry.arc_radius - geometry.width / 2.0
-            );
-            assert!(
-                geometry.sweep <= GOLDEN_ANGLE + 1e-5,
-                "at r={radius} m={matched} the sweep {} exceeds the golden angle",
-                geometry.sweep
-            );
-            assert!(
-                geometry.sweep >= GOLDEN_ANGLE * INV_PHI_2 - 1e-5,
-                "a print that ate anything still shows a mark"
-            );
-        }
-    }
-}
-
-#[test]
-fn the_crown_grows_with_the_matched_share() {
-    // Arc length is the channel a trader reads ordinally without a
-    // reference beside it, so it has to be monotone in what it encodes.
-    let radius = 12.0;
-    let mut previous = f32::NEG_INFINITY;
-    for matched in [0.0_f32, 0.25, 0.5, 0.75, 1.0] {
-        let length = crown_geometry(radius, matched).arc_length();
-        assert!(
-            length > previous,
-            "matched={matched} must draw a longer arc than the share below it"
-        );
-        previous = length;
-    }
-    // A full sweep reaches the golden angle exactly, and a nibble 1/φ² of it.
-    assert!((crown_geometry(radius, 1.0).sweep - GOLDEN_ANGLE).abs() < 1e-5);
-    assert!((crown_geometry(radius, 0.0).sweep - GOLDEN_ANGLE * INV_PHI_2).abs() < 1e-5);
 }
 
 #[test]
@@ -1036,7 +991,10 @@ fn a_pie_needs_the_readability_floor_on_the_shipped_presets() {
         ..BubbleStyle::default()
     };
     assert!(dense_tape_btc.detail_min_radius < dense_tape_btc.min_radius);
-    let colors = BubbleColors::resolve(&super::palette_for_theme(HeatmapTheme::Bookmap), &dense_tape_btc);
+    let colors = BubbleColors::resolve(
+        &super::palette_for_theme(HeatmapTheme::Bookmap),
+        &dense_tape_btc,
+    );
     let mark = |radius: f32| BubbleMark {
         center: egui::pos2(60.0, 60.0),
         radius,

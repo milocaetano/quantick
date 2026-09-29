@@ -27,7 +27,9 @@ fn the_tape_price_path_is_behind_the_dots_and_opt_in() {
     let shown = painted(|painter| {
         draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &style));
     });
-    let path = shown.find("LineSegment").expect("a subtle line joins the tape dots");
+    let path = shown
+        .find("LineSegment")
+        .expect("a subtle line joins the tape dots");
     let dot = shown.find("Circle").expect("the dots remain visible");
     assert!(path < dot, "paint the price path behind the volume dots");
 
@@ -36,5 +38,8 @@ fn the_tape_price_path_is_behind_the_dots_and_opt_in() {
     let shown = painted(|painter| {
         draw_aggression_bubbles(painter, &RenderContext::new(&projection, layout, &legacy));
     });
-    assert!(!shown.contains("LineSegment"), "the existing BTC tape is unchanged");
+    assert!(
+        !shown.contains("LineSegment"),
+        "the existing BTC tape is unchanged"
+    );
 }

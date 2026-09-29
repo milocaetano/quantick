@@ -1,4 +1,4 @@
-//! The current tape window applies even while the worker's frame is cached.
+//! Cached tape placement and real worker-to-painter latency.
 use super::*;
 use quantick_engine::Side;
 use quantick_orderflow::projection::PaneGeometry;

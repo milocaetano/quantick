@@ -580,7 +580,12 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
     vec![
         ("layers.visibility.set", 1, Value::Null, Readback::Moves),
         ("chart.price_axis.set", 1, Value::Null, Readback::Moves),
-        ("orderflow.tape.opening_scale.set", 1, Value::Null, Readback::Moves),
+        (
+            "orderflow.tape.opening_scale.set",
+            1,
+            Value::Null,
+            Readback::Moves,
+        ),
         (
             "layout.preset.apply",
             LAYOUT_V2,

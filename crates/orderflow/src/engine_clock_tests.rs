@@ -107,9 +107,12 @@ fn rolling_window_frame(tape_only: bool, partial_open_ms: i64) -> Arc<VisibleOrd
         },
         ..Default::default()
     });
-    for (agg_id, timestamp_ms, price, quantity) in
-        [(1, 1_000, 90, 1), (2, 5_000, 110, 2), (3, 25_000, 100, 3), (4, 30_000, 101, 4)]
-    {
+    for (agg_id, timestamp_ms, price, quantity) in [
+        (1, 1_000, 90, 1),
+        (2, 5_000, 110, 2),
+        (3, 25_000, 100, 3),
+        (4, 30_000, 101, 4),
+    ] {
         engine.record_trade(&Trade {
             agg_id,
             timestamp_ms,
@@ -153,7 +156,12 @@ fn rolling_window_frame(tape_only: bool, partial_open_ms: i64) -> Arc<VisibleOrd
 fn tape_only_keeps_the_full_window_before_the_forming_candle() {
     for partial_open_ms in [24_000, 29_000] {
         let frame = rolling_window_frame(true, partial_open_ms);
-        let tape: Vec<_> = frame.projection.aggressions.iter().filter(|mark| mark.live).collect();
+        let tape: Vec<_> = frame
+            .projection
+            .aggressions
+            .iter()
+            .filter(|mark| mark.live)
+            .collect();
         assert_eq!(
             tape.iter().map(|mark| mark.quantity).sum::<Decimal>(),
             Decimal::from(10),
@@ -170,7 +178,12 @@ fn tape_only_keeps_the_full_window_before_the_forming_candle() {
 #[test]
 fn ordinary_lane_keeps_its_existing_visible_bar_coverage() {
     let frame = rolling_window_frame(false, 24_000);
-    let tape: Vec<_> = frame.projection.aggressions.iter().filter(|mark| mark.live).collect();
+    let tape: Vec<_> = frame
+        .projection
+        .aggressions
+        .iter()
+        .filter(|mark| mark.live)
+        .collect();
     assert_eq!(
         tape.iter().map(|mark| mark.quantity).sum::<Decimal>(),
         Decimal::from(7),

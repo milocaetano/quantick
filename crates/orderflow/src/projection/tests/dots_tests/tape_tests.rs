@@ -5,8 +5,8 @@ use crate::projection::{
     DotSizing, TapeDotGeometry, TapeHorizontalGeometry, merge_tape_dots, position_tape_at,
 };
 
-mod performance;
 mod opening_scale;
+mod performance;
 mod recorded_stability;
 mod stability;
 

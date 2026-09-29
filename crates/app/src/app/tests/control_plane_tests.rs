@@ -5423,7 +5423,11 @@ fn observer_schemas(update: bool) {
         "orderflow-opening-scale-input-v1.schema.json",
         "orderflow-opening-scale-result-v1.schema.json",
     ] {
-        assert!(documents.iter().any(|document| document.file_name == file_name));
+        assert!(
+            documents
+                .iter()
+                .any(|document| document.file_name == file_name)
+        );
     }
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")

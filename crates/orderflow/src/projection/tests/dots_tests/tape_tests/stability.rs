@@ -356,7 +356,14 @@ fn ordinary_lanes_keep_the_existing_projection_and_do_not_read_tape_memory() {
         px_per_price: 1.0,
         typed_full: None,
     };
-    let legacy = memory.project(&prints, current, sizing, &config.bubbles, &config.live_lane, &[]);
+    let legacy = memory.project(
+        &prints,
+        current,
+        sizing,
+        &config.bubbles,
+        &config.live_lane,
+        &[],
+    );
     assert_eq!(legacy.marks, prints);
     assert_eq!(legacy.max_radius, config.bubbles.max_radius);
 }

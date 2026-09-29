@@ -89,16 +89,30 @@ fn recorded_opening_metadata_survives_mode_changes_but_resets_with_the_source() 
     view.stage_capture_grouping_for_test(Decimal::from(5));
     let regrouped = view.recorded_opening_bursts();
     let shown = frame(&mut view, &[print(1, 2_017, 110, 25, Side::Sell)]).unwrap();
-    let same_frame = shown.projection.tape_facts.as_ref().unwrap().opening_bursts.clone();
+    let same_frame = shown
+        .projection
+        .tape_facts
+        .as_ref()
+        .unwrap()
+        .opening_bursts
+        .clone();
     view.reset_for_symbol("WINV26");
     let reset = view.recorded_opening_bursts();
     view.record_trade(&print(1, 4_017, 120, 2, Side::Buy));
     let restarted = view.recorded_opening_bursts();
     held.release();
     assert_eq!(ordinary_mode, [1_000]);
-    assert_eq!(enabled_later, [1_000], "the first visible print after enabling tape is not the recorded opening");
+    assert_eq!(
+        enabled_later,
+        [1_000],
+        "the first visible print after enabling tape is not the recorded opening"
+    );
     assert_eq!(regrouped, [1_000]);
-    assert_eq!(same_frame, [1_000], "pending metadata reaches the same frame before publication");
+    assert_eq!(
+        same_frame,
+        [1_000],
+        "pending metadata reaches the same frame before publication"
+    );
     assert!(reset.is_empty());
     assert_eq!(restarted, [4_000]);
 }

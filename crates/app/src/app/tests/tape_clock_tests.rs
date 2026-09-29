@@ -26,7 +26,10 @@ fn a_tape_only_live_frame_keeps_moving_without_new_events_and_resets_on_source_c
     let print = trade(1);
     app.active_tab_mut().ingest_live_trade_at(&print, 10_000);
     app.active_tab_mut().update_tape_clock_at(10_000);
-    assert_eq!(app.active_tab().tape().lane_now_ms(), Some(print.timestamp_ms));
+    assert_eq!(
+        app.active_tab().tape().lane_now_ms(),
+        Some(print.timestamp_ms)
+    );
     app.active_tab_mut().update_tape_clock_at(10_016);
     assert_eq!(
         app.active_tab().tape().lane_now_ms(),

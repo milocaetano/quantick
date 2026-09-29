@@ -69,7 +69,7 @@ fn tape_frame_parameters() -> (HeatmapConfig, DotSizing, TapeDotGeometry) {
         px_per_price: 600.0 / 350.0,
         typed_full: None,
     };
-    let horizontal = TapeHorizontalGeometry::resolve(900.0, &config.bubbles);
+    let horizontal = TapeHorizontalGeometry::resolve(900.0, 600.0, &config.bubbles);
     let geometry = TapeDotGeometry {
         left_x: 0.0,
         right_x: 1.0,
@@ -85,9 +85,11 @@ fn tape_frame_parameters() -> (HeatmapConfig, DotSizing, TapeDotGeometry) {
 fn complete_fingerprint(marks: &[AggressionPrimitive]) -> u64 {
     const OFFSET_BASIS: u64 = 14_695_981_039_346_656_037;
     const PRIME: u64 = 1_099_511_628_211;
-    format!("{marks:?}").bytes().fold(OFFSET_BASIS, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(PRIME)
-    })
+    format!("{marks:?}")
+        .bytes()
+        .fold(OFFSET_BASIS, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(PRIME)
+        })
 }
 
 #[test]
@@ -96,20 +98,20 @@ fn tape_merge_preserves_complete_fixture_outputs() {
     let outputs = [600, 6_000].map(|count| {
         let mut marks = win_marks(count);
         position_tape_at(&mut marks, NOW_MS, WINDOW_MS, 0.0, 100);
-        let merged = merge_tape_dots(
-            &marks,
-            sizing,
-            &config.bubbles,
-            &config.live_lane,
-            geometry,
-        );
+        let merged = merge_tape_dots(&marks, sizing, &config.bubbles, &config.live_lane, geometry);
         let fingerprint = complete_fingerprint(&merged);
-        eprintln!("tape baseline: {count} input, {} output, fingerprint {fingerprint:#018x}", merged.len());
+        eprintln!(
+            "tape baseline: {count} input, {} output, fingerprint {fingerprint:#018x}",
+            merged.len()
+        );
         (count, merged.len(), fingerprint)
     });
     assert_eq!(
         outputs,
-        [(600, 271, 0xfe3f_a4e6_88f5_c2dc), (6_000, 587, 0xb16d_5bc3_764b_b568)]
+        [
+            (600, 271, 0xfe3f_a4e6_88f5_c2dc),
+            (6_000, 587, 0xb16d_5bc3_764b_b568)
+        ]
     );
 }
 

@@ -187,26 +187,43 @@ fn the_tape_key_fits_the_external_header_without_covering_any_print() {
         });
         let bounds = bounds.expect("the narrow tape keeps its buy/sell key visible");
         assert!(header.contains_rect(bounds), "{header:?} / {bounds:?}");
-        assert!(bounds.bottom() <= plot.top(), "the key never covers a print");
-        let labels: Vec<_> = output.shapes.iter().filter_map(|shape| {
-            match &shape.shape {
+        assert!(
+            bounds.bottom() <= plot.top(),
+            "the key never covers a print"
+        );
+        let labels: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
                 egui::epaint::Shape::Text(text) => Some(text.galley.job.text.as_str()),
                 _ => None,
-            }
-        }).collect();
+            })
+            .collect();
         assert_eq!(labels, ["Buy", "Sell"]);
-        for color in [config.bubbles.buy_color.unwrap(), config.bubbles.sell_color.unwrap()] {
+        for color in [
+            config.bubbles.buy_color.unwrap(),
+            config.bubbles.sell_color.unwrap(),
+        ] {
             let expected = egui::Color32::from_rgb(color[0], color[1], color[2]);
-            assert!(output.shapes.iter().any(|shape| matches!(
-                &shape.shape,
-                egui::epaint::Shape::Circle(circle)
-                    if circle.fill == expected || circle.stroke.color == expected
-            )), "the key follows the trader's bubble colors");
+            assert!(
+                output.shapes.iter().any(|shape| matches!(
+                    &shape.shape,
+                    egui::epaint::Shape::Circle(circle)
+                        if circle.fill == expected || circle.stroke.color == expected
+                )),
+                "the key follows the trader's bubble colors"
+            );
         }
         for shape in &output.shapes {
-            let painted = shape.shape.visual_bounding_rect().intersect(shape.clip_rect);
+            let painted = shape
+                .shape
+                .visual_bounding_rect()
+                .intersect(shape.clip_rect);
             if painted.is_positive() {
-                assert!(header.contains_rect(painted), "all key ink stays outside the plot");
+                assert!(
+                    header.contains_rect(painted),
+                    "all key ink stays outside the plot"
+                );
             }
         }
     }

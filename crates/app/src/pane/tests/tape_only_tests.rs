@@ -113,7 +113,10 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
         "new prints cannot replace an explicit manual tape range"
     );
     candle_price_view.reset();
-    assert_eq!(fitted(true, &candle_price_view, tape_range).range(), (994.0, 1_016.0));
+    assert_eq!(
+        fitted(true, &candle_price_view, tape_range).range(),
+        (994.0, 1_016.0)
+    );
 }
 
 #[test]

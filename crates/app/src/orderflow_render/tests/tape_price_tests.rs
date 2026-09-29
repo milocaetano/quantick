@@ -95,12 +95,18 @@ fn short_tape_axes_keep_extreme_forming_discs_whole_without_moving_their_price()
         for forming_price in [100, 120] {
             for inverted in [false, true] {
                 let viewport = Viewport::new();
-                let rect = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(600.0, height));
+                let rect =
+                    egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(600.0, height));
                 let mut config = HeatmapConfig::default();
                 config.volume_dots.enabled = true;
                 config.live_lane.tape_only = true;
                 let mut style = style_for(&config);
                 style.bubbles.max_radius = 18.0;
+                let geometry = quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
+                    rect.width(),
+                    rect.height(),
+                    &style.bubbles,
+                );
                 let other_price = 220 - forming_price;
                 let mut earlier = mark(1, true, 1, 0.25, 0.5);
                 earlier.price = Decimal::from(other_price);
@@ -113,33 +119,51 @@ fn short_tape_axes_keep_extreme_forming_discs_whole_without_moving_their_price()
                     None,
                     rect.top(),
                     rect.bottom(),
+                    geometry.price_inset_px,
                 )
                 .unwrap()
                 .with_inverted(inverted);
                 let layout = ProjectedLayout::new(rect, &viewport, 0, 0, 1, rect.width())
                     .with_inverted(inverted);
-                let context = RenderContext::new(&frame, layout, &style)
-                    .with_tape_price_range(axis.range());
+                let context =
+                    RenderContext::new(&frame, layout, &style).with_tape_price_range(axis.range());
                 let ctx = egui::Context::default();
                 let output = ctx.run(egui::RawInput::default(), |ctx| {
-                    draw_aggression_bubbles(&ctx.layer_painter(egui::LayerId::background()), &context);
+                    draw_aggression_bubbles(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        &context,
+                    );
                 });
-                let mut circles: Vec<_> = output.shapes.into_iter().filter_map(|clipped| {
-                    match clipped.shape {
-                        egui::Shape::Circle(circle) if circle.fill != egui::Color32::TRANSPARENT => Some(circle),
+                let mut circles: Vec<_> = output
+                    .shapes
+                    .into_iter()
+                    .filter_map(|clipped| match clipped.shape {
+                        egui::Shape::Circle(circle)
+                            if circle.fill != egui::Color32::TRANSPARENT =>
+                        {
+                            Some(circle)
+                        }
                         _ => None,
-                    }
-                }).collect();
+                    })
+                    .collect();
                 circles.sort_by(|a, b| a.radius.total_cmp(&b.radius));
                 assert_eq!(circles.len(), 2, "both factual prices remain visible");
-                assert!((circles[1].radius / circles[0].radius - 2.0).abs() < 1e-5,
-                    "four times the volume must retain four times the disc area");
+                assert!(
+                    (circles[1].radius / circles[0].radius - 2.0).abs() < 1e-5,
+                    "four times the volume must retain four times the disc area"
+                );
                 for (circle, price) in [(&circles[0], other_price), (&circles[1], forming_price)] {
-                    assert!((circle.center.y - axis.y(f64::from(price))).abs() < 0.01,
-                        "padding the axis must not nudge a dot away from its factual price");
-                    assert!(rect.contains_rect(egui::Rect::from_center_size(circle.center,
-                        egui::Vec2::splat(circle.radius * 2.0))),
-                        "height={height} forming={forming_price} inverted={inverted}: {circle:?}");
+                    assert!(
+                        (circle.center.y - axis.y(f64::from(price))).abs() < 0.01,
+                        "padding the axis must not nudge a dot away from its factual price"
+                    );
+                    assert!(
+                        rect.contains_rect(egui::Rect::from_center_size(
+                            circle.center,
+                            egui::Vec2::splat(circle.radius * 2.0)
+                        )),
+                        "height={height} forming={forming_price} inverted={inverted}: {circle:?}"
+                    );
                 }
                 if height == 800.0 {
                     assert_eq!(circles[1].radius, 18.0, "normal pane sizes stay unchanged");

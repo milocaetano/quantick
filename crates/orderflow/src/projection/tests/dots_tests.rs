@@ -1403,6 +1403,7 @@ fn a_merged_level_is_the_sum_and_never_smaller() {
             enabled: true,
             full_quantity: 1_000.0,
             auto_full: false,
+            ignore_opening_burst_in_scale: false,
         },
         ..dots_config()
     };
@@ -1464,6 +1465,7 @@ fn the_dot_scale_rescales_every_dot_alike() {
                 enabled: true,
                 full_quantity,
                 auto_full: false,
+                ignore_opening_burst_in_scale: false,
             },
             bubbles: BubbleStyle {
                 min_radius: 0.0,

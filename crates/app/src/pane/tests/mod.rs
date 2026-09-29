@@ -464,7 +464,7 @@ fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
 #[test]
 fn the_tape_switch_sits_in_the_canvas_top_right_corner() {
     let chart = egui::Rect::from_min_max(egui::pos2(60.0, 80.0), egui::pos2(1_000.0, 700.0));
-    let chip = tape_switch_rect(chart);
+    let chip = tape_switch_rect(chart, false);
     assert!(chart.contains_rect(chip), "on the canvas, not off its edge");
     assert!(chip.right() < chart.right(), "inset from the right edge");
     assert!(chip.top() > chart.top(), "and from the top");
@@ -476,7 +476,7 @@ fn the_tape_switch_sits_in_the_canvas_top_right_corner() {
     // one corner, so a resized window never leaves it behind.
     let moved = chart.translate(egui::vec2(37.0, -11.0));
     assert_eq!(
-        tape_switch_rect(moved),
+        tape_switch_rect(moved, false),
         chip.translate(egui::vec2(37.0, -11.0))
     );
 }
