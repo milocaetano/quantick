@@ -1,8 +1,8 @@
 //! One projection policy for retained tape history and stateless previews.
 
 use super::{
-    AggressionPrimitive, PriceWindow, TapeDotFrame, TapeDotGeometry, TapeDotMemory, TapeDotView,
-    TapeFacts, merge_tape_dots, position_tape_at,
+    AggressionPrimitive, PastTape, PastTapeMemory, PriceWindow, TapeDotFrame, TapeDotGeometry,
+    TapeDotMemory, TapeDotView, TapeFacts, merge_tape_dots, position_tape_at,
 };
 use crate::LiveEdge;
 use crate::config::theme::OrderflowRenderStyle;
@@ -18,25 +18,14 @@ pub fn project_tape_frame<'a>(
 ) -> Option<TapeDotFrame> {
     let sizing = style.dot_sizing?;
     let marks = marks.into();
-    if let (Some(memory), Some((edge, dot_window_ms)), Some(prices)) = (memory, time, prices) {
+    if let (Some(memory), Some(time), Some(prices)) = (memory, time, prices) {
         return Some(memory.project(
             marks.as_ref(),
-            TapeDotView {
-                now_ms: edge.now_ms,
-                window_ms: edge.window_ms,
-                dot_window_ms,
-                evicted_through_ms: facts.and_then(|facts| facts.evicted_through_ms),
-                prices,
-                geometry,
-            },
+            tape_view(time, prices, geometry, facts),
             sizing,
             &style.bubbles,
             &style.live_lane,
-            if style.ignore_opening_burst_in_scale {
-                facts.map_or(&[], |facts| facts.opening_bursts.as_slice())
-            } else {
-                &[]
-            },
+            opening_bursts(style, facts),
         ));
     }
     // Standalone previews have no source lifetime to retain.
@@ -65,4 +54,52 @@ pub fn project_tape_frame<'a>(
         marks,
         max_radius: style.bubbles.max_radius,
     })
+}
+
+/// The past counterpart of [`project_tape_frame`]: the same frame, drawn at a
+/// past instant from `memory`'s frozen blocks of `tape`.
+#[must_use]
+pub fn project_past_tape_frame(
+    marks: &[AggressionPrimitive],
+    memory: &mut PastTapeMemory,
+    tape: &PastTape,
+    style: &OrderflowRenderStyle,
+    geometry: TapeDotGeometry,
+    time: Option<(LiveEdge, i64)>,
+    prices: Option<PriceWindow>,
+) -> Option<TapeDotFrame> {
+    let facts = tape.projection.tape_facts.as_deref();
+    Some(memory.project(
+        marks,
+        tape,
+        tape_view(time?, prices?, geometry, facts),
+        style.dot_sizing?,
+        &style.bubbles,
+        &style.live_lane,
+        opening_bursts(style, facts),
+    ))
+}
+
+fn tape_view(
+    (edge, dot_window_ms): (LiveEdge, i64),
+    prices: PriceWindow,
+    geometry: TapeDotGeometry,
+    facts: Option<&TapeFacts>,
+) -> TapeDotView {
+    TapeDotView {
+        now_ms: edge.now_ms,
+        window_ms: edge.window_ms,
+        dot_window_ms,
+        evicted_through_ms: facts.and_then(|facts| facts.evicted_through_ms),
+        prices,
+        geometry,
+    }
+}
+
+fn opening_bursts<'a>(style: &OrderflowRenderStyle, facts: Option<&'a TapeFacts>) -> &'a [i64] {
+    if style.ignore_opening_burst_in_scale {
+        facts.map_or(&[], |facts| facts.opening_bursts.as_slice())
+    } else {
+        &[]
+    }
 }

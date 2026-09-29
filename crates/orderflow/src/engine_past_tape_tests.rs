@@ -92,7 +92,10 @@ fn past_tape(trades: &[Trade], end_ms: i64) -> Arc<PastTape> {
     engine
         .project_at(&request(trades), Instant::now())
         .expect("the tape projects");
-    engine.published().past_tape.expect("a past window was asked for")
+    engine
+        .published()
+        .past_tape
+        .expect("a past window was asked for")
 }
 
 fn sizing() -> DotSizing {
@@ -111,8 +114,7 @@ fn view(end_ms: i64, tape: &PastTape) -> TapeDotView {
         window_ms: tape.window_ms,
         dot_window_ms: DOT_MS,
         evicted_through_ms: None,
-        prices: crate::projection::PriceWindow::new(Decimal::from(90), Decimal::from(115))
-            .unwrap(),
+        prices: crate::projection::PriceWindow::new(Decimal::from(90), Decimal::from(115)).unwrap(),
         geometry: TapeDotGeometry {
             left_x: 0.0,
             right_x: 1.0,
@@ -141,7 +143,7 @@ fn frame(memory: &mut PastTapeMemory, tape: &PastTape, end_ms: i64) -> Vec<Aggre
 }
 
 /// The facts a mark stands for, without its screen position or size.
-fn membership(mark: &AggressionPrimitive) -> (i64, i64, Decimal, Decimal, u64) {
+fn membership(mark: &AggressionPrimitive) -> (i64, i64, Decimal, Decimal, usize) {
     (
         mark.first_timestamp_ms,
         mark.last_timestamp_ms,
@@ -164,7 +166,10 @@ fn asking_for_a_past_tape_never_changes_the_live_frame() {
     assert_eq!(*actual.projection, *expected.projection);
     assert_eq!(actual.live_edge, expected.live_edge);
     assert_eq!(actual.volume_dots, expected.volume_dots);
-    assert!(live.published().past_tape.is_none(), "live asks for no past");
+    assert!(
+        live.published().past_tape.is_none(),
+        "live asks for no past"
+    );
     let past = panned.published().past_tape.expect("the past tape");
     assert_eq!(past.end_ms, latest(&trades) - 90_000);
     panned.set_tape_end(None);
@@ -231,9 +236,12 @@ fn the_same_data_and_window_give_the_same_past_marks() {
 #[test]
 fn panning_the_past_moves_marks_without_regrouping_them() {
     let trades = tape();
-    let start = latest(&trades) - 100_000;
+    // The window starts 2 s into a block: the first pan stays inside it,
+    // the second crosses into the block before.
     let block = past_block_ms(WINDOW_MS, DOT_MS);
-    for pan in [1_300, block + 700] {
+    let start = 6 * block + 2_000;
+    assert!(start < latest(&trades) - 2 * WINDOW_MS);
+    for pan in [1_300, 20_000] {
         let end = start - pan;
         let (here, there) = (past_tape(&trades, start), past_tape(&trades, end));
         let mut panned = PastTapeMemory::default();
@@ -302,7 +310,9 @@ fn retention_is_reported_where_the_first_complete_print_is() {
     for trade in tape().into_iter().take(300) {
         history.record_aggression(&trade);
     }
-    let evicted = history.evicted_through_ms().expect("the cap evicted prints");
+    let evicted = history
+        .evicted_through_ms()
+        .expect("the cap evicted prints");
     assert_eq!(history.tape_retained_from_ms(), Some(evicted + 1));
     let fresh = {
         let mut history = LiquidityHistory::new(HeatmapConfig::default());

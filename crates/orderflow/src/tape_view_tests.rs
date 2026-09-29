@@ -8,7 +8,10 @@ const WINDOW: i64 = 60_000;
 #[test]
 fn an_end_at_or_after_the_live_edge_is_live() {
     assert_eq!(TapeEnd::clamped(LIVE, LIVE, WINDOW, None), TapeEnd::Live);
-    assert_eq!(TapeEnd::clamped(LIVE + 5, LIVE, WINDOW, None), TapeEnd::Live);
+    assert_eq!(
+        TapeEnd::clamped(LIVE + 5, LIVE, WINDOW, None),
+        TapeEnd::Live
+    );
     assert_eq!(
         TapeEnd::clamped(LIVE - 1, LIVE, WINDOW, None),
         TapeEnd::Past { end_ms: LIVE - 1 }

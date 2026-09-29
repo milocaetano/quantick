@@ -39,6 +39,10 @@ pub(super) struct TierCut<'a> {
     // not rebuilt drew a print in a bar slot while the live half drew the same
     // print on the tape.
     pub(super) tape_from_ms: Option<i64>,
+    /// Where the walk may stop: the first print delivered after the tape
+    /// reached it ends the walk ([`LiquidityHistory::aggressions_between`]).
+    /// `None` walks to the newest delivery, which both chart halves do.
+    pub(super) reach_ms: Option<i64>,
     /// The volume-dot windows, when the tier keys dots: the tape's window
     /// is also what decides which prints are the tape's.
     pub(super) dots: Option<&'a VolumeDots>,
@@ -97,11 +101,12 @@ pub(super) fn cluster_tier(
     let TierCut {
         range: (from_ms, until_ms),
         tape_from_ms,
+        reach_ms,
         dots,
     } = cut;
     let mut tape_prints = Vec::new();
     let mut slot_prints = Vec::new();
-    for trade in history.aggressions_since(from_ms.unwrap_or(i64::MIN)) {
+    for trade in history.aggressions_between(from_ms.unwrap_or(i64::MIN), reach_ms) {
         if from_ms.is_some_and(|from| trade.timestamp_ms < from)
             || until_ms.is_some_and(|until| trade.timestamp_ms >= until)
         {

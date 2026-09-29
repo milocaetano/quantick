@@ -20,6 +20,8 @@ use crate::{
     project_settled, reserved_span_ms,
 };
 
+#[path = "engine_past_tape.rs"]
+mod past_tape;
 #[path = "engine_pending.rs"]
 mod pending;
 
@@ -482,6 +484,10 @@ pub struct BookPublished {
     /// without a user action, so the UI mirrors it from here.
     pub base_price_grouping: Decimal,
     pub frame: Option<Arc<VisibleOrderflow>>,
+    /// The native tape held at a past instant ([`BookEngine::set_tape_end`]).
+    pub past_tape: Option<Arc<crate::projection::PastTape>>,
+    /// First instant the retained tape is complete from.
+    pub tape_retained_from_ms: Option<i64>,
     /// Current book around the spread; `None` while capture is off or the
     /// book has no snapshot yet. Shared through `Arc` so the per-frame clone
     /// of this snapshot stays cheap.
@@ -497,6 +503,8 @@ impl BookPublished {
             live_end_ms: None,
             base_price_grouping: HeatmapConfig::default().price_grouping,
             frame: None,
+            past_tape: None,
+            tape_retained_from_ms: None,
             ladder: None,
         }
     }
@@ -556,6 +564,10 @@ pub struct BookEngine {
     /// request (or after a symbol reset): the ladder then falls back to the
     /// best levels of each side.
     visible_price_window: Option<(Decimal, Decimal)>,
+    /// Where the native tape's right edge is held; `None` follows live.
+    tape_end_ms: Option<i64>,
+    /// The native tape at `tape_end_ms`, rebuilt with every projection.
+    past_tape: Option<Arc<crate::projection::PastTape>>,
 }
 
 impl BookEngine {
@@ -594,6 +606,8 @@ impl BookEngine {
             projection_cache: None,
             last_frame: None,
             visible_price_window: None,
+            tape_end_ms: None,
+            past_tape: None,
         }
     }
 
@@ -1113,6 +1127,7 @@ impl BookEngine {
         request: &ProjectionRequest,
         cache_now: Instant,
     ) -> Option<Arc<VisibleOrderflow>> {
+        self.past_tape = None;
         if !self.config.any_layer_enabled() {
             return None;
         }
@@ -1201,6 +1216,7 @@ impl BookEngine {
                 .as_ref()
                 .map(|dots| dots.scale(&self.config, request.price_range)),
         });
+        self.past_tape = self.project_past(request, &settled, dots.as_ref(), prices);
         self.last_frame = Some(Arc::clone(&frame));
         Some(frame)
     }
@@ -1397,6 +1413,8 @@ impl BookEngine {
             },
             base_price_grouping: self.config.price_grouping,
             frame: self.last_frame.clone(),
+            past_tape: self.past_tape.clone(),
+            tape_retained_from_ms: self.history.tape_retained_from_ms(),
             ladder: self.ladder(),
         }
     }

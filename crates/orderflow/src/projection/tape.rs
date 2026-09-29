@@ -69,17 +69,37 @@ pub fn position_tape_at(
     lane_start_x: f64,
     dot_window_ms: i64,
 ) {
+    position_tape_with(
+        marks,
+        now_ms,
+        lane_window_ms,
+        lane_start_x,
+        Some(dot_window_ms),
+    );
+}
+
+/// [`position_tape_at`], with the forming dot's pin at now optional: a
+/// frozen past has no forming window, so every mark sits at its centroid.
+pub(super) fn position_tape_with(
+    marks: &mut [AggressionPrimitive],
+    now_ms: i64,
+    lane_window_ms: i64,
+    lane_start_x: f64,
+    forming_dot_window_ms: Option<i64>,
+) {
     if lane_window_ms <= 0 || !lane_start_x.is_finite() || lane_start_x >= 1.0 {
         return;
     }
     let window = Decimal::from(lane_window_ms);
     let from = Decimal::from(now_ms) - window;
-    let forming_window = window_start(now_ms, dot_window_ms);
+    let forming = forming_dot_window_ms.map(|dot| (dot, window_start(now_ms, dot)));
     for mark in marks
         .iter_mut()
         .filter(|mark| mark.live && mark.quantity > Decimal::ZERO)
     {
-        mark.x = if window_start(mark.last_timestamp_ms, dot_window_ms) == forming_window {
+        mark.x = if forming
+            .is_some_and(|(dot, window)| window_start(mark.last_timestamp_ms, dot) == window)
+        {
             1.0
         } else {
             let mean = mark.timestamp_quantity / mark.quantity;

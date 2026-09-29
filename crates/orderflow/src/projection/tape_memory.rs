@@ -7,17 +7,19 @@ use rust_decimal::prelude::ToPrimitive as _;
 
 use super::dots::window_start;
 use super::tape::{
-    TapeReference, combine_tape_facts, merge_tape_dots_with_reference, tape_radius_limit,
+    TapeReference, combine_tape_facts, merge_tape_dots_with_reference, position_tape_with,
+    tape_radius_limit,
 };
-use super::{
-    AggressionPrimitive, DotSizing, PriceWindow, TapeDotGeometry, normalized_area_size,
-    position_tape_at,
-};
+use super::{AggressionPrimitive, DotSizing, PriceWindow, TapeDotGeometry, normalized_area_size};
 use crate::config::{BubbleStyle, LiveLaneStyle};
 
 #[cfg(test)]
 #[path = "tests/dots_tests/tape_tests/native_fact_tests.rs"]
 mod native_fact_tests;
+
+#[path = "tape_past_memory.rs"]
+mod past;
+pub use past::{MAX_PAST_BLOCKS, PAST_PRICE_SPAN_BAND, PastTapeMemory};
 
 /// Drawing inputs. Automatic price changes transform the retained facts;
 /// explicit time-window or pixel-geometry changes start a new display epoch.
@@ -130,6 +132,8 @@ pub struct TapeDotMemory {
     epoch: Option<TapeDotView>,
     settled: Vec<Group>,
     frontier: Vec<Group>,
+    /// A frozen past has no forming window to pin at its right edge.
+    frozen: bool,
 }
 
 impl TapeDotMemory {
@@ -256,12 +260,12 @@ impl TapeDotMemory {
             .map(|group| group.mark.clone())
             .chain(active.into_iter().map(|group| group.mark))
             .collect();
-        position_tape_at(
+        position_tape_with(
             &mut shown,
             view.now_ms,
             view.window_ms,
             view.geometry.left_x,
-            view.dot_window_ms,
+            (!self.frozen).then_some(view.dot_window_ms),
         );
         for mark in &mut shown {
             mark.y = view.prices.y_unclamped(mark.price).unwrap_or(mark.y);

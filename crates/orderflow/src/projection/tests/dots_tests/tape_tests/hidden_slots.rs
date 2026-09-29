@@ -39,6 +39,7 @@ fn dual_collection_reference(
         TierCut {
             range: (timeline.live_boundary_ms(), None),
             tape_from_ms: timeline.lane_start_ms(),
+            reach_ms: None,
             dots: Some(&mixed),
         },
         false,

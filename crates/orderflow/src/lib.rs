@@ -16,6 +16,7 @@ mod native_tape;
 pub mod projection;
 pub mod scale;
 pub mod tape_clock;
+pub mod tape_view;
 pub mod timeline;
 
 // This facade is intentionally wider than the first UI integration. Keeping

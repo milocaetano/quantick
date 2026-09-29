@@ -11,6 +11,7 @@ use super::config::{BubbleSizeReference, HeatmapConfig};
 use super::scale::{SessionScale, SummaryScale};
 
 mod openings;
+mod tape_range;
 pub(crate) use openings::RecordedOpenings;
 
 /// Resting side represented by a liquidity run.

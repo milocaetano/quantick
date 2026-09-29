@@ -17,6 +17,7 @@ mod candle_dots;
 mod dots;
 mod fold;
 mod model;
+mod past_tape;
 mod pending;
 mod tape;
 mod tape_frame;
@@ -39,11 +40,14 @@ pub use model::{
     LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, TapeFacts,
     normalized_area_size, normalized_log_intensity,
 };
+pub use past_tape::{PastBars, PastTape, past_block_ms, project_past_tape};
 pub use pending::PendingTape;
 pub use tape::{TapeDotGeometry, merge_tape_dots, position_tape_at};
-pub use tape_frame::project_tape_frame;
+pub use tape_frame::{project_past_tape_frame, project_tape_frame};
 pub use tape_geometry::TapeHorizontalGeometry;
-pub use tape_memory::{TapeDotFrame, TapeDotMemory, TapeDotView};
+pub use tape_memory::{
+    MAX_PAST_BLOCKS, PAST_PRICE_SPAN_BAND, PastTapeMemory, TapeDotFrame, TapeDotMemory, TapeDotView,
+};
 
 use dots::DotHorizon;
 use fold::{FoldOrder, fold_to_budget, pane_budgets};
@@ -374,6 +378,7 @@ pub fn project_settled(
         TierCut {
             range: (None, live_from_ms),
             tape_from_ms: None,
+            reach_ms: None,
             dots,
         },
         summarizing,
@@ -632,6 +637,7 @@ pub fn project_live(
         TierCut {
             range: (Some(live_from_ms), None),
             tape_from_ms: timeline.lane_start_ms(),
+            reach_ms: None,
             dots,
         },
         summarizing,
