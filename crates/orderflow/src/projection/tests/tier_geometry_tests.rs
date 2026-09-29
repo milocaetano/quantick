@@ -7,6 +7,8 @@ use crate::projection::dots::{DotHorizon, fold_dots, native_grouping, window_sta
 use crate::projection::tiers::{TierClusters, tier_primitives};
 use rust_decimal::prelude::ToPrimitive as _;
 
+mod memoization;
+
 /// Preserve the original per-cluster placement operations and their order.
 /// In particular, convert to floating point only after Decimal subtraction
 /// and division, even for modern epoch timestamps with fractional means.
@@ -56,14 +58,27 @@ fn reference_place(
         }
         (false, Some(_)) => prices.y(cluster.price_bucket + cluster.price_span / Decimal::TWO)?,
     };
-    Some(AggressionPrimitive {
+    let size = normalized_area_size(cluster.quantity, reference);
+    Some(primitive_at(cluster, live, x, y, size))
+}
+
+fn primitive_at(
+    cluster: AggressionCluster,
+    live: bool,
+    x: f64,
+    y: f64,
+    size: f32,
+) -> AggressionPrimitive {
+    let buy_share = cluster.buy_share();
+    let matched_fraction = cluster.matched_fraction();
+    AggressionPrimitive {
         agg_id: cluster.agg_id,
-        agg_ids: cluster.agg_ids.clone(),
+        agg_ids: cluster.agg_ids,
         generation: cluster.generation,
         side: cluster.side,
         consumed_side: cluster.consumed_side,
         quantity: cluster.quantity,
-        buy_share: cluster.buy_share(),
+        buy_share,
         live,
         price_bucket: cluster.price_bucket,
         price_span: cluster.price_span,
@@ -74,13 +89,13 @@ fn reference_place(
         timestamp_quantity: cluster.timestamp_quantity,
         matched_quantity: cluster.matched_quantity,
         buy_quantity: cluster.buy_quantity,
-        matched_fraction: cluster.matched_fraction(),
-        liquidity_event_ids: cluster.liquidity_event_ids.clone(),
+        matched_fraction,
+        liquidity_event_ids: cluster.liquidity_event_ids,
         x,
         y,
-        size: normalized_area_size(cluster.quantity, reference),
+        size,
         folded_marks: 0,
-    })
+    }
 }
 
 fn raw(epoch: i64, config: &HeatmapConfig) -> Vec<AggressionCluster> {
