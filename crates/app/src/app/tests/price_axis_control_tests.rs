@@ -3,6 +3,41 @@ use super::*;
 
 const CAPABILITY: &str = "chart.price_axis.set";
 
+#[test]
+fn a_manual_price_range_is_reported_before_the_first_automatic_fit() {
+    let (mut app, _events, _commands, _book) = test_app();
+    let pane = &mut app.active_tab_mut().flow_pane;
+    assert!(pane.frame.auto_range.is_none());
+    assert!(pane.price_view.set_manual_range(90.0, 110.0));
+    let snapshot = crate::control::chart::viewport_snapshot(pane);
+    assert!(!snapshot.price_auto_fit);
+    let range = snapshot.price_range.expect("manual framing exists before the first print");
+    assert_eq!((range.low.as_str(), range.high.as_str()), ("90", "110"));
+}
+
+#[test]
+fn the_price_range_launch_hook_uses_the_same_manual_range_and_rejects_invalid_bounds() {
+    for (value, expected) in [
+        ("90:110", Some((90.0, 110.0))),
+        (" 90.5 : 110.5 ", Some((90.5, 110.5))),
+        ("110:90", None),
+        ("100:100", None),
+        ("NaN:110", None),
+        ("90:inf", None),
+        ("90:110:120", None),
+        ("", None),
+    ] {
+        let launch = AppLaunch {
+            scenario: crate::hooks::ScenarioInputs::from_pairs(&[("QUANTICK_PRICE_RANGE", value)]),
+            ..AppLaunch::default()
+        };
+        let (app, _events, _commands, _book) = test_app_with_launch(launch);
+        assert_eq!(app.active_tab().flow_pane.price_view.manual_range(), expected, "{value}");
+    }
+    let (app, _events, _commands, _book) = test_app();
+    assert!(app.active_tab().flow_pane.price_view.is_auto(), "an absent hook preserves defaults");
+}
+
 fn enable_tape(app: &mut QuantickApp) {
     for layer in [ChartLayer::TapeChart, ChartLayer::BubbleOverlapMerge, ChartLayer::TapeOnly] {
         app.active_tab_mut().flow_pane.set_layer_visible(layer, true, &mut Default::default());
