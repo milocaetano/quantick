@@ -165,6 +165,10 @@ const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
         crate::surfaces::agent_popup::HOOKS,
     ),
     (
+        "crates/app/src/surfaces/bar_switch.rs",
+        crate::surfaces::bar_switch::HOOKS,
+    ),
+    (
         "crates/app/src/surfaces/footprint_settings.rs",
         crate::surfaces::footprint_settings::HOOKS,
     ),

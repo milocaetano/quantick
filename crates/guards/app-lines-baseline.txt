@@ -31,10 +31,10 @@
 # facade — and no line of logic was added: the three measured representatives
 # read 72%, 51% and 41% fewer lines (PR body, `tools/read_cost/measure.py`).
 # The lines bought read cost, which the size ratchet does not measure.
-# Raised by 239 lines for the quick bar switch (`surfaces/bar_switch.rs`):
+# Raised by 264 lines for the quick bar switch (`surfaces/bar_switch.rs`):
 # drawing and key reading only, docked as a new file on the `Surface` port.
 # What the typed number means lives in `quantick-engine`
 # (`BarRegistry::quick_candidates`), and the change applies through the same
 # `set_pane_bar_spec` the control plane uses; there was no app code to move out.
-!budget 104254
-crates/app 104254
+!budget 104279
+crates/app 104279

@@ -113,12 +113,19 @@ impl Surface for BarSwitchSurface {
         let Some(open) = self.open.as_mut() else {
             return SurfaceResponse::default();
         };
+        let query_id = egui::Id::new(id).with("query");
+        // The switch answers for the pane it opened over: once another pane
+        // is focused, nothing it holds applies.
+        let pane_moved = env.active_tab != open.tab || env.focused_side != open.side;
+        // Keys are the switch's only while its field holds the keyboard; once
+        // focus is elsewhere they belong to whoever holds it.
+        let typing = !pane_moved && ctx.memory(|memory| memory.has_focus(query_id));
         let (escape, enter, down, up) = ctx.input(|input| {
             (
                 input.key_pressed(egui::Key::Escape),
-                input.key_pressed(egui::Key::Enter),
-                input.key_pressed(egui::Key::ArrowDown),
-                input.key_pressed(egui::Key::ArrowUp),
+                typing && input.key_pressed(egui::Key::Enter),
+                typing && input.key_pressed(egui::Key::ArrowDown),
+                typing && input.key_pressed(egui::Key::ArrowUp),
             )
         });
         let last = candidates.len().saturating_sub(1);
@@ -143,10 +150,11 @@ impl Surface for BarSwitchSurface {
             }
             None => window.anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 96.0)),
         };
-        window.show(ctx, |ui| {
+        let asked = open.query.clone();
+        let shown = window.show(ctx, |ui| {
             let edit = ui.add(
                 egui::TextEdit::singleline(&mut open.query)
-                    .id(egui::Id::new(id).with("query"))
+                    .id(query_id)
                     .char_limit(MAX_DIGITS)
                     .hint_text("bar size")
                     .desired_width(f32::INFINITY),
@@ -175,6 +183,11 @@ impl Surface for BarSwitchSurface {
                 );
             });
             open.query.retain(|character| character.is_ascii_digit());
+            // A new number is a new list: a highlight kept by index would land
+            // on a different kind (15's fourth row is tick, 150's is volume).
+            if open.query != asked {
+                open.selected = 0;
+            }
             if candidates.is_empty() {
                 ui.label(egui::RichText::new("no bar at this size").color(theme::TEXT_SUPPORT));
             }
@@ -185,15 +198,23 @@ impl Surface for BarSwitchSurface {
                 }
             }
         });
-        let chosen = clicked.or((enter && !candidates.is_empty()).then_some(open.selected));
+        let chosen = clicked
+            .filter(|_| !pane_moved)
+            .or((enter && !candidates.is_empty()).then_some(open.selected));
         let request = chosen.map(|index| BarSwitchRequest {
             tab: open.tab,
             side: open.side,
             config: candidates[index],
         });
-        if escape || request.is_some() || open.query.is_empty() {
+        // It closes with its pane, or once the keyboard went elsewhere while
+        // the pointer is off the list (a row being pressed holds focus for
+        // the frame before its click lands).
+        let over_list = shown.is_some_and(|shown| shown.response.contains_pointer());
+        let abandoned =
+            !open.focus_pending && !ctx.memory(|memory| memory.has_focus(query_id)) && !over_list;
+        if escape || request.is_some() || open.query.is_empty() || pane_moved || abandoned {
             self.open = None;
-            ctx.memory_mut(|memory| memory.surrender_focus(egui::Id::new(id).with("query")));
+            ctx.memory_mut(|memory| memory.surrender_focus(query_id));
         }
         SurfaceResponse {
             bar_switch: request,

@@ -9,14 +9,22 @@ fn frame(
     ctx: &egui::Context,
     events: Vec<egui::Event>,
 ) -> SurfaceResponse {
-    let env = SurfaceEnv::quiet(Instant::now());
+    frame_in(surface, ctx, events, &SurfaceEnv::quiet(Instant::now()))
+}
+
+fn frame_in(
+    surface: &mut BarSwitchSurface,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+    env: &SurfaceEnv<'_>,
+) -> SurfaceResponse {
     let mut response = SurfaceResponse::default();
     let _ = ctx.run(
         egui::RawInput {
             events,
             ..Default::default()
         },
-        |ctx| response = surface.draw(ctx, &env),
+        |ctx| response = surface.draw(ctx, env),
     );
     response
 }
@@ -67,7 +75,7 @@ fn letters_and_modified_digits_leave_it_closed() {
 fn enter_applies_the_highlighted_row_to_the_pane_it_opened_over() {
     let ctx = egui::Context::default();
     let mut surface = BarSwitchSurface::default();
-    surface.open(7, crate::pane::PaneSide::Time(0), "15");
+    surface.open(0, crate::pane::PaneSide::Flow, "15");
     // egui holds a focus filter only from the frame after focus arrived.
     frame(&mut surface, &ctx, Vec::new());
     frame(&mut surface, &ctx, Vec::new());
@@ -77,8 +85,8 @@ fn enter_applies_the_highlighted_row_to_the_pane_it_opened_over() {
     assert_eq!(
         response.bar_switch,
         Some(BarSwitchRequest {
-            tab: 7,
-            side: crate::pane::PaneSide::Time(0),
+            tab: 0,
+            side: crate::pane::PaneSide::Flow,
             config: chosen,
         })
     );
@@ -94,4 +102,48 @@ fn escape_closes_without_a_change() {
     let response = frame(&mut surface, &ctx, vec![key(egui::Key::Escape)]);
     assert_eq!(response.bar_switch, None);
     assert!(!surface.is_open());
+}
+
+#[test]
+fn focusing_another_pane_closes_it_without_a_change() {
+    let ctx = egui::Context::default();
+    let mut surface = BarSwitchSurface::default();
+    surface.open(0, crate::pane::PaneSide::Flow, "15");
+    frame(&mut surface, &ctx, Vec::new());
+    let mut env = SurfaceEnv::quiet(Instant::now());
+    env.focused_side = crate::pane::PaneSide::Time(0);
+    let response = frame_in(&mut surface, &ctx, vec![key(egui::Key::Enter)], &env);
+    assert_eq!(response.bar_switch, None);
+    assert!(!surface.is_open());
+}
+
+#[test]
+fn losing_the_keyboard_closes_it_and_leaves_enter_alone() {
+    let ctx = egui::Context::default();
+    let mut surface = BarSwitchSurface::default();
+    surface.open(0, crate::pane::PaneSide::Flow, "15");
+    frame(&mut surface, &ctx, Vec::new());
+    ctx.memory_mut(|memory| memory.surrender_focus(egui::Id::new("bar_switch").with("query")));
+    let response = frame(&mut surface, &ctx, vec![key(egui::Key::Enter)]);
+    assert_eq!(response.bar_switch, None);
+    assert!(!surface.is_open());
+}
+
+#[test]
+fn a_new_number_moves_the_highlight_back_to_the_top() {
+    let ctx = egui::Context::default();
+    let mut surface = BarSwitchSurface::default();
+    surface.open(0, crate::pane::PaneSide::Flow, "15");
+    frame(&mut surface, &ctx, Vec::new());
+    frame(&mut surface, &ctx, Vec::new());
+    for _ in 0..3 {
+        frame(&mut surface, &ctx, vec![key(egui::Key::ArrowDown)]);
+    }
+    frame(&mut surface, &ctx, vec![egui::Event::Text("0".into())]);
+    let response = frame(&mut surface, &ctx, vec![key(egui::Key::Enter)]);
+    let first = quantick_engine::bar_registry::BUILTIN_BARS.quick_candidates(150)[0];
+    assert_eq!(
+        response.bar_switch.map(|request| request.config),
+        Some(first)
+    );
 }
