@@ -150,6 +150,64 @@ fn a_whole_width_lane_puts_the_divider_on_the_left_edge() {
 }
 
 #[test]
+fn borrowing_all_visible_marks_and_copying_filtered_marks_obey_the_same_visibility_policy() {
+    let viewport = Viewport::new();
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_000.0, 400.0));
+    let layout = ProjectedLayout::new(rect, &viewport, 3, 0, 4, rect.width());
+    let mut config = quantick_orderflow::HeatmapConfig::default();
+    config.volume_dots.enabled = true;
+    config.live_lane.tape_only = true;
+    config.show_aggressions = true;
+    for include_hidden_candle in [false, true] {
+        let mut projection = HeatmapProjection::empty(true, quantick_orderflow::EffectiveGrouping::resolve(
+            quantick_orderflow::DisplayGrouping::Native, Decimal::ONE, Decimal::from(80),
+        ));
+        projection.volume_dots = true;
+        for (id, price, buy_share, live) in [(1, 100, 1.0, true), (2, 120, 0.0, true), (3, 140, 0.5, true), (4, 160, 1.0, false)] {
+            if !live && !include_hidden_candle {
+                continue;
+            }
+            let mut source = mark(id, live, 4, 0.9, 0.5);
+            source.price = Decimal::from(price);
+            source.price_bucket = source.price;
+            source.buy_share = buy_share;
+            source.buy_quantity = Decimal::from(if id == 2 { 0 } else if id == 3 { 2 } else { 4 });
+            if id == 2 {
+                source.side = Side::Sell;
+                source.consumed_side = BookSide::Bid;
+            }
+            source.first_timestamp_ms = 3_011 + id as i64 * 200;
+            source.last_timestamp_ms = source.first_timestamp_ms;
+            source.timestamp_quantity = Decimal::from(source.first_timestamp_ms) * source.quantity;
+            projection.aggressions.push(source);
+        }
+        let original = projection.aggressions.clone();
+        for (buy, sell, lane, expected) in [
+            (true, true, true, vec![1, 2, 3]),
+            (true, false, true, vec![1]),
+            (false, true, true, vec![2]),
+            (false, false, true, vec![]),
+            (true, true, false, vec![]),
+        ] {
+            let mut style = style_for(&config);
+            style.show_buy = buy;
+            style.show_sell = sell;
+            style.lane_aggression_layer = lane;
+            let memory = std::cell::RefCell::new(quantick_orderflow::projection::TapeDotMemory::default());
+            let context = RenderContext::new(&projection, layout, &style)
+                .with_tape_time(quantick_orderflow::LiveEdge { now_ms: 5_000, window_ms: 30_000, reference_ms: 30_000, on_newest_bar: true }, 100)
+                .with_tape_price_range((90.0, 170.0))
+                .with_tape_memory(&memory);
+            assert_eq!(context.bubbles().map(|mark| mark.agg_id).collect::<Vec<_>>(), expected);
+            let drawn = radii(&painted(|painter| draw_aggression_bubbles(painter, &context)));
+            assert_eq!(drawn.len(), expected.len(), "mixed and hidden-pane marks stay filtered");
+            assert_eq!(memory.borrow().retained_group_count(), expected.len());
+            assert_eq!(projection.aggressions, original, "the source frame remains available to other layers");
+        }
+    }
+}
+
+#[test]
 fn the_tape_key_fits_the_external_header_without_covering_any_print() {
     let viewport = Viewport::new();
     let projection = HeatmapProjection::empty(

@@ -6,6 +6,7 @@ use crate::projection::{
 };
 
 mod dense_window_performance;
+mod frame_input;
 mod hidden_slots;
 mod opening_scale;
 mod performance;
