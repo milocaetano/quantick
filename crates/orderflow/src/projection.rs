@@ -25,8 +25,9 @@ mod tape_memory;
 mod tiers;
 
 pub use candle_dots::{
-    CandleDot, CandleDotFrame, CandleDotGrid, CandleDotView, CandleFootprint,
-    CandleFootprintSource, project_candle_dots,
+    CANDLE_GROUP_HOLD_BAND, CANDLE_GROUP_MIN_WIDTH_PX, CANDLE_MARK_MAX_RADIUS_PX, CandleDot,
+    CandleDotFrame, CandleDotGrid, CandleDotView, CandleFootprint, CandleFootprintSource,
+    CandleGroupMemory, project_candle_dots,
 };
 pub use dots::{
     DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_CELL_PX, DOT_WINDOW_LADDER_MS, DotRungMemory, DotScale,
