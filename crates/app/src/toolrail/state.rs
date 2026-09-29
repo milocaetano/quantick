@@ -329,12 +329,8 @@ impl ToolRail {
             if input.modifiers.command || input.modifiers.alt {
                 return None;
             }
-            if input.key_pressed(egui::Key::Num1) {
-                return Some(Tool::Pointer);
-            }
-            if input.key_pressed(egui::Key::Num2) {
-                return Some(Tool::Crosshair);
-            }
+            // Bare digits belong to the quick bar switch, as in ProfitChart;
+            // Escape still returns to the pointer.
             DRAWING_TOOLS.into_iter().find_map(|tool| {
                 tool.shortcut()
                     .filter(|shortcut| {

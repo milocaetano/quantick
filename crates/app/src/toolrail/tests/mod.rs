@@ -416,8 +416,13 @@ fn tool_shortcuts_arm_their_declared_tools() {
         rail.tool().drawing_tool().map(DrawingTool::id),
         Some("brush")
     );
+    // A bare digit is the quick bar switch's, never a tool's.
     send(&mut rail, egui::Key::Num1, egui::Modifiers::NONE);
-    assert_eq!(rail.tool(), Tool::Pointer);
+    assert_eq!(
+        rail.tool().drawing_tool().map(DrawingTool::id),
+        Some("brush")
+    );
+    rail.arm(Tool::Pointer);
     // A held command modifier keeps the letters out of the tool map.
     send(&mut rail, egui::Key::R, egui::Modifiers::COMMAND);
     assert_eq!(rail.tool(), Tool::Pointer);

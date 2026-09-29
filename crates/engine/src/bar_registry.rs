@@ -4,7 +4,9 @@
 //! Neither the registry nor a legacy enum participates in per-trade dispatch.
 pub mod definitions;
 mod parameters;
+mod quick_switch;
 pub use parameters::*;
+pub use quick_switch::QUICK_DURATION_SCALES_MS;
 
 use crate::BarBuilder;
 use rust_decimal::{Decimal, prelude::ToPrimitive};

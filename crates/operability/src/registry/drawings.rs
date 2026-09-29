@@ -43,7 +43,7 @@ pub(super) const TOOL_RAIL: &[UiBehaviour] = &[
     UiBehaviour {
         id: "tool.crosshair",
         title: "Arm the crosshair",
-        reach: "tool rail, key 2",
+        reach: "tool rail",
         keys: &[(Source::RailTool, "Crosshair")],
         mapping: excluded!(
             PendingCapability,
@@ -54,7 +54,7 @@ pub(super) const TOOL_RAIL: &[UiBehaviour] = &[
     UiBehaviour {
         id: "tool.pointer",
         title: "Arm the pointer — pan, zoom, select and move",
-        reach: "tool rail, key 1, Escape",
+        reach: "tool rail, Escape",
         keys: &[(Source::RailTool, "Pointer")],
         mapping: excluded!(
             PendingCapability,

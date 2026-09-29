@@ -366,7 +366,7 @@ impl QuantickApp {
                 workspace: &self.workspace,
                 style: &self.style,
                 footprint_config: &self.footprint_config,
-                tabs: &self.tabs,
+                tabs: &mut self.tabs,
                 config: &self.config,
                 added_symbols: &self.added_symbols,
             },
