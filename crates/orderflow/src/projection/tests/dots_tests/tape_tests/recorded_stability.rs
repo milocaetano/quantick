@@ -111,8 +111,12 @@ fn report_drawn_radii(label: &str, frame: &TapeDotFrame) {
         typed_full: None,
     };
     let full = sizing.full_quantity(&frame.marks, true);
-    let mut radii: Vec<_> = frame.marks.iter().filter(|mark| mark.live)
-        .map(|mark| sizing.radius(&config.bubbles, &config.live_lane, mark, full)).collect();
+    let mut radii: Vec<_> = frame
+        .marks
+        .iter()
+        .filter(|mark| mark.live)
+        .map(|mark| sizing.radius(&config.bubbles, &config.live_lane, mark, full))
+        .collect();
     radii.sort_by(f32::total_cmp);
     let median = if radii.is_empty() {
         0.0
@@ -121,7 +125,10 @@ fn report_drawn_radii(label: &str, frame: &TapeDotFrame) {
     };
     eprintln!(
         "WIN_STABILITY {label}: marks={} max_radius_cap={:.3}px min_radius={:.3}px median_radius={:.3}px quantity_max={full}",
-        radii.len(), frame.max_radius, radii.first().copied().unwrap_or_default(), median
+        radii.len(),
+        frame.max_radius,
+        radii.first().copied().unwrap_or_default(),
+        median
     );
 }
 
@@ -244,5 +251,93 @@ fn real_win_prefixes_do_not_regroup_ten_second_old_history_when_the_left_maximum
             current.y,
             view(AFTER_MS).prices.y_unclamped(current.price).unwrap()
         );
+    }
+}
+
+fn measure_real_tape(
+    label: &str,
+    input_count: usize,
+    mut project: impl FnMut() -> Vec<AggressionPrimitive>,
+) -> Vec<AggressionPrimitive> {
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    const ITERATIONS: usize = 150;
+    for _ in 0..3 {
+        black_box(project());
+    }
+    let mut elapsed_ms = Vec::with_capacity(ITERATIONS);
+    let mut last = Vec::new();
+    for _ in 0..ITERATIONS {
+        let started = Instant::now();
+        let marks = black_box(project());
+        elapsed_ms.push(started.elapsed().as_secs_f64() * 1_000.0);
+        last = marks;
+    }
+    let mean = elapsed_ms.iter().sum::<f64>() / ITERATIONS as f64;
+    elapsed_ms.sort_by(f64::total_cmp);
+    let median = (elapsed_ms[ITERATIONS / 2 - 1] + elapsed_ms[ITERATIONS / 2]) / 2.0;
+    eprintln!(
+        "WIN_TAPE_PERF {label}: native_input={input_count} rendered_output={} mean_ms={mean:.3} median_ms={median:.3} samples={ITERATIONS} warmups=3",
+        last.len()
+    );
+    last
+}
+
+#[test]
+#[ignore = "opt-in real native-dot measurement; timing is reported without a pass threshold"]
+fn real_native_tape_stateless_and_warmed_memory_cost() {
+    use std::hint::black_box;
+
+    let prints = recording();
+    let prefix_len = prints.partition_point(|trade| trade.timestamp_ms <= BEFORE_MS);
+    let before_native = native_prefix(&prints[..prefix_len], BEFORE_MS);
+    let native = native_prefix(&prints, AFTER_MS);
+    let config = tape_config();
+    let current = view(AFTER_MS);
+    let sizing = DotSizing {
+        tape_column_px: 1.0,
+        candle_column_px: 1.0,
+        px_per_price: 1.0,
+        typed_full: None,
+    };
+    let stateless = measure_real_tape("stateless", native.len(), || {
+        let mut positioned = black_box(native.clone());
+        position_tape_at(
+            &mut positioned,
+            current.now_ms,
+            current.window_ms,
+            current.geometry.left_x,
+            current.dot_window_ms,
+        );
+        for mark in &mut positioned {
+            mark.y = current.prices.y_unclamped(mark.price).unwrap();
+        }
+        merge_tape_dots(
+            &positioned,
+            sizing,
+            &config.bubbles,
+            &config.live_lane,
+            current.geometry,
+        )
+    });
+    let mut memory = TapeDotMemory::default();
+    let _ = draw(&mut memory, &before_native, BEFORE_MS);
+    let retained = measure_real_tape("warmed_memory", native.len(), || {
+        memory
+            .project(
+                black_box(&native),
+                current,
+                sizing,
+                &config.bubbles,
+                &config.live_lane,
+            )
+            .marks
+    });
+    // Whole left-edge groups and causal merging deliberately differ from a
+    // stateless partition; each output must still contain exact source facts.
+    for marks in [&stateless, &retained] {
+        let _ = identities(marks);
+        assert_exact_source_facts(marks, &prints);
     }
 }
