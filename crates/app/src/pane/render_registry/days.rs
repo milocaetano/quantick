@@ -44,10 +44,12 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
         .size()
         .x;
     let mut written_right = f32::NEG_INFINITY;
-    let mut write = |p: &mut DaySeparatorPass<'_>, start: f32, text: String, color| {
+    // `limit` is where the next tick stands, or the strip's end: a date is
+    // never crossed by the tick after it.
+    let mut write = |p: &mut DaySeparatorPass<'_>, start: f32, limit: f32, text: String, color| {
         let galley = p.painter.layout_no_wrap(text, font.clone(), color);
         let width = galley.size().x;
-        let fits = start >= written_right + DAY_LABEL_GAP_PX && start + width <= right;
+        let fits = start >= written_right + DAY_LABEL_GAP_PX && start + width <= limit;
         let centre = start + width / 2.0;
         if !fits || pointer_compass::claimed(centre, width, chip_width, p.claims.iter().copied()) {
             return;
@@ -70,22 +72,17 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
         })
         .filter(|&(x, _)| x >= left && x <= right)
         .collect();
+    let limit_before = |index: usize| {
+        ticks
+            .get(index)
+            .map_or(right, |&(x, _)| x - DAY_LABEL_GAP_PX)
+    };
     if let Some(date) = p.first_visible {
-        let pinned = left + DAY_LABEL_GAP_PX;
         let text = format!("{} {}", weekday_abbr(date.weekday()), date.short());
-        let width = p
-            .painter
-            .layout_no_wrap(text.clone(), font.clone(), theme::TEXT_MUTED)
-            .size()
-            .x;
-        let clear = ticks
-            .first()
-            .is_none_or(|&(x, _)| pinned + width + DAY_LABEL_GAP_PX <= x);
-        if clear {
-            write(p, pinned, text, theme::TEXT_MUTED);
-        }
+        let limit = limit_before(0);
+        write(p, left + DAY_LABEL_GAP_PX, limit, text, theme::TEXT_MUTED);
     }
-    for (x, date) in ticks {
+    for (index, &(x, date)) in ticks.iter().enumerate() {
         p.painter.line_segment(
             [
                 egui::pos2(x, p.strip.top()),
@@ -95,7 +92,14 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
         );
         // No time label is written across the tick either.
         p.reserved.push((x, x));
-        write(p, x + DAY_LABEL_GAP_PX, day_text(date), theme::TEXT_PRIMARY);
+        let limit = limit_before(index + 1);
+        write(
+            p,
+            x + DAY_LABEL_GAP_PX,
+            limit,
+            day_text(date),
+            theme::TEXT_PRIMARY,
+        );
     }
 }
 /// `Tue 29`; the month joins it on the first of the month, where the month
