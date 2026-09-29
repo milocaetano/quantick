@@ -1,6 +1,7 @@
 //! Causal tape groups: the frontier may grow, settled memberships do not.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
@@ -10,8 +11,14 @@ use super::tape::{
     TapeReference, combine_tape_facts, merge_tape_dots_with_reference, position_tape_with,
     tape_radius_limit,
 };
-use super::{AggressionPrimitive, DotSizing, PriceWindow, TapeDotGeometry, normalized_area_size};
+use super::tiers::aggression_primitive;
+use super::{
+    AggressionPrimitive, DotSizing, PriceWindow, TapeDotGeometry, TapeFacts, TapeLineage,
+    TapeOverlay, draws_bubble, normalized_area_size,
+};
+use crate::config::theme::OrderflowRenderStyle;
 use crate::config::{BubbleStyle, LiveLaneStyle};
+use crate::interaction::AggressionCluster;
 
 #[cfg(test)]
 #[path = "tests/dots_tests/tape_tests/native_fact_tests.rs"]
@@ -134,6 +141,33 @@ pub struct TapeDotMemory {
     frontier: Vec<Group>,
     /// A frozen past has no forming window to pin at its right edge.
     frozen: bool,
+    /// What the last sealed frame left reconciled; `None` rereads every cell.
+    ingested: Option<Ingested>,
+    /// Native cells handed to reconciliation by the last projection.
+    reconciled: usize,
+}
+
+/// Every cell of `lineage` before `below_ms` has been reconciled, under the
+/// same floor, bubble switches and eviction horizon.
+#[derive(Debug)]
+struct Ingested {
+    lineage: Arc<TapeLineage>,
+    below_ms: i64,
+    floor: Decimal,
+    switches: (bool, bool, bool),
+    horizon: Option<i64>,
+    /// The overlay's keys: when one leaves the overlay, its published cell
+    /// has to be read again, sealed or not.
+    overlay_keys: Vec<NativeKey>,
+}
+
+/// A sealed published tape, the accepted prints beside it, and the switches
+/// that decide which of its cells the painter draws.
+#[derive(Clone, Copy)]
+pub struct TapeSource<'a> {
+    pub facts: &'a TapeFacts,
+    pub overlay: Option<&'a TapeOverlay>,
+    pub style: &'a OrderflowRenderStyle,
 }
 
 impl TapeDotMemory {
@@ -143,6 +177,13 @@ impl TapeDotMemory {
 
     pub fn retained_group_count(&self) -> usize {
         self.settled.len() + self.frontier.len()
+    }
+
+    /// How many native cells the last projection handed to reconciliation.
+    /// A sealed tape keeps this to the cells after its seal and the pending
+    /// prints, however long the tape window is.
+    pub fn reconciled_cells(&self) -> usize {
+        self.reconciled
     }
 
     /// Includes a group's factual centroid even after one native constituent
@@ -169,7 +210,7 @@ impl TapeDotMemory {
         lane: &LiveLaneStyle,
         opening_bursts: &[i64],
     ) -> TapeDotFrame {
-        if !sizing.native_tape || !view.geometry.valid() || view.window_ms <= 0 {
+        if !keys_native_cells(sizing, view) {
             return TapeDotFrame {
                 marks: marks.to_vec(),
                 max_radius: bubbles.max_radius,
@@ -177,8 +218,156 @@ impl TapeDotMemory {
             };
         }
         self.prepare_epoch(view);
-        let mut incoming = native_facts(marks, view);
-        let mut changed = self.replace_facts(&mut incoming, view.evicted_through_ms);
+        // Marks carry no seal: the next sealed frame rereads every cell.
+        self.ingested = None;
+        let incoming = native_facts(marks, view);
+        self.settle(
+            incoming,
+            None,
+            marks,
+            view,
+            sizing,
+            bubbles,
+            lane,
+            opening_bursts,
+        )
+    }
+
+    /// [`Self::project`] for a sealed published tape and the accepted prints
+    /// beside it, reading only what can have changed since the last frame of
+    /// the same lineage: the cells after its seal, the overlay, and the
+    /// published cells of keys that left the overlay. `marks` supply only the
+    /// frame's candle marks, which pass through. `None` where the tape is not
+    /// keyed on native cells, for the caller's complete path.
+    #[allow(clippy::too_many_arguments)]
+    pub fn project_sealed(
+        &mut self,
+        source: TapeSource<'_>,
+        marks: &[AggressionPrimitive],
+        view: TapeDotView,
+        sizing: DotSizing,
+        bubbles: &BubbleStyle,
+        lane: &LiveLaneStyle,
+        opening_bursts: &[i64],
+    ) -> Option<TapeDotFrame> {
+        let seal = source.facts.seal.as_ref()?;
+        if !keys_native_cells(sizing, view) || seal.window_ms != view.dot_window_ms {
+            return None;
+        }
+        self.prepare_epoch(view);
+        let floor = source
+            .overlay
+            .map_or(source.facts.floor, |overlay| overlay.floor);
+        let style = source.style;
+        let switches = (style.lane_aggression_layer, style.show_buy, style.show_sell);
+        let below = self
+            .ingested
+            .as_ref()
+            .filter(|state| {
+                Arc::ptr_eq(&state.lineage, &seal.lineage)
+                    && state.floor == floor
+                    && state.switches == switches
+                    && horizon_holds(state.horizon, view)
+            })
+            .map(|state| state.below_ms);
+        let window =
+            |cell: &AggressionCluster| window_start(cell.first_timestamp_ms, view.dot_window_ms);
+        let from = source.overlay.map(|overlay| overlay.from_ms);
+        let drawn = |cell: &AggressionCluster| {
+            let start = window(cell);
+            cell.quantity > Decimal::ZERO
+                && cell.quantity >= floor
+                && from.is_none_or(|from| start >= from)
+                && !view
+                    .evicted_through_ms
+                    .is_some_and(|horizon| start <= horizon)
+                && start >= view.now_ms.saturating_sub(view.window_ms)
+        };
+        let key = |cell: &AggressionCluster| NativeKey(window(cell), cell.price_bucket);
+        let cells = &source.facts.clusters;
+        let first = below.map_or(0, |below| {
+            cells.partition_point(|cell| window(cell) < below)
+        });
+        let overlay: &[AggressionCluster] = source.overlay.map_or(&[], |overlay| &overlay.cells);
+        let mut overlay_keys: Vec<NativeKey> = overlay.iter().map(key).collect();
+        overlay_keys.sort_unstable();
+        // Keys that left the overlay since the last frame read their published
+        // cell again: the overlay's fold of it may differ from the worker's.
+        let returning =
+            self.ingested
+                .as_ref()
+                .filter(|_| below.is_some())
+                .map_or(Vec::new(), |state| {
+                    state
+                        .overlay_keys
+                        .iter()
+                        .filter(|key| key.0 < below.unwrap_or(i64::MIN))
+                        .filter(|key| overlay_keys.binary_search(key).is_err())
+                        .filter_map(|key| {
+                            let low = cells.partition_point(|cell| window(cell) < key.0);
+                            cells[low..]
+                                .iter()
+                                .take_while(|cell| window(cell) == key.0)
+                                .find(|cell| cell.price_bucket == key.1)
+                        })
+                        .collect()
+                });
+        // Later entries win: an overlay cell supersedes the published one
+        // before either is filtered, as the complete pending frame does.
+        let current: BTreeMap<NativeKey, &AggressionCluster> = returning
+            .into_iter()
+            .chain(&cells[first..])
+            .chain(overlay)
+            .map(|cell| (key(cell), cell))
+            .collect();
+        let owned: Vec<(NativeKey, AggressionPrimitive)> = current
+            .into_iter()
+            .filter(|(_, cell)| drawn(cell))
+            .map(|(key, cell)| (key, aggression_primitive(cell.clone(), 0.0, 0.0, 0.0, true)))
+            .filter(|(_, mark)| draws_bubble(style, mark))
+            .collect();
+        let incoming: BTreeMap<NativeKey, &AggressionPrimitive> =
+            owned.iter().map(|(key, mark)| (*key, mark)).collect();
+        let frame = self.settle(
+            incoming,
+            below,
+            marks,
+            view,
+            sizing,
+            bubbles,
+            lane,
+            opening_bursts,
+        );
+        self.ingested = Some(Ingested {
+            lineage: Arc::clone(&seal.lineage),
+            below_ms: seal
+                .through_ms
+                .min(window_start(view.now_ms, view.dot_window_ms)),
+            floor,
+            switches,
+            horizon: view.evicted_through_ms,
+            overlay_keys,
+        });
+        Some(frame)
+    }
+
+    /// Reconcile `incoming` with the retained groups and draw the frame.
+    /// `below`: every retained cell before it is already current, so only
+    /// the groups reaching it are walked.
+    #[allow(clippy::too_many_arguments)]
+    fn settle(
+        &mut self,
+        mut incoming: BTreeMap<NativeKey, &AggressionPrimitive>,
+        below: Option<i64>,
+        marks: &[AggressionPrimitive],
+        view: TapeDotView,
+        sizing: DotSizing,
+        bubbles: &BubbleStyle,
+        lane: &LiveLaneStyle,
+        opening_bursts: &[i64],
+    ) -> TapeDotFrame {
+        self.reconciled = incoming.len();
+        let mut changed = self.replace_facts(&mut incoming, view.evicted_through_ms, below);
         let mut windows: BTreeMap<i64, BTreeMap<NativeKey, AggressionPrimitive>> = BTreeMap::new();
         for (key, mark) in incoming {
             windows
@@ -324,7 +513,16 @@ impl TapeDotMemory {
         &mut self,
         incoming: &mut BTreeMap<NativeKey, &AggressionPrimitive>,
         evicted: Option<i64>,
+        below: Option<i64>,
     ) -> bool {
+        // Cells before `below` arrive only from the overlay or as keys that
+        // left it; a group wholly before it is visited for those keys alone.
+        let early: Vec<NativeKey> = below.map_or_else(Vec::new, |below| {
+            incoming
+                .range(..NativeKey(below, Decimal::MIN))
+                .map(|(key, _)| *key)
+                .collect()
+        });
         let mut any_changed = false;
         for group in self.settled.iter_mut().chain(&mut self.frontier) {
             let before = group.sources.len();
@@ -337,12 +535,30 @@ impl TapeDotMemory {
                 group.sources.retain(|key, _| key.0 > horizon);
             }
             let mut changed = before != group.sources.len();
-            for (key, source) in &mut group.sources {
-                if let Some(next) = incoming.remove(key)
-                    && !same_native_fact(source, next)
-                {
-                    *source = normalized_native_fact(next);
-                    changed = true;
+            let reaches = below.is_none_or(|below| {
+                group
+                    .sources
+                    .last_key_value()
+                    .is_some_and(|(key, _)| key.0 >= below)
+            });
+            if reaches {
+                for (key, source) in &mut group.sources {
+                    if let Some(next) = incoming.remove(key)
+                        && !same_native_fact(source, next)
+                    {
+                        *source = normalized_native_fact(next);
+                        changed = true;
+                    }
+                }
+            } else {
+                for key in &early {
+                    if let Some(source) = group.sources.get_mut(key)
+                        && let Some(next) = incoming.remove(key)
+                        && !same_native_fact(source, next)
+                    {
+                        *source = normalized_native_fact(next);
+                        changed = true;
+                    }
                 }
             }
             if changed {
@@ -449,6 +665,21 @@ impl TapeDotMemory {
         } else {
             factual
         }
+    }
+}
+
+/// Whether the view keys native cells at all; elsewhere marks pass through.
+fn keys_native_cells(sizing: DotSizing, view: TapeDotView) -> bool {
+    sizing.native_tape && view.geometry.valid() && view.window_ms > 0
+}
+
+/// Whether the reconciled cells survive `view`'s eviction horizon: it only
+/// moved forward, or the cells it would give back have already expired.
+fn horizon_holds(reconciled: Option<i64>, view: TapeDotView) -> bool {
+    match (reconciled, view.evicted_through_ms) {
+        (None, _) => true,
+        (Some(old), Some(new)) if new >= old => true,
+        (Some(old), _) => old < view.now_ms.saturating_sub(view.window_ms),
     }
 }
 

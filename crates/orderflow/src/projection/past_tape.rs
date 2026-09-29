@@ -188,6 +188,8 @@ pub fn project_past_tape(
             clusters,
             evicted_through_ms: history.evicted_through_ms(),
             opening_bursts: history.opening_bursts().to_vec(),
+            floor,
+            seal: None,
         })
     });
     let mut projection = HeatmapProjection::empty(true, settled.effective_grouping);

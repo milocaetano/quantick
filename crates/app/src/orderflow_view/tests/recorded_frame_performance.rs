@@ -230,7 +230,7 @@ fn repeated<T>(target: usize, opening: bool, stage: &str, mut run: impl FnMut() 
 }
 
 fn conserved(frame: &VisibleOrderflow, prints: &[Trade], now_ms: i64) {
-    let facts = frame.projection.tape_facts.as_ref().unwrap();
+    let facts = frame.tape_projection().tape_facts.as_ref().unwrap();
     let expected: Vec<_> = prints
         .iter()
         .filter(|trade| {
@@ -242,7 +242,7 @@ fn conserved(frame: &VisibleOrderflow, prints: &[Trade], now_ms: i64) {
         })
         .collect();
     let marks: Vec<_> = frame
-        .projection
+        .tape_projection()
         .aggressions
         .iter()
         .filter(|mark| mark.live)
@@ -428,7 +428,7 @@ fn recorded_113_second_tape_ui_stages_around_40000_prints() {
                 "TAPE_RECORDED_COUNTS target={target} opening_exclusion={opening} published_prefix={} suffix=20 native_before={published_native} native_now={} groups_before={before_groups} groups_after={after_groups} warm_frames={warm_frames} warm_step_ms={WARM_STEP_MS} now_ms={} elapsed_market_ms={} expired_raw={expired} price_low={} price_high={} canvas={}x{} shapes={} vertices={vertices}; CPU only, excludes file loading/ingestion/worker/GPU, first changed frame precedes fixed-frame repetitions",
                 target - 20,
                 combined
-                    .projection
+                    .tape_projection()
                     .aggressions
                     .iter()
                     .filter(|mark| mark.live)

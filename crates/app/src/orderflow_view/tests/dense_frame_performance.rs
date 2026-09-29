@@ -93,7 +93,7 @@ fn draw(
 
 fn assert_conserved(frame: &VisibleOrderflow, prints: &[Trade]) {
     let live: Vec<_> = frame
-        .projection
+        .tape_projection()
         .aggressions
         .iter()
         .filter(|mark| mark.live)
@@ -257,7 +257,7 @@ fn dense_113_second_tape_same_frame_ui_stages() {
         });
         assert_conserved(&frame, &expected);
         assert!(
-            frame.projection.aggressions.iter().any(|mark| {
+            frame.tape_projection().aggressions.iter().any(|mark| {
                 mark.live && mark.agg_ids.contains(&suffix[19].agg_id) && mark.x == 1.0
             }),
             "the fixed suffix really exercises an open native cell"

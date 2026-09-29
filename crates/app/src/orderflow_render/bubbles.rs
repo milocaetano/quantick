@@ -603,7 +603,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 );
             }
             let mut memory = context.tape_memory.map(std::cell::RefCell::borrow_mut);
-            quantick_orderflow::projection::project_tape_frame(
+            quantick_orderflow::projection::project_tape_frame_with_overlay(
                 marks,
                 memory.as_deref_mut(),
                 &style,
@@ -611,6 +611,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 time,
                 prices,
                 context.projection.tape_facts.as_deref(),
+                context.tape_overlay,
             )
         })
         .flatten();

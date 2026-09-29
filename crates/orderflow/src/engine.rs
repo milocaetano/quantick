@@ -16,10 +16,12 @@ use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::{
     BarTimeline, DotScale, DotZoom, HeatmapConfig, HeatmapProjection, HistoryStatus,
-    LiquidityHistory, LiveEdge, PriceWindow, SettledProjection, VolumeDots, project_live,
-    project_settled, reserved_span_ms,
+    LiquidityHistory, LiveEdge, PriceWindow, SettledProjection, VolumeDots, project_settled,
+    reserved_span_ms,
 };
 
+#[path = "engine_live_tape.rs"]
+mod live_tape;
 #[path = "engine_past_tape.rs"]
 mod past_tape;
 #[path = "engine_pending.rs"]
@@ -126,6 +128,8 @@ pub struct VisibleOrderflow {
     /// The rungs and size scales this frame's volume dots were built on;
     /// `None` when the frame holds no dots.
     pub volume_dots: Option<DotScale>,
+    /// Accepted prints `projection` does not hold yet, beside it.
+    pub tape_overlay: Option<Arc<crate::projection::TapeOverlay>>,
 }
 
 impl VisibleOrderflow {
@@ -1192,8 +1196,7 @@ impl BookEngine {
         };
 
         let live_started = Instant::now();
-        let live = project_live(&self.history, &timeline, prices, &settled, dots.as_ref());
-        let projection = settled.with_live(live, &self.config);
+        let projection = self.project_live_half(&timeline, prices, &settled, dots.as_ref());
         self.last_live_ms = live_started.elapsed().as_secs_f32() * 1000.0;
         self.last_projection_aggressions = projection.aggressions.len();
         self.last_projection_liquidity_events = projection.liquidity_events.len();
@@ -1208,6 +1211,7 @@ impl BookEngine {
             volume_dots: dots
                 .as_ref()
                 .map(|dots| dots.scale(&self.config, request.price_range)),
+            tape_overlay: None,
         });
         self.view.past_tape = self.project_past(request, &settled, dots.as_ref(), prices, held);
         self.last_frame = Some(Arc::clone(&frame));
@@ -1524,6 +1528,7 @@ mod tests {
             slot_count: 10,
             live_edge: None,
             volume_dots: None,
+            tape_overlay: None,
         };
 
         // No cells: no boundary — the paint must not invent a cut.

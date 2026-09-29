@@ -23,6 +23,8 @@ mod tape;
 mod tape_frame;
 mod tape_geometry;
 mod tape_memory;
+mod tape_reuse;
+mod tape_seal;
 mod tiers;
 
 pub use candle_dots::{
@@ -43,11 +45,19 @@ pub use model::{
 pub use past_tape::{PastBars, PastTape, past_block_ms, past_span, project_past_tape};
 pub use pending::PendingTape;
 pub use tape::{TapeDotGeometry, merge_tape_dots, position_tape_at};
-pub use tape_frame::{project_past_tape_frame, project_tape_frame};
+pub use tape_frame::{
+    project_past_tape_frame, project_tape_frame, project_tape_frame_with_overlay,
+};
 pub use tape_geometry::TapeHorizontalGeometry;
 pub use tape_memory::{
-    MAX_PAST_BLOCKS, PAST_PRICE_SPAN_BAND, PastTapeMemory, TapeDotFrame, TapeDotMemory, TapeDotView,
+    MAX_PAST_BLOCKS, PAST_PRICE_SPAN_BAND, PastTapeMemory, TapeDotFrame, TapeDotMemory,
+    TapeDotView, TapeSource,
 };
+pub use tape_reuse::TapeReuse;
+#[cfg(test)]
+pub(crate) use tape_reuse::reusable_through;
+pub(crate) use tape_seal::{PendingInputs, SealInputs, into_lane_of, lane_relabel, seal_tape};
+pub use tape_seal::{TapeLineage, TapeOverlay, TapeSeal, draws_bubble};
 
 use dots::DotHorizon;
 use fold::{FoldOrder, fold_to_budget, pane_budgets};
@@ -592,6 +602,22 @@ pub fn project_live(
     settled: &SettledProjection,
     dots: Option<&VolumeDots>,
 ) -> LiveMarks {
+    project_live_after(history, timeline, prices, settled, dots, None)
+}
+
+/// [`project_live`], continuing the native tape of the publication in
+/// `reuse` where that is exact: its cells before its seal are copied and only
+/// the prints after the seal are folded, so a wide tape window costs a pass
+/// what a narrow one does. The marks are the ones [`project_live`] builds.
+#[must_use]
+pub fn project_live_after(
+    history: &LiquidityHistory,
+    timeline: &BarTimeline,
+    prices: PriceWindow,
+    settled: &SettledProjection,
+    dots: Option<&VolumeDots>,
+    reuse: Option<TapeReuse<'_>>,
+) -> LiveMarks {
     let config = history.config();
     if !settled.enabled || !config.any_layer_enabled() {
         return LiveMarks::default();
@@ -625,6 +651,18 @@ pub fn project_live(
     } else {
         Vec::new()
     };
+    let lane_from_ms = timeline.lane_start_ms();
+    let through_ms = reuse.and_then(|reuse| {
+        tape_reuse::reusable_through(
+            reuse,
+            history,
+            lane_from_ms,
+            settled,
+            dots,
+            &coverage,
+            live_from_ms,
+        )
+    });
     let mut tier = cluster_tier(
         history,
         timeline,
@@ -635,8 +673,11 @@ pub fn project_live(
             lane: lane_grouping(config),
         },
         TierCut {
-            range: (Some(live_from_ms), None),
-            tape_from_ms: timeline.lane_start_ms(),
+            range: (
+                Some(through_ms.map_or(live_from_ms, |through| through.max(live_from_ms))),
+                None,
+            ),
+            tape_from_ms: lane_from_ms,
             reach_ms: None,
             dots,
         },
@@ -645,7 +686,7 @@ pub fn project_live(
     let mut events = settled.live_events.clone();
     correlate_tier(&mut events, &mut tier, config, summarizing);
     let dropped_liquidity_events = filter_events(&mut events, config, settled.liquidity_reference);
-    let (mut marks, floored_quantity) = refine_tier(
+    let (mut marks, mut floored_quantity) = refine_tier(
         tier,
         config,
         settled.aggression_reference,
@@ -654,6 +695,17 @@ pub fn project_live(
         summarizing,
         dots.map(|dots| (dots, DotHorizon::of(history))),
     );
+    if let (Some(reuse), Some(through_ms), Some(dots)) = (reuse, through_ms, dots) {
+        floored_quantity += tape_reuse::continue_tape(
+            &mut marks,
+            reuse.previous,
+            through_ms,
+            lane_from_ms,
+            history.evicted_through_ms(),
+            dots.tape_window_ms,
+            config,
+        );
+    }
     let tape_facts = marks.tape_facts.take().map(|clusters| {
         let floor = config.bubbles.min_quantity_decimal().unwrap_or_default();
         let floored_quantity = clusters
@@ -666,6 +718,8 @@ pub fn project_live(
             evicted_through_ms: history.evicted_through_ms(),
             floored_quantity,
             opening_bursts: history.opening_bursts().to_vec(),
+            floor,
+            seal: None,
         })
     });
     // This half carries marks for *both* panes: the prints rolling through the

@@ -126,6 +126,8 @@ impl Scene {
             evicted_through_ms: horizon,
             floored_quantity,
             opening_bursts: openings,
+            floor,
+            seal: None,
         }));
         expected.aggressions.retain(|mark| !mark.live);
         let reference = dot_full_quantity(&self.config);

@@ -85,7 +85,7 @@ fn closed() -> Vec<Bar> {
 
 fn live(frame: &VisibleOrderflow) -> Vec<AggressionPrimitive> {
     frame
-        .projection
+        .tape_projection()
         .aggressions
         .iter()
         .filter(|mark| mark.live)

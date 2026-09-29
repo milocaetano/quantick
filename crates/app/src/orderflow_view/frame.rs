@@ -164,7 +164,10 @@ impl OrderflowView {
         let projection = past.map_or(&*frame.projection, |past| &*past.projection);
         let context = RenderContext::new(projection, layout, &style)
             .with_tape_price_range(price_range)
-            .with_tape_memory(&self.tape_dots)
+            .with_tape_memory(
+                &self.tape_dots,
+                frame.tape_overlay.as_deref().filter(|_| past.is_none()),
+            )
             .with_past_tape(past.map(|past| (&self.past_dots, past)));
         let context = match (
             self.config.native_tape(),

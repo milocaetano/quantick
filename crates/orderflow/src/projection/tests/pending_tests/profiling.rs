@@ -65,6 +65,8 @@ fn pending_projection_stage_costs_for_complete_native_cells() {
             evicted_through_ms: facts.evicted_through_ms,
             floored_quantity: facts.floored_quantity,
             opening_bursts: facts.opening_bursts.clone(),
+            floor: facts.floor,
+            seal: facts.seal.clone(),
         })
     });
     measure("clone facts and derive all tier primitives", || {

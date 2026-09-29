@@ -100,7 +100,7 @@ fn a_tape_path_clips_an_offscreen_excursion_without_reconnecting_visible_dots() 
                         100,
                     );
                 let context = if retained {
-                    context.with_tape_memory(&memory)
+                    context.with_tape_memory(&memory, None)
                 } else {
                     context
                 };

@@ -490,7 +490,7 @@ fn level_centre(cluster: &AggressionCluster) -> Decimal {
     cluster.price_bucket + cluster.price_span / Decimal::TWO
 }
 
-fn aggression_primitive(
+pub(super) fn aggression_primitive(
     cluster: AggressionCluster,
     x: f64,
     y: f64,

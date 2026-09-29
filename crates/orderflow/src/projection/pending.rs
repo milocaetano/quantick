@@ -2,10 +2,11 @@
 use super::dots::{DotHorizon, fold_dots, native_grouping, window_start};
 use super::tiers::{TierClusters, native_tape_primitives, tier_primitives};
 use super::{
-    AggressionPrimitive, DOT_WINDOW_LADDER_MS, HeatmapProjection, PriceWindow, TapeFacts,
-    VolumeDots, dot_full_quantity,
+    AggressionPrimitive, DOT_WINDOW_LADDER_MS, HeatmapProjection, PendingInputs, PriceWindow,
+    TapeFacts, TapeOverlay, VolumeDots, dot_full_quantity,
 };
 use crate::HeatmapConfig;
+use crate::grouping::EffectiveGrouping;
 use crate::history::{Aggression, RecordedOpenings};
 use crate::interaction::{AggressionCluster, cluster_aggressions, sort_clusters};
 use crate::timeline::BarTimeline;
@@ -176,76 +177,68 @@ impl PendingTape {
         prices: PriceWindow,
         dots: &VolumeDots,
     ) -> HeatmapProjection {
-        let native = native_grouping(config);
-        let from = timeline.lane_start_ms().unwrap_or(i64::MIN);
-        let raw: Vec<_> = self
-            .trades
-            .iter()
-            .filter(|(_, trade)| window_start(trade.timestamp_ms, dots.tape_window_ms) >= from)
-            .map(|(_, trade)| Aggression {
-                agg_id: trade.agg_id,
-                timestamp_ms: trade.timestamp_ms,
-                price: trade.price,
-                quantity: trade.quantity,
-                side: trade.side,
-                generation: None,
-            })
-            .collect();
         let facts = published.and_then(|frame| frame.tape_facts.as_deref());
-        let evicted_through_ms = self.eviction_horizon(facts);
-        // The worker owns validated book coverage. Pending tape geometry does
-        // not wait for it and never guesses the generation of a queued print.
-        let mut clusters = cluster_aggressions(&raw, &[], native, 0);
-        let mut unchanged = Vec::new();
-        if let Some(facts) = facts {
-            // A published native cell is already a canonical fold. Only keys
-            // touched by this suffix need to repeat that work. The width check
-            // leaves a grouping transition on the complete fold path.
-            let native_cells = dots.native_tape
-                && dots.tape_window_ms == DOT_WINDOW_LADDER_MS[0]
-                && dots.tape_level_ticks == 1
-                && facts
-                    .clusters
-                    .iter()
-                    .all(|cluster| cluster.price_span == native.bucket_width);
-            if native_cells {
-                let touched: BTreeSet<_> = clusters
-                    .iter()
-                    .map(|cluster| {
-                        (
-                            window_start(cluster.timestamp_ms, dots.tape_window_ms),
-                            (cluster.price / native.bucket_width).floor() * native.bucket_width,
-                        )
-                    })
-                    .collect();
-                for cluster in &facts.clusters {
-                    let start = window_start(cluster.first_timestamp_ms, dots.tape_window_ms);
-                    if start < from || evicted_through_ms.is_some_and(|horizon| start <= horizon) {
-                        continue;
-                    }
-                    if touched.contains(&(start, cluster.price_bucket)) {
-                        clusters.push(cluster.clone());
-                    } else {
-                        unchanged.push(cluster.clone());
-                    }
-                }
-            } else {
-                clusters.extend(facts.clusters.iter().cloned());
+        project_suffix(
+            self.trades.iter().map(|(_, trade)| trade),
+            self.eviction_horizon(facts),
+            self.opening_bursts(published),
+            published,
+            config,
+            timeline,
+            prices,
+            dots,
+        )
+    }
+
+    /// The suffix as the native cells it touches on a sealed `published`
+    /// tape, for a painter that keeps the rest of that tape: the same fold
+    /// [`Self::project`] runs on those keys, found by their window instead of
+    /// walking every published cell. `None` wherever only the complete
+    /// projection is exact: cells with depth evidence, no seal, no lane, or a
+    /// fold other than the native one.
+    pub(crate) fn overlay(
+        &self,
+        published: &Arc<HeatmapProjection>,
+        config: &HeatmapConfig,
+        timeline: &BarTimeline,
+        prices: PriceWindow,
+        dots: &VolumeDots,
+        lanes: Option<(usize, usize)>,
+    ) -> Option<TapeOverlay> {
+        let facts = published.tape_facts.as_deref()?;
+        if facts.seal.as_ref().is_none_or(|seal| seal.evidence) {
+            return None;
+        }
+        let native = native_grouping(config);
+        let from = timeline.lane_start_ms()?;
+        if !native_cells(facts, dots, native) {
+            return None;
+        }
+        let evicted_through_ms = self.eviction_horizon(Some(facts));
+        let raw = suffix_prints(self.trades.iter().map(|(_, trade)| trade), from, dots);
+        let mut cells = cluster_aggressions(&raw, &[], native, 0);
+        let touched = touched_keys(&cells, dots, native);
+        let window =
+            |cell: &AggressionCluster| window_start(cell.first_timestamp_ms, dots.tape_window_ms);
+        let windows: BTreeSet<i64> = touched.iter().map(|(start, _)| *start).collect();
+        // The same published cells, in the same order, the complete fold
+        // takes: its walk keeps the cells' own order, which is by window.
+        for start in windows {
+            if start < from || evicted_through_ms.is_some_and(|horizon| start <= horizon) {
+                continue;
             }
-        } else if let Some(frame) = published {
-            clusters.extend(
-                frame
-                    .aggressions
+            let low = facts.clusters.partition_point(|cell| window(cell) < start);
+            cells.extend(
+                facts.clusters[low..]
                     .iter()
-                    .filter(|mark| mark.live)
-                    .map(as_cluster),
+                    .take_while(|cell| window(cell) == start)
+                    .filter(|cell| touched.contains(&(start, cell.price_bucket)))
+                    .cloned(),
             );
         }
-        clusters.retain(|cluster| {
-            window_start(cluster.first_timestamp_ms, dots.tape_window_ms) >= from
-        });
-        let mut folded = fold_dots(
-            clusters,
+        cells.retain(|cell| window(cell) >= from);
+        let cells = fold_dots(
+            cells,
             true,
             dots,
             native,
@@ -254,64 +247,194 @@ impl PendingTape {
                 evicted_through_ms,
             },
         );
-        if !unchanged.is_empty() {
-            folded.extend(unchanged);
-            sort_clusters(&mut folded);
-        }
-        let floor = config.bubbles.min_quantity_decimal().unwrap_or_default();
-        let floored_quantity: Decimal = folded
-            .iter()
-            .filter(|cluster| cluster.quantity < floor)
-            .map(|cluster| cluster.quantity)
-            .sum();
-        let tape_facts = Arc::new(TapeFacts {
-            clusters: folded,
+        Some(TapeOverlay::new(
+            cells,
+            from,
             evicted_through_ms,
-            floored_quantity,
-            opening_bursts: self.opening_bursts(published),
-        });
-        let reference = dot_full_quantity(config);
-        let mut projection = published
-            .map(without_live_aggressions)
-            .unwrap_or_else(|| HeatmapProjection::empty(config.enabled, native));
-        projection.floored_quantity +=
-            floored_quantity - facts.map_or(Decimal::ZERO, |facts| facts.floored_quantity);
-        let visible = tape_facts
+            self.opening_bursts(Some(published.as_ref())),
+            PendingInputs {
+                trades: self.trades.iter().map(|(_, trade)| trade.clone()).collect(),
+                published: Arc::clone(published),
+                config: config.clone(),
+                timeline: timeline.clone(),
+                prices,
+                dots: dots.clone(),
+                lanes,
+            },
+        ))
+    }
+}
+
+/// Whether `facts` are one native fold, so a suffix refolds only the keys it
+/// touches. The width check leaves a grouping transition on the complete
+/// fold path.
+fn native_cells(facts: &TapeFacts, dots: &VolumeDots, native: EffectiveGrouping) -> bool {
+    dots.native_tape
+        && dots.tape_window_ms == DOT_WINDOW_LADDER_MS[0]
+        && dots.tape_level_ticks == 1
+        && facts
             .clusters
             .iter()
-            .filter(|cluster| cluster.quantity >= floor)
-            .cloned();
-        let primitives = if dots.native_tape {
-            native_tape_primitives(visible, timeline, prices, reference, dots)
-        } else {
-            tier_primitives(
-                TierClusters {
-                    tape: visible.collect(),
-                    slot: Vec::new(),
-                    tape_facts: None,
-                },
-                timeline,
-                prices,
-                reference,
-                reference,
-                Some(dots),
+            .all(|cluster| cluster.price_span == native.bucket_width)
+}
+
+/// The suffix's prints on the tape from `from`, as unattributed aggressions.
+fn suffix_prints<'t>(
+    trades: impl Iterator<Item = &'t Trade>,
+    from: i64,
+    dots: &VolumeDots,
+) -> Vec<Aggression> {
+    trades
+        .filter(|trade| window_start(trade.timestamp_ms, dots.tape_window_ms) >= from)
+        .map(|trade| Aggression {
+            agg_id: trade.agg_id,
+            timestamp_ms: trade.timestamp_ms,
+            price: trade.price,
+            quantity: trade.quantity,
+            side: trade.side,
+            generation: None,
+        })
+        .collect()
+}
+
+/// The native keys `clusters` land on.
+fn touched_keys(
+    clusters: &[AggressionCluster],
+    dots: &VolumeDots,
+    native: EffectiveGrouping,
+) -> BTreeSet<(i64, Decimal)> {
+    clusters
+        .iter()
+        .map(|cluster| {
+            (
+                window_start(cluster.timestamp_ms, dots.tape_window_ms),
+                (cluster.price / native.bucket_width).floor() * native.bucket_width,
             )
-        };
-        projection.tape_facts = Some(tape_facts);
-        if projection.aggressions.is_empty() {
-            projection.aggressions = primitives;
+        })
+        .collect()
+}
+
+/// [`PendingTape::project`] over any suffix: `evicted_through_ms` and
+/// `opening_bursts` already span the suffix and the published frame.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn project_suffix<'t>(
+    trades: impl Iterator<Item = &'t Trade>,
+    evicted_through_ms: Option<i64>,
+    opening_bursts: Vec<i64>,
+    published: Option<&HeatmapProjection>,
+    config: &HeatmapConfig,
+    timeline: &BarTimeline,
+    prices: PriceWindow,
+    dots: &VolumeDots,
+) -> HeatmapProjection {
+    let native = native_grouping(config);
+    let from = timeline.lane_start_ms().unwrap_or(i64::MIN);
+    let raw = suffix_prints(trades, from, dots);
+    let facts = published.and_then(|frame| frame.tape_facts.as_deref());
+    // The worker owns validated book coverage. Pending tape geometry does
+    // not wait for it and never guesses the generation of a queued print.
+    let mut clusters = cluster_aggressions(&raw, &[], native, 0);
+    let mut unchanged = Vec::new();
+    if let Some(facts) = facts {
+        // A published native cell is already a canonical fold. Only keys
+        // touched by this suffix need to repeat that work. The width check
+        // leaves a grouping transition on the complete fold path.
+        if native_cells(facts, dots, native) {
+            let touched = touched_keys(&clusters, dots, native);
+            for cluster in &facts.clusters {
+                let start = window_start(cluster.first_timestamp_ms, dots.tape_window_ms);
+                if start < from || evicted_through_ms.is_some_and(|horizon| start <= horizon) {
+                    continue;
+                }
+                if touched.contains(&(start, cluster.price_bucket)) {
+                    clusters.push(cluster.clone());
+                } else {
+                    unchanged.push(cluster.clone());
+                }
+            }
         } else {
-            projection.aggressions.extend(primitives);
+            clusters.extend(facts.clusters.iter().cloned());
         }
-        projection
-            .aggressions
-            .sort_by_cached_key(|mark| mark.quantity);
-        projection.volume_dots = true;
-        projection.live_now_x = timeline
-            .live_now_position()
-            .map(|position| position.normalized);
-        projection
+    } else if let Some(frame) = published {
+        clusters.extend(
+            frame
+                .aggressions
+                .iter()
+                .filter(|mark| mark.live)
+                .map(as_cluster),
+        );
     }
+    clusters
+        .retain(|cluster| window_start(cluster.first_timestamp_ms, dots.tape_window_ms) >= from);
+    let mut folded = fold_dots(
+        clusters,
+        true,
+        dots,
+        native,
+        DotHorizon {
+            recorded_from_ms: None,
+            evicted_through_ms,
+        },
+    );
+    if !unchanged.is_empty() {
+        folded.extend(unchanged);
+        sort_clusters(&mut folded);
+    }
+    let floor = config.bubbles.min_quantity_decimal().unwrap_or_default();
+    let floored_quantity: Decimal = folded
+        .iter()
+        .filter(|cluster| cluster.quantity < floor)
+        .map(|cluster| cluster.quantity)
+        .sum();
+    let tape_facts = Arc::new(TapeFacts {
+        clusters: folded,
+        evicted_through_ms,
+        floored_quantity,
+        opening_bursts,
+        floor,
+        seal: None,
+    });
+    let reference = dot_full_quantity(config);
+    let mut projection = published
+        .map(without_live_aggressions)
+        .unwrap_or_else(|| HeatmapProjection::empty(config.enabled, native));
+    projection.floored_quantity +=
+        floored_quantity - facts.map_or(Decimal::ZERO, |facts| facts.floored_quantity);
+    let visible = tape_facts
+        .clusters
+        .iter()
+        .filter(|cluster| cluster.quantity >= floor)
+        .cloned();
+    let primitives = if dots.native_tape {
+        native_tape_primitives(visible, timeline, prices, reference, dots)
+    } else {
+        tier_primitives(
+            TierClusters {
+                tape: visible.collect(),
+                slot: Vec::new(),
+                tape_facts: None,
+            },
+            timeline,
+            prices,
+            reference,
+            reference,
+            Some(dots),
+        )
+    };
+    projection.tape_facts = Some(tape_facts);
+    if projection.aggressions.is_empty() {
+        projection.aggressions = primitives;
+    } else {
+        projection.aggressions.extend(primitives);
+    }
+    projection
+        .aggressions
+        .sort_by_cached_key(|mark| mark.quantity);
+    projection.volume_dots = true;
+    projection.live_now_x = timeline
+        .live_now_position()
+        .map(|position| position.normalized);
+    projection
 }
 
 /// The live primitives are about to be replaced; copying their execution-id

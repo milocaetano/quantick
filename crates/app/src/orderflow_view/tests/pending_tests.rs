@@ -71,7 +71,7 @@ fn frame(view: &mut OrderflowView, prints: &[Trade]) -> Option<Arc<VisibleOrderf
 
 fn tape(frame: &VisibleOrderflow) -> Vec<quantick_orderflow::AggressionPrimitive> {
     frame
-        .projection
+        .tape_projection()
         .aggressions
         .iter()
         .filter(|mark| mark.live)
@@ -94,7 +94,7 @@ fn recorded_opening_metadata_survives_mode_changes_but_resets_with_the_source() 
     let regrouped = view.recorded_opening_bursts();
     let shown = frame(&mut view, &[print(1, 2_017, 110, 25, Side::Sell)]).unwrap();
     let same_frame = shown
-        .projection
+        .tape_projection()
         .tape_facts
         .as_ref()
         .unwrap()

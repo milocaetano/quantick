@@ -136,6 +136,7 @@ impl PastTapeMemory {
             settled: shown,
             frontier: Vec::new(),
             frozen: true,
+            ..TapeDotMemory::default()
         }
         .project(&[], view, sizing, bubbles, lane, opening_bursts)
     }

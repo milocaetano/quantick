@@ -48,7 +48,7 @@ impl OrderflowView {
             self.pending_frame = None;
             return self.published.frame.clone();
         }
-        let frame = Arc::new(VisibleOrderflow::with_pending_tape(
+        let frame = Arc::new(VisibleOrderflow::with_pending_overlay(
             &self.pending_tape,
             &self.config,
             request,

@@ -1,14 +1,22 @@
 //! One projection policy for retained tape history and stateless previews.
 
+use std::borrow::Cow;
+
 use super::{
     AggressionPrimitive, PastTape, PastTapeMemory, PriceWindow, TapeDotFrame, TapeDotGeometry,
-    TapeDotMemory, TapeDotView, TapeFacts, merge_tape_dots, position_tape_at,
+    TapeDotMemory, TapeDotView, TapeFacts, TapeOverlay, TapeSource, draws_bubble, merge_tape_dots,
+    position_tape_at,
 };
 use crate::LiveEdge;
 use crate::config::theme::OrderflowRenderStyle;
 
+/// Merge a frame's tape into the dots a painter draws.
+///
+/// `marks` are the frame's marks as the painter would draw them. A sealed
+/// published tape (`facts` with a seal) is read from its cells instead, only
+/// where they can have changed.
 pub fn project_tape_frame<'a>(
-    marks: impl Into<std::borrow::Cow<'a, [AggressionPrimitive]>>,
+    marks: impl Into<Cow<'a, [AggressionPrimitive]>>,
     memory: Option<&mut TapeDotMemory>,
     style: &OrderflowRenderStyle,
     geometry: TapeDotGeometry,
@@ -16,20 +24,69 @@ pub fn project_tape_frame<'a>(
     prices: Option<PriceWindow>,
     facts: Option<&TapeFacts>,
 ) -> Option<TapeDotFrame> {
+    project_tape_frame_with_overlay(marks, memory, style, geometry, time, prices, facts, None)
+}
+
+/// [`project_tape_frame`] for a frame carrying accepted prints beside its
+/// published tape ([`crate::engine::VisibleOrderflow::tape_overlay`]): the
+/// overlay supersedes the cells it touches. Every path that cannot read the
+/// sealed cells reads the complete marks, built from the overlay.
+#[allow(clippy::too_many_arguments)]
+pub fn project_tape_frame_with_overlay<'a>(
+    marks: impl Into<Cow<'a, [AggressionPrimitive]>>,
+    memory: Option<&mut TapeDotMemory>,
+    style: &OrderflowRenderStyle,
+    geometry: TapeDotGeometry,
+    time: Option<(LiveEdge, i64)>,
+    prices: Option<PriceWindow>,
+    facts: Option<&TapeFacts>,
+    overlay: Option<&TapeOverlay>,
+) -> Option<TapeDotFrame> {
     let sizing = style.dot_sizing?;
     let marks = marks.into();
     if let (Some(memory), Some(time), Some(prices)) = (memory, time, prices) {
+        // The accepted prints beside a frame carry their own horizon and
+        // opening windows, spanning the published frame's.
+        let mut view = tape_view(time, prices, geometry, facts);
+        let opening_bursts = match overlay {
+            Some(overlay) => {
+                view.evicted_through_ms = overlay.evicted_through_ms;
+                if style.ignore_opening_burst_in_scale {
+                    overlay.opening_bursts.as_slice()
+                } else {
+                    &[]
+                }
+            }
+            None => opening_bursts(style, facts),
+        };
+        if let Some(facts) = facts
+            && let Some(frame) = memory.project_sealed(
+                TapeSource {
+                    facts,
+                    overlay,
+                    style,
+                },
+                marks.as_ref(),
+                view,
+                sizing,
+                &style.bubbles,
+                &style.live_lane,
+                opening_bursts,
+            )
+        {
+            return Some(frame);
+        }
         return Some(memory.project(
-            marks.as_ref(),
-            tape_view(time, prices, geometry, facts),
+            complete_marks(marks, overlay, style).as_ref(),
+            view,
             sizing,
             &style.bubbles,
             &style.live_lane,
-            opening_bursts(style, facts),
+            opening_bursts,
         ));
     }
     // Standalone previews have no source lifetime to retain.
-    let mut marks = marks.into_owned();
+    let mut marks = complete_marks(marks, overlay, style).into_owned();
     if let Some((edge, dot_window_ms)) = time {
         position_tape_at(
             &mut marks,
@@ -101,5 +158,26 @@ fn opening_bursts<'a>(style: &OrderflowRenderStyle, facts: Option<&'a TapeFacts>
         facts.map_or(&[], |facts| facts.opening_bursts.as_slice())
     } else {
         &[]
+    }
+}
+
+/// The marks a frame carrying an overlay stands for, as the painter draws
+/// them; `marks` unchanged when it carries none.
+fn complete_marks<'a>(
+    marks: Cow<'a, [AggressionPrimitive]>,
+    overlay: Option<&TapeOverlay>,
+    style: &OrderflowRenderStyle,
+) -> Cow<'a, [AggressionPrimitive]> {
+    match overlay {
+        Some(overlay) => Cow::Owned(
+            overlay
+                .projection()
+                .aggressions
+                .iter()
+                .filter(|mark| draws_bubble(style, mark))
+                .cloned()
+                .collect(),
+        ),
+        None => marks,
     }
 }

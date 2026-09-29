@@ -293,6 +293,10 @@ pub struct TapeFacts {
     pub floored_quantity: Decimal,
     /// First recorded native window per recent UTC date, not the visible front.
     pub opening_bursts: Vec<i64>,
+    /// The display floor the frame's marks were cut at.
+    pub floor: Decimal,
+    /// The cells a painter may keep from an earlier frame; `None` rereads all.
+    pub seal: Option<super::TapeSeal>,
 }
 
 impl HeatmapProjection {

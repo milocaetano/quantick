@@ -223,7 +223,7 @@ fn borrowing_all_visible_marks_and_copying_filtered_marks_obey_the_same_visibili
                     100,
                 )
                 .with_tape_price_range((90.0, 170.0))
-                .with_tape_memory(&memory);
+                .with_tape_memory(&memory, None);
             assert_eq!(
                 context
                     .bubbles()

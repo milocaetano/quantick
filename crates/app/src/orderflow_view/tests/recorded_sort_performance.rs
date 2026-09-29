@@ -54,11 +54,17 @@ fn recorded_native_sort_and_buffer_costs_at_40000_prints() {
         "the recorded prefix exercises touched-key refolding"
     );
     assert_eq!(view.pending_tape.len(), 20);
-    assert!(frame.projection.aggressions.iter().all(|mark| mark.live));
+    assert!(
+        frame
+            .tape_projection()
+            .aggressions
+            .iter()
+            .all(|mark| mark.live)
+    );
     eprintln!(
         "TAPE_RECORDED_ALLOCATION target={TARGET} native={} output_capacity={} primitive_bytes={} cluster_bytes={} published_native={} native_width={} tape_only={} tape_window_ms={} tape_level_ticks={} widths_match={widths_match} touched_key_eligible={eligible}; one published prefix and held suffix, no historical paint warmup",
-        frame.projection.aggressions.len(),
-        frame.projection.aggressions.capacity(),
+        frame.tape_projection().aggressions.len(),
+        frame.tape_projection().aggressions.capacity(),
         std::mem::size_of::<AggressionPrimitive>(),
         std::mem::size_of::<quantick_orderflow::interaction::AggressionCluster>(),
         facts.clusters.len(),
@@ -71,7 +77,7 @@ fn recorded_native_sort_and_buffer_costs_at_40000_prints() {
     // Restore the comparator used by interaction::sort_clusters, before the
     // production quantity sort. Sorting an already quantity-sorted frame would
     // hide the cost paid on every accepted suffix.
-    let mut canonical = frame.projection.aggressions.clone();
+    let mut canonical = frame.tape_projection().aggressions.clone();
     canonical.sort_by(|a, b| {
         let side = |side| match side {
             Side::Buy => 0,
@@ -109,7 +115,7 @@ fn recorded_native_sort_and_buffer_costs_at_40000_prints() {
             marks
         },
     );
-    assert_eq!(plain, frame.projection.aggressions);
+    assert_eq!(plain, frame.tape_projection().aggressions);
     assert_eq!(
         cached, plain,
         "cached keys retain exact fields and tie order"
