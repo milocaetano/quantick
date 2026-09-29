@@ -324,9 +324,10 @@ fn real_native_tape_stateless_and_warmed_memory_cost() {
     let mut memory = TapeDotMemory::default();
     let _ = draw(&mut memory, &before_native, BEFORE_MS);
     let retained = measure_real_tape("warmed_memory", native.len(), || {
+        let shown = black_box(native.clone());
         memory
             .project(
-                black_box(&native),
+                &shown,
                 current,
                 sizing,
                 &config.bubbles,
