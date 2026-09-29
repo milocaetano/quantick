@@ -31,6 +31,11 @@ fn bubbles(app: &mut QuantickApp, client: &mut LocalClient) -> Value {
 
 #[test]
 fn opening_scale_is_default_off_named_permission_checked_and_read_back() {
+    assert_eq!(
+        quantick_control_schema::opening_scale::descriptor().persistence,
+        quantick_control::registry::EffectPersistence::Transient,
+        "changing the preference does not save a preset implicitly"
+    );
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(4);
     let directory = gateway_test_directory("opening-scale");
@@ -48,14 +53,27 @@ fn opening_scale_is_default_off_named_permission_checked_and_read_back() {
     assert_eq!(error_code(&denied), Some(codes::PERMISSION_DENIED));
     assert_eq!(bubbles(&mut app, &mut observer), before);
     let (first, _) = keyed_call(
-        &mut app, &mut cockpit, "opening-first", ACTION, payload.clone(), "opening-key",
+        &mut app,
+        &mut cockpit,
+        "opening-first",
+        ACTION,
+        payload.clone(),
+        "opening-key",
     );
     let (retry, _) = keyed_call(
-        &mut app, &mut cockpit, "opening-retry", ACTION, payload, "opening-key",
+        &mut app,
+        &mut cockpit,
+        "opening-retry",
+        ACTION,
+        payload,
+        "opening-key",
     );
     assert_eq!(first.outcome, retry.outcome);
     assert_eq!(success_result(&first)["changed"], true);
-    assert_eq!(success_result(&first)["ignore_opening_burst_in_scale"], true);
+    assert_eq!(
+        success_result(&first)["ignore_opening_burst_in_scale"],
+        true
+    );
     let after = bubbles(&mut app, &mut observer);
     assert_eq!(after["ignore_opening_burst_in_scale"], true);
     assert_eq!(after["tape_only"], before["tape_only"]);
@@ -67,7 +85,10 @@ fn opening_scale_is_default_off_named_permission_checked_and_read_back() {
     let payload = input(&app, false);
     let (off, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, payload);
     assert_eq!(success_result(&off)["ignore_opening_burst_in_scale"], false);
-    assert_eq!(bubbles(&mut app, &mut observer)["ignore_opening_burst_in_scale"], false);
+    assert_eq!(
+        bubbles(&mut app, &mut observer)["ignore_opening_burst_in_scale"],
+        false
+    );
     disable_test_gateway(&mut app, &ctx);
 }
 
@@ -87,7 +108,10 @@ fn opening_scale_refuses_stale_targets_without_changing_the_active_pane() {
         payload[field] = json!(u64::MAX.to_string());
         let (response, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, payload);
         assert_eq!(error_code(&response), Some(codes::INVALID_REQUEST));
-        assert_eq!(bubbles(&mut app, &mut cockpit)["ignore_opening_burst_in_scale"], false);
+        assert_eq!(
+            bubbles(&mut app, &mut cockpit)["ignore_opening_burst_in_scale"],
+            false
+        );
     }
     disable_test_gateway(&mut app, &ctx);
 }
