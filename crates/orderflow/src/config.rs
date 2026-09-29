@@ -920,6 +920,46 @@ mod tests {
         );
     }
 
+    /// Processing and presentation are two questions. The native tape decides
+    /// how the tape is built; tape only decides whether the candles give the
+    /// whole pane to it. Beside the candles the book still reaches them, and
+    /// only the candle-slot marks go, because the native tape keys every print
+    /// on its own execution time and price.
+    #[test]
+    fn the_native_tape_is_processing_and_tape_only_is_presentation() {
+        let mut config = HeatmapConfig::default();
+        assert!(!config.native_tape() && !config.tape_only());
+
+        config.live_lane.native_tape = true;
+        assert!(config.native_tape(), "beside the candles");
+        assert!(!config.tape_only(), "the candles stay on the pane");
+        let style = theme::OrderflowRenderStyle::from_config(&config, [0, 0, 0, 255]);
+        assert!(
+            !style.aggression_layer,
+            "the native tape makes no candle-slot marks"
+        );
+        assert_eq!(
+            style.depth_layer,
+            config.depth_visible(),
+            "the book still reaches the candles beside the tape"
+        );
+        assert!(style.lane_aggression_layer);
+
+        config.live_lane.native_tape = false;
+        config.live_lane.tape_only = true;
+        assert!(config.native_tape(), "tape only is always the native tape");
+        assert!(config.tape_only());
+        let style = theme::OrderflowRenderStyle::from_config(&config, [0, 0, 0, 255]);
+        assert!(!style.aggression_layer && !style.depth_layer);
+
+        config.live_lane.native_tape = true;
+        config.live_lane.enabled = false;
+        assert!(
+            !config.native_tape() && !config.tape_only(),
+            "with the tape off the original chart returns"
+        );
+    }
+
     #[test]
     fn each_visual_layer_switches_on_its_own() {
         let bubbles_only = HeatmapConfig {

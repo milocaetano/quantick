@@ -23,6 +23,9 @@ use crate::viewport::Viewport;
 mod clock;
 mod frame;
 mod layers;
+#[cfg(test)]
+#[path = "orderflow_view/tests/native_split_tests.rs"]
+mod native_split_tests;
 mod opening_scale;
 mod pending;
 #[cfg(test)]

@@ -213,3 +213,6 @@ fn the_tape_quantity_tooltip_does_not_claim_to_resize_the_independent_candle_ove
     assert!(tooltip.contains("tape"));
     assert_eq!(view.config, before);
 }
+
+#[path = "native_split_controls_tests.rs"]
+mod native_split_controls_tests;

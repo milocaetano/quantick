@@ -54,6 +54,7 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
         cw: 8.0,
         indicator_guide_x: None,
         tape_only,
+        native_tape: tape_only,
         tape_padding_px: 0.0,
     };
     let ctx = egui::Context::default();

@@ -1168,6 +1168,58 @@ mod tests {
         assert_eq!(toml::from_str::<LiveLaneStyle>(&text).unwrap(), on);
     }
 
+    /// The native tape is how the tape is processed, not how much of the pane
+    /// it takes: beside the candles it keeps its share of the chart, and only
+    /// tape only claims the whole canvas. Tape only implies the native tape,
+    /// so the full-width pane keeps drawing exactly what it drew.
+    #[test]
+    fn a_native_tape_beside_the_candles_keeps_its_share_of_the_chart() {
+        let ordinary = LiveLaneStyle::default();
+        assert!(!ordinary.native_tape, "off until someone asks");
+        assert!(!ordinary.native());
+        let beside = LiveLaneStyle {
+            native_tape: true,
+            ..LiveLaneStyle::default()
+        };
+        assert!(beside.native());
+        assert!(!beside.tape_only);
+        assert!(
+            (beside.resolved_width_px(1_000.0) - 350.0).abs() < 0.01,
+            "the candles keep the rest of the chart"
+        );
+        let full = LiveLaneStyle {
+            tape_only: true,
+            ..LiveLaneStyle::default()
+        };
+        assert!(full.native(), "tape only is always the native tape");
+        assert_eq!(full.resolved_width_px(1_000.0), 1_000.0);
+        let off = LiveLaneStyle {
+            enabled: false,
+            ..beside
+        };
+        assert_eq!(off.resolved_width_px(1_000.0), 0.0);
+    }
+
+    /// A pane that never asked for the native tape writes the file it always
+    /// wrote; one that did reads it back, and a file from before the switch
+    /// opens without it.
+    #[test]
+    fn native_tape_is_saved_only_when_on() {
+        let text = toml::to_string(&LiveLaneStyle::default()).unwrap();
+        assert!(!text.contains("native_tape"), "{text}");
+        let old: LiveLaneStyle = toml::from_str("tape_only = true\n").unwrap();
+        assert!(!old.native_tape, "tape only never writes the native switch");
+        assert!(old.native(), "yet it still processes the tape natively");
+        let on = LiveLaneStyle {
+            native_tape: true,
+            ..LiveLaneStyle::default()
+        };
+        let text = toml::to_string(&on).unwrap();
+        assert!(text.contains("native_tape = true"), "{text}");
+        assert!(!text.contains("tape_only"), "{text}");
+        assert_eq!(toml::from_str::<LiveLaneStyle>(&text).unwrap(), on);
+    }
+
     /// The tape's own clock labels: round instants inside the window, on the
     /// finest step that fits the room, newest last.
     #[test]

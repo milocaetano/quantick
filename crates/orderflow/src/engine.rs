@@ -2635,3 +2635,7 @@ mod clock_tests;
 #[cfg(test)]
 #[path = "engine_opening_tests.rs"]
 mod opening_tests;
+
+#[cfg(test)]
+#[path = "engine_native_tape_tests.rs"]
+mod native_tape_tests;

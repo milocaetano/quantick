@@ -648,6 +648,9 @@ mod tests {
         );
     }
 
+    /// The mini index preset opens the native tape beside the tick candles:
+    /// the tape is built from execution time and price, and the candles keep
+    /// their side of the divider. No other preset touches either switch.
     #[test]
     fn the_mini_index_preset_opens_the_tape_without_changing_other_presets() {
         let presets = embedded();
@@ -656,13 +659,29 @@ mod tests {
             .get("mini index regions")
             .unwrap()
             .apply_to(&mut config);
-        assert!(config.live_lane.tape_only);
+        assert!(config.live_lane.native_tape);
+        assert!(config.native_tape());
+        assert!(!config.live_lane.tape_only, "the candles stay beside it");
+        assert!(!config.tape_only());
         assert!(config.volume_dots.enabled);
         for preset in &presets.presets {
             if preset.name != "mini index regions" {
                 assert!(!preset.live_lane.tape_only, "{} keeps candles", preset.name);
+                assert!(
+                    !preset.live_lane.native_tape,
+                    "{} keeps its own tape",
+                    preset.name
+                );
             }
         }
+        let mut target = HeatmapConfig::default();
+        let mut file = BubblePresetFile::default();
+        file.upsert(BubblePreset::capture("native", &config));
+        let restored = parse(&render(&file).expect("serialize preset")).expect("read preset");
+        restored.get("native").unwrap().apply_to(&mut target);
+        assert!(target.native_tape() && !target.tape_only(), "the mode survives");
+        embedded().get("default").unwrap().apply_to(&mut target);
+        assert!(!target.native_tape(), "the default restores the ordinary tape");
     }
 
     /// A presets file written before volume dots had a scale of their own

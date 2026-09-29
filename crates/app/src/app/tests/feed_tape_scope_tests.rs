@@ -47,7 +47,7 @@ fn automatic_win_look_restores_the_prior_custom_crypto_appearance() {
         let mut app = app_on(config.clone(), feed, symbol);
         let before = customize_crypto(&mut app);
         select_market(&mut app, "metatrader-b3", "WINV26");
-        assert!(app.active_tab().tape().cached_config().tape_only());
+        assert!(app.active_tab().tape().cached_config().native_tape());
         select_market(&mut app, feed, symbol);
         assert_eq!(appearance(&app), before, "restore the exact look on {feed}");
     }
@@ -93,7 +93,7 @@ fn a_tape_scope_ends_on_an_undeclared_symbol_inside_the_same_feed() {
     let mut app = app_on(config, "metatrader-b3", "WDO$N");
     let before = customize_crypto(&mut app);
     select_market(&mut app, "metatrader-b3", "WINV26");
-    assert!(app.active_tab().tape().cached_config().tape_only());
+    assert!(app.active_tab().tape().cached_config().native_tape());
     select_market(&mut app, "metatrader-b3", "WDO$N");
     assert_eq!(appearance(&app), before);
 }

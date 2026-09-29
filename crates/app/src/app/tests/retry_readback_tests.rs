@@ -55,6 +55,8 @@ const CLIENT_NAME: &str = "quantick integration test";
 mod candle_aggression;
 #[path = "layer_control_tests.rs"]
 mod layer_control;
+#[path = "native_tape_readback_tests.rs"]
+mod native_tape_readback_tests;
 #[path = "opening_scale_control_tests.rs"]
 mod opening_scale_control;
 #[path = "price_axis_control_tests.rs"]
