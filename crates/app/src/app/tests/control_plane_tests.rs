@@ -521,7 +521,15 @@ fn the_scripted_view_targets_visible_tick_candles_beside_an_independent_tape() {
     run_frame(&mut app, &ctx);
     app.active_tab_mut().time_panes[0]
         .spec
-        .retain(crate::state::BarSpec::Tick(2));
+        .update(
+            quantick_engine::bar_selection::SelectionCommand::Replace(
+                crate::state::BarSpec::Tick(2).into(),
+            ),
+            quantick_engine::bar_selection::BarInputAvailability::PRINTS,
+        )
+        .unwrap();
+    app.active_tab_mut().apply_spec_changes();
+    app.active_tab_mut().apply_spec_changes();
     for layer in [ChartLayer::TapeChart, ChartLayer::TapeOnly] {
         app.active_tab_mut()
             .flow_pane
@@ -530,6 +538,10 @@ fn the_scripted_view_targets_visible_tick_candles_beside_an_independent_tape() {
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(app.active_tab().shows_context_charts());
+    assert_eq!(
+        app.active_tab().time_panes[0].state.spec(),
+        &crate::state::BarSpec::Tick(2)
+    );
     assert!(app.active_tab().tape().cached_config().tape_only());
     assert!(app.active_tab().time_panes[0].slots() > 0);
     let flow_before = crate::control::chart::viewport_snapshot(&app.active_tab().flow_pane);
