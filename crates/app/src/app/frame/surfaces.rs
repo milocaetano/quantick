@@ -50,7 +50,7 @@ pub(super) struct SurfaceOwners<'a> {
     pub workspace: &'a WorkspaceStore,
     pub style: &'a ChartStyle,
     pub footprint_config: &'a FootprintConfig,
-    pub tabs: &'a ArrangementHost,
+    pub tabs: &'a mut ArrangementHost,
     pub config: &'a AppConfig,
     pub added_symbols: &'a AddedSymbols,
 }
@@ -108,7 +108,7 @@ pub(super) fn draw_surfaces(
     // collapsed pane is focus on nothing.
     let focused_side = focused_tab.focused_side();
     let focused_pane = focused_tab.pane(focused_side);
-    registry.draw_all(
+    let mut asks = registry.draw_all(
         ctx,
         &SurfaceEnv {
             bookmarks: workspace.session().bookmarks(),
@@ -130,7 +130,27 @@ pub(super) fn draw_surfaces(
             counted_bar_sides: &counted_bar_sides,
             alert_failure,
         },
-    )
+    );
+    if let Some(request) = asks.bar_switch.take() {
+        apply_bar_switch(tabs, &mut registry.toast, request);
+    }
+    asks
+}
+
+/// Apply the quick bar switch's choice to the pane it opened over, through
+/// the path `layout.pane.set_bar_spec` takes. A rule this feed cannot build
+/// (volume bars on a venue without volume) is refused in the toast.
+fn apply_bar_switch(
+    tabs: &mut ArrangementHost,
+    toast: &mut crate::surfaces::ToastSurface,
+    request: crate::surfaces::BarSwitchRequest,
+) {
+    let Some(tab) = tabs.by_id_mut(request.tab) else {
+        return;
+    };
+    if let Err(error) = tab.set_pane_bar_spec(request.side.index(), request.config) {
+        toast.note(format!("Bars not changed: {error}"), Instant::now());
+    }
 }
 
 /// The chart rectangle a settings dialog is previewing an unapplied draft on,
