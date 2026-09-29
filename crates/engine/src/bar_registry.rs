@@ -4,6 +4,8 @@
 //! Neither the registry nor a legacy enum participates in per-trade dispatch.
 pub mod definitions;
 mod parameters;
+mod quick_switch;
+pub use quick_switch::QUICK_DURATION_SCALES_MS;
 pub use parameters::*;
 
 use crate::BarBuilder;
