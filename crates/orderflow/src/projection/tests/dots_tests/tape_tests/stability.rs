@@ -215,6 +215,28 @@ fn the_left_edge_expires_whole_groups_instead_of_rewriting_their_centroids() {
 }
 
 #[test]
+fn an_expired_whole_group_cannot_return_as_its_later_native_constituent() {
+    let mut memory = TapeDotMemory::default();
+    let prints = real_win_prints();
+    let first = draw(
+        &mut memory,
+        &prints[..2],
+        view(WIN_TIME_MS + 2_000, "187450", "187550"),
+    );
+    assert_eq!(first.marks.len(), 1);
+    // The group's exact mean is 39.229; its second native cell starts at
+    // 39.300 and is still supplied after the aggregate itself leaves.
+    for offset in [300, 310, 320] {
+        let frame = draw(
+            &mut memory,
+            &prints[1..2],
+            view(WIN_TIME_MS + WINDOW_MS + offset, "187450", "187550"),
+        );
+        assert!(frame.marks.is_empty(), "a consumed native cell cannot reappear");
+    }
+}
+
+#[test]
 fn automatic_price_transforms_preserve_membership_and_use_one_area_scale() {
     let mut memory = TapeDotMemory::default();
     let prints = [
