@@ -245,6 +245,8 @@ pub(in crate::pane) struct TimeStripPass<'a> {
     pub divider_x: Option<f32>,
     pub viewport: &'a crate::viewport::Viewport,
     pub series: super::super::drawing_projection::PaneSeriesRead<'a>,
+    /// Spans the day separator wrote dates or ticks on; labels stand aside.
+    pub reserved: &'a [(f32, f32)],
 }
 impl TimeStripPass<'_> {
     pub fn paint(&self) {
@@ -309,6 +311,10 @@ impl TimeStripPass<'_> {
                     label_width,
                     chip_width,
                     claims.iter().copied(),
+                ) && !super::days::reserved_by(
+                    x - label_width / 2.0,
+                    x + label_width / 2.0,
+                    self.reserved,
                 ) {
                     painter.text(
                         egui::pos2(x, y),
