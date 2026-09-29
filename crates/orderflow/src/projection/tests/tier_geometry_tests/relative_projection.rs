@@ -106,6 +106,26 @@ impl Fixture {
         assert_native_screen_contract(&self.current(), &self.original());
     }
 
+    /// Same frozen arithmetic and owned primitive payloads, without first
+    /// materializing a second contiguous buffer of AggressionCluster values.
+    fn original_streamed(&self) -> Vec<AggressionPrimitive> {
+        let reference = dec("100");
+        self.clusters
+            .iter()
+            .cloned()
+            .filter_map(|cluster| {
+                reference_place(
+                    cluster,
+                    true,
+                    &self.timeline,
+                    self.prices,
+                    reference,
+                    Some(&self.dots),
+                )
+            })
+            .collect()
+    }
+
     fn retime(&mut self, from: i64) {
         let now = from + 15_000;
         self.timeline = BarTimeline::from_bars(
@@ -120,6 +140,44 @@ impl Fixture {
             }),
         )
         .with_full_lane_coverage();
+    }
+}
+
+#[test]
+#[ignore = "opt-in input-buffer experiment; no elapsed-time pass threshold"]
+fn native_placement_input_buffer_cost() {
+    use std::hint::black_box;
+    use std::time::{Duration, Instant};
+    for weighted in [false, true] {
+        let fixture = Fixture::new(1_790_102_415_000, 6_500, weighted);
+        let expected = fixture.original();
+        assert_eq!(fixture.original_streamed(), expected);
+        let mut buffered = Duration::ZERO;
+        let mut streamed = Duration::ZERO;
+        let iterations = 40;
+        for index in 0..iterations {
+            for streaming in [index % 2 == 0, index % 2 != 0] {
+                let started = Instant::now();
+                black_box(if streaming {
+                    fixture.original_streamed()
+                } else {
+                    fixture.original()
+                });
+                if streaming {
+                    streamed += started.elapsed();
+                } else {
+                    buffered += started.elapsed();
+                }
+            }
+        }
+        assert_eq!(fixture.original_streamed(), expected);
+        let ms = |elapsed: Duration| elapsed.as_secs_f64() * 1_000.0 / f64::from(iterations);
+        eprintln!(
+            "native input-buffer experiment: 6500 cells, {} source prints, identical original placement, buffered {:.3} ms/frame, streamed {:.3} ms/frame",
+            if weighted { 39_000 } else { 6_500 },
+            ms(buffered),
+            ms(streamed)
+        );
     }
 }
 
