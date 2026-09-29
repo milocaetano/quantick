@@ -54,7 +54,7 @@ fn context_fixture(
     run_frame(&mut app, ctx);
     assert_eq!(
         app.active_tab().time_panes[0].state.spec(),
-        &BarSpec::Tick(4).into()
+        &BarSpec::Tick(4)
     );
     assert_eq!(
         app.active_tab().time_panes[0].state.tape_price_step(),
