@@ -293,3 +293,38 @@ fn pending_storage_retires_the_existing_time_retention_prefix() {
     assert_eq!(marks[0].agg_ids, vec![2]);
     assert_eq!(marks[0].quantity, Decimal::from(2));
 }
+
+#[test]
+fn metatrader_reconnect_ids_cannot_acknowledge_an_unpublished_new_print() {
+    let (mut view, gate, initial) = held_view(true);
+    let first = print(100_000, 1_001, 100, 2, Side::Buy);
+    view.record_trade(&first);
+    let _ = frame(&mut view, std::slice::from_ref(&first));
+    initial.release();
+    view.flush_for_test();
+    // MT5 bridge reconnection preserves the chart but restarts trade IDs.
+    let held = gate.hold(Phase::Applying);
+    let reconnected = print(1, 1_101, 105, 3, Side::Sell);
+    view.record_trade(&reconnected);
+    held.reached();
+    let prints = [first, reconnected];
+    let immediate = frame(&mut view, &prints);
+    held.release();
+    let immediate = tape(&immediate.unwrap());
+    assert_eq!(
+        immediate.iter().map(|mark| mark.quantity).sum::<Decimal>(),
+        Decimal::from(5)
+    );
+    assert!(
+        immediate
+            .iter()
+            .any(|mark| mark.agg_ids == [1] && mark.quantity == Decimal::from(3))
+    );
+    view.flush_for_test();
+    let settled = tape(&frame(&mut view, &prints).unwrap());
+    assert_eq!(
+        immediate, settled,
+        "the receipt is an owner ordinal, never a venue ID"
+    );
+    assert!(view.pending_tape.is_empty());
+}
