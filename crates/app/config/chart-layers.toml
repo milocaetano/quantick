@@ -70,3 +70,9 @@ drawings = true
 # Nothing is hidden about the data — the bars either side of it are exactly
 # what they were, and the mark is one click away in the layer menu.
 backfill_divider = false
+
+# Off too: a dated tick on the time axis where the display day turns over. The
+# time labels carry a clock time only, so this is how a chart spanning midnight
+# tells one day from the next; a trader who reads one session at a time does
+# not need the axis busier.
+day_separator = false

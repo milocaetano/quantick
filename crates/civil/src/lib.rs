@@ -318,6 +318,30 @@ pub fn weekday_abbr(weekday: i64) -> &'static str {
         .unwrap_or("???")
 }
 
+/// Where a run of bars crosses into a new civil day, in the display timezone.
+///
+/// `open_times` is `(slot, open_ms)` in slot order. The first item only seeds
+/// the comparison — a caller that wants the leftmost visible bar judged passes
+/// the bar before it first. Returns each slot whose bar opens on a different
+/// date than the bar before it, with the date it opens. A day with no bar
+/// (a weekend, a feed gap) is not invented: the mark lands on the first bar
+/// that exists, carrying that bar's own date.
+pub fn day_starts(
+    open_times: impl IntoIterator<Item = (usize, i64)>,
+    tz: TzOffset,
+) -> Vec<(usize, CivilDate)> {
+    let mut previous: Option<CivilDate> = None;
+    let mut starts = Vec::new();
+    for (slot, open_ms) in open_times {
+        let date = CivilDate::from_ms(open_ms, tz);
+        if previous.is_some_and(|before| before != date) {
+            starts.push((slot, date));
+        }
+        previous = Some(date);
+    }
+    starts
+}
+
 /// An inclusive span of civil days.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DateRange {
@@ -441,6 +465,54 @@ mod tests {
             "2026-03-16 10:01",
             "the curve's stamp reads on the display clock"
         );
+    }
+
+    /// 2026-09-27 00:00 UTC.
+    const SEP_27_UTC_MS: i64 = 1_790_467_200_000;
+    const HOUR_MS: i64 = 3_600_000;
+
+    fn hourly(from_ms: i64, count: usize) -> impl Iterator<Item = (usize, i64)> + Clone {
+        (0..count).map(move |slot| (slot, from_ms + slot as i64 * HOUR_MS))
+    }
+
+    #[test]
+    fn a_day_start_is_the_first_bar_on_a_new_local_date() {
+        // Hourly bars from 22:00 to 04:00 UTC.
+        let bars = hourly(SEP_27_UTC_MS - 2 * HOUR_MS, 7);
+        assert_eq!(
+            day_starts(bars.clone(), utc()),
+            vec![(2, CivilDate::from_ymd(2026, 9, 27))],
+            "UTC midnight falls on the third bar"
+        );
+        // São Paulo, three hours behind, is still on the 26th for all of them
+        // until 03:00 UTC.
+        assert_eq!(
+            day_starts(bars, sao_paulo()),
+            vec![(5, CivilDate::from_ymd(2026, 9, 27))],
+            "the display clock, not UTC, decides the day"
+        );
+    }
+
+    #[test]
+    fn the_first_item_seeds_and_is_never_a_day_start() {
+        assert!(day_starts([(4, SEP_27_UTC_MS)], utc()).is_empty());
+        assert!(day_starts(std::iter::empty(), utc()).is_empty());
+    }
+
+    #[test]
+    fn a_gap_over_missing_days_marks_the_next_bar_with_its_own_date() {
+        // Friday evening, then Monday morning: one mark, dated Monday.
+        let friday = SEP_27_UTC_MS - 2 * DAY_MS + 20 * HOUR_MS;
+        let monday = SEP_27_UTC_MS + DAY_MS + 9 * HOUR_MS;
+        assert_eq!(
+            day_starts([(10, friday), (11, friday + HOUR_MS), (12, monday)], utc()),
+            vec![(12, CivilDate::from_ymd(2026, 9, 28))]
+        );
+    }
+
+    #[test]
+    fn bars_within_one_day_have_no_day_start() {
+        assert!(day_starts(hourly(SEP_27_UTC_MS, 24), utc()).is_empty());
     }
 
     #[test]
