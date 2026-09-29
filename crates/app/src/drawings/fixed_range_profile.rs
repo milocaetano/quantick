@@ -81,6 +81,7 @@ struct FrvpPresetData {
     show_value_area: bool,
     show_poc: bool,
     delta_coloring: bool,
+    #[serde(default, rename = "labels")] // `show_labels` was never an opt-in
     show_labels: bool,
     /// Added after v1 presets shipped; absent in older files, so it defaults
     /// rather than invalidating them.
