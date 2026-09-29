@@ -96,13 +96,24 @@ fn a_tape_only_pane_fits_its_price_axis_to_the_tape_alone() {
     candle_price_view.pan(10_000.0, (400.0, 1_600.0));
     candle_price_view.set_inverted(true);
     let tape_scale = fitted(true, &candle_price_view, tape_range);
-    assert_eq!(tape_scale.range(), (994.0, 1_016.0));
+    assert_eq!(
+        tape_scale.range(),
+        (10_400.0, 11_600.0),
+        "an explicit manual tape range is honored after mode entry"
+    );
     assert!(tape_scale.y(995.0) < tape_scale.y(1_015.0));
     assert_eq!(
         fitted(false, &candle_price_view, tape_range).range(),
         (10_400.0, 11_600.0),
         "ordinary candle panes retain their manual price view"
     );
+    assert_eq!(
+        fitted(true, &candle_price_view, Some((900.0, 1_200.0))).range(),
+        tape_scale.range(),
+        "new prints cannot replace an explicit manual tape range"
+    );
+    candle_price_view.reset();
+    assert_eq!(fitted(true, &candle_price_view, tape_range).range(), (994.0, 1_016.0));
 }
 
 #[test]
@@ -213,7 +224,7 @@ fn the_tape_switch_and_key_share_the_header_without_covering_the_live_edge() {
         } else {
             assert_eq!(
                 chip,
-                crate::pane::tape_switch_rect(plot),
+                crate::pane::tape_switch_rect(plot, false),
                 "ordinary/BTC placement is unchanged"
             );
         }

@@ -2710,4 +2710,3 @@ fn add_library_for_test(app: &mut QuantickApp, index: usize) -> Option<SlotId> {
 mod tape_clock_tests;
 
 mod feed_tape_scope_tests;
-mod opening_scale_control_tests;

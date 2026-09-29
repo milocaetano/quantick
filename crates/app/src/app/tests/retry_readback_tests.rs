@@ -53,6 +53,10 @@ const CLIENT_NAME: &str = "quantick integration test";
 
 #[path = "layer_control_tests.rs"]
 mod layer_control;
+#[path = "opening_scale_control_tests.rs"]
+mod opening_scale_control;
+#[path = "price_axis_control_tests.rs"]
+mod price_axis_control;
 #[path = "mutation_uncertainty_tests.rs"]
 mod uncertainty;
 
@@ -575,6 +579,8 @@ const LAYOUT_V2: u32 = 2;
 fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
     vec![
         ("layers.visibility.set", 1, Value::Null, Readback::Moves),
+        ("chart.price_axis.set", 1, Value::Null, Readback::Moves),
+        ("orderflow.tape.opening_scale.set", 1, Value::Null, Readback::Moves),
         (
             "layout.preset.apply",
             LAYOUT_V2,
@@ -747,6 +753,16 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         let mut client = connect(&directory, &cockpit);
         let row = retry_matrix::readback(capability).expect("the matrix has a row");
         let payload = match capability {
+            "chart.price_axis.set" => json!({
+                "tab_id": app.tabs.active_id().to_string(),
+                "pane_id": app.active_tab().flow_pane.id.to_string(),
+                "mode": { "kind": "manual", "low": "80", "high": "120" },
+            }),
+            "orderflow.tape.opening_scale.set" => json!({
+                "tab_id": app.tabs.active_id().to_string(),
+                "pane_id": app.active_tab().flow_pane.id.to_string(),
+                "ignore_opening_burst_in_scale": true,
+            }),
             "layers.visibility.set" => json!({
                 "tab_id": app.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
