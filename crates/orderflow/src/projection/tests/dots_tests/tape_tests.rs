@@ -1,7 +1,7 @@
 //! The optional tape pane retains execution coordinates and readable areas.
 
 use super::*;
-use crate::projection::{DotSizing, TapeDotGeometry, merge_tape_dots, position_tape_at};
+use crate::projection::{DotSizing, TapeDotGeometry, TapeHorizontalGeometry, merge_tape_dots, position_tape_at};
 
 fn tape_config() -> HeatmapConfig {
     let mut config = dots_config();
@@ -28,13 +28,12 @@ fn fixture(now_ms: i64) -> (HeatmapConfig, BarTimeline, Vec<AggressionPrimitive>
         ],
     );
     let timeline = chart(now_ms, 1_500, None);
-    let frame = frame_at(
-        &history,
-        &timeline,
-        prices("90", "110"),
-        &tape_dots(250, 5),
-    );
-    let marks = frame.aggressions.into_iter().filter(|mark| mark.live).collect();
+    let frame = frame_at(&history, &timeline, prices("90", "110"), &tape_dots(250, 5));
+    let marks = frame
+        .aggressions
+        .into_iter()
+        .filter(|mark| mark.live)
+        .collect();
     (config, timeline, marks)
 }
 
@@ -58,7 +57,10 @@ fn closed_tape_dots_keep_the_quantity_weighted_execution_coordinates() {
 fn the_open_tape_window_rides_now_and_then_moves_by_elapsed_time() {
     let (_, timeline, forming) = fixture(3_060);
     assert_eq!(forming.len(), 1, "the latest print appears immediately");
-    assert_eq!(forming[0].x, timeline.live_now_position().unwrap().normalized);
+    assert_eq!(
+        forming[0].x,
+        timeline.live_now_position().unwrap().normalized
+    );
     let (_, early_timeline, early) = fixture(3_400);
     let (_, late_timeline, late) = fixture(3_420);
     let lane_fraction = |timeline: &BarTimeline, mark: &AggressionPrimitive| {
@@ -66,8 +68,7 @@ fn the_open_tape_window_rides_now_and_then_moves_by_elapsed_time() {
         let left = timeline.locate_in_lane_clamped(from).unwrap().normalized;
         (mark.x - left) / (1.0 - left)
     };
-    let drift = lane_fraction(&early_timeline, &early[0])
-        - lane_fraction(&late_timeline, &late[0]);
+    let drift = lane_fraction(&early_timeline, &early[0]) - lane_fraction(&late_timeline, &late[0]);
     assert!((drift - 20.0 / 1_500.0).abs() < 1e-12);
 }
 
@@ -75,12 +76,7 @@ fn the_open_tape_window_rides_now_and_then_moves_by_elapsed_time() {
 fn the_first_captured_print_appears_before_its_window_closes() {
     let history = tape(tape_config(), &[(1, 3_011, "100", "1", Side::Buy)]);
     let timeline = chart(3_011, 1_500, None);
-    let frame = frame_at(
-        &history,
-        &timeline,
-        prices("90", "110"),
-        &tape_dots(100, 1),
-    );
+    let frame = frame_at(&history, &timeline, prices("90", "110"), &tape_dots(100, 1));
     let live: Vec<_> = frame.aggressions.iter().filter(|mark| mark.live).collect();
     assert_eq!(live.len(), 1, "recording may start inside a forming window");
     assert_eq!(live[0].x, 1.0);
@@ -99,14 +95,20 @@ fn a_stale_forming_projection_keeps_exact_time_while_the_tape_rolls() {
     assert_eq!(marks[0].x, 1.0, "the open dot still rides NOW");
     position_tape_at(&mut marks, 3_260, 1_500, left, 250);
     let expected = left + (1.0 - left) * ((3_041.75 - 1_760.0) / 1_500.0);
-    assert!((marks[0].x - expected).abs() < 1e-12, "the closed dot recovers its exact time");
+    assert!(
+        (marks[0].x - expected).abs() < 1e-12,
+        "the closed dot recovers its exact time"
+    );
     let first = marks[0].x;
     position_tape_at(&mut marks, 3_290, 1_500, left, 250);
     assert!((first - marks[0].x - (1.0 - left) * 30.0 / 1_500.0).abs() < 1e-12);
     assert_eq!(marks[1], candle, "candle primitives stay unchanged");
     assert_eq!(marks[0].timestamp_quantity, dec("1216.7"));
     position_tape_at(&mut marks, 5_000, 1_500, left, 250);
-    assert!(marks[0].x < left, "an aged-out dot leaves instead of piling at the left edge");
+    assert!(
+        marks[0].x < left,
+        "an aged-out dot leaves instead of piling at the left edge"
+    );
 }
 
 #[test]
@@ -147,7 +149,12 @@ fn tape_area_is_proportional_without_a_cell_size_or_minimum_radius_floor() {
     assert!(sizing.radius(&config.bubbles, &legacy, &marks[0], biggest) <= 0.5);
 }
 
-fn collision_fixture() -> (HeatmapConfig, DotSizing, TapeDotGeometry, Vec<AggressionPrimitive>) {
+fn collision_fixture() -> (
+    HeatmapConfig,
+    DotSizing,
+    TapeDotGeometry,
+    Vec<AggressionPrimitive>,
+) {
     let (config, _, original) = fixture(3_400);
     let mut marks = Vec::new();
     for (id, x, quantity, buy_quantity, price) in [
@@ -162,7 +169,10 @@ fn collision_fixture() -> (HeatmapConfig, DotSizing, TapeDotGeometry, Vec<Aggres
         mark.agg_ids = vec![id];
         mark.quantity = dec(quantity);
         mark.buy_quantity = dec(buy_quantity);
-        mark.buy_share = (mark.buy_quantity / mark.quantity).to_string().parse().unwrap();
+        mark.buy_share = (mark.buy_quantity / mark.quantity)
+            .to_string()
+            .parse()
+            .unwrap();
         mark.price = dec(price);
         mark.price_bucket = mark.price;
         mark.price_span = Decimal::ONE;
@@ -207,7 +217,16 @@ fn colliding_tape_dots_merge_at_the_weighted_coordinates_with_exact_sums() {
     assert_eq!(dot.trade_count, 2);
     let mut reversed = marks;
     reversed.reverse();
-    assert_eq!(merged, merge_tape_dots(&reversed, sizing, &config.bubbles, &config.live_lane, geometry));
+    assert_eq!(
+        merged,
+        merge_tape_dots(
+            &reversed,
+            sizing,
+            &config.bubbles,
+            &config.live_lane,
+            geometry
+        )
+    );
     let full = sizing.full_quantity(&merged, true);
     for (index, a) in merged.iter().enumerate() {
         for b in &merged[index + 1..] {
@@ -240,4 +259,72 @@ fn budget_folding_preserves_the_exact_execution_time_moment() {
     assert!(marks.len() <= 2);
     let moment: Decimal = marks.iter().map(|mark| mark.timestamp_quantity).sum();
     assert_eq!(moment, dec("16.5"));
+}
+
+#[test]
+fn dots_and_tape_clock_share_one_linear_padded_time_span() {
+    let bubbles = BubbleStyle::default();
+    let geometry = TapeHorizontalGeometry::resolve(300.0, &bubbles);
+    assert_eq!(geometry.max_radius, bubbles.max_radius);
+    assert!(geometry.x(0.0) >= geometry.max_radius);
+    assert!(geometry.x(1.0) + geometry.max_radius <= 300.0);
+    assert_eq!(geometry.x(0.5), 150.0, "half the time is half the pane");
+    let (now, window) = (20_000_i64, 15_000_i64);
+    for instant in [5_000_i64, 8_750, 12_500, 16_250, 20_000] {
+        let fraction = (instant - (now - window)) as f64 / window as f64;
+        let dot_x = geometry.x(fraction);
+        let clock_x = geometry.inset_px + fraction as f32 * geometry.span_px;
+        assert_eq!(dot_x, clock_x, "one instant has one horizontal position");
+    }
+}
+
+#[test]
+fn a_narrow_tape_caps_all_radii_equally_and_keeps_now_whole() {
+    let mut config = tape_config();
+    config.bubbles.max_radius = 48.0;
+    let (_, sizing, _, marks) = collision_fixture();
+    for width in [300.0, 100.0, 96.0, 60.0, 10.0] {
+        let geometry = TapeHorizontalGeometry::resolve(width, &config.bubbles);
+        assert_eq!(geometry.max_radius, 48.0_f32.min(width / 2.0));
+        assert!(geometry.x(1.0) + geometry.max_radius <= width + 1e-5);
+        assert!(geometry.x(0.0) - geometry.max_radius >= -1e-5);
+        assert!(geometry.span_px >= 0.0);
+        let mut fitted = config.bubbles.clone();
+        fitted.max_radius = geometry.max_radius;
+        let mut big = marks[0].clone();
+        big.quantity = dec("4");
+        let mut quarter = big.clone();
+        quarter.quantity = Decimal::ONE;
+        let big_radius = sizing.radius(&fitted, &config.live_lane, &big, dec("4"));
+        let quarter_radius = sizing.radius(&fitted, &config.live_lane, &quarter, dec("4"));
+        assert!((quarter_radius / big_radius - 0.5).abs() < 1e-6);
+    }
+    assert_eq!(config.bubbles.max_radius, 48.0, "fitting never changes the setting");
+}
+
+#[test]
+fn a_tape_with_only_room_for_one_diameter_still_resolves_collisions() {
+    let (mut config, sizing, _, mut marks) = collision_fixture();
+    config.bubbles.max_radius = 48.0;
+    let horizontal = TapeHorizontalGeometry::resolve(60.0, &config.bubbles);
+    assert_eq!(horizontal.span_px, 0.0);
+    config.bubbles.max_radius = horizontal.max_radius;
+    marks.truncate(2);
+    for mark in &mut marks {
+        mark.y = 0.5;
+    }
+    let merged = merge_tape_dots(
+        &marks,
+        sizing,
+        &config.bubbles,
+        &config.live_lane,
+        TapeDotGeometry {
+            left_x: 0.0,
+            right_x: 1.0,
+            width_px: horizontal.span_px,
+            height_px: 200.0,
+        },
+    );
+    assert_eq!(merged.len(), 1, "coincident dots cannot hide behind each other");
+    assert_eq!(merged[0].quantity, dec("0.4"));
 }
