@@ -194,7 +194,8 @@ fn a_blocked_native_tape_layer_locks_its_box_with_the_layers_reason() {
         !open.config.live_lane.native_tape,
         "an open box moves the request"
     );
-    let blocks: [(&str, fn(&mut HeatmapConfig)); 3] = [
+    type Block = fn(&mut HeatmapConfig);
+    let blocks: [(&str, Block); 3] = [
         ("tape only", |config| config.live_lane.tape_only = true),
         ("the tape off", |config| config.live_lane.enabled = false),
         ("volume dots off", |config| {
