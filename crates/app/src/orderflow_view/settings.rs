@@ -21,6 +21,9 @@ use super::frame::status_color;
 
 mod bubble_sections;
 mod l2_sections;
+#[cfg(test)]
+#[path = "settings/tests/source_preset_persistence.rs"]
+mod source_preset_persistence;
 
 use bubble_sections::{
     BubbleHealthSection, ClusteringSection, ColoursSection, ConsumptionMarksSection, LabelsSection,
