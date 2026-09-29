@@ -63,7 +63,8 @@ impl PastTapeMemory {
 
     /// The frame at `view.now_ms`, a past instant, from `facts` — the
     /// native facts of `tape`'s blocks. A block the facts do not cover yet
-    /// (the worker still answering an older end) is drawn once they do.
+    /// (the worker still answering an older end) is drawn once they do. A
+    /// frozen block is drawn only while the retained tape holds all of it.
     #[allow(clippy::too_many_arguments)]
     pub fn project(
         &mut self,
@@ -101,20 +102,23 @@ impl PastTapeMemory {
         let last = view.now_ms.div_euclid(block_ms);
         let mut shown = Vec::new();
         for index in first..=last {
-            if let Some(groups) = self.blocks.get(&index) {
+            let start = index.saturating_mul(block_ms);
+            let end = start.saturating_add(block_ms);
+            // Eviction that reached into a frozen block left it holding prints
+            // the tape no longer has: it goes, and the facts settle what is left.
+            let whole = tape.retained_from_ms.is_some_and(|from| start >= from);
+            if !whole {
+                self.blocks.remove(&index);
+            } else if let Some(groups) = self.blocks.get(&index) {
                 shown.extend(groups.iter().cloned());
                 continue;
             }
-            let start = index.saturating_mul(block_ms);
-            let end = start.saturating_add(block_ms);
             if start < tape.from_ms || end > tape.until_ms {
                 continue;
             }
             let groups = settle_block(facts, start, end, &inputs);
             // Frozen only once no print can still join it, and only whole.
-            if end <= tape.settled_through_ms
-                && tape.retained_from_ms.is_some_and(|from| start >= from)
-            {
+            if end <= tape.settled_through_ms && whole {
                 self.blocks.insert(index, groups.clone());
             }
             shown.extend(groups);
