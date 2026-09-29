@@ -1227,6 +1227,26 @@ mod tests {
     }
 
     #[test]
+    fn a_new_profile_starts_without_labels() {
+        assert!(
+            !FrvpPayload::default().show_labels,
+            "the status line and price plates are opt-in"
+        );
+    }
+
+    #[test]
+    fn a_preset_with_labels_on_keeps_them_on() {
+        let labelled = FrvpPayload {
+            show_labels: true,
+            ..FrvpPayload::default()
+        };
+        let exported = labelled.export_preset().expect("frvp exports its preset");
+        let mut restored = FrvpPayload::default();
+        assert!(restored.import_preset(&exported));
+        assert!(restored.show_labels, "a saved opt-in survives the new default");
+    }
+
+    #[test]
     fn preset_round_trip_excludes_the_cache() {
         let mut payload = FrvpPayload {
             value_area_pct: 68,
