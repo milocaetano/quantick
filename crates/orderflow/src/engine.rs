@@ -2608,3 +2608,7 @@ mod tests {
 #[cfg(test)]
 #[path = "engine_clock_tests.rs"]
 mod clock_tests;
+
+#[cfg(test)]
+#[path = "engine_opening_tests.rs"]
+mod opening_tests;
