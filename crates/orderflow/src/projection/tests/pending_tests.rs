@@ -7,6 +7,8 @@ use crate::projection::dots::{DotHorizon, fold_dots, native_grouping, window_sta
 use crate::projection::tiers::{TierClusters, tier_primitives};
 use std::sync::Arc;
 
+mod profiling;
+
 struct Scene {
     config: HeatmapConfig,
     timeline: BarTimeline,
