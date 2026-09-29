@@ -140,7 +140,7 @@ impl Default for FrvpPayload {
             show_value_area: true,
             show_poc: true,
             delta_coloring: false,
-            show_labels: true,
+            show_labels: false,
             extend_right: false,
             outline_over_heatmap: true,
             approximate_history: true,
