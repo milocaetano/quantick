@@ -22,6 +22,7 @@ fn dot(live: bool, quantity: i64, x: f64, y: f64) -> AggressionPrimitive {
         trade_count: 1,
         first_timestamp_ms: 0,
         last_timestamp_ms: 0,
+        timestamp_quantity: Decimal::ZERO,
         matched_quantity: Decimal::ZERO,
         buy_quantity: Decimal::from(quantity),
         matched_fraction: 0.0,

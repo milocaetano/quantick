@@ -171,6 +171,7 @@ mod tests {
             trade_count: 1,
             first_timestamp_ms: last_ms,
             last_timestamp_ms: last_ms,
+            timestamp_quantity: Decimal::from(last_ms) * dec(quantity),
             matched_quantity: Decimal::ZERO,
             buy_quantity: match side {
                 Side::Buy => dec(quantity),

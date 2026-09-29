@@ -1,7 +1,7 @@
 //! The optional tape pane retains execution coordinates and readable areas.
 
 use super::*;
-use crate::projection::{DotSizing, TapeDotGeometry, merge_tape_dots};
+use crate::projection::{DotSizing, TapeDotGeometry, merge_tape_dots, position_tape_at};
 
 fn tape_config() -> HeatmapConfig {
     let mut config = dots_config();
@@ -45,6 +45,7 @@ fn closed_tape_dots_keep_the_quantity_weighted_execution_coordinates() {
     let dot = &marks[0];
     assert_eq!(dot.quantity, dec("0.4"));
     assert_eq!(dot.buy_quantity, dec("0.1"));
+    assert_eq!(dot.timestamp_quantity, dec("1216.7"));
     assert_eq!(dot.price, dec("100.75"), "no tick or level-centre snap");
     assert_eq!(dot.y, prices("90", "110").y(dec("100.75")).unwrap());
     let lower = timeline.locate_in_lane_clamped(3_041).unwrap().normalized;
@@ -84,6 +85,28 @@ fn the_first_captured_print_appears_before_its_window_closes() {
     assert_eq!(live.len(), 1, "recording may start inside a forming window");
     assert_eq!(live[0].x, 1.0);
     assert_eq!(live[0].quantity, Decimal::ONE);
+}
+
+#[test]
+fn a_stale_forming_projection_keeps_exact_time_while_the_tape_rolls() {
+    let (_, timeline, mut marks) = fixture(3_060);
+    let left = timeline.locate_in_lane_clamped(1_560).unwrap().normalized;
+    let mut candle = marks[0].clone();
+    candle.live = false;
+    candle.x = 0.25;
+    marks.push(candle.clone());
+    position_tape_at(&mut marks, 3_070, 1_500, left, 250);
+    assert_eq!(marks[0].x, 1.0, "the open dot still rides NOW");
+    position_tape_at(&mut marks, 3_260, 1_500, left, 250);
+    let expected = left + (1.0 - left) * ((3_041.75 - 1_760.0) / 1_500.0);
+    assert!((marks[0].x - expected).abs() < 1e-12, "the closed dot recovers its exact time");
+    let first = marks[0].x;
+    position_tape_at(&mut marks, 3_290, 1_500, left, 250);
+    assert!((first - marks[0].x - (1.0 - left) * 30.0 / 1_500.0).abs() < 1e-12);
+    assert_eq!(marks[1], candle, "candle primitives stay unchanged");
+    assert_eq!(marks[0].timestamp_quantity, dec("1216.7"));
+    position_tape_at(&mut marks, 5_000, 1_500, left, 250);
+    assert!(marks[0].x < left, "an aged-out dot leaves instead of piling at the left edge");
 }
 
 #[test]
@@ -147,6 +170,7 @@ fn collision_fixture() -> (HeatmapConfig, DotSizing, TapeDotGeometry, Vec<Aggres
         mark.y = prices("90", "110").y(mark.price).unwrap();
         mark.first_timestamp_ms = id as i64 * 10;
         mark.last_timestamp_ms = mark.first_timestamp_ms;
+        mark.timestamp_quantity = Decimal::from(mark.first_timestamp_ms) * mark.quantity;
         mark.trade_count = 1;
         marks.push(mark);
     }
@@ -173,6 +197,8 @@ fn colliding_tape_dots_merge_at_the_weighted_coordinates_with_exact_sums() {
     let buys: Decimal = merged.iter().map(|mark| mark.buy_quantity).sum();
     assert_eq!(total, dec("0.65"));
     assert_eq!(buys, dec("0.25"));
+    let moment: Decimal = merged.iter().map(|mark| mark.timestamp_quantity).sum();
+    assert_eq!(moment, dec("16.5"));
     let dot = merged.iter().find(|mark| mark.agg_ids == [1, 2]).unwrap();
     assert_eq!(dot.price, dec("100.75"));
     assert!((dot.x - 0.1075).abs() < 1e-12, "no column snapping");
@@ -203,4 +229,15 @@ fn a_collision_at_now_keeps_the_forming_dot_whole_at_the_edge() {
     assert_eq!(merged.len(), 1);
     assert_eq!(merged[0].x, 1.0, "a forming merge remains at now");
     assert_eq!(merged[0].quantity, dec("0.4"));
+}
+
+#[test]
+fn budget_folding_preserves_the_exact_execution_time_moment() {
+    use crate::projection::fold::{FoldOrder, fold_to_budget};
+
+    let (_, _, _, mut marks) = collision_fixture();
+    fold_to_budget(&mut marks, 2, FoldOrder::OldestFirst, Decimal::ONE, None);
+    assert!(marks.len() <= 2);
+    let moment: Decimal = marks.iter().map(|mark| mark.timestamp_quantity).sum();
+    assert_eq!(moment, dec("16.5"));
 }

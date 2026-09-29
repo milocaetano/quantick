@@ -22,6 +22,7 @@ pub(super) fn mark(agg_id: u64, live: bool, quantity: i64, x: f64, y: f64) -> Ag
         trade_count: 1,
         first_timestamp_ms: 0,
         last_timestamp_ms: 0,
+        timestamp_quantity: Decimal::ZERO,
         matched_quantity: Decimal::ZERO,
         buy_quantity: Decimal::from(quantity),
         matched_fraction: 0.0,
