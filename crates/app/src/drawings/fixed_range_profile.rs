@@ -1247,6 +1247,19 @@ mod tests {
     }
 
     #[test]
+    fn a_preset_saved_before_labels_were_opt_in_opens_without_them() {
+        // Every profile saved while labels defaulted on carries
+        // `show_labels = true` without the trader ever choosing it.
+        let mut legacy = FrvpPayload::default().export_preset().unwrap();
+        let table = legacy.as_table_mut().unwrap();
+        table.retain(|key, _| key != "labels");
+        table.insert("show_labels".into(), toml::Value::Boolean(true));
+        let mut restored = FrvpPayload::default();
+        assert!(restored.import_preset(&legacy), "the rest of the preset still loads");
+        assert!(!restored.show_labels, "an inherited default is not an opt-in");
+    }
+
+    #[test]
     fn preset_round_trip_excludes_the_cache() {
         let mut payload = FrvpPayload {
             value_area_pct: 68,
