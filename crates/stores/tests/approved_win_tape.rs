@@ -16,6 +16,11 @@
 //! projection request (`pane/draw_chart.rs`, `frame_layout.rs`,
 //! `frame_stages.rs`), the replay clock (`tab/tape_clock.rs`) and the painter's
 //! tape frame (`orderflow_render/bubbles.rs`, `pane/render_registry/axes.rs`).
+//! Each mode is drawn through both tape paths and compared with the one
+//! golden: the path the app draws, which keeps the published tape and lays
+//! the accepted prints beside it (`with_pending_overlay`,
+//! `project_tape_frame_with_overlay`), and the complete path, which folds the
+//! whole pending tape every frame (`with_pending_tape`, `project_tape_frame`).
 //! Every decision is the engine's, the chart crate's or the shipped preset's;
 //! this file only calls them in the order the app does, so a change to that
 //! app glue has to be mirrored here or this test stops watching it. The clock
@@ -41,7 +46,7 @@ use quantick_orderflow::config::theme::OrderflowRenderStyle;
 use quantick_orderflow::engine::{BookEngine, BookPublished, ProjectionRequest, VisibleOrderflow};
 use quantick_orderflow::projection::{
     AggressionPrimitive, PendingTape, TapeDotGeometry, TapeDotMemory, TapeHorizontalGeometry,
-    project_tape_frame,
+    draws_bubble, project_tape_frame, project_tape_frame_with_overlay,
 };
 use quantick_orderflow::tape_clock::TapeClock;
 use quantick_orderflow::{
@@ -101,6 +106,25 @@ impl Mode {
         match self {
             Self::Beside => "native tape beside the candles",
             Self::TapeOnly => "tape only",
+        }
+    }
+}
+
+/// Which of the two tape paths a replay paints through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Path {
+    /// What the app draws: the published tape kept, the accepted prints
+    /// beside it as the cells they touch.
+    Overlay,
+    /// The complete pending projection, folded whole on every frame.
+    Complete,
+}
+
+impl Path {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Overlay => "overlay",
+            Self::Complete => "complete",
         }
     }
 }
@@ -402,6 +426,7 @@ impl View {
         lane_reference_ms: Option<i64>,
         price_range: (f64, f64),
         geometry: PaneGeometry,
+        path: Path,
     ) -> Option<Arc<VisibleOrderflow>> {
         if !self.config.any_layer_enabled() {
             return None;
@@ -426,7 +451,11 @@ impl View {
         let frame = if !self.immediate_tape() || self.pending_tape.is_empty() {
             self.published.frame.clone()
         } else {
-            VisibleOrderflow::with_pending_tape(
+            let with_pending = match path {
+                Path::Overlay => VisibleOrderflow::with_pending_overlay,
+                Path::Complete => VisibleOrderflow::with_pending_tape,
+            };
+            with_pending(
                 &self.pending_tape,
                 &self.config,
                 &request,
@@ -447,10 +476,14 @@ struct Pane {
     price_view: PriceView,
     auto_range: Option<(f64, f64)>,
     chart_width: f32,
+    path: Path,
+    /// Painted frames that carried their accepted prints beside the
+    /// published tape.
+    overlaid: usize,
 }
 
 impl Pane {
-    fn new(mode: Mode) -> Self {
+    fn new(mode: Mode, path: Path) -> Self {
         let mut view = View::new();
         let before = view.config.clone();
         bubble_presets::embedded()
@@ -477,6 +510,8 @@ impl Pane {
             price_view: PriceView::new(),
             auto_range: None,
             chart_width: mode.chart_width(),
+            path,
+            overlaid: 0,
         }
     }
 
@@ -513,6 +548,8 @@ impl Pane {
             price_view,
             auto_range,
             chart_width,
+            path,
+            overlaid,
         } = self;
         let (chart_width, chart_height) = (*chart_width, CHART_HEIGHT_PX);
         let closed = state.bars();
@@ -579,6 +616,7 @@ impl Pane {
                 height_px: chart_height,
                 lane_bars: lane_bars(closed, partial, window_ms),
             },
+            *path,
         );
         *auto_range = Some(fitted);
         let frame = frame?;
@@ -604,7 +642,7 @@ impl Pane {
             .projection
             .aggressions
             .iter()
-            .filter(|mark| drawn_bubble(mark, &style))
+            .filter(|mark| draws_bubble(&style, mark))
             .cloned()
             .collect();
         if !style.aggression_layer && !style.lane_aggression_layer {
@@ -619,20 +657,37 @@ impl Pane {
             TapeHorizontalGeometry::resolve(chart_width - lane_left, chart_height, &style.bubbles);
         style.bubbles.max_radius = geometry.max_radius;
         let lane_start = 1.0 - 1.0 / frame.slot_count.max(1) as f64;
-        let tape = project_tape_frame(
-            marks,
-            Some(&mut view.tape_dots),
-            &style,
-            TapeDotGeometry {
-                left_x: lane_start,
-                right_x: 1.0,
-                width_px: geometry.span_px,
-                height_px: chart_height,
-            },
-            tape_time,
-            tape_prices,
-            frame.projection.tape_facts.as_deref(),
-        )?;
+        let tape_geometry = TapeDotGeometry {
+            left_x: lane_start,
+            right_x: 1.0,
+            width_px: geometry.span_px,
+            height_px: chart_height,
+        };
+        let facts = frame.projection.tape_facts.as_deref();
+        let tape = match path {
+            Path::Overlay => {
+                *overlaid += usize::from(frame.tape_overlay.is_some());
+                project_tape_frame_with_overlay(
+                    marks,
+                    Some(&mut view.tape_dots),
+                    &style,
+                    tape_geometry,
+                    tape_time,
+                    tape_prices,
+                    facts,
+                    frame.tape_overlay.as_deref(),
+                )
+            }
+            Path::Complete => project_tape_frame(
+                marks,
+                Some(&mut view.tape_dots),
+                &style,
+                tape_geometry,
+                tape_time,
+                tape_prices,
+                facts,
+            ),
+        }?;
         style.bubbles.max_radius = tape.max_radius;
         let sizing = style.dot_sizing.expect("a factual tape has its sizing");
 
@@ -688,26 +743,6 @@ impl Pane {
             ticks: ticks.unwrap_or_default(),
             marks,
         })
-    }
-}
-
-/// `RenderContext::bubbles`: the marks the canvas draws as bubbles.
-fn drawn_bubble(mark: &AggressionPrimitive, style: &OrderflowRenderStyle) -> bool {
-    let layer = if mark.live {
-        style.lane_aggression_layer
-    } else {
-        style.aggression_layer
-    };
-    if !layer {
-        return false;
-    }
-    let both_sides = style.show_buy && style.show_sell;
-    if !both_sides && mark.buy_share > 0.0 && mark.buy_share < 1.0 {
-        return false;
-    }
-    match mark.side {
-        Side::Buy => style.show_buy,
-        Side::Sell => style.show_sell,
     }
 }
 
@@ -837,8 +872,9 @@ fn id_ranges(ids: &[u64]) -> String {
         .join(",")
 }
 
-/// Replay the fixture through the pane and write the tape at each instant.
-fn replay(mode: Mode) -> String {
+/// Replay the fixture through the pane, painting through `path`, and write
+/// the tape at each instant; also returns the frames the overlay drew.
+fn replay(mode: Mode, path: Path) -> (String, usize) {
     let trades = parse_trades(TRADES).expect("the fixture is an engine trade file");
     assert_eq!(trades.len(), 3_267);
     let mut out = String::new();
@@ -852,7 +888,7 @@ fn replay(mode: Mode) -> String {
         trades[0].agg_id,
         trades[trades.len() - 1].agg_id
     );
-    let mut pane = Pane::new(mode);
+    let mut pane = Pane::new(mode, path);
     let started = Instant::now();
     let mut next = 0;
     let mut position_ms = SLICE_START_MS;
@@ -879,22 +915,36 @@ fn replay(mode: Mode) -> String {
             .run_batch(started + Duration::from_millis(elapsed_ms as u64));
         position_ms += FRAME_STEP_MS;
     }
-    out
+    (out, pane.overlaid)
 }
 
+/// Both paths draw the approved tape, and the app's path does lay accepted
+/// prints beside the published tape, so the overlay is what it checks.
 fn assert_approved(mode: Mode) {
-    let actual = replay(mode);
+    let (overlay, overlaid) = replay(mode, Path::Overlay);
+    assert_same_tape(mode, Path::Overlay, &overlay);
+    let (complete, _) = replay(mode, Path::Complete);
+    assert_same_tape(mode, Path::Complete, &complete);
+    assert!(
+        overlaid > 0,
+        "the app's path drew no frame beside the published tape ({})",
+        mode.label()
+    );
+}
+
+fn assert_same_tape(mode: Mode, path: Path, actual: &str) {
     if actual == GOLDEN {
         return;
     }
     let written = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
-        "approved_win_tape.{}.txt",
+        "approved_win_tape.{}.{}.txt",
         match mode {
             Mode::Beside => "native_tape",
             Mode::TapeOnly => "tape_only",
-        }
+        },
+        path.label()
     ));
-    let saved = std::fs::write(&written, &actual).map_or_else(
+    let saved = std::fs::write(&written, actual).map_or_else(
         |error| format!("could not be written ({error})"),
         |()| format!("is in {}", written.display()),
     );
@@ -918,12 +968,13 @@ fn assert_approved(mode: Mode) {
             },
         );
     panic!(
-        "The approved WIN tape changed ({}). The trader approved this tape at aafcc21f, \
+        "The approved WIN tape changed ({}, {} path). The trader approved this tape at aafcc21f, \
          and it must not change without the trader's approval.\n\
          First difference, line {line} of the golden:\n  approved: {approved}\n  now:      {now}\n\
          The whole new tape {saved}. Do not edit the golden to match: fix the change, \
          or show the trader both tapes and replace the golden only once the trader approves.",
         mode.label(),
+        path.label(),
     );
 }
 
