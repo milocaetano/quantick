@@ -326,7 +326,7 @@ impl ChartPane {
 
         // Tape only: the tape is the whole canvas and the candles get none of
         // it, even before the tape has a live edge to run to. The native tape
-        // beside the candles keeps its share and owns the price axis.
+        // beside the candles keeps its share and fits the shared price axis.
         let (tape_only, native_tape) = self.tape_modes();
         if tape_only {
             // No candles to have panned away from: the pane is the live tape.

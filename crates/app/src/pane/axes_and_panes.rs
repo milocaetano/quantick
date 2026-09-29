@@ -208,7 +208,7 @@ fn axis_zoom_gesture(
 
 impl ChartPane {
     /// The tape's two modes, `(tape_only, native_tape)`: tape only hides the
-    /// candles, the native tape owns the price axis beside them or alone.
+    /// candles, the native tape fits the shared price axis beside them or alone.
     pub(crate) fn tape_modes(&self) -> (bool, bool) {
         self.orderflow.as_ref().map_or((false, false), |view| {
             let config = view.cached_config();

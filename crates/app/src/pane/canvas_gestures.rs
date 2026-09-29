@@ -56,7 +56,7 @@ impl ChartPane {
             && !chart.interact_pointer_pos().is_some_and(on_divider)
         {
             let tape = press.is_some_and(over_tape);
-            self.pan_canvas(chart.drag_delta(), total, tape, native_tape);
+            self.pan_canvas(chart.drag_delta(), total, tape);
         }
         // The middle button pans always, mid-placement included: a trader who
         // drops one end of a trend line must be able to go find the other.
@@ -68,7 +68,7 @@ impl ChartPane {
             && middle_down
             && let Some(position) = hover
         {
-            self.pan_canvas(delta, total, over_tape(position), native_tape);
+            self.pan_canvas(delta, total, over_tape(position));
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         }
         // Not with a tool armed: two placement clicks are two anchors. Over
@@ -102,10 +102,10 @@ impl ChartPane {
         }
     }
 
-    /// Over the candles a drag pans them sideways, and prices too unless the
-    /// native tape owns the axis. Over the tape it pans the shared axis and
-    /// the tape's own time: rightward reveals older prints.
-    fn pan_canvas(&mut self, delta: egui::Vec2, total: usize, tape: bool, native_tape: bool) {
+    /// Up and down pans the shared price axis wherever the drag is; sideways
+    /// it pans the candles, or over the tape the tape's own time: rightward
+    /// reveals older prints.
+    fn pan_canvas(&mut self, delta: egui::Vec2, total: usize, tape: bool) {
         let height = self.frame.chart_height;
         if !tape {
             self.viewport.pan_pixels(delta.x, total);
@@ -118,7 +118,7 @@ impl ChartPane {
             let span = TapeHorizontalGeometry::resolve(chart.right() - divider, height, bubbles);
             orderflow.pan_tape(delta.x, span.span_px);
         }
-        if let Some(auto) = self.frame.auto_range.filter(|_| tape || !native_tape)
+        if let Some(auto) = self.frame.auto_range
             && delta.y != 0.0
             && height > 1.0
         {
