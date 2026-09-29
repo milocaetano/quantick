@@ -13,6 +13,9 @@ const WINDOW_MS: i64 = 113_000;
 const WARM_STEP_MS: i64 = 40;
 const CHECKPOINTS: [usize; 3] = [38_000, 40_000, 42_000];
 
+#[path = "recorded_sort_performance.rs"]
+mod recorded_sort_performance;
+
 fn recorded_prefix() -> ParsedFile {
     let path = std::env::var_os("TAPE_BENCH_CSV")
         .expect("set TAPE_BENCH_CSV to the recorded Quantick replay CSV");
