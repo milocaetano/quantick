@@ -271,7 +271,9 @@ pub struct PaneBubblesSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BubblesStateSnapshot {
-    /// Aggression bubbles are drawn over the chart.
+    /// Aggression bubbles are drawn over the chart. Beside the native tape
+    /// they are one summary bubble per tick candle, as layer
+    /// `candle_aggression` draws it; `layers.visibility` names any block.
     pub enabled: bool,
     /// And over the live lane, which is a separate switch.
     pub lane_enabled: bool,

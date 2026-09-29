@@ -1,7 +1,7 @@
 //! Optional, native-price aggression over tick candles.
 use crate::{
-    ChartLayer, LayerBlock, LayerDescriptor, LayerFacts, LayerScope, LayerSource, Persistence,
-    Requirement,
+    ChartLayer, LayerBlock, LayerDescriptor, LayerFacts, LayerScope, LayerSource, LayerState,
+    Persistence, Requirement,
 };
 
 #[allow(non_upper_case_globals)]
@@ -21,6 +21,28 @@ impl ChartLayer {
         default_on: false,
         projection_demand: false,
     });
+}
+
+impl LayerState {
+    /// Whether the candles carry the per-candle summary: asked for by its own
+    /// layer, or by the aggression bubbles beside the native tape, where the
+    /// summary is what they draw. One answer, so it is drawn once.
+    pub fn candle_summary(facts: LayerFacts, bubbles: bool, candle_aggression: bool) -> bool {
+        [
+            (ChartLayer::Bubbles, bubbles),
+            (ChartLayer::CandleAggression, candle_aggression),
+        ]
+        .into_iter()
+        .any(|(layer, requested)| {
+            draws_summary(layer, facts) && Self::effective(layer, requested, facts)
+        })
+    }
+}
+
+/// `layer` draws the summary: candle aggression always, the aggression
+/// bubbles beside the native tape, which keys every print on the tape.
+pub(crate) fn draws_summary(layer: ChartLayer, facts: LayerFacts) -> bool {
+    layer == ChartLayer::CandleAggression || (layer == ChartLayer::Bubbles && facts.native_tape)
 }
 
 pub(crate) fn blocked(facts: LayerFacts) -> Option<LayerBlock> {

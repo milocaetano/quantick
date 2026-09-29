@@ -201,11 +201,6 @@ pub mod blocks {
         "candle_layer_hidden_in_tape_only",
         "this candle-chart layer is hidden while the pane shows only the tape",
     );
-    pub const NATIVE_TAPE_CANDLE_BUBBLES: LayerBlock = LayerBlock::new(
-        "candle_bubbles_replaced_by_native_tape",
-        "the native tape draws every print at its own time and price beside the candles; \
-         candle aggression summarizes each candle",
-    );
     pub const TAPE_ONLY_DRAWS_NATIVE_TAPE: LayerBlock = LayerBlock::new(
         "tape_only_always_draws_the_native_tape",
         "tape only always draws the native tape; switch tape only off to choose it here",

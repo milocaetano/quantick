@@ -14032,7 +14032,7 @@
                 "type": "string"
               },
               "enabled": {
-                "description": "Aggression bubbles are drawn over the chart.",
+                "description": "Aggression bubbles are drawn over the chart. Beside the native tape\nthey are one summary bubble per tick candle, as layer\n`candle_aggression` draws it; `layers.visibility` names any block.",
                 "type": "boolean"
               },
               "floored_quantity": {

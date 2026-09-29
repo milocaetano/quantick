@@ -76,8 +76,9 @@ impl ChartLayer {
         id: "bubbles",
         label: "aggression bubbles",
         hint: "confirmed executions from the trade stream, drawn where they printed, on the \
-                 candles. The tape has a switch of its own and this one never moves it — \
-                 right-click the tape to reach it",
+                 candles. Beside the native tape, one summary bubble per tick candle, as \
+                 candle aggression draws it. The tape has a switch of its own and this one \
+                 never moves it — right-click the tape to reach it",
         source: LayerSource::Orderflow(OrderflowSwitch::Bubbles),
         scope: LayerScope::FlowPane,
         persistence: Persistence::Layers,

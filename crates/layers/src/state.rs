@@ -153,9 +153,6 @@ impl LayerState {
         {
             return Some(blocks::TAPE_ONLY_CANDLES);
         }
-        if layer == ChartLayer::Bubbles && facts.native_tape {
-            return Some(blocks::NATIVE_TAPE_CANDLE_BUBBLES);
-        }
         // Tape only draws the native tape whatever the switch says, so the
         // switch has nothing to change there.
         if layer == ChartLayer::NativeTape && facts.tape_only {
@@ -176,7 +173,7 @@ impl LayerState {
         };
         missing
             .or_else(|| {
-                (layer == ChartLayer::CandleAggression)
+                crate::candle_aggression::draws_summary(layer, facts)
                     .then(|| crate::candle_aggression::blocked(facts))
                     .flatten()
             })

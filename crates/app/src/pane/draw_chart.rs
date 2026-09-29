@@ -247,10 +247,10 @@ impl ChartPane {
         let footprint_blocked = self
             .layer_blocked(ChartLayer::Footprint, chrome.capabilities)
             .is_some();
-        let candle_aggression = self.layer_effective(
-            ChartLayer::CandleAggression,
+        let candle_aggression = quantick_layers::LayerState::candle_summary(
+            self.layer_facts(Some(chrome.capabilities)),
+            self.layer_switched_on(ChartLayer::Bubbles, chrome.style),
             self.layers.requested(ChartLayer::CandleAggression),
-            chrome.capabilities,
         );
         let footprint_on = ((self.footprint.visible || self.wants_range_profile())
             && !footprint_blocked)

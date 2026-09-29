@@ -36,6 +36,7 @@ pub(super) struct FrameStart {
     /// The footprint layer will paint — which is not the same as the
     /// ladders accumulating: a range profile turns those on alone.
     pub(super) footprint_paints: bool,
+    /// The per-candle summary paints, whichever switch asked for it.
     pub(super) candle_aggression: bool,
 }
 

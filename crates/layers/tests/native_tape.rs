@@ -102,6 +102,45 @@ fn beside_the_native_tape_the_bubbles_are_the_candle_summary() {
     );
 }
 
+/// One summary on the candles, whichever switch asks for it: candle
+/// aggression anywhere, the aggression bubbles beside the native tape only.
+#[test]
+fn the_candle_summary_is_one_answer_for_both_switches() {
+    let beside = LayerFacts {
+        native_tape: true,
+        ..ordinary()
+    };
+    for (bubbles, candle_aggression, drawn) in [
+        (false, false, false),
+        (true, false, true),
+        (false, true, true),
+        (true, true, true),
+    ] {
+        assert_eq!(
+            LayerState::candle_summary(beside, bubbles, candle_aggression),
+            drawn,
+            "bubbles {bubbles}, candle aggression {candle_aggression}"
+        );
+    }
+    assert!(
+        !LayerState::candle_summary(ordinary(), true, false),
+        "without the native tape the bubbles are the candles' own per-print marks"
+    );
+    assert!(LayerState::candle_summary(ordinary(), false, true));
+    for waiting in [
+        LayerFacts {
+            tape_only: true,
+            ..beside
+        },
+        LayerFacts {
+            tick_bars: false,
+            ..beside
+        },
+    ] {
+        assert!(!LayerState::candle_summary(waiting, true, true));
+    }
+}
+
 /// The native tape is a switch of its own beside tape only: one registry
 /// entry the layer menu, the settings checkbox and `layers.visibility.set`
 /// share, saved with the order-flow preset exactly like tape only.
