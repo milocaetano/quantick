@@ -201,7 +201,7 @@ impl PendingTape {
             // A published native cell is already a canonical fold. Only keys
             // touched by this suffix need to repeat that work. The width check
             // leaves a grouping transition on the complete fold path.
-            let native_cells = dots.tape_only
+            let native_cells = dots.native_tape
                 && dots.tape_window_ms == DOT_WINDOW_LADDER_MS[0]
                 && dots.tape_level_ticks == 1
                 && facts
@@ -281,7 +281,7 @@ impl PendingTape {
             .iter()
             .filter(|cluster| cluster.quantity >= floor)
             .cloned();
-        let primitives = if dots.tape_only {
+        let primitives = if dots.native_tape {
             native_tape_primitives(visible, timeline, prices, reference, dots)
         } else {
             tier_primitives(

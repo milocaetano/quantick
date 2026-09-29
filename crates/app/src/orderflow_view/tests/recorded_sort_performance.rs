@@ -45,8 +45,10 @@ fn recorded_native_sort_and_buffer_costs_at_40000_prints() {
         .clusters
         .iter()
         .all(|cluster| cluster.price_span == view.config.price_grouping);
-    let eligible =
-        zoom.tape_only && zoom.tape_window_ms == 100 && zoom.tape_level_ticks == 1 && widths_match;
+    let eligible = zoom.native_tape
+        && zoom.tape_window_ms == 100
+        && zoom.tape_level_ticks == 1
+        && widths_match;
     assert!(
         eligible,
         "the recorded prefix exercises touched-key refolding"
@@ -61,7 +63,7 @@ fn recorded_native_sort_and_buffer_costs_at_40000_prints() {
         std::mem::size_of::<quantick_orderflow::interaction::AggressionCluster>(),
         facts.clusters.len(),
         view.config.price_grouping,
-        zoom.tape_only,
+        zoom.native_tape,
         zoom.tape_window_ms,
         zoom.tape_level_ticks,
     );

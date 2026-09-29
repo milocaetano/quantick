@@ -385,7 +385,7 @@ impl OrderflowView {
             lane: &mut config.live_lane,
         }
         .show(ui);
-        let native_tape = config.tape_only() && config.volume_dots.enabled;
+        let native_tape = config.native_tape() && config.volume_dots.enabled;
         let bubbles = &mut config.bubbles;
         SizePlacementSection {
             bubbles: &mut *bubbles,
@@ -414,8 +414,9 @@ impl OrderflowView {
         self.config.bubble_region_rows = defaults.bubble_region_rows;
         self.config.bubble_region_ms = defaults.bubble_region_ms;
         self.config.bubbles = defaults.bubbles;
-        // Tape only is the pane's mode, not part of the look.
+        // The native tape and tape only are the pane's mode, not its look.
         self.config.live_lane = LiveLaneStyle {
+            native_tape: self.config.live_lane.native_tape,
             tape_only: self.config.live_lane.tape_only,
             ..defaults.live_lane
         };

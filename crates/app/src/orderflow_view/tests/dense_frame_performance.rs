@@ -241,7 +241,7 @@ fn dense_113_second_tape_same_frame_ui_stages() {
             lane_now_ms: Some(NOW_MS),
             price_range: PRICES,
             dot_zoom: Some(DotZoom {
-                tape_only: true,
+                native_tape: true,
                 tape_window_ms: 100,
                 tape_level_ticks: 1,
                 candle_level_ticks: 1,

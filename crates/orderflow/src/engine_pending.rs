@@ -32,7 +32,7 @@ impl VisibleOrderflow {
         )
         .with_full_lane_coverage();
         let fallback = DotZoom {
-            tape_only: true,
+            native_tape: true,
             tape_window_ms: DOT_WINDOW_LADDER_MS[0],
             tape_level_ticks: 1,
             candle_level_ticks: 1,
@@ -42,7 +42,7 @@ impl VisibleOrderflow {
             request
                 .dot_zoom
                 .as_ref()
-                .filter(|zoom| zoom.tape_only)
+                .filter(|zoom| zoom.native_tape)
                 .unwrap_or(&fallback),
             &request.closed,
             request.partial.as_ref(),

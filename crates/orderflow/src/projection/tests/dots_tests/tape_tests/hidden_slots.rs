@@ -23,7 +23,7 @@ fn dual_collection_reference(
 ) -> Vec<AggressionPrimitive> {
     let config = history.config();
     let mixed = VolumeDots {
-        tape_only: false,
+        native_tape: false,
         ..dots.clone()
     };
     let grouping = crate::projection::dots::native_grouping(config);

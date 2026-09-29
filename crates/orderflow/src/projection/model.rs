@@ -112,7 +112,7 @@ pub struct AggressionPrimitive {
     /// bubble, the whole region for a regional fold. Range-drawing consumers
     /// (the live strip's histogram) read this instead of assuming one row.
     pub price_span: Decimal,
-    /// The cluster's quantity-weighted price. Tape-only dots retain it without
+    /// The cluster's quantity-weighted price. Native tape dots retain it without
     /// rounding and draw at this price. Legacy mixed-pane volume dots retain
     /// their tick-rounded price and draw at their level's centre.
     pub price: Decimal,

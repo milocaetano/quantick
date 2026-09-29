@@ -14,7 +14,7 @@ impl OrderflowView {
     }
 
     pub(super) fn immediate_tape(&self) -> bool {
-        self.config.tape_only() && self.config.volume_dots.enabled
+        self.config.native_tape() && self.config.volume_dots.enabled
     }
 
     pub(super) fn reset_pending_tape(&mut self) {

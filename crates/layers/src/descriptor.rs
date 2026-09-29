@@ -200,6 +200,11 @@ pub mod blocks {
         "candle_layer_hidden_in_tape_only",
         "this candle-chart layer is hidden while the pane shows only the tape",
     );
+    pub const NATIVE_TAPE_CANDLE_BUBBLES: LayerBlock = LayerBlock::new(
+        "candle_bubbles_replaced_by_native_tape",
+        "the native tape draws every print at its own time and price beside the candles; \
+         candle aggression summarizes each candle",
+    );
     pub const NO_BOOK: LayerBlock = LayerBlock::new(
         "source_captures_no_order_book",
         "order-book capture is not available for this source",

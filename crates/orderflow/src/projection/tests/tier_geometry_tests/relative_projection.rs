@@ -31,7 +31,7 @@ impl Fixture {
             })
             .collect();
         let dots = VolumeDots {
-            tape_only: true,
+            native_tape: true,
             tape_window_ms: 100,
             tape_level_ticks: 1,
             candle_level_ticks: 1,

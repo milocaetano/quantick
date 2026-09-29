@@ -539,10 +539,21 @@ impl HeatmapConfig {
     }
 
     /// Whether the pane shows the tape alone ([`LiveLaneStyle::tape_only`]):
-    /// asked for, and there is a tape to show.
+    /// asked for, and there is a tape to show. Presentation only: the full
+    /// width, the hidden candles and their marks.
     #[must_use]
     pub fn tape_only(&self) -> bool {
         self.lane_enabled() && self.live_lane.tape_only
+    }
+
+    /// Whether the tape on the canvas is the native tape
+    /// ([`LiveLaneStyle::native`]): execution coordinates, the market clock,
+    /// the whole window and a price axis fitted by its prints, beside the
+    /// candles or alone. Every processing site asks this, never
+    /// [`tape_only`](Self::tape_only).
+    #[must_use]
+    pub fn native_tape(&self) -> bool {
+        self.lane_enabled() && self.live_lane.native()
     }
 
     /// Whether any pane still draws the depth map.
@@ -783,6 +794,7 @@ mod tests {
                 enabled: true,
                 show_depth: true,
                 show_aggressions: true,
+                native_tape: false,
                 tape_only: false,
             },
             liquidity_correlation_ms: i64::MIN,

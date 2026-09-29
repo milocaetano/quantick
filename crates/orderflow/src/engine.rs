@@ -1086,7 +1086,7 @@ impl BookEngine {
         // Both print-only and book-backed feeds have a factual latest event.
         // Only the independent tape advances on the supplied market clock.
         let latest_ms = self.history.latest_ms()?;
-        let now_ms = if self.config.tape_only() {
+        let now_ms = if self.config.native_tape() {
             request.lane_now_ms.unwrap_or(latest_ms).max(latest_ms)
         } else {
             latest_ms
@@ -1127,7 +1127,7 @@ impl BookEngine {
             request.partial.as_ref(),
             live_edge,
         );
-        let timeline = if self.config.tape_only() {
+        let timeline = if self.config.native_tape() {
             timeline.with_full_lane_coverage()
         } else {
             timeline
@@ -1228,7 +1228,7 @@ impl BookEngine {
         if base <= Decimal::ZERO || base == self.config.price_grouping {
             return;
         }
-        let reset = if self.config.tape_only() {
+        let reset = if self.config.native_tape() {
             self.history.resize_capture_grouping(base)
         } else {
             self.history.reset_price_grouping(base)
@@ -1285,7 +1285,7 @@ impl BookEngine {
         // A capture resize discards L2 runs, so never infer a different grid
         // after synchronized depth arrives. `Empty` describes book coverage,
         // not the tape: its opening executions can precede this inference and
-        // the tape-only path retains those exact facts in `apply_auto_base`.
+        // the native-tape path retains those exact facts in `apply_auto_base`.
         if !self.auto_base
             || self.venue_price_step.is_some()
             || !matches!(self.history.status(), HistoryStatus::Empty)
@@ -2098,7 +2098,7 @@ mod tests {
     #[test]
     fn volume_dots_need_the_setting_and_the_zoom() {
         let zoom = |tape_window_ms: i64, tape_level_ticks: i64, candle_level_ticks: i64| DotZoom {
-            tape_only: false,
+            native_tape: false,
             tape_window_ms,
             tape_level_ticks,
             candle_level_ticks,

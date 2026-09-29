@@ -23,7 +23,7 @@ fn reference_place(
     let x = match (live, dots) {
         (true, None) => timeline.locate(cluster.timestamp_ms)?.normalized,
         (false, None) => timeline.locate_in_slot(cluster.timestamp_ms)?.normalized,
-        (true, Some(dots)) if dots.tape_only => {
+        (true, Some(dots)) if dots.native_tape => {
             let (from, now) = timeline.lane_bounds_ms()?;
             let right = timeline.live_now_position()?.normalized;
             if window_start(cluster.last_timestamp_ms, dots.tape_window_ms)
@@ -52,7 +52,7 @@ fn reference_place(
     };
     let y = match (live, dots) {
         (_, None) => prices.y(cluster.price)?,
-        (true, Some(dots)) if dots.tape_only => prices.y_unclamped(cluster.price)?,
+        (true, Some(dots)) if dots.native_tape => prices.y_unclamped(cluster.price)?,
         (true, Some(_)) => {
             prices.y_unclamped(cluster.price_bucket + cluster.price_span / Decimal::TWO)?
         }
@@ -155,7 +155,7 @@ fn check_placement(epoch: i64, mode: Option<bool>, lane: bool, now_offset: i64) 
     let dots = mode.map(|tape_only| {
         VolumeDots::resolve(
             &DotZoom {
-                tape_only,
+                native_tape: tape_only,
                 tape_window_ms: if tape_only { 100 } else { 250 },
                 tape_level_ticks: if tape_only { 1 } else { 5 },
                 candle_level_ticks: 10,

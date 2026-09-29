@@ -566,7 +566,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     }
     let mut style = context.style.sanitized();
     let dots = context.projection.volume_dots;
-    let factual_tape = dots && style.live_lane.tape_only;
+    let factual_tape = dots && style.live_lane.native();
     let tape_rect = context.layout.lane_rect();
     let tape_geometry = quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
         tape_rect.width(),

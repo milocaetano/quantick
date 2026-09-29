@@ -48,7 +48,7 @@ pub(super) struct ClusteringSection<'a> {
 impl ClusteringSection<'_> {
     pub(super) fn show(self, ui: &mut egui::Ui) {
         let config = self.config;
-        let native_tape = config.tape_only() && config.volume_dots.enabled;
+        let native_tape = config.native_tape() && config.volume_dots.enabled;
         if native_tape {
             ui.small("Native tape: 100 ms and one price tick before nearby dots join at their quantity-weighted time and price. Automatic sizing uses the largest visible dot; area follows volume. Candle aggression has its own scale.");
         } else {
@@ -132,7 +132,7 @@ impl ClusteringSection<'_> {
                     config.volume_dots.auto_full = true;
                 }
             });
-            if config.tape_only() {
+            if config.native_tape() {
                 ui.add_enabled_ui(config.volume_dots.auto_full, |ui| {
                     ui.checkbox(&mut config.volume_dots.ignore_opening_burst_in_scale, "Ignore opening burst in scale")
                         .on_hover_text("Exclude the first recorded 100 ms burst of each day from automatic sizing. Its volume and buy/sell pie stay exact, but its dot is capped. If opening data is missing, this uses the first available recorded burst. Save the preset to retain this preference.")
@@ -165,9 +165,11 @@ impl LiveLaneSection<'_> {
             inherited_cluster_ms: inherited,
             volume_dots,
         } = self;
+        ui.checkbox(&mut lane.native_tape, "Native tape")
+            .on_hover_text(LiveLaneStyle::NATIVE_TAPE_HINT);
         ui.checkbox(&mut lane.tape_only, "Tape only (hide candles)")
             .on_hover_text(ChartLayer::TapeOnly.hint());
-        let native_tape = lane.tape_only && volume_dots;
+        let native_tape = lane.native() && volume_dots;
         egui::CollapsingHeader::new("live lane")
             .id_salt("bubble_live_lane_section")
             .default_open(false)

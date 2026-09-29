@@ -119,7 +119,7 @@ pub(super) fn cluster_tier(
         if on_tape {
             tape_prints.push(trade);
         }
-        // A tape-only pane has no candle slots to project. In a mixed pane,
+        // The native tape keys no candle slot. In a mixed pane,
         // with volume dots on, the tape is a zoom of its own and the candles
         // draw every print of their bars, so the tape's length never empties
         // or changes the tick chart: the trader reads them as two views.
@@ -133,7 +133,7 @@ pub(super) fn cluster_tier(
         // the dishonesty this whole change exists to remove. The summary is the
         // one exception: a pie is an aggregate of the bar, not a second copy of
         // a print, so the bar keeps counting prints the tape is still showing.
-        if !dots.is_some_and(|dots| dots.tape_only)
+        if !dots.is_some_and(|dots| dots.native_tape)
             && (summarizing || !on_tape || dots.is_some())
             && (dots.is_none() || timeline.slot_at(trade.timestamp_ms).is_some())
         {
@@ -193,7 +193,7 @@ pub(super) fn refine_tier(
         let native = native_grouping(config);
         tier.tape = fold_dots(std::mem::take(&mut tier.tape), true, dots, native, horizon);
         tier.slot = fold_dots(std::mem::take(&mut tier.slot), false, dots, native, horizon);
-        if dots.tape_only {
+        if dots.native_tape {
             tier.tape_facts = Some(tier.tape.clone());
         }
     }
@@ -299,7 +299,7 @@ pub(super) fn refine_tier(
 
 /// Place one tier's marks on the chart, each on the scale its view reads on.
 ///
-/// A tape-only volume dot uses its quantity-weighted time and price, with
+/// A native tape volume dot uses its quantity-weighted time and price, with
 /// the open window at NOW. Mixed panes retain the original cell centres;
 /// candle dots remain at their bar's slot centre. A tape dot off the price window keeps a y
 /// outside `[0, 1]` rather than being dropped — the painter clips — so the
@@ -313,13 +313,13 @@ pub(super) fn tier_primitives(
     summary_reference: Decimal,
     dots: Option<&VolumeDots>,
 ) -> Vec<AggressionPrimitive> {
-    if let Some(dots) = dots.filter(|dots| dots.tape_only)
+    if let Some(dots) = dots.filter(|dots| dots.native_tape)
         && marks.slot.is_empty()
     {
         return native_tape_primitives(marks.tape, timeline, prices, print_reference, dots);
     }
     let tape_geometry = dots
-        .filter(|dots| dots.tape_only)
+        .filter(|dots| dots.native_tape)
         .and_then(|dots| TapeExecutionGeometry::resolve(timeline, dots, prices));
     marks
         .tape
@@ -338,7 +338,7 @@ pub(super) fn tier_primitives(
             let x = match (live, dots.is_some()) {
                 (true, false) => timeline.locate(cluster.timestamp_ms)?.normalized,
                 (false, false) => timeline.locate_in_slot(cluster.timestamp_ms)?.normalized,
-                (true, true) if dots.is_some_and(|dots| dots.tape_only) => {
+                (true, true) if dots.is_some_and(|dots| dots.native_tape) => {
                     tape_geometry.as_ref()?.x(&cluster)?
                 }
                 (true, true) => {
@@ -354,7 +354,7 @@ pub(super) fn tier_primitives(
             };
             let y = match (live, dots.is_some()) {
                 (_, false) => prices.y(cluster.price)?,
-                (true, true) if dots.is_some_and(|dots| dots.tape_only) => {
+                (true, true) if dots.is_some_and(|dots| dots.native_tape) => {
                     tape_geometry.as_ref()?.y(cluster.price)?
                 }
                 (true, true) => prices.y_unclamped(level_centre(&cluster))?,

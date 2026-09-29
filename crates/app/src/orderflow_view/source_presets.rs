@@ -4,7 +4,7 @@ use crate::bubble_presets::BubblePreset;
 use super::OrderflowView;
 
 impl OrderflowView {
-    /// Ordinary declarations keep their historical sticky behavior. A tape-only
+    /// Ordinary declarations keep their historical sticky behavior. A native tape
     /// declaration instead borrows the panel until an undeclared market arrives.
     /// Manual preset selection never creates this source-owned restoration point.
     pub(crate) fn apply_source_preset(&mut self, name: Option<&str>) -> bool {
@@ -13,7 +13,7 @@ impl OrderflowView {
                 let Some(preset) = self.presets.get(name).cloned() else {
                     return false;
                 };
-                if preset.live_lane.tape_only {
+                if preset.live_lane.native() {
                     if self.source_preset_restore.is_none() {
                         self.source_preset_restore =
                             Some(BubblePreset::capture(&self.presets.active, &self.config));

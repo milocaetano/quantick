@@ -87,7 +87,7 @@ fn inferred_grid_does_not_tombstone_the_initial_native_tape_window() {
                 lane_now_ms: Some(20_700),
                 price_range: (186_500.0, 187_300.0),
                 dot_zoom: Some(DotZoom {
-                    tape_only: true,
+                    native_tape: true,
                     tape_window_ms: 100,
                     tape_level_ticks: 1,
                     candle_level_ticks: 1,

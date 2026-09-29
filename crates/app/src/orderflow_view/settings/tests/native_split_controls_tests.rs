@@ -14,7 +14,7 @@ fn native_split_settings_keep_the_width_and_the_native_controls() {
         assert!(!has(&text, inactive), "inactive tape control: {inactive}");
     }
     for meaningful in [
-        "Native tape (execution time and price)",
+        "Native tape",
         "Tape only (hide candles)",
         "Ignore opening burst in scale",
         "width",
@@ -22,5 +22,8 @@ fn native_split_settings_keep_the_width_and_the_native_controls() {
     ] {
         assert!(has(&text, meaningful), "missing control: {meaningful}");
     }
-    assert_eq!(view.config, before, "opening settings must not rewrite a preset");
+    assert_eq!(
+        view.config, before,
+        "opening settings must not rewrite a preset"
+    );
 }

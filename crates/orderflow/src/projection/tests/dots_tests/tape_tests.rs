@@ -23,7 +23,7 @@ fn tape_config() -> HeatmapConfig {
 
 fn tape_dots(window_ms: i64, ticks: i64) -> VolumeDots {
     VolumeDots {
-        tape_only: true,
+        native_tape: true,
         ..coarse(window_ms, ticks)
     }
 }
@@ -135,7 +135,7 @@ fn tape_only_keeps_short_native_price_windows_at_every_tape_zoom() {
         let zoom = DotRungMemory::default().choose(geometry, &config, (0.0, 1_000.0), Some(80.0));
         assert!(zoom.tape_window_ms <= 250, "no coarse gaps: {zoom:?}");
         assert_eq!(zoom.tape_level_ticks, 1, "native prices are the base keys");
-        assert!(zoom.tape_only);
+        assert!(zoom.native_tape);
     }
 }
 

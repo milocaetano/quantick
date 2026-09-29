@@ -1,6 +1,7 @@
 //! The native tape beside the candles is built exactly as the tape-only pane
 //! built it: processing follows the native switch, never the pane's width.
 use super::*;
+use crate::projection::AggressionPrimitive;
 use quantick_engine::{Side, Trade};
 
 fn print(agg_id: u64, timestamp_ms: i64, price: i64, quantity: i64, side: Side) -> Trade {
@@ -99,7 +100,9 @@ fn the_native_tape_beside_the_candles_projects_what_tape_only_projected() {
     let mut beside = engine(true, false);
     for clock in [30_000, 30_016, 42_000] {
         let input = request(closed(), Some(forming()), clock);
-        let expected = tape_only.project_at(&input, now).expect("the tape projects");
+        let expected = tape_only
+            .project_at(&input, now)
+            .expect("the tape projects");
         let actual = beside.project_at(&input, now).expect("the tape projects");
         assert_eq!(
             actual.live_edge, expected.live_edge,

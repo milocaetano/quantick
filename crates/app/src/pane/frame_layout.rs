@@ -102,8 +102,10 @@ pub(super) struct FrameLayout {
     /// Where the indicator panes' vertical guide goes: the pointer's x while
     /// it is over the chart.
     pub(super) indicator_guide_x: Option<f32>,
-    /// The pane shows the tape alone: the price axis follows the tape.
+    /// The pane shows the tape alone: no candles, the tape full width.
     pub(super) tape_only: bool,
+    /// The native tape fits the one price axis, padded by `tape_padding_px`.
+    pub(super) native_tape: bool,
     pub(super) tape_padding_px: f32,
 }
 
@@ -129,7 +131,8 @@ impl FrameLayout {
     /// The visible slices and the price scale, as the [`DrawFrame`] every
     /// painter reads, plus the auto-fitted range the next frame's input
     /// handler converts pixels with. `None` when nothing yields a scale.
-    /// A tape-only pane fits `tape_range`; candle panes fit their own bars.
+    /// The native tape fits `tape_range`, beside the candles too; without
+    /// it the candles fit their own bars.
     pub(super) fn resolve<'a>(
         &'a self,
         painter: &'a egui::Painter,
@@ -173,7 +176,7 @@ impl FrameLayout {
         // indistinguishable from a hung app — which is exactly how the blank
         // frame after a rebuild read.
         let newest = partial.or_else(|| closed.last());
-        let auto_scale = if self.tape_only {
+        let auto_scale = if self.native_tape {
             // The tape's prints and the last price, never a bar's range.
             chart::tape_price_window(
                 tape_range,

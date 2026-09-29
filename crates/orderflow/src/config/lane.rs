@@ -399,9 +399,16 @@ pub struct LiveLaneStyle {
     /// Whether aggression bubbles are drawn *on the tape*. Same rule as
     /// [`show_depth`](Self::show_depth), and on by default for the same reason.
     pub show_aggressions: bool,
+    /// The tape is built from each execution's own time and price, on the
+    /// market clock and over its whole window, and the price axis follows
+    /// its prints: the approved WIN tape. How the tape is *processed*, not
+    /// how much of the pane it takes — beside the candles it keeps its
+    /// share and the candles keep theirs. Off by default; see
+    /// [`native`](Self::native) for the question every processing site asks.
+    pub native_tape: bool,
     /// The pane shows the tape alone, Bookmap style: the lane takes the
-    /// whole canvas, no candle and no candle mark is drawn, and the price
-    /// axis follows the tape's own prints. Off by default, so every other
+    /// whole canvas and no candle and no candle mark is drawn. Presentation
+    /// only, and always on the native tape. Off by default, so every other
     /// pane keeps its candles.
     pub tape_only: bool,
 }
@@ -417,6 +424,7 @@ impl Default for LiveLaneStyle {
             enabled: true,
             show_depth: true,
             show_aggressions: true,
+            native_tape: false,
             tape_only: false,
         }
     }
@@ -455,6 +463,9 @@ struct LiveLaneStyleRepr {
     show_aggressions: Option<bool>,
     /// Written only when on, so a pane that never asked keeps its file.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
+    native_tape: bool,
+    /// Written only when on, like `native_tape`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     tape_only: bool,
 }
 
@@ -484,6 +495,7 @@ impl From<LiveLaneStyleRepr> for LiveLaneStyle {
             // default. See `LiveLaneStyleRepr`.
             show_depth: repr.show_depth.unwrap_or(true),
             show_aggressions: repr.show_aggressions.unwrap_or(true),
+            native_tape: repr.native_tape,
             tape_only: repr.tape_only,
         }
     }
@@ -508,6 +520,7 @@ impl From<LiveLaneStyle> for LiveLaneStyleRepr {
             enabled: style.enabled,
             show_depth: Some(style.show_depth),
             show_aggressions: Some(style.show_aggressions),
+            native_tape: style.native_tape,
             tape_only: style.tape_only,
         }
     }
@@ -532,6 +545,19 @@ impl LiveLaneStyle {
         self.cluster_ms = self
             .cluster_ms
             .map(|window| window.clamp(0, MAX_BUBBLE_CLUSTER_MS));
+    }
+
+    /// What the native-tape switch does, in the words a settings panel shows.
+    pub const NATIVE_TAPE_HINT: &'static str = "build the tape from each print's own execution \
+        time and price, on the market clock, with the price axis fitted by the tape's prints. \
+        Beside the candles the tape keeps its share behind the divider and moving the candles \
+        never changes it; tape only shows it alone. Saved with the order-flow preset";
+
+    /// Whether the tape is built natively: asked for, or implied by tape
+    /// only, whose full-width pane has always drawn the native tape.
+    #[must_use]
+    pub fn native(&self) -> bool {
+        self.native_tape || self.tape_only
     }
 
     /// Lane width in pixels for a chart this wide.

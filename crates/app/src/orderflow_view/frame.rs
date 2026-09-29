@@ -152,7 +152,7 @@ impl OrderflowView {
             .with_tape_price_range(price_range)
             .with_tape_memory(&self.tape_dots);
         let context = match (
-            self.config.tape_only(),
+            self.config.native_tape(),
             frame.live_edge,
             frame.volume_dots.as_ref(),
         ) {

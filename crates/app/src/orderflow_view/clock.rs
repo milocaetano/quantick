@@ -5,7 +5,7 @@ impl OrderflowView {
     /// Only the independent tape advances between market events. Ordinary
     /// lanes retain their existing event-anchored clock, including BTC.
     pub(crate) fn lane_now_ms(&self) -> Option<i64> {
-        if self.config.tape_only() {
+        if self.config.native_tape() {
             self.tape_clock.now_ms()
         } else {
             None
@@ -13,7 +13,7 @@ impl OrderflowView {
     }
 
     pub(crate) fn set_live_clock_at(&mut self, applied_ms: Option<i64>, monotonic_ms: u64) {
-        if self.config.tape_only() {
+        if self.config.native_tape() {
             self.tape_clock.live_at(applied_ms, monotonic_ms);
         } else {
             self.tape_clock.reset();
@@ -26,7 +26,7 @@ impl OrderflowView {
         applied_ms: Option<i64>,
         next_unapplied_ms: Option<i64>,
     ) {
-        if self.config.tape_only() {
+        if self.config.native_tape() {
             self.tape_clock
                 .replay_at(position_ms, applied_ms, next_unapplied_ms);
         } else {

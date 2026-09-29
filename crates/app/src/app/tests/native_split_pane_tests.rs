@@ -46,8 +46,7 @@ fn the_native_tape_sits_beside_the_candles_behind_a_draggable_divider() {
         ChartLayer::CandleAggression,
     ] {
         assert!(
-            LayerState::blocked(layer, facts)
-                .is_none_or(|block| !block.code.contains("tape")),
+            LayerState::blocked(layer, facts).is_none_or(|block| !block.code.contains("tape")),
             "{layer:?} still paints left of the divider"
         );
     }
@@ -57,13 +56,15 @@ fn the_native_tape_sits_beside_the_candles_behind_a_draggable_divider() {
     );
 
     let y = chart.center().y;
-    drag_sized(
-        &mut app,
-        &ctx,
-        TEST_WINDOW,
-        egui::pos2(divider, y),
-        egui::pos2(divider - 100.0, y),
-    );
+    let at = |dx: f32| egui::pos2(divider + dx, y);
+    // Hover first, as a mouse does: the handle answers the pointer it is under.
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at(0.0))]);
+    run_frame_with_events(&mut app, &ctx, vec![pointer_button(at(0.0), true)]);
+    for step in 1..=5 {
+        let dx = -20.0 * step as f32;
+        run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(at(dx))]);
+    }
+    run_frame_with_events(&mut app, &ctx, vec![pointer_button(at(-100.0), false)]);
     run_frame(&mut app, &ctx);
     let wider = app.active_tab().tape().lane_width_px(chart.width());
     assert!(

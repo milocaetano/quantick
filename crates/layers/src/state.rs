@@ -6,6 +6,8 @@ pub struct LayerFacts {
     pub flow_pane: bool,
     pub tape_on: bool,
     pub tape_only: bool,
+    /// The tape is the native tape, beside the candles or alone.
+    pub native_tape: bool,
     pub book_capture: bool,
     pub traded_volume: bool,
     pub capture_enabled: bool,
@@ -148,6 +150,9 @@ impl LayerState {
             .contains(&layer)
         {
             return Some(blocks::TAPE_ONLY_CANDLES);
+        }
+        if layer == ChartLayer::Bubbles && facts.native_tape {
+            return Some(blocks::NATIVE_TAPE_CANDLE_BUBBLES);
         }
         if layer.0.needs_tape && !facts.tape_on {
             return Some(blocks::TAPE_OFF);

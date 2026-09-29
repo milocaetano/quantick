@@ -786,11 +786,9 @@ impl ChartPane {
         // own block; answering it here as well doubled its speed.
         let grabbing_divider = chart.interact_pointer_pos().is_some_and(&on_divider);
         // Tape only follows market time and its own recent price range.
-        // The wheel zooms the tape's window.
-        let tape_only = self
-            .orderflow
-            .as_ref()
-            .is_some_and(|orderflow| orderflow.cached_config().tape_only());
+        // The wheel zooms the tape's window. Beside the candles the native
+        // tape owns the price axis, so a drag pans the candles sideways only.
+        let (tape_only, native_tape) = self.tape_modes();
         if total > 0
             && !tape_only
             && chart.dragged_by(egui::PointerButton::Primary)
@@ -799,7 +797,7 @@ impl ChartPane {
         {
             let drag = chart.drag_delta();
             self.viewport.pan_pixels(drag.x, total);
-            if let Some(auto) = auto
+            if let Some(auto) = auto.filter(|_| !native_tape)
                 && drag.y != 0.0
                 && height > 1.0
             {
@@ -869,7 +867,7 @@ impl ChartPane {
                     .is_some_and(|position| areas.chart.contains(position) && !on_divider(position))
             {
                 self.viewport.pan_pixels(delta.x, total);
-                if let Some(auto) = auto
+                if let Some(auto) = auto.filter(|_| !native_tape)
                     && delta.y != 0.0
                     && height > 1.0
                 {

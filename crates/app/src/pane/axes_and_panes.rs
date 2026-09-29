@@ -237,16 +237,22 @@ fn axis_zoom_gesture(
 }
 
 impl ChartPane {
+    /// The tape's two modes, `(tape_only, native_tape)`: tape only hides the
+    /// candles, the native tape owns the price axis beside them or alone.
+    pub(crate) fn tape_modes(&self) -> (bool, bool) {
+        self.orderflow.as_ref().map_or((false, false), |view| {
+            let config = view.cached_config();
+            (config.tape_only(), config.native_tape())
+        })
+    }
+
     /// Every mode-entry path starts at its own fit, including source presets.
     pub(crate) fn sync_price_axis_mode(&mut self) {
-        let tape_only = self
-            .orderflow
-            .as_ref()
-            .is_some_and(|view| view.cached_config().tape_only());
-        if self.frame.price_tape_only != tape_only {
+        let native_tape = self.tape_modes().1;
+        if self.frame.price_native_tape != native_tape {
             self.price_view.reset();
             self.frame.auto_range = None;
-            self.frame.price_tape_only = tape_only;
+            self.frame.price_native_tape = native_tape;
         }
     }
 
@@ -263,10 +269,7 @@ impl ChartPane {
         chrome: &mut PaneChrome<'_>,
     ) {
         let auto = self.frame.auto_range;
-        let tape_only = self
-            .orderflow
-            .as_ref()
-            .is_some_and(|orderflow| orderflow.cached_config().tape_only());
+        let (tape_only, _) = self.tape_modes();
         // The lane's divider, as a resize handle. Registered after the chart
         // body so it takes the drag that would otherwise pan the candles
         // behind it, and it is the only place the pointer changes shape: the

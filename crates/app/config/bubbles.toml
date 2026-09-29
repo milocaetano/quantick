@@ -45,9 +45,11 @@ active = "default"
 #     price range, drawn as a pie of the buy and sell shares. The pie is the
 #     only mark that shows both sides of one price at once, and it is what
 #     keeps history reading as a summary instead of as a wall of specks.
-# The mini index regions preset enables overlap_merge and tape_only for a
-# separate volume-dot tape. Its time window and price range follow the tape;
-# dot area is relative to the largest visible volume by default.
+# The mini index regions preset enables overlap_merge and native_tape: a
+# volume-dot tape built from each print's own time and price, beside the tick
+# candles behind the draggable divider. Its time window and the one price axis
+# follow the tape; dot area is relative to the largest visible volume by
+# default. tape_only = true shows that tape alone, full width.
 # Other presets keep their existing candle and live-lane presentation.
 # overlap_merge replaces dust_merge, region_rows and candle_summary when enabled.
 [[presets]]
@@ -205,7 +207,7 @@ show_trade_count = false
 label_min_radius = 12.6
 
 [presets.live_lane]
-tape_only = true
+native_tape = true
 
 # The one preset that keeps the older vertical front and the trail, because
 # that is what it is for: a slow tape where the question is which levels got

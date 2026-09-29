@@ -157,8 +157,11 @@ impl OrderflowRenderStyle {
             live_lane: config.live_lane.clone(),
             show_legend: config.show_legend,
             // A tape-only pane draws no candles, so nothing rides on them.
+            // The native tape keys every print on its own execution time and
+            // price, so beside the candles it leaves no candle-slot mark; the
+            // book still reaches the candles there.
             depth_layer: config.depth_visible() && !config.tape_only(),
-            aggression_layer: config.show_aggressions && !config.tape_only(),
+            aggression_layer: config.show_aggressions && !config.native_tape(),
             lane_depth_layer: config.lane_depth_drawn(),
             lane_aggression_layer: config.lane_aggressions_drawn(),
             // The trader's own four switches, carried raw. Whether a *pane*

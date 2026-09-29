@@ -679,9 +679,15 @@ mod tests {
         file.upsert(BubblePreset::capture("native", &config));
         let restored = parse(&render(&file).expect("serialize preset")).expect("read preset");
         restored.get("native").unwrap().apply_to(&mut target);
-        assert!(target.native_tape() && !target.tape_only(), "the mode survives");
+        assert!(
+            target.native_tape() && !target.tape_only(),
+            "the mode survives"
+        );
         embedded().get("default").unwrap().apply_to(&mut target);
-        assert!(!target.native_tape(), "the default restores the ordinary tape");
+        assert!(
+            !target.native_tape(),
+            "the default restores the ordinary tape"
+        );
     }
 
     /// A presets file written before volume dots had a scale of their own

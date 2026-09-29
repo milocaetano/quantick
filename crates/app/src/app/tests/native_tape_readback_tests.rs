@@ -55,7 +55,10 @@ fn the_bubbles_scope_reads_back_the_native_tape_and_tape_only() {
     let (response, _) = unkeyed_call(&mut app, &mut cockpit, "layers.visibility.set", payload);
     assert_eq!(success_result(&response)["changed"], true);
     let full = read(&mut app);
-    assert_eq!(full["native_tape"], true, "tape only is the native tape: {full}");
+    assert_eq!(
+        full["native_tape"], true,
+        "tape only is the native tape: {full}"
+    );
     assert_eq!(full["tape_only"], true, "{full}");
     disable_test_gateway(&mut app, &ctx);
 }

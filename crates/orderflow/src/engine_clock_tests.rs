@@ -139,7 +139,7 @@ fn rolling_window_frame(tape_only: bool, partial_open_ms: i64) -> Arc<VisibleOrd
                 // currently painted price window.
                 price_range: (99.0, 102.0),
                 dot_zoom: Some(DotZoom {
-                    tape_only,
+                    native_tape: tape_only,
                     tape_window_ms: 100,
                     tape_level_ticks: 1,
                     candle_level_ticks: 1,

@@ -161,7 +161,7 @@ impl Chart {
             lane_now_ms: Some(self.now_ms),
             price_range: self.prices,
             dot_zoom: Some(DotZoom {
-                tape_only: true,
+                native_tape: true,
                 tape_window_ms: 100,
                 tape_level_ticks: 1,
                 candle_level_ticks: 1,

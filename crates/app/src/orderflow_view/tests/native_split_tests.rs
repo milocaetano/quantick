@@ -39,7 +39,11 @@ fn session(view: &mut OrderflowView) -> (Vec<Bar>, Bar) {
             timestamp_ms: 1_000 + i64::from(index) * 870,
             price: Decimal::from(100 + i64::from(index % 5) * 2 - 4),
             quantity: Decimal::from(1 + index % 4),
-            side: if index % 3 == 0 { Side::Sell } else { Side::Buy },
+            side: if index % 3 == 0 {
+                Side::Sell
+            } else {
+                Side::Buy
+            },
         };
         view.record_trade(&trade);
         match forming.as_mut() {
@@ -70,7 +74,7 @@ fn frame(
         .chain(partial)
         .map(|bar| (bar.open_time, bar.close_time))
         .collect();
-    let mut ask = |view: &mut OrderflowView| {
+    let ask = |view: &mut OrderflowView| {
         view.project_visible(
             VisibleBarTimeline::new(1, 0, closed, partial),
             true,
@@ -141,7 +145,10 @@ fn assert_same_marks(actual: &[[f32; 4]], expected: &[[f32; 4]], why: &str) {
     assert_eq!(actual.len(), expected.len(), "{why}");
     for (actual, expected) in actual.iter().zip(expected) {
         for (a, e) in actual.iter().zip(expected) {
-            assert!((a - e).abs() < 0.01, "{why}: {actual:?} against {expected:?}");
+            assert!(
+                (a - e).abs() < 0.01,
+                "{why}: {actual:?} against {expected:?}"
+            );
         }
     }
 }
@@ -236,5 +243,9 @@ fn the_mini_index_preset_keeps_candles_beside_a_resizable_native_tape() {
     view.config.live_lane.tape_only = true;
     view.commit_config_changes(before);
     view.resize_live_lane(-100.0, 1_000.0);
-    assert_eq!(view.lane_width_px(1_000.0), 1_000.0, "tape only has no divider");
+    assert_eq!(
+        view.lane_width_px(1_000.0),
+        1_000.0,
+        "tape only has no divider"
+    );
 }

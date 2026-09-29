@@ -14048,9 +14048,14 @@
                 "description": "And over the live lane, which is a separate switch.",
                 "type": "boolean"
               },
+              "native_tape": {
+                "default": false,
+                "description": "The tape is the native tape: each print at its own execution time\nand price, on the market clock over the whole window, with one price\naxis fitted by its prints (manual Y allowed). Beside the tick candles\nit keeps its share of the pane behind a draggable divider, and moving\nor zooming the candles never changes it. True whenever `tape_only` is.\nThe lane setting `native_tape`, saved with the order-flow preset.",
+                "type": "boolean"
+              },
               "overlap_merge": {
                 "default": false,
-                "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nIn `tape_only` mode, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Explicit display changes\nstart a new grouping. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
+                "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nOn the native tape, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Explicit display changes\nstart a new grouping. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
                 "type": "boolean"
               },
               "recorded_opening_windows_ms": {
@@ -14064,7 +14069,7 @@
               },
               "tape_only": {
                 "default": false,
-                "description": "The pane shows the tape alone, Bookmap style: the tape takes the\nwhole canvas, no candle or candle mark is drawn, time runs across the\nfull width on the tape's own window and the price axis follows the\ntape's prints. The lane setting `tape_only`, switched by\n`layers.visibility.set` as layer `tape_only`.",
+                "description": "The pane shows the tape alone, Bookmap style: the native tape takes\nthe whole canvas, no candle or candle mark is drawn and time runs\nacross the full width on the tape's own window. The lane setting\n`tape_only`, switched by `layers.visibility.set` as layer `tape_only`.",
                 "type": "boolean"
               },
               "volume_dots": {

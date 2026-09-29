@@ -249,7 +249,7 @@ impl Neighbours {
 /// as merges grow. Neighbours may overlap by one tenth of the smaller
 /// radius, so even a tiny dot beside a large one keeps its own visible disc.
 ///
-/// The optional tape-only mode owns this behaviour. Other panes pass through
+/// The optional native tape owns this behaviour. Other panes pass through
 /// unchanged, including their existing ordering and sizing.
 #[must_use]
 pub fn merge_tape_dots(
@@ -287,7 +287,7 @@ pub(super) fn merge_tape_dots_with_reference(
     geometry: TapeDotGeometry,
     reference: TapeReference<'_>,
 ) -> Vec<AggressionPrimitive> {
-    if !lane.tape_only || !geometry.valid() || bubbles.max_radius <= 0.0 {
+    if !lane.native() || !geometry.valid() || bubbles.max_radius <= 0.0 {
         return marks.to_vec();
     }
     let (mut tape, other): (Vec<_>, Vec<_>) = marks

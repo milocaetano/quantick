@@ -198,7 +198,7 @@ impl ChartPane {
         self.paper_hud_anchor = self.paint_paper(&frame, axis_x, chrome);
         self.paint_axis_marks(&frame, axis_x, &levels, &time_claims, chrome);
         let clock = layout
-            .tape_only
+            .native_tape
             .then(|| layout.live_lane.map(|lane| (lane.end_ms, chrome.tz)))
             .flatten();
         if let Some(reference_ms) = self.paint_lane_time_axis(&frame, clock) {
@@ -324,24 +324,18 @@ impl ChartPane {
         }
 
         // Tape only: the tape is the whole canvas and the candles get none of
-        // it, even before the tape has a live edge to run to.
-        let tape_only = self
-            .orderflow
-            .as_ref()
-            .is_some_and(|orderflow| orderflow.cached_config().tape_only());
+        // it, even before the tape has a live edge to run to. The native tape
+        // beside the candles keeps its share and owns the price axis.
+        let (tape_only, native_tape) = self.tape_modes();
         if tape_only {
             // No candles to have panned away from: the pane is the live tape.
             self.viewport.snap_to_live();
         }
         let live_lane = self.lay_out_lane(chart_rect, tape_only);
+        let history_right = self.frame.lane_divider_x.unwrap_or(chart_rect.right());
         let history_rect = egui::Rect::from_min_max(
             chart_rect.min,
-            egui::pos2(
-                self.frame
-                    .lane_divider_x
-                    .unwrap_or_else(|| chart_rect.right()),
-                chart_rect.bottom(),
-            ),
+            egui::pos2(history_right, chart_rect.bottom()),
         );
 
         // The projection margin is enforced here, against the rect the candles
@@ -366,13 +360,15 @@ impl ChartPane {
             cw: self.viewport.candle_width(),
             indicator_guide_x,
             tape_only,
+            native_tape,
+            // Measured on the tape's own band: the whole chart in tape only.
             tape_padding_px: self
                 .orderflow
                 .as_ref()
-                .filter(|_| tape_only)
+                .filter(|_| native_tape)
                 .map_or(0.0, |view| {
                     quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
-                        chart_rect.width(),
+                        chart_rect.right() - history_right,
                         chart_rect.height(),
                         &view.cached_config().bubbles,
                     )
@@ -657,7 +653,7 @@ impl ChartPane {
     /// the menu is drawn without the bars in reach. Recorded from the same
     /// bars the axis was just drawn from, so the label and the axis can never
     /// disagree. `None` without a tape. `clock`, the live edge and the
-    /// zone, labels the tape's own clock under a tape-only pane.
+    /// zone, labels the tape's own clock under the native tape.
     fn paint_lane_time_axis(
         &self,
         frame: &DrawFrame<'_>,

@@ -282,7 +282,7 @@ pub struct BubblesStateSnapshot {
     pub floored_quantity: CanonicalDecimal,
     /// Bubbles use volume dots with a buy/sell pie. The ordinary chart and
     /// lane use dots keyed by bars or market-time windows and price levels.
-    /// In `tape_only` mode, dots use quantity-weighted trade time and price;
+    /// On the native tape, dots use quantity-weighted trade time and price;
     /// the forming dot rides the right edge. Nearby recent prints may merge;
     /// once they leave the live aggregation region, their membership stays
     /// fixed while time and price axes transform their coordinates. The
@@ -292,11 +292,18 @@ pub struct BubblesStateSnapshot {
     /// switched by `layers.visibility.set` as layer `bubble_overlap_merge`.
     #[serde(default)]
     pub overlap_merge: bool,
-    /// The pane shows the tape alone, Bookmap style: the tape takes the
-    /// whole canvas, no candle or candle mark is drawn, time runs across the
-    /// full width on the tape's own window and the price axis follows the
-    /// tape's prints. The lane setting `tape_only`, switched by
-    /// `layers.visibility.set` as layer `tape_only`.
+    /// The tape is the native tape: each print at its own execution time
+    /// and price, on the market clock over the whole window, with one price
+    /// axis fitted by its prints (manual Y allowed). Beside the tick candles
+    /// it keeps its share of the pane behind a draggable divider, and moving
+    /// or zooming the candles never changes it. True whenever `tape_only` is.
+    /// The lane setting `native_tape`, saved with the order-flow preset.
+    #[serde(default)]
+    pub native_tape: bool,
+    /// The pane shows the tape alone, Bookmap style: the native tape takes
+    /// the whole canvas, no candle or candle mark is drawn and time runs
+    /// across the full width on the tape's own window. The lane setting
+    /// `tape_only`, switched by `layers.visibility.set` as layer `tape_only`.
     #[serde(default)]
     pub tape_only: bool,
     /// Exclude the first recorded 100 ms burst from automatic tape-only
@@ -327,6 +334,7 @@ impl BubblesStateSnapshot {
             aggression_provenance: AGGRESSION_PROVENANCE.to_owned(),
             floored_quantity: canonical_decimal(floored_quantity),
             overlap_merge: config.volume_dots.enabled,
+            native_tape: config.live_lane.native(),
             tape_only: config.live_lane.tape_only,
             ignore_opening_burst_in_scale: config.volume_dots.ignore_opening_burst_in_scale,
             recorded_opening_windows_ms: opening_bursts.to_vec(),
