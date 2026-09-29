@@ -53,6 +53,16 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         mapping: PENDING_SURFACE,
     },
     UiBehaviour {
+        id: "layer.candle_aggression.toggle",
+        title: "Show discreet aggression dots over tick candles",
+        reach: "pane right-click layer menu; QUANTICK_CHART_LAYERS scratch configuration",
+        keys: &[(
+            Source::Authored,
+            "the per-pane candle aggression layer is opt-in and has no toolbar duplicate",
+        )],
+        mapping: LAYER_SWITCH,
+    },
+    UiBehaviour {
         id: "layer.footprint.toggle",
         title: "Switch the candle footprint on or off",
         reach: "toolbar LAYERS group, pane right-click layer menu",

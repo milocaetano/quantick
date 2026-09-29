@@ -160,12 +160,13 @@ impl ChartPane {
             let price_band = carved.get(..1).unwrap_or_default();
             self.paint_drawing_bands(&frame, price_band, DrawPass::UnderCandles);
             renderers.candles(&mut candle_pass);
-            if start.footprint_paints {
+            if start.footprint_paints || start.candle_aggression {
                 history.footprint(
                     &mut self.footprint,
-                    self.state.bar_footprints(),
+                    &self.state,
                     chrome,
                     depth_visible,
+                    &start,
                 );
             }
             history.overlay(&self.indicators);
@@ -245,8 +246,14 @@ impl ChartPane {
         let footprint_blocked = self
             .layer_blocked(ChartLayer::Footprint, chrome.capabilities)
             .is_some();
-        let footprint_on =
-            (self.footprint.visible || self.wants_range_profile()) && !footprint_blocked;
+        let candle_aggression = self.layer_effective(
+            ChartLayer::CandleAggression,
+            self.layers.requested(ChartLayer::CandleAggression),
+            chrome.capabilities,
+        );
+        let footprint_on = ((self.footprint.visible || self.wants_range_profile())
+            && !footprint_blocked)
+            || candle_aggression;
         self.state.set_footprint_enabled(footprint_on);
         // Accumulating is not painting, and the candles answer to the second.
         // A range profile turns the ladders *on* without ever asking for the
@@ -262,6 +269,11 @@ impl ChartPane {
                 .orderflow
                 .as_mut()
                 .map(OrderflowView::capture_grouping_now)
+                .or_else(|| {
+                    candle_aggression
+                        .then(|| self.state.tape_price_step())
+                        .flatten()
+                })
         {
             self.state.set_footprint_group(base);
         }
@@ -279,6 +291,7 @@ impl ChartPane {
             canvas_background,
             footprint_blocked,
             footprint_paints,
+            candle_aggression,
         }
     }
 

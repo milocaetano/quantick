@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 43 |
+| Reachable by capability | 44 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
 | Excluded: `pending_capability` | 55 |
-| **Total** | **106** |
+| **Total** | **107** |
 
-81 of the 106 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 25 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+81 of the 107 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 26 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -79,6 +79,7 @@ The three exclusion classes are closed:
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, View menu, Ctrl+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `layer.bubbles.toggle` | Switch the aggression bubbles on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.footprint.settings.open` | Open the footprint's settings window | right-click the toolbar's footprint button | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `layer.candle_aggression.toggle` | Show discreet aggression dots over tick candles | pane right-click layer menu; QUANTICK_CHART_LAYERS scratch configuration | `layers.visibility.set` | — |
 | `layer.footprint.toggle` | Switch the candle footprint on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.heatmap.toggle` | Switch the L2 depth map on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
 | `layer.live_strip.toggle` | Switch the live depth strip on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
@@ -182,7 +183,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 25 |
+| `authored` | 26 |
 
 ## Appendix: rows no registry stands behind
 
@@ -200,6 +201,7 @@ declares nothing here is a guard failure.
 | `chart.zoom` | a wheel and an axis drag the canvas handles directly; no registry names it |
 | `layout.pane.focus` | a click anywhere on a pane; the focus follows it without a named control |
 | `layout.pane.resize` | a drag on the divider between two panes |
+| `layer.candle_aggression.toggle` | the per-pane candle aggression layer is opt-in and has no toolbar duplicate |
 | `layer.tape_only.toggle` | the per-pane order-flow menu and settings checkbox are not toolbar LayerToggle entries |
 | `orderflow.tape.opening_scale.set` | the opening-scale preference is a checkbox inside the volume-dot settings |
 | `history.reach.set` | the reach chips and page size inside the toolbar caret menu, drawn per frame |

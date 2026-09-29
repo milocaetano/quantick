@@ -32,6 +32,7 @@ version = 1
 heatmap = true
 bubbles = true
 footprint = true
+candle_aggression = false
 live_strip = true
 
 # The tape's own canvas: the band, and each of its two flow layers.
@@ -65,7 +66,7 @@ paper_trading = true
 trade_paint = true
 drawings = true
 
-# The one layer that opens off: a full-height rule across the candles for a
+# A full-height rule that opens off, across the candles for a
 # boundary that matters once, when reading how far the live tape goes back.
 # Nothing is hidden about the data — the bars either side of it are exactly
 # what they were, and the mark is one click away in the layer menu.

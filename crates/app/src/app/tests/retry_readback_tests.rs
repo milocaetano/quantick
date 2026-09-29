@@ -51,10 +51,10 @@ use crate::control::{ControlAccess, ServedRequest, retry_matrix};
 /// an interrupted call placed is attributed to.
 const CLIENT_NAME: &str = "quantick integration test";
 
-#[path = "layer_control_tests.rs"]
-mod layer_control;
 #[path = "candle_aggression_tests.rs"]
 mod candle_aggression;
+#[path = "layer_control_tests.rs"]
+mod layer_control;
 #[path = "opening_scale_control_tests.rs"]
 mod opening_scale_control;
 #[path = "price_axis_control_tests.rs"]

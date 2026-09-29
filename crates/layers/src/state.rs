@@ -10,6 +10,8 @@ pub struct LayerFacts {
     pub traded_volume: bool,
     pub capture_enabled: bool,
     pub depth_visible: bool,
+    pub tick_bars: bool,
+    pub native_candle_prices: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,6 +143,7 @@ impl LayerState {
                 ChartLayer::TradePaint,
                 ChartLayer::Heatmap,
                 ChartLayer::Bubbles,
+                ChartLayer::CandleAggression,
             ]
             .contains(&layer)
         {
@@ -156,9 +159,15 @@ impl LayerState {
             Requirement::BookOrVolume => (!facts.book_capture && !facts.traded_volume)
                 .then_some(blocks::NO_BOOK_AND_NO_VOLUME),
         };
-        missing.or_else(|| {
-            (layer.0.needs_depth && !facts.depth_visible).then_some(blocks::DEPTH_MAP_HIDDEN)
-        })
+        missing
+            .or_else(|| {
+                (layer == ChartLayer::CandleAggression)
+                    .then(|| crate::candle_aggression::blocked(facts))
+                    .flatten()
+            })
+            .or_else(|| {
+                (layer.0.needs_depth && !facts.depth_visible).then_some(blocks::DEPTH_MAP_HIDDEN)
+            })
     }
     pub fn restorable(layer: ChartLayer, facts: LayerFacts) -> bool {
         layer.0.scope != LayerScope::Window && Self::draws(layer, facts)

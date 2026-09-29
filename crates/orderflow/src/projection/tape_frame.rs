@@ -7,8 +7,8 @@ use super::{
 use crate::LiveEdge;
 use crate::config::theme::OrderflowRenderStyle;
 
-pub fn project_tape_frame(
-    mut marks: Vec<AggressionPrimitive>,
+pub fn project_tape_frame<'a>(
+    marks: impl Into<std::borrow::Cow<'a, [AggressionPrimitive]>>,
     memory: Option<&mut TapeDotMemory>,
     style: &OrderflowRenderStyle,
     geometry: TapeDotGeometry,
@@ -17,9 +17,10 @@ pub fn project_tape_frame(
     facts: Option<&TapeFacts>,
 ) -> Option<TapeDotFrame> {
     let sizing = style.dot_sizing?;
+    let marks = marks.into();
     if let (Some(memory), Some((edge, dot_window_ms)), Some(prices)) = (memory, time, prices) {
         return Some(memory.project(
-            &marks,
+            marks.as_ref(),
             TapeDotView {
                 now_ms: edge.now_ms,
                 window_ms: edge.window_ms,
@@ -39,6 +40,7 @@ pub fn project_tape_frame(
         ));
     }
     // Standalone previews have no source lifetime to retain.
+    let mut marks = marks.into_owned();
     if let Some((edge, dot_window_ms)) = time {
         position_tape_at(
             &mut marks,

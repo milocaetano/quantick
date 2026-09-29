@@ -119,7 +119,8 @@ pub(super) fn cluster_tier(
         if on_tape {
             tape_prints.push(trade);
         }
-        // With volume dots on, the tape is a zoom of its own and the candles
+        // A tape-only pane has no candle slots to project. In a mixed pane,
+        // with volume dots on, the tape is a zoom of its own and the candles
         // draw every print of their bars, so the tape's length never empties
         // or changes the tick chart: the trader reads them as two views.
         // Without dots, exactly one pane draws a print, and which one is the
@@ -132,7 +133,8 @@ pub(super) fn cluster_tier(
         // the dishonesty this whole change exists to remove. The summary is the
         // one exception: a pie is an aggregate of the bar, not a second copy of
         // a print, so the bar keeps counting prints the tape is still showing.
-        if (summarizing || !on_tape || dots.is_some())
+        if !dots.is_some_and(|dots| dots.tape_only)
+            && (summarizing || !on_tape || dots.is_some())
             && (dots.is_none() || timeline.slot_at(trade.timestamp_ms).is_some())
         {
             slot_prints.push(trade);
@@ -311,6 +313,14 @@ pub(super) fn tier_primitives(
     summary_reference: Decimal,
     dots: Option<&VolumeDots>,
 ) -> Vec<AggressionPrimitive> {
+    if let Some(dots) = dots.filter(|dots| dots.tape_only)
+        && marks.slot.is_empty()
+    {
+        return native_tape_primitives(marks.tape, timeline, prices, print_reference, dots);
+    }
+    let tape_geometry = dots
+        .filter(|dots| dots.tape_only)
+        .and_then(|dots| TapeExecutionGeometry::resolve(timeline, dots, prices));
     marks
         .tape
         .into_iter()
@@ -329,7 +339,7 @@ pub(super) fn tier_primitives(
                 (true, false) => timeline.locate(cluster.timestamp_ms)?.normalized,
                 (false, false) => timeline.locate_in_slot(cluster.timestamp_ms)?.normalized,
                 (true, true) if dots.is_some_and(|dots| dots.tape_only) => {
-                    tape_execution_x(&cluster, timeline, dots?)?
+                    tape_geometry.as_ref()?.x(&cluster)?
                 }
                 (true, true) => {
                     timeline
@@ -345,7 +355,7 @@ pub(super) fn tier_primitives(
             let y = match (live, dots.is_some()) {
                 (_, false) => prices.y(cluster.price)?,
                 (true, true) if dots.is_some_and(|dots| dots.tape_only) => {
-                    prices.y_unclamped(cluster.price)?
+                    tape_geometry.as_ref()?.y(cluster.price)?
                 }
                 (true, true) => prices.y_unclamped(level_centre(&cluster))?,
                 (false, true) => prices.y(level_centre(&cluster))?,
@@ -356,24 +366,118 @@ pub(super) fn tier_primitives(
         .collect()
 }
 
-/// Map the exact time moment onto the lane without rounding to milliseconds.
-fn tape_execution_x(
-    cluster: &AggressionCluster,
+/// Place native facts directly from their owner, without materializing another
+/// cluster buffer or checking candle placement rules for every tape cell.
+pub(super) fn native_tape_primitives(
+    clusters: impl IntoIterator<Item = AggressionCluster>,
     timeline: &BarTimeline,
+    prices: PriceWindow,
+    reference: Decimal,
     dots: &VolumeDots,
-) -> Option<f64> {
-    let (from, now) = timeline.lane_bounds_ms()?;
-    let right = timeline.live_now_position()?.normalized;
-    if window_start(cluster.last_timestamp_ms, dots.tape_window_ms)
-        == window_start(now, dots.tape_window_ms)
-    {
-        return Some(right);
+) -> Vec<AggressionPrimitive> {
+    let Some(geometry) = TapeExecutionGeometry::resolve(timeline, dots, prices) else {
+        return Vec::new();
+    };
+    let clusters = clusters.into_iter();
+    // Both callers supply an owned vector or filtered slice. Reserve its upper
+    // bound only once a mark survives, so hidden/empty frames allocate nothing.
+    let capacity = clusters.size_hint().1.unwrap_or(0);
+    let mut primitives = Vec::new();
+    for cluster in clusters {
+        let Some(x) = geometry.x(&cluster) else {
+            continue;
+        };
+        let Some(y) = geometry.y(cluster.price) else {
+            continue;
+        };
+        let size = normalized_area_size(cluster.quantity, reference);
+        if primitives.is_empty() {
+            primitives.reserve(capacity);
+        }
+        primitives.push(aggression_primitive(cluster, x, y, size, true));
     }
-    let left = timeline.locate_in_lane_clamped(from)?.normalized;
-    let mean = cluster.timestamp_quantity / cluster.quantity;
-    let fraction =
-        ((mean - Decimal::from(from)) / Decimal::from(now.saturating_sub(from).max(1))).to_f64()?;
-    Some(left + (right - left) * fraction.clamp(0.0, 1.0))
+    primitives
+}
+
+/// One frame's lane geometry. Exact execution moments remain per cluster;
+/// locating the same lane endpoints and constructing their Decimal constants
+/// need only happen once, regardless of the number of native tape cells.
+struct TapeExecutionGeometry {
+    from: Decimal,
+    duration: Decimal,
+    screen_duration: Option<f64>,
+    prices: PriceWindow,
+    screen_price_span: Option<f64>,
+    window_ms: i64,
+    now_window: i64,
+    left: f64,
+    right: f64,
+}
+
+impl TapeExecutionGeometry {
+    fn resolve(timeline: &BarTimeline, dots: &VolumeDots, prices: PriceWindow) -> Option<Self> {
+        let (from, now) = timeline.lane_bounds_ms()?;
+        let duration = Decimal::from(now.saturating_sub(from).max(1));
+        Some(Self {
+            from: Decimal::from(from),
+            duration,
+            screen_duration: duration.to_f64(),
+            prices,
+            screen_price_span: prices
+                .high
+                .checked_sub(prices.low)
+                .and_then(|span| span.to_f64()),
+            window_ms: dots.tape_window_ms,
+            now_window: window_start(now, dots.tape_window_ms),
+            right: timeline.live_now_position()?.normalized,
+            left: timeline.locate_in_lane_clamped(from)?.normalized,
+        })
+    }
+
+    /// Only screen coordinates use floating ratios, after the epoch offset is
+    /// removed in Decimal. Execution moments and every factual field stay exact.
+    fn x(&self, cluster: &AggressionCluster) -> Option<f64> {
+        if window_start(cluster.last_timestamp_ms, self.window_ms) == self.now_window {
+            return Some(self.right);
+        }
+        let approximate = self.from.checked_mul(cluster.quantity).and_then(|origin| {
+            let offset = cluster.timestamp_quantity.checked_sub(origin)?;
+            Some(offset.to_f64()? / cluster.quantity.to_f64()? / self.screen_duration?)
+        });
+        let fraction = screen_fraction(approximate, || {
+            let mean = cluster.timestamp_quantity / cluster.quantity;
+            ((mean - self.from) / self.duration).to_f64()
+        })?;
+        Some(self.left + (self.right - self.left) * fraction.clamp(0.0, 1.0))
+    }
+
+    fn y(&self, price: Decimal) -> Option<f64> {
+        let approximate = self
+            .prices
+            .high
+            .checked_sub(price)
+            .and_then(|offset| Some(offset.to_f64()? / self.screen_price_span?));
+        screen_fraction(approximate, || self.prices.y_unclamped(price))
+    }
+}
+
+/// Native screen positions allow 1e-12 normalized error (under one millionth
+/// of a pixel at 16K). Keep the original Decimal division at clip boundaries,
+/// for extreme off-axis values, or when checked relative arithmetic fails.
+/// Retained tape geometry continues to project its exact facts independently.
+fn screen_fraction(
+    approximate: Option<f64>,
+    original: impl FnOnce() -> Option<f64>,
+) -> Option<f64> {
+    const BOUNDARY_TOLERANCE: f64 = 1e-12;
+    approximate
+        .filter(|value| {
+            value.is_finite()
+                && (-2.0..=3.0).contains(value)
+                && value.abs() > BOUNDARY_TOLERANCE
+                && (value - 1.0).abs() > BOUNDARY_TOLERANCE
+        })
+        .or_else(original)
 }
 
 /// The centre of a dot's level: where it is drawn, on its cell's grid.

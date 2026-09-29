@@ -209,7 +209,7 @@ pub(super) fn sphere_edge_color(color: egui::Color32, shading: f32) -> egui::Col
 
 /// Angle a pie starts at: straight up. Screen y grows downward, so a positive
 /// sweep from here runs clockwise, the direction a pie chart is read in.
-pub(super) const PIE_START_ANGLE: f32 = -std::f32::consts::FRAC_PI_2;
+pub(crate) const PIE_START_ANGLE: f32 = -std::f32::consts::FRAC_PI_2;
 
 /// Gap between a folded bubble's disc and the ring that marks it as a fold,
 /// in points. Wide enough to read as a separate ring at dot size, narrow
@@ -227,7 +227,7 @@ const FOLD_RING_ALPHA: f32 = 0.55;
 /// The three colours a shaded bubble interpolates between: lit core, side
 /// colour, darkened rim.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct SphereShading {
+pub(crate) struct SphereShading {
     pub(super) core: egui::Color32,
     pub(super) body: egui::Color32,
     pub(super) edge: egui::Color32,
@@ -236,7 +236,7 @@ pub(super) struct SphereShading {
 impl SphereShading {
     /// One colour used three times, which flattens the gradient. This is how
     /// the flat render mode draws its pie without a second tessellator.
-    pub(super) const fn flat(color: egui::Color32) -> Self {
+    pub(crate) const fn flat(color: egui::Color32) -> Self {
         Self {
             core: color,
             body: color,
@@ -272,7 +272,7 @@ impl SphereShading {
 ///
 /// A whole bubble is one sector sweeping `TAU`; a two-sided bubble is two
 /// sectors sharing a centre, each shaded in its own side's colour.
-pub(super) fn add_shaded_sector(
+pub(crate) fn add_shaded_sector(
     mesh: &mut egui::Mesh,
     center: egui::Pos2,
     radius: f32,
@@ -579,8 +579,13 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     let merged = factual_tape
         .then(|| {
             let mut memory = context.tape_memory.map(std::cell::RefCell::borrow_mut);
+            let marks = if context.bubbles().count() == context.projection.aggressions.len() {
+                std::borrow::Cow::Borrowed(context.projection.aggressions.as_slice())
+            } else {
+                std::borrow::Cow::Owned(context.bubbles().cloned().collect::<Vec<_>>())
+            };
             quantick_orderflow::projection::project_tape_frame(
-                context.bubbles().cloned().collect(),
+                marks,
                 memory.as_deref_mut(),
                 &style,
                 quantick_orderflow::projection::TapeDotGeometry {
@@ -723,7 +728,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             continue;
         };
         let clip = clip_for(trade);
-        let radius = radius_of(trade);
+        let (size, radius) = drawn(trade);
         let linked_reduction =
             trade.matched_fraction > 0.0 || !trade.liquidity_event_ids.is_empty();
         draw_bubble(
@@ -732,7 +737,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 center,
                 radius,
                 side: trade.side,
-                size: drawn(trade).0,
+                size,
                 matched: linked_reduction.then_some(trade.matched_fraction),
                 buy_share: trade.buy_share,
                 folded: trade.folded_marks,

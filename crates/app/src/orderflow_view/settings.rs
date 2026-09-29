@@ -381,12 +381,15 @@ impl OrderflowView {
         // this frame is the one the live lane's "Same as history" inherits.
         LiveLaneSection {
             inherited_cluster_ms: config.bubble_cluster_ms,
+            volume_dots: config.volume_dots.enabled,
             lane: &mut config.live_lane,
         }
         .show(ui);
+        let native_tape = config.tape_only() && config.volume_dots.enabled;
         let bubbles = &mut config.bubbles;
         SizePlacementSection {
             bubbles: &mut *bubbles,
+            native_tape,
         }
         .show(ui);
         ConsumptionMarksSection {

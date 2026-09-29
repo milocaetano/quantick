@@ -13,6 +13,7 @@ pub use super::interaction::LiquidityEvidence;
 use super::interaction::{LiquidityEvent, correlate_liquidity, liquidity_events};
 use super::timeline::BarTimeline;
 
+mod candle_dots;
 mod dots;
 mod fold;
 mod model;
@@ -23,6 +24,10 @@ mod tape_geometry;
 mod tape_memory;
 mod tiers;
 
+pub use candle_dots::{
+    CandleDot, CandleDotFrame, CandleDotGrid, CandleDotView, CandleFootprint,
+    CandleFootprintSource, project_candle_dots,
+};
 pub use dots::{
     DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_CELL_PX, DOT_WINDOW_LADDER_MS, DotRungMemory, DotScale,
     DotSizing, DotZoom, MIN_DOT_RADIUS_PX, PaneGeometry, VolumeDots, candle_dot_px,

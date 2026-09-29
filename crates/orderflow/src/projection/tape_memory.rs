@@ -177,7 +177,10 @@ impl TapeDotMemory {
         let mut changed = self.replace_facts(&mut incoming, view.evicted_through_ms);
         let mut windows: BTreeMap<i64, BTreeMap<NativeKey, AggressionPrimitive>> = BTreeMap::new();
         for (key, mark) in incoming {
-            windows.entry(key.0).or_default().insert(key, mark);
+            windows
+                .entry(key.0)
+                .or_default()
+                .insert(key, normalized_native_fact(mark));
         }
         let mut forming = Vec::new();
         for (window, sources) in windows {
@@ -315,21 +318,26 @@ impl TapeDotMemory {
 
     fn replace_facts(
         &mut self,
-        incoming: &mut BTreeMap<NativeKey, AggressionPrimitive>,
+        incoming: &mut BTreeMap<NativeKey, &AggressionPrimitive>,
         evicted: Option<i64>,
     ) -> bool {
         let mut any_changed = false;
         for group in self.settled.iter_mut().chain(&mut self.frontier) {
             let before = group.sources.len();
-            group
-                .sources
-                .retain(|key, _| evicted.is_none_or(|horizon| key.0 > horizon));
+            if let Some(horizon) = evicted
+                && group
+                    .sources
+                    .first_key_value()
+                    .is_some_and(|(key, _)| key.0 <= horizon)
+            {
+                group.sources.retain(|key, _| key.0 > horizon);
+            }
             let mut changed = before != group.sources.len();
             for (key, source) in &mut group.sources {
                 if let Some(next) = incoming.remove(key)
-                    && *source != next
+                    && !same_native_fact(source, next)
                 {
-                    *source = next;
+                    *source = normalized_native_fact(next);
                     changed = true;
                 }
             }
@@ -454,7 +462,7 @@ fn reference_quantities(groups: &[Group], opening_bursts: &[i64]) -> Vec<Decimal
 fn native_facts(
     marks: &[AggressionPrimitive],
     view: TapeDotView,
-) -> BTreeMap<NativeKey, AggressionPrimitive> {
+) -> BTreeMap<NativeKey, &AggressionPrimitive> {
     marks
         .iter()
         .filter(|mark| mark.live && mark.quantity > Decimal::ZERO)
@@ -469,14 +477,68 @@ fn native_facts(
             if window < view.now_ms.saturating_sub(view.window_ms) {
                 return None;
             }
-            let mut source = mark.clone();
-            // Projection coordinates and its old scale are not factual changes.
-            source.x = 0.0;
-            source.y = 0.0;
-            source.size = 0.0;
-            Some((NativeKey(window, mark.price_bucket), source))
+            Some((NativeKey(window, mark.price_bucket), mark))
         })
         .collect()
+}
+
+fn normalized_native_fact(mark: &AggressionPrimitive) -> AggressionPrimitive {
+    let mut source = mark.clone();
+    source.x = 0.0;
+    source.y = 0.0;
+    source.size = 0.0;
+    source
+}
+
+/// Compare retained facts without allocating their source/evidence vectors.
+/// The exhaustive pattern makes new primitive fields require a decision;
+/// every bound factual field participates, while only projection ink is ignored.
+fn same_native_fact(left: &AggressionPrimitive, right: &AggressionPrimitive) -> bool {
+    let AggressionPrimitive {
+        agg_id,
+        agg_ids,
+        generation,
+        side,
+        consumed_side,
+        quantity,
+        buy_share,
+        live,
+        price_bucket,
+        price_span,
+        price,
+        trade_count,
+        first_timestamp_ms,
+        last_timestamp_ms,
+        timestamp_quantity,
+        matched_quantity,
+        buy_quantity,
+        matched_fraction,
+        liquidity_event_ids,
+        folded_marks,
+        x: _,
+        y: _,
+        size: _,
+    } = left;
+    *agg_id == right.agg_id
+        && agg_ids == &right.agg_ids
+        && *generation == right.generation
+        && *side == right.side
+        && *consumed_side == right.consumed_side
+        && *quantity == right.quantity
+        && *buy_share == right.buy_share
+        && *live == right.live
+        && *price_bucket == right.price_bucket
+        && *price_span == right.price_span
+        && *price == right.price
+        && *trade_count == right.trade_count
+        && *first_timestamp_ms == right.first_timestamp_ms
+        && *last_timestamp_ms == right.last_timestamp_ms
+        && *timestamp_quantity == right.timestamp_quantity
+        && *matched_quantity == right.matched_quantity
+        && *buy_quantity == right.buy_quantity
+        && *matched_fraction == right.matched_fraction
+        && liquidity_event_ids == &right.liquidity_event_ids
+        && *folded_marks == right.folded_marks
 }
 
 /// The existing geometric merger operates on indivisible retained groups.

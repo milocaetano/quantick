@@ -15,6 +15,7 @@ pub mod evidence;
 pub mod feed;
 pub mod health;
 pub mod indicator_guide;
+pub mod interaction;
 pub mod layers;
 pub mod layout;
 pub mod layout_v2;

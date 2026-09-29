@@ -268,16 +268,7 @@ impl<'a> ProjectedLayout<'a> {
 
     #[must_use]
     pub(super) fn event_band(self, x: f64, y0: f64, y1: f64, min_height: f32) -> EventBand {
-        let top = self.y(y0);
-        let bottom = self.y(y1);
-        let row = readable_band(
-            egui::Rect::from_min_max(
-                egui::pos2(self.x(x), top.min(bottom)),
-                egui::pos2(self.x(x), top.max(bottom)),
-            ),
-            min_height,
-            self.pane(x),
-        );
+        let row = self.band(x, x, y0, y1, min_height);
         EventBand {
             x: self.x(x),
             top: row.top(),

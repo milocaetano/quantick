@@ -385,7 +385,7 @@ impl ChartLayer {
         projection_demand: false,
     });
 }
-pub const ALL: [ChartLayer; 23] = [
+pub const ALL: [ChartLayer; 24] = [
     ChartLayer::TapeChart,
     ChartLayer::TapeHeatmap,
     ChartLayer::TapeBubbles,
@@ -409,4 +409,5 @@ pub const ALL: [ChartLayer; 23] = [
     ChartLayer::PaperTrading,
     ChartLayer::TradePaint,
     ChartLayer::Drawings,
+    ChartLayer::CandleAggression,
 ];

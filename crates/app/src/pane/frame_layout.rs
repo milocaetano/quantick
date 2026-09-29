@@ -36,6 +36,7 @@ pub(super) struct FrameStart {
     /// The footprint layer will paint — which is not the same as the
     /// ladders accumulating: a range profile turns those on alone.
     pub(super) footprint_paints: bool,
+    pub(super) candle_aggression: bool,
 }
 
 /// Snapshot the forming bar's ladder at ~10 Hz rather than per print;

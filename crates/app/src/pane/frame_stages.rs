@@ -13,7 +13,6 @@
 use std::sync::Arc;
 
 use eframe::egui;
-use quantick_engine::BarFootprint;
 use quantick_orderflow::engine::VisibleOrderflow;
 use quantick_orderflow::{PaneGeometry, lane_bars, reserved_span_ms};
 
@@ -27,7 +26,7 @@ use crate::viewport::Viewport;
 use super::PaneChrome;
 use super::draw_frame::DrawFrame;
 use super::footprint::PaneFootprint;
-use super::frame_layout::CandleDress;
+use super::frame_layout::{CandleDress, FrameStart};
 use super::render_registry::{
     CandlePass, FlowPass, FootprintPass, IndicatorPanePass, LegendPass, OverlayPass,
     RenderRegistry, StripPass,
@@ -340,9 +339,10 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
     pub(super) fn footprint(
         &self,
         footprint: &mut PaneFootprint,
-        footprints: &[BarFootprint],
+        state: &crate::state::ChartState,
         chrome: &PaneChrome<'_>,
         depth_visible: bool,
+        start: &FrameStart,
     ) {
         let frame = self.frame;
         let (viewport, right, total) = (self.viewport, frame.right, frame.total);
@@ -353,7 +353,7 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
             painter: &self.clip,
             chart_rect: frame.history_rect,
             scale: &frame.scale,
-            footprints,
+            footprints: state.bar_footprints(),
             first_state_slot: frame.prefix.len(),
             visible: (frame.start, frame.end),
             // Field access, not `live_ladder`: the draw below needs the
@@ -383,6 +383,18 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
         self.renderers.footprint(&mut FootprintPass {
             frame: &layer,
             lod: &mut footprint.lod,
+            footprint_visible: start.footprint_paints,
+            candle_aggression: start.candle_aggression,
+            native_grid: state
+                .tape_price_step()
+                .zip(state.tape_reference_price())
+                .map(
+                    |(step, reference_price)| quantick_orderflow::projection::CandleDotGrid {
+                        step,
+                        reference_price,
+                    },
+                ),
+            current_partial: state.partial_footprint(),
         });
     }
 

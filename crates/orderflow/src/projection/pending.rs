@@ -1,18 +1,18 @@
 //! Bounded facts bridging ingestion to an asynchronous tape publication.
 use super::dots::{DotHorizon, fold_dots, native_grouping, window_start};
-use super::tiers::{TierClusters, tier_primitives};
+use super::tiers::{TierClusters, native_tape_primitives, tier_primitives};
 use super::{
     AggressionPrimitive, DOT_WINDOW_LADDER_MS, HeatmapProjection, PriceWindow, TapeFacts,
     VolumeDots, dot_full_quantity,
 };
 use crate::HeatmapConfig;
 use crate::history::{Aggression, RecordedOpenings};
-use crate::interaction::{AggressionCluster, cluster_aggressions};
+use crate::interaction::{AggressionCluster, cluster_aggressions, sort_clusters};
 use crate::timeline::BarTimeline;
 use quantick_engine::Trade;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
 
 /// A view owns this suffix; a frame-bound receipt retires its raw facts.
@@ -196,8 +196,42 @@ impl PendingTape {
         // The worker owns validated book coverage. Pending tape geometry does
         // not wait for it and never guesses the generation of a queued print.
         let mut clusters = cluster_aggressions(&raw, &[], native, 0);
+        let mut unchanged = Vec::new();
         if let Some(facts) = facts {
-            clusters.extend(facts.clusters.iter().cloned());
+            // A published native cell is already a canonical fold. Only keys
+            // touched by this suffix need to repeat that work. The width check
+            // leaves a grouping transition on the complete fold path.
+            let native_cells = dots.tape_only
+                && dots.tape_window_ms == DOT_WINDOW_LADDER_MS[0]
+                && dots.tape_level_ticks == 1
+                && facts
+                    .clusters
+                    .iter()
+                    .all(|cluster| cluster.price_span == native.bucket_width);
+            if native_cells {
+                let touched: BTreeSet<_> = clusters
+                    .iter()
+                    .map(|cluster| {
+                        (
+                            window_start(cluster.timestamp_ms, dots.tape_window_ms),
+                            (cluster.price / native.bucket_width).floor() * native.bucket_width,
+                        )
+                    })
+                    .collect();
+                for cluster in &facts.clusters {
+                    let start = window_start(cluster.first_timestamp_ms, dots.tape_window_ms);
+                    if start < from || evicted_through_ms.is_some_and(|horizon| start <= horizon) {
+                        continue;
+                    }
+                    if touched.contains(&(start, cluster.price_bucket)) {
+                        clusters.push(cluster.clone());
+                    } else {
+                        unchanged.push(cluster.clone());
+                    }
+                }
+            } else {
+                clusters.extend(facts.clusters.iter().cloned());
+            }
         } else if let Some(frame) = published {
             clusters.extend(
                 frame
@@ -220,6 +254,10 @@ impl PendingTape {
                 evicted_through_ms,
             },
         );
+        if !unchanged.is_empty() {
+            folded.extend(unchanged);
+            sort_clusters(&mut folded);
+        }
         let floor = config.bubbles.min_quantity_decimal().unwrap_or_default();
         let floored_quantity: Decimal = folded
             .iter()
@@ -227,38 +265,81 @@ impl PendingTape {
             .map(|cluster| cluster.quantity)
             .sum();
         let tape_facts = Arc::new(TapeFacts {
-            clusters: folded.clone(),
+            clusters: folded,
             evicted_through_ms,
             floored_quantity,
             opening_bursts: self.opening_bursts(published),
         });
-        folded.retain(|cluster| cluster.quantity >= floor);
         let reference = dot_full_quantity(config);
         let mut projection = published
-            .cloned()
+            .map(without_live_aggressions)
             .unwrap_or_else(|| HeatmapProjection::empty(config.enabled, native));
         projection.floored_quantity +=
             floored_quantity - facts.map_or(Decimal::ZERO, |facts| facts.floored_quantity);
+        let visible = tape_facts
+            .clusters
+            .iter()
+            .filter(|cluster| cluster.quantity >= floor)
+            .cloned();
+        let primitives = if dots.tape_only {
+            native_tape_primitives(visible, timeline, prices, reference, dots)
+        } else {
+            tier_primitives(
+                TierClusters {
+                    tape: visible.collect(),
+                    slot: Vec::new(),
+                    tape_facts: None,
+                },
+                timeline,
+                prices,
+                reference,
+                reference,
+                Some(dots),
+            )
+        };
         projection.tape_facts = Some(tape_facts);
-        projection.aggressions.retain(|mark| !mark.live);
-        projection.aggressions.extend(tier_primitives(
-            TierClusters {
-                tape: folded,
-                slot: Vec::new(),
-                tape_facts: None,
-            },
-            timeline,
-            prices,
-            reference,
-            reference,
-            Some(dots),
-        ));
-        projection.aggressions.sort_by_key(|mark| mark.quantity);
+        if projection.aggressions.is_empty() {
+            projection.aggressions = primitives;
+        } else {
+            projection.aggressions.extend(primitives);
+        }
+        projection
+            .aggressions
+            .sort_by_cached_key(|mark| mark.quantity);
         projection.volume_dots = true;
         projection.live_now_x = timeline
             .live_now_position()
             .map(|position| position.normalized);
         projection
+    }
+}
+
+/// The live primitives are about to be replaced; copying their execution-id
+/// vectors only to discard them makes each accepted suffix pay for history.
+fn without_live_aggressions(frame: &HeatmapProjection) -> HeatmapProjection {
+    HeatmapProjection {
+        enabled: frame.enabled,
+        floored_quantity: frame.floored_quantity,
+        summarized: frame.summarized,
+        cells: Arc::clone(&frame.cells),
+        aggressions: frame
+            .aggressions
+            .iter()
+            .filter(|mark| !mark.live)
+            .cloned()
+            .collect(),
+        tape_facts: frame.tape_facts.clone(),
+        volume_dots: frame.volume_dots,
+        liquidity_events: frame.liquidity_events.clone(),
+        gaps: Arc::clone(&frame.gaps),
+        live_now_x: frame.live_now_x,
+        effective_grouping: frame.effective_grouping,
+        liquidity_reference: frame.liquidity_reference,
+        aggression_reference: frame.aggression_reference,
+        summary_reference: frame.summary_reference,
+        dropped_cells: frame.dropped_cells,
+        folded_aggressions: frame.folded_aggressions,
+        dropped_liquidity_events: frame.dropped_liquidity_events,
     }
 }
 

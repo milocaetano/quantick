@@ -19,6 +19,9 @@ impl ChartPane {
             depth_visible: tape.is_some_and(OrderflowView::depth_visible),
             book_capture: capabilities.is_some_and(|value| value.book_capture),
             traded_volume: capabilities.is_some_and(|value| value.traded_volume),
+            tick_bars: self.state.spec().id() == "tick",
+            native_candle_prices: self.state.tape_price_step().is_some()
+                && self.state.tape_reference_price().is_some(),
         }
     }
     pub fn layer_switched_on(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
