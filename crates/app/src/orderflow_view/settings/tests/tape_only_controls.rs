@@ -8,6 +8,7 @@ type PaintedText = Vec<(String, egui::Rect)>;
 fn paint(view: &mut OrderflowView, ctx: &egui::Context, events: Vec<egui::Event>) -> PaintedText {
     let output = ctx.run(
         egui::RawInput {
+            time: Some(ctx.input(|input| input.time) + 0.25),
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
                 egui::vec2(1_200.0, 3_000.0),
@@ -170,6 +171,12 @@ fn the_tape_quantity_tooltip_does_not_claim_to_resize_the_independent_candle_ove
         .1
         .center();
     let _ = paint(&mut view, &ctx, vec![egui::Event::PointerMoved(pos)]);
+    // Hit testing uses the previous frame; a tooltip Area then needs its
+    // invisible sizing frame before its text can be painted. Keep hovering
+    // through those frames with an explicit, deterministic UI clock.
+    for _ in 0..3 {
+        let _ = paint(&mut view, &ctx, Vec::new());
+    }
     let text = paint(&mut view, &ctx, Vec::new());
     let tooltip = text
         .iter()
@@ -178,7 +185,7 @@ fn the_tape_quantity_tooltip_does_not_claim_to_resize_the_independent_candle_ove
         .join("\n");
     assert!(
         tooltip.contains("Typing a value turns auto off"),
-        "hover must expose the reference tooltip"
+        "hover must expose the reference tooltip; painted text: {tooltip}"
     );
     assert!(!tooltip.contains("both panes"));
     assert!(tooltip.contains("tape"));
