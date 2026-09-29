@@ -450,3 +450,40 @@ fn canonical_eviction_removes_only_invalid_native_facts_from_a_retained_group() 
         Decimal::from(106)
     );
 }
+
+#[test]
+fn an_exactly_coincident_late_execution_joins_facts_without_collapsing_every_radius() {
+    let mut memory = TapeDotMemory::default();
+    let first = mark(1, 1_001, 100, 1);
+    let mut second = mark(2, 1_201, 110, 1);
+    second.side = Side::Sell;
+    second.consumed_side = BookSide::Bid;
+    second.buy_quantity = Decimal::ZERO;
+    second.buy_share = 0.0;
+    let unrelated = mark(9, 1_001, 200, 1);
+    let mut prints = vec![first, second, unrelated];
+    let before = draw(&mut memory, &prints, view(4_000, "50", "250"));
+    let old = represented(&before, &[1, 2]);
+    assert_eq!(old.price, Decimal::from(105));
+    assert_eq!(old.timestamp_quantity, Decimal::from(2_202));
+    let stable = source_facts(represented(&before, &[9]));
+
+    // A different native key arrives late at the exact factual centroid.
+    prints.push(mark(3, 1_101, 105, 3));
+    let current_view = view(4_100, "50", "250");
+    let after = draw(&mut memory, &prints, current_view);
+    assert_eq!(after.marks.len(), 2);
+    let combined = represented(&after, &[1, 2, 3]);
+    assert_eq!(combined.quantity, Decimal::from(5));
+    assert_eq!(combined.buy_quantity, Decimal::from(4));
+    assert_eq!(combined.buy_share, 0.8);
+    assert_eq!(combined.price, Decimal::from(105));
+    assert_eq!(combined.timestamp_quantity, Decimal::from(5_505));
+    assert_current_coordinates(combined, &current_view);
+    assert_eq!(source_facts(represented(&after, &[9])), stable);
+    assert_eq!(
+        after.marks.iter().map(|mark| mark.quantity).sum::<Decimal>(),
+        Decimal::from(6)
+    );
+    assert_proportional_clearance(&after, current_view.geometry);
+}
