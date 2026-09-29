@@ -6,6 +6,7 @@ use crate::projection::{
 };
 
 mod performance;
+mod recorded_stability;
 mod stability;
 
 fn tape_config() -> HeatmapConfig {
