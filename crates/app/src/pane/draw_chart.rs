@@ -28,6 +28,7 @@ use crate::orderflow_view::{LiveLane, OrderflowView};
 use crate::plot_area::split_time_strip;
 use crate::theme;
 use quantick_layers::ChartLayer;
+use quantick_orderflow::projection::TapeHorizontalGeometry;
 use quantick_orderflow::reserved_span_ms;
 
 use super::draw_frame::{AxisChips, DrawFrame};
@@ -361,19 +362,11 @@ impl ChartPane {
             indicator_guide_x,
             tape_only,
             native_tape,
-            // Measured on the tape's own band: the whole chart in tape only.
-            tape_padding_px: self
-                .orderflow
-                .as_ref()
-                .filter(|_| native_tape)
-                .map_or(0.0, |view| {
-                    quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
-                        chart_rect.right() - history_right,
-                        chart_rect.height(),
-                        &view.cached_config().bubbles,
-                    )
-                    .price_inset_px
-                }),
+            // The lane setting's band, on screen yet or not.
+            tape_padding_px: self.orderflow.as_ref().map_or(0.0, |view| {
+                let (width, height) = (chart_rect.width(), chart_rect.height());
+                TapeHorizontalGeometry::native_price_inset_px(view.cached_config(), width, height)
+            }),
         })
     }
 

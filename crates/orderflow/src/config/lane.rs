@@ -403,8 +403,9 @@ pub struct LiveLaneStyle {
     /// market clock and over its whole window, and the price axis follows
     /// its prints: the approved WIN tape. How the tape is *processed*, not
     /// how much of the pane it takes — beside the candles it keeps its
-    /// share and the candles keep theirs. Off by default; see
-    /// [`native`](Self::native) for the question every processing site asks.
+    /// share and the candles keep theirs. Off by default, and built only
+    /// with volume dots on: [`HeatmapConfig::native_tape`](crate::HeatmapConfig::native_tape)
+    /// is the question every processing site asks.
     pub native_tape: bool,
     /// The pane shows the tape alone, Bookmap style: the lane takes the
     /// whole canvas and no candle and no candle mark is drawn. Presentation
@@ -547,14 +548,10 @@ impl LiveLaneStyle {
             .map(|window| window.clamp(0, MAX_BUBBLE_CLUSTER_MS));
     }
 
-    /// What the native-tape switch does, in the words a settings panel shows.
-    pub const NATIVE_TAPE_HINT: &'static str = "build the tape from each print's own execution \
-        time and price, on the market clock, with the price axis fitted by the tape's prints. \
-        Beside the candles the tape keeps its share behind the divider and moving the candles \
-        never changes it; tape only shows it alone. Saved with the order-flow preset";
-
-    /// Whether the tape is built natively: asked for, or implied by tape
-    /// only, whose full-width pane has always drawn the native tape.
+    /// Whether the tape is asked to be native: the switch, or tape only,
+    /// whose full-width pane has always drawn the native tape. The lane's
+    /// own sites, which only run with volume dots, ask this; whether the
+    /// pane builds it is [`HeatmapConfig::native_tape`](crate::HeatmapConfig::native_tape).
     #[must_use]
     pub fn native(&self) -> bool {
         self.native_tape || self.tape_only

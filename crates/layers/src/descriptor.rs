@@ -18,6 +18,7 @@ pub enum OrderflowSwitch {
     Gaps,
     OverlapMerge,
     TapeOnly,
+    NativeTape,
 }
 
 /// The authority that already owns a requested visibility value.
@@ -74,7 +75,7 @@ pub struct LayerDescriptor {
 pub struct ChartLayer(pub &'static LayerDescriptor);
 
 impl ChartLayer {
-    pub const ALL: [Self; 25] = builtins::ALL;
+    pub const ALL: [Self; 26] = builtins::ALL;
     pub const fn id(self) -> &'static str {
         self.0.id
     }
@@ -204,6 +205,11 @@ pub mod blocks {
         "candle_bubbles_replaced_by_native_tape",
         "the native tape draws every print at its own time and price beside the candles; \
          candle aggression summarizes each candle",
+    );
+    pub const NATIVE_TAPE_NEEDS_VOLUME_DOTS: LayerBlock = LayerBlock::new(
+        "native_tape_needs_volume_dots",
+        "the native tape draws every print as a volume dot at its own time and price; \
+         switch volume dots on and the tape beside the candles becomes the native tape",
     );
     pub const NO_BOOK: LayerBlock = LayerBlock::new(
         "source_captures_no_order_book",

@@ -229,6 +229,25 @@ impl ChartLayer {
         default_on: false,
         projection_demand: false,
     });
+    pub const NativeTape: Self = Self(&LayerDescriptor {
+        id: "native_tape",
+        label: "native tape (execution time and price)",
+        hint: "the tape draws each print at its own execution time and price, on the market \
+               clock, and the one price axis follows the tape's prints; manual Y still \
+               applies. Beside the candles it keeps its share behind the draggable divider and \
+               moving or zooming the candles never changes it. Needs volume dots; tape only \
+               always draws it. Saved with the order-flow preset, not with the other layers",
+        source: LayerSource::Orderflow(OrderflowSwitch::NativeTape),
+        scope: LayerScope::FlowPane,
+        persistence: Persistence::OrderflowPreset,
+        requirement: Requirement::None,
+        on_tape: true,
+        needs_tape: true,
+        needs_depth: false,
+        capture_gates_visibility: false,
+        default_on: false,
+        projection_demand: false,
+    });
     pub const Grid: Self = Self(&LayerDescriptor {
         id: "grid",
         label: "grid",
@@ -403,7 +422,7 @@ impl ChartLayer {
         projection_demand: false,
     });
 }
-pub const ALL: [ChartLayer; 25] = [
+pub const ALL: [ChartLayer; 26] = [
     ChartLayer::TapeChart,
     ChartLayer::TapeHeatmap,
     ChartLayer::TapeBubbles,
@@ -417,6 +436,7 @@ pub const ALL: [ChartLayer; 25] = [
     ChartLayer::DepthGaps,
     ChartLayer::BubbleOverlapMerge,
     ChartLayer::TapeOnly,
+    ChartLayer::NativeTape,
     ChartLayer::Grid,
     ChartLayer::LastPrice,
     ChartLayer::BackfillDivider,

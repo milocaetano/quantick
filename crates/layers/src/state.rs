@@ -8,6 +8,8 @@ pub struct LayerFacts {
     pub tape_only: bool,
     /// The tape is the native tape, beside the candles or alone.
     pub native_tape: bool,
+    /// The pane keys its prints as volume dots, which the native tape is.
+    pub volume_dots: bool,
     pub book_capture: bool,
     pub traded_volume: bool,
     pub capture_enabled: bool,
@@ -156,6 +158,9 @@ impl LayerState {
         }
         if layer.0.needs_tape && !facts.tape_on {
             return Some(blocks::TAPE_OFF);
+        }
+        if layer == ChartLayer::NativeTape && !facts.volume_dots && !facts.tape_only {
+            return Some(blocks::NATIVE_TAPE_NEEDS_VOLUME_DOTS);
         }
         let missing = match layer.0.requirement {
             Requirement::None => None,

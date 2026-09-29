@@ -648,7 +648,7 @@ impl ChartPane {
         // the jump-to-live chip's rule — and it is the *only* way back once the
         // tape is off: with no band there is no tape to right-click, so a
         // switch that lived only in that menu would be a one-way door.
-        let tape_only = self.layer_facts(None).tape_only;
+        let (tape_only, native_tape) = self.tape_modes();
         if self.orderflow.is_some() {
             let on = self.layer_visible(ChartLayer::TapeChart, chrome.style);
             let clicked = self.tape_switch.handle(
@@ -788,7 +788,6 @@ impl ChartPane {
         // Tape only follows market time and its own recent price range.
         // The wheel zooms the tape's window. Beside the candles the native
         // tape owns the price axis, so a drag pans the candles sideways only.
-        let (tape_only, native_tape) = self.tape_modes();
         if total > 0
             && !tape_only
             && chart.dragged_by(egui::PointerButton::Primary)

@@ -149,6 +149,10 @@ impl ClusteringSection<'_> {
     }
 }
 
+/// Why the native-tape box is locked while tape only is on.
+const TAPE_ONLY_IMPLIES_NATIVE: &str =
+    "tape only always draws the native tape; switch tape only off to choose it here";
+
 /// The live lane's own settings: the reserved band right of the forming
 /// bar, which has room the compressed history does not.
 pub(super) struct LiveLaneSection<'a> {
@@ -165,8 +169,18 @@ impl LiveLaneSection<'_> {
             inherited_cluster_ms: inherited,
             volume_dots,
         } = self;
-        ui.checkbox(&mut lane.native_tape, "Native tape")
-            .on_hover_text(LiveLaneStyle::NATIVE_TAPE_HINT);
+        // Tape only always draws the native tape, so there the box reads
+        // checked and is locked; the write is the layer switch's field.
+        let mut native = lane.native();
+        let native_box = egui::Checkbox::new(&mut native, "Native tape (execution time and price)");
+        if ui
+            .add_enabled(!lane.tape_only, native_box)
+            .on_hover_text(ChartLayer::NativeTape.hint())
+            .on_disabled_hover_text(TAPE_ONLY_IMPLIES_NATIVE)
+            .changed()
+        {
+            lane.native_tape = native;
+        }
         ui.checkbox(&mut lane.tape_only, "Tape only (hide candles)")
             .on_hover_text(ChartLayer::TapeOnly.hint());
         let native_tape = lane.native() && volume_dots;

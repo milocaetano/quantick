@@ -64,8 +64,9 @@ pub struct PaneFrame {
     /// Last frame's auto-fit price range, for pixel↔price maths in the input
     /// handler (which runs before the draw computes it).
     pub auto_range: Option<(f64, f64)>,
-    /// Which source the remembered price framing belongs to: tape or candles.
-    pub(super) price_native_tape: bool,
+    /// The modes the remembered price framing belongs to, as
+    /// [`ChartPane::tape_modes`](super::ChartPane::tape_modes) reads them.
+    pub(super) price_axis_mode: (bool, bool),
     /// Last frame's chart height. See [`Self::auto_range`].
     pub chart_height: f32,
     /// Last frame's chart top. See [`Self::auto_range`].
@@ -101,7 +102,7 @@ impl Default for PaneFrame {
             time_strip: None,
             lane_reference_ms: None,
             auto_range: None,
-            price_native_tape: false,
+            price_axis_mode: (false, false),
             chart_height: 1.0,
             chart_top: 0.0,
             chart_area: None,

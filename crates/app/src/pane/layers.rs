@@ -16,6 +16,7 @@ impl ChartPane {
             tape_on: tape.is_some_and(OrderflowView::lane_enabled),
             tape_only: tape.is_some_and(|view| view.cached_config().tape_only()),
             native_tape: tape.is_some_and(|view| view.cached_config().native_tape()),
+            volume_dots: tape.is_some_and(|view| view.cached_config().volume_dots.enabled),
             capture_enabled: tape.is_some_and(OrderflowView::enabled),
             depth_visible: tape.is_some_and(OrderflowView::depth_visible),
             book_capture: capabilities.is_some_and(|value| value.book_capture),

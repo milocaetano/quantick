@@ -246,13 +246,14 @@ impl ChartPane {
         })
     }
 
-    /// Every mode-entry path starts at its own fit, including source presets.
+    /// Every mode-entry path starts at its own fit, including source presets:
+    /// a new axis source (tape or candles) or entering or leaving tape only.
     pub(crate) fn sync_price_axis_mode(&mut self) {
-        let native_tape = self.tape_modes().1;
-        if self.frame.price_native_tape != native_tape {
+        let modes = self.tape_modes();
+        if self.frame.price_axis_mode != modes {
             self.price_view.reset();
             self.frame.auto_range = None;
-            self.frame.price_native_tape = native_tape;
+            self.frame.price_axis_mode = modes;
         }
     }
 
