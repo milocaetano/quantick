@@ -111,6 +111,61 @@ fn a_vertical_drag_over_the_tape_takes_manual_y_and_the_candles_follow_the_axis(
     assert_eq!(app.active_tab().tape().tape_end(), TapeEnd::Live);
 }
 
+/// Up and down over the candles pans the shared axis too — primary or
+/// middle button, one path with the tape's — and never the tape's time.
+#[test]
+fn a_vertical_drag_over_the_candles_pans_the_shared_axis_and_never_the_tape() {
+    let ctx = egui::Context::default();
+    let (mut app, _, candles) = split_app(&ctx);
+    let (before, window) = (
+        candles_view(&app),
+        app.active_tab().tape().live_lane_window(),
+    );
+    let auto = app.active_tab().flow_pane.frame.auto_range.expect("fitted");
+    drag_sized(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        candles,
+        candles + egui::vec2(0.0, 90.0),
+    );
+    run_frame(&mut app, &ctx);
+    let pane = &app.active_tab().flow_pane;
+    assert!(!pane.price_view.is_auto(), "manual Y from the candles");
+    let primary = pane.price_view.resolve(auto);
+    assert_eq!(candles_view(&app), before, "a vertical drag pans no bars");
+    let tape = app.active_tab().tape();
+    assert_eq!(tape.tape_end(), TapeEnd::Live);
+    assert_eq!(tape.live_lane_window(), window);
+
+    let middle = |position: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+        pos: position,
+        button: egui::PointerButton::Middle,
+        pressed,
+        modifiers: egui::Modifiers::default(),
+    };
+    let end = candles + egui::vec2(0.0, 60.0);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(candles), middle(candles, true)],
+    );
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(end), middle(end, false)],
+    );
+    let pane = &app.active_tab().flow_pane;
+    assert_ne!(
+        pane.price_view.resolve(auto),
+        primary,
+        "the middle button pans Y"
+    );
+    assert_eq!(candles_view(&app), before);
+    assert_eq!(app.active_tab().tape().tape_end(), TapeEnd::Live);
+}
+
 /// A horizontal drag moves the tape back in time and leaves the candles
 /// where they were; dragging it back past now re-pins it to live, and a
 /// double click over the tape returns it to live and to automatic Y.

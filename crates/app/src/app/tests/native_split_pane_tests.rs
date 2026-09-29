@@ -74,25 +74,25 @@ fn the_native_tape_sits_beside_the_candles_behind_a_draggable_divider() {
     assert!(app.active_tab().tape().cached_config().native_tape());
 }
 
-/// A drag over the candles pans them through history and never touches the
-/// axis the tape owns; the tape off, the same drag pans prices again.
+/// A drag over the candles pans them through history and, up and down, the
+/// shared price axis (trader 2026-09-29: up and down back, as before); it
+/// never moves the tape's time. The tape off, the original chart.
 #[test]
-fn dragging_the_candles_pans_them_and_never_the_tapes_axis() {
+fn dragging_the_candles_pans_them_and_the_shared_axis_but_never_the_tapes_time() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
     native_split(&mut app);
     run_frame(&mut app, &ctx);
-    let (chart, divider, auto, total) = {
+    let (chart, divider, total) = {
         let pane = &app.active_tab().flow_pane;
         let total = pane.state.bars().len() + usize::from(pane.state.partial().is_some());
         (
             pane.frame.chart_rect.unwrap(),
             pane.frame.lane_divider_x.unwrap(),
-            pane.frame.auto_range,
             total,
         )
     };
-    let tape_range = app.active_tab().tape().tape_price_range();
+    let window = app.active_tab().tape().live_lane_window();
     let start = egui::pos2((chart.left() + divider) / 2.0, chart.center().y);
     let end = start + egui::vec2(180.0, 90.0);
     let edge = app.active_tab().flow_pane.viewport.right_edge_bar(total);
@@ -103,9 +103,13 @@ fn dragging_the_candles_pans_them_and_never_the_tapes_axis() {
         pane.viewport.right_edge_bar(total) < edge,
         "the candles moved back through history"
     );
-    assert!(pane.price_view.is_auto(), "the tape still owns the axis");
-    assert_eq!(pane.frame.auto_range, auto, "the axis did not move");
-    assert_eq!(app.active_tab().tape().tape_price_range(), tape_range);
+    assert!(
+        !pane.price_view.is_auto(),
+        "the shared axis panned: manual Y"
+    );
+    let tape = app.active_tab().tape();
+    assert!(tape.tape_end().is_live(), "the tape's time did not move");
+    assert_eq!(tape.live_lane_window(), window);
 
     // Tape off: the original tick chart, candle fit and original gestures.
     switch_layer(&mut app, ChartLayer::TapeChart, false);
