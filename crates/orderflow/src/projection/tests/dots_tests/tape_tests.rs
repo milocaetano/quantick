@@ -6,6 +6,7 @@ use crate::projection::{
 };
 
 mod performance;
+mod stability;
 
 fn tape_config() -> HeatmapConfig {
     let mut config = dots_config();
@@ -268,7 +269,7 @@ fn budget_folding_preserves_the_exact_execution_time_moment() {
 #[test]
 fn dots_and_tape_clock_share_one_linear_padded_time_span() {
     let bubbles = BubbleStyle::default();
-    let geometry = TapeHorizontalGeometry::resolve(300.0, &bubbles);
+    let geometry = TapeHorizontalGeometry::resolve(300.0, 400.0, &bubbles);
     assert_eq!(geometry.max_radius, bubbles.max_radius);
     assert!(geometry.x(0.0) >= geometry.max_radius);
     assert!(geometry.x(1.0) + geometry.max_radius <= 300.0);
@@ -288,7 +289,7 @@ fn a_narrow_tape_caps_all_radii_equally_and_keeps_now_whole() {
     config.bubbles.max_radius = 48.0;
     let (_, sizing, _, marks) = collision_fixture();
     for width in [300.0, 100.0, 96.0, 60.0, 10.0] {
-        let geometry = TapeHorizontalGeometry::resolve(width, &config.bubbles);
+        let geometry = TapeHorizontalGeometry::resolve(width, 400.0, &config.bubbles);
         assert_eq!(geometry.max_radius, 48.0_f32.min(width / 2.0));
         assert!(geometry.x(1.0) + geometry.max_radius <= width + 1e-5);
         assert!(geometry.x(0.0) - geometry.max_radius >= -1e-5);
@@ -313,7 +314,7 @@ fn a_narrow_tape_caps_all_radii_equally_and_keeps_now_whole() {
 fn a_tape_with_only_room_for_one_diameter_still_resolves_collisions() {
     let (mut config, sizing, _, mut marks) = collision_fixture();
     config.bubbles.max_radius = 48.0;
-    let horizontal = TapeHorizontalGeometry::resolve(60.0, &config.bubbles);
+    let horizontal = TapeHorizontalGeometry::resolve(60.0, 200.0, &config.bubbles);
     assert_eq!(horizontal.span_px, 0.0);
     config.bubbles.max_radius = horizontal.max_radius;
     marks.truncate(2);
