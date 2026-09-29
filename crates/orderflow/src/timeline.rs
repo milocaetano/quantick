@@ -233,16 +233,20 @@ impl BarTimeline {
     /// Where a bar covers the boundary, the answer snaps back to its open
     /// time so that the two halves never summarize partial copies of that bar.
     /// Full lane coverage can begin before the supplied bars; that earlier
-    /// tape begins at its own edge. It begins there too once the supplied
-    /// bars end before it — candles panned back into history — so the half
-    /// rebuilt every frame is the tape, however far back the candles are.
+    /// tape begins at its own edge. Once the supplied bars end before the
+    /// tape — candles panned back into history — the half rebuilt every
+    /// frame is the tape alone, however far back the candles are: cut on the
+    /// window's own grid, so the seam holds still while the tape rolls and
+    /// steps once per window, and never back into the candles on screen.
     #[must_use]
     pub fn live_boundary_ms(&self) -> Option<i64> {
         let newest = self.slots.last()?;
         if let Some(lane) = self.lane.filter(|_| self.full_lane_coverage)
             && newest.end_ms <= lane.start_ms
         {
-            return Some(lane.start_ms);
+            let window = (lane.end_ms - lane.start_ms).max(1);
+            let grid = lane.start_ms - lane.start_ms.rem_euclid(window);
+            return Some(grid.max(newest.end_ms));
         }
         let from = self
             .lane
