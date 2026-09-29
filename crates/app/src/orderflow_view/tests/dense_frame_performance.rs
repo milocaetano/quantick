@@ -3,7 +3,6 @@
 use super::*;
 use quantick_orderflow::engine::ProjectionRequest;
 use quantick_orderflow::projection::DotZoom;
-use rust_decimal::prelude::ToPrimitive as _;
 use std::hint::black_box;
 use std::time::Instant;
 
