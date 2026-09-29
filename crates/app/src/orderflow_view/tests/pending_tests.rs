@@ -328,3 +328,64 @@ fn metatrader_reconnect_ids_cannot_acknowledge_an_unpublished_new_print() {
     );
     assert!(view.pending_tape.is_empty());
 }
+
+#[test]
+fn worker_publication_before_the_next_layout_keeps_an_extreme_print() {
+    let (mut view, _, initial) = held_view(true);
+    let first = print(1, 1_001, 100, 2, Side::Buy);
+    view.record_trade(&first);
+    let _ = frame(&mut view, std::slice::from_ref(&first));
+    initial.release();
+    view.flush_for_test();
+    let extreme = print(2, 1_101, 1_000, 3, Side::Sell);
+    view.record_trade(&extreme);
+    // Let the real worker rebuild against its OLD 90..210 price range.
+    view.worker.flush();
+    let current = frame(&mut view, &[first, extreme]).unwrap();
+    let fit = view.tape_price_range();
+    let marks = tape(&current);
+    assert_eq!(
+        marks.iter().map(|mark| mark.quantity).sum::<Decimal>(),
+        Decimal::from(5)
+    );
+    assert!(
+        marks
+            .iter()
+            .any(|mark| mark.agg_ids == [2] && mark.price == Decimal::from(1_000))
+    );
+    assert_eq!(fit, Some((100.0, 1_000.0)));
+}
+
+#[test]
+fn a_cap_cut_inside_a_published_window_matches_the_workers_whole_window_eviction() {
+    let (mut view, gate, initial) = held_view(true);
+    let before = view.config.clone();
+    view.config.max_aggressions = 2;
+    view.commit_config_changes(before);
+    let mut prints = vec![
+        print(1, 1_001, 100, 1, Side::Buy),
+        print(2, 1_017, 100, 2, Side::Sell),
+    ];
+    for trade in &prints {
+        view.record_trade(trade);
+    }
+    let _ = frame(&mut view, &prints);
+    initial.release();
+    view.flush_for_test();
+    let held = gate.hold(Phase::Applying);
+    let next = print(3, 1_101, 105, 3, Side::Buy);
+    view.record_trade(&next);
+    prints.push(next);
+    held.reached();
+    let immediate = tape(&frame(&mut view, &prints).unwrap());
+    held.release();
+    view.flush_for_test();
+    let settled = tape(&frame(&mut view, &prints).unwrap());
+    assert_eq!(immediate, settled);
+    assert_eq!(
+        settled.len(),
+        1,
+        "the canonical projector excludes a partly evicted native window"
+    );
+    assert_eq!(settled[0].agg_ids, vec![3]);
+}
