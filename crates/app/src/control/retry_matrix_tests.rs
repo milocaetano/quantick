@@ -12,7 +12,11 @@ use super::*;
 
 /// Where the transport tests that prove the rows live, relative to
 /// `crates/app`. A row's proving test must be a function in one of these.
-const PROOF_SOURCES: [&str; 1] = ["src/app/tests/retry_readback_tests.rs"];
+const PROOF_SOURCES: [&str; 3] = [
+    "src/app/tests/retry_readback_tests.rs",
+    "src/app/tests/opening_scale_control_tests.rs",
+    "src/app/tests/price_axis_control_tests.rs",
+];
 
 fn contract() -> ObserverContract {
     standard_contract().expect("the registry builds")

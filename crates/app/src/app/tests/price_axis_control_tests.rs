@@ -68,6 +68,7 @@ fn input(app: &QuantickApp, mode: Value) -> Value {
 }
 
 fn read_viewport(app: &mut QuantickApp, client: &mut LocalClient, pane_id: u64) -> Value {
+    let pane_id = pane_id.to_string();
     let (response, _) = unkeyed_call(
         app,
         client,
@@ -78,7 +79,7 @@ fn read_viewport(app: &mut QuantickApp, client: &mut LocalClient, pane_id: u64) 
         .as_array()
         .unwrap()
         .iter()
-        .find(|pane| pane["pane_id"] == pane_id.to_string())
+        .find(|pane| pane["pane_id"] == pane_id)
         .unwrap()["viewport"]
         .clone()
 }
