@@ -2639,3 +2639,7 @@ mod opening_tests;
 #[cfg(test)]
 #[path = "engine_native_tape_tests.rs"]
 mod native_tape_tests;
+
+#[cfg(test)]
+#[path = "engine_past_tape_tests.rs"]
+mod past_tape_tests;

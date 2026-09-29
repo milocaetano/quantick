@@ -61,6 +61,8 @@ mod native_tape_readback_tests;
 mod opening_scale_control;
 #[path = "price_axis_control_tests.rs"]
 mod price_axis_control;
+#[path = "tape_navigation_tests.rs"]
+mod tape_navigation;
 #[path = "mutation_uncertainty_tests.rs"]
 mod uncertainty;
 

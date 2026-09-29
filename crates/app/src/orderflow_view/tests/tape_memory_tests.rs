@@ -249,3 +249,38 @@ fn hiding_a_side_cannot_repaint_its_retained_historical_members() {
         "a visibility edit cannot leak cached buy dots"
     );
 }
+
+/// A visit to the past never touches the live tape's memory: back at live
+/// the tape paints exactly what a pane that never left it paints.
+#[test]
+fn a_visit_to_the_past_leaves_the_live_tape_exactly_as_it_was() {
+    use quantick_orderflow::tape_view::TapeEnd;
+    let (mut control, control_hold) = memory_view();
+    let control_shown = seed_closed_history(&mut control);
+    let (mut view, hold) = memory_view();
+    let shown = seed_closed_history(&mut view);
+    let retained = view.tape_dots.borrow().retained_group_count();
+    let past = TapeEnd::Past {
+        end_ms: WIN_TIME_MS + 900,
+    };
+    view.set_tape_end(past);
+    assert_eq!(view.tape_end(), past);
+    let _ = paint(&mut view, &shown, WIN_TIME_MS + 2_050, WIN_PRICES);
+    assert_eq!(
+        view.tape_dots.borrow().retained_group_count(),
+        retained,
+        "the past paints from a memory of its own"
+    );
+    view.set_tape_end(TapeEnd::Live);
+    let live = paint(&mut view, &shown, WIN_TIME_MS + 2_100, WIN_PRICES);
+    let expected = paint(
+        &mut control,
+        &control_shown,
+        WIN_TIME_MS + 2_100,
+        WIN_PRICES,
+    );
+    hold.release();
+    control_hold.release();
+    assert!(!expected.is_empty());
+    assert_eq!(live, expected);
+}
