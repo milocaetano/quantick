@@ -1,7 +1,11 @@
 //! The optional tape pane retains execution coordinates and readable areas.
 
 use super::*;
-use crate::projection::{DotSizing, TapeDotGeometry, TapeHorizontalGeometry, merge_tape_dots, position_tape_at};
+use crate::projection::{
+    DotSizing, TapeDotGeometry, TapeHorizontalGeometry, merge_tape_dots, position_tape_at,
+};
+
+mod performance;
 
 fn tape_config() -> HeatmapConfig {
     let mut config = dots_config();
@@ -299,7 +303,10 @@ fn a_narrow_tape_caps_all_radii_equally_and_keeps_now_whole() {
         let quarter_radius = sizing.radius(&fitted, &config.live_lane, &quarter, dec("4"));
         assert!((quarter_radius / big_radius - 0.5).abs() < 1e-6);
     }
-    assert_eq!(config.bubbles.max_radius, 48.0, "fitting never changes the setting");
+    assert_eq!(
+        config.bubbles.max_radius, 48.0,
+        "fitting never changes the setting"
+    );
 }
 
 #[test]
@@ -325,6 +332,10 @@ fn a_tape_with_only_room_for_one_diameter_still_resolves_collisions() {
             height_px: 200.0,
         },
     );
-    assert_eq!(merged.len(), 1, "coincident dots cannot hide behind each other");
+    assert_eq!(
+        merged.len(),
+        1,
+        "coincident dots cannot hide behind each other"
+    );
     assert_eq!(merged[0].quantity, dec("0.4"));
 }

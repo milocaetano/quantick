@@ -23,6 +23,8 @@ use crate::viewport::Viewport;
 mod frame;
 mod layers;
 mod settings;
+#[cfg(test)]
+mod tape_frame_tests;
 
 /// Borrowed chart timeline handed to one order-flow projection request.
 ///
