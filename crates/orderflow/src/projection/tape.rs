@@ -5,7 +5,7 @@
 //! except the open dot that follows NOW. Each merge removes one indexed dot,
 //! so a dense tape needs no repeated all-pairs collision pass.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
@@ -44,16 +44,25 @@ impl TapeDotGeometry {
     }
 
     pub(super) fn visible(self, mark: &AggressionPrimitive) -> bool {
-        mark.live
-            && mark.quantity > Decimal::ZERO
-            && (self.left_x..=self.right_x).contains(&mark.x)
-            && (0.0..=1.0).contains(&mark.y)
+        mark.live && self.holds(mark.quantity, mark.x, mark.y)
+    }
+
+    /// Whether a live dot of `quantity` at normalized `(x, y)` is on the tape.
+    pub(super) fn holds(self, quantity: Decimal, x: f64, y: f64) -> bool {
+        quantity > Decimal::ZERO
+            && (self.left_x..=self.right_x).contains(&x)
+            && (0.0..=1.0).contains(&y)
     }
 
     fn position(self, mark: &AggressionPrimitive) -> (f64, f64) {
+        self.point(mark.x, mark.y)
+    }
+
+    /// Pixels from the tape's left end and top of normalized `(x, y)`.
+    fn point(self, x: f64, y: f64) -> (f64, f64) {
         (
-            (mark.x - self.left_x) / (self.right_x - self.left_x) * f64::from(self.width_px),
-            mark.y * f64::from(self.height_px),
+            (x - self.left_x) / (self.right_x - self.left_x) * f64::from(self.width_px),
+            y * f64::from(self.height_px),
         )
     }
 }
@@ -112,7 +121,7 @@ pub(super) fn position_tape_with(
 /// Exact moments prevent repeated centroid averaging from losing quantity.
 /// Coordinates begin at the projection's final floating-point boundary; the
 /// accumulation itself uses Decimal and converts back only to draw.
-struct TapeMoment {
+pub(super) struct TapeMoment {
     mark: AggressionPrimitive,
     /// Volume eligible for the automatic reference; factual size and moments
     /// always use the complete mark quantity, including any opening burst.
@@ -122,11 +131,14 @@ struct TapeMoment {
     y_quantity: Decimal,
     at_now: bool,
     /// Exact radius calculation reused while this quantity and full scale hold.
-    radius_cache: Option<(Decimal, f32)>,
+    radius_cache: Option<(u64, f32)>,
+    /// How many leading trade and liquidity-event ids are already sorted and
+    /// unique: a resumed fold's, which [`Self::finish`] need not sort again.
+    sorted_ids: (usize, usize),
 }
 
 impl TapeMoment {
-    fn new(mark: AggressionPrimitive, right_x: f64) -> Self {
+    pub(super) fn new(mark: AggressionPrimitive, right_x: f64) -> Self {
         Self {
             reference_quantity: mark.quantity,
             price_quantity: mark.price * mark.quantity,
@@ -134,36 +146,72 @@ impl TapeMoment {
             y_quantity: Decimal::from_f64_retain(mark.y).unwrap_or_default() * mark.quantity,
             at_now: mark.x == right_x,
             radius_cache: None,
+            sorted_ids: (0, 0),
             mark,
         }
     }
 
-    fn radius(
-        &mut self,
-        sizing: DotSizing,
-        bubbles: &BubbleStyle,
-        lane: &LiveLaneStyle,
-        full: Decimal,
-    ) -> f32 {
-        if let Some((reference, radius)) = self.radius_cache
-            && reference == full
-        {
-            return radius;
+    /// Resume the fold that finished as `mark` over facts whose exact price
+    /// moment is `price_quantity`, placed nowhere, so later facts join it as
+    /// they would have joined the fold itself ([`combine_tape_facts`]).
+    pub(super) fn resumed(mark: AggressionPrimitive, price_quantity: Decimal) -> Self {
+        Self {
+            reference_quantity: mark.quantity,
+            price_quantity,
+            x_quantity: Decimal::ZERO,
+            y_quantity: Decimal::ZERO,
+            at_now: false,
+            radius_cache: None,
+            sorted_ids: (mark.agg_ids.len(), mark.liquidity_event_ids.len()),
+            mark,
         }
-        let radius = sizing.radius(bubbles, lane, &self.mark, full);
-        self.radius_cache = Some((full, radius));
-        radius
     }
 
-    fn absorb(&mut self, other: Self, right_x: f64) {
-        self.radius_cache = None;
-        self.reference_quantity += other.reference_quantity;
-        self.price_quantity += other.price_quantity;
+    /// The exact price moment folded so far.
+    pub(super) fn price_quantity(&self) -> Decimal {
+        self.price_quantity
+    }
+
+    pub(super) fn absorb(&mut self, mut other: Self, right_x: f64) {
         self.x_quantity += other.x_quantity;
         self.y_quantity += other.y_quantity;
         self.at_now |= other.at_now;
+        self.mark.agg_ids.append(&mut other.mark.agg_ids);
+        self.mark
+            .liquidity_event_ids
+            .append(&mut other.mark.liquidity_event_ids);
+        self.fold(
+            other.reference_quantity,
+            other.price_quantity,
+            &other.mark,
+            right_x,
+        );
+    }
+
+    /// [`Self::absorb`] of `fact` placed nowhere, into a fold of facts placed
+    /// nowhere ([`combine_tape_facts`]), without taking the fact: its x and y
+    /// moments are zero, so the fold's stay what they are.
+    pub(super) fn absorb_fact(&mut self, fact: &AggressionPrimitive) {
+        self.mark.agg_ids.extend_from_slice(&fact.agg_ids);
+        self.mark
+            .liquidity_event_ids
+            .extend_from_slice(&fact.liquidity_event_ids);
+        self.fold(fact.quantity, fact.price * fact.quantity, fact, 1.0);
+    }
+
+    /// Everything [`Self::absorb`] takes from `other` but its drawing moments
+    /// and ids.
+    fn fold(
+        &mut self,
+        reference_quantity: Decimal,
+        price_quantity: Decimal,
+        other: &AggressionPrimitive,
+        right_x: f64,
+    ) {
+        self.radius_cache = None;
+        self.reference_quantity += reference_quantity;
+        self.price_quantity += price_quantity;
         let mark = &mut self.mark;
-        let mut other = other.mark;
         let low = mark.price_bucket.min(other.price_bucket);
         let high = (mark.price_bucket + mark.price_span).max(other.price_bucket + other.price_span);
         mark.quantity += other.quantity;
@@ -174,9 +222,6 @@ impl TapeMoment {
         mark.last_timestamp_ms = mark.last_timestamp_ms.max(other.last_timestamp_ms);
         mark.timestamp_quantity += other.timestamp_quantity;
         mark.agg_id = mark.agg_id.min(other.agg_id);
-        mark.agg_ids.append(&mut other.agg_ids);
-        mark.liquidity_event_ids
-            .append(&mut other.liquidity_event_ids);
         if mark.generation != other.generation {
             mark.generation = None;
         }
@@ -207,60 +252,287 @@ impl TapeMoment {
         };
     }
 
-    fn finish(mut self, full: Decimal) -> AggressionPrimitive {
-        self.mark.agg_ids.sort_unstable();
-        self.mark.agg_ids.dedup();
-        self.mark.liquidity_event_ids.sort_unstable();
-        self.mark.liquidity_event_ids.dedup();
+    pub(super) fn finish(mut self, full: Decimal) -> AggressionPrimitive {
+        sort_unique_after(&mut self.mark.agg_ids, self.sorted_ids.0);
+        sort_unique_after(&mut self.mark.liquidity_event_ids, self.sorted_ids.1);
         self.mark.size = normalized_area_size(self.mark.quantity, full);
         self.mark
     }
 }
 
+/// Sort `ids` and drop repeats, where the first `sorted` are already sorted
+/// and unique: only what follows them is sorted, unless it reaches below
+/// them. The result is `sort_unstable` then `dedup` of the whole.
+pub(super) fn sort_unique_after(ids: &mut Vec<u64>, sorted: usize) {
+    let sorted = sorted.min(ids.len());
+    ids[sorted..].sort_unstable();
+    if sorted > 0 && sorted < ids.len() && ids[sorted] <= ids[sorted - 1] {
+        ids.sort_unstable();
+        ids.dedup();
+        return;
+    }
+    let mut kept = sorted;
+    for read in sorted..ids.len() {
+        if kept > 0 && ids[read] == ids[kept - 1] {
+            continue;
+        }
+        ids[kept] = ids[read];
+        kept += 1;
+    }
+    ids.truncate(kept);
+}
+
+/// What the collision merge ([`collide`]) reads of a disc, and how a disc
+/// grows by absorbing its neighbour. A whole mark ([`TapeMoment`]) and the
+/// bare moments the tape memory merges its groups with both answer it, so
+/// both are merged by the one algorithm.
+pub(super) trait MergeDisc: Sized {
+    /// Normalized timeline position.
+    fn x(&self) -> f64;
+    /// Normalized price position, from the top.
+    fn y(&self) -> f64;
+    fn first_timestamp_ms(&self) -> i64;
+    fn agg_id(&self) -> u64;
+    fn quantity(&self) -> Decimal;
+    /// The volume the automatic full size is taken from.
+    fn reference_quantity(&self) -> Decimal;
+    /// The disc's radius against `full`, cached while its quantity and the
+    /// full size hold.
+    fn radius(
+        &mut self,
+        sizing: DotSizing,
+        bubbles: &BubbleStyle,
+        lane: &LiveLaneStyle,
+        full: Full,
+    ) -> f32;
+    fn absorb(&mut self, other: Self, right_x: f64);
+}
+
+impl MergeDisc for TapeMoment {
+    fn x(&self) -> f64 {
+        self.mark.x
+    }
+
+    fn y(&self) -> f64 {
+        self.mark.y
+    }
+
+    fn first_timestamp_ms(&self) -> i64 {
+        self.mark.first_timestamp_ms
+    }
+
+    fn agg_id(&self) -> u64 {
+        self.mark.agg_id
+    }
+
+    fn quantity(&self) -> Decimal {
+        self.mark.quantity
+    }
+
+    fn reference_quantity(&self) -> Decimal {
+        self.reference_quantity
+    }
+
+    fn radius(
+        &mut self,
+        sizing: DotSizing,
+        bubbles: &BubbleStyle,
+        lane: &LiveLaneStyle,
+        full: Full,
+    ) -> f32 {
+        if let Some((held, radius)) = self.radius_cache
+            && held == full.serial
+        {
+            return radius;
+        }
+        let radius = sizing.radius(bubbles, lane, &self.mark, full.quantity);
+        self.radius_cache = Some((full.serial, radius));
+        radius
+    }
+
+    fn absorb(&mut self, other: Self, right_x: f64) {
+        TapeMoment::absorb(self, other, right_x);
+    }
+}
+
+/// The full size a merge sizes its discs against, and how many times it
+/// has grown: it only grows, so an equal count is an equal size.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Full {
+    pub(super) quantity: Decimal,
+    pub(super) serial: u64,
+}
+
 type Cell = (i64, i64);
 
 /// A lookup grid, never a drawing grid. Its cell width bounds the search;
-/// all collision tests still use the original execution coordinates.
+/// all collision tests still use the original execution coordinates. Each
+/// cell lists its dots by ascending index, the order they are tried in.
 struct Neighbours {
-    cells: BTreeMap<Cell, BTreeSet<usize>>,
+    cells: BTreeMap<Cell, Vec<usize>>,
     span_px: f64,
     geometry: TapeDotGeometry,
 }
 
 impl Neighbours {
-    fn cell(&self, mark: &AggressionPrimitive) -> Cell {
-        let (x, y) = self.geometry.position(mark);
+    fn new(span_px: f64, geometry: TapeDotGeometry) -> Self {
+        Self {
+            cells: BTreeMap::new(),
+            span_px,
+            geometry,
+        }
+    }
+
+    fn cell(&self, x: f64, y: f64) -> Cell {
+        let (x, y) = self.geometry.point(x, y);
         (
             (x / self.span_px).floor() as i64,
             (y / self.span_px).floor() as i64,
         )
     }
 
-    fn insert(&mut self, index: usize, mark: &AggressionPrimitive) {
-        self.cells.entry(self.cell(mark)).or_default().insert(index);
+    /// Indices only grow, so a push keeps each cell ascending.
+    fn insert(&mut self, index: usize, x: f64, y: f64) {
+        self.cells.entry(self.cell(x, y)).or_default().push(index);
     }
 
-    fn remove(&mut self, index: usize, mark: &AggressionPrimitive) {
-        let cell = self.cell(mark);
+    fn remove(&mut self, index: usize, x: f64, y: f64) {
+        let cell = self.cell(x, y);
         if let Some(indices) = self.cells.get_mut(&cell) {
-            indices.remove(&index);
+            if let Some(at) = indices.iter().position(|held| *held == index) {
+                indices.remove(at);
+            }
             if indices.is_empty() {
                 self.cells.remove(&cell);
             }
         }
     }
 
-    fn candidates(&self, mark: &AggressionPrimitive) -> impl Iterator<Item = usize> + '_ {
-        let (x, y) = self.cell(mark);
-        (-1..=1).flat_map(move |dx| {
-            (-1..=1).flat_map(move |dy| {
+    /// The dots in the 3x3 cells around `(x, y)`, column by column, each
+    /// column from its top cell down: one ordered range per column.
+    fn candidates(&self, x: f64, y: f64) -> impl Iterator<Item = usize> + '_ {
+        let (x, y) = self.cell(x, y);
+        let (top, bottom) = (y.saturating_sub(1), y.saturating_add(1));
+        (-1..=1)
+            .filter_map(move |dx| x.checked_add(dx))
+            .flat_map(move |column| {
                 self.cells
-                    .get(&(x + dx, y + dy))
-                    .into_iter()
-                    .flatten()
-                    .copied()
+                    .range((column, top)..=(column, bottom))
+                    .flat_map(|(_, indices)| indices.iter().copied())
             })
-        })
+    }
+}
+
+/// The collision merge itself: `tape`, every disc of it on the tape, taken
+/// in time then price order, each absorbing the nearest disc it would
+/// obscure until none is left. Areas start from the largest reference
+/// volume when `by_reference`, else from the pane's full size, never under
+/// `minimum_full`. The surviving discs come back in the order they were
+/// placed, with the reference they finished at.
+pub(super) fn collide<D: MergeDisc>(
+    mut tape: Vec<D>,
+    sizing: DotSizing,
+    bubbles: &BubbleStyle,
+    lane: &LiveLaneStyle,
+    geometry: TapeDotGeometry,
+    minimum_full: Decimal,
+    by_reference: bool,
+) -> (Vec<D>, Decimal) {
+    tape.sort_by(|a, b| {
+        a.x()
+            .total_cmp(&b.x())
+            .then_with(|| a.y().total_cmp(&b.y()))
+            .then_with(|| a.first_timestamp_ms().cmp(&b.first_timestamp_ms()))
+            .then_with(|| a.agg_id().cmp(&b.agg_id()))
+    });
+    let mut full = starting_full(
+        sizing,
+        tape.iter().map(D::quantity),
+        by_reference.then(|| tape.iter().map(D::reference_quantity)),
+        minimum_full,
+    );
+    let mut neighbours = Neighbours::new(f64::from(bubbles.max_radius) * 2.0, geometry);
+    let mut active: Vec<Option<D>> = Vec::with_capacity(tape.len());
+    let mut serial = 0_u64;
+    for mut pending in tape {
+        loop {
+            if sizing.typed_full.is_none() {
+                // Existing discs only shrink as a new largest dot grows, so
+                // they cannot create a new collision with one another.
+                let reference = pending.reference_quantity();
+                serial += u64::from(reference > full);
+                full = full.max(reference);
+            }
+            let at = Full {
+                quantity: full,
+                serial,
+            };
+            let radius = pending.radius(sizing, bubbles, lane, at);
+            // No disc is wider than the style's largest, so no clearance is.
+            let reach = f64::from(radius + bubbles.max_radius);
+            let (x, y) = geometry.point(pending.x(), pending.y());
+            let collision = neighbours
+                .candidates(pending.x(), pending.y())
+                .filter_map(|index| {
+                    let other = active[index].as_mut()?;
+                    let (other_x, other_y) = geometry.point(other.x(), other.y());
+                    let dx = other_x - x;
+                    let dy = other_y - y;
+                    if dx.abs() >= reach || dy.abs() >= reach {
+                        return None;
+                    }
+                    let other_radius = other.radius(sizing, bubbles, lane, at);
+                    let clearance = f64::from(
+                        radius + other_radius
+                            - SMALLER_DOT_OVERLAP_SHARE * radius.min(other_radius),
+                    );
+                    if dx.abs() >= clearance || dy.abs() >= clearance {
+                        return None;
+                    }
+                    let distance = dx.hypot(dy);
+                    (distance < clearance).then_some((index, distance, other.agg_id()))
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.2.cmp(&b.2)))
+                .map(|candidate| candidate.0);
+            let Some(index) = collision else { break };
+            let absorbed = active[index].take().expect("an indexed dot is active");
+            neighbours.remove(index, absorbed.x(), absorbed.y());
+            pending.absorb(absorbed, geometry.right_x);
+        }
+        neighbours.insert(active.len(), pending.x(), pending.y());
+        active.push(Some(pending));
+    }
+    (active.into_iter().flatten().collect(), full)
+}
+
+/// The reference a merge starts from: the largest eligible volume on the
+/// tape (`reference`, one per disc, when the burst is kept out of scale),
+/// or the pane's full size over `quantities`; never under `minimum_full`,
+/// never zero.
+fn starting_full(
+    sizing: DotSizing,
+    quantities: impl Iterator<Item = Decimal>,
+    reference: Option<impl Iterator<Item = Decimal>>,
+    minimum_full: Decimal,
+) -> Decimal {
+    let initial = match reference {
+        Some(reference) if sizing.typed_full.is_none() => reference.max().unwrap_or_default(),
+        _ => {
+            let full = sizing
+                .typed_full
+                .unwrap_or_else(|| quantities.max().unwrap_or_default());
+            if full > Decimal::ZERO {
+                full
+            } else {
+                Decimal::ONE
+            }
+        }
+    };
+    let full = initial.max(minimum_full);
+    if full <= Decimal::ZERO {
+        Decimal::ONE
+    } else {
+        full
     }
 }
 
@@ -311,86 +583,28 @@ pub(super) fn merge_tape_dots_with_reference(
     if !sizing.native_tape || !geometry.valid() || bubbles.max_radius <= 0.0 {
         return marks.to_vec();
     }
-    let (mut tape, other): (Vec<_>, Vec<_>) = marks
+    let (tape, other): (Vec<_>, Vec<_>) = marks
         .iter()
         .enumerate()
         .map(|(index, mark)| {
-            (
-                mark.clone(),
-                reference
-                    .quantities
-                    .get(index)
-                    .copied()
-                    .unwrap_or(mark.quantity),
-            )
-        })
-        .partition(|(mark, _)| geometry.visible(mark));
-    tape.sort_by(|(a, _), (b, _)| {
-        a.x.total_cmp(&b.x)
-            .then_with(|| a.y.total_cmp(&b.y))
-            .then_with(|| a.first_timestamp_ms.cmp(&b.first_timestamp_ms))
-            .then_with(|| a.agg_id.cmp(&b.agg_id))
-    });
-    let initial = if sizing.typed_full.is_none() && !reference.quantities.is_empty() {
-        tape.iter()
-            .map(|(_, quantity)| *quantity)
-            .max()
-            .unwrap_or_default()
-    } else {
-        sizing.full_quantity(tape.iter().map(|(mark, _)| mark), true)
-    };
-    let mut full = initial.max(reference.minimum_full);
-    if full <= Decimal::ZERO {
-        full = Decimal::ONE;
-    }
-    let mut other: Vec<_> = other.into_iter().map(|(mark, _)| mark).collect();
-    let mut neighbours = Neighbours {
-        cells: BTreeMap::new(),
-        span_px: f64::from(bubbles.max_radius) * 2.0,
-        geometry,
-    };
-    let mut active: Vec<Option<TapeMoment>> = Vec::with_capacity(tape.len());
-    for (mark, reference_quantity) in tape {
-        let mut pending = TapeMoment::new(mark, geometry.right_x);
-        pending.reference_quantity = reference_quantity;
-        loop {
-            if sizing.typed_full.is_none() {
-                // Existing discs only shrink as a new largest dot grows, so
-                // they cannot create a new collision with one another.
-                full = full.max(pending.reference_quantity);
+            let mut moment = TapeMoment::new(mark.clone(), geometry.right_x);
+            if let Some(quantity) = reference.quantities.get(index) {
+                moment.reference_quantity = *quantity;
             }
-            let radius = pending.radius(sizing, bubbles, lane, full);
-            let (x, y) = geometry.position(&pending.mark);
-            let collision = neighbours
-                .candidates(&pending.mark)
-                .filter_map(|index| {
-                    let other = active[index].as_mut()?;
-                    let other_radius = other.radius(sizing, bubbles, lane, full);
-                    let other = &other.mark;
-                    let (other_x, other_y) = geometry.position(other);
-                    let clearance = f64::from(
-                        radius + other_radius
-                            - SMALLER_DOT_OVERLAP_SHARE * radius.min(other_radius),
-                    );
-                    let dx = other_x - x;
-                    let dy = other_y - y;
-                    if dx.abs() >= clearance || dy.abs() >= clearance {
-                        return None;
-                    }
-                    let distance = dx.hypot(dy);
-                    (distance < clearance).then_some((index, distance, other.agg_id))
-                })
-                .min_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.2.cmp(&b.2)))
-                .map(|candidate| candidate.0);
-            let Some(index) = collision else { break };
-            let absorbed = active[index].take().expect("an indexed dot is active");
-            neighbours.remove(index, &absorbed.mark);
-            pending.absorb(absorbed, geometry.right_x);
-        }
-        neighbours.insert(active.len(), &pending.mark);
-        active.push(Some(pending));
-    }
-    other.extend(active.into_iter().flatten().map(|dot| dot.finish(full)));
+            moment
+        })
+        .partition(|moment| geometry.visible(&moment.mark));
+    let (merged, full) = collide(
+        tape,
+        sizing,
+        bubbles,
+        lane,
+        geometry,
+        reference.minimum_full,
+        !reference.quantities.is_empty(),
+    );
+    let mut other: Vec<_> = other.into_iter().map(|moment| moment.mark).collect();
+    other.extend(merged.into_iter().map(|dot| dot.finish(full)));
     other.sort_by(|a, b| {
         a.quantity
             .cmp(&b.quantity)
@@ -402,17 +616,16 @@ pub(super) fn merge_tape_dots_with_reference(
 
 /// Rebuild a retained group from its exact native facts, never from an
 /// already divided price centroid. Drawing coordinates are assigned later.
-pub(super) fn combine_tape_facts(
-    marks: impl IntoIterator<Item = AggressionPrimitive>,
+pub(super) fn combine_tape_facts<'a>(
+    marks: impl IntoIterator<Item = &'a AggressionPrimitive>,
 ) -> Option<AggressionPrimitive> {
-    let mut marks = marks.into_iter().map(|mut mark| {
-        mark.x = 0.0;
-        mark.y = 0.0;
-        mark
-    });
-    let mut moment = TapeMoment::new(marks.next()?, 1.0);
+    let mut marks = marks.into_iter();
+    let mut first = marks.next()?.clone();
+    first.x = 0.0;
+    first.y = 0.0;
+    let mut moment = TapeMoment::new(first, 1.0);
     for mark in marks {
-        moment.absorb(TapeMoment::new(mark, 1.0), 1.0);
+        moment.absorb_fact(mark);
     }
     Some(moment.finish(Decimal::ONE))
 }
@@ -432,15 +645,14 @@ pub(super) fn tape_radius_limit(
         .iter()
         .map(|mark| sizing.radius(bubbles, lane, mark, full))
         .collect();
-    let mut neighbours = Neighbours {
-        cells: BTreeMap::new(),
-        span_px: f64::from(bubbles.max_radius.max(f32::MIN_POSITIVE)) * 2.0,
+    let mut neighbours = Neighbours::new(
+        f64::from(bubbles.max_radius.max(f32::MIN_POSITIVE)) * 2.0,
         geometry,
-    };
+    );
     let mut share = 1.0_f64;
     for (index, mark) in shown.iter().enumerate() {
         let (x, y) = geometry.position(mark);
-        for other in neighbours.candidates(mark) {
+        for other in neighbours.candidates(mark.x, mark.y) {
             let (other_x, other_y) = geometry.position(shown[other]);
             let clearance = f64::from(
                 radii[index] + radii[other]
@@ -450,7 +662,7 @@ pub(super) fn tape_radius_limit(
                 share = share.min((x - other_x).hypot(y - other_y) / clearance);
             }
         }
-        neighbours.insert(index, mark);
+        neighbours.insert(index, mark.x, mark.y);
     }
     bubbles.max_radius * share.clamp(0.0, 1.0) as f32
 }

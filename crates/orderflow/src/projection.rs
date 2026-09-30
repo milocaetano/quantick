@@ -22,6 +22,7 @@ mod pending;
 mod tape;
 mod tape_frame;
 mod tape_geometry;
+mod tape_group;
 mod tape_memory;
 mod tape_reuse;
 mod tape_seal;

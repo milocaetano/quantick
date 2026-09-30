@@ -7,9 +7,9 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use super::dots::window_start;
-use super::tape::{
-    TapeReference, combine_tape_facts, merge_tape_dots_with_reference, position_tape_with,
-    tape_radius_limit,
+use super::tape::{TapeReference, position_tape_with, tape_radius_limit};
+use super::tape_group::{
+    Group, NativeKey, PreviewDot, SettledReference, merge_groups, preview_groups,
 };
 use super::tiers::aggression_primitive;
 use super::{
@@ -26,6 +26,7 @@ mod native_fact_tests;
 
 #[path = "tape_past_memory.rs"]
 mod past;
+
 pub use past::{MAX_PAST_BLOCKS, PAST_PRICE_SPAN_BAND, PastTapeMemory};
 
 /// Drawing inputs. Automatic price changes transform the retained facts;
@@ -49,92 +50,9 @@ pub struct TapeDotFrame {
     pub full_quantity: Decimal,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct NativeKey(i64, Decimal);
-
-#[derive(Debug, Clone)]
-struct Group {
-    mark: AggressionPrimitive,
-    price_quantity: Decimal,
-    // Native keys survive venue trade-ID restarts. Keeping their exact facts
-    // also permits a late execution or canonical eviction to update one group.
-    sources: BTreeMap<NativeKey, AggressionPrimitive>,
-}
-
-impl Group {
-    fn of(sources: BTreeMap<NativeKey, AggressionPrimitive>) -> Self {
-        let mark = combine_tape_facts(sources.values().cloned()).expect("a group has native facts");
-        let price_quantity = sources
-            .values()
-            .map(|mark| mark.price * mark.quantity)
-            .sum();
-        Self {
-            mark,
-            price_quantity,
-            sources,
-        }
-    }
-
-    fn visible_at(&self, now_ms: i64, window_ms: i64) -> bool {
-        self.mark.timestamp_quantity
-            >= Decimal::from(now_ms.saturating_sub(window_ms)) * self.mark.quantity
-    }
-
-    fn retained_at(&self, now_ms: i64, window_ms: i64) -> bool {
-        // An expired aggregate still consumes its later native members until
-        // they leave the input. Retain their facts so a genuine late update
-        // can move the complete group's mean back into view without duplication.
-        self.visible_at(now_ms, window_ms)
-            || self
-                .sources
-                .keys()
-                .any(|key| key.0 >= now_ms.saturating_sub(window_ms))
-    }
-
-    fn refresh(&mut self) {
-        if let Some(mark) = combine_tape_facts(self.sources.values().cloned()) {
-            self.mark = mark;
-            self.price_quantity = self
-                .sources
-                .values()
-                .map(|mark| mark.price * mark.quantity)
-                .sum();
-        }
-    }
-
-    fn reference_quantity(&self, opening_bursts: &[i64]) -> Decimal {
-        self.sources
-            .iter()
-            .filter(|(key, _)| !opening_bursts.contains(&key.0))
-            .map(|(_, mark)| mark.quantity)
-            .sum()
-    }
-
-    fn coincides(&self, other: &Self) -> bool {
-        // Rounded quotients only select candidates; exact cross-products
-        // prove equality before any native memberships can be combined.
-        match (
-            self.mark
-                .timestamp_quantity
-                .checked_mul(other.mark.quantity),
-            other
-                .mark
-                .timestamp_quantity
-                .checked_mul(self.mark.quantity),
-            self.price_quantity.checked_mul(other.mark.quantity),
-            other.price_quantity.checked_mul(self.mark.quantity),
-        ) {
-            (Some(a_time), Some(b_time), Some(a_price), Some(b_price)) => {
-                a_time == b_time && a_price == b_price
-            }
-            _ => false,
-        }
-    }
-}
-
 /// Per-pane display history. Only newly closed native windows are merged;
 /// each settled group retains its source facts until its whole centroid exits.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct TapeDotMemory {
     epoch: Option<TapeDotView>,
     settled: Vec<Group>,
@@ -149,7 +67,7 @@ pub struct TapeDotMemory {
 
 /// Every cell of `lineage` before `below_ms` has been reconciled, under the
 /// same floor, bubble switches and eviction horizon.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Ingested {
     lineage: Arc<TapeLineage>,
     below_ms: i64,
@@ -168,6 +86,21 @@ pub struct TapeSource<'a> {
     pub facts: &'a TapeFacts,
     pub overlay: Option<&'a TapeOverlay>,
     pub style: &'a OrderflowRenderStyle,
+}
+
+impl TapeSource<'_> {
+    /// The floor and bubble switches the source's cells are drawn under; a
+    /// reconciled prefix is trusted only under the same ones.
+    fn reading(self) -> (Decimal, (bool, bool, bool)) {
+        let floor = self
+            .overlay
+            .map_or(self.facts.floor, |overlay| overlay.floor);
+        let style = self.style;
+        (
+            floor,
+            (style.lane_aggression_layer, style.show_buy, style.show_sell),
+        )
+    }
 }
 
 impl TapeDotMemory {
@@ -233,6 +166,23 @@ impl TapeDotMemory {
         )
     }
 
+    /// Where the reconciled prefix of `source`'s lineage ends, when the
+    /// memory holds one it can trust at `view`: the same lineage, floor and
+    /// switches, under a horizon that only moved on. `None` rereads it all.
+    fn reconciled_below(&self, source: TapeSource<'_>, view: TapeDotView) -> Option<i64> {
+        let seal = source.facts.seal.as_ref()?;
+        let (floor, switches) = source.reading();
+        self.ingested
+            .as_ref()
+            .filter(|state| {
+                Arc::ptr_eq(&state.lineage, &seal.lineage)
+                    && state.floor == floor
+                    && state.switches == switches
+                    && horizon_holds(state.horizon, view)
+            })
+            .map(|state| state.below_ms)
+    }
+
     /// [`Self::project`] for a sealed published tape and the accepted prints
     /// beside it, reading only what can have changed since the last frame of
     /// the same lineage: the cells after its seal, the overlay, and the
@@ -255,21 +205,9 @@ impl TapeDotMemory {
             return None;
         }
         self.prepare_epoch(view);
-        let floor = source
-            .overlay
-            .map_or(source.facts.floor, |overlay| overlay.floor);
+        let (floor, switches) = source.reading();
+        let below = self.reconciled_below(source, view);
         let style = source.style;
-        let switches = (style.lane_aggression_layer, style.show_buy, style.show_sell);
-        let below = self
-            .ingested
-            .as_ref()
-            .filter(|state| {
-                Arc::ptr_eq(&state.lineage, &seal.lineage)
-                    && state.floor == floor
-                    && state.switches == switches
-                    && horizon_holds(state.horizon, view)
-            })
-            .map(|state| state.below_ms);
         let window =
             |cell: &AggressionCluster| window_start(cell.first_timestamp_ms, view.dot_window_ms);
         let from = source.overlay.map(|overlay| overlay.from_ms);
@@ -376,6 +314,8 @@ impl TapeDotMemory {
                 .insert(key, normalized_native_fact(mark));
         }
         let mut forming = Vec::new();
+        let mut settled_reference = SettledReference::default();
+        let mut last_closed = None;
         for (window, sources) in windows {
             let groups = sources
                 .into_iter()
@@ -385,31 +325,37 @@ impl TapeDotMemory {
                 forming.extend(groups);
                 continue;
             }
-            self.seal_at(closed_at, view, bubbles.max_radius);
+            // The settled groups a later window would no longer keep are only
+            // read again as invisible, so they are let go once, after the last.
+            self.seal_frontier_at(closed_at, view, bubbles.max_radius);
+            last_closed = Some(closed_at);
             let mut candidates = std::mem::take(&mut self.frontier);
             candidates.extend(groups);
             let quantities = reference_quantities(&candidates, opening_bursts);
             let reference = TapeReference {
-                minimum_full: self.reference(
+                minimum_full: settled_reference.minimum_full(
+                    &self.settled,
                     &candidates,
                     sizing,
-                    closed_at,
-                    view.window_ms,
+                    (closed_at, view.window_ms),
                     opening_bursts,
                 ),
                 quantities: &quantities,
             };
-            self.frontier = merge_groups(candidates, view, sizing, bubbles, lane, reference, None);
+            self.frontier = merge_groups(candidates, view, sizing, bubbles, lane, reference);
             changed = true;
+        }
+        if let Some(closed_at) = last_closed {
+            self.settled
+                .retain(|group| group.retained_at(closed_at, view.window_ms));
         }
         if changed {
             self.coalesce_coincident();
         }
         self.seal_at(view.now_ms, view, bubbles.max_radius);
         let has_forming = !forming.is_empty();
-        let mut active = self.frontier.clone();
-        active.extend(forming);
-        let quantities = reference_quantities(&active, opening_bursts);
+        let active: Vec<&Group> = self.frontier.iter().chain(&forming).collect();
+        let quantities = reference_quantities(active.iter().copied(), opening_bursts);
         let reference = TapeReference {
             minimum_full: self.reference(
                 &active,
@@ -420,35 +366,57 @@ impl TapeDotMemory {
             ),
             quantities: &quantities,
         };
-        let active = if has_forming {
-            merge_groups(
-                active,
-                view,
-                sizing,
-                bubbles,
-                lane,
-                reference,
-                Some(view.now_ms),
-            )
-        } else {
-            active
-        };
+        let active = preview_groups(
+            &active,
+            view,
+            sizing,
+            bubbles,
+            lane,
+            reference,
+            has_forming.then_some(view.now_ms),
+            opening_bursts,
+        );
         // The same reference policy sizes frontier merges and final discs;
         // every factual quantity and weighted moment still includes the burst.
         let reference_quantities = (!opening_bursts.is_empty() && sizing.typed_full.is_none())
             .then(|| {
                 self.settled
                     .iter()
-                    .chain(&active)
                     .map(|group| group.reference_quantity(opening_bursts))
+                    .chain(active.iter().map(|dot| dot.reference_quantity))
                     .collect::<Vec<_>>()
             });
-        let mut shown: Vec<_> = self
+        let shown: Vec<_> = self
             .settled
             .iter()
             .map(|group| group.mark.clone())
-            .chain(active.into_iter().map(|group| group.mark))
+            .chain(active.into_iter().map(|dot: PreviewDot| dot.mark))
             .collect();
+        self.draw(
+            shown,
+            reference_quantities,
+            marks,
+            view,
+            sizing,
+            bubbles,
+            lane,
+        )
+    }
+
+    /// Place, size and cap `shown`, the groups' marks with their volumes
+    /// eligible for the automatic reference, and pass the candle marks of
+    /// `marks` through.
+    #[allow(clippy::too_many_arguments)]
+    fn draw(
+        &self,
+        mut shown: Vec<AggressionPrimitive>,
+        reference_quantities: Option<Vec<Decimal>>,
+        marks: &[AggressionPrimitive],
+        view: TapeDotView,
+        sizing: DotSizing,
+        bubbles: &BubbleStyle,
+        lane: &LiveLaneStyle,
+    ) -> TapeDotFrame {
         position_tape_with(
             &mut shown,
             view.now_ms,
@@ -497,13 +465,19 @@ impl TapeDotMemory {
         }
     }
 
-    fn prepare_epoch(&mut self, view: TapeDotView) {
-        if self.epoch.is_some_and(|old| {
+    /// Whether `view` begins a new display epoch: another time window or
+    /// pixel geometry merges every group again from its cells.
+    fn starts_over(&self, view: TapeDotView) -> bool {
+        self.epoch.is_some_and(|old| {
             old.window_ms != view.window_ms
                 || old.dot_window_ms != view.dot_window_ms
                 || old.geometry.width_px != view.geometry.width_px
                 || old.geometry.height_px != view.geometry.height_px
-        }) {
+        })
+    }
+
+    fn prepare_epoch(&mut self, view: TapeDotView) {
+        if self.starts_over(view) {
             self.clear();
         }
         self.epoch = Some(view);
@@ -583,10 +557,7 @@ impl TapeDotMemory {
                     .map(|group| (false, group)),
             );
         for (sealed, group) in retained {
-            let key = (
-                group.mark.timestamp_quantity / group.mark.quantity,
-                group.mark.price,
-            );
+            let key = (group.mean_ms(), group.mark.price);
             let indices = candidates.entry(key).or_default();
             if let Some(index) = indices
                 .iter()
@@ -612,6 +583,14 @@ impl TapeDotMemory {
     }
 
     fn seal_at(&mut self, now_ms: i64, view: TapeDotView, radius: f32) {
+        self.seal_frontier_at(now_ms, view, radius);
+        self.settled
+            .retain(|group| group.retained_at(now_ms, view.window_ms));
+    }
+
+    /// Settle the frontier groups no dot at `now_ms` can reach any more, and
+    /// let go of the frontier groups `now_ms` no longer keeps.
+    fn seal_frontier_at(&mut self, now_ms: i64, view: TapeDotView, radius: f32) {
         let frontier_ms = (2.0 * f64::from(radius) * view.window_ms as f64
             / f64::from(view.geometry.width_px.max(f32::MIN_POSITIVE)))
         .ceil()
@@ -624,15 +603,13 @@ impl TapeDotMemory {
                 self.frontier.push(group);
             }
         }
-        self.settled
-            .retain(|group| group.retained_at(now_ms, view.window_ms));
         self.frontier
             .retain(|group| group.retained_at(now_ms, view.window_ms));
     }
 
     fn reference(
         &self,
-        active: &[Group],
+        active: &[&Group],
         sizing: DotSizing,
         now_ms: i64,
         window_ms: i64,
@@ -644,7 +621,7 @@ impl TapeDotMemory {
         let (eligible, factual) = self
             .settled
             .iter()
-            .chain(active)
+            .chain(active.iter().copied())
             .filter(|group| group.visible_at(now_ms, window_ms))
             .map(|group| {
                 (
@@ -683,12 +660,15 @@ fn horizon_holds(reconciled: Option<i64>, view: TapeDotView) -> bool {
     }
 }
 
-fn reference_quantities(groups: &[Group], opening_bursts: &[i64]) -> Vec<Decimal> {
+fn reference_quantities<'a>(
+    groups: impl IntoIterator<Item = &'a Group>,
+    opening_bursts: &[i64],
+) -> Vec<Decimal> {
     if opening_bursts.is_empty() {
         Vec::new()
     } else {
         groups
-            .iter()
+            .into_iter()
             .map(|group| group.reference_quantity(opening_bursts))
             .collect()
     }
@@ -774,99 +754,4 @@ fn same_native_fact(left: &AggressionPrimitive, right: &AggressionPrimitive) -> 
         && *matched_fraction == right.matched_fraction
         && liquidity_event_ids == &right.liquidity_event_ids
         && *folded_marks == right.folded_marks
-}
-
-/// The existing geometric merger operates on indivisible retained groups.
-/// Temporary local IDs identify those groups, never a venue's reused IDs.
-fn merge_groups(
-    groups: Vec<Group>,
-    view: TapeDotView,
-    sizing: DotSizing,
-    bubbles: &BubbleStyle,
-    lane: &LiveLaneStyle,
-    reference: TapeReference<'_>,
-    preview_now: Option<i64>,
-) -> Vec<Group> {
-    if groups.len() < 2 {
-        return groups;
-    }
-    let low_time = groups
-        .iter()
-        .map(|group| group.mark.first_timestamp_ms)
-        .min()
-        .unwrap()
-        .saturating_sub(1);
-    let high_time = preview_now
-        .unwrap_or_else(|| {
-            groups
-                .iter()
-                .map(|group| group.mark.last_timestamp_ms)
-                .max()
-                .unwrap()
-                .saturating_add(1)
-        })
-        .max(low_time.saturating_add(1));
-    let low_price = groups
-        .iter()
-        .map(|group| group.mark.price)
-        .min()
-        .unwrap()
-        .min(view.prices.low);
-    let high_price = groups
-        .iter()
-        .map(|group| group.mark.price)
-        .max()
-        .unwrap()
-        .max(view.prices.high);
-    let prices = PriceWindow::new(low_price, high_price).expect("the view price span is positive");
-    let time_span = Decimal::from(high_time) - Decimal::from(low_time);
-    let geometry = TapeDotGeometry {
-        left_x: 0.0,
-        right_x: 1.0,
-        width_px: view.geometry.width_px
-            * (time_span / Decimal::from(view.window_ms))
-                .to_f32()
-                .unwrap_or(1.0),
-        height_px: view.geometry.height_px
-            * ((high_price - low_price) / (view.prices.high - view.prices.low))
-                .to_f32()
-                .unwrap_or(1.0),
-    };
-    let tagged: Vec<_> = groups
-        .iter()
-        .enumerate()
-        .map(|(index, group)| {
-            let mut mark = group.mark.clone();
-            mark.agg_id = index as u64 + 1;
-            mark.agg_ids = vec![mark.agg_id];
-            mark.x = if preview_now.is_some_and(|now| {
-                window_start(mark.last_timestamp_ms, view.dot_window_ms)
-                    == window_start(now, view.dot_window_ms)
-            }) {
-                1.0
-            } else {
-                ((mark.timestamp_quantity / mark.quantity - Decimal::from(low_time)) / time_span)
-                    .to_f64()
-                    .unwrap_or_default()
-            };
-            mark.y = prices.y_unclamped(mark.price).unwrap_or_default();
-            mark
-        })
-        .collect();
-    merge_tape_dots_with_reference(&tagged, sizing, bubbles, lane, geometry, reference)
-        .into_iter()
-        .map(|merged| {
-            let sources = merged
-                .agg_ids
-                .iter()
-                .flat_map(|id| {
-                    groups[*id as usize - 1]
-                        .sources
-                        .iter()
-                        .map(|(key, source)| (*key, source.clone()))
-                })
-                .collect();
-            Group::of(sources)
-        })
-        .collect()
 }
