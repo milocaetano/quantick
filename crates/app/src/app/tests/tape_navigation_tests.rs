@@ -519,3 +519,90 @@ fn a_drag_in_tape_only_pans_the_price_axis_and_the_tapes_time() {
         "the sideways drag took the tape into the past"
     );
 }
+
+/// A hand dragging the chart up and down over the tape, pressed at `at`:
+/// every frame moves it 15 px down, then back up past the press, and a few
+/// pixels sideways either way. Returns the tape's end after each frame.
+fn jittery_vertical_drag(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+    at: egui::Pos2,
+) -> Vec<TapeEnd> {
+    run_frame_with_events(
+        app,
+        ctx,
+        vec![egui::Event::PointerMoved(at), pointer_button(at, true)],
+    );
+    let sideways = [3.0, -2.0, 4.0, -3.0, 2.0, 3.0, -1.0, 2.0, -2.0, 3.0];
+    let vertical = [
+        15.0, 15.0, 15.0, 15.0, -15.0, -15.0, -15.0, -15.0, -15.0, 15.0,
+    ];
+    let mut pointer = at;
+    let mut ends = Vec::new();
+    for (dx, dy) in sideways.into_iter().zip(vertical) {
+        pointer += egui::vec2(dx, dy);
+        run_frame_with_events(app, ctx, vec![egui::Event::PointerMoved(pointer)]);
+        ends.push(app.active_tab().tape().tape_end());
+    }
+    run_frame_with_events(
+        app,
+        ctx,
+        vec![
+            egui::Event::PointerMoved(pointer),
+            pointer_button(pointer, false),
+        ],
+    );
+    run_frame(app, ctx);
+    ends.push(app.active_tab().tape().tape_end());
+    ends
+}
+
+/// Up and down over the tape pans the price axis, and the few pixels a hand
+/// drifts sideways doing it never take the tape into the past — which is
+/// what takes the book off it (`OrderflowView::draw_background`). Trader
+/// 2026-09-30: dragging the chart up and down over the tape, the book
+/// disappeared and came back now and then.
+#[test]
+fn a_vertical_drag_that_wobbles_sideways_keeps_the_tape_live() {
+    let ctx = egui::Context::default();
+    let (mut app, tape, _) = split_app(&ctx);
+    let before = candles_view(&app);
+    let ends = jittery_vertical_drag(&mut app, &ctx, tape);
+    assert!(
+        ends.iter().all(|end| end.is_live()),
+        "the sideways wobble moved the tape off live: {ends:?}"
+    );
+    assert!(
+        !app.active_tab().flow_pane.price_view.is_auto(),
+        "the drag panned the price axis"
+    );
+    assert_eq!(candles_view(&app), before, "and never the candles");
+}
+
+/// The same wobble in tape only, where the tape is the whole canvas.
+#[test]
+fn a_vertical_drag_that_wobbles_sideways_keeps_the_tape_live_in_tape_only() {
+    let ctx = egui::Context::default();
+    let (mut app, _, _) = split_app(&ctx);
+    app.active_tab_mut()
+        .tape_mut()
+        .set_layer_switch(quantick_layers::OrderflowSwitch::TapeOnly, true);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(app.active_tab().tape().cached_config().tape_only());
+    let chart = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .chart_rect
+        .expect("the canvas laid out");
+    let ends = jittery_vertical_drag(&mut app, &ctx, chart.center());
+    assert!(
+        ends.iter().all(|end| end.is_live()),
+        "the sideways wobble moved the tape off live: {ends:?}"
+    );
+    assert!(
+        !app.active_tab().flow_pane.price_view.is_auto(),
+        "the drag panned the price axis"
+    );
+}
