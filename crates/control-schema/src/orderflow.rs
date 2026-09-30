@@ -19,6 +19,9 @@
 //! rule where it does not; the feed scope owns that declaration for the market
 //! as a whole and it is named here rather than restated per level.
 
+mod candle_aggression;
+pub use candle_aggression::{CandleAggressionSnapshot, CandleMarkSnapshot};
+
 use quantick_control_host::wire::{
     AvailabilitySnapshot, PaneSideDto, canonical_decimal, canonical_f32, wire_usize,
 };
@@ -263,6 +266,9 @@ pub struct TabBubblesSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PaneBubblesSnapshot {
+    /// Last painted candle aggression, independent of the tape worker.
+    #[serde(default)]
+    pub candle_aggression: Option<CandleAggressionSnapshot>,
     pub pane_id: WireU64,
     pub side: PaneSideDto,
     pub engine: AvailabilitySnapshot,
@@ -271,9 +277,9 @@ pub struct PaneBubblesSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BubblesStateSnapshot {
-    /// Aggression bubbles are drawn over the chart. Beside the native tape
-    /// they are one summary bubble per tick candle, as layer
-    /// `candle_aggression` draws it; `layers.visibility` names any block.
+    /// Aggression bubbles are drawn over the chart. Beside the native tape,
+    /// `candle_aggression` draws price-local marks on the tick candles;
+    /// `layers.visibility` names any block.
     pub enabled: bool,
     /// And over the live lane, which is a separate switch.
     pub lane_enabled: bool,

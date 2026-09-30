@@ -1,12 +1,9 @@
-//! Each quiet candle dot sums its factual native levels at their weighted price.
-//! Zoomed out, neighbouring candles fold into one mark by absolute slot: the
-//! sums stay exact, panning never regroups, and area follows volume.
-
+//! Price distribution, exact conservation and stable axis detail.
 use super::*;
 use crate::projection::{
-    CANDLE_GROUP_HOLD_BAND, CANDLE_GROUP_MIN_WIDTH_PX, CANDLE_MARK_MAX_RADIUS_PX, CandleDot,
-    CandleDotFrame, CandleDotGrid, CandleDotView, CandleFootprint, CandleFootprintSource,
-    CandleGroupMemory, project_candle_dots,
+    CANDLE_MARK_MAX_RADIUS_PX, CandleDotFrame, CandleDotGrid, CandleDotView, CandleFootprint,
+    CandleFootprintSource, CandleGroupMemory, CandlePriceMemory, CandleScaleMemory,
+    project_candle_dots,
 };
 use quantick_engine::{BarFootprint, FootprintBuilder};
 
@@ -19,15 +16,16 @@ fn print(id: u64, price: &str, quantity: &str, side: Side) -> Trade {
         side,
     }
 }
-
-fn ladder(group: &str, prints: &[Trade]) -> BarFootprint {
-    let mut builder = FootprintBuilder::new(dec(group), 2_000);
+fn ladder(prints: &[Trade]) -> BarFootprint {
+    ladder_on("5", prints)
+}
+fn ladder_on(step: &str, prints: &[Trade]) -> BarFootprint {
+    let mut builder = FootprintBuilder::new(dec(step), 2_000);
     for trade in prints {
         builder.push(trade);
     }
     builder.close().unwrap()
 }
-
 fn factual(slot: usize, ladder: &BarFootprint) -> CandleFootprint<'_> {
     CandleFootprint {
         slot,
@@ -35,252 +33,263 @@ fn factual(slot: usize, ladder: &BarFootprint) -> CandleFootprint<'_> {
         source: CandleFootprintSource::TradeBuilt,
     }
 }
-
 fn grid() -> Option<CandleDotGrid> {
     Some(CandleDotGrid {
         step: dec("5"),
         reference_price: dec("100"),
     })
 }
-
 fn view() -> CandleDotView {
     CandleDotView {
         prices: PriceWindow::new(dec("90"), dec("120")).unwrap(),
-        candle_width_px: 32.0,
+        candle_width_px: 16.0,
         visible: (0, 64),
         candles_per_mark: 1,
+        price_ticks_per_mark: 1,
+        height_px: 120.0,
     }
 }
-
-fn grouped(
-    candles_per_mark: usize,
-    candle_width_px: f32,
-    visible: (usize, usize),
-) -> CandleDotView {
-    CandleDotView {
-        candle_width_px,
-        visible,
-        candles_per_mark,
-        ..view()
-    }
-}
-
-/// A mark without its radius: the facts grouping and panning must keep.
-fn facts(dot: &CandleDot) -> (usize, usize, Decimal, Decimal, Decimal, u64) {
-    (
-        dot.slot,
-        dot.last_slot,
-        dot.price,
-        dot.buy_quantity,
-        dot.sell_quantity,
-        dot.trade_count,
-    )
-}
-
 fn totals(frame: &CandleDotFrame) -> (Decimal, Decimal, u64) {
     frame.marks.iter().fold(
         (Decimal::ZERO, Decimal::ZERO, 0),
-        |(buy, sell, count), dot| {
+        |(buy, sell, count), mark| {
             (
-                buy + dot.buy_quantity,
-                sell + dot.sell_quantity,
-                count + dot.trade_count,
+                buy + mark.buy_quantity,
+                sell + mark.sell_quantity,
+                count + mark.trade_count,
             )
         },
     )
 }
 
 #[test]
-fn one_candle_dot_preserves_exact_sides_count_and_quantity_weighted_price() {
-    let first = ladder(
-        "5",
-        &[
-            print(1, "100", "0.1", Side::Buy),
-            print(2, "100", "0.2", Side::Sell),
-            print(3, "105", "1.2", Side::Buy),
-        ],
-    );
-    let next = ladder("5", &[print(4, "100", "0.4", Side::Sell)]);
-    let frame = project_candle_dots([factual(17, &first), factual(18, &next)], grid(), view());
-    assert_eq!(frame.full_quantity, dec("1.5"));
-    assert_eq!(totals(&frame), (dec("1.3"), dec("0.6"), 4));
-    assert_eq!(
-        frame
-            .marks
-            .iter()
-            .map(|dot| (dot.slot, dot.price))
-            .collect::<Vec<_>>(),
-        [(17, dec("104")), (18, dec("100"))]
-    );
-    assert_eq!(frame.marks[0].buy_quantity, dec("1.3"));
-    assert_eq!(frame.marks[0].sell_quantity, dec("0.2"));
-    assert_eq!(frame.marks[0].trade_count, 3);
-    assert_eq!(
-        frame.marks[0].price,
-        (dec("100") * dec("0.3") + dec("105") * dec("1.2")) / dec("1.5"),
-        "price is the exact Decimal moment divided once by the whole candle quantity"
-    );
-    let reversed = project_candle_dots([factual(18, &next), factual(17, &first)], grid(), view());
-    assert_eq!(
-        frame.marks, reversed.marks,
-        "input iteration order is not display identity"
-    );
-}
-
-#[test]
-fn visible_candle_totals_supply_the_exact_decimal_area_reference() {
-    let small = ladder("5", &[print(1, "100", "1", Side::Buy)]);
-    let large = ladder(
-        "5",
-        &[
-            print(2, "100", "1", Side::Sell),
-            print(3, "110", "3", Side::Sell),
-        ],
-    );
-    let hidden = ladder("5", &[print(4, "150", "100000", Side::Buy)]);
+fn equal_total_candles_retain_opposite_price_distributions_and_sides() {
+    // The execution sides are independent of candle direction.
+    let low_strong = ladder(&[
+        print(1, "100", "400", Side::Sell),
+        print(2, "115", "100", Side::Buy),
+    ]);
+    let high_strong = ladder(&[
+        print(3, "100", "100", Side::Buy),
+        print(4, "115", "400", Side::Sell),
+    ]);
     let frame = project_candle_dots(
-        [factual(7, &small), factual(8, &large), factual(9, &hidden)],
+        [factual(0, &low_strong), factual(1, &high_strong)],
         grid(),
         view(),
     );
-    assert_eq!(frame.full_quantity, dec("4"));
-    assert_eq!(frame.marks.len(), 2);
-    assert_eq!(frame.marks[0].radius_px, CANDLE_MARK_MAX_RADIUS_PX / 2.0);
-    assert_eq!(frame.marks[1].radius_px, CANDLE_MARK_MAX_RADIUS_PX);
+    assert_eq!(frame.marks.len(), 4);
+    assert_eq!(totals(&frame), (dec("200"), dec("800"), 4));
+    let facts: Vec<_> = frame
+        .marks
+        .iter()
+        .map(|m| (m.slot, m.price, m.buy_quantity, m.sell_quantity))
+        .collect();
     assert_eq!(
-        frame.marks[1].radius_px.powi(2),
-        4.0 * frame.marks[0].radius_px.powi(2)
+        facts,
+        [
+            (0, dec("100"), dec("0"), dec("400")),
+            (0, dec("115"), dec("100"), dec("0")),
+            (1, dec("100"), dec("100"), dec("0")),
+            (1, dec("115"), dec("0"), dec("400"))
+        ]
     );
-    assert_eq!(frame.marks[1].price, dec("107.5"));
-    assert_eq!(totals(&frame), (dec("1"), dec("4"), 3));
-}
-
-#[test]
-fn candle_visibility_filters_the_weighted_center_after_summing_every_native_row() {
-    let crossing = ladder(
-        "5",
-        &[
-            print(1, "80", "1", Side::Buy),
-            print(2, "130", "1", Side::Sell),
-        ],
-    );
-    let mostly_outside = ladder(
-        "5",
-        &[
-            print(3, "100", "1", Side::Buy),
-            print(4, "150", "9", Side::Sell),
-        ],
-    );
-    let frame = project_candle_dots(
-        [factual(7, &crossing), factual(8, &mostly_outside)],
+    for (strong, weak) in [(0, 1), (3, 2)] {
+        assert_eq!(
+            frame.marks[strong].radius_px,
+            2.0 * frame.marks[weak].radius_px
+        );
+    }
+    let reversed = project_candle_dots(
+        [factual(1, &high_strong), factual(0, &low_strong)],
         grid(),
         view(),
     );
-    assert_eq!(frame.marks.len(), 1);
-    assert_eq!(frame.marks[0].slot, 7);
-    assert_eq!(frame.marks[0].price, dec("105"));
-    assert_eq!(totals(&frame), (Decimal::ONE, Decimal::ONE, 2));
-    assert_eq!(frame.full_quantity, dec("2"));
+    assert_eq!(frame, reversed, "input order cannot change identity");
+}
+
+#[test]
+fn common_scale_keeps_four_to_one_and_subpixel_area_ratios_without_floors() {
+    let members = ["400", "100", "0.01"].map(|q| ladder(&[print(1, "100", q, Side::Buy)]));
+    let frame = project_candle_dots(
+        members.iter().enumerate().map(|(s, l)| factual(s, l)),
+        grid(),
+        view(),
+    );
+    assert_eq!(frame.full_quantity, dec("400"));
     assert_eq!(frame.marks[0].radius_px, CANDLE_MARK_MAX_RADIUS_PX);
+    assert_eq!(
+        frame.marks[0].radius_px.powi(2) / frame.marks[1].radius_px.powi(2),
+        4.0
+    );
+    assert!(frame.marks[2].radius_px < 0.1);
+    assert!(
+        (frame.marks[2].radius_px.powi(2) / frame.marks[0].radius_px.powi(2) - 0.000025).abs()
+            < 1e-10
+    );
+    assert_eq!(totals(&frame), (dec("500.01"), dec("0"), 3));
 }
 
 #[test]
-fn a_current_partial_has_one_dot_and_updates_without_closing_the_candle() {
-    let mut builder = FootprintBuilder::new(dec("5"), 2_000);
+fn horizontal_and_vertical_zoom_conserve_exact_sides_counts_and_price_spans() {
+    let members = (0..8)
+        .map(|id| {
+            ladder(&[
+                print(id * 2, "100", "0.1", Side::Buy),
+                print(id * 2 + 1, "105", "0.2", Side::Sell),
+            ])
+        })
+        .collect::<Vec<_>>();
+    for candles in [1, 2, 4, 8] {
+        for ticks in [1, 2, 4, 8] {
+            let frame = project_candle_dots(
+                members.iter().enumerate().map(|(s, l)| factual(s, l)),
+                grid(),
+                CandleDotView {
+                    candles_per_mark: candles,
+                    price_ticks_per_mark: ticks,
+                    ..view()
+                },
+            );
+            assert_eq!(totals(&frame), (dec("0.8"), dec("1.6"), 16));
+            for mark in &frame.marks {
+                assert_eq!(mark.last_slot - mark.slot + 1, candles);
+                assert!(mark.price >= mark.price_low && mark.price <= mark.price_high);
+                if ticks > 1 {
+                    assert_eq!((mark.price_low, mark.price_high), (dec("100"), dec("105")));
+                    assert_eq!(
+                        mark.price,
+                        (dec("100") * dec("0.1") + dec("105") * dec("0.2")) / dec("0.3")
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn panning_owns_whole_absolute_groups_and_never_inflates_retained_marks() {
+    let members = (0..12)
+        .map(|id| {
+            ladder(&[print(
+                id,
+                "100",
+                if id < 4 { "400" } else { "100" },
+                Side::Buy,
+            )])
+        })
+        .collect::<Vec<_>>();
+    let project = |visible| {
+        let view = CandleDotView {
+            visible,
+            candles_per_mark: 4,
+            candle_width_px: 2.0,
+            ..view()
+        };
+        project_candle_dots(view.trade_built(&members, 2, None), grid(), view)
+    };
+    let mut memory = CandleScaleMemory::default();
+    let mut left = project((3, 11));
+    memory.apply(&mut left);
+    let mut right = project((8, 13));
+    memory.apply(&mut right);
+    assert_eq!(right.full_quantity, left.full_quantity);
+    assert_eq!(left.marks[0].slot, 2, "prefix slots have no ladder");
+    assert_eq!((left.marks[1].slot, left.marks[1].last_slot), (4, 7));
+    let shared = left.marks.iter().find(|m| m.slot == 8).unwrap();
+    assert_eq!(
+        &right.marks[0], shared,
+        "panning retains sums, span, price and radius"
+    );
+    assert_eq!(totals(&left), (dec("2200"), dec("0"), 10));
+    let mut changed_tier = project_candle_dots([factual(8, &members[8])], grid(), view());
+    memory.apply(&mut changed_tier);
+    assert_eq!(
+        changed_tier.full_quantity,
+        dec("100"),
+        "a new tier starts its own reference"
+    );
+    let mut returned = project((8, 13));
+    memory.apply(&mut returned);
+    assert_eq!(
+        returned.full_quantity, left.full_quantity,
+        "returning to a tier retains its previously observed reference"
+    );
+}
+
+#[test]
+fn a_live_partial_updates_each_price_band_without_a_bar_close() {
+    let mut builder = FootprintBuilder::new(dec("5"), 2000);
     builder.push(&print(1, "100", "9", Side::Buy));
     let before = project_candle_dots([factual(18, builder.partial().unwrap())], grid(), view());
-    assert_eq!(before.marks.len(), 1);
-    assert_eq!(before.marks[0].price, dec("100"));
     builder.push(&print(2, "105", "16", Side::Sell));
     let after = project_candle_dots([factual(18, builder.partial().unwrap())], grid(), view());
-    assert_eq!(after.marks.len(), 1);
-    assert_eq!(after.marks[0].slot, 18);
-    assert_eq!(after.marks[0].price, dec("103.2"));
+    assert_eq!(after.marks.len(), 2);
+    assert_eq!(after.marks[0].buy_quantity, before.marks[0].buy_quantity);
+    assert_eq!(after.marks[1].price, dec("105"));
     assert_eq!(totals(&after), (dec("9"), dec("16"), 2));
-    assert_eq!(after.full_quantity, dec("25"));
 }
 
 #[test]
-fn candle_radius_stays_inside_its_column_without_a_native_price_row_cap() {
-    let current = ladder("5", &[print(1, "100", "10", Side::Buy)]);
-    let narrow = project_candle_dots(
-        [factual(0, &current)],
-        grid(),
-        CandleDotView {
-            candle_width_px: 4.0,
-            ..view()
-        },
+fn price_visibility_never_pulls_outside_execution_rows_into_a_candle_centroid() {
+    let crossing = ladder(&[
+        print(1, "80", "1", Side::Buy),
+        print(2, "130", "1", Side::Sell),
+    ]);
+    assert!(
+        project_candle_dots([factual(0, &crossing)], grid(), view())
+            .marks
+            .is_empty()
     );
-    assert_eq!(narrow.marks[0].radius_px, 2.0);
-    let broad_price_range = project_candle_dots(
-        [factual(0, &current)],
-        grid(),
-        CandleDotView {
-            prices: PriceWindow::new(Decimal::ZERO, dec("10000")).unwrap(),
-            ..view()
-        },
+}
+
+#[test]
+fn price_bands_use_floor_for_negative_prices_and_aligned_offset_grids() {
+    let native = ladder_on(
+        "1",
+        &[
+            print(1, "-3", "1", Side::Buy),
+            print(2, "-2", "1", Side::Sell),
+            print(3, "1", "1", Side::Buy),
+        ],
     );
+    let grid = Some(CandleDotGrid {
+        step: dec("1"),
+        reference_price: dec("1"),
+    });
+    let view = CandleDotView {
+        prices: PriceWindow::new(dec("-10"), dec("10")).unwrap(),
+        price_ticks_per_mark: 4,
+        ..view()
+    };
+    let frame = project_candle_dots([factual(0, &native)], grid, view);
+    assert_eq!(frame.marks.len(), 2);
     assert_eq!(
-        broad_price_range.marks[0].radius_px,
-        CANDLE_MARK_MAX_RADIUS_PX
+        (frame.marks[0].price_low, frame.marks[0].price_high),
+        (dec("-3"), dec("-2"))
     );
+    assert_eq!(frame.marks[1].price, dec("1"));
 }
 
 #[test]
-fn fine_aligned_rows_are_exact_but_offset_or_incompatible_grids_are_not() {
+fn coarse_capped_approximate_and_incompatible_capture_grids_do_not_invent_prices() {
     let prints = [
         print(1, "100", "1", Side::Buy),
         print(2, "105", "3", Side::Sell),
     ];
-    let fine = ladder("1", &prints);
-    let frame = project_candle_dots([factual(0, &fine)], grid(), view());
-    assert_eq!(frame.marks.len(), 1);
-    assert_eq!(frame.marks[0].price, dec("103.75"));
-    let native = ladder("5", &prints);
+    let native = ladder(&prints);
+    let fine = ladder_on("1", &prints);
     assert_eq!(
-        frame,
         project_candle_dots([factual(0, &native)], grid(), view()),
-        "empty sub-tick capture buckets cannot shrink native-price dots"
+        project_candle_dots([factual(0, &fine)], grid(), view())
     );
-    let incompatible = ladder("2", &[print(1, "105", "3", Side::Buy)]);
-    assert!(
-        project_candle_dots([factual(0, &incompatible)], grid(), view())
-            .marks
-            .is_empty()
-    );
-    let offset = ladder("5", &[print(1, "102", "3", Side::Buy)]);
-    let offset_grid = Some(CandleDotGrid {
-        step: dec("5"),
-        reference_price: dec("102"),
-    });
-    assert!(
-        project_candle_dots([factual(0, &offset)], offset_grid, view())
-            .marks
-            .is_empty()
-    );
-    assert!(
-        project_candle_dots([factual(0, &fine)], None, view())
-            .marks
-            .is_empty()
-    );
-}
-
-#[test]
-fn a_coarse_base_or_cap_fold_cannot_claim_an_exact_execution_price() {
-    let prints = [
-        print(1, "100", "2", Side::Buy),
-        print(2, "105", "3", Side::Sell),
-    ];
-    let coarse = ladder("10", &prints);
-    assert!(
-        !coarse.is_aggregated(),
-        "a configured coarse base is distinct from a cap fold"
-    );
-    assert!(
-        project_candle_dots([factual(0, &coarse)], grid(), view())
-            .marks
-            .is_empty()
-    );
+    for bad in [ladder_on("10", &prints), ladder_on("2", &prints)] {
+        assert!(
+            project_candle_dots([factual(0, &bad)], grid(), view())
+                .marks
+                .is_empty()
+        );
+    }
     let mut capped = FootprintBuilder::new(dec("5"), 1);
     for trade in &prints {
         capped.push(trade);
@@ -292,46 +301,72 @@ fn a_coarse_base_or_cap_fold_cannot_claim_an_exact_execution_price() {
             .marks
             .is_empty()
     );
-}
-
-#[test]
-fn an_approximated_venue_ladder_never_becomes_execution_dots() {
-    let first = print(1, "100", "2", Side::Buy);
-    let mut bar = Bar::opened_by(&first);
-    bar.extend(&print(2, "110", "3", Side::Sell));
-    let guessed = BarFootprint::approximated(&bar, dec("5"), 2_000).unwrap();
-    assert!(!guessed.is_aggregated());
-    let frame = project_candle_dots(
-        [CandleFootprint {
-            slot: 0,
-            ladder: &guessed,
-            source: CandleFootprintSource::Approximate,
-        }],
-        grid(),
-        view(),
+    let guessed = CandleFootprint {
+        source: CandleFootprintSource::Approximate,
+        ..factual(0, &native)
+    };
+    assert!(
+        project_candle_dots([guessed], grid(), view())
+            .marks
+            .is_empty()
     );
-    assert!(frame.marks.is_empty());
-    assert_eq!(frame.full_quantity, Decimal::ONE);
+    assert!(
+        project_candle_dots([factual(0, &native)], None, view())
+            .marks
+            .is_empty()
+    );
+    let offset = Some(CandleDotGrid {
+        step: dec("5"),
+        reference_price: dec("102"),
+    });
+    assert!(
+        project_candle_dots([factual(0, &native)], offset, view())
+            .marks
+            .is_empty()
+    );
 }
 
 #[test]
-fn invalid_geometry_or_native_step_cannot_emit_nonfinite_dots() {
-    let current = ladder("5", &[print(1, "100", "10", Side::Buy)]);
-    for invalid in [
+fn independent_horizontal_and_vertical_ladders_hold_their_dead_bands() {
+    let mut candles = CandleGroupMemory::default();
+    let mut prices = CandlePriceMemory::default();
+    assert_eq!(candles.choose(8.0), 1);
+    assert_eq!(prices.choose(8.0), 1);
+    for _ in 0..3 {
+        assert_eq!(candles.choose(5.9), 2);
+        assert_eq!(prices.choose(5.9), 2);
+        assert_eq!(candles.choose(7.4), 2);
+        assert_eq!(prices.choose(7.4), 2);
+    }
+    assert_eq!(candles.choose(7.5), 1);
+    assert_eq!(prices.choose(7.5), 1);
+    assert_eq!(prices.choose(0.1), 64);
+    assert_eq!(candles.choose(8.0), 1);
+    assert_eq!(candles.choose(1.0), 8);
+    assert_eq!(prices.choose(8.0), 1);
+}
+
+#[test]
+fn invalid_geometry_is_empty_and_compact_cap_is_shared_by_every_mark() {
+    let native = ladder(&[
+        print(1, "100", "400", Side::Buy),
+        print(2, "105", "100", Side::Sell),
+    ]);
+    for bad in [
         CandleDotView {
-            candle_width_px: 0.0,
+            height_px: f32::NAN,
             ..view()
         },
         CandleDotView {
-            candle_width_px: f32::NAN,
+            height_px: 0.0,
+            ..view()
+        },
+        CandleDotView {
+            price_ticks_per_mark: 0,
             ..view()
         },
         CandleDotView {
             candle_width_px: f32::INFINITY,
-            ..view()
-        },
-        CandleDotView {
-            candle_width_px: -1.0,
             ..view()
         },
         CandleDotView {
@@ -340,268 +375,19 @@ fn invalid_geometry_or_native_step_cannot_emit_nonfinite_dots() {
         },
     ] {
         assert!(
-            project_candle_dots([factual(0, &current)], grid(), invalid)
+            project_candle_dots([factual(0, &native)], grid(), bad)
                 .marks
                 .is_empty()
         );
     }
-    let invalid_grid = Some(CandleDotGrid {
-        step: Decimal::ZERO,
-        reference_price: dec("100"),
-    });
-    assert!(
-        project_candle_dots([factual(0, &current)], invalid_grid, view())
-            .marks
-            .is_empty()
-    );
-}
-
-#[test]
-fn a_group_sums_its_members_exactly_at_their_quantity_weighted_price() {
-    let members = [
-        ladder(
-            "5",
-            &[
-                print(1, "100", "1", Side::Buy),
-                print(2, "105", "2", Side::Sell),
-            ],
-        ),
-        ladder("5", &[print(3, "110", "3", Side::Buy)]),
-        ladder("5", &[print(4, "100", "0.5", Side::Sell)]),
-        ladder(
-            "5",
-            &[
-                print(5, "115", "1.5", Side::Buy),
-                print(6, "115", "0.5", Side::Sell),
-            ],
-        ),
-        ladder("5", &[print(7, "95", "7", Side::Sell)]),
-        // Its own weighted price is off the window; the group's is not.
-        ladder("5", &[print(8, "150", "1", Side::Buy)]),
-    ];
-    let inputs = || {
-        members
-            .iter()
-            .enumerate()
-            .map(|(index, member)| factual(8 + index, member))
-    };
-    let view = grouped(4, 2.0, (8, 14));
-    let frame = project_candle_dots(inputs(), grid(), view);
-    assert_eq!(
-        frame.marks.iter().map(facts).collect::<Vec<_>>(),
-        [
-            (8, 11, dec("920") / dec("8.5"), dec("5.5"), dec("3"), 6),
-            (12, 13, dec("101.875"), dec("1"), dec("7"), 2),
-        ],
-        "slots 8..=11 and 12..=13 fold by slot / 4: exact Decimal sums, one \
-         division of the summed price moment"
-    );
-    assert_eq!(frame.full_quantity, dec("8.5"));
-    let alone = project_candle_dots(inputs().take(4), grid(), grouped(1, 32.0, (8, 12)));
-    assert_eq!(alone.marks.len(), 4);
-    assert_eq!(
-        totals(&alone),
-        (dec("5.5"), dec("3"), 6),
-        "the group's sums are its candles' sums"
-    );
-    let reversed: Vec<_> = inputs().collect::<Vec<_>>().into_iter().rev().collect();
-    assert_eq!(
-        project_candle_dots(reversed, grid(), view).marks,
-        frame.marks,
-        "input order is not a group's identity"
-    );
-}
-
-#[test]
-fn panning_never_regroups_and_an_edge_group_sums_its_hidden_members() {
-    // Twelve closed candles after a two-candle venue prefix, so closed ladder
-    // `i` is slot `2 + i`, then the forming candle at slot 14.
-    let closed: Vec<BarFootprint> = (0..12_u64)
-        .map(|index| {
-            let price = (100 + 5 * (index % 4)).to_string();
-            let quantity = (index + 1).to_string();
-            let side = if index % 3 == 0 {
-                Side::Sell
-            } else {
-                Side::Buy
-            };
-            ladder("5", &[print(index + 1, &price, &quantity, side)])
-        })
-        .collect();
-    let forming = ladder("5", &[print(99, "110", "2", Side::Sell)]);
-    let project = |candles_per_mark: usize, visible: (usize, usize)| {
-        let view = grouped(candles_per_mark, 2.0, visible);
-        let inputs = view.trade_built(&closed, 2, Some((14, &forming)));
-        project_candle_dots(inputs, grid(), view)
-    };
-    assert_eq!(grouped(4, 2.0, (5, 11)).input_slots(), 4..12);
-    assert_eq!(grouped(4, 2.0, (8, 12)).input_slots(), 8..12);
-    let left = project(4, (5, 11));
-    let right = project(4, (7, 15));
-    let far_left = project(4, (1, 6));
-    let spans = |frame: &CandleDotFrame| {
-        frame
-            .marks
-            .iter()
-            .map(|dot| (dot.slot, dot.last_slot))
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(
-        spans(&left),
-        [(4, 7), (8, 11)],
-        "slot 4 is off screen and still in its group"
-    );
-    assert_eq!(
-        spans(&right),
-        [(4, 7), (8, 11), (12, 14)],
-        "the forming candle joins the group its slot names"
-    );
-    assert_eq!(
-        spans(&far_left),
-        [(2, 3), (4, 7)],
-        "venue prefix slots own no ladder"
-    );
-    for (panned, reference) in [(&left, &right), (&far_left, &left)] {
-        for mark in &panned.marks {
-            let same = reference.marks.iter().find(|other| other.slot == mark.slot);
-            if let Some(same) = same {
-                assert_eq!(facts(mark), facts(same), "a pan changed a group's sums");
-            }
-        }
-    }
-    let per_candle = project(1, (4, 8));
-    assert_eq!(per_candle.marks.len(), 4);
-    let edge = &left.marks[0];
-    assert_eq!(
-        (edge.buy_quantity, edge.sell_quantity, edge.trade_count),
-        totals(&per_candle),
-        "the edge group sums every member, hidden or not"
-    );
-}
-
-#[test]
-fn at_one_candle_per_mark_each_candle_keeps_todays_mark() {
-    let candles = [("100", "1"), ("105", "4"), ("110", "2"), ("95", "8")]
-        .map(|(price, quantity)| ladder("5", &[print(1, price, quantity, Side::Buy)]));
-    // The chart's default zoom, 8 px per bar.
-    let view = grouped(1, 8.0, (0, 4));
-    let inputs = || {
-        candles
-            .iter()
-            .enumerate()
-            .map(|(slot, candle)| factual(slot, candle))
-    };
-    let frame = project_candle_dots(inputs(), grid(), view);
-    assert_eq!(frame.marks.len(), candles.len());
-    for (mark, input) in frame.marks.iter().zip(inputs()) {
-        let alone = project_candle_dots([input], grid(), view);
-        assert_eq!(facts(mark), facts(&alone.marks[0]));
-        assert_eq!((mark.slot, mark.last_slot), (input.slot, input.slot));
-        assert_eq!(
-            mark.radius_px,
-            4.0 * normalized_area_size(mark.buy_quantity + mark.sell_quantity, dec("8")),
-            "today's rule at the default zoom: half the 8 px column, area by volume"
-        );
-    }
-    assert_eq!(frame.marks[3].radius_px, 4.0);
-}
-
-#[test]
-fn mark_area_follows_exact_volume_against_the_largest_visible_mark() {
-    let candles = ["16", "4", "1", "0.01"]
-        .map(|quantity| ladder("5", &[print(1, "100", quantity, Side::Buy)]));
-    let inputs = || {
-        candles
-            .iter()
-            .enumerate()
-            .map(|(slot, candle)| factual(slot, candle))
-    };
-    let frame = project_candle_dots(inputs(), grid(), view());
-    let radius = |index: usize| frame.marks[index].radius_px;
-    assert_eq!(radius(0), CANDLE_MARK_MAX_RADIUS_PX);
-    assert_eq!(radius(0).powi(2) / radius(1).powi(2), 4.0);
-    assert_eq!(radius(0).powi(2) / radius(2).powi(2), 16.0);
-    assert_eq!(
-        radius(3),
-        MIN_DOT_RADIUS_PX,
-        "a speck is lifted to the floor, never hidden, and above it no ratio moves"
-    );
-    let one_group = project_candle_dots(inputs(), grid(), grouped(4, 2.0, (0, 4)));
-    assert_eq!(one_group.marks.len(), 1);
-    assert_eq!(
-        one_group.marks[0].radius_px, 4.0,
-        "four 2 px candles are an 8 px column: radius 4, not one candle's 1"
-    );
-    let wide = project_candle_dots(inputs(), grid(), grouped(8, 2.0, (0, 4)));
-    assert_eq!(wide.marks[0].radius_px, CANDLE_MARK_MAX_RADIUS_PX);
-    let pairs =
-        ["12", "4", "3", "1"].map(|quantity| ladder("5", &[print(1, "100", quantity, Side::Sell)]));
-    let merged = project_candle_dots(
-        pairs
-            .iter()
-            .enumerate()
-            .map(|(slot, candle)| factual(slot, candle)),
+    let frame = project_candle_dots(
+        [factual(0, &native)],
         grid(),
-        grouped(2, 6.0, (0, 4)),
+        CandleDotView {
+            height_px: 12.0,
+            ..view()
+        },
     );
-    assert_eq!(
-        merged
-            .marks
-            .iter()
-            .map(|dot| dot.sell_quantity)
-            .collect::<Vec<_>>(),
-        [dec("16"), dec("4")]
-    );
-    assert_eq!(merged.marks[0].radius_px, CANDLE_MARK_MAX_RADIUS_PX);
-    assert_eq!(
-        merged.marks[0].radius_px.powi(2) / merged.marks[1].radius_px.powi(2),
-        4.0,
-        "merged marks keep area proportional to their summed volume"
-    );
-}
-
-#[test]
-fn the_group_ladder_holds_inside_its_band_and_moves_past_it() {
-    let least = CANDLE_GROUP_MIN_WIDTH_PX;
-    let halve_at = least * CANDLE_GROUP_HOLD_BAND;
-    let mut memory = CandleGroupMemory::default();
-    assert_eq!(
-        memory.choose(8.0),
-        1,
-        "the chart's default 8 px per bar draws one mark per candle"
-    );
-    for _ in 0..3 {
-        assert_eq!(memory.choose(least), 1, "a steady zoom never flickers");
-    }
-    assert_eq!(
-        memory.choose(least * 0.99),
-        2,
-        "under the least width, pairs"
-    );
-    assert_eq!(
-        memory.choose(halve_at * 0.99),
-        2,
-        "widening inside the band keeps the pairs"
-    );
-    assert_eq!(memory.choose(halve_at), 1, "past the band, one per candle");
-    let mut memory = CandleGroupMemory::default();
-    assert_eq!(memory.choose(1.0), 8);
-    assert_eq!(
-        memory.choose(1.8),
-        8,
-        "an 8-candle group is held while its 4-candle half is inside the band"
-    );
-    assert_eq!(
-        memory.choose(8.0),
-        1,
-        "the default zoom is one mark per candle whatever came before"
-    );
-    for width in [7.0, 5.0, 3.1, 2.9, 1.4, 1.0, 1.6, 3.8, 5.9, 7.6] {
-        let candles = memory.choose(width);
-        assert!(candles.is_power_of_two());
-        assert!(
-            candles as f32 * width >= least,
-            "a held group is never narrower than {least} px: {candles} x {width}"
-        );
-    }
+    assert_eq!(frame.maximum_radius_px, 1.0);
+    assert_eq!(frame.marks[0].radius_px, 2.0 * frame.marks[1].radius_px);
 }

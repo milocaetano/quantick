@@ -481,3 +481,20 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
         }
     }
 }
+
+impl PaneFootprint {
+    /// Rebuilt bars and new market streams begin a fresh grouping/size epoch.
+    pub(super) fn reset_candle_aggression(&mut self) {
+        self.lod.candle_groups = Default::default();
+        self.lod.candle_prices = Default::default();
+        self.lod.candle_scale = Default::default();
+        self.lod.candle_frame = None;
+    }
+
+    /// Last painted price-local frame; observer captures never reproject it.
+    pub(crate) fn candle_aggression(
+        &self,
+    ) -> Option<&quantick_orderflow::projection::CandleDotFrame> {
+        self.lod.candle_frame.as_ref()
+    }
+}

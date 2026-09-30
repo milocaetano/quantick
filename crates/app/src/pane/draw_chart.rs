@@ -170,6 +170,11 @@ impl ChartPane {
                     &start,
                 );
             }
+            if start.candle_aggression {
+                // Repaint only contours so price-local flow stays visible
+                // while OHLC remains readable through dense aggression.
+                super::render_registry::candles::silhouettes(&mut candle_pass);
+            }
             history.overlay(&self.indicators);
         }
         let lane = self.pane_lane(&layout, &frame);
@@ -232,6 +237,7 @@ impl ChartPane {
         // Published before anything can return early, so an empty pane still
         // says where it is.
         self.frame.area = Some(area);
+        self.footprint.lod.candle_frame = None;
         let canvas_background = background_color(chrome.style);
         painter.rect_filled(area, egui::Rounding::ZERO, canvas_background);
 

@@ -25,7 +25,7 @@
           "type": "string"
         },
         "enabled": {
-          "description": "Aggression bubbles are drawn over the chart. Beside the native tape\nthey are one summary bubble per tick candle, as layer\n`candle_aggression` draws it; `layers.visibility` names any block.",
+          "description": "Aggression bubbles are drawn over the chart. Beside the native tape,\n`candle_aggression` draws price-local marks on the tick candles;\n`layers.visibility` names any block.",
           "type": "boolean"
         },
         "floored_quantity": {
@@ -86,6 +86,105 @@
       ],
       "type": "object"
     },
+    "CandleAggressionSnapshot": {
+      "properties": {
+        "buy_quantity": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Exact totals of every projected mark, including those omitted by the\nreadback bound. Price-filtered and unavailable ladders are excluded."
+        },
+        "candles_per_mark": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "full_quantity": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Held largest observed band quantity at this aggregation tier. All\nradii use sqrt(quantity / full_quantity) times maximum_radius_px."
+        },
+        "mark_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "marks": {
+          "description": "At most 256 marks in absolute slot, then price-band order.",
+          "items": {
+            "$ref": "#/$defs/CandleMarkSnapshot"
+          },
+          "type": "array"
+        },
+        "maximum_radius_px": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "price_ticks_per_mark": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "sell_quantity": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "trade_count": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "candles_per_mark",
+        "price_ticks_per_mark",
+        "full_quantity",
+        "maximum_radius_px",
+        "buy_quantity",
+        "sell_quantity",
+        "trade_count",
+        "mark_count",
+        "truncated",
+        "marks"
+      ],
+      "type": "object"
+    },
+    "CandleMarkSnapshot": {
+      "properties": {
+        "buy_quantity": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "last_slot": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "price": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Quantity-weighted execution price within this price band."
+        },
+        "price_high": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "price_low": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Actual contributing execution span, not synthetic band edges."
+        },
+        "radius_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Exact decimal representation of the painted f32 logical radius."
+        },
+        "sell_quantity": {
+          "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "slot": {
+          "$ref": "#/$defs/WireU64"
+        },
+        "trade_count": {
+          "$ref": "#/$defs/WireU64"
+        }
+      },
+      "required": [
+        "slot",
+        "last_slot",
+        "price",
+        "price_low",
+        "price_high",
+        "buy_quantity",
+        "sell_quantity",
+        "trade_count",
+        "radius_px"
+      ],
+      "type": "object"
+    },
     "CanonicalDecimal": {
       "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
       "type": "string"
@@ -101,6 +200,18 @@
               "type": "null"
             }
           ]
+        },
+        "candle_aggression": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CandleAggressionSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Last painted candle aggression, independent of the tape worker."
         },
         "engine": {
           "$ref": "#/$defs/AvailabilitySnapshot"

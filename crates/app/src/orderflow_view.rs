@@ -223,6 +223,18 @@ impl OrderflowView {
         self.lane_now_ms().or(self.published.live_end_ms)
     }
 
+    /// Snapshot only published tape state; capturing never wakes the worker.
+    pub(crate) fn bubbles_snapshot(
+        &self,
+    ) -> quantick_control_schema::orderflow::BubblesStateSnapshot {
+        quantick_control_schema::orderflow::BubblesStateSnapshot::from_config(
+            self.cached_config(),
+            self.cached_health().floored_quantity,
+            self.dot_scale(),
+            &self.recorded_opening_bursts(),
+        )
+    }
+
     /// The rungs and scales of the last published volume-dots frame.
     pub(crate) fn dot_scale(&self) -> Option<&quantick_orderflow::DotScale> {
         self.pending_frame

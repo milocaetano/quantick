@@ -199,17 +199,11 @@ fn project_bubbles<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> B
                 panes: tab
                     .panes()
                     .map(|(pane, side)| PaneBubblesSnapshot {
+                        candle_aggression: pane.footprint.candle_aggression().map(Into::into),
                         pane_id: WireU64::new(pane.id),
                         side: side.into(),
                         engine: engine_availability(pane),
-                        bubbles: pane.orderflow.as_ref().map(|view| {
-                            BubblesStateSnapshot::from_config(
-                                view.cached_config(),
-                                view.cached_health().floored_quantity,
-                                view.dot_scale(),
-                                &view.recorded_opening_bursts(),
-                            )
-                        }),
+                        bubbles: pane.orderflow.as_ref().map(OrderflowView::bubbles_snapshot),
                     })
                     .collect(),
             })

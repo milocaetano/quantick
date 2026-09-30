@@ -1,5 +1,4 @@
-//! One quiet, opt-in weighted-price dot per candle, or per held group of
-//! candles when zoomed out, from the native trade ladders.
+//! Small translucent price-local pies from exact native execution rows.
 use super::{Contribution, FootprintPass, Package};
 use crate::orderflow_render::{PIE_START_ANGLE, SphereShading, add_shaded_sector};
 use crate::theme;
@@ -34,16 +33,24 @@ fn paint(pass: &mut FootprintPass<'_>) {
         candle_width_px: frame.candle_width,
         visible: frame.visible,
         candles_per_mark: pass.lod.candle_groups.choose(frame.candle_width),
+        price_ticks_per_mark: pass
+            .lod
+            .candle_prices
+            .choose(pass.native_grid.map_or(0.0, |grid| {
+                grid.tick_height_px(prices, frame.chart_rect.height())
+            })),
+        height_px: frame.chart_rect.height(),
     };
     let partial = pass
         .current_partial
         .map(|ladder| (frame.partial_slot, ladder));
     let inputs = view.trade_built(frame.footprints, frame.first_state_slot, partial);
-    let projected = project_candle_dots(inputs, pass.native_grid, view);
+    let mut projected = project_candle_dots(inputs, pass.native_grid, view);
+    pass.lod.candle_scale.apply(&mut projected);
     let buy = theme::BUY.gamma_multiply(DOT_OPACITY);
     let sell = theme::SELL.gamma_multiply(DOT_OPACITY);
     let mut mesh = egui::Mesh::default();
-    for dot in projected.marks {
+    for dot in &projected.marks {
         let Some(price) = dot.price.to_f64() else {
             continue;
         };
@@ -89,4 +96,5 @@ fn paint(pass: &mut FootprintPass<'_>) {
     if !mesh.is_empty() {
         frame.painter.add(egui::Shape::mesh(mesh));
     }
+    pass.lod.candle_frame = Some(projected);
 }

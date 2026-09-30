@@ -127,8 +127,8 @@ fn candle_aggression_opt_in_preserves_candles_and_the_right_tape() {
     assert_eq!(left.state.bar_footprints().len(), 5);
     assert!(!left.layer_switched_on(ChartLayer::Footprint, &app.style));
     assert_eq!(
-        candle_ink(&after, chart),
-        ink,
+        &candle_ink(&after, chart)[..ink.len()],
+        &ink,
         "accumulation cannot invoke footprint candle dressing"
     );
     assert_eq!(
@@ -198,16 +198,16 @@ fn candle_aggression_keeps_same_millisecond_tick_ownership_and_current_partial()
     let range = left.price_view.resolve(left.frame.auto_range.unwrap());
     let scale = PriceScale::from_range(range.0, range.1, chart.top(), chart.bottom());
     let x = left.viewport.x_center(6, chart.right(), left.slots());
-    assert!(
-        circle_at(&output, egui::pos2(x, scale.y(143.2))),
-        "this frame paints the forming candle's exact quantity-weighted price: (9*140 + 16*145)/25"
-    );
     for price in [140.0, 145.0] {
         assert!(
-            !circle_at(&output, egui::pos2(x, scale.y(price))),
-            "one candle owns one dot, not one dot per native row"
+            circle_at(&output, egui::pos2(x, scale.y(price))),
+            "the forming candle retains both execution price bands in this frame"
         );
     }
+    assert!(
+        !circle_at(&output, egui::pos2(x, scale.y(143.2))),
+        "the candle's whole-volume centroid cannot erase its price distribution"
+    );
 }
 
 #[test]
@@ -251,6 +251,43 @@ fn candle_aggression_is_reachable_by_the_existing_named_layer_action() {
         assert_eq!(layer["requested"], visible);
         assert_eq!(layer["effective"], visible);
         assert!(app.active_tab().time_panes[0].orderflow.is_none());
+        // Gateway calls serve control requests without painting the canvas.
+        run_frame(&mut app, &ctx);
+        let (read, _) = unkeyed_call(
+            &mut app,
+            &mut client,
+            "snapshot.read",
+            json!({"scopes":["orderflow.bubbles"]}),
+        );
+        let scope = &success_result(&read)["scopes"]["orderflow.bubbles"]["value"];
+        let pane = scope["tabs"][0]["panes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|pane| pane["pane_id"] == pane_id)
+            .unwrap();
+        if visible {
+            let snapshot = &pane["candle_aggression"];
+            let painted = app.active_tab().time_panes[0]
+                .footprint
+                .candle_aggression()
+                .unwrap();
+            let expected = serde_json::to_value(
+                quantick_control_schema::orderflow::CandleAggressionSnapshot::from(painted),
+            )
+            .unwrap();
+            assert_eq!(
+                snapshot, &expected,
+                "readback is the frame actually painted"
+            );
+            assert_eq!(snapshot["trade_count"], "20");
+            assert!(snapshot["marks"].as_array().unwrap().len() > 5);
+        } else {
+            assert!(
+                pane["candle_aggression"].is_null(),
+                "hidden marks cannot leave a stale readback"
+            );
+        }
     }
     disable_test_gateway(&mut app, &ctx);
 }

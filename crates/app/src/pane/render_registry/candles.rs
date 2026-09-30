@@ -97,3 +97,14 @@ fn paint(pass: &mut CandlePass<'_, '_>) {
         );
     });
 }
+
+/// Restore wick and body boundaries above the translucent aggression layer.
+pub(in crate::pane) fn silhouettes(pass: &mut CandlePass<'_, '_>) {
+    let mut style = *pass.style;
+    style.fill_opacity = 0.0;
+    // Build a short-lived pass to preserve the caller's style borrow.
+    paint(&mut CandlePass {
+        style: &style,
+        ..*pass
+    });
+}
