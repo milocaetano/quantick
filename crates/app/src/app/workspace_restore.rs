@@ -89,10 +89,12 @@ impl ArrangementAdapter<'_> {
                     tab.restore_canvas(
                         CanvasLayout::from(saved.layout),
                         saved.split_fraction,
-                        saved.context_collapsed,
-                        saved.flow_collapsed,
-                        &saved.context_heights,
-                        &saved.context_panes_collapsed,
+                        crate::tab::CanvasCollapseRestore {
+                            context: saved.context_collapsed,
+                            flow: saved.flow_collapsed,
+                            heights: &saved.context_heights,
+                            collapsed_slots: &saved.context_panes_collapsed,
+                        },
                         saved.focus.map(|focus| focus.to_side(saved.focus_slot)),
                         &intervals,
                         LegendFold {

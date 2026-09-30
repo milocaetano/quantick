@@ -198,6 +198,14 @@ pub struct LegendFold {
     pub time: bool,
 }
 
+/// The collapsed columns and context bands restored with a saved canvas.
+pub(crate) struct CanvasCollapseRestore<'a> {
+    pub context: bool,
+    pub flow: bool,
+    pub heights: &'a [f32],
+    pub collapsed_slots: &'a [bool],
+}
+
 /// How long the outcome of a *load older* press stays on screen.
 ///
 /// Long enough to read one short line without hunting for it, short enough

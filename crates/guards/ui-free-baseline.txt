@@ -22,5 +22,7 @@
 # adapters: they address live egui pane identities and cannot run headlessly.
 # Raised by 34 lines for harness-only launch adapters that apply those same
 # live tab transitions after the requested canvas layout has been selected.
-!budget 24343
-crates/app 24343
+# Raised by 5 lines to keep the observer's visible-pane walk aligned with
+# the actual live canvas, including the new horizontal and vertical rails.
+!budget 24348
+crates/app 24348

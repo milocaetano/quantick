@@ -109,6 +109,25 @@ impl Default for PaneFrame {
 }
 
 impl PaneFrame {
+    /// Discard a pane's last draw when the canvas leaves only its rail visible.
+    pub(crate) fn clear_hidden(&mut self) {
+        self.lane_divider_x = None;
+        self.flow_legend = None;
+        self.indicator_legend = None;
+        self.chart_rect = None;
+        self.area = None;
+        self.layout_strip = None;
+        self.price_gutter = None;
+        self.time_strip = None;
+        self.lane_reference_ms = None;
+        self.auto_range = None;
+        self.chart_height = 1.0;
+        self.chart_top = 0.0;
+        self.chart_area = None;
+        self.bands.clear();
+        self.plot_area = None;
+    }
+
     /// Immutable geometry from the last completed paint, never a fresh carve.
     pub(crate) fn cached_bands(&self) -> &[crate::bands::Band] {
         &self.bands

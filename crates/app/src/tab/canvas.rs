@@ -364,9 +364,15 @@ impl Tab {
         // canvas, on a chart that is not there.
         flow_pane.frame.area = None;
         flow_pane.frame.layout_strip = None;
-        for pane in time_panes.iter_mut() {
+        if rects.flow_areas.is_none() {
+            flow_pane.frame.clear_hidden();
+        }
+        for (slot, pane) in time_panes.iter_mut().enumerate() {
             pane.frame.area = None;
             pane.frame.layout_strip = None;
+            if rects.context_charts.get(slot).is_none_or(Option::is_none) {
+                pane.frame.clear_hidden();
+            }
         }
         // The time pane has no tape of its own (§11), so its footprint rows
         // adopt the flow pane's capture bucket — the instrument's grid is a

@@ -87,8 +87,8 @@ impl Tab {
     }
 
     pub(crate) fn expand_context_stack(&mut self) {
-        if self.context_stack.heights.len() == 2 {
-            if let Some((slot, restore)) =
+        if self.context_stack.heights.len() == 2
+            && let Some((slot, restore)) =
                 self.context_stack
                     .heights
                     .iter()
@@ -97,11 +97,10 @@ impl Tab {
                         PaneWidth::Collapsed { restore } => Some((slot, restore)),
                         _ => None,
                     })
-            {
-                self.context_stack.heights[slot] = PaneWidth::Manual(restore);
-                self.context_stack.heights[1 - slot] = PaneWidth::Manual(1.0 - restore);
-                return;
-            }
+        {
+            self.context_stack.heights[slot] = PaneWidth::Manual(restore);
+            self.context_stack.heights[1 - slot] = PaneWidth::Manual(1.0 - restore);
+            return;
         }
         for height in &mut self.context_stack.heights {
             if let PaneWidth::Collapsed { restore } = *height {
@@ -250,8 +249,15 @@ impl ContextStack {
             self.heights[index + 1] = PaneWidth::Collapsed {
                 restore: lower_share,
             };
-        } else if !collapse_upper && !collapse_lower && pair_height >= floor * 2.0 {
-            let applied = wanted_y.clamp(pair_top + floor, pair_bottom - floor);
+        } else if !collapse_upper && !collapse_lower {
+            // A short column can hold one open pane and a rail but cannot
+            // satisfy two full floors. Reopening must still be reachable.
+            let open_floor = if pair_height >= floor * 2.0 {
+                floor
+            } else {
+                canvas_layout::COLLAPSE_AT_PX
+            };
+            let applied = wanted_y.clamp(pair_top + open_floor, pair_bottom - open_floor);
             self.heights[index] = PaneWidth::Manual((applied - pair_top) / column.height());
             self.heights[index + 1] = PaneWidth::Manual((pair_bottom - applied) / column.height());
         }
@@ -339,6 +345,45 @@ mod tests {
                     .panes
                     .iter()
                     .all(|pane| pane.height() >= canvas_layout::MIN_PANE_WIDTH_PX)
+            );
+        }
+    }
+
+    #[test]
+    fn short_context_stack_can_reopen_either_rail() {
+        let column = egui::Rect::from_min_size(egui::pos2(0.0, 40.0), egui::vec2(600.0, 440.0));
+        let mut stack = ContextStack {
+            heights: smallvec::smallvec![PaneWidth::Auto; 2],
+            frame: None,
+        };
+        for slot in [0, 1, 1, 0] {
+            let before = canvas_layout::split_column(column, &stack.heights);
+            let edge = if slot == 0 {
+                column.top()
+            } else {
+                column.bottom()
+            };
+            assert!(
+                stack
+                    .resize(0, edge, column, &before.dividers)
+                    .unwrap()
+                    .changed
+            );
+            assert!(stack.heights[slot].is_collapsed());
+            let folded = canvas_layout::split_column(column, &stack.heights);
+            assert!(
+                stack
+                    .resize(0, column.center().y, column, &folded.dividers)
+                    .unwrap()
+                    .changed
+            );
+            assert!(stack.heights.iter().all(|height| !height.is_collapsed()));
+            let opened = canvas_layout::split_column(column, &stack.heights);
+            assert!(
+                opened
+                    .panes
+                    .iter()
+                    .all(|pane| pane.height() > canvas_layout::COLLAPSE_AT_PX)
             );
         }
     }

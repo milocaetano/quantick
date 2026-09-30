@@ -212,8 +212,17 @@ impl Tab {
         if self.context_collapsed {
             return PaneSide::Flow;
         }
+        let visible_context = (0..self.context_panes_shown())
+            .find(|slot| {
+                !self
+                    .context_stack
+                    .heights
+                    .get(*slot)
+                    .is_some_and(|height| height.is_collapsed())
+            })
+            .map(PaneSide::Time);
         if self.flow_collapsed {
-            return PaneSide::Time(0);
+            return visible_context.unwrap_or(PaneSide::Flow);
         }
         // A slot the stack no longer shows — the focused pane was the bottom
         // of a three-pane layout and the trader switched to two — falls back
@@ -226,17 +235,11 @@ impl Tab {
                     .get(slot)
                     .is_some_and(|height| height.is_collapsed()) =>
             {
-                (0..self.context_panes_shown())
-                    .find(|candidate| {
-                        !self
-                            .context_stack
-                            .heights
-                            .get(*candidate)
-                            .is_some_and(|height| height.is_collapsed())
-                    })
-                    .map_or(PaneSide::Flow, PaneSide::Time)
+                visible_context.unwrap_or(PaneSide::Flow)
             }
-            PaneSide::Time(slot) if slot >= self.context_panes_shown() => PaneSide::Time(0),
+            PaneSide::Time(slot) if slot >= self.context_panes_shown() => {
+                visible_context.unwrap_or(PaneSide::Flow)
+            }
             focus => focus,
         }
     }

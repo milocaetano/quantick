@@ -50,5 +50,10 @@
 # change adds no trade-path work or new dependency to the UI crate.
 # Raised by another 14 lines to expose the new rails from harness-only launch
 # hooks and verify their state after layout selection.
-!budget 104807
-crates/app 104807
+# Raised by 6 lines to name the restored collapse state as one argument,
+# keeping the public restore operation within the repository's lint limit.
+# Raised by 38 lines to repair reviewed collapse boundaries: visible-pane
+# focus, stale frame geometry and short-window rail reopening. The observer
+# and pointer now share the corrected visible-pane walk.
+!budget 104851
+crates/app 104851
