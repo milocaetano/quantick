@@ -36,9 +36,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         .reserve(context.projection.cells.len().saturating_mul(12));
 
     for cell in context.projection.cells.iter() {
-        let rect = context
-            .layout
-            .band(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height);
+        let rect = context.layout.heat_cell_rect(cell, style.min_cell_height);
         if !rect.is_positive() {
             continue;
         }
@@ -55,7 +53,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
                 egui::pos2(rect.left(), rect.top() - spread),
                 egui::pos2(rect.right(), rect.bottom() + spread),
             )
-            .intersect(context.layout.span_pane(cell.x0, cell.x1));
+            .intersect(context.layout.cell_pane(cell));
             let glow = rgba(rgb, alpha * style.edge_glow);
             add_gradient_rect(&mut mesh, glow_rect, glow, glow);
         }
@@ -298,7 +296,7 @@ impl<'c, 'a> EventPass<'c, 'a> {
             if !pane_draws_book || !kind_shown {
                 continue;
             }
-            let band = layout.event_band(event.x, event.y0, event.y1, style.min_cell_height);
+            let band = layout.event_band(event, style.min_cell_height);
             if band.x < layout.chart_rect.left() - 1.0 || band.x > right_edge + 1.0 {
                 continue;
             }
@@ -356,7 +354,7 @@ impl<'c, 'a> EventPass<'c, 'a> {
             if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
                 continue;
             }
-            let center = egui::pos2(layout.x(trade.x), layout.y_unclamped(trade.y));
+            let center = egui::pos2(self.context.mark_x(trade), layout.y_unclamped(trade.y));
             let pane = layout.pane(trade.x);
             if !pane.contains(center) {
                 continue;

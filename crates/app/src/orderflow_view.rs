@@ -299,7 +299,11 @@ impl OrderflowView {
             frame.slot_count,
             lane_width_px,
         )
-        .with_inverted(inverted);
+        .with_inverted(inverted)
+        .with_tape_clock(
+            self.tape_time(frame).map(|(edge, _)| edge),
+            &self.tape_bubbles(),
+        );
         let in_lane = layout
             .lane_left_x()
             .is_some_and(|divider| position.x >= divider);
@@ -316,7 +320,7 @@ impl OrderflowView {
             OrderflowRenderStyle::from_config(&self.config, egui::Color32::TRANSPARENT.to_array());
         let cell = frame.projection.cells.iter().rev().find(|cell| {
             layout
-                .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)
+                .heat_cell_rect(cell, style.min_cell_height)
                 .contains(position)
         })?;
 
@@ -1539,9 +1543,7 @@ mod tests {
         );
         let style =
             OrderflowRenderStyle::from_config(&view.config, egui::Color32::TRANSPARENT.to_array());
-        let position = layout
-            .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)
-            .center();
+        let position = layout.heat_cell_rect(cell, style.min_cell_height).center();
 
         let hit = view
             .control_flow_cell_at(chart, &viewport, 1, 0.0, false, position)

@@ -7,8 +7,11 @@
 //! pointer resolver cannot grow two pixel mappings. Nothing here paints.
 
 use eframe::egui;
-use quantick_orderflow::projection::{PastTape, PastTapeMemory};
-use quantick_orderflow::{AggressionPrimitive, HeatmapProjection, PriceWindow};
+use quantick_orderflow::projection::{PastTape, PastTapeMemory, TapeHorizontalGeometry};
+use quantick_orderflow::{
+    AggressionPrimitive, BubbleStyle, HeatmapCell, HeatmapProjection, LiquidityEventPrimitive,
+    LiveEdge, PriceWindow,
+};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive as _;
 use std::sync::Arc;
@@ -50,6 +53,20 @@ pub(crate) struct ProjectedLayout<'a> {
     /// here, at the same boundary where the candles' own scale flips, so the
     /// map, the bubbles and the bars they sit on turn over together.
     pub(crate) inverted: bool,
+    /// The native tape's own clock, when the lane is that tape: its book is
+    /// then placed by market time exactly where its dots are, rather than by
+    /// the normalized x the worker laid out against an older instant.
+    tape: Option<TapeClock>,
+}
+
+/// Where a market instant lands on the native tape this frame: the tape's
+/// inset span and the window ending at its supplied clock. The same mapping
+/// its dots are drawn on, so a print and the book of its instant share an x.
+#[derive(Debug, Clone, Copy)]
+struct TapeClock {
+    geometry: TapeHorizontalGeometry,
+    now_ms: i64,
+    window_ms: i64,
 }
 
 impl<'a> ProjectedLayout<'a> {
@@ -74,7 +91,44 @@ impl<'a> ProjectedLayout<'a> {
                 0.0
             },
             inverted: false,
+            tape: None,
         }
+    }
+
+    /// Place the lane's book on the native tape's clock: `edge` is the tape's
+    /// live edge this frame, as its dots are drawn against it, and `bubbles`
+    /// sizes the tape's inset exactly as the dots' pass does. `None` keeps
+    /// the linear lane of every other tape.
+    #[must_use]
+    pub(crate) fn with_tape_clock(mut self, edge: Option<LiveEdge>, bubbles: &BubbleStyle) -> Self {
+        self.tape = edge.filter(|_| self.lane_left_x().is_some()).map(|edge| {
+            let lane = self.lane_rect();
+            TapeClock {
+                geometry: TapeHorizontalGeometry::resolve(lane.width(), lane.height(), bubbles),
+                now_ms: edge.now_ms,
+                window_ms: edge.window_ms,
+            }
+        });
+        self
+    }
+
+    /// Screen x of the market instant `timestamp_ms` on the native tape;
+    /// `None` without its clock.
+    #[must_use]
+    fn tape_x(self, timestamp_ms: i64) -> Option<f32> {
+        let tape = self.tape?;
+        Some(
+            self.lane_rect().left()
+                + tape
+                    .geometry
+                    .x_at_ms(timestamp_ms, tape.now_ms, tape.window_ms),
+        )
+    }
+
+    /// The tape's span of a cell drawn on the native tape, left to right.
+    fn tape_span(self, cell: &HeatmapCell) -> Option<(f32, f32)> {
+        let (start, end) = cell.tape_ms?;
+        Some((self.tape_x(start)?, self.tape_x(end)?))
     }
 
     /// The same layout upside down when `inverted` — see the field's note.
@@ -249,29 +303,49 @@ impl<'a> ProjectedLayout<'a> {
         )
     }
 
-    /// Screen rectangle occupied by one semantic heatmap cell.
+    /// Screen rectangle occupied by one semantic heatmap cell: on the native
+    /// tape, the market time it covers on the tape's own clock.
     ///
     /// Kept on the renderer's projection object so the on-demand pointer
     /// resolver and the paint path cannot grow two pixel mappings. This does
     /// no work unless a control snapshot explicitly asks what is under the
     /// cursor.
     #[must_use]
-    pub(crate) fn heat_cell_rect(
-        self,
-        x0: f64,
-        x1: f64,
-        y0: f64,
-        y1: f64,
-        min_height: f32,
-    ) -> egui::Rect {
-        self.band(x0, x1, y0, y1, min_height)
+    pub(crate) fn heat_cell_rect(self, cell: &HeatmapCell, min_height: f32) -> egui::Rect {
+        let Some((left, right)) = self.tape_span(cell) else {
+            return self.band(cell.x0, cell.x1, cell.y0, cell.y1, min_height);
+        };
+        let (top, bottom) = (self.y(cell.y0), self.y(cell.y1));
+        readable_band(
+            egui::Rect::from_min_max(
+                egui::pos2(left.min(right), top.min(bottom)),
+                egui::pos2(left.max(right), top.max(bottom)),
+            ),
+            min_height,
+            self.lane_rect(),
+        )
     }
 
+    /// The pane a cell is drawn in: the tape's, for a cell on its clock.
     #[must_use]
-    pub(super) fn event_band(self, x: f64, y0: f64, y1: f64, min_height: f32) -> EventBand {
-        let row = self.band(x, x, y0, y1, min_height);
+    pub(super) fn cell_pane(self, cell: &HeatmapCell) -> egui::Rect {
+        if self.tape_span(cell).is_some() {
+            self.lane_rect()
+        } else {
+            self.span_pane(cell.x0, cell.x1)
+        }
+    }
+
+    /// Where a reduction is marked: on the native tape, at its own instant on
+    /// the tape's clock, over the book it happened to.
+    #[must_use]
+    pub(super) fn event_band(self, event: &LiquidityEventPrimitive, min_height: f32) -> EventBand {
+        let row = self.band(event.x, event.x, event.y0, event.y1, min_height);
+        let tape_x = self
+            .tape_x(event.timestamp_ms)
+            .filter(|_| self.in_lane(event.x));
         EventBand {
-            x: self.x(x),
+            x: tape_x.unwrap_or_else(|| self.x(event.x)),
             top: row.top(),
             bottom: row.bottom(),
         }
@@ -332,6 +406,28 @@ impl<'a> RenderContext<'a> {
             .zip(Decimal::from_f64(range.1))
             .and_then(|(low, high)| PriceWindow::new(low, high));
         self
+    }
+
+    /// Screen x of `mark`: on the native tape, where the dots' pass draws it
+    /// this frame — its execution time, or now while its dot is forming.
+    #[must_use]
+    pub(super) fn mark_x(&self, mark: &AggressionPrimitive) -> f32 {
+        let (Some(tape), Some((edge, dot_window_ms)), true) =
+            (self.layout.tape, self.tape_time, mark.live)
+        else {
+            return self.layout.x(mark.x);
+        };
+        let lane_start = 1.0 - 1.0 / self.layout.slot_count.max(1) as f64;
+        let mut placed = [mark.clone()];
+        quantick_orderflow::projection::position_tape_at(
+            &mut placed,
+            edge.now_ms,
+            edge.window_ms,
+            lane_start,
+            dot_window_ms,
+        );
+        let fraction = (placed[0].x - lane_start) / (1.0 - lane_start);
+        self.layout.lane_rect().left() + tape.geometry.x(fraction)
     }
 
     /// Reposition a cached tape against this frame's supplied market clock.

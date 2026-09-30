@@ -80,6 +80,7 @@ struct DraftCell {
     x1: f64,
     y0: f64,
     y1: f64,
+    tape_ms: Option<(i64, i64)>,
 }
 
 /// One level's resting liquidity, summed over one bar and weighted by time.
@@ -240,7 +241,7 @@ pub fn project_settled(
         if y1 <= y0 {
             continue;
         }
-        let draft = |x0: f64, x1: f64, quantity: Decimal| DraftCell {
+        let draft = |x0: f64, x1: f64, quantity: Decimal, tape_ms| DraftCell {
             generation: run.generation,
             side: run.side,
             price_bucket: run.price_bucket,
@@ -249,6 +250,7 @@ pub fn project_settled(
             x1,
             y0,
             y1,
+            tape_ms,
         };
 
         let mut drawn = false;
@@ -281,7 +283,12 @@ pub fn project_settled(
                 timeline.locate_in_lane_clamped(run.end_ms),
             ) && x1.normalized > x0.normalized
             {
-                drafts.push(draft(x0.normalized, x1.normalized, run.quantity));
+                drafts.push(draft(
+                    x0.normalized,
+                    x1.normalized,
+                    run.quantity,
+                    Some((run.start_ms, run.end_ms)),
+                ));
                 drawn = true;
             }
         } else if let (Some(x0), Some(x1)) = (
@@ -289,7 +296,7 @@ pub fn project_settled(
             timeline.locate_clamped(run.end_ms),
         ) && x1.normalized > x0.normalized
         {
-            drafts.push(draft(x0.normalized, x1.normalized, run.quantity));
+            drafts.push(draft(x0.normalized, x1.normalized, run.quantity, None));
             drawn = true;
         }
         if drawn {
@@ -307,6 +314,7 @@ pub fn project_settled(
             x1,
             y0: heat.y0,
             y1: heat.y1,
+            tape_ms: None,
         });
     }
 
@@ -351,6 +359,7 @@ pub fn project_settled(
                 y1: draft.y1,
                 intensity,
                 alpha: intensity * config.opacity,
+                tape_ms: draft.tape_ms,
             }
         })
         .collect();

@@ -274,6 +274,11 @@ struct ProjectionCache {
     /// re-keys every closed dot. The tape's rungs are not: the tape is the
     /// live half's.
     dot_rungs: Option<i64>,
+    /// The newest book instant this half was built through. The native tape
+    /// never keeps a newer one waiting on the cadence: its prints reach the
+    /// screen the frame they arrive, so a book held back behind them is the
+    /// book showing up after the prints that hit it.
+    book_ms: Option<i64>,
     /// The finished half of the chart, reused until the layout moves or a dirty
     /// revision is old enough to rebuild.
     settled: Arc<SettledProjection>,
@@ -1154,6 +1159,9 @@ impl BookEngine {
             .filter(|_| self.config.volume_dots.enabled)
             .map(|zoom| VolumeDots::resolve(zoom, &request.closed, request.partial.as_ref()));
         let dot_rungs = dots.as_ref().map(|dots| dots.candle_level_ticks);
+        let book_ms = self.history.latest_book_ms();
+        let book_may_wait =
+            |cache: &ProjectionCache| !self.config.native_tape() || cache.book_ms == book_ms;
 
         let settled = match &self.projection_cache {
             Some(cache)
@@ -1162,8 +1170,9 @@ impl BookEngine {
                     && cache.seam_ms == timeline.live_boundary_ms()
                     && ((cache.settled_revision == self.settled_revision
                         && cache.timeline_revision == request.timeline_revision)
-                        || cache_now.saturating_duration_since(cache.built_at)
-                            < PROJECTION_INTERVAL) =>
+                        || (cache_now.saturating_duration_since(cache.built_at)
+                            < PROJECTION_INTERVAL
+                            && book_may_wait(cache))) =>
             {
                 self.projection_cache_hits = self.projection_cache_hits.saturating_add(1);
                 Arc::clone(&cache.settled)
@@ -1189,6 +1198,7 @@ impl BookEngine {
                     settled_revision: self.settled_revision,
                     seam_ms: timeline.live_boundary_ms(),
                     dot_rungs,
+                    book_ms,
                     settled: Arc::clone(&settled),
                 });
                 settled
@@ -1521,6 +1531,7 @@ mod tests {
             y1: 0.3,
             intensity: 0.5,
             alpha: 0.5,
+            tape_ms: None,
         };
         let frame = |projection: HeatmapProjection| VisibleOrderflow {
             projection: Arc::new(projection),

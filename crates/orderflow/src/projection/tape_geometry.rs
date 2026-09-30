@@ -76,4 +76,13 @@ impl TapeHorizontalGeometry {
     pub fn x(self, fraction: f64) -> f32 {
         self.inset_px + fraction as f32 * self.span_px
     }
+
+    /// [`Self::x`] of the market instant `timestamp_ms` on a tape whose
+    /// window of `window_ms` ends at `now_ms`: where a print of that instant
+    /// is drawn, and so where the book of that instant belongs.
+    #[must_use]
+    pub fn x_at_ms(self, timestamp_ms: i64, now_ms: i64, window_ms: i64) -> f32 {
+        let window = window_ms.max(1);
+        self.x((timestamp_ms - (now_ms - window)) as f64 / window as f64)
+    }
 }

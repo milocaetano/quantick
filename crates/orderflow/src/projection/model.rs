@@ -77,6 +77,12 @@ pub struct HeatmapCell {
     pub intensity: f32,
     /// Final alpha after applying configured opacity.
     pub alpha: f32,
+    /// The market time a run drawn on the tape covers, `(start_ms, end_ms)`:
+    /// its own bounds, not cut to the window it was projected on, and ending
+    /// where the book is known. The native tape moves its prints on its own
+    /// clock every frame, and places the book from these with them. `None`
+    /// for a bar's summary band and on a chart without a tape.
+    pub tape_ms: Option<(i64, i64)>,
 }
 
 /// One aggressive execution ready for circles, footprint cells or tooltips.
