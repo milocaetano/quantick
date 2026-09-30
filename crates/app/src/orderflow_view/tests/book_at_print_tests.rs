@@ -25,7 +25,7 @@ fn price(index: i64) -> i64 {
 }
 
 /// Pixel centres of the tape's dots, left to right.
-fn dot_centres(shapes: &[egui::epaint::ClippedShape]) -> Vec<egui::Pos2> {
+pub(super) fn dot_centres(shapes: &[egui::epaint::ClippedShape]) -> Vec<egui::Pos2> {
     let mut centres: Vec<egui::Pos2> = Vec::new();
     for shape in shapes {
         if let egui::Shape::Circle(circle) = &shape.shape
@@ -40,23 +40,26 @@ fn dot_centres(shapes: &[egui::epaint::ClippedShape]) -> Vec<egui::Pos2> {
     centres
 }
 
-/// Every rectangle of the resting-liquidity mesh, the first mesh the depth
-/// pass paints, that lies in the tape's pane: beside the candles, their own
-/// pane carries each bar's summary band instead.
-fn book_rects(shapes: &[egui::epaint::ClippedShape], tape_left: f32) -> Vec<egui::Rect> {
-    let Some(mesh) = shapes.iter().find_map(|shape| match &shape.shape {
-        egui::Shape::Mesh(mesh) => Some(mesh),
-        _ => None,
-    }) else {
-        return Vec::new();
-    };
-    mesh.vertices
-        .chunks(4)
-        .map(|quad| {
-            egui::Rect::from_points(&quad.iter().map(|vertex| vertex.pos).collect::<Vec<_>>())
-        })
-        .filter(|rect: &egui::Rect| rect.left() >= tape_left - 0.5)
-        .collect()
+/// Every visible rectangle the depth pass paints in the tape's pane, cut to
+/// its clip: beside the candles, their own pane carries each bar's summary
+/// band instead. The fixtures here make no reduction, so every such
+/// rectangle is resting liquidity.
+pub(super) fn book_rects(shapes: &[egui::epaint::ClippedShape], tape_left: f32) -> Vec<egui::Rect> {
+    let mut rects = Vec::new();
+    for shape in shapes {
+        let egui::Shape::Mesh(mesh) = &shape.shape else {
+            continue;
+        };
+        for quad in mesh.vertices.chunks(4) {
+            let rect =
+                egui::Rect::from_points(&quad.iter().map(|vertex| vertex.pos).collect::<Vec<_>>())
+                    .intersect(shape.clip_rect);
+            if rect.is_positive() && rect.left() >= tape_left - 0.5 {
+                rects.push(rect);
+            }
+        }
+    }
+    rects
 }
 
 /// Check one painted frame: under every print but the newest, the level

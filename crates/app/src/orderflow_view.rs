@@ -28,6 +28,9 @@ mod layers;
 #[path = "orderflow_view/tests/native_split_tests.rs"]
 mod native_split_tests;
 mod opening_scale;
+#[cfg(test)]
+#[path = "orderflow_view/tests/past_book_tests.rs"]
+mod past_book_tests;
 mod pending;
 #[cfg(test)]
 #[path = "orderflow_view/tests/pending_tests.rs"]

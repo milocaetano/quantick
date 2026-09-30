@@ -35,8 +35,16 @@ pub(super) struct WinLive {
 
 impl WinLive {
     /// `tape_only` is the full-width tape the trader approved; otherwise the
-    /// same tape sits in a 600 px pane beside the tick candles.
+    /// same tape sits in a 600 px pane beside the tick candles. Its book is
+    /// captured from `at_ms`.
     pub(super) fn new(tape_only: bool, bids: &[BookLevel], asks: &[BookLevel], at_ms: i64) -> Self {
+        let mut live = Self::without_book(tape_only);
+        live.snapshot(at_ms, bids, asks);
+        live
+    }
+
+    /// [`Self::new`] before its book's first image.
+    pub(super) fn without_book(tape_only: bool) -> Self {
         let mut view = OrderflowView::new("WINV26");
         let before = view.config.clone();
         assert!(view.apply_preset("mini index regions"));
@@ -45,7 +53,20 @@ impl WinLive {
         assert!(view.config.native_tape());
         view.observe_tape_price_grid(Decimal::from(5), Some(Decimal::from(187_000)));
         view.set_enabled(true, GENERATION);
-        view.handle_depth_event(DepthEvent::Snapshot {
+        Self {
+            view,
+            closed: Vec::new(),
+            forming: None,
+            monotonic_ms: 0,
+            last_print_ms: None,
+            update_id: 1,
+            lane_px: if tape_only { CHART_PX } else { 600.0 },
+        }
+    }
+
+    /// The book's capture opens at `at_ms` on this image.
+    pub(super) fn snapshot(&mut self, at_ms: i64, bids: &[BookLevel], asks: &[BookLevel]) {
+        self.view.handle_depth_event(DepthEvent::Snapshot {
             symbol: "WINV26".to_owned(),
             generation: GENERATION,
             observed_at_ms: at_ms,
@@ -60,15 +81,6 @@ impl WinLive {
                 },
             ),
         });
-        Self {
-            view,
-            closed: Vec::new(),
-            forming: None,
-            monotonic_ms: 0,
-            last_print_ms: None,
-            update_id: 1,
-            lane_px: if tape_only { CHART_PX } else { 600.0 },
-        }
     }
 
     /// The book changes at `at_ms`, as MetaTrader stamps an image.
