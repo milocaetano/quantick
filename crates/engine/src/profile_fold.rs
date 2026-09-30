@@ -203,6 +203,17 @@ impl ProfileFold {
         Some(VolumeProfile::from_parts(levels, group, doublings > 0))
     }
 
+    /// Resume this exact fold as a footprint accumulator with the same grid
+    /// and row cap. This lets a caller retract a contribution, fold only the
+    /// retained ladders, and continue accepting prints without a second fold.
+    #[must_use]
+    pub fn into_footprint_builder(mut self) -> crate::FootprintBuilder {
+        self.seal();
+        let partial = (self.inputs > 0)
+            .then(|| BarFootprint::from_parts(self.levels, self.base_group, self.doublings));
+        crate::FootprintBuilder::from_partial(self.base_group, self.level_cap, partial)
+    }
+
     /// Fold every pending spread in, so later reads cost a clone of the rows
     /// and nothing else.
     ///
@@ -423,4 +434,63 @@ fn print_rows(diff: &BTreeMap<i64, Delta>) -> BTreeMap<i64, FootprintLevel> {
         previous = Some(bucket);
     }
     rows
+}
+
+#[cfg(test)]
+mod footprint_rebuild_tests {
+    use super::*;
+    use crate::{DEFAULT_LEVEL_CAP, FootprintBuilder, Side, Trade};
+
+    fn trade(id: u64, price: i64, quantity: i64, side: Side) -> Trade {
+        Trade {
+            agg_id: id,
+            timestamp_ms: id as i64,
+            price: Decimal::from(price),
+            quantity: Decimal::from(quantity),
+            side,
+        }
+    }
+
+    #[test]
+    fn resuming_retained_ladders_keeps_shared_counts_caps_and_future_prints() {
+        let prints = [
+            trade(0, 100, 1, Side::Buy),
+            trade(1, 101, 2, Side::Sell),
+            trade(2, 104, 3, Side::Buy),
+            trade(3, 105, 4, Side::Sell),
+        ];
+        let mut first = FootprintBuilder::new(Decimal::ONE, DEFAULT_LEVEL_CAP);
+        for print in &prints[..2] {
+            first.push(print);
+        }
+        let mut second = FootprintBuilder::new(Decimal::ONE, DEFAULT_LEVEL_CAP);
+        second.push(&prints[2]);
+        let mut expected = FootprintBuilder::new(Decimal::ONE, 2);
+        for print in &prints[..3] {
+            expected.push(print);
+        }
+        let mut fold = ProfileFold::new(Decimal::ONE, 2);
+        assert!(fold.push_ladder(&first.close().unwrap()));
+        assert!(fold.push_ladder(&second.close().unwrap()));
+        let mut rebuilt = fold.into_footprint_builder();
+        assert_eq!(rebuilt.partial(), expected.partial());
+        assert!(rebuilt.partial().unwrap().is_aggregated());
+        assert_eq!(
+            rebuilt
+                .partial()
+                .unwrap()
+                .levels()
+                .values()
+                .map(|row| row.trade_count)
+                .sum::<u64>(),
+            3
+        );
+        rebuilt.push(&prints[3]);
+        expected.push(&prints[3]);
+        assert_eq!(rebuilt.partial(), expected.partial());
+        let mut empty = ProfileFold::new(Decimal::from(5), 2).into_footprint_builder();
+        assert!(empty.partial().is_none());
+        empty.push(&prints[0]);
+        assert_eq!(empty.partial().unwrap().group(), Decimal::from(5));
+    }
 }

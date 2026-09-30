@@ -11,10 +11,16 @@ const RECORDED_DATES: i64 = 8;
 pub struct RecordedOpenings(Vec<i64>);
 
 impl RecordedOpenings {
-    pub fn observe(&mut self, timestamp_ms: i64) {
-        let window = timestamp_ms
+    /// The aligned native 100 ms window used for opening classification.
+    #[must_use]
+    pub fn window_start(timestamp_ms: i64) -> i64 {
+        timestamp_ms
             .div_euclid(NATIVE_TAPE_WINDOW_MS)
-            .saturating_mul(NATIVE_TAPE_WINDOW_MS);
+            .saturating_mul(NATIVE_TAPE_WINDOW_MS)
+    }
+
+    pub fn observe(&mut self, timestamp_ms: i64) {
+        let window = Self::window_start(timestamp_ms);
         let day = window.div_euclid(UTC_DAY_MS);
         match self
             .0
@@ -36,9 +42,7 @@ impl RecordedOpenings {
     /// Whether a print lies in its UTC date's first recorded 100 ms window.
     #[must_use]
     pub fn contains(&self, timestamp_ms: i64) -> bool {
-        let window = timestamp_ms
-            .div_euclid(NATIVE_TAPE_WINDOW_MS)
-            .saturating_mul(NATIVE_TAPE_WINDOW_MS);
+        let window = Self::window_start(timestamp_ms);
         self.0.binary_search(&window).is_ok()
     }
 

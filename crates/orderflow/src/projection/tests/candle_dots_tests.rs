@@ -425,6 +425,43 @@ fn opening_exclusion_preserves_mixed_band_facts_and_only_caps_opening_overflow()
 }
 
 #[test]
+fn opening_cap_handles_an_extreme_positive_ordinary_reference() {
+    let opening = ladder(&[print(1, "100", "10000", Side::Buy)]);
+    let tiny = dec("0.0000000000000000000000000001");
+    let ordinary = ladder(&[print(2, "105", &tiny.to_string(), Side::Sell)]);
+    let inputs = [
+        CandleFootprint {
+            opening: Some(&opening),
+            ..factual(0, &opening)
+        },
+        factual(1, &ordinary),
+    ];
+    let frame = project_candle_dots(
+        inputs,
+        grid(),
+        CandleDotView {
+            ignore_opening_burst_in_scale: true,
+            ..view()
+        },
+    );
+    assert_eq!(frame.full_quantity, tiny);
+    assert!(frame.opening_exclusion_effective);
+    assert_eq!(totals(&frame), (dec("10000"), tiny, 2));
+    assert_eq!(frame.marks.len(), 2);
+    assert!(frame.marks[0].size_capped);
+    assert_eq!(frame.marks[0].opening_quantity, dec("10000"));
+    assert!(!frame.marks[1].size_capped);
+    for (mark, price) in frame.marks.iter().zip([dec("100"), dec("105")]) {
+        assert!(mark.radius_px.is_finite());
+        assert_eq!(mark.radius_px, frame.maximum_radius_px);
+        assert_eq!(
+            (mark.price, mark.price_low, mark.price_high),
+            (price, price, price)
+        );
+    }
+}
+
+#[test]
 fn an_opening_only_view_falls_back_without_dropping_its_exact_quantity() {
     let opening = ladder(&[
         print(1, "100", "10000", Side::Buy),

@@ -115,9 +115,13 @@ fn paint(pass: &mut FootprintPass<'_>) {
                 .marks
                 .iter()
                 .all(|mark| mark.opening_quantity == mark.buy_quantity + mark.sell_quantity);
-        frame.painter.text(
-            frame.chart_rect.left_bottom() + egui::vec2(8.0, -8.0),
-            egui::Align2::LEFT_BOTTOM,
+        let header = egui::Rect::from_min_max(
+            frame.chart_rect.left_top() - egui::vec2(0.0, crate::plot_area::PLOT_PADDING_PX),
+            frame.chart_rect.right_top(),
+        );
+        pass.status_painter.with_clip_rect(header).text(
+            header.left_center() + egui::vec2(8.0, 0.0),
+            egui::Align2::LEFT_CENTER,
             if fallback {
                 "Opening-only scale fallback"
             } else {

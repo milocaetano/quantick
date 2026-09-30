@@ -383,6 +383,7 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
         let ignore_opening_burst = footprint.ignore_candle_opening();
         self.renderers.footprint(&mut FootprintPass {
             frame: &layer,
+            status_painter: frame.painter,
             lod: &mut footprint.lod,
             footprint_visible: start.footprint_paints,
             candle_aggression: start.candle_aggression,

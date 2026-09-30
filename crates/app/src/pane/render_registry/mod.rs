@@ -26,6 +26,7 @@ pub(super) use paper::{PaperPass, TradesPass};
 
 pub(super) struct FootprintPass<'a> {
     pub frame: &'a LayerFrame<'a>,
+    pub status_painter: &'a egui::Painter,
     pub lod: &'a mut FootprintLod,
     pub footprint_visible: bool,
     pub candle_aggression: bool,

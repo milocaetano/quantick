@@ -479,11 +479,15 @@ impl CandleDotFrame {
             dot.size_capped = self.opening_exclusion_effective
                 && dot.opening_quantity > Decimal::ZERO
                 && dot.buy_quantity.saturating_add(dot.sell_quantity) > self.full_quantity;
-            dot.radius_px = self.maximum_radius_px
-                * normalized_area_size(
-                    dot.buy_quantity.saturating_add(dot.sell_quantity),
-                    self.full_quantity,
-                );
+            dot.radius_px = if dot.size_capped {
+                self.maximum_radius_px
+            } else {
+                self.maximum_radius_px
+                    * normalized_area_size(
+                        dot.buy_quantity.saturating_add(dot.sell_quantity),
+                        self.full_quantity,
+                    )
+            };
         }
     }
 }

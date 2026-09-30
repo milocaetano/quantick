@@ -393,6 +393,64 @@ fn a_tick_context_header_names_the_applied_bars_and_time_controls_return_for_tim
 }
 
 #[test]
+fn opening_status_stays_above_the_plot_with_footprint_and_manual_price_ranges() {
+    let ctx = egui::Context::default();
+    let (mut app, events, _commands) = context_fixture(&ctx);
+    let left = &mut app.active_tab_mut().time_panes[0];
+    for layer in [ChartLayer::Footprint, ChartLayer::CandleAggression] {
+        left.set_layer_visible(layer, true, &mut Default::default());
+    }
+    left.footprint.set_ignore_candle_opening(true);
+    events
+        .try_send(FeedEvent::Live(print(21, 1200, 120, 400, Side::Sell)))
+        .unwrap();
+    run_frame(&mut app, &ctx);
+    for (size, width, low, high) in [
+        (egui::vec2(1500.0, 900.0), 40.0, 90.0, 200.0),
+        (egui::vec2(1000.0, 700.0), 8.0, 100.0, 130.0),
+        (egui::vec2(1000.0, 700.0), 40.0, 180.0, 220.0),
+    ] {
+        let left = &mut app.active_tab_mut().time_panes[0];
+        left.viewport.set_px_per_bar(width);
+        left.price_view.set_manual_range(low, high);
+        let output = run_frame_sized(&mut app, &ctx, size, vec![], Default::default());
+        let chart = app.active_tab().time_panes[0].frame.chart_rect.unwrap();
+        let (clip, text) = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text)
+                    if matches!(
+                        text.galley.text(),
+                        "First recorded burst excluded" | "Opening-only scale fallback"
+                    ) =>
+                {
+                    Some((shape.clip_rect, text))
+                }
+                _ => None,
+            })
+            .expect("enabled opening preference has visible status");
+        let visible = text.visual_bounding_rect().intersect(clip);
+        assert!(
+            visible.is_positive(),
+            "status must survive painter clipping"
+        );
+        assert!(
+            visible.bottom() <= chart.top(),
+            "status cannot cover plot data"
+        );
+        assert!(visible.top() >= chart.top() - crate::plot_area::PLOT_PADDING_PX);
+        assert!(visible.left() >= chart.left() && visible.right() <= chart.right());
+        assert!(
+            painted_text(&output)
+                .iter()
+                .any(|text| text.starts_with("footprint")),
+            "the footprint footer must be present in the same frame"
+        );
+    }
+}
+
+#[test]
 fn late_session_marks_recover_visible_scale_after_visiting_a_large_opening() {
     let ctx = egui::Context::default();
     let (mut app, events, _commands) = context_fixture(&ctx);

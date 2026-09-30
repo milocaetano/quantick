@@ -16,7 +16,7 @@
 //! answer off the closed bar's own `trade_count`: `pending + 1` means the
 //! closing trade is inside, `pending` means it opens the next ladder.
 
-use quantick_orderflow::history::RecordedOpenings;
+mod opening;
 use std::collections::BTreeMap;
 
 use quantick_engine::{Bar, BarFootprint, DEFAULT_LEVEL_CAP, FootprintBuilder, Trade};
@@ -37,9 +37,7 @@ pub struct FootprintSeries {
     /// Trades fed since the last close — the counter the closing-trade
     /// question is answered against.
     pending: u64,
-    opening_builder: FootprintBuilder,
-    opening_closed: BTreeMap<usize, BarFootprint>,
-    openings: RecordedOpenings,
+    opening: opening::OpeningSeries,
 }
 
 impl FootprintSeries {
@@ -51,9 +49,7 @@ impl FootprintSeries {
             base_group,
             closed: Vec::new(),
             pending: 0,
-            opening_builder: FootprintBuilder::new(base_group, DEFAULT_LEVEL_CAP),
-            opening_closed: BTreeMap::new(),
-            openings: RecordedOpenings::default(),
+            opening: opening::OpeningSeries::new(base_group),
         }
     }
 
@@ -71,45 +67,38 @@ impl FootprintSeries {
         self.base_group = base_group;
         self.closed.clear();
         self.pending = 0;
-        self.opening_builder = FootprintBuilder::new(base_group, DEFAULT_LEVEL_CAP);
-        self.opening_closed.clear();
-        self.openings = RecordedOpenings::default();
+        self.opening = opening::OpeningSeries::new(base_group);
     }
 
     fn push(&mut self, trade: &Trade) {
         self.builder.push(trade);
-        self.openings.observe(trade.timestamp_ms);
-        if self.openings.contains(trade.timestamp_ms) {
-            self.opening_builder.push(trade);
-        }
+        self.opening.observe(trade);
     }
 
     fn close_opening(&mut self) {
-        if let Some(ladder) = self.opening_builder.close() {
-            self.opening_closed.insert(self.closed.len(), ladder);
-        }
+        self.opening.close(self.closed.len());
     }
 
     /// Sparse opening contributions, indexed by the same closed bars.
     #[must_use]
     pub fn opening_closed(&self) -> &BTreeMap<usize, BarFootprint> {
-        &self.opening_closed
+        self.opening.closed()
     }
 
     #[must_use]
     pub fn opening_partial(&self) -> Option<&BarFootprint> {
-        self.opening_builder.partial()
+        self.opening.partial()
     }
 
     #[must_use]
     pub fn recorded_openings(&self) -> &[i64] {
-        self.openings.windows()
+        self.opening.recorded_windows()
     }
 
     /// Fold the trade the bar builder just consumed, `closed` being what that
-    /// same `push` returned. Must be called for every trade in chronological
-    /// order. Prepending earlier evidence resets and refolds the entire series
-    /// before classifying its new first-recorded windows.
+    /// same `push` returned. Uses the bar builder's arrival order, including
+    /// earlier live timestamps; opening provenance can be reclassified without
+    /// changing candle membership. Prepending history resets and refolds.
     pub fn observe(&mut self, trade: &Trade, closed: Option<&Bar>) {
         let Some(bar) = closed else {
             self.push(trade);
