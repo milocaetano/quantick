@@ -20,5 +20,7 @@
 # agrees. This closes #443's A2.
 # Raised by 76 lines for the Tab-owned collapse transitions and control/workspace
 # adapters: they address live egui pane identities and cannot run headlessly.
-!budget 24309
-crates/app 24309
+# Raised by 34 lines for harness-only launch adapters that apply those same
+# live tab transitions after the requested canvas layout has been selected.
+!budget 24343
+crates/app 24343

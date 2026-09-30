@@ -48,5 +48,7 @@
 # their hit areas and pointer routing live beside the egui canvas they draw.
 # Sizing state and workspace/control adapters share those transitions; this
 # change adds no trade-path work or new dependency to the UI crate.
-!budget 104793
-crates/app 104793
+# Raised by another 14 lines to expose the new rails from harness-only launch
+# hooks and verify their state after layout selection.
+!budget 104807
+crates/app 104807

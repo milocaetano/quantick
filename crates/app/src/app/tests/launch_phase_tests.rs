@@ -18,6 +18,51 @@ fn captured_scenario_inputs_reach_the_launch_phase() {
 }
 
 #[test]
+fn collapse_hooks_reach_each_rail_after_layout_selection() {
+    for (name, flow, upper, lower) in [
+        ("QUANTICK_FLOW_PANE_COLLAPSED", true, false, false),
+        ("QUANTICK_CONTEXT_UPPER_COLLAPSED", false, true, false),
+        ("QUANTICK_CONTEXT_LOWER_COLLAPSED", false, false, true),
+    ] {
+        let launch = AppLaunch {
+            scenario: crate::hooks::ScenarioInputs::from_pairs(&[
+                ("QUANTICK_LAYOUT", "time+time+flow"),
+                (name, "1"),
+            ]),
+            ..AppLaunch::default()
+        };
+        let (app, _evt, _cmd, _book) = test_app_with_launch(launch);
+        let tab = app.active_tab();
+        assert_eq!(tab.layout, crate::tab::CanvasLayout::TimeTimeAndFlow);
+        assert_eq!(tab.flow_collapsed, flow, "{name}");
+        if upper || lower {
+            assert_eq!(tab.context_collapsed_slots(), vec![upper, lower], "{name}");
+        }
+    }
+}
+
+#[test]
+fn two_pane_launch_hooks_reach_both_horizontal_rails() {
+    for (name, context, flow) in [
+        ("QUANTICK_PANE_COLLAPSED", true, false),
+        ("QUANTICK_FLOW_PANE_COLLAPSED", false, true),
+    ] {
+        let launch = AppLaunch {
+            scenario: crate::hooks::ScenarioInputs::from_pairs(&[
+                ("QUANTICK_LAYOUT", "time+flow"),
+                (name, "1"),
+            ]),
+            ..AppLaunch::default()
+        };
+        let (app, _evt, _cmd, _book) = test_app_with_launch(launch);
+        let tab = app.active_tab();
+        assert_eq!(tab.layout, crate::tab::CanvasLayout::TimeAndFlow);
+        assert_eq!(tab.context_collapsed, context, "{name}");
+        assert_eq!(tab.flow_collapsed, flow, "{name}");
+    }
+}
+
+#[test]
 fn an_app_without_scenario_inputs_applies_no_scenario() {
     let (app, _evt, _cmd, _book) = test_app();
     assert!(!app.active_tab().flow_pane.price_view.is_inverted());

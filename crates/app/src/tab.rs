@@ -659,7 +659,7 @@ impl Tab {
             pending_context_panes: 0,
             layout: CanvasLayout::Single,
             split_fraction: DEFAULT_PANE_FRACTION,
-            context_collapsed: pane_collapsed_hook(),
+            context_collapsed: false,
             flow_collapsed: false,
             context_stack: context_resize::ContextStack::default(),
             canvas_drag: None,
@@ -913,22 +913,6 @@ impl Tab {
         self.forced_latency.or(*self.feed_latency.borrow())
     }
 }
-
-/// `QUANTICK_PANE_COLLAPSED=1` opens every tab with its context panes folded.
-/// A capture hook: compiled only with the scenario harness (or under test).
-fn pane_collapsed_hook() -> bool {
-    #[cfg(any(feature = "scenario-harness", test))]
-    {
-        crate::hooks::captured::var("QUANTICK_PANE_COLLAPSED").is_some_and(|value| value == "1")
-    }
-    #[cfg(not(any(feature = "scenario-harness", test)))]
-    {
-        false
-    }
-}
-
-#[cfg(any(feature = "scenario-harness", test))]
-crate::hooks::declare_hooks!["QUANTICK_PANE_COLLAPSED"];
 
 #[cfg(test)]
 mod tests;
