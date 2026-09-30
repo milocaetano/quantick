@@ -171,6 +171,11 @@ impl WinLive {
         .shapes
     }
 
+    /// Screen x where the tape's pane begins.
+    pub(super) fn tape_left(&self) -> f32 {
+        CHART_PX - self.lane_px
+    }
+
     /// Every shape the tape paints for `frame`.
     pub(super) fn tape(&self, frame: &VisibleOrderflow) -> Vec<egui::epaint::ClippedShape> {
         self.painted(frame, false)

@@ -41,8 +41,9 @@ fn dot_centres(shapes: &[egui::epaint::ClippedShape]) -> Vec<egui::Pos2> {
 }
 
 /// Every rectangle of the resting-liquidity mesh, the first mesh the depth
-/// pass paints.
-fn book_rects(shapes: &[egui::epaint::ClippedShape]) -> Vec<egui::Rect> {
+/// pass paints, that lies in the tape's pane: beside the candles, their own
+/// pane carries each bar's summary band instead.
+fn book_rects(shapes: &[egui::epaint::ClippedShape], tape_left: f32) -> Vec<egui::Rect> {
     let Some(mesh) = shapes.iter().find_map(|shape| match &shape.shape {
         egui::Shape::Mesh(mesh) => Some(mesh),
         _ => None,
@@ -54,6 +55,7 @@ fn book_rects(shapes: &[egui::epaint::ClippedShape]) -> Vec<egui::Rect> {
         .map(|quad| {
             egui::Rect::from_points(&quad.iter().map(|vertex| vertex.pos).collect::<Vec<_>>())
         })
+        .filter(|rect: &egui::Rect| rect.left() >= tape_left - 0.5)
         .collect()
 }
 
@@ -62,7 +64,7 @@ fn book_rects(shapes: &[egui::epaint::ClippedShape]) -> Vec<egui::Rect> {
 /// the newest print, where the newest image left it known.
 fn assert_book_at_the_prints(live: &WinLive, frame: &VisibleOrderflow, prints: usize, why: &str) {
     let dots = dot_centres(&live.tape(frame));
-    let book = book_rects(&live.book_pass(frame));
+    let book = book_rects(&live.book_pass(frame), live.tape_left());
     let why = format!("{why}; dots {dots:?}; book {book:?}");
     assert_eq!(dots.len(), prints, "{why}");
     let (newest, earlier) = dots.split_last().expect("a print");
