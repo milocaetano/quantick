@@ -1061,6 +1061,7 @@ fn an_unsynchronized_history_marks_the_whole_timeline_unavailable() {
             x0: 0.0,
             x1: 1.0,
             reason: "book_unavailable_before_capture".to_owned(),
+            tape_ms: None,
         }]
     );
 }

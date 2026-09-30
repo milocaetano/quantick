@@ -15,6 +15,7 @@ use quantick_orderbook::BookLevel;
 use quantick_orderflow::engine::{CaptureStatus, ProjectionRequest, VisibleOrderflow};
 use quantick_orderflow::projection::{PaneGeometry, normalized_area_size};
 use quantick_orderflow::tape_view::TapeEnd;
+use quantick_orderflow::{BubbleStyle, LiveEdge};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
@@ -104,6 +105,8 @@ impl OrderflowView {
         lane_width_px: f32,
         inverted: bool,
     ) {
+        let style = OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
+        let tape_time = self.tape_time(frame);
         let layout = ProjectedLayout::new(
             chart_rect,
             viewport,
@@ -112,8 +115,8 @@ impl OrderflowView {
             frame.slot_count,
             lane_width_px,
         )
-        .with_inverted(inverted);
-        let style = OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
+        .with_inverted(inverted)
+        .with_tape_clock(tape_time, &self.tape_bubbles());
         // The book beside a past tape is today's: it stays with the candles.
         let right = chart_rect.right() - lane_width_px * f32::from(!self.tape_end.is_live());
         let depth = painter.with_clip_rect(chart_rect.with_max_x(right));
@@ -121,6 +124,20 @@ impl OrderflowView {
         draw_heatmap_background(&depth, &context);
         draw_live_lane_marks(painter, &context);
         draw_liquidity_events(&depth, &context);
+        // A held tape stands on the book recorded for its own window, placed
+        // on its own clock and labelled where the history holds none.
+        if let Some(book) = self.past_book() {
+            let tape = painter.with_clip_rect(layout.lane_rect());
+            draw_heatmap_background(&tape, &RenderContext::new(book, layout, &style));
+        }
+    }
+
+    /// The book of the tape held in the past, once the worker has one.
+    fn past_book(&self) -> Option<&quantick_orderflow::HeatmapProjection> {
+        if self.tape_end.is_live() || !self.config.native_tape() {
+            return None;
+        }
+        self.published.past_tape.as_ref()?.book.as_deref()
     }
 
     /// Draw factual aggressive prints over the candles. The canvas's key is
@@ -173,22 +190,39 @@ impl OrderflowView {
                     .then_some((&self.tape_rebuilds, &frame.projection)),
             )
             .with_past_tape(past.map(|past| (&self.past_dots, past)));
-        let context = match (
-            self.config.native_tape(),
-            frame.live_edge,
-            frame.volume_dots.as_ref(),
-        ) {
-            (true, Some(mut edge), Some(dots)) => {
-                edge.now_ms = self
-                    .tape_end
-                    .end_ms(self.lane_now_ms().unwrap_or(edge.now_ms));
-                edge.window_ms = self.config.lane_window_ms(edge.reference_ms);
-                context.with_tape_time(edge, dots.tape_window_ms)
-            }
-            _ => context,
+        let context = match self.tape_time(frame) {
+            Some((edge, dot_window_ms)) => context.with_tape_time(edge, dot_window_ms),
+            None => context,
         };
         draw_aggression_bubbles(painter, &context);
         crate::orderflow_render::draw_past_tape_edge(painter, &context, past);
+    }
+
+    /// The native tape's clock for `frame`, as its dots and the book behind
+    /// them are both placed on it: the frame's live edge moved to where the
+    /// tape is held on the pane's supplied market clock, with the window the
+    /// lane setting resolves to, beside the dots' own window. `None` off the
+    /// native tape, or before its frame has a live edge and dots.
+    pub(super) fn tape_time(&self, frame: &VisibleOrderflow) -> Option<(LiveEdge, i64)> {
+        let (true, Some(mut edge), Some(dots)) = (
+            self.config.native_tape(),
+            frame.live_edge,
+            frame.volume_dots.as_ref(),
+        ) else {
+            return None;
+        };
+        edge.now_ms = self
+            .tape_end
+            .end_ms(self.lane_now_ms().unwrap_or(edge.now_ms));
+        edge.window_ms = self.config.lane_window_ms(edge.reference_ms);
+        Some((edge, dots.tape_window_ms))
+    }
+
+    /// The bubble style the dots' pass sizes the tape's inset with.
+    pub(super) fn tape_bubbles(&self) -> BubbleStyle {
+        let mut bubbles = self.config.bubbles.clone();
+        bubbles.sanitize();
+        bubbles
     }
 
     /// Where the tape's right edge is held.

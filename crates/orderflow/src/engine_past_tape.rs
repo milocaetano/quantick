@@ -49,25 +49,33 @@ impl BookEngine {
         let window_ms = self.config.lane_window_ms(reference_ms).max(1);
         let latest_end = end_ms.min(self.history.latest_ms()?);
         let retained = self.history.tape_retained_from_ms();
-        if let Some(reused) =
-            held.and_then(|held| held.reused_at(latest_end, window_ms, dots, retained))
+        let bars = PastBars {
+            first_bar_index: request.first_bar_index,
+            closed: &request.closed,
+            partial: request.partial.as_ref(),
+        };
+        let tape = match held.and_then(|held| held.reused_at(latest_end, window_ms, dots, retained))
         {
-            return Some(Arc::new(reused));
-        }
-        project_past_tape(
+            Some(reused) => reused,
+            None => project_past_tape(
+                &self.history,
+                bars,
+                end_ms,
+                window_ms,
+                reference_ms,
+                prices,
+                settled,
+                dots,
+            )?,
+        };
+        // The book under it is the one recorded for its own stretch, rowed
+        // on this request's prices; never today's.
+        Some(Arc::new(tape.with_depth(
             &self.history,
-            PastBars {
-                first_bar_index: request.first_bar_index,
-                closed: &request.closed,
-                partial: request.partial.as_ref(),
-            },
-            end_ms,
-            window_ms,
+            bars,
             reference_ms,
             prices,
             settled,
-            dots,
-        )
-        .map(Arc::new)
+        )))
     }
 }

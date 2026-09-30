@@ -7,8 +7,11 @@
 //! pointer resolver cannot grow two pixel mappings. Nothing here paints.
 
 use eframe::egui;
-use quantick_orderflow::projection::{PastTape, PastTapeMemory};
-use quantick_orderflow::{AggressionPrimitive, HeatmapProjection, PriceWindow};
+use quantick_orderflow::projection::{PastTape, PastTapeMemory, TapeClock};
+use quantick_orderflow::{
+    AggressionPrimitive, BubbleStyle, GapPrimitive, HeatmapCell, HeatmapProjection,
+    LiquidityEventPrimitive, LiveEdge, PriceWindow,
+};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive as _;
 use std::sync::Arc;
@@ -50,6 +53,9 @@ pub(crate) struct ProjectedLayout<'a> {
     /// here, at the same boundary where the candles' own scale flips, so the
     /// map, the bubbles and the bars they sit on turn over together.
     pub(crate) inverted: bool,
+    /// The native tape's clock: its book is placed by market time where its
+    /// dots are. `None` for every other lane.
+    tape: Option<TapeClock>,
 }
 
 impl<'a> ProjectedLayout<'a> {
@@ -74,6 +80,42 @@ impl<'a> ProjectedLayout<'a> {
                 0.0
             },
             inverted: false,
+            tape: None,
+        }
+    }
+
+    /// Place the lane's book on the native tape's `time` (its live edge and
+    /// dot window this frame), inset for `bubbles` as its dots are.
+    #[must_use]
+    pub(crate) fn with_tape_clock(
+        mut self,
+        time: Option<(LiveEdge, i64)>,
+        bubbles: &BubbleStyle,
+    ) -> Self {
+        let lane = self.lane_rect();
+        self.tape = time
+            .filter(|_| self.lane_left_x().is_some())
+            .map(|(edge, dots)| TapeClock::new(edge, dots, (lane.width(), lane.height()), bubbles));
+        self
+    }
+
+    fn tape_x(self, timestamp_ms: i64) -> Option<f32> {
+        Some(self.lane_rect().left() + self.tape?.x_ms(timestamp_ms))
+    }
+
+    /// Screen span of a stretch of market time on the native tape.
+    fn tape_span(self, span: Option<(i64, i64)>) -> Option<(f32, f32)> {
+        let (start, end) = span?;
+        Some((self.tape_x(start)?, self.tape_x(end)?))
+    }
+
+    /// Screen x of `mark`: on the native tape, where its dot is drawn.
+    #[must_use]
+    pub(super) fn mark_x(self, mark: &AggressionPrimitive) -> f32 {
+        let lane_start = 1.0 - 1.0 / self.slot_count.max(1) as f64;
+        match self.tape.filter(|_| mark.live) {
+            Some(tape) => self.lane_rect().left() + tape.mark_x(mark, lane_start),
+            None => self.x(mark.x),
         }
     }
 
@@ -135,7 +177,7 @@ impl<'a> ProjectedLayout<'a> {
 
     /// The tape's pane — everything right of the divider.
     #[must_use]
-    pub(super) fn lane_rect(self) -> egui::Rect {
+    pub(crate) fn lane_rect(self) -> egui::Rect {
         egui::Rect::from_min_max(
             egui::pos2(self.history_right(), self.chart_rect.top()),
             self.chart_rect.max,
@@ -249,29 +291,70 @@ impl<'a> ProjectedLayout<'a> {
         )
     }
 
-    /// Screen rectangle occupied by one semantic heatmap cell.
+    /// Screen rectangle occupied by one semantic heatmap cell: on the native
+    /// tape, the market time it covers on the tape's own clock.
     ///
     /// Kept on the renderer's projection object so the on-demand pointer
     /// resolver and the paint path cannot grow two pixel mappings. This does
     /// no work unless a control snapshot explicitly asks what is under the
     /// cursor.
     #[must_use]
-    pub(crate) fn heat_cell_rect(
-        self,
-        x0: f64,
-        x1: f64,
-        y0: f64,
-        y1: f64,
-        min_height: f32,
-    ) -> egui::Rect {
-        self.band(x0, x1, y0, y1, min_height)
+    pub(crate) fn heat_cell_rect(self, cell: &HeatmapCell, min_height: f32) -> egui::Rect {
+        let Some((left, right)) = self.tape_span(cell.tape_ms) else {
+            return self.band(cell.x0, cell.x1, cell.y0, cell.y1, min_height);
+        };
+        let (top, bottom) = (self.y(cell.y0), self.y(cell.y1));
+        readable_band(
+            egui::Rect::from_min_max(
+                egui::pos2(left.min(right), top.min(bottom)),
+                egui::pos2(left.max(right), top.max(bottom)),
+            ),
+            min_height,
+            self.lane_rect(),
+        )
     }
 
+    /// The full-height stretch a coverage gap spans, cut to its pane; the
+    /// pane; and whether that pane is the tape's. A gap that carries its
+    /// market time is placed on the native tape's clock, like its book.
     #[must_use]
-    pub(super) fn event_band(self, x: f64, y0: f64, y1: f64, min_height: f32) -> EventBand {
-        let row = self.band(x, x, y0, y1, min_height);
+    pub(super) fn gap_rect(self, gap: &GapPrimitive) -> (egui::Rect, egui::Rect, bool) {
+        let (x0, x1, pane, on_tape) = match self.tape_span(gap.tape_ms) {
+            Some((x0, x1)) => (x0, x1, self.lane_rect(), true),
+            None => (
+                self.x(gap.x0),
+                self.x(gap.x1),
+                self.span_pane(gap.x0, gap.x1),
+                self.in_lane(gap.x0),
+            ),
+        };
+        let rect = egui::Rect::from_min_max(
+            egui::pos2(x0.min(x1), self.chart_rect.top()),
+            egui::pos2(x0.max(x1), self.chart_rect.bottom()),
+        );
+        (rect.intersect(pane), pane, on_tape)
+    }
+
+    /// The pane a cell is drawn in: the tape's, for a cell on its clock.
+    #[must_use]
+    pub(super) fn cell_pane(self, cell: &HeatmapCell) -> egui::Rect {
+        if self.tape_span(cell.tape_ms).is_some() {
+            self.lane_rect()
+        } else {
+            self.span_pane(cell.x0, cell.x1)
+        }
+    }
+
+    /// Where a reduction is marked: on the native tape, at its own instant on
+    /// the tape's clock, over the book it happened to.
+    #[must_use]
+    pub(super) fn event_band(self, event: &LiquidityEventPrimitive, min_height: f32) -> EventBand {
+        let row = self.band(event.x, event.x, event.y0, event.y1, min_height);
+        let tape_x = self
+            .tape_x(event.timestamp_ms)
+            .filter(|_| self.in_lane(event.x));
         EventBand {
-            x: self.x(x),
+            x: tape_x.unwrap_or_else(|| self.x(event.x)),
             top: row.top(),
             bottom: row.bottom(),
         }

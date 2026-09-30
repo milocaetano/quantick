@@ -274,6 +274,9 @@ pub struct LiquidityHistory {
     /// The newest timestamp among the prints retention or a cap has evicted:
     /// every print at or before it may be gone, none after it is.
     evicted_through_ms: Option<i64>,
+    /// The instant up to which retention or a cap has let captured book go:
+    /// book before it may have existed and is no longer held.
+    book_evicted_through_ms: Option<i64>,
     archived: VecDeque<LiquidityRun>,
     active: BTreeMap<LevelKey, LiquidityRun>,
     aggressions: VecDeque<Aggression>,
@@ -310,6 +313,7 @@ impl LiquidityHistory {
             first_stream_ms: None,
             opening_bursts: RecordedOpenings::default(),
             evicted_through_ms: None,
+            book_evicted_through_ms: None,
             archived: VecDeque::new(),
             active: BTreeMap::new(),
             aggressions: VecDeque::new(),
@@ -475,6 +479,14 @@ impl LiquidityHistory {
     #[must_use]
     pub fn evicted_through_ms(&self) -> Option<i64> {
         self.evicted_through_ms
+    }
+
+    /// The instant up to which captured book has been let go by retention or
+    /// a cap: book before it may have existed and is no longer held. `None`
+    /// until the first eviction.
+    #[must_use]
+    pub fn book_evicted_through_ms(&self) -> Option<i64> {
+        self.book_evicted_through_ms
     }
 
     /// The first instant any stream reached this history: nothing before it
@@ -990,6 +1002,11 @@ impl LiquidityHistory {
     }
 
     fn truncate_before(&mut self, cutoff: i64) {
+        let book_before = self
+            .coverage
+            .front()
+            .is_some_and(|segment| segment.start_ms < cutoff);
+        let runs_before = self.counters.runs_evicted;
         while self
             .archived
             .front()
@@ -1021,6 +1038,12 @@ impl LiquidityHistory {
         }
         if let Some(segment) = self.coverage.front_mut() {
             segment.start_ms = segment.start_ms.max(cutoff);
+        }
+        if book_before || self.counters.runs_evicted > runs_before {
+            self.book_evicted_through_ms = Some(
+                self.book_evicted_through_ms
+                    .map_or(cutoff, |through| through.max(cutoff)),
+            );
         }
 
         while self

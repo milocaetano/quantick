@@ -264,3 +264,69 @@ fn a_pending_tape_keeps_the_published_frames_bar_geometry() {
         }
     }
 }
+
+/// The native tape's prints reach the screen the frame they arrive, so its
+/// book may not wait behind them for the projection cadence: a book image
+/// inside the cadence rebuilds the depth at once, where any other chart
+/// still coalesces it.
+#[test]
+fn a_newer_book_is_never_held_back_by_the_cadence_under_the_native_tape() {
+    use quantick_orderbook::{BookCoverage, BookDelta, BookSnapshot};
+    let level = |price: i64, quantity: i64| {
+        BookLevel::new(Decimal::from(price), Decimal::from(quantity)).expect("a level")
+    };
+    let mut engine = engine(true, false);
+    let mut config = engine.config.clone();
+    config.live_lane.show_depth = true;
+    engine.apply_visual_config(config);
+    engine.set_enabled(true, 10);
+    engine.handle_depth_event(DepthEvent::Snapshot {
+        symbol: "WINV26".to_owned(),
+        generation: 10,
+        observed_at_ms: 20_000,
+        effective_at_ms: 20_000,
+        price_step: Some(Decimal::ONE),
+        snapshot: BookSnapshot::new(
+            1,
+            vec![level(90, 40)],
+            vec![level(110, 40)],
+            BookCoverage::Limited {
+                levels_per_side: 20,
+            },
+        ),
+    });
+    let input = request(closed(), Some(forming()), 30_000);
+    let started = Instant::now();
+    engine
+        .project_at(&input, started)
+        .expect("the tape projects");
+    let builds = engine.projection_builds;
+    for (update_id, at_ms, asks) in [
+        (2, 28_000, vec![level(100, 60)]),
+        (3, 29_000, vec![level(110, 45)]),
+    ] {
+        engine.handle_depth_event(DepthEvent::Update {
+            symbol: "WINV26".to_owned(),
+            generation: 10,
+            event_time_ms: at_ms,
+            delta: BookDelta::new(update_id, update_id, Vec::new(), asks),
+        });
+    }
+    let frame = engine
+        .project_at(&input, started + Duration::from_millis(1))
+        .expect("the tape projects");
+    assert_eq!(
+        engine.projection_builds,
+        builds + 1,
+        "a book image inside the cadence rebuilds the native tape's depth"
+    );
+    let width = frame.projection.effective_grouping.bucket_width;
+    assert!(
+        frame.projection.cells.iter().any(|cell| {
+            cell.price_bucket <= Decimal::from(100)
+                && Decimal::from(100) < cell.price_bucket + width
+        }),
+        "the level the newest images added is on the tape: {:?}",
+        frame.projection.cells
+    );
+}

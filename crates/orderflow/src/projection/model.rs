@@ -52,6 +52,15 @@ impl PriceWindow {
     pub fn y_unclamped(&self, price: Decimal) -> Option<f64> {
         ((self.high - price) / (self.high - self.low)).to_f64()
     }
+
+    /// The normalized `(top, bottom)` of the book row starting at `bucket`
+    /// and `width` tall, cut to the window; `None` when none of it shows.
+    #[must_use]
+    pub fn rows(&self, bucket: Decimal, width: Decimal) -> Option<(f64, f64)> {
+        let top = self.y((bucket + width).min(self.high))?;
+        let bottom = self.y(bucket.max(self.low))?;
+        (bottom > top).then_some((top, bottom))
+    }
 }
 
 /// One clipped liquidity rectangle ready for a backend to colour.
@@ -77,6 +86,12 @@ pub struct HeatmapCell {
     pub intensity: f32,
     /// Final alpha after applying configured opacity.
     pub alpha: f32,
+    /// The market time a run drawn on the tape covers, `(start_ms, end_ms)`:
+    /// its own bounds, not cut to the window it was projected on, and ending
+    /// where the book is known. The native tape moves its prints on its own
+    /// clock every frame, and places the book from these with them. `None`
+    /// for a bar's summary band and on a chart without a tape.
+    pub tape_ms: Option<(i64, i64)>,
 }
 
 /// One aggressive execution ready for circles, footprint cells or tooltips.
@@ -197,6 +212,11 @@ pub struct LiquidityEventPrimitive {
 /// to the generic label without a single test noticing.
 pub const BEFORE_CAPTURE: &str = "book_unavailable_before_capture";
 
+/// Reason recorded for a stretch whose book the history captured and has
+/// since let go, by retention or a cap. Like [`BEFORE_CAPTURE`] it leads the
+/// book a window holds; unlike it, the book once existed.
+pub const BOOK_EVICTED: &str = "book_history_evicted";
+
 /// A visible interval that must not be filled or connected.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GapPrimitive {
@@ -210,14 +230,18 @@ pub struct GapPrimitive {
     pub x1: f64,
     /// Diagnostic reason copied from history.
     pub reason: String,
+    /// The market time the gap covers on a tape that places its book by
+    /// time ([`HeatmapCell::tape_ms`]); `None` where it is placed by `x`.
+    pub tape_ms: Option<(i64, i64)>,
 }
 
 impl GapPrimitive {
-    /// Whether this is the leading stretch that predates local capture, as
+    /// Whether this is the leading stretch before the book the history
+    /// holds — never captured, or captured and no longer retained — as
     /// opposed to a discontinuity inside covered time.
     #[must_use]
     pub fn precedes_capture(&self) -> bool {
-        self.reason == BEFORE_CAPTURE
+        self.reason == BEFORE_CAPTURE || self.reason == BOOK_EVICTED
     }
 }
 

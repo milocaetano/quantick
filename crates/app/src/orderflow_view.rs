@@ -18,6 +18,9 @@ use crate::orderflow_render::{OrderflowRenderStyle, ProjectedLayout};
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
+#[cfg(test)]
+#[path = "orderflow_view/tests/book_at_print_tests.rs"]
+mod book_at_print_tests;
 mod clock;
 mod frame;
 mod layers;
@@ -25,6 +28,9 @@ mod layers;
 #[path = "orderflow_view/tests/native_split_tests.rs"]
 mod native_split_tests;
 mod opening_scale;
+#[cfg(test)]
+#[path = "orderflow_view/tests/past_book_tests.rs"]
+mod past_book_tests;
 mod pending;
 #[cfg(test)]
 #[path = "orderflow_view/tests/pending_tests.rs"]
@@ -34,6 +40,9 @@ mod source_presets;
 #[cfg(test)]
 #[path = "orderflow_view/tests/tape_frame_tests.rs"]
 mod tape_frame_tests;
+#[cfg(test)]
+#[path = "orderflow_view/tests/tape_golden_tests.rs"]
+mod tape_golden_tests;
 
 /// Borrowed chart timeline for one order-flow projection request; the boundary revision sits beside
 /// the exact bar slice so a new timeline never pairs with an old cache identity.
@@ -293,7 +302,8 @@ impl OrderflowView {
             frame.slot_count,
             lane_width_px,
         )
-        .with_inverted(inverted);
+        .with_inverted(inverted)
+        .with_tape_clock(self.tape_time(frame), &self.tape_bubbles());
         let in_lane = layout
             .lane_left_x()
             .is_some_and(|divider| position.x >= divider);
@@ -310,7 +320,7 @@ impl OrderflowView {
             OrderflowRenderStyle::from_config(&self.config, egui::Color32::TRANSPARENT.to_array());
         let cell = frame.projection.cells.iter().rev().find(|cell| {
             layout
-                .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)
+                .heat_cell_rect(cell, style.min_cell_height)
                 .contains(position)
         })?;
 
@@ -1533,9 +1543,7 @@ mod tests {
         );
         let style =
             OrderflowRenderStyle::from_config(&view.config, egui::Color32::TRANSPARENT.to_array());
-        let position = layout
-            .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)
-            .center();
+        let position = layout.heat_cell_rect(cell, style.min_cell_height).center();
 
         let hit = view
             .control_flow_cell_at(chart, &viewport, 1, 0.0, false, position)
