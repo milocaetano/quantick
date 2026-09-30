@@ -235,8 +235,9 @@ fn flip_travel(app: &mut QuantickApp) -> Option<f32> {
 /// (trader 2026-09-30: dragging the axis turned the chart over far too
 /// soon). The tape fits the shared axis to a few recent prints; when they
 /// narrow, that fit shrinks under the drag, and a threshold measured against
-/// it arrived hundreds of pixels early. With the tape on and off, the drag
-/// from auto-fit flips only after main's travel.
+/// it arrived early: 450px here, almost at once on an index tape whose one
+/// quiet price fits a single point. With the tape on and off, the drag from
+/// auto-fit flips only after main's travel.
 #[test]
 fn an_expanding_gutter_drag_flips_only_after_mains_travel_with_the_tape_on_or_off() {
     let main = main_flip_travel_px();

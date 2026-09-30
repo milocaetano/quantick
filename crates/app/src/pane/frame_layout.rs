@@ -131,7 +131,8 @@ impl FrameLayout {
 
     /// The visible slices and the price scale, as the [`DrawFrame`] every
     /// painter reads, plus the auto-fitted range the next frame's input
-    /// handler converts pixels with. `None` when nothing yields a scale.
+    /// handler converts pixels with and the span its gutter drag flips
+    /// against. `None` when nothing yields a scale.
     /// The native tape fits `tape_range`, beside the candles too; without
     /// it the candles fit their own bars.
     pub(super) fn resolve<'a>(
@@ -142,7 +143,7 @@ impl FrameLayout {
         last_auto_range: Option<(f64, f64)>,
         price_view: &PriceView,
         canvas_background: egui::Color32,
-    ) -> Option<(DrawFrame<'a>, (f64, f64))> {
+    ) -> Option<(DrawFrame<'a>, (f64, f64), f64)> {
         let Series {
             prefix,
             closed,
@@ -199,6 +200,29 @@ impl FrameLayout {
             )
         }?;
         let auto_range = auto_scale.range();
+        // The flip is a squeeze of the bars, so it is counted in their own fit,
+        // as it is without the tape, and never narrower than the axis's: the
+        // tape's few prints narrow under a drag when the market goes quiet,
+        // the bars do not, and a threshold riding the tape's fit turned the
+        // chart over long before the bars were flat.
+        let auto_span = auto_range.1 - auto_range.0;
+        let flip_span = if self.native_tape {
+            chart::price_window(
+                visible_prefix.iter().chain(visible_state),
+                partial_visible,
+                Some(auto_range),
+                None,
+                None,
+                chart_rect.top(),
+                chart_rect.bottom(),
+            )
+            .map_or(auto_span, |bars| {
+                let (lo, hi) = bars.range();
+                (hi - lo).max(auto_span)
+            })
+        } else {
+            auto_span
+        };
         let scale = price_view.scale(auto_range, chart_rect.top(), chart_rect.bottom());
         let frame = DrawFrame {
             painter,
@@ -221,7 +245,7 @@ impl FrameLayout {
             canvas_background,
             cw,
         };
-        Some((frame, auto_range))
+        Some((frame, auto_range, flip_span))
     }
 }
 

@@ -159,21 +159,28 @@ impl PriceView {
     /// wider (the wheel zooms without a ceiling) keeps its span and only
     /// turns over: snapping it back to the threshold would jump.
     pub fn drag_zoom(&mut self, factor: f64, auto: (f64, f64)) {
+        self.drag_zoom_against(factor, auto, auto.1 - auto.0);
+    }
+
+    /// [`Self::drag_zoom`] with the threshold counted in `reference_span`s
+    /// rather than in `auto`'s: an axis fitted to something narrower than
+    /// the bars — a few recent prints — still flips only once the bars are
+    /// flat.
+    pub fn drag_zoom_against(&mut self, factor: f64, auto: (f64, f64), reference_span: f64) {
         if factor <= 0.0 || !factor.is_finite() {
             return;
         }
-        let auto_span = auto.1 - auto.0;
         // The boundary zone: at 99% of the threshold and beyond the chart is
         // equally flat, so this one band is both where an expanding drag
         // flips and what a contraction must leave to re-arm — and comparing
         // against the zone rather than the exact threshold keeps a span the
         // cap parked one float ulp short of it from missing the flip.
-        let flip_zone = auto_span * FLIP_SPAN_FACTOR * FLIP_REARM_FRACTION;
-        if factor <= 1.0 || auto_span <= 0.0 {
+        let flip_zone = reference_span * FLIP_SPAN_FACTOR * FLIP_REARM_FRACTION;
+        if factor <= 1.0 || reference_span <= 0.0 {
             // Contracting: a plain zoom — and once the span drops back out
             // of the boundary zone, the next crossing may flip again.
             self.zoom(factor, auto);
-            if auto_span > 0.0 {
+            if reference_span > 0.0 {
                 let (lo, hi) = self.resolve(auto);
                 if hi - lo < flip_zone {
                     self.flip_parked = false;
@@ -190,7 +197,7 @@ impl PriceView {
             }
             return;
         }
-        let flip_span = auto_span * FLIP_SPAN_FACTOR;
+        let flip_span = reference_span * FLIP_SPAN_FACTOR;
         self.zoom(factor.min(flip_span / span), auto);
     }
 }
@@ -278,6 +285,22 @@ mod tests {
         v.drag_zoom(1.01, AUTO);
         assert!(v.is_inverted());
         assert_eq!(v.resolve(AUTO), (lo, hi));
+    }
+
+    #[test]
+    fn a_wider_reference_moves_the_threshold_out_with_it() {
+        let mut v = PriceView::new();
+        // The axis fits 10 wide, the bars 50: 400 is flat for the axis's
+        // fit, not for the bars, so the drag keeps shrinking them.
+        v.drag_zoom_against(1000.0, AUTO, 50.0);
+        let (lo, hi) = v.resolve(AUTO);
+        assert!(!v.is_inverted());
+        assert!(
+            ((hi - lo) - 2000.0).abs() < 1e-9,
+            "capped at forty reference spans: {lo}..{hi}"
+        );
+        v.drag_zoom_against(1.01, AUTO, 50.0);
+        assert!(v.is_inverted());
     }
 
     #[test]

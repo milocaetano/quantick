@@ -66,7 +66,7 @@ impl ChartPane {
             closed: self.state.bars(),
             partial: self.state.partial(),
         };
-        let Some((frame, auto_range)) = layout.resolve(
+        let Some((frame, auto_range, flip_span)) = layout.resolve(
             painter,
             series,
             tape_range,
@@ -215,6 +215,7 @@ impl ChartPane {
         // Cache the auto range + height for next frame's input handler, which
         // runs before the draw and needs them for pixel↔price conversion.
         self.frame.auto_range = Some(auto_range);
+        self.frame.flip_span = Some(flip_span);
         self.frame.chart_height = chart_rect.height();
         self.frame.chart_top = chart_rect.top();
     }
