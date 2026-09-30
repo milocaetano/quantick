@@ -528,6 +528,9 @@ mod collapse_path_tests {
             CanvasLayout::TimeTimeAndFlow,
             None,
             false,
+            false,
+            &[],
+            &[],
             Some(PaneSide::Time(1)),
             &[60_000, 900_000],
             LegendFold::default(),
@@ -562,6 +565,28 @@ mod collapse_path_tests {
         );
     }
 
+    #[test]
+    fn canvas_restore_keeps_right_and_vertical_collapse_state() {
+        let mut tab = tab();
+        tab.restore_canvas(
+            CanvasLayout::TimeTimeAndFlow,
+            Some(0.42),
+            false,
+            true,
+            &[0.4, 0.6],
+            &[true, false],
+            Some(PaneSide::Flow),
+            &[60_000, 300_000],
+            LegendFold::default(),
+        );
+        assert!(tab.flow_collapsed);
+        assert!(tab.pane_collapsed(PaneSide::Time(0)));
+        assert!(!tab.pane_collapsed(PaneSide::Time(1)));
+        assert_eq!(tab.context_height_shares(), vec![0.4, 0.6]);
+        assert_eq!(tab.context_collapsed_slots(), vec![true, false]);
+        assert_eq!(tab.split_fraction, 0.42);
+    }
+
     /// over the trader's file.
     #[test]
     fn a_restored_workspace_keeps_its_collapsed_column() {
@@ -570,6 +595,9 @@ mod collapse_path_tests {
             CanvasLayout::TimeAndFlow,
             Some(0.42),
             true,
+            false,
+            &[],
+            &[],
             Some(PaneSide::Flow),
             &[],
             LegendFold {

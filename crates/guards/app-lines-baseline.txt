@@ -44,5 +44,9 @@
 # What the typed number means lives in `quantick-engine`
 # (`BarRegistry::quick_candidates`), and the change applies through the same
 # `set_pane_bar_spec` the control plane uses; there was no app code to move out.
-!budget 104449
-crates/app 104449
+# Raised by 344 lines for symmetric canvas collapse: the four draggable rails,
+# their hit areas and pointer routing live beside the egui canvas they draw.
+# Sizing state and workspace/control adapters share those transitions; this
+# change adds no trade-path work or new dependency to the UI crate.
+!budget 104793
+crates/app 104793

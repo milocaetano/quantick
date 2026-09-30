@@ -103,6 +103,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                                 app.layout_state().pane_layout(tabs.id_at(index), side).0,
                             ),
                             visible: active && visible,
+                            collapsed: tab.pane_collapsed(side),
                             focused: active && focused == side,
                         }
                     })
@@ -122,6 +123,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
                     )
                     .expect("the pane split fraction is finite"),
                     context_collapsed: tab.context_collapsed,
+                    flow_collapsed: tab.flow_collapsed,
                     panes,
                 }
             })

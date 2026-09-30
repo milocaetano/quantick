@@ -121,6 +121,24 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )?;
     registry.register(
         descriptor(
+            FLOW_COLLAPSE_CAPABILITY_ID,
+            "Collapse the flow chart",
+            "Folds the right flow chart to a draggable rail and preserves its width for reopening.",
+            generated_schema::<TabTarget>(),
+        ),
+        collapse_flow,
+    )?;
+    registry.register(
+        descriptor(
+            FLOW_EXPAND_CAPABILITY_ID,
+            "Expand the flow chart",
+            "Restores the right flow chart at its previous width.",
+            generated_schema::<TabTarget>(),
+        ),
+        expand_flow,
+    )?;
+    registry.register(
+        descriptor(
             FOCUS_CAPABILITY_ID,
             "Focus a chart",
             "Moves focus to one pane: the chart the status bar speaks for, and the one an indicator or drawing command lands on.",
@@ -357,6 +375,7 @@ fn result<P: TabsPort + ?Sized>(
         focused_pane: WireU64::new(focused),
         fraction: f64::from(tab.split_fraction),
         collapsed: tab.context_collapsed,
+        flow_collapsed: tab.flow_collapsed,
         changed,
     };
     serde_json::to_value(payload).map_err(|error| {
@@ -487,6 +506,45 @@ fn set_collapsed<P: TabsPort + TabsMutPort + ?Sized>(
         .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
     // The same call the divider drag, the rail and the menu take.
     let changed = tab.set_context_collapsed(collapsed);
+    result(app, index, changed)
+}
+
+fn collapse_flow<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
+    _access: &mut ControlAccess,
+    _actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    set_flow_collapsed(app, input, true)
+}
+
+fn expand_flow<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
+    _access: &mut ControlAccess,
+    _actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    set_flow_collapsed(app, input, false)
+}
+
+fn set_flow_collapsed<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
+    input: &Value,
+    collapsed: bool,
+) -> Result<Value, ControlError> {
+    let input: TabTarget = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let index = tab_index(app, input)?;
+    let tab = app
+        .tabs_mut()
+        .tab_at_mut(index)
+        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
+    if !tab.layout.shows_flow() || !tab.layout.shows_time() {
+        return Err(ControlError::invalid_request(
+            "the flow pane has no right rail in this layout",
+        ));
+    }
+    let changed = tab.set_flow_collapsed(collapsed);
     result(app, index, changed)
 }
 

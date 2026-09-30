@@ -26,10 +26,25 @@ impl Tab {
     ///
     /// Returns whether anything changed.
     pub fn set_context_collapsed(&mut self, collapsed: bool) -> bool {
-        if self.context_collapsed == collapsed {
+        if self.context_collapsed == collapsed && (!collapsed || !self.flow_collapsed) {
             return false;
         }
         self.context_collapsed = collapsed;
+        if collapsed {
+            self.flow_collapsed = false;
+        }
+        true
+    }
+
+    /// Fold or restore the flow pane while retaining the split's open width.
+    pub fn set_flow_collapsed(&mut self, collapsed: bool) -> bool {
+        if self.flow_collapsed == collapsed && (!collapsed || !self.context_collapsed) {
+            return false;
+        }
+        self.flow_collapsed = collapsed;
+        if collapsed {
+            self.context_collapsed = false;
+        }
         true
     }
 
@@ -59,6 +74,12 @@ impl Tab {
         }
         let pane = self.time_panes.remove(from_slot);
         self.time_panes.insert(to_slot, pane);
+        if from_slot < self.context_stack.heights.len()
+            && to_slot < self.context_stack.heights.len()
+        {
+            let height = self.context_stack.heights.remove(from_slot);
+            self.context_stack.heights.insert(to_slot, height);
+        }
         // Focus follows the pane the trader just moved, so the next command
         // lands on the chart they were working with rather than on whichever
         // one slid into its place.
@@ -191,10 +212,30 @@ impl Tab {
         if self.context_collapsed {
             return PaneSide::Flow;
         }
+        if self.flow_collapsed {
+            return PaneSide::Time(0);
+        }
         // A slot the stack no longer shows — the focused pane was the bottom
         // of a three-pane layout and the trader switched to two — falls back
         // to the top context chart, never to a pane that is not drawn.
         match self.focus {
+            PaneSide::Time(slot)
+                if self
+                    .context_stack
+                    .heights
+                    .get(slot)
+                    .is_some_and(|height| height.is_collapsed()) =>
+            {
+                (0..self.context_panes_shown())
+                    .find(|candidate| {
+                        !self
+                            .context_stack
+                            .heights
+                            .get(*candidate)
+                            .is_some_and(|height| height.is_collapsed())
+                    })
+                    .map_or(PaneSide::Flow, PaneSide::Time)
+            }
             PaneSide::Time(slot) if slot >= self.context_panes_shown() => PaneSide::Time(0),
             focus => focus,
         }

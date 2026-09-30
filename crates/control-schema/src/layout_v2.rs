@@ -5,7 +5,8 @@
 //! refuses floating-point JSON in both directions (`quantick_control::codec`).
 //! So a v1 `layout.pane.resize` can only be sent the integers 0 and 1, and
 //! every v1 call that answers a `LayoutResult` — `layout.focus.set`,
-//! `layout.pane.collapse`, `layout.pane.expand`, `layout.pane.move`,
+//! `layout.pane.collapse`, `layout.pane.expand`, `layout.flow.collapse`,
+//! `layout.flow.expand`, `layout.pane.move`,
 //! `layout.preset.apply`, `layout.pane.set_interval`,
 //! `layout.pane.set_bar_spec` and a successful `layout.pane.resize` — acts, and then the gateway cannot encode the answer
 //! and tells the client `control.capability_unavailable`. The retry matrix's
@@ -72,6 +73,8 @@ pub struct LayoutResultV2 {
     pub fraction: CanonicalDecimal,
     /// Whether the context column is collapsed to its rail.
     pub collapsed: bool,
+    /// Whether the right flow chart is folded to its rail.
+    pub flow_collapsed: bool,
     /// Whether the call changed anything. `false` is a real answer: applying
     /// the layout that is already showing is a no-op, not a failure.
     pub changed: bool,

@@ -553,10 +553,12 @@ pub struct Tab {
     pub split_fraction: f32,
     /// Whether the context column is collapsed to its rail.
     pub context_collapsed: bool,
+    /// Whether the flow pane is folded against the right canvas edge.
+    pub flow_collapsed: bool,
     /// Retained context heights and the geometry of their last drawn stack.
     context_stack: context_resize::ContextStack,
     /// Pixel width and opening direction of the divider drag in flight.
-    canvas_drag: Option<(f32, bool)>,
+    canvas_drag: Option<(f32, bool, bool)>,
     /// The canvas width the last drawn frame used. See
     /// [`Self::last_canvas_width`].
     last_canvas_width: f32,
@@ -658,6 +660,7 @@ impl Tab {
             layout: CanvasLayout::Single,
             split_fraction: DEFAULT_PANE_FRACTION,
             context_collapsed: pane_collapsed_hook(),
+            flow_collapsed: false,
             context_stack: context_resize::ContextStack::default(),
             canvas_drag: None,
             last_canvas_width: 0.0,
@@ -801,6 +804,11 @@ impl Tab {
     #[cfg(test)]
     pub(crate) fn collapsed_rail_rect(&self) -> Option<egui::Rect> {
         self.collapsed_rail
+    }
+
+    #[cfg(test)]
+    pub(crate) fn flow_rail_rect(&self) -> Option<egui::Rect> {
+        self.flow_collapsed.then_some(self.collapsed_rail).flatten()
     }
 
     /// Where the dividers between stacked context charts landed.

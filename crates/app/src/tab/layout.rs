@@ -32,6 +32,8 @@ impl Tab {
         // exactly how a trader asks for the charts they can see promised in a
         // lit cell — and a return above this line answered that with the rail.
         self.context_collapsed = false;
+        self.flow_collapsed = false;
+        self.expand_context_stack();
         if layout == previous {
             return;
         }
@@ -233,6 +235,9 @@ impl Tab {
         layout: CanvasLayout,
         split_fraction: Option<f32>,
         context_collapsed: bool,
+        flow_collapsed: bool,
+        context_heights: &[f32],
+        context_panes_collapsed: &[bool],
         focus: Option<PaneSide>,
         context_intervals_ms: &[i64],
         legends: LegendFold,
@@ -255,6 +260,8 @@ impl Tab {
         // with them out — and the next `capture_arrangement` wrote that over
         // the trader's choice.
         self.context_collapsed = context_collapsed;
+        self.flow_collapsed = flow_collapsed && !context_collapsed;
+        self.restore_context_heights(context_heights, context_panes_collapsed);
         if let Some(fraction) = split_fraction {
             self.split_fraction = clamp_pane_fraction(fraction);
         }

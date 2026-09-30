@@ -90,6 +90,9 @@ impl ArrangementAdapter<'_> {
                         CanvasLayout::from(saved.layout),
                         saved.split_fraction,
                         saved.context_collapsed,
+                        saved.flow_collapsed,
+                        &saved.context_heights,
+                        &saved.context_panes_collapsed,
                         saved.focus.map(|focus| focus.to_side(saved.focus_slot)),
                         &intervals,
                         LegendFold {

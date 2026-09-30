@@ -20,6 +20,10 @@
       "description": "Whether the context column is collapsed to its rail.",
       "type": "boolean"
     },
+    "flow_collapsed": {
+      "description": "Whether the right flow chart is folded to its rail.",
+      "type": "boolean"
+    },
     "focused_pane": {
       "$ref": "#/$defs/WireU64",
       "description": "The focused pane's address."
@@ -48,6 +52,7 @@
     "focused_pane",
     "fraction",
     "collapsed",
+    "flow_collapsed",
     "changed"
   ],
   "title": "LayoutResultV2",

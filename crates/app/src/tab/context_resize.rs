@@ -6,6 +6,7 @@ use smallvec::SmallVec;
 
 use super::Tab;
 use crate::canvas_layout::{self, MAX_CONTEXT_PANES, PaneKind, PaneWidth, RowAreas};
+use crate::pane::PaneSide;
 
 /// Height choices survive hidden layouts; frame geometry only describes a drawn stack.
 #[derive(Default)]
@@ -51,6 +52,89 @@ impl std::fmt::Display for ContextResizeError {
 }
 
 impl Tab {
+    pub(crate) fn pane_collapsed(&self, side: PaneSide) -> bool {
+        match side {
+            PaneSide::Flow => self.flow_collapsed && self.layout.shows_time(),
+            PaneSide::Time(slot) => {
+                (self.context_collapsed && self.layout.shows_flow())
+                    || self
+                        .context_stack
+                        .heights
+                        .get(slot)
+                        .is_some_and(|height| height.is_collapsed())
+            }
+        }
+    }
+
+    /// Persist the trader's vertical sizing without tying the document to egui.
+    pub(crate) fn context_height_shares(&self) -> Vec<f32> {
+        self.context_stack
+            .heights
+            .iter()
+            .map(|height| match *height {
+                PaneWidth::Auto => 0.0,
+                PaneWidth::Manual(share) | PaneWidth::Collapsed { restore: share } => share,
+            })
+            .collect()
+    }
+
+    pub(crate) fn context_collapsed_slots(&self) -> Vec<bool> {
+        self.context_stack
+            .heights
+            .iter()
+            .map(|height| height.is_collapsed())
+            .collect()
+    }
+
+    pub(crate) fn expand_context_stack(&mut self) {
+        if self.context_stack.heights.len() == 2 {
+            if let Some((slot, restore)) =
+                self.context_stack
+                    .heights
+                    .iter()
+                    .enumerate()
+                    .find_map(|(slot, height)| match *height {
+                        PaneWidth::Collapsed { restore } => Some((slot, restore)),
+                        _ => None,
+                    })
+            {
+                self.context_stack.heights[slot] = PaneWidth::Manual(restore);
+                self.context_stack.heights[1 - slot] = PaneWidth::Manual(1.0 - restore);
+                return;
+            }
+        }
+        for height in &mut self.context_stack.heights {
+            if let PaneWidth::Collapsed { restore } = *height {
+                *height = PaneWidth::Manual(restore);
+            }
+        }
+    }
+
+    pub(crate) fn restore_context_heights(&mut self, shares: &[f32], collapsed: &[bool]) {
+        self.context_stack.heights.clear();
+        for (slot, share) in shares.iter().copied().take(MAX_CONTEXT_PANES).enumerate() {
+            let size = if !share.is_finite() || !(0.0..=1.0).contains(&share) {
+                PaneWidth::Auto
+            } else if collapsed.get(slot).copied().unwrap_or(false) && share > 0.0 {
+                PaneWidth::Collapsed { restore: share }
+            } else if share > 0.0 {
+                PaneWidth::Manual(share)
+            } else {
+                PaneWidth::Auto
+            };
+            self.context_stack.heights.push(size);
+        }
+        if !self.context_stack.heights.is_empty()
+            && self
+                .context_stack
+                .heights
+                .iter()
+                .all(|height| height.is_collapsed())
+        {
+            self.context_stack.heights[0] = PaneWidth::Auto;
+        }
+    }
+
     /// Current geometry from the same splitter the painter uses. Old layouts
     /// and reordered/replaced panes cannot lend their rectangles to an action.
     pub(crate) fn context_stack_geometry(&self) -> Option<(egui::Rect, RowAreas)> {
@@ -136,29 +220,51 @@ impl ContextStack {
         // Height buys the pane-local footer too, so it cannot consume the chart's floor.
         let floor = canvas_layout::MIN_PANE_WIDTH_PX + crate::layout_strip::STRIP_HEIGHT;
         let previous_y = dividers[index].center().y;
-        let wanted_y = if pair_height >= floor * 2.0 {
-            wanted_y.clamp(pair_top + floor, pair_bottom - floor)
+        if pair_height < floor + canvas_layout::COLLAPSED_PANE_WIDTH_PX {
+            return Ok(ContextPairResult {
+                fraction: (previous_y - column.top()) / column.height(),
+                changed: false,
+            });
+        }
+        let upper = self.heights[index];
+        let lower = self.heights[index + 1];
+        let upper_share = (previous_y - pair_top) / column.height();
+        let lower_share = (pair_bottom - previous_y) / column.height();
+        let pair_share = pair_height / column.height();
+        let count = self.heights.len();
+        let collapsed_share = |slot: usize| {
+            let dividers = usize::from(slot > 0) + usize::from(slot + 1 < count);
+            (canvas_layout::COLLAPSED_PANE_WIDTH_PX
+                + dividers as f32 * canvas_layout::CANVAS_DIVIDER_PX / 2.0)
+                / column.height()
+        };
+        let collapse_upper = wanted_y - pair_top < canvas_layout::COLLAPSE_AT_PX;
+        let collapse_lower = pair_bottom - wanted_y < canvas_layout::COLLAPSE_AT_PX;
+        if collapse_upper && !upper.is_collapsed() && !lower.is_collapsed() {
+            self.heights[index] = PaneWidth::Collapsed {
+                restore: upper_share,
+            };
+            self.heights[index + 1] = PaneWidth::Manual(pair_share - collapsed_share(index));
+        } else if collapse_lower && !lower.is_collapsed() && !upper.is_collapsed() {
+            self.heights[index] = PaneWidth::Manual(pair_share - collapsed_share(index + 1));
+            self.heights[index + 1] = PaneWidth::Collapsed {
+                restore: lower_share,
+            };
+        } else if !collapse_upper && !collapse_lower && pair_height >= floor * 2.0 {
+            let applied = wanted_y.clamp(pair_top + floor, pair_bottom - floor);
+            self.heights[index] = PaneWidth::Manual((applied - pair_top) / column.height());
+            self.heights[index + 1] = PaneWidth::Manual((pair_bottom - applied) / column.height());
+        }
+        let changed = self.heights[index] != upper || self.heights[index + 1] != lower;
+        let applied = if changed {
+            canvas_layout::split_column(column, &self.heights).dividers[index]
+                .center()
+                .y
         } else {
             previous_y
         };
-        let changed = (wanted_y - previous_y).abs() > f32::EPSILON;
-        if changed {
-            let mut previous = column.top();
-            for slot in 0..=dividers.len() {
-                let boundary = if slot == dividers.len() {
-                    column.bottom()
-                } else if slot == index {
-                    wanted_y
-                } else {
-                    dividers[slot].center().y
-                };
-                self.heights[slot] =
-                    PaneWidth::Manual(((boundary - previous) / column.height()).max(0.0));
-                previous = boundary;
-            }
-        }
         Ok(ContextPairResult {
-            fraction: (wanted_y - column.top()) / column.height(),
+            fraction: (applied - column.top()) / column.height(),
             changed,
         })
     }
@@ -188,12 +294,52 @@ mod tests {
                 assert_eq!(before.dividers, after.dividers);
             } else {
                 assert!(result.changed);
-                let floor = canvas_layout::MIN_PANE_WIDTH_PX + crate::layout_strip::STRIP_HEIGHT;
-                assert!(
-                    (after.dividers[1].center().y - after.dividers[0].center().y - floor).abs()
-                        < 0.001
-                );
+                assert!(stack.heights[1].is_collapsed());
+                assert!(after.panes[1].height() <= canvas_layout::COLLAPSED_PANE_WIDTH_PX + 1.0);
             }
+        }
+    }
+
+    #[test]
+    fn either_context_pane_can_collapse_and_reopen_repeatedly() {
+        let column = egui::Rect::from_min_size(egui::pos2(0.0, 40.0), egui::vec2(600.0, 900.0));
+        let mut stack = ContextStack {
+            heights: smallvec::smallvec![PaneWidth::Auto; 2],
+            frame: None,
+        };
+        for slot in [0, 1, 1, 0] {
+            let before = canvas_layout::split_column(column, &stack.heights);
+            let edge = if slot == 0 {
+                column.top()
+            } else {
+                column.bottom()
+            };
+            assert!(
+                stack
+                    .resize(0, edge, column, &before.dividers)
+                    .unwrap()
+                    .changed
+            );
+            assert!(stack.heights[slot].is_collapsed());
+            let folded = canvas_layout::split_column(column, &stack.heights);
+            assert!(
+                (folded.panes[slot].height() - canvas_layout::COLLAPSED_PANE_WIDTH_PX).abs() < 1.0
+            );
+            assert!(folded.panes[1 - slot].height() > 800.0);
+            assert!(
+                stack
+                    .resize(0, column.center().y, column, &folded.dividers)
+                    .unwrap()
+                    .changed
+            );
+            assert!(stack.heights.iter().all(|height| !height.is_collapsed()));
+            let opened = canvas_layout::split_column(column, &stack.heights);
+            assert!(
+                opened
+                    .panes
+                    .iter()
+                    .all(|pane| pane.height() >= canvas_layout::MIN_PANE_WIDTH_PX)
+            );
         }
     }
 }
