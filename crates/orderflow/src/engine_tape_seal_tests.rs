@@ -16,10 +16,13 @@ use super::*;
 use crate::config::VolumeDotStyle;
 use crate::config::theme::OrderflowRenderStyle;
 use crate::projection::{
-    DotSizing, PendingTape, TapeDotFrame, TapeDotGeometry, TapeDotMemory, TapeFacts, draws_bubble,
-    project_tape_frame, project_tape_frame_with_overlay,
+    AggressionPrimitive, DotSizing, PendingTape, TapeDotFrame, TapeDotGeometry, TapeDotMemory,
+    TapeFacts, draws_bubble, project_tape_frame, project_tape_frame_with_overlay,
 };
 use quantick_engine::{BarBuilder as _, Side, TickBarBuilder};
+
+#[path = "engine_tape_reread_tests.rs"]
+mod tape_reread_tests;
 
 /// Market milliseconds between two painted frames.
 const FRAME_MS: i64 = 100;
@@ -97,6 +100,18 @@ struct Run {
 /// Play `prints` through the worker, the pending tape and two painters: the
 /// sealed one the application runs, and the complete per-frame reference.
 fn play(prints: &[Trade], config: &HeatmapConfig) -> Run {
+    play_zooming(prints, config, &[])
+}
+
+/// [`play`], the display changing to `changes`' configuration at each of its
+/// frames: the worker applies it and both painters start over, as the
+/// order-flow view's display change does.
+fn play_zooming(
+    prints: &[Trade],
+    first: &HeatmapConfig,
+    changes: &[(usize, HeatmapConfig)],
+) -> Run {
+    let mut config = first.clone();
     let mut worker = BookEngine::new("WINV26");
     worker.apply_visual_config(config.clone());
     let mut pending = PendingTape::default();
@@ -117,8 +132,14 @@ fn play(prints: &[Trade], config: &HeatmapConfig) -> Run {
     let mut now_ms = prints[0].timestamp_ms;
     let mut frame_index = 0;
     while now_ms <= newest + FRAME_MS {
+        for (_, next_config) in changes.iter().filter(|(at, _)| *at == frame_index) {
+            config = next_config.clone();
+            worker.apply_visual_config(config.clone());
+            sealed.clear();
+            complete.clear();
+        }
         while next < prints.len() && prints[next].timestamp_ms <= now_ms {
-            let ordinal = pending.record(&prints[next], config);
+            let ordinal = pending.record(&prints[next], &config);
             queued.push((ordinal, prints[next].clone()));
             if let Some(bar) = bars.push(&prints[next]) {
                 closed.push(bar);
@@ -155,8 +176,13 @@ fn play(prints: &[Trade], config: &HeatmapConfig) -> Run {
         let frame = if pending.is_empty() {
             published.clone()
         } else {
-            VisibleOrderflow::with_pending_overlay(&pending, config, &request, published.as_deref())
-                .map(Arc::new)
+            VisibleOrderflow::with_pending_overlay(
+                &pending,
+                &config,
+                &request,
+                published.as_deref(),
+            )
+            .map(Arc::new)
         };
         if let Some(frame) = frame {
             if let Some(facts) = published
@@ -166,7 +192,7 @@ fn play(prints: &[Trade], config: &HeatmapConfig) -> Run {
                 run.widest_tape = run.widest_tape.max(facts.clusters.len());
             }
             run.overlaid += usize::from(frame.tape_overlay.is_some());
-            let (actual, expected) = paint(&frame, config, now_ms, &mut sealed, &mut complete);
+            let (actual, expected) = paint(&frame, &config, now_ms, &mut sealed, &mut complete);
             assert_eq!(
                 actual.marks, expected.marks,
                 "frame {frame_index} at {now_ms}"
@@ -187,15 +213,16 @@ fn play(prints: &[Trade], config: &HeatmapConfig) -> Run {
     run
 }
 
-/// Paint `frame` twice: through the sealed path, and through the complete
-/// marks with no seal to trust, as every frame used to be painted.
-fn paint(
-    frame: &VisibleOrderflow,
-    config: &HeatmapConfig,
-    now_ms: i64,
-    sealed: &mut TapeDotMemory,
-    complete: &mut TapeDotMemory,
-) -> (TapeDotFrame, TapeDotFrame) {
+/// What the painter hands the tape projection for one frame.
+struct PainterInputs {
+    style: OrderflowRenderStyle,
+    time: (crate::LiveEdge, i64),
+    geometry: TapeDotGeometry,
+    prices: Option<PriceWindow>,
+    marks: Vec<AggressionPrimitive>,
+}
+
+fn painter_inputs(frame: &VisibleOrderflow, config: &HeatmapConfig, now_ms: i64) -> PainterInputs {
     let mut style = OrderflowRenderStyle::from_config(config, [0, 0, 0, 255]);
     style.dot_sizing = Some(DotSizing {
         native_tape: true,
@@ -214,41 +241,84 @@ fn paint(
         height_px: 600.0,
     };
     let prices = PriceWindow::new(Decimal::from(80), Decimal::from(130));
-    let drawn = |projection: &HeatmapProjection| -> Vec<_> {
-        projection
-            .aggressions
-            .iter()
-            .filter(|mark| draws_bubble(&style, mark))
-            .cloned()
-            .collect()
-    };
+    let marks = drawn(&style, &frame.projection);
+    PainterInputs {
+        style,
+        time: (edge, 100),
+        geometry,
+        prices,
+        marks,
+    }
+}
+
+fn drawn(style: &OrderflowRenderStyle, projection: &HeatmapProjection) -> Vec<AggressionPrimitive> {
+    projection
+        .aggressions
+        .iter()
+        .filter(|mark| draws_bubble(style, mark))
+        .cloned()
+        .collect()
+}
+
+/// Paint `frame` twice: through the sealed path, and through the complete
+/// marks with no seal to trust, as every frame used to be painted.
+fn paint(
+    frame: &VisibleOrderflow,
+    config: &HeatmapConfig,
+    now_ms: i64,
+    sealed: &mut TapeDotMemory,
+    complete: &mut TapeDotMemory,
+) -> (TapeDotFrame, TapeDotFrame) {
+    let PainterInputs {
+        style,
+        time,
+        geometry,
+        prices,
+        marks,
+    } = painter_inputs(frame, config, now_ms);
     let actual = project_tape_frame_with_overlay(
-        drawn(&frame.projection),
+        marks,
         Some(sealed),
         &style,
         geometry,
-        Some((edge, 100)),
+        Some(time),
         prices,
         frame.projection.tape_facts.as_deref(),
         frame.tape_overlay.as_deref(),
     )
     .expect("the sealed painter draws the tape");
+    (actual, paint_complete(frame, config, now_ms, complete))
+}
+
+/// Paint `frame` through the complete marks alone: the reference.
+fn paint_complete(
+    frame: &VisibleOrderflow,
+    config: &HeatmapConfig,
+    now_ms: i64,
+    complete: &mut TapeDotMemory,
+) -> TapeDotFrame {
+    let PainterInputs {
+        style,
+        time,
+        geometry,
+        prices,
+        ..
+    } = painter_inputs(frame, config, now_ms);
     let whole = frame.tape_projection();
     let unsealed = whole.tape_facts.as_deref().map(|facts| TapeFacts {
         seal: None,
         ..facts.clone()
     });
-    let expected = project_tape_frame(
-        drawn(whole),
+    project_tape_frame(
+        drawn(&style, whole),
         Some(complete),
         &style,
         geometry,
-        Some((edge, 100)),
+        Some(time),
         prices,
         unsealed.as_ref(),
     )
-    .expect("the complete painter draws the tape");
-    (actual, expected)
+    .expect("the complete painter draws the tape")
 }
 
 #[test]
@@ -291,6 +361,26 @@ fn a_wide_tape_window_reconciles_no_more_cells_per_frame_than_a_narrow_one() {
         "{} of {} cells",
         steady(&wide),
         wide.widest_tape
+    );
+}
+
+/// A zoom merges every window of the new tape window again, out to a wide
+/// window and back, and every frame after it draws what the complete path
+/// draws.
+#[test]
+fn zooming_the_tape_out_and_back_draws_what_the_complete_path_draws() {
+    let windows = [20_000, 40_000, 80_000, 140_000, 40_000, 10_000];
+    let changes: Vec<(usize, HeatmapConfig)> = windows
+        .iter()
+        .enumerate()
+        .map(|(step, window_ms)| (700 + step * 90, config(*window_ms, 100_000)))
+        .collect();
+    let run = play_zooming(&tape(150, None), &config(10_000, 100_000), &changes);
+    assert!(run.overlaid > 100, "most frames carry pending prints");
+    assert!(
+        run.widest_tape > 1_000,
+        "the widest window holds {}",
+        run.widest_tape
     );
 }
 
