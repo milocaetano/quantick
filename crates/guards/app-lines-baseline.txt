@@ -37,10 +37,12 @@
 # dates it writes. All of it is drawing and label placement; the rule for
 # where a day starts is `quantick_civil::day_starts`, below `app`, with its
 # tests.
+# Raised by 1 line for opt-in FRVP labels: a serde rename so presets saved
+# while labels defaulted on stop counting as the trader's choice.
 # Raised by 264 lines for the quick bar switch (`surfaces/bar_switch.rs`):
 # drawing and key reading only, docked as a new file on the `Surface` port.
 # What the typed number means lives in `quantick-engine`
 # (`BarRegistry::quick_candidates`), and the change applies through the same
 # `set_pane_bar_spec` the control plane uses; there was no app code to move out.
-!budget 104448
-crates/app 104448
+!budget 104449
+crates/app 104449

@@ -81,6 +81,7 @@ struct FrvpPresetData {
     show_value_area: bool,
     show_poc: bool,
     delta_coloring: bool,
+    #[serde(default, rename = "labels")] // `show_labels` was never an opt-in
     show_labels: bool,
     /// Added after v1 presets shipped; absent in older files, so it defaults
     /// rather than invalidating them.
@@ -140,7 +141,7 @@ impl Default for FrvpPayload {
             show_value_area: true,
             show_poc: true,
             delta_coloring: false,
-            show_labels: true,
+            show_labels: false,
             extend_right: false,
             outline_over_heatmap: true,
             approximate_history: true,
@@ -1224,6 +1225,39 @@ mod tests {
 
         let flat = [ChartPoint::at(10.0, 100.0), ChartPoint::at(10.0, 105.0)];
         assert_eq!(bar_x(&points, &flat, 15.0), None);
+    }
+
+    #[test]
+    fn a_new_profile_starts_without_labels() {
+        assert!(
+            !FrvpPayload::default().show_labels,
+            "the status line and price plates are opt-in"
+        );
+    }
+
+    #[test]
+    fn a_preset_with_labels_on_keeps_them_on() {
+        let labelled = FrvpPayload {
+            show_labels: true,
+            ..FrvpPayload::default()
+        };
+        let exported = labelled.export_preset().expect("frvp exports its preset");
+        let mut restored = FrvpPayload::default();
+        assert!(restored.import_preset(&exported));
+        assert!(restored.show_labels, "a saved opt-in survives the new default");
+    }
+
+    #[test]
+    fn a_preset_saved_before_labels_were_opt_in_opens_without_them() {
+        // Every profile saved while labels defaulted on carries
+        // `show_labels = true` without the trader ever choosing it.
+        let mut legacy = FrvpPayload::default().export_preset().unwrap();
+        let table = legacy.as_table_mut().unwrap();
+        table.retain(|key, _| key != "labels");
+        table.insert("show_labels".into(), toml::Value::Boolean(true));
+        let mut restored = FrvpPayload::default();
+        assert!(restored.import_preset(&legacy), "the rest of the preset still loads");
+        assert!(!restored.show_labels, "an inherited default is not an opt-in");
     }
 
     #[test]
