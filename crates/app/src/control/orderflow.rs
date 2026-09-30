@@ -199,6 +199,7 @@ fn project_bubbles<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> B
                 panes: tab
                     .panes()
                     .map(|(pane, side)| PaneBubblesSnapshot {
+                        opening_scale: pane.opening_scale_snapshot(),
                         candle_aggression: pane.footprint.candle_aggression().map(Into::into),
                         pane_id: WireU64::new(pane.id),
                         side: side.into(),

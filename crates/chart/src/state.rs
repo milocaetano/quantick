@@ -19,6 +19,8 @@ use quantick_engine::{Bar, BarBuilder, BarFootprint, BarProgress, DealSample, Pr
 pub use quantick_engine::{BarKind, BarSpec, MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS};
 use rust_decimal::Decimal;
 
+pub mod opening;
+
 use crate::footprint_series::{self, FootprintSeries};
 
 fn seed_deal_counter(builder: &mut dyn BarBuilder, samples: &[DealSample]) {

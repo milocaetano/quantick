@@ -12,7 +12,7 @@ fn print(id: u64, timestamp_ms: i64, price: i64, quantity: i64, side: Side) -> T
     }
 }
 
-fn context_fixture(
+pub(super) fn context_fixture(
     ctx: &egui::Context,
 ) -> (
     QuantickApp,
@@ -390,4 +390,79 @@ fn a_tick_context_header_names_the_applied_bars_and_time_controls_return_for_tim
         &BarSpec::Time(300_000)
     );
     assert_eq!(app.active_tab().flow_pane.state.spec(), &flow);
+}
+
+#[test]
+fn late_session_marks_recover_visible_scale_after_visiting_a_large_opening() {
+    let ctx = egui::Context::default();
+    let (mut app, events, _commands) = context_fixture(&ctx);
+    app.active_tab_mut().time_panes[0].set_layer_visible(
+        ChartLayer::CandleAggression,
+        true,
+        &mut Default::default(),
+    );
+    for index in 0..164 {
+        let row = index % 4;
+        let quantity = if index == 0 {
+            74365
+        } else if row == 0 {
+            493
+        } else {
+            1
+        };
+        events
+            .try_send(FeedEvent::Live(print(
+                21 + index,
+                1200 + index as i64,
+                100 + 5 * row as i64,
+                quantity,
+                Side::Buy,
+            )))
+            .unwrap();
+        if index % 32 == 31 {
+            run_frame(&mut app, &ctx);
+        }
+    }
+    run_frame(&mut app, &ctx);
+    let left = &mut app.active_tab_mut().time_panes[0];
+    left.viewport.set_px_per_bar(40.0);
+    left.price_view.set_manual_range(90.0, 200.0);
+    run_frame(&mut app, &ctx);
+    let late = app.active_tab().time_panes[0]
+        .footprint
+        .candle_aggression()
+        .unwrap()
+        .clone();
+    assert_eq!(late.full_quantity, Decimal::from(493));
+    let left = &mut app.active_tab_mut().time_panes[0];
+    let width = left.frame.chart_rect.unwrap().width();
+    let slots = left.slots();
+    left.viewport.center_on_bar(5.0, width, slots);
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab().time_panes[0]
+            .footprint
+            .candle_aggression()
+            .unwrap()
+            .full_quantity,
+        Decimal::from(74365)
+    );
+    app.active_tab_mut().time_panes[0].viewport.snap_to_live();
+    run_frame(&mut app, &ctx);
+    let recovered = app.active_tab().time_panes[0]
+        .footprint
+        .candle_aggression()
+        .unwrap();
+    assert_eq!(
+        recovered, &late,
+        "the same visible groups have the same scale after an opening visit"
+    );
+    assert_eq!(
+        recovered
+            .marks
+            .iter()
+            .map(|mark| mark.radius_px)
+            .fold(0.0_f32, f32::max),
+        recovered.maximum_radius_px
+    );
 }

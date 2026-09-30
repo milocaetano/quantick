@@ -97,7 +97,10 @@
         },
         "full_quantity": {
           "$ref": "#/$defs/CanonicalDecimal",
-          "description": "Held largest observed band quantity at this aggregation tier. All\nradii use sqrt(quantity / full_quantity) times maximum_radius_px."
+          "description": "Largest visible eligible band quantity. When opening exclusion is\neffective, the reference excludes only exact opening contributions. All\nradii use sqrt(quantity / full_quantity) times maximum_radius_px,\nexcept opening overflow explicitly reported by size_capped."
+        },
+        "ignore_opening_burst_in_scale": {
+          "type": "boolean"
         },
         "mark_count": {
           "$ref": "#/$defs/WireU64"
@@ -112,8 +115,19 @@
         "maximum_radius_px": {
           "$ref": "#/$defs/CanonicalDecimal"
         },
+        "opening_exclusion_effective": {
+          "type": "boolean"
+        },
         "price_ticks_per_mark": {
           "$ref": "#/$defs/WireU64"
+        },
+        "recorded_opening_windows_ms": {
+          "description": "First available recorded 100 ms windows per retained UTC date; an\napproximation, not evidence of an exchange auction.",
+          "items": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "type": "array"
         },
         "sell_quantity": {
           "$ref": "#/$defs/CanonicalDecimal"
@@ -130,6 +144,9 @@
         "price_ticks_per_mark",
         "full_quantity",
         "maximum_radius_px",
+        "ignore_opening_burst_in_scale",
+        "opening_exclusion_effective",
+        "recorded_opening_windows_ms",
         "buy_quantity",
         "sell_quantity",
         "trade_count",
@@ -146,6 +163,9 @@
         },
         "last_slot": {
           "$ref": "#/$defs/WireU64"
+        },
+        "opening_quantity": {
+          "$ref": "#/$defs/CanonicalDecimal"
         },
         "price": {
           "$ref": "#/$defs/CanonicalDecimal",
@@ -165,6 +185,10 @@
         "sell_quantity": {
           "$ref": "#/$defs/CanonicalDecimal"
         },
+        "size_capped": {
+          "description": "True only for an opening-containing mark whose factual total exceeds\nthe ordinary reference. Other marks retain proportional areas.",
+          "type": "boolean"
+        },
         "slot": {
           "$ref": "#/$defs/WireU64"
         },
@@ -181,13 +205,32 @@
         "buy_quantity",
         "sell_quantity",
         "trade_count",
-        "radius_px"
+        "radius_px",
+        "opening_quantity",
+        "size_capped"
       ],
       "type": "object"
     },
     "CanonicalDecimal": {
       "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
       "type": "string"
+    },
+    "OpeningScaleSnapshot": {
+      "properties": {
+        "candle": {
+          "type": "boolean"
+        },
+        "tape": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "candle"
+      ],
+      "type": "object"
     },
     "PaneBubblesSnapshot": {
       "properties": {
@@ -215,6 +258,14 @@
         },
         "engine": {
           "$ref": "#/$defs/AvailabilitySnapshot"
+        },
+        "opening_scale": {
+          "$ref": "#/$defs/OpeningScaleSnapshot",
+          "default": {
+            "candle": false,
+            "tape": null
+          },
+          "description": "Independent reversible preferences, readable even when marks are hidden."
         },
         "pane_id": {
           "$ref": "#/$defs/WireU64"

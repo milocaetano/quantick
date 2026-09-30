@@ -34,7 +34,7 @@ pub use candle_dots::{
     CANDLE_GROUP_HOLD_BAND, CANDLE_GROUP_MIN_WIDTH_PX, CANDLE_MARK_MAX_RADIUS_PX,
     CANDLE_PRICE_MIN_HEIGHT_PX, CandleDot, CandleDotFrame, CandleDotGrid, CandleDotView,
     CandleFootprint, CandleFootprintSource, CandleGroupMemory, CandlePriceMemory,
-    CandleScaleMemory, project_candle_dots,
+    project_candle_dots,
 };
 pub(crate) use dots::native_grouping;
 pub use dots::{

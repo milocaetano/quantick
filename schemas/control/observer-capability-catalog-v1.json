@@ -9917,7 +9917,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Optionally excludes the first recorded 100 ms burst of each day from automatic tape-only dot scaling. Executions, prices and pies remain exact; the opening dot is capped at full radius. Uses the first available recorded burst if session-opening data is missing. Transient until the bubble preset is explicitly saved; defaults off and has no effect on ordinary chart/BTC rendering or a typed size reference.",
+      "description": "Optionally excludes the first recorded 100 ms burst per UTC date from the targeted size reference. The default target is tape; target candle is independent and works on context panes without a tape worker. Executions, prices and pies remain exact; the opening dot is capped at full radius. Uses the first available recorded burst if session-opening data is missing. Transient until the bubble preset is explicitly saved; defaults off for tape, with no effect on a typed tape reference. The candle preference is transient for its pane and defaults off; a frame with only opening quantities uses an explicitly reported full-scale fallback.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -9930,6 +9930,13 @@
       "idempotency": "optional",
       "input_schema": {
         "$defs": {
+          "OpeningScaleTarget": {
+            "enum": [
+              "tape",
+              "candle"
+            ],
+            "type": "string"
+          },
           "WireU64": {
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
@@ -9939,7 +9946,7 @@
         "additionalProperties": false,
         "properties": {
           "ignore_opening_burst_in_scale": {
-            "description": "Exclude each day's first recorded 100 ms burst from the automatic\ntape size reference. Preserve its exact volume and cap its radius.",
+            "description": "Exclude each day's first recorded 100 ms burst from the automatic\ntargeted size reference. Preserve its exact volume and cap its radius.",
             "type": "boolean"
           },
           "pane_id": {
@@ -9947,6 +9954,11 @@
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
+          },
+          "target": {
+            "$ref": "#/$defs/OpeningScaleTarget",
+            "default": "tape",
+            "description": "Tape is the backward-compatible default; Candle has an independent\ntransient pane preference and requires no tape worker."
           }
         },
         "required": [
@@ -9960,6 +9972,13 @@
       "module": "orderflow",
       "output_schema": {
         "$defs": {
+          "OpeningScaleTarget": {
+            "enum": [
+              "tape",
+              "candle"
+            ],
+            "type": "string"
+          },
           "WireU64": {
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
@@ -9978,6 +9997,11 @@
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
+          },
+          "target": {
+            "$ref": "#/$defs/OpeningScaleTarget",
+            "default": "tape",
+            "description": "Tape is the backward-compatible default; Candle has an independent\ntransient pane preference and requires no tape worker."
           }
         },
         "required": [
@@ -14628,7 +14652,10 @@
               },
               "full_quantity": {
                 "$ref": "#/$defs/CanonicalDecimal",
-                "description": "Held largest observed band quantity at this aggregation tier. All\nradii use sqrt(quantity / full_quantity) times maximum_radius_px."
+                "description": "Largest visible eligible band quantity. When opening exclusion is\neffective, the reference excludes only exact opening contributions. All\nradii use sqrt(quantity / full_quantity) times maximum_radius_px,\nexcept opening overflow explicitly reported by size_capped."
+              },
+              "ignore_opening_burst_in_scale": {
+                "type": "boolean"
               },
               "mark_count": {
                 "$ref": "#/$defs/WireU64"
@@ -14643,8 +14670,19 @@
               "maximum_radius_px": {
                 "$ref": "#/$defs/CanonicalDecimal"
               },
+              "opening_exclusion_effective": {
+                "type": "boolean"
+              },
               "price_ticks_per_mark": {
                 "$ref": "#/$defs/WireU64"
+              },
+              "recorded_opening_windows_ms": {
+                "description": "First available recorded 100 ms windows per retained UTC date; an\napproximation, not evidence of an exchange auction.",
+                "items": {
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "type": "array"
               },
               "sell_quantity": {
                 "$ref": "#/$defs/CanonicalDecimal"
@@ -14661,6 +14699,9 @@
               "price_ticks_per_mark",
               "full_quantity",
               "maximum_radius_px",
+              "ignore_opening_burst_in_scale",
+              "opening_exclusion_effective",
+              "recorded_opening_windows_ms",
               "buy_quantity",
               "sell_quantity",
               "trade_count",
@@ -14677,6 +14718,9 @@
               },
               "last_slot": {
                 "$ref": "#/$defs/WireU64"
+              },
+              "opening_quantity": {
+                "$ref": "#/$defs/CanonicalDecimal"
               },
               "price": {
                 "$ref": "#/$defs/CanonicalDecimal",
@@ -14696,6 +14740,10 @@
               "sell_quantity": {
                 "$ref": "#/$defs/CanonicalDecimal"
               },
+              "size_capped": {
+                "description": "True only for an opening-containing mark whose factual total exceeds\nthe ordinary reference. Other marks retain proportional areas.",
+                "type": "boolean"
+              },
               "slot": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -14712,13 +14760,32 @@
               "buy_quantity",
               "sell_quantity",
               "trade_count",
-              "radius_px"
+              "radius_px",
+              "opening_quantity",
+              "size_capped"
             ],
             "type": "object"
           },
           "CanonicalDecimal": {
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
             "type": "string"
+          },
+          "OpeningScaleSnapshot": {
+            "properties": {
+              "candle": {
+                "type": "boolean"
+              },
+              "tape": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "candle"
+            ],
+            "type": "object"
           },
           "PaneBubblesSnapshot": {
             "properties": {
@@ -14746,6 +14813,14 @@
               },
               "engine": {
                 "$ref": "#/$defs/AvailabilitySnapshot"
+              },
+              "opening_scale": {
+                "$ref": "#/$defs/OpeningScaleSnapshot",
+                "default": {
+                  "candle": false,
+                  "tape": null
+                },
+                "description": "Independent reversible preferences, readable even when marks are hidden."
               },
               "pane_id": {
                 "$ref": "#/$defs/WireU64"

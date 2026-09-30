@@ -2,8 +2,7 @@
 use super::*;
 use crate::projection::{
     CANDLE_MARK_MAX_RADIUS_PX, CandleDotFrame, CandleDotGrid, CandleDotView, CandleFootprint,
-    CandleFootprintSource, CandleGroupMemory, CandlePriceMemory, CandleScaleMemory,
-    project_candle_dots,
+    CandleFootprintSource, CandleGroupMemory, CandlePriceMemory, project_candle_dots,
 };
 use quantick_engine::{BarFootprint, FootprintBuilder};
 
@@ -31,6 +30,7 @@ fn factual(slot: usize, ladder: &BarFootprint) -> CandleFootprint<'_> {
         slot,
         ladder,
         source: CandleFootprintSource::TradeBuilt,
+        opening: None,
     }
 }
 fn grid() -> Option<CandleDotGrid> {
@@ -47,6 +47,7 @@ fn view() -> CandleDotView {
         candles_per_mark: 1,
         price_ticks_per_mark: 1,
         height_px: 120.0,
+        ignore_opening_burst_in_scale: false,
     }
 }
 fn totals(frame: &CandleDotFrame) -> (Decimal, Decimal, u64) {
@@ -168,7 +169,7 @@ fn horizontal_and_vertical_zoom_conserve_exact_sides_counts_and_price_spans() {
 }
 
 #[test]
-fn panning_owns_whole_absolute_groups_and_never_inflates_retained_marks() {
+fn panning_preserves_whole_absolute_group_facts_and_uses_visible_reference() {
     let members = (0..12)
         .map(|id| {
             ladder(&[print(
@@ -188,33 +189,27 @@ fn panning_owns_whole_absolute_groups_and_never_inflates_retained_marks() {
         };
         project_candle_dots(view.trade_built(&members, 2, None), grid(), view)
     };
-    let mut memory = CandleScaleMemory::default();
-    let mut left = project((3, 11));
-    memory.apply(&mut left);
-    let mut right = project((8, 13));
-    memory.apply(&mut right);
-    assert_eq!(right.full_quantity, left.full_quantity);
+    let left = project((3, 11));
+    let right = project((8, 13));
+    assert!(right.full_quantity < left.full_quantity);
     assert_eq!(left.marks[0].slot, 2, "prefix slots have no ladder");
     assert_eq!((left.marks[1].slot, left.marks[1].last_slot), (4, 7));
-    let shared = left.marks.iter().find(|m| m.slot == 8).unwrap();
+    let shared = left.marks.iter().find(|mark| mark.slot == 8).unwrap();
+    let retained = &right.marks[0];
     assert_eq!(
-        &right.marks[0], shared,
-        "panning retains sums, span, price and radius"
+        (retained.price, retained.buy_quantity, retained.last_slot),
+        (shared.price, shared.buy_quantity, shared.last_slot)
+    );
+    assert!(
+        retained.radius_px > shared.radius_px,
+        "a heavy off-screen group cannot suppress late flow"
+    );
+    assert_eq!(
+        right,
+        project((8, 13)),
+        "the same viewport does not depend on navigation history"
     );
     assert_eq!(totals(&left), (dec("2200"), dec("0"), 10));
-    let mut changed_tier = project_candle_dots([factual(8, &members[8])], grid(), view());
-    memory.apply(&mut changed_tier);
-    assert_eq!(
-        changed_tier.full_quantity,
-        dec("100"),
-        "a new tier starts its own reference"
-    );
-    let mut returned = project((8, 13));
-    memory.apply(&mut returned);
-    assert_eq!(
-        returned.full_quantity, left.full_quantity,
-        "returning to a tier retains its previously observed reference"
-    );
 }
 
 #[test]
@@ -389,5 +384,66 @@ fn invalid_geometry_is_empty_and_compact_cap_is_shared_by_every_mark() {
         },
     );
     assert_eq!(frame.maximum_radius_px, 1.0);
+    assert_eq!(frame.marks[0].radius_px, 2.0 * frame.marks[1].radius_px);
+}
+
+#[test]
+fn opening_exclusion_preserves_mixed_band_facts_and_only_caps_opening_overflow() {
+    let mixed = ladder(&[
+        print(1, "100", "10000", Side::Buy),
+        print(2, "100", "100", Side::Sell),
+        print(3, "115", "400", Side::Sell),
+    ]);
+    let opening = ladder(&[print(1, "100", "10000", Side::Buy)]);
+    let ordinary = ladder(&[print(4, "115", "100", Side::Buy)]);
+    let inputs = [
+        CandleFootprint {
+            opening: Some(&opening),
+            ..factual(0, &mixed)
+        },
+        factual(1, &ordinary),
+    ];
+    let frame = project_candle_dots(
+        inputs,
+        grid(),
+        CandleDotView {
+            ignore_opening_burst_in_scale: true,
+            ..view()
+        },
+    );
+    assert_eq!(frame.full_quantity, dec("400"));
+    assert!(frame.opening_exclusion_effective);
+    assert_eq!(totals(&frame), (dec("10100"), dec("500"), 4));
+    assert_eq!(frame.marks[0].opening_quantity, dec("10000"));
+    assert!(frame.marks[0].size_capped);
+    assert_eq!(frame.marks[0].radius_px, frame.maximum_radius_px);
+    assert!(!frame.marks[1].size_capped && !frame.marks[2].size_capped);
+    assert_eq!(frame.marks[1].radius_px, 2.0 * frame.marks[2].radius_px);
+    let factual = project_candle_dots(inputs, grid(), view());
+    assert_eq!(totals(&frame), totals(&factual));
+    assert_eq!(frame.marks[0].price, factual.marks[0].price);
+}
+
+#[test]
+fn an_opening_only_view_falls_back_without_dropping_its_exact_quantity() {
+    let opening = ladder(&[
+        print(1, "100", "10000", Side::Buy),
+        print(2, "115", "2500", Side::Sell),
+    ]);
+    let frame = project_candle_dots(
+        [CandleFootprint {
+            opening: Some(&opening),
+            ..factual(0, &opening)
+        }],
+        grid(),
+        CandleDotView {
+            ignore_opening_burst_in_scale: true,
+            ..view()
+        },
+    );
+    assert!(!frame.opening_exclusion_effective);
+    assert_eq!(frame.full_quantity, dec("10000"));
+    assert_eq!(totals(&frame), (dec("10000"), dec("2500"), 2));
+    assert!(frame.marks.iter().all(|mark| !mark.size_capped));
     assert_eq!(frame.marks[0].radius_px, 2.0 * frame.marks[1].radius_px);
 }

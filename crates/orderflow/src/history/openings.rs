@@ -8,10 +8,10 @@ const UTC_DAY_MS: i64 = 86_400_000;
 const RECORDED_DATES: i64 = 8;
 
 #[derive(Debug, Clone, Default)]
-pub(crate) struct RecordedOpenings(Vec<i64>);
+pub struct RecordedOpenings(Vec<i64>);
 
 impl RecordedOpenings {
-    pub(crate) fn observe(&mut self, timestamp_ms: i64) {
+    pub fn observe(&mut self, timestamp_ms: i64) {
         let window = timestamp_ms
             .div_euclid(NATIVE_TAPE_WINDOW_MS)
             .saturating_mul(NATIVE_TAPE_WINDOW_MS);
@@ -33,13 +33,22 @@ impl RecordedOpenings {
             .retain(|time| time.div_euclid(UTC_DAY_MS) > newest - RECORDED_DATES);
     }
 
+    /// Whether a print lies in its UTC date's first recorded 100 ms window.
+    #[must_use]
+    pub fn contains(&self, timestamp_ms: i64) -> bool {
+        let window = timestamp_ms
+            .div_euclid(NATIVE_TAPE_WINDOW_MS)
+            .saturating_mul(NATIVE_TAPE_WINDOW_MS);
+        self.0.binary_search(&window).is_ok()
+    }
+
     pub(crate) fn merge(&mut self, windows: &[i64]) {
         for &window in windows {
             self.observe(window);
         }
     }
 
-    pub(crate) fn windows(&self) -> &[i64] {
+    pub fn windows(&self) -> &[i64] {
         &self.0
     }
 }

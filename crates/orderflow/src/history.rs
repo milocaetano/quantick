@@ -12,7 +12,7 @@ use super::scale::{SessionScale, SummaryScale};
 
 mod openings;
 mod tape_range;
-pub(crate) use openings::RecordedOpenings;
+pub use openings::RecordedOpenings;
 
 /// Resting side represented by a liquidity run.
 pub type RestingSide = BookSide;

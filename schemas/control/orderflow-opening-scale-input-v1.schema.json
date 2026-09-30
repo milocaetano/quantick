@@ -1,5 +1,12 @@
 {
   "$defs": {
+    "OpeningScaleTarget": {
+      "enum": [
+        "tape",
+        "candle"
+      ],
+      "type": "string"
+    },
     "WireU64": {
       "pattern": "^(0|[1-9][0-9]*)$",
       "type": "string"
@@ -9,7 +16,7 @@
   "additionalProperties": false,
   "properties": {
     "ignore_opening_burst_in_scale": {
-      "description": "Exclude each day's first recorded 100 ms burst from the automatic\ntape size reference. Preserve its exact volume and cap its radius.",
+      "description": "Exclude each day's first recorded 100 ms burst from the automatic\ntargeted size reference. Preserve its exact volume and cap its radius.",
       "type": "boolean"
     },
     "pane_id": {
@@ -17,6 +24,11 @@
     },
     "tab_id": {
       "$ref": "#/$defs/WireU64"
+    },
+    "target": {
+      "$ref": "#/$defs/OpeningScaleTarget",
+      "default": "tape",
+      "description": "Tape is the backward-compatible default; Candle has an independent\ntransient pane preference and requires no tape worker."
     }
   },
   "required": [

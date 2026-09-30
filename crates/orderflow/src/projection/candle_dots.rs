@@ -6,7 +6,8 @@
 //! (`slot / k`). Slots count from the series' first bar, so panning never
 //! regroups, and a group cut by the view edge still sums every member
 //! ([`CandleDotView::input_slots`]). A mark's area is its exact volume against
-//! the largest visible mark.
+//! the largest visible mark. The optional opening exclusion changes only
+//! that reference; an opening-containing mark above it is explicitly capped.
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -22,7 +23,8 @@ use rust_decimal::prelude::ToPrimitive as _;
 pub const CANDLE_MARK_MAX_RADIUS_PX: f32 = 4.0;
 
 /// Minimum horizontal group spacing. The common cap also respects vertical
-/// band spacing; each individual radius remains strictly proportional.
+/// band spacing. Ordinary mark areas remain strictly proportional; the
+/// optional opening exclusion explicitly caps opening overflow.
 pub const CANDLE_GROUP_MIN_WIDTH_PX: f32 = 6.0;
 
 /// The hysteresis band: a held group halves only once the half would be this
@@ -50,6 +52,8 @@ pub struct CandleFootprint<'a> {
     pub slot: usize,
     pub ladder: &'a BarFootprint,
     pub source: CandleFootprintSource,
+    /// Exact contributions from the first recorded 100 ms window per UTC date.
+    pub opening: Option<&'a BarFootprint>,
 }
 
 /// The observed price grid and one price known to lie on it.
@@ -74,6 +78,7 @@ pub struct CandleDotView {
     pub price_ticks_per_mark: usize,
     /// Height of the visible price window in logical pixels.
     pub height_px: f32,
+    pub ignore_opening_burst_in_scale: bool,
 }
 
 /// A price band's exact quantities at their weighted execution price, with
@@ -91,6 +96,9 @@ pub struct CandleDot {
     pub sell_quantity: Decimal,
     pub trade_count: u64,
     pub radius_px: f32,
+    pub opening_quantity: Decimal,
+    /// Only an opening-containing mark may exceed the ordinary reference.
+    pub size_capped: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -99,8 +107,13 @@ pub struct CandleDotFrame {
     pub full_quantity: Decimal,
     pub candles_per_mark: usize,
     pub price_ticks_per_mark: usize,
-    /// One common radius cap; every mark's area follows its exact quantity.
+    /// Common radius cap. Ordinary areas follow exact quantity; optionally
+    /// excluded opening contributions may exceed the reference and be capped,
+    /// with that exception identified by each mark's `size_capped`.
     pub maximum_radius_px: f32,
+    pub ignore_opening_burst_in_scale: bool,
+    pub opening_exclusion_effective: bool,
+    pub recorded_opening_windows_ms: Vec<i64>,
 }
 
 /// The candles one mark stands for, held across frames so a steady zoom
@@ -209,6 +222,7 @@ impl CandleDotView {
                 slot,
                 ladder,
                 source: CandleFootprintSource::TradeBuilt,
+                opening: None,
             })
     }
 }
@@ -236,6 +250,7 @@ struct BandSums {
     sell: Decimal,
     moment: Decimal,
     count: u64,
+    opening: Decimal,
 }
 
 impl BandSums {
@@ -247,6 +262,7 @@ impl BandSums {
             sell: self.sell.checked_add(other.sell)?,
             moment: self.moment.checked_add(other.moment)?,
             count: self.count.checked_add(other.count)?,
+            opening: self.opening.checked_add(other.opening)?,
         })
     }
 }
@@ -265,7 +281,11 @@ struct CandleBands {
 /// the affected whole group rather than publishing partial quantities.
 ///
 /// Every visible mark shares a single area scale and radius cap. Small
-/// quantities may produce tiny marks: there is no radius floor or saturation.
+/// quantities may produce tiny marks; there is no radius floor. Optional
+/// opening exclusion removes only exact opening contributions from the size
+/// reference, retaining factual totals/pies. Opening-containing marks above
+/// that reference are explicitly capped; ordinary marks are never saturated.
+/// An opening-only viewport falls back to its factual maximum.
 pub fn project_candle_dots<'a>(
     inputs: impl IntoIterator<Item = CandleFootprint<'a>>,
     grid: Option<CandleDotGrid>,
@@ -277,6 +297,9 @@ pub fn project_candle_dots<'a>(
         candles_per_mark: view.candles_per_mark,
         price_ticks_per_mark: view.price_ticks_per_mark,
         maximum_radius_px: 0.0,
+        ignore_opening_burst_in_scale: view.ignore_opening_burst_in_scale,
+        opening_exclusion_effective: false,
+        recorded_opening_windows_ms: Vec::new(),
     };
     let Some(grid) = grid else { return frame };
     let Some(band_step) = grid
@@ -325,7 +348,7 @@ pub fn project_candle_dots<'a>(
         };
         group.first = group.first.min(input.slot);
         group.last = group.last.max(input.slot);
-        if !add_ladder(group, input.ladder, band_step) {
+        if !add_ladder(group, input.ladder, input.opening, grid, band_step) {
             *entry = None;
         }
     }
@@ -351,6 +374,8 @@ pub fn project_candle_dots<'a>(
                 sell_quantity: sums.sell,
                 trade_count: sums.count,
                 radius_px: 0.0,
+                opening_quantity: sums.opening,
+                size_capped: false,
             });
         }
     }
@@ -375,11 +400,37 @@ pub fn project_candle_dots<'a>(
         .map(|dot| dot.buy_quantity.saturating_add(dot.sell_quantity))
         .max()
         .unwrap_or(Decimal::ONE);
+    if view.ignore_opening_burst_in_scale {
+        let eligible = frame
+            .marks
+            .iter()
+            .map(|mark| mark.buy_quantity + mark.sell_quantity - mark.opening_quantity)
+            .max()
+            .unwrap_or(Decimal::ZERO);
+        if eligible > Decimal::ZERO {
+            frame.full_quantity = eligible;
+            frame.opening_exclusion_effective = frame
+                .marks
+                .iter()
+                .any(|mark| mark.opening_quantity > Decimal::ZERO);
+        }
+    }
     frame.resize();
     frame
 }
 
-fn add_ladder(group: &mut CandleBands, ladder: &BarFootprint, band_step: Decimal) -> bool {
+fn add_ladder(
+    group: &mut CandleBands,
+    ladder: &BarFootprint,
+    opening: Option<&BarFootprint>,
+    grid: CandleDotGrid,
+    band_step: Decimal,
+) -> bool {
+    if opening
+        .is_some_and(|opening| !grid.preserves_prices(opening) || opening.group() != ladder.group())
+    {
+        return false;
+    }
     for (&bucket, level) in ladder.levels() {
         let Some(price) = ladder.group().checked_mul(Decimal::from(bucket)) else {
             return false;
@@ -403,7 +454,13 @@ fn add_ladder(group: &mut CandleBands, ladder: &BarFootprint, band_step: Decimal
             sell: level.sell,
             moment,
             count: level.trade_count,
+            opening: opening
+                .and_then(|opening| opening.levels().get(&bucket))
+                .map_or(Decimal::ZERO, |level| level.volume()),
         };
+        if sums.opening > quantity {
+            return false;
+        }
         group
             .bands
             .entry(band)
@@ -419,35 +476,14 @@ fn add_ladder(group: &mut CandleBands, ladder: &BarFootprint, band_step: Decimal
 impl CandleDotFrame {
     fn resize(&mut self) {
         for dot in &mut self.marks {
+            dot.size_capped = self.opening_exclusion_effective
+                && dot.opening_quantity > Decimal::ZERO
+                && dot.buy_quantity.saturating_add(dot.sell_quantity) > self.full_quantity;
             dot.radius_px = self.maximum_radius_px
                 * normalized_area_size(
                     dot.buy_quantity.saturating_add(dot.sell_quantity),
                     self.full_quantity,
                 );
         }
-    }
-}
-
-/// Hold the largest observed quantity for one horizontal/vertical tier.
-/// Panning a heavy band off screen does not inflate the retained marks. A
-/// heavier newly observed band raises the common reference for all marks.
-#[derive(Debug, Clone, Default)]
-pub struct CandleScaleMemory {
-    held: BTreeMap<(usize, usize), Decimal>,
-}
-
-impl CandleScaleMemory {
-    pub fn apply(&mut self, frame: &mut CandleDotFrame) {
-        if frame.marks.is_empty() {
-            return;
-        }
-        let (candles, ticks) = (frame.candles_per_mark, frame.price_ticks_per_mark);
-        let reference = self
-            .held
-            .entry((candles, ticks))
-            .or_insert(frame.full_quantity);
-        *reference = (*reference).max(frame.full_quantity);
-        frame.full_quantity = *reference;
-        frame.resize();
     }
 }

@@ -264,8 +264,17 @@ pub struct TabBubblesSnapshot {
     pub panes: Vec<PaneBubblesSnapshot>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct OpeningScaleSnapshot {
+    pub tape: Option<bool>,
+    pub candle: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PaneBubblesSnapshot {
+    /// Independent reversible preferences, readable even when marks are hidden.
+    #[serde(default)]
+    pub opening_scale: OpeningScaleSnapshot,
     /// Last painted candle aggression, independent of the tape worker.
     #[serde(default)]
     pub candle_aggression: Option<CandleAggressionSnapshot>,

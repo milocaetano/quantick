@@ -12,10 +12,17 @@ const MAX_CANDLE_MARKS: usize = 256;
 pub struct CandleAggressionSnapshot {
     pub candles_per_mark: WireU64,
     pub price_ticks_per_mark: WireU64,
-    /// Held largest observed band quantity at this aggregation tier. All
-    /// radii use sqrt(quantity / full_quantity) times maximum_radius_px.
+    /// Largest visible eligible band quantity. When opening exclusion is
+    /// effective, the reference excludes only exact opening contributions. All
+    /// radii use sqrt(quantity / full_quantity) times maximum_radius_px,
+    /// except opening overflow explicitly reported by size_capped.
     pub full_quantity: CanonicalDecimal,
     pub maximum_radius_px: CanonicalDecimal,
+    pub ignore_opening_burst_in_scale: bool,
+    pub opening_exclusion_effective: bool,
+    /// First available recorded 100 ms windows per retained UTC date; an
+    /// approximation, not evidence of an exchange auction.
+    pub recorded_opening_windows_ms: Vec<i64>,
     /// Exact totals of every projected mark, including those omitted by the
     /// readback bound. Price-filtered and unavailable ladders are excluded.
     pub buy_quantity: CanonicalDecimal,
@@ -41,6 +48,10 @@ pub struct CandleMarkSnapshot {
     pub trade_count: WireU64,
     /// Exact decimal representation of the painted f32 logical radius.
     pub radius_px: CanonicalDecimal,
+    pub opening_quantity: CanonicalDecimal,
+    /// True only for an opening-containing mark whose factual total exceeds
+    /// the ordinary reference. Other marks retain proportional areas.
+    pub size_capped: bool,
 }
 
 fn pixels(value: f32) -> CanonicalDecimal {
@@ -64,6 +75,9 @@ impl From<&CandleDotFrame> for CandleAggressionSnapshot {
             price_ticks_per_mark: wire_usize(frame.price_ticks_per_mark),
             full_quantity: canonical_decimal(frame.full_quantity),
             maximum_radius_px: pixels(frame.maximum_radius_px),
+            ignore_opening_burst_in_scale: frame.ignore_opening_burst_in_scale,
+            opening_exclusion_effective: frame.opening_exclusion_effective,
+            recorded_opening_windows_ms: frame.recorded_opening_windows_ms.clone(),
             buy_quantity: canonical_decimal(buy),
             sell_quantity: canonical_decimal(sell),
             trade_count: WireU64::new(count),
@@ -91,6 +105,8 @@ impl From<&CandleDot> for CandleMarkSnapshot {
             sell_quantity: canonical_decimal(mark.sell_quantity),
             trade_count: WireU64::new(mark.trade_count),
             radius_px: pixels(mark.radius_px),
+            opening_quantity: canonical_decimal(mark.opening_quantity),
+            size_capped: mark.size_capped,
         }
     }
 }
@@ -110,6 +126,8 @@ mod tests {
             sell_quantity: Decimal::ZERO,
             trade_count: 1,
             radius_px: 0.02,
+            opening_quantity: Decimal::ZERO,
+            size_capped: false,
         };
         let frame = CandleDotFrame {
             marks: vec![mark; 300],
@@ -117,6 +135,9 @@ mod tests {
             candles_per_mark: 1,
             price_ticks_per_mark: 2,
             maximum_radius_px: 4.0,
+            ignore_opening_burst_in_scale: false,
+            opening_exclusion_effective: false,
+            recorded_opening_windows_ms: Vec::new(),
         };
         let snapshot = CandleAggressionSnapshot::from(&frame);
         assert_eq!(snapshot.marks.len(), 256);

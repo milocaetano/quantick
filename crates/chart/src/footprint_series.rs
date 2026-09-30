@@ -16,6 +16,9 @@
 //! answer off the closed bar's own `trade_count`: `pending + 1` means the
 //! closing trade is inside, `pending` means it opens the next ladder.
 
+use quantick_orderflow::history::RecordedOpenings;
+use std::collections::BTreeMap;
+
 use quantick_engine::{Bar, BarFootprint, DEFAULT_LEVEL_CAP, FootprintBuilder, Trade};
 use rust_decimal::Decimal;
 
@@ -34,6 +37,9 @@ pub struct FootprintSeries {
     /// Trades fed since the last close — the counter the closing-trade
     /// question is answered against.
     pending: u64,
+    opening_builder: FootprintBuilder,
+    opening_closed: BTreeMap<usize, BarFootprint>,
+    openings: RecordedOpenings,
 }
 
 impl FootprintSeries {
@@ -45,6 +51,9 @@ impl FootprintSeries {
             base_group,
             closed: Vec::new(),
             pending: 0,
+            opening_builder: FootprintBuilder::new(base_group, DEFAULT_LEVEL_CAP),
+            opening_closed: BTreeMap::new(),
+            openings: RecordedOpenings::default(),
         }
     }
 
@@ -62,13 +71,48 @@ impl FootprintSeries {
         self.base_group = base_group;
         self.closed.clear();
         self.pending = 0;
+        self.opening_builder = FootprintBuilder::new(base_group, DEFAULT_LEVEL_CAP);
+        self.opening_closed.clear();
+        self.openings = RecordedOpenings::default();
+    }
+
+    fn push(&mut self, trade: &Trade) {
+        self.builder.push(trade);
+        self.openings.observe(trade.timestamp_ms);
+        if self.openings.contains(trade.timestamp_ms) {
+            self.opening_builder.push(trade);
+        }
+    }
+
+    fn close_opening(&mut self) {
+        if let Some(ladder) = self.opening_builder.close() {
+            self.opening_closed.insert(self.closed.len(), ladder);
+        }
+    }
+
+    /// Sparse opening contributions, indexed by the same closed bars.
+    #[must_use]
+    pub fn opening_closed(&self) -> &BTreeMap<usize, BarFootprint> {
+        &self.opening_closed
+    }
+
+    #[must_use]
+    pub fn opening_partial(&self) -> Option<&BarFootprint> {
+        self.opening_builder.partial()
+    }
+
+    #[must_use]
+    pub fn recorded_openings(&self) -> &[i64] {
+        self.openings.windows()
     }
 
     /// Fold the trade the bar builder just consumed, `closed` being what that
-    /// same `push` returned. Must be called for every trade, in order.
+    /// same `push` returned. Must be called for every trade in chronological
+    /// order. Prepending earlier evidence resets and refolds the entire series
+    /// before classifying its new first-recorded windows.
     pub fn observe(&mut self, trade: &Trade, closed: Option<&Bar>) {
         let Some(bar) = closed else {
-            self.builder.push(trade);
+            self.push(trade);
             self.pending = self.pending.saturating_add(1);
             return;
         };
@@ -79,8 +123,9 @@ impl FootprintSeries {
             "footprint trade counter drifted from the bar builder's"
         );
         if closing_trade_included {
-            self.builder.push(trade);
+            self.push(trade);
         }
+        self.close_opening();
         match self.builder.close() {
             Some(ladder) => self.closed.push(ladder),
             None => {
@@ -88,7 +133,8 @@ impl FootprintSeries {
                 // least one trade — but index alignment with `bars` is the
                 // invariant everything downstream indexes by, so restore it
                 // from the only trade at hand instead of panicking mid-feed.
-                self.builder.push(trade);
+                self.push(trade);
+                self.close_opening();
                 self.closed
                     .push(self.builder.close().expect("pushed just above"));
                 self.pending = 0;
@@ -99,7 +145,7 @@ impl FootprintSeries {
             self.pending = 0;
         } else {
             // The bar closed on its boundary; this trade opens the next one.
-            self.builder.push(trade);
+            self.push(trade);
             self.pending = 1;
         }
     }
@@ -112,6 +158,7 @@ impl FootprintSeries {
             bar.trade_count == self.pending,
             "footprint trade counter drifted from the bar builder's"
         );
+        self.close_opening();
         if let Some(ladder) = self.builder.close() {
             self.closed.push(ladder);
         }
@@ -348,3 +395,7 @@ mod tests {
         assert!(chart.partial_footprint().is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "footprint_series/opening_tests.rs"]
+mod opening_tests;

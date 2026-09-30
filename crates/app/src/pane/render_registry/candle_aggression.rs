@@ -40,13 +40,26 @@ fn paint(pass: &mut FootprintPass<'_>) {
                 grid.tick_height_px(prices, frame.chart_rect.height())
             })),
         height_px: frame.chart_rect.height(),
+        ignore_opening_burst_in_scale: pass.ignore_opening_burst,
     };
     let partial = pass
         .current_partial
         .map(|ladder| (frame.partial_slot, ladder));
-    let inputs = view.trade_built(frame.footprints, frame.first_state_slot, partial);
+    let inputs = view
+        .trade_built(frame.footprints, frame.first_state_slot, partial)
+        .map(|mut input| {
+            input.opening = if input.slot == frame.partial_slot {
+                pass.partial_opening
+            } else {
+                input
+                    .slot
+                    .checked_sub(frame.first_state_slot)
+                    .and_then(|index| pass.opening_ladders.get(&index))
+            };
+            input
+        });
     let mut projected = project_candle_dots(inputs, pass.native_grid, view);
-    pass.lod.candle_scale.apply(&mut projected);
+    projected.recorded_opening_windows_ms = pass.recorded_openings.to_vec();
     let buy = theme::BUY.gamma_multiply(DOT_OPACITY);
     let sell = theme::SELL.gamma_multiply(DOT_OPACITY);
     let mut mesh = egui::Mesh::default();
@@ -95,6 +108,24 @@ fn paint(pass: &mut FootprintPass<'_>) {
     }
     if !mesh.is_empty() {
         frame.painter.add(egui::Shape::mesh(mesh));
+    }
+    if pass.ignore_opening_burst {
+        let fallback = !projected.marks.is_empty()
+            && projected
+                .marks
+                .iter()
+                .all(|mark| mark.opening_quantity == mark.buy_quantity + mark.sell_quantity);
+        frame.painter.text(
+            frame.chart_rect.left_bottom() + egui::vec2(8.0, -8.0),
+            egui::Align2::LEFT_BOTTOM,
+            if fallback {
+                "Opening-only scale fallback"
+            } else {
+                "First recorded burst excluded"
+            },
+            egui::FontId::proportional(11.0),
+            theme::TEXT_MUTED,
+        );
     }
     pass.lod.candle_frame = Some(projected);
 }

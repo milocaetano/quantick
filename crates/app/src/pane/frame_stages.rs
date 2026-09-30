@@ -380,6 +380,7 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
             // detail mutably. Same resolution rule.
             config: footprint.config.as_ref().unwrap_or(chrome.footprint),
         };
+        let ignore_opening_burst = footprint.ignore_candle_opening();
         self.renderers.footprint(&mut FootprintPass {
             frame: &layer,
             lod: &mut footprint.lod,
@@ -395,6 +396,10 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
                     },
                 ),
             current_partial: state.partial_footprint(),
+            opening_ladders: quantick_chart::state::opening::closed(state),
+            partial_opening: quantick_chart::state::opening::partial(state),
+            recorded_openings: quantick_chart::state::opening::recorded_windows(state),
+            ignore_opening_burst,
         });
     }
 
@@ -483,11 +488,23 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
 }
 
 impl PaneFootprint {
+    pub(crate) fn ignore_candle_opening(&self) -> bool {
+        self.lod.candle_ignore_opening
+    }
+
+    pub(crate) fn set_ignore_candle_opening(&mut self, enabled: bool) -> bool {
+        let changed = self.lod.candle_ignore_opening != enabled;
+        self.lod.candle_ignore_opening = enabled;
+        if changed {
+            self.lod.candle_frame = None;
+        }
+        changed
+    }
+
     /// Rebuilt bars and new market streams begin a fresh grouping/size epoch.
     pub(super) fn reset_candle_aggression(&mut self) {
         self.lod.candle_groups = Default::default();
         self.lod.candle_prices = Default::default();
-        self.lod.candle_scale = Default::default();
         self.lod.candle_frame = None;
     }
 
@@ -496,5 +513,20 @@ impl PaneFootprint {
         &self,
     ) -> Option<&quantick_orderflow::projection::CandleDotFrame> {
         self.lod.candle_frame.as_ref()
+    }
+}
+
+impl super::ChartPane {
+    pub(crate) fn opening_scale_snapshot(
+        &self,
+    ) -> quantick_control_schema::orderflow::OpeningScaleSnapshot {
+        quantick_control_schema::orderflow::OpeningScaleSnapshot {
+            tape: self.orderflow.as_ref().map(|view| {
+                view.cached_config()
+                    .volume_dots
+                    .ignore_opening_burst_in_scale
+            }),
+            candle: self.footprint.ignore_candle_opening(),
+        }
     }
 }
