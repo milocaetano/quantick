@@ -166,7 +166,11 @@ impl OrderflowView {
             .with_tape_price_range(price_range)
             .with_tape_memory(
                 &self.tape_dots,
-                frame.tape_overlay.as_deref().filter(|_| past.is_none()),
+                frame.tape_overlay.as_ref().filter(|_| past.is_none()),
+            )
+            .with_tape_rebuilds(
+                past.is_none()
+                    .then_some((&self.tape_rebuilds, &frame.projection)),
             )
             .with_past_tape(past.map(|past| (&self.past_dots, past)));
         let context = match (

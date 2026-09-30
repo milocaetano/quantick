@@ -21,6 +21,9 @@ use crate::projection::{
 };
 use quantick_engine::{BarBuilder as _, Side, TickBarBuilder};
 
+#[path = "engine_tape_rebuild_tests.rs"]
+mod tape_rebuild_tests;
+
 #[path = "engine_tape_reread_tests.rs"]
 mod tape_reread_tests;
 

@@ -17,6 +17,7 @@ mod layout;
 mod legend;
 mod preview;
 mod tape_path;
+mod tape_rebuild;
 
 pub(crate) use bubbles::draw_aggression_bubbles;
 pub(crate) use bubbles::{PIE_START_ANGLE, SphereShading, add_shaded_sector};
@@ -25,6 +26,7 @@ pub(crate) use layout::{ProjectedLayout, RenderContext, lane_divider_x};
 pub(crate) use legend::draw_compact_legend;
 pub(crate) use preview::draw_preview;
 pub(crate) use tape_path::draw_past_tape_edge;
+pub(crate) use tape_rebuild::PaneTapeRebuilds;
 
 pub(crate) use quantick_orderflow::config::theme::{
     LEGEND_HEADER_CLEARANCE_PX, OrderflowRenderStyle, ThemeBubbleRgb, theme_bubble_rgb,

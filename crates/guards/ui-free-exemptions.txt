@@ -23,3 +23,4 @@ crates/app/src/indicators/views.rs the UI's copy of indicator state, applied fro
 crates/app/src/pane.rs a facade of re-exports: it names no library because every leaf it addresses does.
 crates/app/src/pane/chrome.rs what one frame hands a pane around its plot area: the tool rail, the drawings and the paper account, all app-owned.
 crates/app/src/theme.rs a facade of re-exports: it names no library because every leaf it addresses does.
+crates/app/src/orderflow_render/tape_rebuild.rs the pane's tape rebuild thread; headless crates may not spawn one, and the pricing, stand-in and adoption it serves live in `quantick_orderflow::projection::TapeRebuilds`.

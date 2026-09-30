@@ -11,6 +11,7 @@ use quantick_orderflow::projection::{PastTape, PastTapeMemory};
 use quantick_orderflow::{AggressionPrimitive, HeatmapProjection, PriceWindow};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive as _;
+use std::sync::Arc;
 
 use crate::viewport::Viewport;
 
@@ -287,8 +288,12 @@ pub(crate) struct RenderContext<'a> {
     pub(super) tape_prices: Option<PriceWindow>,
     pub(super) tape_memory:
         Option<&'a std::cell::RefCell<quantick_orderflow::projection::TapeDotMemory>>,
+    pub(super) tape_rebuilds: Option<(
+        &'a std::cell::RefCell<super::PaneTapeRebuilds>,
+        &'a Arc<HeatmapProjection>,
+    )>,
     pub(super) past_tape: Option<(&'a std::cell::RefCell<PastTapeMemory>, &'a PastTape)>,
-    pub(super) tape_overlay: Option<&'a quantick_orderflow::projection::TapeOverlay>,
+    pub(super) tape_overlay: Option<&'a Arc<quantick_orderflow::projection::TapeOverlay>>,
 }
 
 impl<'a> RenderContext<'a> {
@@ -305,6 +310,7 @@ impl<'a> RenderContext<'a> {
             tape_time: None,
             tape_prices: None,
             tape_memory: None,
+            tape_rebuilds: None,
             past_tape: None,
             tape_overlay: None,
         }
@@ -343,10 +349,24 @@ impl<'a> RenderContext<'a> {
     pub(crate) fn with_tape_memory(
         mut self,
         memory: &'a std::cell::RefCell<quantick_orderflow::projection::TapeDotMemory>,
-        overlay: Option<&'a quantick_orderflow::projection::TapeOverlay>,
+        overlay: Option<&'a Arc<quantick_orderflow::projection::TapeOverlay>>,
     ) -> Self {
         self.tape_memory = Some(memory);
         self.tape_overlay = overlay;
+        self
+    }
+
+    /// Run the tape's reconciliations too large for a frame beside it,
+    /// drawing the retained groups until each lands; `projection` is the
+    /// frame's own, shared with them.
+    pub(crate) fn with_tape_rebuilds(
+        mut self,
+        rebuilds: Option<(
+            &'a std::cell::RefCell<super::PaneTapeRebuilds>,
+            &'a Arc<HeatmapProjection>,
+        )>,
+    ) -> Self {
+        self.tape_rebuilds = rebuilds;
         self
     }
 

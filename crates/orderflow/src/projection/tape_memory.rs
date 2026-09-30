@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{self, AtomicBool};
 
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
@@ -26,6 +27,10 @@ mod native_fact_tests;
 
 #[path = "tape_past_memory.rs"]
 mod past;
+
+#[path = "tape_work.rs"]
+mod work;
+pub use work::{FRAME_WORK_BUDGET, TapeWork};
 
 pub use past::{MAX_PAST_BLOCKS, PAST_PRICE_SPAN_BAND, PastTapeMemory};
 
@@ -63,6 +68,12 @@ pub struct TapeDotMemory {
     ingested: Option<Ingested>,
     /// Native cells handed to reconciliation by the last projection.
     reconciled: usize,
+    /// The newest closed native window merged into the groups.
+    merged_through: Option<i64>,
+    /// Raised once the rebuild this memory reconciles in can no longer be
+    /// adopted ([`crate::projection::TapeRebuild`]): the pass stops at the
+    /// next window instead of finishing work nobody will draw.
+    abandoned: Option<Arc<AtomicBool>>,
 }
 
 /// Every cell of `lineage` before `below_ms` has been reconciled, under the
@@ -106,6 +117,18 @@ impl TapeSource<'_> {
 impl TapeDotMemory {
     pub fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    /// Reconcile under `abandoned`: once it is raised, what is left of a
+    /// pass is skipped and the memory is fit only to be dropped.
+    pub fn abandon_when(&mut self, abandoned: Option<Arc<AtomicBool>>) {
+        self.abandoned = abandoned;
+    }
+
+    fn is_abandoned(&self) -> bool {
+        self.abandoned
+            .as_ref()
+            .is_some_and(|flag| flag.load(atomic::Ordering::Relaxed))
     }
 
     pub fn retained_group_count(&self) -> usize {
@@ -317,6 +340,13 @@ impl TapeDotMemory {
         let mut settled_reference = SettledReference::default();
         let mut last_closed = None;
         for (window, sources) in windows {
+            if self.is_abandoned() {
+                return TapeDotFrame {
+                    marks: Vec::new(),
+                    max_radius: bubbles.max_radius,
+                    full_quantity: Decimal::ONE,
+                };
+            }
             let groups = sources
                 .into_iter()
                 .map(|(key, mark)| Group::of(BTreeMap::from([(key, mark)])));
@@ -329,6 +359,7 @@ impl TapeDotMemory {
             // read again as invisible, so they are let go once, after the last.
             self.seal_frontier_at(closed_at, view, bubbles.max_radius);
             last_closed = Some(closed_at);
+            self.merged_through = Some(self.merged_through.map_or(window, |at| at.max(window)));
             let mut candidates = std::mem::take(&mut self.frontier);
             candidates.extend(groups);
             let quantities = reference_quantities(&candidates, opening_bursts);

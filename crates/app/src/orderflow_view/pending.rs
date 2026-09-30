@@ -19,6 +19,7 @@ impl OrderflowView {
 
     pub(super) fn reset_pending_tape(&mut self) {
         self.tape_dots.get_mut().clear();
+        self.tape_rebuilds.get_mut().discard();
         self.past_dots.get_mut().clear();
         self.set_tape_end(quantick_orderflow::tape_view::TapeEnd::Live);
         let epoch = self.pending_tape.reset();
