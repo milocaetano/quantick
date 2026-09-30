@@ -34,6 +34,9 @@ mod source_presets;
 #[cfg(test)]
 #[path = "orderflow_view/tests/tape_frame_tests.rs"]
 mod tape_frame_tests;
+#[cfg(test)]
+#[path = "orderflow_view/tests/tape_golden_tests.rs"]
+mod tape_golden_tests;
 
 /// Borrowed chart timeline for one order-flow projection request; the boundary revision sits beside
 /// the exact bar slice so a new timeline never pairs with an old cache identity.
