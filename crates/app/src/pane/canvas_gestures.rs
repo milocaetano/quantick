@@ -11,6 +11,42 @@ use quantick_orderflow::tape_view::TapeEnd;
 use super::{ChartPane, LANE_HANDLE_HALF_WIDTH_PX, SCROLL_ZOOM_PX};
 use crate::plot_area;
 
+/// How far a drag travels from its press before it is judged. One that sets
+/// off more sideways than up or down pans the tape's time and the price
+/// axis; one that sets off up or down pans the axis alone, to its release. A
+/// hand dragging the axis drifts a few pixels sideways, and each rightward
+/// one took the tape into the past, and the book off it, while leftward ones
+/// only clamped back at live: the book blinked with the wobble.
+const DRAG_JUDGED_AFTER_PX: f32 = 6.0;
+
+/// Whether the drag pressed at `pressed_at`, `travel` off its press now, may
+/// move the tape's time: judged once, and kept under the canvas's `id` until
+/// the next press.
+fn drag_moves_tape_time(
+    ctx: &egui::Context,
+    id: egui::Id,
+    pressed_at: Option<f64>,
+    travel: egui::Vec2,
+) -> bool {
+    let Some(press) = pressed_at.map(f64::to_bits) else {
+        return false;
+    };
+    let key = id.with("drag-moves-tape-time");
+    ctx.data_mut(|data| {
+        if let Some((judged, sideways)) = data.get_temp::<(u64, bool)>(key)
+            && judged == press
+        {
+            return sideways;
+        }
+        if travel.length() < DRAG_JUDGED_AFTER_PX {
+            return false;
+        }
+        let sideways = travel.x.abs() > travel.y.abs();
+        data.insert_temp(key, (press, sideways));
+        sideways
+    })
+}
+
 /// What the canvas gestures read from this frame's input pass.
 pub(super) struct CanvasInput<'r> {
     pub(super) chart: &'r egui::Response,
@@ -40,15 +76,27 @@ impl ChartPane {
         let over_tape = |position: egui::Pos2| {
             native_tape && (tape_only || divider.is_some_and(|x| position.x > x))
         };
-        let (press, middle_down, delta, scroll) = ui.input(|i| {
+        let (press, pressed_at, travel, middle_down, delta, scroll) = ui.input(|i| {
             let p = &i.pointer;
+            let travel = p.latest_pos().zip(p.press_origin());
             (
                 p.press_origin(),
+                p.press_start_time(),
+                travel.map_or(egui::Vec2::ZERO, |(now, from)| now - from),
                 p.middle_down(),
                 p.delta(),
                 i.raw_scroll_delta.y,
             )
         });
+        // Over the tape the sideways part of a drag is its time, and only a
+        // drag that set off sideways may move it.
+        let side = |delta: egui::Vec2, tape: bool| {
+            if !tape || drag_moves_tape_time(ui.ctx(), chart.id, pressed_at, travel) {
+                delta
+            } else {
+                egui::vec2(0.0, delta.y)
+            }
+        };
         // Primary only: the secondary drag is the quick range's
         // (`pane/quick_range.rs`), and the middle button pans below.
         if total > 0
@@ -57,7 +105,7 @@ impl ChartPane {
             && !chart.interact_pointer_pos().is_some_and(on_divider)
         {
             let tape = press.is_some_and(over_tape);
-            self.pan_canvas(chart.drag_delta(), total, tape);
+            self.pan_canvas(side(chart.drag_delta(), tape), total, tape);
         }
         // The middle button pans always, mid-placement included: a trader who
         // drops one end of a trend line must be able to go find the other.
@@ -69,7 +117,8 @@ impl ChartPane {
             && middle_down
             && let Some(position) = hover
         {
-            self.pan_canvas(delta, total, over_tape(press.unwrap_or(position)));
+            let tape = over_tape(press.unwrap_or(position));
+            self.pan_canvas(side(delta, tape), total, tape);
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         }
         // Not with a tool armed: two placement clicks are two anchors. Over
