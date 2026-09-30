@@ -304,3 +304,90 @@ fn a_steady_wide_tape_reconciles_every_frame_in_the_frame() {
     assert!(run.rebuilds <= 1, "{run:?}");
     assert!(run.stood_in <= 2, "{run:?}");
 }
+
+/// A pending tape that has folded its overlay frame after frame folds the
+/// same cells as one that folds every pending print at once, through a
+/// stalled worker, receipts, a wider window and back.
+#[test]
+fn the_overlay_folded_where_prints_land_is_the_overlay_folded_whole() {
+    let prints = tape(90, Some((1_800, 7_000)));
+    let first = config(8_000, 100_000);
+    let changes = [
+        (300, config(60_000, 100_000)),
+        (700, config(8_000, 100_000)),
+    ];
+    let mut config = first.clone();
+    let mut worker = BookEngine::new("WINV26");
+    worker.apply_visual_config(config.clone());
+    let mut pending = PendingTape::default();
+    let mut bars = TickBarBuilder::new(200);
+    let mut closed: Vec<Bar> = Vec::new();
+    let mut queued: Vec<(u64, Trade)> = Vec::new();
+    let mut acknowledged = 0;
+    let mut published: Option<Arc<VisibleOrderflow>> = None;
+    let started = std::time::Instant::now();
+    let mut compared = 0;
+    let mut next = 0;
+    let mut now_ms = prints[0].timestamp_ms;
+    let mut frame_index = 0;
+    while next < prints.len() {
+        for (_, next_config) in changes.iter().filter(|(at, _)| *at == frame_index) {
+            config = next_config.clone();
+            worker.apply_visual_config(config.clone());
+        }
+        while next < prints.len() && prints[next].timestamp_ms <= now_ms {
+            let ordinal = pending.record(&prints[next], &config);
+            queued.push((ordinal, prints[next].clone()));
+            if let Some(bar) = bars.push(&prints[next]) {
+                closed.push(bar);
+            }
+            next += 1;
+        }
+        let request = ProjectionRequest {
+            timeline_revision: next as u64,
+            first_bar_index: closed.len().saturating_sub(40),
+            closed: closed[closed.len().saturating_sub(40)..].to_vec(),
+            partial: bars.partial().cloned(),
+            lane: true,
+            on_newest_bar: true,
+            lane_reference_ms: Some(6_000),
+            lane_now_ms: Some(now_ms),
+            price_range: (80.0, 130.0),
+            dot_zoom: Some(DotZoom {
+                native_tape: true,
+                tape_window_ms: 100,
+                tape_level_ticks: 1,
+                candle_level_ticks: 1,
+                lane_bars: Vec::new(),
+            }),
+        };
+        // The worker stalls for twenty seconds twice.
+        let stalled = (200..400).contains(&frame_index) || (500..700).contains(&frame_index);
+        if frame_index % FRAMES_PER_PUBLICATION == 0 && !queued.is_empty() && !stalled {
+            let through = queued.last().map(|(ordinal, _)| *ordinal).unwrap();
+            for (_, trade) in queued.drain(..) {
+                worker.record_trade(&trade);
+            }
+            let at = started + std::time::Duration::from_millis(frame_index as u64 * 16);
+            published = worker.project_at(&request, at);
+            pending.acknowledge(through);
+            acknowledged = through;
+        }
+        let mut whole = PendingTape::default();
+        for trade in &prints[..next] {
+            whole.record(trade, &config);
+        }
+        whole.acknowledge(acknowledged);
+        let overlay = |pending: &PendingTape| {
+            VisibleOrderflow::with_pending_overlay(pending, &config, &request, published.as_deref())
+                .and_then(|frame| frame.tape_overlay)
+                .map(|overlay| format!("{:?}", overlay.cells))
+        };
+        let (kept, folded) = (overlay(&pending), overlay(&whole));
+        assert_eq!(kept, folded, "frame {frame_index}");
+        compared += usize::from(kept.is_some());
+        now_ms += FRAME_MS;
+        frame_index += 1;
+    }
+    assert!(compared > 500, "{compared} overlays compared");
+}

@@ -19,6 +19,7 @@ mod fold;
 mod model;
 mod past_tape;
 mod pending;
+mod pending_overlay;
 mod tape;
 mod tape_frame;
 mod tape_geometry;
