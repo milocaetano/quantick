@@ -101,6 +101,9 @@ pub struct WorkspaceTab {
     /// payload.
     #[serde(default)]
     pub context_collapsed: bool,
+    /// The right-hand chart has a draggable rail instead of its body.
+    #[serde(default)]
+    pub flow_collapsed: bool,
     pub panes: Vec<WorkspacePane>,
 }
 
@@ -113,5 +116,8 @@ pub struct WorkspacePane {
     /// The layout this pane shows, by id in the strip.
     pub layout_id: WireU64,
     pub visible: bool,
+    /// A folded pane retains its identity and data behind its rail.
+    #[serde(default)]
+    pub collapsed: bool,
     pub focused: bool,
 }

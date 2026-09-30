@@ -18,5 +18,11 @@
 # Q16 (#453, the paper account into `paper`) and Q17 (#452, the control-plane
 # host into `control-host`) moved out of `app`; the same independent count
 # agrees. This closes #443's A2.
-!budget 24233
-crates/app 24233
+# Raised by 76 lines for the Tab-owned collapse transitions and control/workspace
+# adapters: they address live egui pane identities and cannot run headlessly.
+# Raised by 34 lines for harness-only launch adapters that apply those same
+# live tab transitions after the requested canvas layout has been selected.
+# Raised by 5 lines to keep the observer's visible-pane walk aligned with
+# the actual live canvas, including the new horizontal and vertical rails.
+!budget 24348
+crates/app 24348

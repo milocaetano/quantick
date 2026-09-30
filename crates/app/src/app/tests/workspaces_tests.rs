@@ -107,6 +107,9 @@ fn opening_a_workspace_replaces_the_tab_strip_instead_of_growing_it() {
                 layout: crate::config::DeclaredLayout::Flow,
                 split_fraction: None,
                 context_collapsed: false,
+                flow_collapsed: false,
+                context_heights: vec![],
+                context_panes_collapsed: vec![],
                 focus: None,
                 focus_slot: 0,
                 context_bars: vec![],
@@ -132,6 +135,55 @@ fn opening_a_workspace_replaces_the_tab_strip_instead_of_growing_it() {
         app.tabs.active_index() < app.tabs.len(),
         "and the active index points at a tab that exists"
     );
+}
+
+#[test]
+fn saved_workspace_restores_both_right_and_vertical_rails() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(50);
+    app.workspace
+        .set_ui_state_path(scratch_ui_state("pane-rails"));
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let upper = app.active_tab().pane(PaneSide::Time(0)).id;
+    let lower = app.active_tab().pane(PaneSide::Time(1)).id;
+    app.control_action(
+        "layout.pane.resize_pair",
+        1,
+        crate::control::ActionOrigin::Human,
+        serde_json::json!({"upper_pane_id": upper.to_string(), "lower_pane_id": lower.to_string(), "fraction": "0"}),
+    ).unwrap();
+    assert!(app.active_tab_mut().set_flow_collapsed(true));
+    run_frame(&mut app, &ctx);
+    app.workspace_save_adapter().save_workspace("test");
+    let saved = ui_state::load(app.workspace.ui_state_path());
+    assert!(saved.tabs[0].flow_collapsed);
+    assert_eq!(saved.tabs[0].context_panes_collapsed, vec![true, false]);
+    let config = app.config.clone();
+    app.arrangement_adapter()
+        .restore_workspace(saved.restore(&config));
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(app.active_tab().flow_collapsed);
+    assert!(app.active_tab().pane_collapsed(PaneSide::Time(0)));
+    assert!(!app.active_tab().pane_collapsed(PaneSide::Time(1)));
+    assert!(
+        app.active_tab()
+            .pane(PaneSide::Time(0))
+            .frame
+            .area
+            .is_none()
+    );
+    assert!(
+        app.active_tab()
+            .pane(PaneSide::Time(1))
+            .frame
+            .area
+            .is_some()
+    );
+    assert!(app.active_tab().flow_pane.frame.area.is_none());
 }
 
 /// The all-or-nothing rule where the trader actually meets it: a bad file
@@ -571,6 +623,9 @@ fn a_restored_workspace_puts_the_window_back() {
                 layout: crate::config::DeclaredLayout::TimeAndFlow,
                 split_fraction: Some(0.4),
                 context_collapsed: false,
+                flow_collapsed: false,
+                context_heights: vec![],
+                context_panes_collapsed: vec![],
                 focus: Some(ui_state::SavedFocus::Flow),
                 focus_slot: 0,
                 context_bars: vec![],

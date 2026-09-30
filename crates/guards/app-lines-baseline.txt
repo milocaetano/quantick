@@ -44,5 +44,16 @@
 # What the typed number means lives in `quantick-engine`
 # (`BarRegistry::quick_candidates`), and the change applies through the same
 # `set_pane_bar_spec` the control plane uses; there was no app code to move out.
-!budget 104449
-crates/app 104449
+# Raised by 344 lines for symmetric canvas collapse: the four draggable rails,
+# their hit areas and pointer routing live beside the egui canvas they draw.
+# Sizing state and workspace/control adapters share those transitions; this
+# change adds no trade-path work or new dependency to the UI crate.
+# Raised by another 14 lines to expose the new rails from harness-only launch
+# hooks and verify their state after layout selection.
+# Raised by 6 lines to name the restored collapse state as one argument,
+# keeping the public restore operation within the repository's lint limit.
+# Raised by 38 lines to repair reviewed collapse boundaries: visible-pane
+# focus, stale frame geometry and short-window rail reopening. The observer
+# and pointer now share the corrected visible-pane walk.
+!budget 104851
+crates/app 104851

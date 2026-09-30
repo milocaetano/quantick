@@ -2,7 +2,7 @@
 //! layout, the layout a restored pane opens with, and the bar spec changes
 //! a pane applies.
 
-use super::{CanvasLayout, LegendFold, Tab};
+use super::{CanvasCollapseRestore, CanvasLayout, LegendFold, Tab};
 use crate::canvas_layout::{MAX_CONTEXT_PANES, PaneIdAllocator, PaneKind};
 use crate::config::AppConfig;
 use crate::loading::LoadingTask;
@@ -32,6 +32,8 @@ impl Tab {
         // exactly how a trader asks for the charts they can see promised in a
         // lit cell — and a return above this line answered that with the rail.
         self.context_collapsed = false;
+        self.flow_collapsed = false;
+        self.expand_context_stack();
         if layout == previous {
             return;
         }
@@ -232,7 +234,7 @@ impl Tab {
         &mut self,
         layout: CanvasLayout,
         split_fraction: Option<f32>,
-        context_collapsed: bool,
+        collapse: CanvasCollapseRestore<'_>,
         focus: Option<PaneSide>,
         context_intervals_ms: &[i64],
         legends: LegendFold,
@@ -254,7 +256,9 @@ impl Tab {
         // Assigned before, a workspace saved with its charts put away reopened
         // with them out — and the next `capture_arrangement` wrote that over
         // the trader's choice.
-        self.context_collapsed = context_collapsed;
+        self.context_collapsed = collapse.context;
+        self.flow_collapsed = collapse.flow && !collapse.context;
+        self.restore_context_heights(collapse.heights, collapse.collapsed_slots);
         if let Some(fraction) = split_fraction {
             self.split_fraction = clamp_pane_fraction(fraction);
         }

@@ -192,7 +192,6 @@ const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
         "crates/app/src/surfaces/workspace_name.rs",
         crate::surfaces::workspace_name::HOOKS,
     ),
-    ("crates/app/src/tab.rs", crate::tab::HOOKS),
 ];
 
 /// The control plane's launch scenarios: `control-harness`.

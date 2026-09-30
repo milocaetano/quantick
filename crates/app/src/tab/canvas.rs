@@ -100,13 +100,14 @@ struct CanvasFrame {
     divider: Option<egui::Rect>,
     flow_band: egui::Rect,
     collapsed_rail: Option<egui::Rect>,
+    flow_rail: Option<egui::Rect>,
 }
 
 /// Where each visible pane draws this frame, after the context column has
 /// spent its header strips.
 struct PaneRects {
     /// Per context chart, top to bottom: the chart rect and its layout strip.
-    context_charts: SmallVec<[(egui::Rect, egui::Rect); MAX_CONTEXT_PANES]>,
+    context_charts: SmallVec<[Option<(egui::Rect, egui::Rect)>; MAX_CONTEXT_PANES]>,
     context_dividers: SmallVec<[egui::Rect; MAX_CONTEXT_PANES]>,
     flow_areas: Option<PaneAreas>,
 }
@@ -173,7 +174,7 @@ impl Tab {
         // shows the market rather than nothing.
         let show_flow = self.layout.shows_flow() || !show_time;
         let split = show_time && show_flow;
-        if split && !self.context_collapsed && area.width() > 0.0 {
+        if split && !self.context_collapsed && !self.flow_collapsed && area.width() > 0.0 {
             let floor = canvas_layout::MIN_PANE_WIDTH_PX / area.width();
             self.split_fraction = clamp_pane_fraction(self.split_fraction.max(floor));
         }
@@ -181,14 +182,23 @@ impl Tab {
         // reduces to nothing: no divider, no focus rule — though a lone time
         // pane keeps its header.
         let (time_area, divider, flow_band) = if split {
-            let width = if self.context_collapsed {
+            let width = if self.flow_collapsed {
+                canvas_layout::PaneWidth::Auto
+            } else if self.context_collapsed {
                 canvas_layout::PaneWidth::Collapsed {
                     restore: self.split_fraction,
                 }
             } else {
                 canvas_layout::PaneWidth::Manual(self.split_fraction)
             };
-            let row = canvas_layout::split_row(area, &[width, canvas_layout::PaneWidth::Auto]);
+            let flow_width = if self.flow_collapsed {
+                canvas_layout::PaneWidth::Collapsed {
+                    restore: 1.0 - self.split_fraction,
+                }
+            } else {
+                canvas_layout::PaneWidth::Auto
+            };
+            let row = canvas_layout::split_row(area, &[width, flow_width]);
             (Some(row.panes[0]), Some(row.dividers[0]), row.panes[1])
         } else if show_time {
             (Some(area), None, area)
@@ -201,6 +211,7 @@ impl Tab {
         let collapsed_rail = (split && self.context_collapsed)
             .then_some(time_area)
             .flatten();
+        let flow_rail = (split && self.flow_collapsed).then_some(flow_band);
         let time_area = if collapsed_rail.is_some() {
             None
         } else {
@@ -209,12 +220,13 @@ impl Tab {
         CanvasFrame {
             area,
             context_shown,
-            show_flow,
+            show_flow: show_flow && flow_rail.is_none(),
             split,
             time_area,
             divider,
             flow_band,
             collapsed_rail,
+            flow_rail,
         }
     }
 
@@ -260,12 +272,26 @@ impl Tab {
                 self.focus_from_pointer(ui, &bands.panes[..context_shown], frame.flow_band);
             }
             for (slot, band) in bands.panes.iter().enumerate().take(context_shown) {
+                if self.context_stack.heights[slot].is_collapsed() {
+                    ui.painter()
+                        .rect_filled(*band, egui::Rounding::ZERO, theme::CHROME);
+                    ui.painter().rect_filled(
+                        egui::Rect::from_center_size(
+                            band.center(),
+                            egui::vec2(RAIL_GRIP_HEIGHT_PX, RAIL_GRIP_WIDTH_PX),
+                        ),
+                        egui::Rounding::same(1.0),
+                        theme::TEXT_MUTED,
+                    );
+                    rects.context_charts.push(None);
+                    continue;
+                }
                 let pane_areas = split_pane_layout_strip(*band);
                 let areas = split_time_pane(pane_areas.body);
                 self.draw_time_header(ui, slot, areas.header);
                 rects
                     .context_charts
-                    .push((areas.chart, pane_areas.layout_strip));
+                    .push(Some((areas.chart, pane_areas.layout_strip)));
             }
         }
         rects.flow_areas = frame
@@ -338,9 +364,15 @@ impl Tab {
         // canvas, on a chart that is not there.
         flow_pane.frame.area = None;
         flow_pane.frame.layout_strip = None;
-        for pane in time_panes.iter_mut() {
+        if rects.flow_areas.is_none() {
+            flow_pane.frame.clear_hidden();
+        }
+        for (slot, pane) in time_panes.iter_mut().enumerate() {
             pane.frame.area = None;
             pane.frame.layout_strip = None;
+            if rects.context_charts.get(slot).is_none_or(Option::is_none) {
+                pane.frame.clear_hidden();
+            }
         }
         // The time pane has no tape of its own (§11), so its footprint rows
         // adopt the flow pane's capture bucket — the instrument's grid is a
@@ -374,7 +406,7 @@ impl Tab {
             .context_charts
             .iter()
             .enumerate()
-            .map(|(slot, (chart, _))| (slot + 1, *chart))
+            .filter_map(|(slot, areas)| areas.map(|(chart, _)| (slot + 1, chart)))
             .chain(rects.flow_areas.map(|areas| (0 as PaneIndex, areas.body)))
             .collect();
         let trading_pane = trading_pane(
@@ -415,7 +447,9 @@ impl Tab {
             .iter_mut()
             .zip(rects.context_charts.iter().copied())
             .enumerate()
-            .map(|(slot, (pane, (chart, strip)))| (pane, chart, strip, slot + 1));
+            .filter_map(|(slot, (pane, areas))| {
+                areas.map(|(chart, strip)| (pane, chart, strip, slot + 1))
+            });
         let flow = rects.flow_areas.map(|areas| {
             (
                 &mut *flow_pane,
@@ -464,7 +498,10 @@ impl Tab {
     ) {
         let area = frame.area;
         if let Some(rail) = frame.collapsed_rail {
-            self.draw_collapsed_rail(tab_id, ui, rail, area.width());
+            self.draw_collapsed_rail(tab_id, ui, rail, area, false);
+        }
+        if let Some(rail) = frame.flow_rail {
+            self.draw_collapsed_rail(tab_id, ui, rail, area, true);
         }
         if frame.time_area.is_some() {
             self.draw_context_dividers(tab_id, ui, &rects.context_dividers);
@@ -473,14 +510,16 @@ impl Tab {
             return;
         };
         let drawn_width = divider.center().x - area.left();
-        self.draw_canvas_divider(tab_id, ui, divider, drawn_width, area.width());
+        if frame.flow_rail.is_none() {
+            self.draw_canvas_divider(tab_id, ui, divider, drawn_width, area.width());
+        }
         // §11: a 1 px accent under the focused pane's top edge — no border
         // boxes around market data.
         let focused = match self.focused_side() {
             PaneSide::Time(slot) => rects
                 .context_charts
                 .get(slot)
-                .map(|(chart, _)| *chart)
+                .and_then(|areas| areas.map(|(chart, _)| chart))
                 .unwrap_or(time_area),
             PaneSide::Flow => rects.flow_areas.map_or(frame.flow_band, |areas| areas.body),
         };
@@ -514,6 +553,9 @@ impl Tab {
         };
 
         for viewer in 0..count {
+            if self.pane_collapsed(PaneSide::from_index(viewer)) {
+                continue;
+            }
             let Some(pane) = self.pane_at(viewer) else {
                 continue;
             };
@@ -613,6 +655,9 @@ impl Tab {
             return;
         }
         for viewer in 0..count {
+            if self.pane_collapsed(PaneSide::from_index(viewer)) {
+                continue;
+            }
             let Some(pane) = self.pane_at(viewer) else {
                 continue;
             };
@@ -654,12 +699,11 @@ impl Tab {
         // names the chart it landed in, not the column. Before this the whole
         // column was one target, which is how a third pane could never take
         // focus.
-        if let Some(slot) = context_bands
-            .iter()
-            .position(|band| band.contains(position))
-        {
+        if let Some(slot) = context_bands.iter().enumerate().position(|(slot, band)| {
+            band.contains(position) && !self.context_stack.heights[slot].is_collapsed()
+        }) {
             self.focus = PaneSide::Time(slot);
-        } else if flow_area.contains(position) {
+        } else if !self.flow_collapsed && flow_area.contains(position) {
             self.focus = PaneSide::Flow;
         }
     }
@@ -683,7 +727,8 @@ impl Tab {
         tab_id: u64,
         ui: &egui::Ui,
         rail: egui::Rect,
-        canvas_width: f32,
+        canvas: egui::Rect,
+        right: bool,
     ) {
         #[cfg(test)]
         {
@@ -695,26 +740,43 @@ impl Tab {
         // than as a stripe the chart happens to start after.
         painter.line_segment(
             [
-                egui::pos2(rail.right(), rail.top()),
-                egui::pos2(rail.right(), rail.bottom()),
+                egui::pos2(if right { rail.left() } else { rail.right() }, rail.top()),
+                egui::pos2(
+                    if right { rail.left() } else { rail.right() },
+                    rail.bottom(),
+                ),
             ],
             egui::Stroke::new(1.0_f32, theme::BORDER),
         );
 
-        let hit = egui::Rect::from_min_max(
-            rail.min,
-            egui::pos2(
-                rail.left() + canvas_layout::COLLAPSED_HIT_PX.max(rail.width()),
-                rail.bottom(),
-            ),
-        );
+        let hit = if right {
+            egui::Rect::from_min_max(
+                egui::pos2(
+                    rail.right() - canvas_layout::COLLAPSED_HIT_PX.max(rail.width()),
+                    rail.top(),
+                ),
+                rail.max,
+            )
+        } else {
+            egui::Rect::from_min_max(
+                rail.min,
+                egui::pos2(
+                    rail.left() + canvas_layout::COLLAPSED_HIT_PX.max(rail.width()),
+                    rail.bottom(),
+                ),
+            )
+        };
         let response = ui
             .interact(
                 hit,
                 egui::Id::new(("canvas_divider", tab_id)),
                 egui::Sense::drag(),
             )
-            .on_hover_text("drag right to show the timeframe charts again");
+            .on_hover_text(if right {
+                "drag left to show the flow chart again"
+            } else {
+                "drag right to show the timeframe charts again"
+            });
         if response.hovered() || response.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
@@ -733,7 +795,12 @@ impl Tab {
         ui.painter()
             .rect_filled(grip, egui::Rounding::same(1.0), grip_colour);
 
-        self.apply_canvas_drag(&response, rail.width() / 2.0, canvas_width);
+        let drawn_width = if right {
+            rail.left() - canvas.left()
+        } else {
+            rail.width() / 2.0
+        };
+        self.apply_canvas_drag(&response, drawn_width, canvas.width());
     }
 
     /// The divider between the panes, as a resize handle.
@@ -777,25 +844,42 @@ impl Tab {
         canvas_width: f32,
     ) {
         if response.drag_started() {
-            self.canvas_drag = Some((drawn_width, self.context_collapsed));
+            self.canvas_drag = Some((drawn_width, self.context_collapsed, self.flow_collapsed));
         }
         if response.dragged() && response.drag_delta().x.abs() > f32::EPSILON && canvas_width > 0.0
         {
-            let (wanted_px, opening) = {
-                let state = self
-                    .canvas_drag
-                    .get_or_insert((drawn_width, self.context_collapsed));
+            let (wanted_px, opening_left, opening_right) = {
+                let state = self.canvas_drag.get_or_insert((
+                    drawn_width,
+                    self.context_collapsed,
+                    self.flow_collapsed,
+                ));
                 state.0 += response.drag_delta().x;
                 *state
             };
-            if opening && wanted_px <= canvas_layout::COLLAPSED_PANE_WIDTH_PX / 2.0 {
+            if opening_left && wanted_px <= canvas_layout::COLLAPSED_PANE_WIDTH_PX / 2.0 {
                 return;
             }
-            if !opening && wanted_px < canvas_layout::COLLAPSE_AT_PX {
+            if opening_right
+                && canvas_width - wanted_px <= canvas_layout::COLLAPSED_PANE_WIDTH_PX / 2.0
+            {
+                return;
+            }
+            if wanted_px < canvas_layout::COLLAPSE_AT_PX {
                 self.set_context_collapsed(true);
+            } else if canvas_width - wanted_px < canvas_layout::COLLAPSE_AT_PX {
+                self.set_flow_collapsed(true);
             } else {
                 self.set_context_collapsed(false);
-                let width = wanted_px.max(canvas_layout::MIN_PANE_WIDTH_PX);
+                self.set_flow_collapsed(false);
+                let width = if canvas_width >= 2.0 * canvas_layout::MIN_PANE_WIDTH_PX {
+                    wanted_px.clamp(
+                        canvas_layout::MIN_PANE_WIDTH_PX,
+                        canvas_width - canvas_layout::MIN_PANE_WIDTH_PX,
+                    )
+                } else {
+                    wanted_px.clamp(0.0, canvas_width)
+                };
                 self.split_fraction = clamp_pane_fraction(width / canvas_width);
             }
         }
@@ -814,18 +898,35 @@ impl Tab {
         self.context_dividers.extend(dividers.iter().copied());
 
         for (index, divider) in dividers.iter().copied().enumerate() {
+            let upper_collapsed = self.context_stack.heights[index].is_collapsed();
+            let lower_collapsed = self.context_stack.heights[index + 1].is_collapsed();
             ui.painter()
                 .rect_filled(divider, egui::Rounding::ZERO, theme::BORDER);
-            let handle = ui.interact(
-                divider.expand2(egui::vec2(0.0, CANVAS_DIVIDER_HANDLE_PX)),
-                egui::Id::new((
-                    "context_divider",
-                    tab_id,
-                    self.time_panes[index].id,
-                    self.time_panes[index + 1].id,
-                )),
-                egui::Sense::drag(),
-            );
+            let handle = ui
+                .interact(
+                    divider.expand2(egui::vec2(
+                        0.0,
+                        if upper_collapsed || lower_collapsed {
+                            canvas_layout::COLLAPSED_HIT_PX / 2.0
+                        } else {
+                            CANVAS_DIVIDER_HANDLE_PX
+                        },
+                    )),
+                    egui::Id::new((
+                        "context_divider",
+                        tab_id,
+                        self.time_panes[index].id,
+                        self.time_panes[index + 1].id,
+                    )),
+                    egui::Sense::drag(),
+                )
+                .on_hover_text(if upper_collapsed {
+                    "drag down to reopen the upper chart"
+                } else if lower_collapsed {
+                    "drag up to reopen the lower chart"
+                } else {
+                    "drag to resize the context charts"
+                });
             if handle.hovered() || handle.dragged() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
             }

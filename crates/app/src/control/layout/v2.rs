@@ -1,11 +1,12 @@
-//! Version 2 of the eight layout calls that answer with the arrangement: the
+//! Version 2 of the layout calls that answer with the arrangement: the
 //! same acts, with the context column's share carried as an exact decimal.
 //!
 //! Version 1 declares `fraction` as a JSON number, and the control wire
 //! refuses floating-point JSON in both directions (`quantick_control::codec`).
 //! So a v1 `layout.pane.resize` can only be sent the integers 0 and 1, and
 //! every v1 call that answers a `LayoutResult` — `layout.focus.set`,
-//! `layout.pane.collapse`, `layout.pane.expand`, `layout.pane.move`,
+//! `layout.pane.collapse`, `layout.pane.expand`, `layout.flow.collapse`,
+//! `layout.flow.expand`, `layout.pane.move`,
 //! `layout.preset.apply`, `layout.pane.set_interval`,
 //! `layout.pane.set_bar_spec` and a successful `layout.pane.resize` — acts, and then the gateway cannot encode the answer
 //! and tells the client `control.capability_unavailable`. The retry matrix's
@@ -49,17 +50,19 @@ use super::super::workspace::SPLIT_FRACTION_DECIMAL_PLACES as FRACTION_DECIMAL_P
 
 use super::{
     APPLY_PRESET_CAPABILITY_ID, BAR_SPEC_CAPABILITY_ID, COLLAPSE_CAPABILITY_ID,
-    EXPAND_CAPABILITY_ID, FOCUS_CAPABILITY_ID, INTERVAL_CAPABILITY_ID, MOVE_PANE_CAPABILITY_ID,
-    RESIZE_CAPABILITY_ID,
+    EXPAND_CAPABILITY_ID, FLOW_COLLAPSE_CAPABILITY_ID, FLOW_EXPAND_CAPABILITY_ID,
+    FOCUS_CAPABILITY_ID, INTERVAL_CAPABILITY_ID, MOVE_PANE_CAPABILITY_ID, RESIZE_CAPABILITY_ID,
 };
 
-/// The eight calls, each with the v2 handler that answers for it.
-const CALLS: [(&str, super::super::actions::ActionHandler); 8] = [
+/// Every layout call with a v2 handler that answers its exact fraction.
+const CALLS: [(&str, super::super::actions::ActionHandler); 10] = [
     (APPLY_PRESET_CAPABILITY_ID, apply_preset),
     (MOVE_PANE_CAPABILITY_ID, move_pane),
     (RESIZE_CAPABILITY_ID, resize),
     (COLLAPSE_CAPABILITY_ID, collapse),
     (EXPAND_CAPABILITY_ID, expand),
+    (FLOW_COLLAPSE_CAPABILITY_ID, collapse_flow),
+    (FLOW_EXPAND_CAPABILITY_ID, expand_flow),
     (FOCUS_CAPABILITY_ID, focus),
     (INTERVAL_CAPABILITY_ID, set_interval),
     (BAR_SPEC_CAPABILITY_ID, set_bar_spec),
@@ -117,6 +120,24 @@ fn expand<P: TabsPort + TabsMutPort + ?Sized>(
     input: &Value,
 ) -> Result<Value, ControlError> {
     exact(super::expand(app, access, actor, input)?)
+}
+
+fn collapse_flow<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    exact(super::collapse_flow(app, access, actor, input)?)
+}
+
+fn expand_flow<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    exact(super::expand_flow(app, access, actor, input)?)
 }
 
 fn focus<P: TabsPort + TabsMutPort + ?Sized>(

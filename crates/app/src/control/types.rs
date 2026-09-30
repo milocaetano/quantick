@@ -36,17 +36,20 @@ impl From<CanvasLayout> for CanvasLayoutDto {
 /// here.
 pub(crate) fn visible_panes(tab: &Tab) -> Vec<(&ChartPane, PaneSide)> {
     let mut panes = Vec::with_capacity(crate::canvas_layout::MAX_CANVAS_PANES);
-    if tab.layout.shows_time() && !tab.context_collapsed {
+    if tab.layout.shows_time() {
         let shown = tab.context_panes_shown();
         panes.extend(
             tab.time_panes
                 .iter()
                 .take(shown)
                 .enumerate()
-                .map(|(slot, time)| (time, PaneSide::Time(slot))),
+                .filter_map(|(slot, time)| {
+                    let side = PaneSide::Time(slot);
+                    (!tab.pane_collapsed(side)).then_some((time, side))
+                }),
         );
     }
-    if tab.layout.shows_flow() {
+    if tab.layout.shows_flow() && !tab.pane_collapsed(PaneSide::Flow) {
         panes.push((&tab.flow_pane, PaneSide::Flow));
     }
     panes

@@ -114,6 +114,15 @@ pub struct SavedTab {
     /// `split_fraction`, which such a file already carries.
     #[serde(default)]
     pub context_collapsed: bool,
+    /// Whether the flow chart is folded to the right rail.
+    #[serde(default)]
+    pub flow_collapsed: bool,
+    /// Context pane shares; zero means automatic sizing.
+    #[serde(default)]
+    pub context_heights: Vec<f32>,
+    /// Folded context panes, in the same top-to-bottom order.
+    #[serde(default)]
+    pub context_panes_collapsed: Vec<bool>,
     /// The pane the chrome spoke for.
     #[serde(default)]
     pub focus: Option<SavedFocus>,
@@ -279,6 +288,9 @@ mod tests {
         let tab: SavedTab = toml::from_str(literal).unwrap();
         assert_eq!(tab.layout, DeclaredLayout::TimeAndFlow);
         assert!(!tab.context_collapsed);
+        assert!(!tab.flow_collapsed);
+        assert!(tab.context_heights.is_empty());
+        assert!(tab.context_panes_collapsed.is_empty());
         assert_eq!(tab.focus_slot, 0);
         assert_eq!(tab.flow_layout, None);
         assert!(tab.context_layouts.is_empty());
@@ -290,6 +302,9 @@ mod tests {
                 "symbol = \"TESTUSDT\"\n",
                 "layout = \"time+flow\"\n",
                 "context_collapsed = false\n",
+                "flow_collapsed = false\n",
+                "context_heights = []\n",
+                "context_panes_collapsed = []\n",
                 "focus_slot = 0\n",
                 "flow_bars = \"tick:50\"\n",
                 "context_bars = []\n",

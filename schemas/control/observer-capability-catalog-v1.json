@@ -6604,6 +6604,468 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Folds the right flow chart to a draggable rail and preserves its width for reopening.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.flow.collapse",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Which tab a call is about. Omitted means the one the trader is looking at —\nthe same default the chrome's own commands take.",
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "title": "TabTarget",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every layout call answers with: the arrangement as it now stands.\n\nEchoed back rather than assumed, so a client never has to guess whether a\ncall it made is the reason the canvas looks the way it does.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "flow_collapsed": {
+            "description": "Whether the flow pane is folded against the right rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "description": "The context column's share of the canvas.",
+            "format": "double",
+            "type": "number"
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "flow_collapsed",
+          "changed"
+        ],
+        "title": "LayoutResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Collapse the flow chart",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Folds the right flow chart to a draggable rail and preserves its width for reopening. Version 2 carries the context column's share as an exact decimal; version 1's number cannot cross the wire.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.flow.collapse",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Which tab a call is about. Omitted means the one the trader is looking at —\nthe same default the chrome's own commands take.",
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "title": "TabTarget",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a v2 layout call answers with: v1's `LayoutResult`, with `fraction`\nexact.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "flow_collapsed": {
+            "description": "Whether the right flow chart is folded to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "The context column's share of the canvas, 0..1, to six places — the\nsame number `workspace.summary` reports as `split_fraction`."
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "flow_collapsed",
+          "changed"
+        ],
+        "title": "LayoutResultV2",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Collapse the flow chart",
+      "version": 2
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Restores the right flow chart at its previous width.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.flow.expand",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Which tab a call is about. Omitted means the one the trader is looking at —\nthe same default the chrome's own commands take.",
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "title": "TabTarget",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What every layout call answers with: the arrangement as it now stands.\n\nEchoed back rather than assumed, so a client never has to guess whether a\ncall it made is the reason the canvas looks the way it does.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "flow_collapsed": {
+            "description": "Whether the flow pane is folded against the right rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "description": "The context column's share of the canvas.",
+            "format": "double",
+            "type": "number"
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "flow_collapsed",
+          "changed"
+        ],
+        "title": "LayoutResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Expand the flow chart",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Restores the right flow chart at its previous width. Version 2 carries the context column's share as an exact decimal; version 1's number cannot cross the wire.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "layout.flow.expand",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "Which tab a call is about. Omitted means the one the trader is looking at —\nthe same default the chrome's own commands take.",
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `observe.workspace` reports it."
+          }
+        },
+        "title": "TabTarget",
+        "type": "object"
+      },
+      "module": "layout",
+      "output_schema": {
+        "$defs": {
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a v2 layout call answers with: v1's `LayoutResult`, with `fraction`\nexact.",
+        "properties": {
+          "changed": {
+            "description": "Whether the call changed anything. `false` is a real answer: applying\nthe layout that is already showing is a no-op, not a failure.",
+            "type": "boolean"
+          },
+          "collapsed": {
+            "description": "Whether the context column is collapsed to its rail.",
+            "type": "boolean"
+          },
+          "flow_collapsed": {
+            "description": "Whether the right flow chart is folded to its rail.",
+            "type": "boolean"
+          },
+          "focused_pane": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The focused pane's address."
+          },
+          "fraction": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "The context column's share of the canvas, 0..1, to six places — the\nsame number `workspace.summary` reports as `split_fraction`."
+          },
+          "pane_count": {
+            "$ref": "#/$defs/WireU64",
+            "description": "How many panes it draws."
+          },
+          "preset_id": {
+            "description": "The preset the canvas now matches.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab that changed."
+          }
+        },
+        "required": [
+          "tab_id",
+          "preset_id",
+          "pane_count",
+          "focused_pane",
+          "fraction",
+          "collapsed",
+          "flow_collapsed",
+          "changed"
+        ],
+        "title": "LayoutResultV2",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Rearranging a canvas removes no work: a chart taken off the screen keeps its drawings, its indicators and its bars, and comes back with them. A stale caller can only show the wrong charts, which the result it gets back names.",
+      "title": "Expand the flow chart",
+      "version": 2
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Moves focus to one pane: the chart the status bar speaks for, and the one an indicator or drawing command lands on.",
       "destructive": false,
       "dry_run_supported": false,
@@ -6666,6 +7128,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the flow pane is folded against the right rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -6695,6 +7161,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResult",
@@ -6786,6 +7253,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the right flow chart is folded to its rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -6814,6 +7285,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResultV2",
@@ -6894,6 +7366,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the flow pane is folded against the right rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -6923,6 +7399,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResult",
@@ -7007,6 +7484,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the right flow chart is folded to its rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -7035,6 +7516,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResultV2",
@@ -7115,6 +7597,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the flow pane is folded against the right rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -7144,6 +7630,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResult",
@@ -7228,6 +7715,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the right flow chart is folded to its rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -7256,6 +7747,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResultV2",
@@ -7348,6 +7840,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the flow pane is folded against the right rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -7377,6 +7873,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResult",
@@ -7473,6 +7970,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the right flow chart is folded to its rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -7501,6 +8002,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResultV2",
@@ -7589,6 +8091,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the flow pane is folded against the right rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -7618,6 +8124,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResult",
@@ -7713,6 +8220,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the right flow chart is folded to its rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -7741,6 +8252,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResultV2",
@@ -7950,6 +8462,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the flow pane is folded against the right rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -7979,6 +8495,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResult",
@@ -8075,6 +8592,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the right flow chart is folded to its rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -8103,6 +8624,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResultV2",
@@ -8196,6 +8718,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the flow pane is folded against the right rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -8225,6 +8751,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResult",
@@ -8322,6 +8849,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the right flow chart is folded to its rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -8350,6 +8881,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResultV2",
@@ -8437,6 +8969,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the flow pane is folded against the right rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -8466,6 +9002,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResult",
@@ -8557,6 +9094,10 @@
             "description": "Whether the context column is collapsed to its rail.",
             "type": "boolean"
           },
+          "flow_collapsed": {
+            "description": "Whether the right flow chart is folded to its rail.",
+            "type": "boolean"
+          },
           "focused_pane": {
             "$ref": "#/$defs/WireU64",
             "description": "The focused pane's address."
@@ -8585,6 +9126,7 @@
           "focused_pane",
           "fraction",
           "collapsed",
+          "flow_collapsed",
           "changed"
         ],
         "title": "LayoutResultV2",
@@ -15524,6 +16066,11 @@
           },
           "WorkspacePane": {
             "properties": {
+              "collapsed": {
+                "default": false,
+                "description": "A folded pane retains its identity and data behind its rail.",
+                "type": "boolean"
+              },
               "focused": {
                 "type": "boolean"
               },
@@ -15567,6 +16114,11 @@
               },
               "feed_id": {
                 "type": "string"
+              },
+              "flow_collapsed": {
+                "default": false,
+                "description": "The right-hand chart has a draggable rail instead of its body.",
+                "type": "boolean"
               },
               "focused_pane": {
                 "$ref": "#/$defs/PaneSideDto"
