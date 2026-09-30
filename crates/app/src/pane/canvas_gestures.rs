@@ -32,7 +32,8 @@ impl ChartPane {
             scroll_taken,
         } = input;
         let (tape_only, native_tape) = self.tape_modes();
-        let divider = self.frame.lane_divider_x;
+        // Tape only has no divider to grab: its left edge is the canvas's.
+        let divider = self.frame.lane_divider_x.filter(|_| !tape_only);
         let on_divider = |position: egui::Pos2| {
             plot_area::gesture_hits_lane_divider(divider, position.x, LANE_HANDLE_HALF_WIDTH_PX)
         };
@@ -51,7 +52,6 @@ impl ChartPane {
         // Primary only: the secondary drag is the quick range's
         // (`pane/quick_range.rs`), and the middle button pans below.
         if total > 0
-            && !tape_only
             && primary_free
             && chart.dragged_by(egui::PointerButton::Primary)
             && !chart.interact_pointer_pos().is_some_and(on_divider)
@@ -66,7 +66,6 @@ impl ChartPane {
             .hover_pos()
             .filter(|position| area.contains(*position) && !on_divider(*position));
         if total > 0
-            && !tape_only
             && middle_down
             && let Some(position) = hover
         {
