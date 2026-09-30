@@ -18,6 +18,9 @@ use crate::orderflow_render::{OrderflowRenderStyle, ProjectedLayout};
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
+#[cfg(test)]
+#[path = "orderflow_view/tests/book_at_print_tests.rs"]
+mod book_at_print_tests;
 mod clock;
 mod frame;
 mod layers;

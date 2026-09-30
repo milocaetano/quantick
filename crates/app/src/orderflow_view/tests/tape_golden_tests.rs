@@ -175,6 +175,11 @@ impl WinLive {
     pub(super) fn tape(&self, frame: &VisibleOrderflow) -> Vec<egui::epaint::ClippedShape> {
         self.painted(frame, false)
     }
+
+    /// Every shape the depth pass paints behind the tape for `frame`.
+    pub(super) fn book_pass(&self, frame: &VisibleOrderflow) -> Vec<egui::epaint::ClippedShape> {
+        self.painted(frame, true)
+    }
 }
 
 /// A deterministic WIN-like session: sixty prints over about twelve seconds
