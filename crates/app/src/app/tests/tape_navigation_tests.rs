@@ -466,3 +466,56 @@ fn the_tape_view_call_moves_the_tape_end_and_window_and_reads_them_back() {
     assert_eq!(error_code(&unknown), Some(codes::INVALID_REQUEST));
     disable_test_gateway(&mut app, &ctx);
 }
+
+/// Tape only is the tape across the whole canvas, so it drags like the tape
+/// beside the candles: up and down pans the price axis, sideways its time,
+/// primary or middle button (trader 2026-09-30: in tape only a click and
+/// drag moved nothing).
+#[test]
+fn a_drag_in_tape_only_pans_the_price_axis_and_the_tapes_time() {
+    let ctx = egui::Context::default();
+    let (mut app, _, _) = split_app(&ctx);
+    app.active_tab_mut()
+        .tape_mut()
+        .set_layer_switch(quantick_layers::OrderflowSwitch::TapeOnly, true);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(app.active_tab().tape().cached_config().tape_only());
+    let chart = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .chart_rect
+        .expect("the canvas laid out");
+    let at = chart.center();
+    let range = |app: &QuantickApp| {
+        let pane = &app.active_tab().flow_pane;
+        pane.price_view
+            .resolve(pane.frame.auto_range.expect("fitted"))
+    };
+    let before = range(&app);
+
+    drag_sized(&mut app, &ctx, TEST_WINDOW, at, at + egui::vec2(0.0, 90.0));
+    run_frame(&mut app, &ctx);
+    assert!(
+        !app.active_tab().flow_pane.price_view.is_auto(),
+        "the vertical drag took manual Y"
+    );
+    let after = range(&app);
+    assert!(
+        after.0 > before.0 && after.1 > before.1,
+        "dragging down pans to higher prices: {before:?} -> {after:?}"
+    );
+    assert_eq!(app.active_tab().tape().tape_end(), TapeEnd::Live);
+
+    middle_drag(&mut app, &ctx, at, at + egui::vec2(0.0, -90.0));
+    run_frame(&mut app, &ctx);
+    assert!(range(&app).1 < after.1, "the middle button pans back down");
+
+    drag_sized(&mut app, &ctx, TEST_WINDOW, at, at + egui::vec2(120.0, 0.0));
+    run_frame(&mut app, &ctx);
+    assert!(
+        !app.active_tab().tape().tape_end().is_live(),
+        "the sideways drag took the tape into the past"
+    );
+}
