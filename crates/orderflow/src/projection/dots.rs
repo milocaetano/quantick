@@ -408,11 +408,18 @@ impl DotSizing {
         full: Decimal,
     ) -> f32 {
         if mark.live && self.native_tape {
-            return bubbles.max_radius * normalized_area_size(mark.quantity, full);
+            return native_tape_radius(bubbles, mark.quantity, full);
         }
         let (minimum, maximum) = dot_radius_range(bubbles, lane, mark.live, self.cell(mark));
         bubble_radius(normalized_area_size(mark.quantity, full), minimum, maximum)
     }
+}
+
+/// The radius of a native tape dot holding `quantity` against `full`
+/// ([`DotSizing::radius`] of a live mark): area proportional to quantity,
+/// whatever its cell.
+pub(super) fn native_tape_radius(bubbles: &BubbleStyle, quantity: Decimal, full: Decimal) -> f32 {
+    bubbles.max_radius * normalized_area_size(quantity, full)
 }
 
 /// The `(smallest, largest)` radius a dot on `live`'s pane is drawn with in a

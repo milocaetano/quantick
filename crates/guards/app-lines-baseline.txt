@@ -42,5 +42,13 @@
 # What the typed number means lives in `quantick-engine`
 # (`BarRegistry::quick_candidates`), and the change applies through the same
 # `set_pane_bar_spec` the control plane uses; there was no app code to move out.
-!budget 104448
-crates/app 104448
+# Raised by 78 lines for the tape's reconciliations beside the frame
+# (`fix/pr596-tape-rebuild-off-ui`): the pane's rebuild thread,
+# `orderflow_render/tape_rebuild.rs`, which a headless crate may not spawn
+# (it runs the newest rebuild, drops a superseded one where it ran and logs
+# both), and its wiring: the frame's projection handed to the bubble pass
+# and the axis fit reading the stand-in. Pricing the work, the stand-in and
+# the adoption live in `quantick_orderflow::projection::TapeRebuilds`, below
+# `app`, with their tests.
+!budget 104526
+crates/app 104526

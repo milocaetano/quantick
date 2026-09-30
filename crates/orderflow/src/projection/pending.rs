@@ -13,8 +13,11 @@ use crate::timeline::BarTimeline;
 use quantick_engine::Trade;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
+use std::cell::RefCell;
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
+
+use super::pending_overlay::{OverlayCells, OverlayFrame};
 
 /// A view owns this suffix; a frame-bound receipt retires its raw facts.
 /// Retained id/time metadata keeps capacity eviction identical after receipt.
@@ -27,6 +30,8 @@ pub struct PendingTape {
     newest_ms: Option<i64>,
     evicted_through_ms: Option<i64>,
     opening_bursts: RecordedOpenings,
+    /// The last overlay's cells, carried to the next frame's.
+    overlay_cells: RefCell<Option<OverlayCells>>,
 }
 
 impl PendingTape {
@@ -215,38 +220,20 @@ impl PendingTape {
             return None;
         }
         let evicted_through_ms = self.eviction_horizon(Some(facts));
-        let raw = suffix_prints(self.trades.iter().map(|(_, trade)| trade), from, dots);
-        let mut cells = cluster_aggressions(&raw, &[], native, 0);
-        let touched = touched_keys(&cells, dots, native);
-        let window =
-            |cell: &AggressionCluster| window_start(cell.first_timestamp_ms, dots.tape_window_ms);
-        let windows: BTreeSet<i64> = touched.iter().map(|(start, _)| *start).collect();
-        // The same published cells, in the same order, the complete fold
-        // takes: its walk keeps the cells' own order, which is by window.
-        for start in windows {
-            if start < from || evicted_through_ms.is_some_and(|horizon| start <= horizon) {
-                continue;
-            }
-            let low = facts.clusters.partition_point(|cell| window(cell) < start);
-            cells.extend(
-                facts.clusters[low..]
-                    .iter()
-                    .take_while(|cell| window(cell) == start)
-                    .filter(|cell| touched.contains(&(start, cell.price_bucket)))
-                    .cloned(),
-            );
-        }
-        cells.retain(|cell| window(cell) >= from);
-        let cells = fold_dots(
-            cells,
-            true,
-            dots,
+        // The same published cells, folded with the same prints, the
+        // complete fold takes; each key folded again only when a new print
+        // touches it ([`OverlayCells`]).
+        let frame = OverlayFrame {
+            published,
+            facts,
             native,
-            DotHorizon {
-                recorded_from_ms: None,
-                evicted_through_ms,
-            },
-        );
+            dots,
+            from_ms: from,
+            evicted_through_ms,
+        };
+        let kept = self.overlay_cells.borrow_mut().take();
+        let (cells, kept) = OverlayCells::fold(kept, &frame, &self.trades);
+        *self.overlay_cells.borrow_mut() = Some(kept);
         Some(TapeOverlay::new(
             cells,
             from,

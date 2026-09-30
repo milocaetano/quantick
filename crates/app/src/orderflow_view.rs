@@ -127,6 +127,8 @@ pub struct OrderflowView {
     pending_tape: quantick_orderflow::projection::PendingTape,
     pending_frame: Option<std::sync::Arc<quantick_orderflow::engine::VisibleOrderflow>>,
     tape_dots: std::cell::RefCell<quantick_orderflow::projection::TapeDotMemory>,
+    /// The tape's reconciliations too large for a frame, run beside it.
+    tape_rebuilds: std::cell::RefCell<crate::orderflow_render::PaneTapeRebuilds>,
     /// Where the tape's right edge is held, and the frozen past it draws.
     tape_end: quantick_orderflow::tape_view::TapeEnd,
     past_dots: std::cell::RefCell<quantick_orderflow::projection::PastTapeMemory>,
@@ -187,6 +189,7 @@ impl OrderflowView {
             pending_tape: Default::default(),
             pending_frame: None,
             tape_dots: Default::default(),
+            tape_rebuilds: Default::default(),
             tape_end: Default::default(),
             past_dots: Default::default(),
         }
@@ -237,9 +240,11 @@ impl OrderflowView {
         }
         if self.immediate_tape() {
             let window_ms = self.config.lane_window_ms(15_000);
-            let retained = self
-                .lane_now_ms()
-                .and_then(|now| self.tape_dots.borrow().price_range(now, window_ms));
+            let retained = self.lane_now_ms().and_then(|now| {
+                self.tape_rebuilds
+                    .borrow()
+                    .price_range(&self.tape_dots.borrow(), now, window_ms)
+            });
             return self
                 .pending_tape
                 .price_range(
@@ -955,7 +960,9 @@ impl OrderflowView {
         }
         // Explicit display changes begin a new epoch; advancing the clock,
         // changing book generations or following prices never clears it.
-        self.tape_dots.get_mut().clear();
+        self.tape_rebuilds
+            .get_mut()
+            .start_over(self.tape_dots.get_mut());
         self.past_dots.get_mut().clear();
         if self.config.native_tape() != before.native_tape()
             || self.config.volume_dots.enabled != before.volume_dots.enabled

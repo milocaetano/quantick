@@ -19,10 +19,13 @@ mod fold;
 mod model;
 mod past_tape;
 mod pending;
+mod pending_overlay;
 mod tape;
 mod tape_frame;
 mod tape_geometry;
+mod tape_group;
 mod tape_memory;
+mod tape_rebuild;
 mod tape_reuse;
 mod tape_seal;
 mod tiers;
@@ -47,13 +50,15 @@ pub use past_tape::{PastBars, PastTape, past_block_ms, past_span, project_past_t
 pub use pending::PendingTape;
 pub use tape::{TapeDotGeometry, merge_tape_dots, position_tape_at};
 pub use tape_frame::{
-    project_past_tape_frame, project_tape_frame, project_tape_frame_with_overlay,
+    TapeFrameInputs, TapeRebuild, project_past_tape_frame, project_retained_tape_frame,
+    project_tape_frame, project_tape_frame_with_overlay, tape_frame_work,
 };
 pub use tape_geometry::TapeHorizontalGeometry;
 pub use tape_memory::{
-    MAX_PAST_BLOCKS, PAST_PRICE_SPAN_BAND, PastTapeMemory, TapeDotFrame, TapeDotMemory,
-    TapeDotView, TapeSource,
+    FRAME_WORK_BUDGET, MAX_PAST_BLOCKS, PAST_PRICE_SPAN_BAND, PastTapeMemory, TapeDotFrame,
+    TapeDotMemory, TapeDotView, TapeSource, TapeWork,
 };
+pub use tape_rebuild::{RunnerStopped, TapeRebuildRunner, TapeRebuilds};
 pub use tape_reuse::TapeReuse;
 #[cfg(test)]
 pub(crate) use tape_reuse::reusable_through;

@@ -579,11 +579,6 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     }
     let merged = factual_tape
         .then(|| {
-            let marks = if context.bubbles().count() == context.projection.aggressions.len() {
-                std::borrow::Cow::Borrowed(context.projection.aggressions.as_slice())
-            } else {
-                std::borrow::Cow::Owned(context.bubbles().cloned().collect::<Vec<_>>())
-            };
             let geometry = quantick_orderflow::projection::TapeDotGeometry {
                 left_x: 1.0 - 1.0 / context.layout.slot_count.max(1) as f64,
                 right_x: 1.0,
@@ -591,6 +586,29 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 height_px: context.layout.chart_rect.height(),
             };
             let (time, prices) = (context.tape_time, context.tape_prices);
+            // The live tape, which carries its rebuilds: it chooses its own
+            // marks, and reads none of them when its work runs elsewhere.
+            if let (Some((rebuilds, projection)), Some(memory)) =
+                (context.tape_rebuilds, context.tape_memory)
+            {
+                return rebuilds.borrow_mut().project(
+                    &mut memory.borrow_mut(),
+                    quantick_orderflow::projection::TapeFrameInputs {
+                        projection,
+                        bubbles: context.style,
+                        style: &style,
+                        geometry,
+                        time,
+                        prices,
+                        overlay: context.tape_overlay,
+                    },
+                );
+            }
+            let marks = if context.bubbles().count() == context.projection.aggressions.len() {
+                std::borrow::Cow::Borrowed(context.projection.aggressions.as_slice())
+            } else {
+                std::borrow::Cow::Owned(context.bubbles().cloned().collect::<Vec<_>>())
+            };
             if let Some((memory, past)) = context.past_tape {
                 return quantick_orderflow::projection::project_past_tape_frame(
                     &marks,
@@ -611,7 +629,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 time,
                 prices,
                 context.projection.tape_facts.as_deref(),
-                context.tape_overlay,
+                context.tape_overlay.map(|overlay| &**overlay),
             )
         })
         .flatten();

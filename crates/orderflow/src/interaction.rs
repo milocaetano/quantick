@@ -540,14 +540,17 @@ pub(crate) fn fold_by_key<K: Ord>(
 /// history behind it separately: two sorted halves concatenated are not sorted,
 /// and iteration order must never leak into what the chart draws.
 pub fn sort_clusters(clusters: &mut [AggressionCluster]) {
-    clusters.sort_by(|a, b| {
-        a.first_timestamp_ms
-            .cmp(&b.first_timestamp_ms)
-            .then_with(|| a.last_timestamp_ms.cmp(&b.last_timestamp_ms))
-            .then_with(|| aggressor_side_key(a.side).cmp(&aggressor_side_key(b.side)))
-            .then_with(|| a.price_bucket.cmp(&b.price_bucket))
-            .then_with(|| a.agg_id.cmp(&b.agg_id))
-    });
+    clusters.sort_by(cluster_order);
+}
+
+/// The order [`sort_clusters`] puts two clusters in.
+pub(crate) fn cluster_order(a: &AggressionCluster, b: &AggressionCluster) -> std::cmp::Ordering {
+    a.first_timestamp_ms
+        .cmp(&b.first_timestamp_ms)
+        .then_with(|| a.last_timestamp_ms.cmp(&b.last_timestamp_ms))
+        .then_with(|| aggressor_side_key(a.side).cmp(&aggressor_side_key(b.side)))
+        .then_with(|| a.price_bucket.cmp(&b.price_bucket))
+        .then_with(|| a.agg_id.cmp(&b.agg_id))
 }
 
 /// Fold prints too small to draw as anything but a dot into one bubble per

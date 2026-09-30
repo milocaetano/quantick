@@ -1,8 +1,8 @@
 //! Borrowed native facts obey the former normalized-clone equality contract.
 
 use super::{
-    AggressionPrimitive, Group, TapeDotMemory, TapeDotView, TapeReference, merge_groups,
-    native_facts, normalized_native_fact, reference_quantities, same_native_fact,
+    AggressionPrimitive, Group, TapeDotMemory, TapeDotView, TapeReference, native_facts,
+    normalized_native_fact, preview_groups, reference_quantities, same_native_fact,
 };
 use crate::config::HeatmapConfig;
 use crate::config::theme::OrderflowRenderStyle;
@@ -287,14 +287,17 @@ impl TapeDotMemory {
             "the benchmark includes a forming window"
         );
         let _ = measure_stage(
-            "frontier_clone_and_forming_preview",
+            "forming_preview",
             || (),
             |_| {
-                let mut active = self.frontier.clone();
-                active.extend(remaining.iter().map(|(key, mark)| {
-                    Group::of(BTreeMap::from([(*key, normalized_native_fact(mark))]))
-                }));
-                let quantities = reference_quantities(&active, openings);
+                let forming: Vec<Group> = remaining
+                    .iter()
+                    .map(|(key, mark)| {
+                        Group::of(BTreeMap::from([(*key, normalized_native_fact(mark))]))
+                    })
+                    .collect();
+                let active: Vec<&Group> = self.frontier.iter().chain(&forming).collect();
+                let quantities = reference_quantities(active.iter().copied(), openings);
                 let reference = TapeReference {
                     minimum_full: self.reference(
                         &active,
@@ -305,15 +308,17 @@ impl TapeDotMemory {
                     ),
                     quantities: &quantities,
                 };
-                merge_groups(
-                    active,
+                preview_groups(
+                    &active,
                     view,
                     sizing,
                     &style.bubbles,
                     &style.live_lane,
                     reference,
                     Some(view.now_ms),
+                    openings,
                 )
+                .len()
             },
         );
         let _ = measure_stage("rendered_group_clone", || (), |_| frame.marks.clone());
