@@ -116,17 +116,28 @@ impl OrderflowView {
             lane_width_px,
         )
         .with_inverted(inverted)
-        .with_tape_clock(tape_time.map(|(edge, _)| edge), &self.tape_bubbles());
+        .with_tape_clock(tape_time, &self.tape_bubbles());
         // The book beside a past tape is today's: it stays with the candles.
         let right = chart_rect.right() - lane_width_px * f32::from(!self.tape_end.is_live());
         let depth = painter.with_clip_rect(chart_rect.with_max_x(right));
-        let mut context = RenderContext::new(&frame.projection, layout, &style);
-        if let Some((edge, dot_window_ms)) = tape_time {
-            context = context.with_tape_time(edge, dot_window_ms);
-        }
+        let context = RenderContext::new(&frame.projection, layout, &style);
         draw_heatmap_background(&depth, &context);
         draw_live_lane_marks(painter, &context);
         draw_liquidity_events(&depth, &context);
+        // A held tape stands on the book recorded for its own window, placed
+        // on its own clock and labelled where the history holds none.
+        if let Some(book) = self.past_book() {
+            let tape = painter.with_clip_rect(layout.lane_rect());
+            draw_heatmap_background(&tape, &RenderContext::new(book, layout, &style));
+        }
+    }
+
+    /// The book of the tape held in the past, once the worker has one.
+    fn past_book(&self) -> Option<&quantick_orderflow::HeatmapProjection> {
+        if self.tape_end.is_live() || !self.config.native_tape() {
+            return None;
+        }
+        self.published.past_tape.as_ref()?.book.as_deref()
     }
 
     /// Draw factual aggressive prints over the candles. The canvas's key is

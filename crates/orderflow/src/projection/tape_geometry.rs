@@ -1,7 +1,8 @@
 //! Shared tape radius limits and insets for dots, clock labels and price fit.
 
-use crate::HeatmapConfig;
+use super::{AggressionPrimitive, position_tape_at};
 use crate::config::{BubbleStyle, bubble_halo_padding};
+use crate::{HeatmapConfig, LiveEdge};
 
 /// Decoration may consume at most this fraction of the pane at each edge.
 /// The actual disc radius takes precedence when its diameter nearly fills it.
@@ -76,13 +77,58 @@ impl TapeHorizontalGeometry {
     pub fn x(self, fraction: f64) -> f32 {
         self.inset_px + fraction as f32 * self.span_px
     }
+}
 
-    /// [`Self::x`] of the market instant `timestamp_ms` on a tape whose
-    /// window of `window_ms` ends at `now_ms`: where a print of that instant
-    /// is drawn, and so where the book of that instant belongs.
+/// Where market time lands on a native tape this frame: its inset span and
+/// the window ending at its clock. Its dots and the book behind them are
+/// placed on the same one, so a print sits on the book of its own instant.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TapeClock {
+    geometry: TapeHorizontalGeometry,
+    edge: LiveEdge,
+    dot_window_ms: i64,
+}
+
+impl TapeClock {
+    /// The clock of a tape pane `(width, height)` pixels at `edge`, whose
+    /// dots cover `dot_window_ms`, inset for `bubbles` as its dots are.
     #[must_use]
-    pub fn x_at_ms(self, timestamp_ms: i64, now_ms: i64, window_ms: i64) -> f32 {
-        let window = window_ms.max(1);
-        self.x((timestamp_ms - (now_ms - window)) as f64 / window as f64)
+    pub fn new(
+        edge: LiveEdge,
+        dot_window_ms: i64,
+        (width, height): (f32, f32),
+        bubbles: &BubbleStyle,
+    ) -> Self {
+        Self {
+            geometry: TapeHorizontalGeometry::resolve(width, height, bubbles),
+            edge,
+            dot_window_ms,
+        }
+    }
+
+    /// Offset from the pane's left edge of the market instant `timestamp_ms`.
+    #[must_use]
+    pub fn x_ms(self, timestamp_ms: i64) -> f32 {
+        let window = self.edge.window_ms.max(1);
+        let from = self.edge.now_ms - window;
+        self.geometry
+            .x((timestamp_ms - from) as f64 / window as f64)
+    }
+
+    /// Offset of `mark` where the dots' pass draws it, on a lane opening at
+    /// normalized `lane_start_x`: its execution time, or now while it forms.
+    #[must_use]
+    pub fn mark_x(self, mark: &AggressionPrimitive, lane_start_x: f64) -> f32 {
+        let mut placed = [mark.clone()];
+        let (now_ms, window_ms) = (self.edge.now_ms, self.edge.window_ms);
+        position_tape_at(
+            &mut placed,
+            now_ms,
+            window_ms,
+            lane_start_x,
+            self.dot_window_ms,
+        );
+        self.geometry
+            .x((placed[0].x - lane_start_x) / (1.0 - lane_start_x))
     }
 }

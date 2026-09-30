@@ -171,6 +171,7 @@ fn freeze_past(view: &OrderflowView, shown: &VisibleOrderflow) -> usize {
         retained_from_ms: Some(from_ms),
         rungs: (100, 1),
         projection: Arc::clone(&shown.projection),
+        book: None,
     };
     let scale = shown.volume_dots.as_ref().unwrap();
     let sizing = view.dot_rungs.sizing(scale, 400.0).unwrap();

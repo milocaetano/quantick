@@ -17,6 +17,7 @@ mod candle_dots;
 mod dots;
 mod fold;
 mod model;
+mod past_depth;
 mod past_tape;
 mod pending;
 mod pending_overlay;
@@ -42,9 +43,9 @@ pub use dots::{
     dot_level_ticks, dot_radius_range, dot_window_ms, hold_rung, lane_bars, tape_price_range,
 };
 pub use model::{
-    AggressionPrimitive, BEFORE_CAPTURE, GapPrimitive, HeatmapCell, HeatmapProjection,
-    LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, TapeFacts,
-    normalized_area_size, normalized_log_intensity,
+    AggressionPrimitive, BEFORE_CAPTURE, BOOK_EVICTED, GapPrimitive, HeatmapCell,
+    HeatmapProjection, LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection,
+    TapeFacts, normalized_area_size, normalized_log_intensity,
 };
 pub use past_tape::{PastBars, PastTape, past_block_ms, past_span, project_past_tape};
 pub use pending::PendingTape;
@@ -53,7 +54,7 @@ pub use tape_frame::{
     TapeFrameInputs, TapeRebuild, project_past_tape_frame, project_retained_tape_frame,
     project_tape_frame, project_tape_frame_with_overlay, tape_frame_work,
 };
-pub use tape_geometry::TapeHorizontalGeometry;
+pub use tape_geometry::{TapeClock, TapeHorizontalGeometry};
 pub use tape_memory::{
     FRAME_WORK_BUDGET, MAX_PAST_BLOCKS, PAST_PRICE_SPAN_BAND, PastTapeMemory, TapeDotFrame,
     TapeDotMemory, TapeDotView, TapeSource, TapeWork,
@@ -228,19 +229,9 @@ pub fn project_settled(
     let mut summary: BTreeMap<(usize, Decimal, RestingSide), SlotHeat> = BTreeMap::new();
     let lane_view = timeline.lane_start_ms().is_some();
     for run in &grouped.runs {
-        let bucket_low = run.price_bucket;
-        let bucket_high = bucket_low + effective_grouping.bucket_width;
-        let clipped_low = bucket_low.max(prices.low);
-        let clipped_high = bucket_high.min(prices.high);
-        let Some(y0) = prices.y(clipped_high) else {
+        let Some((y0, y1)) = prices.rows(run.price_bucket, effective_grouping.bucket_width) else {
             continue;
         };
-        let Some(y1) = prices.y(clipped_low) else {
-            continue;
-        };
-        if y1 <= y0 {
-            continue;
-        }
         let draft = |x0: f64, x1: f64, quantity: Decimal, tape_ms| DraftCell {
             generation: run.generation,
             side: run.side,
@@ -532,6 +523,7 @@ pub fn project_settled(
                     x0: x0.normalized,
                     x1: x1.normalized,
                     reason: gap.reason.clone(),
+                    tape_ms: None,
                 })
             })
             .collect()
@@ -559,6 +551,7 @@ pub fn project_settled(
                         x0: x0.normalized,
                         x1: x1.normalized,
                         reason: BEFORE_CAPTURE.to_owned(),
+                        tape_ms: None,
                     });
                 }
             }
@@ -568,6 +561,7 @@ pub fn project_settled(
                 x0: 0.0,
                 x1: 1.0,
                 reason: "book_unavailable_before_capture".to_owned(),
+                tape_ms: None,
             }),
             Some(_) => {}
         }

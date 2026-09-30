@@ -215,7 +215,7 @@ fn session(live: &mut WinLive) {
         let quantity = 1 + i64::try_from((seed >> 33) % 35).expect("small");
         let price =
             187_100 + steps[index % steps.len()] + 5 * i64::try_from(index / 16).expect("small");
-        let side = if (seed >> 40) % 3 == 0 {
+        let side = if (seed >> 40).is_multiple_of(3) {
             Side::Sell
         } else {
             Side::Buy

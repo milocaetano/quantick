@@ -58,6 +58,11 @@ pub struct PastTape {
     pub rungs: (i64, i64),
     /// The native facts (`live` marks) and their exact tape facts.
     pub projection: Arc<HeatmapProjection>,
+    /// The book recorded for this stretch, as tape cells and the gaps the
+    /// history holds no book for ([`PastTape::with_depth`]). Kept apart from
+    /// the prints' facts, which a drag inside the same blocks keeps sharing.
+    /// `None` while the depth map is off.
+    pub book: Option<Arc<HeatmapProjection>>,
 }
 
 impl PastTape {
@@ -110,7 +115,26 @@ impl PastTape {
     }
 }
 
+/// The timeline a past stretch `[from_ms, until_ms)` is placed on: the
+/// visible candles, and a lane covering exactly that stretch.
+pub(super) fn past_timeline(
+    bars: PastBars<'_>,
+    from_ms: i64,
+    until_ms: i64,
+    reference_ms: i64,
+) -> BarTimeline {
+    let edge = LiveEdge {
+        now_ms: until_ms,
+        window_ms: until_ms - from_ms,
+        reference_ms,
+        on_newest_bar: false,
+    };
+    BarTimeline::from_bars(bars.first_bar_index, bars.closed, bars.partial, Some(edge))
+        .with_full_lane_coverage()
+}
+
 /// Where the visible candles are, for the timeline the facts are placed on.
+#[derive(Clone, Copy)]
 pub struct PastBars<'a> {
     pub first_bar_index: usize,
     pub closed: &'a [Bar],
@@ -136,15 +160,7 @@ pub fn project_past_tape(
     let end_ms = end_ms.min(latest);
     let window_ms = window_ms.max(1);
     let (block_ms, from_ms, until_ms) = past_span(end_ms, window_ms, dots.tape_window_ms);
-    let edge = LiveEdge {
-        now_ms: until_ms,
-        window_ms: until_ms - from_ms,
-        reference_ms,
-        on_newest_bar: false,
-    };
-    let timeline =
-        BarTimeline::from_bars(bars.first_bar_index, bars.closed, bars.partial, Some(edge))
-            .with_full_lane_coverage();
+    let timeline = past_timeline(bars, from_ms, until_ms, reference_ms);
     let config = history.config();
     let coverage: Vec<_> = if config.depth_visible_anywhere() {
         history.coverage_segments().cloned().collect()
@@ -219,5 +235,6 @@ pub fn project_past_tape(
         retained_from_ms: history.tape_retained_from_ms(),
         rungs: (dots.tape_window_ms, dots.tape_level_ticks),
         projection: Arc::new(projection),
+        book: None,
     })
 }

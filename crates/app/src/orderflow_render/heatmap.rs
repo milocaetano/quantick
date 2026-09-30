@@ -7,7 +7,7 @@
 
 use eframe::egui;
 use quantick_orderbook::BookSide;
-use quantick_orderflow::{BEFORE_CAPTURE, LiquidityEvidence};
+use quantick_orderflow::{BEFORE_CAPTURE, BOOK_EVICTED, LiquidityEvidence};
 
 use super::bubbles::{bubble_radius, side_offset_y};
 use super::layout::{EventBand, RenderContext};
@@ -70,7 +70,8 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         // Same two questions the reductions answer, and for the same reason: a
         // coverage gap explains a hole in the *book*, so it belongs to the pane
         // that draws one, and `show_gaps` reached only the legend until now.
-        let pane_draws_book = if context.layout.in_lane(gap.x0) {
+        let (rect, pane, on_tape) = context.layout.gap_rect(gap);
+        let pane_draws_book = if on_tape {
             style.lane_depth_layer
         } else {
             style.depth_layer
@@ -78,13 +79,6 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         if !pane_draws_book || !style.show_gaps {
             continue;
         }
-        let x0 = context.layout.x(gap.x0);
-        let x1 = context.layout.x(gap.x1);
-        let rect = egui::Rect::from_min_max(
-            egui::pos2(x0.min(x1), context.layout.chart_rect.top()),
-            egui::pos2(x0.max(x1), context.layout.chart_rect.bottom()),
-        )
-        .intersect(context.layout.span_pane(gap.x0, gap.x1));
         if !rect.is_positive() {
             continue;
         }
@@ -92,7 +86,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         // Against its own pane, not the chart: a gap cut short by the divider
         // ends there because the pane does, and a boundary mark would claim the
         // coverage resumed at a moment it did not.
-        let marks = gap_marks(rect, context.layout.span_pane(gap.x0, gap.x1), leading);
+        let marks = gap_marks(rect, pane, leading);
         if marks.fill {
             clip.rect_filled(rect, egui::Rounding::ZERO, palette.gap_fill);
         }
@@ -109,7 +103,14 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
             let label = gap_label(&gap.reason);
             // Centering the leading label would park text in the middle of an
             // otherwise clean chart; it belongs to the divider, so it hugs it.
-            let (anchor, align) = if leading {
+            // A held tape labels its own retained edge along the top, so the
+            // book's leading label there hugs the divider along the bottom.
+            let (anchor, align) = if leading && gap.tape_ms.is_some() {
+                (
+                    rect.right_bottom() + egui::vec2(-GAP_LABEL_INSET_PX, -17.0),
+                    egui::Align2::RIGHT_BOTTOM,
+                )
+            } else if leading {
                 (
                     rect.right_top() + egui::vec2(-GAP_LABEL_INSET_PX, 17.0),
                     egui::Align2::RIGHT_TOP,
@@ -354,7 +355,7 @@ impl<'c, 'a> EventPass<'c, 'a> {
             if trade.matched_fraction <= 0.0 && trade.liquidity_event_ids.is_empty() {
                 continue;
             }
-            let center = egui::pos2(self.context.mark_x(trade), layout.y_unclamped(trade.y));
+            let center = egui::pos2(layout.mark_x(trade), layout.y_unclamped(trade.y));
             let pane = layout.pane(trade.x);
             if !pane.contains(center) {
                 continue;
@@ -565,6 +566,7 @@ pub(super) fn gap_marks(rect: egui::Rect, chart_rect: egui::Rect, leading: bool)
 fn gap_label(reason: &str) -> &'static str {
     match reason {
         BEFORE_CAPTURE => "L2 unavailable before capture",
+        BOOK_EVICTED => "L2 history no longer retained",
         "capture_disabled" => "L2 capture disabled",
         "sequence_gap" => "L2 sequence gap · resynchronizing",
         _ => "L2 continuity unavailable",

@@ -303,10 +303,7 @@ impl OrderflowView {
             lane_width_px,
         )
         .with_inverted(inverted)
-        .with_tape_clock(
-            self.tape_time(frame).map(|(edge, _)| edge),
-            &self.tape_bubbles(),
-        );
+        .with_tape_clock(self.tape_time(frame), &self.tape_bubbles());
         let in_lane = layout
             .lane_left_x()
             .is_some_and(|divider| position.x >= divider);
