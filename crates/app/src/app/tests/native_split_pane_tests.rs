@@ -167,3 +167,92 @@ fn entering_tape_only_from_the_split_starts_at_the_tapes_own_fit() {
         "tape only opens at the tape's own fit"
     );
 }
+
+/// Gutter travel per frame in [`flip_travel`]: a steady hand, not a flick.
+const DRAG_STEP_PX: f32 = 5.0;
+
+/// The gutter travel main needs to flip from auto-fit:
+/// `AXIS_ZOOM_DRAG_PX · ln(FLIP_SPAN_FACTOR · FLIP_REARM_FRACTION)`, about
+/// 546px, where the bars are flat enough to turn over.
+fn main_flip_travel_px() -> f32 {
+    use quantick_chart::price_view::{FLIP_REARM_FRACTION, FLIP_SPAN_FACTOR};
+    (150.0 * (FLIP_SPAN_FACTOR * FLIP_REARM_FRACTION).ln()) as f32
+}
+
+/// One continuous downward drag on the price gutter from auto-fit, the
+/// market going quiet a third of the way in — a burst at one price, two
+/// minutes on, so the prints the tape held age out of its window. Returns
+/// the travel at which the chart turned over, `None` if 2000px never did.
+fn flip_travel(app: &mut QuantickApp) -> Option<f32> {
+    let ctx = &egui::Context::default();
+    for agg_id in 201..=400 {
+        app.active_tab_mut()
+            .ingest_live_trade_at(&trade(agg_id), 10_000 + agg_id as i64);
+    }
+    run_frame(app, ctx);
+    app.active_tab_mut().tape_mut().flush_for_test();
+    run_frame(app, ctx);
+    run_frame(app, ctx);
+    assert!(app.active_tab().flow_pane.price_view.is_auto());
+    let gutter = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .price_gutter
+        .expect("the draw published the gutter");
+    let start = gutter.center();
+    run_frame_with_events(
+        app,
+        ctx,
+        vec![
+            egui::Event::PointerMoved(start),
+            pointer_button(start, true),
+        ],
+    );
+    let mut travel = 0.0;
+    while travel < 2000.0 {
+        travel += DRAG_STEP_PX;
+        if travel == 180.0 {
+            for agg_id in 401..=440 {
+                let mut print = trade(agg_id);
+                print.timestamp_ms += 120_000;
+                print.price = Decimal::from(101);
+                app.active_tab_mut()
+                    .ingest_live_trade_at(&print, 130_000 + agg_id as i64);
+            }
+            app.active_tab_mut().tape_mut().flush_for_test();
+        }
+        let at = start + egui::vec2(0.0, travel);
+        run_frame_with_events(app, ctx, vec![egui::Event::PointerMoved(at)]);
+        if app.active_tab().flow_pane.price_view.is_inverted() {
+            return Some(travel);
+        }
+    }
+    None
+}
+
+/// The flip is a strong squeeze beside the tape exactly as without it
+/// (trader 2026-09-30: dragging the axis turned the chart over far too
+/// soon). The tape fits the shared axis to a few recent prints; when they
+/// narrow, that fit shrinks under the drag, and a threshold measured against
+/// it arrived hundreds of pixels early. With the tape on and off, the drag
+/// from auto-fit flips only after main's travel.
+#[test]
+fn an_expanding_gutter_drag_flips_only_after_mains_travel_with_the_tape_on_or_off() {
+    let main = main_flip_travel_px();
+
+    let (mut app, _commands) = app_with_history(200);
+    let off = flip_travel(&mut app).expect("the tape off, the drag flips");
+    assert!(
+        off >= main && off <= main + 3.0 * DRAG_STEP_PX,
+        "the tape off flips at main's travel: {off}px, main {main}px"
+    );
+
+    let (mut app, _commands) = app_with_history(200);
+    native_split(&mut app);
+    let on = flip_travel(&mut app).expect("beside the tape, the drag still flips");
+    assert!(
+        on >= main,
+        "beside the tape the flip waits for main's travel: {on}px, main {main}px"
+    );
+}
