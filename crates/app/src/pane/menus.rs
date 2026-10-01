@@ -80,13 +80,20 @@ impl ChartPane {
             // Profitchart-style properties dialog, the boss's ask); the menu
             // offers the door. Available with the layer off too — configuring
             // before switching on is a legitimate order of operations.
-            if layer == ChartLayer::CandleAggression && blocked.is_none() {
+            if layer == ChartLayer::Bubbles
+                && blocked.is_none()
+                && self.state.tick_membership().is_some()
+                && let Some(owner) = self
+                    .orderflow
+                    .as_mut()
+                    .filter(|owner| owner.flow_execution_active())
+            {
                 ui.indent("candle_opening_scale", |ui| {
-                    let mut ignore = self.footprint.ignore_candle_opening();
-                    if ui.checkbox(&mut ignore, "Ignore first recorded burst in candle scale")
+                    let mut ignore = owner.ignore_flow_opening();
+                    if ui.checkbox(&mut ignore, "Ignore first recorded burst in regional scale")
                         .on_hover_text("Exclude the first recorded 100 ms burst per UTC date from candle sizing. This is an approximation, not a proven auction. Full quantities and pies remain; oversized opening marks are capped. If only opening flow is visible, use its full scale. This preference lasts for this pane and does not change Tape.")
                         .changed() {
-                        self.footprint.set_ignore_candle_opening(ignore);
+                        owner.set_ignore_flow_opening(ignore);
                     }
                 });
             }

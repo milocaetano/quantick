@@ -43,6 +43,7 @@ pub(super) struct FlowFrame<'a> {
     rect: egui::Rect,
     viewport: &'a Viewport,
     total: usize,
+    prefix_len: usize,
     background: egui::Color32,
     lane_width: f32,
     inverted: bool,
@@ -64,6 +65,7 @@ impl<'a> FlowFrame<'a> {
             rect: frame.chart_rect,
             viewport,
             total: frame.total,
+            prefix_len: frame.prefix.len(),
             background: frame.canvas_background,
             lane_width,
             inverted,
@@ -94,16 +96,37 @@ impl<'a> FlowFrame<'a> {
         &mut self,
         orderflow: Option<&mut OrderflowView>,
         demand: bool,
-        timeline_revision: u64,
+        state: &crate::state::ChartState,
         frame: &DrawFrame<'_>,
     ) {
         let timeline = VisibleBarTimeline::new(
-            timeline_revision,
+            state.timeline_revision(),
             frame.closed_start.max(frame.prefix.len()),
             frame.visible_state,
             frame.partial_visible,
         );
         self.projection = orderflow.and_then(|orderflow| {
+            let slots = frame.start.saturating_sub(frame.prefix.len())
+                ..frame.end.saturating_sub(frame.prefix.len());
+            let right =
+                self.viewport.right_edge_bar(self.total) as f64 + 1.0 - self.prefix_len as f64;
+            let left = right
+                - (self.rect.width() - self.lane_width) as f64 / self.viewport.px_per_bar() as f64;
+            orderflow.project_flow_executions(
+                state,
+                slots.clone(),
+                egui::vec2(
+                    slots.len() as f32 * self.viewport.px_per_bar(),
+                    self.rect.height(),
+                ),
+                self.price_range,
+                (left, right),
+            );
+            if orderflow.flow_execution_progress().pending {
+                self.painter
+                    .ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(16));
+            }
             orderflow.set_projection_demand(demand);
             let window_ms = orderflow.live_lane_window_ms(frame.closed);
             // The tape's automatic window comes from the newest bars of the
@@ -168,8 +191,87 @@ impl<'a> FlowFrame<'a> {
         }
     }
 
+    fn execution_centers(
+        &self,
+    ) -> Option<
+        impl Fn(&quantick_orderflow::projection::flow_tape::FlowTapeDot) -> Option<egui::Pos2> + '_,
+    > {
+        use quantick_orderflow::projection::PriceWindow;
+        use rust_decimal::{
+            Decimal,
+            prelude::{FromPrimitive as _, ToPrimitive as _},
+        };
+        let prices = Decimal::from_f64(self.price_range.0)
+            .zip(Decimal::from_f64(self.price_range.1))
+            .and_then(|(low, high)| PriceWindow::new(low, high))?;
+        let history = self.rect.with_max_x(self.rect.right() - self.lane_width);
+        Some(
+            move |dot: &quantick_orderflow::projection::flow_tape::FlowTapeDot| {
+                let position = dot.candle_position.to_f32()? + self.prefix_len as f32 - 0.5;
+                let point = egui::pos2(
+                    self.viewport
+                        .x_at_bar_position(position, history.right(), self.total),
+                    crate::orderflow_render::current_price_y(
+                        prices,
+                        dot.mark.price,
+                        self.rect,
+                        self.inverted,
+                    ),
+                );
+                history.expand(dot.radius).contains(point).then_some(point)
+            },
+        )
+    }
+    pub(super) fn inspection(
+        &self,
+        owner: Option<&OrderflowView>,
+        pointer: Option<egui::Pos2>,
+        tz: crate::timezone::TzOffset,
+        side_inferred: bool,
+    ) {
+        let Some(pointer) = pointer else {
+            return;
+        };
+        let Some(owner) = owner.filter(|owner| owner.flow_execution_active()) else {
+            return;
+        };
+        let Some(frame) = owner.flow_execution_frame() else {
+            return;
+        };
+        let Some(center) = self.execution_centers() else {
+            return;
+        };
+        let _ = crate::orderflow_render::draw_flow_inspection(
+            crate::orderflow_render::FlowInspection {
+                painter: self.painter,
+                history: self.rect.with_max_x(self.rect.right() - self.lane_width),
+                pointer: Some(pointer),
+                frame,
+                progress: owner.flow_execution_progress(),
+                prefix_len: self.prefix_len,
+                tz,
+                side_inferred,
+            },
+            center,
+        );
+    }
+
     /// The aggression bubbles, over the candles and the indicator panes.
     pub(super) fn aggressions(&self, owner: Option<&OrderflowView>) {
+        if let Some(owner) = owner
+            && let Some(frame) = owner.flow_execution_frame()
+            && let Some(center) = self.execution_centers()
+        {
+            crate::orderflow_render::draw_flow_executions(
+                self.painter,
+                self.rect,
+                self.lane_width,
+                frame,
+                self.background,
+                owner.cached_config(),
+                center,
+            );
+        }
         if let Some(owner) = owner
             && let Some(projection) = self.projection.as_deref()
         {
@@ -202,6 +304,22 @@ impl<'a> FlowFrame<'a> {
                 legend_inset,
                 bounds: &mut bounds,
             });
+        }
+        if let Some(owner) = owner.filter(|owner| owner.flow_execution_replaces_history()) {
+            let history = self.rect.with_max_x(self.rect.right() - self.lane_width);
+            let top = bounds.map_or(history.top() + 6.0 + legend_inset, |rect| {
+                rect.bottom() + 3.0
+            });
+            if let Some(caption) = crate::orderflow_render::flow_caption(
+                self.painter,
+                history,
+                top,
+                owner.flow_execution_frame(),
+                owner.flow_execution_progress(),
+                owner.legend_visible(),
+            ) {
+                bounds = Some(bounds.map_or(caption, |rect| rect.union(caption)));
+            }
         }
         bounds
     }
@@ -380,10 +498,8 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
             // detail mutably. Same resolution rule.
             config: footprint.config.as_ref().unwrap_or(chrome.footprint),
         };
-        let ignore_opening_burst = footprint.ignore_candle_opening();
         self.renderers.footprint(&mut FootprintPass {
             frame: &layer,
-            status_painter: frame.painter,
             lod: &mut footprint.lod,
             footprint_visible: start.footprint_paints,
             candle_aggression: start.candle_aggression,
@@ -397,10 +513,6 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
                     },
                 ),
             current_partial: state.partial_footprint(),
-            opening_ladders: quantick_chart::state::opening::closed(state),
-            partial_opening: quantick_chart::state::opening::partial(state),
-            recorded_openings: quantick_chart::state::opening::recorded_windows(state),
-            ignore_opening_burst,
         });
     }
 
@@ -488,35 +600,6 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
     }
 }
 
-impl PaneFootprint {
-    pub(crate) fn ignore_candle_opening(&self) -> bool {
-        self.lod.candle_ignore_opening
-    }
-
-    pub(crate) fn set_ignore_candle_opening(&mut self, enabled: bool) -> bool {
-        let changed = self.lod.candle_ignore_opening != enabled;
-        self.lod.candle_ignore_opening = enabled;
-        if changed {
-            self.lod.candle_frame = None;
-        }
-        changed
-    }
-
-    /// Rebuilt bars and new market streams begin a fresh grouping/size epoch.
-    pub(super) fn reset_candle_aggression(&mut self) {
-        self.lod.candle_groups = Default::default();
-        self.lod.candle_prices = Default::default();
-        self.lod.candle_frame = None;
-    }
-
-    /// Last painted price-local frame; observer captures never reproject it.
-    pub(crate) fn candle_aggression(
-        &self,
-    ) -> Option<&quantick_orderflow::projection::CandleDotFrame> {
-        self.lod.candle_frame.as_ref()
-    }
-}
-
 impl super::ChartPane {
     pub(crate) fn opening_scale_snapshot(
         &self,
@@ -527,7 +610,10 @@ impl super::ChartPane {
                     .volume_dots
                     .ignore_opening_burst_in_scale
             }),
-            candle: self.footprint.ignore_candle_opening(),
+            candle: self
+                .orderflow
+                .as_ref()
+                .is_some_and(OrderflowView::ignore_flow_opening),
         }
     }
 }

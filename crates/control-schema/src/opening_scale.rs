@@ -25,7 +25,7 @@ pub struct OpeningScaleInput {
     pub tab_id: WireU64,
     pub pane_id: WireU64,
     /// Tape is the backward-compatible default; Candle has an independent
-    /// transient pane preference and requires no tape worker.
+    /// transient FLOW preference, independent of the native Tape worker.
     #[serde(default)]
     pub target: OpeningScaleTarget,
     /// Exclude each day's first recorded 100 ms burst from the automatic
@@ -38,7 +38,7 @@ pub struct OpeningScaleResult {
     pub tab_id: WireU64,
     pub pane_id: WireU64,
     /// Tape is the backward-compatible default; Candle has an independent
-    /// transient pane preference and requires no tape worker.
+    /// transient FLOW preference, independent of the native Tape worker.
     #[serde(default)]
     pub target: OpeningScaleTarget,
     pub ignore_opening_burst_in_scale: bool,
@@ -61,7 +61,7 @@ pub fn descriptor() -> CapabilityDescriptor {
     let mut descriptor = crate::layout::descriptor(
         OPENING_SCALE_CAPABILITY_ID,
         "Set opening burst size reference",
-        "Optionally excludes the first recorded 100 ms burst per UTC date from the targeted size reference. The default target is tape; target candle is independent and works on context panes without a tape worker. Executions, prices and pies remain exact; the opening dot is capped at full radius. Uses the first available recorded burst if session-opening data is missing. Transient until the bubble preset is explicitly saved; defaults off for tape, with no effect on a typed tape reference. The candle preference is transient for its pane and defaults off; a frame with only opening quantities uses an explicitly reported full-scale fallback.",
+        "Optionally excludes the first recorded 100 ms burst per UTC date from the targeted size reference. The default target is tape; target candle requires active tick FLOW bubbles and is independent of the native Tape worker. Executions, prices and pies remain exact; the opening dot is capped at full radius. Uses the first available recorded burst if session-opening data is missing. Transient until the bubble preset is explicitly saved; defaults off for tape, with no effect on a typed tape reference. The candle preference is transient for its pane and defaults off; a frame with only opening quantities uses an explicitly reported full-scale fallback.",
         generated_schema::<OpeningScaleInput>(),
     );
     descriptor.module = ModuleId::new("orderflow").expect("static module ID");
@@ -81,7 +81,7 @@ pub const READBACKS: &[crate::readback::Readback] = &[crate::readback::snapshot(
     "the addressed pane reports independent tape and candle opening-burst scaling preferences",
     &[
         "opening_scale_is_default_off_named_permission_checked_and_read_back",
-        "candle_opening_scale_is_independent_retry_safe_and_readable_without_a_tape_worker",
+        "flow_opening_scale_is_independent_retry_safe_and_refuses_context",
         crate::readback::EVERY_OPTIONAL_TEST,
     ],
 )];

@@ -26,16 +26,11 @@ pub(super) use paper::{PaperPass, TradesPass};
 
 pub(super) struct FootprintPass<'a> {
     pub frame: &'a LayerFrame<'a>,
-    pub status_painter: &'a egui::Painter,
     pub lod: &'a mut FootprintLod,
     pub footprint_visible: bool,
     pub candle_aggression: bool,
     pub native_grid: Option<quantick_orderflow::projection::CandleDotGrid>,
     pub current_partial: Option<&'a quantick_engine::BarFootprint>,
-    pub opening_ladders: &'a std::collections::BTreeMap<usize, quantick_engine::BarFootprint>,
-    pub partial_opening: Option<&'a quantick_engine::BarFootprint>,
-    pub recorded_openings: &'a [i64],
-    pub ignore_opening_burst: bool,
 }
 pub(super) struct CanvasPass<'a> {
     pub painter: &'a egui::Painter,

@@ -237,6 +237,66 @@ fn settled_frame(app: &mut QuantickApp, ctx: &egui::Context) -> egui::FullOutput
     run_frame(app, ctx)
 }
 
+fn settled_flow_frame(app: &mut QuantickApp, ctx: &egui::Context) -> egui::FullOutput {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let output = settled_frame(app, ctx);
+        let owner = app.active_tab().tape();
+        if owner.flow_execution_frame().is_some() && !owner.flow_execution_progress().pending {
+            return output;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "FLOW must finish the requested source"
+        );
+        std::thread::yield_now();
+    }
+}
+
+fn flow_snapshot(app: &mut QuantickApp, observer: &mut LocalClient) -> Value {
+    let pane_id = app.active_tab().flow_pane.id.to_string();
+    let (read, _) = unkeyed_call(
+        app,
+        observer,
+        "snapshot.read",
+        json!({"scopes":["orderflow.bubbles"]}),
+    );
+    success_result(&read)["scopes"]["orderflow.bubbles"]["value"]["tabs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|tab| tab["panes"].as_array().unwrap())
+        .find(|pane| pane["pane_id"] == pane_id)
+        .unwrap()["flow_execution"]
+        .clone()
+}
+
+fn assert_complete_flow_fixture(app: &mut QuantickApp, observer: &mut LocalClient) -> Value {
+    let snapshot = flow_snapshot(app, observer);
+    // app_with_history(200): one contract each, alternating sides, prices 100..101.9.
+    assert_eq!(snapshot["buy_quantity"], "100");
+    assert_eq!(snapshot["sell_quantity"], "100");
+    assert_eq!(snapshot["trade_count"], "200");
+    assert_eq!(snapshot["worker"]["loaded_executions"], "200");
+    assert_eq!(snapshot["worker"]["pending"], false);
+    assert_eq!(snapshot["omitted_executions"], "0");
+    assert_eq!(snapshot["off_axis_executions"], "0");
+    assert_eq!(snapshot["offscreen_executions"], "0");
+    let owner = app.active_tab().tape();
+    let painted = quantick_control_schema::orderflow::FlowExecutionSnapshot::from((
+        owner.flow_execution_frame().unwrap(),
+        owner.flow_execution_progress(),
+    ));
+    assert_eq!(snapshot, serde_json::to_value(painted).unwrap());
+    snapshot
+}
+
+fn fit_flow_fixture(app: &mut QuantickApp) {
+    let pane = &mut app.active_tab_mut().flow_pane;
+    pane.viewport.set_px_per_bar(1.0);
+    assert!(pane.price_view.set_manual_range(99.0, 103.0));
+}
+
 /// The per-candle summary's marks a frame painted: its one translucent colour
 /// per side, as a disc or as a pie.
 fn summary_marks(output: &egui::FullOutput) -> Vec<egui::Shape> {
@@ -272,13 +332,10 @@ fn other_discs_left_of(output: &egui::FullOutput, x: f32) -> usize {
         .count()
 }
 
-/// The trader's one candle switch beside the native tape. The aggression
-/// bubbles stay available there and draw the per-candle summary on the tick
-/// candles, once, whether or not candle aggression asks too; the layer call,
-/// the readback, the settings switch and the paint agree. Off, the candles
-/// carry nothing; with the tape off, their own per-print bubbles return.
+/// The layer call, published execution facts and one regional paint agree.
+/// Hiding Tape leaves FLOW active; disabling native mode restores ordinary bubbles.
 #[test]
-fn beside_the_native_tape_the_bubbles_switch_draws_the_candle_summary() {
+fn the_bubbles_switch_publishes_regional_flow_independently_of_tape_visibility() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
     let directory = gateway_test_directory("native-tape-candle-bubbles");
@@ -290,21 +347,24 @@ fn beside_the_native_tape_the_bubbles_switch_draws_the_candle_summary() {
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
     native_split(&mut app);
+    // Initialize the camera before fitting this test's complete retained history.
+    settled_frame(&mut app, &ctx);
+    fit_flow_fixture(&mut app);
     let switched_on = |app: &QuantickApp| app.active_tab().tape().cached_config().show_aggressions;
     assert!(switched_on(&app), "the trader's candle switch is on");
 
-    // Beside the native tape: available, effective, and drawn as the summary.
+    // Beside the native tape: available, effective, and projected from all 200 executions.
     let bubbles = read_layer(&mut app, &mut observer, "bubbles");
     assert_eq!(bubbles["requested"], true, "{bubbles}");
     assert_eq!(bubbles["effective"], true, "{bubbles}");
     assert_eq!(bubbles["blocked_reason"], Value::Null, "{bubbles}");
     let candle_aggression = read_layer(&mut app, &mut observer, "candle_aggression");
     assert_eq!(candle_aggression["requested"], false, "{candle_aggression}");
-    let frame = settled_frame(&mut app, &ctx);
-    let summary = summary_marks(&frame);
+    let frame = settled_flow_frame(&mut app, &ctx);
+    let regional = assert_complete_flow_fixture(&mut app, &mut observer);
     assert!(
-        !summary.is_empty(),
-        "the bubbles switch draws the per-candle summary on the candles"
+        summary_marks(&frame).is_empty(),
+        "the legacy summary is suppressed"
     );
     let divider = app
         .active_tab()
@@ -313,14 +373,21 @@ fn beside_the_native_tape_the_bubbles_switch_draws_the_candle_summary() {
         .lane_divider_x
         .expect("the tape beside the candles");
     let beside = other_discs_left_of(&frame, divider);
+    assert!(beside > 0, "regional marks are painted over the history");
 
-    // Candle aggression asked for too: the same marks, drawn once.
+    // Asking for the baseline layer too cannot duplicate the regional paint.
     let layer = set_layer(&mut app, &mut cockpit, "candle_aggression", true);
     assert_eq!(layer["effective"], true, "{layer}");
+    let duplicate = settled_flow_frame(&mut app, &ctx);
     assert_eq!(
-        summary_marks(&settled_frame(&mut app, &ctx)),
-        summary,
-        "one summary whichever switch asks for it, never two"
+        assert_complete_flow_fixture(&mut app, &mut observer)["marks"],
+        regional["marks"]
+    );
+    assert!(summary_marks(&duplicate).is_empty());
+    assert_eq!(
+        other_discs_left_of(&duplicate, divider),
+        beside,
+        "one regional paint, never two"
     );
     set_layer(&mut app, &mut cockpit, "candle_aggression", false);
 
@@ -330,30 +397,43 @@ fn beside_the_native_tape_the_bubbles_switch_draws_the_candle_summary() {
     assert_eq!(layer["effective"], false, "{layer}");
     assert!(!switched_on(&app), "the settings switch is the layer's own");
     let frame = settled_frame(&mut app, &ctx);
+    assert_eq!(flow_snapshot(&mut app, &mut observer), Value::Null);
     assert!(
         summary_marks(&frame).is_empty(),
         "bubbles off draws nothing"
     );
-    assert_eq!(
-        other_discs_left_of(&frame, divider),
-        beside,
-        "beside the native tape the candles never carry per-print bubbles"
+    assert!(
+        other_discs_left_of(&frame, divider) < beside,
+        "bubbles off removes regional paint"
     );
 
-    // The tape off: the original tick chart, with its own per-print bubbles.
+    // Tape visibility is independent: its hidden lane still leaves regional FLOW.
     set_layer(&mut app, &mut cockpit, "tape_chart", false);
+    fit_flow_fixture(&mut app);
     let right = app.active_tab().flow_pane.frame.chart_rect.unwrap().right();
     let without = other_discs_left_of(&settled_frame(&mut app, &ctx), right);
     let layer = set_layer(&mut app, &mut cockpit, "bubbles", true);
     assert_eq!(layer["effective"], true, "{layer}");
-    let frame = settled_frame(&mut app, &ctx);
-    assert!(
-        summary_marks(&frame).is_empty(),
-        "without the native tape the switch draws main's bubbles, not the summary"
-    );
+    let frame = settled_flow_frame(&mut app, &ctx);
+    assert_complete_flow_fixture(&mut app, &mut observer);
+    assert!(summary_marks(&frame).is_empty());
     assert!(
         other_discs_left_of(&frame, right) > without,
-        "the candles' per-print bubbles return with the tape off"
+        "regional FLOW remains painted with the tape hidden"
+    );
+    set_layer(&mut app, &mut cockpit, "bubbles", false);
+    // Native-mode controls remain gated by the Tape lane's own visibility.
+    set_layer(&mut app, &mut cockpit, "tape_chart", true);
+    set_layer(&mut app, &mut cockpit, "native_tape", false);
+    set_layer(&mut app, &mut cockpit, "tape_chart", false);
+    app.active_tab_mut().flow_pane.viewport.set_px_per_bar(8.0);
+    let ordinary_off = other_discs_left_of(&settled_frame(&mut app, &ctx), right);
+    set_layer(&mut app, &mut cockpit, "bubbles", true);
+    let ordinary = settled_frame(&mut app, &ctx);
+    assert_eq!(flow_snapshot(&mut app, &mut observer), Value::Null);
+    assert!(
+        other_discs_left_of(&ordinary, right) > ordinary_off,
+        "explicitly disabling native mode restores ordinary bubbles"
     );
     disable_test_gateway(&mut app, &ctx);
 }

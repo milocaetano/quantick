@@ -280,6 +280,26 @@ pub(crate) fn add_shaded_sector(
     sweep: f32,
     shading: SphereShading,
 ) {
+    add_sector(
+        mesh,
+        center,
+        radius,
+        start_angle,
+        sweep,
+        shading,
+        SPHERE_LIGHT_OFFSET,
+    );
+}
+
+pub(super) fn add_sector(
+    mesh: &mut egui::Mesh,
+    center: egui::Pos2,
+    radius: f32,
+    start_angle: f32,
+    sweep: f32,
+    shading: SphereShading,
+    light_offset: f32,
+) {
     let SphereShading { core, body, edge } = shading;
     if !radius.is_finite() || radius <= 0.0 || !center.is_finite() || !sweep.is_finite() {
         return;
@@ -290,9 +310,15 @@ pub(crate) fn add_shaded_sector(
     }
     // Segments are budgeted for a whole circle, so a narrow sector stays
     // cheap without ever falling below the two edges that make it a wedge.
-    let full = sphere_segments(radius);
-    let segments = (((full as f32) * (sweep / std::f32::consts::TAU)).ceil() as usize).max(2);
-    let offset = egui::vec2(-radius, -radius) * SPHERE_LIGHT_OFFSET;
+    let segments = if light_offset == 0.0 {
+        // A shared quarter-circle grid preserves FLOW half/quarter coloured areas.
+        let full = sphere_segments(radius).next_multiple_of(4);
+        ((full as f32 * (sweep / std::f32::consts::TAU)).round() as usize).max(2)
+    } else {
+        let full = sphere_segments(radius);
+        (((full as f32) * (sweep / std::f32::consts::TAU)).ceil() as usize).max(2)
+    };
+    let offset = egui::vec2(-radius, -radius) * light_offset;
     // The core ring keeps a scaled-down share of the highlight offset, which
     // holds the whole lit zone inside the rim at any radius.
     let core_center = center + offset * (1.0 - SPHERE_CORE_RADIUS);
@@ -356,6 +382,26 @@ pub(super) fn draw_bubble(
     mark: BubbleMark,
     bubbles: &BubbleStyle,
     colors: &BubbleColors,
+) {
+    draw_bubble_with_light_offset(painter, mark, bubbles, colors, SPHERE_LIGHT_OFFSET);
+}
+
+/// FLOW's uniform pies use a geometric centre so coloured areas encode quantities.
+pub(super) fn draw_centered_bubble(
+    painter: &egui::Painter,
+    mark: BubbleMark,
+    bubbles: &BubbleStyle,
+    colors: &BubbleColors,
+) {
+    draw_bubble_with_light_offset(painter, mark, bubbles, colors, 0.0);
+}
+
+fn draw_bubble_with_light_offset(
+    painter: &egui::Painter,
+    mark: BubbleMark,
+    bubbles: &BubbleStyle,
+    colors: &BubbleColors,
+    light_offset: f32,
 ) {
     let BubbleMark {
         center,
@@ -454,7 +500,19 @@ pub(super) fn draw_bubble(
         let mut mesh = egui::Mesh::default();
         let mut angle = PIE_START_ANGLE;
         for (sweep, side_color) in sectors {
-            add_shaded_sector(&mut mesh, center, radius, angle, sweep, shaded(side_color));
+            if light_offset == SPHERE_LIGHT_OFFSET {
+                add_shaded_sector(&mut mesh, center, radius, angle, sweep, shaded(side_color));
+            } else {
+                add_sector(
+                    &mut mesh,
+                    center,
+                    radius,
+                    angle,
+                    sweep,
+                    shaded(side_color),
+                    light_offset,
+                );
+            }
             angle += sweep;
         }
         painter.add(egui::Shape::mesh(mesh));

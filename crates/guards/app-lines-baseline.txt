@@ -50,5 +50,20 @@
 # and the axis fit reading the stand-in. Pricing the work, the stand-in and
 # the adoption live in `quantick_orderflow::projection::TapeRebuilds`, below
 # `app`, with their tests.
-!budget 104526
-crates/app 104526
+# Raised by 717 lines for `fix/price-resolved-candle-aggression` after retiring
+# its superseded price-band renderer/observer while preserving baseline CandleAggression.
+# App owns FLOW bubble/inspection/chrome paint, canonical ChartState capture wiring,
+# and its bounded lazy worker thread. Admission, retention, scale, coverage and
+# result adoption live in orderflow's FlowSession/FlowTapeSource, with pure tests.
+# Reviewed and authorized by the root agent after independent flow_aggregation_ports
+# ownership review (2026-10-01); measured remainder only, no spare headroom.
+# Another 13 lines name the existing paint policies and back FLOW regions with
+# an exact-radius opaque canvas disc, authorized by the root agent (2026-10-01).
+# Another 5 lines apply the named 70-percent first-contour opacity for FLOW,
+# authorized by the root agent (2026-10-01); the final contour pass is unchanged.
+# The final 80 lines keep idle-wait transport in the app and reuse bubble paint
+# with centred quantitative FLOW sectors; publication policy stays in orderflow.
+# Root authorized this exact measured remainder after independent baseline_visual
+# ownership/geometry review (2026-10-01); native Tape geometry is unchanged.
+!budget 105243
+crates/app 105243

@@ -19,18 +19,7 @@ use quantick_engine::{Bar, BarBuilder, BarFootprint, BarProgress, DealSample, Pr
 pub use quantick_engine::{BarKind, BarSpec, MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS};
 use rust_decimal::Decimal;
 
-pub mod opening;
-
-use crate::footprint_series::{self, FootprintSeries};
-
-fn seed_deal_counter(builder: &mut dyn BarBuilder, samples: &[DealSample]) {
-    let Some(input) = builder.deal_counter_input() else {
-        return;
-    };
-    for sample in samples {
-        input.observe(*sample);
-    }
-}
+use crate::footprint_series::{self, FootprintSeries, fold_print, seed_deal_counter};
 
 /// Any UI `f64` as a positive [`Decimal`].
 ///
@@ -130,32 +119,6 @@ pub struct ChartState {
     readings_held: bool,
 }
 
-/// Push one print through `builder` and, with the footprint layer on, fold
-/// it into the ladders — unless the builder left it *uncounted*. A deal bar
-/// counts nothing before its first reading: such a print belongs to no bar,
-/// so it belongs to no ladder either, or the ladders drift off the bars they
-/// index by and the footprint series asserts on the first close.
-fn fold_print<B: BarBuilder + ?Sized>(
-    builder: &mut B,
-    footprints: &mut FootprintSeries,
-    footprint_enabled: bool,
-    trade: &Trade,
-) -> Option<Bar> {
-    let uncounted_before = builder.diagnostics().uncounted_trades;
-    let closed = builder.push(trade);
-    if footprint_enabled {
-        let uncounted = builder.diagnostics().uncounted_trades != uncounted_before;
-        match (&closed, uncounted) {
-            (_, false) => footprints.observe(trade, closed.as_ref()),
-            // A rollover ended the bar and this print counts for nothing:
-            // the ladder closes on what it held, the print folds nowhere.
-            (Some(bar), true) => footprints.close_without(bar),
-            (None, true) => {}
-        }
-    }
-    closed
-}
-
 impl ChartState {
     /// A fresh chart building bars per `spec`.
     #[must_use]
@@ -173,7 +136,10 @@ impl ChartState {
             bars: Vec::new(),
             partial: None,
             backfill_boundary: None,
-            footprints: FootprintSeries::new(footprint_series::default_group()),
+            footprints: FootprintSeries::for_chart(
+                footprint_series::default_group(),
+                spec.id() == "tick",
+            ),
             price_grid: PriceGrid::new(),
             tape_reference_price: None,
             footprint_enabled: false,
@@ -281,7 +247,9 @@ impl ChartState {
     /// flushed.
     pub fn reset_series(&mut self, spec: impl Into<BarConfiguration>) {
         let readings = std::mem::take(&mut self.deal_samples);
+        let revision = self.series_revision.saturating_add(1);
         *self = Self::new(spec);
+        self.series_revision = revision;
         // Into the fresh builder too, ahead of the prints that will come:
         // the retained series is what a rebuild replays, and the live path
         // feeds the builder as each reading arrives.
@@ -322,6 +290,7 @@ impl ChartState {
                 &mut *self.builder,
                 &mut self.footprints,
                 self.footprint_enabled,
+                true,
                 trade,
             );
             if let Some(bar) = closed {
@@ -370,6 +339,7 @@ impl ChartState {
             &mut *self.builder,
             &mut self.footprints,
             self.footprint_enabled,
+            true,
             trade,
         );
         if let Some(bar) = closed {
@@ -419,6 +389,7 @@ impl ChartState {
         let mut bars = Vec::new();
         let mut boundary = None;
         self.footprints.reset(self.footprints.base_group());
+        self.footprints.reset_membership(self.spec.id() == "tick");
         for (i, trade) in self.trades.iter().enumerate() {
             if self.backfill_done && i == self.backfill_trade_count {
                 boundary = Some(bars.len());
@@ -427,6 +398,7 @@ impl ChartState {
                 &mut *builder,
                 &mut self.footprints,
                 self.footprint_enabled,
+                true,
                 trade,
             );
             if let Some(bar) = closed {
@@ -509,6 +481,11 @@ impl ChartState {
     #[must_use]
     pub fn backfill_boundary(&self) -> Option<usize> {
         self.backfill_boundary
+    }
+
+    #[must_use]
+    pub fn tick_membership(&self) -> Option<&crate::tick_membership::TickMembership> {
+        self.footprints.tick_membership.as_ref()
     }
 
     /// One footprint ladder per closed bar, same indices as [`Self::bars`].
@@ -595,29 +572,15 @@ impl ChartState {
         }
     }
 
-    /// Replay every retained trade through a scratch builder of the current
-    /// spec, rebuilding the ladders on `group`-wide rows against the very
-    /// same bar boundaries the real builder produced.
     fn refold_footprints(&mut self, group: Decimal) {
-        // The ladders are rebuilt wholesale, so anything folding them is
-        // reading different inputs from this point on.
         self.bump_series_revision();
         self.footprints.reset(group);
-        // Readings held for the next rebuild: this is one. The ladders must
-        // close where the bars are, and a bar cut without a reading the
-        // series now holds is a bar the next rebuild would move anyway.
         if self.readings_held {
             self.rebuild();
             return;
         }
-        let mut builder = self.spec.build();
-        // Readings first, as `rebuild` does: a deal bar with no readings
-        // counts every print as uncounted, and the ladders would be empty
-        // under bars that are not.
-        seed_deal_counter(&mut *builder, &self.deal_samples);
-        for trade in &self.trades {
-            fold_print(&mut *builder, &mut self.footprints, true, trade);
-        }
+        self.footprints
+            .refold(self.spec, &self.trades, &self.deal_samples);
     }
 
     /// Every trade this chart still holds, oldest first — what a rebuild

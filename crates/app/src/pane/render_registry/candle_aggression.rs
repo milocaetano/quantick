@@ -1,4 +1,5 @@
-//! Small translucent price-local pies from exact native execution rows.
+//! One quiet, opt-in weighted-price dot per candle, or per held group of
+//! candles when zoomed out, from the native trade ladders.
 use super::{Contribution, FootprintPass, Package};
 use crate::orderflow_render::{PIE_START_ANGLE, SphereShading, add_shaded_sector};
 use crate::theme;
@@ -33,37 +34,16 @@ fn paint(pass: &mut FootprintPass<'_>) {
         candle_width_px: frame.candle_width,
         visible: frame.visible,
         candles_per_mark: pass.lod.candle_groups.choose(frame.candle_width),
-        price_ticks_per_mark: pass
-            .lod
-            .candle_prices
-            .choose(pass.native_grid.map_or(0.0, |grid| {
-                grid.tick_height_px(prices, frame.chart_rect.height())
-            })),
-        height_px: frame.chart_rect.height(),
-        ignore_opening_burst_in_scale: pass.ignore_opening_burst,
     };
     let partial = pass
         .current_partial
         .map(|ladder| (frame.partial_slot, ladder));
-    let inputs = view
-        .trade_built(frame.footprints, frame.first_state_slot, partial)
-        .map(|mut input| {
-            input.opening = if input.slot == frame.partial_slot {
-                pass.partial_opening
-            } else {
-                input
-                    .slot
-                    .checked_sub(frame.first_state_slot)
-                    .and_then(|index| pass.opening_ladders.get(&index))
-            };
-            input
-        });
-    let mut projected = project_candle_dots(inputs, pass.native_grid, view);
-    projected.recorded_opening_windows_ms = pass.recorded_openings.to_vec();
+    let inputs = view.trade_built(frame.footprints, frame.first_state_slot, partial);
+    let projected = project_candle_dots(inputs, pass.native_grid, view);
     let buy = theme::BUY.gamma_multiply(DOT_OPACITY);
     let sell = theme::SELL.gamma_multiply(DOT_OPACITY);
     let mut mesh = egui::Mesh::default();
-    for dot in &projected.marks {
+    for dot in projected.marks {
         let Some(price) = dot.price.to_f64() else {
             continue;
         };
@@ -109,27 +89,4 @@ fn paint(pass: &mut FootprintPass<'_>) {
     if !mesh.is_empty() {
         frame.painter.add(egui::Shape::mesh(mesh));
     }
-    if pass.ignore_opening_burst {
-        let fallback = !projected.marks.is_empty()
-            && projected
-                .marks
-                .iter()
-                .all(|mark| mark.opening_quantity == mark.buy_quantity + mark.sell_quantity);
-        let header = egui::Rect::from_min_max(
-            frame.chart_rect.left_top() - egui::vec2(0.0, crate::plot_area::PLOT_PADDING_PX),
-            frame.chart_rect.right_top(),
-        );
-        pass.status_painter.with_clip_rect(header).text(
-            header.left_center() + egui::vec2(8.0, 0.0),
-            egui::Align2::LEFT_CENTER,
-            if fallback {
-                "Opening-only scale fallback"
-            } else {
-                "First recorded burst excluded"
-            },
-            egui::FontId::proportional(11.0),
-            theme::TEXT_MUTED,
-        );
-    }
-    pass.lod.candle_frame = Some(projected);
 }

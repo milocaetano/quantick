@@ -117,59 +117,54 @@ fn opening_scale_refuses_stale_targets_without_changing_the_active_pane() {
 }
 
 #[test]
-fn candle_opening_scale_is_independent_retry_safe_and_readable_without_a_tape_worker() {
+fn flow_opening_scale_is_independent_retry_safe_and_refuses_context() {
     let ctx = egui::Context::default();
-    let (mut app, events, _commands) = super::candle_aggression::context_fixture(&ctx);
-    let pane_id = app.active_tab().time_panes[0].id.to_string();
-    let tape_before = format!("{:?}", app.active_tab().tape().cached_config());
+    let (mut app, _commands) = app_with_history(4);
     assert!(
-        !app.active_tab().time_panes[0]
-            .footprint
-            .ignore_candle_opening()
+        app.active_tab_mut()
+            .tape_mut()
+            .apply_source_preset(Some("mini index regions"))
     );
-    assert!(app.active_tab().time_panes[0].orderflow.is_none());
-    let directory = gateway_test_directory("candle-opening-scale");
+    app.active_tab_mut().tape_mut().set_bubbles_enabled(true);
+    let pane_id = app.active_tab().flow_pane.id.to_string();
+    assert!(!app.active_tab().tape().ignore_flow_opening());
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    run_frame(&mut app, &ctx);
+    let tape_before = format!("{:?}", app.active_tab().tape().cached_config());
+    let directory = gateway_test_directory("flow-opening-scale");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
     enable_test_gateway(&mut app, &ctx, &directory, 4);
-    let mut observer = connect(&directory, &options("observer", &[]));
     let mut cockpit = connect(
         &directory,
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
-    let payload = json!({"tab_id":app.tabs.active_id().to_string(),"pane_id":pane_id,
-        "target":"candle","ignore_opening_burst_in_scale":true});
-    let (denied, _) = unkeyed_call(&mut app, &mut observer, ACTION, payload.clone());
-    assert_eq!(error_code(&denied), Some(codes::PERMISSION_DENIED));
-    assert!(
-        !app.active_tab().time_panes[0]
-            .footprint
-            .ignore_candle_opening()
-    );
+    let payload = json!({"tab_id":app.tabs.active_id().to_string(),"pane_id":pane_id,"target":"candle","ignore_opening_burst_in_scale":true});
     let (first, _) = keyed_call(
         &mut app,
         &mut cockpit,
-        "candle-opening-first",
+        "flow-opening-first",
         ACTION,
         payload.clone(),
-        "candle-opening-key",
+        "flow-opening-key",
     );
     let (retry, _) = keyed_call(
         &mut app,
         &mut cockpit,
-        "candle-opening-retry",
+        "flow-opening-retry",
         ACTION,
         payload.clone(),
-        "candle-opening-key",
+        "flow-opening-key",
     );
     assert_eq!(first.outcome, retry.outcome);
-    assert_eq!(success_result(&first)["target"], "candle");
     assert_eq!(success_result(&first)["changed"], true);
-    let (noop, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, payload.clone());
-    assert_eq!(success_result(&noop)["changed"], false);
-    // The preference is readable before painting and while the layer is hidden.
+    assert!(app.active_tab().tape().ignore_flow_opening());
+    assert_eq!(
+        format!("{:?}", app.active_tab().tape().cached_config()),
+        tape_before
+    );
     let (read, _) = unkeyed_call(
         &mut app,
-        &mut observer,
+        &mut cockpit,
         "snapshot.read",
         json!({"scopes":["orderflow.bubbles"]}),
     );
@@ -181,77 +176,16 @@ fn candle_opening_scale_is_independent_retry_safe_and_readable_without_a_tape_wo
         .find(|p| p["pane_id"] == pane_id)
         .unwrap();
     assert_eq!(pane["opening_scale"]["candle"], true);
-    assert!(pane["opening_scale"]["tape"].is_null());
-    assert!(pane["candle_aggression"].is_null());
-    app.active_tab_mut().time_panes[0].set_layer_visible(
-        quantick_layers::ChartLayer::CandleAggression,
-        true,
-        &mut Default::default(),
-    );
-    let opening_output = run_frame(&mut app, &ctx);
-    assert!(
-        painted_text(&opening_output)
-            .iter()
-            .any(|text| text == "Opening-only scale fallback")
-    );
-    let opening = app.active_tab().time_panes[0]
-        .footprint
-        .candle_aggression()
-        .unwrap();
-    assert!(!opening.opening_exclusion_effective);
-    assert_eq!(opening.recorded_opening_windows_ms, [1000]);
-    for index in 0..4 {
-        events
-            .try_send(FeedEvent::Live(quantick_engine::Trade {
-                agg_id: 21 + index,
-                timestamp_ms: 1200 + index as i64,
-                price: Decimal::from(100 + 5 * index as i64),
-                quantity: Decimal::from(if index == 0 { 400 } else { 100 }),
-                side: quantick_engine::Side::Buy,
-            }))
-            .unwrap();
-    }
-    let output = run_frame(&mut app, &ctx);
-    assert!(
-        painted_text(&output)
-            .iter()
-            .any(|text| text == "First recorded burst excluded")
-    );
-    let projected = app.active_tab().time_panes[0]
-        .footprint
-        .candle_aggression()
-        .unwrap();
-    assert!(projected.opening_exclusion_effective);
-    assert_eq!(
-        projected
-            .marks
-            .iter()
-            .map(|m| m.opening_quantity)
-            .sum::<Decimal>(),
-        Decimal::from(20)
-    );
-    assert_eq!(projected.full_quantity, Decimal::from(400));
-    assert_eq!(
-        format!("{:?}", app.active_tab().tape().cached_config()),
-        tape_before
-    );
-    app.active_tab_mut().time_panes[0].reset_series();
-    assert!(
-        app.active_tab().time_panes[0]
-            .footprint
-            .ignore_candle_opening(),
-        "same-pane source resets preserve preference"
-    );
-    assert!(
-        app.active_tab().time_panes[0]
-            .footprint
-            .candle_aggression()
-            .is_none()
-    );
+    assert_eq!(pane["opening_scale"]["tape"], false);
+    let (noop, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, payload.clone());
+    assert_eq!(success_result(&noop)["changed"], false);
+    let mut context = payload.clone();
+    context["pane_id"] = json!(app.active_tab().time_panes[0].id.to_string());
+    let (refused, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, context);
+    assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST));
     let mut off = payload;
     off["ignore_opening_burst_in_scale"] = json!(false);
     let (off, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, off);
-    assert_eq!(success_result(&off)["ignore_opening_burst_in_scale"], false);
-    assert!(!crate::pane::PaneFootprint::default().ignore_candle_opening());
+    assert_eq!(success_result(&off)["changed"], true);
     disable_test_gateway(&mut app, &ctx);
 }

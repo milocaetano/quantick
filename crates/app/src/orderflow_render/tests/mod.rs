@@ -504,6 +504,60 @@ fn a_sector_covers_only_its_own_slice() {
 }
 
 #[test]
+fn centered_flow_pies_preserve_half_and_quarter_areas_at_every_orientation() {
+    fn area(mesh: &egui::Mesh) -> f32 {
+        mesh.indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|triangle| {
+                let a = mesh.vertices[triangle[0] as usize].pos;
+                let b = mesh.vertices[triangle[1] as usize].pos - a;
+                let c = mesh.vertices[triangle[2] as usize].pos - a;
+                (b.x * c.y - b.y * c.x).abs() * 0.5
+            })
+            .sum()
+    }
+    let center = egui::pos2(30.0, 40.0);
+    let shading = SphereShading::flat(egui::Color32::GREEN);
+    for radius in [3.5, 5.0, 7.0] {
+        for start in [
+            0.0,
+            PIE_START_ANGLE,
+            std::f32::consts::FRAC_PI_4,
+            std::f32::consts::PI,
+        ] {
+            for share in [0.25, 0.5, 0.75] {
+                let sweep = share * std::f32::consts::TAU;
+                let mut buy = egui::Mesh::default();
+                let mut sell = egui::Mesh::default();
+                add_sector(&mut buy, center, radius, start, sweep, shading, 0.0);
+                add_sector(
+                    &mut sell,
+                    center,
+                    radius,
+                    start + sweep,
+                    std::f32::consts::TAU - sweep,
+                    shading,
+                    0.0,
+                );
+                assert_eq!(buy.vertices[0].pos, center);
+                assert_eq!(sell.vertices[0].pos, center);
+                let actual = area(&buy) / (area(&buy) + area(&sell));
+                assert!(
+                    (actual - share).abs() < 0.002,
+                    "radius={radius}, start={start}, share={share}, painted={actual}"
+                );
+                assert!(buy.vertices.iter().chain(&sell.vertices).all(|vertex| {
+                    vertex.color == egui::Color32::GREEN
+                        && (vertex.pos - center).length() <= radius + 0.0001
+                }));
+            }
+        }
+    }
+}
+
+#[test]
 fn the_crown_replaces_the_front_and_leaves_the_disc_alone() {
     let bubbles = BubbleStyle::default();
     assert_eq!(bubbles.consumption_mark, ConsumptionMark::Crown);

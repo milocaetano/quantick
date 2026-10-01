@@ -200,7 +200,10 @@ fn project_bubbles<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> B
                     .panes()
                     .map(|(pane, side)| PaneBubblesSnapshot {
                         opening_scale: pane.opening_scale_snapshot(),
-                        candle_aggression: pane.footprint.candle_aggression().map(Into::into),
+                        flow_execution: pane.orderflow.as_ref().and_then(|view| {
+                            view.flow_execution_frame()
+                                .map(|frame| (frame, view.flow_execution_progress()).into())
+                        }),
                         pane_id: WireU64::new(pane.id),
                         side: side.into(),
                         engine: engine_availability(pane),

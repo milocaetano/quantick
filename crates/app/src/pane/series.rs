@@ -167,7 +167,9 @@ impl ChartPane {
     /// command behind spec switches, prepended history and source resets, so
     /// indicators inherit correct behavior for every rebuild path.
     pub fn send_indicator_rebuild(&mut self) {
-        self.footprint.reset_candle_aggression();
+        if let Some(owner) = self.orderflow.as_mut() {
+            owner.reset_flow_executions();
+        }
         self.lane.reset();
         self.indicator_worker.send(IndicatorCommand::Rebuild(
             self.closed_bars(),
@@ -258,7 +260,6 @@ impl ChartPane {
             self.bump_pagination_revision();
         }
         self.state.ingest_backfill(trades);
-        self.footprint.reset_candle_aggression();
         self.lane.reset();
         self.indicator_worker
             .send(IndicatorCommand::Backfilled(self.closed_bars()));
@@ -378,6 +379,9 @@ impl ChartPane {
     /// Reset the tape while optionally retaining deal-counter readings for a
     /// rebuild of the same market.
     pub fn reset_series_with(&mut self, keep_readings: bool) {
+        if let Some(owner) = self.orderflow.as_mut() {
+            owner.reset_flow_executions();
+        }
         // A second reset before the first settled must not overwrite the
         // baseline with the empty series it is looking at now.
         let slots = self.slots();
@@ -391,7 +395,6 @@ impl ChartPane {
         } else {
             self.state = ChartState::new(self.current_spec());
         }
-        self.footprint.reset_candle_aggression();
         self.lane.reset();
         self.publish_partial();
         self.bump_pagination_revision();

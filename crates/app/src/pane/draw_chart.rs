@@ -43,6 +43,9 @@ use super::{
     lane_rungs,
 };
 
+// Keep the whole FLOW price path visible without competing with regional volume.
+const FLOW_BASE_CONTOUR_OPACITY_FRACTION: f32 = 0.70;
+
 impl ChartPane {
     pub fn draw_chart(
         &mut self,
@@ -51,7 +54,15 @@ impl ChartPane {
         chrome: &mut PaneChrome<'_>,
     ) {
         let renderers = self.layer_renderers;
-        let start = self.begin_frame(painter, area, chrome);
+        let mut start = self.begin_frame(painter, area, chrome);
+        let flow_execution = self
+            .orderflow
+            .as_ref()
+            .is_some_and(OrderflowView::flow_execution_active)
+            && self.state.tick_membership().is_some();
+        if flow_execution {
+            start.candle_aggression = false;
+        }
         let Some(layout) = self.lay_out(painter, area, chrome) else {
             return;
         };
@@ -88,8 +99,7 @@ impl ChartPane {
             self.price_view.is_inverted(),
         );
         let demand = self.projection_demand();
-        let timeline_revision = self.state.timeline_revision();
-        flow.project(self.orderflow.as_mut(), demand, timeline_revision, &frame);
+        flow.project(self.orderflow.as_mut(), demand, &self.state, &frame);
         flow.heatmap(self.orderflow.as_ref());
         let depth_visible = self
             .orderflow
@@ -152,9 +162,15 @@ impl ChartPane {
         };
         let mut carved = std::mem::take(&mut self.frame.bands);
         let clear_depth = flow.projected() && depth_visible;
+        let mut flow_candle_style = chrome.style.candles;
+        if flow_execution {
+            flow_candle_style.body_mode = crate::style::CandleBodyMode::OutlineOnly;
+            flow_candle_style.outline_opacity *= FLOW_BASE_CONTOUR_OPACITY_FRACTION;
+            flow_candle_style.wick_opacity *= FLOW_BASE_CONTOUR_OPACITY_FRACTION;
+        }
         if !layout.tape_only {
             let mut candle_pass =
-                history.candle_pass(&self.indicators, clear_depth, &chrome.style.candles);
+                history.candle_pass(&self.indicators, clear_depth, &flow_candle_style);
             renderers.candle_clear(&mut candle_pass);
             // Only price-band background drawings may precede candle/indicator scales.
             self.carve_bands(&layout, &mut carved);
@@ -170,17 +186,17 @@ impl ChartPane {
                     &start,
                 );
             }
-            if start.candle_aggression {
-                // Repaint only contours so price-local flow stays visible
-                // while OHLC remains readable through dense aggression.
-                super::render_registry::candles::silhouettes(&mut candle_pass);
-            }
             history.overlay(&self.indicators);
         }
         let lane = self.pane_lane(&layout, &frame);
         let grid = grid_color(chrome.style);
         history.indicator_panes(&mut self.indicators, lane, layout.indicator_guide_x, grid);
         flow.aggressions(self.orderflow.as_ref());
+        if flow_execution && !layout.tape_only {
+            let mut candle_pass =
+                history.candle_pass(&self.indicators, false, &chrome.style.candles);
+            super::render_registry::candles::silhouettes(&mut candle_pass);
+        }
         self.frame.flow_legend = flow.legend(
             self.orderflow.as_ref(),
             self.legend_inset(chrome),
@@ -212,6 +228,22 @@ impl ChartPane {
         }
         let nothing_in_view = nothing_in_view(&frame);
         self.paint_canvas_chrome(&frame, axis_x, nothing_in_view, compass.as_ref(), chrome);
+        let inspect_pointer = self.hover_pos.filter(|position| {
+            !layout.tape_only
+                && chrome.toolrail.tool().drawing_tool().is_none()
+                && !chrome.paper.aiming()
+                && !painter.ctx().input(|input| input.pointer.any_down())
+                && painter
+                    .ctx()
+                    .layer_id_at(*position)
+                    .is_none_or(|layer| layer == painter.layer_id())
+        });
+        flow.inspection(
+            self.orderflow.as_ref(),
+            inspect_pointer,
+            chrome.tz,
+            chrome.side_inferred,
+        );
 
         // The levels' container, back on the pane for the next frame to
         // refill rather than reallocate.
@@ -237,7 +269,6 @@ impl ChartPane {
         // Published before anything can return early, so an empty pane still
         // says where it is.
         self.frame.area = Some(area);
-        self.footprint.lod.candle_frame = None;
         let canvas_background = background_color(chrome.style);
         painter.rect_filled(area, egui::Rounding::ZERO, canvas_background);
 

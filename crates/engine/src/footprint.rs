@@ -229,18 +229,6 @@ pub struct BarFootprint {
 }
 
 impl BarFootprint {
-    pub(crate) fn from_parts(
-        levels: BTreeMap<i64, FootprintLevel>,
-        base_group: Decimal,
-        doublings: u32,
-    ) -> Self {
-        Self {
-            levels,
-            base_group,
-            doublings,
-        }
-    }
-
     fn new(base_group: Decimal) -> Self {
         Self {
             levels: BTreeMap::new(),
@@ -537,18 +525,6 @@ pub struct FootprintBuilder {
 }
 
 impl FootprintBuilder {
-    pub(crate) fn from_partial(
-        base_group: Decimal,
-        level_cap: usize,
-        partial: Option<BarFootprint>,
-    ) -> Self {
-        Self {
-            base_group,
-            level_cap,
-            partial,
-        }
-    }
-
     /// A builder bucketing prices into rows `base_group` wide (normally the
     /// instrument's tick size), holding at most `level_cap` rows per bar
     /// before the grouping doubles.

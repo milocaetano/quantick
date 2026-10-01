@@ -9,6 +9,8 @@ use crate::{
 use eframe::egui;
 use rust_decimal::prelude::ToPrimitive as _;
 const SIDEBAR_BODY_FRAC: f32 = 0.35;
+// Retain candle continuity across FLOW regions without obscuring their pies.
+const FLOW_CONTOUR_OPACITY_FRACTION: f32 = 0.25;
 pub(super) const PACKAGE: Package = Package {
     layers: &[],
     contributions: &[
@@ -102,6 +104,8 @@ fn paint(pass: &mut CandlePass<'_, '_>) {
 pub(in crate::pane) fn silhouettes(pass: &mut CandlePass<'_, '_>) {
     let mut style = *pass.style;
     style.fill_opacity = 0.0;
+    style.outline_opacity *= FLOW_CONTOUR_OPACITY_FRACTION;
+    style.wick_opacity *= FLOW_CONTOUR_OPACITY_FRACTION;
     // Build a short-lived pass to preserve the caller's style borrow.
     paint(&mut CandlePass {
         style: &style,

@@ -19,8 +19,8 @@
 //! rule where it does not; the feed scope owns that declaration for the market
 //! as a whole and it is named here rather than restated per level.
 
-mod candle_aggression;
-pub use candle_aggression::{CandleAggressionSnapshot, CandleMarkSnapshot};
+mod flow_execution;
+pub use flow_execution::FlowExecutionSnapshot;
 
 use quantick_control_host::wire::{
     AvailabilitySnapshot, PaneSideDto, canonical_decimal, canonical_f32, wire_usize,
@@ -275,9 +275,9 @@ pub struct PaneBubblesSnapshot {
     /// Independent reversible preferences, readable even when marks are hidden.
     #[serde(default)]
     pub opening_scale: OpeningScaleSnapshot,
-    /// Last painted candle aggression, independent of the tape worker.
+    /// Retained executions aggregated into visible FLOW regions, separate from native Tape.
     #[serde(default)]
-    pub candle_aggression: Option<CandleAggressionSnapshot>,
+    pub flow_execution: Option<FlowExecutionSnapshot>,
     pub pane_id: WireU64,
     pub side: PaneSideDto,
     pub engine: AvailabilitySnapshot,
@@ -287,7 +287,7 @@ pub struct PaneBubblesSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BubblesStateSnapshot {
     /// Aggression bubbles are drawn over the chart. Beside the native tape,
-    /// `candle_aggression` draws price-local marks on the tick candles;
+    /// FLOW draws regional execution totals on the tick candles;
     /// `layers.visibility` names any block.
     pub enabled: bool,
     /// And over the live lane, which is a separate switch.

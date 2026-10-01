@@ -29,7 +29,7 @@
     "target": {
       "$ref": "#/$defs/OpeningScaleTarget",
       "default": "tape",
-      "description": "Tape is the backward-compatible default; Candle has an independent\ntransient pane preference and requires no tape worker."
+      "description": "Tape is the backward-compatible default; Candle has an independent\ntransient FLOW preference, independent of the native Tape worker."
     }
   },
   "required": [

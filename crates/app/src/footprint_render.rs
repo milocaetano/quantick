@@ -302,10 +302,6 @@ pub struct FootprintLod {
     drawn_style: Option<crate::footprint_config::FootprintStyle>,
     /// Candles per aggression-summary mark, held through a steady zoom.
     pub(crate) candle_groups: quantick_orderflow::projection::CandleGroupMemory,
-    pub(crate) candle_prices: quantick_orderflow::projection::CandlePriceMemory,
-    /// Transient pane preference, independent of the tape's size policy.
-    pub(crate) candle_ignore_opening: bool,
-    pub(crate) candle_frame: Option<quantick_orderflow::projection::CandleDotFrame>,
 }
 
 impl FootprintLod {

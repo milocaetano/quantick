@@ -12,7 +12,7 @@ fn print(id: u64, timestamp_ms: i64, price: i64, quantity: i64, side: Side) -> T
     }
 }
 
-pub(super) fn context_fixture(
+fn context_fixture(
     ctx: &egui::Context,
 ) -> (
     QuantickApp,
@@ -127,8 +127,8 @@ fn candle_aggression_opt_in_preserves_candles_and_the_right_tape() {
     assert_eq!(left.state.bar_footprints().len(), 5);
     assert!(!left.layer_switched_on(ChartLayer::Footprint, &app.style));
     assert_eq!(
-        &candle_ink(&after, chart)[..ink.len()],
-        &ink,
+        candle_ink(&after, chart),
+        ink,
         "accumulation cannot invoke footprint candle dressing"
     );
     assert_eq!(
@@ -198,16 +198,16 @@ fn candle_aggression_keeps_same_millisecond_tick_ownership_and_current_partial()
     let range = left.price_view.resolve(left.frame.auto_range.unwrap());
     let scale = PriceScale::from_range(range.0, range.1, chart.top(), chart.bottom());
     let x = left.viewport.x_center(6, chart.right(), left.slots());
+    assert!(
+        circle_at(&output, egui::pos2(x, scale.y(143.2))),
+        "this frame paints the forming candle's exact quantity-weighted price: (9*140 + 16*145)/25"
+    );
     for price in [140.0, 145.0] {
         assert!(
-            circle_at(&output, egui::pos2(x, scale.y(price))),
-            "the forming candle retains both execution price bands in this frame"
+            !circle_at(&output, egui::pos2(x, scale.y(price))),
+            "one candle owns one dot, not one dot per native row"
         );
     }
-    assert!(
-        !circle_at(&output, egui::pos2(x, scale.y(143.2))),
-        "the candle's whole-volume centroid cannot erase its price distribution"
-    );
 }
 
 #[test]
@@ -251,43 +251,6 @@ fn candle_aggression_is_reachable_by_the_existing_named_layer_action() {
         assert_eq!(layer["requested"], visible);
         assert_eq!(layer["effective"], visible);
         assert!(app.active_tab().time_panes[0].orderflow.is_none());
-        // Gateway calls serve control requests without painting the canvas.
-        run_frame(&mut app, &ctx);
-        let (read, _) = unkeyed_call(
-            &mut app,
-            &mut client,
-            "snapshot.read",
-            json!({"scopes":["orderflow.bubbles"]}),
-        );
-        let scope = &success_result(&read)["scopes"]["orderflow.bubbles"]["value"];
-        let pane = scope["tabs"][0]["panes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|pane| pane["pane_id"] == pane_id)
-            .unwrap();
-        if visible {
-            let snapshot = &pane["candle_aggression"];
-            let painted = app.active_tab().time_panes[0]
-                .footprint
-                .candle_aggression()
-                .unwrap();
-            let expected = serde_json::to_value(
-                quantick_control_schema::orderflow::CandleAggressionSnapshot::from(painted),
-            )
-            .unwrap();
-            assert_eq!(
-                snapshot, &expected,
-                "readback is the frame actually painted"
-            );
-            assert_eq!(snapshot["trade_count"], "20");
-            assert!(snapshot["marks"].as_array().unwrap().len() > 5);
-        } else {
-            assert!(
-                pane["candle_aggression"].is_null(),
-                "hidden marks cannot leave a stale readback"
-            );
-        }
     }
     disable_test_gateway(&mut app, &ctx);
 }
@@ -390,137 +353,4 @@ fn a_tick_context_header_names_the_applied_bars_and_time_controls_return_for_tim
         &BarSpec::Time(300_000)
     );
     assert_eq!(app.active_tab().flow_pane.state.spec(), &flow);
-}
-
-#[test]
-fn opening_status_stays_above_the_plot_with_footprint_and_manual_price_ranges() {
-    let ctx = egui::Context::default();
-    let (mut app, events, _commands) = context_fixture(&ctx);
-    let left = &mut app.active_tab_mut().time_panes[0];
-    for layer in [ChartLayer::Footprint, ChartLayer::CandleAggression] {
-        left.set_layer_visible(layer, true, &mut Default::default());
-    }
-    left.footprint.set_ignore_candle_opening(true);
-    events
-        .try_send(FeedEvent::Live(print(21, 1200, 120, 400, Side::Sell)))
-        .unwrap();
-    run_frame(&mut app, &ctx);
-    for (size, width, low, high) in [
-        (egui::vec2(1500.0, 900.0), 40.0, 90.0, 200.0),
-        (egui::vec2(1000.0, 700.0), 8.0, 100.0, 130.0),
-        (egui::vec2(1000.0, 700.0), 40.0, 180.0, 220.0),
-    ] {
-        let left = &mut app.active_tab_mut().time_panes[0];
-        left.viewport.set_px_per_bar(width);
-        left.price_view.set_manual_range(low, high);
-        let output = run_frame_sized(&mut app, &ctx, size, vec![], Default::default());
-        let chart = app.active_tab().time_panes[0].frame.chart_rect.unwrap();
-        let (clip, text) = output
-            .shapes
-            .iter()
-            .find_map(|shape| match &shape.shape {
-                egui::Shape::Text(text)
-                    if matches!(
-                        text.galley.text(),
-                        "First recorded burst excluded" | "Opening-only scale fallback"
-                    ) =>
-                {
-                    Some((shape.clip_rect, text))
-                }
-                _ => None,
-            })
-            .expect("enabled opening preference has visible status");
-        let visible = text.visual_bounding_rect().intersect(clip);
-        assert!(
-            visible.is_positive(),
-            "status must survive painter clipping"
-        );
-        assert!(
-            visible.bottom() <= chart.top(),
-            "status cannot cover plot data"
-        );
-        assert!(visible.top() >= chart.top() - crate::plot_area::PLOT_PADDING_PX);
-        assert!(visible.left() >= chart.left() && visible.right() <= chart.right());
-        assert!(
-            painted_text(&output)
-                .iter()
-                .any(|text| text.starts_with("footprint")),
-            "the footprint footer must be present in the same frame"
-        );
-    }
-}
-
-#[test]
-fn late_session_marks_recover_visible_scale_after_visiting_a_large_opening() {
-    let ctx = egui::Context::default();
-    let (mut app, events, _commands) = context_fixture(&ctx);
-    app.active_tab_mut().time_panes[0].set_layer_visible(
-        ChartLayer::CandleAggression,
-        true,
-        &mut Default::default(),
-    );
-    for index in 0..164 {
-        let row = index % 4;
-        let quantity = if index == 0 {
-            74365
-        } else if row == 0 {
-            493
-        } else {
-            1
-        };
-        events
-            .try_send(FeedEvent::Live(print(
-                21 + index,
-                1200 + index as i64,
-                100 + 5 * row as i64,
-                quantity,
-                Side::Buy,
-            )))
-            .unwrap();
-        if index % 32 == 31 {
-            run_frame(&mut app, &ctx);
-        }
-    }
-    run_frame(&mut app, &ctx);
-    let left = &mut app.active_tab_mut().time_panes[0];
-    left.viewport.set_px_per_bar(40.0);
-    left.price_view.set_manual_range(90.0, 200.0);
-    run_frame(&mut app, &ctx);
-    let late = app.active_tab().time_panes[0]
-        .footprint
-        .candle_aggression()
-        .unwrap()
-        .clone();
-    assert_eq!(late.full_quantity, Decimal::from(493));
-    let left = &mut app.active_tab_mut().time_panes[0];
-    let width = left.frame.chart_rect.unwrap().width();
-    let slots = left.slots();
-    left.viewport.center_on_bar(5.0, width, slots);
-    run_frame(&mut app, &ctx);
-    assert_eq!(
-        app.active_tab().time_panes[0]
-            .footprint
-            .candle_aggression()
-            .unwrap()
-            .full_quantity,
-        Decimal::from(74365)
-    );
-    app.active_tab_mut().time_panes[0].viewport.snap_to_live();
-    run_frame(&mut app, &ctx);
-    let recovered = app.active_tab().time_panes[0]
-        .footprint
-        .candle_aggression()
-        .unwrap();
-    assert_eq!(
-        recovered, &late,
-        "the same visible groups have the same scale after an opening visit"
-    );
-    assert_eq!(
-        recovered
-            .marks
-            .iter()
-            .map(|mark| mark.radius_px)
-            .fold(0.0_f32, f32::max),
-        recovered.maximum_radius_px
-    );
 }

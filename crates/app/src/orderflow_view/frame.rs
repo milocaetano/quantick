@@ -151,6 +151,8 @@ impl OrderflowView {
         .with_inverted(inverted);
         let mut style =
             OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
+        // FLOW owns tick-candle executions even when the Tape lane is hidden.
+        style.aggression_layer &= !self.flow_execution_replaces_history();
         style.dot_sizing = frame
             .volume_dots
             .as_ref()

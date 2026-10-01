@@ -114,11 +114,11 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     },
     UiBehaviour {
         id: "orderflow.tape.opening_scale.set",
-        title: "Choose whether the first recorded burst sets tape or candle size references",
-        reach: "Bubbles settings for Tape; chart layers, candle aggression, Ignore first recorded burst in candle scale for the independent pane preference",
+        title: "Choose whether the first recorded burst sets Tape or FLOW region size references",
+        reach: "Bubbles settings for Tape; tick FLOW chart layers, Bubbles, Ignore first recorded burst in regional scale for the independent pane preference",
         keys: &[(
             Source::Authored,
-            "opening-scale preferences are checkboxes inside the volume-dot settings and the contextual Candle aggression layer menu",
+            "opening-scale preferences are checkboxes inside the volume-dot settings and the tick FLOW Bubbles layer menu",
         )],
         mapping: capability!("orderflow.tape.opening_scale.set"),
     },
