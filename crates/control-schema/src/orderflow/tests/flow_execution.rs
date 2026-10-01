@@ -82,12 +82,13 @@ fn wire(frame: &FlowTapeFrame, progress: FlowProgress) -> Value {
 }
 
 #[test]
-fn paired_radii_read_back_each_actual_side_and_the_equivalent_gross_area() {
+fn circle_radius_and_sector_equivalent_radii_preserve_exact_side_areas() {
     for (buy, sell) in [(51, 49), (100, 0), (0, 100)] {
         let trades = [source_trade(0, 100, buy), source_trade(1, 100, sell)];
         let mut frame = projected(&trades, 2, 1.0, 1.0);
         frame.dots[0].mark.buy_share = 0.0;
         let value = wire(&frame, settled(&frame));
+        assert!(value.get("bar_height_px").is_none());
         let mark = &value["marks"][0];
         let radius = |field: &str| mark[field].as_str().unwrap().parse::<f64>().unwrap();
         assert_eq!(radius("radius_px"), 7.0);
@@ -96,6 +97,33 @@ fn paired_radii_read_back_each_actual_side_and_the_equivalent_gross_area() {
         assert_eq!(radius("buy_radius_px") == 0.0, buy == 0);
         assert_eq!(radius("sell_radius_px") == 0.0, sell == 0);
     }
+}
+
+#[test]
+fn sector_radii_readback_preserves_opening_cap_and_tiny_positive_sides() {
+    let trades = [source_trade(0, 100, 100), source_trade(1, 100, 1800)];
+    let mut frame = projected(&trades, 2, 1.0, 1.0);
+    frame.effective_reference = Some(1800.into());
+    frame.dots[0].opening_capped = true;
+    frame.dots[0].opening_quantity = 100.into();
+    let number = |value: &Value, field: &str| {
+        value["marks"][0][field]
+            .as_str()
+            .unwrap()
+            .parse::<f64>()
+            .unwrap()
+    };
+    let value = wire(&frame, settled(&frame));
+    assert!((number(&value, "buy_radius_px").powi(2) - 49.0 * 100.0 / 1900.0).abs() < 0.00001);
+    assert!((number(&value, "sell_radius_px").powi(2) - 49.0 * 1800.0 / 1900.0).abs() < 0.00001);
+    frame.dots[0].mark.quantity = Decimal::from(100_000_000_000_000_000_000_u128);
+    frame.dots[0].mark.buy_quantity = Decimal::new(1, 20);
+    frame.dots[0].mark.buy_share = 0.0;
+    let tiny = wire(&frame, settled(&frame));
+    assert!(number(&tiny, "buy_radius_px") > 0.0);
+    assert!((number(&tiny, "buy_radius_px") / 7e-20 - 1.0).abs() < 0.000001);
+    assert_eq!(number(&tiny, "sell_radius_px"), 7.0);
+    assert!(tiny["marks"][0].get("buy_length_px").is_none());
 }
 
 #[test]

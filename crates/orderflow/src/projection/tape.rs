@@ -305,6 +305,10 @@ pub(super) trait MergeDisc: Sized {
         lane: &LiveLaneStyle,
         full: Full,
     ) -> f32;
+    /// Optional source-locality constraint; ordinary Tape discs retain unrestricted merging.
+    fn permits_merge(&self, _other: &Self) -> bool {
+        true
+    }
     fn absorb(&mut self, other: Self, right_x: f64);
 }
 
@@ -490,7 +494,11 @@ pub(super) fn collide<D: MergeDisc>(
                         return None;
                     }
                     let distance = dx.hypot(dy);
-                    (distance < clearance).then_some((index, distance, other.agg_id()))
+                    (distance < clearance && pending.permits_merge(other)).then_some((
+                        index,
+                        distance,
+                        other.agg_id(),
+                    ))
                 })
                 .min_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.2.cmp(&b.2)))
                 .map(|candidate| candidate.0);

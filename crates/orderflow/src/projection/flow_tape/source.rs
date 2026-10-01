@@ -69,6 +69,8 @@ struct NativeCell {
     first_ordinal: usize,
     mark: AggressionPrimitive,
     position_quantity: Decimal,
+    /// Exact minimum/maximum admitted execution positions, including within one cell.
+    positions: [Decimal; 2],
     members: Arc<Vec<FlowMember>>,
 }
 #[derive(Default)]
@@ -143,6 +145,8 @@ impl FlowTapeSource {
                     let cell = held.get_mut();
                     cell.mark = combine_tape_facts([&cell.mark, &mark]).expect("two native facts");
                     cell.position_quantity += position * trade.quantity;
+                    cell.positions[0] = cell.positions[0].min(position);
+                    cell.positions[1] = cell.positions[1].max(position);
                     cell.first_ordinal = cell.first_ordinal.min(ordinal);
                     let members = Arc::make_mut(&mut cell.members);
                     let at = members.partition_point(|held| held.ordinal < ordinal);
@@ -153,6 +157,7 @@ impl FlowTapeSource {
                         first_ordinal: ordinal,
                         mark,
                         position_quantity: position * trade.quantity,
+                        positions: [position, position],
                         members: Arc::new(vec![member]),
                     });
                 }
@@ -195,6 +200,15 @@ impl FlowTapeSource {
             return frame;
         }
         let slots = Decimal::from(view.end_slot - view.first_slot);
+        // width_px covers the admission span, so padding cancels just as it does
+        // in the collision geometry; no viewport-width reinterpretation is made.
+        let pixels_per_slot = f64::from(view.width_px) / (view.end_slot - view.first_slot) as f64;
+        let position_px = |position: Decimal| {
+            (position - Decimal::from(view.first_slot))
+                .to_f64()
+                .unwrap_or_default()
+                * pixels_per_slot
+        };
         let groups = self
             .cells
             .range(
@@ -207,6 +221,12 @@ impl FlowTapeSource {
                     .to_f64()
                     .unwrap_or_default();
                 mark.y = view.prices.y_unclamped(mark.price).unwrap_or_default();
+                let hull = FlowHull {
+                    left: position_px(cell.positions[0]),
+                    right: position_px(cell.positions[1]),
+                    top: mark.y * f64::from(view.height_px),
+                    bottom: mark.y * f64::from(view.height_px),
+                };
                 let opening = if openings.contains(&window) {
                     mark.quantity
                 } else {
@@ -215,6 +235,7 @@ impl FlowTapeSource {
                 Group {
                     first_ordinal: cell.first_ordinal,
                     moment: TapeMoment::new(mark, f64::INFINITY),
+                    hull,
                     members: FlowMembers {
                         parts: vec![Arc::clone(&cell.members)],
                         count: cell.members.len(),

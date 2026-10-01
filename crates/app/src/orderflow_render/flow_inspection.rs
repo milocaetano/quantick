@@ -1,11 +1,9 @@
 //! Passive inspection of the FLOW regions actually painted this frame.
-use super::flow_execution::flow_discs;
+use super::flow_execution::flow_disc;
 use crate::{paper_chrome::fmt_decimal, theme, timezone::TzOffset};
 use eframe::egui;
 use quantick_civil::CivilDate;
-use quantick_orderflow::projection::flow_tape::{
-    FlowProgress, FlowScaleBasis, FlowTapeDot, FlowTapeFrame,
-};
+use quantick_orderflow::projection::flow_tape::{FlowProgress, FlowTapeDot, FlowTapeFrame};
 
 pub(crate) struct FlowInspection<'a> {
     pub painter: &'a egui::Painter,
@@ -18,14 +16,14 @@ pub(crate) struct FlowInspection<'a> {
     pub side_inferred: bool,
 }
 
-/// `center` is the same mapping used by the bubble painter, with current axes.
+/// `center` is the same mapping used by the regional painter, with current axes.
 /// No interaction widgets, retained selection, source reads, or member expansion.
 pub(crate) fn draw_flow_inspection(
     view: FlowInspection<'_>,
     center: impl FnMut(&FlowTapeDot) -> Option<egui::Pos2>,
 ) -> Option<egui::Rect> {
     let pointer = view.pointer.filter(|point| view.history.contains(*point))?;
-    let dot = hit_region(&view.frame.dots, view.history, pointer, center)?;
+    let dot = hit_region(view.frame, view.history, pointer, center)?;
     let painter = view.painter.with_clip_rect(view.history);
     let width_limit = view.history.width() - 16.0;
     if width_limit < 80.0 {
@@ -77,19 +75,17 @@ pub(crate) fn draw_flow_inspection(
 }
 
 fn hit_region(
-    dots: &[FlowTapeDot],
+    frame: &FlowTapeFrame,
     history: egui::Rect,
     pointer: egui::Pos2,
     mut center: impl FnMut(&FlowTapeDot) -> Option<egui::Pos2>,
 ) -> Option<&FlowTapeDot> {
-    dots.iter()
+    frame
+        .dots
+        .iter()
         .filter_map(|dot| {
             let at = center(dot)?;
-            let distance = flow_discs(dot, at)
-                .into_iter()
-                .flatten()
-                .filter_map(|disc| disc.hit_distance(history, pointer))
-                .min_by(f32::total_cmp)?;
+            let distance = flow_disc(dot, at)?.hit_distance(history, pointer)?;
             Some((distance, dot))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -100,73 +96,22 @@ fn details(dot: &FlowTapeDot, view: &FlowInspection<'_>) -> Vec<String> {
     let mark = &dot.mark;
     let dates = CivilDate::from_ms(mark.first_timestamp_ms, view.tz)
         != CivilDate::from_ms(mark.last_timestamp_ms, view.tz);
-    let mut rows = vec![
-        "Paired at the pooled regional centre.".to_owned(),
-        format!(
-            "Buy {} · Sell {} · Total {}",
-            fmt_decimal(mark.buy_quantity),
-            fmt_decimal(mark.quantity - mark.buy_quantity),
-            fmt_decimal(mark.quantity)
-        ),
-        format!(
-            "Executed prices {}–{}",
-            fmt_decimal(mark.price_bucket),
-            fmt_decimal(mark.price_bucket + mark.price_span)
-        ),
+    let mut rows = view.frame.inspection_details(
+        dot,
+        view.progress.pending,
+        view.prefix_len,
+        view.side_inferred,
+        fmt_decimal,
+    );
+    rows.insert(
+        3,
         format!(
             "Time {}–{} ({})",
             stamp(mark.first_timestamp_ms, view.tz, dates),
             stamp(mark.last_timestamp_ms, view.tz, dates),
-            view.tz.label()
+            view.tz.label(),
         ),
-        format!(
-            "Candle span {}–{}",
-            dot.first_slot
-                .saturating_add(view.prefix_len)
-                .saturating_add(1),
-            dot.end_slot.saturating_add(view.prefix_len)
-        ),
-    ];
-    if let Some(reference) = view.frame.effective_reference {
-        rows.push(format!("Area reference {}", fmt_decimal(reference)));
-    }
-    if dot.opening_quantity > rust_decimal::Decimal::ZERO {
-        rows.push(format!(
-            "Recorded opening {}",
-            fmt_decimal(dot.opening_quantity)
-        ));
-    }
-    if dot.opening_capped {
-        rows.push("Opening volume included; bubble area capped.".into());
-    } else if view.frame.scale_basis == FlowScaleBasis::OpeningOnlyFallback {
-        rows.push("Only opening volume visible; using full volume for scale.".into());
-    } else if view.frame.opening_exclusion_effective {
-        rows.push("Opening excluded from reference; quantities unchanged.".into());
-    }
-    if view.progress.pending {
-        rows.push("Updating: showing last computed regions.".into());
-    }
-    if view.frame.omitted_executions > 0 {
-        rows.push(format!(
-            "Partial coverage: {} of {} records loaded{}.",
-            view.frame.loaded_executions,
-            view.frame.requested_ordinals.len(),
-            if view.frame.cache_limit_reached {
-                " (display capacity)"
-            } else {
-                ""
-            }
-        ));
-    }
-    if view.frame.ineligible_executions > 0 {
-        rows.push(format!(
-            "{} source records excluded.",
-            view.frame.ineligible_executions
-        ));
-    }
-    if view.side_inferred {
-        rows.push("Aggressor side inferred.".into());
-    }
+    );
     rows
 }
 

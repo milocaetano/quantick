@@ -14,7 +14,7 @@ use quantick_orderflow::HeatmapTheme;
 mod bubbles;
 mod flow_execution;
 mod flow_inspection;
-pub(crate) use flow_execution::{current_price_y, draw_flow_executions, flow_caption};
+pub(crate) use flow_execution::{draw_flow_executions, flow_caption};
 pub(crate) use flow_inspection::{FlowInspection, draw_flow_inspection};
 mod heatmap;
 mod layout;

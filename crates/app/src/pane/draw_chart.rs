@@ -43,9 +43,6 @@ use super::{
     lane_rungs,
 };
 
-// Keep the whole FLOW price path visible without competing with regional volume.
-const FLOW_BASE_CONTOUR_OPACITY_FRACTION: f32 = 0.70;
-
 impl ChartPane {
     pub fn draw_chart(
         &mut self,
@@ -162,21 +159,17 @@ impl ChartPane {
         };
         let mut carved = std::mem::take(&mut self.frame.bands);
         let clear_depth = flow.projected() && depth_visible;
-        let mut flow_candle_style = chrome.style.candles;
-        if flow_execution {
-            flow_candle_style.body_mode = crate::style::CandleBodyMode::OutlineOnly;
-            flow_candle_style.outline_opacity *= FLOW_BASE_CONTOUR_OPACITY_FRACTION;
-            flow_candle_style.wick_opacity *= FLOW_BASE_CONTOUR_OPACITY_FRACTION;
-        }
         if !layout.tape_only {
             let mut candle_pass =
-                history.candle_pass(&self.indicators, clear_depth, &flow_candle_style);
+                history.candle_pass(&self.indicators, clear_depth, &chrome.style.candles);
             renderers.candle_clear(&mut candle_pass);
             // Only price-band background drawings may precede candle/indicator scales.
             self.carve_bands(&layout, &mut carved);
             let price_band = carved.get(..1).unwrap_or_default();
             self.paint_drawing_bands(&frame, price_band, DrawPass::UnderCandles);
-            renderers.candles(&mut candle_pass);
+            if !flow_execution {
+                renderers.candles(&mut candle_pass);
+            }
             if start.footprint_paints || start.candle_aggression {
                 history.footprint(
                     &mut self.footprint,
@@ -186,17 +179,22 @@ impl ChartPane {
                     &start,
                 );
             }
+            if flow_execution {
+                flow.regional_aggressions(
+                    self.orderflow.as_ref(),
+                    start.footprint_paints.then(|| {
+                        let [r, g, b] = chrome.style.canvas.background;
+                        egui::Color32::from_rgb(r, g, b)
+                    }),
+                );
+                renderers.candles(&mut candle_pass);
+            }
             history.overlay(&self.indicators);
         }
         let lane = self.pane_lane(&layout, &frame);
         let grid = grid_color(chrome.style);
         history.indicator_panes(&mut self.indicators, lane, layout.indicator_guide_x, grid);
         flow.aggressions(self.orderflow.as_ref());
-        if flow_execution && !layout.tape_only {
-            let mut candle_pass =
-                history.candle_pass(&self.indicators, false, &chrome.style.candles);
-            super::render_registry::candles::silhouettes(&mut candle_pass);
-        }
         self.frame.flow_legend = flow.legend(
             self.orderflow.as_ref(),
             self.legend_inset(chrome),

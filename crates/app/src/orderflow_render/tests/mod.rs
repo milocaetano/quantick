@@ -520,7 +520,7 @@ fn centered_flow_pies_preserve_half_and_quarter_areas_at_every_orientation() {
     }
     let center = egui::pos2(30.0, 40.0);
     let shading = SphereShading::flat(egui::Color32::GREEN);
-    for radius in [3.5, 5.0, 7.0] {
+    for radius in [0.5, 3.5, 7.0, 12.0] {
         for start in [
             0.0,
             PIE_START_ANGLE,

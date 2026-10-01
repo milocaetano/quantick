@@ -9,8 +9,6 @@ use crate::{
 use eframe::egui;
 use rust_decimal::prelude::ToPrimitive as _;
 const SIDEBAR_BODY_FRAC: f32 = 0.35;
-// Retain candle continuity across FLOW regions without obscuring their pies.
-const FLOW_CONTOUR_OPACITY_FRACTION: f32 = 0.25;
 pub(super) const PACKAGE: Package = Package {
     layers: &[],
     contributions: &[
@@ -30,6 +28,23 @@ pub(in crate::pane) struct CandlePass<'a, 'b> {
     pub style: &'a CandleStyle,
 }
 impl CandlePass<'_, '_> {
+    fn slot(&self, index: usize) -> BarSlot {
+        let xc = self
+            .viewport
+            .x_center(index, self.frame.right, self.frame.total);
+        if self.candle_lane > 0.0 {
+            let sliver = (self.candle_lane * SIDEBAR_BODY_FRAC).max(1.0);
+            BarSlot {
+                xc: xc - self.content_half + sliver + 1.0,
+                half_width: sliver,
+            }
+        } else {
+            BarSlot {
+                xc,
+                half_width: self.half,
+            }
+        }
+    }
     fn bars(&self, mut visit: impl FnMut(usize, &quantick_engine::Bar, bool)) {
         for (offset, bar) in self
             .frame
@@ -70,45 +85,17 @@ fn clear(pass: &mut CandlePass<'_, '_>) {
 fn paint(pass: &mut CandlePass<'_, '_>) {
     let painted = pass.indicators.paints_any();
     pass.bars(|index, bar, forming| {
-        let xc = pass
-            .viewport
-            .x_center(index, pass.frame.right, pass.frame.total);
         let color = painted
             .then(|| pass.indicators.slot_paint(index..index + 1, forming))
             .flatten();
-        let slot = if pass.candle_lane > 0.0 {
-            let sliver = (pass.candle_lane * SIDEBAR_BODY_FRAC).max(1.0);
-            BarSlot {
-                xc: xc - pass.content_half + sliver + 1.0,
-                half_width: sliver,
-            }
-        } else {
-            BarSlot {
-                xc,
-                half_width: pass.half,
-            }
-        };
         draw_candle(
             pass.painter,
-            slot,
+            pass.slot(index),
             &pass.frame.scale,
             bar,
             forming,
             pass.style,
             color,
         );
-    });
-}
-
-/// Restore wick and body boundaries above the translucent aggression layer.
-pub(in crate::pane) fn silhouettes(pass: &mut CandlePass<'_, '_>) {
-    let mut style = *pass.style;
-    style.fill_opacity = 0.0;
-    style.outline_opacity *= FLOW_CONTOUR_OPACITY_FRACTION;
-    style.wick_opacity *= FLOW_CONTOUR_OPACITY_FRACTION;
-    // Build a short-lived pass to preserve the caller's style borrow.
-    paint(&mut CandlePass {
-        style: &style,
-        ..*pass
     });
 }

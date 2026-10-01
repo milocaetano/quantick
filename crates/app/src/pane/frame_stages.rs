@@ -211,10 +211,11 @@ impl<'a> FlowFrame<'a> {
                 let point = egui::pos2(
                     self.viewport
                         .x_at_bar_position(position, history.right(), self.total),
-                    crate::orderflow_render::current_price_y(
+                    quantick_chart::flow_execution::flow_price_y(
                         prices,
                         dot.mark.price,
-                        self.rect,
+                        self.rect.top(),
+                        self.rect.height(),
                         self.inverted,
                     ),
                 );
@@ -229,9 +230,6 @@ impl<'a> FlowFrame<'a> {
         tz: crate::timezone::TzOffset,
         side_inferred: bool,
     ) {
-        let Some(pointer) = pointer else {
-            return;
-        };
         let Some(owner) = owner.filter(|owner| owner.flow_execution_active()) else {
             return;
         };
@@ -241,6 +239,7 @@ impl<'a> FlowFrame<'a> {
         let Some(center) = self.execution_centers() else {
             return;
         };
+        let Some(pointer) = pointer else { return };
         let _ = crate::orderflow_render::draw_flow_inspection(
             crate::orderflow_render::FlowInspection {
                 painter: self.painter,
@@ -256,8 +255,12 @@ impl<'a> FlowFrame<'a> {
         );
     }
 
-    /// The aggression bubbles, over the candles and the indicator panes.
-    pub(super) fn aggressions(&self, owner: Option<&OrderflowView>) {
+    /// Regions above any footprint, behind one configured candle and indicator pass.
+    pub(super) fn regional_aggressions(
+        &self,
+        owner: Option<&OrderflowView>,
+        backing: Option<egui::Color32>,
+    ) {
         if let Some(owner) = owner
             && let Some(frame) = owner.flow_execution_frame()
             && let Some(center) = self.execution_centers()
@@ -268,9 +271,14 @@ impl<'a> FlowFrame<'a> {
                 self.lane_width,
                 frame,
                 owner.cached_config(),
+                backing,
                 center,
             );
         }
+    }
+
+    /// Native Tape and ordinary aggressions retain their original foreground order.
+    pub(super) fn aggressions(&self, owner: Option<&OrderflowView>) {
         if let Some(owner) = owner
             && let Some(projection) = self.projection.as_deref()
         {

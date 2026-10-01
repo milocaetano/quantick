@@ -1,5 +1,9 @@
 use super::*;
 use quantick_engine::Side;
+#[path = "tests/hull.rs"]
+mod hull;
+#[path = "tests/reading.rs"]
+mod reading;
 fn trade(time: i64, price: i64, quantity: i64, side: Side) -> Trade {
     Trade {
         agg_id: 1,
@@ -542,6 +546,9 @@ fn side_radii_keep_a_positive_decimal_minority_when_the_cached_share_is_zero() {
     dot.mark.quantity = Decimal::from(100_000_000_000_000_000_000_u128);
     dot.mark.buy_quantity = Decimal::new(1, 20);
     dot.mark.buy_share = 0.0;
+    let (buy_share, sell_share) = dot.side_shares();
+    assert!((buy_share / 1e-40 - 1.0).abs() < 0.000001);
+    assert_eq!(sell_share, 1.0);
     let (buy, sell) = dot.side_radii();
     assert!(buy > 0.0 && sell > 0.0);
     assert!((f64::from(buy) / (f64::from(dot.radius) * 1e-20) - 1.0).abs() < 0.000001);

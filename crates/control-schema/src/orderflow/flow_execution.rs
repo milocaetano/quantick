@@ -107,11 +107,11 @@ pub struct FlowExecutionMark {
     pub buy_quantity: CanonicalDecimal,
     pub sell_quantity: CanonicalDecimal,
     pub trade_count: WireU64,
-    /// Equivalent gross-area radius; not either side's radius or the pair's extent.
+    /// Actual painted circle radius; gross quantity determines its area.
     pub radius_px: CanonicalDecimal,
-    /// Actual buy disc radius, zero when no buy quantity is present.
+    /// Radius of a disc with the same area as the buy sector; not a separate painted disc.
     pub buy_radius_px: CanonicalDecimal,
-    /// Actual sell disc radius, zero when no sell quantity is present.
+    /// Radius of a disc with the same area as the sell sector; not a separate painted disc.
     pub sell_radius_px: CanonicalDecimal,
     pub opening_quantity: CanonicalDecimal,
     pub opening_capped: bool,

@@ -332,6 +332,107 @@ fn other_discs_left_of(output: &egui::FullOutput, x: f32) -> usize {
         .count()
 }
 
+fn regional_colours(app: &QuantickApp) -> [egui::Color32; 2] {
+    let config = app.active_tab().tape().cached_config();
+    let theme = crate::orderflow_render::theme_bubble_rgb(config.theme);
+    [
+        config.bubbles.buy_color.unwrap_or(theme.buy),
+        config.bubbles.sell_color.unwrap_or(theme.sell),
+    ]
+    .map(|[r, g, b]| egui::Color32::from_rgb(r, g, b).gamma_multiply(0.5))
+}
+
+/// Exact translucent sector meshes in history, excluding candle outlines and Tape.
+fn regional_circles(app: &QuantickApp, output: &egui::FullOutput) -> Vec<egui::Mesh> {
+    let frame = &app.active_tab().flow_pane.frame;
+    let rect = frame.chart_rect.unwrap();
+    let history = rect.with_max_x(frame.lane_divider_x.unwrap_or(rect.right()));
+    let colours = regional_colours(app);
+    output
+        .shapes
+        .iter()
+        .filter_map(|clipped| {
+            let egui::Shape::Mesh(mesh) = &clipped.shape else {
+                return None;
+            };
+            (!mesh.vertices.is_empty()
+                && mesh
+                    .vertices
+                    .iter()
+                    .all(|vertex| colours.contains(&vertex.color))
+                && mesh
+                    .calc_bounds()
+                    .intersect(clipped.clip_rect)
+                    .intersect(history)
+                    .is_positive())
+            .then(|| mesh.clone())
+        })
+        .collect()
+}
+
+fn regional_labels(output: &egui::FullOutput) -> Vec<String> {
+    output
+        .shapes
+        .iter()
+        .filter_map(|clipped| {
+            let egui::Shape::Text(text) = &clipped.shape else {
+                return None;
+            };
+            let text = &text.galley.job.text;
+            (text.starts_with("Buy ") || text.starts_with("Sell ")).then(|| text.clone())
+        })
+        .collect()
+}
+
+fn assert_regional_circles(
+    app: &QuantickApp,
+    output: &egui::FullOutput,
+    snapshot: &Value,
+) -> Vec<egui::Mesh> {
+    let circles = regional_circles(app, output);
+    let marks = snapshot["marks"].as_array().unwrap();
+    assert!(!circles.is_empty(), "regional circles must be painted");
+    assert_eq!(
+        circles.len(),
+        marks.len(),
+        "exactly one mesh per published region"
+    );
+    for (mesh, mark) in circles.iter().zip(marks) {
+        let radius: f32 = mark["radius_px"].as_str().unwrap().parse().unwrap();
+        let center = mesh.vertices[0].pos;
+        let extent = mesh
+            .vertices
+            .iter()
+            .map(|vertex| center.distance(vertex.pos))
+            .fold(0.0_f32, f32::max);
+        assert!(
+            (extent - radius).abs() < 0.0001,
+            "painted {extent}, published {radius}"
+        );
+        let mut areas = [0.0_f32; 2];
+        for triangle in mesh.indices.as_chunks::<3>().0 {
+            let a = mesh.vertices[triangle[0] as usize];
+            let b = mesh.vertices[triangle[1] as usize];
+            let c = mesh.vertices[triangle[2] as usize];
+            let side = regional_colours(app)
+                .iter()
+                .position(|colour| *colour == a.color)
+                .unwrap();
+            assert_eq!(a.color, b.color);
+            assert_eq!(a.color, c.color);
+            let b = b.pos - a.pos;
+            let c = c.pos - a.pos;
+            areas[side] += (b.x * c.y - b.y * c.x).abs() * 0.5;
+        }
+        let buy: f32 = mark["buy_quantity"].as_str().unwrap().parse().unwrap();
+        let sell: f32 = mark["sell_quantity"].as_str().unwrap().parse().unwrap();
+        assert_eq!(areas[0] > 0.0, buy > 0.0);
+        assert_eq!(areas[1] > 0.0, sell > 0.0);
+        assert!((areas[0] / areas.iter().sum::<f32>() - buy / (buy + sell)).abs() < 0.005);
+    }
+    circles
+}
+
 /// The layer call, published execution facts and one regional paint agree.
 /// Hiding Tape leaves FLOW active; disabling native mode restores ordinary bubbles.
 #[test]
@@ -366,14 +467,16 @@ fn the_bubbles_switch_publishes_regional_flow_independently_of_tape_visibility()
         summary_marks(&frame).is_empty(),
         "the legacy summary is suppressed"
     );
-    let divider = app
-        .active_tab()
+    app.active_tab()
         .flow_pane
         .frame
         .lane_divider_x
         .expect("the tape beside the candles");
-    let beside = other_discs_left_of(&frame, divider);
-    assert!(beside > 0, "regional marks are painted over the history");
+    let beside = assert_regional_circles(&app, &frame, &regional);
+    assert!(
+        regional_labels(&frame).is_empty(),
+        "regional quantities are passive hover detail"
+    );
 
     // Asking for the baseline layer too cannot duplicate the regional paint.
     let layer = set_layer(&mut app, &mut cockpit, "candle_aggression", true);
@@ -385,7 +488,7 @@ fn the_bubbles_switch_publishes_regional_flow_independently_of_tape_visibility()
     );
     assert!(summary_marks(&duplicate).is_empty());
     assert_eq!(
-        other_discs_left_of(&duplicate, divider),
+        assert_regional_circles(&app, &duplicate, &regional),
         beside,
         "one regional paint, never two"
     );
@@ -403,23 +506,28 @@ fn the_bubbles_switch_publishes_regional_flow_independently_of_tape_visibility()
         "bubbles off draws nothing"
     );
     assert!(
-        other_discs_left_of(&frame, divider) < beside,
+        regional_circles(&app, &frame).is_empty(),
         "bubbles off removes regional paint"
+    );
+    assert!(
+        regional_labels(&frame).is_empty(),
+        "Bubbles switch removes annotations too"
     );
 
     // Tape visibility is independent: its hidden lane still leaves regional FLOW.
     set_layer(&mut app, &mut cockpit, "tape_chart", false);
     fit_flow_fixture(&mut app);
-    let right = app.active_tab().flow_pane.frame.chart_rect.unwrap().right();
-    let without = other_discs_left_of(&settled_frame(&mut app, &ctx), right);
+    let hidden_off = settled_frame(&mut app, &ctx);
+    assert!(regional_circles(&app, &hidden_off).is_empty());
     let layer = set_layer(&mut app, &mut cockpit, "bubbles", true);
     assert_eq!(layer["effective"], true, "{layer}");
     let frame = settled_flow_frame(&mut app, &ctx);
-    assert_complete_flow_fixture(&mut app, &mut observer);
+    let hidden = assert_complete_flow_fixture(&mut app, &mut observer);
     assert!(summary_marks(&frame).is_empty());
+    assert_regional_circles(&app, &frame, &hidden);
     assert!(
-        other_discs_left_of(&frame, right) > without,
-        "regional FLOW remains painted with the tape hidden"
+        regional_labels(&frame).is_empty(),
+        "hidden Tape does not add automatic quantity boxes"
     );
     set_layer(&mut app, &mut cockpit, "bubbles", false);
     // Native-mode controls remain gated by the Tape lane's own visibility.
@@ -427,13 +535,19 @@ fn the_bubbles_switch_publishes_regional_flow_independently_of_tape_visibility()
     set_layer(&mut app, &mut cockpit, "native_tape", false);
     set_layer(&mut app, &mut cockpit, "tape_chart", false);
     app.active_tab_mut().flow_pane.viewport.set_px_per_bar(8.0);
-    let ordinary_off = other_discs_left_of(&settled_frame(&mut app, &ctx), right);
+    let ordinary_off = settled_frame(&mut app, &ctx);
+    let right = app.active_tab().flow_pane.frame.chart_rect.unwrap().right();
+    let ordinary_off = other_discs_left_of(&ordinary_off, right);
     set_layer(&mut app, &mut cockpit, "bubbles", true);
     let ordinary = settled_frame(&mut app, &ctx);
     assert_eq!(flow_snapshot(&mut app, &mut observer), Value::Null);
+    assert!(regional_circles(&app, &ordinary).is_empty());
     assert!(
         other_discs_left_of(&ordinary, right) > ordinary_off,
         "explicitly disabling native mode restores ordinary bubbles"
     );
     disable_test_gateway(&mut app, &ctx);
 }
+
+#[path = "flow_candle_paint_tests.rs"]
+mod flow_candle_paint_tests;

@@ -6,6 +6,8 @@ use crate::{BubbleStyle, LiveLaneStyle};
 use quantick_engine::Trade;
 use rust_decimal::Decimal;
 use std::sync::Arc;
+mod reading;
+pub use reading::caption_text;
 mod source;
 pub use source::{FlowCoverage, FlowTapeSource};
 mod stream;
@@ -17,6 +19,11 @@ pub use stream::{
 /// Retained worker cache bound, independent of per-frame source admission.
 /// The readback reports missing coverage if a larger source exhausts it.
 pub const MAX_FLOW_EXECUTIONS: usize = 2_000_000;
+
+// Merges may pool a local time/price region, but may not walk along an entire swing.
+// An indivisible native cell wider than this remains alone; it is never split or lost.
+const FLOW_MERGE_WIDTH_PX: f64 = 48.0;
+const FLOW_MERGE_HEIGHT_PX: f64 = 32.0;
 
 /// Production uses one common reference from the final visible regional groups.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -111,21 +118,29 @@ pub struct FlowTapeDot {
     pub opening_capped: bool,
 }
 impl FlowTapeDot {
-    /// Actual buy/sell disc radii under the region's common area scale and cap.
-    pub fn side_radii(&self) -> (f32, f32) {
+    /// Exact sides converted only at the geometry boundary, without a Decimal division floor.
+    pub fn side_shares(&self) -> (f64, f64) {
         use rust_decimal::prelude::ToPrimitive as _;
         let total = self.mark.quantity.to_f64().unwrap_or_default();
-        let radius = |quantity: Decimal| {
+        let share = |quantity: Decimal| {
             if quantity <= Decimal::ZERO || total <= 0.0 {
-                return 0.0;
+                0.0
+            } else {
+                quantity.to_f64().unwrap_or_default() / total
             }
-            // Convert the exact quantities at the geometry boundary. Dividing
-            // in Decimal first could round a positive tiny share down to zero.
-            self.radius * (quantity.to_f64().unwrap_or_default() / total).sqrt() as f32
         };
         (
-            radius(self.mark.buy_quantity),
-            radius(self.mark.quantity - self.mark.buy_quantity),
+            share(self.mark.buy_quantity),
+            share(self.mark.quantity - self.mark.buy_quantity),
+        )
+    }
+
+    /// Equivalent radii of the buy/sell sector areas; both sectors share the gross circle.
+    pub fn side_radii(&self) -> (f32, f32) {
+        let (buy, sell) = self.side_shares();
+        (
+            self.radius * buy.sqrt() as f32,
+            self.radius * sell.sqrt() as f32,
         )
     }
 }
@@ -153,8 +168,31 @@ pub struct FlowTapeFrame {
     pub dots: Vec<FlowTapeDot>,
 }
 
+/// Bounds of original source positions in logical pixels, never centroid bounds.
+#[derive(Clone, Copy)]
+struct FlowHull {
+    left: f64,
+    right: f64,
+    top: f64,
+    bottom: f64,
+}
+impl FlowHull {
+    fn union(self, other: Self) -> Self {
+        Self {
+            left: self.left.min(other.left),
+            right: self.right.max(other.right),
+            top: self.top.min(other.top),
+            bottom: self.bottom.max(other.bottom),
+        }
+    }
+    fn within_merge_limits(self) -> bool {
+        self.right - self.left <= FLOW_MERGE_WIDTH_PX
+            && self.bottom - self.top <= FLOW_MERGE_HEIGHT_PX
+    }
+}
 struct Group {
     moment: TapeMoment,
+    hull: FlowHull,
     first_ordinal: usize,
     members: FlowMembers,
     position_quantity: Decimal,
@@ -193,12 +231,16 @@ impl MergeDisc for Group {
         // painted radii are calculated only after regional quantities are known.
         bubbles.max_radius
     }
+    fn permits_merge(&self, other: &Self) -> bool {
+        self.hull.union(other.hull).within_merge_limits()
+    }
     fn absorb(&mut self, mut other: Self, right_x: f64) {
         // The collision frontier often folds an old large group into a new tiny
         // group. Keep the larger allocation, avoiding quadratic member copying.
         if self.members.len() < other.members.len() {
             std::mem::swap(self, &mut other);
         }
+        self.hull = self.hull.union(other.hull);
         self.first_ordinal = self.first_ordinal.min(other.first_ordinal);
         self.position_quantity += other.position_quantity;
         self.first_slot = self.first_slot.min(other.first_slot);
@@ -270,7 +312,7 @@ fn finish_groups(
     };
     let mut off_axis_executions = 0;
     let mut offscreen_executions = 0;
-    let groups = groups
+    let (groups, mut standalone): (Vec<_>, Vec<_>) = groups
         .into_iter()
         .filter(|group| {
             if !(0.0..=1.0).contains(&group.y()) {
@@ -284,8 +326,10 @@ fn finish_groups(
             }
             true
         })
-        .collect::<Vec<_>>();
-    let (groups, _) = collide(
+        // Oversized native cells cannot merge. Keep them out of the neighbour
+        // index, where near-identical centroids would cause quadratic rejection.
+        .partition(|group| group.hull.within_merge_limits());
+    let (mut groups, _) = collide(
         groups,
         sizing,
         &bubbles,
@@ -294,6 +338,7 @@ fn finish_groups(
         Decimal::ZERO,
         false,
     );
+    groups.append(&mut standalone);
     let Some(full_max) = groups.iter().map(Group::quantity).max() else {
         return (
             Vec::new(),

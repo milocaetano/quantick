@@ -97,7 +97,7 @@
         },
         "buy_radius_px": {
           "$ref": "#/$defs/CanonicalDecimal",
-          "description": "Actual buy disc radius, zero when no buy quantity is present."
+          "description": "Radius of a disc with the same area as the buy sector; not a separate painted disc."
         },
         "candle_position": {
           "$ref": "#/$defs/CanonicalDecimal"
@@ -145,14 +145,14 @@
         },
         "radius_px": {
           "$ref": "#/$defs/CanonicalDecimal",
-          "description": "Equivalent gross-area radius; not either side's radius or the pair's extent."
+          "description": "Actual painted circle radius; gross quantity determines its area."
         },
         "sell_quantity": {
           "$ref": "#/$defs/CanonicalDecimal"
         },
         "sell_radius_px": {
           "$ref": "#/$defs/CanonicalDecimal",
-          "description": "Actual sell disc radius, zero when no sell quantity is present."
+          "description": "Radius of a disc with the same area as the sell sector; not a separate painted disc."
         },
         "trade_count": {
           "$ref": "#/$defs/WireU64"
