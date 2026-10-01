@@ -188,6 +188,7 @@ impl ChartPane {
                     }),
                 );
                 renderers.candles(&mut candle_pass);
+                flow.regional_perimeters(self.orderflow.as_ref());
             }
             history.overlay(&self.indicators);
         }

@@ -105,6 +105,22 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
         egui::Shape::Mesh(mesh) if circles.contains(mesh))
         })
         .unwrap();
+    let config = app.active_tab().tape().cached_config();
+    let palette = crate::orderflow_render::theme_bubble_rgb(config.theme);
+    let rim_colours = [
+        config.bubbles.buy_color.unwrap_or(palette.buy),
+        config.bubbles.sell_color.unwrap_or(palette.sell),
+    ]
+    .map(|[r, g, b]| egui::Color32::from_rgb(r, g, b));
+    let first_rim = output
+        .shapes
+        .iter()
+        .position(|shape| {
+            matches!(&shape.shape, egui::Shape::Mesh(mesh)
+            if !mesh.vertices.is_empty()
+                && mesh.vertices.iter().all(|vertex| rim_colours.contains(&vertex.color)))
+        })
+        .expect("foreground regional perimeter");
     let colours = [
         egui::Color32::from_rgba_unmultiplied(231, 41, 177, 153),
         egui::Color32::from_rgba_unmultiplied(19, 73, 223, 76),
@@ -120,6 +136,10 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
         assert!(
             bodies[0].0 > last_circle,
             "regional circles precede the normal filled candle"
+        );
+        assert!(
+            bodies[0].0 < first_rim,
+            "only the inward perimeter follows configured candle bodies"
         );
         let rect = bodies[0].1;
         let outlines = output

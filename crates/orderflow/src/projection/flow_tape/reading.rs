@@ -42,7 +42,9 @@ impl FlowTapeFrame {
             ));
         }
         if dot.opening_capped {
-            rows.push("Opening volume included; circle area capped.".into());
+            rows.push(
+                "Opening volume included; dashed hollow marker is capped, not proportional.".into(),
+            );
         } else if self.scale_basis == FlowScaleBasis::OpeningOnlyFallback {
             rows.push("Only opening volume visible; using full volume for scale.".into());
         } else if self.opening_exclusion_effective {
@@ -111,6 +113,24 @@ pub fn caption_text(
     if let Some(frame) = frame {
         if frame.ineligible_executions > 0 {
             hints.push(format!("{} records excluded", frame.ineligible_executions));
+        }
+        let (count, opening, total) = frame.dots.iter().filter(|dot| dot.opening_capped).fold(
+            (0, Decimal::ZERO, Decimal::ZERO),
+            |(count, opening, total), dot| {
+                (
+                    count + 1,
+                    opening.saturating_add(dot.opening_quantity),
+                    total.saturating_add(dot.mark.quantity),
+                )
+            },
+        );
+        if count > 0 {
+            hints.push(format!(
+                "{} dashed capped regions: total {}, recorded opening {} (not proportional)",
+                count,
+                total.normalize(),
+                opening.normalize()
+            ));
         }
         if frame.opening_exclusion_effective {
             hints.push("First recorded burst excluded from scale".to_owned());

@@ -277,6 +277,22 @@ impl<'a> FlowFrame<'a> {
         }
     }
 
+    /// Only the earned inner circumference crosses the configured candles.
+    pub(super) fn regional_perimeters(&self, owner: Option<&OrderflowView>) {
+        if let Some(owner) = owner
+            && let Some(frame) = owner.flow_execution_frame()
+            && let Some(center) = self.execution_centers()
+        {
+            crate::orderflow_render::draw_flow_perimeters(
+                self.painter,
+                self.rect.with_max_x(self.rect.right() - self.lane_width),
+                frame,
+                owner.cached_config(),
+                center,
+            );
+        }
+    }
+
     /// Native Tape and ordinary aggressions retain their original foreground order.
     pub(super) fn aggressions(&self, owner: Option<&OrderflowView>) {
         if let Some(owner) = owner

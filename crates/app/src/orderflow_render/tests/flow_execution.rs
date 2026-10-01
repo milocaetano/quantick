@@ -189,3 +189,22 @@ fn circle_edge_visibility_and_hit_testing_share_exact_geometry() {
         assert!(disc.hit_distance(history, history.clamp(center)).is_none());
     }
 }
+
+#[test]
+fn capped_opening_has_no_proportional_fill_or_footprint_backing() {
+    let (mut frame, _) = painted_region(100, 0);
+    frame.dots[0].opening_capped = true;
+    let ctx = egui::Context::default();
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        draw_flow_executions(
+            &ctx.layer_painter(egui::LayerId::background()),
+            egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(100.0, 100.0)),
+            0.0,
+            &frame,
+            &HeatmapConfig::default(),
+            Some(egui::Color32::BLACK),
+            |_| Some(egui::pos2(50.0, 50.0)),
+        );
+    });
+    assert!(output.shapes.is_empty());
+}

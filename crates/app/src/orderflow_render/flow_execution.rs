@@ -53,7 +53,7 @@ pub(crate) fn draw_flow_executions(
     let clip = painter.with_clip_rect(history);
     let palette = super::palette_for_theme(config.theme);
     let colors = BubbleColors::resolve(&palette, &config.bubbles);
-    for dot in &frame.dots {
+    for dot in frame.dots.iter().filter(|dot| !dot.opening_capped) {
         let Some(disc) = center(dot)
             .and_then(|at| flow_disc(dot, at))
             .filter(|disc| disc.visible(history))
