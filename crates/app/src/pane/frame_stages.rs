@@ -218,7 +218,7 @@ impl<'a> FlowFrame<'a> {
                         self.inverted,
                     ),
                 );
-                history.expand(dot.radius).contains(point).then_some(point)
+                Some(point)
             },
         )
     }
@@ -267,7 +267,6 @@ impl<'a> FlowFrame<'a> {
                 self.rect,
                 self.lane_width,
                 frame,
-                self.background,
                 owner.cached_config(),
                 center,
             );

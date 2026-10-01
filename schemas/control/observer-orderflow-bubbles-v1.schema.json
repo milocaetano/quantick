@@ -95,6 +95,10 @@
         "buy_quantity": {
           "$ref": "#/$defs/CanonicalDecimal"
         },
+        "buy_radius_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Actual buy disc radius, zero when no buy quantity is present."
+        },
         "candle_position": {
           "$ref": "#/$defs/CanonicalDecimal"
         },
@@ -140,10 +144,15 @@
           "$ref": "#/$defs/CanonicalDecimal"
         },
         "radius_px": {
-          "$ref": "#/$defs/CanonicalDecimal"
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Equivalent gross-area radius; not either side's radius or the pair's extent."
         },
         "sell_quantity": {
           "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "sell_radius_px": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Actual sell disc radius, zero when no sell quantity is present."
         },
         "trade_count": {
           "$ref": "#/$defs/WireU64"
@@ -165,6 +174,8 @@
         "sell_quantity",
         "trade_count",
         "radius_px",
+        "buy_radius_px",
+        "sell_radius_px",
         "opening_quantity",
         "opening_capped"
       ],

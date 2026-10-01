@@ -82,6 +82,23 @@ fn wire(frame: &FlowTapeFrame, progress: FlowProgress) -> Value {
 }
 
 #[test]
+fn paired_radii_read_back_each_actual_side_and_the_equivalent_gross_area() {
+    for (buy, sell) in [(51, 49), (100, 0), (0, 100)] {
+        let trades = [source_trade(0, 100, buy), source_trade(1, 100, sell)];
+        let mut frame = projected(&trades, 2, 1.0, 1.0);
+        frame.dots[0].mark.buy_share = 0.0;
+        let value = wire(&frame, settled(&frame));
+        let mark = &value["marks"][0];
+        let radius = |field: &str| mark[field].as_str().unwrap().parse::<f64>().unwrap();
+        assert_eq!(radius("radius_px"), 7.0);
+        assert!((radius("buy_radius_px").powi(2) - 49.0 * buy as f64 / 100.0).abs() < 0.00001);
+        assert!((radius("sell_radius_px").powi(2) - 49.0 * sell as f64 / 100.0).abs() < 0.00001);
+        assert_eq!(radius("buy_radius_px") == 0.0, buy == 0);
+        assert_eq!(radius("sell_radius_px") == 0.0, sell == 0);
+    }
+}
+
+#[test]
 fn mark_page_boundary_keeps_full_frame_totals_and_reports_only_omitted_rows() {
     for (count, buy, sell, reference) in [(256, "128", "128", "1"), (257, "135", "128", "7")] {
         let trades = (0..count)

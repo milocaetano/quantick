@@ -50,6 +50,8 @@ pub struct FlowTapeView {
     /// Actual fractional candle-coordinate viewport; slots include admission overscan.
     pub clip_left: Decimal,
     pub clip_right: Decimal,
+    /// Width of the admission slot span (`end_slot - first_slot`) at the current zoom.
+    /// This includes overscan; `clip_left/right` separately describe the painted viewport.
     pub width_px: f32,
     pub height_px: f32,
     pub prices: PriceWindow,
@@ -104,8 +106,28 @@ pub struct FlowTapeDot {
     pub end_slot: usize,
     pub opening_quantity: Decimal,
     pub native_cells: usize,
+    /// Equivalent gross-area radius: buy_radius² + sell_radius² = radius².
     pub radius: f32,
     pub opening_capped: bool,
+}
+impl FlowTapeDot {
+    /// Actual buy/sell disc radii under the region's common area scale and cap.
+    pub fn side_radii(&self) -> (f32, f32) {
+        use rust_decimal::prelude::ToPrimitive as _;
+        let total = self.mark.quantity.to_f64().unwrap_or_default();
+        let radius = |quantity: Decimal| {
+            if quantity <= Decimal::ZERO || total <= 0.0 {
+                return 0.0;
+            }
+            // Convert the exact quantities at the geometry boundary. Dividing
+            // in Decimal first could round a positive tiny share down to zero.
+            self.radius * (quantity.to_f64().unwrap_or_default() / total).sqrt() as f32
+        };
+        (
+            radius(self.mark.buy_quantity),
+            radius(self.mark.quantity - self.mark.buy_quantity),
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

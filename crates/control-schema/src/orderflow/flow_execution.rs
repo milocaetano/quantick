@@ -107,7 +107,12 @@ pub struct FlowExecutionMark {
     pub buy_quantity: CanonicalDecimal,
     pub sell_quantity: CanonicalDecimal,
     pub trade_count: WireU64,
+    /// Equivalent gross-area radius; not either side's radius or the pair's extent.
     pub radius_px: CanonicalDecimal,
+    /// Actual buy disc radius, zero when no buy quantity is present.
+    pub buy_radius_px: CanonicalDecimal,
+    /// Actual sell disc radius, zero when no sell quantity is present.
+    pub sell_radius_px: CanonicalDecimal,
     pub opening_quantity: CanonicalDecimal,
     pub opening_capped: bool,
 }
@@ -172,6 +177,7 @@ impl From<(&FlowTapeFrame, FlowProgress)> for FlowExecutionSnapshot {
 impl From<&FlowTapeDot> for FlowExecutionMark {
     fn from(dot: &FlowTapeDot) -> Self {
         let mark = &dot.mark;
+        let (buy_radius, sell_radius) = dot.side_radii();
         Self {
             members: dot
                 .members
@@ -198,6 +204,12 @@ impl From<&FlowTapeDot> for FlowExecutionMark {
             sell_quantity: canonical_decimal(mark.quantity - mark.buy_quantity),
             trade_count: wire_usize(mark.trade_count),
             radius_px: canonical_decimal(Decimal::from_f32_retain(dot.radius).unwrap_or_default()),
+            buy_radius_px: canonical_decimal(
+                Decimal::from_f32_retain(buy_radius).unwrap_or_default(),
+            ),
+            sell_radius_px: canonical_decimal(
+                Decimal::from_f32_retain(sell_radius).unwrap_or_default(),
+            ),
             opening_quantity: canonical_decimal(dot.opening_quantity),
             opening_capped: dot.opening_capped,
         }

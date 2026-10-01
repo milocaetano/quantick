@@ -1,4 +1,5 @@
 //! Passive inspection of the FLOW regions actually painted this frame.
+use super::flow_execution::flow_discs;
 use crate::{paper_chrome::fmt_decimal, theme, timezone::TzOffset};
 use eframe::egui;
 use quantick_civil::CivilDate;
@@ -83,23 +84,13 @@ fn hit_region(
 ) -> Option<&FlowTapeDot> {
     dots.iter()
         .filter_map(|dot| {
-            if !dot.radius.is_finite() || dot.radius <= 0.0 {
-                return None;
-            }
             let at = center(dot)?;
-            if !at.x.is_finite() || !at.y.is_finite() {
-                return None;
-            }
-            let edge = egui::pos2(
-                at.x.clamp(history.left(), history.right()),
-                at.y.clamp(history.top(), history.bottom()),
-            );
-            // A wholly clipped disc is never inspectable through the hit padding.
-            if at.distance_sq(edge) > dot.radius * dot.radius {
-                return None;
-            }
-            let distance = at.distance_sq(pointer);
-            (distance <= dot.radius.max(6.0).powi(2)).then_some((distance, dot))
+            let distance = flow_discs(dot, at)
+                .into_iter()
+                .flatten()
+                .filter_map(|disc| disc.hit_distance(history, pointer))
+                .min_by(f32::total_cmp)?;
+            Some((distance, dot))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .map(|(_, dot)| dot)
@@ -110,6 +101,7 @@ fn details(dot: &FlowTapeDot, view: &FlowInspection<'_>) -> Vec<String> {
     let dates = CivilDate::from_ms(mark.first_timestamp_ms, view.tz)
         != CivilDate::from_ms(mark.last_timestamp_ms, view.tz);
     let mut rows = vec![
+        "Paired at the pooled regional centre.".to_owned(),
         format!(
             "Buy {} · Sell {} · Total {}",
             fmt_decimal(mark.buy_quantity),

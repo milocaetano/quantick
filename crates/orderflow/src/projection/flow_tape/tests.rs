@@ -483,6 +483,9 @@ fn automatic_mixed_opening_cap_keeps_gross_facts_and_toggle_keeps_membership() {
     assert_eq!(mixed.mark.quantity, Decimal::from(1900));
     assert!(mixed.opening_capped);
     assert_eq!(mixed.radius, 7.0);
+    let (buy_radius, sell_radius) = mixed.side_radii();
+    assert!((buy_radius.powi(2) - 49.0 * 100.0 / 1900.0).abs() < 0.00001);
+    assert!((sell_radius.powi(2) - 49.0 * 1800.0 / 1900.0).abs() < 0.00001);
     let ordinary = excluded
         .dots
         .iter()
@@ -530,4 +533,17 @@ fn padded_source_outside_actual_fractional_clip_does_not_set_visible_reference()
     assert_eq!(frame.omitted_executions, 0);
     assert_eq!(frame.dots.len(), 1);
     assert_eq!(frame.dots[0].members.iter().next().unwrap().ordinal, 1);
+}
+
+#[test]
+fn side_radii_keep_a_positive_decimal_minority_when_the_cached_share_is_zero() {
+    let mut projected = frame(&[trade(1000, 100, 100, Side::Buy)], 200.0);
+    let dot = &mut projected.dots[0];
+    dot.mark.quantity = Decimal::from(100_000_000_000_000_000_000_u128);
+    dot.mark.buy_quantity = Decimal::new(1, 20);
+    dot.mark.buy_share = 0.0;
+    let (buy, sell) = dot.side_radii();
+    assert!(buy > 0.0 && sell > 0.0);
+    assert!((f64::from(buy) / (f64::from(dot.radius) * 1e-20) - 1.0).abs() < 0.000001);
+    assert_eq!(sell, dot.radius);
 }

@@ -386,16 +386,6 @@ pub(super) fn draw_bubble(
     draw_bubble_with_light_offset(painter, mark, bubbles, colors, SPHERE_LIGHT_OFFSET);
 }
 
-/// FLOW's uniform pies use a geometric centre so coloured areas encode quantities.
-pub(super) fn draw_centered_bubble(
-    painter: &egui::Painter,
-    mark: BubbleMark,
-    bubbles: &BubbleStyle,
-    colors: &BubbleColors,
-) {
-    draw_bubble_with_light_offset(painter, mark, bubbles, colors, 0.0);
-}
-
 fn draw_bubble_with_light_offset(
     painter: &egui::Painter,
     mark: BubbleMark,
