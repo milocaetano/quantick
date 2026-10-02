@@ -105,22 +105,16 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
         egui::Shape::Mesh(mesh) if circles.contains(mesh))
         })
         .unwrap();
-    let config = app.active_tab().tape().cached_config();
-    let palette = crate::orderflow_render::theme_bubble_rgb(config.theme);
     let rim_colours = [
-        config.bubbles.buy_color.unwrap_or(palette.buy),
-        config.bubbles.sell_color.unwrap_or(palette.sell),
-    ]
-    .map(|[r, g, b]| egui::Color32::from_rgb(r, g, b));
-    let first_rim = output
-        .shapes
-        .iter()
-        .position(|shape| {
-            matches!(&shape.shape, egui::Shape::Mesh(mesh)
-            if !mesh.vertices.is_empty()
-                && mesh.vertices.iter().all(|vertex| rim_colours.contains(&vertex.color)))
-        })
-        .expect("foreground regional perimeter");
+        egui::Color32::from_rgb(112, 185, 244),
+        egui::Color32::from_rgb(232, 175, 99),
+    ];
+    assert!(
+        !output.shapes.iter().any(|shape| matches!(&shape.shape,
+        egui::Shape::Mesh(mesh) if !mesh.vertices.is_empty()
+            && mesh.vertices.iter().all(|vertex| rim_colours.contains(&vertex.color)))),
+        "ordinary FLOW regions have no opaque foreground rims"
+    );
     let colours = [
         egui::Color32::from_rgba_unmultiplied(231, 41, 177, 153),
         egui::Color32::from_rgba_unmultiplied(19, 73, 223, 76),
@@ -136,10 +130,6 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
         assert!(
             bodies[0].0 > last_circle,
             "regional circles precede the normal filled candle"
-        );
-        assert!(
-            bodies[0].0 < first_rim,
-            "only the inward perimeter follows configured candle bodies"
         );
         let rect = bodies[0].1;
         let outlines = output
@@ -301,4 +291,73 @@ fn assert_footprint_layering(
     }).collect();
     assert_eq!(outlines.len(), 4, "each closed candle outline paints once");
     assert!(outlines.iter().all(|index| *index > last_region));
+}
+
+#[test]
+fn flow_legend_keeps_native_swatches_in_tape_and_preserves_depth_and_hide_switches() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    native_split(&mut app);
+    let keys = |output: &egui::FullOutput| {
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| {
+                let egui::Shape::Text(text) = &shape.shape else {
+                    return None;
+                };
+                let label = text.galley.job.text.clone();
+                ([
+                    "Buy",
+                    "Sell",
+                    "buy aggression",
+                    "sell aggression",
+                    "liquidity",
+                ]
+                .contains(&label.as_str()))
+                .then_some((label, text.pos))
+            })
+            .collect::<Vec<_>>()
+    };
+    let frame = settled_flow_frame(&mut app, &ctx);
+    let pane = &app.active_tab().flow_pane.frame;
+    let divider = pane.lane_divider_x.unwrap();
+    let top = pane.chart_rect.unwrap().top();
+    let shown: Vec<_> = keys(&frame)
+        .into_iter()
+        .filter(|(label, _)| label != "liquidity")
+        .collect();
+    assert_eq!(
+        shown.len(),
+        2,
+        "only compact native Buy/Sell aggression keys"
+    );
+    assert!(
+        shown
+            .iter()
+            .all(|(label, pos)| ["Buy", "Sell"].contains(&label.as_str())
+                && pos.x > divider
+                && pos.y >= top
+                && pos.y < top + 22.0)
+    );
+    app.active_tab_mut().tape_mut().set_enabled(true, 10);
+    let depth = settled_flow_frame(&mut app, &ctx);
+    assert!(
+        keys(&depth)
+            .iter()
+            .any(|(label, pos)| label == "liquidity" && pos.x < divider)
+    );
+    app.active_tab_mut().tape_mut().set_legend_visible(false);
+    assert!(keys(&settled_flow_frame(&mut app, &ctx)).is_empty());
+    app.active_tab_mut().tape_mut().set_legend_visible(true);
+    app.active_tab_mut().flow_pane.set_layer_visible(
+        ChartLayer::TapeChart,
+        false,
+        &mut Default::default(),
+    );
+    assert!(
+        keys(&settled_flow_frame(&mut app, &ctx))
+            .iter()
+            .all(|(label, _)| label != "Buy" && label != "Sell")
+    );
 }

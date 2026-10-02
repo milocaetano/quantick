@@ -17,3 +17,5 @@ pub mod source_drain_plan;
 pub mod stage_registry;
 
 pub mod tab_drain_plan;
+
+pub mod tape_drag;

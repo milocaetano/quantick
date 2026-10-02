@@ -332,14 +332,12 @@ fn other_discs_left_of(output: &egui::FullOutput, x: f32) -> usize {
         .count()
 }
 
-fn regional_colours(app: &QuantickApp) -> [egui::Color32; 2] {
-    let config = app.active_tab().tape().cached_config();
-    let theme = crate::orderflow_render::theme_bubble_rgb(config.theme);
+fn regional_colours(_app: &QuantickApp) -> [egui::Color32; 2] {
     [
-        config.bubbles.buy_color.unwrap_or(theme.buy),
-        config.bubbles.sell_color.unwrap_or(theme.sell),
+        egui::Color32::from_rgb(112, 185, 244),
+        egui::Color32::from_rgb(232, 175, 99),
     ]
-    .map(|[r, g, b]| egui::Color32::from_rgb(r, g, b).gamma_multiply(0.5))
+    .map(|color| color.gamma_multiply(0.85))
 }
 
 /// Exact translucent sector meshes in history, excluding candle outlines and Tape.

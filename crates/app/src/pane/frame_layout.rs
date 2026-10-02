@@ -11,9 +11,7 @@
 
 use eframe::egui;
 use quantick_engine::{Bar, BarFootprint};
-use rust_decimal::prelude::ToPrimitive as _;
 
-use crate::chart;
 use crate::orderflow_view::LiveLane;
 use crate::plot_area::PlotAreas;
 use crate::price_view::PriceView;
@@ -131,7 +129,8 @@ impl FrameLayout {
 
     /// The visible slices and the price scale, as the [`DrawFrame`] every
     /// painter reads, plus the auto-fitted range the next frame's input
-    /// handler converts pixels with. `None` when nothing yields a scale.
+    /// handler converts pixels with and the span its gutter drag flips
+    /// against. `None` when nothing yields a scale.
     /// The native tape fits `tape_range`, beside the candles too; without
     /// it the candles fit their own bars.
     pub(super) fn resolve<'a>(
@@ -142,7 +141,7 @@ impl FrameLayout {
         last_auto_range: Option<(f64, f64)>,
         price_view: &PriceView,
         canvas_background: egui::Color32,
-    ) -> Option<(DrawFrame<'a>, (f64, f64))> {
+    ) -> Option<(DrawFrame<'a>, (f64, f64), f64)> {
         let Series {
             prefix,
             closed,
@@ -177,28 +176,18 @@ impl FrameLayout {
         // indistinguishable from a hung app — which is exactly how the blank
         // frame after a rebuild read.
         let newest = partial.or_else(|| closed.last());
-        let auto_scale = if self.native_tape {
-            // The tape's prints and the last price, never a bar's range.
-            chart::tape_price_window(
-                tape_range,
-                newest.and_then(|bar| bar.close.to_f64()),
-                last_auto_range,
-                chart_rect.top(),
-                chart_rect.bottom(),
-                self.tape_padding_px,
-            )
-        } else {
-            chart::price_window(
-                visible_prefix.iter().chain(visible_state),
-                partial_visible,
-                None,
-                last_auto_range,
-                newest,
-                chart_rect.top(),
-                chart_rect.bottom(),
-            )
-        }?;
-        let auto_range = auto_scale.range();
+        let (auto_range, flip_span) = quantick_chart::price_axis_fit::PriceAxisFit {
+            native_tape: self.native_tape,
+            tape_range,
+            previous_auto: last_auto_range,
+            bounds: (chart_rect.top(), chart_rect.bottom()),
+            tape_padding_px: self.tape_padding_px,
+        }
+        .resolve(
+            visible_prefix.iter().chain(visible_state),
+            partial_visible,
+            newest,
+        )?;
         let scale = price_view.scale(auto_range, chart_rect.top(), chart_rect.bottom());
         let frame = DrawFrame {
             painter,
@@ -221,7 +210,7 @@ impl FrameLayout {
             canvas_background,
             cw,
         };
-        Some((frame, auto_range))
+        Some((frame, auto_range, flip_span))
     }
 }
 

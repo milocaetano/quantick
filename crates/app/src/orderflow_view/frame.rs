@@ -283,6 +283,31 @@ impl OrderflowView {
         let mut style =
             OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
         style.legend_top_inset = top_inset_px;
+        if self.flow_execution_replaces_history() && !style.live_lane.tape_only {
+            if lane_width_px > 0.0 {
+                let mut tape_style = style.clone();
+                tape_style.live_lane.tape_only = true;
+                // The left half of the Tape header leaves its status and switch clear.
+                let header = egui::Rect::from_min_size(
+                    egui::pos2(chart_rect.right() - lane_width_px + 6.0, chart_rect.top()),
+                    egui::vec2(
+                        (lane_width_px * 0.5 - 6.0).max(0.0),
+                        crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX,
+                    ),
+                );
+                let tape_layout = ProjectedLayout {
+                    chart_rect: header,
+                    ..layout
+                };
+                let _ = draw_compact_legend(
+                    painter,
+                    &RenderContext::new(&frame.projection, tape_layout, &tape_style),
+                );
+            }
+            // FLOW has its own unboxed palette key; retain the historical L2 key.
+            style.aggression_layer = false;
+            style.lane_aggression_layer = false;
+        }
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_compact_legend(painter, &context)
     }

@@ -32,32 +32,54 @@ impl ChartPane {
             scroll_taken,
         } = input;
         let (tape_only, native_tape) = self.tape_modes();
-        let divider = self.frame.lane_divider_x;
+        // Tape only has no divider to grab: its left edge is the canvas's.
+        let divider = self.frame.lane_divider_x.filter(|_| !tape_only);
         let on_divider = |position: egui::Pos2| {
             plot_area::gesture_hits_lane_divider(divider, position.x, LANE_HANDLE_HALF_WIDTH_PX)
         };
         let over_tape = |position: egui::Pos2| {
             native_tape && (tape_only || divider.is_some_and(|x| position.x > x))
         };
-        let (press, middle_down, delta, scroll) = ui.input(|i| {
+        let (press, pressed_at, travel, middle_down, delta, scroll) = ui.input(|i| {
             let p = &i.pointer;
+            let travel = p.latest_pos().zip(p.press_origin());
             (
                 p.press_origin(),
+                p.press_start_time(),
+                travel.map_or(egui::Vec2::ZERO, |(now, from)| now - from),
                 p.middle_down(),
                 p.delta(),
                 i.raw_scroll_delta.y,
             )
         });
+        // Over the tape the sideways part of a drag is its time, and only a
+        // drag that set off sideways may move it.
+        let side = |delta: egui::Vec2, tape: bool| {
+            let moves_time = !tape
+                || ui.ctx().data_mut(|data| {
+                    let key = chart.id.with("drag-moves-tape-time");
+                    let mut state = data
+                        .get_temp::<quantick_chart_interaction::tape_drag::TapeDrag>(key)
+                        .unwrap_or_default();
+                    let moves = state.moves_time(pressed_at, [travel.x, travel.y]);
+                    data.insert_temp(key, state);
+                    moves
+                });
+            if moves_time {
+                delta
+            } else {
+                egui::vec2(0.0, delta.y)
+            }
+        };
         // Primary only: the secondary drag is the quick range's
         // (`pane/quick_range.rs`), and the middle button pans below.
         if total > 0
-            && !tape_only
             && primary_free
             && chart.dragged_by(egui::PointerButton::Primary)
             && !chart.interact_pointer_pos().is_some_and(on_divider)
         {
             let tape = press.is_some_and(over_tape);
-            self.pan_canvas(chart.drag_delta(), total, tape);
+            self.pan_canvas(side(chart.drag_delta(), tape), total, tape);
         }
         // The middle button pans always, mid-placement included: a trader who
         // drops one end of a trend line must be able to go find the other.
@@ -66,11 +88,11 @@ impl ChartPane {
             .hover_pos()
             .filter(|position| area.contains(*position) && !on_divider(*position));
         if total > 0
-            && !tape_only
             && middle_down
             && let Some(position) = hover
         {
-            self.pan_canvas(delta, total, over_tape(press.unwrap_or(position)));
+            let tape = over_tape(press.unwrap_or(position));
+            self.pan_canvas(side(delta, tape), total, tape);
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         }
         // Not with a tool armed: two placement clicks are two anchors. Over
@@ -120,14 +142,9 @@ impl ChartPane {
             let span = TapeHorizontalGeometry::resolve(chart.right() - divider, height, bubbles);
             orderflow.pan_tape(delta.x, span.span_px);
         }
-        if let Some(auto) = self.frame.auto_range
-            && delta.y != 0.0
-            && height > 1.0
-        {
-            let (lo, hi) = self.price_view.resolve(auto);
-            let price_per_px = (hi - lo) / f64::from(height);
+        if let Some(auto) = self.frame.auto_range {
             self.price_view
-                .pan_screen(f64::from(delta.y), price_per_px, auto);
+                .pan_pixels(f64::from(delta.y), f64::from(height), auto);
         }
     }
 }

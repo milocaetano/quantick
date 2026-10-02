@@ -1,7 +1,7 @@
 //! FLOW silhouettes inside the earned radius, above candle bodies.
 use super::{
-    bubbles::{BubbleColors, sphere_segments},
-    flow_execution::{FlowDisc, flow_disc},
+    bubbles::sphere_segments,
+    flow_execution::{FLOW_BUY, FLOW_SELL, FlowDisc, flow_disc},
 };
 use eframe::egui::{
     self,
@@ -23,13 +23,11 @@ pub(crate) fn draw_flow_perimeters(
     painter: &egui::Painter,
     history: egui::Rect,
     frame: &FlowTapeFrame,
-    config: &HeatmapConfig,
+    _config: &HeatmapConfig,
     mut center: impl FnMut(&FlowTapeDot) -> Option<egui::Pos2>,
 ) {
     let clip = painter.with_clip_rect(history);
-    let palette = super::palette_for_theme(config.theme);
-    let colors = BubbleColors::resolve(&palette, &config.bubbles);
-    for dot in &frame.dots {
+    for dot in frame.dots.iter().filter(|dot| dot.opening_capped) {
         let Some(disc) = center(dot)
             .and_then(|at| flow_disc(dot, at))
             .filter(|disc| disc.visible(history))
@@ -39,7 +37,7 @@ pub(crate) fn draw_flow_perimeters(
         let (buy, sell) = dot.side_shares();
         let mut mesh = egui::Mesh::default();
         let mut angle = f64::from(super::PIE_START_ANGLE);
-        for (share, color) in [(buy, colors.buy), (sell, colors.sell)] {
+        for (share, color) in [(buy, FLOW_BUY), (sell, FLOW_SELL)] {
             let sweep = share * std::f64::consts::TAU;
             add_perimeter(&mut mesh, disc, angle, sweep, color, dot.opening_capped);
             angle += sweep;

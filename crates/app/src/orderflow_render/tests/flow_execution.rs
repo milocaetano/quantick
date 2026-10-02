@@ -98,8 +98,8 @@ fn translucent_circles_preserve_side_areas_without_cutoffs_or_inherited_dressing
             panic!("one centered sector mesh")
         };
         let colors = [
-            egui::Color32::GREEN.gamma_multiply(0.5),
-            egui::Color32::RED.gamma_multiply(0.5),
+            FLOW_BUY.gamma_multiply(FLOW_FILL_OPACITY),
+            FLOW_SELL.gamma_multiply(FLOW_FILL_OPACITY),
         ];
         let radius = frame.dots[0].radius;
         let mut areas = [0.0_f32; 2];
@@ -114,11 +114,9 @@ fn translucent_circles_preserve_side_areas_without_cutoffs_or_inherited_dressing
             let c = c.pos - a.pos;
             areas[side] += (b.x * c.y - b.y * c.x).abs() * 0.5;
         }
-        assert!(
-            mesh.vertices
-                .iter()
-                .all(|vertex| vertex.pos.distance(egui::pos2(50.0, 50.0)) <= radius + 0.00001)
-        );
+        assert!(mesh.vertices.iter().all(|vertex| {
+            vertex.pos.distance(egui::pos2(50.0, 50.0) + FLOW_OFFSET) <= radius + 0.00001
+        }));
         assert_eq!(areas[0] > 0.0, buy > 0);
         assert_eq!(areas[1] > 0.0, sell > 0);
         let total = areas.iter().sum::<f32>();
@@ -148,7 +146,7 @@ fn footprint_backing_is_opaque_and_exactly_the_earned_disc_before_unchanged_sect
         let egui::Shape::Circle(disc) = &backed[0] else {
             panic!("one exact-radius neutral disc precedes the sectors")
         };
-        assert_eq!(disc.center, egui::pos2(50.0, 50.0));
+        assert_eq!(disc.center, egui::pos2(50.0, 50.0) + FLOW_OFFSET);
         assert_eq!(disc.radius, frame.dots[0].radius);
         assert_eq!(disc.fill, background);
         assert_eq!(disc.fill.a(), 255);
@@ -165,7 +163,7 @@ fn circle_edge_visibility_and_hit_testing_share_exact_geometry() {
     let (frame, _) = painted_region(4593, 4594);
     let history = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0));
     for (x, pointer_x) in [(-10.0, 1.0), (110.0, 99.0)] {
-        let disc = flow_disc(&frame.dots[0], egui::pos2(x, 50.0)).unwrap();
+        let disc = flow_disc(&frame.dots[0], egui::pos2(x, 50.0) - FLOW_OFFSET).unwrap();
         assert!(disc.visible(history));
         assert!(
             disc.hit_distance(history, egui::pos2(pointer_x, 50.0))
@@ -181,7 +179,7 @@ fn circle_edge_visibility_and_hit_testing_share_exact_geometry() {
         egui::pos2(113.0, 50.0),
         egui::pos2(-10.0, -10.0),
     ] {
-        let disc = flow_disc(&frame.dots[0], center).unwrap();
+        let disc = flow_disc(&frame.dots[0], center - FLOW_OFFSET).unwrap();
         assert!(
             !disc.visible(history),
             "a bounding-box corner is not a circle intersection"
@@ -207,4 +205,80 @@ fn capped_opening_has_no_proportional_fill_or_footprint_backing() {
         );
     });
     assert!(output.shapes.is_empty());
+}
+
+#[test]
+fn common_offset_preserves_vectors_radii_and_inspects_the_painted_position() {
+    let (frame, _) = painted_region(90, 0);
+    let a = egui::pos2(30.0, 40.0);
+    let b = egui::pos2(60.0, 75.0);
+    let da = flow_disc(&frame.dots[0], a).unwrap();
+    let db = flow_disc(&frame.dots[0], b).unwrap();
+    assert_eq!(da.center, a + egui::vec2(-18.0, -18.0));
+    assert_eq!(db.center - da.center, b - a);
+    assert_eq!(da.radius, frame.dots[0].radius);
+    let history = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(100.0, 100.0));
+    assert_eq!(da.hit_distance(history, da.center), Some(0.0));
+    assert!(da.hit_distance(history, a).is_none());
+    let paint = |frame: &FlowTapeFrame| {
+        let ctx = egui::Context::default();
+        ctx.run(egui::RawInput::default(), |ctx| {
+            super::super::flow_perimeter::draw_flow_perimeters(
+                &ctx.layer_painter(egui::LayerId::background()),
+                history,
+                frame,
+                &HeatmapConfig::default(),
+                |_| Some(a),
+            )
+        })
+        .shapes
+    };
+    assert!(
+        paint(&frame).is_empty(),
+        "ordinary bubbles have no foreground perimeter"
+    );
+    let mut capped = frame;
+    capped.dots[0].opening_capped = true;
+    let shapes = paint(&capped);
+    assert_eq!(shapes.len(), 1, "opening exception remains distinct");
+    let egui::Shape::Mesh(mesh) = &shapes[0].shape else {
+        panic!("exception mesh")
+    };
+    assert!(
+        mesh.vertices
+            .iter()
+            .all(|vertex| vertex.pos.distance(da.center) <= da.radius + 0.00001)
+    );
+}
+
+#[test]
+fn hiding_flow_legend_keeps_offset_and_exception_facts_but_hides_colour_key() {
+    let (mut frame, _) = painted_region(100, 0);
+    frame.dots[0].opening_capped = true;
+    frame.dots[0].opening_quantity = 90.into();
+    let ctx = egui::Context::default();
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        flow_caption(
+            &ctx.layer_painter(egui::LayerId::background()),
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 100.0)),
+            0.0,
+            Some(&frame),
+            FlowProgress::default(),
+            false,
+        );
+    });
+    let texts = output
+        .shapes
+        .iter()
+        .filter_map(|shape| {
+            let egui::Shape::Text(text) = &shape.shape else {
+                return None;
+            };
+            Some(text.galley.job.text.as_str())
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(texts.contains("offset"));
+    assert!(texts.contains("dashed capped"));
+    assert!(!texts.contains("Buy") && !texts.contains("Sell"));
 }

@@ -103,6 +103,10 @@ fn details(dot: &FlowTapeDot, view: &FlowInspection<'_>) -> Vec<String> {
         view.side_inferred,
         fmt_decimal,
     );
+    rows[0] = format!(
+        "Symbol above-left of source; pooled price {}",
+        fmt_decimal(mark.price)
+    );
     rows.insert(
         3,
         format!(

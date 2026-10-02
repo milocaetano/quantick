@@ -1,5 +1,5 @@
 //! Compact history execution groups on the FLOW candle coordinate system.
-use super::bubbles::{BubbleColors, PIE_START_ANGLE, SphereShading, add_sector};
+use super::bubbles::{PIE_START_ANGLE, SphereShading, add_sector};
 use eframe::egui;
 use quantick_orderflow::{
     HeatmapConfig,
@@ -8,7 +8,12 @@ use quantick_orderflow::{
 use rust_decimal::Decimal;
 
 // Translucent regional area remains distinct while candle contours stay in front.
-const FLOW_FILL_OPACITY: f32 = 0.5;
+const FLOW_FILL_OPACITY: f32 = 0.85;
+// FLOW volume uses its own palette, distinct from candle direction and native Tape.
+pub(super) const FLOW_BUY: egui::Color32 = egui::Color32::from_rgb(112, 185, 244);
+pub(super) const FLOW_SELL: egui::Color32 = egui::Color32::from_rgb(232, 175, 99);
+// One translation preserves the execution path and every inter-region distance.
+const FLOW_OFFSET: egui::Vec2 = egui::vec2(-18.0, -18.0);
 
 #[derive(Clone, Copy)]
 pub(super) struct FlowDisc {
@@ -35,7 +40,7 @@ pub(super) fn flow_disc(dot: &FlowTapeDot, center: egui::Pos2) -> Option<FlowDis
         && dot.radius > 0.0
         && dot.mark.quantity > Decimal::ZERO)
         .then_some(FlowDisc {
-            center,
+            center: center + FLOW_OFFSET,
             radius: dot.radius,
         })
 }
@@ -45,14 +50,12 @@ pub(crate) fn draw_flow_executions(
     rect: egui::Rect,
     lane_width: f32,
     frame: &FlowTapeFrame,
-    config: &HeatmapConfig,
+    _config: &HeatmapConfig,
     backing: Option<egui::Color32>,
     mut center: impl FnMut(&FlowTapeDot) -> Option<egui::Pos2>,
 ) {
     let history = rect.with_max_x(rect.right() - lane_width);
     let clip = painter.with_clip_rect(history);
-    let palette = super::palette_for_theme(config.theme);
-    let colors = BubbleColors::resolve(&palette, &config.bubbles);
     for dot in frame.dots.iter().filter(|dot| !dot.opening_capped) {
         let Some(disc) = center(dot)
             .and_then(|at| flow_disc(dot, at))
@@ -68,7 +71,7 @@ pub(crate) fn draw_flow_executions(
         let (buy, sell) = dot.side_shares();
         let mut mesh = egui::Mesh::default();
         let mut angle = f64::from(PIE_START_ANGLE);
-        for (share, color) in [(buy, colors.buy), (sell, colors.sell)] {
+        for (share, color) in [(buy, FLOW_BUY), (sell, FLOW_SELL)] {
             if share <= 0.0 {
                 continue;
             }
@@ -98,14 +101,33 @@ pub(crate) fn flow_caption(
     progress: FlowProgress,
     legend_visible: bool,
 ) -> Option<egui::Rect> {
-    let text =
-        quantick_orderflow::projection::flow_tape::caption_text(frame, progress, legend_visible)?;
-    let galley = painter.layout(
-        text,
-        egui::FontId::proportional(10.0),
-        crate::theme::TEXT_MUTED,
-        (history.width() - 16.0).max(1.0),
-    );
+    let detail =
+        quantick_orderflow::projection::flow_tape::caption_text(frame, progress, legend_visible);
+    let mut job = egui::text::LayoutJob::default();
+    job.wrap.max_width = (history.width() - 16.0).max(1.0);
+    let mut append = |text: &str, color| {
+        job.append(
+            text,
+            0.0,
+            egui::TextFormat::simple(egui::FontId::proportional(10.0), color),
+        )
+    };
+    append("FLOW", crate::theme::TEXT_MUTED);
+    if legend_visible {
+        append(" \u{00b7} ", crate::theme::TEXT_MUTED);
+        append("Buy", FLOW_BUY);
+        append(" / ", crate::theme::TEXT_MUTED);
+        append("Sell", FLOW_SELL);
+    }
+    append(" \u{00b7} offset \u{2196}", crate::theme::TEXT_MUTED);
+    if let Some(detail) = detail {
+        job.append(
+            &format!(" | {detail}"),
+            0.0,
+            egui::TextFormat::simple(egui::FontId::proportional(10.0), crate::theme::TEXT_MUTED),
+        );
+    }
+    let galley = painter.layout_job(job);
     let rect = egui::Rect::from_min_size(egui::pos2(history.left() + 8.0, top), galley.size());
     painter
         .with_clip_rect(history)
