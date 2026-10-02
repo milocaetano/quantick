@@ -234,6 +234,8 @@ impl FlowTapeSource {
                 };
                 Group {
                     first_ordinal: cell.first_ordinal,
+                    support_reference: mark.quantity,
+                    support_radius_cache: None,
                     moment: TapeMoment::new(mark, f64::INFINITY),
                     hull,
                     members: FlowMembers {

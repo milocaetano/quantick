@@ -206,14 +206,23 @@ fn dense_bounded_source_cells_are_bounded_and_conserve_every_member() {
 }
 
 #[test]
-fn regional_support_combines_tiny_prints_without_a_painted_radius_floor() {
+fn tiny_prints_merge_only_when_their_earned_collision_discs_touch() {
     let trades = [
         trade(1000, 100, 1, Side::Buy),
         trade(1100, 100, 1, Side::Sell),
     ];
-    // Centres are ten pixels apart: far beyond their subpixel painted circles,
-    // but inside the same region at this zoom.
-    let regional = frame(&trades, 40.0);
+    // Ten pixels apart is inside the hull limit, but these subpixel discs
+    // must remain distinct rather than borrowing maximum collision reach.
+    let separated = frame(&trades, 40.0);
+    assert_eq!(separated.dots.len(), 2);
+    assert!(
+        separated
+            .dots
+            .iter()
+            .all(|dot| dot.mark.quantity == Decimal::ONE)
+    );
+    // At a quarter-pixel separation their earned collision discs touch.
+    let regional = frame(&trades, 1.0);
     assert_eq!(regional.dots.len(), 1);
     let dot = &regional.dots[0];
     assert_eq!(dot.mark.quantity, Decimal::from(2));

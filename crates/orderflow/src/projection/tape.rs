@@ -412,18 +412,19 @@ impl Neighbours {
         }
     }
 
-    /// The dots in the 3x3 cells around `(x, y)`, column by column, each
-    /// column from its top cell down: one ordered range per column.
-    fn candidates(&self, x: f64, y: f64) -> impl Iterator<Item = usize> + '_ {
-        let (x, y) = self.cell(x, y);
-        let (top, bottom) = (y.saturating_sub(1), y.saturating_add(1));
-        (-1..=1)
-            .filter_map(move |dx| x.checked_add(dx))
-            .flat_map(move |column| {
-                self.cells
-                    .range((column, top)..=(column, bottom))
-                    .flat_map(|(_, indices)| indices.iter().copied())
-            })
+    /// Cells intersecting the actual search box, column by column, each
+    /// column from its top cell down. Exact disc distance is checked by callers.
+    fn candidates(&self, x: f64, y: f64, reach: f64) -> impl Iterator<Item = usize> + '_ {
+        let (x, y) = self.geometry.point(x, y);
+        let left = ((x - reach) / self.span_px).floor() as i64;
+        let right = ((x + reach) / self.span_px).floor() as i64;
+        let top = ((y - reach) / self.span_px).floor() as i64;
+        let bottom = ((y + reach) / self.span_px).floor() as i64;
+        (left..=right).flat_map(move |column| {
+            self.cells
+                .range((column, top)..=(column, bottom))
+                .flat_map(|(_, indices)| indices.iter().copied())
+        })
     }
 }
 
@@ -476,7 +477,7 @@ pub(super) fn collide<D: MergeDisc>(
             let reach = f64::from(radius + bubbles.max_radius);
             let (x, y) = geometry.point(pending.x(), pending.y());
             let collision = neighbours
-                .candidates(pending.x(), pending.y())
+                .candidates(pending.x(), pending.y(), reach)
                 .filter_map(|index| {
                     let other = active[index].as_mut()?;
                     let (other_x, other_y) = geometry.point(other.x(), other.y());
@@ -660,7 +661,9 @@ pub(super) fn tape_radius_limit(
     let mut share = 1.0_f64;
     for (index, mark) in shown.iter().enumerate() {
         let (x, y) = geometry.position(mark);
-        for other in neighbours.candidates(mark.x, mark.y) {
+        for other in
+            neighbours.candidates(mark.x, mark.y, f64::from(radii[index] + bubbles.max_radius))
+        {
             let (other_x, other_y) = geometry.position(shown[other]);
             let clearance = f64::from(
                 radii[index] + radii[other]
@@ -674,3 +677,7 @@ pub(super) fn tape_radius_limit(
     }
     bubbles.max_radius * share.clamp(0.0, 1.0) as f32
 }
+
+#[cfg(test)]
+#[path = "tests/tape_neighbours.rs"]
+mod neighbours_tests;

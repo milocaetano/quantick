@@ -1,5 +1,6 @@
 //! Execution aggregation in authoritative tick-candle coordinates.
 //! Raw membership is retained; every zoom starts again from native execution cells.
+use super::dots::native_tape_radius;
 use super::tape::{Full, MergeDisc, TapeMoment, collide};
 use super::{AggressionPrimitive, DotSizing, PriceWindow, TapeDotGeometry};
 use crate::{BubbleStyle, LiveLaneStyle};
@@ -64,7 +65,7 @@ pub struct FlowTapeView {
     pub prices: PriceWindow,
     pub reference: FlowReference,
     pub radius_limit: f32,
-    /// Collision support in logical pixels, independent of painted quantity area.
+    /// Maximum collision radius in logical pixels; individual reach follows volume area.
     pub merge_support_radius: f32,
     pub exclude_opening: bool,
 }
@@ -191,6 +192,8 @@ impl FlowHull {
     }
 }
 struct Group {
+    support_reference: Decimal,
+    support_radius_cache: Option<(u64, f32)>,
     moment: TapeMoment,
     hull: FlowHull,
     first_ordinal: usize,
@@ -218,18 +221,25 @@ impl MergeDisc for Group {
         self.moment.quantity()
     }
     fn reference_quantity(&self) -> Decimal {
-        self.quantity()
+        self.support_reference
     }
     fn radius(
         &mut self,
         _: DotSizing,
         bubbles: &BubbleStyle,
         _: &LiveLaneStyle,
-        _full: Full,
+        full: Full,
     ) -> f32 {
-        // Spatial resolution groups small prints as well as large ones. Their
-        // painted radii are calculated only after regional quantities are known.
-        bubbles.max_radius
+        // Collision reach follows earned area: tiny executions must not pool
+        // merely because two maximum-sized discs would have overlapped.
+        if let Some((serial, radius)) = self.support_radius_cache
+            && serial == full.serial
+        {
+            return radius;
+        }
+        let radius = native_tape_radius(bubbles, self.quantity(), full.quantity);
+        self.support_radius_cache = Some((full.serial, radius));
+        radius
     }
     fn permits_merge(&self, other: &Self) -> bool {
         self.hull.union(other.hull).within_merge_limits()
@@ -240,6 +250,8 @@ impl MergeDisc for Group {
         if self.members.len() < other.members.len() {
             std::mem::swap(self, &mut other);
         }
+        self.support_radius_cache = None;
+        self.support_reference += other.support_reference;
         self.hull = self.hull.union(other.hull);
         self.first_ordinal = self.first_ordinal.min(other.first_ordinal);
         self.position_quantity += other.position_quantity;
@@ -312,7 +324,7 @@ fn finish_groups(
     };
     let mut off_axis_executions = 0;
     let mut offscreen_executions = 0;
-    let (groups, mut standalone): (Vec<_>, Vec<_>) = groups
+    let (mut groups, mut standalone): (Vec<_>, Vec<_>) = groups
         .into_iter()
         .filter(|group| {
             if !(0.0..=1.0).contains(&group.y()) {
@@ -329,6 +341,15 @@ fn finish_groups(
         // Oversized native cells cannot merge. Keep them out of the neighbour
         // index, where near-identical centroids would cause quadratic rejection.
         .partition(|group| group.hull.within_merge_limits());
+    // Opening volume must not compress ordinary collision reach. Keep this
+    // independent of the sizing toggle so changing calibration never regroups.
+    // With opening-only flow, retain its full gross scale instead of a unit floor.
+    let ordinary_reference = groups.iter().any(|group| group.quantity() > group.opening);
+    if ordinary_reference {
+        for group in &mut groups {
+            group.support_reference -= group.opening;
+        }
+    }
     let (mut groups, _) = collide(
         groups,
         sizing,
@@ -336,7 +357,7 @@ fn finish_groups(
         &LiveLaneStyle::default(),
         geometry,
         Decimal::ZERO,
-        false,
+        ordinary_reference,
     );
     groups.append(&mut standalone);
     let Some(full_max) = groups.iter().map(Group::quantity).max() else {

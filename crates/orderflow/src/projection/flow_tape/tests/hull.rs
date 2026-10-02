@@ -97,8 +97,8 @@ fn a_walking_price_centroid_cannot_swallow_an_entire_swing() {
     let coarse = at_scale(&trades, 1.0, 50.0, prices);
     assert_eq!(
         coarse.dots.len(),
-        1,
-        "the same 48-price-unit swing occupies only24px now"
+        3,
+        "the dominant region captures its neighbour, not all smaller distant discs"
     );
     assert_partition(&coarse, &[0, 1, 2, 3], 101, 1010);
     assert_eq!(at_scale(&trades, 1.0, 100.0, prices), close);
@@ -141,7 +141,11 @@ fn a_walking_time_centroid_keeps_original_x_extent_bounded() {
     }
     assert_partition(&close, &[0, 1, 2, 3, 4], 10101, 1010);
     let coarse = at_scale(&trades, 40.0, 100.0, prices);
-    assert_eq!(coarse.dots.len(), 1);
+    assert_eq!(
+        coarse.dots.len(),
+        4,
+        "small regions do not borrow the dominant region's collision reach"
+    );
     assert_partition(&coarse, &[0, 1, 2, 3, 4], 10101, 1010);
     assert_eq!(at_scale(&trades, 80.0, 100.0, prices), close);
 
@@ -253,4 +257,153 @@ fn many_oversized_atomic_cells_stay_intact_without_entering_the_collision_fronti
         CELLS as i64,
         CELLS as i64 * 2,
     );
+}
+
+#[test]
+fn collision_reach_tracks_volume_instead_of_giving_tiny_prints_the_maximum_disc() {
+    let trades = [
+        trade(1000, 100, 1, Side::Buy),
+        trade(1100, 100, 1, Side::Sell),
+        trade(1200, 100, 1000, Side::Buy),
+    ];
+    let prices = PriceWindow::new(90.into(), 110.into()).unwrap();
+    // Eight pixels between cells: the two tiny cells do not touch, but the
+    // dominant disc reaches its immediate neighbour without swallowing the first.
+    let regional = at_scale(&trades, 24.0, 100.0, prices);
+    assert_eq!(regional.dots.len(), 2);
+    let dominant = regional
+        .dots
+        .iter()
+        .find(|dot| dot.mark.quantity == Decimal::from(1001))
+        .unwrap();
+    assert_eq!(
+        dominant
+            .members
+            .iter()
+            .map(|m| m.ordinal)
+            .collect::<Vec<_>>(),
+        [1, 2]
+    );
+    let tiny = regional
+        .dots
+        .iter()
+        .find(|dot| dot.mark.quantity == Decimal::ONE)
+        .unwrap();
+    assert!((dominant.radius.powi(2) / tiny.radius.powi(2) - 1001.0).abs() < 0.001);
+    assert_partition(&regional, &[0, 1, 2], 1001, 1);
+    let micro = at_scale(&trades, 120.0, 100.0, prices);
+    assert_eq!(micro.dots.len(), 3);
+    assert_partition(&micro, &[0, 1, 2], 1001, 1);
+    let distant = at_scale(&trades, 1.0, 100.0, prices);
+    assert_eq!(distant.dots.len(), 1);
+    assert_partition(&distant, &[0, 1, 2], 1001, 1);
+    assert_eq!(at_scale(&trades, 24.0, 100.0, prices), regional);
+}
+
+#[test]
+fn remote_opening_does_not_compress_ordinary_collision_reach_or_toggle_membership() {
+    let prices = PriceWindow::new(90.into(), 110.into()).unwrap();
+    let trades = [
+        trade(1000, 109, 1_000_000, Side::Buy),
+        trade(1200, 100, 1, Side::Buy),
+        trade(1300, 100, 1, Side::Sell),
+        trade(1400, 100, 1000, Side::Buy),
+    ];
+    let project = |opening: bool, exclude: bool| {
+        let mut view = at_scale(&trades, 32.0, 200.0, prices).view;
+        view.exclude_opening = exclude;
+        project_flow_tape(
+            trades
+                .iter()
+                .enumerate()
+                .map(|(ordinal, trade)| FlowExecution {
+                    ordinal,
+                    slot: 0,
+                    accepted_ordinal: ordinal,
+                    ticks_per_bar: 4.into(),
+                    trade,
+                    opening: opening && ordinal == 0,
+                }),
+            1,
+            4,
+            4,
+            view,
+        )
+    };
+    let opening = project(true, false);
+    let excluded = project(true, true);
+    let members = |frame: &FlowTapeFrame| {
+        frame
+            .dots
+            .iter()
+            .map(|dot| dot.members.iter().map(|m| m.ordinal).collect::<Vec<_>>())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(members(&opening), members(&excluded));
+    assert!(
+        opening
+            .dots
+            .iter()
+            .any(|dot| dot.mark.quantity == Decimal::from(1001))
+    );
+    assert_eq!(
+        project(false, false).dots.len(),
+        4,
+        "an ordinary whale remains a legitimate collision reference"
+    );
+    assert_partition(&opening, &[0, 1, 2, 3], 1_001_001, 1);
+    assert_partition(&excluded, &[0, 1, 2, 3], 1_001_001, 1);
+}
+
+#[test]
+fn opening_only_collision_reference_grows_when_regions_merge() {
+    let trades = [0; 3].map(|_| trade(1000, 100, 100, Side::Buy));
+    let project = |opening| {
+        let mut view = at_scale(
+            &trades,
+            30.0,
+            100.0,
+            PriceWindow::new(90.into(), 110.into()).unwrap(),
+        )
+        .view;
+        view.end_slot = 5;
+        view.clip_right = 5.into();
+        view.exclude_opening = true;
+        project_flow_tape(
+            trades
+                .iter()
+                .zip([0, 1, 4])
+                .enumerate()
+                .map(|(ordinal, (trade, slot))| FlowExecution {
+                    ordinal,
+                    slot,
+                    accepted_ordinal: 0,
+                    ticks_per_bar: 1.into(),
+                    trade,
+                    opening,
+                }),
+            1,
+            3,
+            3,
+            view,
+        )
+    };
+    let ordinary = project(false);
+    let opening = project(true);
+    let facts = |frame: &FlowTapeFrame| {
+        frame
+            .dots
+            .iter()
+            .map(|dot| (dot.members.clone(), dot.mark.quantity, dot.radius))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ordinary.dots.len(), 2);
+    assert_eq!(
+        facts(&opening),
+        facts(&ordinary),
+        "opening-only fallback must grow the shared gross reference after a merge"
+    );
+    assert_eq!(opening.effective_reference, Some(200.into()));
+    assert_eq!(opening.scale_basis, FlowScaleBasis::OpeningOnlyFallback);
+    assert_partition(&opening, &[0, 1, 2], 300, 0);
 }
