@@ -14,6 +14,8 @@ pub struct FlowRequest {
     pub keep: FlowKeep,
     pub view: FlowTapeView,
     pub opening_windows: Vec<i64>,
+    /// Canonical first daily source ordinals, selected before viewport admission.
+    pub opening_ordinals: Vec<usize>,
 }
 /// Matching whole-candle and canonical ordinal bounds of the retained window.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -150,7 +152,10 @@ impl FlowWorkerCache {
             request.source_count,
             request.requested.clone(),
             request.view,
-            &request.opening_windows,
+            FlowOpeningSelection {
+                windows: &request.opening_windows,
+                ordinals: &request.opening_ordinals,
+            },
         ))
     }
     /// Fold packets freely; project geometric partials, completed requests and quiet flushes.
@@ -284,7 +289,9 @@ impl<R: FlowRunner> FlowSession<R> {
         request.layout_revision = self.request.as_ref().map_or(0, |held| {
             held.layout_revision
                 + u64::from(
-                    held.view != request.view || held.opening_windows != request.opening_windows,
+                    held.view != request.view
+                        || held.opening_windows != request.opening_windows
+                        || held.opening_ordinals != request.opening_ordinals,
                 )
         });
         self.submitted.retain(request.keep.ordinals.clone());

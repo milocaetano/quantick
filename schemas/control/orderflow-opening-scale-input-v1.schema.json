@@ -16,7 +16,7 @@
   "additionalProperties": false,
   "properties": {
     "ignore_opening_burst_in_scale": {
-      "description": "Exclude each day's first recorded 100 ms burst from the automatic\ntargeted size reference. Preserve its exact volume and cap its radius.",
+      "description": "Tape excludes the first recorded 100 ms burst per UTC date and caps it.\nCandle excludes only the canonical first region's opening portion;\nits radius may grow uncapped while every other region sets the reference.",
       "type": "boolean"
     },
     "pane_id": {

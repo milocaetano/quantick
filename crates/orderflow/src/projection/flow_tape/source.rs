@@ -80,6 +80,15 @@ pub struct FlowTapeSource {
     ineligible: FlowCoverage,
     count: usize,
 }
+
+/// Both classifications are supplied by the complete canonical source owner.
+/// Missing retained or visible executions never nominate replacement anchors.
+#[derive(Default, Clone, Copy)]
+pub struct FlowOpeningSelection<'a> {
+    pub windows: &'a [i64],
+    pub ordinals: &'a [usize],
+}
+
 impl FlowTapeSource {
     pub fn retain(&mut self, keep: &FlowKeep) {
         let beyond = self
@@ -164,7 +173,6 @@ impl FlowTapeSource {
             }
         }
     }
-    #[allow(clippy::too_many_arguments)]
     pub fn project(
         &self,
         epoch: u64,
@@ -172,7 +180,7 @@ impl FlowTapeSource {
         source_count: usize,
         requested: Range<usize>,
         view: FlowTapeView,
-        openings: &[i64],
+        openings: FlowOpeningSelection<'_>,
     ) -> FlowTapeFrame {
         let loaded_executions = self.coverage.count(requested.clone());
         let mut frame = FlowTapeFrame {
@@ -227,15 +235,13 @@ impl FlowTapeSource {
                     top: mark.y * f64::from(view.height_px),
                     bottom: mark.y * f64::from(view.height_px),
                 };
-                let opening = if openings.contains(&window) {
+                let opening = if openings.windows.contains(&window) {
                     mark.quantity
                 } else {
                     Decimal::ZERO
                 };
                 Group {
                     first_ordinal: cell.first_ordinal,
-                    support_reference: mark.quantity,
-                    support_radius_cache: None,
                     moment: TapeMoment::new(mark, f64::INFINITY),
                     hull,
                     members: FlowMembers {
@@ -246,6 +252,11 @@ impl FlowTapeSource {
                     first_slot: slot,
                     end_slot: slot + 1,
                     opening,
+                    opening_anchor: openings.ordinals.iter().any(|ordinal| {
+                        cell.members
+                            .binary_search_by_key(ordinal, |member| member.ordinal)
+                            .is_ok()
+                    }),
                     cells: 1,
                 }
             })

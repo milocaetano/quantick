@@ -41,14 +41,13 @@ impl FlowTapeFrame {
                 fmt_decimal(dot.opening_quantity)
             ));
         }
-        if dot.opening_capped {
-            rows.push(
-                "Opening volume included; dashed hollow marker is capped, not proportional.".into(),
-            );
+        if dot.opening_oversized {
+            rows.push("First daily region: uncapped area proportional to its total volume.".into());
+            rows.push("Lighter fill preserves the candles beneath this oversized region.".into());
         } else if self.scale_basis == FlowScaleBasis::OpeningOnlyFallback {
             rows.push("Only opening volume visible; using full volume for scale.".into());
         } else if self.opening_exclusion_effective {
-            rows.push("Opening excluded from reference; quantities unchanged.".into());
+            rows.push("First daily region excluded from scale; quantities unchanged.".into());
         }
         if pending {
             rows.push("Updating: showing last computed regions.".into());
@@ -114,7 +113,7 @@ pub fn caption_text(
         if frame.ineligible_executions > 0 {
             hints.push(format!("{} records excluded", frame.ineligible_executions));
         }
-        let (count, opening, total) = frame.dots.iter().filter(|dot| dot.opening_capped).fold(
+        let (count, opening, total) = frame.dots.iter().filter(|dot| dot.opening_oversized).fold(
             (0, Decimal::ZERO, Decimal::ZERO),
             |(count, opening, total), dot| {
                 (
@@ -126,14 +125,14 @@ pub fn caption_text(
         );
         if count > 0 {
             hints.push(format!(
-                "{} dashed capped regions: total {}, recorded opening {} (not proportional)",
+                "{} first daily regions: total {}, recorded opening {} (faint area proportional)",
                 count,
                 total.normalize(),
                 opening.normalize()
             ));
         }
         if frame.opening_exclusion_effective {
-            hints.push("First recorded burst excluded from scale".to_owned());
+            hints.push("First daily region excluded from scale".to_owned());
         } else if frame.scale_basis == FlowScaleBasis::OpeningOnlyFallback {
             hints.push("Opening-only scale fallback".to_owned());
         }

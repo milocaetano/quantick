@@ -1,6 +1,5 @@
 //! Execution aggregation in authoritative tick-candle coordinates.
 //! Raw membership is retained; every zoom starts again from native execution cells.
-use super::dots::native_tape_radius;
 use super::tape::{Full, MergeDisc, TapeMoment, collide};
 use super::{AggressionPrimitive, DotSizing, PriceWindow, TapeDotGeometry};
 use crate::{BubbleStyle, LiveLaneStyle};
@@ -10,7 +9,7 @@ use std::sync::Arc;
 mod reading;
 pub use reading::caption_text;
 mod source;
-pub use source::{FlowCoverage, FlowTapeSource};
+pub use source::{FlowCoverage, FlowOpeningSelection, FlowTapeSource};
 mod stream;
 pub use stream::{
     FlowChunk, FlowKeep, FlowProgress, FlowRequest, FlowRunner, FlowSession, FlowWorkerCache,
@@ -65,7 +64,7 @@ pub struct FlowTapeView {
     pub prices: PriceWindow,
     pub reference: FlowReference,
     pub radius_limit: f32,
-    /// Maximum collision radius in logical pixels; individual reach follows volume area.
+    /// Fixed spatial aggregation support in logical pixels, independent of painted area.
     pub merge_support_radius: f32,
     pub exclude_opening: bool,
 }
@@ -116,7 +115,10 @@ pub struct FlowTapeDot {
     pub native_cells: usize,
     /// Equivalent gross-area radius: buy_radius² + sell_radius² = radius².
     pub radius: f32,
-    pub opening_capped: bool,
+    /// Contains the canonical first recorded execution of at least one UTC date.
+    pub opening_anchor: bool,
+    /// First daily region whose earned radius exceeds the ordinary reference radius.
+    pub opening_oversized: bool,
 }
 impl FlowTapeDot {
     /// Exact sides converted only at the geometry boundary, without a Decimal division floor.
@@ -192,8 +194,6 @@ impl FlowHull {
     }
 }
 struct Group {
-    support_reference: Decimal,
-    support_radius_cache: Option<(u64, f32)>,
     moment: TapeMoment,
     hull: FlowHull,
     first_ordinal: usize,
@@ -202,6 +202,7 @@ struct Group {
     first_slot: usize,
     end_slot: usize,
     opening: Decimal,
+    opening_anchor: bool,
     cells: usize,
 }
 impl MergeDisc for Group {
@@ -221,25 +222,12 @@ impl MergeDisc for Group {
         self.moment.quantity()
     }
     fn reference_quantity(&self) -> Decimal {
-        self.support_reference
+        self.quantity()
     }
-    fn radius(
-        &mut self,
-        _: DotSizing,
-        bubbles: &BubbleStyle,
-        _: &LiveLaneStyle,
-        full: Full,
-    ) -> f32 {
-        // Collision reach follows earned area: tiny executions must not pool
-        // merely because two maximum-sized discs would have overlapped.
-        if let Some((serial, radius)) = self.support_radius_cache
-            && serial == full.serial
-        {
-            return radius;
-        }
-        let radius = native_tape_radius(bubbles, self.quantity(), full.quantity);
-        self.support_radius_cache = Some((full.serial, radius));
-        radius
+    fn radius(&mut self, _: DotSizing, bubbles: &BubbleStyle, _: &LiveLaneStyle, _: Full) -> f32 {
+        // Define regions by proximity, so an unrelated whale cannot fragment
+        // nearby small executions. Final painted area still follows full volume.
+        bubbles.max_radius
     }
     fn permits_merge(&self, other: &Self) -> bool {
         self.hull.union(other.hull).within_merge_limits()
@@ -250,14 +238,13 @@ impl MergeDisc for Group {
         if self.members.len() < other.members.len() {
             std::mem::swap(self, &mut other);
         }
-        self.support_radius_cache = None;
-        self.support_reference += other.support_reference;
         self.hull = self.hull.union(other.hull);
         self.first_ordinal = self.first_ordinal.min(other.first_ordinal);
         self.position_quantity += other.position_quantity;
         self.first_slot = self.first_slot.min(other.first_slot);
         self.end_slot = self.end_slot.max(other.end_slot);
         self.opening += other.opening;
+        self.opening_anchor |= other.opening_anchor;
         self.cells += other.cells;
         self.members.count += other.members.count;
         self.members.parts.extend(other.members.parts);
@@ -276,8 +263,13 @@ pub fn project_flow_tape<'a>(
 ) -> FlowTapeFrame {
     let mut source = FlowTapeSource::default();
     let mut openings = Vec::new();
+    let mut anchors = crate::history::RecordedOpeningAnchors::default();
     for execution in executions {
-        if execution.opening {
+        if execution.opening
+            && execution.trade.quantity > Decimal::ZERO
+            && execution.ticks_per_bar > Decimal::ZERO
+        {
+            anchors.observe(execution.trade.timestamp_ms, execution.ordinal);
             openings.push(crate::history::RecordedOpenings::window_start(
                 execution.trade.timestamp_ms,
             ));
@@ -290,7 +282,10 @@ pub fn project_flow_tape<'a>(
         source_count,
         0..requested_executions,
         view,
-        &openings,
+        FlowOpeningSelection {
+            windows: &openings,
+            ordinals: &anchors.ordinals().collect::<Vec<_>>(),
+        },
     )
 }
 
@@ -324,7 +319,7 @@ fn finish_groups(
     };
     let mut off_axis_executions = 0;
     let mut offscreen_executions = 0;
-    let (mut groups, mut standalone): (Vec<_>, Vec<_>) = groups
+    let (groups, mut standalone): (Vec<_>, Vec<_>) = groups
         .into_iter()
         .filter(|group| {
             if !(0.0..=1.0).contains(&group.y()) {
@@ -341,15 +336,6 @@ fn finish_groups(
         // Oversized native cells cannot merge. Keep them out of the neighbour
         // index, where near-identical centroids would cause quadratic rejection.
         .partition(|group| group.hull.within_merge_limits());
-    // Opening volume must not compress ordinary collision reach. Keep this
-    // independent of the sizing toggle so changing calibration never regroups.
-    // With opening-only flow, retain its full gross scale instead of a unit floor.
-    let ordinary_reference = groups.iter().any(|group| group.quantity() > group.opening);
-    if ordinary_reference {
-        for group in &mut groups {
-            group.support_reference -= group.opening;
-        }
-    }
     let (mut groups, _) = collide(
         groups,
         sizing,
@@ -357,7 +343,7 @@ fn finish_groups(
         &LiveLaneStyle::default(),
         geometry,
         Decimal::ZERO,
-        ordinary_reference,
+        false,
     );
     groups.append(&mut standalone);
     let Some(full_max) = groups.iter().map(Group::quantity).max() else {
@@ -374,7 +360,7 @@ fn finish_groups(
         .iter()
         .map(|group| {
             group.quantity()
-                - if view.exclude_opening {
+                - if view.exclude_opening && group.opening_anchor {
                     group.opening
                 } else {
                     Decimal::ZERO
@@ -382,7 +368,7 @@ fn finish_groups(
         })
         .max()
         .unwrap_or_default();
-    let has_opening = groups.iter().any(|group| group.opening > Decimal::ZERO);
+    let has_opening = groups.iter().any(|group| group.opening_anchor);
     let (effective_reference, scale_basis, opening_exclusion_effective) = match view.reference {
         FlowReference::Typed(reference) => (
             reference.max(ordinary_max),
@@ -407,6 +393,9 @@ fn finish_groups(
         .into_iter()
         .map(|mut group| {
             let quantity = group.quantity();
+            let opening_oversized = opening_exclusion_effective
+                && group.opening_anchor
+                && quantity > effective_reference;
             group.members.parts.sort_by_key(|part| part[0].ordinal);
             let mut mark = group.moment.finish(effective_reference);
             mark.folded_marks = if group.cells > 1 {
@@ -416,10 +405,16 @@ fn finish_groups(
             };
             FlowTapeDot {
                 radius: view.radius_limit
-                    * super::normalized_area_size(quantity, effective_reference),
-                opening_capped: opening_exclusion_effective
-                    && group.opening > Decimal::ZERO
-                    && quantity > effective_reference,
+                    * if opening_oversized {
+                        use rust_decimal::prelude::ToPrimitive as _;
+                        (quantity.to_f64().unwrap_or_default()
+                            / effective_reference.to_f64().unwrap_or(1.0))
+                        .sqrt() as f32
+                    } else {
+                        super::normalized_area_size(quantity, effective_reference)
+                    },
+                opening_anchor: group.opening_anchor,
+                opening_oversized,
                 candle_position: group.position_quantity / quantity,
                 mark,
                 members: group.members,

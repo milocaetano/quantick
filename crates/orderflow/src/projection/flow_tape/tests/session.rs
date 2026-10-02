@@ -51,6 +51,7 @@ fn request(epoch: u64, slots: Range<usize>) -> FlowRequest {
             ordinals,
         },
         opening_windows: vec![],
+        opening_ordinals: vec![],
         view: FlowTapeView {
             first_slot: slots.start,
             end_slot: slots.end,
@@ -132,6 +133,38 @@ fn metadata_only_append_does_not_wake_or_recapture_pinned_history() {
     session.project(request, |_| panic!("offscreen append copied source"));
     assert_eq!(session.runner.notifications, notifications);
     assert!(!session.progress().pending);
+}
+
+#[test]
+fn earlier_anchor_within_the_same_opening_window_revises_layout_without_recapturing_source() {
+    let mut session = FlowSession::<Runner>::default();
+    let mut request = request(1, 0..2);
+    request.opening_windows = vec![1000];
+    request.opening_ordinals = vec![0];
+    project(&mut session, request.clone());
+    session.runner.pump();
+    project(&mut session, request.clone());
+    assert!(!session.progress().pending);
+    let previous = session.progress().layout_revision;
+    request.opening_ordinals = vec![2];
+    session.project(request.clone(), |_| panic!("anchor metadata copied source"));
+    assert_eq!(session.progress().layout_revision, previous + 1);
+    assert!(session.progress().pending);
+    session.runner.pump();
+    session.project(request, |_| {
+        panic!("completed anchor metadata copied source")
+    });
+    assert!(!session.progress().pending);
+    let anchored = session
+        .frame()
+        .unwrap()
+        .dots
+        .iter()
+        .filter(|dot| dot.opening_anchor)
+        .collect::<Vec<_>>();
+    assert_eq!(anchored.len(), 1);
+    assert!(anchored[0].members.iter().any(|member| member.ordinal == 2));
+    assert!(!anchored[0].members.iter().any(|member| member.ordinal == 0));
 }
 #[test]
 fn queued_navigation_a_b_a_refills_evicted_facts_without_duplicates() {

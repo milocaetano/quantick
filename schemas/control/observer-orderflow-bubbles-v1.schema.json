@@ -128,7 +128,16 @@
         "native_cells": {
           "$ref": "#/$defs/WireU64"
         },
+        "opening_anchor": {
+          "default": false,
+          "type": "boolean"
+        },
         "opening_capped": {
+          "description": "Compatibility field: FLOW no longer caps opening regions; always false.",
+          "type": "boolean"
+        },
+        "opening_oversized": {
+          "default": false,
           "type": "boolean"
         },
         "opening_quantity": {
@@ -281,7 +290,8 @@
           "type": "boolean"
         },
         "radius_limit_px": {
-          "$ref": "#/$defs/CanonicalDecimal"
+          "$ref": "#/$defs/CanonicalDecimal",
+          "description": "Ordinary reference radius; the first daily region can exceed it when excluded."
         },
         "retained_source_count": {
           "$ref": "#/$defs/WireU64"

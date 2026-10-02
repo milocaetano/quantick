@@ -2,7 +2,7 @@
 use super::flow_execution::flow_disc;
 use crate::{paper_chrome::fmt_decimal, theme, timezone::TzOffset};
 use eframe::egui;
-use quantick_civil::CivilDate;
+use quantick_civil::{CivilDate, fmt_offset_millisecond};
 use quantick_orderflow::projection::flow_tape::{FlowProgress, FlowTapeDot, FlowTapeFrame};
 
 pub(crate) struct FlowInspection<'a> {
@@ -111,36 +111,10 @@ fn details(dot: &FlowTapeDot, view: &FlowInspection<'_>) -> Vec<String> {
         3,
         format!(
             "Time {}–{} ({})",
-            stamp(mark.first_timestamp_ms, view.tz, dates),
-            stamp(mark.last_timestamp_ms, view.tz, dates),
+            fmt_offset_millisecond(mark.first_timestamp_ms, view.tz, dates),
+            fmt_offset_millisecond(mark.last_timestamp_ms, view.tz, dates),
             view.tz.label(),
         ),
     );
     rows
-}
-
-fn stamp(ms: i64, tz: TzOffset, date: bool) -> String {
-    let local = ms.saturating_add(tz.offset_ms());
-    let (year, month, day, hour, minute, second) = quantick_civil::civil_utc(local);
-    let clock = format!(
-        "{hour:02}:{minute:02}:{second:02}.{:03}",
-        local.rem_euclid(1000)
-    );
-    if date {
-        format!("{year:04}-{month:02}-{day:02} {clock}")
-    } else {
-        clock
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn inspection_preserves_milliseconds_and_display_dates() {
-        let tz = TzOffset::new(-180);
-        assert_eq!(stamp(10_799_999, tz, true), "1969-12-31 23:59:59.999");
-        assert_eq!(stamp(10_800_001, tz, true), "1970-01-01 00:00:00.001");
-        assert_eq!(stamp(10_800_001, tz, false), "00:00:00.001");
-    }
 }

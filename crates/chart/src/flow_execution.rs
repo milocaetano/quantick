@@ -11,7 +11,9 @@ use rust_decimal::{Decimal, prelude::FromPrimitive as _};
 
 // Compact marks and a separate spatial support preserve the surrounding candle path.
 const FLOW_RADIUS_LIMIT_PX: f32 = 12.0;
-const FLOW_MERGE_SUPPORT_RADIUS_PX: f32 = 12.0;
+// A small geometric support pools unresolved neighbours without letting the
+// largest volume in another region determine which executions belong together.
+const FLOW_MERGE_SUPPORT_RADIUS_PX: f32 = 6.0;
 
 /// Capture canonical membership when the caller enables regional FLOW.
 pub fn project_flow_executions<R: FlowRunner>(
@@ -58,6 +60,7 @@ pub fn project_flow_executions<R: FlowRunner>(
         requested: span(slots.clone()),
         keep,
         opening_windows: membership.opening_windows().to_vec(),
+        opening_ordinals: membership.opening_ordinals().collect(),
         view: FlowTapeView {
             clip_left: Decimal::from_f64(clip.0).unwrap_or_default(),
             clip_right: Decimal::from_f64(clip.1).unwrap_or_default(),

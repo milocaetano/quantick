@@ -68,7 +68,7 @@ pub(crate) fn fold_print<B: BarBuilder + ?Sized>(
         .as_ref()
         .is_some_and(|bar| bar.trade_count == pending.saturating_add(1));
     if canonical && let Some(membership) = footprints.tick_membership.as_mut() {
-        membership.observe(!uncounted, closed.is_some(), included, trade.timestamp_ms);
+        membership.observe(!uncounted, closed.is_some(), included, trade);
     }
     if footprint_enabled {
         match (&closed, uncounted) {

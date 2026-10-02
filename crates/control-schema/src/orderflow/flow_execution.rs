@@ -29,6 +29,7 @@ pub struct FlowExecutionSnapshot {
     pub typed_reference: Option<CanonicalDecimal>,
     pub effective_reference: Option<CanonicalDecimal>,
     pub opening_exclusion_effective: bool,
+    /// Ordinary reference radius; the first daily region can exceed it when excluded.
     pub radius_limit_px: CanonicalDecimal,
     pub merge_support_radius_px: CanonicalDecimal,
     pub ignore_opening: bool,
@@ -114,7 +115,12 @@ pub struct FlowExecutionMark {
     /// Radius of a disc with the same area as the sell sector; not a separate painted disc.
     pub sell_radius_px: CanonicalDecimal,
     pub opening_quantity: CanonicalDecimal,
+    /// Compatibility field: FLOW no longer caps opening regions; always false.
     pub opening_capped: bool,
+    #[serde(default)]
+    pub opening_anchor: bool,
+    #[serde(default)]
+    pub opening_oversized: bool,
 }
 impl From<(&FlowTapeFrame, FlowProgress)> for FlowExecutionSnapshot {
     fn from((frame, progress): (&FlowTapeFrame, FlowProgress)) -> Self {
@@ -211,7 +217,9 @@ impl From<&FlowTapeDot> for FlowExecutionMark {
                 Decimal::from_f32_retain(sell_radius).unwrap_or_default(),
             ),
             opening_quantity: canonical_decimal(dot.opening_quantity),
-            opening_capped: dot.opening_capped,
+            opening_capped: false,
+            opening_anchor: dot.opening_anchor,
+            opening_oversized: dot.opening_oversized,
         }
     }
 }

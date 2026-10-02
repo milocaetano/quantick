@@ -27,7 +27,7 @@ fn at_scale(trades: &[Trade], width: f32, height: f32, prices: PriceWindow) -> F
             prices,
             reference: FlowReference::VisibleRegions,
             radius_limit: 7.0,
-            merge_support_radius: 12.0,
+            merge_support_radius: 6.0,
             exclude_opening: false,
         },
     )
@@ -69,13 +69,13 @@ fn assert_partition(frame: &FlowTapeFrame, ordinals: &[usize], buy: i64, sell: i
 
 #[test]
 fn a_walking_price_centroid_cannot_swallow_an_entire_swing() {
-    let trades = [1, 10, 100, 1000]
+    let trades = [1, 10, 100, 1000, 10000]
         .into_iter()
         .enumerate()
         .map(|(i, q)| {
             trade(
                 1000 + i as i64 * 100,
-                100 + i as i64 * 16,
+                100 + i as i64 * 10,
                 q,
                 if i % 2 == 0 { Side::Buy } else { Side::Sell },
             )
@@ -85,7 +85,7 @@ fn a_walking_price_centroid_cannot_swallow_an_entire_swing() {
     let close = at_scale(&trades, 1.0, 100.0, prices);
     assert!(
         close.dots.len() >= 2,
-        "the previous centroid chain pooled a 48px swing"
+        "nearby centroids must not pool a 40px source swing"
     );
     assert!(
         close
@@ -93,20 +93,20 @@ fn a_walking_price_centroid_cannot_swallow_an_entire_swing() {
             .iter()
             .all(|dot| dot.mark.price_span <= Decimal::from(32))
     );
-    assert_partition(&close, &[0, 1, 2, 3], 101, 1010);
+    assert_partition(&close, &[0, 1, 2, 3, 4], 10101, 1010);
     let coarse = at_scale(&trades, 1.0, 50.0, prices);
     assert_eq!(
         coarse.dots.len(),
-        3,
-        "the dominant region captures its neighbour, not all smaller distant discs"
+        1,
+        "the complete 20px source span fits one local region after zooming out"
     );
-    assert_partition(&coarse, &[0, 1, 2, 3], 101, 1010);
+    assert_partition(&coarse, &[0, 1, 2, 3, 4], 10101, 1010);
     assert_eq!(at_scale(&trades, 1.0, 100.0, prices), close);
 }
 
 #[test]
 fn a_walking_time_centroid_keeps_original_x_extent_bounded() {
-    let trades = [1, 10, 100, 1000, 10000]
+    let trades = [1, 10, 100, 1000, 10000, 100000, 1000000]
         .into_iter()
         .enumerate()
         .map(|(i, q)| {
@@ -119,10 +119,10 @@ fn a_walking_time_centroid_keeps_original_x_extent_bounded() {
         })
         .collect::<Vec<_>>();
     let prices = PriceWindow::new(90.into(), 110.into()).unwrap();
-    let close = at_scale(&trades, 80.0, 100.0, prices);
+    let close = at_scale(&trades, 70.0, 100.0, prices);
     assert!(
         close.dots.len() >= 2,
-        "the previous centroid chain pooled 64px of source positions"
+        "nearby centroids must not pool 60px of source positions"
     );
     for dot in &close.dots {
         let min = dot
@@ -137,17 +137,17 @@ fn a_walking_time_centroid_keeps_original_x_extent_bounded() {
             .map(|m| m.accepted_ordinal)
             .max()
             .unwrap();
-        assert!((max - min) as f32 * 16.0 <= 48.0);
+        assert!((max - min) as f32 * 10.0 <= 48.0);
     }
-    assert_partition(&close, &[0, 1, 2, 3, 4], 10101, 1010);
-    let coarse = at_scale(&trades, 40.0, 100.0, prices);
+    assert_partition(&close, &[0, 1, 2, 3, 4, 5, 6], 1010101, 101010);
+    let coarse = at_scale(&trades, 35.0, 100.0, prices);
     assert_eq!(
         coarse.dots.len(),
-        4,
-        "small regions do not borrow the dominant region's collision reach"
+        1,
+        "zooming out puts the full 30px source span inside one local region"
     );
-    assert_partition(&coarse, &[0, 1, 2, 3, 4], 10101, 1010);
-    assert_eq!(at_scale(&trades, 80.0, 100.0, prices), close);
+    assert_partition(&coarse, &[0, 1, 2, 3, 4, 5, 6], 1010101, 101010);
+    assert_eq!(at_scale(&trades, 70.0, 100.0, prices), close);
 
     // The real caller grows width with admission overscan. Holding width fixed
     // would describe a different zoom, not the same physical merge contract.
@@ -167,8 +167,15 @@ fn a_walking_time_centroid_keeps_original_x_extent_bounded() {
     );
     let mut padded = close.view;
     padded.end_slot = 3;
-    padded.width_px = 240.0;
-    let padded = source.project(1, 0, trades.len(), 0..trades.len(), padded, &[]);
+    padded.width_px = 210.0;
+    let padded = source.project(
+        1,
+        0,
+        trades.len(),
+        0..trades.len(),
+        padded,
+        FlowOpeningSelection::default(),
+    );
     let facts = |frame: &FlowTapeFrame| {
         frame
             .dots
@@ -260,21 +267,21 @@ fn many_oversized_atomic_cells_stay_intact_without_entering_the_collision_fronti
 }
 
 #[test]
-fn collision_reach_tracks_volume_instead_of_giving_tiny_prints_the_maximum_disc() {
+fn geometric_regions_pool_neighbours_without_a_painted_size_floor() {
     let trades = [
         trade(1000, 100, 1, Side::Buy),
         trade(1100, 100, 1, Side::Sell),
         trade(1200, 100, 1000, Side::Buy),
     ];
     let prices = PriceWindow::new(90.into(), 110.into()).unwrap();
-    // Eight pixels between cells: the two tiny cells do not touch, but the
-    // dominant disc reaches its immediate neighbour without swallowing the first.
+    // Eight pixels between cells: the two small neighbours form one region.
+    // Its centroid remains too far from the whale to merge at this zoom.
     let regional = at_scale(&trades, 24.0, 100.0, prices);
     assert_eq!(regional.dots.len(), 2);
     let dominant = regional
         .dots
         .iter()
-        .find(|dot| dot.mark.quantity == Decimal::from(1001))
+        .find(|dot| dot.mark.quantity == Decimal::from(1000))
         .unwrap();
     assert_eq!(
         dominant
@@ -282,14 +289,18 @@ fn collision_reach_tracks_volume_instead_of_giving_tiny_prints_the_maximum_disc(
             .iter()
             .map(|m| m.ordinal)
             .collect::<Vec<_>>(),
-        [1, 2]
+        [2]
     );
     let tiny = regional
         .dots
         .iter()
-        .find(|dot| dot.mark.quantity == Decimal::ONE)
+        .find(|dot| dot.mark.quantity == Decimal::from(2))
         .unwrap();
-    assert!((dominant.radius.powi(2) / tiny.radius.powi(2) - 1001.0).abs() < 0.001);
+    assert!((dominant.radius.powi(2) / tiny.radius.powi(2) - 500.0).abs() < 0.001);
+    assert!(
+        tiny.radius < 1.0,
+        "spatial support is not a painted radius floor"
+    );
     assert_partition(&regional, &[0, 1, 2], 1001, 1);
     let micro = at_scale(&trades, 120.0, 100.0, prices);
     assert_eq!(micro.dots.len(), 3);
@@ -301,7 +312,7 @@ fn collision_reach_tracks_volume_instead_of_giving_tiny_prints_the_maximum_disc(
 }
 
 #[test]
-fn remote_opening_does_not_compress_ordinary_collision_reach_or_toggle_membership() {
+fn remote_volume_never_changes_local_regions_or_toggle_membership() {
     let prices = PriceWindow::new(90.into(), 110.into()).unwrap();
     let trades = [
         trade(1000, 109, 1_000_000, Side::Buy),
@@ -309,7 +320,9 @@ fn remote_opening_does_not_compress_ordinary_collision_reach_or_toggle_membershi
         trade(1300, 100, 1, Side::Sell),
         trade(1400, 100, 1000, Side::Buy),
     ];
-    let project = |opening: bool, exclude: bool| {
+    let project = |opening: bool, exclude: bool, remote_quantity: i64| {
+        let mut trades = trades.clone();
+        trades[0].quantity = remote_quantity.into();
         let mut view = at_scale(&trades, 32.0, 200.0, prices).view;
         view.exclude_opening = exclude;
         project_flow_tape(
@@ -330,8 +343,9 @@ fn remote_opening_does_not_compress_ordinary_collision_reach_or_toggle_membershi
             view,
         )
     };
-    let opening = project(true, false);
-    let excluded = project(true, true);
+    let opening = project(true, false, 1_000_000);
+    let excluded = project(true, true, 1_000_000);
+    let small_remote = project(false, false, 1);
     let members = |frame: &FlowTapeFrame| {
         frame
             .dots
@@ -340,23 +354,35 @@ fn remote_opening_does_not_compress_ordinary_collision_reach_or_toggle_membershi
             .collect::<Vec<_>>()
     };
     assert_eq!(members(&opening), members(&excluded));
+    assert_eq!(members(&opening), members(&small_remote));
+    for frame in [&opening, &small_remote] {
+        let radius = |quantity| {
+            frame
+                .dots
+                .iter()
+                .find(|dot| dot.mark.quantity == Decimal::from(quantity))
+                .unwrap()
+                .radius
+        };
+        assert!((radius(1000).powi(2) / radius(2).powi(2) - 500.0).abs() < 0.001);
+    }
     assert!(
         opening
             .dots
             .iter()
-            .any(|dot| dot.mark.quantity == Decimal::from(1001))
+            .any(|dot| dot.mark.quantity == Decimal::from(2))
     );
     assert_eq!(
-        project(false, false).dots.len(),
-        4,
-        "an ordinary whale remains a legitimate collision reference"
+        members(&project(false, false, 1_000_000)),
+        members(&opening),
+        "remote opening classification changes calibration, never local membership"
     );
     assert_partition(&opening, &[0, 1, 2, 3], 1_001_001, 1);
     assert_partition(&excluded, &[0, 1, 2, 3], 1_001_001, 1);
 }
 
 #[test]
-fn opening_only_collision_reference_grows_when_regions_merge() {
+fn opening_collision_groups_survive_first_region_scale_exclusion() {
     let trades = [0; 3].map(|_| trade(1000, 100, 100, Side::Buy));
     let project = |opening| {
         let mut view = at_scale(
@@ -394,16 +420,19 @@ fn opening_only_collision_reference_grows_when_regions_merge() {
         frame
             .dots
             .iter()
-            .map(|dot| (dot.members.clone(), dot.mark.quantity, dot.radius))
+            .map(|dot| (dot.members.clone(), dot.mark.quantity))
             .collect::<Vec<_>>()
     };
     assert_eq!(ordinary.dots.len(), 2);
     assert_eq!(
         facts(&opening),
         facts(&ordinary),
-        "opening-only fallback must grow the shared gross reference after a merge"
+        "first-region scaling must preserve the collision groups"
     );
-    assert_eq!(opening.effective_reference, Some(200.into()));
-    assert_eq!(opening.scale_basis, FlowScaleBasis::OpeningOnlyFallback);
+    assert_eq!(opening.effective_reference, Some(100.into()));
+    assert_eq!(
+        opening.scale_basis,
+        FlowScaleBasis::VisibleOrdinaryRegionMax
+    );
     assert_partition(&opening, &[0, 1, 2], 300, 0);
 }

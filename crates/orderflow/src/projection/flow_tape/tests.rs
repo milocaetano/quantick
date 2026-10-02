@@ -2,6 +2,8 @@ use super::*;
 use quantick_engine::Side;
 #[path = "tests/hull.rs"]
 mod hull;
+#[path = "tests/opening_anchor.rs"]
+mod opening_anchor;
 #[path = "tests/reading.rs"]
 mod reading;
 fn trade(time: i64, price: i64, quantity: i64, side: Side) -> Trade {
@@ -24,7 +26,7 @@ fn view(width: f32) -> FlowTapeView {
         prices: PriceWindow::new(90.into(), 110.into()).unwrap(),
         reference: FlowReference::Typed(900.into()),
         radius_limit: 7.0,
-        merge_support_radius: 12.0,
+        merge_support_radius: 6.0,
         exclude_opening: true,
     }
 }
@@ -101,7 +103,7 @@ fn forming_to_closed_keeps_the_accepted_position() {
     );
 }
 #[test]
-fn opening_cap_changes_no_source_facts() {
+fn opening_earned_oversize_changes_no_source_facts() {
     let trade = trade(1000, 100, 9000, Side::Buy);
     let f = project_flow_tape(
         [FlowExecution {
@@ -118,7 +120,8 @@ fn opening_cap_changes_no_source_facts() {
         view(200.0),
     );
     assert_eq!(f.effective_reference, Some(Decimal::from(900)));
-    assert!(f.dots[0].opening_capped);
+    assert!(f.dots[0].opening_oversized);
+    assert!((f.dots[0].radius.powi(2) / 49.0 - 10.0).abs() < 0.00001);
     assert_eq!(f.dots[0].mark.quantity, Decimal::from(9000));
     assert_eq!(f.dots[0].opening_quantity, Decimal::from(9000));
 }
@@ -163,7 +166,7 @@ fn mixed_opening_group_keeps_ordinary_quantity_in_the_common_reference() {
     assert_eq!(f.effective_reference, Some(Decimal::from(1800)));
     assert_eq!(f.dots[0].mark.quantity, Decimal::from(1900));
     assert_eq!(f.dots[0].opening_quantity, Decimal::from(100));
-    assert!(f.dots[0].opening_capped);
+    assert!(f.dots[0].opening_oversized);
 }
 #[test]
 fn off_axis_whale_does_not_rescale_visible_regions() {
@@ -206,14 +209,13 @@ fn dense_bounded_source_cells_are_bounded_and_conserve_every_member() {
 }
 
 #[test]
-fn tiny_prints_merge_only_when_their_earned_collision_discs_touch() {
+fn tiny_prints_pool_by_proximity_while_their_painted_area_stays_small() {
     let trades = [
         trade(1000, 100, 1, Side::Buy),
         trade(1100, 100, 1, Side::Sell),
     ];
-    // Ten pixels apart is inside the hull limit, but these subpixel discs
-    // must remain distinct rather than borrowing maximum collision reach.
-    let separated = frame(&trades, 40.0);
+    // Twenty pixels apart exceeds the fixed local support.
+    let separated = frame(&trades, 80.0);
     assert_eq!(separated.dots.len(), 2);
     assert!(
         separated
@@ -221,8 +223,8 @@ fn tiny_prints_merge_only_when_their_earned_collision_discs_touch() {
             .iter()
             .all(|dot| dot.mark.quantity == Decimal::ONE)
     );
-    // At a quarter-pixel separation their earned collision discs touch.
-    let regional = frame(&trades, 1.0);
+    // Ten pixels apart pools the executions without enlarging painted area.
+    let regional = frame(&trades, 40.0);
     assert_eq!(regional.dots.len(), 1);
     let dot = &regional.dots[0];
     assert_eq!(dot.mark.quantity, Decimal::from(2));
@@ -273,6 +275,7 @@ fn request(epoch: u64, end: usize) -> FlowRequest {
         },
         view: view(200.0),
         opening_windows: Vec::new(),
+        opening_ordinals: Vec::new(),
     }
 }
 #[test]
@@ -459,20 +462,20 @@ fn automatic_region_scale_is_unit_invariant_below_one_contract() {
 fn automatic_opening_only_fallback_keeps_area_ratios_and_empty_has_no_reference() {
     let trades = [
         trade(1000, 95, 450, Side::Buy),
-        trade(1100, 105, 90, Side::Sell),
+        trade(86_401_100, 105, 90, Side::Sell),
     ];
     let frame = automatic_frame(&trades, &[0, 1], 200.0, true);
     assert_eq!(frame.effective_reference, Some(Decimal::from(450)));
     assert_eq!(frame.scale_basis, FlowScaleBasis::OpeningOnlyFallback);
     assert!(!frame.opening_exclusion_effective);
-    assert!(frame.dots.iter().all(|dot| !dot.opening_capped));
+    assert!(frame.dots.iter().all(|dot| !dot.opening_oversized));
     assert!((frame.dots[0].radius.powi(2) / frame.dots[1].radius.powi(2) - 5.0).abs() < 0.0001);
     let empty = automatic_frame(&[], &[], 200.0, true);
     assert_eq!(empty.effective_reference, None);
     assert_eq!(empty.scale_basis, FlowScaleBasis::Empty);
 }
 #[test]
-fn automatic_mixed_opening_cap_keeps_gross_facts_and_toggle_keeps_membership() {
+fn automatic_mixed_opening_oversize_keeps_gross_facts_and_toggle_keeps_membership() {
     let trades = [
         trade(1000, 100, 100, Side::Buy),
         trade(1100, 100, 1800, Side::Sell),
@@ -494,11 +497,11 @@ fn automatic_mixed_opening_cap_keeps_gross_facts_and_toggle_keeps_membership() {
         .find(|dot| dot.opening_quantity > Decimal::ZERO)
         .unwrap();
     assert_eq!(mixed.mark.quantity, Decimal::from(1900));
-    assert!(mixed.opening_capped);
-    assert_eq!(mixed.radius, 7.0);
+    assert!(mixed.opening_oversized);
+    assert!((mixed.radius.powi(2) - 49.0 * 1900.0 / 1800.0).abs() < 0.00001);
     let (buy_radius, sell_radius) = mixed.side_radii();
-    assert!((buy_radius.powi(2) - 49.0 * 100.0 / 1900.0).abs() < 0.00001);
-    assert!((sell_radius.powi(2) - 49.0 * 1800.0 / 1900.0).abs() < 0.00001);
+    assert!((buy_radius.powi(2) - 49.0 * 100.0 / 1800.0).abs() < 0.00001);
+    assert!((sell_radius.powi(2) - 49.0).abs() < 0.00001);
     let ordinary = excluded
         .dots
         .iter()
@@ -509,7 +512,7 @@ fn automatic_mixed_opening_cap_keeps_gross_facts_and_toggle_keeps_membership() {
         assert_eq!(a.members, b.members);
         assert_eq!(a.mark.quantity, b.mark.quantity);
         assert_eq!(a.mark.buy_quantity, b.mark.buy_quantity);
-        assert!(!b.opening_capped);
+        assert!(!b.opening_oversized);
     }
 }
 
@@ -539,7 +542,7 @@ fn padded_source_outside_actual_fractional_clip_does_not_set_visible_reference()
     view.clip_left = Decimal::new(5, 1);
     view.clip_right = Decimal::new(20, 1);
     view.reference = FlowReference::VisibleRegions;
-    let frame = source.project(1, 0, 3, 0..3, view, &[]);
+    let frame = source.project(1, 0, 3, 0..3, view, FlowOpeningSelection::default());
     assert_eq!(frame.effective_reference, Some(769.into()));
     assert_eq!(frame.offscreen_executions, 2);
     assert_eq!(frame.off_axis_executions, 0);

@@ -100,11 +100,12 @@ fn circle_radius_and_sector_equivalent_radii_preserve_exact_side_areas() {
 }
 
 #[test]
-fn sector_radii_readback_preserves_opening_cap_and_tiny_positive_sides() {
+fn sector_radii_readback_preserves_opening_identity_and_tiny_positive_sides() {
     let trades = [source_trade(0, 100, 100), source_trade(1, 100, 1800)];
     let mut frame = projected(&trades, 2, 1.0, 1.0);
     frame.effective_reference = Some(1800.into());
-    frame.dots[0].opening_capped = true;
+    frame.dots[0].opening_anchor = true;
+    frame.dots[0].opening_oversized = true;
     frame.dots[0].opening_quantity = 100.into();
     let number = |value: &Value, field: &str| {
         value["marks"][0][field]
@@ -114,6 +115,9 @@ fn sector_radii_readback_preserves_opening_cap_and_tiny_positive_sides() {
             .unwrap()
     };
     let value = wire(&frame, settled(&frame));
+    assert_eq!(value["marks"][0]["opening_capped"], false);
+    assert_eq!(value["marks"][0]["opening_anchor"], true);
+    assert_eq!(value["marks"][0]["opening_oversized"], true);
     assert!((number(&value, "buy_radius_px").powi(2) - 49.0 * 100.0 / 1900.0).abs() < 0.00001);
     assert!((number(&value, "sell_radius_px").powi(2) - 49.0 * 1800.0 / 1900.0).abs() < 0.00001);
     frame.dots[0].mark.quantity = Decimal::from(100_000_000_000_000_000_000_u128);

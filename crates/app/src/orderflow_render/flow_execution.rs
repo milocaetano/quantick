@@ -56,7 +56,7 @@ pub(crate) fn draw_flow_executions(
 ) {
     let history = rect.with_max_x(rect.right() - lane_width);
     let clip = painter.with_clip_rect(history);
-    for dot in frame.dots.iter().filter(|dot| !dot.opening_capped) {
+    for dot in &frame.dots {
         let Some(disc) = center(dot)
             .and_then(|at| flow_disc(dot, at))
             .filter(|disc| disc.visible(history))
@@ -65,9 +65,14 @@ pub(crate) fn draw_flow_executions(
         };
         // A visible footprint must not change sector colours. The opaque neutral
         // backing occupies exactly the earned disc, with no rim or minimum floor.
-        if let Some(color) = backing {
+        if let Some(color) = backing.filter(|_| !dot.opening_oversized) {
             clip.circle_filled(disc.center, disc.radius, color);
         }
+        let opacity = if dot.opening_oversized {
+            FLOW_FILL_OPACITY * quantick_orderflow::config::dressing::HOLLOW_FILL_ALPHA
+        } else {
+            FLOW_FILL_OPACITY
+        };
         let (buy, sell) = dot.side_shares();
         let mut mesh = egui::Mesh::default();
         let mut angle = f64::from(PIE_START_ANGLE);
@@ -83,7 +88,7 @@ pub(crate) fn draw_flow_executions(
                 disc.radius,
                 angle as f32,
                 sweep as f32,
-                SphereShading::flat(color.gamma_multiply(FLOW_FILL_OPACITY)),
+                SphereShading::flat(color.gamma_multiply(opacity)),
                 0.0,
             );
             angle += sweep;

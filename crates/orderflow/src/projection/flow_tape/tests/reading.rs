@@ -25,14 +25,17 @@ fn caption_reports_current_reference_and_inspection_preserves_exact_facts() {
 }
 
 #[test]
-fn capped_region_caption_remains_visible_and_separates_total_from_opening() {
+fn oversized_region_caption_remains_visible_and_separates_total_from_opening() {
     let mut frame = frame(&[trade(1000, 100, 32100, Side::Buy)], 200.0);
-    frame.dots[0].opening_capped = true;
+    frame.dots[0].opening_oversized = true;
     frame.dots[0].opening_quantity = 31000.into();
     let text = caption_text(Some(&frame), FlowProgress::default(), false).unwrap();
     assert!(text.contains("total 32100, recorded opening 31000"));
-    assert!(text.contains("dashed capped regions"));
-    assert!(text.contains("not proportional"));
+    assert!(text.contains("first daily regions"));
+    assert!(text.contains("area proportional"));
     let rows = frame.inspection_details(&frame.dots[0], false, 0, false, |q| q.to_string());
-    assert!(rows.iter().any(|row| row.contains("dashed hollow marker")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("uncapped area proportional"))
+    );
 }

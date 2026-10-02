@@ -189,9 +189,11 @@ fn circle_edge_visibility_and_hit_testing_share_exact_geometry() {
 }
 
 #[test]
-fn capped_opening_has_no_proportional_fill_or_footprint_backing() {
-    let (mut frame, _) = painted_region(100, 0);
-    frame.dots[0].opening_capped = true;
+fn oversized_opening_keeps_earned_area_with_faint_sectors_and_no_opaque_backing() {
+    let (mut frame, _) = painted_region(75, 25);
+    frame.dots[0].opening_anchor = true;
+    frame.dots[0].opening_oversized = true;
+    frame.dots[0].radius = 120.0;
     let ctx = egui::Context::default();
     let output = ctx.run(egui::RawInput::default(), |ctx| {
         draw_flow_executions(
@@ -204,7 +206,30 @@ fn capped_opening_has_no_proportional_fill_or_footprint_backing() {
             |_| Some(egui::pos2(50.0, 50.0)),
         );
     });
-    assert!(output.shapes.is_empty());
+    assert_eq!(output.shapes.len(), 1, "no opaque footprint backing");
+    let egui::Shape::Mesh(mesh) = &output.shapes[0].shape else {
+        panic!("earned-area opening sectors")
+    };
+    let opacity = FLOW_FILL_OPACITY * quantick_orderflow::config::dressing::HOLLOW_FILL_ALPHA;
+    let colors = [
+        FLOW_BUY.gamma_multiply(opacity),
+        FLOW_SELL.gamma_multiply(opacity),
+    ];
+    let center = egui::pos2(50.0, 50.0) + FLOW_OFFSET;
+    assert!(mesh.vertices.iter().all(|vertex| {
+        vertex.pos.distance(center) <= 120.0001 && colors.contains(&vertex.color)
+    }));
+    let mut areas = [0.0_f32; 2];
+    for triangle in mesh.indices.as_chunks::<3>().0 {
+        let a = mesh.vertices[triangle[0] as usize];
+        let b = mesh.vertices[triangle[1] as usize].pos - a.pos;
+        let c = mesh.vertices[triangle[2] as usize].pos - a.pos;
+        let side = colors.iter().position(|color| *color == a.color).unwrap();
+        areas[side] += (b.x * c.y - b.y * c.x).abs() * 0.5;
+    }
+    let area = areas.iter().sum::<f32>();
+    assert!((area / (std::f32::consts::PI * 120.0_f32.powi(2)) - 1.0).abs() < 0.01);
+    assert!((areas[0] / area - 0.75).abs() < 0.001);
 }
 
 #[test]
@@ -237,10 +262,15 @@ fn common_offset_preserves_vectors_radii_and_inspects_the_painted_position() {
         paint(&frame).is_empty(),
         "ordinary bubbles have no foreground perimeter"
     );
-    let mut capped = frame;
-    capped.dots[0].opening_capped = true;
-    let shapes = paint(&capped);
-    assert_eq!(shapes.len(), 1, "opening exception remains distinct");
+    let mut opening = frame;
+    opening.dots[0].opening_anchor = true;
+    opening.dots[0].opening_oversized = true;
+    let shapes = paint(&opening);
+    assert_eq!(
+        shapes.len(),
+        3,
+        "opening perimeter and shadowed direct value remain distinct"
+    );
     let egui::Shape::Mesh(mesh) = &shapes[0].shape else {
         panic!("exception mesh")
     };
@@ -254,7 +284,8 @@ fn common_offset_preserves_vectors_radii_and_inspects_the_painted_position() {
 #[test]
 fn hiding_flow_legend_keeps_offset_and_exception_facts_but_hides_colour_key() {
     let (mut frame, _) = painted_region(100, 0);
-    frame.dots[0].opening_capped = true;
+    frame.dots[0].opening_anchor = true;
+    frame.dots[0].opening_oversized = true;
     frame.dots[0].opening_quantity = 90.into();
     let ctx = egui::Context::default();
     let output = ctx.run(egui::RawInput::default(), |ctx| {
@@ -279,6 +310,41 @@ fn hiding_flow_legend_keeps_offset_and_exception_facts_but_hides_colour_key() {
         .collect::<Vec<_>>()
         .join(" ");
     assert!(texts.contains("offset"));
-    assert!(texts.contains("dashed capped"));
+    assert!(texts.contains("100") && texts.contains("90"));
+    assert!(!texts.contains("capped"));
     assert!(!texts.contains("Buy") && !texts.contains("Sell"));
+}
+
+#[test]
+fn oversized_opening_value_stays_inside_the_pane_even_when_its_perimeter_is_clipped() {
+    let (mut frame, _) = painted_region(74365, 0);
+    frame.dots[0].opening_anchor = true;
+    frame.dots[0].opening_oversized = true;
+    frame.dots[0].radius = 1200.0;
+    let history = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(200.0, 100.0));
+    for center in [history.min, history.center(), history.max] {
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            super::super::flow_perimeter::draw_flow_perimeters(
+                &ctx.layer_painter(egui::LayerId::background()),
+                history,
+                &frame,
+                &HeatmapConfig::default(),
+                |_| Some(center - FLOW_OFFSET),
+            );
+        });
+        let text = output
+            .shapes
+            .iter()
+            .rev()
+            .find_map(|shape| {
+                let egui::Shape::Text(text) = &shape.shape else {
+                    return None;
+                };
+                Some(text)
+            })
+            .expect("exact value survives even when the giant circumference is outside the pane");
+        assert_eq!(text.galley.job.text, "First 74365 (clipped)");
+        assert!(history.contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())));
+    }
 }

@@ -1,23 +1,14 @@
 //! FLOW silhouettes inside the earned radius, above candle bodies.
-use super::{
-    bubbles::sphere_segments,
-    flow_execution::{FLOW_BUY, FLOW_SELL, FlowDisc, flow_disc},
-};
+use super::flow_execution::{FLOW_BUY, FLOW_SELL, FlowDisc, flow_disc};
 use eframe::egui::{
     self,
     epaint::{Vertex, WHITE_UV},
 };
 use quantick_orderflow::{
     HeatmapConfig,
+    config::dressing::inner_perimeter_quads,
     projection::flow_tape::{FlowTapeDot, FlowTapeFrame},
 };
-
-// The circumference is opaque for a stable silhouette, but occupies at most
-// one quarter of a tiny radius and never changes the outer volume boundary.
-const PERIMETER_WIDTH_PX: f32 = 0.75;
-const PERIMETER_RADIUS_FRACTION: f32 = 0.25;
-// Twelve visible dashes alternate with twelve gaps for capped exceptions.
-const DASH_PHASES: usize = 24;
 
 pub(crate) fn draw_flow_perimeters(
     painter: &egui::Painter,
@@ -27,7 +18,7 @@ pub(crate) fn draw_flow_perimeters(
     mut center: impl FnMut(&FlowTapeDot) -> Option<egui::Pos2>,
 ) {
     let clip = painter.with_clip_rect(history);
-    for dot in frame.dots.iter().filter(|dot| dot.opening_capped) {
+    for dot in frame.dots.iter().filter(|dot| dot.opening_oversized) {
         let Some(disc) = center(dot)
             .and_then(|at| flow_disc(dot, at))
             .filter(|disc| disc.visible(history))
@@ -39,10 +30,33 @@ pub(crate) fn draw_flow_perimeters(
         let mut angle = f64::from(super::PIE_START_ANGLE);
         for (share, color) in [(buy, FLOW_BUY), (sell, FLOW_SELL)] {
             let sweep = share * std::f64::consts::TAU;
-            add_perimeter(&mut mesh, disc, angle, sweep, color, dot.opening_capped);
+            add_perimeter(&mut mesh, disc, angle, sweep, color, true);
             angle += sweep;
         }
         clip.add(egui::Shape::mesh(mesh));
+        let clipped = !history.contains_rect(egui::Rect::from_center_size(
+            disc.center,
+            egui::Vec2::splat(disc.radius * 2.0),
+        ));
+        let label = clip.layout_no_wrap(
+            format!(
+                "First {}{}",
+                dot.mark.quantity.normalize(),
+                if clipped { " (clipped)" } else { "" }
+            ),
+            egui::FontId::monospace(11.0),
+            crate::theme::TEXT_PRIMARY,
+        );
+        if label.size().x <= history.width() && label.size().y <= history.height() {
+            let origin =
+                history.shrink2(label.size() * 0.5).clamp(disc.center) - label.size() * 0.5;
+            clip.galley_with_override_text_color(
+                origin + egui::vec2(1.0, 1.0),
+                label.clone(),
+                egui::Color32::BLACK,
+            );
+            clip.galley(origin, label, crate::theme::TEXT_PRIMARY);
+        }
     }
 }
 
@@ -56,34 +70,11 @@ fn add_perimeter(
     color: egui::Color32,
     dashed: bool,
 ) {
-    if sweep <= 0.0 {
-        return;
-    }
-    let full = if dashed {
-        sphere_segments(disc.radius).next_multiple_of(DASH_PHASES)
-    } else {
-        sphere_segments(disc.radius)
-    };
-    let steps = (sweep / std::f64::consts::TAU * full as f64).ceil() as usize;
-    let inner = disc.radius - PERIMETER_WIDTH_PX.min(disc.radius * PERIMETER_RADIUS_FRACTION);
-    for step in 0..steps {
-        let start = angle + sweep * step as f64 / steps as f64;
-        let end = angle + sweep * (step + 1) as f64 / steps as f64;
-        // Twelve evenly spaced gaps identify a capped exception, even for one side.
-        let phase =
-            ((start + end) * 0.5 - f64::from(super::PIE_START_ANGLE)) / std::f64::consts::TAU;
-        if dashed && (phase * DASH_PHASES as f64).floor() as usize % 2 == 1 {
-            continue;
-        }
+    for quad in inner_perimeter_quads(disc.radius, angle, sweep, dashed) {
         let base = mesh.vertices.len() as u32;
-        for (angle, radius) in [
-            (start, inner),
-            (start, disc.radius),
-            (end, disc.radius),
-            (end, inner),
-        ] {
+        for [x, y] in quad {
             mesh.vertices.push(Vertex {
-                pos: disc.center + egui::vec2(angle.cos() as f32, angle.sin() as f32) * radius,
+                pos: disc.center + egui::vec2(x, y),
                 uv: WHITE_UV,
                 color,
             });

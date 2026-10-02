@@ -90,8 +90,8 @@ impl ChartPane {
             {
                 ui.indent("candle_opening_scale", |ui| {
                     let mut ignore = owner.ignore_flow_opening();
-                    if ui.checkbox(&mut ignore, "Ignore first recorded burst in regional scale")
-                        .on_hover_text("Exclude the first recorded 100 ms burst per UTC date from candle sizing. This is an approximation, not a proven auction. Full quantities and regional buy/sell shares remain; oversized opening regions use dashed hollow capped markers, not proportional circles. If only opening flow is visible, use its full scale. This preference lasts for this pane and does not change Tape.")
+                    if ui.checkbox(&mut ignore, "Exclude first daily region from scale")
+                        .on_hover_text("Exclude the opening quantity in the region containing each UTC date's first recorded trade from FLOW sizing. Only that region may exceed the ordinary maximum, with proportional area and its full volume shown. Other regions share the visible full-volume reference. The first recorded trade is not a proven auction. If no other volume is visible, use the full scale. This preference lasts for this pane and does not change Tape.")
                         .changed() {
                         owner.set_ignore_flow_opening(ignore);
                     }
