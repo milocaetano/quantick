@@ -131,8 +131,8 @@ impl FrameLayout {
     /// painter reads, plus the auto-fitted range the next frame's input
     /// handler converts pixels with and the span its gutter drag flips
     /// against. `None` when nothing yields a scale.
-    /// The native tape fits `tape_range`, beside the candles too; without
-    /// it the candles fit their own bars.
+    /// The native tape and visible candles share a fit; tape only fits its
+    /// prints, and ordinary charts fit their own bars.
     pub(super) fn resolve<'a>(
         &'a self,
         painter: &'a egui::Painter,
@@ -178,6 +178,7 @@ impl FrameLayout {
         let newest = partial.or_else(|| closed.last());
         let (auto_range, flip_span) = quantick_chart::price_axis_fit::PriceAxisFit {
             native_tape: self.native_tape,
+            tape_only: self.tape_only,
             tape_range,
             previous_auto: last_auto_range,
             bounds: (chart_rect.top(), chart_rect.bottom()),

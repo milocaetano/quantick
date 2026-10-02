@@ -608,11 +608,12 @@ fn a_vertical_drag_that_wobbles_sideways_keeps_the_tape_live_in_tape_only() {
 }
 
 /// A literal double click resets framing, not orientation. The next vertical
-/// gesture must still follow the hand even when only one Tape price remains.
+/// gesture must still follow the hand when one Tape price remains: beside
+/// visible candles, or alone on the narrow Tape-only axis.
 #[test]
 fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
     for inverted in [false, true] {
-        for on_tape in [false, true] {
+        for (tape_only, on_tape) in [(false, false), (false, true), (true, true)] {
             for middle in [false, true] {
                 for dy in [-60.0, 60.0] {
                     let ctx = egui::Context::default();
@@ -625,11 +626,29 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                             .ingest_live_trade_at(&print, 130_000 + agg_id as i64);
                     }
                     app.active_tab_mut().tape_mut().flush_for_test();
+                    if tape_only {
+                        app.active_tab_mut()
+                            .tape_mut()
+                            .set_layer_switch(quantick_layers::OrderflowSwitch::TapeOnly, true);
+                        run_frame(&mut app, &ctx);
+                        run_frame(&mut app, &ctx);
+                    }
                     let view = &mut app.active_tab_mut().flow_pane.price_view;
                     assert!(view.set_manual_range(90.455, 111.545));
                     view.set_inverted(inverted);
                     run_frame(&mut app, &ctx);
-                    let at = if on_tape { tape } else { candles };
+                    let at = if tape_only {
+                        app.active_tab()
+                            .flow_pane
+                            .frame
+                            .chart_rect
+                            .unwrap()
+                            .center()
+                    } else if on_tape {
+                        tape
+                    } else {
+                        candles
+                    };
                     click_sized(&mut app, &ctx, TEST_WINDOW, at);
                     click_sized(&mut app, &ctx, TEST_WINDOW, at);
                     run_frame(&mut app, &ctx);
@@ -640,7 +659,22 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     );
                     assert_eq!(pane.price_view.is_inverted(), inverted);
                     let auto = pane.frame.auto_range.unwrap();
-                    assert!(auto.1 - auto.0 <= 1.0, "quiet Tape: {auto:?}");
+                    assert_eq!(
+                        app.active_tab().tape().tape_price_range(),
+                        Some((101.0, 101.0)),
+                        "the fixture retains only the quiet Tape price"
+                    );
+                    if tape_only {
+                        assert!(auto.1 - auto.0 <= 1.0, "quiet Tape only: {auto:?}");
+                        assert!(auto.0 <= 101.0 && auto.1 >= 101.0);
+                    } else {
+                        // trade(1..=400) cycles through 100.0..101.9; visible
+                        // candles keep those extrema after the Tape goes quiet.
+                        assert!(
+                            auto.0 <= 100.0 && auto.1 >= 101.9,
+                            "the split still includes visible candle extremes: {auto:?}"
+                        );
+                    }
                     let height = pane.frame.chart_height;
                     let price = (auto.0 + auto.1) * 0.5;
                     let before_y = pane.price_view.scale(auto, 0.0, height).y(price);
@@ -655,7 +689,7 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     assert_eq!(pane.price_view.is_inverted(), inverted);
                     assert!(
                         (after_y - before_y - dy).abs() < 1.0,
-                        "screen pan {dy}, actual {}, Tape {on_tape}, middle {middle}, inverted {inverted}",
+                        "screen pan {dy}, actual {}, Tape {on_tape}, Tape only {tape_only}, middle {middle}, inverted {inverted}",
                         after_y - before_y
                     );
                     assert_eq!(app.active_tab().tape().tape_end(), TapeEnd::Live);
