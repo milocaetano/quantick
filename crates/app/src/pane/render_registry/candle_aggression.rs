@@ -5,11 +5,9 @@ use crate::orderflow_render::{PIE_START_ANGLE, SphereShading, add_shaded_sector}
 use crate::theme;
 use eframe::egui;
 use quantick_layers::ChartLayer;
-use quantick_orderflow::projection::{CandleDotView, PriceWindow, project_candle_dots};
-use rust_decimal::{
-    Decimal,
-    prelude::{FromPrimitive as _, ToPrimitive as _},
-};
+use quantick_chart::flow_execution::flow_price_window;
+use quantick_orderflow::projection::{CandleDotView, project_candle_dots};
+use rust_decimal::prelude::ToPrimitive as _;
 
 const DOT_OPACITY: f32 = 0.35;
 pub(super) const PACKAGE: Package = Package {
@@ -22,11 +20,7 @@ fn paint(pass: &mut FootprintPass<'_>) {
         return;
     }
     let frame = pass.frame;
-    let (low, high) = frame.scale.range();
-    let Some(prices) = Decimal::from_f64(low)
-        .zip(Decimal::from_f64(high))
-        .and_then(|(low, high)| PriceWindow::new(low, high))
-    else {
+    let Some(prices) = flow_price_window(frame.scale.range()) else {
         return;
     };
     let view = CandleDotView {

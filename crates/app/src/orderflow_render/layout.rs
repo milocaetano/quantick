@@ -9,8 +9,6 @@
 use eframe::egui;
 use quantick_orderflow::projection::{PastTape, PastTapeMemory};
 use quantick_orderflow::{AggressionPrimitive, HeatmapProjection, PriceWindow};
-use rust_decimal::Decimal;
-use rust_decimal::prelude::FromPrimitive as _;
 use std::sync::Arc;
 
 use crate::viewport::Viewport;
@@ -328,9 +326,7 @@ impl<'a> RenderContext<'a> {
     /// Reproject factual tape prices against the axis being painted now,
     /// before visibility and overlap decisions use their screen positions.
     pub(crate) fn with_tape_price_range(mut self, range: (f64, f64)) -> Self {
-        self.tape_prices = Decimal::from_f64(range.0)
-            .zip(Decimal::from_f64(range.1))
-            .and_then(|(low, high)| PriceWindow::new(low, high));
+        self.tape_prices = quantick_chart::flow_execution::flow_price_window(range);
         self
     }
 
