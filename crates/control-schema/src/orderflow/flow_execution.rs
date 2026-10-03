@@ -8,8 +8,7 @@ use rust_decimal::Decimal;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-const MAX_MARKS: usize = 256;
-const MAX_MEMBERS: usize = 128;
+use super::constants::{MAX_FLOW_READBACK_MARKS, MAX_FLOW_READBACK_MEMBERS};
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FlowExecutionSnapshot {
@@ -196,8 +195,13 @@ impl From<(&FlowTapeFrame, FlowProgress)> for FlowExecutionSnapshot {
             sell_quantity: canonical_decimal(sell),
             trade_count: wire_usize(frame.dots.iter().map(|dot| dot.mark.trade_count).sum()),
             mark_count: wire_usize(frame.dots.len()),
-            marks_truncated: frame.dots.len() > MAX_MARKS,
-            marks: frame.dots.iter().take(MAX_MARKS).map(Into::into).collect(),
+            marks_truncated: frame.dots.len() > MAX_FLOW_READBACK_MARKS,
+            marks: frame
+                .dots
+                .iter()
+                .take(MAX_FLOW_READBACK_MARKS)
+                .map(Into::into)
+                .collect(),
         }
     }
 }
@@ -209,7 +213,7 @@ impl From<&FlowTapeDot> for FlowExecutionMark {
             members: dot
                 .members
                 .iter()
-                .take(MAX_MEMBERS)
+                .take(MAX_FLOW_READBACK_MEMBERS)
                 .map(|member| FlowExecutionMember {
                     ordinal: wire_usize(member.ordinal),
                     source_id: WireU64::new(member.source_id),
@@ -217,7 +221,7 @@ impl From<&FlowTapeDot> for FlowExecutionMark {
                     accepted_ordinal: wire_usize(member.accepted_ordinal),
                 })
                 .collect(),
-            members_truncated: dot.members.len() > MAX_MEMBERS,
+            members_truncated: dot.members.len() > MAX_FLOW_READBACK_MEMBERS,
             native_cells: wire_usize(dot.native_cells),
             first_slot: wire_usize(dot.first_slot),
             end_slot: wire_usize(dot.end_slot),

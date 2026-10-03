@@ -19,6 +19,7 @@
 //! rule where it does not; the feed scope owns that declaration for the market
 //! as a whole and it is named here rather than restated per level.
 
+mod constants;
 mod flow_execution;
 pub use flow_execution::FlowExecutionSnapshot;
 

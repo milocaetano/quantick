@@ -2,9 +2,7 @@
 
 use quantick_control::{
     error::ControlError,
-    id::ModuleId,
-    registry::{CapabilityDescriptor, EffectPersistence, IdempotencyPolicy},
-    schema::generated_schema,
+    registry::{CapabilityDescriptor, IdempotencyPolicy},
     wire::{CanonicalDecimal, WireU64},
 };
 use schemars::JsonSchema;
@@ -73,17 +71,13 @@ pub struct PriceAxisResult {
 }
 
 pub fn descriptor() -> CapabilityDescriptor {
-    let mut descriptor = crate::layout::descriptor(
+    crate::layout::transient_descriptor::<PriceAxisInput, PriceAxisResult>(
         PRICE_AXIS_CAPABILITY_ID,
+        MODULE_ID,
         "Set a pane's price axis",
         "Sets an explicit manual price range or resumes the pane's own automatic fit. Applies to the chart or independent tape without changing its time window or other panes.",
-        generated_schema::<PriceAxisInput>(),
-    );
-    descriptor.module = ModuleId::new(MODULE_ID).expect("static module ID");
-    descriptor.output_schema = generated_schema::<PriceAxisResult>();
-    descriptor.persistence = EffectPersistence::Transient;
-    descriptor.stale_input_safety = Some("Stable tab and pane IDs select one price axis; setting the same range or automatic mode is harmless, and the result reports the actual framing.".to_owned());
-    descriptor
+        "Stable tab and pane IDs select one price axis; setting the same range or automatic mode is harmless, and the result reports the actual framing.",
+    )
 }
 
 pub const READBACKS: &[Readback] = &[snapshot(

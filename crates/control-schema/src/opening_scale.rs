@@ -1,9 +1,7 @@
 //! Optional opening-burst display scaling; execution facts remain unchanged.
 
 use quantick_control::{
-    id::ModuleId,
-    registry::{CapabilityDescriptor, EffectPersistence, IdempotencyPolicy},
-    schema::generated_schema,
+    registry::{CapabilityDescriptor, IdempotencyPolicy},
     wire::WireU64,
 };
 use schemars::JsonSchema;
@@ -59,25 +57,19 @@ impl OpeningScaleInput {
 }
 
 pub fn descriptor() -> CapabilityDescriptor {
-    let mut descriptor = crate::layout::descriptor(
+    crate::layout::transient_descriptor::<OpeningScaleInput, OpeningScaleResult>(
         OPENING_SCALE_CAPABILITY_ID,
+        crate::orderflow::MODULE_ID,
         "Set opening burst size reference",
         "Optionally changes opening calibration without changing executions, prices or grouping. The default target tape excludes the first recorded 100 ms burst per UTC date and caps its radius; it has no effect on a typed tape reference and remains transient until the bubble preset is saved. Target candle requires active tick FLOW bubbles and has an independent transient pane preference: only the region containing the canonical first recorded execution per UTC date excludes its opening portion from the visible reference and may grow uncapped with area proportional to gross volume. Other first-window regions contribute their full volume. Offscreen or evicted anchors never transfer to visible regions. A frame with no ordinary reference uses an explicitly reported full-volume fallback. Both preferences default off; first recorded activity is not an exchange auction flag.",
-        generated_schema::<OpeningScaleInput>(),
-    );
-    descriptor.module = ModuleId::new("orderflow").expect("static module ID");
-    descriptor.output_schema = generated_schema::<OpeningScaleResult>();
-    descriptor.persistence = EffectPersistence::Transient;
-    descriptor.stale_input_safety = Some(
-        "Stable tab and pane IDs are resolved before changing only a reversible display preference; the result and orderflow.bubbles report its actual value.".to_owned(),
-    );
-    descriptor
+        "Stable tab and pane IDs are resolved before changing only a reversible display preference; the result and orderflow.bubbles report its actual value.",
+    )
 }
 
 pub const READBACKS: &[crate::readback::Readback] = &[crate::readback::snapshot(
     OPENING_SCALE_CAPABILITY_ID,
     IdempotencyPolicy::Optional,
-    "orderflow.bubbles",
+    crate::orderflow::BUBBLES_SCOPE_ID,
     "tabs[].panes[].opening_scale",
     "the addressed pane reports independent tape and candle opening-burst scaling preferences",
     &[

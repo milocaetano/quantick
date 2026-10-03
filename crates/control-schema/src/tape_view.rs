@@ -4,9 +4,7 @@
 
 use quantick_control::{
     error::ControlError,
-    id::ModuleId,
-    registry::{CapabilityDescriptor, EffectPersistence, IdempotencyPolicy},
-    schema::generated_schema,
+    registry::{CapabilityDescriptor, IdempotencyPolicy},
     wire::WireU64,
 };
 use quantick_orderflow::LaneWindow;
@@ -132,17 +130,13 @@ pub struct TapeViewResult {
 }
 
 pub fn descriptor() -> CapabilityDescriptor {
-    let mut descriptor = crate::layout::descriptor(
+    crate::layout::transient_descriptor::<TapeViewInput, TapeViewResult>(
         TAPE_VIEW_CAPABILITY_ID,
+        MODULE_ID,
         "Move the native tape through time",
         "Holds the native tape's right edge at a past instant or pins it to live, and sets how much market time it shows. Never moves the candles beside it.",
-        generated_schema::<TapeViewInput>(),
-    );
-    descriptor.module = ModuleId::new(MODULE_ID).expect("static module ID");
-    descriptor.output_schema = generated_schema::<TapeViewResult>();
-    descriptor.persistence = EffectPersistence::Transient;
-    descriptor.stale_input_safety = Some("Stable tab and pane IDs select one tape; the same end or window again is harmless, and the result reports the end after clamping.".to_owned());
-    descriptor
+        "Stable tab and pane IDs select one tape; the same end or window again is harmless, and the result reports the end after clamping.",
+    )
 }
 
 pub const READBACKS: &[Readback] = &[snapshot(
