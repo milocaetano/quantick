@@ -1,9 +1,8 @@
+//! The layer descriptor vocabulary, the registry that validates it and the
+//! block reasons policy reports.
 use crate::builtins;
 
-/// The supported compact state budget. Registration rejects overflow and aliasing.
-pub const MAX_LAYERS: usize = u32::BITS as usize;
-pub const MAX_LAYER_ID_BYTES: usize = 64;
-pub const MAX_LAYER_LABEL_BYTES: usize = 128;
+pub use crate::constants::{MAX_LAYER_ID_BYTES, MAX_LAYER_LABEL_BYTES, MAX_LAYERS};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum OrderflowSwitch {

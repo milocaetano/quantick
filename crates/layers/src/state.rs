@@ -1,3 +1,4 @@
+//! Requested layer state and the effective-visibility policy over caller-supplied facts.
 use crate::{ChartLayer, LayerBlock, LayerRegistry, LayerScope, LayerSource, Requirement, blocks};
 
 /// Facts needed by policy, supplied by the caller; no clock or feature state is owned here.

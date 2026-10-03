@@ -4,6 +4,7 @@
 
 mod builtins;
 mod candle_aggression;
+mod constants;
 mod descriptor;
 mod document;
 mod persistence;

@@ -1,3 +1,4 @@
+//! The built-in chart layers, each one descriptor registered in [`ALL`].
 use crate::{
     ChartLayer, LayerDescriptor, LayerScope, LayerSource, OrderflowSwitch, Persistence, Requirement,
 };
