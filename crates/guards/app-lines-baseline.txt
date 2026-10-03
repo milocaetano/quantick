@@ -37,6 +37,8 @@
 # dates it writes. All of it is drawing and label placement; the rule for
 # where a day starts is `quantick_civil::day_starts`, below `app`, with its
 # tests.
+# Raised by 1 line for opt-in FRVP labels: a serde rename so presets saved
+# while labels defaulted on stop counting as the trader's choice.
 # Raised by 264 lines for the quick bar switch (`surfaces/bar_switch.rs`):
 # drawing and key reading only, docked as a new file on the `Surface` port.
 # What the typed number means lives in `quantick-engine`
@@ -65,5 +67,5 @@
 # with centred quantitative FLOW sectors; publication policy stays in orderflow.
 # Root authorized this exact measured remainder after independent baseline_visual
 # ownership/geometry review (2026-10-01); native Tape geometry is unchanged.
-!budget 105243
-crates/app 105243
+!budget 105244
+crates/app 105244
