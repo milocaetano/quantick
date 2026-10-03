@@ -1,7 +1,6 @@
 //! Classify a Tape drag once from its initial direction; vertical wobble stays live.
 
-/// Travel before the hand's initial direction can be distinguished from a click.
-const DRAG_JUDGED_AFTER_PX: f32 = 6.0;
+use crate::constants::DRAG_JUDGED_AFTER_PX;
 
 /// Per-canvas gesture state; the caller stores it beside its input surface.
 #[derive(Clone, Copy, Debug, Default)]
