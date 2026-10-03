@@ -67,8 +67,10 @@ fn layout_tab_shortcut(index: usize) -> Option<egui::KeyboardShortcut> {
 const COLLAPSE_CONTEXT_SHORTCUT: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::Num0);
 
-const DOCK_SHORTCUT: egui::KeyboardShortcut =
-    egui::KeyboardShortcut::new(egui::Modifiers::CTRL, egui::Key::B);
+const DOCK_SHORTCUT: egui::KeyboardShortcut = egui::KeyboardShortcut::new(
+    egui::Modifiers::CTRL.plus(egui::Modifiers::SHIFT),
+    egui::Key::B,
+);
 /// Folds the focused pane's on-chart indicator legend to its count puck, or
 /// opens it back up (see [`crate::indicator_legend`]).
 ///
@@ -216,6 +218,18 @@ impl QuantickApp {
                 tab.close_replay(config);
             }
             MenuCommand::ToggleDock => self.dock.toggle_visible(),
+            MenuCommand::ToggleLayer(layer) => {
+                let pane = self.focused_pane();
+                let capabilities = self.active_tab().capabilities(&self.config);
+                if pane.layer_blocked(layer, capabilities).is_none() {
+                    let visible = !pane.layer_visible(layer, &self.style);
+                    self.focused_pane_mut().set_layer_visible(
+                        layer,
+                        visible,
+                        &mut Default::default(),
+                    );
+                }
+            }
             MenuCommand::ToggleContextCharts => {
                 let collapsed = self.active_tab().context_collapsed;
                 self.active_tab_mut().set_context_collapsed(!collapsed);

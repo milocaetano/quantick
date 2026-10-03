@@ -44,11 +44,19 @@ impl ChartPane {
         let blocked = self.layer_blocked(layer, chrome.capabilities);
         let mut visible = self.layer_visible(layer, chrome.style);
         let response = ui
-            .add_enabled(
-                blocked.is_none(),
-                egui::Checkbox::new(&mut visible, layer.label()),
-            )
-            .on_hover_text(layer.hint());
+            .horizontal(|ui| {
+                let response = ui
+                    .add_enabled(
+                        blocked.is_none(),
+                        egui::Checkbox::new(&mut visible, layer.label()),
+                    )
+                    .on_hover_text(layer.hint());
+                if let Some(shortcut) = crate::chart_layers::shortcuts::label(layer) {
+                    ui.weak(shortcut);
+                }
+                response
+            })
+            .inner;
         #[cfg(test)]
         self.layer_menu_rects.push((layer, response.rect));
         if let Some(reason) = blocked {

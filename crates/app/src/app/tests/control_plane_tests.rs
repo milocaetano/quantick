@@ -611,7 +611,10 @@ fn bubble_toggle_needs_no_feed_command_and_leaves_capture_alone() {
         "aggregate trades already flow; no feed command is needed"
     );
 
-    app.apply_toolbar_action(ToolbarAction::SetHeatmap(false));
+    app.apply_toolbar_action(ToolbarAction::SetLayer(
+        crate::toolbar::LayerToggle::Heatmap,
+        false,
+    ));
     assert!(
         app.active_tab().tape().bubbles_enabled(),
         "hiding the book must not stop the bubbles"

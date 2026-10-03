@@ -67,6 +67,7 @@ pub(crate) const LAYERS_FILE: &str = "chart-layers.toml";
 
 pub(crate) use quantick_layers::{ChartLayer, LayerBlock};
 mod session;
+pub(crate) mod shortcuts;
 pub(crate) use session::{maintain, restore};
 
 /// The layer-visibility file the app opens with and writes back to.
