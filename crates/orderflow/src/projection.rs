@@ -14,6 +14,7 @@ use super::interaction::{LiquidityEvent, correlate_liquidity, liquidity_events};
 use super::timeline::BarTimeline;
 
 mod candle_dots;
+mod constants;
 mod dots;
 pub mod flow_tape;
 mod fold;
@@ -32,14 +33,17 @@ mod tape_seal;
 mod tiers;
 
 pub use candle_dots::{
-    CANDLE_GROUP_HOLD_BAND, CANDLE_GROUP_MIN_WIDTH_PX, CANDLE_MARK_MAX_RADIUS_PX, CandleDot,
-    CandleDotFrame, CandleDotGrid, CandleDotView, CandleFootprint, CandleFootprintSource,
-    CandleGroupMemory, project_candle_dots,
+    CandleDot, CandleDotFrame, CandleDotGrid, CandleDotView, CandleFootprint,
+    CandleFootprintSource, CandleGroupMemory, project_candle_dots,
+};
+pub use constants::{
+    CANDLE_GROUP_HOLD_BAND, CANDLE_GROUP_MIN_WIDTH_PX, CANDLE_MARK_MAX_RADIUS_PX,
+    DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_CELL_PX, DOT_WINDOW_LADDER_MS, FRAME_WORK_BUDGET,
+    MAX_PAST_BLOCKS, MIN_DOT_RADIUS_PX, PAST_PRICE_SPAN_BAND,
 };
 pub(crate) use dots::native_grouping;
 pub use dots::{
-    DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_CELL_PX, DOT_WINDOW_LADDER_MS, DotRungMemory, DotScale,
-    DotSizing, DotZoom, MIN_DOT_RADIUS_PX, PaneGeometry, VolumeDots, candle_dot_px,
+    DotRungMemory, DotScale, DotSizing, DotZoom, PaneGeometry, VolumeDots, candle_dot_px,
     dot_level_ticks, dot_radius_range, dot_window_ms, hold_rung, lane_bars, tape_price_range,
 };
 pub use model::{
@@ -56,8 +60,7 @@ pub use tape_frame::{
 };
 pub use tape_geometry::TapeHorizontalGeometry;
 pub use tape_memory::{
-    FRAME_WORK_BUDGET, MAX_PAST_BLOCKS, PAST_PRICE_SPAN_BAND, PastTapeMemory, TapeDotFrame,
-    TapeDotMemory, TapeDotView, TapeSource, TapeWork,
+    PastTapeMemory, TapeDotFrame, TapeDotMemory, TapeDotView, TapeSource, TapeWork,
 };
 pub use tape_rebuild::{RunnerStopped, TapeRebuildRunner, TapeRebuilds};
 pub use tape_reuse::TapeReuse;

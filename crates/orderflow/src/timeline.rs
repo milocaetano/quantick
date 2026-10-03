@@ -2,6 +2,8 @@
 
 use quantick_engine::Bar;
 
+use crate::constants::{DEFAULT_RESERVE_MS, MIN_LANE_SPAN_MS, RESERVE_SAMPLE_BARS};
+
 /// A timestamp located inside one equal-width bar slot.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TimelinePosition {
@@ -19,27 +21,6 @@ struct Slot {
     start_ms: i64,
     end_ms: i64,
 }
-
-/// How many recent closed bars decide how much market time the lane shows.
-///
-/// A single bar is too fragile a reference: one session break, one burst bar,
-/// and the lane would be calibrated to a duration that never repeats. A median
-/// over a short window follows the instrument's rhythm without letting one
-/// outlier set it.
-const RESERVE_SAMPLE_BARS: usize = 8;
-
-/// Market time the lane shows before any bar has closed, in exchange
-/// milliseconds. Only the very first bars of a fresh series see it.
-const DEFAULT_RESERVE_MS: i64 = 1_000;
-
-/// Shortest window the lane will show, in exchange milliseconds.
-///
-/// Bar durations are wildly uneven on an activity-sampled series: a burst
-/// closes a tick bar in well under a second while a quiet stretch takes a
-/// minute, so the median alone can collapse to almost nothing right after a
-/// busy patch and leave the tape empty. Below a few seconds there is no tape
-/// left to read, whatever the bars did.
-const MIN_LANE_SPAN_MS: i64 = 4_000;
 
 /// How much market time the live lane shows: the typical duration of the recent
 /// closed bars.

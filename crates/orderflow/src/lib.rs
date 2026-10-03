@@ -8,11 +8,11 @@
 //! the time by its caller ([`engine::BookEngine::project_at`]).
 
 pub mod config;
+mod constants;
 pub mod engine;
 pub mod grouping;
 pub mod history;
 pub mod interaction;
-mod native_tape;
 pub mod projection;
 pub mod scale;
 pub mod tape_clock;

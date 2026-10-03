@@ -6,8 +6,11 @@ use crate::{BubbleStyle, LiveLaneStyle};
 use quantick_engine::Trade;
 use rust_decimal::Decimal;
 use std::sync::Arc;
+mod constants;
+use constants::{FLOW_MERGE_HEIGHT_PX, FLOW_MERGE_WIDTH_PX};
+pub use constants::{FLOW_REGION_WINDOW_MS, LARGE_REGION_REFERENCE_DIVISOR, MAX_FLOW_EXECUTIONS};
 mod reading;
-pub use reading::{LARGE_REGION_REFERENCE_DIVISOR, caption_text};
+pub use reading::caption_text;
 mod source;
 pub use source::{FlowCoverage, FlowOpeningSelection, FlowTapeSource};
 mod stream;
@@ -15,20 +18,6 @@ pub use stream::{
     FlowChunk, FlowKeep, FlowProgress, FlowRequest, FlowRunner, FlowSession, FlowWorkerCache,
     OwnedFlowExecution,
 };
-
-/// Retained worker cache bound, independent of per-frame source admission.
-/// The readback reports missing coverage if a larger source exhausts it.
-pub const MAX_FLOW_EXECUTIONS: usize = 2_000_000;
-
-// Merges may pool a local time/price region, but may not walk along an entire swing.
-// An indivisible native cell wider than this remains alone; it is never split or lost.
-const FLOW_MERGE_WIDTH_PX: f64 = 48.0;
-const FLOW_MERGE_HEIGHT_PX: f64 = 32.0;
-
-/// Fixed time support prevents compressed tick coordinates from pooling minutes
-/// of routine flow into peers of a brief large execution. These are regions,
-/// not reconstructed orders. A multiple of the native 100 ms cell keeps facts whole.
-pub const FLOW_REGION_WINDOW_MS: i64 = 1_000;
 
 /// Production uses one common reference from the final visible regional groups.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]

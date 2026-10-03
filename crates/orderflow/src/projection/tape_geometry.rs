@@ -3,11 +3,7 @@
 use crate::HeatmapConfig;
 use crate::config::{BubbleStyle, bubble_halo_padding};
 
-/// Decoration may consume at most this fraction of the pane at each edge.
-/// The actual disc radius takes precedence when its diameter nearly fills it.
-const MAX_DECORATED_INSET_SHARE: f32 = 0.45;
-/// Leave room between the extreme prices even in a very short pane.
-const MAX_VERTICAL_RADIUS_SHARE: f32 = 0.4;
+use super::constants::{MAX_DECORATED_INSET_SHARE, MAX_VERTICAL_RADIUS_SHARE};
 
 /// The tape's padded linear time span and the uniform radius it can display.
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
+use super::constants::MAX_FOLD_IDS;
+
 use super::model::{AggressionPrimitive, normalized_area_size};
 use crate::config::{
     DEFAULT_LIVE_LANE_SHARE, LiveLaneStyle, MAX_LIVE_LANE_SHARE, MIN_LIVE_LANE_SHARE,
@@ -133,16 +135,6 @@ fn merge_marks(
     // decision and must not rescale the marks it left alone.
     mark.size = normalized_area_size(mark.quantity, reference);
 }
-
-/// Ids a single fold keeps, before it stops recording which prints it stands
-/// for and lets [`AggressionPrimitive::trade_count`] speak for them.
-///
-/// A fold is unbounded in principle — a quiet budget on a busy session can put
-/// a whole minute of prints under one mark — and the id lists are cloned into
-/// every published frame. The exact count is never lost, only the roll of
-/// individual ids past this point, and the truncation is declared by
-/// `trade_count` exceeding `agg_ids.len()`.
-const MAX_FOLD_IDS: usize = 256;
 
 /// Put one finished fold's id lists back in order, once, and bound them.
 fn settle_ids(mark: &mut AggressionPrimitive) {

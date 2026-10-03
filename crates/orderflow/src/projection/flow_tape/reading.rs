@@ -1,10 +1,8 @@
 //! Factual regional inspection and calibration text, independent of pixels.
-use super::{FLOW_REGION_WINDOW_MS, FlowScaleBasis, FlowTapeDot, FlowTapeFrame};
+use super::constants::{FLOW_REGION_WINDOW_MS, LARGE_REGION_REFERENCE_DIVISOR};
+use super::{FlowScaleBasis, FlowTapeDot, FlowTapeFrame};
 use crate::config::dressing::flow::{CONTEXT_OPACITY, PEAK_OPACITY};
 use rust_decimal::{Decimal, prelude::ToPrimitive as _};
-
-/// Start ordinary-region placement and gradual emphasis at a quarter of the reference.
-pub const LARGE_REGION_REFERENCE_DIVISOR: u32 = 4;
 
 impl FlowTapeFrame {
     /// Inclusive ordinary-region placement threshold; brightness rises above it.

@@ -10,6 +10,10 @@
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
+use super::constants::{
+    SCREEN_FRACTION_APPROXIMATE_MAX, SCREEN_FRACTION_APPROXIMATE_MIN,
+    SCREEN_FRACTION_BOUNDARY_TOLERANCE,
+};
 use super::dots::{DotHorizon, VolumeDots, fold_dots, native_grouping, window_start};
 use super::model::{AggressionPrimitive, PriceWindow, normalized_area_size};
 use crate::config::HeatmapConfig;
@@ -474,13 +478,13 @@ fn screen_fraction(
     approximate: Option<f64>,
     original: impl FnOnce() -> Option<f64>,
 ) -> Option<f64> {
-    const BOUNDARY_TOLERANCE: f64 = 1e-12;
     approximate
         .filter(|value| {
             value.is_finite()
-                && (-2.0..=3.0).contains(value)
-                && value.abs() > BOUNDARY_TOLERANCE
-                && (value - 1.0).abs() > BOUNDARY_TOLERANCE
+                && (SCREEN_FRACTION_APPROXIMATE_MIN..=SCREEN_FRACTION_APPROXIMATE_MAX)
+                    .contains(value)
+                && value.abs() > SCREEN_FRACTION_BOUNDARY_TOLERANCE
+                && (value - 1.0).abs() > SCREEN_FRACTION_BOUNDARY_TOLERANCE
         })
         .or_else(original)
 }

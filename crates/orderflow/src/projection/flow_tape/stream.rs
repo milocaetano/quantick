@@ -1,9 +1,9 @@
 //! Source packets are nondropping; view requests may supersede older layouts.
+use super::constants::{
+    EVICTION_RESET_DIVISOR, KEEP_MARGIN_SLOTS, PUBLICATION_GROWTH_FACTOR, SOURCE_CHUNK,
+};
 use super::*;
 use std::ops::Range;
-
-// Small pans reuse whole candles while the retained source stays bounded.
-const KEEP_MARGIN_SLOTS: usize = 32;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FlowRequest {
@@ -63,7 +63,7 @@ impl FlowPublication {
             (last.requested != *requested
                 && (last.requested.end <= requested.start || requested.end <= last.requested.start))
                 // Substantial eviction starts a fresh partial; a small live pan does not.
-                || loaded.saturating_mul(2) < last.loaded
+                || loaded.saturating_mul(EVICTION_RESET_DIVISOR) < last.loaded
         }) {
             self.last = None;
         }
@@ -83,7 +83,11 @@ impl FlowPublication {
                 || at_capacity
                 || self.last.as_ref().is_none_or(|last| {
                     // Geometric milestones bound total cold-fill projection work.
-                    loaded >= last.loaded.saturating_mul(2).max(SOURCE_CHUNK)
+                    loaded
+                        >= last
+                            .loaded
+                            .saturating_mul(PUBLICATION_GROWTH_FACTOR)
+                            .max(SOURCE_CHUNK)
                 }))
     }
     fn record(&mut self, request: &FlowRequest, loaded: usize, at_capacity: bool) {
@@ -195,7 +199,6 @@ pub trait FlowRunner: Default {
     fn submit(&self, chunk: FlowChunk) -> Result<(), Box<FlowChunk>>;
     fn finished(&self) -> Option<Arc<FlowTapeFrame>>;
 }
-const SOURCE_CHUNK: usize = 2048;
 #[derive(Default)]
 pub struct FlowSession<R> {
     request: Option<FlowRequest>,

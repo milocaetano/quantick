@@ -7,7 +7,7 @@
 //! dedicated thread and the UI only reads published snapshots.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use quantick_engine::{Bar, Trade};
 use quantick_orderbook::{BookLevel, DepthEvent, DepthResyncReason, DepthStatus};
@@ -27,19 +27,7 @@ mod past_tape;
 #[path = "engine_pending.rs"]
 mod pending;
 
-/// Minimum interval between dirty rebuilds of the finished half of the chart.
-///
-/// History or bar-boundary changes mark the projection dirty. This cadence
-/// coalesces a burst of updates, while a clean projection remains cached
-/// indefinitely. The live half ignores this interval entirely — see
-/// [`BookEngine::project_at`].
-pub const PROJECTION_INTERVAL: Duration = Duration::from_millis(220);
-
-/// Maximum raw book levels per side copied into a published [`BookLadder`].
-/// Bounds the per-batch copy in [`BookEngine::published`] and the memory the
-/// UI clones per frame; deeper books stay fully captured in history, they are
-/// just not republished level-by-level.
-pub const LADDER_LEVELS_PER_SIDE: usize = 128;
+pub use crate::constants::{LADDER_LEVELS_PER_SIDE, PROJECTION_INTERVAL};
 
 /// Quantize the price window before it keys the projection cache, so a
 /// sub-pixel wiggle of the auto-fit range (which happens almost every frame on a
@@ -1481,6 +1469,8 @@ fn resync_reason_code(reason: &DepthResyncReason) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     impl BookEngine {

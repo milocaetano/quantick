@@ -14,23 +14,9 @@ use super::{
     AggressionCluster, AggressionPrimitive, BubbleStyle, DotSizing, Group, LiveLaneStyle,
     TapeDotFrame, TapeDotMemory, TapeDotView, TapeSource, keys_native_cells, window_start,
 };
-
-/// The work, in [`TapeWork::units`], a frame reconciles itself: past it the
-/// reconciliation runs beside the frame. A unit is about a microsecond of a
-/// release build on the recorded WIN tape, so this keeps the tape's share of
-/// a frame near 4 ms whatever the zoom or the worker's lag.
-pub const FRAME_WORK_BUDGET: usize = 4_000;
-
-/// Units a sealed frame spends on each cell it reads: it turns the cell into
-/// a mark and looks it up among the groups (measured at about 3 us).
-const SEALED_CELL_UNITS: usize = 3;
-/// Units the complete path spends on each mark in the window: only a look-up
-/// (measured at about 0.3 us, priced high).
-const COMPLETE_CELL_UNITS: usize = 1;
-/// Units one closed window costs to merge, beside one per frontier group.
-const WINDOW_UNITS: usize = 16;
-/// The frontier a reread is priced at: it rebuilds its own as it goes.
-const REREAD_FRONTIER: usize = 32;
+use crate::projection::constants::{
+    COMPLETE_CELL_UNITS, FRAME_WORK_BUDGET, REREAD_FRONTIER, SEALED_CELL_UNITS, WINDOW_UNITS,
+};
 
 /// What projecting one frame asks of a [`TapeDotMemory`], measured without
 /// doing it.

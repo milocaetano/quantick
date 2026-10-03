@@ -1,11 +1,9 @@
 //! The first recorded native tape window per UTC date, independent of retention.
 
-use crate::native_tape::NATIVE_TAPE_WINDOW_MS;
+use crate::constants::{NATIVE_TAPE_WINDOW_MS, RECORDED_DATES};
 
+/// Milliseconds in one UTC day: a calendar fact, not a tunable.
 const UTC_DAY_MS: i64 = 86_400_000;
-/// Seven days of supported history plus the current date. WIN trades during
-/// the UTC date of its B3 daytime session; this is not an exchange auction flag.
-const RECORDED_DATES: i64 = 8;
 
 #[derive(Debug, Clone, Default)]
 pub struct RecordedOpenings(Vec<i64>);

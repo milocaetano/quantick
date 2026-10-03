@@ -1,6 +1,7 @@
 //! Compose an accepted tape suffix with an asynchronous published frame.
 use super::{ProjectionRequest, VisibleOrderflow};
 use crate::HeatmapConfig;
+use crate::constants::PENDING_LANE_REFERENCE_MS;
 use crate::projection::{
     DOT_WINDOW_LADDER_MS, DotZoom, PendingTape, PriceWindow, VolumeDots, into_lane_of, lane_relabel,
 };
@@ -25,7 +26,9 @@ impl PendingPlace {
         request: &ProjectionRequest,
     ) -> Option<Self> {
         let latest = pending.latest_ms()?;
-        let reference_ms = request.lane_reference_ms.unwrap_or(15_000);
+        let reference_ms = request
+            .lane_reference_ms
+            .unwrap_or(PENDING_LANE_REFERENCE_MS);
         let edge = LiveEdge {
             now_ms: request.lane_now_ms.unwrap_or(latest).max(latest),
             window_ms: config.lane_window_ms(reference_ms),

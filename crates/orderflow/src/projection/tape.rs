@@ -15,8 +15,7 @@ use super::{AggressionPrimitive, DotSizing, normalized_area_size};
 use crate::config::{BubbleStyle, LiveLaneStyle};
 use crate::history::{AggressorSide, RestingSide};
 
-/// Allowed intersection depth as a share of the smaller disc's radius.
-const SMALLER_DOT_OVERLAP_SHARE: f32 = 0.1;
+use super::constants::SMALLER_DOT_OVERLAP_SHARE;
 
 /// The linear drawing space of the tape, after any common edge padding.
 /// Both the painter and this projection must use the same effective span.

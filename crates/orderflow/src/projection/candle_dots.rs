@@ -14,26 +14,11 @@ use std::ops::Range;
 use quantick_engine::BarFootprint;
 use rust_decimal::Decimal;
 
-use super::{MIN_DOT_RADIUS_PX, PriceWindow, normalized_area_size};
-
-/// The largest radius a mark reaches, in pixels; half its group's width may
-/// reduce it. 6 rather than 4, so the heaviest group of a zoomed-out chart
-/// reads as clearly larger than a quiet one while staying a quiet overlay.
-pub const CANDLE_MARK_MAX_RADIUS_PX: f32 = 6.0;
-
-/// The narrowest a group of candles is held at, in pixels. A mark's cap is
-/// half its group's width, so it never falls under 3 px and a quiet group
-/// and a heavy one still differ in size.
-pub const CANDLE_GROUP_MIN_WIDTH_PX: f32 = 6.0;
-
-/// The hysteresis band: a held group halves only once the half would be this
-/// many times [`CANDLE_GROUP_MIN_WIDTH_PX`] wide (7.5 px). Between the two
-/// widths a steady zoom keeps its rung, and at the chart's default 8 px per
-/// bar every rung returns to one candle per mark.
-pub const CANDLE_GROUP_HOLD_BAND: f32 = 1.25;
-
-/// Candles per mark on offer: powers of two, the widest when none fits.
-const CANDLE_GROUP_LADDER: [usize; 8] = [1, 2, 4, 8, 16, 32, 64, 128];
+use super::constants::{
+    CANDLE_GROUP_HOLD_BAND, CANDLE_GROUP_LADDER, CANDLE_GROUP_MIN_WIDTH_PX,
+    CANDLE_MARK_MAX_RADIUS_PX, MIN_DOT_RADIUS_PX,
+};
+use super::{PriceWindow, normalized_area_size};
 
 /// Provenance is supplied by the ladder owner, never guessed from its rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

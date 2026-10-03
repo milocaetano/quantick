@@ -2,11 +2,7 @@
 //! instant the trader panned to. The host tells it the live edge; nothing
 //! here reads a clock.
 
-/// How far the window may reach before the first retained print, as a share
-/// of itself, when the tape is panned to the start of its history. The
-/// boundary then sits inside the tape, labelled, instead of scrolling out of
-/// view — an empty stretch the trader can see is history the chart never had.
-pub const RETAINED_EDGE_SHARE: f64 = 0.5;
+pub use crate::constants::RETAINED_EDGE_SHARE;
 
 /// What a held tape says on its top edge: it is not now.
 pub const PAST_TAPE_LABEL: &str = "past · double-click for live";

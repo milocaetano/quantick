@@ -30,9 +30,9 @@ mod past;
 
 #[path = "tape_work.rs"]
 mod work;
-pub use work::{FRAME_WORK_BUDGET, TapeWork};
+pub use work::TapeWork;
 
-pub use past::{MAX_PAST_BLOCKS, PAST_PRICE_SPAN_BAND, PastTapeMemory};
+pub use past::PastTapeMemory;
 
 /// Drawing inputs. Automatic price changes transform the retained facts;
 /// explicit time-window or pixel-geometry changes start a new display epoch.

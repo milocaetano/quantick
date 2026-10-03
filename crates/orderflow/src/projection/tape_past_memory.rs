@@ -13,16 +13,8 @@ use rust_decimal::prelude::ToPrimitive as _;
 
 use super::{Group, TapeDotFrame, TapeDotMemory, TapeDotView, window_start};
 use crate::config::{BubbleStyle, LiveLaneStyle};
+use crate::projection::constants::{MAX_PAST_BLOCKS, PAST_PRICE_SPAN_BAND};
 use crate::projection::{AggressionPrimitive, DotSizing, PastTape, PriceWindow, TapeDotGeometry};
-
-/// Most frozen blocks held at once; the farthest from the window go first.
-pub const MAX_PAST_BLOCKS: usize = 64;
-
-/// How far the drawn price span may drift from the span the blocks were
-/// merged at, as a factor either way, before they are merged again. Inside
-/// it an axis change never regroups the past; outside it the old merges
-/// would overlap or scatter on the new axis.
-pub const PAST_PRICE_SPAN_BAND: f64 = 2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct PastEpoch {

@@ -79,40 +79,10 @@ use crate::grouping::EffectiveGrouping;
 use crate::history::LiquidityHistory;
 use crate::interaction::{AggressionCluster, fold_by_key, sort_clusters};
 
-/// The windows of market time a tape dot may cover, in exchange
-/// milliseconds, narrowest first.
-pub const DOT_WINDOW_LADDER_MS: [i64; 10] = [
-    crate::native_tape::NATIVE_TAPE_WINDOW_MS,
-    250,
-    500,
-    1_000,
-    2_000,
-    5_000,
-    10_000,
-    30_000,
-    60_000,
-    300_000,
-];
-
-/// The heights, in native ticks, a dot's price level may span, narrowest
-/// first.
-pub const DOT_LEVEL_LADDER_TICKS: [i64; 12] =
-    [1, 2, 5, 10, 20, 50, 100, 200, 500, 1_000, 2_000, 5_000];
-
-/// The least screen width, in pixels, of a tape dot's window of market time:
-/// a thin column, not the biggest dot, so a dot sits near the moment its
-/// prints traded and only squeezing the time axis widens it.
-pub const DOT_WINDOW_CELL_PX: f64 = 8.0;
-
-/// A held rung moves down once the dot would be under this share of the next
-/// smaller cell.
-const HOLD_BELOW: f64 = 0.7;
-
-/// A held rung moves up once the dot would be over this share of its cell.
-const HOLD_ABOVE: f64 = 1.5;
-
-/// The smallest radius a shrunk dot keeps, in pixels.
-pub const MIN_DOT_RADIUS_PX: f32 = 1.0;
+use super::constants::{
+    DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_CELL_PX, DOT_WINDOW_LADDER_MS, HOLD_ABOVE, HOLD_BELOW,
+    LANE_BAR_WINDOWS, MIN_DOT_RADIUS_PX,
+};
 
 /// How the chart is drawn, as the view measures it every frame.
 #[derive(Debug, Clone, PartialEq)]
@@ -143,7 +113,7 @@ pub fn lane_bars(closed: &[Bar], partial: Option<&Bar>, window_ms: i64) -> Vec<(
     };
     let start = newest
         .close_time
-        .saturating_sub(window_ms.max(0).saturating_mul(2));
+        .saturating_sub(window_ms.max(0).saturating_mul(LANE_BAR_WINDOWS));
     let first = closed.partition_point(|bar| bar.close_time < start);
     closed[first.saturating_sub(1)..]
         .iter()
