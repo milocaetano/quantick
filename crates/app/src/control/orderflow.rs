@@ -199,17 +199,15 @@ fn project_bubbles<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> B
                 panes: tab
                     .panes()
                     .map(|(pane, side)| PaneBubblesSnapshot {
+                        opening_scale: pane.opening_scale_snapshot(),
+                        flow_execution: pane.orderflow.as_ref().and_then(|view| {
+                            view.flow_execution_frame()
+                                .map(|frame| (frame, view.flow_execution_progress()).into())
+                        }),
                         pane_id: WireU64::new(pane.id),
                         side: side.into(),
                         engine: engine_availability(pane),
-                        bubbles: pane.orderflow.as_ref().map(|view| {
-                            BubblesStateSnapshot::from_config(
-                                view.cached_config(),
-                                view.cached_health().floored_quantity,
-                                view.dot_scale(),
-                                &view.recorded_opening_bursts(),
-                            )
-                        }),
+                        bubbles: pane.orderflow.as_ref().map(OrderflowView::bubbles_snapshot),
                     })
                     .collect(),
             })

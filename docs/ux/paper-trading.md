@@ -218,7 +218,7 @@ answer.
 
 ### Cmd trading: the aim rides the pointer
 
-Hold the buy modifier (Shift by default; Ctrl sells, both configurable in
+Hold the buy modifier (Shift by default; Alt sells, both configurable in
 the Trading tab) and the chart paints the order the next click would place:
 a dashed line from under the cursor out to the axis — across the tape lane,
 not stopping at it — the exact snapped price on the gutter under its own

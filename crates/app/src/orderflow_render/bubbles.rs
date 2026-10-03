@@ -13,9 +13,9 @@ use quantick_orderflow::config::crown::{
     crown_alpha, crown_center_angle, crown_geometry,
 };
 pub(super) use quantick_orderflow::config::dressing::{
-    HOLLOW_FILL_ALPHA, RIM_ALPHA, SEPARATOR_RING_ALPHA, SPHERE_CORE_RADIUS, SPHERE_LIGHT_OFFSET,
-    front_half_length, halo_alpha, hollow_ring_width, impact_ring_alpha, separator_ring_width,
-    sphere_segments, trail_half_height,
+    HOLLOW_FILL_ALPHA, RIM_ALPHA, SEPARATOR_RING_ALPHA, SPHERE_LIGHT_OFFSET, front_half_length,
+    halo_alpha, hollow_ring_width, impact_ring_alpha, separator_ring_width, sphere_segments,
+    trail_half_height,
 };
 pub(super) use quantick_orderflow::config::labels::format_quantity;
 use quantick_orderflow::{
@@ -280,48 +280,45 @@ pub(crate) fn add_shaded_sector(
     sweep: f32,
     shading: SphereShading,
 ) {
+    add_sector(
+        mesh,
+        center,
+        radius,
+        start_angle,
+        sweep,
+        shading,
+        SPHERE_LIGHT_OFFSET,
+    );
+}
+
+pub(super) fn add_sector(
+    mesh: &mut egui::Mesh,
+    center: egui::Pos2,
+    radius: f32,
+    start_angle: f32,
+    sweep: f32,
+    shading: SphereShading,
+    light_offset: f32,
+) {
     let SphereShading { core, body, edge } = shading;
-    if !radius.is_finite() || radius <= 0.0 || !center.is_finite() || !sweep.is_finite() {
+    let Some(sector) = quantick_orderflow::config::dressing::SectorGeometry::new(
+        [center.x, center.y],
+        radius,
+        start_angle,
+        sweep,
+        light_offset,
+        core == body && body == edge,
+    ) else {
         return;
-    }
-    let sweep = sweep.clamp(0.0, std::f32::consts::TAU);
-    if sweep <= 0.0 {
-        return;
-    }
-    // Segments are budgeted for a whole circle, so a narrow sector stays
-    // cheap without ever falling below the two edges that make it a wedge.
-    let full = sphere_segments(radius);
-    let segments = (((full as f32) * (sweep / std::f32::consts::TAU)).ceil() as usize).max(2);
-    let offset = egui::vec2(-radius, -radius) * SPHERE_LIGHT_OFFSET;
-    // The core ring keeps a scaled-down share of the highlight offset, which
-    // holds the whole lit zone inside the rim at any radius.
-    let core_center = center + offset * (1.0 - SPHERE_CORE_RADIUS);
+    };
     let base = mesh.vertices.len() as u32;
-    mesh.colored_vertex(center + offset, core);
-    // One more vertex than segments: the arc has two ends and, unlike a full
-    // circle, must not wrap the last back onto the first.
-    for (ring_center, ring_radius, color) in [
-        (core_center, radius * SPHERE_CORE_RADIUS, body),
-        (center, radius, edge),
-    ] {
-        for index in 0..=segments {
-            let angle = start_angle + sweep * (index as f32 / segments as f32);
-            let direction = egui::vec2(angle.cos(), angle.sin());
-            mesh.colored_vertex(ring_center + direction * ring_radius, color);
-        }
-    }
-    let count = segments as u32;
-    let core_ring = base + 1;
-    let rim_ring = core_ring + count + 1;
-    for index in 0..count {
-        let next = index + 1;
+    sector.for_each_vertex(|[x, y], role| {
+        mesh.colored_vertex(egui::pos2(x, y), [core, body, edge][role]);
+    });
+    sector.for_each_triangle(|[a, b, c]| {
         mesh.indices
-            .extend_from_slice(&[base, core_ring + index, core_ring + next]);
-        mesh.indices
-            .extend_from_slice(&[core_ring + index, rim_ring + index, rim_ring + next]);
-        mesh.indices
-            .extend_from_slice(&[core_ring + index, rim_ring + next, core_ring + next]);
-    }
+            .extend_from_slice(&[base + a, base + b, base + c]);
+    });
 }
 
 /// One aggression bubble, already placed in screen space.
@@ -356,6 +353,16 @@ pub(super) fn draw_bubble(
     mark: BubbleMark,
     bubbles: &BubbleStyle,
     colors: &BubbleColors,
+) {
+    draw_bubble_with_light_offset(painter, mark, bubbles, colors, SPHERE_LIGHT_OFFSET);
+}
+
+fn draw_bubble_with_light_offset(
+    painter: &egui::Painter,
+    mark: BubbleMark,
+    bubbles: &BubbleStyle,
+    colors: &BubbleColors,
+    light_offset: f32,
 ) {
     let BubbleMark {
         center,
@@ -454,7 +461,19 @@ pub(super) fn draw_bubble(
         let mut mesh = egui::Mesh::default();
         let mut angle = PIE_START_ANGLE;
         for (sweep, side_color) in sectors {
-            add_shaded_sector(&mut mesh, center, radius, angle, sweep, shaded(side_color));
+            if light_offset == SPHERE_LIGHT_OFFSET {
+                add_shaded_sector(&mut mesh, center, radius, angle, sweep, shaded(side_color));
+            } else {
+                add_sector(
+                    &mut mesh,
+                    center,
+                    radius,
+                    angle,
+                    sweep,
+                    shaded(side_color),
+                    light_offset,
+                );
+            }
             angle += sweep;
         }
         painter.add(egui::Shape::mesh(mesh));

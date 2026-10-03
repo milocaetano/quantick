@@ -237,6 +237,66 @@ fn settled_frame(app: &mut QuantickApp, ctx: &egui::Context) -> egui::FullOutput
     run_frame(app, ctx)
 }
 
+fn settled_flow_frame(app: &mut QuantickApp, ctx: &egui::Context) -> egui::FullOutput {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let output = settled_frame(app, ctx);
+        let owner = app.active_tab().tape();
+        if owner.flow_execution_frame().is_some() && !owner.flow_execution_progress().pending {
+            return output;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "FLOW must finish the requested source"
+        );
+        std::thread::yield_now();
+    }
+}
+
+fn flow_snapshot(app: &mut QuantickApp, observer: &mut LocalClient) -> Value {
+    let pane_id = app.active_tab().flow_pane.id.to_string();
+    let (read, _) = unkeyed_call(
+        app,
+        observer,
+        "snapshot.read",
+        json!({"scopes":["orderflow.bubbles"]}),
+    );
+    success_result(&read)["scopes"]["orderflow.bubbles"]["value"]["tabs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|tab| tab["panes"].as_array().unwrap())
+        .find(|pane| pane["pane_id"] == pane_id)
+        .unwrap()["flow_execution"]
+        .clone()
+}
+
+fn assert_complete_flow_fixture(app: &mut QuantickApp, observer: &mut LocalClient) -> Value {
+    let snapshot = flow_snapshot(app, observer);
+    // app_with_history(200): one contract each, alternating sides, prices 100..101.9.
+    assert_eq!(snapshot["buy_quantity"], "100");
+    assert_eq!(snapshot["sell_quantity"], "100");
+    assert_eq!(snapshot["trade_count"], "200");
+    assert_eq!(snapshot["worker"]["loaded_executions"], "200");
+    assert_eq!(snapshot["worker"]["pending"], false);
+    assert_eq!(snapshot["omitted_executions"], "0");
+    assert_eq!(snapshot["off_axis_executions"], "0");
+    assert_eq!(snapshot["offscreen_executions"], "0");
+    let owner = app.active_tab().tape();
+    let painted = quantick_control_schema::orderflow::FlowExecutionSnapshot::from((
+        owner.flow_execution_frame().unwrap(),
+        owner.flow_execution_progress(),
+    ));
+    assert_eq!(snapshot, serde_json::to_value(painted).unwrap());
+    snapshot
+}
+
+fn fit_flow_fixture(app: &mut QuantickApp) {
+    let pane = &mut app.active_tab_mut().flow_pane;
+    pane.viewport.set_px_per_bar(1.0);
+    assert!(pane.price_view.set_manual_range(99.0, 103.0));
+}
+
 /// The per-candle summary's marks a frame painted: its one translucent colour
 /// per side, as a disc or as a pie.
 fn summary_marks(output: &egui::FullOutput) -> Vec<egui::Shape> {
@@ -272,13 +332,225 @@ fn other_discs_left_of(output: &egui::FullOutput, x: f32) -> usize {
         .count()
 }
 
-/// The trader's one candle switch beside the native tape. The aggression
-/// bubbles stay available there and draw the per-candle summary on the tick
-/// candles, once, whether or not candle aggression asks too; the layer call,
-/// the readback, the settings switch and the paint agree. Off, the candles
-/// carry nothing; with the tape off, their own per-print bubbles return.
+fn regional_colours(app: &QuantickApp, context: bool) -> [egui::Color32; 2] {
+    regional_colours_at_opacity(app, if context { 0.12 } else { 0.65 })
+}
+
+fn regional_colours_at_opacity(app: &QuantickApp, opacity: f32) -> [egui::Color32; 2] {
+    [
+        egui::Color32::from_rgb(112, 185, 244),
+        egui::Color32::from_rgb(232, 175, 99),
+    ]
+    .map(|color| {
+        let source = color.gamma_multiply(opacity);
+        // Independently model the old source-over-opaque-canvas GPU result.
+        let rgb = std::array::from_fn(|channel| {
+            (f64::from(source[channel])
+                + f64::from(app.style.canvas.background[channel])
+                    * (1.0 - f64::from(source.a()) / 255.0))
+                .round() as u8
+        });
+        let [r, g, b] = rgb;
+        egui::Color32::from_rgb(r, g, b)
+    })
+}
+
+/// The packed regional sector mesh in history, excluding candle outlines and Tape.
+fn regional_circles(app: &QuantickApp, output: &egui::FullOutput) -> Vec<egui::Mesh> {
+    let flow = app.active_tab().tape().flow_execution_frame().unwrap();
+    let colours: Vec<_> = flow
+        .dots
+        .iter()
+        .flat_map(|dot| regional_colours_at_opacity(app, flow.ordinary_region_opacity(dot)))
+        .collect();
+    regional_circles_with_colours(app, output, &colours)
+}
+
+fn regional_circles_with_colours(
+    app: &QuantickApp,
+    output: &egui::FullOutput,
+    colours: &[egui::Color32],
+) -> Vec<egui::Mesh> {
+    let frame = &app.active_tab().flow_pane.frame;
+    let rect = frame.chart_rect.unwrap();
+    let history = rect.with_max_x(frame.lane_divider_x.unwrap_or(rect.right()));
+    output
+        .shapes
+        .iter()
+        .filter_map(|clipped| {
+            let egui::Shape::Mesh(mesh) = &clipped.shape else {
+                return None;
+            };
+            (!mesh.vertices.is_empty()
+                && mesh
+                    .vertices
+                    .iter()
+                    .all(|vertex| colours.contains(&vertex.color))
+                && mesh
+                    .calc_bounds()
+                    .intersect(clipped.clip_rect)
+                    .intersect(history)
+                    .is_positive())
+            .then(|| mesh.clone())
+        })
+        .collect()
+}
+
+fn regional_labels(output: &egui::FullOutput) -> Vec<String> {
+    output
+        .shapes
+        .iter()
+        .filter_map(|clipped| {
+            let egui::Shape::Text(text) = &clipped.shape else {
+                return None;
+            };
+            let text = &text.galley.job.text;
+            (text.starts_with("Buy ") || text.starts_with("Sell ")).then(|| text.clone())
+        })
+        .collect()
+}
+
+#[derive(Debug)]
+struct RegionalFan {
+    center: egui::Pos2,
+    radius: f32,
+    area: f32,
+    color: egui::Color32,
+}
+
+/// Recover each actual flat fan from its indexed centre, independent of mesh count.
+fn regional_fans(meshes: &[egui::Mesh]) -> Vec<RegionalFan> {
+    let mut fans: Vec<RegionalFan> = Vec::new();
+    for mesh in meshes {
+        assert!(mesh.is_valid());
+        assert_eq!(mesh.texture_id, egui::TextureId::default());
+        assert!(
+            mesh.vertices
+                .iter()
+                .all(|vertex| vertex.uv == egui::epaint::WHITE_UV)
+        );
+        assert_eq!(mesh.indices.len() % 3, 0);
+        let mut center_index = None;
+        for triangle in mesh.indices.as_chunks::<3>().0 {
+            let a = mesh.vertices[triangle[0] as usize];
+            let b = mesh.vertices[triangle[1] as usize];
+            let c = mesh.vertices[triangle[2] as usize];
+            assert_eq!(a.color, b.color);
+            assert_eq!(a.color, c.color);
+            if center_index != Some(triangle[0]) {
+                fans.push(RegionalFan {
+                    center: a.pos,
+                    radius: 0.0,
+                    area: 0.0,
+                    color: a.color,
+                });
+                center_index = Some(triangle[0]);
+            }
+            let fan = fans.last_mut().unwrap();
+            fan.radius = fan
+                .radius
+                .max(a.pos.distance(b.pos))
+                .max(a.pos.distance(c.pos));
+            let b = b.pos - a.pos;
+            let c = c.pos - a.pos;
+            fan.area += (b.x * c.y - b.y * c.x).abs() * 0.5;
+        }
+    }
+    fans
+}
+
+fn assert_regional_circles(
+    app: &QuantickApp,
+    output: &egui::FullOutput,
+    snapshot: &Value,
+) -> Vec<egui::Mesh> {
+    let circles = regional_circles(app, output);
+    assert!(!circles.is_empty(), "regional volume must be painted");
+    let fans = regional_fans(&circles);
+    let mut painted = fans.iter();
+    assert_eq!(snapshot["marks_truncated"], false);
+    let marks = snapshot["marks"].as_array().unwrap();
+    let number = |mark: &Value, field: &str| mark[field].as_str().unwrap().parse::<f64>().unwrap();
+    assert!(marks.iter().all(|mark| mark["opening_oversized"] == false));
+    let pane = &app.active_tab().flow_pane;
+    let rect = pane.frame.chart_rect.unwrap();
+    let right = pane.frame.lane_divider_x.unwrap_or(rect.right());
+    let (low, high) = pane.price_view.resolve(pane.frame.auto_range.unwrap());
+    let total = pane.state.bars().len() + usize::from(pane.state.partial().is_some());
+    let history = rect.with_max_x(right);
+    let geometry = quantick_chart::flow_execution::FlowExecutionGeometry::new(
+        pane.viewport,
+        total,
+        0,
+        (low, high),
+        [
+            history.left(),
+            history.top(),
+            history.right(),
+            history.bottom(),
+        ],
+        false,
+    )
+    .unwrap();
+    let presentation = quantick_chart::flow_execution::FlowPresentation::new(
+        app.active_tab().tape().flow_execution_frame().unwrap(),
+        [history.min.into(), history.max.into()],
+        |dot| geometry.point(dot).map(|(x, y)| [x, y]),
+    );
+    assert_eq!(presentation.regions.len(), marks.len());
+    for region in &presentation.regions {
+        let mark = &marks[region.dot_index];
+        let radius = number(mark, "radius_px") as f32;
+        let x = pane.viewport.x_at_bar_position(
+            number(mark, "candle_position") as f32 - 0.5,
+            right,
+            total,
+        );
+        let y = rect.top() + rect.height() * ((high - number(mark, "price")) / (high - low)) as f32;
+        let source = egui::Pos2::from(region.source_disc.center);
+        assert!(source.distance(egui::pos2(x - 18.0, y - 18.0)) < 0.0001);
+        let center = egui::Pos2::from(region.disc.center);
+        assert!(center.distance(source) <= 24.0001);
+        assert!(center.y <= source.y + 0.0001);
+        assert_eq!(region.disc.radius, region.source_disc.radius);
+        let buy = number(mark, "buy_quantity") as f32;
+        let sell = number(mark, "sell_quantity") as f32;
+        let flow = app.active_tab().tape().flow_execution_frame().unwrap();
+        let colours = regional_colours_at_opacity(
+            app,
+            flow.ordinary_region_opacity(&flow.dots[region.dot_index]),
+        );
+        let mut areas = [0.0; 2];
+        for (side, quantity) in [buy, sell].into_iter().enumerate() {
+            if quantity <= 0.0 {
+                continue;
+            }
+            let fan = painted
+                .next()
+                .expect("every positive side has one painted fan");
+            assert!(fan.center.distance(center) < 0.0001);
+            assert!(
+                (fan.radius - radius).abs() < 0.0001,
+                "painted {}, published {radius}",
+                fan.radius
+            );
+            assert_eq!(fan.color, colours[side]);
+            areas[side] = fan.area;
+        }
+        assert_eq!(areas[0] > 0.0, buy > 0.0);
+        assert_eq!(areas[1] > 0.0, sell > 0.0);
+        let total_area = areas.iter().sum::<f32>();
+        assert!((areas[0] / total_area - buy / (buy + sell)).abs() < 0.005);
+        assert!((total_area / (std::f32::consts::PI * radius.powi(2)) - 1.0).abs() < 0.05);
+    }
+    assert!(painted.next().is_none(), "no regional side is duplicated");
+    circles
+}
+
+/// The layer call, published execution facts and one regional paint agree.
+/// Hiding Tape leaves FLOW active; disabling native mode restores ordinary bubbles.
 #[test]
-fn beside_the_native_tape_the_bubbles_switch_draws_the_candle_summary() {
+fn the_bubbles_switch_publishes_regional_flow_independently_of_tape_visibility() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
     let directory = gateway_test_directory("native-tape-candle-bubbles");
@@ -290,37 +562,55 @@ fn beside_the_native_tape_the_bubbles_switch_draws_the_candle_summary() {
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
     native_split(&mut app);
+    // Initialize the camera before fitting this test's complete retained history.
+    settled_frame(&mut app, &ctx);
+    fit_flow_fixture(&mut app);
     let switched_on = |app: &QuantickApp| app.active_tab().tape().cached_config().show_aggressions;
     assert!(switched_on(&app), "the trader's candle switch is on");
 
-    // Beside the native tape: available, effective, and drawn as the summary.
+    // Beside the native tape: available, effective, and projected from all 200 executions.
     let bubbles = read_layer(&mut app, &mut observer, "bubbles");
     assert_eq!(bubbles["requested"], true, "{bubbles}");
     assert_eq!(bubbles["effective"], true, "{bubbles}");
     assert_eq!(bubbles["blocked_reason"], Value::Null, "{bubbles}");
     let candle_aggression = read_layer(&mut app, &mut observer, "candle_aggression");
     assert_eq!(candle_aggression["requested"], false, "{candle_aggression}");
-    let frame = settled_frame(&mut app, &ctx);
-    let summary = summary_marks(&frame);
+    let frame = settled_flow_frame(&mut app, &ctx);
+    let regional = assert_complete_flow_fixture(&mut app, &mut observer);
     assert!(
-        !summary.is_empty(),
-        "the bubbles switch draws the per-candle summary on the candles"
+        summary_marks(&frame).is_empty(),
+        "the legacy summary is suppressed"
     );
-    let divider = app
-        .active_tab()
+    app.active_tab()
         .flow_pane
         .frame
         .lane_divider_x
         .expect("the tape beside the candles");
-    let beside = other_discs_left_of(&frame, divider);
+    let beside = assert_regional_circles(&app, &frame, &regional);
+    // Retain actual painted colours before disabling the source: the negative
+    // assertion must detect stale paint even after its frame has been cleared.
+    let regional_colours: Vec<_> = beside
+        .iter()
+        .flat_map(|mesh| mesh.vertices.iter().map(|vertex| vertex.color))
+        .collect();
+    assert!(
+        regional_labels(&frame).is_empty(),
+        "regional quantities are passive hover detail"
+    );
 
-    // Candle aggression asked for too: the same marks, drawn once.
+    // Asking for the baseline layer too cannot duplicate the regional paint.
     let layer = set_layer(&mut app, &mut cockpit, "candle_aggression", true);
     assert_eq!(layer["effective"], true, "{layer}");
+    let duplicate = settled_flow_frame(&mut app, &ctx);
     assert_eq!(
-        summary_marks(&settled_frame(&mut app, &ctx)),
-        summary,
-        "one summary whichever switch asks for it, never two"
+        assert_complete_flow_fixture(&mut app, &mut observer)["marks"],
+        regional["marks"]
+    );
+    assert!(summary_marks(&duplicate).is_empty());
+    assert_eq!(
+        assert_regional_circles(&app, &duplicate, &regional),
+        beside,
+        "one regional paint, never two"
     );
     set_layer(&mut app, &mut cockpit, "candle_aggression", false);
 
@@ -330,30 +620,54 @@ fn beside_the_native_tape_the_bubbles_switch_draws_the_candle_summary() {
     assert_eq!(layer["effective"], false, "{layer}");
     assert!(!switched_on(&app), "the settings switch is the layer's own");
     let frame = settled_frame(&mut app, &ctx);
+    assert_eq!(flow_snapshot(&mut app, &mut observer), Value::Null);
     assert!(
         summary_marks(&frame).is_empty(),
         "bubbles off draws nothing"
     );
-    assert_eq!(
-        other_discs_left_of(&frame, divider),
-        beside,
-        "beside the native tape the candles never carry per-print bubbles"
+    assert!(
+        regional_circles_with_colours(&app, &frame, &regional_colours).is_empty(),
+        "bubbles off removes regional paint"
+    );
+    assert!(
+        regional_labels(&frame).is_empty(),
+        "Bubbles switch removes annotations too"
     );
 
-    // The tape off: the original tick chart, with its own per-print bubbles.
+    // Tape visibility is independent: its hidden lane still leaves regional FLOW.
     set_layer(&mut app, &mut cockpit, "tape_chart", false);
-    let right = app.active_tab().flow_pane.frame.chart_rect.unwrap().right();
-    let without = other_discs_left_of(&settled_frame(&mut app, &ctx), right);
+    fit_flow_fixture(&mut app);
+    let hidden_off = settled_frame(&mut app, &ctx);
+    assert!(regional_circles_with_colours(&app, &hidden_off, &regional_colours).is_empty());
     let layer = set_layer(&mut app, &mut cockpit, "bubbles", true);
     assert_eq!(layer["effective"], true, "{layer}");
-    let frame = settled_frame(&mut app, &ctx);
+    let frame = settled_flow_frame(&mut app, &ctx);
+    let hidden = assert_complete_flow_fixture(&mut app, &mut observer);
+    assert!(summary_marks(&frame).is_empty());
+    assert_regional_circles(&app, &frame, &hidden);
     assert!(
-        summary_marks(&frame).is_empty(),
-        "without the native tape the switch draws main's bubbles, not the summary"
+        regional_labels(&frame).is_empty(),
+        "hidden Tape does not add automatic quantity boxes"
     );
+    set_layer(&mut app, &mut cockpit, "bubbles", false);
+    // Native-mode controls remain gated by the Tape lane's own visibility.
+    set_layer(&mut app, &mut cockpit, "tape_chart", true);
+    set_layer(&mut app, &mut cockpit, "native_tape", false);
+    set_layer(&mut app, &mut cockpit, "tape_chart", false);
+    app.active_tab_mut().flow_pane.viewport.set_px_per_bar(8.0);
+    let ordinary_off = settled_frame(&mut app, &ctx);
+    let right = app.active_tab().flow_pane.frame.chart_rect.unwrap().right();
+    let ordinary_off = other_discs_left_of(&ordinary_off, right);
+    set_layer(&mut app, &mut cockpit, "bubbles", true);
+    let ordinary = settled_frame(&mut app, &ctx);
+    assert_eq!(flow_snapshot(&mut app, &mut observer), Value::Null);
+    assert!(regional_circles_with_colours(&app, &ordinary, &regional_colours).is_empty());
     assert!(
-        other_discs_left_of(&frame, right) > without,
-        "the candles' per-print bubbles return with the tape off"
+        other_discs_left_of(&ordinary, right) > ordinary_off,
+        "explicitly disabling native mode restores ordinary bubbles"
     );
     disable_test_gateway(&mut app, &ctx);
 }
+
+#[path = "flow_candle_paint_tests.rs"]
+mod flow_candle_paint_tests;

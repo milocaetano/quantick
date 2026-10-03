@@ -115,3 +115,77 @@ fn opening_scale_refuses_stale_targets_without_changing_the_active_pane() {
     }
     disable_test_gateway(&mut app, &ctx);
 }
+
+#[test]
+fn flow_opening_scale_is_independent_retry_safe_and_refuses_context() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    assert!(
+        app.active_tab_mut()
+            .tape_mut()
+            .apply_source_preset(Some("mini index regions"))
+    );
+    app.active_tab_mut().tape_mut().set_bubbles_enabled(true);
+    let pane_id = app.active_tab().flow_pane.id.to_string();
+    assert!(!app.active_tab().tape().ignore_flow_opening());
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    run_frame(&mut app, &ctx);
+    let tape_before = format!("{:?}", app.active_tab().tape().cached_config());
+    let directory = gateway_test_directory("flow-opening-scale");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut cockpit = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let payload = json!({"tab_id":app.tabs.active_id().to_string(),"pane_id":pane_id,"target":"candle","ignore_opening_burst_in_scale":true});
+    let (first, _) = keyed_call(
+        &mut app,
+        &mut cockpit,
+        "flow-opening-first",
+        ACTION,
+        payload.clone(),
+        "flow-opening-key",
+    );
+    let (retry, _) = keyed_call(
+        &mut app,
+        &mut cockpit,
+        "flow-opening-retry",
+        ACTION,
+        payload.clone(),
+        "flow-opening-key",
+    );
+    assert_eq!(first.outcome, retry.outcome);
+    assert_eq!(success_result(&first)["changed"], true);
+    assert!(app.active_tab().tape().ignore_flow_opening());
+    assert_eq!(
+        format!("{:?}", app.active_tab().tape().cached_config()),
+        tape_before
+    );
+    let (read, _) = unkeyed_call(
+        &mut app,
+        &mut cockpit,
+        "snapshot.read",
+        json!({"scopes":["orderflow.bubbles"]}),
+    );
+    let result = success_result(&read);
+    let pane = result["scopes"]["orderflow.bubbles"]["value"]["tabs"][0]["panes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["pane_id"] == pane_id)
+        .unwrap();
+    assert_eq!(pane["opening_scale"]["candle"], true);
+    assert_eq!(pane["opening_scale"]["tape"], false);
+    let (noop, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, payload.clone());
+    assert_eq!(success_result(&noop)["changed"], false);
+    let mut context = payload.clone();
+    context["pane_id"] = json!(app.active_tab().time_panes[0].id.to_string());
+    let (refused, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, context);
+    assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST));
+    let mut off = payload;
+    off["ignore_opening_burst_in_scale"] = json!(false);
+    let (off, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, off);
+    assert_eq!(success_result(&off)["changed"], true);
+    disable_test_gateway(&mut app, &ctx);
+}

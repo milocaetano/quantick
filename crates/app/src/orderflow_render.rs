@@ -12,6 +12,16 @@ use quantick_orderbook::BookSide;
 use quantick_orderflow::HeatmapTheme;
 
 mod bubbles;
+mod flow_cache;
+mod flow_execution;
+mod flow_inspection;
+mod flow_perimeter;
+pub(crate) use flow_cache::cached_flow;
+#[cfg(test)]
+pub(crate) use flow_cache::draw_cached_flow;
+pub(crate) use flow_execution::{FlowDrawing, flow_caption};
+pub(crate) use flow_inspection::{FlowInspection, draw_flow_inspection};
+pub(crate) use flow_perimeter::draw_flow_perimeters;
 mod heatmap;
 mod layout;
 mod legend;

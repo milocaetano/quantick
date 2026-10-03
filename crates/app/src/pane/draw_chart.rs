@@ -51,7 +51,15 @@ impl ChartPane {
         chrome: &mut PaneChrome<'_>,
     ) {
         let renderers = self.layer_renderers;
-        let start = self.begin_frame(painter, area, chrome);
+        let mut start = self.begin_frame(painter, area, chrome);
+        let flow_execution = self
+            .orderflow
+            .as_ref()
+            .is_some_and(OrderflowView::flow_execution_active)
+            && self.state.tick_membership().is_some();
+        if flow_execution {
+            start.candle_aggression = false;
+        }
         let Some(layout) = self.lay_out(painter, area, chrome) else {
             return;
         };
@@ -66,7 +74,7 @@ impl ChartPane {
             closed: self.state.bars(),
             partial: self.state.partial(),
         };
-        let Some((frame, auto_range)) = layout.resolve(
+        let Some((frame, auto_range, flip_span)) = layout.resolve(
             painter,
             series,
             tape_range,
@@ -88,8 +96,7 @@ impl ChartPane {
             self.price_view.is_inverted(),
         );
         let demand = self.projection_demand();
-        let timeline_revision = self.state.timeline_revision();
-        flow.project(self.orderflow.as_mut(), demand, timeline_revision, &frame);
+        flow.project(self.orderflow.as_mut(), demand, &self.state, &frame);
         flow.heatmap(self.orderflow.as_ref());
         let depth_visible = self
             .orderflow
@@ -160,7 +167,15 @@ impl ChartPane {
             self.carve_bands(&layout, &mut carved);
             let price_band = carved.get(..1).unwrap_or_default();
             self.paint_drawing_bands(&frame, price_band, DrawPass::UnderCandles);
-            renderers.candles(&mut candle_pass);
+            if !flow_execution {
+                renderers.candles(&mut candle_pass);
+            }
+            if flow_execution {
+                flow.regional_context(
+                    self.orderflow.as_ref(),
+                    start.footprint_paints.then_some(frame.canvas_background),
+                );
+            }
             if start.footprint_paints || start.candle_aggression {
                 history.footprint(
                     &mut self.footprint,
@@ -169,6 +184,11 @@ impl ChartPane {
                     depth_visible,
                     &start,
                 );
+            }
+            if flow_execution {
+                flow.regional_aggressions();
+                renderers.candles(&mut candle_pass);
+                flow.regional_perimeters();
             }
             history.overlay(&self.indicators);
         }
@@ -207,6 +227,22 @@ impl ChartPane {
         }
         let nothing_in_view = nothing_in_view(&frame);
         self.paint_canvas_chrome(&frame, axis_x, nothing_in_view, compass.as_ref(), chrome);
+        let inspect_pointer = self.hover_pos.filter(|position| {
+            !layout.tape_only
+                && chrome.toolrail.tool().drawing_tool().is_none()
+                && !chrome.paper.aiming()
+                && !painter.ctx().input(|input| input.pointer.any_down())
+                && painter
+                    .ctx()
+                    .layer_id_at(*position)
+                    .is_none_or(|layer| layer == painter.layer_id())
+        });
+        flow.inspection(
+            self.orderflow.as_ref(),
+            inspect_pointer,
+            chrome.tz,
+            chrome.side_inferred,
+        );
 
         // The levels' container, back on the pane for the next frame to
         // refill rather than reallocate.
@@ -215,6 +251,7 @@ impl ChartPane {
         // Cache the auto range + height for next frame's input handler, which
         // runs before the draw and needs them for pixel↔price conversion.
         self.frame.auto_range = Some(auto_range);
+        self.frame.flip_span = Some(flip_span);
         self.frame.chart_height = chart_rect.height();
         self.frame.chart_top = chart_rect.top();
     }

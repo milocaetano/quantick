@@ -1,5 +1,12 @@
 {
   "$defs": {
+    "OpeningScaleTarget": {
+      "enum": [
+        "tape",
+        "candle"
+      ],
+      "type": "string"
+    },
     "WireU64": {
       "pattern": "^(0|[1-9][0-9]*)$",
       "type": "string"
@@ -18,6 +25,11 @@
     },
     "tab_id": {
       "$ref": "#/$defs/WireU64"
+    },
+    "target": {
+      "$ref": "#/$defs/OpeningScaleTarget",
+      "default": "tape",
+      "description": "Tape is the backward-compatible default; Candle has an independent\ntransient FLOW preference, independent of the native Tape worker."
     }
   },
   "required": [

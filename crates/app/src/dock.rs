@@ -188,7 +188,7 @@ impl Dock {
         self.visible
     }
 
-    /// Show/hide the whole dock — the toolbar PANELS button and `Ctrl+B`.
+    /// Show/hide the whole dock — the toolbar PANELS button and `Ctrl+Shift+B`.
     pub fn toggle_visible(&mut self) {
         self.visible = !self.visible;
     }

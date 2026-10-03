@@ -168,7 +168,7 @@ fn a_vertical_drag_over_the_candles_pans_the_shared_axis_and_never_the_tape() {
 
 /// A horizontal drag moves the tape back in time and leaves the candles
 /// where they were; dragging it back past now re-pins it to live, and a
-/// double click over the tape returns it to live and to automatic Y.
+/// double click over the tape returns it to live without changing framing.
 #[test]
 fn a_horizontal_drag_pans_the_tape_through_time_and_never_the_candles() {
     let ctx = egui::Context::default();
@@ -226,11 +226,16 @@ fn a_horizontal_drag_pans_the_tape_through_time_and_never_the_candles() {
     run_frame(&mut app, &ctx);
     assert!(!app.active_tab().tape().tape_end().is_live());
     assert!(!app.active_tab().flow_pane.price_view.is_auto());
+    let manual = app.active_tab().flow_pane.price_view.manual_range();
+    let candles_before = candles_view(&app);
+    let window = app.active_tab().tape().live_lane_window();
     click_sized(&mut app, &ctx, TEST_WINDOW, tape);
     click_sized(&mut app, &ctx, TEST_WINDOW, tape);
     run_frame(&mut app, &ctx);
     assert_eq!(app.active_tab().tape().tape_end(), TapeEnd::Live);
-    assert!(app.active_tab().flow_pane.price_view.is_auto());
+    assert_eq!(app.active_tab().flow_pane.price_view.manual_range(), manual);
+    assert_eq!(candles_view(&app), candles_before);
+    assert_eq!(app.active_tab().tape().live_lane_window(), window);
 }
 
 /// A press and release of the middle button at `from` and `to`, moving
@@ -282,7 +287,7 @@ fn a_middle_drag_pans_the_side_it_was_pressed_on() {
 }
 
 /// Tape only is the tape across the whole canvas: a double click anywhere
-/// on it returns a held tape to live and the axis to automatic Y, as a
+/// on it returns a held tape to live without changing price framing, as a
 /// double click over the tape beside the candles does.
 #[test]
 fn a_double_click_in_tape_only_returns_the_tape_to_live() {
@@ -308,8 +313,11 @@ fn a_double_click_in_tape_only_returns_the_tape_to_live() {
     let auto = pane.frame.auto_range.expect("fitted");
     pane.price_view.pan_screen(40.0, 0.5, auto);
     assert!(!pane.price_view.is_auto());
+    let manual = pane.price_view.manual_range();
     let chart = pane.frame.chart_rect.expect("the canvas laid out");
     let at = chart.center() - egui::vec2(chart.width() / 4.0, 0.0);
+    let window = app.active_tab().tape().live_lane_window();
+    let candles_before = candles_view(&app);
     click_sized(&mut app, &ctx, TEST_WINDOW, at);
     click_sized(&mut app, &ctx, TEST_WINDOW, at);
     run_frame(&mut app, &ctx);
@@ -318,7 +326,9 @@ fn a_double_click_in_tape_only_returns_the_tape_to_live() {
         TapeEnd::Live,
         "the double click returned the tape to live"
     );
-    assert!(app.active_tab().flow_pane.price_view.is_auto());
+    assert_eq!(app.active_tab().flow_pane.price_view.manual_range(), manual);
+    assert_eq!(app.active_tab().tape().live_lane_window(), window);
+    assert_eq!(candles_view(&app), candles_before);
 }
 
 /// A past end stops where the retained tape begins, never before it.
@@ -465,4 +475,300 @@ fn the_tape_view_call_moves_the_tape_end_and_window_and_reads_them_back() {
     let (unknown, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, stale);
     assert_eq!(error_code(&unknown), Some(codes::INVALID_REQUEST));
     disable_test_gateway(&mut app, &ctx);
+}
+
+/// Tape only is the tape across the whole canvas, so it drags like the tape
+/// beside the candles: up and down pans the price axis, sideways its time,
+/// primary or middle button (trader 2026-09-30: in tape only a click and
+/// drag moved nothing).
+#[test]
+fn a_drag_in_tape_only_pans_the_price_axis_and_the_tapes_time() {
+    let ctx = egui::Context::default();
+    let (mut app, _, _) = split_app(&ctx);
+    app.active_tab_mut()
+        .tape_mut()
+        .set_layer_switch(quantick_layers::OrderflowSwitch::TapeOnly, true);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(app.active_tab().tape().cached_config().tape_only());
+    let chart = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .chart_rect
+        .expect("the canvas laid out");
+    let at = chart.center();
+    let range = |app: &QuantickApp| {
+        let pane = &app.active_tab().flow_pane;
+        pane.price_view
+            .resolve(pane.frame.auto_range.expect("fitted"))
+    };
+    let before = range(&app);
+
+    drag_sized(&mut app, &ctx, TEST_WINDOW, at, at + egui::vec2(0.0, 90.0));
+    run_frame(&mut app, &ctx);
+    assert!(
+        !app.active_tab().flow_pane.price_view.is_auto(),
+        "the vertical drag took manual Y"
+    );
+    let after = range(&app);
+    assert!(
+        after.0 > before.0 && after.1 > before.1,
+        "dragging down pans to higher prices: {before:?} -> {after:?}"
+    );
+    assert_eq!(app.active_tab().tape().tape_end(), TapeEnd::Live);
+
+    middle_drag(&mut app, &ctx, at, at + egui::vec2(0.0, -90.0));
+    run_frame(&mut app, &ctx);
+    assert!(range(&app).1 < after.1, "the middle button pans back down");
+
+    drag_sized(&mut app, &ctx, TEST_WINDOW, at, at + egui::vec2(120.0, 0.0));
+    run_frame(&mut app, &ctx);
+    assert!(
+        !app.active_tab().tape().tape_end().is_live(),
+        "the sideways drag took the tape into the past"
+    );
+}
+
+/// A hand dragging the chart up and down over the tape, pressed at `at`:
+/// every frame moves it 15 px down, then back up past the press, and a few
+/// pixels sideways either way. Returns the tape's end after each frame.
+fn jittery_vertical_drag(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+    at: egui::Pos2,
+) -> Vec<TapeEnd> {
+    run_frame_with_events(
+        app,
+        ctx,
+        vec![egui::Event::PointerMoved(at), pointer_button(at, true)],
+    );
+    let sideways = [3.0, -2.0, 4.0, -3.0, 2.0, 3.0, -1.0, 2.0, -2.0, 3.0];
+    let vertical = [
+        15.0, 15.0, 15.0, 15.0, -15.0, -15.0, -15.0, -15.0, -15.0, 15.0,
+    ];
+    let mut pointer = at;
+    let mut ends = Vec::new();
+    for (dx, dy) in sideways.into_iter().zip(vertical) {
+        pointer += egui::vec2(dx, dy);
+        run_frame_with_events(app, ctx, vec![egui::Event::PointerMoved(pointer)]);
+        ends.push(app.active_tab().tape().tape_end());
+    }
+    run_frame_with_events(
+        app,
+        ctx,
+        vec![
+            egui::Event::PointerMoved(pointer),
+            pointer_button(pointer, false),
+        ],
+    );
+    run_frame(app, ctx);
+    ends.push(app.active_tab().tape().tape_end());
+    ends
+}
+
+/// Up and down over the tape pans the price axis, and the few pixels a hand
+/// drifts sideways doing it never take the tape into the past — which is
+/// what takes the book off it (`OrderflowView::draw_background`). Trader
+/// 2026-09-30: dragging the chart up and down over the tape, the book
+/// disappeared and came back now and then.
+#[test]
+fn a_vertical_drag_that_wobbles_sideways_keeps_the_tape_live() {
+    let ctx = egui::Context::default();
+    let (mut app, tape, _) = split_app(&ctx);
+    let before = candles_view(&app);
+    let ends = jittery_vertical_drag(&mut app, &ctx, tape);
+    assert!(
+        ends.iter().all(|end| end.is_live()),
+        "the sideways wobble moved the tape off live: {ends:?}"
+    );
+    assert!(
+        !app.active_tab().flow_pane.price_view.is_auto(),
+        "the drag panned the price axis"
+    );
+    assert_eq!(candles_view(&app), before, "and never the candles");
+}
+
+/// The same wobble in tape only, where the tape is the whole canvas.
+#[test]
+fn a_vertical_drag_that_wobbles_sideways_keeps_the_tape_live_in_tape_only() {
+    let ctx = egui::Context::default();
+    let (mut app, _, _) = split_app(&ctx);
+    app.active_tab_mut()
+        .tape_mut()
+        .set_layer_switch(quantick_layers::OrderflowSwitch::TapeOnly, true);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    assert!(app.active_tab().tape().cached_config().tape_only());
+    let chart = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .chart_rect
+        .expect("the canvas laid out");
+    let ends = jittery_vertical_drag(&mut app, &ctx, chart.center());
+    assert!(
+        ends.iter().all(|end| end.is_live()),
+        "the sideways wobble moved the tape off live: {ends:?}"
+    );
+    assert!(
+        !app.active_tab().flow_pane.price_view.is_auto(),
+        "the drag panned the price axis"
+    );
+}
+
+/// A literal double click returns only the clicked side to live, preserving
+/// zoom, manual prices and orientation. The next vertical gesture must still
+/// follow the hand, including on a narrow Tape-only price window.
+#[test]
+fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
+    for inverted in [false, true] {
+        for (tape_only, on_tape) in [(false, false), (false, true), (true, true)] {
+            for middle in [false, true] {
+                for dy in [-60.0, 60.0] {
+                    let ctx = egui::Context::default();
+                    let (mut app, tape, candles) = split_app(&ctx);
+                    for agg_id in 401..=440 {
+                        let mut print = trade(agg_id);
+                        print.timestamp_ms += 120_000;
+                        print.price = Decimal::from(101);
+                        app.active_tab_mut()
+                            .ingest_live_trade_at(&print, 130_000 + agg_id as i64);
+                    }
+                    app.active_tab_mut().tape_mut().flush_for_test();
+                    // The app frame publishes the new market clock used by
+                    // set_tape_end; flushing the worker alone leaves it stale.
+                    run_frame(&mut app, &ctx);
+                    if tape_only {
+                        app.active_tab_mut()
+                            .tape_mut()
+                            .set_layer_switch(quantick_layers::OrderflowSwitch::TapeOnly, true);
+                        run_frame(&mut app, &ctx);
+                        run_frame(&mut app, &ctx);
+                    }
+                    let manual = if tape_only {
+                        (100.995, 101.005)
+                    } else {
+                        (90.455, 111.545)
+                    };
+                    let pane = &mut app.active_tab_mut().flow_pane;
+                    assert!(pane.price_view.set_manual_range(manual.0, manual.1));
+                    pane.price_view.set_inverted(inverted);
+                    pane.viewport.zoom(1.375);
+                    pane.viewport.pan_pixels(64.0, pane.slots());
+                    app.active_tab_mut()
+                        .tape_mut()
+                        .set_live_lane_window(quantick_orderflow::LaneWindow::Fixed { ms: 3_000 });
+                    app.active_tab_mut()
+                        .tape_mut()
+                        .set_tape_end(TapeEnd::Past { end_ms: 163_000 });
+                    app.active_tab_mut().tape_mut().flush_for_test();
+                    run_frame(&mut app, &ctx);
+                    let candles_before = candles_view(&app);
+                    let tape_before = app.active_tab().tape().tape_end();
+                    let window = app.active_tab().tape().live_lane_window();
+                    assert_eq!(
+                        app.active_tab().flow_pane.viewport.follows_live(),
+                        tape_only
+                    );
+                    assert!(!tape_before.is_live());
+                    let at = if tape_only {
+                        app.active_tab()
+                            .flow_pane
+                            .frame
+                            .chart_rect
+                            .unwrap()
+                            .center()
+                    } else if on_tape {
+                        tape
+                    } else {
+                        candles
+                    };
+                    click_sized(&mut app, &ctx, TEST_WINDOW, at);
+                    click_sized(&mut app, &ctx, TEST_WINDOW, at);
+                    run_frame(&mut app, &ctx);
+                    let pane = &app.active_tab().flow_pane;
+                    assert_eq!(
+                        pane.price_view.manual_range(),
+                        Some(manual),
+                        "the literal double click preserves exact price framing"
+                    );
+                    assert_eq!(pane.price_view.is_inverted(), inverted);
+                    assert_eq!(pane.viewport.px_per_bar(), candles_before.0);
+                    assert_eq!(app.active_tab().tape().live_lane_window(), window);
+                    let expected_tape = if on_tape { TapeEnd::Live } else { tape_before };
+                    assert_eq!(app.active_tab().tape().tape_end(), expected_tape);
+                    if on_tape {
+                        assert_eq!(candles_view(&app), candles_before);
+                        assert_eq!(pane.viewport.follows_live(), tape_only);
+                    } else {
+                        assert!(pane.viewport.follows_live());
+                        assert_eq!(
+                            pane.viewport.right_edge_bar(pane.slots()),
+                            pane.slots().saturating_sub(1) as f32
+                        );
+                    }
+                    let auto = pane.frame.auto_range.unwrap();
+                    assert_eq!(
+                        app.active_tab().tape().tape_price_range(),
+                        Some((101.0, 101.0)),
+                        "the fixture retains only the quiet Tape price"
+                    );
+                    let height = pane.frame.chart_height;
+                    let price = (manual.0 + manual.1) * 0.5;
+                    let before_y = pane.price_view.scale(auto, 0.0, height).y(price);
+                    if middle {
+                        middle_drag(&mut app, &ctx, at, at + egui::vec2(0.0, dy));
+                    } else {
+                        drag_sized(&mut app, &ctx, TEST_WINDOW, at, at + egui::vec2(0.0, dy));
+                    }
+                    let pane = &app.active_tab().flow_pane;
+                    let after_y = pane.price_view.scale(auto, 0.0, height).y(price);
+                    assert!(!pane.price_view.is_auto());
+                    assert_eq!(pane.price_view.is_inverted(), inverted);
+                    assert!(
+                        (after_y - before_y - dy).abs() < 1.0,
+                        "screen pan {dy}, actual {}, Tape {on_tape}, Tape only {tape_only}, middle {middle}, inverted {inverted}",
+                        after_y - before_y
+                    );
+                    assert_eq!(app.active_tab().tape().tape_end(), expected_tape);
+                    assert_eq!(app.active_tab().tape().live_lane_window(), window);
+                    assert_eq!(pane.viewport.px_per_bar(), candles_before.0);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn an_ordinary_canvas_double_click_returns_to_live_at_the_existing_zoom_and_price_range() {
+    for inverted in [false, true] {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(200);
+        switch_layer(&mut app, ChartLayer::TapeChart, false);
+        run_frame(&mut app, &ctx);
+        let pane = &mut app.active_tab_mut().flow_pane;
+        let manual = (98.25, 104.75);
+        assert!(pane.price_view.set_manual_range(manual.0, manual.1));
+        pane.price_view.set_inverted(inverted);
+        pane.viewport.set_px_per_bar(23.0);
+        pane.viewport.pan_pixels(120.0, pane.slots());
+        run_frame(&mut app, &ctx);
+        let pane = &app.active_tab().flow_pane;
+        assert!(pane.frame.lane_divider_x.is_none());
+        assert!(!pane.viewport.follows_live());
+        let at = pane.frame.chart_rect.unwrap().center();
+        click_sized(&mut app, &ctx, TEST_WINDOW, at);
+        click_sized(&mut app, &ctx, TEST_WINDOW, at);
+        run_frame(&mut app, &ctx);
+        let pane = &app.active_tab().flow_pane;
+        assert!(pane.viewport.follows_live());
+        assert_eq!(
+            pane.viewport.right_edge_bar(pane.slots()),
+            pane.slots().saturating_sub(1) as f32
+        );
+        assert_eq!(pane.viewport.px_per_bar(), 23.0);
+        assert_eq!(pane.price_view.manual_range(), Some(manual));
+        assert_eq!(pane.price_view.is_inverted(), inverted);
+    }
 }

@@ -271,7 +271,13 @@ fn deal_oracle(
             let reading = *pending.next().expect("peeked");
             seed_deal_counter(&mut *builder, &[reading]);
         }
-        bars.extend(fold_print(&mut *builder, &mut footprints, footprint, trade));
+        bars.extend(fold_print(
+            &mut *builder,
+            &mut footprints,
+            footprint,
+            false,
+            trade,
+        ));
     }
     Shown {
         bars: format!("{bars:?}"),

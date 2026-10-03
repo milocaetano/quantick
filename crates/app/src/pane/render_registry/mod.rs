@@ -3,7 +3,7 @@
 use eframe::egui;
 use quantick_layers::{ChartLayer, LayerRegistry, RegistrationError};
 mod candle_aggression;
-mod candles;
+pub(super) mod candles;
 mod days;
 mod dividers;
 mod flow;

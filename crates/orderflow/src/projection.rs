@@ -15,6 +15,7 @@ use super::timeline::BarTimeline;
 
 mod candle_dots;
 mod dots;
+pub mod flow_tape;
 mod fold;
 mod model;
 mod past_tape;

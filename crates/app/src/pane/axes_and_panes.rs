@@ -152,9 +152,9 @@ struct PaneGesture {
 /// `auto` is the range the last frame fitted; `None` means nothing is computed to scale yet, and
 /// only the reset stays available.
 ///
-/// `flips` is the price gutter's privilege: an expanding drag past the flip threshold turns the
-/// chart upside down ([`PriceView::drag_zoom`]) and the drag's sense mirrors with it. Indicator
-/// gutters pass `false`: a pane's values have no upside down. The wheel never flips.
+/// `flip_span` is the price gutter's privilege: an expanding drag past that many flip spans turns
+/// the chart upside down ([`PriceView::drag_zoom_against`]) and the drag's sense mirrors with it.
+/// Indicator gutters pass `None`: a pane's values have no upside down. The wheel never flips.
 ///
 /// Returns the band's response, so the price gutter can hang its context menu off the region the
 /// gesture owns.
@@ -164,7 +164,7 @@ fn axis_zoom_gesture(
     band: egui::Rect,
     view: &mut PriceView,
     auto: Option<(f64, f64)>,
-    flips: bool,
+    flip_span: Option<f64>,
 ) -> egui::Response {
     let response = ui.interact(band, id, egui::Sense::click_and_drag());
     // The cursor is the affordance (audit F5): nothing else on the band says
@@ -185,16 +185,15 @@ fn axis_zoom_gesture(
     if response.dragged_by(egui::PointerButton::Primary) {
         // Drag up → compress the span (a taller trace); down → expand it —
         // mirrored once the chart is upside down.
-        let sense = if flips && view.is_inverted() {
+        let sense = if flip_span.is_some() && view.is_inverted() {
             -1.0
         } else {
             1.0
         };
         let factor = f64::from(sense * response.drag_delta().y / AXIS_ZOOM_DRAG_PX).exp();
-        if flips {
-            view.drag_zoom(factor, auto);
-        } else {
-            view.zoom(factor, auto);
+        match flip_span {
+            Some(span) => view.drag_zoom_against(factor, auto, span),
+            None => view.zoom(factor, auto),
         }
     }
     if response.hovered() {
@@ -344,7 +343,7 @@ impl ChartPane {
             areas.price_gutter,
             &mut self.price_view,
             auto,
-            true,
+            auto.map(|(lo, hi)| self.frame.flip_span.unwrap_or(hi - lo)),
         );
         // The axis's own menu: about the scale and what is written on it, not the canvas (the layer
         // menu stays the canvas's right-click). The compass's price half is offered here because
@@ -408,7 +407,7 @@ impl ChartPane {
                 *gutter,
                 &mut view.scale,
                 view.last_auto,
-                false,
+                None,
             );
             if !body.collapsed {
                 // The body moves the scale the gutter scales. Registered after the gutter so the

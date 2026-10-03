@@ -9917,7 +9917,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Optionally excludes the first recorded 100 ms burst of each day from automatic tape-only dot scaling. Executions, prices and pies remain exact; the opening dot is capped at full radius. Uses the first available recorded burst if session-opening data is missing. Transient until the bubble preset is explicitly saved; defaults off and has no effect on ordinary chart/BTC rendering or a typed size reference.",
+      "description": "Optionally changes opening calibration without changing executions, prices or grouping. The default target tape excludes the first recorded 100 ms burst per UTC date and caps its radius; it has no effect on a typed tape reference and remains transient until the bubble preset is saved. Target candle requires active tick FLOW bubbles and has an independent transient pane preference: only the region containing the canonical first recorded execution per UTC date excludes its opening portion from the visible reference and may grow uncapped with area proportional to gross volume. Other first-window regions contribute their full volume. Offscreen or evicted anchors never transfer to visible regions. A frame with no ordinary reference uses an explicitly reported full-volume fallback. Both preferences default off; first recorded activity is not an exchange auction flag.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -9930,6 +9930,13 @@
       "idempotency": "optional",
       "input_schema": {
         "$defs": {
+          "OpeningScaleTarget": {
+            "enum": [
+              "tape",
+              "candle"
+            ],
+            "type": "string"
+          },
           "WireU64": {
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
@@ -9939,7 +9946,7 @@
         "additionalProperties": false,
         "properties": {
           "ignore_opening_burst_in_scale": {
-            "description": "Exclude each day's first recorded 100 ms burst from the automatic\ntape size reference. Preserve its exact volume and cap its radius.",
+            "description": "Tape excludes the first recorded 100 ms burst per UTC date and caps it.\nCandle excludes only the canonical first region's opening portion;\nits radius may grow uncapped while every other region sets the reference.",
             "type": "boolean"
           },
           "pane_id": {
@@ -9947,6 +9954,11 @@
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
+          },
+          "target": {
+            "$ref": "#/$defs/OpeningScaleTarget",
+            "default": "tape",
+            "description": "Tape is the backward-compatible default; Candle has an independent\ntransient FLOW preference, independent of the native Tape worker."
           }
         },
         "required": [
@@ -9960,6 +9972,13 @@
       "module": "orderflow",
       "output_schema": {
         "$defs": {
+          "OpeningScaleTarget": {
+            "enum": [
+              "tape",
+              "candle"
+            ],
+            "type": "string"
+          },
           "WireU64": {
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
@@ -9978,6 +9997,11 @@
           },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
+          },
+          "target": {
+            "$ref": "#/$defs/OpeningScaleTarget",
+            "default": "tape",
+            "description": "Tape is the backward-compatible default; Candle has an independent\ntransient FLOW preference, independent of the native Tape worker."
           }
         },
         "required": [
@@ -14556,7 +14580,7 @@
                 "type": "string"
               },
               "enabled": {
-                "description": "Aggression bubbles are drawn over the chart. Beside the native tape\nthey are one summary bubble per tick candle, as layer\n`candle_aggression` draws it; `layers.visibility` names any block.",
+                "description": "Aggression bubbles are drawn over the chart. Beside the native tape,\nFLOW draws regional execution totals on the tick candles;\n`layers.visibility` names any block.",
                 "type": "boolean"
               },
               "floored_quantity": {
@@ -14621,6 +14645,383 @@
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
             "type": "string"
           },
+          "FlowExecutionDisplayPolicy": {
+            "description": "Emphasis changes neither source membership nor volume-proportional area.\nSymbols may be separated above their source; reported prices remain factual.",
+            "oneOf": [
+              {
+                "const": "large_or_isolated_with_dim_context",
+                "description": "Legacy readback policy, retained for previously captured snapshots.",
+                "type": "string"
+              },
+              {
+                "const": "volume_weighted_with_dim_context",
+                "description": "Ordinary regions remain dim through one quarter of the reference, then\nbrighten gradually up to the reference. Display separation never promotes\na small region. Oversized opening regions keep their faint treatment.",
+                "type": "string"
+              }
+            ]
+          },
+          "FlowExecutionMark": {
+            "properties": {
+              "buy_quantity": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "buy_radius_px": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Radius of a disc with the same area as the buy sector; not a separate painted disc."
+              },
+              "candle_position": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "end_slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "first_slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "first_timestamp_ms": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "last_timestamp_ms": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "members": {
+                "items": {
+                  "$ref": "#/$defs/FlowExecutionMember"
+                },
+                "type": "array"
+              },
+              "members_truncated": {
+                "type": "boolean"
+              },
+              "native_cells": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "opening_anchor": {
+                "default": false,
+                "type": "boolean"
+              },
+              "opening_capped": {
+                "description": "Compatibility field: FLOW no longer caps opening regions; always false.",
+                "type": "boolean"
+              },
+              "opening_oversized": {
+                "default": false,
+                "type": "boolean"
+              },
+              "opening_quantity": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "price": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "price_high": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "price_low": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "radius_px": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Actual painted circle radius; gross quantity determines its area."
+              },
+              "sell_quantity": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "sell_radius_px": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Radius of a disc with the same area as the sell sector; not a separate painted disc."
+              },
+              "trade_count": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "members",
+              "members_truncated",
+              "native_cells",
+              "first_slot",
+              "end_slot",
+              "candle_position",
+              "price",
+              "price_low",
+              "price_high",
+              "first_timestamp_ms",
+              "last_timestamp_ms",
+              "buy_quantity",
+              "sell_quantity",
+              "trade_count",
+              "radius_px",
+              "buy_radius_px",
+              "sell_radius_px",
+              "opening_quantity",
+              "opening_capped"
+            ],
+            "type": "object"
+          },
+          "FlowExecutionMember": {
+            "properties": {
+              "accepted_ordinal": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "candle_slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "ordinal": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Zero-based index in this pane's retained source at source_revision."
+              },
+              "source_id": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "ordinal",
+              "source_id",
+              "candle_slot",
+              "accepted_ordinal"
+            ],
+            "type": "object"
+          },
+          "FlowExecutionScaleBasis": {
+            "enum": [
+              "empty",
+              "visible_region_max",
+              "visible_ordinary_region_max",
+              "opening_only_fallback",
+              "typed_reference"
+            ],
+            "type": "string"
+          },
+          "FlowExecutionScaleMode": {
+            "enum": [
+              "visible_regions",
+              "typed"
+            ],
+            "type": "string"
+          },
+          "FlowExecutionSnapshot": {
+            "properties": {
+              "buy_quantity": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "clip_left": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "clip_right": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "display_policy": {
+                "$ref": "#/$defs/FlowExecutionDisplayPolicy"
+              },
+              "effective_reference": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "end_slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "first_slot": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "ignore_opening": {
+                "type": "boolean"
+              },
+              "large_region_threshold": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Inclusive placement threshold for ordinary regions. Above this volume,\nbrightness rises gradually to the effective reference; area is unchanged."
+              },
+              "mark_count": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "marks": {
+                "items": {
+                  "$ref": "#/$defs/FlowExecutionMark"
+                },
+                "type": "array"
+              },
+              "marks_truncated": {
+                "type": "boolean"
+              },
+              "merge_support_radius_px": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "off_axis_executions": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "offscreen_executions": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Loaded native cells outside the actual horizontal viewport, not missing source."
+              },
+              "omitted_executions": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "opening_exclusion_effective": {
+                "type": "boolean"
+              },
+              "radius_limit_px": {
+                "$ref": "#/$defs/CanonicalDecimal",
+                "description": "Ordinary reference radius; the first daily region can exceed it when excluded."
+              },
+              "region_window_ms": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Intrinsic aligned interval before spatial pooling; never an order identifier."
+              },
+              "retained_source_count": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "scale_basis": {
+                "$ref": "#/$defs/FlowExecutionScaleBasis"
+              },
+              "scale_mode": {
+                "$ref": "#/$defs/FlowExecutionScaleMode"
+              },
+              "sell_quantity": {
+                "$ref": "#/$defs/CanonicalDecimal"
+              },
+              "source_revision": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "trade_count": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "typed_reference": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "worker": {
+                "$ref": "#/$defs/FlowExecutionWorkerSnapshot"
+              }
+            },
+            "required": [
+              "source_revision",
+              "worker",
+              "retained_source_count",
+              "omitted_executions",
+              "off_axis_executions",
+              "offscreen_executions",
+              "clip_left",
+              "clip_right",
+              "first_slot",
+              "end_slot",
+              "scale_mode",
+              "scale_basis",
+              "display_policy",
+              "opening_exclusion_effective",
+              "radius_limit_px",
+              "merge_support_radius_px",
+              "region_window_ms",
+              "ignore_opening",
+              "buy_quantity",
+              "sell_quantity",
+              "trade_count",
+              "mark_count",
+              "marks_truncated",
+              "marks"
+            ],
+            "type": "object"
+          },
+          "FlowExecutionWorkerSnapshot": {
+            "properties": {
+              "cache_limit_reached": {
+                "type": "boolean"
+              },
+              "computed_through_ordinal": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "current_requested_end_ordinal": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "current_requested_first_ordinal": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "ineligible_executions": {
+                "$ref": "#/$defs/WireU64",
+                "description": "Loaded source records excluded for nonpositive quantity or invalid tick denominator."
+              },
+              "layout_revision": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "loaded_executions": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "pending": {
+                "type": "boolean"
+              },
+              "projected_source_count": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "requested_end_ordinal": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "requested_executions": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "requested_first_ordinal": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "requested_layout_revision": {
+                "$ref": "#/$defs/WireU64"
+              },
+              "submitted_executions": {
+                "$ref": "#/$defs/WireU64"
+              }
+            },
+            "required": [
+              "layout_revision",
+              "requested_layout_revision",
+              "requested_first_ordinal",
+              "requested_end_ordinal",
+              "loaded_executions",
+              "ineligible_executions",
+              "computed_through_ordinal",
+              "cache_limit_reached",
+              "pending",
+              "submitted_executions",
+              "requested_executions",
+              "projected_source_count",
+              "current_requested_first_ordinal",
+              "current_requested_end_ordinal"
+            ],
+            "type": "object"
+          },
+          "OpeningScaleSnapshot": {
+            "properties": {
+              "candle": {
+                "type": "boolean"
+              },
+              "tape": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "candle"
+            ],
+            "type": "object"
+          },
           "PaneBubblesSnapshot": {
             "properties": {
               "bubbles": {
@@ -14635,6 +15036,26 @@
               },
               "engine": {
                 "$ref": "#/$defs/AvailabilitySnapshot"
+              },
+              "flow_execution": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/FlowExecutionSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Retained executions aggregated into visible FLOW regions, separate from native Tape."
+              },
+              "opening_scale": {
+                "$ref": "#/$defs/OpeningScaleSnapshot",
+                "default": {
+                  "candle": false,
+                  "tape": null
+                },
+                "description": "Independent reversible preferences, readable even when marks are hidden."
               },
               "pane_id": {
                 "$ref": "#/$defs/WireU64"

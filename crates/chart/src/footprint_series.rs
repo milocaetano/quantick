@@ -16,7 +16,9 @@
 //! answer off the closed bar's own `trade_count`: `pending + 1` means the
 //! closing trade is inside, `pending` means it opens the next ladder.
 
-use quantick_engine::{Bar, BarFootprint, DEFAULT_LEVEL_CAP, FootprintBuilder, Trade};
+use quantick_engine::{
+    Bar, BarBuilder, BarFootprint, DEFAULT_LEVEL_CAP, DealSample, FootprintBuilder, Trade,
+};
 use rust_decimal::Decimal;
 
 /// Row width used until the feed reports the instrument's real `price_step` —
@@ -34,6 +36,50 @@ pub struct FootprintSeries {
     /// Trades fed since the last close — the counter the closing-trade
     /// question is answered against.
     pending: u64,
+    pub(crate) tick_membership: Option<crate::tick_membership::TickMembership>,
+}
+
+pub(crate) fn seed_deal_counter(builder: &mut dyn BarBuilder, samples: &[DealSample]) {
+    let Some(input) = builder.deal_counter_input() else {
+        return;
+    };
+    for sample in samples {
+        input.observe(*sample);
+    }
+}
+
+/// Push one print through `builder` and, with the footprint layer on, fold
+/// it into the ladders — unless the builder left it *uncounted*. A deal bar
+/// counts nothing before its first reading: such a print belongs to no bar,
+/// so it belongs to no ladder either, or the ladders drift off the bars they
+/// index by and the footprint series asserts on the first close.
+pub(crate) fn fold_print<B: BarBuilder + ?Sized>(
+    builder: &mut B,
+    footprints: &mut FootprintSeries,
+    footprint_enabled: bool,
+    canonical: bool,
+    trade: &Trade,
+) -> Option<Bar> {
+    let uncounted_before = builder.diagnostics().uncounted_trades;
+    let pending = builder.partial().map_or(0, |bar| bar.trade_count);
+    let closed = builder.push(trade);
+    let uncounted = builder.diagnostics().uncounted_trades != uncounted_before;
+    let included = closed
+        .as_ref()
+        .is_some_and(|bar| bar.trade_count == pending.saturating_add(1));
+    if canonical && let Some(membership) = footprints.tick_membership.as_mut() {
+        membership.observe(!uncounted, closed.is_some(), included, trade);
+    }
+    if footprint_enabled {
+        match (&closed, uncounted) {
+            (_, false) => footprints.observe_admitted(trade, closed.as_ref(), included),
+            // A rollover ended the bar and this print counts for nothing:
+            // the ladder closes on what it held, the print folds nowhere.
+            (Some(bar), true) => footprints.close_without(bar),
+            (None, true) => {}
+        }
+    }
+    closed
 }
 
 impl FootprintSeries {
@@ -45,7 +91,34 @@ impl FootprintSeries {
             base_group,
             closed: Vec::new(),
             pending: 0,
+            tick_membership: None,
         }
+    }
+
+    pub(crate) fn for_chart(base_group: Decimal, tick: bool) -> Self {
+        let mut series = Self::new(base_group);
+        series.reset_membership(tick);
+        series
+    }
+
+    /// Replay retained prints through the canonical close decision without changing
+    /// membership. Deal readings seed the scratch builder before the prints.
+    pub(crate) fn refold(
+        &mut self,
+        spec: quantick_engine::bar_registry::BarConfiguration,
+        trades: &quantick_engine::trade_tape::TradeTape,
+        samples: &[DealSample],
+    ) {
+        let mut builder = spec.build();
+        seed_deal_counter(&mut *builder, samples);
+        for trade in trades {
+            fold_print(&mut *builder, self, true, false, trade);
+        }
+    }
+
+    /// A full bar rebuild resets source membership; ladder refolds do not.
+    pub(crate) fn reset_membership(&mut self, tick: bool) {
+        self.tick_membership = tick.then(Default::default);
     }
 
     /// The row width ladders are captured at (before any per-bar level-cap
@@ -67,13 +140,23 @@ impl FootprintSeries {
     /// Fold the trade the bar builder just consumed, `closed` being what that
     /// same `push` returned. Must be called for every trade, in order.
     pub fn observe(&mut self, trade: &Trade, closed: Option<&Bar>) {
+        let included = closed.is_some_and(|bar| bar.trade_count == self.pending.saturating_add(1));
+        self.observe_admitted(trade, closed, included);
+    }
+
+    /// Use the closing decision already made by the canonical chart fold.
+    pub(crate) fn observe_admitted(
+        &mut self,
+        trade: &Trade,
+        closed: Option<&Bar>,
+        closing_trade_included: bool,
+    ) {
         let Some(bar) = closed else {
             self.builder.push(trade);
             self.pending = self.pending.saturating_add(1);
             return;
         };
 
-        let closing_trade_included = bar.trade_count == self.pending.saturating_add(1);
         debug_assert!(
             closing_trade_included || bar.trade_count == self.pending,
             "footprint trade counter drifted from the bar builder's"

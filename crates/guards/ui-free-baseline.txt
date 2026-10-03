@@ -18,5 +18,11 @@
 # Q16 (#453, the paper account into `paper`) and Q17 (#452, the control-plane
 # host into `control-host`) moved out of `app`; the same independent count
 # agrees. This closes #443's A2.
-!budget 24233
-crates/app 24233
+# Raised by 7 lines for `fix/price-resolved-candle-aggression`: six pane-owned
+# reset-orchestration lines clear FLOW across spec/history/source changes before an
+# empty layout can return; the remainder is app control/readback binding. Portable
+# admission, retention and adoption policy lives in orderflow's FlowSession.
+# Reviewed and authorized by the root agent after independent flow_aggregation_ports
+# ownership review (2026-10-01); measured remainder only, no spare headroom.
+!budget 24240
+crates/app 24240

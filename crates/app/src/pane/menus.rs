@@ -44,11 +44,19 @@ impl ChartPane {
         let blocked = self.layer_blocked(layer, chrome.capabilities);
         let mut visible = self.layer_visible(layer, chrome.style);
         let response = ui
-            .add_enabled(
-                blocked.is_none(),
-                egui::Checkbox::new(&mut visible, layer.label()),
-            )
-            .on_hover_text(layer.hint());
+            .horizontal(|ui| {
+                let response = ui
+                    .add_enabled(
+                        blocked.is_none(),
+                        egui::Checkbox::new(&mut visible, layer.label()),
+                    )
+                    .on_hover_text(layer.hint());
+                if let Some(shortcut) = crate::chart_layers::shortcuts::label(layer) {
+                    ui.weak(shortcut);
+                }
+                response
+            })
+            .inner;
         #[cfg(test)]
         self.layer_menu_rects.push((layer, response.rect));
         if let Some(reason) = blocked {
@@ -80,6 +88,23 @@ impl ChartPane {
             // Profitchart-style properties dialog, the boss's ask); the menu
             // offers the door. Available with the layer off too — configuring
             // before switching on is a legitimate order of operations.
+            if layer == ChartLayer::Bubbles
+                && blocked.is_none()
+                && self.state.tick_membership().is_some()
+                && let Some(owner) = self
+                    .orderflow
+                    .as_mut()
+                    .filter(|owner| owner.flow_execution_active())
+            {
+                ui.indent("candle_opening_scale", |ui| {
+                    let mut ignore = owner.ignore_flow_opening();
+                    if ui.checkbox(&mut ignore, "Exclude first daily region from scale")
+                        .on_hover_text("Exclude the opening quantity in the region containing each UTC date's first recorded trade from FLOW sizing. Only that region may exceed the ordinary maximum, with proportional area and its full volume shown. Other regions share the visible full-volume reference. The first recorded trade is not a proven auction. If no other volume is visible, use the full scale. This preference lasts for this pane and does not change Tape.")
+                        .changed() {
+                        owner.set_ignore_flow_opening(ignore);
+                    }
+                });
+            }
             if layer == ChartLayer::Footprint && blocked.is_none() {
                 ui.indent("footprint_configure", |ui| {
                     if ui

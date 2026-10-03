@@ -12,13 +12,17 @@
 //! [`work_meter`] is the test instrument the budgets in this crate and in
 //! `app` are held with: a counting allocator, installed by each test binary.
 
+pub mod flow_execution;
+pub mod footprint_projection;
 pub mod footprint_series;
 pub mod geometry;
 pub mod indicator_style;
 pub mod live_strip;
+pub mod price_axis_fit;
 pub mod price_view;
 pub mod state;
 pub mod style;
+pub mod tick_membership;
 pub mod viewport;
 pub mod work_meter;
 

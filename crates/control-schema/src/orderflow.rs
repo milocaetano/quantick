@@ -19,6 +19,9 @@
 //! rule where it does not; the feed scope owns that declaration for the market
 //! as a whole and it is named here rather than restated per level.
 
+mod flow_execution;
+pub use flow_execution::FlowExecutionSnapshot;
+
 use quantick_control_host::wire::{
     AvailabilitySnapshot, PaneSideDto, canonical_decimal, canonical_f32, wire_usize,
 };
@@ -261,8 +264,20 @@ pub struct TabBubblesSnapshot {
     pub panes: Vec<PaneBubblesSnapshot>,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct OpeningScaleSnapshot {
+    pub tape: Option<bool>,
+    pub candle: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PaneBubblesSnapshot {
+    /// Independent reversible preferences, readable even when marks are hidden.
+    #[serde(default)]
+    pub opening_scale: OpeningScaleSnapshot,
+    /// Retained executions aggregated into visible FLOW regions, separate from native Tape.
+    #[serde(default)]
+    pub flow_execution: Option<FlowExecutionSnapshot>,
     pub pane_id: WireU64,
     pub side: PaneSideDto,
     pub engine: AvailabilitySnapshot,
@@ -271,9 +286,9 @@ pub struct PaneBubblesSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BubblesStateSnapshot {
-    /// Aggression bubbles are drawn over the chart. Beside the native tape
-    /// they are one summary bubble per tick candle, as layer
-    /// `candle_aggression` draws it; `layers.visibility` names any block.
+    /// Aggression bubbles are drawn over the chart. Beside the native tape,
+    /// FLOW draws regional execution totals on the tick candles;
+    /// `layers.visibility` names any block.
     pub enabled: bool,
     /// And over the live lane, which is a separate switch.
     pub lane_enabled: bool,

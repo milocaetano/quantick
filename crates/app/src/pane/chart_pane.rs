@@ -476,10 +476,11 @@ impl ChartPane {
     /// - drag the bottom time strip left/right → zoom time (spread candles);
     /// - drag the right price gutter up/down → zoom the price scale;
     /// - scroll over either axis → zoom that axis;
-    /// - double-click → reset to the live edge and auto-fit price.
+    /// - double-click the canvas → return to live, keeping zoom and price scale;
+    /// - double-click the price gutter → resume automatic price fitting.
     ///
-    /// The live lane is a pane of its own and answers to none of it: a gesture starting inside the
-    /// tape moves nothing, and scrolling there zooms the tape's own window instead of the candles.
+    /// The native Tape owns its time navigation: dragging moves its history,
+    /// scrolling zooms its window, and double-clicking returns it to live.
     pub fn handle_navigation(
         &mut self,
         ui: &egui::Ui,

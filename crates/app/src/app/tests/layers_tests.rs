@@ -110,7 +110,10 @@ fn layer_visibility_survives_a_restart() {
     switch_layer(&mut app, ChartLayer::Grid, false);
     // Switched through the toolbar's own action rather than the menu: the
     // save must follow the state, not the widget that moved it.
-    app.apply_toolbar_action(ToolbarAction::SetHeatmap(true));
+    app.apply_toolbar_action(ToolbarAction::SetLayer(
+        crate::toolbar::LayerToggle::Heatmap,
+        true,
+    ));
     // A market layer switched *on* has to come back on, which is why the
     // file records each layer's state instead of a list of hidden ones.
     switch_layer(&mut app, ChartLayer::Bubbles, true);
@@ -897,10 +900,16 @@ fn hiding_the_heatmap_never_stops_the_recorder() {
     take_capture_start(&mut cmd_rx);
     let gaps_before = app.active_tab_mut().tape_mut().health().gaps;
 
-    app.apply_toolbar_action(ToolbarAction::SetHeatmap(true));
+    app.apply_toolbar_action(ToolbarAction::SetLayer(
+        crate::toolbar::LayerToggle::Heatmap,
+        true,
+    ));
     assert!(app.active_tab().tape().depth_visible());
 
-    app.apply_toolbar_action(ToolbarAction::SetHeatmap(false));
+    app.apply_toolbar_action(ToolbarAction::SetLayer(
+        crate::toolbar::LayerToggle::Heatmap,
+        false,
+    ));
     assert!(
         !app.active_tab().tape().depth_visible(),
         "the map is hidden"
@@ -914,7 +923,10 @@ fn hiding_the_heatmap_never_stops_the_recorder() {
         "showing or hiding the map sends no feed command"
     );
 
-    app.apply_toolbar_action(ToolbarAction::SetHeatmap(true));
+    app.apply_toolbar_action(ToolbarAction::SetLayer(
+        crate::toolbar::LayerToggle::Heatmap,
+        true,
+    ));
     app.active_tab_mut().tape_mut().flush_for_test();
     assert!(app.active_tab().tape().depth_visible());
     assert_eq!(
@@ -931,9 +943,18 @@ fn the_time_pane_has_no_tape_and_no_flow_layers() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
 
-    app.apply_toolbar_action(ToolbarAction::SetLiveStrip(true));
-    app.apply_toolbar_action(ToolbarAction::SetHeatmap(true));
-    app.apply_toolbar_action(ToolbarAction::SetBubbles(true));
+    app.apply_toolbar_action(ToolbarAction::SetLayer(
+        crate::toolbar::LayerToggle::LiveStrip,
+        true,
+    ));
+    app.apply_toolbar_action(ToolbarAction::SetLayer(
+        crate::toolbar::LayerToggle::Heatmap,
+        true,
+    ));
+    app.apply_toolbar_action(ToolbarAction::SetLayer(
+        crate::toolbar::LayerToggle::Bubbles,
+        true,
+    ));
     run_frame(&mut app, &ctx);
 
     let time = app.active_tab().time_pane().expect("time pane");
@@ -1194,4 +1215,61 @@ fn a_rail_hidden_this_frame_names_no_buttons_before_the_next_draw() {
         !folded.iter().any(|id| id.starts_with("tool_rail.")),
         "a rail nobody can see contributes no controls: {folded:?}"
     );
+}
+
+#[test]
+fn layer_shortcuts_toggle_candles_without_toggling_the_dock() {
+    let (mut app, _events, _commands, _book) = test_app();
+    let ctx = egui::Context::default();
+    let dock = app.dock.visible();
+    for (key, layer) in [
+        (egui::Key::B, ChartLayer::Bubbles),
+        (egui::Key::F, ChartLayer::Footprint),
+    ] {
+        let before = layer_on(&app, layer);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![key_press_with(key, egui::Modifiers::CTRL)],
+        );
+        assert_eq!(layer_on(&app, layer), !before);
+        assert_eq!(app.dock.visible(), dock);
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![key_press_with(key, egui::Modifiers::CTRL)],
+        );
+        assert_eq!(layer_on(&app, layer), before);
+    }
+    let bubbles = layer_on(&app, ChartLayer::Bubbles);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![key_press_with(
+            egui::Key::B,
+            egui::Modifiers::CTRL | egui::Modifiers::SHIFT,
+        )],
+    );
+    assert_eq!(app.dock.visible(), !dock);
+    assert_eq!(layer_on(&app, ChartLayer::Bubbles), bubbles);
+}
+
+#[test]
+fn layer_shortcuts_leave_text_input_alone() {
+    let (mut app, _events, _commands, _book) = test_app();
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    for (key, layer) in [
+        (egui::Key::B, ChartLayer::Bubbles),
+        (egui::Key::F, ChartLayer::Footprint),
+    ] {
+        let before = layer_on(&app, layer);
+        ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("layer-shortcut-text")));
+        run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![key_press_with(key, egui::Modifiers::CTRL)],
+        );
+        assert_eq!(layer_on(&app, layer), before);
+    }
 }

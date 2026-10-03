@@ -19,6 +19,7 @@ use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
 mod clock;
+pub(crate) mod flow_execution;
 mod frame;
 mod layers;
 #[cfg(test)]
@@ -89,6 +90,7 @@ pub(crate) struct FlowCellHit {
 
 /// Stateful UI/controller facade for the optional heatmap.
 pub struct OrderflowView {
+    flow_execution: flow_execution::FlowExecutionView,
     symbol: String,
     /// UI mirror of the engine configuration. The engine owns
     /// `price_grouping` (auto-base can rewrite it); the mirror adopts engine
@@ -169,6 +171,7 @@ impl OrderflowView {
         let preset_name_draft = presets.active.clone();
         let base_grouping = config.price_grouping;
         Self {
+            flow_execution: Default::default(),
             worker: BookWorker::spawn(&symbol),
             symbol,
             config,
@@ -221,6 +224,18 @@ impl OrderflowView {
     #[must_use]
     pub(crate) fn cached_live_end_ms(&self) -> Option<i64> {
         self.lane_now_ms().or(self.published.live_end_ms)
+    }
+
+    /// Snapshot only published tape state; capturing never wakes the worker.
+    pub(crate) fn bubbles_snapshot(
+        &self,
+    ) -> quantick_control_schema::orderflow::BubblesStateSnapshot {
+        quantick_control_schema::orderflow::BubblesStateSnapshot::from_config(
+            self.cached_config(),
+            self.cached_health().floored_quantity,
+            self.dot_scale(),
+            &self.recorded_opening_bursts(),
+        )
     }
 
     /// The rungs and scales of the last published volume-dots frame.
@@ -774,6 +789,7 @@ impl OrderflowView {
     /// settings. Capture deliberately returns to off; the app starts a fresh
     /// provider task only after the new feed handle is installed.
     pub fn reset_for_symbol(&mut self, symbol: impl Into<String>) {
+        self.reset_flow_executions();
         self.symbol = symbol.into();
         self.tape_clock.reset();
         self.config.enabled = false;
