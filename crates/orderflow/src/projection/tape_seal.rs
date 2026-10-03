@@ -133,9 +133,26 @@ fn sealed_cells<'a>(
     through_ms: i64,
     window_ms: i64,
 ) -> &'a [AggressionCluster] {
+    let front = front
+        .map_or(through_ms, |cell| {
+            window_start(cell.first_timestamp_ms, window_ms)
+        })
+        .min(through_ms);
+    window_run(facts, front, through_ms, window_ms)
+}
+
+/// The cells of `facts` whose window starts in `from_ms..through_ms`. Cells
+/// are ordered by their first execution, so the run is contiguous.
+pub(super) fn window_run(
+    facts: &TapeFacts,
+    from_ms: i64,
+    through_ms: i64,
+    window_ms: i64,
+) -> &[AggressionCluster] {
     let window = |cell: &AggressionCluster| window_start(cell.first_timestamp_ms, window_ms);
-    let front = front.map_or(through_ms, window).min(through_ms);
-    let low = facts.clusters.partition_point(|cell| window(cell) < front);
+    let low = facts
+        .clusters
+        .partition_point(|cell| window(cell) < from_ms);
     let high = facts
         .clusters
         .partition_point(|cell| window(cell) < through_ms);

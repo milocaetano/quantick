@@ -11,6 +11,7 @@
 use rust_decimal::Decimal;
 
 use super::dots::{native_grouping, window_start};
+use super::tape_seal::window_run;
 use super::tiers::TierClusters;
 use super::{SettledProjection, TapeFacts, VolumeDots};
 use crate::HeatmapConfig;
@@ -77,15 +78,8 @@ pub(super) fn continue_tape(
     config: &HeatmapConfig,
 ) -> Decimal {
     let window = |cell: &AggressionCluster| window_start(cell.first_timestamp_ms, window_ms);
-    let low = lane_from_ms.map_or(0, |from| {
-        previous
-            .clusters
-            .partition_point(|cell| window(cell) < from)
-    });
-    let high = previous
-        .clusters
-        .partition_point(|cell| window(cell) < through_ms);
-    let kept: Vec<AggressionCluster> = previous.clusters[low..high.max(low)]
+    let from_ms = lane_from_ms.unwrap_or(i64::MIN);
+    let kept: Vec<AggressionCluster> = window_run(previous, from_ms, through_ms, window_ms)
         .iter()
         .filter(|cell| evicted_through_ms.is_none_or(|horizon| window(cell) > horizon))
         .cloned()

@@ -2,7 +2,8 @@
 //! draws, the two halves of a frame they arrive in, and the three rules a
 //! reader of those primitives shares with the pipeline that built them — how
 //! a quantity maps to intensity, how it maps to area, and which reduction
-//! markers survive the frame's safety cap.
+//! markers survive the frame's safety cap — plus the `(low, high)` price span
+//! an axis fit reads off a set of marks.
 //!
 //! Nothing here walks the tape or the book. The pipeline in the parent module
 //! builds these values; [`SettledProjection::with_live`] is the one operation
@@ -574,4 +575,25 @@ pub fn normalized_area_size(quantity: Decimal, reference: Decimal) -> f32 {
         .unwrap_or(0.0)
         .clamp(0.0, 1.0)
         .sqrt() as f32
+}
+
+/// The `(low, high)` of `prices`, as `f64`, or `None` when there are none.
+/// Folded exactly in [`Decimal`] and converted once at the ends.
+pub(crate) fn price_span(prices: impl IntoIterator<Item = Decimal>) -> Option<(f64, f64)> {
+    let mut prices = prices.into_iter();
+    let first = prices.next()?;
+    let (low, high) = prices.fold((first, first), |(low, high), price| {
+        (low.min(price), high.max(price))
+    });
+    Some((low.to_f64()?, high.to_f64()?))
+}
+
+/// The `(low, high)` of already converted `prices`, or `None` when there are
+/// none.
+pub(crate) fn f64_span(prices: impl IntoIterator<Item = f64>) -> Option<(f64, f64)> {
+    prices.into_iter().fold(None, |range, price| {
+        Some(range.map_or((price, price), |(low, high): (f64, f64)| {
+            (low.min(price), high.max(price))
+        }))
+    })
 }

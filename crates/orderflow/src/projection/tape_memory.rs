@@ -8,6 +8,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use super::dots::window_start;
+use super::model::f64_span;
 use super::tape::{TapeReference, position_tape_with, tape_radius_limit};
 use super::tape_group::{
     Group, NativeKey, PreviewDot, SettledReference, merge_groups, preview_groups,
@@ -145,16 +146,13 @@ impl TapeDotMemory {
     /// Includes a group's factual centroid even after one native constituent
     /// crossed the left edge, so the independent tape axis still contains it.
     pub fn price_range(&self, now_ms: i64, window_ms: i64) -> Option<(f64, f64)> {
-        self.settled
-            .iter()
-            .chain(&self.frontier)
-            .filter(|group| group.visible_at(now_ms, window_ms))
-            .filter_map(|group| group.mark.price.to_f64())
-            .fold(None, |range, price| {
-                Some(range.map_or((price, price), |(low, high): (f64, f64)| {
-                    (low.min(price), high.max(price))
-                }))
-            })
+        f64_span(
+            self.settled
+                .iter()
+                .chain(&self.frontier)
+                .filter(|group| group.visible_at(now_ms, window_ms))
+                .filter_map(|group| group.mark.price.to_f64()),
+        )
     }
 
     pub fn project(

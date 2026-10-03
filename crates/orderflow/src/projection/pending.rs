@@ -17,6 +17,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
 
+use super::model::f64_span;
 use super::pending_overlay::{OverlayCells, OverlayFrame};
 
 /// A view owns this suffix; a frame-bound receipt retires its raw facts.
@@ -150,21 +151,18 @@ impl PendingTape {
             .flat_map(|frame| &frame.aggressions)
             .filter(|mark| mark.live && recent(mark.first_timestamp_ms))
             .map(|mark| mark.price);
-        native
-            .chain(fallback)
-            .chain(
-                self.trades
-                    .iter()
-                    .map(|(_, trade)| trade)
-                    .filter(|trade| recent(trade.timestamp_ms))
-                    .map(|trade| trade.price),
-            )
-            .filter_map(|price| price.to_f64())
-            .fold(None, |range, price| {
-                Some(range.map_or((price, price), |(low, high): (f64, f64)| {
-                    (low.min(price), high.max(price))
-                }))
-            })
+        f64_span(
+            native
+                .chain(fallback)
+                .chain(
+                    self.trades
+                        .iter()
+                        .map(|(_, trade)| trade)
+                        .filter(|trade| recent(trade.timestamp_ms))
+                        .map(|trade| trade.price),
+                )
+                .filter_map(|price| price.to_f64()),
+        )
     }
 
     fn eviction_horizon(&self, facts: Option<&TapeFacts>) -> Option<i64> {

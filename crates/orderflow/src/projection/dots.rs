@@ -70,7 +70,7 @@ use rust_decimal::prelude::ToPrimitive as _;
 
 use quantick_engine::Bar;
 
-use super::model::{AggressionPrimitive, normalized_area_size};
+use super::model::{AggressionPrimitive, normalized_area_size, price_span};
 use crate::config::{
     BubbleStyle, CANDLE_DOT_RADIUS_SHARE, DisplayGrouping, HeatmapConfig, LiveLaneStyle,
     bubble_radius,
@@ -425,12 +425,7 @@ pub fn dot_radius_range(
 /// chart's price fit keeps on the axis.
 #[must_use]
 pub fn tape_price_range(marks: &[AggressionPrimitive]) -> Option<(f64, f64)> {
-    let mut prices = marks.iter().filter(|mark| mark.live).map(|mark| mark.price);
-    let first = prices.next()?;
-    let (low, high) = prices.fold((first, first), |(low, high), price| {
-        (low.min(price), high.max(price))
-    });
-    Some((low.to_f64()?, high.to_f64()?))
+    price_span(marks.iter().filter(|mark| mark.live).map(|mark| mark.price))
 }
 
 /// The rungs and scale a dots frame was built on, for the painter, the health

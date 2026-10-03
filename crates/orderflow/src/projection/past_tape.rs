@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use quantick_engine::Bar;
-use rust_decimal::prelude::ToPrimitive as _;
 
+use super::model::price_span;
 use super::{
     DotHorizon, HeatmapProjection, PriceWindow, SettledProjection, TapeFacts, TierCut,
     TierGrouping, VolumeDots, cluster_tier, lane_grouping, refine_tier, tier_primitives,
@@ -96,17 +96,15 @@ impl PastTape {
     #[must_use]
     pub fn price_range(&self) -> Option<(f64, f64)> {
         let from = self.end_ms.saturating_sub(self.window_ms);
-        let mut prices = self
-            .projection
-            .aggressions
-            .iter()
-            .filter(|mark| mark.last_timestamp_ms >= from && mark.first_timestamp_ms <= self.end_ms)
-            .map(|mark| mark.price);
-        let first = prices.next()?;
-        let (low, high) = prices.fold((first, first), |(low, high), price| {
-            (low.min(price), high.max(price))
-        });
-        Some((low.to_f64()?, high.to_f64()?))
+        price_span(
+            self.projection
+                .aggressions
+                .iter()
+                .filter(|mark| {
+                    mark.last_timestamp_ms >= from && mark.first_timestamp_ms <= self.end_ms
+                })
+                .map(|mark| mark.price),
+        )
     }
 }
 
