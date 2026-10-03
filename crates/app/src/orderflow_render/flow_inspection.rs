@@ -1,4 +1,10 @@
 //! Passive inspection of the FLOW regions actually painted this frame.
+use crate::orderflow_render::constants::{
+    INSPECTION_CORNER_RADIUS_PX, INSPECTION_DETAIL_FONT_PX, INSPECTION_GAP_ABOVE_PX,
+    INSPECTION_HEADING_FONT_PX, INSPECTION_MIN_TEXT_WIDTH_PX, INSPECTION_PADDING_X_PX,
+    INSPECTION_PADDING_Y_PX, INSPECTION_POINTER_OFFSET_PX, INSPECTION_ROW_GAP_PX,
+    INSPECTION_TEXT_INSET,
+};
 use crate::{paper_chrome::fmt_decimal, theme, timezone::TzOffset};
 use eframe::egui;
 use quantick_civil::{CivilDate, fmt_offset_millisecond};
@@ -26,49 +32,54 @@ pub(crate) fn draw_flow_inspection(view: FlowInspection<'_>) -> Option<egui::Rec
     )?;
     let dot = &view.frame.dots[index];
     let painter = view.painter.with_clip_rect(view.history);
-    let width_limit = view.history.width() - 16.0;
-    if width_limit < 80.0 {
+    let width_limit = view.history.width() - INSPECTION_PADDING_X_PX;
+    if width_limit < INSPECTION_MIN_TEXT_WIDTH_PX {
         return None;
     }
     let heading = painter.layout(
         format!("Regional executions · {} prints", dot.mark.trade_count),
-        egui::FontId::monospace(11.0),
+        egui::FontId::monospace(INSPECTION_HEADING_FONT_PX),
         theme::TEXT_PRIMARY,
         width_limit,
     );
     let detail = painter.layout(
         details(dot, &view).join("\n"),
-        egui::FontId::monospace(10.0),
+        egui::FontId::monospace(INSPECTION_DETAIL_FONT_PX),
         theme::TEXT_MUTED,
         width_limit,
     );
     let size = egui::vec2(
-        heading.size().x.max(detail.size().x) + 16.0,
-        heading.size().y + detail.size().y + 14.0,
+        heading.size().x.max(detail.size().x) + INSPECTION_PADDING_X_PX,
+        heading.size().y + detail.size().y + INSPECTION_PADDING_Y_PX,
     );
     if size.x > view.history.width() || size.y > view.history.height() {
         return None;
     }
-    let above = pointer.y - size.y - 8.0;
+    let above = pointer.y - size.y - INSPECTION_GAP_ABOVE_PX;
     let y = if above >= view.history.top() {
         above
     } else {
-        pointer.y + 12.0
+        pointer.y + INSPECTION_POINTER_OFFSET_PX
     };
     let origin = egui::pos2(
-        (pointer.x + 12.0).clamp(view.history.left(), view.history.right() - size.x),
+        (pointer.x + INSPECTION_POINTER_OFFSET_PX)
+            .clamp(view.history.left(), view.history.right() - size.x),
         y.clamp(view.history.top(), view.history.bottom() - size.y),
     );
     let rect = egui::Rect::from_min_size(origin, size);
-    painter.rect_filled(rect, egui::Rounding::same(4.0), theme::TAG_BG);
-    let detail_y = heading.size().y + 8.0;
+    painter.rect_filled(
+        rect,
+        egui::Rounding::same(INSPECTION_CORNER_RADIUS_PX),
+        theme::TAG_BG,
+    );
+    let detail_y = heading.size().y + INSPECTION_ROW_GAP_PX;
     painter.galley(
-        rect.min + egui::vec2(8.0, 4.0),
+        rect.min + INSPECTION_TEXT_INSET,
         heading,
         theme::TEXT_PRIMARY,
     );
     painter.galley(
-        rect.min + egui::vec2(8.0, detail_y),
+        rect.min + egui::vec2(INSPECTION_TEXT_INSET.x, detail_y),
         detail,
         theme::TEXT_MUTED,
     );

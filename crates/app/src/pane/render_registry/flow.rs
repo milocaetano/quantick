@@ -67,7 +67,7 @@ fn status(p: &mut StatusPass<'_>) {
     p.owner.draw_status_badge(
         p.painter,
         p.rect,
-        super::super::tape_switch::TAPE_SWITCH_RESERVED_PX,
+        super::super::constants::TAPE_SWITCH_RESERVED_PX,
     );
 }
 fn background(p: &mut FlowPass<'_>) {

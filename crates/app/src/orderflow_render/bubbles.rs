@@ -6,6 +6,11 @@
 //! preview draw through, which is what keeps the preview honest. Every
 //! crown calculation is shared with the headless order-flow configuration.
 
+use crate::orderflow_render::constants::{
+    FOLD_RING_ALPHA, FOLD_RING_GAP, FOLD_RING_WIDTH, LABEL_FONT_SCALE, LABEL_MAX_FONT_PX,
+    LABEL_MAX_HEIGHT_SCALE, LABEL_MAX_WIDTH_SCALE, LABEL_MIN_FONT_PX, LABEL_SHADOW_ALPHA,
+    LABEL_SHADOW_OFFSET_PX, PIE_START_ANGLE,
+};
 use eframe::egui;
 use quantick_engine::Side;
 use quantick_orderflow::config::crown::{
@@ -148,30 +153,6 @@ fn draw_crown(
     ));
 }
 
-/// Label font size as a fraction of the bubble radius, and the range it is
-/// held to: too small to read is pointless, too large stops fitting inside.
-const LABEL_FONT_SCALE: f32 = 0.68;
-
-/// See [`LABEL_FONT_SCALE`].
-const LABEL_MIN_FONT_PX: f32 = 8.0;
-
-/// See [`LABEL_FONT_SCALE`].
-const LABEL_MAX_FONT_PX: f32 = 11.0;
-
-/// How far a laid-out label may spill past the radius before it is dropped.
-/// Wider than tall: a bubble is a circle, and text is a horizontal band across
-/// its middle, where there is more room.
-const LABEL_MAX_WIDTH_SCALE: f32 = 1.78;
-
-/// See [`LABEL_MAX_WIDTH_SCALE`].
-const LABEL_MAX_HEIGHT_SCALE: f32 = 1.45;
-
-/// Drop shadow that keeps a label legible over any fill colour.
-const LABEL_SHADOW_OFFSET_PX: egui::Vec2 = egui::vec2(1.0, 1.0);
-
-/// See [`LABEL_SHADOW_OFFSET_PX`].
-const LABEL_SHADOW_ALPHA: u8 = 190;
-
 /// The consumption trail leaking to the right of a bubble, stopped at
 /// `right_edge` so it never paints past the chart.
 pub(super) fn trail_rect(
@@ -206,23 +187,6 @@ pub(super) fn sphere_edge_color(color: egui::Color32, shading: f32) -> egui::Col
         shading,
     ))
 }
-
-/// Angle a pie starts at: straight up. Screen y grows downward, so a positive
-/// sweep from here runs clockwise, the direction a pie chart is read in.
-pub(crate) const PIE_START_ANGLE: f32 = -std::f32::consts::FRAC_PI_2;
-
-/// Gap between a folded bubble's disc and the ring that marks it as a fold,
-/// in points. Wide enough to read as a separate ring at dot size, narrow
-/// enough that two neighbouring folds do not run into each other.
-const FOLD_RING_GAP: f32 = 2.0;
-
-/// Stroke width of that ring.
-const FOLD_RING_WIDTH: f32 = 1.0;
-
-/// Its alpha. Below the rim's, because a fold ring is a caveat about the mark
-/// and not part of the mark: it has to be findable without competing with the
-/// pressure the bubble is there to show.
-const FOLD_RING_ALPHA: f32 = 0.55;
 
 /// The three colours a shaded bubble interpolates between: lit core, side
 /// colour, darkened rim.

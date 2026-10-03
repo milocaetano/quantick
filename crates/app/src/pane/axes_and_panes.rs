@@ -5,6 +5,9 @@
 //! arms of [`ChartPane::handle_navigation`] plus the `pane_*_gesture` and `axis_zoom_gesture`
 //! helpers only they call.
 
+use crate::pane::constants::{
+    AXIS_ZOOM_DRAG_PX, AXIS_ZOOM_SCROLL_PX, LANE_ZOOM_DRAG_PX, PANE_DIVIDER_HANDLE_PX,
+};
 use eframe::egui;
 
 use crate::indicator_render;
@@ -15,24 +18,6 @@ use crate::price_view::PriceView;
 use quantick_layers::ChartLayer;
 
 use super::{ChartPane, LANE_HANDLE_HALF_WIDTH_PX, PaneChrome, SCROLL_ZOOM_PX, live_chip_rect};
-
-/// Pixels of drag on the lane's own time strip that double or halve its window; matches the
-/// candles' `exp(dx / 120)` time-axis zoom so both panes answer a drag at the same rate.
-const LANE_ZOOM_DRAG_PX: f32 = 120.0;
-
-/// Half-height of the grab band over a pane's top edge, in pixels. The rule stays a hairline (a
-/// thick bar reads as a wall in the data); the handle around it makes it catchable and the resize
-/// cursor announces it, the same bargain the live lane's divider and the canvas split strike.
-pub(super) const PANE_DIVIDER_HANDLE_PX: f32 = 4.0;
-
-/// Pixels of drag on a vertical axis that change its span by a factor of `e`. One number for the
-/// price gutter and every indicator pane's gutter, so the axes stretch at the same rate wherever
-/// the dragged numbers live.
-const AXIS_ZOOM_DRAG_PX: f32 = 150.0;
-/// The same, for a scroll over an axis rather than a drag. One wheel notch
-/// reports far more units than a pointer travels in a frame, so each unit has
-/// to count for less — a larger divisor, not a smaller one.
-const AXIS_ZOOM_SCROLL_PX: f32 = 200.0;
 
 /// The divider along a pane's top edge, as a resize handle. The band it opens is the pane *below*
 /// it: drag up and that pane grows into the chart, drag down and it gives the room back. Double

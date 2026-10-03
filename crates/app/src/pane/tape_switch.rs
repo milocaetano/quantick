@@ -8,44 +8,16 @@
 //! the click. Which layer the click flips, and what a hovered chip does to the
 //! crosshair, is the pane's to decide; the switch never reaches into it.
 
+use crate::pane::constants::{
+    TAPE_SWITCH_DOT_RADIUS_PX, TAPE_SWITCH_DOT_X_PX, TAPE_SWITCH_FILL_ALPHA, TAPE_SWITCH_FONT_PX,
+    TAPE_SWITCH_HOVER_FILL_ALPHA, TAPE_SWITCH_HOVER_STROKE_ALPHA, TAPE_SWITCH_INSET,
+    TAPE_SWITCH_LABEL_X_PX, TAPE_SWITCH_ROUNDING_PX, TAPE_SWITCH_SIZE, TAPE_SWITCH_STROKE_PX,
+};
 use eframe::egui;
 
 use crate::theme;
 use quantick_layers::ChartLayer;
 
-/// The tape switch's chip, in logical pixels.
-///
-/// A fixed size rather than one measured off its own text: the hit rect is
-/// registered in the input pass and painted in the pass after it, and two
-/// measurements of one chip are two chances for the button to be somewhere the
-/// click is not.
-const TAPE_SWITCH_SIZE: egui::Vec2 = egui::vec2(54.0, 18.0);
-/// Inset of that chip from the canvas's top-right corner.
-const TAPE_SWITCH_INSET: egui::Vec2 = egui::vec2(8.0, 4.0);
-/// Gap between the switch and whatever sits to its left.
-const TAPE_SWITCH_GAP_PX: f32 = 6.0;
-/// Room the switch takes off the right edge, for anything else that wants the
-/// same corner — the book status badge is the one thing that does.
-pub(super) const TAPE_SWITCH_RESERVED_PX: f32 =
-    TAPE_SWITCH_SIZE.x + TAPE_SWITCH_INSET.x + TAPE_SWITCH_GAP_PX;
-/// Corner radius of the chip, matching the status badge it sits beside.
-const TAPE_SWITCH_ROUNDING_PX: f32 = 3.0;
-/// Chip background opacity over the canvas, resting and hovered. The resting
-/// value is the status badge's, so the two read as one family of chrome.
-const TAPE_SWITCH_FILL_ALPHA: u8 = 165;
-const TAPE_SWITCH_HOVER_FILL_ALPHA: u8 = 210;
-/// Opacity of the hover outline, relative to the chip's own accent.
-const TAPE_SWITCH_HOVER_STROKE_ALPHA: f32 = 0.7;
-/// Width of every line the chip draws.
-const TAPE_SWITCH_STROKE_PX: f32 = 1.0;
-/// State dot: how far its centre sits from the chip's left edge, and its
-/// radius. Filled means the tape is on the canvas, hollow means it is not.
-const TAPE_SWITCH_DOT_X_PX: f32 = 9.0;
-const TAPE_SWITCH_DOT_RADIUS_PX: f32 = 3.0;
-/// Where the label starts, measured from the same edge as the dot.
-const TAPE_SWITCH_LABEL_X_PX: f32 = 17.0;
-/// Label size, matching the status badge's.
-const TAPE_SWITCH_FONT_PX: f32 = 11.0;
 /// The label itself. Short enough for both the canvas and compact header.
 const TAPE_SWITCH_LABEL: &str = "tape";
 

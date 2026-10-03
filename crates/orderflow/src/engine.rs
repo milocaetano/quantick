@@ -27,7 +27,9 @@ mod past_tape;
 #[path = "engine_pending.rs"]
 mod pending;
 
-pub use crate::constants::{LADDER_LEVELS_PER_SIDE, PROJECTION_INTERVAL};
+pub use crate::constants::{
+    LADDER_LEVELS_PER_SIDE, PENDING_LANE_REFERENCE_MS, PROJECTION_INTERVAL,
+};
 
 /// Quantize the price window before it keys the projection cache, so a
 /// sub-pixel wiggle of the auto-fit range (which happens almost every frame on a

@@ -1,4 +1,5 @@
 //! Lazy pane worker with a bounded source mailbox and one replaceable view request.
+use crate::orderflow_view::constants::{PARTIAL_IDLE_WAIT, QUEUE_CHUNKS};
 use quantick_orderflow::projection::flow_tape::{
     FlowChunk, FlowRequest, FlowRunner, FlowTapeFrame, FlowWorkerCache,
 };
@@ -7,11 +8,7 @@ use std::sync::{
     mpsc::{self, SyncSender},
 };
 use std::thread::JoinHandle;
-use std::time::Duration;
 
-pub(super) const QUEUE_CHUNKS: usize = 2;
-// Flush a stalled partial without treating normal inter-frame packet gaps as idle.
-const PARTIAL_IDLE_WAIT: Duration = Duration::from_millis(250);
 enum Message {
     Chunk(FlowChunk),
     Wake,

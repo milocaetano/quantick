@@ -7,6 +7,7 @@
 //! the stack from borrowed inputs and hands them to the renderer; nothing
 //! here is retained between frames.
 
+use crate::orderflow_view::constants::TAPE_HEADER_INSET_PX;
 use std::sync::Arc;
 
 use eframe::egui;
@@ -239,7 +240,10 @@ impl OrderflowView {
             .frame
             .as_ref()
             .and_then(|frame| frame.live_edge);
-        let reference = edge.map_or(15_000, |edge| edge.reference_ms);
+        let reference = edge.map_or(
+            quantick_orderflow::engine::PENDING_LANE_REFERENCE_MS,
+            |edge| edge.reference_ms,
+        );
         (
             self.config.lane_window_ms(reference),
             self.tape_retained_from_ms(),
@@ -289,9 +293,12 @@ impl OrderflowView {
                 tape_style.live_lane.tape_only = true;
                 // The left half of the Tape header leaves its status and switch clear.
                 let header = egui::Rect::from_min_size(
-                    egui::pos2(chart_rect.right() - lane_width_px + 6.0, chart_rect.top()),
+                    egui::pos2(
+                        chart_rect.right() - lane_width_px + TAPE_HEADER_INSET_PX,
+                        chart_rect.top(),
+                    ),
                     egui::vec2(
-                        (lane_width_px * 0.5 - 6.0).max(0.0),
+                        (lane_width_px * 0.5 - TAPE_HEADER_INSET_PX).max(0.0),
                         crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX,
                     ),
                 );

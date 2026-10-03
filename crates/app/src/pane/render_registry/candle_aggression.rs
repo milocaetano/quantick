@@ -2,14 +2,14 @@
 //! candles when zoomed out, from the native trade ladders.
 use super::{Contribution, FootprintPass, Package};
 use crate::orderflow_render::{PIE_START_ANGLE, SphereShading, add_shaded_sector};
+use crate::pane::constants::CANDLE_AGGRESSION_DOT_OPACITY;
 use crate::theme;
 use eframe::egui;
-use quantick_layers::ChartLayer;
 use quantick_chart::flow_execution::flow_price_window;
+use quantick_layers::ChartLayer;
 use quantick_orderflow::projection::{CandleDotView, project_candle_dots};
 use rust_decimal::prelude::ToPrimitive as _;
 
-const DOT_OPACITY: f32 = 0.35;
 pub(super) const PACKAGE: Package = Package {
     layers: &[ChartLayer::CandleAggression],
     contributions: &[Contribution::Footprint(paint)],
@@ -34,8 +34,8 @@ fn paint(pass: &mut FootprintPass<'_>) {
         .map(|ladder| (frame.partial_slot, ladder));
     let inputs = view.trade_built(frame.footprints, frame.first_state_slot, partial);
     let projected = project_candle_dots(inputs, pass.native_grid, view);
-    let buy = theme::BUY.gamma_multiply(DOT_OPACITY);
-    let sell = theme::SELL.gamma_multiply(DOT_OPACITY);
+    let buy = theme::BUY.gamma_multiply(CANDLE_AGGRESSION_DOT_OPACITY);
+    let sell = theme::SELL.gamma_multiply(CANDLE_AGGRESSION_DOT_OPACITY);
     let mut mesh = egui::Mesh::default();
     for dot in projected.marks {
         let Some(price) = dot.price.to_f64() else {

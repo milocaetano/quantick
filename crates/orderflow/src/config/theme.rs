@@ -1,6 +1,7 @@
 //! Portable order-flow render choices and theme colour arithmetic.
 
 use super::{BubbleStyle, HeatmapConfig, HeatmapTheme, LiveLaneStyle};
+use crate::constants::HEAT_LEVELS;
 use quantick_orderbook::BookSide;
 
 // A perceptually smoother Bookmap-style thermal ramp. It keeps the signature
@@ -371,6 +372,41 @@ fn finite_clamp(value: f32, low: f32, high: f32, fallback: f32) -> f32 {
     } else {
         fallback.clamp(low, high)
     }
+}
+
+/// Colour and opacity of one resting-liquidity block — the heatmap's exact
+/// pipeline (quantized magnitude bands, thermal ramp, side tint), factored out
+/// so the live strip reads on the very same ramp by construction. `None`
+/// means the block is too faint to draw at all.
+pub fn heat_fill_parts(
+    style: &OrderflowRenderStyle,
+    side: BookSide,
+    raw_intensity: f32,
+    base_alpha: f32,
+) -> Option<([u8; 3], f32)> {
+    let raw_intensity = finite_unit(raw_intensity);
+    let base_alpha = finite_unit(base_alpha);
+    if raw_intensity <= 0.0 || base_alpha <= 0.0 {
+        return None;
+    }
+    // Quantize magnitude into a few bands so the book's per-update jitter
+    // maps to the SAME colour: adjacent runs merge into one crisp, stable
+    // band instead of a flickering gradient that reads as "meteors". The
+    // faintest noise (rounding to zero) drops out entirely.
+    let intensity = quantize_heat(raw_intensity);
+    if intensity <= 0.0 {
+        return None;
+    }
+    let alpha = finite_unit(base_alpha * (intensity / raw_intensity) * style.heat_opacity);
+    if alpha <= 0.0 {
+        return None;
+    }
+    Some((resting_rgb(style.theme, side, intensity), alpha))
+}
+
+/// Snap an intensity onto one of the [`HEAT_LEVELS`] bands, clamped to `[0, 1]`.
+pub fn quantize_heat(intensity: f32) -> f32 {
+    ((intensity * HEAT_LEVELS).round() / HEAT_LEVELS).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]

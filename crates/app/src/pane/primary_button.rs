@@ -17,7 +17,7 @@ use crate::paper_trading::ChartInput;
 use crate::plot_area::PlotAreas;
 use crate::toolrail::Tool;
 
-use super::axes_and_panes::PANE_DIVIDER_HANDLE_PX;
+use super::constants::PANE_DIVIDER_HANDLE_PX;
 use super::drawing_projection::DrawingProjection;
 use super::{PaneChrome, SharedPointer};
 

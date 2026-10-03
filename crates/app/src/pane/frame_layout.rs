@@ -9,6 +9,7 @@
 //! Every one is a plain value or a borrow the frame already holds: nothing
 //! here allocates, and nothing reads the pane past the fields it is handed.
 
+use crate::pane::constants::LIVE_LADDER_REFRESH_S;
 use eframe::egui;
 use quantick_engine::{Bar, BarFootprint};
 
@@ -20,11 +21,6 @@ use crate::style::CandleStyle;
 use super::PaneChrome;
 use super::draw_frame::DrawFrame;
 use super::footprint::PaneFootprint;
-
-/// How often the forming bar's footprint ladder is re-snapshotted for
-/// drawing, in seconds. ~10 Hz: the eye reads the pattern, not the ticking
-/// digits, and a layout that repaints per print reflows under the pointer.
-const LIVE_LADDER_REFRESH_S: f64 = 0.1;
 
 /// What the frame's opening writes decided, for the stages after them.
 pub(super) struct FrameStart {

@@ -36,7 +36,7 @@ use bar::{BarPaint, draw_bar, draw_poc_dot, draw_zone_mark};
 use heat::{HeatScale, heat_scale};
 use quantick_chart::footprint_projection::{
     ADAPTIVE_FLOOR_BARS, ZoneMark, adaptive_min_qty, bar_delta, coalesce_zones, fmt_delta, fmt_qty,
-    regroup,
+    poc_of, regroup, zones_of,
 };
 
 mod bar;
@@ -904,67 +904,6 @@ impl<'p, 'f> LayerPass<'p, 'f> {
             );
         }
     }
-}
-
-/// POC of already-regrouped rows: highest volume, ties to the lowest row —
-/// the engine's own rule, restated on display rows.
-fn poc_of(rows: &BTreeMap<i64, FootprintLevel>) -> Option<i64> {
-    let mut best: Option<(i64, Decimal)> = None;
-    for (&row, level) in rows {
-        let volume = level.volume();
-        match best {
-            Some((_, best_volume)) if volume <= best_volume => {}
-            _ => best = Some((row, volume)),
-        }
-    }
-    best.map(|(row, _)| row)
-}
-
-/// Diagonal stacked zones on display rows: same rule the engine applies to
-/// capture buckets, run over the rows the eye actually compares.
-fn zones_of(
-    rows: &BTreeMap<i64, FootprintLevel>,
-    ratio: Decimal,
-    min_qty: Decimal,
-    min_run: usize,
-) -> Vec<StackedZone> {
-    let side_qty = |row: i64, side: Side| -> Decimal {
-        rows.get(&row)
-            .map(|level| match side {
-                Side::Buy => level.buy,
-                Side::Sell => level.sell,
-            })
-            .unwrap_or(Decimal::ZERO)
-    };
-    let dominates = |qty: Decimal, other: Decimal| -> bool {
-        qty >= ratio.saturating_mul(other) && qty.saturating_sub(other) >= min_qty
-    };
-    let mut zones = Vec::new();
-    for side in [Side::Buy, Side::Sell] {
-        let buckets: Vec<i64> = rows
-            .iter()
-            .filter(|&(&row, level)| match side {
-                Side::Buy => dominates(level.buy, side_qty(row - 1, Side::Sell)),
-                Side::Sell => dominates(level.sell, side_qty(row + 1, Side::Buy)),
-            })
-            .map(|(&row, _)| row)
-            .collect();
-        let mut run_start = 0usize;
-        for i in 0..buckets.len() {
-            let run_breaks = i + 1 == buckets.len() || buckets[i + 1] != buckets[i] + 1;
-            if run_breaks {
-                if i + 1 - run_start >= min_run.max(1) {
-                    zones.push(StackedZone {
-                        low_bucket: buckets[run_start],
-                        high_bucket: buckets[i],
-                        side,
-                    });
-                }
-                run_start = i + 1;
-            }
-        }
-    }
-    zones
 }
 
 /// Inset of the cluster's columns from its box, and the gutter between them.

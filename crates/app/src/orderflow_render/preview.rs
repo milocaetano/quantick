@@ -6,6 +6,10 @@
 //! an approximation of it — a preview that drew its own picture would send
 //! the trader tuning against something the chart never produces.
 
+use crate::orderflow_render::constants::{
+    PREVIEW_CANVAS_BACKGROUND, PREVIEW_LARGE_PRINT_SIZE, PREVIEW_MATCHED_FRACTION,
+    PREVIEW_SMALL_PRINT_SIZE, PREVIEW_SUMMARY_BUY_SHARE,
+};
 use eframe::egui;
 use quantick_engine::Side;
 use quantick_orderbook::BookSide;
@@ -18,21 +22,6 @@ use super::layout::EventBand;
 use super::{
     OrderflowRenderStyle, Palette, add_gradient_rect, finite_unit, resting_rgb, rgba, thermal_rgb,
 };
-
-/// Normalized sizes of the two sample prints in the settings preview: one
-/// near full size and one routine print, so the radius range is visible.
-pub(super) const PREVIEW_LARGE_PRINT_SIZE: f32 = 0.85;
-
-/// See [`PREVIEW_LARGE_PRINT_SIZE`].
-const PREVIEW_SMALL_PRINT_SIZE: f32 = 0.45;
-
-/// Matched fraction of the preview's consuming print. Mid-range, so the
-/// impact ring shows neither its floor nor its ceiling.
-pub(super) const PREVIEW_MATCHED_FRACTION: f32 = 0.6;
-
-/// Buy share of the preview's summarized print. Lopsided rather than even, so
-/// the two sectors are visibly unequal and the mark reads as a proportion.
-const PREVIEW_SUMMARY_BUY_SHARE: f32 = 0.62;
 
 /// Deterministic visual sample used by the settings panel and screenshot tests.
 ///
@@ -88,11 +77,8 @@ struct PreviewCanvas {
 
 impl PreviewCanvas {
     fn new(ui: &egui::Ui, rect: egui::Rect, config: &HeatmapConfig) -> Self {
-        let style = OrderflowRenderStyle::from_config(
-            config,
-            egui::Color32::from_rgb(19, 23, 34).to_array(),
-        )
-        .sanitized();
+        let style = OrderflowRenderStyle::from_config(config, PREVIEW_CANVAS_BACKGROUND.to_array())
+            .sanitized();
         let palette = super::palette_for_theme(style.theme);
         let painter = ui.painter().with_clip_rect(rect);
         let chart = egui::Rect::from_min_max(

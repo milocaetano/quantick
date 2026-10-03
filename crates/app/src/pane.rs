@@ -35,6 +35,7 @@ use strategies::strategy_badge_text;
 
 mod axes_and_panes;
 mod canvas_gestures;
+mod constants;
 // `pub(crate)`, like `app::launch_hooks`: `split_time_pane` returns
 // `TimePaneAreas`, which nothing outside names yet, so a `pub use` of it is an
 // unused import under the workspace's deny-warnings policy while a public

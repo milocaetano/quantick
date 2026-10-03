@@ -19,6 +19,7 @@ use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
 mod clock;
+mod constants;
 pub(crate) mod flow_execution;
 mod frame;
 mod layers;
@@ -254,7 +255,9 @@ impl OrderflowView {
             return past.price_range();
         }
         if self.immediate_tape() {
-            let window_ms = self.config.lane_window_ms(15_000);
+            let window_ms = self
+                .config
+                .lane_window_ms(quantick_orderflow::engine::PENDING_LANE_REFERENCE_MS);
             let retained = self.lane_now_ms().and_then(|now| {
                 self.tape_rebuilds
                     .borrow()

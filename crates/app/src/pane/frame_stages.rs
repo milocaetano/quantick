@@ -10,6 +10,7 @@
 //! method could not, and a free function handed every input separately would
 //! take a dozen of them.
 
+use crate::pane::constants::{FLOW_CAPTION_GAP_PX, FLOW_CAPTION_TOP_PX, FLOW_PENDING_REPAINT};
 use std::sync::Arc;
 
 use eframe::egui;
@@ -130,7 +131,7 @@ impl<'a> FlowFrame<'a> {
             if orderflow.flow_execution_progress().pending {
                 self.painter
                     .ctx()
-                    .request_repaint_after(std::time::Duration::from_millis(16));
+                    .request_repaint_after(FLOW_PENDING_REPAINT);
             }
             orderflow.set_projection_demand(demand);
             let window_ms = orderflow.live_lane_window_ms(frame.closed);
@@ -328,8 +329,8 @@ impl<'a> FlowFrame<'a> {
         }
         if let Some(owner) = owner.filter(|owner| owner.flow_execution_replaces_history()) {
             let history = self.rect.with_max_x(self.rect.right() - self.lane_width);
-            let top = bounds.map_or(history.top() + 6.0 + legend_inset, |rect| {
-                rect.bottom() + 3.0
+            let top = bounds.map_or(history.top() + FLOW_CAPTION_TOP_PX + legend_inset, |rect| {
+                rect.bottom() + FLOW_CAPTION_GAP_PX
             });
             if let Some(caption) = crate::orderflow_render::flow_caption(
                 self.painter,

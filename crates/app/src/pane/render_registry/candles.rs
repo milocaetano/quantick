@@ -1,5 +1,6 @@
 use super::super::draw_frame::DrawFrame;
 use super::{Contribution, Package};
+use crate::pane::constants::SIDEBAR_BODY_FRAC;
 use crate::{
     candle_view::{BarSlot, draw_candle},
     indicators::IndicatorViews,
@@ -8,7 +9,6 @@ use crate::{
 };
 use eframe::egui;
 use rust_decimal::prelude::ToPrimitive as _;
-const SIDEBAR_BODY_FRAC: f32 = 0.35;
 pub(super) const PACKAGE: Package = Package {
     layers: &[],
     contributions: &[

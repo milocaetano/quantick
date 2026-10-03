@@ -282,7 +282,8 @@ fn sector_mesh_uses_only_white_uv_and_survives_font_atlas_growth() {
 #[test]
 fn direct_mesh_separates_peaks_without_changing_sector_geometry_or_colours() {
     use super::super::{
-        bubbles::{PIE_START_ANGLE, SphereShading, add_sector},
+        bubbles::{SphereShading, add_sector},
+        constants::PIE_START_ANGLE,
         flow_execution::flow_mesh,
     };
 

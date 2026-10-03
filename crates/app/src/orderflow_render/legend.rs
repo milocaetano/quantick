@@ -4,6 +4,13 @@
 //! Chrome, not data: everything it names keeps drawing while it is hidden,
 //! and it stands down rather than print over a stack of indicator chips.
 
+use crate::orderflow_render::constants::{
+    LEGEND_BORDER_WIDTH_PX, LEGEND_CORNER_RADIUS_PX, LEGEND_ENTRY_GAP_PX, LEGEND_ENTRY_PADDING_PX,
+    LEGEND_GLYPH_GAP_PX, LEGEND_INNER_MARGIN_PX, LEGEND_MIN_CHART_WIDTH_PX,
+    LEGEND_MIN_CONTENT_WIDTH_PX, LEGEND_MIN_PANEL_WIDTH_PX, LEGEND_OUTER_MARGIN_PX,
+    LEGEND_ROW_HEIGHT_PX, LEGEND_TAPE_MIN_CHART_WIDTH_PX, LEGEND_TAPE_ROW_HEIGHT_PX,
+    MAX_LEGEND_TOP_INSET_FRAC,
+};
 use eframe::egui;
 use quantick_orderflow::HeatmapTheme;
 
@@ -12,18 +19,6 @@ use super::layout::RenderContext;
 use super::{
     OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, rgba, thermal_rgb,
 };
-
-/// How far down the canvas the stack above the key may push it, as a share
-/// of the canvas height.
-///
-/// Past this the key would be reading as part of the chart rather than as its
-/// key — and a canvas whose top half is chips has no room for it at all, so it
-/// stands down instead of printing over them. Chrome yields to the chart;
-/// nothing it says is data (the layers keep drawing, and the trader can bring
-/// it back from the right-click menu).
-pub(super) const MAX_LEGEND_TOP_INSET_FRAC: f32 = 0.5;
-/// The key's hairline, included in its published painted footprint.
-const LEGEND_BORDER_WIDTH_PX: f32 = 0.75;
 
 /// The legend keys for this style, one per layer that can actually draw.
 ///
@@ -78,7 +73,12 @@ pub(crate) fn draw_compact_legend(
     let style = context.style.sanitized();
     let tape_header = style.live_lane.tape_only && style.live_lane.enabled;
     if !style.show_legend
-        || context.layout.chart_rect.width() < if tape_header { 90.0 } else { 150.0 }
+        || context.layout.chart_rect.width()
+            < if tape_header {
+                LEGEND_TAPE_MIN_CHART_WIDTH_PX
+            } else {
+                LEGEND_MIN_CHART_WIDTH_PX
+            }
     {
         return None;
     }
@@ -127,20 +127,34 @@ pub(crate) fn draw_compact_legend(
     let widths: Vec<f32> = entries
         .iter()
         .zip(&galleys)
-        .map(|((glyph, _), galley)| glyph.width() + 5.0 + galley.size().x + 10.0)
+        .map(|((glyph, _), galley)| {
+            glyph.width() + LEGEND_GLYPH_GAP_PX + galley.size().x + LEGEND_ENTRY_PADDING_PX
+        })
         .collect();
 
-    let outer_margin = if tape_header { 0.0 } else { 6.0 };
-    let inner_margin = if tape_header { 0.0 } else { 7.0 };
-    let max_panel_width = style
-        .legend_max_width
-        .min((context.layout.chart_rect.width() - outer_margin * 2.0).max(120.0));
-    let max_content_width = (max_panel_width - inner_margin * 2.0).max(100.0);
+    let outer_margin = if tape_header {
+        0.0
+    } else {
+        LEGEND_OUTER_MARGIN_PX
+    };
+    let inner_margin = if tape_header {
+        0.0
+    } else {
+        LEGEND_INNER_MARGIN_PX
+    };
+    let max_panel_width = style.legend_max_width.min(
+        (context.layout.chart_rect.width() - outer_margin * 2.0).max(LEGEND_MIN_PANEL_WIDTH_PX),
+    );
+    let max_content_width = (max_panel_width - inner_margin * 2.0).max(LEGEND_MIN_CONTENT_WIDTH_PX);
     let flow = flow_layout(
         &widths,
         max_content_width,
-        if tape_header { 14.0 } else { 17.0 },
-        3.0,
+        if tape_header {
+            LEGEND_TAPE_ROW_HEIGHT_PX
+        } else {
+            LEGEND_ROW_HEIGHT_PX
+        },
+        LEGEND_ENTRY_GAP_PX,
     );
     let panel_size = egui::vec2(
         (flow.size.x + inner_margin * 2.0).min(max_panel_width),
@@ -160,10 +174,14 @@ pub(crate) fn draw_compact_legend(
         panel_size,
     );
     if !tape_header {
-        clip.rect_filled(panel, egui::Rounding::same(4.0), palette.legend_background);
+        clip.rect_filled(
+            panel,
+            egui::Rounding::same(LEGEND_CORNER_RADIUS_PX),
+            palette.legend_background,
+        );
         clip.rect_stroke(
             panel,
-            egui::Rounding::same(4.0),
+            egui::Rounding::same(LEGEND_CORNER_RADIUS_PX),
             egui::Stroke::new(LEGEND_BORDER_WIDTH_PX, palette.legend_border),
         );
     }

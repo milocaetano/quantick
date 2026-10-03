@@ -12,6 +12,7 @@ use quantick_orderbook::BookSide;
 use quantick_orderflow::HeatmapTheme;
 
 mod bubbles;
+mod constants;
 mod flow_cache;
 mod flow_execution;
 mod flow_inspection;
@@ -30,7 +31,8 @@ mod tape_path;
 mod tape_rebuild;
 
 pub(crate) use bubbles::draw_aggression_bubbles;
-pub(crate) use bubbles::{PIE_START_ANGLE, SphereShading, add_shaded_sector};
+pub(crate) use bubbles::{SphereShading, add_shaded_sector};
+pub(crate) use constants::PIE_START_ANGLE;
 pub(crate) use heatmap::{draw_heatmap_background, draw_liquidity_events, draw_live_lane_marks};
 pub(crate) use layout::{ProjectedLayout, RenderContext, lane_divider_x};
 pub(crate) use legend::draw_compact_legend;

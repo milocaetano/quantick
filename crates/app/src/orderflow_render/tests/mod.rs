@@ -13,6 +13,7 @@
 // them; nothing here is `pub(crate)` or wider.
 
 use super::bubbles::*;
+use super::constants::*;
 use super::heatmap::*;
 use super::layout::*;
 use super::legend::*;

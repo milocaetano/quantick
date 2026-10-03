@@ -1,5 +1,8 @@
 //! FLOW silhouettes inside the earned radius, above candle bodies.
-use super::flow_execution::{FLOW_BUY, FLOW_SELL};
+use super::constants::{FLOW_BUY, FLOW_SELL};
+use crate::orderflow_render::constants::{
+    FLOW_OPENING_LABEL_FONT_PX, FLOW_OPENING_LABEL_SHADOW_OFFSET,
+};
 use eframe::egui::{
     self,
     epaint::{Vertex, WHITE_UV},
@@ -42,7 +45,7 @@ pub(crate) fn draw_flow_perimeters(
                 dot.mark.quantity.normalize(),
                 if clipped { " (clipped)" } else { "" }
             ),
-            egui::FontId::monospace(11.0),
+            egui::FontId::monospace(FLOW_OPENING_LABEL_FONT_PX),
             crate::theme::TEXT_PRIMARY,
         );
         if label.size().x <= history.width() && label.size().y <= history.height() {
@@ -51,7 +54,7 @@ pub(crate) fn draw_flow_perimeters(
                 .clamp(disc.center.into())
                 - label.size() * 0.5;
             clip.galley_with_override_text_color(
-                origin + egui::vec2(1.0, 1.0),
+                origin + FLOW_OPENING_LABEL_SHADOW_OFFSET,
                 label.clone(),
                 egui::Color32::BLACK,
             );

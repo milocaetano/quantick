@@ -1,5 +1,9 @@
 //! Compact history execution groups on the FLOW candle coordinate system.
-use super::bubbles::{PIE_START_ANGLE, SphereShading, add_sector};
+use super::bubbles::{SphereShading, add_sector};
+use crate::orderflow_render::constants::{
+    FLOW_BUY, FLOW_CAPTION_FONT_PX, FLOW_CAPTION_INSET_PX, FLOW_CAPTION_WRAP_MARGIN_PX, FLOW_SELL,
+    PIE_START_ANGLE,
+};
 use eframe::egui;
 #[cfg(test)]
 pub(super) use quantick_chart::flow_execution::FlowDisc;
@@ -15,9 +19,6 @@ use rust_decimal::Decimal;
 // Regional volume controls emphasis while candle contours stay in front.
 #[cfg(test)]
 const FLOW_FILL_OPACITY: f32 = quantick_orderflow::config::dressing::flow::PEAK_OPACITY;
-// FLOW volume uses its own palette, distinct from candle direction and native Tape.
-pub(super) const FLOW_BUY: egui::Color32 = egui::Color32::from_rgb(112, 185, 244);
-pub(super) const FLOW_SELL: egui::Color32 = egui::Color32::from_rgb(232, 175, 99);
 #[cfg(test)]
 const FLOW_OFFSET: egui::Vec2 = egui::vec2(
     quantick_chart::flow_execution::FLOW_EXECUTION_OFFSET[0],
@@ -157,12 +158,12 @@ pub(crate) fn flow_caption(
     let detail =
         quantick_orderflow::projection::flow_tape::caption_text(frame, progress, legend_visible);
     let mut job = egui::text::LayoutJob::default();
-    job.wrap.max_width = (history.width() - 16.0).max(1.0);
+    job.wrap.max_width = (history.width() - FLOW_CAPTION_WRAP_MARGIN_PX).max(1.0);
     let mut append = |text: &str, color| {
         job.append(
             text,
             0.0,
-            egui::TextFormat::simple(egui::FontId::proportional(10.0), color),
+            egui::TextFormat::simple(egui::FontId::proportional(FLOW_CAPTION_FONT_PX), color),
         )
     };
     append("FLOW", crate::theme::TEXT_MUTED);
@@ -177,11 +178,17 @@ pub(crate) fn flow_caption(
         job.append(
             &format!(" | {detail}"),
             0.0,
-            egui::TextFormat::simple(egui::FontId::proportional(10.0), crate::theme::TEXT_MUTED),
+            egui::TextFormat::simple(
+                egui::FontId::proportional(FLOW_CAPTION_FONT_PX),
+                crate::theme::TEXT_MUTED,
+            ),
         );
     }
     let galley = painter.layout_job(job);
-    let rect = egui::Rect::from_min_size(egui::pos2(history.left() + 8.0, top), galley.size());
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(history.left() + FLOW_CAPTION_INSET_PX, top),
+        galley.size(),
+    );
     painter
         .with_clip_rect(history)
         .galley(rect.min, galley, crate::theme::TEXT_MUTED);
