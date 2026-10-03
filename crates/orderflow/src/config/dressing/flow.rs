@@ -21,9 +21,23 @@ pub fn colors(background: Option<[u8; 4]>, opening: bool, context: bool) -> [[u8
     } else {
         PEAK_OPACITY
     };
+    compose(background.filter(|_| !opening), opacity)
+}
+
+/// Compose gradual ordinary emphasis into an opaque canvas so overlaps do not
+/// accumulate brightness. The sector's area remains unchanged.
+pub fn ordinary_colors(background: [u8; 4], opacity: f32) -> [[u8; 4]; 2] {
+    assert_eq!(
+        background[3], 255,
+        "FLOW ordinary emphasis requires an opaque canvas background"
+    );
+    compose(Some(background), opacity)
+}
+
+fn compose(background: Option<[u8; 4]>, opacity: f32) -> [[u8; 4]; 2] {
     [BLUE, AMBER].map(|[r, g, b]| {
         let source = [r, g, b, 255].map(|v| (f32::from(v) * opacity + 0.5) as u8);
-        let Some(background) = background.filter(|_| !opening) else {
+        let Some(background) = background else {
             return source;
         };
         let remaining = 1.0 - f32::from(source[3]) / 255.0;
@@ -66,6 +80,37 @@ mod tests {
     }
 
     #[test]
+    fn gradual_emphasis_preserves_endpoints_and_never_accumulates_ink() {
+        let background = [19, 23, 34, 255];
+        assert_eq!(
+            ordinary_colors(background, CONTEXT_OPACITY),
+            colors(Some(background), false, true)
+        );
+        assert_eq!(
+            ordinary_colors(background, PEAK_OPACITY),
+            colors(Some(background), false, false)
+        );
+        let mut previous = ordinary_colors(background, CONTEXT_OPACITY);
+        for opacity in [0.2, 0.3, 0.4, 0.5, PEAK_OPACITY] {
+            let palette = ordinary_colors(background, opacity);
+            for (source, prior) in palette.into_iter().zip(previous) {
+                assert_eq!(source[3], 255);
+                assert!((0..3).all(|channel| source[channel] >= prior[channel]));
+                let over = |destination: [u8; 4]| {
+                    std::array::from_fn::<_, 4, _>(|channel| {
+                        (f32::from(source[channel])
+                            + f32::from(destination[channel])
+                                * (1.0 - f32::from(source[3]) / 255.0))
+                            .round() as u8
+                    })
+                };
+                assert_eq!(over(over(background)), source);
+            }
+            previous = palette;
+        }
+    }
+
+    #[test]
     fn translucent_backings_preserve_premultiplied_compositing() {
         let over = |source: [f64; 4], destination: [f64; 4]| {
             std::array::from_fn::<_, 4, _>(|channel| {
@@ -103,5 +148,11 @@ mod tests {
     #[should_panic(expected = "FLOW context requires an opaque canvas background")]
     fn context_rejects_a_missing_opaque_canvas() {
         colors(None, false, true);
+    }
+
+    #[test]
+    #[should_panic(expected = "FLOW ordinary emphasis requires an opaque canvas background")]
+    fn gradual_emphasis_rejects_a_translucent_canvas() {
+        ordinary_colors([19, 23, 34, 128], 0.3);
     }
 }

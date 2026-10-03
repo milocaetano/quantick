@@ -77,7 +77,7 @@ impl FlowPresentation {
                 })
             })
             .collect();
-        let mut ordinary: Vec<_> = (0..regions.len())
+        let ordinary: Vec<_> = (0..regions.len())
             .filter(|&index| regions[index].role != FlowRegionRole::Opening)
             .collect();
         let threshold = frame.large_region_threshold().unwrap_or_else(|| {
@@ -88,15 +88,10 @@ impl FlowPresentation {
                 .unwrap_or_default()
                 / Decimal::from(LARGE_REGION_REFERENCE_DIVISOR)
         });
-        let needs_isolation = ordinary
-            .iter()
-            .any(|&index| frame.dots[regions[index].dot_index].mark.quantity < threshold);
-        let index = needs_isolation.then(|| CircleIndex::new(&regions, &mut ordinary));
+        // Camera spacing never promotes small volume out of the source trajectory.
         for &region_index in &ordinary {
             let region = regions[region_index];
-            if frame.dots[region.dot_index].mark.quantity >= threshold
-                || !index.as_ref().unwrap().overlaps(region_index, &regions)
-            {
+            if frame.dots[region.dot_index].mark.quantity >= threshold {
                 regions[region_index].role = FlowRegionRole::Peak;
             }
         }
@@ -139,67 +134,6 @@ fn intersects(a: FlowDisc, b: FlowDisc, gap: f32) -> bool {
     let dy = f64::from(a.center[1]) - f64::from(b.center[1]);
     let separation = f64::from(a.radius) + f64::from(b.radius) + f64::from(gap);
     dx * dx + dy * dy < separation * separation
-}
-
-/// Median-split circle bounds avoid a distant large circle imposing one coarse
-/// grid cell on thousands of tiny, mutually disjoint circles.
-struct CircleIndex {
-    bounds: [[f64; 2]; 2],
-    children: CircleChildren,
-}
-
-enum CircleChildren {
-    Leaf(Vec<usize>),
-    Split(Box<CircleIndex>, Box<CircleIndex>),
-}
-
-impl CircleIndex {
-    fn new(regions: &[FlowRegionVisual], indices: &mut [usize]) -> Self {
-        let mut bounds = [[f64::INFINITY; 2], [f64::NEG_INFINITY; 2]];
-        let mut centers = bounds;
-        for &index in indices.iter() {
-            let disc = regions[index].source_disc;
-            for axis in 0..2 {
-                let center = f64::from(disc.center[axis]);
-                bounds[0][axis] = bounds[0][axis].min(center - f64::from(disc.radius));
-                bounds[1][axis] = bounds[1][axis].max(center + f64::from(disc.radius));
-                centers[0][axis] = centers[0][axis].min(center);
-                centers[1][axis] = centers[1][axis].max(center);
-            }
-        }
-        let children = if indices.len() <= CIRCLE_INDEX_LEAF_CAPACITY {
-            CircleChildren::Leaf(indices.to_vec())
-        } else {
-            let axis = usize::from(centers[1][1] - centers[0][1] > centers[1][0] - centers[0][0]);
-            let middle = indices.len() / 2;
-            indices.select_nth_unstable_by(middle, |&a, &b| {
-                regions[a].source_disc.center[axis]
-                    .total_cmp(&regions[b].source_disc.center[axis])
-                    .then_with(|| a.cmp(&b))
-            });
-            let (left, right) = indices.split_at_mut(middle);
-            CircleChildren::Split(
-                Box::new(Self::new(regions, left)),
-                Box::new(Self::new(regions, right)),
-            )
-        };
-        Self { bounds, children }
-    }
-
-    fn overlaps(&self, index: usize, regions: &[FlowRegionVisual]) -> bool {
-        let disc = regions[index].source_disc;
-        if !intersects_bounds(disc, self.bounds, 0.0) {
-            return false;
-        }
-        match &self.children {
-            CircleChildren::Leaf(indices) => indices
-                .iter()
-                .any(|&other| other != index && intersects(disc, regions[other].source_disc, 0.0)),
-            CircleChildren::Split(left, right) => {
-                left.overlaps(index, regions) || right.overlaps(index, regions)
-            }
-        }
-    }
 }
 
 #[inline]

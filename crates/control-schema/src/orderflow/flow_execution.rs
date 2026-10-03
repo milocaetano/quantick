@@ -29,8 +29,8 @@ pub struct FlowExecutionSnapshot {
     pub typed_reference: Option<CanonicalDecimal>,
     pub effective_reference: Option<CanonicalDecimal>,
     pub display_policy: FlowExecutionDisplayPolicy,
-    /// Inclusive full-colour threshold for ordinary regions; smaller isolated
-    /// regions also retain full colour. Dim context keeps its full volume and area.
+    /// Inclusive placement threshold for ordinary regions. Above this volume,
+    /// brightness rises gradually to the effective reference; area is unchanged.
     pub large_region_threshold: Option<CanonicalDecimal>,
     pub opening_exclusion_effective: bool,
     /// Ordinary reference radius; the first daily region can exceed it when excluded.
@@ -57,10 +57,12 @@ pub enum FlowExecutionScaleMode {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FlowExecutionDisplayPolicy {
-    /// Ordinary regions at or above one quarter of the effective reference, or
-    /// spatially isolated regions, retain full colour. Others are dim context;
-    /// oversized opening regions keep their separate faint treatment.
+    /// Legacy readback policy, retained for previously captured snapshots.
     LargeOrIsolatedWithDimContext,
+    /// Ordinary regions remain dim through one quarter of the reference, then
+    /// brighten gradually up to the reference. Display separation never promotes
+    /// a small region. Oversized opening regions keep their faint treatment.
+    VolumeWeightedWithDimContext,
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -179,7 +181,7 @@ impl From<(&FlowTapeFrame, FlowProgress)> for FlowExecutionSnapshot {
             scale_basis: frame.scale_basis.into(),
             typed_reference: frame.view.reference.typed().map(canonical_decimal),
             effective_reference: frame.effective_reference.map(canonical_decimal),
-            display_policy: FlowExecutionDisplayPolicy::LargeOrIsolatedWithDimContext,
+            display_policy: FlowExecutionDisplayPolicy::VolumeWeightedWithDimContext,
             large_region_threshold: frame.large_region_threshold().map(canonical_decimal),
             opening_exclusion_effective: frame.opening_exclusion_effective,
             radius_limit_px: canonical_decimal(

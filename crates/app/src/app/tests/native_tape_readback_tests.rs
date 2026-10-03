@@ -333,20 +333,16 @@ fn other_discs_left_of(output: &egui::FullOutput, x: f32) -> usize {
 }
 
 fn regional_colours(app: &QuantickApp, context: bool) -> [egui::Color32; 2] {
+    regional_colours_at_opacity(app, if context { 0.12 } else { 0.65 })
+}
+
+fn regional_colours_at_opacity(app: &QuantickApp, opacity: f32) -> [egui::Color32; 2] {
     [
         egui::Color32::from_rgb(112, 185, 244),
         egui::Color32::from_rgb(232, 175, 99),
     ]
     .map(|color| {
-        let source = color.gamma_multiply(if context { 0.12 } else { 0.65 });
-        if !context
-            && !app
-                .active_tab()
-                .flow_pane
-                .layer_visible(ChartLayer::Footprint, &app.style)
-        {
-            return source;
-        }
+        let source = color.gamma_multiply(opacity);
         // Independently model the old source-over-opaque-canvas GPU result.
         let rgb = std::array::from_fn(|channel| {
             (f64::from(source[channel])
@@ -361,10 +357,23 @@ fn regional_colours(app: &QuantickApp, context: bool) -> [egui::Color32; 2] {
 
 /// The packed regional sector mesh in history, excluding candle outlines and Tape.
 fn regional_circles(app: &QuantickApp, output: &egui::FullOutput) -> Vec<egui::Mesh> {
+    let flow = app.active_tab().tape().flow_execution_frame().unwrap();
+    let colours: Vec<_> = flow
+        .dots
+        .iter()
+        .flat_map(|dot| regional_colours_at_opacity(app, flow.ordinary_region_opacity(dot)))
+        .collect();
+    regional_circles_with_colours(app, output, &colours)
+}
+
+fn regional_circles_with_colours(
+    app: &QuantickApp,
+    output: &egui::FullOutput,
+    colours: &[egui::Color32],
+) -> Vec<egui::Mesh> {
     let frame = &app.active_tab().flow_pane.frame;
     let rect = frame.chart_rect.unwrap();
     let history = rect.with_max_x(frame.lane_divider_x.unwrap_or(rect.right()));
-    let colours = [regional_colours(app, true), regional_colours(app, false)].concat();
     output
         .shapes
         .iter()
@@ -506,8 +515,11 @@ fn assert_regional_circles(
         assert_eq!(region.disc.radius, region.source_disc.radius);
         let buy = number(mark, "buy_quantity") as f32;
         let sell = number(mark, "sell_quantity") as f32;
-        let context = region.role == quantick_chart::flow_execution::FlowRegionRole::Context;
-        let colours = regional_colours(app, context);
+        let flow = app.active_tab().tape().flow_execution_frame().unwrap();
+        let colours = regional_colours_at_opacity(
+            app,
+            flow.ordinary_region_opacity(&flow.dots[region.dot_index]),
+        );
         let mut areas = [0.0; 2];
         for (side, quantity) in [buy, sell].into_iter().enumerate() {
             if quantity <= 0.0 {
@@ -575,6 +587,12 @@ fn the_bubbles_switch_publishes_regional_flow_independently_of_tape_visibility()
         .lane_divider_x
         .expect("the tape beside the candles");
     let beside = assert_regional_circles(&app, &frame, &regional);
+    // Retain actual painted colours before disabling the source: the negative
+    // assertion must detect stale paint even after its frame has been cleared.
+    let regional_colours: Vec<_> = beside
+        .iter()
+        .flat_map(|mesh| mesh.vertices.iter().map(|vertex| vertex.color))
+        .collect();
     assert!(
         regional_labels(&frame).is_empty(),
         "regional quantities are passive hover detail"
@@ -608,7 +626,7 @@ fn the_bubbles_switch_publishes_regional_flow_independently_of_tape_visibility()
         "bubbles off draws nothing"
     );
     assert!(
-        regional_circles(&app, &frame).is_empty(),
+        regional_circles_with_colours(&app, &frame, &regional_colours).is_empty(),
         "bubbles off removes regional paint"
     );
     assert!(
@@ -620,7 +638,7 @@ fn the_bubbles_switch_publishes_regional_flow_independently_of_tape_visibility()
     set_layer(&mut app, &mut cockpit, "tape_chart", false);
     fit_flow_fixture(&mut app);
     let hidden_off = settled_frame(&mut app, &ctx);
-    assert!(regional_circles(&app, &hidden_off).is_empty());
+    assert!(regional_circles_with_colours(&app, &hidden_off, &regional_colours).is_empty());
     let layer = set_layer(&mut app, &mut cockpit, "bubbles", true);
     assert_eq!(layer["effective"], true, "{layer}");
     let frame = settled_flow_frame(&mut app, &ctx);
@@ -643,7 +661,7 @@ fn the_bubbles_switch_publishes_regional_flow_independently_of_tape_visibility()
     set_layer(&mut app, &mut cockpit, "bubbles", true);
     let ordinary = settled_frame(&mut app, &ctx);
     assert_eq!(flow_snapshot(&mut app, &mut observer), Value::Null);
-    assert!(regional_circles(&app, &ordinary).is_empty());
+    assert!(regional_circles_with_colours(&app, &ordinary, &regional_colours).is_empty());
     assert!(
         other_discs_left_of(&ordinary, right) > ordinary_off,
         "explicitly disabling native mode restores ordinary bubbles"

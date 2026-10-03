@@ -88,11 +88,18 @@ fn display_policy_reports_exact_threshold_without_changing_execution_facts() {
     let original = wire(&frame, settled(&frame));
     assert_eq!(
         original["display_policy"],
-        "large_or_isolated_with_dim_context"
+        "volume_weighted_with_dim_context"
     );
     assert_eq!(original["large_region_threshold"], "3.25");
     assert_eq!(original["buy_quantity"], "13");
     assert_eq!(original["sell_quantity"], "0");
+    let mut previous = original.clone();
+    previous["display_policy"] = "large_or_isolated_with_dim_context".into();
+    let previous: FlowExecutionSnapshot = serde_json::from_value(previous).unwrap();
+    assert_eq!(
+        serde_json::to_value(previous).unwrap()["marks"],
+        original["marks"]
+    );
     for reference in [None, Some(Decimal::ZERO), Some((-1).into())] {
         frame.effective_reference = reference;
         let value = wire(&frame, settled(&frame));

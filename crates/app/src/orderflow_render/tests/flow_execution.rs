@@ -81,7 +81,7 @@ fn painted_region_with_backing(
 }
 
 #[test]
-fn translucent_circles_preserve_side_areas_without_cutoffs_or_inherited_dressing() {
+fn regional_circles_preserve_side_areas_without_cutoffs_or_inherited_dressing() {
     for (buy, sell) in [
         (51, 49),
         (100, 0),
@@ -99,10 +99,11 @@ fn translucent_circles_preserve_side_areas_without_cutoffs_or_inherited_dressing
         let egui::Shape::Mesh(mesh) = &shapes[0] else {
             panic!("one centered sector mesh")
         };
-        let colors = [
-            FLOW_BUY.gamma_multiply(FLOW_FILL_OPACITY),
-            FLOW_SELL.gamma_multiply(FLOW_FILL_OPACITY),
-        ];
+        let colors = quantick_orderflow::config::dressing::flow::ordinary_colors(
+            crate::theme::CANVAS.to_array(),
+            frame.ordinary_region_opacity(&frame.dots[0]),
+        )
+        .map(super::super::premultiplied);
         let radius = frame.dots[0].radius;
         let mut areas = [0.0_f32; 2];
         for triangle in mesh.indices.as_chunks::<3>().0 {

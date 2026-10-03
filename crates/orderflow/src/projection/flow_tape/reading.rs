@@ -1,16 +1,42 @@
 //! Factual regional inspection and calibration text, independent of pixels.
 use super::{FLOW_REGION_WINDOW_MS, FlowScaleBasis, FlowTapeDot, FlowTapeFrame};
-use rust_decimal::Decimal;
+use crate::config::dressing::flow::{CONTEXT_OPACITY, PEAK_OPACITY};
+use rust_decimal::{Decimal, prelude::ToPrimitive as _};
 
-/// Emphasize the upper two octaves of visible regional volume without changing area.
+/// Start ordinary-region placement and gradual emphasis at a quarter of the reference.
 pub const LARGE_REGION_REFERENCE_DIVISOR: u32 = 4;
 
 impl FlowTapeFrame {
-    /// Inclusive full-colour volume threshold; smaller isolated regions also qualify.
+    /// Inclusive ordinary-region placement threshold; brightness rises above it.
     pub fn large_region_threshold(&self) -> Option<Decimal> {
         self.effective_reference
             .filter(|reference| *reference > Decimal::ZERO)
             .map(|reference| reference / Decimal::from(LARGE_REGION_REFERENCE_DIVISOR))
+    }
+
+    /// Ordinary volume stays dim through scale/4, then gradually reaches the
+    /// existing peak brightness at the reference, independent of camera spacing.
+    pub fn ordinary_region_opacity(&self, dot: &FlowTapeDot) -> f32 {
+        let reference = self
+            .effective_reference
+            .filter(|reference| *reference > Decimal::ZERO)
+            .or_else(|| {
+                self.dots
+                    .iter()
+                    .filter(|dot| !dot.opening_oversized)
+                    .map(|dot| dot.mark.quantity)
+                    .max()
+                    .filter(|quantity| *quantity > Decimal::ZERO)
+            });
+        let Some(reference) = reference else {
+            return CONTEXT_OPACITY;
+        };
+        // Convert before division: even MAX / 1e-28 fits f64, unlike Decimal.
+        let relative =
+            dot.mark.quantity.to_f64().unwrap_or_default() / reference.to_f64().unwrap_or(1.0);
+        let start = 1.0 / f64::from(LARGE_REGION_REFERENCE_DIVISOR);
+        let emphasis = ((relative - start) / (1.0 - start)).clamp(0.0, 1.0) as f32;
+        CONTEXT_OPACITY + (PEAK_OPACITY - CONTEXT_OPACITY) * emphasis
     }
 
     /// Exact facts for any renderer; time-zone formatting stays with its caller.
@@ -47,11 +73,15 @@ impl FlowTapeFrame {
         }
         if let Some(threshold) = self.large_region_threshold() {
             rows.push(format!(
-                "Ordinary regions: full colour at total >= {} (scale / 4), or when isolated.",
+                "Ordinary regions: brightness rises gradually above total {} (scale / 4), reaching full colour at the volume reference; separation alone does not promote small regions.",
                 fmt_decimal(threshold)
             ));
         }
         rows.push("Dim context keeps full volume and area; brightness is emphasis.".into());
+        rows.push(
+            "Circle volume totals this price/time region; footprint totals cover a candle price row."
+                .into(),
+        );
         rows.push(
             "Dim context is drawn beneath footprint; inspection retains exact quantities.".into(),
         );
@@ -114,18 +144,18 @@ pub fn caption_text(
                 .map_or_else(
                     || {
                         format!(
-                            "{FLOW_REGION_WINDOW_MS} ms regions · area = volume · visible scale"
+                            "{FLOW_REGION_WINDOW_MS} ms regions · area = regional gross volume · visible scale"
                         )
                     },
                     |reference| {
                         format!(
-                            "{FLOW_REGION_WINDOW_MS} ms regions · area = volume · scale {}",
+                            "{FLOW_REGION_WINDOW_MS} ms regions · area = regional gross volume · scale {}",
                             crate::config::labels::format_quantity(reference)
                         )
                     },
                 ),
         );
-        hints.push("bright >= scale/4 or isolated; dim retains volume".to_owned());
+        hints.push("brightness rises with regional volume".to_owned());
     }
     if progress.pending {
         hints.push(

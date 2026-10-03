@@ -12,7 +12,7 @@ use quantick_orderflow::projection::flow_tape::{FlowProgress, FlowTapeFrame};
 #[cfg(test)]
 use rust_decimal::Decimal;
 
-// Translucent regional area remains distinct while candle contours stay in front.
+// Regional volume controls emphasis while candle contours stay in front.
 #[cfg(test)]
 const FLOW_FILL_OPACITY: f32 = quantick_orderflow::config::dressing::flow::PEAK_OPACITY;
 // FLOW volume uses its own palette, distinct from candle direction and native Tape.
@@ -80,19 +80,26 @@ impl FlowDrawing {
         background: egui::Color32,
         backing: Option<egui::Color32>,
     ) -> Self {
-        use quantick_orderflow::config::dressing::flow::colors;
+        use quantick_orderflow::config::dressing::flow::{colors, ordinary_colors};
         let mut meshes = [egui::Mesh::default(), egui::Mesh::default()];
         let colors = [
             colors(None, true, false),
             colors(Some(background.to_array()), false, true),
-            colors(backing.map(|color| color.to_array()), false, false),
         ]
         .map(|palette| palette.map(super::premultiplied));
         for region in &plan.regions {
             let dot = &frame.dots[region.dot_index];
             let disc = region.disc;
             let mesh = &mut meshes[usize::from(region.role == FlowRegionRole::Peak)];
-            let [buy_color, sell_color] = colors[region.role as usize];
+            let [buy_color, sell_color] = if region.role == FlowRegionRole::Peak {
+                ordinary_colors(
+                    backing.unwrap_or(background).to_array(),
+                    frame.ordinary_region_opacity(dot),
+                )
+                .map(super::premultiplied)
+            } else {
+                colors[region.role as usize]
+            };
             let (buy, sell) = dot.side_shares();
             let mut angle = f64::from(PIE_START_ANGLE);
             for (share, color) in [(buy, buy_color), (sell, sell_color)] {

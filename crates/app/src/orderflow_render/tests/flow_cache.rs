@@ -192,7 +192,11 @@ fn camera_clip_and_backing_each_rebuild_the_cached_mesh() {
         let (before, before_shapes) = paint(&ctx, original);
         let (after, after_shapes) = paint(&ctx, changed);
         assert!(!Arc::ptr_eq(&before, &after));
-        assert_ne!(before_shapes, after_shapes);
+        if changed.backing.is_none() {
+            assert_eq!(before_shapes, after_shapes, "both compose over the canvas");
+        } else {
+            assert_ne!(before_shapes, after_shapes);
+        }
     }
 }
 
@@ -279,7 +283,7 @@ fn sector_mesh_uses_only_white_uv_and_survives_font_atlas_growth() {
 fn direct_mesh_separates_peaks_without_changing_sector_geometry_or_colours() {
     use super::super::{
         bubbles::{PIE_START_ANGLE, SphereShading, add_sector},
-        flow_execution::{FLOW_BUY, FLOW_SELL, flow_mesh},
+        flow_execution::flow_mesh,
     };
 
     let trades = [
@@ -314,21 +318,12 @@ fn direct_mesh_separates_peaks_without_changing_sector_geometry_or_colours() {
     );
     assert_eq!(frame.dots.len(), 2);
     for backing in [None, Some(egui::Color32::from_rgb(19, 23, 34))] {
-        let colors = if backing.is_some() {
-            [
-                egui::Color32::from_rgb(80, 128, 171),
-                egui::Color32::from_rgb(158, 122, 76),
-            ]
-        } else {
-            [
-                FLOW_BUY.gamma_multiply(0.65),
-                FLOW_SELL.gamma_multiply(0.65),
-            ]
-        };
         let mut expected = egui::Mesh::default();
         // The smaller circle first clears its neighbour at 16px above-left.
         // Radius, shares and absence of a second backing polygon remain exact.
-        for (center, radius, buy) in [
+        // At one quarter of the reference it retains context colour; the
+        // reference-sized circle earns full emphasis. Both are canvas-opaque.
+        for (center, radius, buy, colors) in [
             (
                 egui::pos2(
                     100.0 - 16.0 / std::f32::consts::SQRT_2,
@@ -336,8 +331,20 @@ fn direct_mesh_separates_peaks_without_changing_sector_geometry_or_colours() {
                 ),
                 6.0,
                 0.75_f64,
+                [
+                    egui::Color32::from_rgb(30, 42, 59),
+                    egui::Color32::from_rgb(45, 41, 42),
+                ],
             ),
-            (egui::pos2(104.0, 60.0), 12.0, 0.25_f64),
+            (
+                egui::pos2(104.0, 60.0),
+                12.0,
+                0.25_f64,
+                [
+                    egui::Color32::from_rgb(80, 128, 171),
+                    egui::Color32::from_rgb(158, 122, 76),
+                ],
+            ),
         ] {
             let mut angle = f64::from(PIE_START_ANGLE);
             for (share, color) in [(buy, colors[0]), (1.0 - buy, colors[1])] {

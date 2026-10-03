@@ -122,7 +122,7 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
                 if context_colours.contains(&vertex.color) {
                     vertex.color.a() == 255
                 } else {
-                    peak_colours.contains(&vertex.color) && vertex.color.a() == 166
+                    peak_colours.contains(&vertex.color) && vertex.color.a() == 255
                 }
             })
     );

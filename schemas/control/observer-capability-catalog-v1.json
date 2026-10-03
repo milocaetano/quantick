@@ -14650,7 +14650,12 @@
             "oneOf": [
               {
                 "const": "large_or_isolated_with_dim_context",
-                "description": "Ordinary regions at or above one quarter of the effective reference, or\nspatially isolated regions, retain full colour. Others are dim context;\noversized opening regions keep their separate faint treatment.",
+                "description": "Legacy readback policy, retained for previously captured snapshots.",
+                "type": "string"
+              },
+              {
+                "const": "volume_weighted_with_dim_context",
+                "description": "Ordinary regions remain dim through one quarter of the reference, then\nbrighten gradually up to the reference. Display separation never promotes\na small region. Oversized opening regions keep their faint treatment.",
                 "type": "string"
               }
             ]
@@ -14838,7 +14843,7 @@
                     "type": "null"
                   }
                 ],
-                "description": "Inclusive full-colour threshold for ordinary regions; smaller isolated\nregions also retain full colour. Dim context keeps its full volume and area."
+                "description": "Inclusive placement threshold for ordinary regions. Above this volume,\nbrightness rises gradually to the effective reference; area is unchanged."
               },
               "mark_count": {
                 "$ref": "#/$defs/WireU64"

@@ -76,8 +76,8 @@ fn priority_preserves_every_member_quantity_center_and_true_area() {
             .map(|r| (r.dot_index, r.role))
             .collect::<Vec<_>>(),
         [
+            (2, FlowRegionRole::Context),
             (1, FlowRegionRole::Context),
-            (2, FlowRegionRole::Peak),
             (0, FlowRegionRole::Peak)
         ]
     );
@@ -182,19 +182,71 @@ fn oversized_opening_neither_blocks_peaks_nor_changes_its_earned_disc() {
 }
 
 #[test]
-fn zoomed_apart_regions_all_recover_peak_priority_without_a_radius_floor() {
-    let frame = frame(&[1, 600, 4500]);
-    let presentation = plan(&frame, &[[50.0, 100.0], [120.0, 100.0], [190.0, 100.0]]);
-    assert!(
-        presentation
-            .regions
-            .iter()
-            .all(|r| r.role == FlowRegionRole::Peak)
-    );
-    assert_eq!(presentation.regions[0].disc.radius, frame.dots[0].radius);
-    assert!(presentation.regions[0].disc.radius < 0.2);
-    assert_eq!(presentation.hit(HISTORY, [53.0, 100.0]), Some(0));
-    assert_eq!(presentation.hit(HISTORY, [57.0, 100.0]), None);
+fn camera_spacing_keeps_small_volume_dim_without_losing_its_path_area_or_inspection() {
+    let frame = frame(&[4500, 600, 90, 1]);
+    let before = frame.clone();
+    let offsets = [[12.0, 10.0], [0.0, 0.0], [2.0, 3.0], [7.0, 6.0]];
+    for x_scale in [0.5, 1.0, 2.0, 8.0, 16.0] {
+        for y_scale in [0.5, 1.0, 2.0, 8.0, 16.0] {
+            let centers = offsets.map(|[x, y]| [50.0 + x * x_scale, 50.0 + y * y_scale]);
+            let presentation = plan(&frame, &centers);
+            assert_eq!(presentation.regions.len(), 4);
+            let mut members = Vec::new();
+            let mut totals = [Decimal::ZERO; 2];
+            for region in &presentation.regions {
+                let dot = &frame.dots[region.dot_index];
+                assert_eq!(
+                    region.role,
+                    if region.dot_index == 0 {
+                        FlowRegionRole::Peak
+                    } else {
+                        FlowRegionRole::Context
+                    },
+                    "unchanged volume keeps its priority at camera scales {x_scale}, {y_scale}"
+                );
+                assert_eq!(region.disc.center, centers[region.dot_index]);
+                assert_eq!(region.disc, region.source_disc);
+                assert_eq!(region.disc.radius, dot.radius);
+                members.extend(dot.members.iter().map(|member| member.ordinal));
+                totals[0] += dot.mark.buy_quantity;
+                totals[1] += dot.mark.quantity - dot.mark.buy_quantity;
+            }
+            members.sort_unstable();
+            assert_eq!(members, [0, 1, 2, 3]);
+            assert_eq!(totals, [4590.into(), 601.into()]);
+            if x_scale >= 8.0 && y_scale >= 8.0 {
+                let [x, y] = centers[3];
+                assert_eq!(presentation.hit(HISTORY, [x + 3.0, y]), Some(3));
+                assert_eq!(presentation.hit(HISTORY, [x + 7.0, y]), None);
+            }
+        }
+    }
+    assert_eq!(frame, before);
+    assert_eq!(frame.effective_reference, Some(4500.into()));
+    assert!(frame.dots[3].radius < 0.2);
+}
+
+#[test]
+fn quarter_reference_priority_is_exact_in_crowded_and_separated_geometry() {
+    let frame = frame(&[400, 100, 99]);
+    for centers in [
+        [[100.0, 100.0]; 3],
+        [[50.0, 50.0], [150.0, 150.0], [250.0, 250.0]],
+    ] {
+        let presentation = plan(&frame, &centers);
+        assert_eq!(
+            presentation
+                .regions
+                .iter()
+                .map(|region| (region.dot_index, region.role))
+                .collect::<Vec<_>>(),
+            [
+                (2, FlowRegionRole::Context),
+                (1, FlowRegionRole::Peak),
+                (0, FlowRegionRole::Peak)
+            ]
+        );
+    }
 }
 
 #[test]
@@ -314,7 +366,7 @@ fn dense_coincident_regions_keep_all_volume_with_one_stable_peak() {
 }
 
 #[test]
-fn many_isolated_tiny_regions_are_not_trapped_in_a_large_outliers_grid_cell() {
+fn many_isolated_tiny_regions_keep_their_volume_without_competing_with_a_large_peak() {
     let mut quantities = vec![1; 20_000];
     quantities.push(100_000_000);
     let frame = frame(&quantities);
@@ -330,13 +382,29 @@ fn many_isolated_tiny_regions_are_not_trapped_in_a_large_outliers_grid_cell() {
         })
     });
     assert_eq!(presentation.regions.len(), 20_001);
-    assert!(
+    assert_eq!(
         presentation
             .regions
             .iter()
-            .all(|region| region.role == FlowRegionRole::Peak)
+            .filter(|region| region.role == FlowRegionRole::Peak)
+            .count(),
+        1
+    );
+    assert_eq!(presentation.regions.last().unwrap().dot_index, 20_000);
+    assert!(
+        presentation.regions[..20_000]
+            .iter()
+            .all(|region| region.role == FlowRegionRole::Context)
     );
     assert!(presentation.regions[0].disc.radius < 0.002);
+    assert_eq!(
+        presentation
+            .regions
+            .iter()
+            .map(|region| frame.dots[region.dot_index].mark.quantity)
+            .sum::<Decimal>(),
+        100_020_000.into()
+    );
 }
 
 #[test]
