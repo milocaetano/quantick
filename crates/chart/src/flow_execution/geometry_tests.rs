@@ -3,6 +3,7 @@ use quantick_engine::{Side, Trade};
 use quantick_orderflow::projection::flow_tape::{
     FlowExecution, FlowReference, FlowTapeView, project_flow_tape,
 };
+use rust_decimal::Decimal;
 
 fn dot() -> FlowTapeDot {
     let trade = Trade {

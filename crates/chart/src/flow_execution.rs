@@ -9,18 +9,15 @@ use quantick_orderflow::projection::{
 };
 use rust_decimal::{Decimal, prelude::FromPrimitive as _};
 
+mod constants;
+pub use constants::FLOW_EXECUTION_OFFSET;
+use constants::{FLOW_MERGE_SUPPORT_RADIUS_PX, FLOW_RADIUS_LIMIT_PX};
 mod geometry;
 pub use geometry::FlowExecutionGeometry;
 mod disc;
-pub use disc::{FLOW_EXECUTION_OFFSET, FlowBounds, FlowDisc, hit_flow_region};
+pub use disc::{FlowBounds, FlowDisc, hit_flow_region};
 mod presentation;
 pub use presentation::{FlowPresentation, FlowRegionRole, FlowRegionVisual};
-
-// Compact marks and a separate spatial support preserve the surrounding candle path.
-const FLOW_RADIUS_LIMIT_PX: f32 = 12.0;
-// A small geometric support pools unresolved neighbours without letting the
-// largest volume in another region determine which executions belong together.
-const FLOW_MERGE_SUPPORT_RADIUS_PX: f32 = 6.0;
 
 /// Capture canonical membership when the caller enables regional FLOW.
 pub fn project_flow_executions<R: FlowRunner>(
@@ -36,10 +33,7 @@ pub fn project_flow_executions<R: FlowRunner>(
         session.clear();
         return;
     }
-    let Some(prices) = Decimal::from_f64(range.0)
-        .zip(Decimal::from_f64(range.1))
-        .and_then(|(low, high)| PriceWindow::new(low, high))
-    else {
+    let Some(prices) = flow_price_window(range) else {
         return;
     };
     let membership = state.tick_membership().unwrap();
@@ -101,6 +95,14 @@ pub fn project_flow_executions<R: FlowRunner>(
             })
             .collect(),
     });
+}
+
+/// The exact price window of an `(low, high)` chart axis range; `None` when
+/// either bound is not a finite decimal or the window is degenerate.
+pub fn flow_price_window(range: (f64, f64)) -> Option<PriceWindow> {
+    Decimal::from_f64(range.0)
+        .zip(Decimal::from_f64(range.1))
+        .and_then(|(low, high)| PriceWindow::new(low, high))
 }
 
 /// Factual regional price on the current chart axis, including inverted views.

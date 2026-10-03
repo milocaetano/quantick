@@ -136,10 +136,7 @@ impl ChartState {
             bars: Vec::new(),
             partial: None,
             backfill_boundary: None,
-            footprints: FootprintSeries::for_chart(
-                footprint_series::default_group(),
-                spec.id() == "tick",
-            ),
+            footprints: FootprintSeries::for_chart(footprint_series::default_group(), &spec),
             price_grid: PriceGrid::new(),
             tape_reference_price: None,
             footprint_enabled: false,
@@ -389,7 +386,7 @@ impl ChartState {
         let mut bars = Vec::new();
         let mut boundary = None;
         self.footprints.reset(self.footprints.base_group());
-        self.footprints.reset_membership(self.spec.id() == "tick");
+        self.footprints.reset_membership(&self.spec);
         for (i, trade) in self.trades.iter().enumerate() {
             if self.backfill_done && i == self.backfill_trade_count {
                 boundary = Some(bars.len());

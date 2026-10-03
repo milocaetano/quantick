@@ -7,6 +7,11 @@ use rust_decimal::{
 };
 use std::collections::BTreeMap;
 
+pub use crate::constants::ADAPTIVE_FLOOR_BARS;
+use crate::constants::{
+    ADAPTIVE_FLOOR_PERCENTILE, QTY_MILLIONS_FROM, QTY_THOUSANDS_FROM, QTY_WHOLE_FROM,
+};
+
 /// Fold a ladder onto rows `k` buckets tall. `k = 1` is the identity; the
 /// merge is exact because display buckets are integer multiples of capture
 /// buckets sharing the zero anchor.
@@ -31,11 +36,11 @@ pub fn fmt_qty(qty: Decimal) -> String {
     // Suffix thresholds sit at the value that *rounds* to the next unit:
     // 999.96k would print "1000.0k" — seven glyphs where the cell budget
     // assumes five — so it rolls to "1.0M" instead.
-    if magnitude >= 999_950.0 {
+    if magnitude >= QTY_MILLIONS_FROM {
         format!("{:.1}M", value / 1_000_000.0)
-    } else if magnitude >= 999.95 {
+    } else if magnitude >= QTY_THOUSANDS_FROM {
         format!("{:.1}k", value / 1_000.0)
-    } else if magnitude >= 100.0 {
+    } else if magnitude >= QTY_WHOLE_FROM {
         format!("{value:.0}")
     } else if value == value.trunc() {
         // A whole number of contracts is written as one. "92.00" spends two
@@ -132,9 +137,6 @@ pub fn coalesce_zones(mut zones: Vec<(usize, StackedZone)>, cap: usize) -> (Vec<
     (marks, dropped)
 }
 
-/// How many of the newest *closed* bars feed the adaptive imbalance floor.
-pub const ADAPTIVE_FLOOR_BARS: usize = 50;
-
 /// The adaptive imbalance quantity floor: the 60th percentile of per-row
 /// total volume over the newest closed bars. One fixed number cannot serve
 /// WIN contracts and BTC fractions at once (20 is right on one and absurd on
@@ -154,7 +156,7 @@ pub fn adaptive_min_qty<'a>(ladders: impl Iterator<Item = &'a BarFootprint>) -> 
     // Only the p60 is read, so partition around it instead of ordering the
     // whole vector: linear rather than n log n over up to a few thousand
     // rows. The caller caches this until its source changes.
-    let index = (volumes.len().saturating_sub(1)) * 60 / 100;
+    let index = (volumes.len().saturating_sub(1)) * ADAPTIVE_FLOOR_PERCENTILE / 100;
     let (_, p60, _) = volumes.select_nth_unstable_by(index, f64::total_cmp);
     Decimal::from_f64(*p60).unwrap_or(Decimal::ZERO)
 }

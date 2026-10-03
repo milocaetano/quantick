@@ -9,29 +9,8 @@
 //! "Inverted chart" toggle flips it outright. This is the pure state behind
 //! all of that, unit-tested in CI.
 
+pub use crate::constants::{FLIP_REARM_FRACTION, FLIP_SPAN_FACTOR};
 use crate::geometry::PriceScale;
-
-/// How many auto-fit spans wide the price window can be stretched before an
-/// expanding drag flips the chart upside down instead of shrinking it further.
-///
-/// At 40× the visible bars occupy 1/40 — under 3% — of the pane: flat to the
-/// eye. Flipping there mirrors nothing legible, so the drag reads as one
-/// continuous motion — shrink, flatten, grow again upside down. Only the drag
-/// flips ([`PriceView::drag_zoom`]); the wheel zooms without a ceiling
-/// ([`PriceView::zoom`]), because zooming far out to read a wide range is a
-/// legitimate ask that must not turn the chart over.
-pub const FLIP_SPAN_FACTOR: f64 = 40.0;
-
-/// How far back inside [`FLIP_SPAN_FACTOR`] the span must contract before the
-/// drag may flip again.
-///
-/// A flip parks the window at the threshold, where any expanding pixel would
-/// cross it again: without this band a hand tremor at the boundary would
-/// strobe the chart's orientation at frame rate. 5% is ~8px of gutter travel
-/// (`AXIS_ZOOM_DRAG_PX · ln(1/0.95)`) — beyond any tremor, and invisible
-/// inside the ~550px gesture that reaches the threshold at all (the bars are
-/// equally flat at 95% and 100% of forty auto-fit spans).
-pub const FLIP_REARM_FRACTION: f64 = 0.95;
 
 /// The vertical price view: auto-fit or a manual price range, either way up.
 #[derive(Debug, Clone, Copy, Default)]

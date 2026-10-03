@@ -12,6 +12,16 @@
 use quantick_engine::Bar;
 use rust_decimal::prelude::ToPrimitive as _;
 
+pub use crate::constants::{
+    AUTO_PAD_FRAC, AXIS_LABEL_FONT_PX, AXIS_LABEL_GAP_PX, TIME_LABEL_FONT_PX,
+};
+use crate::constants::{
+    AXIS_LABEL_MIN_GAP_PX, AXIS_LABEL_SPACING_PX, AXIS_MAX_DECIMALS, AXIS_MAX_TICKS,
+    AXIS_MIN_TICKS, AXIS_STEP_EPSILON, COMPACT_VALUE_DECIMALS, FALLBACK_BODY_HEIGHT,
+    FALLBACK_HALF_WIDTH, MAX_TAPE_PADDING_SHARE, SAFE_PIXEL_LIMIT, TAPE_AXIS_REFIT_SPAN_RATIO,
+    TIME_LABEL_MIN_GAP_PX, TIME_LABEL_SPACING_PX, TIME_MIN_LABELS,
+};
+
 /// A `Decimal` price as an `f64` for pixel math (display only).
 #[must_use]
 pub fn to_f64(price: rust_decimal::Decimal) -> f64 {
@@ -280,20 +290,16 @@ pub fn tape_price_window(
     }
     if let Some(previous) = last {
         let (safe_lo, safe_hi) = safe_range(previous);
-        if lo >= safe_lo && hi <= safe_hi && hi - lo > (safe_hi - safe_lo) * 0.5 {
+        if lo >= safe_lo
+            && hi <= safe_hi
+            && hi - lo > (safe_hi - safe_lo) * TAPE_AXIS_REFIT_SPAN_RATIO
+        {
             return Some(PriceScale::from_range(previous.0, previous.1, top, bottom));
         }
     }
     let pad = (hi - lo).max(f64::EPSILON) * pad_fraction;
     Some(PriceScale::from_range(lo - pad, hi + pad, top, bottom))
 }
-
-/// Fraction of the price span left as breathing room above and below the
-/// candles, so they never touch the edges of the plot.
-pub const AUTO_PAD_FRAC: f64 = 0.05;
-
-/// Keep a positive price span between the two decorated tape edges.
-const MAX_TAPE_PADDING_SHARE: f64 = 0.45;
 
 /// An axis-aligned candle body in pixel coordinates.
 ///
@@ -347,12 +353,6 @@ pub struct CandleGeometry {
     pub upper_wick: Option<VerticalSegment>,
     pub lower_wick: Option<VerticalSegment>,
 }
-
-// Constraining intermediates keeps additions and subtractions finite even for
-// hostile inputs close to `f32::MAX`.
-const SAFE_PIXEL_LIMIT: f32 = f32::MAX / 8.0;
-const FALLBACK_HALF_WIDTH: f32 = 0.5;
-const FALLBACK_BODY_HEIGHT: f32 = 1.0;
 
 fn safe_pixel(value: f32, fallback: f32) -> f32 {
     if value.is_finite() {
@@ -478,49 +478,12 @@ pub fn nice_ticks(lo: f64, hi: f64, target: usize) -> Vec<f64> {
     ticks
 }
 
-/// Pixels of axis height per label *asked for*.
-///
-/// The ask is not a promise: [`nice_ticks`] rounds the step to 1, 2 or 5,
-/// which can hand back half of what was asked or nearly double it. So an axis
-/// asks generously — one label per 20 pixels — and thins the result to fit
-/// ([`AXIS_LABEL_MIN_GAP_PX`]). Asking modestly instead is what left a 163 px
-/// CVD pane drawing a single label: an ask of three rounded down to one, and
-/// there was nothing left to thin.
-const AXIS_LABEL_SPACING_PX: f32 = 20.0;
-/// Fewest labels an axis asks for: below two there is no scale to read, only
-/// a number floating in a band.
-const AXIS_MIN_TICKS: usize = 2;
-/// Most labels an axis asks for, however tall it grows.
-const AXIS_MAX_TICKS: usize = 8;
-/// Least vertical room between two labels, in pixels. Below this the column
-/// reads as texture rather than as numbers, and the axis drops every other
-/// label until it clears.
-const AXIS_LABEL_MIN_GAP_PX: f32 = 18.0;
 /// Thresholds a tick label is abbreviated at, largest first, with the suffix
 /// that replaces the zeros. Below the smallest the value is printed as it is.
 ///
 /// Same spellings as the aggression bubbles' own `format_quantity`: one chart,
 /// one way to write a thousand.
 const AXIS_UNITS: [(f64, &str); 3] = [(1e9, "B"), (1e6, "M"), (1e3, "K")];
-/// Least horizontal room between two time labels, in pixels.
-///
-/// The horizontal twin of [`AXIS_LABEL_MIN_GAP_PX`]. Smaller than it because a
-/// time label is read as one word and its neighbours are far apart in bars;
-/// the price column is read as a column and needs more air.
-const TIME_LABEL_MIN_GAP_PX: f32 = 12.0;
-/// Comfortable distance between two time labels, in pixels.
-///
-/// The ask, as [`AXIS_LABEL_SPACING_PX`] is for price: a label roughly this
-/// far apart reads as a scale rather than as a ribbon of numbers. It is a
-/// floor on the spacing, never a cap — the collision rule can only push
-/// labels further apart.
-const TIME_LABEL_SPACING_PX: f32 = 110.0;
-/// Fewest time labels a strip is worth writing at a given format. Below two
-/// there is no scale to read, only an instant floating in a band — and that is
-/// the signal to write the same axis in a shorter format instead.
-const TIME_MIN_LABELS: usize = 2;
-/// Time label font size, in pixels.
-pub const TIME_LABEL_FONT_PX: f32 = 10.0;
 
 /// How a time label is written, longest first.
 ///
@@ -629,21 +592,6 @@ pub fn time_label_format(
         })
         .unwrap_or(TimeLabelFormat::Short)
 }
-
-/// Gap between the axis rule and a tick label, in pixels. Shared by the price
-/// gutter and every pane's, so the numbers form one column down the chart.
-pub const AXIS_LABEL_GAP_PX: f32 = 6.0;
-/// Tick label font size, in pixels. Shared for the same reason.
-pub const AXIS_LABEL_FONT_PX: f32 = 11.0;
-/// Most decimals a tick label ever shows. Past this the step is so fine that
-/// the digits stop distinguishing neighbouring labels.
-const AXIS_MAX_DECIMALS: usize = 4;
-/// Relative tolerance for "this many decimals writes the step back exactly".
-/// Steps are 1/2/5 × a power of ten, so the only error to absorb is the one
-/// binary floating point introduces.
-const AXIS_STEP_EPSILON: f64 = 1e-6;
-/// Decimals a compact readout shows below the smallest abbreviation unit.
-const COMPACT_VALUE_DECIMALS: usize = 2;
 
 /// One value for a compact readout (the indicator legend's last-value cell):
 /// the axis units' own spellings — `1.20M`, `3.40K` — so the legend and the

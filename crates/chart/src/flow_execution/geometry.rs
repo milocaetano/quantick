@@ -1,10 +1,7 @@
 //! One factual FLOW-to-chart transform, shared by paint, inspection and cache keys.
 use crate::viewport::Viewport;
 use quantick_orderflow::projection::{PriceWindow, flow_tape::FlowTapeDot};
-use rust_decimal::{
-    Decimal,
-    prelude::{FromPrimitive as _, ToPrimitive as _},
-};
+use rust_decimal::prelude::ToPrimitive as _;
 
 #[derive(Debug, Clone, Copy)]
 pub struct FlowExecutionGeometry {
@@ -27,9 +24,7 @@ impl FlowExecutionGeometry {
         history: [f32; 4],
         inverted: bool,
     ) -> Option<Self> {
-        let prices = Decimal::from_f64(range.0)
-            .zip(Decimal::from_f64(range.1))
-            .and_then(|(low, high)| PriceWindow::new(low, high))?;
+        let prices = super::flow_price_window(range)?;
         Some(Self {
             viewport,
             total,

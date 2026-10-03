@@ -20,25 +20,10 @@ use rust_decimal::Decimal;
 
 use quantick_orderflow::projection::AggressionPrimitive;
 
-/// Width of the strip, in pixels. The proposal band is 72–96 px: wide enough
-/// for the histogram to read, narrow enough to never crowd the chart.
-pub const LIVE_STRIP_WIDTH_PX: f32 = 84.0;
-
-/// Stroke of the best bid/ask touch markers, in pixels.
-pub const TOUCH_MARKER_STROKE_PX: f32 = 1.5;
-
-/// Alpha of the strip's left border line, against the chart body.
-pub const STRIP_BORDER_ALPHA: f32 = 0.3;
-
-/// Left inset of the strip's content, in pixels, so the border stays visible.
-pub const STRIP_ROW_INSET_PX: f32 = 1.0;
-
-/// Opacity of the histogram bars.
-pub const HISTOGRAM_ALPHA: f32 = 0.8;
-
-/// Widest histogram bar, as a fraction of the strip's half width, leaving a
-/// sliver of background visible even at full scale.
-pub const HISTOGRAM_MAX_HALF_FRAC: f32 = 0.94;
+pub use crate::constants::{
+    HISTOGRAM_ALPHA, HISTOGRAM_MAX_HALF_FRAC, LIVE_STRIP_WIDTH_PX, STRIP_BORDER_ALPHA,
+    STRIP_ROW_INSET_PX, TOUCH_MARKER_STROKE_PX,
+};
 
 /// One histogram row: the forming bar's aggression at one price bucket,
 /// both sides together because the drawing mirrors them around one centre.

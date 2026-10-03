@@ -1,7 +1,6 @@
 //! Fixed balanced topology; activation expands only final, already placed bounds.
-use super::{
-    CIRCLE_INDEX_LEAF_CAPACITY, FlowDisc, FlowRegionVisual, intersects, intersects_bounds,
-};
+use super::{FlowDisc, FlowRegionVisual, intersects, intersects_bounds};
+use crate::flow_execution::constants::CIRCLE_INDEX_LEAF_CAPACITY;
 
 const EMPTY_BOUNDS: [[f64; 2]; 2] = [[f64::INFINITY; 2], [f64::NEG_INFINITY; 2]];
 

@@ -2,10 +2,7 @@
 use quantick_orderflow::projection::flow_tape::{FlowTapeDot, FlowTapeFrame};
 use rust_decimal::Decimal;
 
-/// One translation preserves the execution path and every inter-region distance.
-pub const FLOW_EXECUTION_OFFSET: [f32; 2] = [-18.0, -18.0];
-// Pointer tolerance may exceed a tiny circle; painted area never uses this floor.
-const FLOW_POINTER_RADIUS_PX: f32 = 6.0;
+use super::constants::{FLOW_EXECUTION_OFFSET, FLOW_POINTER_RADIUS_PX};
 
 /// Minimum and maximum corners in logical pixels.
 pub type FlowBounds = [[f32; 2]; 2];

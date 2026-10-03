@@ -1,4 +1,8 @@
 //! Visual priority without changing regional membership, quantity or earned area.
+use super::constants::{
+    MAX_PEAK_DISPLACEMENT_PX, PEAK_DISPLACEMENT_ANGLES_DEGREES, PEAK_DISPLACEMENT_STEP_PX,
+    RELOCATED_PEAK_GAP_PX,
+};
 use super::{FlowBounds, FlowDisc};
 use quantick_orderflow::projection::flow_tape::{
     FlowTapeDot, FlowTapeFrame, LARGE_REGION_REFERENCE_DIVISOR,
@@ -7,18 +11,6 @@ use rust_decimal::Decimal;
 
 mod placement_index;
 use placement_index::PlacedIndex;
-
-// Small leaves bound exact circle checks after spatial bounds reject a branch.
-const CIRCLE_INDEX_LEAF_CAPACITY: usize = 8;
-// Logical-pixel movement stays near the factual source, preserving local reading.
-const MAX_PEAK_DISPLACEMENT_PX: usize = 24;
-const PEAK_DISPLACEMENT_STEP_PX: usize = 2;
-// Only relocated circles request breathing room; separate source circles stay put.
-const RELOCATED_PEAK_GAP_PX: f32 = 1.0;
-// Screen-space degrees: above-left first, then nearby upward alternatives.
-const PEAK_DISPLACEMENT_ANGLES_DEGREES: [f32; 9] = [
-    -135.0, -90.0, -45.0, -180.0, 0.0, -157.5, -112.5, -67.5, -22.5,
-];
 
 /// Paint in this order; context retains its factual circle behind local peaks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

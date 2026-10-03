@@ -16,6 +16,7 @@
 //! answer off the closed bar's own `trade_count`: `pending + 1` means the
 //! closing trade is inside, `pending` means it opens the next ladder.
 
+use quantick_engine::bar_registry::BarConfiguration;
 use quantick_engine::{
     Bar, BarBuilder, BarFootprint, DEFAULT_LEVEL_CAP, DealSample, FootprintBuilder, Trade,
 };
@@ -95,9 +96,9 @@ impl FootprintSeries {
         }
     }
 
-    pub(crate) fn for_chart(base_group: Decimal, tick: bool) -> Self {
+    pub(crate) fn for_chart(base_group: Decimal, spec: &BarConfiguration) -> Self {
         let mut series = Self::new(base_group);
-        series.reset_membership(tick);
+        series.reset_membership(spec);
         series
     }
 
@@ -105,7 +106,7 @@ impl FootprintSeries {
     /// membership. Deal readings seed the scratch builder before the prints.
     pub(crate) fn refold(
         &mut self,
-        spec: quantick_engine::bar_registry::BarConfiguration,
+        spec: BarConfiguration,
         trades: &quantick_engine::trade_tape::TradeTape,
         samples: &[DealSample],
     ) {
@@ -117,8 +118,9 @@ impl FootprintSeries {
     }
 
     /// A full bar rebuild resets source membership; ladder refolds do not.
-    pub(crate) fn reset_membership(&mut self, tick: bool) {
-        self.tick_membership = tick.then(Default::default);
+    /// Only fixed tick bars, which admit every print, keep exact membership.
+    pub(crate) fn reset_membership(&mut self, spec: &BarConfiguration) {
+        self.tick_membership = (spec.id() == "tick").then(Default::default);
     }
 
     /// The row width ladders are captured at (before any per-bar level-cap
