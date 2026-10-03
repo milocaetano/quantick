@@ -13,6 +13,8 @@ mod geometry;
 pub use geometry::FlowExecutionGeometry;
 mod disc;
 pub use disc::{FLOW_EXECUTION_OFFSET, FlowBounds, FlowDisc, hit_flow_region};
+mod presentation;
+pub use presentation::{FlowPresentation, FlowRegionRole, FlowRegionVisual};
 
 // Compact marks and a separate spatial support preserve the surrounding candle path.
 const FLOW_RADIUS_LIMIT_PX: f32 = 12.0;

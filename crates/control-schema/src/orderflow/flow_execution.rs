@@ -28,6 +28,10 @@ pub struct FlowExecutionSnapshot {
     pub scale_basis: FlowExecutionScaleBasis,
     pub typed_reference: Option<CanonicalDecimal>,
     pub effective_reference: Option<CanonicalDecimal>,
+    pub display_policy: FlowExecutionDisplayPolicy,
+    /// Inclusive full-colour threshold for ordinary regions; smaller isolated
+    /// regions also retain full colour. Dim context keeps its full volume and area.
+    pub large_region_threshold: Option<CanonicalDecimal>,
     pub opening_exclusion_effective: bool,
     /// Ordinary reference radius; the first daily region can exceed it when excluded.
     pub radius_limit_px: CanonicalDecimal,
@@ -47,6 +51,16 @@ pub struct FlowExecutionSnapshot {
 pub enum FlowExecutionScaleMode {
     VisibleRegions,
     Typed,
+}
+/// Emphasis changes neither source membership nor volume-proportional area.
+/// Symbols may be separated above their source; reported prices remain factual.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowExecutionDisplayPolicy {
+    /// Ordinary regions at or above one quarter of the effective reference, or
+    /// spatially isolated regions, retain full colour. Others are dim context;
+    /// oversized opening regions keep their separate faint treatment.
+    LargeOrIsolatedWithDimContext,
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -165,6 +179,8 @@ impl From<(&FlowTapeFrame, FlowProgress)> for FlowExecutionSnapshot {
             scale_basis: frame.scale_basis.into(),
             typed_reference: frame.view.reference.typed().map(canonical_decimal),
             effective_reference: frame.effective_reference.map(canonical_decimal),
+            display_policy: FlowExecutionDisplayPolicy::LargeOrIsolatedWithDimContext,
+            large_region_threshold: frame.large_region_threshold().map(canonical_decimal),
             opening_exclusion_effective: frame.opening_exclusion_effective,
             radius_limit_px: canonical_decimal(
                 Decimal::from_f32_retain(frame.view.radius_limit).unwrap_or_default(),

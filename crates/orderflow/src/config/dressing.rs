@@ -2,6 +2,7 @@
 
 use super::{BubbleStyle, INV_PHI, theme::finite_unit};
 
+pub mod flow;
 mod perimeter;
 pub use perimeter::inner_perimeter_quads;
 mod sector;

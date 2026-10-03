@@ -82,6 +82,28 @@ fn wire(frame: &FlowTapeFrame, progress: FlowProgress) -> Value {
 }
 
 #[test]
+fn display_policy_reports_exact_threshold_without_changing_execution_facts() {
+    let trades = [source_trade(0, 100, 13)];
+    let mut frame = projected(&trades, 1, 200.0, 200.0);
+    let original = wire(&frame, settled(&frame));
+    assert_eq!(
+        original["display_policy"],
+        "large_or_isolated_with_dim_context"
+    );
+    assert_eq!(original["large_region_threshold"], "3.25");
+    assert_eq!(original["buy_quantity"], "13");
+    assert_eq!(original["sell_quantity"], "0");
+    for reference in [None, Some(Decimal::ZERO), Some((-1).into())] {
+        frame.effective_reference = reference;
+        let value = wire(&frame, settled(&frame));
+        assert!(value["large_region_threshold"].is_null());
+        assert_eq!(value["marks"], original["marks"]);
+        assert_eq!(value["buy_quantity"], original["buy_quantity"]);
+        assert_eq!(value["trade_count"], original["trade_count"]);
+    }
+}
+
+#[test]
 fn circle_radius_and_sector_equivalent_radii_preserve_exact_side_areas() {
     for (buy, sell) in [(51, 49), (100, 0), (0, 100)] {
         let trades = [source_trade(0, 100, buy), source_trade(1, 100, sell)];

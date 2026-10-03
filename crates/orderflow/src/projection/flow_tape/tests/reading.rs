@@ -6,6 +6,7 @@ fn caption_reports_current_reference_and_inspection_preserves_exact_facts() {
     frame.effective_reference = Some(32100.into());
     let text = caption_text(Some(&frame), FlowProgress::default(), true).unwrap();
     assert!(text.contains("scale 32.1K"));
+    assert!(text.contains("bright >= scale/4 or isolated; dim retains volume"));
     frame.effective_reference = Some(450.into());
     assert!(
         caption_text(Some(&frame), FlowProgress::default(), true)
@@ -21,7 +22,27 @@ fn caption_reports_current_reference_and_inspection_preserves_exact_facts() {
     );
     assert!(rows.iter().any(|row| row.contains("Candle span 11")));
     assert!(rows.iter().any(|row| row.contains("Updating:")));
+    assert!(rows.iter().any(|row| row.contains("total >= 112.5")));
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("Dim context keeps full volume and area"))
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("may be separated above its source"))
+    );
     assert!(caption_text(Some(&frame), FlowProgress::default(), false).is_none());
+}
+
+#[test]
+fn full_colour_threshold_is_exact_and_absent_without_a_positive_reference() {
+    let mut frame = frame(&[trade(1000, 100, 13, Side::Buy)], 200.0);
+    frame.effective_reference = Some(13.into());
+    assert_eq!(frame.large_region_threshold(), Some(Decimal::new(325, 2)));
+    for reference in [None, Some(Decimal::ZERO), Some((-1).into())] {
+        frame.effective_reference = reference;
+        assert_eq!(frame.large_region_threshold(), None);
+    }
 }
 
 #[test]

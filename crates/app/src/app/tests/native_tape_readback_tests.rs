@@ -332,17 +332,18 @@ fn other_discs_left_of(output: &egui::FullOutput, x: f32) -> usize {
         .count()
 }
 
-fn regional_colours(app: &QuantickApp) -> [egui::Color32; 2] {
+fn regional_colours(app: &QuantickApp, context: bool) -> [egui::Color32; 2] {
     [
         egui::Color32::from_rgb(112, 185, 244),
         egui::Color32::from_rgb(232, 175, 99),
     ]
     .map(|color| {
-        let source = color.gamma_multiply(0.65);
-        if !app
-            .active_tab()
-            .flow_pane
-            .layer_visible(ChartLayer::Footprint, &app.style)
+        let source = color.gamma_multiply(if context { 0.12 } else { 0.65 });
+        if !context
+            && !app
+                .active_tab()
+                .flow_pane
+                .layer_visible(ChartLayer::Footprint, &app.style)
         {
             return source;
         }
@@ -363,7 +364,7 @@ fn regional_circles(app: &QuantickApp, output: &egui::FullOutput) -> Vec<egui::M
     let frame = &app.active_tab().flow_pane.frame;
     let rect = frame.chart_rect.unwrap();
     let history = rect.with_max_x(frame.lane_divider_x.unwrap_or(rect.right()));
-    let colours = regional_colours(app);
+    let colours = [regional_colours(app, true), regional_colours(app, false)].concat();
     output
         .shapes
         .iter()
@@ -400,88 +401,137 @@ fn regional_labels(output: &egui::FullOutput) -> Vec<String> {
         .collect()
 }
 
+#[derive(Debug)]
+struct RegionalFan {
+    center: egui::Pos2,
+    radius: f32,
+    area: f32,
+    color: egui::Color32,
+}
+
+/// Recover each actual flat fan from its indexed centre, independent of mesh count.
+fn regional_fans(meshes: &[egui::Mesh]) -> Vec<RegionalFan> {
+    let mut fans: Vec<RegionalFan> = Vec::new();
+    for mesh in meshes {
+        assert!(mesh.is_valid());
+        assert_eq!(mesh.texture_id, egui::TextureId::default());
+        assert!(
+            mesh.vertices
+                .iter()
+                .all(|vertex| vertex.uv == egui::epaint::WHITE_UV)
+        );
+        assert_eq!(mesh.indices.len() % 3, 0);
+        let mut center_index = None;
+        for triangle in mesh.indices.as_chunks::<3>().0 {
+            let a = mesh.vertices[triangle[0] as usize];
+            let b = mesh.vertices[triangle[1] as usize];
+            let c = mesh.vertices[triangle[2] as usize];
+            assert_eq!(a.color, b.color);
+            assert_eq!(a.color, c.color);
+            if center_index != Some(triangle[0]) {
+                fans.push(RegionalFan {
+                    center: a.pos,
+                    radius: 0.0,
+                    area: 0.0,
+                    color: a.color,
+                });
+                center_index = Some(triangle[0]);
+            }
+            let fan = fans.last_mut().unwrap();
+            fan.radius = fan
+                .radius
+                .max(a.pos.distance(b.pos))
+                .max(a.pos.distance(c.pos));
+            let b = b.pos - a.pos;
+            let c = c.pos - a.pos;
+            fan.area += (b.x * c.y - b.y * c.x).abs() * 0.5;
+        }
+    }
+    fans
+}
+
 fn assert_regional_circles(
     app: &QuantickApp,
     output: &egui::FullOutput,
     snapshot: &Value,
 ) -> Vec<egui::Mesh> {
     let circles = regional_circles(app, output);
-    assert_eq!(circles.len(), 1, "one packed regional mesh must be painted");
-    let mesh = &circles[0];
-    assert!(mesh.is_valid());
-    assert_eq!(mesh.texture_id, egui::TextureId::default());
-    assert!(
-        mesh.vertices
-            .iter()
-            .all(|vertex| vertex.uv == egui::epaint::WHITE_UV)
-    );
-    let colours = regional_colours(app);
-    // Each flat fan triangle begins at its factual regional centre. The two
-    // side fans share that position, so recover regions without re-rendering.
-    let mut regions: Vec<(egui::Pos2, f32, [f32; 2])> = Vec::new();
-    assert_eq!(mesh.indices.len() % 3, 0);
-    for triangle in mesh.indices.as_chunks::<3>().0 {
-        let a = mesh.vertices[triangle[0] as usize];
-        let b = mesh.vertices[triangle[1] as usize];
-        let c = mesh.vertices[triangle[2] as usize];
-        let side = colours
-            .iter()
-            .position(|colour| *colour == a.color)
-            .unwrap();
-        assert_eq!(a.color, b.color);
-        assert_eq!(a.color, c.color);
-        if regions.last().is_none_or(|region| region.0 != a.pos) {
-            regions.push((a.pos, 0.0, [0.0; 2]));
-        }
-        let region = regions.last_mut().unwrap();
-        region.1 = region
-            .1
-            .max(a.pos.distance(b.pos))
-            .max(a.pos.distance(c.pos));
-        let b = b.pos - a.pos;
-        let c = c.pos - a.pos;
-        region.2[side] += (b.x * c.y - b.y * c.x).abs() * 0.5;
-    }
+    assert!(!circles.is_empty(), "regional volume must be painted");
+    let fans = regional_fans(&circles);
+    let mut painted = fans.iter();
     assert_eq!(snapshot["marks_truncated"], false);
-    let mut marks: Vec<_> = snapshot["marks"].as_array().unwrap().iter().collect();
+    let marks = snapshot["marks"].as_array().unwrap();
     let number = |mark: &Value, field: &str| mark[field].as_str().unwrap().parse::<f64>().unwrap();
     assert!(marks.iter().all(|mark| mark["opening_oversized"] == false));
-    // Readback remains chronological while ordinary painting is stable by volume.
-    marks.sort_by(|a, b| {
-        (number(a, "buy_quantity") + number(a, "sell_quantity"))
-            .total_cmp(&(number(b, "buy_quantity") + number(b, "sell_quantity")))
-    });
-    assert_eq!(
-        regions.len(),
-        marks.len(),
-        "every published region occurs exactly once in the packed mesh"
-    );
     let pane = &app.active_tab().flow_pane;
     let rect = pane.frame.chart_rect.unwrap();
     let right = pane.frame.lane_divider_x.unwrap_or(rect.right());
     let (low, high) = pane.price_view.resolve(pane.frame.auto_range.unwrap());
     let total = pane.state.bars().len() + usize::from(pane.state.partial().is_some());
-    for ((center, extent, areas), mark) in regions.iter().zip(marks) {
+    let history = rect.with_max_x(right);
+    let geometry = quantick_chart::flow_execution::FlowExecutionGeometry::new(
+        pane.viewport,
+        total,
+        0,
+        (low, high),
+        [
+            history.left(),
+            history.top(),
+            history.right(),
+            history.bottom(),
+        ],
+        false,
+    )
+    .unwrap();
+    let presentation = quantick_chart::flow_execution::FlowPresentation::new(
+        app.active_tab().tape().flow_execution_frame().unwrap(),
+        [history.min.into(), history.max.into()],
+        |dot| geometry.point(dot).map(|(x, y)| [x, y]),
+    );
+    assert_eq!(presentation.regions.len(), marks.len());
+    for region in &presentation.regions {
+        let mark = &marks[region.dot_index];
         let radius = number(mark, "radius_px") as f32;
-        assert!(
-            (*extent - radius).abs() < 0.0001,
-            "painted {extent}, published {radius}"
-        );
         let x = pane.viewport.x_at_bar_position(
             number(mark, "candle_position") as f32 - 0.5,
             right,
             total,
         );
         let y = rect.top() + rect.height() * ((high - number(mark, "price")) / (high - low)) as f32;
-        assert!(center.distance(egui::pos2(x - 18.0, y - 18.0)) < 0.0001);
+        let source = egui::Pos2::from(region.source_disc.center);
+        assert!(source.distance(egui::pos2(x - 18.0, y - 18.0)) < 0.0001);
+        let center = egui::Pos2::from(region.disc.center);
+        assert!(center.distance(source) <= 24.0001);
+        assert!(center.y <= source.y + 0.0001);
+        assert_eq!(region.disc.radius, region.source_disc.radius);
         let buy = number(mark, "buy_quantity") as f32;
         let sell = number(mark, "sell_quantity") as f32;
+        let context = region.role == quantick_chart::flow_execution::FlowRegionRole::Context;
+        let colours = regional_colours(app, context);
+        let mut areas = [0.0; 2];
+        for (side, quantity) in [buy, sell].into_iter().enumerate() {
+            if quantity <= 0.0 {
+                continue;
+            }
+            let fan = painted
+                .next()
+                .expect("every positive side has one painted fan");
+            assert!(fan.center.distance(center) < 0.0001);
+            assert!(
+                (fan.radius - radius).abs() < 0.0001,
+                "painted {}, published {radius}",
+                fan.radius
+            );
+            assert_eq!(fan.color, colours[side]);
+            areas[side] = fan.area;
+        }
         assert_eq!(areas[0] > 0.0, buy > 0.0);
         assert_eq!(areas[1] > 0.0, sell > 0.0);
         let total_area = areas.iter().sum::<f32>();
         assert!((areas[0] / total_area - buy / (buy + sell)).abs() < 0.005);
         assert!((total_area / (std::f32::consts::PI * radius.powi(2)) - 1.0).abs() < 0.05);
     }
+    assert!(painted.next().is_none(), "no regional side is duplicated");
     circles
 }
 

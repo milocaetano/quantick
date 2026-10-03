@@ -272,8 +272,9 @@ fn common_offset_preserves_vectors_radii_and_inspects_the_painted_position() {
                 &ctx.layer_painter(egui::LayerId::background()),
                 history,
                 frame,
-                &HeatmapConfig::default(),
-                |_| Some(a),
+                &FlowPresentation::new(frame, [history.min.into(), history.max.into()], |_| {
+                    Some(a.into())
+                }),
             )
         })
         .shapes
@@ -349,8 +350,9 @@ fn oversized_opening_value_stays_inside_the_pane_even_when_its_perimeter_is_clip
                 &ctx.layer_painter(egui::LayerId::background()),
                 history,
                 &frame,
-                &HeatmapConfig::default(),
-                |_| Some(center - FLOW_OFFSET),
+                &FlowPresentation::new(&frame, [history.min.into(), history.max.into()], |_| {
+                    Some((center - FLOW_OFFSET).into())
+                }),
             );
         });
         let text = output

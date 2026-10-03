@@ -68,24 +68,12 @@ pub fn hit_flow_region(
     frame: &FlowTapeFrame,
     history: FlowBounds,
     pointer: [f32; 2],
-    mut center: impl FnMut(&FlowTapeDot) -> Option<[f32; 2]>,
+    center: impl FnMut(&FlowTapeDot) -> Option<[f32; 2]>,
 ) -> Option<&FlowTapeDot> {
-    let mut nearest: Option<(f32, &FlowTapeDot)> = None;
-    for dot in frame.dots_in_paint_order().rev() {
-        let Some(disc) = center(dot).and_then(|at| FlowDisc::new(dot, at)) else {
-            continue;
-        };
-        let Some(distance) = disc.hit_distance(history, pointer) else {
-            continue;
-        };
-        if distance <= disc.radius.powi(2) {
-            return Some(dot);
-        }
-        if nearest.is_none_or(|(held, _)| distance < held) {
-            nearest = Some((distance, dot));
-        }
-    }
-    nearest.map(|(_, dot)| dot)
+    let presentation = super::FlowPresentation::new(frame, history, center);
+    presentation
+        .hit(history, pointer)
+        .map(|index| &frame.dots[index])
 }
 
 #[cfg(test)]

@@ -9,25 +9,22 @@ pub(crate) struct FlowInspection<'a> {
     pub history: egui::Rect,
     pub pointer: Option<egui::Pos2>,
     pub frame: &'a FlowTapeFrame,
+    pub presentation: &'a quantick_chart::flow_execution::FlowPresentation,
     pub progress: FlowProgress,
     pub prefix_len: usize,
     pub tz: TzOffset,
     pub side_inferred: bool,
 }
 
-/// `center` is the same mapping used by the regional painter, with current axes.
+/// The cached display plan is shared with this frame's regional painter.
 /// No interaction widgets, retained selection, source reads, or member expansion.
-pub(crate) fn draw_flow_inspection(
-    view: FlowInspection<'_>,
-    mut center: impl FnMut(&FlowTapeDot) -> Option<egui::Pos2>,
-) -> Option<egui::Rect> {
+pub(crate) fn draw_flow_inspection(view: FlowInspection<'_>) -> Option<egui::Rect> {
     let pointer = view.pointer.filter(|point| view.history.contains(*point))?;
-    let dot = quantick_chart::flow_execution::hit_flow_region(
-        view.frame,
+    let index = view.presentation.hit(
         [view.history.min.into(), view.history.max.into()],
         pointer.into(),
-        |dot| center(dot).map(Into::into),
     )?;
+    let dot = &view.frame.dots[index];
     let painter = view.painter.with_clip_rect(view.history);
     let width_limit = view.history.width() - 16.0;
     if width_limit < 80.0 {
@@ -90,7 +87,7 @@ fn details(dot: &FlowTapeDot, view: &FlowInspection<'_>) -> Vec<String> {
         fmt_decimal,
     );
     rows[0] = format!(
-        "Symbol above-left of source; pooled price {}",
+        "Symbol separated above source; pooled price {}",
         fmt_decimal(mark.price)
     );
     rows.insert(

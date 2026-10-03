@@ -170,6 +170,12 @@ impl ChartPane {
             if !flow_execution {
                 renderers.candles(&mut candle_pass);
             }
+            if flow_execution {
+                flow.regional_context(
+                    self.orderflow.as_ref(),
+                    start.footprint_paints.then_some(frame.canvas_background),
+                );
+            }
             if start.footprint_paints || start.candle_aggression {
                 history.footprint(
                     &mut self.footprint,
@@ -180,15 +186,9 @@ impl ChartPane {
                 );
             }
             if flow_execution {
-                flow.regional_aggressions(
-                    self.orderflow.as_ref(),
-                    start.footprint_paints.then(|| {
-                        let [r, g, b] = chrome.style.canvas.background;
-                        egui::Color32::from_rgb(r, g, b)
-                    }),
-                );
+                flow.regional_aggressions();
                 renderers.candles(&mut candle_pass);
-                flow.regional_perimeters(self.orderflow.as_ref());
+                flow.regional_perimeters();
             }
             history.overlay(&self.indicators);
         }

@@ -14645,6 +14645,16 @@
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
             "type": "string"
           },
+          "FlowExecutionDisplayPolicy": {
+            "description": "Emphasis changes neither source membership nor volume-proportional area.\nSymbols may be separated above their source; reported prices remain factual.",
+            "oneOf": [
+              {
+                "const": "large_or_isolated_with_dim_context",
+                "description": "Ordinary regions at or above one quarter of the effective reference, or\nspatially isolated regions, retain full colour. Others are dim context;\noversized opening regions keep their separate faint treatment.",
+                "type": "string"
+              }
+            ]
+          },
           "FlowExecutionMark": {
             "properties": {
               "buy_quantity": {
@@ -14797,6 +14807,9 @@
               "clip_right": {
                 "$ref": "#/$defs/CanonicalDecimal"
               },
+              "display_policy": {
+                "$ref": "#/$defs/FlowExecutionDisplayPolicy"
+              },
               "effective_reference": {
                 "anyOf": [
                   {
@@ -14815,6 +14828,17 @@
               },
               "ignore_opening": {
                 "type": "boolean"
+              },
+              "large_region_threshold": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Inclusive full-colour threshold for ordinary regions; smaller isolated\nregions also retain full colour. Dim context keeps its full volume and area."
               },
               "mark_count": {
                 "$ref": "#/$defs/WireU64"
@@ -14897,6 +14921,7 @@
               "end_slot",
               "scale_mode",
               "scale_basis",
+              "display_policy",
               "opening_exclusion_effective",
               "radius_limit_px",
               "merge_support_radius_px",

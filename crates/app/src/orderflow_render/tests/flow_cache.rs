@@ -66,6 +66,7 @@ fn key(frame: &Arc<FlowTapeFrame>) -> Key<'_> {
         geometry: geometry(),
         clip: history(),
         backing: Some(egui::Color32::from_rgb(19, 23, 34)),
+        background: crate::theme::CANVAS,
     }
 }
 
@@ -99,7 +100,16 @@ fn paint_at_density(
             ..key
         };
         assert_eq!(ctx.pixels_per_point(), pixels_per_point);
-        draw_cached_flow(&painter, history(), key.frame, key.geometry, key.backing);
+        let drawing = cached_flow(
+            &painter,
+            history(),
+            key.frame,
+            key.geometry,
+            key.background,
+            key.backing,
+        );
+        drawing.paint(&painter, history(), false);
+        drawing.paint(&painter, history(), true);
         entry = Some(ctx.memory_mut(|memory| memory.caches.cache::<Cache>().get(actual)));
     });
     let entry = entry.unwrap();
@@ -119,7 +129,14 @@ fn warm_paint_reuses_the_same_geometry_and_exact_mesh_output() {
     assert!(Arc::ptr_eq(&cold, &warm));
     assert_eq!(first_shapes, second_shapes);
     assert!(!first_shapes.is_empty());
-    assert!(cold.mesh.get().unwrap().is_valid());
+    assert!(
+        cold.mesh
+            .get()
+            .unwrap()
+            .meshes
+            .iter()
+            .all(egui::Mesh::is_valid)
+    );
 }
 
 #[test]
@@ -235,7 +252,7 @@ fn sector_mesh_uses_only_white_uv_and_survives_font_atlas_growth() {
     let frame = frame();
     let ctx = egui::Context::default();
     let (entry, before_shapes) = paint(&ctx, key(&frame));
-    let mesh = entry.mesh.get().unwrap();
+    let mesh = &entry.mesh.get().unwrap().meshes[1];
     assert!(!mesh.vertices.is_empty());
     assert_eq!(mesh.texture_id, egui::TextureId::default());
     assert!(
@@ -259,7 +276,7 @@ fn sector_mesh_uses_only_white_uv_and_survives_font_atlas_growth() {
 }
 
 #[test]
-fn direct_mesh_keeps_exact_overlapping_sector_geometry_with_precomposed_colours() {
+fn direct_mesh_separates_peaks_without_changing_sector_geometry_or_colours() {
     use super::super::{
         bubbles::{PIE_START_ANGLE, SphereShading, add_sector},
         flow_execution::{FLOW_BUY, FLOW_SELL, flow_mesh},
@@ -309,10 +326,17 @@ fn direct_mesh_keeps_exact_overlapping_sector_geometry_with_precomposed_colours(
             ]
         };
         let mut expected = egui::Mesh::default();
-        // Concrete overlapping circles verify size order, side shares and the
-        // absence of a second backing polygon, without using production colours.
+        // The smaller circle first clears its neighbour at 16px above-left.
+        // Radius, shares and absence of a second backing polygon remain exact.
         for (center, radius, buy) in [
-            (egui::pos2(100.0, 60.0), 6.0, 0.75_f64),
+            (
+                egui::pos2(
+                    100.0 - 16.0 / std::f32::consts::SQRT_2,
+                    60.0 - 16.0 / std::f32::consts::SQRT_2,
+                ),
+                6.0,
+                0.75_f64,
+            ),
             (egui::pos2(104.0, 60.0), 12.0, 0.25_f64),
         ] {
             let mut angle = f64::from(PIE_START_ANGLE);

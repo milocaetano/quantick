@@ -1,9 +1,10 @@
 //! Pack immutable FLOW geometry once; ordinary frames only copy the final mesh.
+use super::flow_execution::FlowDrawing;
 use eframe::egui::{
     self,
     util::cache::{ComputerMut, FrameCache},
 };
-use quantick_chart::flow_execution::FlowExecutionGeometry;
+use quantick_chart::flow_execution::{FlowExecutionGeometry, FlowPresentation};
 use quantick_orderflow::projection::flow_tape::FlowTapeFrame;
 use std::{
     hash::{Hash, Hasher},
@@ -13,7 +14,7 @@ use std::{
 struct Entry {
     // Keep the allocation identity alive without retaining its source members.
     _source: Weak<FlowTapeFrame>,
-    mesh: OnceLock<egui::Mesh>,
+    mesh: OnceLock<Arc<FlowDrawing>>,
 }
 #[derive(Default)]
 struct Computer;
@@ -23,6 +24,7 @@ struct Key<'a> {
     geometry: FlowExecutionGeometry,
     clip: egui::Rect,
     backing: Option<egui::Color32>,
+    background: egui::Color32,
 }
 impl Hash for Key<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -33,6 +35,7 @@ impl Hash for Key<'_> {
         self.clip.max.x.to_bits().hash(state);
         self.clip.max.y.to_bits().hash(state);
         self.backing.hash(state);
+        self.background.hash(state);
     }
 }
 impl ComputerMut<Key<'_>, Arc<Entry>> for Computer {
@@ -45,6 +48,36 @@ impl ComputerMut<Key<'_>, Arc<Entry>> for Computer {
 }
 type Cache = FrameCache<Arc<Entry>, Computer>;
 
+pub(crate) fn cached_flow(
+    painter: &egui::Painter,
+    history: egui::Rect,
+    frame: &Arc<FlowTapeFrame>,
+    geometry: FlowExecutionGeometry,
+    background: egui::Color32,
+    backing: Option<egui::Color32>,
+) -> Arc<FlowDrawing> {
+    let clip = history.intersect(painter.clip_rect());
+    let key = Key {
+        frame,
+        geometry,
+        clip,
+        backing,
+        background,
+    };
+    let entry = painter
+        .ctx()
+        .memory_mut(|memory| memory.caches.cache::<Cache>().get(key));
+    // Build outside the Context memory lock. Logical sector vertices use only
+    // WHITE_UV, independent of pixel density and the growing font atlas.
+    Arc::clone(entry.mesh.get_or_init(|| {
+        let plan = FlowPresentation::new(frame, [clip.min.into(), clip.max.into()], |dot| {
+            geometry.point(dot).map(|(x, y)| [x, y])
+        });
+        Arc::new(FlowDrawing::new(frame, plan, background, backing))
+    }))
+}
+
+#[cfg(test)]
 pub(crate) fn draw_cached_flow(
     painter: &egui::Painter,
     history: egui::Rect,
@@ -52,26 +85,16 @@ pub(crate) fn draw_cached_flow(
     geometry: FlowExecutionGeometry,
     backing: Option<egui::Color32>,
 ) {
-    let clip = history.intersect(painter.clip_rect());
-    let key = Key {
+    let drawing = cached_flow(
+        painter,
+        history,
         frame,
         geometry,
-        clip,
+        crate::theme::CANVAS,
         backing,
-    };
-    let entry = painter
-        .ctx()
-        .memory_mut(|memory| memory.caches.cache::<Cache>().get(key));
-    // Build outside the Context memory lock. Logical sector vertices use only
-    // WHITE_UV, independent of pixel density and the growing font atlas.
-    let mesh = entry.mesh.get_or_init(|| {
-        super::flow_execution::flow_mesh(clip, frame, backing, |dot| {
-            geometry.point(dot).map(|(x, y)| egui::pos2(x, y))
-        })
-    });
-    painter
-        .with_clip_rect(clip)
-        .add(egui::Shape::mesh(mesh.clone()));
+    );
+    drawing.paint(painter, history, false);
+    drawing.paint(painter, history, true);
 }
 
 #[cfg(test)]

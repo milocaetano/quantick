@@ -21,12 +21,33 @@ fn painted_bodies(output: &egui::FullOutput, colour: egui::Color32) -> Vec<(usiz
 #[test]
 fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() {
     let ctx = egui::Context::default();
-    let (mut app, _commands) = app_with_history(23);
+    let (mut app, events, _commands, _book) = test_app();
+    app.active_tab_mut().flow_pane.set_layer_visible(
+        ChartLayer::LiveStrip,
+        false,
+        &mut Default::default(),
+    );
     app.active_tab_mut()
         .flow_pane
         .spec
         .retain(crate::state::BarSpec::Tick(5));
     app.active_tab_mut().apply_spec_changes();
+    let trades = (1..=23)
+        .map(|id| {
+            let mut execution = trade(id);
+            execution.timestamp_ms = 1_000 + id as i64 * 1_000;
+            if id == 6 {
+                execution.quantity = 100.into();
+            }
+            if id == 7 {
+                execution.price = trade(6).price;
+            }
+            execution
+        })
+        .collect();
+    events.try_send(FeedEvent::Backfilled(trades)).unwrap();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed(tab_id);
     native_split(&mut app);
     app.active_tab_mut().flow_pane.set_layer_visible(
         ChartLayer::Footprint,
@@ -82,16 +103,28 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
     });
     let output = settled_flow_frame(&mut app, &ctx);
     let circles = regional_circles(&app, &output);
-    assert_eq!(
-        circles.len(),
-        1,
-        "one packed FLOW mesh precedes the candles"
-    );
+    assert!(!circles.is_empty(), "regional volume precedes the candles");
+    let context_colours = regional_colours(&app, true);
+    let peak_colours = regional_colours(&app, false);
+    for expected in [context_colours, peak_colours] {
+        assert!(
+            circles
+                .iter()
+                .any(|mesh| mesh.vertices.iter().any(|v| expected.contains(&v.color))),
+            "fixture must paint both context and full-colour regions"
+        );
+    }
     assert!(
-        circles[0]
-            .vertices
+        circles
             .iter()
-            .all(|vertex| vertex.color.a() == 166)
+            .flat_map(|mesh| &mesh.vertices)
+            .all(|vertex| {
+                if context_colours.contains(&vertex.color) {
+                    vertex.color.a() == 255
+                } else {
+                    peak_colours.contains(&vertex.color) && vertex.color.a() == 166
+                }
+            })
     );
     let facts = app
         .active_tab()
@@ -105,7 +138,7 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
             .iter()
             .map(|dot| dot.mark.quantity)
             .sum::<rust_decimal::Decimal>(),
-        23.into()
+        122.into()
     );
     let last_circle = output
         .shapes
@@ -224,8 +257,9 @@ fn assert_footprint_layering(
     history: egui::Rect,
     plain: usize,
 ) {
-    // Footprint keeps its existing candle dressing, but completes before the
-    // isolated sectors. Exactly one normal candle pass stays last.
+    // Context is beneath footprint; highlighted sectors follow it. Exactly one
+    // normal candle pass stays last, with every source fact and radius retained.
+    let original_colours = [regional_colours(app, true), regional_colours(app, false)];
     app.style.candles.body_mode = crate::style::CandleBodyMode::Filled;
     app.style.canvas.background = [13, 17, 23];
     let pane = &mut app.active_tab_mut().flow_pane;
@@ -238,30 +272,38 @@ fn assert_footprint_layering(
     let isolated = regional_circles(app, &footprint);
     assert_eq!(
         isolated.len(),
-        1,
-        "footprint still has one packed FLOW mesh"
+        circles.len(),
+        "footprint changes dressing, not regional passes"
     );
-    let original = &circles[0];
-    let opaque = &isolated[0];
-    assert_eq!(opaque.indices, original.indices);
-    assert_eq!(opaque.vertices.len(), original.vertices.len());
-    let translucent_colours = [
-        egui::Color32::from_rgba_premultiplied(73, 120, 159, 166),
-        egui::Color32::from_rgba_premultiplied(151, 114, 64, 166),
-    ];
     // Independent gamma source-over expectations on this fixture's (13,17,23).
     let isolated_colours = [
-        egui::Color32::from_rgb(78, 126, 167),
-        egui::Color32::from_rgb(156, 120, 72),
+        [
+            egui::Color32::from_rgb(24, 37, 49),
+            egui::Color32::from_rgb(39, 36, 32),
+        ],
+        [
+            egui::Color32::from_rgb(78, 126, 167),
+            egui::Color32::from_rgb(156, 120, 72),
+        ],
     ];
-    for (before, after) in original.vertices.iter().zip(&opaque.vertices) {
-        assert_eq!(before.pos, after.pos);
-        assert_eq!(before.uv, after.uv);
-        let side = translucent_colours
-            .iter()
-            .position(|color| *color == before.color)
-            .unwrap();
-        assert_eq!(after.color, isolated_colours[side]);
+    for (original, opaque) in circles.iter().zip(&isolated) {
+        assert_eq!(opaque.indices, original.indices);
+        assert_eq!(opaque.vertices.len(), original.vertices.len());
+        for (before, after) in original.vertices.iter().zip(&opaque.vertices) {
+            assert_eq!(before.pos, after.pos);
+            assert_eq!(before.uv, after.uv);
+            let (role, side) = original_colours
+                .iter()
+                .enumerate()
+                .find_map(|(role, colors)| {
+                    colors
+                        .iter()
+                        .position(|color| *color == before.color)
+                        .map(|side| (role, side))
+                })
+                .unwrap();
+            assert_eq!(after.color, isolated_colours[role][side]);
+        }
     }
     assert_eq!(
         app.active_tab().tape().flow_execution_frame().unwrap().dots,
@@ -275,13 +317,7 @@ fn assert_footprint_layering(
             matches!(&shape.shape, egui::Shape::Mesh(mesh) if isolated.contains(mesh)).then_some(i)
         })
         .collect();
-    let first_region = region_indices[0];
     let last_region = *region_indices.last().unwrap();
-    assert_eq!(
-        region_indices.len(),
-        1,
-        "isolation adds no extra sector pass"
-    );
     let profiles: Vec<_> = footprint.shapes.iter().enumerate().filter_map(|(i, shape)| {
         matches!(&shape.shape, egui::Shape::Rect(rect) if history.contains(rect.rect.center()) &&
             [0.60, 0.95].iter().any(|alpha| rect.fill == egui::Color32::from_gray(0xD8).gamma_multiply(*alpha))
@@ -291,7 +327,32 @@ fn assert_footprint_layering(
         !profiles.is_empty(),
         "the fixture must actually paint footprint profiles"
     );
-    assert!(profiles.iter().all(|i| *i < first_region));
+    for (role, colors) in isolated_colours.iter().enumerate() {
+        let indices: Vec<_> = footprint
+            .shapes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, shape)| {
+                matches!(&shape.shape, egui::Shape::Mesh(mesh) if !mesh.vertices.is_empty()
+                && mesh.vertices.iter().all(|vertex| colors.contains(&vertex.color)))
+                .then_some(i)
+            })
+            .collect();
+        assert!(
+            !indices.is_empty(),
+            "both emphasis passes must survive footprint"
+        );
+        for index in indices {
+            assert!(
+                profiles.iter().all(|profile| if role == 0 {
+                    index < *profile
+                } else {
+                    index > *profile
+                }),
+                "context precedes footprint and full-colour regions follow it"
+            );
+        }
+    }
     let (_, dressed) = crate::footprint_render::candle_dressing(
         true,
         crate::footprint_config::CandleTreatment::Fade,

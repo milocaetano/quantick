@@ -7,7 +7,7 @@ use quantick_engine::Trade;
 use rust_decimal::Decimal;
 use std::sync::Arc;
 mod reading;
-pub use reading::caption_text;
+pub use reading::{LARGE_REGION_REFERENCE_DIVISOR, caption_text};
 mod source;
 pub use source::{FlowCoverage, FlowOpeningSelection, FlowTapeSource};
 mod stream;

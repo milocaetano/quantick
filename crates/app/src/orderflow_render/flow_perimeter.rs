@@ -1,30 +1,28 @@
 //! FLOW silhouettes inside the earned radius, above candle bodies.
-use super::flow_execution::{FLOW_BUY, FLOW_SELL, FlowDisc, flow_disc};
+use super::flow_execution::{FLOW_BUY, FLOW_SELL};
 use eframe::egui::{
     self,
     epaint::{Vertex, WHITE_UV},
 };
+use quantick_chart::flow_execution::{FlowDisc, FlowPresentation, FlowRegionRole};
 use quantick_orderflow::{
-    HeatmapConfig,
-    config::dressing::inner_perimeter_quads,
-    projection::flow_tape::{FlowTapeDot, FlowTapeFrame},
+    config::dressing::inner_perimeter_quads, projection::flow_tape::FlowTapeFrame,
 };
 
 pub(crate) fn draw_flow_perimeters(
     painter: &egui::Painter,
     history: egui::Rect,
     frame: &FlowTapeFrame,
-    _config: &HeatmapConfig,
-    mut center: impl FnMut(&FlowTapeDot) -> Option<egui::Pos2>,
+    presentation: &FlowPresentation,
 ) {
     let clip = painter.with_clip_rect(history);
-    for dot in frame.dots.iter().filter(|dot| dot.opening_oversized) {
-        let Some(disc) = center(dot)
-            .and_then(|at| flow_disc(dot, at))
-            .filter(|disc| disc.visible([history.min.into(), history.max.into()]))
-        else {
-            continue;
-        };
+    for region in presentation
+        .regions
+        .iter()
+        .filter(|region| region.role == FlowRegionRole::Opening)
+    {
+        let dot = &frame.dots[region.dot_index];
+        let disc = region.disc;
         let (buy, sell) = dot.side_shares();
         let mut mesh = egui::Mesh::default();
         let mut angle = f64::from(super::PIE_START_ANGLE);

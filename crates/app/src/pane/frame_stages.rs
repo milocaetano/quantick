@@ -49,6 +49,10 @@ pub(super) struct FlowFrame<'a> {
     inverted: bool,
     price_range: (f64, f64),
     projection: Option<Arc<VisibleOrderflow>>,
+    regional: Option<(
+        Arc<quantick_orderflow::projection::flow_tape::FlowTapeFrame>,
+        Arc<crate::orderflow_render::FlowDrawing>,
+    )>,
 }
 
 impl<'a> FlowFrame<'a> {
@@ -71,6 +75,7 @@ impl<'a> FlowFrame<'a> {
             inverted,
             price_range: frame.scale.range(),
             projection: None,
+            regional: None,
         }
     }
 
@@ -208,18 +213,6 @@ impl<'a> FlowFrame<'a> {
         )
     }
 
-    fn execution_centers(
-        &self,
-    ) -> Option<
-        impl Fn(&quantick_orderflow::projection::flow_tape::FlowTapeDot) -> Option<egui::Pos2> + '_,
-    > {
-        let geometry = self.execution_geometry()?;
-        Some(
-            move |dot: &quantick_orderflow::projection::flow_tape::FlowTapeDot| {
-                geometry.point(dot).map(|(x, y)| egui::pos2(x, y))
-            },
-        )
-    }
     pub(super) fn inspection(
         &self,
         owner: Option<&OrderflowView>,
@@ -230,10 +223,7 @@ impl<'a> FlowFrame<'a> {
         let Some(owner) = owner.filter(|owner| owner.flow_execution_active()) else {
             return;
         };
-        let Some(frame) = owner.flow_execution_frame() else {
-            return;
-        };
-        let Some(center) = self.execution_centers() else {
+        let Some((frame, drawing)) = &self.regional else {
             return;
         };
         let Some(pointer) = pointer else { return };
@@ -243,18 +233,18 @@ impl<'a> FlowFrame<'a> {
                 history: self.rect.with_max_x(self.rect.right() - self.lane_width),
                 pointer: Some(pointer),
                 frame,
+                presentation: &drawing.plan,
                 progress: owner.flow_execution_progress(),
                 prefix_len: self.prefix_len,
                 tz,
                 side_inferred,
             },
-            center,
         );
     }
 
-    /// Regions above any footprint, behind one configured candle and indicator pass.
-    pub(super) fn regional_aggressions(
-        &self,
+    /// Quiet context sits below footprint; one cached plan serves both paint passes.
+    pub(super) fn regional_context(
+        &mut self,
         owner: Option<&OrderflowView>,
         backing: Option<egui::Color32>,
     ) {
@@ -262,28 +252,41 @@ impl<'a> FlowFrame<'a> {
             && let Some(frame) = owner.flow_execution_handle()
             && let Some(geometry) = self.execution_geometry()
         {
-            crate::orderflow_render::draw_cached_flow(
+            let drawing = crate::orderflow_render::cached_flow(
                 self.painter,
                 self.rect.with_max_x(self.rect.right() - self.lane_width),
                 frame,
                 geometry,
+                self.background,
                 backing,
+            );
+            drawing.paint(
+                self.painter,
+                self.rect.with_max_x(self.rect.right() - self.lane_width),
+                false,
+            );
+            self.regional = Some((Arc::clone(frame), drawing));
+        }
+    }
+
+    pub(super) fn regional_aggressions(&self) {
+        if let Some((_, drawing)) = &self.regional {
+            drawing.paint(
+                self.painter,
+                self.rect.with_max_x(self.rect.right() - self.lane_width),
+                true,
             );
         }
     }
 
     /// Only the earned inner circumference crosses the configured candles.
-    pub(super) fn regional_perimeters(&self, owner: Option<&OrderflowView>) {
-        if let Some(owner) = owner
-            && let Some(frame) = owner.flow_execution_frame()
-            && let Some(center) = self.execution_centers()
-        {
+    pub(super) fn regional_perimeters(&self) {
+        if let Some((frame, drawing)) = &self.regional {
             crate::orderflow_render::draw_flow_perimeters(
                 self.painter,
                 self.rect.with_max_x(self.rect.right() - self.lane_width),
                 frame,
-                owner.cached_config(),
-                center,
+                &drawing.plan,
             );
         }
     }

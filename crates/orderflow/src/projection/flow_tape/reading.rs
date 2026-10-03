@@ -2,7 +2,17 @@
 use super::{FLOW_REGION_WINDOW_MS, FlowScaleBasis, FlowTapeDot, FlowTapeFrame};
 use rust_decimal::Decimal;
 
+/// Emphasize the upper two octaves of visible regional volume without changing area.
+pub const LARGE_REGION_REFERENCE_DIVISOR: u32 = 4;
+
 impl FlowTapeFrame {
+    /// Inclusive full-colour volume threshold; smaller isolated regions also qualify.
+    pub fn large_region_threshold(&self) -> Option<Decimal> {
+        self.effective_reference
+            .filter(|reference| *reference > Decimal::ZERO)
+            .map(|reference| reference / Decimal::from(LARGE_REGION_REFERENCE_DIVISOR))
+    }
+
     /// Exact facts for any renderer; time-zone formatting stays with its caller.
     pub fn inspection_details(
         &self,
@@ -14,7 +24,7 @@ impl FlowTapeFrame {
     ) -> Vec<String> {
         let mark = &dot.mark;
         let mut rows = vec![
-            "Circle at the pooled regional centre.".to_owned(),
+            "Symbol may be separated above its source; executed prices remain factual.".to_owned(),
             format!(
                 "Buy {} · Sell {} · Total {}",
                 fmt_decimal(mark.buy_quantity),
@@ -35,6 +45,16 @@ impl FlowTapeFrame {
         if let Some(reference) = self.effective_reference {
             rows.push(format!("Volume reference {}", fmt_decimal(reference)));
         }
+        if let Some(threshold) = self.large_region_threshold() {
+            rows.push(format!(
+                "Ordinary regions: full colour at total >= {} (scale / 4), or when isolated.",
+                fmt_decimal(threshold)
+            ));
+        }
+        rows.push("Dim context keeps full volume and area; brightness is emphasis.".into());
+        rows.push(
+            "Dim context is drawn beneath footprint; inspection retains exact quantities.".into(),
+        );
         rows.push(format!(
             "Fixed {FLOW_REGION_WINDOW_MS} ms price/time regions; not individual orders."
         ));
@@ -105,6 +125,7 @@ pub fn caption_text(
                     },
                 ),
         );
+        hints.push("bright >= scale/4 or isolated; dim retains volume".to_owned());
     }
     if progress.pending {
         hints.push(
