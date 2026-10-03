@@ -192,14 +192,16 @@ fn merged_frame(count: usize) -> FlowTapeFrame {
         .map(|n| {
             // Only the 129th member extends both price and candle span and adds
             // two buys. A DTO that recomputes from its first 128 members loses it.
-            source_trade(
+            let mut trade = source_trade(
                 n,
                 if n == 128 { 120 } else { 100 },
                 if n == 128 { 2 } else { 1 },
-            )
+            );
+            trade.timestamp_ms = 1_000 + n as i64;
+            trade
         })
         .collect::<Vec<_>>();
-    // All native cells lie in a 1x1 screen-unit box under a 12-unit support.
+    // All native cells lie in one second and a 1x1 box under a 12-unit support.
     // The public projection must therefore produce the one marked region.
     let frame = projected(&trades, 64, 1.0, 1.0);
     assert_eq!(
@@ -213,8 +215,8 @@ fn merged_frame(count: usize) -> FlowTapeFrame {
 #[test]
 fn member_page_boundary_keeps_unlisted_member_volume_and_actual_spans() {
     for (count, buy, end_slot, high_price, last_time) in [
-        (128, "64", "2", "100", 13_700),
-        (129, "66", "3", "120", 13_800),
+        (128, "64", "2", "100", 1_127),
+        (129, "66", "3", "120", 1_128),
     ] {
         let frame = merged_frame(count);
         let value = wire(&frame, settled(&frame));
@@ -231,7 +233,8 @@ fn member_page_boundary_keeps_unlisted_member_volume_and_actual_spans() {
         assert_eq!(mark["buy_quantity"], buy);
         assert_eq!(mark["sell_quantity"], "64");
         assert_eq!(mark["trade_count"], count.to_string());
-        assert_eq!(mark["native_cells"], count.to_string());
+        assert_eq!(mark["native_cells"], if count == 128 { "3" } else { "4" });
+        assert_eq!(value["region_window_ms"], "1000");
         assert_eq!(mark["first_slot"], "0");
         assert_eq!(mark["end_slot"], end_slot);
         assert_eq!(mark["price_low"], "100");

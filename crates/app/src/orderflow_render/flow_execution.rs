@@ -1,82 +1,66 @@
 //! Compact history execution groups on the FLOW candle coordinate system.
 use super::bubbles::{PIE_START_ANGLE, SphereShading, add_sector};
 use eframe::egui;
-use quantick_orderflow::{
-    HeatmapConfig,
-    projection::flow_tape::{FlowProgress, FlowTapeDot, FlowTapeFrame},
-};
+pub(super) use quantick_chart::flow_execution::FlowDisc;
+#[cfg(test)]
+use quantick_orderflow::HeatmapConfig;
+use quantick_orderflow::projection::flow_tape::{FlowProgress, FlowTapeDot, FlowTapeFrame};
+#[cfg(test)]
 use rust_decimal::Decimal;
 
 // Translucent regional area remains distinct while candle contours stay in front.
-const FLOW_FILL_OPACITY: f32 = 0.85;
+const FLOW_FILL_OPACITY: f32 = 0.65;
 // FLOW volume uses its own palette, distinct from candle direction and native Tape.
 pub(super) const FLOW_BUY: egui::Color32 = egui::Color32::from_rgb(112, 185, 244);
 pub(super) const FLOW_SELL: egui::Color32 = egui::Color32::from_rgb(232, 175, 99);
-// One translation preserves the execution path and every inter-region distance.
-const FLOW_OFFSET: egui::Vec2 = egui::vec2(-18.0, -18.0);
-
-#[derive(Clone, Copy)]
-pub(super) struct FlowDisc {
-    pub center: egui::Pos2,
-    pub radius: f32,
-}
-impl FlowDisc {
-    pub fn visible(self, history: egui::Rect) -> bool {
-        history.distance_sq_to_pos(self.center) < self.radius.powi(2)
-    }
-    pub fn hit_distance(self, history: egui::Rect, pointer: egui::Pos2) -> Option<f32> {
-        let distance = self.center.distance_sq(pointer);
-        (history.contains(pointer)
-            && self.visible(history)
-            && distance <= self.radius.max(6.0).powi(2))
-        .then_some(distance)
-    }
-}
+#[cfg(test)]
+const FLOW_OFFSET: egui::Vec2 = egui::vec2(
+    quantick_chart::flow_execution::FLOW_EXECUTION_OFFSET[0],
+    quantick_chart::flow_execution::FLOW_EXECUTION_OFFSET[1],
+);
 
 /// One factual gross-area disc shared by paint and passive inspection.
 pub(super) fn flow_disc(dot: &FlowTapeDot, center: egui::Pos2) -> Option<FlowDisc> {
-    (center.is_finite()
-        && dot.radius.is_finite()
-        && dot.radius > 0.0
-        && dot.mark.quantity > Decimal::ZERO)
-        .then_some(FlowDisc {
-            center: center + FLOW_OFFSET,
-            radius: dot.radius,
-        })
+    FlowDisc::new(dot, center.into())
 }
 
-pub(crate) fn draw_flow_executions(
+#[cfg(test)]
+fn draw_flow_executions(
     painter: &egui::Painter,
     rect: egui::Rect,
     lane_width: f32,
     frame: &FlowTapeFrame,
     _config: &HeatmapConfig,
     backing: Option<egui::Color32>,
-    mut center: impl FnMut(&FlowTapeDot) -> Option<egui::Pos2>,
+    center: impl FnMut(&FlowTapeDot) -> Option<egui::Pos2>,
 ) {
     let history = rect.with_max_x(rect.right() - lane_width);
-    let clip = painter.with_clip_rect(history);
-    for dot in &frame.dots {
+    painter
+        .with_clip_rect(history)
+        .add(egui::Shape::mesh(flow_mesh(
+            history, frame, backing, center,
+        )));
+}
+
+pub(super) fn flow_mesh(
+    history: egui::Rect,
+    frame: &FlowTapeFrame,
+    backing: Option<egui::Color32>,
+    mut center: impl FnMut(&FlowTapeDot) -> Option<egui::Pos2>,
+) -> egui::Mesh {
+    let mut mesh = egui::Mesh::default();
+    let colors = [flow_colors(backing, false), flow_colors(None, true)];
+    for dot in frame.dots_in_paint_order() {
         let Some(disc) = center(dot)
             .and_then(|at| flow_disc(dot, at))
-            .filter(|disc| disc.visible(history))
+            .filter(|disc| disc.visible([history.min.into(), history.max.into()]))
         else {
             continue;
         };
-        // A visible footprint must not change sector colours. The opaque neutral
-        // backing occupies exactly the earned disc, with no rim or minimum floor.
-        if let Some(color) = backing.filter(|_| !dot.opening_oversized) {
-            clip.circle_filled(disc.center, disc.radius, color);
-        }
-        let opacity = if dot.opening_oversized {
-            FLOW_FILL_OPACITY * quantick_orderflow::config::dressing::HOLLOW_FILL_ALPHA
-        } else {
-            FLOW_FILL_OPACITY
-        };
+        let [buy_color, sell_color] = colors[usize::from(dot.opening_oversized)];
         let (buy, sell) = dot.side_shares();
-        let mut mesh = egui::Mesh::default();
         let mut angle = f64::from(PIE_START_ANGLE);
-        for (share, color) in [(buy, FLOW_BUY), (sell, FLOW_SELL)] {
+        for (share, color) in [(buy, buy_color), (sell, sell_color)] {
             if share <= 0.0 {
                 continue;
             }
@@ -84,17 +68,39 @@ pub(crate) fn draw_flow_executions(
             let sweep = share * std::f64::consts::TAU;
             add_sector(
                 &mut mesh,
-                disc.center,
+                disc.center.into(),
                 disc.radius,
                 angle as f32,
                 sweep as f32,
-                SphereShading::flat(color.gamma_multiply(opacity)),
+                SphereShading::flat(color),
                 0.0,
             );
             angle += sweep;
         }
-        clip.add(egui::Shape::mesh(mesh));
     }
+    mesh
+}
+
+/// Compose neutral isolation into the earned sectors, without extra circle geometry.
+/// Glow blends premultiplied sRGBA in gamma space; linear Rgba would change the tone.
+pub(super) fn flow_colors(backing: Option<egui::Color32>, oversized: bool) -> [egui::Color32; 2] {
+    let opacity = FLOW_FILL_OPACITY
+        * if oversized {
+            quantick_orderflow::config::dressing::HOLLOW_FILL_ALPHA
+        } else {
+            1.0
+        };
+    [FLOW_BUY, FLOW_SELL].map(|color| {
+        let color = color.gamma_multiply(opacity);
+        let Some(backing) = backing.filter(|_| !oversized) else {
+            return color;
+        };
+        let remaining = 1.0 - f32::from(color.a()) / 255.0;
+        let [r, g, b, a] = std::array::from_fn(|index| {
+            (f32::from(color[index]) + f32::from(backing[index]) * remaining).round() as u8
+        });
+        egui::Color32::from_rgba_premultiplied(r, g, b, a)
+    })
 }
 
 /// Regional chrome is docked after the native legend, including incomplete first frames.

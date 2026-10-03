@@ -21,7 +21,7 @@ pub(crate) fn draw_flow_perimeters(
     for dot in frame.dots.iter().filter(|dot| dot.opening_oversized) {
         let Some(disc) = center(dot)
             .and_then(|at| flow_disc(dot, at))
-            .filter(|disc| disc.visible(history))
+            .filter(|disc| disc.visible([history.min.into(), history.max.into()]))
         else {
             continue;
         };
@@ -35,7 +35,7 @@ pub(crate) fn draw_flow_perimeters(
         }
         clip.add(egui::Shape::mesh(mesh));
         let clipped = !history.contains_rect(egui::Rect::from_center_size(
-            disc.center,
+            disc.center.into(),
             egui::Vec2::splat(disc.radius * 2.0),
         ));
         let label = clip.layout_no_wrap(
@@ -48,8 +48,10 @@ pub(crate) fn draw_flow_perimeters(
             crate::theme::TEXT_PRIMARY,
         );
         if label.size().x <= history.width() && label.size().y <= history.height() {
-            let origin =
-                history.shrink2(label.size() * 0.5).clamp(disc.center) - label.size() * 0.5;
+            let origin = history
+                .shrink2(label.size() * 0.5)
+                .clamp(disc.center.into())
+                - label.size() * 0.5;
             clip.galley_with_override_text_color(
                 origin + egui::vec2(1.0, 1.0),
                 label.clone(),
@@ -74,7 +76,7 @@ fn add_perimeter(
         let base = mesh.vertices.len() as u32;
         for [x, y] in quad {
             mesh.vertices.push(Vertex {
-                pos: disc.center + egui::vec2(x, y),
+                pos: egui::Pos2::from(disc.center) + egui::vec2(x, y),
                 uv: WHITE_UV,
                 color,
             });
@@ -91,7 +93,7 @@ mod tests {
     fn silhouettes_never_expand_or_fill_the_earned_disc_even_at_subpixel_radii() {
         for radius in [0.01, 0.2, 1.0, 3.0, 12.0] {
             let disc = FlowDisc {
-                center: egui::Pos2::ZERO,
+                center: [0.0, 0.0],
                 radius,
             };
             let mut mesh = egui::Mesh::default();
@@ -105,7 +107,7 @@ mod tests {
             );
             assert!(!mesh.is_empty());
             for vertex in &mesh.vertices {
-                let distance = vertex.pos.distance(disc.center);
+                let distance = vertex.pos.distance(disc.center.into());
                 assert!(distance <= radius + 0.00001);
                 assert!(distance >= radius * 0.75 - 0.00001);
             }
@@ -120,10 +122,9 @@ mod tests {
             );
             assert!(!exception.is_empty());
             assert!(
-                exception
-                    .vertices
-                    .iter()
-                    .all(|vertex| vertex.pos.distance(disc.center) >= radius * 0.75 - 0.00001)
+                exception.vertices.iter().all(
+                    |vertex| vertex.pos.distance(disc.center.into()) >= radius * 0.75 - 0.00001
+                )
             );
             assert_ne!(exception.vertices, mesh.vertices);
         }

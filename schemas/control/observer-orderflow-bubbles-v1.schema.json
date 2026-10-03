@@ -293,6 +293,10 @@
           "$ref": "#/$defs/CanonicalDecimal",
           "description": "Ordinary reference radius; the first daily region can exceed it when excluded."
         },
+        "region_window_ms": {
+          "$ref": "#/$defs/WireU64",
+          "description": "Intrinsic aligned interval before spatial pooling; never an order identifier."
+        },
         "retained_source_count": {
           "$ref": "#/$defs/WireU64"
         },
@@ -341,6 +345,7 @@
         "opening_exclusion_effective",
         "radius_limit_px",
         "merge_support_radius_px",
+        "region_window_ms",
         "ignore_opening",
         "buy_quantity",
         "sell_quantity",

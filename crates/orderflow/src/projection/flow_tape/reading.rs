@@ -1,5 +1,5 @@
 //! Factual regional inspection and calibration text, independent of pixels.
-use super::{FlowScaleBasis, FlowTapeDot, FlowTapeFrame};
+use super::{FLOW_REGION_WINDOW_MS, FlowScaleBasis, FlowTapeDot, FlowTapeFrame};
 use rust_decimal::Decimal;
 
 impl FlowTapeFrame {
@@ -35,6 +35,9 @@ impl FlowTapeFrame {
         if let Some(reference) = self.effective_reference {
             rows.push(format!("Volume reference {}", fmt_decimal(reference)));
         }
+        rows.push(format!(
+            "Fixed {FLOW_REGION_WINDOW_MS} ms price/time regions; not individual orders."
+        ));
         if dot.opening_quantity > rust_decimal::Decimal::ZERO {
             rows.push(format!(
                 "Recorded opening {}",
@@ -89,10 +92,14 @@ pub fn caption_text(
             frame
                 .and_then(|frame| frame.effective_reference)
                 .map_or_else(
-                    || "Regional sell / buy volume · visible scale".to_owned(),
+                    || {
+                        format!(
+                            "{FLOW_REGION_WINDOW_MS} ms regions · area = volume · visible scale"
+                        )
+                    },
                     |reference| {
                         format!(
-                            "Regional sell / buy volume · scale {}",
+                            "{FLOW_REGION_WINDOW_MS} ms regions · area = volume · scale {}",
                             crate::config::labels::format_quantity(reference)
                         )
                     },

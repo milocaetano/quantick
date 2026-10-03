@@ -6,6 +6,8 @@ mod hull;
 mod opening_anchor;
 #[path = "tests/reading.rs"]
 mod reading;
+#[path = "tests/time_regions.rs"]
+mod time_regions;
 fn trade(time: i64, price: i64, quantity: i64, side: Side) -> Trade {
     Trade {
         agg_id: 1,
@@ -203,9 +205,20 @@ fn dense_bounded_source_cells_are_bounded_and_conserve_every_member() {
         trades.len(),
         view(1.0),
     );
-    assert_eq!(f.dots.len(), 1);
-    assert_eq!(f.dots[0].members.len(), 80_000);
-    assert_eq!(f.dots[0].mark.quantity, Decimal::from(80_000));
+    assert_eq!(f.dots.len(), 8000);
+    assert!(f.dots.iter().all(|dot| dot.members.len() == 10));
+    assert!(
+        f.dots
+            .iter()
+            .all(|dot| dot.mark.quantity == Decimal::from(10))
+    );
+    let mut ordinals = f
+        .dots
+        .iter()
+        .flat_map(|dot| dot.members.iter().map(|member| member.ordinal))
+        .collect::<Vec<_>>();
+    ordinals.sort_unstable();
+    assert_eq!(ordinals, (0..80_000).collect::<Vec<_>>());
 }
 
 #[test]

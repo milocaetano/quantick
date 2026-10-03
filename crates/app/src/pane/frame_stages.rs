@@ -191,35 +191,32 @@ impl<'a> FlowFrame<'a> {
         }
     }
 
+    fn execution_geometry(&self) -> Option<quantick_chart::flow_execution::FlowExecutionGeometry> {
+        let history = self.rect.with_max_x(self.rect.right() - self.lane_width);
+        quantick_chart::flow_execution::FlowExecutionGeometry::new(
+            *self.viewport,
+            self.total,
+            self.prefix_len,
+            self.price_range,
+            [
+                history.left(),
+                history.top(),
+                history.right(),
+                history.bottom(),
+            ],
+            self.inverted,
+        )
+    }
+
     fn execution_centers(
         &self,
     ) -> Option<
         impl Fn(&quantick_orderflow::projection::flow_tape::FlowTapeDot) -> Option<egui::Pos2> + '_,
     > {
-        use quantick_orderflow::projection::PriceWindow;
-        use rust_decimal::{
-            Decimal,
-            prelude::{FromPrimitive as _, ToPrimitive as _},
-        };
-        let prices = Decimal::from_f64(self.price_range.0)
-            .zip(Decimal::from_f64(self.price_range.1))
-            .and_then(|(low, high)| PriceWindow::new(low, high))?;
-        let history = self.rect.with_max_x(self.rect.right() - self.lane_width);
+        let geometry = self.execution_geometry()?;
         Some(
             move |dot: &quantick_orderflow::projection::flow_tape::FlowTapeDot| {
-                let position = dot.candle_position.to_f32()? + self.prefix_len as f32 - 0.5;
-                let point = egui::pos2(
-                    self.viewport
-                        .x_at_bar_position(position, history.right(), self.total),
-                    quantick_chart::flow_execution::flow_price_y(
-                        prices,
-                        dot.mark.price,
-                        self.rect.top(),
-                        self.rect.height(),
-                        self.inverted,
-                    ),
-                );
-                Some(point)
+                geometry.point(dot).map(|(x, y)| egui::pos2(x, y))
             },
         )
     }
@@ -262,17 +259,15 @@ impl<'a> FlowFrame<'a> {
         backing: Option<egui::Color32>,
     ) {
         if let Some(owner) = owner
-            && let Some(frame) = owner.flow_execution_frame()
-            && let Some(center) = self.execution_centers()
+            && let Some(frame) = owner.flow_execution_handle()
+            && let Some(geometry) = self.execution_geometry()
         {
-            crate::orderflow_render::draw_flow_executions(
+            crate::orderflow_render::draw_cached_flow(
                 self.painter,
-                self.rect,
-                self.lane_width,
+                self.rect.with_max_x(self.rect.right() - self.lane_width),
                 frame,
-                owner.cached_config(),
+                geometry,
                 backing,
-                center,
             );
         }
     }

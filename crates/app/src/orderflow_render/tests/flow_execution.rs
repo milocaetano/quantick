@@ -1,4 +1,6 @@
 use super::*;
+#[path = "flow_stage_profile.rs"]
+mod profile;
 use quantick_engine::{Side, Trade};
 use quantick_orderflow::projection::{
     PriceWindow,
@@ -137,24 +139,26 @@ fn translucent_circles_preserve_side_areas_without_cutoffs_or_inherited_dressing
 }
 
 #[test]
-fn footprint_backing_is_opaque_and_exactly_the_earned_disc_before_unchanged_sectors() {
+fn footprint_isolation_is_opaque_without_adding_to_the_earned_sector_geometry() {
     let background = egui::Color32::from_rgb(13, 17, 23);
     for (buy, sell) in [(1, 0), (51, 49), (4593, 4594)] {
-        let (frame, plain) = painted_region(buy, sell);
+        let (_, plain) = painted_region(buy, sell);
         let (_, backed) = painted_region_with_backing(buy, sell, Some(background));
-        assert_eq!(backed.len(), 2);
-        let egui::Shape::Circle(disc) = &backed[0] else {
-            panic!("one exact-radius neutral disc precedes the sectors")
+        assert_eq!(backed.len(), 1);
+        let egui::Shape::Mesh(sectors) = &plain[0] else {
+            panic!("ordinary side geometry")
         };
-        assert_eq!(disc.center, egui::pos2(50.0, 50.0) + FLOW_OFFSET);
-        assert_eq!(disc.radius, frame.dots[0].radius);
-        assert_eq!(disc.fill, background);
-        assert_eq!(disc.fill.a(), 255);
-        assert_eq!(disc.stroke, egui::Stroke::NONE);
-        assert_eq!(
-            backed[1], plain[0],
-            "backing cannot change quantitative geometry or colors"
-        );
+        let egui::Shape::Mesh(isolated) = &backed[0] else {
+            panic!("isolated side geometry")
+        };
+        assert_eq!(sectors.indices, isolated.indices);
+        assert_eq!(sectors.vertices.len(), isolated.vertices.len());
+        for (plain, isolated) in sectors.vertices.iter().zip(&isolated.vertices) {
+            assert_eq!(plain.pos, isolated.pos);
+            assert_eq!(plain.uv, isolated.uv);
+            assert_eq!(isolated.color.a(), 255);
+            assert_ne!(plain.color, isolated.color);
+        }
     }
 }
 
@@ -164,13 +168,14 @@ fn circle_edge_visibility_and_hit_testing_share_exact_geometry() {
     let history = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0));
     for (x, pointer_x) in [(-10.0, 1.0), (110.0, 99.0)] {
         let disc = flow_disc(&frame.dots[0], egui::pos2(x, 50.0) - FLOW_OFFSET).unwrap();
-        assert!(disc.visible(history));
+        assert!(disc.visible([history.min.into(), history.max.into()]));
         assert!(
-            disc.hit_distance(history, egui::pos2(pointer_x, 50.0))
+            disc.hit_distance([history.min.into(), history.max.into()], [pointer_x, 50.0])
                 .is_some()
         );
         assert!(
-            disc.hit_distance(history, disc.center).is_none(),
+            disc.hit_distance([history.min.into(), history.max.into()], disc.center)
+                .is_none(),
             "outside pointer cannot inspect the clip"
         );
     }
@@ -181,10 +186,16 @@ fn circle_edge_visibility_and_hit_testing_share_exact_geometry() {
     ] {
         let disc = flow_disc(&frame.dots[0], center - FLOW_OFFSET).unwrap();
         assert!(
-            !disc.visible(history),
+            !disc.visible([history.min.into(), history.max.into()]),
             "a bounding-box corner is not a circle intersection"
         );
-        assert!(disc.hit_distance(history, history.clamp(center)).is_none());
+        assert!(
+            disc.hit_distance(
+                [history.min.into(), history.max.into()],
+                history.clamp(center).into()
+            )
+            .is_none()
+        );
     }
 }
 
@@ -239,12 +250,21 @@ fn common_offset_preserves_vectors_radii_and_inspects_the_painted_position() {
     let b = egui::pos2(60.0, 75.0);
     let da = flow_disc(&frame.dots[0], a).unwrap();
     let db = flow_disc(&frame.dots[0], b).unwrap();
-    assert_eq!(da.center, a + egui::vec2(-18.0, -18.0));
-    assert_eq!(db.center - da.center, b - a);
+    assert_eq!(egui::Pos2::from(da.center), a + FLOW_OFFSET);
+    assert_eq!(
+        egui::Pos2::from(db.center) - egui::Pos2::from(da.center),
+        b - a
+    );
     assert_eq!(da.radius, frame.dots[0].radius);
     let history = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(100.0, 100.0));
-    assert_eq!(da.hit_distance(history, da.center), Some(0.0));
-    assert!(da.hit_distance(history, a).is_none());
+    assert_eq!(
+        da.hit_distance([history.min.into(), history.max.into()], da.center),
+        Some(0.0)
+    );
+    assert!(
+        da.hit_distance([history.min.into(), history.max.into()], a.into())
+            .is_none()
+    );
     let paint = |frame: &FlowTapeFrame| {
         let ctx = egui::Context::default();
         ctx.run(egui::RawInput::default(), |ctx| {
@@ -277,7 +297,7 @@ fn common_offset_preserves_vectors_radii_and_inspects_the_painted_position() {
     assert!(
         mesh.vertices
             .iter()
-            .all(|vertex| vertex.pos.distance(da.center) <= da.radius + 0.00001)
+            .all(|vertex| vertex.pos.distance(da.center.into()) <= da.radius + 0.00001)
     );
 }
 
@@ -346,5 +366,247 @@ fn oversized_opening_value_stays_inside_the_pane_even_when_its_perimeter_is_clip
             .expect("exact value survives even when the giant circumference is outside the pane");
         assert_eq!(text.galley.job.text, "First 74365 (clipped)");
         assert!(history.contains_rect(egui::Rect::from_min_size(text.pos, text.galley.size())));
+    }
+}
+
+#[test]
+fn flat_centered_sectors_use_one_fan_without_changing_the_outer_arc() {
+    use crate::orderflow_render::bubbles::{SPHERE_LIGHT_OFFSET, sphere_segments};
+
+    let center = egui::pos2(30.0, 40.0);
+    let shading = SphereShading::flat(egui::Color32::GRAY);
+    for radius in [0.1, 0.5, 3.5, 7.0, 12.0, 120.0] {
+        for share in [0.001, 0.01, 0.25, 0.5, 0.75, 1.0] {
+            let sweep = share * std::f32::consts::TAU;
+            let full = sphere_segments(radius).next_multiple_of(4);
+            let segments = ((full as f32 * share).round() as usize).max(2);
+            let mut flat = egui::Mesh::default();
+            add_sector(
+                &mut flat,
+                center,
+                radius,
+                PIE_START_ANGLE,
+                sweep,
+                shading,
+                0.0,
+            );
+            assert_eq!(flat.vertices.len(), segments + 2);
+            assert_eq!(flat.indices.len(), segments * 3);
+            assert_eq!(flat.vertices[0].pos, center);
+            for (index, vertex) in flat.vertices[1..].iter().enumerate() {
+                let angle = PIE_START_ANGLE + sweep * (index as f32 / segments as f32);
+                assert_eq!(
+                    vertex.pos,
+                    center + egui::vec2(angle.cos(), angle.sin()) * radius
+                );
+                assert_eq!(vertex.color, egui::Color32::GRAY);
+            }
+            let mut native = egui::Mesh::default();
+            add_sector(
+                &mut native,
+                center,
+                radius,
+                PIE_START_ANGLE,
+                sweep,
+                shading,
+                SPHERE_LIGHT_OFFSET,
+            );
+            let native_segments = ((sphere_segments(radius) as f32 * share).ceil() as usize).max(2);
+            assert_eq!(native.vertices.len(), 2 * native_segments + 3);
+            assert_eq!(native.indices.len(), native_segments * 9);
+        }
+    }
+    let mut shaded = egui::Mesh::default();
+    add_sector(
+        &mut shaded,
+        center,
+        12.0,
+        PIE_START_ANGLE,
+        std::f32::consts::TAU,
+        SphereShading {
+            core: egui::Color32::WHITE,
+            body: egui::Color32::GRAY,
+            edge: egui::Color32::BLACK,
+        },
+        0.0,
+    );
+    assert_eq!(shaded.vertices.len(), 2 * 24 + 3);
+    assert_eq!(shaded.indices.len(), 24 * 9);
+}
+
+fn dense_flow_fixture(dot_count: u64) -> FlowTapeFrame {
+    // Mid-bin quantiles from the 5,798-region recorded 1000 ms candidate.
+    // They reproduce its size distribution; this is not a replay identity fixture.
+    const QUANTITIES: [i64; 32] = [
+        29, 48, 65, 80, 93, 106, 118, 132, 146, 160, 174, 191, 210, 226, 245, 269, 289, 313, 341,
+        370, 402, 437, 479, 532, 589, 663, 757, 877, 1018, 1279, 1760, 2964,
+    ];
+    let slot_count = dot_count as usize / 40;
+    let trades: Vec<_> = (0..dot_count)
+        .flat_map(|index| {
+            let quantity = if index == 0 {
+                12780
+            } else {
+                QUANTITIES[index as usize % 32]
+            };
+            let buy = quantity * (1 + index as i64 % 3) / 4;
+            [(buy, Side::Buy), (quantity - buy, Side::Sell)].map(|(quantity, side)| Trade {
+                agg_id: index + 1,
+                timestamp_ms: 1000 + index as i64 * 1000,
+                price: (100 + index as i64 % 31).into(),
+                quantity: quantity.into(),
+                side,
+            })
+        })
+        .collect();
+    let frame = project_flow_tape(
+        trades
+            .iter()
+            .enumerate()
+            .map(|(ordinal, trade)| FlowExecution {
+                ordinal,
+                slot: ordinal / 80,
+                accepted_ordinal: ordinal % 80,
+                ticks_per_bar: 80.into(),
+                trade,
+                opening: false,
+            }),
+        1,
+        trades.len(),
+        trades.len(),
+        FlowTapeView {
+            first_slot: 0,
+            end_slot: slot_count,
+            clip_left: 0.into(),
+            clip_right: Decimal::from(slot_count),
+            width_px: 1200.0,
+            height_px: 795.0,
+            prices: PriceWindow::new(90.into(), 140.into()).unwrap(),
+            reference: FlowReference::Typed(12780.into()),
+            radius_limit: 12.0,
+            merge_support_radius: 6.0,
+            exclude_opening: false,
+        },
+    );
+    assert_eq!(frame.dots.len(), dot_count as usize);
+    frame
+}
+
+#[test]
+#[ignore = "manual production FLOW cache cold, warm and invalidated frame timing"]
+fn dense_production_flow_cache_benchmark() {
+    use quantick_chart::{flow_execution::FlowExecutionGeometry, viewport::Viewport};
+    use std::{sync::Arc, time::Instant};
+
+    for dot_count in [6000_u64, 30000] {
+        let frame = Arc::new(dense_flow_fixture(dot_count));
+        let slot_count = dot_count as usize / 40;
+        let mut viewport = Viewport::new();
+        viewport.set_px_per_bar(1200.0 / slot_count as f32);
+        let geometry = |price_shift: f64| {
+            FlowExecutionGeometry::new(
+                viewport,
+                slot_count,
+                0,
+                (90.0 + price_shift, 140.0 + price_shift),
+                [20.0, 20.0, 1220.0, 815.0],
+                false,
+            )
+            .unwrap()
+        };
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1240.0, 835.0));
+        let history = egui::Rect::from_min_max(egui::pos2(20.0, 20.0), egui::pos2(1220.0, 815.0));
+        let paint = |source: &Arc<FlowTapeFrame>, geometry| {
+            let started = Instant::now();
+            let output = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ctx| {
+                    crate::orderflow_render::draw_cached_flow(
+                        &ctx.layer_painter(egui::LayerId::background()),
+                        history,
+                        source,
+                        geometry,
+                        Some(egui::Color32::from_rgb(19, 23, 34)),
+                    );
+                },
+            );
+            let shapes = output.shapes.len();
+            let paint_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let tessellation_started = Instant::now();
+            let primitives = ctx.tessellate(output.shapes, output.pixels_per_point);
+            let tessellation_ms = tessellation_started.elapsed().as_secs_f64() * 1000.0;
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let counts =
+                primitives
+                    .iter()
+                    .fold((shapes, 0, 0), |(shapes, vertices, indices), primitive| {
+                        if let egui::epaint::Primitive::Mesh(mesh) = &primitive.primitive {
+                            (
+                                shapes,
+                                vertices + mesh.vertices.len(),
+                                indices + mesh.indices.len(),
+                            )
+                        } else {
+                            (shapes, vertices, indices)
+                        }
+                    });
+            (elapsed_ms, paint_ms, tessellation_ms, counts)
+        };
+        let cold = paint(&frame, geometry(0.0));
+        println!(
+            "DENSE_FLOW_PRODUCTION_CACHE_COLD {{\"dots\":{dot_count},\"total_ms\":{:.6},\"paint_ms\":{:.6},\"final_tessellation_ms\":{:.6},\"shapes\":{},\"vertices\":{},\"indices\":{}}}",
+            cold.0, cold.1, cold.2, cold.3.0, cold.3.1, cold.3.2,
+        );
+        for mode in ["warm_same_arc", "new_source_arc", "changed_price_axis"] {
+            let mut samples = Vec::new();
+            let mut paint_total = 0.0;
+            let mut tessellation_total = 0.0;
+            let (warmup, measured) = if mode == "warm_same_arc" {
+                (30, 100)
+            } else {
+                (2, 10)
+            };
+            for iteration in 0..warmup + measured {
+                // Worker projection and camera-key creation are outside renderer timing.
+                let source = if mode == "new_source_arc" {
+                    let mut next = (*frame).clone();
+                    next.source_revision += iteration as u64 + 1;
+                    Arc::new(next)
+                } else {
+                    Arc::clone(&frame)
+                };
+                let shift = if mode == "changed_price_axis" {
+                    (iteration + 1) as f64 * 0.001
+                } else {
+                    0.0
+                };
+                let result = paint(&source, geometry(shift));
+                if mode == "warm_same_arc" {
+                    assert_eq!(
+                        result.3, cold.3,
+                        "the same frame retains every cached triangle"
+                    );
+                }
+                if iteration >= warmup {
+                    samples.push(result.0);
+                    paint_total += result.1;
+                    tessellation_total += result.2;
+                }
+            }
+            samples.sort_by(f64::total_cmp);
+            let p95 = (samples.len() * 95).div_ceil(100) - 1;
+            println!(
+                "DENSE_FLOW_PRODUCTION_CACHE {{\"dots\":{dot_count},\"mode\":\"{mode}\",\"frames\":{},\"mean_ms\":{:.6},\"p95_ms\":{:.6},\"paint_mean_ms\":{:.6},\"final_tessellation_mean_ms\":{:.6}}}",
+                samples.len(),
+                samples.iter().sum::<f64>() / samples.len() as f64,
+                samples[p95],
+                paint_total / samples.len() as f64,
+                tessellation_total / samples.len() as f64,
+            );
+        }
     }
 }

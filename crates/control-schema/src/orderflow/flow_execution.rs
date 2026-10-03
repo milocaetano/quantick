@@ -2,7 +2,7 @@
 use quantick_control::wire::{CanonicalDecimal, WireU64};
 use quantick_control_host::wire::{canonical_decimal, wire_usize};
 use quantick_orderflow::projection::flow_tape::{
-    FlowProgress, FlowReference, FlowScaleBasis, FlowTapeDot, FlowTapeFrame,
+    FLOW_REGION_WINDOW_MS, FlowProgress, FlowReference, FlowScaleBasis, FlowTapeDot, FlowTapeFrame,
 };
 use rust_decimal::Decimal;
 use schemars::JsonSchema;
@@ -32,6 +32,8 @@ pub struct FlowExecutionSnapshot {
     /// Ordinary reference radius; the first daily region can exceed it when excluded.
     pub radius_limit_px: CanonicalDecimal,
     pub merge_support_radius_px: CanonicalDecimal,
+    /// Intrinsic aligned interval before spatial pooling; never an order identifier.
+    pub region_window_ms: WireU64,
     pub ignore_opening: bool,
     pub buy_quantity: CanonicalDecimal,
     pub sell_quantity: CanonicalDecimal,
@@ -171,6 +173,7 @@ impl From<(&FlowTapeFrame, FlowProgress)> for FlowExecutionSnapshot {
                 Decimal::from_f32_retain(frame.view.merge_support_radius).unwrap_or_default(),
             ),
             ignore_opening: frame.view.exclude_opening,
+            region_window_ms: WireU64(FLOW_REGION_WINDOW_MS as u64),
             buy_quantity: canonical_decimal(buy),
             sell_quantity: canonical_decimal(sell),
             trade_count: wire_usize(frame.dots.iter().map(|dot| dot.mark.trade_count).sum()),

@@ -332,15 +332,33 @@ fn other_discs_left_of(output: &egui::FullOutput, x: f32) -> usize {
         .count()
 }
 
-fn regional_colours(_app: &QuantickApp) -> [egui::Color32; 2] {
+fn regional_colours(app: &QuantickApp) -> [egui::Color32; 2] {
     [
         egui::Color32::from_rgb(112, 185, 244),
         egui::Color32::from_rgb(232, 175, 99),
     ]
-    .map(|color| color.gamma_multiply(0.85))
+    .map(|color| {
+        let source = color.gamma_multiply(0.65);
+        if !app
+            .active_tab()
+            .flow_pane
+            .layer_visible(ChartLayer::Footprint, &app.style)
+        {
+            return source;
+        }
+        // Independently model the old source-over-opaque-canvas GPU result.
+        let rgb = std::array::from_fn(|channel| {
+            (f64::from(source[channel])
+                + f64::from(app.style.canvas.background[channel])
+                    * (1.0 - f64::from(source.a()) / 255.0))
+                .round() as u8
+        });
+        let [r, g, b] = rgb;
+        egui::Color32::from_rgb(r, g, b)
+    })
 }
 
-/// Exact translucent sector meshes in history, excluding candle outlines and Tape.
+/// The packed regional sector mesh in history, excluding candle outlines and Tape.
 fn regional_circles(app: &QuantickApp, output: &egui::FullOutput) -> Vec<egui::Mesh> {
     let frame = &app.active_tab().flow_pane.frame;
     let rect = frame.chart_rect.unwrap();
@@ -388,45 +406,81 @@ fn assert_regional_circles(
     snapshot: &Value,
 ) -> Vec<egui::Mesh> {
     let circles = regional_circles(app, output);
-    let marks = snapshot["marks"].as_array().unwrap();
-    assert!(!circles.is_empty(), "regional circles must be painted");
-    assert_eq!(
-        circles.len(),
-        marks.len(),
-        "exactly one mesh per published region"
-    );
-    for (mesh, mark) in circles.iter().zip(marks) {
-        let radius: f32 = mark["radius_px"].as_str().unwrap().parse().unwrap();
-        let center = mesh.vertices[0].pos;
-        let extent = mesh
-            .vertices
+    assert_eq!(circles.len(), 1, "one packed regional mesh must be painted");
+    let mesh = &circles[0];
+    assert!(mesh.is_valid());
+    assert_eq!(mesh.texture_id, egui::TextureId::default());
+    assert!(
+        mesh.vertices
             .iter()
-            .map(|vertex| center.distance(vertex.pos))
-            .fold(0.0_f32, f32::max);
+            .all(|vertex| vertex.uv == egui::epaint::WHITE_UV)
+    );
+    let colours = regional_colours(app);
+    // Each flat fan triangle begins at its factual regional centre. The two
+    // side fans share that position, so recover regions without re-rendering.
+    let mut regions: Vec<(egui::Pos2, f32, [f32; 2])> = Vec::new();
+    assert_eq!(mesh.indices.len() % 3, 0);
+    for triangle in mesh.indices.as_chunks::<3>().0 {
+        let a = mesh.vertices[triangle[0] as usize];
+        let b = mesh.vertices[triangle[1] as usize];
+        let c = mesh.vertices[triangle[2] as usize];
+        let side = colours
+            .iter()
+            .position(|colour| *colour == a.color)
+            .unwrap();
+        assert_eq!(a.color, b.color);
+        assert_eq!(a.color, c.color);
+        if regions.last().is_none_or(|region| region.0 != a.pos) {
+            regions.push((a.pos, 0.0, [0.0; 2]));
+        }
+        let region = regions.last_mut().unwrap();
+        region.1 = region
+            .1
+            .max(a.pos.distance(b.pos))
+            .max(a.pos.distance(c.pos));
+        let b = b.pos - a.pos;
+        let c = c.pos - a.pos;
+        region.2[side] += (b.x * c.y - b.y * c.x).abs() * 0.5;
+    }
+    assert_eq!(snapshot["marks_truncated"], false);
+    let mut marks: Vec<_> = snapshot["marks"].as_array().unwrap().iter().collect();
+    let number = |mark: &Value, field: &str| mark[field].as_str().unwrap().parse::<f64>().unwrap();
+    assert!(marks.iter().all(|mark| mark["opening_oversized"] == false));
+    // Readback remains chronological while ordinary painting is stable by volume.
+    marks.sort_by(|a, b| {
+        (number(a, "buy_quantity") + number(a, "sell_quantity"))
+            .total_cmp(&(number(b, "buy_quantity") + number(b, "sell_quantity")))
+    });
+    assert_eq!(
+        regions.len(),
+        marks.len(),
+        "every published region occurs exactly once in the packed mesh"
+    );
+    let pane = &app.active_tab().flow_pane;
+    let rect = pane.frame.chart_rect.unwrap();
+    let right = pane.frame.lane_divider_x.unwrap_or(rect.right());
+    let (low, high) = pane.price_view.resolve(pane.frame.auto_range.unwrap());
+    let total = pane.state.bars().len() + usize::from(pane.state.partial().is_some());
+    for ((center, extent, areas), mark) in regions.iter().zip(marks) {
+        let radius = number(mark, "radius_px") as f32;
         assert!(
-            (extent - radius).abs() < 0.0001,
+            (*extent - radius).abs() < 0.0001,
             "painted {extent}, published {radius}"
         );
-        let mut areas = [0.0_f32; 2];
-        for triangle in mesh.indices.as_chunks::<3>().0 {
-            let a = mesh.vertices[triangle[0] as usize];
-            let b = mesh.vertices[triangle[1] as usize];
-            let c = mesh.vertices[triangle[2] as usize];
-            let side = regional_colours(app)
-                .iter()
-                .position(|colour| *colour == a.color)
-                .unwrap();
-            assert_eq!(a.color, b.color);
-            assert_eq!(a.color, c.color);
-            let b = b.pos - a.pos;
-            let c = c.pos - a.pos;
-            areas[side] += (b.x * c.y - b.y * c.x).abs() * 0.5;
-        }
-        let buy: f32 = mark["buy_quantity"].as_str().unwrap().parse().unwrap();
-        let sell: f32 = mark["sell_quantity"].as_str().unwrap().parse().unwrap();
+        let x = pane.viewport.x_at_bar_position(
+            number(mark, "candle_position") as f32 - 0.5,
+            right,
+            total,
+        );
+        let y = rect.top() + rect.height() * ((high - number(mark, "price")) / (high - low)) as f32;
+        assert!(center.distance(egui::pos2(x - 18.0, y - 18.0)) < 0.0001);
+        let buy = number(mark, "buy_quantity") as f32;
+        let sell = number(mark, "sell_quantity") as f32;
         assert_eq!(areas[0] > 0.0, buy > 0.0);
         assert_eq!(areas[1] > 0.0, sell > 0.0);
-        assert!((areas[0] / areas.iter().sum::<f32>() - buy / (buy + sell)).abs() < 0.005);
+        let total_area = areas.iter().sum::<f32>();
+        assert!((areas[0] / total_area - buy / (buy + sell)).abs() < 0.005);
+        assert!((total_area / (std::f32::consts::PI * radius.powi(2)) - 1.0).abs() < 0.05);
     }
     circles
 }

@@ -203,6 +203,7 @@ impl FlowTapeSource {
             scale_basis: FlowScaleBasis::Empty,
             opening_exclusion_effective: false,
             dots: Vec::new(),
+            paint_order: Vec::new(),
         };
         if !valid(view) {
             return frame;
@@ -269,6 +270,7 @@ impl FlowTapeSource {
             frame.scale_basis,
             frame.opening_exclusion_effective,
         ) = finish_groups(groups, view);
+        frame.order_for_paint();
         frame
     }
 }

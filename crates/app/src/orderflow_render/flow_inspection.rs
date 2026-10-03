@@ -1,5 +1,4 @@
 //! Passive inspection of the FLOW regions actually painted this frame.
-use super::flow_execution::flow_disc;
 use crate::{paper_chrome::fmt_decimal, theme, timezone::TzOffset};
 use eframe::egui;
 use quantick_civil::{CivilDate, fmt_offset_millisecond};
@@ -20,10 +19,15 @@ pub(crate) struct FlowInspection<'a> {
 /// No interaction widgets, retained selection, source reads, or member expansion.
 pub(crate) fn draw_flow_inspection(
     view: FlowInspection<'_>,
-    center: impl FnMut(&FlowTapeDot) -> Option<egui::Pos2>,
+    mut center: impl FnMut(&FlowTapeDot) -> Option<egui::Pos2>,
 ) -> Option<egui::Rect> {
     let pointer = view.pointer.filter(|point| view.history.contains(*point))?;
-    let dot = hit_region(view.frame, view.history, pointer, center)?;
+    let dot = quantick_chart::flow_execution::hit_flow_region(
+        view.frame,
+        [view.history.min.into(), view.history.max.into()],
+        pointer.into(),
+        |dot| center(dot).map(Into::into),
+    )?;
     let painter = view.painter.with_clip_rect(view.history);
     let width_limit = view.history.width() - 16.0;
     if width_limit < 80.0 {
@@ -74,24 +78,6 @@ pub(crate) fn draw_flow_inspection(
     Some(rect)
 }
 
-fn hit_region(
-    frame: &FlowTapeFrame,
-    history: egui::Rect,
-    pointer: egui::Pos2,
-    mut center: impl FnMut(&FlowTapeDot) -> Option<egui::Pos2>,
-) -> Option<&FlowTapeDot> {
-    frame
-        .dots
-        .iter()
-        .filter_map(|dot| {
-            let at = center(dot)?;
-            let distance = flow_disc(dot, at)?.hit_distance(history, pointer)?;
-            Some((distance, dot))
-        })
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map(|(_, dot)| dot)
-}
-
 fn details(dot: &FlowTapeDot, view: &FlowInspection<'_>) -> Vec<String> {
     let mark = &dot.mark;
     let dates = CivilDate::from_ms(mark.first_timestamp_ms, view.tz)
@@ -118,3 +104,7 @@ fn details(dot: &FlowTapeDot, view: &FlowInspection<'_>) -> Vec<String> {
     );
     rows
 }
+
+#[cfg(test)]
+#[path = "tests/flow_inspection.rs"]
+mod tests;

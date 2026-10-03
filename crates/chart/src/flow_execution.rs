@@ -9,6 +9,11 @@ use quantick_orderflow::projection::{
 };
 use rust_decimal::{Decimal, prelude::FromPrimitive as _};
 
+mod geometry;
+pub use geometry::FlowExecutionGeometry;
+mod disc;
+pub use disc::{FLOW_EXECUTION_OFFSET, FlowBounds, FlowDisc, hit_flow_region};
+
 // Compact marks and a separate spatial support preserve the surrounding candle path.
 const FLOW_RADIUS_LIMIT_PX: f32 = 12.0;
 // A small geometric support pools unresolved neighbours without letting the

@@ -4,6 +4,8 @@ use super::{BubbleStyle, INV_PHI, theme::finite_unit};
 
 mod perimeter;
 pub use perimeter::inner_perimeter_quads;
+mod sector;
+pub use sector::SectorGeometry;
 
 /// Interior alpha of a hollow bubble, as a fraction of the configured fill
 /// alpha: enough tint to keep the disc's area readable, light enough that the

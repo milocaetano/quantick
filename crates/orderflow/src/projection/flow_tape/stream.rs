@@ -219,6 +219,10 @@ impl<R: FlowRunner> FlowSession<R> {
     pub fn frame(&self) -> Option<&FlowTapeFrame> {
         self.frame.as_deref()
     }
+    /// Immutable publication identity, including distinct partial frames.
+    pub fn frame_handle(&self) -> Option<&Arc<FlowTapeFrame>> {
+        self.frame.as_ref()
+    }
     pub fn progress(&self) -> FlowProgress {
         self.progress
     }

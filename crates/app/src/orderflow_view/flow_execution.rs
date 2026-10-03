@@ -18,6 +18,9 @@ impl OrderflowView {
     pub(crate) fn flow_execution_frame(&self) -> Option<&FlowTapeFrame> {
         self.flow_execution.frame()
     }
+    pub(crate) fn flow_execution_handle(&self) -> Option<&std::sync::Arc<FlowTapeFrame>> {
+        self.flow_execution.frame_handle()
+    }
     pub(crate) fn flow_execution_progress(&self) -> FlowProgress {
         self.flow_execution.progress()
     }

@@ -25,6 +25,11 @@ pub const MAX_FLOW_EXECUTIONS: usize = 2_000_000;
 const FLOW_MERGE_WIDTH_PX: f64 = 48.0;
 const FLOW_MERGE_HEIGHT_PX: f64 = 32.0;
 
+/// Fixed time support prevents compressed tick coordinates from pooling minutes
+/// of routine flow into peers of a brief large execution. These are regions,
+/// not reconstructed orders. A multiple of the native 100 ms cell keeps facts whole.
+pub const FLOW_REGION_WINDOW_MS: i64 = 1_000;
+
 /// Production uses one common reference from the final visible regional groups.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum FlowReference {
@@ -169,6 +174,23 @@ pub struct FlowTapeFrame {
     pub scale_basis: FlowScaleBasis,
     pub opening_exclusion_effective: bool,
     pub dots: Vec<FlowTapeDot>,
+    paint_order: Vec<usize>,
+}
+
+impl FlowTapeFrame {
+    /// Computed once per worker projection: the faint first daily exception is
+    /// underneath ordinary volume, then small regions precede large ones.
+    pub fn dots_in_paint_order(&self) -> impl DoubleEndedIterator<Item = &FlowTapeDot> {
+        self.paint_order.iter().map(|&index| &self.dots[index])
+    }
+
+    fn order_for_paint(&mut self) {
+        self.paint_order = (0..self.dots.len()).collect();
+        self.paint_order.sort_by_key(|&index| {
+            let dot = &self.dots[index];
+            (!dot.opening_oversized, dot.mark.quantity, index)
+        });
+    }
 }
 
 /// Bounds of original source positions in logical pixels, never centroid bounds.
@@ -336,15 +358,29 @@ fn finish_groups(
         // Oversized native cells cannot merge. Keep them out of the neighbour
         // index, where near-identical centroids would cause quadratic rejection.
         .partition(|group| group.hull.within_merge_limits());
-    let (mut groups, _) = collide(
-        groups,
-        sizing,
-        &bubbles,
-        &LiveLaneStyle::default(),
-        geometry,
-        Decimal::ZERO,
-        false,
-    );
+    // Separate indexes bound neighbour work even when thousands of distant
+    // time intervals occupy the same pixels. Rejecting only in permits_merge
+    // would leave all those impossible neighbours in one growing index.
+    let mut windows = std::collections::BTreeMap::<i64, Vec<Group>>::new();
+    for group in groups {
+        windows
+            .entry(group.first_timestamp_ms().div_euclid(FLOW_REGION_WINDOW_MS))
+            .or_default()
+            .push(group);
+    }
+    let mut groups = Vec::new();
+    for window in windows.into_values() {
+        let (merged, _) = collide(
+            window,
+            sizing,
+            &bubbles,
+            &LiveLaneStyle::default(),
+            geometry,
+            Decimal::ZERO,
+            false,
+        );
+        groups.extend(merged);
+    }
     groups.append(&mut standalone);
     let Some(full_max) = groups.iter().map(Group::quantity).max() else {
         return (
