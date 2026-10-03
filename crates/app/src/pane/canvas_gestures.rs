@@ -96,9 +96,9 @@ impl ChartPane {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
         }
         // Not with a tool armed: two placement clicks are two anchors. Over
-        // the tape a double click returns it to live and to automatic Y; on an
+        // the tape a double click returns it to live; on an
         // overlay's own line it opens that line; elsewhere the candles snap
-        // back to the live edge.
+        // back to the live edge. Each keeps the chosen zoom and price scale.
         if chart.double_clicked() && primary_free {
             let at = chart.interact_pointer_pos();
             match at.and_then(|position| self.hit_test().overlay_plot_at(position)) {
@@ -106,13 +106,9 @@ impl ChartPane {
                     if let Some(tape) = self.orderflow.as_mut() {
                         tape.set_tape_end(TapeEnd::Live);
                     }
-                    self.price_view.reset();
                 }
                 Some(slot) => self.pending_settings = Some(slot),
-                None => {
-                    self.viewport.snap_to_live();
-                    self.price_view.reset();
-                }
+                None => self.viewport.snap_to_live(),
             }
         }
         if chart.hovered() && !scroll_taken && scroll.abs() > 0.0 {
