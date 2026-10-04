@@ -39,7 +39,9 @@ pub enum LayerScope {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Persistence {
+    /// The chart-layers file, shared by every market.
     Layers,
+    /// The order-flow look, saved per asset with its bubble settings.
     OrderflowPreset,
 }
 

@@ -123,7 +123,7 @@ fn flow_opening_scale_is_independent_retry_safe_and_refuses_context() {
     assert!(
         app.active_tab_mut()
             .tape_mut()
-            .apply_source_preset(Some("mini index regions"))
+            .apply_preset("mini index regions")
     );
     app.active_tab_mut().tape_mut().set_bubbles_enabled(true);
     let pane_id = app.active_tab().flow_pane.id.to_string();

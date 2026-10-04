@@ -22,13 +22,11 @@ fn candle_aggression(app: &QuantickApp) -> bool {
 /// The tab's own symbol switch, without a live feed behind it.
 fn select_market(app: &mut QuantickApp, feed: &str, symbol: &str) {
     let tab = app.active_tab_mut();
-    let previous_feed = tab.feed_id.clone();
-    let previous_symbol = tab.symbol.clone();
     tab.feed_id = feed.to_owned();
     tab.symbol = symbol.to_owned();
     tab.tape_mut().reset_for_symbol(symbol);
     with_config(app, |tab, config| {
-        tab.apply_feed_bubble_preset_after_switch(config, &previous_feed, &previous_symbol);
+        tab.apply_asset_bubbles_after_switch(config);
     });
 }
 

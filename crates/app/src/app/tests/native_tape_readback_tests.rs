@@ -6,7 +6,7 @@ fn native_split(app: &mut QuantickApp) {
     assert!(
         app.active_tab_mut()
             .tape_mut()
-            .apply_source_preset(Some("mini index regions"))
+            .apply_preset("mini index regions")
     );
 }
 

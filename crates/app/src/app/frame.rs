@@ -213,6 +213,12 @@ impl QuantickApp {
                 surfaces::reload_changed_scripts(&mut self.indicators, &mut self.tabs);
                 self.layout_adapter().apply_pending_indicator_state();
                 self.layer_wiring().maintain();
+                // Bubble settings are the asset's on screen; filed once a drag lets go.
+                if !ctx.input(|input| input.pointer.any_down()) {
+                    self.tabs
+                        .iter_mut()
+                        .for_each(crate::tab::Tab::file_asset_bubbles);
+                }
             }
             FrameStage::StatusLine => self.draw_status_line(ctx, scratch),
             FrameStage::LayoutDialogs => self.layout_adapter().draw_layout_delete_confirm(ctx),

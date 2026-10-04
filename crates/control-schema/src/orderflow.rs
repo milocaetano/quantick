@@ -340,6 +340,30 @@ pub struct BubblesStateSnapshot {
     /// absent when the pane last drew no dots.
     #[serde(default)]
     pub volume_dots: Option<VolumeDotsSnapshot>,
+    /// The asset these bubble settings belong to. Every change made while
+    /// it is on screen — the panel, `layers.visibility.set` on
+    /// `bubble_overlap_merge`, `native_tape`, `tape_only` and the flow
+    /// pane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —
+    /// is saved for this asset alone and restored whenever a tab shows it
+    /// again. Absent until the tab binds an asset.
+    #[serde(default)]
+    pub asset: Option<BubbleAssetSnapshot>,
+}
+
+/// The asset a pane's bubble settings belong to.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BubbleAssetSnapshot {
+    /// The asset's key: the feed config's `symbol_bubble_presets` key that
+    /// names the symbol (`WIN*` covers every mini index contract), or the
+    /// symbol itself.
+    pub key: String,
+    /// Where the settings came from: `stored` (changed for this asset),
+    /// `declared` (the preset the feed config declares) or `default` (the
+    /// presets file's active look).
+    pub source: String,
+    /// The preset the look on screen started from; empty once the panel's
+    /// defaults replaced it.
+    pub preset: String,
 }
 
 impl BubblesStateSnapshot {
@@ -360,6 +384,7 @@ impl BubblesStateSnapshot {
             ignore_opening_burst_in_scale: config.volume_dots.ignore_opening_burst_in_scale,
             recorded_opening_windows_ms: opening_bursts.to_vec(),
             volume_dots: dot_scale.map(Into::into),
+            asset: None,
         }
     }
 }

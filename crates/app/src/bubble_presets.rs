@@ -14,6 +14,15 @@ pub fn presets_path() -> PathBuf {
         .map_or_else(|| PathBuf::from(PRESETS_PATH), PathBuf::from)
 }
 
+/// Where each asset's bubble settings are kept: the cockpit home.
+#[must_use]
+pub fn assets_path() -> PathBuf {
+    if cfg!(test) {
+        return crate::store_home::test_path(quantick_stores::bubble_assets::ASSETS_FILE);
+    }
+    crate::store_home::resolve(quantick_stores::bubble_assets::ASSETS_FILE)
+}
+
 /// Load presets, falling back to the embedded file.
 ///
 /// Returns the presets, where they came from, and — when an external file

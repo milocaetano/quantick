@@ -14573,11 +14573,46 @@
             ],
             "type": "object"
           },
+          "BubbleAssetSnapshot": {
+            "description": "The asset a pane's bubble settings belong to.",
+            "properties": {
+              "key": {
+                "description": "The asset's key: the feed config's `symbol_bubble_presets` key that\nnames the symbol (`WIN*` covers every mini index contract), or the\nsymbol itself.",
+                "type": "string"
+              },
+              "preset": {
+                "description": "The preset the look on screen started from; empty once the panel's\ndefaults replaced it.",
+                "type": "string"
+              },
+              "source": {
+                "description": "Where the settings came from: `stored` (changed for this asset),\n`declared` (the preset the feed config declares) or `default` (the\npresets file's active look).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "source",
+              "preset"
+            ],
+            "type": "object"
+          },
           "BubblesStateSnapshot": {
             "properties": {
               "aggression_provenance": {
                 "description": "Where the aggression these bubbles draw comes from.",
                 "type": "string"
+              },
+              "asset": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BubbleAssetSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —\nis saved for this asset alone and restored whenever a tab shows it\nagain. Absent until the tab binds an asset."
               },
               "enabled": {
                 "description": "Aggression bubbles are drawn over the chart. Beside the native tape,\nFLOW draws regional execution totals on the tick candles;\n`layers.visibility` names any block.",

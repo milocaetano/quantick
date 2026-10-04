@@ -790,7 +790,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
 }
 
 #[test]
-fn a_symbol_hop_inside_one_feed_keeps_the_panel_look() {
+fn each_symbol_of_a_feed_keeps_its_own_panel_look() {
     let mut config = test_config();
     config.feeds[0].bubble_preset = Some("live lane pie".to_string());
     let mut app = app_on(config, "binance", "TESTUSDT");
@@ -799,25 +799,27 @@ fn a_symbol_hop_inside_one_feed_keeps_the_panel_look() {
         "live lane pie"
     );
 
-    // The user picks a different look by hand mid-session...
+    // The user picks a different look by hand on this symbol...
     assert!(app.active_tab_mut().tape_mut().apply_preset("dense tape"));
-    // ...then hops symbols inside the same feed: the hand-picked look
-    // survives — the declared preset belongs to the feed, not the symbol.
+    // ...then hops to another symbol of the same feed, which is another
+    // asset: it opens on the look the feed declares for it.
+    app.active_tab_mut().symbol = "OTHERUSDT".to_string();
     with_config(&mut app, |tab, config| {
-        tab.apply_feed_bubble_preset_after_switch(config, "binance", "OTHERUSDT")
-    });
-    assert_eq!(
-        app.active_tab().tape().active_preset_for_test(),
-        "dense tape"
-    );
-
-    // Arriving from another feed is what re-applies the declared look.
-    with_config(&mut app, |tab, config| {
-        tab.apply_feed_bubble_preset_after_switch(config, "other-feed", "TESTUSDT")
+        tab.apply_asset_bubbles_after_switch(config)
     });
     assert_eq!(
         app.active_tab().tape().active_preset_for_test(),
         "live lane pie"
+    );
+
+    // Coming back brings the hand-picked look back with it.
+    app.active_tab_mut().symbol = "TESTUSDT".to_string();
+    with_config(&mut app, |tab, config| {
+        tab.apply_asset_bubbles_after_switch(config)
+    });
+    assert_eq!(
+        app.active_tab().tape().active_preset_for_test(),
+        "dense tape"
     );
 }
 

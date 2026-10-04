@@ -215,7 +215,7 @@ impl ArrangementAdapter<'_> {
         let config = self.config.clone();
         self.active_tab_mut().refresh_chip_label(&config);
         self.active_tab_mut().ensure_book_capture(&config);
-        self.active_tab_mut().apply_feed_bubble_preset(&config);
+        self.active_tab_mut().apply_asset_bubbles(&config);
         self.active_tab_mut().apply_feed_declared_layout(&config);
         // The new tab opens on the layers the user left showing, over the
         // preset it just put on: opening a second market is not a request to

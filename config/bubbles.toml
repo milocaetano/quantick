@@ -3,7 +3,9 @@
 # Written by the "aggression bubbles" panel (save), and safe to edit by hand:
 # this file is the versioned record of how the tape is read. See README.md in
 # this folder.
-# `active` names the preset the panel opens on. Colour overrides are optional
+# `active` names the look an asset opens on when its feed declares none
+# (feeds.toml); every asset then keeps its own settings, saved per asset in the
+# cockpit home, and a save here never changes `active`. Colour overrides are optional
 # `[r, g, b]` triples; leave them out to follow the chart theme.
 #
 # The radii of every shipped preset are rungs of one golden-ratio ladder off

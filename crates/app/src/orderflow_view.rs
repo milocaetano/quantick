@@ -18,6 +18,7 @@ use crate::orderflow_render::{OrderflowRenderStyle, ProjectedLayout};
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
+mod asset_bubbles;
 mod clock;
 mod constants;
 pub(crate) mod flow_execution;
@@ -32,7 +33,6 @@ mod pending;
 #[path = "orderflow_view/tests/pending_tests.rs"]
 mod pending_tests;
 mod settings;
-mod source_presets;
 #[cfg(test)]
 #[path = "orderflow_view/tests/tape_frame_tests.rs"]
 mod tape_frame_tests;
@@ -115,8 +115,11 @@ pub struct OrderflowView {
     preset_name_draft: String,
     /// Last preset action (or failure), shown verbatim in the panel.
     preset_status: Option<String>,
-    /// Appearance to restore after an automatically declared tape-only look.
-    source_preset_restore: Option<bubble_presets::BubblePreset>,
+    /// Name of the preset the look on screen started from; empty once the
+    /// panel's defaults replaced it. `presets.active` stays the file's own.
+    look_name: String,
+    /// The asset these settings belong to, bound by the tab.
+    asset: Option<quantick_stores::bubble_assets::AssetTrack>,
     /// Scripted tape starvation: prints stop reaching the tape this many
     /// milliseconds after the first one, while the book keeps arriving.
     /// `None` — always, outside a capture run — feeds the tape every print.
@@ -157,9 +160,12 @@ impl OrderflowView {
             );
             preset_status = Some(format!("presets not loaded — {message}"));
         }
-        if let Some(active) = presets.get(&presets.active) {
-            active.apply_to(&mut config);
-        }
+        let look_name = presets
+            .get(&presets.active)
+            .map_or_else(String::new, |active| {
+                active.apply_to(&mut config);
+                active.name.clone()
+            });
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -185,7 +191,8 @@ impl OrderflowView {
             presets_source,
             preset_name_draft,
             preset_status,
-            source_preset_restore: None,
+            look_name,
+            asset: None,
             starve_tape_after_ms: None,
             first_print_ms: None,
             dot_rungs: Default::default(),
@@ -231,12 +238,15 @@ impl OrderflowView {
     pub(crate) fn bubbles_snapshot(
         &self,
     ) -> quantick_control_schema::orderflow::BubblesStateSnapshot {
-        quantick_control_schema::orderflow::BubblesStateSnapshot::from_config(
-            self.cached_config(),
-            self.cached_health().floored_quantity,
-            self.dot_scale(),
-            &self.recorded_opening_bursts(),
-        )
+        quantick_control_schema::orderflow::BubblesStateSnapshot {
+            asset: self.asset_snapshot(),
+            ..quantick_control_schema::orderflow::BubblesStateSnapshot::from_config(
+                self.cached_config(),
+                self.cached_health().floored_quantity,
+                self.dot_scale(),
+                &self.recorded_opening_bursts(),
+            )
+        }
     }
 
     /// The rungs and scales of the last published volume-dots frame.
@@ -756,7 +766,7 @@ impl OrderflowView {
     /// Name of the preset the panel currently wears.
     #[cfg(test)]
     pub(crate) fn active_preset_for_test(&self) -> &str {
-        &self.presets.active
+        &self.look_name
     }
 
     /// Read-only view of the heatmap config, for app-level assertions.
@@ -1390,7 +1400,7 @@ mod tests {
         assert_eq!(view.config.live_lane.width_share, 0.5);
         assert_eq!(view.config.live_lane.window, LaneWindow::Auto { zoom: 2.0 });
         assert_eq!(view.config.live_lane.cluster_ms, Some(50));
-        assert_eq!(view.presets.active, "wide");
+        assert_eq!(view.look_name, "wide");
         assert_eq!(view.preset_name_draft, "wide");
         // Untouched: the layer switch, retention, grouping, gamma, capture bucket.
         assert_eq!(view.config.show_aggressions, before.show_aggressions);
@@ -1403,7 +1413,7 @@ mod tests {
         let after = view.config.clone();
         assert!(!view.apply_preset("nope"));
         assert_eq!(view.config, after);
-        assert_eq!(view.presets.active, "wide");
+        assert_eq!(view.look_name, "wide");
     }
 
     fn snapshot_event(generation: u64) -> DepthEvent {

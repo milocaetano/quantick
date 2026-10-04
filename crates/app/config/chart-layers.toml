@@ -18,8 +18,10 @@
 # Ids are `ChartLayer::id` (same file). An id this build does not know is dropped
 # rather than failing the launch. An id absent from *both* files means "whatever
 # the app decided" — the code default, a feed's preset or an autostart env var —
-# and `lane_marks` is deliberately the only one: it belongs to the order-flow
-# preset, which is its only home.
+# and `lane_marks` is deliberately one: it belongs to the order-flow preset,
+# which is its only home. `candle_aggression` is the other: it is saved per
+# asset with that asset's bubble settings, so it is off until switched on for
+# an asset, and on only for that asset.
 
 version = 1
 
@@ -32,7 +34,6 @@ version = 1
 heatmap = true
 bubbles = true
 footprint = true
-candle_aggression = false
 live_strip = true
 
 # The tape's own canvas: the band, and each of its two flow layers.

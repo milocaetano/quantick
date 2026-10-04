@@ -22,8 +22,8 @@ use super::frame::status_color;
 mod bubble_sections;
 mod l2_sections;
 #[cfg(test)]
-#[path = "settings/tests/source_preset_persistence.rs"]
-mod source_preset_persistence;
+#[path = "settings/tests/preset_persistence_tests.rs"]
+mod preset_persistence_tests;
 #[cfg(test)]
 #[path = "settings/tests/tape_only_controls.rs"]
 mod tape_only_controls;
@@ -50,17 +50,17 @@ impl OrderflowView {
         let mut chosen = None;
         ui.horizontal(|ui| {
             ui.label("preset");
-            let selected = if self.presets.active.is_empty() {
+            let selected = if self.look_name.is_empty() {
                 "— custom —"
             } else {
-                self.presets.active.as_str()
+                self.look_name.as_str()
             };
             egui::ComboBox::from_id_salt("bubble_preset")
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
                     for (index, preset) in self.presets.presets.iter().enumerate() {
                         if ui
-                            .selectable_label(self.presets.active == preset.name, &preset.name)
+                            .selectable_label(self.look_name == preset.name, &preset.name)
                             .clicked()
                         {
                             chosen = Some(index);
@@ -110,6 +110,13 @@ impl OrderflowView {
             self.apply_preset(&name);
         }
         ui.small(format!("presets · {}", self.presets_source));
+        if let Some(asset) = &self.asset {
+            ui.small(format!(
+                "settings saved for asset {} only ({})",
+                asset.key(),
+                asset.source().as_str()
+            ));
+        }
         if let Some(status) = &self.preset_status {
             ui.small(status.clone());
         }
@@ -117,16 +124,15 @@ impl OrderflowView {
 
     /// Apply the stored preset called `name`, reporting whether it exists.
     ///
-    /// A manual choice ends a temporary source-owned look. An unknown name
-    /// changes nothing and returns `false`; the caller decides how loudly to
-    /// say so. Source declarations have their own scoped application path.
+    /// The choice is the asset's own: it is filed for the asset on screen.
+    /// An unknown name changes nothing and returns `false`; the caller
+    /// decides how loudly to say so.
     pub(crate) fn apply_preset(&mut self, name: &str) -> bool {
         let Some(preset) = self.presets.get(name).cloned() else {
             return false;
         };
-        self.source_preset_restore = None;
         preset.apply_to(&mut self.config);
-        self.presets.active = preset.name.clone();
+        self.look_name = preset.name.clone();
         self.preset_name_draft = preset.name.clone();
         self.preset_status = Some(format!("'{}' applied", preset.name));
         true
@@ -145,19 +151,9 @@ impl OrderflowView {
             self.preset_status = Some("name the preset before saving".to_owned());
             return;
         }
-        if self
-            .source_preset_restore
-            .as_ref()
-            .is_some_and(|previous| previous.name == name)
-        {
-            self.preset_status = Some(format!(
-                "use another preset name to keep '{name}' as the default for other markets"
-            ));
-            return;
-        }
         self.presets
             .upsert(BubblePreset::capture(&name, &self.config));
-        self.presets.active = name.clone();
+        self.look_name = name.clone();
         self.persist_presets(format!("'{name}' saved"), writer);
     }
 
@@ -166,11 +162,9 @@ impl OrderflowView {
         success: String,
         writer: impl FnOnce(&bubble_presets::BubblePresetFile) -> Result<std::path::PathBuf, String>,
     ) {
-        let mut stored = self.presets.clone();
-        if let Some(previous) = &self.source_preset_restore {
-            stored.active = previous.name.clone();
-        }
-        match writer(&stored) {
+        // `active` stays the file's: the look an undeclared asset opens on,
+        // never the asset on screen's choice.
+        match writer(&self.presets) {
             Ok(path) => {
                 self.presets_source = PresetSource::WorkingDir(path.clone());
                 self.preset_status = Some(format!("{success} → {}", path.display()));
@@ -201,12 +195,7 @@ impl OrderflowView {
             Option<String>,
         ),
     ) {
-        let previous_scope = self.source_preset_restore.take();
-        let scoped_name = previous_scope.as_ref().map(|_| self.presets.active.clone());
         self.presets = presets;
-        if let Some(name) = scoped_name {
-            self.presets.active = name;
-        }
         self.presets_source = source;
         match error {
             Some(message) => {
@@ -221,8 +210,8 @@ impl OrderflowView {
                 self.preset_status = Some(format!("presets not loaded — {message}"));
             }
             None => {
-                let active = self.presets.active.clone();
-                if active.is_empty() {
+                let active = self.look_name.clone();
+                if active.is_empty() || self.presets.get(&active).is_none() {
                     self.preset_status = Some("presets reloaded".to_owned());
                 } else {
                     self.apply_preset(&active);
@@ -230,7 +219,6 @@ impl OrderflowView {
                 }
             }
         }
-        self.source_preset_restore = previous_scope;
     }
 
     /// The L2 dock tab's body: everything the depth map owns. Returns
@@ -423,7 +411,7 @@ impl OrderflowView {
         };
         // No stored preset is on screen any more, so the
         // picker must not keep claiming one.
-        self.presets.active.clear();
+        self.look_name.clear();
         self.preset_status = Some("bubble defaults restored (not saved)".to_owned());
     }
 }

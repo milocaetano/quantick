@@ -187,6 +187,25 @@ impl BubblePreset {
     }
 }
 
+impl BubblePreset {
+    /// Clamp every stored number into the range the panel can set.
+    pub(crate) fn sanitize(&mut self) {
+        self.cluster_ms = self
+            .cluster_ms
+            .clamp(0, quantick_orderflow::config::MAX_BUBBLE_CLUSTER_MS);
+        self.volume_dot_full_quantity =
+            quantick_orderflow::sane_volume_dot_full_quantity(self.volume_dot_full_quantity);
+        self.region_rows = self
+            .region_rows
+            .clamp(1, quantick_orderflow::config::MAX_BUBBLE_REGION_ROWS);
+        self.region_ms = self
+            .region_ms
+            .clamp(0, quantick_orderflow::config::MAX_BUBBLE_REGION_MS);
+        self.bubbles.sanitize();
+        self.live_lane.sanitize();
+    }
+}
+
 /// The presets file as a whole.
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BubblePresetFile {
@@ -240,19 +259,7 @@ impl BubblePresetFile {
                 return false;
             }
             seen.push(preset.name.clone());
-            preset.cluster_ms = preset
-                .cluster_ms
-                .clamp(0, quantick_orderflow::config::MAX_BUBBLE_CLUSTER_MS);
-            preset.volume_dot_full_quantity =
-                quantick_orderflow::sane_volume_dot_full_quantity(preset.volume_dot_full_quantity);
-            preset.region_rows = preset
-                .region_rows
-                .clamp(1, quantick_orderflow::config::MAX_BUBBLE_REGION_ROWS);
-            preset.region_ms = preset
-                .region_ms
-                .clamp(0, quantick_orderflow::config::MAX_BUBBLE_REGION_MS);
-            preset.bubbles.sanitize();
-            preset.live_lane.sanitize();
+            preset.sanitize();
             true
         });
         let active = std::mem::take(&mut self.active).trim().to_owned();
@@ -390,7 +397,9 @@ const PRESET_FILE_HEADER: &str = "\
 # Written by the \"aggression bubbles\" panel (save), and safe to edit by hand:
 # this file is the versioned record of how the tape is read. See README.md in
 # this folder.
-# `active` names the preset the panel opens on. Colour overrides are optional
+# `active` names the look an asset opens on when its feed declares none
+# (feeds.toml); every asset then keeps its own settings, saved per asset in the
+# cockpit home, and a save here never changes `active`. Colour overrides are optional
 # `[r, g, b]` triples; leave them out to follow the chart theme.
 
 ";

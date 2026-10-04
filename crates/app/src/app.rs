@@ -673,7 +673,7 @@ impl QuantickApp {
         app.active_tab_mut().refresh_chip_label(&config);
         app.active_tab_mut().ensure_book_capture(&config);
         // A feed that declares its own look opens wearing it.
-        app.active_tab_mut().apply_feed_bubble_preset(&config);
+        app.active_tab_mut().apply_asset_bubbles(&config);
         // Same for a declared opening layout: a feed the user reads by
         // timeframe can open straight on the timeframe chart.
         app.active_tab_mut().apply_feed_declared_layout(&config);

@@ -9,7 +9,10 @@ fn candle_aggression_is_a_named_default_off_pane_layer() {
     assert_eq!(layer.0.source, LayerSource::Local);
     assert!(!layer.0.default_on);
     assert!(!layer.0.projection_demand, "no second order-flow worker");
-    assert!(layer.persisted());
+    assert!(
+        !layer.persisted(),
+        "saved per asset with its bubble settings, not in the chart-layers file"
+    );
     assert!(!LayerState::default().requested(layer));
 }
 

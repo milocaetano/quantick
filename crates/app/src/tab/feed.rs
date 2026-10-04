@@ -14,7 +14,7 @@ use quantick_chart_interaction::tab_drain_plan::{TabDrainPlan, TabDrainStage};
 use tokio::sync::mpsc;
 
 use super::{BOOK_DRAIN_BUDGET, BOOK_GENERATION_STRIDE, CanvasLayout, Tab};
-use crate::config::AppConfig;
+use crate::config::{AppConfig, BubbleAsset};
 use crate::loading::LoadingTask;
 use crate::metrics;
 use crate::pane::PaneSide;
@@ -25,6 +25,8 @@ use quantick_feed::{
     FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedNotice, MAX_REMEMBERED_GAPS,
     MIN_MARKED_GAP_MS, past_resume_floor,
 };
+use quantick_layers::ChartLayer;
+use quantick_stores::bubble_assets::{self, AssetTrack};
 
 /// The window's history choices every tab mirrors on each frame's drain.
 #[derive(Clone, Copy, Debug)]
@@ -252,7 +254,6 @@ impl Tab {
         if self.active == (self.feed_id.clone(), self.symbol.clone()) {
             return;
         }
-        let (previous_feed, previous_symbol) = self.active.clone();
         let Some(provider) = config.provider_of(&self.feed_id) else {
             tracing::warn!(
                 target: "quantick::app",
@@ -327,72 +328,105 @@ impl Tab {
         self.active = (self.feed_id.clone(), self.symbol.clone());
         self.refresh_chip_label(config);
         self.ensure_book_capture(config);
-        self.apply_feed_bubble_preset_after_switch(config, &previous_feed, &previous_symbol);
+        self.apply_asset_bubbles_after_switch(config);
     }
 
-    /// Apply the arrived-at declared preset — when the switch crossed feeds,
-    /// or when it crossed symbols whose declared looks differ. A symbol hop
-    /// between two symbols that declare nothing of their own keeps the user's
-    /// panel tweaks, exactly as before per-symbol declarations existed: the
-    /// declared look belongs to the feed, and to the symbols that state one.
-    ///
-    /// Ordinary declarations remain sticky. A tape-only declaration is scoped:
-    /// leaving it for an undeclared market restores the prior panel appearance.
-    pub fn apply_feed_bubble_preset_after_switch(
-        &mut self,
-        config: &AppConfig,
-        previous_feed: &str,
-        previous_symbol: &str,
-    ) {
-        if previous_feed == self.feed_id {
-            let feed = config.feed(&self.feed_id);
-            let arrived = feed.and_then(|feed| feed.bubble_preset_for(&self.symbol));
-            let left = feed.and_then(|feed| feed.bubble_preset_for(previous_symbol));
-            if arrived == left {
-                return;
-            }
+    /// Bring the arrived-at asset's own bubble settings on screen, filing the
+    /// leaving asset's first. A hop inside one asset (`WIN$N` to `WINV26`)
+    /// keeps what is on screen, edits included.
+    pub fn apply_asset_bubbles_after_switch(&mut self, config: &AppConfig) {
+        let arriving = self.bubble_asset(config);
+        if self
+            .tape()
+            .asset()
+            .is_some_and(|track| track.key() == arriving.key)
+        {
+            return;
         }
-        self.apply_feed_bubble_preset(config);
+        self.file_asset_bubbles();
+        self.apply_asset_bubbles(config);
     }
 
-    /// Apply the bubble preset declared for the current feed and symbol, if
-    /// one is declared ([`FeedConfig::bubble_preset_for`]'s ladder: the
-    /// symbol's own entry first, the feed-wide declaration behind it).
-    ///
-    /// An undeclared feed keeps the user's look, restoring it if a source had
-    /// temporarily declared a tape-only preset. Unknown names are ignored —
-    /// the presets file is user-edited, and a typo must not silently restyle it.
-    pub fn apply_feed_bubble_preset(&mut self, config: &AppConfig) {
-        let name = config
-            .feed(&self.feed_id)
-            .and_then(|feed| feed.bubble_preset_for(&self.symbol))
-            .map(str::to_owned);
-        let applied = self.tape_mut().apply_source_preset(name.as_deref());
-        let Some(name) = name else {
+    /// The asset this tab's symbol belongs to on its feed.
+    fn bubble_asset(&self, config: &AppConfig) -> BubbleAsset {
+        config.feed(&self.feed_id).map_or_else(
+            || BubbleAsset::undeclared(&self.symbol),
+            |feed| feed.bubble_asset(&self.symbol),
+        )
+    }
+
+    /// Put this tab's asset's bubble settings on screen: its stored ones,
+    /// else the preset its feed declares, else the presets file's active
+    /// look ([`AssetTrack::resolve`]). An unknown declared name is reported
+    /// and falls through — the presets file is user-edited, and a typo must
+    /// not silently restyle a market.
+    pub fn apply_asset_bubbles(&mut self, config: &AppConfig) {
+        let asset = self.bubble_asset(config);
+        let declared = asset.preset.clone();
+        let (store, error) = bubble_assets::load(&crate::bubble_presets::assets_path());
+        if let Some(error) = error {
+            tracing::error!(target: "quantick::app", schema_version = 1_u8,
+                event_code = "BUBBLE_ASSETS_UNREADABLE", error = error.as_str(),
+                action = "using_declared_looks", "bubble asset settings could not be read");
+        }
+        let (track, settings) = AssetTrack::resolve(
+            asset,
+            self.tape().bubble_presets(),
+            &store,
+            ChartLayer::CandleAggression.0.default_on,
+        );
+        if let Some(name) = declared.filter(|name| self.tape().bubble_presets().get(name).is_none())
+        {
+            tracing::warn!(target: "quantick::app", schema_version = 1_u8,
+                event_code = "FEED_BUBBLE_PRESET_UNKNOWN", feed = %self.feed_id,
+                symbol = %self.symbol, preset = name.as_str(), action = "use_default_look",
+                "feed declares a bubble preset that is not in the presets file; ignoring");
+        }
+        tracing::info!(target: "quantick::app", schema_version = 1_u8,
+            event_code = "ASSET_BUBBLES_APPLIED", feed = %self.feed_id, symbol = %self.symbol,
+            asset = track.key(), source = track.source().as_str(),
+            preset = settings.look.name.as_str(), action = "apply_asset_settings",
+            "bubble settings of the asset on screen applied");
+        self.flow_pane
+            .apply_layer_states(&std::collections::BTreeMap::from([(
+                ChartLayer::CandleAggression,
+                settings.candle_aggression,
+            )]));
+        self.tape_mut().bind_asset(track, &settings);
+    }
+
+    /// File what this tab shows for its asset, when it changed since it was
+    /// last filed: the frame loop calls this once no drag is held, and a
+    /// symbol switch before it leaves the asset.
+    pub fn file_asset_bubbles(&mut self) {
+        let candle = self
+            .flow_pane
+            .layers
+            .requested(ChartLayer::CandleAggression);
+        let current = self.tape().asset_settings(candle);
+        if !self
+            .tape()
+            .asset()
+            .is_some_and(|track| track.changed(&current))
+        {
+            return;
+        }
+        let path = crate::bubble_presets::assets_path();
+        let (mut store, error) = bubble_assets::load(&path);
+        let Some(track) = self.tape_mut().asset_mut() else {
             return;
         };
-        if applied {
-            tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "FEED_BUBBLE_PRESET",
-                feed = %self.feed_id,
-                symbol = %self.symbol,
-                preset = name.as_str(),
-                action = "apply_preset",
-                "feed declares a bubble preset; applied"
-            );
-        } else {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "FEED_BUBBLE_PRESET_UNKNOWN",
-                feed = %self.feed_id,
-                symbol = %self.symbol,
-                preset = name.as_str(),
-                action = "keep_current_look",
-                "feed declares a bubble preset that is not in the presets file; ignoring"
-            );
+        // An unreadable store is left for the trader to see, never replaced.
+        let saved = match error {
+            Some(error) => Err(error),
+            None if track.file(&current, &mut store) => bubble_assets::save_to(&path, &store),
+            None => Ok(()),
+        };
+        if let Err(error) = saved {
+            tracing::warn!(target: "quantick::app", schema_version = 1_u8,
+                event_code = "BUBBLE_ASSETS_NOT_SAVED", asset = track.key(),
+                error = error.as_str(), action = "keep_settings_in_memory_only",
+                "bubble asset settings could not be saved");
         }
     }
 

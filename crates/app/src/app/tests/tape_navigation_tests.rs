@@ -13,7 +13,7 @@ fn native_split(app: &mut QuantickApp) {
     assert!(
         app.active_tab_mut()
             .tape_mut()
-            .apply_source_preset(Some("mini index regions"))
+            .apply_preset("mini index regions")
     );
     let config = app.active_tab().tape().cached_config();
     assert!(config.native_tape() && !config.tape_only());
