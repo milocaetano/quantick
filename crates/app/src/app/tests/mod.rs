@@ -2709,5 +2709,6 @@ fn add_library_for_test(app: &mut QuantickApp, index: usize) -> Option<SlotId> {
 
 mod tape_clock_tests;
 
+mod asset_bubbles_tests;
 mod feed_tape_scope_tests;
 mod native_split_pane_tests;
