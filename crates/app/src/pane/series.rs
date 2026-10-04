@@ -265,16 +265,25 @@ impl ChartPane {
         self.publish_tape_price_step();
     }
 
-    /// Prepend older trades and shift everything anchored to a bar index by the
-    /// number of bars they added, which is what this returns.
+    /// Prepend older trades, keeping the view and the marks on the bars they
+    /// were on, and return how many net bars the trades added.
     pub fn prepend_history(&mut self, trades: &[quantick_engine::Trade]) -> usize {
         if !trades.is_empty() {
             self.bump_pagination_revision();
         }
-        // Older bars shift every index up; keep the view steady.
+        let (edge_time, old_slots) = (self.right_edge_time(), self.slots());
         let added = self.state.prepend_history(trades);
-        self.viewport.shift_right_edge(added as isize);
-        self.drawings.shift_bars(added as isize);
+        if self.state.spec().time_interval_ms().is_some() {
+            // Clock buckets stand: older bars shift every index up by `added`.
+            self.viewport.shift_right_edge(added as isize);
+            self.drawings.shift_bars(added as isize);
+        } else {
+            // Re-cut from the first print, a bar can change shape (a Renko
+            // brick can), so the view and the marks go back to market time.
+            self.viewport
+                .reanchor(edge_time.and_then(|ms| self.slot_at_time(ms)), self.slots());
+            self.reanchor_drawings(old_slots);
+        }
         // Indicator columns shift with them: the rebuild below is a round-trip
         // away, and until it lands every value would otherwise be drawn
         // `added` slots off its own candle.
