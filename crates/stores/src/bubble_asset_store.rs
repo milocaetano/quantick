@@ -15,6 +15,14 @@
 //! a layer switch. Wheeling or dragging the tape's window or width moves the
 //! view, not the asset: the lane's width and window are filed only when the
 //! caller says they were set on purpose ([`AssetBinding::note_lane_set`]).
+//!
+//! "Save changes for this asset" is the asset's own switch, stored with its
+//! settings ([`AssetBubblesStore::saves_changes`]). Off, a change stays on
+//! the screen it was made on for the session: it is not filed, so it is not
+//! written and no other tab wears it — another tab on the asset shows what
+//! is stored, and so does this one once it binds again or the app restarts.
+//! Switched on again, the screen of the view that switched it is filed and
+//! every other view on the asset wears that ([`AssetBinding::set_save_changes`]).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -115,6 +123,33 @@ impl AssetBubblesStore {
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&AssetBubbles> {
         self.file.get(key)
+    }
+
+    /// Whether a change to `key`'s settings is filed and written.
+    #[must_use]
+    pub fn saves_changes(&self, key: &str) -> bool {
+        self.file.saves_changes(key)
+    }
+
+    /// Switch saving `key`'s changes on or off, written like a change.
+    /// Switching it on moves the asset's revision, so every view on it
+    /// drops what it held unsaved and wears what is filed next. Reports
+    /// whether the switch moved.
+    pub fn set_save_changes(&mut self, key: &str, on: bool) -> bool {
+        if !self.file.set_save_changes(key, on) {
+            return false;
+        }
+        self.changes += 1;
+        if on {
+            self.revisions.insert(key.to_owned(), self.changes);
+        }
+        self.unwritten.insert(key.to_owned());
+        self.pending = true;
+        tracing::info!(target: "quantick::app", schema_version = 1_u8,
+            event_code = "ASSET_BUBBLES_SAVE_SWITCHED", asset = key, on,
+            action = if on { "file_the_screen" } else { "keep_changes_on_screen_only" },
+            "saving bubble changes for the asset switched");
+        true
     }
 
     fn revision(&self, key: &str) -> u64 {
@@ -250,6 +285,9 @@ pub struct AssetBinding {
     edited: bool,
     /// Among those changes, the lane's width or window, set on purpose.
     lane_set: bool,
+    /// What this view shows that differs from [`Self::filed`] while saving
+    /// is off for the asset: held on this screen, never filed.
+    held: Option<AssetBubbles>,
 }
 
 impl AssetBinding {
@@ -300,6 +338,7 @@ impl AssetBinding {
             presets_seen,
             edited: false,
             lane_set: false,
+            held: None,
         };
         tracing::info!(target: "quantick::app", schema_version = 1_u8,
             event_code = "ASSET_BUBBLES_APPLIED", symbol, asset = binding.key(),
@@ -333,9 +372,16 @@ impl AssetBinding {
     }
 
     /// Why the file does not hold the settings on screen; `None` when it
-    /// does. A change noted but not filed yet is not saved either.
+    /// does. A change noted but not filed yet is not saved either, and with
+    /// saving off a change on screen never is.
     #[must_use]
     pub fn unsaved(&self) -> Option<String> {
+        if !self.saves_changes() && (self.edited || self.held.is_some()) {
+            return Some(format!(
+                "saving is off for {} — the changes on screen last this session only",
+                self.asset.key
+            ));
+        }
         if self.edited {
             return Some("changed on screen, not filed yet".to_owned());
         }
@@ -346,6 +392,38 @@ impl AssetBinding {
     #[must_use]
     pub fn filed(&self) -> &AssetBubbles {
         &self.filed
+    }
+
+    /// What this view showed at its last filing: what it holds unsaved
+    /// while saving is off, else what it filed or adopted.
+    #[must_use]
+    pub fn on_screen(&self) -> &AssetBubbles {
+        self.held.as_ref().unwrap_or(&self.filed)
+    }
+
+    /// Whether a change to the asset's settings is filed — the asset's
+    /// "Save changes for this asset", the same in every tab on it.
+    #[must_use]
+    pub fn saves_changes(&self) -> bool {
+        self.store.borrow().saves_changes(&self.asset.key)
+    }
+
+    /// Switch saving the asset's changes on or off. Switched on, this view's
+    /// screen is filed at its next filing — the lane included when it was
+    /// set on purpose while saving was off — and every other view on the
+    /// asset drops what it held and wears that. Reports whether it moved.
+    pub fn set_save_changes(&mut self, on: bool) -> bool {
+        let mut store = self.store.borrow_mut();
+        if !store.set_save_changes(&self.asset.key, on) {
+            return false;
+        }
+        if on {
+            // This view's screen is the one to file, not one to give way.
+            self.seen = store.revision(&self.asset.key);
+            self.edited = true;
+            self.held = None;
+        }
+        true
     }
 
     /// A setting changed: the panel, a menu, a control call or a layer
@@ -372,14 +450,21 @@ impl AssetBinding {
 
     /// File `current`, what the view shows, for the asset. The lane's width
     /// and window stay as filed unless they were set on purpose since.
-    /// Reports whether the store changed.
+    /// Reports whether the store changed. With saving off nothing is filed:
+    /// what differs is held on this screen ([`Self::on_screen`]).
     pub fn file(&mut self, mut current: AssetBubbles) -> bool {
-        if !std::mem::take(&mut self.lane_set) {
+        if !self.lane_set {
             let filed = &self.filed.look.live_lane;
             current.look.live_lane.window = filed.window;
             current.look.live_lane.width_share = filed.width_share;
         }
         self.edited = false;
+        if !self.saves_changes() {
+            self.held = (current != self.filed).then_some(current);
+            return false;
+        }
+        self.lane_set = false;
+        self.held = None;
         if current == self.filed {
             return false;
         }
@@ -419,10 +504,11 @@ impl AssetBinding {
         }
         let settings = store.get(&self.asset.key).unwrap_or(&self.declared).clone();
         drop(store);
-        let lane_moved = lane_moved(&self.filed, &settings);
+        let lane_moved = lane_moved(self.on_screen(), &settings);
         self.seen = revision;
         self.edited = false;
         self.lane_set = false;
+        self.held = None;
         self.filed = settings.clone();
         Some((settings, lane_moved))
     }
@@ -455,7 +541,9 @@ impl AssetBinding {
     /// nothing edited — for the view to put on screen: the presets file's
     /// new word reaches an asset nobody tuned, and only that one.
     pub fn refresh_declared(&mut self, presets: &BubblePresetFile) -> Option<(AssetBubbles, bool)> {
-        let untuned = !self.edited && self.store.borrow().get(&self.asset.key).is_none();
+        let untuned = !self.edited
+            && self.held.is_none()
+            && self.store.borrow().get(&self.asset.key).is_none();
         (self.declared_source, self.declared) = declared(&self.asset, presets, self.candle_default);
         untuned.then(|| {
             let moved = lane_moved(&self.filed, &self.declared);
@@ -505,8 +593,8 @@ fn declared(
 }
 
 #[cfg(test)]
-#[path = "bubble_asset_store_tests.rs"]
-mod bubble_asset_store_tests;
-#[cfg(test)]
 #[path = "bubble_asset_store_save_tests.rs"]
 mod bubble_asset_store_save_tests;
+#[cfg(test)]
+#[path = "bubble_asset_store_tests.rs"]
+mod bubble_asset_store_tests;

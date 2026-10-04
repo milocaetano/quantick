@@ -9,6 +9,7 @@
 
 pub mod analysis;
 pub mod attention;
+pub mod bubble_save;
 pub mod chart;
 pub mod deal_recording;
 pub mod evidence;

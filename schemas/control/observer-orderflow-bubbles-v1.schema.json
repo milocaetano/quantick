@@ -29,6 +29,11 @@
           "description": "The preset the look on screen started from; empty once the panel's\ndefaults replaced it.",
           "type": "string"
         },
+        "save_changes": {
+          "default": true,
+          "description": "The asset's \"Save changes for this asset\" (default on), the same in\nevery tab on it; `orderflow.bubbles.save_changes.set` switches it.\nOff, a change stays on the pane it was made on for this session — not\nstored, not shown in other tabs on the asset, which show the stored\nsettings — and `saved` is `false` while one is on screen. Switched on\nagain, the switching pane's settings are stored for the asset.",
+          "type": "boolean"
+        },
         "save_error": {
           "default": null,
           "description": "Why they are not saved; absent when they are.",
@@ -38,7 +43,7 @@
           ]
         },
         "saved": {
-          "description": "Whether the store file holds this asset's settings. `false` until\nthe next frame writes a change, and while the file cannot be read or\nwritten: they are kept in memory, retried, for this run only.",
+          "description": "Whether the store file holds the settings this pane shows. `false`\nuntil the next frame writes a change, while the file cannot be read\nor written — they are kept in memory, retried, for this run only —\nand while saving is off and a change is on screen.",
           "type": "boolean"
         },
         "source": {

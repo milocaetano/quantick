@@ -51,6 +51,8 @@ use crate::control::{ControlAccess, ServedRequest, retry_matrix};
 /// an interrupted call placed is attributed to.
 const CLIENT_NAME: &str = "quantick integration test";
 
+#[path = "asset_bubbles_save_tests.rs"]
+mod asset_bubbles_save_tests;
 #[path = "candle_aggression_tests.rs"]
 mod candle_aggression;
 #[path = "layer_control_tests.rs"]
@@ -594,6 +596,12 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         (
+            "orderflow.bubbles.save_changes.set",
+            1,
+            Value::Null,
+            Readback::Moves,
+        ),
+        (
             "layout.preset.apply",
             LAYOUT_V2,
             json!({ "preset_id": "time+time+flow" }),
@@ -784,6 +792,11 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "tab_id": app.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "ignore_opening_burst_in_scale": true,
+            }),
+            "orderflow.bubbles.save_changes.set" => json!({
+                "tab_id": app.tabs.active_id().to_string(),
+                "pane_id": app.active_tab().flow_pane.id.to_string(),
+                "save_changes": false,
             }),
             "layers.visibility.set" => json!({
                 "tab_id": app.tabs.active_id().to_string(),

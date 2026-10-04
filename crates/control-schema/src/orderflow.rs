@@ -366,13 +366,26 @@ pub struct BubbleAssetSnapshot {
     /// The preset the look on screen started from; empty once the panel's
     /// defaults replaced it.
     pub preset: String,
-    /// Whether the store file holds this asset's settings. `false` until
-    /// the next frame writes a change, and while the file cannot be read or
-    /// written: they are kept in memory, retried, for this run only.
+    /// The asset's "Save changes for this asset" (default on), the same in
+    /// every tab on it; `orderflow.bubbles.save_changes.set` switches it.
+    /// Off, a change stays on the pane it was made on for this session — not
+    /// stored, not shown in other tabs on the asset, which show the stored
+    /// settings — and `saved` is `false` while one is on screen. Switched on
+    /// again, the switching pane's settings are stored for the asset.
+    #[serde(default = "save_changes_default")]
+    pub save_changes: bool,
+    /// Whether the store file holds the settings this pane shows. `false`
+    /// until the next frame writes a change, while the file cannot be read
+    /// or written — they are kept in memory, retried, for this run only —
+    /// and while saving is off and a change is on screen.
     pub saved: bool,
     /// Why they are not saved; absent when they are.
     #[serde(default)]
     pub save_error: Option<String>,
+}
+
+const fn save_changes_default() -> bool {
+    true
 }
 
 impl BubblesStateSnapshot {

@@ -46,13 +46,29 @@ impl OrderflowView {
             self.follow_declared_look(false);
         }
         let binding = self.asset.as_ref()?;
-        if binding.edited() || binding.filed().candle_aggression != candle_aggression {
+        if binding.edited() || binding.on_screen().candle_aggression != candle_aggression {
             let current = self.asset_settings(candle_aggression);
             self.asset.as_mut()?.file(current);
         }
         let (settings, lane_moved) = self.asset.as_mut()?.adoption()?;
         self.wear_asset(&settings, !lane_moved);
         Some(settings.candle_aggression)
+    }
+
+    /// Switch "Save changes for this asset" ([`AssetBinding::set_save_changes`]):
+    /// switched on, what this view shows is filed at the next sync. `None`
+    /// when no asset is bound, else whether the switch moved.
+    pub(crate) fn set_save_asset_changes(&mut self, on: bool) -> Option<bool> {
+        let changed = self.asset.as_mut()?.set_save_changes(on);
+        let status = if on {
+            "saved again"
+        } else {
+            "kept for this session only"
+        };
+        if changed {
+            self.preset_status = Some(format!("changes for this asset are {status}"));
+        }
+        Some(changed)
     }
 
     /// A setting outside the config changed: the look's name, the candles'
@@ -120,9 +136,29 @@ impl OrderflowView {
                 key: binding.key().to_owned(),
                 source: binding.source().as_str().to_owned(),
                 preset: self.look_name.clone(),
+                save_changes: binding.saves_changes(),
                 saved: unsaved.is_none(),
                 save_error: unsaved,
             }
         })
+    }
+}
+
+/// The panel's doors, for tests that drive it without drawing it.
+#[cfg(test)]
+impl OrderflowView {
+    /// A panel control's change, through the door the panel's draw takes.
+    pub(crate) fn edit_config_for_test(
+        &mut self,
+        edit: impl FnOnce(&mut quantick_orderflow::HeatmapConfig),
+    ) {
+        let before = self.config.clone();
+        edit(&mut self.config);
+        self.commit_config_changes(before);
+    }
+
+    /// Type `name` into the panel's preset name field.
+    pub(crate) fn set_preset_name_draft_for_test(&mut self, name: &str) {
+        name.clone_into(&mut self.preset_name_draft);
     }
 }

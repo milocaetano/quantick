@@ -94,5 +94,12 @@
 # an export files and writes the asset store and says when it could not
 # (workspace_bundle_adapter.rs). Tab-feed resolution, per-asset saved state,
 # write retry and presets publication live in quantick_stores. Measured.
-!budget 105241
-crates/app 105241
+# Raised by 90 more lines for its addendum, "Save changes for this asset":
+# the panel's checkbox and the preset delete as a door the audit test drives
+# (settings.rs), the view's switch and its snapshot field
+# (orderflow_view/asset_bubbles.rs), and the `orderflow.bubbles.save_changes.set`
+# action binding (control/bubble_save.rs, registered in actions.rs and mod.rs).
+# The switch, its storage and what off holds on screen live in
+# quantick_stores::bubble_asset_store with their tests. Measured remainder.
+!budget 105331
+crates/app 105331

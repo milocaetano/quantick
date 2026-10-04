@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "pane_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The pane whose bubble settings belong to an asset: the tab's flow\npane (`orderflow.bubbles` reports its `asset`)."
+    },
+    "save_changes": {
+      "description": "`true` stores every change for the asset again, starting with what\nthis pane shows now; `false` keeps later changes on the pane they are\nmade on, for this session only.",
+      "type": "boolean"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "save_changes"
+  ],
+  "title": "SaveChangesInput",
+  "type": "object"
+}

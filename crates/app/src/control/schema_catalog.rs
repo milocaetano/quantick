@@ -73,6 +73,12 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<quantick_control_schema::opening_scale::OpeningScaleResult>(
             "orderflow-opening-scale-result-v1.schema.json",
         ),
+        document::<quantick_control_schema::bubble_save::SaveChangesInput>(
+            "orderflow-bubbles-save-changes-input-v1.schema.json",
+        ),
+        document::<quantick_control_schema::bubble_save::SaveChangesResult>(
+            "orderflow-bubbles-save-changes-result-v1.schema.json",
+        ),
         document::<HeatmapSnapshot>("observer-orderflow-heatmap-v1.schema.json"),
         document::<L2Snapshot>("observer-orderflow-l2-v1.schema.json"),
         document::<ReplaySnapshot>("observer-session-replay-v1.schema.json"),

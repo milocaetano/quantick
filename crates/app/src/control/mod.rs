@@ -22,6 +22,7 @@ pub(crate) mod inventory;
 mod price_axis;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
+mod bubble_save;
 mod layers;
 mod layout;
 mod notify;

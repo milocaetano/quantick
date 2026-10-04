@@ -37,9 +37,16 @@ fn saving_off_keeps_changes_on_one_screen_and_a_restart_keeps_only_the_switch() 
     assert!(win.saves_changes(), "saving is on until switched off");
     assert!(win.set_save_changes(false));
     assert!(!win.set_save_changes(false), "already off");
-    assert!(!other.saves_changes(), "the switch is the asset's, in every tab");
+    assert!(
+        !other.saves_changes(),
+        "the switch is the asset's, in every tab"
+    );
     assert!(btc.saves_changes(), "and that asset's alone");
-    assert_eq!(store.borrow_mut().flush(), Some(Ok(())), "the switch is kept");
+    assert_eq!(
+        store.borrow_mut().flush(),
+        Some(Ok(())),
+        "the switch is kept"
+    );
 
     let mut edited = opened.clone();
     edited.flow_ignore_opening = true;
@@ -63,7 +70,10 @@ fn saving_off_keeps_changes_on_one_screen_and_a_restart_keeps_only_the_switch() 
     );
 
     let written = std::fs::read_to_string(&path).expect("the store");
-    assert!(written.contains("save_changes_off = [\"WIN*\"]"), "{written}");
+    assert!(
+        written.contains("save_changes_off = [\"WIN*\"]"),
+        "{written}"
+    );
     let reread = AssetBubblesStore::load(path).shared();
     let (win, restored) = bind(&reread, "WINV26");
     assert!(!win.saves_changes(), "a restart keeps the switch");

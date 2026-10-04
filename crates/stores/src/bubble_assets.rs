@@ -14,7 +14,7 @@
 //! tuned by hand. The running app holds the store in memory and binds each
 //! view to its asset through [`crate::bubble_asset_store`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -66,10 +66,18 @@ impl AssetBubbles {
 }
 
 /// The store as a whole.
+///
+/// Field order matters: TOML requires plain values before the `assets`
+/// tables.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetBubblesFile {
     #[serde(default = "format_version")]
     pub version: u32,
+    /// The assets whose "Save changes for this asset" is off: a change made
+    /// while one is on screen stays on that screen for the session and is
+    /// never stored. Saving is on for every asset not listed.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub save_changes_off: BTreeSet<String>,
     /// Settings by asset key, in key order.
     #[serde(default)]
     pub assets: BTreeMap<String, AssetBubbles>,
@@ -79,6 +87,7 @@ impl Default for AssetBubblesFile {
     fn default() -> Self {
         Self {
             version: FORMAT_VERSION,
+            save_changes_off: BTreeSet::new(),
             assets: BTreeMap::new(),
         }
     }
@@ -89,6 +98,22 @@ impl AssetBubblesFile {
     #[must_use]
     pub fn get(&self, asset: &str) -> Option<&AssetBubbles> {
         self.assets.get(asset)
+    }
+
+    /// Whether a change to `asset`'s settings is stored.
+    #[must_use]
+    pub fn saves_changes(&self, asset: &str) -> bool {
+        !self.save_changes_off.contains(asset)
+    }
+
+    /// Switch storing `asset`'s changes on or off. Reports whether the
+    /// switch moved.
+    pub fn set_save_changes(&mut self, asset: &str, on: bool) -> bool {
+        if on {
+            self.save_changes_off.remove(asset)
+        } else {
+            self.save_changes_off.insert(asset.to_owned())
+        }
     }
 
     /// Store `current` for `asset`, or forget the entry when `current` is
@@ -218,6 +243,7 @@ const FILE_HEADER: &str = "\
 #
 # One entry per asset whose bubble settings were changed from the look the
 # feed config declares for it (`symbol_bubble_presets` in feeds.toml). Delete
-# an entry and that asset opens on its declared look again.
+# an entry and that asset opens on its declared look again. An asset listed
+# in `save_changes_off` keeps what is changed on screen for the session only.
 
 ";

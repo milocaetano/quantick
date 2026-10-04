@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 48 |
+| Reachable by capability | 49 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
 | Excluded: `pending_capability` | 55 |
-| **Total** | **111** |
+| **Total** | **112** |
 
-82 of the 111 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 29 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+82 of the 112 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 30 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -89,6 +89,7 @@ The three exclusion classes are closed:
 | `layer.tape_only.toggle` | Give the tape its own canvas without candles | pane right-click layer menu; Bubbles settings, Tape only (hide candles) | `layers.visibility.set` | — |
 | `layer.native_tape.toggle` | Draw the tape at execution time and price beside the candles | pane right-click layer menu; Bubbles settings, Native tape (execution time and price) | `layers.visibility.set` | — |
 | `orderflow.tape.opening_scale.set` | Choose whether the first recorded burst sets Tape or FLOW region size references | Bubbles settings for Tape; tick FLOW chart layers, Bubbles, Ignore first recorded burst in regional scale for the independent pane preference | `orderflow.tape.opening_scale.set` | — |
+| `orderflow.bubbles.save_changes.set` | Choose whether bubble changes are saved for the asset on screen | Bubbles settings, Save changes for this asset | `orderflow.bubbles.save_changes.set` | — |
 | `history.candles.load_older` | Fetch another span of older venue candles | toolbar history caret | — | `pending_capability` — no capability pages history; `chart.window.read` reads what is already loaded. Tracked in issue 401 |
 | `history.progressive.toggle` | Build venue history backwards a week at a time, or in one request | View menu | — | `pending_capability` — no capability pages history; `chart.window.read` reads what is already loaded. Tracked in issue 401 |
 | `history.reach.set` | Choose how far back the chart reaches, and the page size | toolbar history caret menu, reachable by the `history` scripted-menu hook | — | `pending_capability` — no capability pages history; `chart.window.read` reads what is already loaded. Tracked in issue 401 |
@@ -187,7 +188,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 29 |
+| `authored` | 30 |
 
 ## Appendix: rows no registry stands behind
 
@@ -211,6 +212,7 @@ declares nothing here is a guard failure.
 | `layer.tape_only.toggle` | the per-pane order-flow menu and settings checkbox are not toolbar LayerToggle entries |
 | `layer.native_tape.toggle` | the per-pane order-flow menu and settings checkbox are not toolbar LayerToggle entries |
 | `orderflow.tape.opening_scale.set` | opening-scale preferences are checkboxes inside the volume-dot settings and the tick FLOW Bubbles layer menu |
+| `orderflow.bubbles.save_changes.set` | the per-asset save switch is a checkbox under the bubble preset picker |
 | `history.reach.set` | the reach chips and page size inside the toolbar caret menu, drawn per frame |
 | `indicator.mouse_vertical_line.toggle` | the indicator pane's Mouse vertical line checkbox |
 | `indicator.native.remove` | the legend row close, which the toolbar enum sees only as `RemoveIndicator` |

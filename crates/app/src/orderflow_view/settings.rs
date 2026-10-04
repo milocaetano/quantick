@@ -95,12 +95,7 @@ impl OrderflowView {
                 .on_hover_text("remove this preset from the file")
                 .clicked()
             {
-                let name = self.preset_name_draft.trim().to_owned();
-                if self.refused_preset_name(&name) {
-                    return;
-                }
-                self.presets.remove(&name);
-                self.persist_presets(format!("preset '{name}' removed"), bubble_presets::save);
+                self.delete_preset_with(bubble_presets::save);
             }
         });
         if let Some(index) = chosen
@@ -113,7 +108,23 @@ impl OrderflowView {
             self.apply_preset(&name);
         }
         ui.small(format!("presets · {}", self.presets_source));
+        let mut save_switched = None;
         if let Some(asset) = &self.asset {
+            let mut save = asset.saves_changes();
+            if ui
+                .checkbox(&mut save, "Save changes for this asset")
+                .on_hover_text(format!(
+                    "On: a change here is saved for {key} alone and shown in every tab on {key}. \
+                     Off: a change applies to this tab for this session only — not saved, not \
+                     shown in other tabs, which keep what is saved; switching this tab to another \
+                     market and back, or restarting, brings back what is saved. Turning it back on \
+                     saves what this tab shows now for {key}.",
+                    key = asset.key()
+                ))
+                .changed()
+            {
+                save_switched = Some(save);
+            }
             let saved = asset
                 .unsaved()
                 .map_or_else(String::new, |why| format!(" — not saved: {why}"));
@@ -122,6 +133,9 @@ impl OrderflowView {
                 asset.key(),
                 asset.source().as_str()
             ));
+        }
+        if let Some(on) = save_switched {
+            self.set_save_asset_changes(on);
         }
         if let Some(status) = &self.preset_status {
             ui.small(status.clone());
@@ -158,7 +172,7 @@ impl OrderflowView {
         self.save_preset_with(bubble_presets::save);
     }
 
-    fn save_preset_with(
+    pub(crate) fn save_preset_with(
         &mut self,
         writer: impl FnOnce(&bubble_presets::BubblePresetFile) -> Result<std::path::PathBuf, String>,
     ) {
@@ -175,6 +189,20 @@ impl OrderflowView {
         self.look_name = name.clone();
         self.note_asset_change();
         self.persist_presets(format!("'{name}' saved"), writer);
+    }
+
+    /// Remove the preset the name field holds from the presets file, unless
+    /// some asset opens on it.
+    pub(crate) fn delete_preset_with(
+        &mut self,
+        writer: impl FnOnce(&bubble_presets::BubblePresetFile) -> Result<std::path::PathBuf, String>,
+    ) {
+        let name = self.preset_name_draft.trim().to_owned();
+        if self.refused_preset_name(&name) {
+            return;
+        }
+        self.presets.remove(&name);
+        self.persist_presets(format!("preset '{name}' removed"), writer);
     }
 
     fn persist_presets(
@@ -207,7 +235,7 @@ impl OrderflowView {
         self.reload_presets_from(bubble_presets::load());
     }
 
-    fn reload_presets_from(
+    pub(crate) fn reload_presets_from(
         &mut self,
         (presets, source, error): (
             bubble_presets::BubblePresetFile,
@@ -354,7 +382,8 @@ impl OrderflowView {
 
                 ui.checkbox(&mut self.config.show_aggressions, "show aggression bubbles")
                     .on_hover_text(
-                        "records and projects confirmed trades; does not start or stop L2 depth capture",
+                        "records and projects confirmed trades; does not start or stop L2 depth capture. \
+                         A chart layer switch (Ctrl+B), kept for every market — not an asset setting",
                     );
                 ui.add_enabled_ui(self.config.show_aggressions, |ui| {
                     self.draw_bubble_controls(ui);
@@ -419,7 +448,7 @@ impl OrderflowView {
 
     /// Restore the bubble layer's defaults and drop the preset claim, since
     /// no stored preset is on screen any more.
-    fn reset_bubble_visuals(&mut self) {
+    pub(crate) fn reset_bubble_visuals(&mut self) {
         let defaults = HeatmapConfig::default();
         self.config.bubble_cluster_ms = defaults.bubble_cluster_ms;
         self.config.bubble_dust_merge_ms = defaults.bubble_dust_merge_ms;
