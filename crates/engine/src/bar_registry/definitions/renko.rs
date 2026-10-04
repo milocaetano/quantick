@@ -28,6 +28,7 @@ pub static RENKO: BarDefinition = BarDefinition {
         suffix: 'R',
         noun: "Ticks (Renko)",
     }),
+    path_dependent: true,
     factory: |value, _| {
         Box::new(RenkoBarBuilder::new(
             value.to_u64().expect("count representation"),

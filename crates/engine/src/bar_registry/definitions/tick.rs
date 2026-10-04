@@ -20,6 +20,7 @@ pub static TICK: BarDefinition = BarDefinition {
     progress_unit: "ticks",
     fixed_time_interval: false,
     quick_alias: None,
+    path_dependent: false,
     factory: |value, _| {
         Box::new(TickBarBuilder::new(
             value.to_u64().expect("count representation"),

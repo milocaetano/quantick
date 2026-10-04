@@ -27,5 +27,6 @@ pub static VOLUME: BarDefinition = BarDefinition {
     progress_unit: "vol",
     fixed_time_interval: false,
     quick_alias: None,
+    path_dependent: false,
     factory: |value, _| Box::new(VolumeBarBuilder::new(value)),
 };

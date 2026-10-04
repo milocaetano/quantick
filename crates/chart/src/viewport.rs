@@ -271,10 +271,10 @@ impl Viewport {
     /// newest bar by definition, whatever the rebuild did.
     ///
     /// The sibling of [`Self::shift_right_edge`], for the case that one cannot
-    /// serve: prepending older history to bars cut by the clock moves every
-    /// index by a known count, so that one shifts by it; a re-cut series —
-    /// any other rule's after a prepend, too — has no such count, so this one
-    /// takes the destination outright.
+    /// serve: prepending older history moves every index by a known count, so
+    /// that one shifts by it; a re-cut series — a path-dependent rule's after
+    /// a prepend, too — has no such count, so this one takes the destination
+    /// outright.
     pub fn reanchor(&mut self, bar: Option<usize>, total: usize) {
         if self.right_bar.is_none() {
             return;

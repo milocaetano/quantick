@@ -45,6 +45,7 @@ pub static IMBALANCE: BarDefinition = BarDefinition {
     progress_unit: "ticks",
     fixed_time_interval: false,
     quick_alias: None,
+    path_dependent: false,
     factory: |value, choice| {
         Box::new(ImbalanceBarBuilder::with_unit(
             value.to_u64().expect("count representation"),

@@ -271,18 +271,20 @@ impl ChartPane {
         if !trades.is_empty() {
             self.bump_pagination_revision();
         }
-        let (edge_time, old_slots) = (self.right_edge_time(), self.slots());
+        let path_dependent = self.state.spec().definition().path_dependent;
+        let anchor = path_dependent.then(|| (self.right_edge_time(), self.slots()));
         let added = self.state.prepend_history(trades);
-        if self.state.spec().time_interval_ms().is_some() {
-            // Clock buckets stand: older bars shift every index up by `added`.
-            self.viewport.shift_right_edge(added as isize);
-            self.drawings.shift_bars(added as isize);
-        } else {
-            // Re-cut from the first print, a bar can change shape (a Renko
-            // brick can), so the view and the marks go back to market time.
+        if let Some((edge_time, old_slots)) = anchor {
+            // A Renko series re-cut from an older first print can hold a
+            // different number of bricks, so the view and the marks go back
+            // to market time.
             self.viewport
                 .reanchor(edge_time.and_then(|ms| self.slot_at_time(ms)), self.slots());
             self.reanchor_drawings(old_slots);
+        } else {
+            // Older bars shift every index up by `added`; keep the view steady.
+            self.viewport.shift_right_edge(added as isize);
+            self.drawings.shift_bars(added as isize);
         }
         // Indicator columns shift with them: the rebuild below is a round-trip
         // away, and until it lands every value would otherwise be drawn
