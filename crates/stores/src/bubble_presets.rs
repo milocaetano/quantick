@@ -306,6 +306,34 @@ pub fn embedded() -> BubblePresetFile {
     parse(EMBEDDED_DEFAULT).unwrap_or_default()
 }
 
+/// Load presets from `explicit` (an operator's path) or [`PRESETS_PATH`],
+/// falling back to the embedded file.
+///
+/// Returns the presets, where they came from, and — when an external file
+/// exists but could not be read or parsed — the error to surface. In that case
+/// the returned presets are the embedded ones, and the source says so.
+#[must_use]
+pub fn load_from(explicit: Option<PathBuf>) -> (BubblePresetFile, PresetSource, Option<String>) {
+    let (path, source): (PathBuf, fn(PathBuf) -> PresetSource) = match explicit {
+        Some(path) => (path, PresetSource::EnvPath),
+        None => (PathBuf::from(PRESETS_PATH), PresetSource::WorkingDir),
+    };
+    if !path.is_file() {
+        return (embedded(), PresetSource::Embedded, None);
+    }
+    let failure = |message: String| (embedded(), PresetSource::Embedded, Some(message));
+    match std::fs::read_to_string(&path) {
+        Ok(text) => match parse(&text) {
+            Ok(file) => {
+                report_retired_keys(&text, &path);
+                (file, source(path), None)
+            }
+            Err(message) => failure(format!("{}: {message}", path.display())),
+        },
+        Err(error) => failure(format!("cannot read {}: {error}", path.display())),
+    }
+}
+
 /// Keys a presets file may still carry from before a setting was replaced,
 /// each paired with what took the job over.
 ///

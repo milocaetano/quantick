@@ -337,6 +337,16 @@ impl AppConfig {
         self.feeds.iter().find(|f| f.id == id)
     }
 
+    /// The asset `symbol` belongs to on feed `feed_id`; a feed the config
+    /// does not carry declares nothing.
+    #[must_use]
+    pub fn bubble_asset(&self, feed_id: &str, symbol: &str) -> BubbleAsset {
+        self.feed(feed_id).map_or_else(
+            || BubbleAsset::undeclared(symbol),
+            |feed| feed.bubble_asset(symbol),
+        )
+    }
+
     /// Fold the user's added symbols into the catalog, in place.
     ///
     /// Config order first, additions after it, no duplicates: what the file

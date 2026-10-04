@@ -173,7 +173,7 @@ fn candle_aggression_on_a_win_tab_does_not_reach_a_btc_tab_after_a_restart() {
     let mask = win.active_tab().flow_pane.layer_mask(&win.style);
     win.workspace.layers_mut().record(mask);
     switch_layer(&mut win, ChartLayer::CandleAggression, true);
-    win.layer_wiring().maintain();
+    win.layer_wiring().maintain(&egui::Context::default());
 
     let mut btc = app_on(shipped_config(), "binance", "BTCUSDT");
     btc.workspace.set_chart_layers_path(path);

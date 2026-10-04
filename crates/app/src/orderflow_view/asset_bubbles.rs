@@ -39,12 +39,6 @@ impl OrderflowView {
         self.look_name.clone_from(&settings.look.name);
         self.preset_name_draft.clone_from(&settings.look.name);
         self.set_ignore_flow_opening(settings.flow_ignore_opening);
-        self.preset_status = Some(format!(
-            "{} · '{}' ({})",
-            track.key(),
-            settings.look.name,
-            track.source().as_str()
-        ));
         self.asset = Some(track);
         self.commit_config_changes(before);
     }

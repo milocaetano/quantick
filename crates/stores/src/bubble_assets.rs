@@ -204,6 +204,38 @@ impl AssetTrack {
     }
 }
 
+/// [`AssetTrack::resolve`] against the store at `path`, with the reason the
+/// store could not be read, if it could not.
+#[must_use]
+pub fn resolve_at(
+    path: &Path,
+    asset: BubbleAsset,
+    presets: &BubblePresetFile,
+    candle_aggression: bool,
+) -> (AssetTrack, AssetBubbles, Option<String>) {
+    let (store, error) = load(path);
+    let (track, settings) = AssetTrack::resolve(asset, presets, &store, candle_aggression);
+    (track, settings, error)
+}
+
+/// File `current` for `track`'s asset in the store at `path`, writing only
+/// when the store changed. An unreadable store is left for the trader to
+/// see, never replaced.
+///
+/// # Errors
+///
+/// Returns why the store could not be read or written.
+pub fn file_at(path: &Path, track: &mut AssetTrack, current: &AssetBubbles) -> Result<(), String> {
+    let (mut store, error) = load(path);
+    if let Some(error) = error {
+        return Err(error);
+    }
+    if track.file(current, &mut store) {
+        save_to(path, &store)?;
+    }
+    Ok(())
+}
+
 /// Parse the store, sanitizing every look the way the presets file does.
 ///
 /// # Errors

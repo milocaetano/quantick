@@ -12,7 +12,9 @@ use crate::chart_layers;
 use crate::footprint_config::FootprintConfig;
 use crate::style::ChartStyle;
 use crate::surfaces::{FootprintChange, FootprintSettingsSurface};
+use crate::tab::Tab;
 use crate::workspace_store::WorkspaceStore;
+use eframe::egui;
 
 use super::arrangement_host::ArrangementHost;
 
@@ -101,11 +103,15 @@ impl LayerWiring<'_> {
         }
     }
 
-    /// File the active tab's flow-pane layer mask when it moved.
-    pub(crate) fn maintain(&mut self) {
+    /// File the active tab's flow-pane layer mask when it moved, and each
+    /// tab's asset bubble settings once the pointer lets go of any drag.
+    pub(crate) fn maintain(&mut self, ctx: &egui::Context) {
         let tab_id = self.tabs.id_at(self.tabs.active_index());
         let tab = &self.tabs[self.tabs.active_index()];
         chart_layers::maintain(self.workspace, tab_id, &tab.flow_pane, self.style);
+        if !ctx.input(|input| input.pointer.any_down()) {
+            self.tabs.iter_mut().for_each(Tab::file_asset_bubbles);
+        }
     }
 
     /// Put the saved layer states back on every pane.

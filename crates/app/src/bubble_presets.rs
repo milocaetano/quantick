@@ -1,7 +1,7 @@
 //! Aggression-bubble presets: the document is `quantick_stores::bubble_presets`;
 //! this is where the launch root's `QUANTICK_BUBBLES` reaches it.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub use quantick_stores::bubble_presets::*;
 
@@ -23,39 +23,16 @@ pub fn assets_path() -> PathBuf {
     crate::store_home::resolve(quantick_stores::bubble_assets::ASSETS_FILE)
 }
 
-/// Load presets, falling back to the embedded file.
-///
-/// Returns the presets, where they came from, and — when an external file
-/// exists but could not be read or parsed — the error to surface. In that case
-/// the returned presets are the embedded ones, and the source says so.
+/// Load presets from the launch root's `QUANTICK_BUBBLES` or the working
+/// directory, falling back to the embedded file ([`load_from`]).
 #[must_use]
 pub fn load() -> (BubblePresetFile, PresetSource, Option<String>) {
-    let (path, source): (PathBuf, fn(PathBuf) -> PresetSource) =
-        match crate::launch::operator_paths().bubbles.clone() {
-            Some(raw) => (PathBuf::from(raw), PresetSource::EnvPath),
-            None => (PathBuf::from(PRESETS_PATH), PresetSource::WorkingDir),
-        };
-    if !Path::new(&path).is_file() {
-        return (embedded(), PresetSource::Embedded, None);
-    }
-    match std::fs::read_to_string(&path) {
-        Ok(text) => match parse(&text) {
-            Ok(file) => {
-                report_retired_keys(&text, &path);
-                (file, source(path), None)
-            }
-            Err(message) => (
-                embedded(),
-                PresetSource::Embedded,
-                Some(format!("{}: {message}", path.display())),
-            ),
-        },
-        Err(error) => (
-            embedded(),
-            PresetSource::Embedded,
-            Some(format!("cannot read {}: {error}", path.display())),
-        ),
-    }
+    load_from(
+        crate::launch::operator_paths()
+            .bubbles
+            .clone()
+            .map(PathBuf::from),
+    )
 }
 
 /// Write `file` to [`presets_path`], returning where it landed.

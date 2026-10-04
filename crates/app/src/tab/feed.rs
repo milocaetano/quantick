@@ -14,7 +14,7 @@ use quantick_chart_interaction::tab_drain_plan::{TabDrainPlan, TabDrainStage};
 use tokio::sync::mpsc;
 
 use super::{BOOK_DRAIN_BUDGET, BOOK_GENERATION_STRIDE, CanvasLayout, Tab};
-use crate::config::{AppConfig, BubbleAsset};
+use crate::config::AppConfig;
 use crate::loading::LoadingTask;
 use crate::metrics;
 use crate::pane::PaneSide;
@@ -26,7 +26,7 @@ use quantick_feed::{
     MIN_MARKED_GAP_MS, past_resume_floor,
 };
 use quantick_layers::ChartLayer;
-use quantick_stores::bubble_assets::{self, AssetTrack};
+use quantick_stores::bubble_assets;
 
 /// The window's history choices every tab mirrors on each frame's drain.
 #[derive(Clone, Copy, Debug)]
@@ -335,7 +335,7 @@ impl Tab {
     /// leaving asset's first. A hop inside one asset (`WIN$N` to `WINV26`)
     /// keeps what is on screen, edits included.
     pub fn apply_asset_bubbles_after_switch(&mut self, config: &AppConfig) {
-        let arriving = self.bubble_asset(config);
+        let arriving = config.bubble_asset(&self.feed_id, &self.symbol);
         if self
             .tape()
             .asset()
@@ -347,34 +347,25 @@ impl Tab {
         self.apply_asset_bubbles(config);
     }
 
-    /// The asset this tab's symbol belongs to on its feed.
-    fn bubble_asset(&self, config: &AppConfig) -> BubbleAsset {
-        config.feed(&self.feed_id).map_or_else(
-            || BubbleAsset::undeclared(&self.symbol),
-            |feed| feed.bubble_asset(&self.symbol),
-        )
-    }
-
     /// Put this tab's asset's bubble settings on screen: its stored ones,
     /// else the preset its feed declares, else the presets file's active
-    /// look ([`AssetTrack::resolve`]). An unknown declared name is reported
+    /// look ([`bubble_assets::AssetTrack::resolve`]). An unknown declared name is reported
     /// and falls through — the presets file is user-edited, and a typo must
     /// not silently restyle a market.
     pub fn apply_asset_bubbles(&mut self, config: &AppConfig) {
-        let asset = self.bubble_asset(config);
+        let asset = config.bubble_asset(&self.feed_id, &self.symbol);
         let declared = asset.preset.clone();
-        let (store, error) = bubble_assets::load(&crate::bubble_presets::assets_path());
+        let (track, settings, error) = bubble_assets::resolve_at(
+            &crate::bubble_presets::assets_path(),
+            asset,
+            self.tape().bubble_presets(),
+            ChartLayer::CandleAggression.0.default_on,
+        );
         if let Some(error) = error {
             tracing::error!(target: "quantick::app", schema_version = 1_u8,
                 event_code = "BUBBLE_ASSETS_UNREADABLE", error = error.as_str(),
                 action = "using_declared_looks", "bubble asset settings could not be read");
         }
-        let (track, settings) = AssetTrack::resolve(
-            asset,
-            self.tape().bubble_presets(),
-            &store,
-            ChartLayer::CandleAggression.0.default_on,
-        );
         if let Some(name) = declared.filter(|name| self.tape().bubble_presets().get(name).is_none())
         {
             tracing::warn!(target: "quantick::app", schema_version = 1_u8,
@@ -411,18 +402,11 @@ impl Tab {
         {
             return;
         }
-        let path = crate::bubble_presets::assets_path();
-        let (mut store, error) = bubble_assets::load(&path);
         let Some(track) = self.tape_mut().asset_mut() else {
             return;
         };
-        // An unreadable store is left for the trader to see, never replaced.
-        let saved = match error {
-            Some(error) => Err(error),
-            None if track.file(&current, &mut store) => bubble_assets::save_to(&path, &store),
-            None => Ok(()),
-        };
-        if let Err(error) = saved {
+        let path = crate::bubble_presets::assets_path();
+        if let Err(error) = bubble_assets::file_at(&path, track, &current) {
             tracing::warn!(target: "quantick::app", schema_version = 1_u8,
                 event_code = "BUBBLE_ASSETS_NOT_SAVED", asset = track.key(),
                 error = error.as_str(), action = "keep_settings_in_memory_only",

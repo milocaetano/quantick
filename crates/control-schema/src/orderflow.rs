@@ -372,6 +372,7 @@ impl BubblesStateSnapshot {
         floored_quantity: rust_decimal::Decimal,
         dot_scale: Option<&quantick_orderflow::DotScale>,
         opening_bursts: &[i64],
+        asset: Option<BubbleAssetSnapshot>,
     ) -> Self {
         Self {
             enabled: config.show_aggressions,
@@ -384,7 +385,7 @@ impl BubblesStateSnapshot {
             ignore_opening_burst_in_scale: config.volume_dots.ignore_opening_burst_in_scale,
             recorded_opening_windows_ms: opening_bursts.to_vec(),
             volume_dots: dot_scale.map(Into::into),
-            asset: None,
+            asset,
         }
     }
 }

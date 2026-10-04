@@ -238,15 +238,13 @@ impl OrderflowView {
     pub(crate) fn bubbles_snapshot(
         &self,
     ) -> quantick_control_schema::orderflow::BubblesStateSnapshot {
-        quantick_control_schema::orderflow::BubblesStateSnapshot {
-            asset: self.asset_snapshot(),
-            ..quantick_control_schema::orderflow::BubblesStateSnapshot::from_config(
-                self.cached_config(),
-                self.cached_health().floored_quantity,
-                self.dot_scale(),
-                &self.recorded_opening_bursts(),
-            )
-        }
+        quantick_control_schema::orderflow::BubblesStateSnapshot::from_config(
+            self.cached_config(),
+            self.cached_health().floored_quantity,
+            self.dot_scale(),
+            &self.recorded_opening_bursts(),
+            self.asset_snapshot(),
+        )
     }
 
     /// The rungs and scales of the last published volume-dots frame.

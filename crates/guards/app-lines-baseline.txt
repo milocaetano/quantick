@@ -68,5 +68,11 @@
 # Root authorized this exact measured remainder after independent baseline_visual
 # ownership/geometry review (2026-10-01); native Tape geometry is unchanged.
 # Lowered by 188 lines: PR #596 refactor moved pure logic to its headless owner.
-!budget 105055
-crates/app 105055
+# Raised by 26 lines for `feat/per-asset-bubble-config`: a tab binds its asset's
+# bubble settings and files them back (tab/feed.rs), the view applies and captures
+# them (orderflow_view/asset_bubbles.rs), and the store is registered with the
+# cockpit home and its capture override (store_home.rs). Resolution, the store
+# document and its I/O live in quantick_stores::bubble_assets; source_presets.rs
+# and the presets loader left app in the same change. Measured remainder only.
+!budget 105081
+crates/app 105081
