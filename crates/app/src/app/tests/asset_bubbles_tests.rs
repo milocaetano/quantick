@@ -306,3 +306,134 @@ fn an_imported_cockpit_dresses_the_open_tabs_with_its_asset_settings() {
     );
     assert_eq!(source(&app), AssetSource::Stored);
 }
+
+/// Review round 2, finding 2: a dated roll no feed lists — typed in the
+/// source picker — opens on its tab feed's look, as before assets existed,
+/// not on the presets file's default.
+#[test]
+fn a_dated_roll_no_feed_lists_opens_on_its_tab_feeds_look() {
+    let mut app = app_on(shipped_config(), "metatrader-b3", "WDO$N");
+    select_market(&mut app, "metatrader-b3", "WDOX26");
+    assert_eq!(look(&app).name, "live lane pie");
+    let asset = app.active_tab().tape().asset().expect("bound");
+    assert_eq!(asset.key(), "WDOX26");
+    assert_eq!(asset.source(), AssetSource::Declared);
+}
+
+/// Review round 2, finding 6: two tabs on the mini index each change a
+/// setting before a frame files either. The later filing wins whole — it is
+/// filed, not dropped — and the other tab wears it at the next frame.
+#[test]
+fn an_unfiled_edit_is_filed_even_when_another_tab_filed_first() {
+    let mut app = app_on(shipped_config(), "metatrader-b3", "WINV26");
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "BTCUSDT".to_owned(), None);
+    select_market(&mut app, "metatrader-b3", "WIN$N");
+    app.tabs.select(0);
+    assert!(
+        app.active_tab_mut()
+            .tape_mut()
+            .set_ignore_opening_burst_in_scale(true)
+    );
+    app.tabs.select(1);
+    assert!(
+        app.active_tab_mut()
+            .tape_mut()
+            .set_ignore_flow_opening(true)
+    );
+    maintain(&mut app);
+    assert!(
+        app.active_tab().tape().ignore_flow_opening(),
+        "the second tab's edit is on screen, not dropped"
+    );
+    maintain(&mut app);
+    app.tabs.select(0);
+    assert!(
+        app.active_tab().tape().ignore_flow_opening(),
+        "and reaches the first tab"
+    );
+}
+
+/// Review round 2, finding 4: a window chosen from the menu is the asset's
+/// even when the wheel already showed it, and a restart brings it back.
+#[test]
+fn a_window_chosen_equal_to_the_wheeled_one_survives_a_restart() {
+    let mut app = app_on(shipped_config(), "metatrader-b3", "WINV26");
+    let tape = app.active_tab_mut().tape_mut();
+    tape.zoom_live_lane(2.0);
+    let wheeled = tape.live_lane_window();
+    tape.set_live_lane_window(wheeled);
+    maintain(&mut app);
+    assert_eq!(source(&app), AssetSource::Stored);
+
+    let reread = quantick_stores::bubble_asset_store::AssetBubblesStore::load(
+        crate::bubble_presets::assets_path(),
+    )
+    .shared();
+    with_config(&mut app, |tab, config| {
+        tab.bind_asset_bubbles(config, &reread)
+    });
+    assert_eq!(app.active_tab().tape().live_lane_window(), wheeled);
+}
+
+/// Test agent D2 (review round 2, finding 7): the launch window hook is
+/// navigation for one run. It reaches the asset a replay switches the tab
+/// to after the hook ran, and it files nothing.
+#[test]
+fn the_launch_window_hook_holds_through_a_switch_and_files_nothing() {
+    let launch = AppLaunch {
+        scenario: crate::hooks::ScenarioInputs::from_pairs(&[("QUANTICK_TAPE_WINDOW", "90s")]),
+        ..AppLaunch::default()
+    };
+    let (mut app, _evt, _cmd, _book) = test_app_with_launch(launch);
+    let held = LaneWindow::Fixed { ms: 90_000 };
+    assert_eq!(app.active_tab().tape().live_lane_window(), held);
+    app.config = shipped_config();
+    select_market(&mut app, "binance", "WINV26");
+    let tape = app.active_tab().tape();
+    assert_eq!(tape.asset().expect("bound").key(), "WIN*");
+    assert!(tape.cached_config().native_tape(), "the WIN look is on");
+    assert_eq!(tape.live_lane_window(), held, "the held window too");
+    maintain(&mut app);
+    assert_eq!(source(&app), AssetSource::Declared);
+    assert!(
+        !crate::bubble_presets::assets_path().exists(),
+        "a launch hook writes nothing"
+    );
+}
+
+/// Review round 2, finding 3: an export carries an edit no frame filed
+/// yet, and says so when the disk would not take the per-asset settings.
+#[test]
+fn an_export_files_pending_edits_and_says_when_the_disk_refused_them() {
+    let mut app = app_on(shipped_config(), "metatrader-b3", "WINV26");
+    let tape = app.active_tab_mut().tape_mut();
+    assert!(tape.set_ignore_opening_burst_in_scale(true));
+    let file = crate::scratch::ScratchFile::new("asset-export", "workspace.qws.toml");
+    app.workspace_bundle_adapter().export_workspace_to(&file);
+    let tape = app.active_tab_mut().tape_mut();
+    assert!(tape.set_ignore_opening_burst_in_scale(false));
+    maintain(&mut app);
+    app.workspace_bundle_adapter().import_workspace_from(&file);
+    assert!(
+        app.active_tab()
+            .tape()
+            .cached_config()
+            .volume_dots
+            .ignore_opening_burst_in_scale,
+        "the unfiled edit was in the export"
+    );
+
+    let path = crate::bubble_presets::assets_path();
+    let blocked = path.with_extension("toml.tmp");
+    std::fs::create_dir_all(&blocked).expect("a folder where the write goes");
+    assert!(
+        app.active_tab_mut()
+            .tape_mut()
+            .set_ignore_flow_opening(true)
+    );
+    app.workspace_bundle_adapter().export_workspace_to(&file);
+    let message = app.surfaces.toast.message().unwrap_or_default().to_owned();
+    assert!(message.contains("as last saved"), "{message}");
+    std::fs::remove_dir(&blocked).expect("the folder goes");
+}

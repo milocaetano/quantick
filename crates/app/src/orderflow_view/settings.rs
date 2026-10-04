@@ -141,7 +141,7 @@ impl OrderflowView {
         self.look_name = preset.name.clone();
         self.preset_name_draft = preset.name.clone();
         self.preset_status = Some(format!("'{}' applied", preset.name));
-        self.note_asset_change();
+        self.note_asset_lane_set();
         true
     }
 
@@ -217,7 +217,7 @@ impl OrderflowView {
     ) {
         self.presets = presets;
         self.presets_source = source;
-        self.follow_declared_look();
+        self.follow_declared_look(true);
         match error {
             Some(message) => {
                 tracing::error!(
@@ -389,7 +389,7 @@ impl OrderflowView {
         .show(ui);
         // Read after the clustering section drew: a history window picked
         // this frame is the one the live lane's "Same as history" inherits.
-        LiveLaneSection {
+        let lane_set = LiveLaneSection {
             inherited_cluster_ms: config.bubble_cluster_ms,
             volume_dots: config.volume_dots.enabled,
             native_block: OrderflowView::native_tape_block(config),
@@ -412,6 +412,9 @@ impl OrderflowView {
         }
         .show(ui);
         ColoursSection { bubbles, theme_rgb }.show(ui);
+        if lane_set {
+            self.note_asset_lane_set();
+        }
     }
 
     /// Restore the bubble layer's defaults and drop the preset claim, since
@@ -434,7 +437,7 @@ impl OrderflowView {
         // No stored preset is on screen any more, so the
         // picker must not keep claiming one.
         self.look_name.clear();
-        self.note_asset_change();
+        self.note_asset_lane_set();
         self.preset_status = Some("bubble defaults restored for the asset on screen".to_owned());
     }
 }

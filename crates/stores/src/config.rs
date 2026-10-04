@@ -122,18 +122,6 @@ pub struct BubbleAsset {
     pub preset: Option<String>,
 }
 
-impl BubbleAsset {
-    /// A symbol no feed declares anything for: its own asset, on the
-    /// presets file's active look.
-    #[must_use]
-    pub fn undeclared(symbol: &str) -> Self {
-        Self {
-            key: symbol.to_owned(),
-            preset: None,
-        }
-    }
-}
-
 /// Whether `key` (an exact symbol or a `PREFIX*` family) names `symbol`.
 fn key_matches(key: &str, symbol: &str) -> bool {
     match key.strip_suffix(SYMBOL_FAMILY_WILDCARD) {
@@ -340,34 +328,48 @@ impl AppConfig {
         self.feeds.iter().find(|f| f.id == id)
     }
 
-    /// The asset `symbol` belongs to, whichever tab shows it, so one key
-    /// always opens on one declared look: the `symbol_bubble_presets` entry
-    /// naming it on any feed — an exact key over a family pattern, a longer
-    /// pattern over a shorter, config order on a tie — else the symbol alone
-    /// on the feed-wide preset of the first feed offering it, else the
-    /// symbol alone on nothing. A recorded WINV26 replayed in a BTC tab is
-    /// the mini index; a WDO$N recording is the B3 feed's WDO$N.
+    /// The asset `symbol` belongs to in a tab on `feed_id`, and the look it
+    /// opens on. The tab's feed decides first: its exact key, else its
+    /// longest family pattern. A symbol that feed offers stops there, on the
+    /// feed-wide preset — a pattern on another venue never captures it. A
+    /// symbol it does not offer (a recording replayed in the tab, a dated
+    /// roll typed in the source picker) takes the key some other feed
+    /// declares for it — exact over pattern, longer pattern over shorter —
+    /// else the feed-wide preset of the first feed offering it, else the tab
+    /// feed's own. A key declared on several feeds opens on the first one's
+    /// preset, so one key has one declared look whichever tab shows it.
     #[must_use]
-    pub fn bubble_asset(&self, symbol: &str) -> BubbleAsset {
-        let declared = self
+    pub fn bubble_asset(&self, feed_id: &str, symbol: &str) -> BubbleAsset {
+        let tab_feed = self.feed(feed_id);
+        let offers = |feed: &FeedConfig| feed.symbols.iter().any(|offered| offered == symbol);
+        let asset = match tab_feed {
+            Some(feed) if offers(feed) => feed.bubble_asset(symbol),
+            _ => tab_feed
+                .and_then(|feed| feed.declared_asset(symbol))
+                .or_else(|| {
+                    self.feeds
+                        .iter()
+                        .filter_map(|feed| feed.declared_asset(symbol))
+                        .min_by_key(|asset| {
+                            (asset.key != symbol, std::cmp::Reverse(asset.key.len()))
+                        })
+                })
+                .or_else(|| {
+                    let offering = self.feeds.iter().find(|feed| offers(feed));
+                    offering.map(|feed| feed.bubble_asset(symbol))
+                })
+                .unwrap_or_else(|| BubbleAsset {
+                    key: symbol.to_owned(),
+                    preset: tab_feed.and_then(|feed| feed.bubble_preset.clone()),
+                }),
+        };
+        let first = self
             .feeds
             .iter()
-            .flat_map(|feed| &feed.symbol_bubble_presets)
-            .filter(|(key, _)| key_matches(key, symbol))
-            .min_by_key(|(key, _)| (key.as_str() != symbol, std::cmp::Reverse(key.len())));
-        match declared {
-            Some((key, preset)) => BubbleAsset {
-                key: key.clone(),
-                preset: Some(preset.clone()),
-            },
-            None => self
-                .feeds
-                .iter()
-                .find(|feed| feed.symbols.iter().any(|offered| offered == symbol))
-                .map_or_else(
-                    || BubbleAsset::undeclared(symbol),
-                    |feed| feed.bubble_asset(symbol),
-                ),
+            .find_map(|feed| feed.symbol_bubble_presets.get(&asset.key));
+        BubbleAsset {
+            preset: first.cloned().or(asset.preset),
+            ..asset
         }
     }
 

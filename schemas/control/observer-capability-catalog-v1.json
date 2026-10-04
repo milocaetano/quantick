@@ -14593,7 +14593,7 @@
                 ]
               },
               "saved": {
-                "description": "Whether the store file holds these settings. `false` when it could\nnot be read or written: they are kept in memory for this run only.",
+                "description": "Whether the store file holds this asset's settings. `false` until\nthe next frame writes a change, and while the file cannot be read or\nwritten: they are kept in memory, retried, for this run only.",
                 "type": "boolean"
               },
               "source": {

@@ -162,7 +162,9 @@ pub(super) struct LiveLaneSection<'a> {
 }
 
 impl LiveLaneSection<'_> {
-    pub(super) fn show(self, ui: &mut egui::Ui) {
+    /// Returns whether the trader set the lane's width or window on purpose
+    /// — a filing of the asset's, unlike the wheel's navigation.
+    pub(super) fn show(self, ui: &mut egui::Ui) -> bool {
         let Self {
             lane,
             inherited_cluster_ms: inherited,
@@ -183,12 +185,13 @@ impl LiveLaneSection<'_> {
         ui.checkbox(&mut lane.tape_only, "Tape only (hide candles)")
             .on_hover_text(ChartLayer::TapeOnly.hint());
         let native_tape = lane.native() && volume_dots;
+        let mut lane_set = false;
         egui::CollapsingHeader::new("live lane")
             .id_salt("bubble_live_lane_section")
             .default_open(false)
             .show(ui, |ui| {
                 if !lane.tape_only {
-                ui.horizontal(|ui| {
+                let width = ui.horizontal(|ui| {
                     ui.label("width");
                     ui.add(
                         egui::Slider::new(
@@ -196,14 +199,15 @@ impl LiveLaneSection<'_> {
                             MIN_LIVE_LANE_SHARE..=MAX_LIVE_LANE_SHARE,
                         )
                         .custom_formatter(|value, _| format!("{:.0}% of the chart", value * 100.0)),
-                    );
-                })
-                .response
+                    )
+                });
+                lane_set |= width.inner.changed();
+                width.response
                 .on_hover_text(
                     "how much of the chart the rolling tape takes, up to half of it. Also set by dragging the divider on the chart; measured against the chart, not the candle, so zooming the time axis changes how many bars fit beside the tape and never how much room it gets",
                 );
                 }
-                window_rows(ui, lane, native_tape);
+                lane_set |= window_rows(ui, lane, native_tape);
                 if !native_tape {
                 ui.horizontal(|ui| {
                     ui.label("cluster");
@@ -237,12 +241,16 @@ impl LiveLaneSection<'_> {
                         "the dashed line where the bar slots end and the tape begins, and the line on the live edge itself at its right end"
                     });
             });
+        lane_set
     }
 }
 
 /// The lane's window picker, and the one row that tunes whichever mode it
 /// is in: the zoom while it follows the bars, the duration while pinned.
-fn window_rows(ui: &mut egui::Ui, lane: &mut LiveLaneStyle, native_tape: bool) {
+/// Returns whether the trader picked or tuned the window — even the one
+/// already shown.
+fn window_rows(ui: &mut egui::Ui, lane: &mut LiveLaneStyle, native_tape: bool) -> bool {
+    let mut picked = false;
     ui.horizontal(|ui| {
         ui.label("window");
         egui::ComboBox::from_id_salt("bubble_live_lane_window")
@@ -254,11 +262,11 @@ fn window_rows(ui: &mut egui::Ui, lane: &mut LiveLaneStyle, native_tape: bool) {
                     // the entry compares modes and assigns whole
                     // values only when the mode actually changes.
                     let selected = same_lane_window(lane.window, option);
-                    if ui
+                    let clicked = ui
                         .selectable_label(selected, lane_window_label(option, None))
-                        .clicked()
-                        && !selected
-                    {
+                        .clicked();
+                    picked |= clicked;
+                    if clicked && !selected {
                         lane.window = option;
                     }
                 };
@@ -274,38 +282,39 @@ fn window_rows(ui: &mut egui::Ui, lane: &mut LiveLaneStyle, native_tape: bool) {
     } else {
         "how much market time fits in the tape. Following the bars keeps roughly one bar's worth of flow in the band whatever the instrument; a fixed window shows that much time however fast the bars are closing, which is what a burst calls for. The clustering window follows either way, so a crowded tape gathers into fewer, bigger bubbles instead of a smear"
     });
-    match &mut lane.window {
+    let tuned = match &mut lane.window {
         LaneWindow::Auto { zoom } => {
-            ui.horizontal(|ui| {
+            let row = ui.horizontal(|ui| {
                 ui.label("zoom");
                 ui.add(
                     egui::Slider::new(zoom, MIN_LIVE_LANE_ZOOM..=MAX_LIVE_LANE_ZOOM)
                         .logarithmic(true)
                         .suffix("×"),
-                );
-            })
-            .response
-            .on_hover_text(if native_tape {
+                )
+            });
+            row.response.on_hover_text(if native_tape {
                 "the tape's 15-second reference, scaled. Zoom in to show less time; zoom out to show more. Also set by dragging the time strip under the tape."
             } else {
                 "the recent bars' typical duration, scaled. Zoom in and prints run across the tape faster and further apart; zoom out and more time crowds in. Also set by dragging the time strip under the tape"
             });
+            row.inner.changed()
         }
         LaneWindow::Fixed { ms } => {
-            ui.horizontal(|ui| {
+            let row = ui.horizontal(|ui| {
                 ui.label("duration");
                 ui.add(
                     egui::Slider::new(ms, MIN_LIVE_LANE_WINDOW_MS..=MAX_LIVE_LANE_WINDOW_MS)
                         .logarithmic(true)
                         .custom_formatter(|value, _| format_window_ms(value as i64)),
-                );
-            })
-            .response
-            .on_hover_text(
+                )
+            });
+            row.response.on_hover_text(
                 "market time pinned in the tape, whatever the bars do. Also set by dragging the time strip under the tape",
             );
+            row.inner.changed()
         }
-    }
+    };
+    picked || tuned
 }
 
 /// Render style, radii and size reference, and the finish of every disc.

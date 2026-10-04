@@ -84,5 +84,15 @@
 # (workspace_store.rs, chart_layers_wiring.rs, workspace_bundle_adapter.rs).
 # The store, the binding, adoption, the gesture rule and the saved state live
 # in quantick_stores::bubble_asset_store with their tests. Measured remainder.
-!budget 105169
-crates/app 105169
+# Raised by 72 more lines for its review round 2 blockers: the wheel's path
+# beside the purposeful one for the tape window, so `chart.tape_view.set` and
+# the QUANTICK_TAPE_WINDOW hook move the view only (orderflow_view.rs,
+# price_axis.rs, launch_hooks.rs); the panel marks a width or window it set
+# (bubble_sections.rs); a view files before it adopts and takes presets
+# another tab reloaded (orderflow_view/asset_bubbles.rs); an action files
+# what it changed before the next read (local_action.rs, control_host.rs);
+# an export files and writes the asset store and says when it could not
+# (workspace_bundle_adapter.rs). Tab-feed resolution, per-asset saved state,
+# write retry and presets publication live in quantick_stores. Measured.
+!budget 105241
+crates/app 105241

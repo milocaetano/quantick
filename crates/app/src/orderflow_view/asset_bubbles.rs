@@ -35,39 +35,55 @@ impl OrderflowView {
         self.wear_asset(settings, false);
     }
 
-    /// Wear what another view filed for this asset, else file what this one
-    /// changed ([`AssetBinding::adoption`], [`AssetBinding::file`]). Returns
-    /// the candle aggression to put on the flow pane when it adopted.
+    /// Take the presets another view reloaded, file what this one changed,
+    /// then wear what another view filed since ([`AssetBinding::file`],
+    /// [`AssetBinding::adoption`]): filing first, so an edit here is never
+    /// dropped for one filed elsewhere in the same pass. Returns the candle
+    /// aggression to put on the flow pane when it adopted.
     pub(crate) fn sync_asset(&mut self, candle_aggression: bool) -> Option<bool> {
-        let binding = self.asset.as_mut()?;
-        if let Some((settings, lane_moved)) = binding.adoption() {
-            self.wear_asset(&settings, !lane_moved);
-            return Some(settings.candle_aggression);
+        if let Some(presets) = self.asset.as_mut()?.take_reloaded_presets() {
+            self.presets = presets;
+            self.follow_declared_look(false);
         }
+        let binding = self.asset.as_ref()?;
         if binding.edited() || binding.filed().candle_aggression != candle_aggression {
             let current = self.asset_settings(candle_aggression);
             self.asset.as_mut()?.file(current);
         }
-        None
+        let (settings, lane_moved) = self.asset.as_mut()?.adoption()?;
+        self.wear_asset(&settings, !lane_moved);
+        Some(settings.candle_aggression)
     }
 
     /// A setting outside the config changed: the look's name, the candles'
     /// opening scale.
     pub(crate) fn note_asset_change(&mut self) {
         if let Some(binding) = &mut self.asset {
-            binding.note_change();
+            binding.note_edit();
+        }
+    }
+
+    /// The lane's width or window was set on purpose: a menu, the panel, a
+    /// preset or the panel's reset ([`AssetBinding::note_lane_set`]).
+    pub(crate) fn note_asset_lane_set(&mut self) {
+        if let Some(binding) = &mut self.asset {
+            binding.note_lane_set();
         }
     }
 
     /// Re-read the asset's declared look from the presets: an asset nobody
     /// tuned wears the new one, one with settings of its own keeps them.
-    pub(super) fn follow_declared_look(&mut self) {
+    /// Reloaded here, they go to every view on the store first.
+    pub(super) fn follow_declared_look(&mut self, reloaded_here: bool) {
         let Some(binding) = &mut self.asset else {
             return;
         };
+        if reloaded_here {
+            binding.publish_presets(&self.presets);
+        }
         self.preset_status = Some(match binding.refresh_declared(&self.presets) {
-            Some(settings) => {
-                self.wear_asset(&settings, false);
+            Some((settings, lane_moved)) => {
+                self.wear_asset(&settings, !lane_moved);
                 format!("presets reloaded · '{}' applied", self.look_name)
             }
             None => format!(
@@ -79,13 +95,16 @@ impl OrderflowView {
 
     /// Put `settings` on screen without counting it as an edit;
     /// `keep_navigation` leaves the lane's width and window where this
-    /// view's own gestures put them.
+    /// view's own gestures put them, and a held window stays held.
     fn wear_asset(&mut self, settings: &AssetBubbles, keep_navigation: bool) {
         let before = self.config.clone();
         settings.look.apply_to(&mut self.config);
         if keep_navigation {
             self.config.live_lane.window = before.live_lane.window;
             self.config.live_lane.width_share = before.live_lane.width_share;
+        }
+        if let Some(window) = self.held_window {
+            self.config.live_lane.window = window;
         }
         self.look_name.clone_from(&settings.look.name);
         self.preset_name_draft.clone_from(&settings.look.name);

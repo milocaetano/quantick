@@ -190,7 +190,7 @@ fn win_asset_settings() -> AssetBubbles {
     let (track, settings) = AssetBinding::bind(
         AssetBubblesStore::default().shared(),
         &feeds,
-        "WINV26",
+        ("metatrader-b3", "WINV26"),
         &bubble_presets::embedded(),
         false,
     );

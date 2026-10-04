@@ -338,7 +338,7 @@ impl Tab {
         let Some(binding) = self.tape().asset() else {
             return;
         };
-        if binding.key() == config.bubble_asset(&self.symbol).key {
+        if binding.key() == config.bubble_asset(&self.feed_id, &self.symbol).key {
             return;
         }
         let store = binding.store().clone();
@@ -353,8 +353,9 @@ impl Tab {
             ChartLayer::CandleAggression.0.default_on,
             self.tape().bubble_presets(),
         );
+        let market = (self.feed_id.as_str(), self.symbol.as_str());
         let (binding, settings) =
-            AssetBinding::bind(store.clone(), config, &self.symbol, presets, candle);
+            AssetBinding::bind(store.clone(), config, market, presets, candle);
         self.set_candle_aggression(settings.candle_aggression);
         self.tape_mut().bind_asset(binding, &settings);
     }

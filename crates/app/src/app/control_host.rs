@@ -375,6 +375,12 @@ impl<'a> TabsMut<'a> {
     ) -> &'a mut ChartPane {
         self.tabs.runtime_mut(tab_index).pane_mut(side)
     }
+
+    /// File what an action changed for each tab's asset now, so the next
+    /// read reports it as the store holds it ([`Tab::sync_asset_bubbles`]).
+    pub(crate) fn file_asset_bubbles(self) {
+        self.tabs.iter_mut().for_each(Tab::sync_asset_bubbles);
+    }
 }
 
 /// The chrome-and-layout read view: what the window drew around the tab on

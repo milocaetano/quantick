@@ -5,14 +5,16 @@
 //! one tab reaches every other tab on the same asset ([`AssetBinding::adoption`])
 //! instead of being overwritten by their stale copy. The store is read once
 //! and written once per change ([`AssetBubblesStore::flush`]), never per
-//! frame, and it says when the file does not hold what is on screen
-//! ([`AssetBubblesStore::unsaved`]). The document and its I/O are
-//! [`crate::bubble_assets`].
+//! frame — a failed write is retried after a growing number of frames — and
+//! it says, per asset, when the file does not hold what is on screen
+//! ([`AssetBubblesStore::unsaved`]). A presets file one view reloads reaches
+//! every view ([`AssetBinding::publish_presets`]). The document and its I/O
+//! are [`crate::bubble_assets`].
 //!
 //! A setting is something the trader set: the panel, a menu, a control call,
 //! a layer switch. Wheeling or dragging the tape's window or width moves the
-//! view, not the asset: the lane's width and window are filed only when set
-//! on purpose ([`AssetBinding::note_edit`]).
+//! view, not the asset: the lane's width and window are filed only when the
+//! caller says they were set on purpose ([`AssetBinding::note_lane_set`]).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -28,6 +30,10 @@ use crate::config::{AppConfig, BubbleAsset};
 /// The store every view of one app shares.
 pub type SharedAssetBubbles = Rc<RefCell<AssetBubblesStore>>;
 
+/// The most flush opportunities — frames — a failing disk waits between two
+/// write attempts. The wait doubles from one up to this.
+pub const MAX_WRITE_BACKOFF: u32 = 512;
+
 /// Every asset's own bubble settings, in memory, and whether the file holds
 /// them.
 #[derive(Debug, Default)]
@@ -38,11 +44,14 @@ pub struct AssetBubblesStore {
     /// Why the file could not be read. While set it is never written over:
     /// edits stay in memory and every asset reports them unsaved.
     unreadable: Option<String>,
-    /// A change the file does not hold yet.
-    unwritten: bool,
-    /// A change waiting for [`Self::flush`]. The attempt clears it, so a
-    /// failing disk is tried once per change, not once per frame.
+    /// The assets changed since the file last held every one.
+    unwritten: BTreeSet<String>,
+    /// A change waiting for [`Self::flush`].
     pending: bool,
+    /// Flushes to let pass before retrying a failed write, and the wait the
+    /// next failure doubles, so a failing disk is not tried every frame.
+    retry_in: u32,
+    backoff: u32,
     /// Why the last write failed.
     write_error: Option<String>,
     /// Counts changes; an asset's revision is the count at its last one.
@@ -50,6 +59,10 @@ pub struct AssetBubblesStore {
     /// The count at the last reload, which changed every asset at once.
     reloaded_at: u64,
     revisions: BTreeMap<String, u64>,
+    /// The presets file a view last reloaded, and how many reloads there
+    /// were: every other view takes it at its next sync.
+    presets: Option<BubblePresetFile>,
+    presets_revision: u64,
 }
 
 impl AssetBubblesStore {
@@ -92,8 +105,9 @@ impl AssetBubblesStore {
         }
         self.file = file;
         self.unreadable = unreadable;
-        self.unwritten = false;
+        self.unwritten.clear();
         self.pending = false;
+        (self.retry_in, self.backoff) = (0, 0);
         self.write_error = None;
     }
 
@@ -119,18 +133,38 @@ impl AssetBubblesStore {
         }
         self.changes += 1;
         self.revisions.insert(key.to_owned(), self.changes);
-        self.unwritten = true;
+        self.unwritten.insert(key.to_owned());
         self.pending = true;
         true
     }
 
-    /// Write the change waiting, once: `None` when none waited, else the
-    /// attempt's outcome, logged when it failed. An unreadable file is never
-    /// written over.
+    /// Write the change waiting: `None` when none waited or a failed write
+    /// is still backing off, else the attempt's outcome, logged when it
+    /// failed. A failed write is retried after 1, 2, 4 … up to
+    /// [`MAX_WRITE_BACKOFF`] flushes; an unreadable file is never written
+    /// over, and neither it nor a memory-only store is retried.
     pub fn flush(&mut self) -> Option<Result<(), String>> {
-        if !std::mem::take(&mut self.pending) {
+        if !self.pending {
             return None;
         }
+        if self.retry_in > 0 {
+            self.retry_in -= 1;
+            return None;
+        }
+        Some(self.write())
+    }
+
+    /// Write what the file does not hold now, backoff or not — a workspace
+    /// export captures the file next. Returns why the file still does not
+    /// hold every asset's settings; `None` when it does.
+    pub fn write_now(&mut self) -> Option<String> {
+        if self.pending {
+            let _ = self.write();
+        }
+        self.unsaved_any()
+    }
+
+    fn write(&mut self) -> Result<(), String> {
         let result = match (&self.unreadable, &self.path) {
             (Some(error), _) => Err(format!("not written over an unreadable store — {error}")),
             (None, None) => Err("kept in memory only".to_owned()),
@@ -138,7 +172,9 @@ impl AssetBubblesStore {
         };
         match &result {
             Ok(()) => {
-                self.unwritten = false;
+                self.unwritten.clear();
+                self.pending = false;
+                self.backoff = 0;
                 self.write_error = None;
             }
             Err(error) => {
@@ -147,21 +183,46 @@ impl AssetBubblesStore {
                     action = "keep_settings_in_memory_only",
                     "bubble asset settings could not be saved");
                 self.write_error = Some(error.clone());
+                if self.unreadable.is_some() || self.path.is_none() {
+                    self.pending = false;
+                } else {
+                    self.backoff = self.backoff.saturating_mul(2).clamp(1, MAX_WRITE_BACKOFF);
+                    self.retry_in = self.backoff;
+                }
             }
         }
-        Some(result)
+        result
     }
 
-    /// Why the file does not hold what memory does; `None` when it does.
+    /// Why the file does not hold `key`'s settings as memory has them;
+    /// `None` when it does. Another asset's failed write is not this one's.
     #[must_use]
-    pub fn unsaved(&self) -> Option<String> {
+    pub fn unsaved(&self, key: &str) -> Option<String> {
         if let Some(error) = &self.unreadable {
             return Some(format!("store unreadable — {error}"));
         }
-        self.unwritten.then(|| {
+        self.unwritten.contains(key).then(|| {
             self.write_error
                 .clone()
                 .unwrap_or_else(|| "not written yet".to_owned())
+        })
+    }
+
+    /// Why the file does not hold every asset's settings; `None` when it
+    /// does.
+    #[must_use]
+    pub fn unsaved_any(&self) -> Option<String> {
+        if let Some(error) = &self.unreadable {
+            return Some(format!("store unreadable — {error}"));
+        }
+        let keys = self
+            .unwritten
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        (!keys.is_empty()).then(|| {
+            let why = self.write_error.as_deref().unwrap_or("not written yet");
+            format!("{} — {why}", keys.join(", "))
         })
     }
 }
@@ -182,6 +243,9 @@ pub struct AssetBinding {
     /// The asset's revision in the store when this view last filed or
     /// adopted.
     seen: u64,
+    /// The store's presets revision this view's presets reflect: a view
+    /// takes every reload at its next sync, so it binds current.
+    presets_seen: u64,
     /// The trader changed a setting since the last filing.
     edited: bool,
     /// Among those changes, the lane's width or window, set on purpose.
@@ -189,20 +253,21 @@ pub struct AssetBinding {
 }
 
 impl AssetBinding {
-    /// Bind to the asset `symbol` belongs to ([`AppConfig::bubble_asset`]).
-    /// The settings to put on screen are its stored ones, else the preset
-    /// declared for it, else the presets file's active look, else the code
-    /// defaults. An unknown declared name is reported and falls through —
-    /// the presets file is user-edited, and a typo must not restyle a market.
+    /// Bind to the asset `symbol` belongs to in a tab on `feed_id`
+    /// ([`AppConfig::bubble_asset`]). The settings to put on screen are its
+    /// stored ones, else the preset declared for it, else the presets file's
+    /// active look, else the code defaults. An unknown declared name is
+    /// reported and falls through — the presets file is user-edited, and a
+    /// typo must not restyle a market.
     #[must_use]
     pub fn bind(
         store: SharedAssetBubbles,
         config: &AppConfig,
-        symbol: &str,
+        (feed_id, symbol): (&str, &str),
         presets: &BubblePresetFile,
         candle_default: bool,
     ) -> (Self, AssetBubbles) {
-        let asset = config.bubble_asset(symbol);
+        let asset = config.bubble_asset(feed_id, symbol);
         if let Some(name) = asset
             .preset
             .as_deref()
@@ -214,10 +279,14 @@ impl AssetBinding {
                 "feed declares a bubble preset that is not in the presets file; ignoring");
         }
         let (declared_source, declared) = declared(&asset, presets, candle_default);
-        let (settings, seen) = {
+        let (settings, seen, presets_seen) = {
             let shared = store.borrow();
             let settings = shared.get(&asset.key).unwrap_or(&declared).clone();
-            (settings, shared.revision(&asset.key))
+            (
+                settings,
+                shared.revision(&asset.key),
+                shared.presets_revision,
+            )
         };
         let binding = Self {
             store,
@@ -228,6 +297,7 @@ impl AssetBinding {
             declared,
             filed: settings.clone(),
             seen,
+            presets_seen,
             edited: false,
             lane_set: false,
         };
@@ -263,10 +333,13 @@ impl AssetBinding {
     }
 
     /// Why the file does not hold the settings on screen; `None` when it
-    /// does.
+    /// does. A change noted but not filed yet is not saved either.
     #[must_use]
     pub fn unsaved(&self) -> Option<String> {
-        self.store.borrow().unsaved()
+        if self.edited {
+            return Some("changed on screen, not filed yet".to_owned());
+        }
+        self.store.borrow().unsaved(&self.asset.key)
     }
 
     /// What this view last filed or adopted.
@@ -275,19 +348,20 @@ impl AssetBinding {
         &self.filed
     }
 
-    /// A setting changed from `before` to `after`: the panel, a menu, a
-    /// control call or a layer switch — never a gesture, which moves the
-    /// view and is not noted at all.
-    pub fn note_edit(&mut self, before: &HeatmapConfig, after: &HeatmapConfig) {
+    /// A setting changed: the panel, a menu, a control call or a layer
+    /// switch — never a gesture, which moves the view and is not noted at
+    /// all. The lane's width and window are not filed by this; see
+    /// [`Self::note_lane_set`].
+    pub fn note_edit(&mut self) {
         self.edited = true;
-        let (was, is) = (&before.live_lane, &after.live_lane);
-        self.lane_set |= was.window != is.window || was.width_share != is.width_share;
     }
 
-    /// A setting outside the config changed: the look's name, the candles'
-    /// opening scale.
-    pub fn note_change(&mut self) {
+    /// The lane's width or window was set on purpose — a menu entry, the
+    /// panel, a preset — even to the value navigation already shows: the
+    /// next filing keeps the lane as it is on screen.
+    pub fn note_lane_set(&mut self) {
         self.edited = true;
+        self.lane_set = true;
     }
 
     /// Whether a setting changed since the last filing.
@@ -310,7 +384,23 @@ impl AssetBinding {
             return false;
         }
         let mut store = self.store.borrow_mut();
-        let changed = store.record(&self.asset.key, &current, &self.declared);
+        let key = self.asset.key.as_str();
+        if store.reloaded_at > self.seen {
+            // An import rewrote the store: the file is the newer word, and
+            // the adoption that follows puts it on screen.
+            tracing::warn!(target: "quantick::app", schema_version = 1_u8,
+                event_code = "ASSET_BUBBLES_EDIT_SUPERSEDED", asset = key, by = "import",
+                action = "adopt_imported_settings",
+                "an unfiled bubble edit gives way to the imported settings");
+            return false;
+        }
+        if store.revision(key) != self.seen {
+            tracing::warn!(target: "quantick::app", schema_version = 1_u8,
+                event_code = "ASSET_BUBBLES_EDIT_SUPERSEDED", asset = key, by = "this_view",
+                action = "last_writer_wins",
+                "another tab's bubble edit on this asset is replaced by this tab's newer one");
+        }
+        let changed = store.record(key, &current, &self.declared);
         self.seen = store.revision(&self.asset.key);
         drop(store);
         self.filed = current;
@@ -329,8 +419,7 @@ impl AssetBinding {
         }
         let settings = store.get(&self.asset.key).unwrap_or(&self.declared).clone();
         drop(store);
-        let (was, is) = (&self.filed.look.live_lane, &settings.look.live_lane);
-        let lane_moved = was.window != is.window || was.width_share != is.width_share;
+        let lane_moved = lane_moved(&self.filed, &settings);
         self.seen = revision;
         self.edited = false;
         self.lane_set = false;
@@ -338,17 +427,40 @@ impl AssetBinding {
         Some((settings, lane_moved))
     }
 
-    /// Read the declared look again from `presets`, reloaded or saved, so
-    /// filing compares against the look the asset opens on now. Returns it
+    /// Hand `presets`, reloaded by this view, to every other view on the
+    /// store; each takes it at its next sync
+    /// ([`Self::take_reloaded_presets`]).
+    pub fn publish_presets(&mut self, presets: &BubblePresetFile) {
+        let mut store = self.store.borrow_mut();
+        store.presets = Some(presets.clone());
+        store.presets_revision += 1;
+        self.presets_seen = store.presets_revision;
+    }
+
+    /// The presets file another view reloaded since this one last looked,
+    /// for this view to hold and [`Self::refresh_declared`] from.
+    pub fn take_reloaded_presets(&mut self) -> Option<BubblePresetFile> {
+        let store = self.store.borrow();
+        if store.presets_revision == self.presets_seen {
+            return None;
+        }
+        self.presets_seen = store.presets_revision;
+        store.presets.clone()
+    }
+
+    /// Read the declared look again from `presets`, reloaded here or
+    /// elsewhere, so filing compares against the look the asset opens on
+    /// now. Returns it, with whether it moves the lane's width or window,
     /// when the asset was on its declared look — nothing of its own stored,
     /// nothing edited — for the view to put on screen: the presets file's
     /// new word reaches an asset nobody tuned, and only that one.
-    pub fn refresh_declared(&mut self, presets: &BubblePresetFile) -> Option<AssetBubbles> {
+    pub fn refresh_declared(&mut self, presets: &BubblePresetFile) -> Option<(AssetBubbles, bool)> {
         let untuned = !self.edited && self.store.borrow().get(&self.asset.key).is_none();
         (self.declared_source, self.declared) = declared(&self.asset, presets, self.candle_default);
         untuned.then(|| {
+            let moved = lane_moved(&self.filed, &self.declared);
             self.filed = self.declared.clone();
-            self.declared.clone()
+            (self.declared.clone(), moved)
         })
     }
 
@@ -365,6 +477,12 @@ impl AssetBinding {
             )
         })
     }
+}
+
+/// Whether `to` puts the lane's width or window elsewhere than `from`.
+fn lane_moved(from: &AssetBubbles, to: &AssetBubbles) -> bool {
+    let (was, is) = (&from.look.live_lane, &to.look.live_lane);
+    was.window != is.window || was.width_share != is.width_share
 }
 
 /// The look `asset` opens on, and where it comes from.

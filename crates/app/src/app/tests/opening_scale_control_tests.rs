@@ -234,6 +234,12 @@ fn an_opening_scale_set_by_control_is_read_back_and_kept_per_asset() {
         payload,
     );
     assert_eq!(success_result(&set)["changed"], true);
+    // Test agent D3: the snapshot right after the call is honest — filed
+    // for the asset, not yet on disk.
+    let pending = bubbles(&mut app, &mut observer);
+    assert_eq!(pending["asset"]["source"], "stored", "{pending}");
+    assert_eq!(pending["asset"]["saved"], false, "{pending}");
+    assert_eq!(pending["asset"]["save_error"], "not written yet");
     app.layer_wiring().maintain(&ctx);
     let filed = bubbles(&mut app, &mut observer);
     assert_eq!(filed["ignore_opening_burst_in_scale"], true);

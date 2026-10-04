@@ -31,8 +31,13 @@ default_symbol = "BTCUSDT"
 #                   for that asset alone (bubble-assets.toml in the cockpit
 #                   home), reaches every tab showing it and is restored
 #                   whenever a tab shows it again. Wheeling or dragging the
-#                   tape moves the view only. A symbol two feeds offer opens
-#                   on the first one's declaration, whichever tab shows it.
+#                   tape moves the view only. A tab resolves a symbol on its
+#                   own feed first (exact key, longest pattern, then
+#                   bubble_preset), so a pattern never captures another
+#                   venue's symbol; a symbol its feed does not offer (a
+#                   recording replayed there) takes the key another feed
+#                   declares for it. A key two feeds declare opens on the
+#                   first one's preset.
 #   default_layout — optional: the canvas layout a tab on this feed opens
 #                   showing — "flow" (the default), "time" (a full-window
 #                   timeframe chart) or "time+flow" (the split). Startup-only:

@@ -366,8 +366,9 @@ pub struct BubbleAssetSnapshot {
     /// The preset the look on screen started from; empty once the panel's
     /// defaults replaced it.
     pub preset: String,
-    /// Whether the store file holds these settings. `false` when it could
-    /// not be read or written: they are kept in memory for this run only.
+    /// Whether the store file holds this asset's settings. `false` until
+    /// the next frame writes a change, and while the file cannot be read or
+    /// written: they are kept in memory, retried, for this run only.
     pub saved: bool,
     /// Why they are not saved; absent when they are.
     #[serde(default)]

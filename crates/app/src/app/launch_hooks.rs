@@ -275,11 +275,14 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
     // How much market time the tape shows: `auto` follows the bars, a
     // duration pins it (`90s`, `2min`, `120000ms`, or bare milliseconds).
     // Nonsense is refused rather than guessed at, so a typo photographs
-    // the default instead of an invented window.
+    // the default instead of an invented window. Navigation held for the
+    // run, never filed: it reaches the asset a replay autostart switches to.
     if let Some(value) = env.var("QUANTICK_TAPE_WINDOW")
         && let Some(window) = parse_tape_window(value.trim())
     {
-        app.active_tab_mut().tape_mut().set_live_lane_window(window);
+        app.active_tab_mut()
+            .tape_mut()
+            .hold_live_lane_window(window);
     }
     // Same convenience for the candle footprint — the same field the
     // pane's layer menu writes, so a validation run sees exactly what a

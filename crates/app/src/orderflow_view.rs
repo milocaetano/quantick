@@ -120,6 +120,10 @@ pub struct OrderflowView {
     look_name: String,
     /// The asset these settings belong to, bound by the tab.
     asset: Option<quantick_stores::bubble_asset_store::AssetBinding>,
+    /// A tape window a launch hook holds for this run: navigation, put back
+    /// whenever the view wears an asset's settings, so it reaches the asset
+    /// a replay autostart switches to. `None` outside a capture run.
+    held_window: Option<LaneWindow>,
     /// Scripted tape starvation: prints stop reaching the tape this many
     /// milliseconds after the first one, while the book keeps arriving.
     /// `None` — always, outside a capture run — feeds the tape every print.
@@ -193,6 +197,7 @@ impl OrderflowView {
             preset_status,
             look_name,
             asset: None,
+            held_window: None,
             starve_tape_after_ms: None,
             first_print_ms: None,
             dot_rungs: Default::default(),
@@ -727,15 +732,27 @@ impl OrderflowView {
     }
 
     /// Choose how the tape's window is decided: a preset, a custom duration,
-    /// or back to following the bars.
+    /// or back to following the bars. A setting of the asset on screen, even
+    /// when the wheel already shows that window.
     pub fn set_live_lane_window(&mut self, window: LaneWindow) {
-        if self.config.live_lane.window == window {
-            return;
-        }
+        self.note_asset_lane_set();
+        self.navigate_live_lane_window(window);
+    }
+
+    /// Move the tape's window as the wheel does: the view, not the asset.
+    pub fn navigate_live_lane_window(&mut self, window: LaneWindow) {
         let before = self.config.clone();
         self.config.live_lane.window = window;
         self.config.live_lane.window.sanitize();
-        self.commit_config_changes(before);
+        self.apply_config(before);
+    }
+
+    /// Hold the tape's window at `window` for this run, through every asset
+    /// the view shows — a launch hook's navigation, never filed.
+    #[cfg(any(feature = "scenario-harness", test))]
+    pub fn hold_live_lane_window(&mut self, window: LaneWindow) {
+        self.held_window = Some(window);
+        self.navigate_live_lane_window(window);
     }
 
     /// Market time the lane is showing right now, in milliseconds — the label
@@ -985,7 +1002,7 @@ impl OrderflowView {
         if self.config != before
             && let Some(asset) = &mut self.asset
         {
-            asset.note_edit(&before, &self.config);
+            asset.note_edit();
         }
         self.apply_config(before)
     }
