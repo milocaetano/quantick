@@ -60,49 +60,18 @@ pub struct ChoiceDescriptor {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BarConfigurationError {
-    NotKindParameter {
-        text: String,
-    },
-    UnknownKind {
-        kind: String,
-    },
-    UnknownParameter {
-        parameter: String,
-    },
-    InvalidCount {
-        kind: String,
-        parameter: String,
-    },
-    InvalidNumber {
-        kind: String,
-        parameter: String,
-    },
-    BelowMinimum {
-        kind: String,
-        minimum: Decimal,
-        unit: &'static str,
-        parameter: String,
-    },
-    UnknownChoice {
-        choice: String,
-    },
-    InvalidInterval {
-        parameter: String,
-    },
-    IntervalOutOfRange {
-        ms: i64,
-        parameter: String,
-    },
-    DuplicateKind {
-        kind: String,
-    },
-    LegacyKindUnavailable {
-        kind: String,
-    },
-    InvalidDefinition {
-        kind: String,
-        reason: &'static str,
-    },
+    NotKindParameter { text: String },
+    UnknownKind { kind: String },
+    UnknownParameter { parameter: String },
+    InvalidCount { kind: String, parameter: String },
+    InvalidNumber { kind: String, parameter: String },
+    BelowMinimum { kind: String, minimum: String },
+    UnknownChoice { choice: String },
+    InvalidInterval { parameter: String },
+    IntervalOutOfRange { ms: i64, parameter: String },
+    DuplicateKind { kind: String },
+    LegacyKindUnavailable { kind: String },
+    InvalidDefinition { kind: String, reason: &'static str },
 }
 
 impl std::fmt::Display for BarConfigurationError {
@@ -122,15 +91,9 @@ impl std::fmt::Display for BarConfigurationError {
             Self::InvalidNumber { kind, parameter } => {
                 write!(f, "{kind} bars need a positive number, got '{parameter}'")
             }
-            Self::BelowMinimum {
-                kind,
-                minimum,
-                unit,
-                parameter,
-            } => write!(
-                f,
-                "{kind} bars need at least {minimum} {unit}, got '{parameter}'"
-            ),
+            Self::BelowMinimum { kind, minimum } => {
+                write!(f, "{kind} bars need at least {minimum}")
+            }
             Self::UnknownChoice { choice } => write!(f, "unknown bar parameter choice '{choice}'"),
             Self::InvalidInterval { parameter } => write!(
                 f,
@@ -193,9 +156,7 @@ impl ParameterDescriptor {
         match self.minimum {
             Some(minimum) if value < minimum => Err(BarConfigurationError::BelowMinimum {
                 kind: id.to_owned(),
-                minimum,
-                unit: self.unit,
-                parameter: value.to_string(),
+                minimum: format!("{minimum} {}", self.unit),
             }),
             _ => Ok(()),
         }

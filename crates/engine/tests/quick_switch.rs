@@ -74,10 +74,7 @@ fn one_tick_is_no_renko_brick() {
     assert!(matches("1R").is_empty());
     assert!(!configs(1).iter().any(|spec| spec.starts_with("renko")));
     let refusal = BUILTIN_BARS.parse("renko:1").unwrap_err();
-    assert_eq!(
-        refusal.to_string(),
-        "renko bars need at least 2 ticks, got '1'"
-    );
+    assert_eq!(refusal.to_string(), "renko bars need at least 2 ticks");
 }
 
 #[test]

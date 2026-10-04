@@ -256,9 +256,7 @@ fn a_parameter_below_the_declared_minimum_is_refused() {
             quantick_engine::bar_selection::SelectionError::Configuration(
                 quantick_engine::bar_registry::BarConfigurationError::BelowMinimum {
                     kind: "renko".to_owned(),
-                    minimum: Decimal::TWO,
-                    unit: "ticks",
-                    parameter: "1".to_owned(),
+                    minimum: "2 ticks".to_owned(),
                 }
             )
         )
