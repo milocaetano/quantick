@@ -6,7 +6,9 @@ pub mod definitions;
 mod parameters;
 mod quick_switch;
 pub use parameters::*;
-pub use quick_switch::QUICK_DURATION_SCALES_MS;
+pub use quick_switch::{
+    QUICK_DURATION_SCALES_MS, QUICK_QUERY_MAX_CHARS, QuickAlias, quick_query_text,
+};
 
 use crate::BarBuilder;
 use rust_decimal::{Decimal, prelude::ToPrimitive};
@@ -24,7 +26,9 @@ pub struct BarDefinition {
     /// Closed bars partition a fixed duration, as required by candle/viewport consumers.
     /// A duration-shaped parameter alone does not imply this capability.
     pub fixed_time_interval: bool,
-    pub factory: fn(Decimal, Option<&str>) -> Box<dyn BarBuilder>,
+    /// The quick switch's own name for this kind, if it has one.
+    pub quick_alias: Option<QuickAlias>,
+    pub factory: fn(Decimal, Option<&str>, InstrumentFacts) -> Box<dyn BarBuilder>,
 }
 
 impl BarDefinition {
@@ -33,6 +37,7 @@ impl BarDefinition {
         if let Some(choice) = self.choices.iter().find(|entry| Some(entry.id) == choice) {
             requirements.traded_volume |= choice.requirements.traded_volume;
             requirements.deal_counter |= choice.requirements.deal_counter;
+            requirements.price_step |= choice.requirements.price_step;
         }
         requirements
     }
@@ -142,8 +147,14 @@ impl BarConfiguration {
     pub fn choice(self) -> Option<&'static str> {
         self.choice
     }
+    /// A builder told nothing about the instrument. A rule that measures in
+    /// its price step cuts nothing from it; consumers call [`Self::build_for`].
     pub fn build(self) -> Box<dyn BarBuilder> {
-        (self.definition.factory)(self.parameter, self.choice)
+        self.build_for(InstrumentFacts::default())
+    }
+    /// A builder for this rule on the instrument `facts` describe.
+    pub fn build_for(self, facts: InstrumentFacts) -> Box<dyn BarBuilder> {
+        (self.definition.factory)(self.parameter, self.choice, facts)
     }
     pub fn time_interval_ms(self) -> Option<i64> {
         self.definition
@@ -187,16 +198,18 @@ impl BarConfiguration {
         }
     }
     /// Legacy in-memory/config restore used positive floors, including time <100ms.
-    /// Strict text/command construction goes through `configure` instead.
+    /// Strict text/command construction goes through `configure` instead. A
+    /// declared minimum is the floor of a rule defined from it upward.
     pub fn clamped(self) -> Self {
+        let floor = if self.definition.parameter.kind == NumberKind::Decimal {
+            DECIMAL_PARAM_FLOOR
+        } else {
+            Decimal::ONE
+        };
         Self {
-            parameter: self.parameter.max(
-                if self.definition.parameter.kind == NumberKind::Decimal {
-                    DECIMAL_PARAM_FLOOR
-                } else {
-                    Decimal::ONE
-                },
-            ),
+            parameter: self
+                .parameter
+                .max(self.definition.parameter.minimum.unwrap_or(floor)),
             ..self
         }
     }
@@ -284,6 +297,18 @@ impl BarRegistry {
                 {
                     return Err(invalid("duplicate parameter choice"));
                 }
+            }
+            if definition.quick_alias.is_some_and(|alias| {
+                !alias.suffix.is_ascii_alphabetic()
+                    || definitions[..i].iter().any(|other| {
+                        other
+                            .quick_alias
+                            .is_some_and(|taken| taken.suffix.eq_ignore_ascii_case(&alias.suffix))
+                    })
+            }) {
+                return Err(invalid(
+                    "a quick-switch suffix is one letter no other kind declares",
+                ));
             }
             if definitions[..i]
                 .iter()

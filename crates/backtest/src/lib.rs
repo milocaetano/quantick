@@ -18,7 +18,7 @@
 //! ```text
 //! for each trade:
 //!     (a) sim.on_trade(trade)      resting orders meet the tape
-//!     (b) builder.push(trade)      at most one bar closes per print
+//!     (b) builder.push_into(trade) every bar the print closed, in order
 //!           -> host.push_closed_bar(bar)
 //!           -> strategy.on_bar(view)     reads indicators, returns commands
 //!     (c) sim.apply(command)       queued for the *next* print

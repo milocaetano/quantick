@@ -10,6 +10,7 @@ pub static TICK: BarDefinition = BarDefinition {
         unit: "trades",
         kind: NumberKind::Count,
         default: Decimal::from_parts(50, 0, 0, false, 0),
+        minimum: None,
         editor: super::COUNT_EDITOR,
     },
     choice_parameter: None,
@@ -18,7 +19,8 @@ pub static TICK: BarDefinition = BarDefinition {
     requirements: super::PRINTS,
     progress_unit: "ticks",
     fixed_time_interval: false,
-    factory: |value, _| {
+    quick_alias: None,
+    factory: |value, _, _| {
         Box::new(TickBarBuilder::new(
             value.to_u64().expect("count representation"),
         ))

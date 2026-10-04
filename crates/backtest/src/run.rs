@@ -13,14 +13,14 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use quantick_engine::Side;
+use quantick_engine::{PriceGrid, Side};
 use quantick_indicators::{IndicatorHost, InstanceId};
 use quantick_replay::Session;
 use quantick_sim::{ClosedTrade, PerformanceReport, RejectReason, Simulator, VenueEvent};
 use rust_decimal::Decimal;
 
 use crate::strategy::{Account, BarView, Signals, Strategy};
-use quantick_engine::bar_registry::BarConfiguration;
+use quantick_engine::bar_registry::{BarConfiguration, InstrumentFacts};
 use quantick_engine::bar_selection::BarInputAvailability;
 
 /// Everything the tape refused, counted rather than swallowed.
@@ -182,9 +182,13 @@ pub struct SessionRun {
 ///    actions meet the print **before** anything looks at it. An order placed
 ///    on the previous bar fills here, which is why a decision can never act
 ///    on the print that triggered it.
-/// 2. `builder.push(print)` — at most one bar closes per print.
-/// 3. On a close: the host evaluates indicators, then the strategy is asked
-///    for commands, then `sim.apply` queues them for the *next* print.
+/// 2. `builder.push_into(print)` — every bar the print closed, oldest first:
+///    one at most for most rules, one per brick level a Renko print clears.
+/// 3. On each close: the host evaluates indicators, then the strategy is
+///    asked for commands, then `sim.apply` queues them for the *next* print.
+///
+/// A rule that measures in the price step cuts on the grid the session's own
+/// tape shows — the answer the chart reaches from the same prints.
 ///
 /// Indicator and simulator state are created here and dropped with the
 /// session: nothing carries over into the next recorded day.
@@ -208,7 +212,13 @@ pub fn run_session(
          bars::parse_runnable refuses it before a run",
         spec.to_config_string()
     );
-    let mut builder = spec.build();
+    let price_step = if spec.requirements().price_step {
+        let grid: PriceGrid = session.trades.iter().map(|trade| trade.price).collect();
+        grid.step()
+    } else {
+        None
+    };
+    let mut builder = spec.build_for(InstrumentFacts { price_step });
     let mut host = IndicatorHost::new();
     let slots: Vec<InstanceId> = strategy
         .indicators()
@@ -218,6 +228,7 @@ pub fn run_session(
     let mut sim = Simulator::new();
     let mut anomalies = Anomalies::default();
     let mut bars = 0usize;
+    let mut closed = Vec::new();
 
     for trade in &session.trades {
         let events = sim.on_trade(trade);
@@ -233,37 +244,37 @@ pub fn run_session(
             }
             let _ = strategy.on_events(&events);
         }
-        let Some(bar) = builder.push(trade) else {
-            continue;
-        };
-        host.push_closed_bar(&bar);
-        let index = bars;
-        bars += 1;
+        builder.push_into(trade, &mut closed);
+        for bar in closed.drain(..) {
+            host.push_closed_bar(&bar);
+            let index = bars;
+            bars += 1;
 
-        // The view borrows the host and the simulator, so it must be gone
-        // before `apply` can mutate the simulator. The block is the seam.
-        let commands = {
-            let view = BarView {
-                bar: &bar,
-                index,
-                signals: Signals::new(&host, &slots),
-                account: Account {
-                    position: sim.position(),
-                    orders: sim.orders(),
-                    mark_price: sim.mark_price(),
-                    mark_timestamp_ms: sim.mark_timestamp_ms(),
-                    closed_trades: sim.closed_trades().len(),
-                    realized_points: sim.realized_points(),
-                },
+            // The view borrows the host and the simulator, so it must be gone
+            // before `apply` can mutate the simulator. The block is the seam.
+            let commands = {
+                let view = BarView {
+                    bar: &bar,
+                    index,
+                    signals: Signals::new(&host, &slots),
+                    account: Account {
+                        position: sim.position(),
+                        orders: sim.orders(),
+                        mark_price: sim.mark_price(),
+                        mark_timestamp_ms: sim.mark_timestamp_ms(),
+                        closed_trades: sim.closed_trades().len(),
+                        realized_points: sim.realized_points(),
+                    },
+                };
+                strategy.on_bar(&view)
             };
-            strategy.on_bar(&view)
-        };
-        for command in commands {
-            let events = sim.apply(command);
-            for event in &events {
-                anomalies.observe(event);
+            for command in commands {
+                let events = sim.apply(command);
+                for event in &events {
+                    anomalies.observe(event);
+                }
+                let _ = strategy.on_events(&events);
             }
-            let _ = strategy.on_events(&events);
         }
     }
     strategy.end_of_session();

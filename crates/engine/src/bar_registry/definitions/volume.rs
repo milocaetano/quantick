@@ -10,6 +10,7 @@ pub static VOLUME: BarDefinition = BarDefinition {
         unit: "base_asset_quantity",
         kind: NumberKind::Decimal,
         default: Decimal::from_parts(5, 0, 0, false, 0),
+        minimum: None,
         editor: NumberEditor {
             label: "units",
             min: 0.1,
@@ -25,5 +26,6 @@ pub static VOLUME: BarDefinition = BarDefinition {
     requirements: super::VOLUME_INPUT,
     progress_unit: "vol",
     fixed_time_interval: false,
-    factory: |value, _| Box::new(VolumeBarBuilder::new(value)),
+    quick_alias: None,
+    factory: |value, _, _| Box::new(VolumeBarBuilder::new(value)),
 };

@@ -13,16 +13,18 @@ register! {
     time => TIME,
     imbalance => IMBALANCE,
     trades => TRADES,
+    renko => RENKO,
 }
 
 use super::{InputRequirements, NumberEditor};
 pub const PRINTS: InputRequirements = InputRequirements {
     traded_volume: false,
     deal_counter: false,
+    price_step: false,
 };
 pub const VOLUME_INPUT: InputRequirements = InputRequirements {
     traded_volume: true,
-    deal_counter: false,
+    ..PRINTS
 };
 const COUNT_EDITOR: NumberEditor = NumberEditor {
     label: "N ticks",

@@ -49,11 +49,11 @@ fn oracle(spec: &BarSpec, tape: &[Trade], backfilled: usize, footprint: bool) ->
         if index == backfilled {
             boundary = Some(bars.len());
         }
-        let closed = builder.push(trade);
+        let first = bars.len();
+        builder.push_into(trade, &mut bars);
         if footprint {
-            footprints.observe(trade, closed.as_ref());
+            footprints.observe(trade, &bars[first..]);
         }
-        bars.extend(closed);
     }
     Shown {
         bars: format!("{bars:?}"),
@@ -271,7 +271,7 @@ fn deal_oracle(
             let reading = *pending.next().expect("peeked");
             seed_deal_counter(&mut *builder, &[reading]);
         }
-        bars.extend(fold_print(&mut *builder, &mut footprints, footprint, trade));
+        fold_print(&mut *builder, &mut footprints, footprint, trade, &mut bars);
     }
     Shown {
         bars: format!("{bars:?}"),

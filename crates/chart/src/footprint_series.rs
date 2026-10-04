@@ -15,6 +15,11 @@
 //! the series counts the trades it fed since the last close and reads the
 //! answer off the closed bar's own `trade_count`: `pending + 1` means the
 //! closing trade is inside, `pending` means it opens the next ladder.
+//!
+//! One trade can close several bars — a Renko print clearing several brick
+//! levels. The first holds the ladder that was forming; each after it holds
+//! the closing trade if its count says so, and otherwise nothing, so it gets
+//! an empty ladder rather than a borrowed one.
 
 use quantick_engine::{Bar, BarFootprint, DEFAULT_LEVEL_CAP, FootprintBuilder, Trade};
 use rust_decimal::Decimal;
@@ -64,43 +69,33 @@ impl FootprintSeries {
         self.pending = 0;
     }
 
-    /// Fold the trade the bar builder just consumed, `closed` being what that
-    /// same `push` returned. Must be called for every trade, in order.
-    pub fn observe(&mut self, trade: &Trade, closed: Option<&Bar>) {
-        let Some(bar) = closed else {
+    /// Fold the trade the bar builder just consumed, `closed` being every bar
+    /// that same push closed, oldest first. Must be called for every trade, in
+    /// order.
+    pub fn observe(&mut self, trade: &Trade, closed: &[Bar]) {
+        let mut placed = false;
+        for bar in closed {
+            let closing_trade_included =
+                !placed && bar.trade_count == self.pending.saturating_add(1);
+            debug_assert!(
+                closing_trade_included || bar.trade_count == self.pending,
+                "footprint trade counter drifted from the bar builder's"
+            );
+            if closing_trade_included {
+                self.builder.push(trade);
+                placed = true;
+            }
+            // Index alignment with `bars` is the invariant everything
+            // downstream indexes by: a bar that summarises no print still
+            // gets its (empty) ladder.
+            self.closed.push(self.builder.close_or_empty());
+            self.pending = 0;
+        }
+        if !placed {
+            // No bar closed, or the last one closed on its boundary: this
+            // trade forms the next one.
             self.builder.push(trade);
             self.pending = self.pending.saturating_add(1);
-            return;
-        };
-
-        let closing_trade_included = bar.trade_count == self.pending.saturating_add(1);
-        debug_assert!(
-            closing_trade_included || bar.trade_count == self.pending,
-            "footprint trade counter drifted from the bar builder's"
-        );
-        if closing_trade_included {
-            self.builder.push(trade);
-        }
-        match self.builder.close() {
-            Some(ladder) => self.closed.push(ladder),
-            None => {
-                // Unreachable through ChartState — a closed bar summarises at
-                // least one trade — but index alignment with `bars` is the
-                // invariant everything downstream indexes by, so restore it
-                // from the only trade at hand instead of panicking mid-feed.
-                self.builder.push(trade);
-                self.closed
-                    .push(self.builder.close().expect("pushed just above"));
-                self.pending = 0;
-                return;
-            }
-        }
-        if closing_trade_included {
-            self.pending = 0;
-        } else {
-            // The bar closed on its boundary; this trade opens the next one.
-            self.builder.push(trade);
-            self.pending = 1;
         }
     }
 

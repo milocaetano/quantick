@@ -26,9 +26,7 @@ use crate::{Bar, BarBuilder, Trade, fixture};
 pub fn replay<B: BarBuilder>(builder: &mut B, trades: &[Trade]) -> Vec<Bar> {
     let mut bars = Vec::with_capacity(trades.len());
     for trade in trades {
-        if let Some(bar) = builder.push(trade) {
-            bars.push(bar);
-        }
+        builder.push_into(trade, &mut bars);
     }
     bars
 }

@@ -26,6 +26,9 @@ pub struct ParameterDescriptor {
     pub unit: &'static str,
     pub kind: NumberKind,
     pub default: Decimal,
+    /// The smallest value the rule is defined for, where that is more than
+    /// any positive value of its kind — a Renko brick needs two ticks.
+    pub minimum: Option<Decimal>,
     pub editor: NumberEditor,
 }
 
@@ -33,6 +36,19 @@ pub struct ParameterDescriptor {
 pub struct InputRequirements {
     pub traded_volume: bool,
     pub deal_counter: bool,
+    /// The rule measures in the instrument's price step. Never refused:
+    /// every tape shows its grid, and until it has, the rule cuts nothing.
+    pub price_step: bool,
+}
+
+/// What a builder is told about the instrument beyond its own parameter.
+///
+/// Every consumer of one tape hands the builder the same facts — the chart,
+/// the backtest and a bot alike — so the same trades cut the same bars.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InstrumentFacts {
+    /// One tick: the price grid the instrument trades on. `None` until known.
+    pub price_step: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -44,17 +60,49 @@ pub struct ChoiceDescriptor {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BarConfigurationError {
-    NotKindParameter { text: String },
-    UnknownKind { kind: String },
-    UnknownParameter { parameter: String },
-    InvalidCount { kind: String, parameter: String },
-    InvalidNumber { kind: String, parameter: String },
-    UnknownChoice { choice: String },
-    InvalidInterval { parameter: String },
-    IntervalOutOfRange { ms: i64, parameter: String },
-    DuplicateKind { kind: String },
-    LegacyKindUnavailable { kind: String },
-    InvalidDefinition { kind: String, reason: &'static str },
+    NotKindParameter {
+        text: String,
+    },
+    UnknownKind {
+        kind: String,
+    },
+    UnknownParameter {
+        parameter: String,
+    },
+    InvalidCount {
+        kind: String,
+        parameter: String,
+    },
+    InvalidNumber {
+        kind: String,
+        parameter: String,
+    },
+    BelowMinimum {
+        kind: String,
+        minimum: Decimal,
+        unit: &'static str,
+        parameter: String,
+    },
+    UnknownChoice {
+        choice: String,
+    },
+    InvalidInterval {
+        parameter: String,
+    },
+    IntervalOutOfRange {
+        ms: i64,
+        parameter: String,
+    },
+    DuplicateKind {
+        kind: String,
+    },
+    LegacyKindUnavailable {
+        kind: String,
+    },
+    InvalidDefinition {
+        kind: String,
+        reason: &'static str,
+    },
 }
 
 impl std::fmt::Display for BarConfigurationError {
@@ -74,6 +122,15 @@ impl std::fmt::Display for BarConfigurationError {
             Self::InvalidNumber { kind, parameter } => {
                 write!(f, "{kind} bars need a positive number, got '{parameter}'")
             }
+            Self::BelowMinimum {
+                kind,
+                minimum,
+                unit,
+                parameter,
+            } => write!(
+                f,
+                "{kind} bars need at least {minimum} {unit}, got '{parameter}'"
+            ),
             Self::UnknownChoice { choice } => write!(f, "unknown bar parameter choice '{choice}'"),
             Self::InvalidInterval { parameter } => write!(
                 f,
@@ -128,7 +185,20 @@ impl ParameterDescriptor {
                 })?,
             NumberKind::Duration => Decimal::from(parse_interval(text)?),
         };
+        self.check_minimum(id, value)?;
         Ok(value)
+    }
+
+    fn check_minimum(&self, id: &str, value: Decimal) -> Result<(), BarConfigurationError> {
+        match self.minimum {
+            Some(minimum) if value < minimum => Err(BarConfigurationError::BelowMinimum {
+                kind: id.to_owned(),
+                minimum,
+                unit: self.unit,
+                parameter: value.to_string(),
+            }),
+            _ => Ok(()),
+        }
     }
 
     pub fn validate(&self, id: &str, value: Decimal) -> Result<(), BarConfigurationError> {
@@ -162,7 +232,7 @@ impl ParameterDescriptor {
                 });
             }
         }
-        Ok(())
+        self.check_minimum(id, value)
     }
 
     pub fn format(&self, value: Decimal) -> String {

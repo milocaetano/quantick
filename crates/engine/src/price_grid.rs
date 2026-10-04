@@ -123,6 +123,18 @@ impl PriceGrid {
     }
 }
 
+/// The grid a whole tape shows, its prices folded in order — the answer a
+/// chart reaches observing the same prints one at a time.
+impl FromIterator<Decimal> for PriceGrid {
+    fn from_iter<I: IntoIterator<Item = Decimal>>(prices: I) -> Self {
+        let mut grid = Self::new();
+        for price in prices {
+            grid.observe(price);
+        }
+        grid
+    }
+}
+
 /// Greatest common divisor of two positive decimals, by Euclid, or [`None`]
 /// when this build of `Decimal` cannot finish the job.
 ///

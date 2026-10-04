@@ -35,33 +35,52 @@ pub struct BarProgress {
 
 /// Turns a stream of [`Trade`]s into a stream of [`Bar`]s.
 ///
-/// Every bar type — tick, volume, dollar, time — is a `BarBuilder`. Trades are
-/// fed one at a time in occurrence order via [`push`](BarBuilder::push); a bar
-/// is returned the moment its sampling bucket fills. This one-trade-in,
-/// maybe-a-bar-out shape is what makes the same code path drive a chart, a
-/// backtest and a bot ("one engine, three consumers").
+/// Every bar type — tick, volume, dollar, time, Renko — is a `BarBuilder`.
+/// Trades are fed one at a time in occurrence order via
+/// [`push_into`](BarBuilder::push_into); a bar is handed out the moment its
+/// sampling bucket fills. This one-trade-in, bars-out shape is what makes the
+/// same code path drive a chart, a backtest and a bot ("one engine, three
+/// consumers").
 ///
 /// A builder is a state machine: the trades seen since the last closed bar form
 /// the **in-progress** bar, exposed by [`partial`](BarBuilder::partial) so a
 /// chart can render the rightmost bar forming in real time. When a bucket fills,
-/// that in-progress bar is finalised, returned from `push`, and the builder
-/// starts a fresh one.
+/// that in-progress bar is finalised, handed out, and the builder starts a
+/// fresh one.
 pub trait BarBuilder {
     /// Feed one trade, in occurrence order.
     ///
     /// Returns `Some(bar)` if this trade completed a bar, `None` if the trade
-    /// only extended the in-progress bar. At most one bar closes per trade: a
-    /// trade is an atomic market event and is never split across bars (see the
-    /// boundary rule the threshold builder documents).
+    /// only extended the in-progress bar. A trade is an atomic market event and
+    /// is never split across bars (see the boundary rule the threshold builder
+    /// documents).
+    ///
+    /// One bar at most: a rule whose single print can complete several
+    /// overrides [`push_into`](BarBuilder::push_into), and that is the call
+    /// to make wherever such a rule can be configured.
     fn push(&mut self, trade: &Trade) -> Option<Bar>;
+
+    /// Feed one trade, in occurrence order, and append every bar it closed to
+    /// `closed`, oldest first.
+    ///
+    /// The call the shared aggregator path makes — chart, backtest and bot.
+    /// The default is [`push`](BarBuilder::push): at most one bar per print,
+    /// so a rule that never closes two cuts exactly what it always cut. A rule
+    /// whose one print can complete several bars overrides it: a Renko print
+    /// clearing `k` brick levels closes `k` bricks, and the ones it cleared on
+    /// its way past hold none of its prints.
+    fn push_into(&mut self, trade: &Trade, closed: &mut Vec<Bar>) {
+        closed.extend(self.push(trade));
+    }
 
     /// The in-progress bar — the trades seen since the last close — or `None`
     /// if no trade has arrived since the last bar closed.
     ///
     /// This bar is *not* closed: its `close`/`close_time` reflect only the
     /// trades so far and will keep moving until the bucket fills. Consumers that
-    /// need finalised bars only should use the return value of
-    /// [`push`](BarBuilder::push); `partial` is for rendering the forming bar.
+    /// need finalised bars only should use what
+    /// [`push_into`](BarBuilder::push_into) hands out; `partial` is for
+    /// rendering the forming bar.
     fn partial(&self) -> Option<&Bar>;
 
     /// How far the in-progress bar is from closing, in this rule's measure.
