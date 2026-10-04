@@ -37,6 +37,7 @@ pub(super) const FOLD_RING_WIDTH: f32 = 1.0;
 /// and not part of the mark: it has to be findable without competing with the
 /// pressure the bubble is there to show.
 pub(super) const FOLD_RING_ALPHA: f32 = 0.55;
+
 /// FLOW volume uses its own palette, distinct from candle direction and native Tape.
 pub(super) const FLOW_BUY: egui::Color32 = egui::Color32::from_rgb(112, 185, 244);
 pub(super) const FLOW_SELL: egui::Color32 = egui::Color32::from_rgb(232, 175, 99);
@@ -102,10 +103,12 @@ pub(super) const FLOW_CAPTION_FONT_PX: f32 = 10.0;
 pub(super) const FLOW_CAPTION_INSET_PX: f32 = 8.0;
 /// Width the FLOW caption leaves free of wrapped text, both sides together, in pixels.
 pub(super) const FLOW_CAPTION_WRAP_MARGIN_PX: f32 = 16.0;
+
 /// Text size of the first-contour quantity label, in points.
 pub(super) const FLOW_OPENING_LABEL_FONT_PX: f32 = 11.0;
 /// Drop-shadow offset behind the first-contour quantity label, in pixels.
 pub(super) const FLOW_OPENING_LABEL_SHADOW_OFFSET: egui::Vec2 = egui::vec2(1.0, 1.0);
+
 /// Horizontal padding of the FLOW inspection card, both sides together, in pixels.
 pub(super) const INSPECTION_PADDING_X_PX: f32 = 16.0;
 /// Vertical padding of the FLOW inspection card, top and bottom together, in pixels.
@@ -126,6 +129,7 @@ pub(super) const INSPECTION_CORNER_RADIUS_PX: f32 = 4.0;
 pub(super) const INSPECTION_ROW_GAP_PX: f32 = 8.0;
 /// Where the inspection heading starts inside the card, in pixels.
 pub(super) const INSPECTION_TEXT_INSET: egui::Vec2 = egui::vec2(8.0, 4.0);
+
 /// Chart width below which the tape header legend hides, in pixels.
 pub(super) const LEGEND_TAPE_MIN_CHART_WIDTH_PX: f32 = 90.0;
 /// Chart width below which the chart legend hides, in pixels.
@@ -150,14 +154,17 @@ pub(super) const LEGEND_ROW_HEIGHT_PX: f32 = 17.0;
 pub(super) const LEGEND_ENTRY_GAP_PX: f32 = 3.0;
 /// Legend panel corner radius, in pixels.
 pub(super) const LEGEND_CORNER_RADIUS_PX: f32 = 4.0;
+
 /// Canvas colour the settings preview dresses its sample against.
 pub(super) const PREVIEW_CANVAS_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(19, 23, 34);
+
 /// Text size of the held-tape and retained-edge labels, in points.
 pub(super) const PAST_TAPE_LABEL_FONT_PX: f32 = 11.0;
 /// Where the held-tape label starts inside the lane, in pixels.
 pub(super) const PAST_TAPE_LABEL_INSET: egui::Vec2 = egui::vec2(6.0, 4.0);
 /// Alpha of the shade over the stretch before the retained tape begins (0-255).
 pub(super) const PAST_TAPE_SHADE_ALPHA: u8 = 90;
+
 /// Gap between the retained-edge line and its label, in pixels.
 pub(super) const RETAINED_EDGE_LABEL_GAP_PX: f32 = 4.0;
 /// Retained-edge label distance below the lane top, in pixels.

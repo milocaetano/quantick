@@ -12,14 +12,23 @@ use quantick_orderflow::engine::OrderflowHealth;
 use quantick_orderflow::{
     BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, HeatmapConfig,
     LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS,
-    MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE,
-    MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
-    MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms,
-    lane_window_label, same_lane_window,
+    MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM,
+    MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE,
+    MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms, lane_window_label,
+    same_lane_window,
 };
 use rust_decimal::Decimal;
 
 use crate::orderflow_render::ThemeBubbleRgb;
+use crate::orderflow_view::constants::{
+    CLUSTER_WINDOW_CHOICES_MS, DETAIL_MIN_RADIUS_RANGE, DOT_FULL_QUANTITY_DRAG_SPEED,
+    DOT_FULL_QUANTITY_RANGE, DUST_FOLD_CHOICES_MS, FRONT_LENGTH_SCALE_RANGE, FRONT_WIDTH_RANGE,
+    HALO_STRENGTH_RANGE, IMPACT_RING_WIDTH_RANGE, LABEL_MIN_RADIUS_RANGE, LANE_CLUSTER_CHOICES_MS,
+    MIN_QUANTITY_DRAG_SPEED, MIN_QUANTITY_RANGE, MIN_RADIUS_RANGE, OPACITY_RANGE,
+    OUTLINE_WIDTH_RANGE, READABLE_MIN_RADIUS_RANGE, REGION_ROW_CHOICES, REGION_WINDOW_CHOICES_MS,
+    SIDE_OFFSET_RANGE, SIZE_REFERENCE_QUANTITY_DRAG_SPEED, SIZE_REFERENCE_QUANTITY_RANGE,
+    SPHERE_HIGHLIGHT_RANGE, SPHERE_SHADING_RANGE, TRAIL_LENGTH_RANGE, TRAIL_OPACITY_RANGE,
+};
 use quantick_layers::ChartLayer;
 
 fn select<T: Copy + PartialEq, L: Into<egui::WidgetText>>(
@@ -57,15 +66,7 @@ impl ClusteringSection<'_> {
             egui::ComboBox::from_id_salt("heatmap_bubble_cluster")
                 .selected_text(cluster_label(config.bubble_cluster_ms))
                 .show_ui(ui, |ui| {
-                    for (milliseconds, label) in [
-                        (0, "Raw · one bubble per print"),
-                        (50, "50 ms"),
-                        (100, "100 ms"),
-                        (200, "200 ms"),
-                        (500, "500 ms"),
-                        (1_000, "1 s"),
-                        (2_000, "2 s"),
-                    ] {
+                    for (milliseconds, label) in CLUSTER_WINDOW_CHOICES_MS {
                         ui.selectable_value(&mut config.bubble_cluster_ms, milliseconds, label);
                     }
                 });
@@ -77,7 +78,7 @@ impl ClusteringSection<'_> {
             ui.horizontal(|ui| {
             ui.label("fold dust");
                 select(ui, "heatmap_bubble_dust", &mut config.bubble_dust_merge_ms,
-                    [0, 500, 1_500, 3_000, 10_000], dust_label);
+                    DUST_FOLD_CHOICES_MS, dust_label);
         })
         .response
         .on_hover_text(
@@ -86,11 +87,11 @@ impl ClusteringSection<'_> {
             ui.horizontal(|ui| {
             ui.label("region height");
                 select(ui, "heatmap_bubble_region", &mut config.bubble_region_rows,
-                    [1, 2, 3, 4, 6, 8, 12], region_label);
+                    REGION_ROW_CHOICES, region_label);
             if config.bubble_region_rows > 1 {
                 ui.label("window");
                     select(ui, "heatmap_bubble_region_ms", &mut config.bubble_region_ms,
-                        [500, 1_000, 1_500, 2_000, 3_000, 5_000], region_window_label);
+                        REGION_WINDOW_CHOICES_MS, region_window_label);
             }
         })
         .response
@@ -103,8 +104,8 @@ impl ClusteringSection<'_> {
                 let typed = ui
                     .add(
                         egui::DragValue::new(&mut config.volume_dots.full_quantity)
-                            .range(1.0..=10_000_000.0)
-                            .speed(10.0)
+                            .range(DOT_FULL_QUANTITY_RANGE)
+                            .speed(DOT_FULL_QUANTITY_DRAG_SPEED)
                             .prefix("dot full size qty "),
                     )
                     .on_hover_text(if native_tape {
@@ -207,7 +208,7 @@ impl LiveLaneSection<'_> {
                 ui.horizontal(|ui| {
                     ui.label("cluster");
                         select(ui, "bubble_live_lane_cluster", &mut lane.cluster_ms,
-                            [None, Some(0), Some(50), Some(100), Some(200), Some(500)],
+                            LANE_CLUSTER_CHOICES_MS,
                             |window| lane_cluster_label(window, inherited));
                 })
                 .response
@@ -347,13 +348,19 @@ fn render_style_rows(ui: &mut egui::Ui, bubbles: &mut BubbleStyle) {
         );
     });
     if bubbles.render_mode == BubbleRenderMode::Sphere {
-        ui.add(egui::Slider::new(&mut bubbles.sphere_shading, 0.0..=1.0).text("depth shading"))
-            .on_hover_text(
-                "how much the rim darkens toward the edge; higher separates \
+        ui.add(
+            egui::Slider::new(&mut bubbles.sphere_shading, SPHERE_SHADING_RANGE)
+                .text("depth shading"),
+        )
+        .on_hover_text(
+            "how much the rim darkens toward the edge; higher separates \
                  overlapping bubbles harder, zero reads flat again",
-            );
-        ui.add(egui::Slider::new(&mut bubbles.sphere_highlight, 0.0..=1.0).text("highlight"))
-            .on_hover_text("strength of the light spot that gives the ball its volume");
+        );
+        ui.add(
+            egui::Slider::new(&mut bubbles.sphere_highlight, SPHERE_HIGHLIGHT_RANGE)
+                .text("highlight"),
+        )
+        .on_hover_text("strength of the light spot that gives the ball its volume");
         ui.small(
             "Sphere shading applies from the 'detail from px' radius up; smaller \
              prints stay cheap dots.",
@@ -365,8 +372,7 @@ fn render_style_rows(ui: &mut egui::Ui, bubbles: &mut BubbleStyle) {
 fn size_rows(ui: &mut egui::Ui, bubbles: &mut BubbleStyle, native_tape: bool) {
     if !native_tape {
         ui.add(
-            egui::Slider::new(&mut bubbles.min_radius, 0.5..=MAX_BUBBLE_MIN_RADIUS)
-                .text("smallest print px"),
+            egui::Slider::new(&mut bubbles.min_radius, MIN_RADIUS_RANGE).text("smallest print px"),
         )
         .on_hover_text("floor radius, so the quietest print is still a visible dot");
     }
@@ -411,8 +417,8 @@ fn size_rows(ui: &mut egui::Ui, bubbles: &mut BubbleStyle, native_tape: bool) {
         if bubbles.size_reference == BubbleSizeReference::Fixed {
             ui.add(
                 egui::DragValue::new(&mut bubbles.size_reference_quantity)
-                    .range(0.000_001..=1_000_000_000.0)
-                    .speed(1.0)
+                    .range(SIZE_REFERENCE_QUANTITY_RANGE)
+                    .speed(SIZE_REFERENCE_QUANTITY_DRAG_SPEED)
                     .prefix("full size qty "),
             )
             .on_hover_text("quantity drawn at the maximum radius, in the symbol's units");
@@ -420,8 +426,8 @@ fn size_rows(ui: &mut egui::Ui, bubbles: &mut BubbleStyle, native_tape: bool) {
     }
     ui.add(
         egui::DragValue::new(&mut bubbles.min_quantity)
-            .range(0.0..=1_000_000_000.0)
-            .speed(0.5)
+            .range(MIN_QUANTITY_RANGE)
+            .speed(MIN_QUANTITY_DRAG_SPEED)
             .prefix("hide below qty "),
     )
     .on_hover_text(
@@ -434,26 +440,32 @@ fn size_rows(ui: &mut egui::Ui, bubbles: &mut BubbleStyle, native_tape: bool) {
 /// Side separation, fill, rim, halo and the two small-print thresholds.
 fn finish_rows(ui: &mut egui::Ui, bubbles: &mut BubbleStyle, native_tape: bool) {
     if !native_tape {
-        ui.add(egui::Slider::new(&mut bubbles.side_offset, 0.0..=20.0).text("side separation px"))
-            .on_hover_text(
-                "buy bubbles are nudged up, sell bubbles down: a buy lifts the ask, a sell \
+        ui.add(
+            egui::Slider::new(&mut bubbles.side_offset, SIDE_OFFSET_RANGE)
+                .text("side separation px"),
+        )
+        .on_hover_text(
+            "buy bubbles are nudged up, sell bubbles down: a buy lifts the ask, a sell \
              hits the bid, so they are not on the same row. With a one-tick spread they \
              would otherwise stack into an unreadable line. Zero pins both to the exact \
              price.",
-            );
-    }
-    ui.add(egui::Slider::new(&mut bubbles.opacity, 0.05..=1.0).text("fill opacity"));
-    ui.add(egui::Slider::new(&mut bubbles.outline_width, 0.0..=4.0).text("rim width px"))
-        .on_hover_text("zero draws no rim");
-    ui.add(egui::Slider::new(&mut bubbles.halo_strength, 0.0..=0.6).text("halo"))
-        .on_hover_text("soft glow behind the fill; opens up a little with size");
-    ui.add(egui::Slider::new(&mut bubbles.detail_min_radius, 0.0..=20.0).text("detail from px"))
-        .on_hover_text(
-            "bubbles smaller than this are plain dots (no halo, rim or impact ring). \
-             Raising it buys frame time on a fast tape.",
         );
+    }
+    ui.add(egui::Slider::new(&mut bubbles.opacity, OPACITY_RANGE).text("fill opacity"));
+    ui.add(egui::Slider::new(&mut bubbles.outline_width, OUTLINE_WIDTH_RANGE).text("rim width px"))
+        .on_hover_text("zero draws no rim");
+    ui.add(egui::Slider::new(&mut bubbles.halo_strength, HALO_STRENGTH_RANGE).text("halo"))
+        .on_hover_text("soft glow behind the fill; opens up a little with size");
     ui.add(
-        egui::Slider::new(&mut bubbles.readable_min_radius, 0.0..=24.0).text("readable from px"),
+        egui::Slider::new(&mut bubbles.detail_min_radius, DETAIL_MIN_RADIUS_RANGE)
+            .text("detail from px"),
+    )
+    .on_hover_text(
+        "bubbles smaller than this are plain dots (no halo, rim or impact ring). \
+             Raising it buys frame time on a fast tape.",
+    );
+    ui.add(
+        egui::Slider::new(&mut bubbles.readable_min_radius, READABLE_MIN_RADIUS_RANGE).text("readable from px"),
     )
     .on_hover_text(if native_tape {
         "minimum radius for a readable buy/sell pie; smaller dots use the dominant side's colour, or the hollow-buy style below. This does not fold tape history."
@@ -508,23 +520,26 @@ impl ConsumptionMarksSection<'_> {
                 });
                 if bubbles.consumption_mark.is_front() {
                     ui.add(
-                        egui::Slider::new(&mut bubbles.front_width, 0.5..=10.0)
+                        egui::Slider::new(&mut bubbles.front_width, FRONT_WIDTH_RANGE)
                             .text("front width px"),
                     );
                     ui.add(
-                        egui::Slider::new(&mut bubbles.front_length_scale, 0.5..=6.0)
-                            .text("front length × radius"),
+                        egui::Slider::new(
+                            &mut bubbles.front_length_scale,
+                            FRONT_LENGTH_SCALE_RANGE,
+                        )
+                        .text("front length × radius"),
                     );
                 }
                 ui.checkbox(&mut bubbles.show_impact_ring, "impact ring on the rim");
                 ui.add_enabled(
                     bubbles.show_impact_ring,
-                    egui::Slider::new(&mut bubbles.impact_ring_width, 0.5..=6.0)
+                    egui::Slider::new(&mut bubbles.impact_ring_width, IMPACT_RING_WIDTH_RANGE)
                         .text("ring width px"),
                 )
                 .on_hover_text("brightness of the ring also tracks how much of the print matched");
                 ui.add(
-                    egui::Slider::new(&mut bubbles.trail_length, 0.0..=80.0)
+                    egui::Slider::new(&mut bubbles.trail_length, TRAIL_LENGTH_RANGE)
                         .text("trail length px"),
                 )
                 .on_hover_text(
@@ -533,7 +548,8 @@ impl ConsumptionMarksSection<'_> {
                 );
                 ui.add_enabled(
                     bubbles.trail_length > 0.0,
-                    egui::Slider::new(&mut bubbles.trail_opacity, 0.0..=1.0).text("trail opacity"),
+                    egui::Slider::new(&mut bubbles.trail_opacity, TRAIL_OPACITY_RANGE)
+                        .text("trail opacity"),
                 );
             });
     }
@@ -556,7 +572,7 @@ impl LabelsSection<'_> {
                 );
                 ui.checkbox(&mut bubbles.show_trade_count, "×N clustered prints");
                 ui.add(
-                    egui::Slider::new(&mut bubbles.label_min_radius, 4.0..=48.0)
+                    egui::Slider::new(&mut bubbles.label_min_radius, LABEL_MIN_RADIUS_RANGE)
                         .text("label from px"),
                 )
                 .on_hover_text(

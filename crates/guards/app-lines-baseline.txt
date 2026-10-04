@@ -67,5 +67,6 @@
 # with centred quantitative FLOW sectors; publication policy stays in orderflow.
 # Root authorized this exact measured remainder after independent baseline_visual
 # ownership/geometry review (2026-10-01); native Tape geometry is unchanged.
-!budget 105244
-crates/app 105244
+# Lowered by 187 lines: PR #596 refactor moved pure logic to its headless owner.
+!budget 105057
+crates/app 105057

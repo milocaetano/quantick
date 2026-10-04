@@ -24,5 +24,6 @@
 # admission, retention and adoption policy lives in orderflow's FlowSession.
 # Reviewed and authorized by the root agent after independent flow_aggregation_ports
 # ownership review (2026-10-01); measured remainder only, no spare headroom.
-!budget 24240
-crates/app 24240
+# Lowered by 23 lines: PR #596 refactor moved pure logic to its headless owner.
+!budget 24217
+crates/app 24217
