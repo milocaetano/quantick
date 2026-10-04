@@ -33,8 +33,8 @@ fn bubbles(app: &mut QuantickApp, client: &mut LocalClient) -> Value {
 fn opening_scale_is_default_off_named_permission_checked_and_read_back() {
     assert_eq!(
         quantick_control_schema::opening_scale::descriptor().persistence,
-        quantick_control::registry::EffectPersistence::Transient,
-        "changing the preference does not save a preset implicitly"
+        quantick_control::registry::EffectPersistence::Durable,
+        "the preference is saved for the asset the pane shows"
     );
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(4);
@@ -187,5 +187,67 @@ fn flow_opening_scale_is_independent_retry_safe_and_refuses_context() {
     off["ignore_opening_burst_in_scale"] = json!(false);
     let (off, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, off);
     assert_eq!(success_result(&off)["changed"], true);
+    disable_test_gateway(&mut app, &ctx);
+}
+
+/// The tab's own market switch, without a live feed behind it.
+fn select_market(app: &mut QuantickApp, feed: &str, symbol: &str) {
+    let tab = app.active_tab_mut();
+    tab.feed_id = feed.to_owned();
+    tab.symbol = symbol.to_owned();
+    tab.tape_mut().reset_for_symbol(symbol);
+    with_config(app, |tab, config| {
+        tab.apply_asset_bubbles_after_switch(config)
+    });
+}
+
+/// The agent contract: a control call changes the asset on screen, the
+/// snapshot names that asset, and the change is filed for it alone.
+#[test]
+fn an_opening_scale_set_by_control_is_read_back_and_kept_per_asset() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    app.config = toml::from_str(include_str!("../../../config/feeds.toml")).expect("shipped feeds");
+    select_market(&mut app, "metatrader-b3", "WINV26");
+    let directory = gateway_test_directory("asset-opening-scale");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut observer = connect(&directory, &options("observer", &[]));
+    let mut cockpit = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let win = bubbles(&mut app, &mut observer);
+    assert_eq!(win["asset"]["key"], "WIN*");
+    assert_eq!(win["asset"]["source"], "declared");
+    assert_eq!(win["asset"]["preset"], "mini index regions");
+
+    let payload = json!({
+        "tab_id": app.tabs.active_id().to_string(),
+        "pane_id": app.active_tab().flow_pane.id.to_string(),
+        "ignore_opening_burst_in_scale": true,
+    });
+    let (set, _) = unkeyed_call(
+        &mut app,
+        &mut cockpit,
+        "orderflow.tape.opening_scale.set",
+        payload,
+    );
+    assert_eq!(success_result(&set)["changed"], true);
+    app.layer_wiring().maintain(&ctx);
+    let filed = bubbles(&mut app, &mut observer);
+    assert_eq!(filed["ignore_opening_burst_in_scale"], true);
+    assert_eq!(filed["asset"]["source"], "stored");
+
+    select_market(&mut app, "binance", "BTCUSDT");
+    let btc = bubbles(&mut app, &mut observer);
+    assert_eq!(btc["asset"]["key"], "BTCUSDT");
+    assert_eq!(btc["ignore_opening_burst_in_scale"], false);
+    assert_eq!(btc["native_tape"], false);
+
+    select_market(&mut app, "metatrader-b3", "WINV26");
+    let back = bubbles(&mut app, &mut observer);
+    assert_eq!(back["ignore_opening_burst_in_scale"], true);
+    assert_eq!(back["asset"]["source"], "stored");
     disable_test_gateway(&mut app, &ctx);
 }

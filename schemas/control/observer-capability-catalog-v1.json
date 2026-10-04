@@ -9917,7 +9917,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Optionally changes opening calibration without changing executions, prices or grouping. The default target tape excludes the first recorded 100 ms burst per UTC date and caps its radius; it has no effect on a typed tape reference and remains transient until the bubble preset is saved. Target candle requires active tick FLOW bubbles and has an independent transient pane preference: only the region containing the canonical first recorded execution per UTC date excludes its opening portion from the visible reference and may grow uncapped with area proportional to gross volume. Other first-window regions contribute their full volume. Offscreen or evicted anchors never transfer to visible regions. A frame with no ordinary reference uses an explicitly reported full-volume fallback. Both preferences default off; first recorded activity is not an exchange auction flag.",
+      "description": "Optionally changes opening calibration without changing executions, prices or grouping. The default target tape excludes the first recorded 100 ms burst per UTC date and caps its radius; it has no effect on a typed tape reference. Target candle requires active tick FLOW bubbles and has an independent pane preference. Both are saved for the asset the pane shows (orderflow.bubbles names it) and come back whenever a tab shows that asset. Target candle: only the region containing the canonical first recorded execution per UTC date excludes its opening portion from the visible reference and may grow uncapped with area proportional to gross volume. Other first-window regions contribute their full volume. Offscreen or evicted anchors never transfer to visible regions. A frame with no ordinary reference uses an explicitly reported full-volume fallback. Both preferences default off; first recorded activity is not an exchange auction flag.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -10013,7 +10013,7 @@
         "title": "OpeningScaleResult",
         "type": "object"
       },
-      "persistence": "transient",
+      "persistence": "durable",
       "preconditions": [],
       "read_only": false,
       "required_permissions": [
