@@ -68,17 +68,19 @@ engine::footprint          app (ChartState)             app (render)
 
 Effective level = min(candle-width level, row-height level). Before dropping
 a level, the renderer first tries a larger display grouping (merging rows
-preserves more information than deleting text). Discrete steps with ~15%
-hysteresis; no fades (a half-transparent number is illegible and present at
-the same time — trader veto).
+preserves more information than deleting text). The two-sided dead band is 15%
+for most level transitions and 2% between Marks and Profile. Numbers never fade
+(a half-transparent number is illegible and present at the same time — trader
+veto). Widths below are approximate for the ladder style at `detail_scale = 1`;
+row floors use the default configuration.
 
 | Level | Candle width | Row height | Draws |
 | --- | --- | --- | --- |
-| Detailed | ≥ 72 px | ≥ 12 px | bid × ask numbers per row, imbalance highlight, POC, ratio badge at extremes |
-| Compact | 40–72 px | ≥ 11 px | one abbreviated delta number per row, imbalance highlight, POC |
-| Profile | 18–40 px | ≥ 4 px | textless histogram, POC emphasized, stacked-zone ticks on the edge |
-| Marks | 8–18 px | any | POC dot + stacked-imbalance zone marks only |
-| Off | < 8 px | — | layer hidden; legend says "footprint: zoom in for detail" |
+| Detailed | ≥ 68 px | ≥ 12 px | bid × ask numbers per row, imbalance highlight, POC, ratio badge at extremes |
+| Compact | 33–68 px | ≥ 11 px | one abbreviated delta number per row, imbalance highlight, POC |
+| Profile | 12–33 px | ≥ 4 px | textless histogram, POC emphasized, stacked-zone ticks on the edge |
+| Marks | 6–12 px | any | POC dot + stacked-imbalance zone marks only |
+| Off | < 6 px | — | layer hidden; legend says "footprint: zoom in for detail" |
 
 What survives zoom-out, in order: stacked zones > POC > (opt-in) bar delta
 color > everything else. Isolated imbalances die at Profile; digits die below
