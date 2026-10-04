@@ -101,23 +101,49 @@ fn arm_a_strategy(pane: &mut ChartPane) {
 /// step closed itself are closes.
 #[test]
 fn bricks_cut_from_held_prints_reach_no_strategy_and_no_live_close() {
+    use crate::indicator_worker::{IndicatorEvent, IndicatorSource};
     let mut pane = renko_pane();
     arm_a_strategy(&mut pane);
+    pane.add_indicator(IndicatorSource::Native {
+        id: "native.cvd".to_owned(),
+        values: Vec::new(),
+    });
+    // Everything the worker published for the commands sent so far.
+    let settled = |pane: &ChartPane| {
+        pane.indicator_worker.flush();
+        pane.indicator_worker.drain_events()
+    };
     // One point a print through 163 closes 31 bricks while they are held;
     // 170, the sixty-fourth distance, reads the step and clears three more.
     let mut prices: Vec<i64> = (100..164).collect();
     prices.push(170);
     let tape = prints(0, prices);
     pane.ingest_backfill(&tape[..10]);
-    for trade in &tape[10..] {
+    for trade in &tape[10..64] {
         pane.ingest_live_trade(trade);
     }
+    let _ = settled(&pane);
+    pane.ingest_live_trade(&tape[64]);
     assert_eq!(pane.closed_slots(), 34);
     assert_eq!(pane.state.backfill_boundary(), Some(31));
-    assert_eq!(
-        pane.indicator_worker.bar_closes_for_test(),
-        3,
-        "only the three bricks the print closed itself are live closes"
+    let events = settled(&pane);
+    let rebuilt: Vec<usize> = events
+        .iter()
+        .filter_map(|event| match event {
+            IndicatorEvent::Rebuilt { rows, .. } => Some(*rows),
+            _ => None,
+        })
+        .collect();
+    let appended = events
+        .iter()
+        .filter(|event| matches!(event, IndicatorEvent::Appended { .. }))
+        .count();
+    // The worker may take the print's own closes in the history's batch, so
+    // one rebuild carries 31 to 34 rows; the 31 bricks of the held prints
+    // never arrive as live closes, which only the print's own three can be.
+    assert!(
+        matches!(rebuilt[..], [rows] if rows >= 31 && rows + appended == 34),
+        "{rebuilt:?} rebuilt, {appended} appended"
     );
     let queued: Vec<usize> = pane
         .strategies
