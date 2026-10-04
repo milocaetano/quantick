@@ -11,9 +11,21 @@ pub trait DealCounterInput {
     fn observe(&mut self, sample: DealSample);
 }
 
+/// What a builder could not do with the prints it was fed, counted rather
+/// than hidden. All zero for a rule that cuts every print as it arrives.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BarBuilderDiagnostics {
+    /// Prints placed in no bar: the rule had nothing to count them against
+    /// — a deal bar before its first counter reading.
     pub uncounted_trades: u64,
+    /// Prints in no closed bar yet because the rule cannot measure them —
+    /// a Renko builder before its own prints have shown its price step.
+    /// They form the in-progress bar and are cut once it is known; prints
+    /// still held when a tape ends were never cut.
+    pub held_prints: u64,
+    /// Prints off the price grid the rule froze: cut on that grid and
+    /// counted, never snapped onto it.
+    pub off_grid_prints: u64,
 }
 
 /// How far the in-progress bar is from closing.
@@ -68,7 +80,8 @@ pub trait BarBuilder {
     /// so a rule that never closes two cuts exactly what it always cut. A rule
     /// whose one print can complete several bars overrides it: a Renko print
     /// clearing `k` brick levels closes `k` bricks, and the ones it cleared on
-    /// its way past hold none of its prints.
+    /// its way past hold none of its prints; the print that shows a Renko
+    /// builder its price step closes every brick of the prints it held.
     fn push_into(&mut self, trade: &Trade, closed: &mut Vec<Bar>) {
         closed.extend(self.push(trade));
     }
@@ -100,7 +113,9 @@ pub trait BarBuilder {
 
     /// Prints this builder could not place in any bar because the rule had
     /// nothing to count them against — a deal bar before the first counter
-    /// reading. Zero for every rule fed by prints alone.
+    /// reading — prints it holds until it can measure them, and prints off
+    /// the grid it froze. All zero for a rule that cuts every print as it
+    /// arrives.
     ///
     /// Reported rather than hidden: a chart owes the trader the number of
     /// prints it is showing no bar for.

@@ -31,7 +31,7 @@ pub static TIME: BarDefinition = BarDefinition {
     progress_unit: "ms",
     fixed_time_interval: true,
     quick_alias: None,
-    factory: |value, _, _| {
+    factory: |value, _| {
         Box::new(TimeBarBuilder::new(
             value.to_i64().expect("interval representation"),
         ))

@@ -14,7 +14,7 @@ pub static SEVENTH: BarDefinition = BarDefinition {
         },
         ..TICK.parameter
     },
-    factory: |value, _, _| Box::new(Probe(TickBarBuilder::new(value.to_u64().unwrap()))),
+    factory: |value, _| Box::new(Probe(TickBarBuilder::new(value.to_u64().unwrap()))),
     ..TICK
 };
 

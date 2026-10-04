@@ -28,7 +28,7 @@ pub struct BarDefinition {
     pub fixed_time_interval: bool,
     /// The quick switch's own name for this kind, if it has one.
     pub quick_alias: Option<QuickAlias>,
-    pub factory: fn(Decimal, Option<&str>, InstrumentFacts) -> Box<dyn BarBuilder>,
+    pub factory: fn(Decimal, Option<&str>) -> Box<dyn BarBuilder>,
 }
 
 impl BarDefinition {
@@ -37,7 +37,6 @@ impl BarDefinition {
         if let Some(choice) = self.choices.iter().find(|entry| Some(entry.id) == choice) {
             requirements.traded_volume |= choice.requirements.traded_volume;
             requirements.deal_counter |= choice.requirements.deal_counter;
-            requirements.price_step |= choice.requirements.price_step;
         }
         requirements
     }
@@ -147,14 +146,8 @@ impl BarConfiguration {
     pub fn choice(self) -> Option<&'static str> {
         self.choice
     }
-    /// A builder told nothing about the instrument. A rule that measures in
-    /// its price step cuts nothing from it; consumers call [`Self::build_for`].
     pub fn build(self) -> Box<dyn BarBuilder> {
-        self.build_for(InstrumentFacts::default())
-    }
-    /// A builder for this rule on the instrument `facts` describe.
-    pub fn build_for(self, facts: InstrumentFacts) -> Box<dyn BarBuilder> {
-        (self.definition.factory)(self.parameter, self.choice, facts)
+        (self.definition.factory)(self.parameter, self.choice)
     }
     pub fn time_interval_ms(self) -> Option<i64> {
         self.definition

@@ -13,14 +13,14 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use quantick_engine::{PriceGrid, Side};
+use quantick_engine::{BarBuilderDiagnostics, Side};
 use quantick_indicators::{IndicatorHost, InstanceId};
 use quantick_replay::Session;
 use quantick_sim::{ClosedTrade, PerformanceReport, RejectReason, Simulator, VenueEvent};
 use rust_decimal::Decimal;
 
 use crate::strategy::{Account, BarView, Signals, Strategy};
-use quantick_engine::bar_registry::{BarConfiguration, InstrumentFacts};
+use quantick_engine::bar_registry::BarConfiguration;
 use quantick_engine::bar_selection::BarInputAvailability;
 
 /// Everything the tape refused, counted rather than swallowed.
@@ -41,6 +41,11 @@ pub struct Anomalies {
     /// land here, and without them a zero-trade run under `--retest-limit`
     /// is indistinguishable from "no cut ever happened".
     pub cancels: BTreeMap<&'static str, u64>,
+    /// Prints the bar rule could not cut as it measures, by reason code:
+    /// `prints_held_uncut`, a session that never showed a Renko builder its
+    /// price step, so every print was held and none cut; `prints_off_grid`,
+    /// prints off the step it froze, cut on that step and counted.
+    pub bar_rule: BTreeMap<&'static str, u64>,
 }
 
 impl Anomalies {
@@ -62,12 +67,19 @@ impl Anomalies {
         self.cancels.values().sum()
     }
 
-    /// True when the run produced no refusal of any kind. Cancels are not
-    /// refusals — an order standing down by its own rule is the rule
-    /// working — so they do not dirty a run.
+    /// Total prints the bar rule could not cut as it measures.
+    #[must_use]
+    pub fn bar_rule_prints(&self) -> u64 {
+        self.bar_rule.values().sum()
+    }
+
+    /// True when the run produced no refusal of any kind and the bar rule
+    /// cut every print as it measures. Cancels are not refusals — an order
+    /// standing down by its own rule is the rule working — so they do not
+    /// dirty a run.
     #[must_use]
     pub fn is_clean(&self) -> bool {
-        self.rejected.is_empty() && self.brackets_dropped.is_empty()
+        self.rejected.is_empty() && self.brackets_dropped.is_empty() && self.bar_rule.is_empty()
     }
 
     /// Fold another run's counts into this one.
@@ -80,6 +92,21 @@ impl Anomalies {
         }
         for (code, count) in &other.cancels {
             *self.cancels.entry(code).or_default() += count;
+        }
+        for (code, count) in &other.bar_rule {
+            *self.bar_rule.entry(code).or_default() += count;
+        }
+    }
+
+    /// What the bar rule reports once the session's last print is in.
+    fn observe_rule(&mut self, diagnostics: BarBuilderDiagnostics) {
+        for (code, count) in [
+            ("prints_held_uncut", diagnostics.held_prints),
+            ("prints_off_grid", diagnostics.off_grid_prints),
+        ] {
+            if count > 0 {
+                *self.bar_rule.entry(code).or_default() += count;
+            }
         }
     }
 
@@ -183,12 +210,16 @@ pub struct SessionRun {
 ///    on the previous bar fills here, which is why a decision can never act
 ///    on the print that triggered it.
 /// 2. `builder.push_into(print)` — every bar the print closed, oldest first:
-///    one at most for most rules, one per brick level a Renko print clears.
+///    one at most for most rules, one per brick level a Renko print clears,
+///    and every brick of the prints a Renko builder held while it read its
+///    price step off them.
 /// 3. On each close: the host evaluates indicators, then the strategy is
 ///    asked for commands, then `sim.apply` queues them for the *next* print.
 ///
-/// A rule that measures in the price step cuts on the grid the session's own
-/// tape shows — the answer the chart reaches from the same prints.
+/// The builder is the one the chart builds from the same prints, so nothing
+/// is read ahead: a Renko step comes off the prints already played. What the
+/// rule could not cut — a session that never showed it the step, prints off
+/// the step it froze — is counted in [`Anomalies::bar_rule`].
 ///
 /// Indicator and simulator state are created here and dropped with the
 /// session: nothing carries over into the next recorded day.
@@ -212,13 +243,7 @@ pub fn run_session(
          bars::parse_runnable refuses it before a run",
         spec.to_config_string()
     );
-    let price_step = if spec.requirements().price_step {
-        let grid: PriceGrid = session.trades.iter().map(|trade| trade.price).collect();
-        grid.step()
-    } else {
-        None
-    };
-    let mut builder = spec.build_for(InstrumentFacts { price_step });
+    let mut builder = spec.build();
     let mut host = IndicatorHost::new();
     let slots: Vec<InstanceId> = strategy
         .indicators()
@@ -278,6 +303,7 @@ pub fn run_session(
         }
     }
     strategy.end_of_session();
+    anomalies.observe_rule(builder.diagnostics());
 
     let trades = sim.closed_trades().to_vec();
     SessionRun {
@@ -461,5 +487,23 @@ mod tests {
         assert_eq!(total.rejected.get("no_market_price"), Some(&4));
         assert_eq!(total.dropped_brackets(), 2);
         assert!(Anomalies::default().is_clean());
+    }
+
+    #[test]
+    fn prints_the_bar_rule_could_not_cut_dirty_the_run_and_add_up() {
+        let mut a = Anomalies::default();
+        a.observe_rule(quantick_engine::BarBuilderDiagnostics {
+            held_prints: 7,
+            ..Default::default()
+        });
+        a.observe_rule(quantick_engine::BarBuilderDiagnostics::default());
+        assert_eq!(a.bar_rule.get("prints_held_uncut"), Some(&7));
+        assert_eq!(a.bar_rule.get("prints_off_grid"), None, "zero is no entry");
+        assert!(!a.is_clean());
+
+        let mut total = Anomalies::default();
+        total.absorb(&a);
+        total.absorb(&a);
+        assert_eq!(total.bar_rule_prints(), 14);
     }
 }

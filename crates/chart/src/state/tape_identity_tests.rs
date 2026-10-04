@@ -16,7 +16,7 @@ use quantick_engine::trade_tape::CHUNK_TRADES;
 
 /// Everything a chart shows from its tape, as text.
 #[derive(Debug, PartialEq, Eq)]
-struct Shown {
+pub(super) struct Shown {
     bars: String,
     partial: String,
     boundary: Option<usize>,
@@ -26,7 +26,7 @@ struct Shown {
 }
 
 impl Shown {
-    fn of(state: &ChartState) -> Self {
+    pub(super) fn of(state: &ChartState) -> Self {
         Self {
             bars: format!("{:?}", state.bars()),
             partial: format!("{:?}", state.partial()),
@@ -40,8 +40,13 @@ impl Shown {
 
 /// What a contiguous tape showed: `tape` folded in order, the first
 /// `backfilled` of it as history.
-fn oracle(spec: &BarSpec, tape: &[Trade], backfilled: usize, footprint: bool) -> Shown {
-    let mut builder = spec.build();
+pub(super) fn oracle(
+    spec: impl Into<BarConfiguration>,
+    tape: &[Trade],
+    backfilled: usize,
+    footprint: bool,
+) -> Shown {
+    let mut builder = spec.into().build();
     let mut footprints = FootprintSeries::new(footprint_series::default_group());
     let mut bars = Vec::new();
     let mut boundary = None;
@@ -52,7 +57,7 @@ fn oracle(spec: &BarSpec, tape: &[Trade], backfilled: usize, footprint: bool) ->
         let first = bars.len();
         builder.push_into(trade, &mut bars);
         if footprint {
-            footprints.observe(trade, &bars[first..]);
+            footprints.observe(tape, index, &bars[first..]);
         }
     }
     Shown {
@@ -137,7 +142,7 @@ fn every_way_in_shows_what_a_contiguous_tape_showed() {
                 backfilled.ingest_backfill(&tape);
                 assert_eq!(
                     Shown::of(&backfilled),
-                    oracle(spec, &tape, tape.len(), footprint),
+                    oracle(*spec, &tape, tape.len(), footprint),
                     "backfill: {what}"
                 );
 
@@ -145,7 +150,7 @@ fn every_way_in_shows_what_a_contiguous_tape_showed() {
                 for trade in &tape {
                     live.ingest_live(trade);
                 }
-                let mut shown = oracle(spec, &tape, 0, footprint);
+                let mut shown = oracle(*spec, &tape, 0, footprint);
                 shown.boundary = None;
                 assert_eq!(Shown::of(&live), shown, "live: {what}");
 
@@ -156,7 +161,7 @@ fn every_way_in_shows_what_a_contiguous_tape_showed() {
                 }
                 assert_eq!(
                     Shown::of(&mixed),
-                    oracle(spec, &tape, older.len(), footprint),
+                    oracle(*spec, &tape, older.len(), footprint),
                     "backfill then live: {what}"
                 );
 
@@ -168,7 +173,7 @@ fn every_way_in_shows_what_a_contiguous_tape_showed() {
                 }
                 assert_eq!(
                     Shown::of(&paged),
-                    oracle(spec, &tape, older.len() + middle.len(), footprint),
+                    oracle(*spec, &tape, older.len() + middle.len(), footprint),
                     "older history prepended: {what}"
                 );
 
@@ -197,7 +202,7 @@ fn every_way_in_shows_what_a_contiguous_tape_showed() {
                     switched.set_footprint_enabled(footprint);
                     assert_eq!(
                         Shown::of(&switched),
-                        oracle(spec, &tape, older.len(), footprint),
+                        oracle(*spec, &tape, older.len(), footprint),
                         "switched spec, then refolded: {what}"
                     );
                 }
@@ -271,7 +276,14 @@ fn deal_oracle(
             let reading = *pending.next().expect("peeked");
             seed_deal_counter(&mut *builder, &[reading]);
         }
-        fold_print(&mut *builder, &mut footprints, footprint, trade, &mut bars);
+        fold_print(
+            &mut *builder,
+            &mut footprints,
+            footprint,
+            tape,
+            index,
+            &mut bars,
+        );
     }
     Shown {
         bars: format!("{bars:?}"),

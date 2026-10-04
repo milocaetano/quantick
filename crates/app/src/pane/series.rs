@@ -443,28 +443,18 @@ impl ChartPane {
         if let Some(orderflow) = self.orderflow.as_mut() {
             orderflow.record_trade(trade);
         }
-        let (bars_before, slots_before) = (self.state.bars().len(), self.slots());
-        let series = self.state.series_revision();
+        let bars_before = self.state.bars().len();
         self.state.ingest_live(trade);
         self.publish_tape_price_step();
-        if self.state.series_revision() != series {
-            // The print moved the grid a rule measures in and every bar was
-            // re-cut: the indicators replay the series, the marks follow it.
-            self.lane.reset();
-            self.bump_pagination_revision();
-            self.send_indicator_rebuild();
-            self.reanchor_drawings(slots_before);
-            return;
-        }
         // One print can close several bars — a Renko print clearing several
-        // brick levels — and each is its own event.
+        // levels, or the one that reads a Renko step — and each is an event.
         for index in bars_before..self.state.bars().len() {
             let closed = self.state.bars()[index].clone();
             self.lane.reset();
             self.indicator_worker
                 .send(IndicatorCommand::BarClosed(closed.clone()));
             // Queued for the armed instances only while any exist: an idle
-            // chart clones nothing more on the per-trade path. The slot is the
+            // chart clones nothing on the per-trade path. The slot is the
             // *composed* one (venue history prefix + live bars) — the same
             // space the drawings' anchors live in, or the region's time
             // window would be off by the prefix length.

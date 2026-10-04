@@ -11,7 +11,6 @@
 //! unit-tested in CI.
 
 pub use quantick_engine::ImbalanceUnit;
-use quantick_engine::bar_registry::InstrumentFacts;
 use quantick_engine::trade_tape::TradeTape;
 use quantick_engine::{Bar, BarBuilder, BarFootprint, BarProgress, DealSample, PriceGrid, Trade};
 /// The bar vocabulary lives in the engine, one definition for the chart, the
@@ -19,6 +18,7 @@ use quantick_engine::{Bar, BarBuilder, BarFootprint, BarProgress, DealSample, Pr
 /// here, with the imbalance unit beside it.
 pub use quantick_engine::{BarKind, BarSpec, MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS};
 use rust_decimal::Decimal;
+use std::ops::Index;
 
 use crate::footprint_series::{self, FootprintSeries};
 
@@ -129,26 +129,30 @@ pub struct ChartState {
     readings_held: bool,
 }
 
-/// Push one print through `builder`, appending every bar it closed to `bars`,
-/// and, with the footprint layer on, fold it into the ladders — unless the
-/// builder left it *uncounted*. A deal bar counts nothing before its first
-/// reading: such a print belongs to no bar, so it belongs to no ladder
-/// either, or the ladders drift off the bars they index by and the footprint
-/// series asserts on the first close.
-fn fold_print<B: BarBuilder + ?Sized>(
+/// Push print `index` of `tape` through `builder`, appending every bar it
+/// closed to `bars`, and, with the footprint layer on, fold it into the
+/// ladders — unless the builder left it *uncounted*. A deal bar counts
+/// nothing before its first reading: such a print belongs to no bar, so it
+/// belongs to no ladder either, or the ladders drift off the bars they index
+/// by and the footprint series asserts on the first close.
+fn fold_print<B, T>(
     builder: &mut B,
     footprints: &mut FootprintSeries,
     footprint_enabled: bool,
-    trade: &Trade,
+    tape: &T,
+    index: usize,
     bars: &mut Vec<Bar>,
-) {
+) where
+    B: BarBuilder + ?Sized,
+    T: Index<usize, Output = Trade> + ?Sized,
+{
     let uncounted_before = builder.diagnostics().uncounted_trades;
     let first = bars.len();
-    builder.push_into(trade, bars);
+    builder.push_into(&tape[index], bars);
     if footprint_enabled {
         let closed = &bars[first..];
         if builder.diagnostics().uncounted_trades == uncounted_before {
-            footprints.observe(trade, closed);
+            footprints.observe(tape, index, closed);
         } else {
             // A rollover ended the bar and this print counts for nothing:
             // the ladder closes on what it held, the print folds nowhere.
@@ -156,14 +160,6 @@ fn fold_print<B: BarBuilder + ?Sized>(
                 footprints.close_without(bar);
             }
         }
-    }
-}
-
-/// What the chart tells a builder about its instrument: the grid its own
-/// tape prints on, the same answer for every rebuild of the same prints.
-fn instrument(grid: &PriceGrid) -> InstrumentFacts {
-    InstrumentFacts {
-        price_step: grid.step(),
     }
 }
 
@@ -322,23 +318,20 @@ impl ChartState {
     /// Ingest backfilled history (a slice, or another chart's tape) as one
     /// batch — once, before any live trades — then mark the boundary.
     pub fn ingest_backfill<'a>(&mut self, trades: impl IntoIterator<Item = &'a Trade> + Clone) {
+        let start = self.trades.len();
         self.trades.extend(trades.clone());
-        for trade in trades.clone() {
+        for trade in trades {
             self.observe_price(trade.price);
         }
         self.backfill_trade_count = self.trades.len();
         self.backfill_done = true;
-        if self.spec.requirements().price_step {
-            // Cut on the grid the history just showed, not the builder's.
-            self.rebuild();
-            return;
-        }
-        for trade in trades {
+        for index in start..self.trades.len() {
             fold_print(
                 &mut *self.builder,
                 &mut self.footprints,
                 self.footprint_enabled,
-                trade,
+                &self.trades,
+                index,
                 &mut self.bars,
             );
         }
@@ -379,21 +372,19 @@ impl ChartState {
     /// Ingest one live trade, incrementally (no full rebuild).
     pub fn ingest_live(&mut self, trade: &Trade) {
         self.trades.push(trade.clone());
-        if self.observe_price(trade.price) && self.spec.requirements().price_step {
-            self.rebuild();
-            return;
-        }
+        self.observe_price(trade.price);
         fold_print(
             &mut *self.builder,
             &mut self.footprints,
             self.footprint_enabled,
-            trade,
+            &self.trades,
+            self.trades.len() - 1,
             &mut self.bars,
         );
         self.refresh_partial();
-        // Live ingest only *appends* — the one rewrite is the re-cut above,
-        // on a grid a rule measures in. No bar already closed changes and no
-        // ladder already built is touched, so the series identity stands —
+        // Live ingest only ever *appends*: no bar already closed changes, and
+        // no ladder already built is touched. So the series identity stands
+        // and a consumer folding a fixed set of closed bars keeps its work —
         // see [`Self::series_revision`].
         self.bump_timeline_revision();
     }
@@ -416,20 +407,17 @@ impl ChartState {
     /// ingest path cannot pick up the grid and quietly forget the magnitude.
     ///
     /// Per-trade, and both halves are cheap — a modulo on the settled grid, and
-    /// an `Option` test that stores once per chart. Returns whether the grid
-    /// moved, which re-cuts a rule that measures in it.
-    fn observe_price(&mut self, price: Decimal) -> bool {
-        let step = self.price_grid.step();
+    /// an `Option` test that stores once per chart.
+    fn observe_price(&mut self, price: Decimal) {
         self.price_grid.observe(price);
         self.tape_reference_price.get_or_insert(price);
-        self.price_grid.step() != step
     }
 
     /// Replay every retained trade through a fresh builder for the current spec,
     /// recomputing the bars and the backfill/live boundary.
     fn rebuild(&mut self) {
         self.readings_held = false;
-        let mut builder = self.spec.build_for(instrument(&self.price_grid));
+        let mut builder = self.spec.build();
         // Readings first, prints after: the builder joins each print to the
         // newest reading strictly before it, so the order between the two
         // streams is immaterial as long as every reading is in hand.
@@ -437,17 +425,13 @@ impl ChartState {
         let mut bars = Vec::new();
         let mut boundary = None;
         self.footprints.reset(self.footprints.base_group());
-        for (i, trade) in self.trades.iter().enumerate() {
+        let (footprints, trades) = (&mut self.footprints, &self.trades);
+        let enabled = self.footprint_enabled;
+        for i in 0..trades.len() {
             if self.backfill_done && i == self.backfill_trade_count {
                 boundary = Some(bars.len());
             }
-            fold_print(
-                &mut *builder,
-                &mut self.footprints,
-                self.footprint_enabled,
-                trade,
-                &mut bars,
-            );
+            fold_print(&mut *builder, footprints, enabled, trades, i, &mut bars);
         }
         // Backfill covered every retained trade (no live yet): boundary is the
         // end of the bar list.
@@ -626,14 +610,15 @@ impl ChartState {
             self.rebuild();
             return;
         }
-        let mut builder = self.spec.build_for(instrument(&self.price_grid));
+        let mut builder = self.spec.build();
         // Readings first, as `rebuild` does: a deal bar with no readings
         // counts every print as uncounted, and the ladders would be empty
         // under bars that are not.
         seed_deal_counter(&mut *builder, &self.deal_samples);
         let mut cut = Vec::new();
-        for trade in &self.trades {
-            fold_print(&mut *builder, &mut self.footprints, true, trade, &mut cut);
+        let (footprints, trades) = (&mut self.footprints, &self.trades);
+        for i in 0..trades.len() {
+            fold_print(&mut *builder, footprints, true, trades, i, &mut cut);
             cut.clear();
         }
     }

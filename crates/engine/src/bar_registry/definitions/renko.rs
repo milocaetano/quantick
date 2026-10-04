@@ -1,9 +1,6 @@
 use crate::{
     RenkoBarBuilder,
-    bar_registry::{
-        BarDefinition, InputRequirements, NumberEditor, NumberKind, ParameterDescriptor,
-        QuickAlias,
-    },
+    bar_registry::{BarDefinition, NumberEditor, NumberKind, ParameterDescriptor, QuickAlias},
 };
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 pub static RENKO: BarDefinition = BarDefinition {
@@ -24,20 +21,16 @@ pub static RENKO: BarDefinition = BarDefinition {
     choice_parameter: None,
     choices: &[],
     default_choice: None,
-    requirements: InputRequirements {
-        price_step: true,
-        ..super::PRINTS
-    },
+    requirements: super::PRINTS,
     progress_unit: "ticks",
     fixed_time_interval: false,
     quick_alias: Some(QuickAlias {
         suffix: 'R',
         noun: "Ticks (Renko)",
     }),
-    factory: |value, _, facts| {
+    factory: |value, _| {
         Box::new(RenkoBarBuilder::new(
             value.to_u64().expect("count representation"),
-            facts.price_step,
         ))
     },
 };

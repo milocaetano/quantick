@@ -282,6 +282,15 @@ fn push_anomalies(out: &mut String, anomalies: &Anomalies) {
             detail(&anomalies.cancels)
         );
     }
+    if !anomalies.bar_rule.is_empty() {
+        let _ = writeln!(
+            out,
+            "  {:<LABEL_WIDTH$}{} ({})",
+            "bar rule",
+            anomalies.bar_rule_prints(),
+            detail(&anomalies.bar_rule)
+        );
+    }
 }
 
 fn exit_label(reason: ExitReason) -> &'static str {

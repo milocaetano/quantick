@@ -59,7 +59,7 @@ pub use imbalance::{ImbalanceBarBuilder, ImbalanceUnit};
 pub use price_grid::PriceGrid;
 pub use profile::{ValueArea, VolumeProfile};
 pub use profile_fold::ProfileFold;
-pub use renko::{MAX_BRICKS_PER_PRINT, RenkoBarBuilder};
+pub use renko::{MAX_BRICKS_PER_PRINT, RenkoBarBuilder, STEP_EVIDENCE_DISTANCES};
 pub use spec::{
     BarKind, BarSpec, BarSpecError, DECIMAL_PARAM_FLOOR, DEFAULT_TIME_INTERVAL_MS,
     MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS, fmt_time_interval,

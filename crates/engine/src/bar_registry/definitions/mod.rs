@@ -20,11 +20,10 @@ use super::{InputRequirements, NumberEditor};
 pub const PRINTS: InputRequirements = InputRequirements {
     traded_volume: false,
     deal_counter: false,
-    price_step: false,
 };
 pub const VOLUME_INPUT: InputRequirements = InputRequirements {
     traded_volume: true,
-    ..PRINTS
+    deal_counter: false,
 };
 const COUNT_EDITOR: NumberEditor = NumberEditor {
     label: "N ticks",

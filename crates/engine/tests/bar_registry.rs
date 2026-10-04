@@ -189,8 +189,6 @@ fn every_family_member_exposes_the_same_parameter_contract() {
         assert_eq!(config.definition().parameter.unit, unit);
         assert_eq!(config.requirements().traded_volume, volume);
         assert_eq!(config.requirements().deal_counter, deals);
-        // Only Renko measures in the instrument's price step.
-        assert_eq!(config.requirements().price_step, definition.id == "renko");
         assert_eq!(BUILTIN_BARS.parse(text).unwrap(), config);
         assert!(config.with_parameter("unknown", 3.into()).is_err());
     }

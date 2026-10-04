@@ -397,6 +397,7 @@ impl BarBuilder for DealBarBuilder {
     fn diagnostics(&self) -> BarBuilderDiagnostics {
         BarBuilderDiagnostics {
             uncounted_trades: self.uncounted,
+            ..BarBuilderDiagnostics::default()
         }
     }
 }

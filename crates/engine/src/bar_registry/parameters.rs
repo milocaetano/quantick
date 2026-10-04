@@ -36,19 +36,6 @@ pub struct ParameterDescriptor {
 pub struct InputRequirements {
     pub traded_volume: bool,
     pub deal_counter: bool,
-    /// The rule measures in the instrument's price step. Never refused:
-    /// every tape shows its grid, and until it has, the rule cuts nothing.
-    pub price_step: bool,
-}
-
-/// What a builder is told about the instrument beyond its own parameter.
-///
-/// Every consumer of one tape hands the builder the same facts — the chart,
-/// the backtest and a bot alike — so the same trades cut the same bars.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct InstrumentFacts {
-    /// One tick: the price grid the instrument trades on. `None` until known.
-    pub price_step: Option<Decimal>,
 }
 
 #[derive(Debug, Clone, Copy)]

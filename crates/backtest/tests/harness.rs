@@ -835,22 +835,25 @@ impl Strategy for Recorder {
     }
 }
 
-/// Renko measures in the price step, which a recorded session states nowhere:
-/// the run reads the grid off the session's own tape — the answer the chart
-/// reaches from the same prints — and shows the strategy every brick, the
-/// ones a print cleared on its way past included.
+/// The backtest's half of the three-consumer proof for Renko: from WIN's
+/// tape, `renko:50` reads the five-point step off the prints as they play and
+/// shows the strategy exactly the bricks the chart cuts from the same file
+/// (`crates/chart/src/state/renko_tests.rs`), the ones a print cleared on its
+/// way past included. No crate links both consumers, so the file is what
+/// they agree through.
 #[test]
-fn the_backtest_cuts_renko_on_the_grid_its_own_tape_shows() {
+fn the_backtest_cuts_the_renko_bricks_the_chart_cuts() {
     use quantick_engine::{fixture, golden};
-    let config = quantick_backtest::bars::parse_configuration("renko:3").unwrap();
+    let config = quantick_backtest::bars::parse_configuration("renko:50").unwrap();
     let expected = fixture::parse_bars(include_str!(
-        "../../engine/tests/fixtures/renko_n3_expected.csv"
+        "../../engine/tests/fixtures/renko_win_50r_expected.csv"
     ))
     .unwrap();
     let mut session = synthetic(&tape_of(&["100"]));
-    session.trades =
-        fixture::parse_trades(include_str!("../../engine/tests/fixtures/renko_trades.csv"))
-            .unwrap();
+    session.trades = fixture::parse_trades(include_str!(
+        "../../engine/tests/fixtures/renko_win_50r_trades.csv"
+    ))
+    .unwrap();
 
     let mut recorder = Recorder(Vec::new());
     let run = run_session(&session, config, &mut recorder);
@@ -858,6 +861,40 @@ fn the_backtest_cuts_renko_on_the_grid_its_own_tape_shows() {
         panic!("{report}");
     }
     assert_eq!(run.bars, expected.len());
+    assert!(run.anomalies.is_clean(), "{:?}", run.anomalies);
+}
+
+/// A session too short to show a Renko builder its price step cuts no brick,
+/// and says so: every print it held is an anomaly of the run, not a quiet
+/// day. Prints off the step it froze are counted the same way.
+#[test]
+fn a_renko_session_that_never_shows_its_step_reports_every_print_uncut() {
+    let config = quantick_backtest::bars::parse_configuration("renko:3").unwrap();
+    let short = synthetic(&tape_of(&["100", "101", "102", "101", "103"]));
+    let mut recorder = Recorder(Vec::new());
+    let run = run_session(&short, config, &mut recorder);
+    assert_eq!(run.bars, 0);
+    assert_eq!(
+        run.anomalies.bar_rule.get("prints_held_uncut"),
+        Some(&5),
+        "{:?}",
+        run.anomalies
+    );
+    assert!(!run.anomalies.is_clean());
+
+    // Sixty-four two-point moves freeze a two-point step; a print a point
+    // off it is cut on that step and counted.
+    let mut prices: Vec<String> = (0..65).map(|i| (100 + 2 * (i % 2)).to_string()).collect();
+    prices.push("105".to_owned());
+    let prices: Vec<&str> = prices.iter().map(String::as_str).collect();
+    let run = run_session(&synthetic(&tape_of(&prices)), config, &mut recorder);
+    assert_eq!(
+        run.anomalies.bar_rule.get("prints_off_grid"),
+        Some(&1),
+        "{:?}",
+        run.anomalies
+    );
+    assert_eq!(run.anomalies.bar_rule.get("prints_held_uncut"), None);
 }
 
 /// The parser refuses a deal-count spec by name; a caller that builds one in

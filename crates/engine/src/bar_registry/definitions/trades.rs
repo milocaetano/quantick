@@ -30,7 +30,7 @@ pub static TRADES: BarDefinition = BarDefinition {
     progress_unit: "deals",
     fixed_time_interval: false,
     quick_alias: None,
-    factory: |value, _, _| {
+    factory: |value, _| {
         Box::new(DealBarBuilder::new(
             value.to_u64().expect("count representation"),
         ))

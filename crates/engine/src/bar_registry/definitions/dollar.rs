@@ -27,5 +27,5 @@ pub static DOLLAR: BarDefinition = BarDefinition {
     progress_unit: "notional",
     fixed_time_interval: false,
     quick_alias: None,
-    factory: |value, _, _| Box::new(DollarBarBuilder::new(value)),
+    factory: |value, _| Box::new(DollarBarBuilder::new(value)),
 };

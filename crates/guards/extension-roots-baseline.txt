@@ -9,12 +9,7 @@
 # Synchronized from main 5c7b7d1a (X3, #433): `--tighten` lowers QuantickApp
 # by 1, #433's net change to the root's measured lines, as on main
 # (10242 -> 10241 there).
-# Renko bars (feat/renko-bars) raise ChartState by 7: the chart builds every
-# rule on its own tape's price grid and cuts a rule that measures in that grid
-# again when the grid moves. The grid and the retained prints both live here,
-# so the re-cut does too; `fold_print` appending every bar one print closes
-# paid for 6 of the lines it would have cost.
-!budget 2815
-ChartState 578
+!budget 2804
+ChartState 567
 QuantickApp 2237
 # #526 G5: two root drawing impl modules and shared drawing/strategy operations leave the window.

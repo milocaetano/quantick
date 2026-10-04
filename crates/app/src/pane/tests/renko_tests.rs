@@ -1,6 +1,6 @@
-//! A Renko pane: nothing is cut before the tape shows its grid, the grid's
-//! arrival re-cuts the series as a rewrite, and one print that clears
-//! several brick levels lands every brick it closed.
+//! A Renko pane: no brick until its builder has read the price step, then
+//! every brick the prints it held close, appended; and one print clearing
+//! several levels lands every brick it closed.
 
 use super::*;
 use quantick_engine::bar_registry::BUILTIN_BARS;
@@ -16,38 +16,44 @@ fn print(agg_id: u64, price: i64) -> quantick_engine::Trade {
     }
 }
 
-#[test]
-fn a_renko_pane_waits_for_the_grid_then_takes_every_brick_a_print_closes() {
-    let renko = BUILTIN_BARS.parse("renko:3").unwrap();
-    let mut pane = ChartPane::flow(1, renko, "WINV26".to_owned());
-    // Eight one-point moves inside the first brick's cell: the eighth names
-    // the grid, and no level is broken yet.
-    for (i, price) in [100, 101, 100, 101, 100, 101, 100, 101].iter().enumerate() {
-        pane.ingest_live_trade(&print(i as u64, *price));
-    }
-    assert_eq!(pane.state.tape_price_step(), None);
-    let before_grid = pane.pagination_revision();
-    pane.ingest_live_trade(&print(8, 100));
-    assert_eq!(pane.state.tape_price_step(), Some(Decimal::ONE));
-    assert_ne!(
-        pane.pagination_revision(),
-        before_grid,
-        "the grid's arrival re-cut the series, a rewrite and not an append"
-    );
-    assert_eq!(pane.closed_slots(), 0, "nothing broke the cell [100, 102]");
+/// `prices` as consecutive prints, the first one numbered `first_id`.
+fn prints(first_id: u64, prices: Vec<i64>) -> Vec<quantick_engine::Trade> {
+    prices
+        .into_iter()
+        .enumerate()
+        .map(|(i, price)| print(first_id + i as u64, price))
+        .collect()
+}
 
-    // 108 clears 102, 104 and 106 by a step: three bricks from one print,
-    // appended without rewriting anything closed.
+/// A flow pane cutting 3-tick bricks: on a one-point grid, two points tall.
+fn renko_pane() -> ChartPane {
+    let renko = BUILTIN_BARS.parse("renko:3").unwrap();
+    ChartPane::flow(1, renko, "WINV26".to_owned())
+}
+
+#[test]
+fn a_renko_pane_appends_every_brick_the_print_that_reads_the_step_cuts() {
+    let mut pane = renko_pane();
+    // A climb of one point a print: sixty-three distances read no step.
+    let climb = prints(0, (100..=164).collect());
+    for trade in &climb[..64] {
+        pane.ingest_live_trade(trade);
+    }
+    assert_eq!(pane.closed_slots(), 0, "the prints are held");
     let appended = pane.pagination_revision();
-    pane.ingest_live_trade(&print(9, 108));
-    assert_eq!(pane.closed_slots(), 3);
-    assert_eq!(pane.pagination_revision(), appended);
-    let closes: Vec<Decimal> = (0..3)
+    // The sixty-fourth distance reads it and cuts every brick the climb
+    // closed; then 170 clears 164, 166 and 168 by a step in one print.
+    pane.ingest_live_trade(&climb[64]);
+    assert_eq!(pane.closed_slots(), 31);
+    pane.ingest_live_trade(&print(65, 170));
+    assert_eq!(pane.closed_slots(), 34);
+    assert_eq!(
+        pane.pagination_revision(),
+        appended,
+        "appended, never rewritten"
+    );
+    let closes: Vec<Decimal> = (31..34)
         .map(|slot| pane.closed_bar(slot).expect("a closed brick").close)
         .collect();
-    assert_eq!(
-        closes,
-        [102, 104, 106].map(Decimal::from),
-        "one brick per level"
-    );
+    assert_eq!(closes, [164, 166, 168].map(Decimal::from), "one per level");
 }
