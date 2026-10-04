@@ -12,7 +12,9 @@
 
 pub use quantick_engine::ImbalanceUnit;
 use quantick_engine::trade_tape::TradeTape;
-use quantick_engine::{Bar, BarBuilder, BarFootprint, BarProgress, DealSample, PriceGrid, Trade};
+use quantick_engine::{
+    Bar, BarBuilder, BarBuilderDiagnostics, BarFootprint, BarProgress, DealSample, PriceGrid, Trade,
+};
 /// The bar vocabulary lives in the engine, one definition for the chart, the
 /// backtest and the bot. Re-exported so the chart's callers keep finding it
 /// here, with the imbalance unit beside it.
@@ -320,6 +322,20 @@ impl ChartState {
         self.builder.diagnostics().uncounted_trades
     }
 
+    /// Prints the current rule left uncounted, holds while it reads its
+    /// price step, or found off the step it froze.
+    #[must_use]
+    pub fn rule_diagnostics(&self) -> BarBuilderDiagnostics {
+        self.builder.diagnostics()
+    }
+
+    /// The price step the current rule read off this chart's prints, once it
+    /// has one: inferred, never declared by a venue.
+    #[must_use]
+    pub fn inferred_price_step(&self) -> Option<Decimal> {
+        self.builder.inferred_price_step()
+    }
+
     /// Ingest backfilled history (a slice, or another chart's tape) as one
     /// batch — once, before any live trades — then mark the boundary.
     pub fn ingest_backfill<'a>(&mut self, trades: impl IntoIterator<Item = &'a Trade> + Clone) {
@@ -388,9 +404,8 @@ impl ChartState {
             &mut self.bars,
         );
         if late > 0 {
-            // Bars cut from prints the builder held — Renko's, while it read
-            // its step — closed before anyone saw them: history, behind the
-            // boundary, not closes this print made.
+            // Bars cut late from prints the builder held (Renko's, while it
+            // read its step) closed unseen: history, behind the boundary.
             self.backfill_boundary = Some(first + late);
         }
         self.refresh_partial();
@@ -522,9 +537,8 @@ impl ChartState {
         self.partial.as_ref()
     }
 
-    /// The backfill/live divider index: the bars before it are history — cut
-    /// from backfilled prints, or late from prints a builder held — and the
-    /// bars from it on closed live.
+    /// The backfill/live divider index: the bars before it are history —
+    /// backfilled, or cut late from prints a builder held — the rest live.
     #[must_use]
     pub fn backfill_boundary(&self) -> Option<usize> {
         self.backfill_boundary
