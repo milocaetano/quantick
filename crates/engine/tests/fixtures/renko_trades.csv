@@ -1,0 +1,15 @@
+# Renko fixture: ten prints on a 1.0 price grid, for N = 3 ticks, so a
+# brick is (3 - 1) x 1.0 = 2.0 tall. Trade 4 breaks the first cell up,
+# trade 7 continues, trade 8 reverses and clears a second level on the way
+# down, trade 9 continues and clears two levels, trade 10 is left forming.
+agg_id,timestamp_ms,price,quantity,side
+1,1000,10.0,1.0,buy
+2,1100,11.0,2.0,buy
+3,1200,10.0,1.0,sell
+4,1300,13.0,1.0,buy
+5,1400,12.0,1.0,sell
+6,1500,11.0,2.0,sell
+7,1600,15.0,1.0,buy
+8,1700,7.0,3.0,sell
+9,1800,3.0,1.0,sell
+10,1900,4.0,1.0,buy
