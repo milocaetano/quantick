@@ -774,19 +774,7 @@ fn a_strategy_that_declares_no_indicator_reads_na_instead_of_panicking() {
 /// and the engine pins `BarSpec::build` to them (`crates/engine/tests/bar_spec.rs`).
 #[test]
 fn the_backtest_cuts_every_golden_the_chart_cuts() {
-    use quantick_engine::{Bar, fixture, golden};
-
-    /// Shows nothing, orders nothing: only keeps every bar it is shown.
-    struct Recorder(Vec<Bar>);
-    impl Strategy for Recorder {
-        fn name(&self) -> &str {
-            "recorder"
-        }
-        fn on_bar(&mut self, view: &BarView<'_>) -> Vec<Command> {
-            self.0.push(view.bar.clone());
-            Vec::new()
-        }
-    }
+    use quantick_engine::{fixture, golden};
 
     for (text, trades_csv, expected_csv) in [
         (
@@ -833,6 +821,43 @@ fn the_backtest_cuts_every_golden_the_chart_cuts() {
             "{text}: the run counts what it showed"
         );
     }
+}
+
+/// Shows nothing, orders nothing: only keeps every bar it is shown.
+struct Recorder(Vec<quantick_engine::Bar>);
+impl Strategy for Recorder {
+    fn name(&self) -> &str {
+        "recorder"
+    }
+    fn on_bar(&mut self, view: &BarView<'_>) -> Vec<Command> {
+        self.0.push(view.bar.clone());
+        Vec::new()
+    }
+}
+
+/// Renko measures in the price step, which a recorded session states nowhere:
+/// the run reads the grid off the session's own tape — the answer the chart
+/// reaches from the same prints — and shows the strategy every brick, the
+/// ones a print cleared on its way past included.
+#[test]
+fn the_backtest_cuts_renko_on_the_grid_its_own_tape_shows() {
+    use quantick_engine::{fixture, golden};
+    let config = quantick_backtest::bars::parse_configuration("renko:3").unwrap();
+    let expected = fixture::parse_bars(include_str!(
+        "../../engine/tests/fixtures/renko_n3_expected.csv"
+    ))
+    .unwrap();
+    let mut session = synthetic(&tape_of(&["100"]));
+    session.trades =
+        fixture::parse_trades(include_str!("../../engine/tests/fixtures/renko_trades.csv"))
+            .unwrap();
+
+    let mut recorder = Recorder(Vec::new());
+    let run = run_session(&session, config, &mut recorder);
+    if let Some(report) = golden::diff_bars(&expected, &recorder.0) {
+        panic!("{report}");
+    }
+    assert_eq!(run.bars, expected.len());
 }
 
 /// The parser refuses a deal-count spec by name; a caller that builds one in

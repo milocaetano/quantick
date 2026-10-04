@@ -44,5 +44,9 @@
 # What the typed number means lives in `quantick-engine`
 # (`BarRegistry::quick_candidates`), and the change applies through the same
 # `set_pane_bar_spec` the control plane uses; there was no app code to move out.
-!budget 104449
-crates/app 104449
+# Raised by 10 lines for Renko bars (`feat/renko-bars`): the pane hands the
+# indicators every bar one print closes, and replays them when a price-grid
+# re-cut rewrites the series. The rule, the query that reads `50R` and the
+# price-step plumbing live in `quantick-engine` and `quantick-chart`.
+!budget 104459
+crates/app 104459

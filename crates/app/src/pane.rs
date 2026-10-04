@@ -131,3 +131,7 @@ mod tests;
 #[cfg(test)]
 #[path = "pane/tests/lane_transport_tests.rs"]
 mod lane_transport_tests;
+
+#[cfg(test)]
+#[path = "pane/tests/renko_tests.rs"]
+mod renko_tests;

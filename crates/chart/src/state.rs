@@ -695,6 +695,9 @@ impl ChartState {
 mod bar_spec_parity_tests;
 
 #[cfg(test)]
+mod renko_tests;
+
+#[cfg(test)]
 mod tape_identity_tests;
 
 #[cfg(test)]

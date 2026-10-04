@@ -147,3 +147,37 @@ fn a_new_number_moves_the_highlight_back_to_the_top() {
         Some(first)
     );
 }
+
+#[test]
+fn a_letter_after_the_number_lists_the_kind_that_declares_it() {
+    let ctx = egui::Context::default();
+    let mut surface = BarSwitchSurface::default();
+    surface.open(0, crate::pane::PaneSide::Flow, "5");
+    frame(&mut surface, &ctx, Vec::new());
+    frame(&mut surface, &ctx, vec![egui::Event::Text("0".into())]);
+    frame(&mut surface, &ctx, vec![egui::Event::Text("R".into())]);
+    let labels: Vec<String> = surface
+        .candidates()
+        .into_iter()
+        .map(BarConfiguration::quick_label)
+        .collect();
+    assert_eq!(labels, ["50 Ticks (Renko)"]);
+    let response = frame(&mut surface, &ctx, vec![key(egui::Key::Enter)]);
+    assert_eq!(
+        response
+            .bar_switch
+            .map(|request| request.config.to_config_string()),
+        Some("renko:50".to_owned())
+    );
+}
+
+#[test]
+fn the_hook_opens_on_a_typed_letter_too() {
+    let mut surface = BarSwitchSurface::default();
+    surface.open(0, crate::pane::PaneSide::Flow, "50R");
+    assert_eq!(
+        surface.candidates(),
+        quantick_engine::bar_registry::BUILTIN_BARS.quick_matches("50R")
+    );
+    assert_eq!(surface.candidates().len(), 1);
+}
