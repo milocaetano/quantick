@@ -1447,6 +1447,38 @@ mod tests {
     }
 
     #[test]
+    fn a_family_pattern_must_match_an_offered_symbol() {
+        let text = |key: &str| {
+            format!(
+                r#"
+            default_feed = "b"
+            default_symbol = "WINV26"
+            [[feeds]]
+            id = "b"
+            name = "B"
+            provider = "binance"
+            symbols = ["WINV26"]
+            symbol_bubble_presets = {{ "{key}" = "default" }}
+        "#
+            )
+        };
+        for key in ["WDO*", "*"] {
+            let err = parse(&text(key), ConfigSource::Embedded, &AddedSymbols::default())
+                .expect_err("a pattern naming no offered symbol");
+            assert!(err.to_string().contains(key), "{err}");
+        }
+        let config = parse(
+            &text("WIN*"),
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("a family pattern matching an offered symbol");
+        let feed = config.feed("b").expect("feed");
+        assert_eq!(feed.bubble_asset("WINZ26").key, "WIN*");
+        assert_eq!(feed.bubble_asset("WDO$N").key, "WDO$N");
+    }
+
+    #[test]
     fn an_empty_symbol_preset_name_is_a_config_error() {
         let text = r#"
             default_feed = "b"
