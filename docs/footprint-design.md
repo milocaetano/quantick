@@ -256,7 +256,7 @@ code dispatches instead of branching. Adding a style is a registry edit.
 - **`bidask`** — both sides at absolute size, mirrored on one shared scale
   (the larger *side*, never the row total, or a one-sided row would draw at
   the same width as a balanced one). No digits, so it lives from Profile up
-  and fills the 10–33 px band where the number styles cannot go. It answers
+  and fills the 12–33 px band where the number styles cannot go. It answers
   what the split cannot: 400×380 and 40×20 share a delta and are not the same
   market.
 - **`cluster`** — the reference chart's boxed ladder: `bid | ask | total` per
