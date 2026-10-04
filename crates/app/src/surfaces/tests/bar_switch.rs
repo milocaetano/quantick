@@ -181,3 +181,20 @@ fn the_hook_opens_on_a_typed_letter_too() {
     );
     assert_eq!(surface.candidates().len(), 1);
 }
+
+#[test]
+fn at_full_length_a_typed_letter_replaces_the_letter() {
+    let ctx = egui::Context::default();
+    let mut surface = BarSwitchSurface::default();
+    surface.open(0, crate::pane::PaneSide::Flow, "123456789T");
+    frame(&mut surface, &ctx, Vec::new());
+    frame(&mut surface, &ctx, vec![egui::Event::Text("R".into())]);
+    let query = |surface: &BarSwitchSurface| surface.open.as_ref().map(|open| open.query.clone());
+    assert_eq!(query(&surface).as_deref(), Some("123456789R"));
+    // A tenth digit is past what any rule reads: it is dropped, and the
+    // letter stays.
+    frame(&mut surface, &ctx, vec![egui::Event::Text("5".into())]);
+    assert_eq!(query(&surface).as_deref(), Some("123456789R"));
+    frame(&mut surface, &ctx, vec![egui::Event::Text("r".into())]);
+    assert_eq!(query(&surface).as_deref(), Some("123456789r"));
+}

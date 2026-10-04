@@ -11,9 +11,6 @@ pub const QUICK_DURATION_SCALES_MS: [i64; 3] = [60_000, 1_000, 3_600_000];
 /// The most digits a typed number keeps: more than any bar rule reads.
 const QUICK_MAX_DIGITS: usize = 9;
 
-/// The longest query the switch holds: the number, then one suffix letter.
-pub const QUICK_QUERY_MAX_CHARS: usize = QUICK_MAX_DIGITS + 1;
-
 /// A kind's own name in the quick switch: the letter typed after the number
 /// that lists this kind alone (`50R`), and the noun its row reads after the
 /// number (`50 Ticks (Renko)`).
@@ -26,6 +23,10 @@ pub struct QuickAlias {
 /// What the switch keeps of typed text: its digits, at most nine, then the
 /// last letter typed — a second letter replaces the first rather than
 /// spelling a word no kind declares.
+///
+/// This is the switch's only length limit. A field capping its own length
+/// would refuse the letter typed after a full query, which has to reach this
+/// to replace the letter there.
 #[must_use]
 pub fn quick_query_text(typed: &str) -> String {
     let mut query: String = typed

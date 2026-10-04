@@ -6,9 +6,7 @@ pub mod definitions;
 mod parameters;
 mod quick_switch;
 pub use parameters::*;
-pub use quick_switch::{
-    QUICK_DURATION_SCALES_MS, QUICK_QUERY_MAX_CHARS, QuickAlias, quick_query_text,
-};
+pub use quick_switch::{QUICK_DURATION_SCALES_MS, QuickAlias, quick_query_text};
 
 use crate::BarBuilder;
 use rust_decimal::{Decimal, prelude::ToPrimitive};

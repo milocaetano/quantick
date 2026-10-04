@@ -6,14 +6,11 @@
 //! imbalance, trades, Renko); a letter after it (`50R`) keeps the kind that
 //! declares it. The engine's registry reads the query and writes the list;
 //! this file only reads keys and draws it. Enter applies the highlighted row
-//! to the pane the switch opened over, through the same path
-//! `layout.pane.set_bar_spec` takes, so an agent reaches the same outcome by
-//! that capability.
+//! to the pane it opened over through `layout.pane.set_bar_spec`'s own path,
+//! so an agent reaches the same outcome by that capability.
 
 use eframe::egui;
-use quantick_engine::bar_registry::{
-    BUILTIN_BARS, BarConfiguration, QUICK_QUERY_MAX_CHARS, quick_query_text,
-};
+use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration, quick_query_text};
 
 use super::{Surface, SurfaceEnv, SurfaceResponse};
 use crate::pane::PaneSide;
@@ -156,7 +153,6 @@ impl Surface for BarSwitchSurface {
             let edit = ui.add(
                 egui::TextEdit::singleline(&mut open.query)
                     .id(query_id)
-                    .char_limit(QUICK_QUERY_MAX_CHARS)
                     .hint_text("bar size")
                     .desired_width(f32::INFINITY),
             );
@@ -183,7 +179,10 @@ impl Surface for BarSwitchSurface {
                     },
                 );
             });
-            open.query = quick_query_text(&open.query);
+            let kept = quick_query_text(&open.query);
+            if kept != open.query {
+                open.query = kept;
+            }
             // A new query is a new list: a highlight kept by index would land
             // on a different kind (15's fourth row is tick, 150's is volume).
             if open.query != asked {
