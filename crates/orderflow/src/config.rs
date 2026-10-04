@@ -7,6 +7,7 @@ pub mod crown;
 pub mod dressing;
 pub mod labels;
 mod lane;
+pub mod legend;
 pub mod theme;
 
 pub use bubbles::{

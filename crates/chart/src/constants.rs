@@ -161,3 +161,87 @@ pub(crate) const QTY_THOUSANDS_FROM: f64 = 999.95;
 
 /// Least magnitude a footprint quantity is written without decimals.
 pub(crate) const QTY_WHOLE_FROM: f64 = 100.0;
+
+// Footprint level of detail (`footprint_lod.rs`).
+
+/// Smallest font the ladder draws its quantities at, in pixels.
+///
+/// Seven, down from eight. Monospace digits hold their shape a size below what
+/// prose needs — they are a fixed, familiar alphabet of ten — and every text
+/// floor below is measured from this number, so a pixel here is worth several
+/// pixels of candle in how soon the numbers arrive.
+pub const LADDER_MIN_FONT_PX: f32 = 7.0;
+
+/// Advance width of a monospace glyph, as a fraction of the font size.
+pub const GLYPH_EM: f32 = 0.6;
+
+/// Glyphs in the widest quantity the ladder writes (`58.1k`).
+pub const QUANTITY_GLYPHS: f32 = 5.0;
+
+/// Width of that quantity at the smallest font, in pixels.
+pub const QUANTITY_PX: f32 = QUANTITY_GLYPHS * GLYPH_EM * LADDER_MIN_FONT_PX;
+
+/// Clearance kept around a quantity inside the body it is drawn in.
+///
+/// A pixel and a half a side, not the six the row layout reserves when it is
+/// *sizing* the font: what a floor has to guarantee is that the digits do not
+/// reach the next candle, and the body already sits inside a gap
+/// ([`crate::style::DEFAULT_CANDLE_GAP`]) that keeps them apart.
+pub const QUANTITY_PADDING_PX: f32 = 3.0;
+
+/// The share of a slot a candle body takes at the default style. The numbers
+/// are drawn inside the *body*, so this is what turns a text budget into a
+/// candle width.
+pub const TYPICAL_BODY_FRAC: f32 = 0.72;
+
+/// Candle-width floors per level, in pixels — the typography budget of what
+/// each level draws.
+///
+/// The two text levels are **derived, never chosen**: Compact fits one
+/// quantity across the body, Detailed one per half of it. Writing them as
+/// arithmetic is what keeps the retune honest — the floors moved because
+/// [`LADDER_MIN_FONT_PX`] moved (8 px → 7 px), and anyone tightening them
+/// further has to move a number that means something first.
+///
+/// That gap is much of why the layer read as *slow to arrive*: a trader zoomed
+/// in for numbers, got marks, and had nothing saying how much further to go
+/// (the legend now says it).
+///
+/// The two levels that draw no text answer to geometry instead, and had no
+/// such excuse for waiting. Marks are a POC dot and a zone tick — visible from
+/// a candle six pixels wide. The profile is a textless histogram whose *shape*
+/// is the signal, readable at ten pixels where the old floor made it wait for
+/// eighteen.
+///
+/// The footprint config's `detail_scale` moves all four together, for a trader
+/// who wants detail earlier still (and tighter) or later and roomier.
+pub const COMPACT_MIN_WIDTH: f32 = (QUANTITY_PX + QUANTITY_PADDING_PX) / TYPICAL_BODY_FRAC;
+
+/// Profile's candle-width floor, in pixels.
+pub const PROFILE_MIN_WIDTH: f32 = 10.0;
+
+/// Marks' candle-width floor, in pixels.
+pub const MARKS_MIN_WIDTH: f32 = 6.0;
+
+/// Row-height floors per level. Profile rows survive down to hairline bands;
+/// text rows need a legible line.
+pub const DETAILED_MIN_ROW: f32 = 12.0;
+
+/// Compact's row-height floor, in pixels.
+pub const COMPACT_MIN_ROW: f32 = 11.0;
+
+/// The dead band on level *downgrades*: the current level survives until the
+/// zoom is 15% past its floor, so a trackpad hovering on a boundary cannot
+/// blink the chart between modes mid-gesture.
+pub(crate) const LEVEL_HYSTERESIS: f32 = 1.15;
+
+/// Display-grouping multiples, smallest first. Integer multiples of the
+/// capture grid keep row merges exact; round values keep the effective
+/// grouping a number a trader can say out loud. The ladder runs to 10 000×
+/// deliberately: a feed that never reports its tick leaves the capture grid
+/// on the 0.01 fallback, and an index future at 180 000 needs a 200–500×
+/// merge before a row is even one visible pixel — capping at 100× silently
+/// locked those charts in Marks at every zoom.
+pub const GROUP_SNAP: [i64; 16] = [
+    1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000, 10_000,
+];

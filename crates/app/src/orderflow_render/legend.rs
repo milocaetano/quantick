@@ -13,57 +13,11 @@ use crate::orderflow_render::constants::{
 };
 use eframe::egui;
 use quantick_orderflow::HeatmapTheme;
+use quantick_orderflow::config::legend::{LegendGlyph, legend_entries};
 
 use super::bubbles::BubbleColors;
 use super::layout::RenderContext;
-use super::{
-    OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, rgba, thermal_rgb,
-};
-
-/// The legend keys for this style, one per layer that can actually draw.
-///
-/// A layer draws when its family is active (L2 capture for the depth family,
-/// the bubbles switch for aggression) *and* its own display switch is on.
-/// Announcing anything else would describe a chart the viewer is not looking
-/// at — the legend is a key for what is on screen, not a feature list.
-///
-/// "On screen" means either pane. The canvas holds two of them and the layers
-/// are switched apart, so a key withheld because the candles are clear would
-/// deny a mark the tape is drawing right now — the legend has one canvas to
-/// describe, not one pane of it.
-pub(super) fn legend_entries(
-    style: &OrderflowRenderStyle,
-    liquidity_label: String,
-) -> Vec<(LegendGlyph, String)> {
-    let depth = style.depth_layer || style.lane_depth_layer;
-    let aggression = style.aggression_layer || style.lane_aggression_layer;
-    let mut entries = Vec::new();
-    if depth && style.show_liquidity {
-        entries.push((LegendGlyph::Heat, liquidity_label));
-    }
-    if aggression && style.show_buy {
-        entries.push((LegendGlyph::Buy, "buy aggression".to_owned()));
-    }
-    if aggression && style.show_sell {
-        entries.push((LegendGlyph::Sell, "sell aggression".to_owned()));
-    }
-    if depth && style.show_aligned {
-        entries.push((
-            LegendGlyph::Aligned,
-            "aggression-aligned depletion".to_owned(),
-        ));
-    }
-    if depth && style.show_unattributed {
-        entries.push((
-            LegendGlyph::DepthOnly,
-            "L2 reduction (unattributed)".to_owned(),
-        ));
-    }
-    if depth && style.show_gaps {
-        entries.push((LegendGlyph::Gap, "L2 gap".to_owned()));
-    }
-    entries
-}
+use super::{Palette, add_gradient_rect, draw_dashed_vertical, rgba, thermal_rgb};
 
 /// Draw the canvas key, or a compact buy/sell key in the tape-only header.
 pub(crate) fn draw_compact_legend(
@@ -128,7 +82,7 @@ pub(crate) fn draw_compact_legend(
         .iter()
         .zip(&galleys)
         .map(|((glyph, _), galley)| {
-            glyph.width() + LEGEND_GLYPH_GAP_PX + galley.size().x + LEGEND_ENTRY_PADDING_PX
+            glyph_width(*glyph) + LEGEND_GLYPH_GAP_PX + galley.size().x + LEGEND_ENTRY_PADDING_PX
         })
         .collect();
 
@@ -196,7 +150,7 @@ pub(crate) fn draw_compact_legend(
         let item = origin + offset;
         draw_legend_glyph(&clip, *glyph, item, &palette, style.theme);
         let text_pos = egui::pos2(
-            item.x + glyph.width() + 5.0,
+            item.x + glyph_width(*glyph) + 5.0,
             item.y + (14.0 - galley.size().y) / 2.0,
         );
         footprint = footprint.union(egui::Rect::from_min_size(text_pos, galley.size()));
@@ -205,23 +159,12 @@ pub(crate) fn draw_compact_legend(
     Some(footprint.intersect(clip.clip_rect()))
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(super) enum LegendGlyph {
-    Heat,
-    Buy,
-    Sell,
-    Aligned,
-    DepthOnly,
-    Gap,
-}
-
-impl LegendGlyph {
-    const fn width(self) -> f32 {
-        match self {
-            Self::Heat => 42.0,
-            Self::Buy | Self::Sell => 12.0,
-            Self::Aligned | Self::DepthOnly | Self::Gap => 18.0,
-        }
+/// A key's glyph width, in pixels.
+const fn glyph_width(glyph: LegendGlyph) -> f32 {
+    match glyph {
+        LegendGlyph::Heat => 42.0,
+        LegendGlyph::Buy | LegendGlyph::Sell => 12.0,
+        LegendGlyph::Aligned | LegendGlyph::DepthOnly | LegendGlyph::Gap => 18.0,
     }
 }
 
@@ -269,7 +212,7 @@ fn draw_legend_glyph(
     palette: &Palette,
     theme: HeatmapTheme,
 ) {
-    let center = origin + egui::vec2(glyph.width() / 2.0, 7.0);
+    let center = origin + egui::vec2(glyph_width(glyph) / 2.0, 7.0);
     match glyph {
         LegendGlyph::Heat => {
             let rect =

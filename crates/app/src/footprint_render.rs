@@ -13,8 +13,10 @@
 //! illegible and present at the same time.
 //!
 //! Everything that decides (levels, grouping, zone coalescing, quantity
-//! formatting) is a pure function tested without egui; only the painting
-//! itself touches the frame.
+//! formatting) is a pure function tested without egui — the level ladder in
+//! [`quantick_chart::footprint_lod`], the ladder arithmetic in
+//! [`quantick_chart::footprint_projection`]; only the painting itself touches
+//! the frame.
 
 use std::collections::BTreeMap;
 
@@ -34,6 +36,13 @@ use crate::theme;
 use bar::cluster_column_px_from;
 use bar::{BarPaint, draw_bar, draw_poc_dot, draw_zone_mark};
 use heat::{HeatScale, heat_scale};
+use quantick_chart::footprint_lod::{
+    COMPACT_MIN_ROW, COMPACT_MIN_WIDTH, DETAILED_MIN_ROW, DetailLevel, GLYPH_EM, GROUP_SNAP,
+    LADDER_MIN_FONT_PX, LevelMemory, PROFILE_MIN_WIDTH, QUANTITY_GLYPHS, QUANTITY_PADDING_PX,
+    QUANTITY_PX, TYPICAL_BODY_FRAC,
+};
+#[cfg(test)]
+use quantick_chart::footprint_lod::{MARKS_MIN_WIDTH, level_for};
 use quantick_chart::footprint_projection::{
     ADAPTIVE_FLOOR_BARS, ZoneMark, adaptive_min_qty, bar_delta, coalesce_zones, fmt_delta, fmt_qty,
     poc_of, regroup, zones_of,
@@ -42,75 +51,6 @@ use quantick_chart::footprint_projection::{
 mod bar;
 mod heat;
 
-/// How much detail the current zoom supports. Ordered: more detail is greater.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum DetailLevel {
-    /// Below every readable threshold: the layer paints nothing and the
-    /// legend says why, because an on-but-invisible layer reads as broken.
-    Off,
-    /// POC dot and stacked-zone marks only. Nothing here is a number.
-    Marks,
-    /// Textless histogram per row, POC emphasized, zone ticks on the edge.
-    Profile,
-    /// One abbreviated delta number per row.
-    Compact,
-    /// The full sell × buy ladder with imbalance highlights and the extreme
-    /// ratio badges.
-    Detailed,
-}
-
-/// Smallest font the ladder draws its quantities at, in pixels.
-///
-/// Seven, down from eight. Monospace digits hold their shape a size below what
-/// prose needs — they are a fixed, familiar alphabet of ten — and every text
-/// floor below is measured from this number, so a pixel here is worth several
-/// pixels of candle in how soon the numbers arrive.
-const LADDER_MIN_FONT_PX: f32 = 7.0;
-
-/// Advance width of a monospace glyph, as a fraction of the font size.
-const GLYPH_EM: f32 = 0.6;
-
-/// Glyphs in the widest quantity the ladder writes (`58.1k`).
-const QUANTITY_GLYPHS: f32 = 5.0;
-
-/// Width of that quantity at the smallest font, in pixels.
-const QUANTITY_PX: f32 = QUANTITY_GLYPHS * GLYPH_EM * LADDER_MIN_FONT_PX;
-
-/// Clearance kept around a quantity inside the body it is drawn in.
-///
-/// A pixel and a half a side, not the six the row layout reserves when it is
-/// *sizing* the font: what a floor has to guarantee is that the digits do not
-/// reach the next candle, and the body already sits inside a gap
-/// ([`crate::style::DEFAULT_CANDLE_GAP`]) that keeps them apart.
-const QUANTITY_PADDING_PX: f32 = 3.0;
-
-/// The share of a slot a candle body takes at the default style. The numbers
-/// are drawn inside the *body*, so this is what turns a text budget into a
-/// candle width.
-const TYPICAL_BODY_FRAC: f32 = 0.72;
-
-/// Candle-width floors per level, in pixels — the typography budget of what
-/// each level draws.
-///
-/// The two text levels are **derived, never chosen**: Compact fits one
-/// quantity across the body, Detailed one per half of it. Writing them as
-/// arithmetic is what keeps the retune honest — the floors moved because
-/// [`LADDER_MIN_FONT_PX`] moved (8 px → 7 px), and anyone tightening them
-/// further has to move a number that means something first.
-///
-/// That gap is much of why the layer read as *slow to arrive*: a trader zoomed
-/// in for numbers, got marks, and had nothing saying how much further to go
-/// (the legend now says it).
-///
-/// The two levels that draw no text answer to geometry instead, and had no
-/// such excuse for waiting. Marks are a POC dot and a zone tick — visible from
-/// a candle six pixels wide. The profile is a textless histogram whose *shape*
-/// is the signal, readable at ten pixels where the old floor made it wait for
-/// eighteen.
-///
-/// [`crate::footprint_config::FootprintConfig::detail_scale`] moves all four
-/// together, for a trader who wants detail earlier still (and tighter) or
-/// later and roomier.
 /// Clearance between a number and the bar's central axis, per side.
 ///
 /// The floors below are budgets for text anchored *at* `xc`; the ladder
@@ -167,38 +107,10 @@ fn detailed_min_width_for(style: FootprintStyle, columns: f32) -> f32 {
     (text + furniture) / TYPICAL_BODY_FRAC
 }
 
-const COMPACT_MIN_WIDTH: f32 = (QUANTITY_PX + QUANTITY_PADDING_PX) / TYPICAL_BODY_FRAC;
-
-const PROFILE_MIN_WIDTH: f32 = 10.0;
-
-const MARKS_MIN_WIDTH: f32 = 6.0;
-
-/// Row-height floors per level. Profile rows survive down to hairline bands;
-/// text rows need a legible line.
-const DETAILED_MIN_ROW: f32 = 12.0;
-
-const COMPACT_MIN_ROW: f32 = 11.0;
-
 /// The Profile floor moved into config (`profile_row_px`, same default);
 /// the constant stays as the tests' reference value for that default.
 #[cfg(test)]
 const PROFILE_MIN_ROW: f32 = 4.0;
-
-/// The dead band on level *downgrades*: the current level survives until the
-/// zoom is 15% past its floor, so a trackpad hovering on a boundary cannot
-/// blink the chart between modes mid-gesture.
-const LEVEL_HYSTERESIS: f32 = 1.15;
-
-/// Display-grouping multiples, smallest first. Integer multiples of the
-/// capture grid keep row merges exact; round values keep the effective
-/// grouping a number a trader can say out loud. The ladder runs to 10 000×
-/// deliberately: a feed that never reports its tick leaves the capture grid
-/// on the 0.01 fallback, and an index future at 180 000 needs a 200–500×
-/// merge before a row is even one visible pixel — capping at 100× silently
-/// locked those charts in Marks at every zoom.
-const GROUP_SNAP: [i64; 16] = [
-    1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000, 10_000,
-];
 
 /// Hard cap of painted cells per frame, the heatmap's own budget: beyond it
 /// the layer stops and the legend says "capped" instead of eating the frame.
@@ -278,8 +190,8 @@ pub fn candle_dressing(
 /// applied, per pane.
 #[derive(Debug, Default)]
 pub struct FootprintLod {
-    level: Option<DetailLevel>,
-    k: Option<i64>,
+    /// The detail level and row multiple, each held through its dead band.
+    pub(crate) levels: LevelMemory,
     /// The adaptive imbalance floor and the state it was computed from:
     /// `(closed bar count, capture group)`. See [`Self::adaptive_floor`].
     floor: Option<(usize, Decimal, Decimal)>,
@@ -305,56 +217,6 @@ pub struct FootprintLod {
 }
 
 impl FootprintLod {
-    /// The level this zoom supports, sticky in BOTH directions (see
-    /// [`LEVEL_HYSTERESIS`]). `profile_row_px` is the configured Profile
-    /// floor — the "how fine may the bands get" knob.
-    ///
-    /// The dead band is two-sided on purpose: the price auto-fit breathes
-    /// with every pan and print, so the row height crosses a floor and
-    /// crosses back with a centimetre of mouse travel. With instant
-    /// upgrades against banded downgrades, the boundary blinks — up at
-    /// once, down 15% later, up at once again. A change in either
-    /// direction now has to clear the floor with 15% to spare before the
-    /// level moves; only the very first frame takes the strict answer.
-    pub fn resolve(
-        &mut self,
-        candle_width: f32,
-        base_row_px: f32,
-        profile_row_px: f32,
-        detailed_min: f32,
-    ) -> DetailLevel {
-        let strict = level_for(candle_width, base_row_px, profile_row_px, detailed_min);
-        let level = match self.level {
-            // The dead band defends exactly ONE step of boundary jitter.
-            // Further than that, the sticky state is not jitter — it is a
-            // leftover from another zoom era (the first frames' wild
-            // auto-fit spans) — and holding it is how "rows 100.00" wedges
-            // on a chart whose strict answer is Detailed.
-            Some(current) if (strict as i8 - current as i8).abs() > 1 => strict,
-            Some(current) if strict < current => {
-                let relaxed = level_for(
-                    candle_width * LEVEL_HYSTERESIS,
-                    base_row_px * LEVEL_HYSTERESIS,
-                    profile_row_px,
-                    detailed_min,
-                );
-                if relaxed < current { strict } else { current }
-            }
-            Some(current) if strict > current => {
-                let confirmed = level_for(
-                    candle_width / LEVEL_HYSTERESIS,
-                    base_row_px / LEVEL_HYSTERESIS,
-                    profile_row_px,
-                    detailed_min,
-                );
-                if confirmed >= strict { strict } else { current }
-            }
-            _ => strict,
-        };
-        self.level = Some(level);
-        level
-    }
-
     /// The adaptive imbalance floor, recomputed only when the closed-bar
     /// count or the capture grid changes.
     ///
@@ -436,80 +298,6 @@ impl FootprintLod {
         self.heat = Some((visible.0, visible.1, bars, k, scale));
         scale
     }
-
-    /// The display multiple, with the same dead band the level has: the
-    /// price auto-fit breathes with every new high of the live bar, and a
-    /// ladder that restructures from 2-tick to 5-tick rows on one print and
-    /// back on the next is unreadable. The current `k` survives until it is
-    /// 15% past failing its floor, and a finer one is adopted only once it
-    /// clears the floor with 15% to spare.
-    fn resolve_multiple(&mut self, base_row_px: f32, min_row_px: f32) -> Option<i64> {
-        let strict = display_multiple(base_row_px, min_row_px);
-        let snap_position = |k: i64| GROUP_SNAP.iter().position(|snap| *snap == k);
-        let k = match (self.k, strict) {
-            (Some(current), Some(strict_k)) if current != strict_k => {
-                // Same one-step rule as the level: the dead band defends
-                // boundary jitter, never a multiple wedged eras away (the
-                // snap quantization can leave the strict answer exactly on
-                // its floor, where the 15% adoption margin is unreachable —
-                // without this, a stale 10 000× from the first frames'
-                // auto-fit span holds forever).
-                let one_step_apart = matches!(
-                    (snap_position(current), snap_position(strict_k)),
-                    (Some(a), Some(b)) if a.abs_diff(b) <= 1
-                );
-                if !one_step_apart {
-                    strict_k
-                } else if strict_k > current {
-                    if base_row_px * current as f32 >= min_row_px / LEVEL_HYSTERESIS {
-                        current
-                    } else {
-                        strict_k
-                    }
-                } else if base_row_px * strict_k as f32 >= min_row_px * LEVEL_HYSTERESIS {
-                    strict_k
-                } else {
-                    current
-                }
-            }
-            (_, strict) => strict?,
-        };
-        self.k = Some(k);
-        Some(k)
-    }
-}
-
-/// What `candle_width` and the *achievable* row height allow. A thin base row
-/// is not a refusal — the display grouping can merge up to [`GROUP_SNAP`]'s
-/// largest multiple — so each level asks whether some multiple reaches its
-/// row floor.
-fn level_for(
-    candle_width: f32,
-    base_row_px: f32,
-    profile_row_px: f32,
-    detailed_min: f32,
-) -> DetailLevel {
-    let row_reachable = |min_row: f32| display_multiple(base_row_px, min_row).is_some();
-    if candle_width >= detailed_min && row_reachable(DETAILED_MIN_ROW) {
-        DetailLevel::Detailed
-    } else if candle_width >= COMPACT_MIN_WIDTH && row_reachable(COMPACT_MIN_ROW) {
-        DetailLevel::Compact
-    } else if candle_width >= PROFILE_MIN_WIDTH && row_reachable(profile_row_px) {
-        DetailLevel::Profile
-    } else if candle_width >= MARKS_MIN_WIDTH {
-        DetailLevel::Marks
-    } else {
-        DetailLevel::Off
-    }
-}
-
-/// The smallest snap multiple whose rows reach `min_row_px`, or `None` when
-/// even the coarsest is too thin (a chart zoomed so far out that one snap row
-/// is still under the floor).
-fn display_multiple(base_row_px: f32, min_row_px: f32) -> Option<i64> {
-    GROUP_SNAP
-        .into_iter()
-        .find(|k| base_row_px * (*k as f32) >= min_row_px)
 }
 
 /// Everything one frame of the layer needs, borrowed from the pane's draw.
@@ -616,7 +404,7 @@ impl LayerPlan {
             .config
             .style
             .resolve_auto(|style| scaled_width >= detailed_min_width(style, frame.config));
-        let level = lod.resolve(
+        let level = lod.levels.resolve(
             scaled_width,
             base_row_px,
             frame.config.profile_row_px,
@@ -717,6 +505,7 @@ impl<'p, 'f> LayerPass<'p, 'f> {
             _ => frame.config.profile_row_px,
         };
         let k = lod
+            .levels
             .resolve_multiple(plan.base_row_px, min_row)
             .unwrap_or(GROUP_SNAP[GROUP_SNAP.len() - 1]);
         let min_qty = match frame.config.imbalance_min_qty {
@@ -1694,7 +1483,7 @@ mod tests {
         let mut lod = FootprintLod::default();
         // The first frame takes the strict answer.
         assert_eq!(
-            lod.resolve(
+            lod.levels.resolve(
                 floor * 1.2,
                 12.0,
                 PROFILE_MIN_ROW,
@@ -1704,7 +1493,7 @@ mod tests {
         );
         // Just under the floor: inside the 15% band, the level holds.
         assert_eq!(
-            lod.resolve(
+            lod.levels.resolve(
                 floor * 0.95,
                 12.0,
                 PROFILE_MIN_ROW,
@@ -1714,7 +1503,7 @@ mod tests {
         );
         // 15% past the floor: the downgrade happens.
         assert_eq!(
-            lod.resolve(
+            lod.levels.resolve(
                 floor * 0.83,
                 12.0,
                 PROFILE_MIN_ROW,
@@ -1726,7 +1515,7 @@ mod tests {
         // so the level holds — an instant upgrade against a banded downgrade
         // is a blinker at the boundary.
         assert_eq!(
-            lod.resolve(
+            lod.levels.resolve(
                 floor * 1.1,
                 12.0,
                 PROFILE_MIN_ROW,
@@ -1735,7 +1524,7 @@ mod tests {
             DetailLevel::Compact
         );
         assert_eq!(
-            lod.resolve(
+            lod.levels.resolve(
                 floor * 1.2,
                 12.0,
                 PROFILE_MIN_ROW,
@@ -1747,7 +1536,8 @@ mod tests {
         // hair must not change the level once settled.
         for width in [floor * 1.02, floor * 0.98, floor * 1.02, floor * 0.98] {
             assert_eq!(
-                lod.resolve(width, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+                lod.levels
+                    .resolve(width, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
                 DetailLevel::Detailed,
                 "width {width} blinked"
             );
@@ -1762,35 +1552,22 @@ mod tests {
         let mut lod = FootprintLod::default();
         // Locked at Marks by a startup-era span (rows unreachable)...
         assert_eq!(
-            lod.resolve(100.0, 0.0001, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+            lod.levels
+                .resolve(100.0, 0.0001, PROFILE_MIN_ROW, ladder_detailed_min_width()),
             DetailLevel::Marks
         );
         // ...then the real span arrives: two steps away, no band, snap.
         assert_eq!(
-            lod.resolve(100.0, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+            lod.levels
+                .resolve(100.0, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
             DetailLevel::Detailed
         );
 
         // Same for the row multiple: a 10 000x from a wild span must not
         // hold once the strict answer is orders of magnitude finer.
         let mut lod = FootprintLod::default();
-        assert_eq!(lod.resolve_multiple(0.0005, 4.0), Some(10_000));
-        assert_eq!(lod.resolve_multiple(0.09, 4.0), Some(50));
-    }
-
-    #[test]
-    fn display_multiple_snaps_to_round_row_groups() {
-        assert_eq!(display_multiple(12.0, 11.0), Some(1));
-        assert_eq!(display_multiple(6.0, 11.0), Some(2));
-        assert_eq!(display_multiple(1.0, 11.0), Some(20));
-        assert_eq!(display_multiple(0.1, 11.0), Some(200));
-        assert_eq!(display_multiple(0.1, 4.0), Some(50));
-        // The fallback-grid regression: a 0.01 capture grid on an index
-        // future leaves base rows at ~0.026 px — the ladder must still
-        // reach a drawable row instead of locking the level at Marks.
-        assert_eq!(display_multiple(0.026, 4.0), Some(200));
-        assert_eq!(display_multiple(0.026, 12.0), Some(500));
-        assert_eq!(display_multiple(0.0001, 12.0), None);
+        assert_eq!(lod.levels.resolve_multiple(0.0005, 4.0), Some(10_000));
+        assert_eq!(lod.levels.resolve_multiple(0.09, 4.0), Some(50));
     }
 
     /// The floor is a fact about the closed bars, so it is computed once and
