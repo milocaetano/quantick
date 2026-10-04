@@ -99,8 +99,7 @@ const TYPICAL_BODY_FRAC: f32 = 0.72;
 /// The two levels that draw no text answer to geometry instead, and had no
 /// such excuse for waiting. Marks are a POC dot and a zone tick — visible from
 /// a candle six pixels wide. The profile is a textless histogram whose *shape*
-/// is the signal, readable at ten pixels where the old floor made it wait for
-/// eighteen.
+/// is the signal, readable at twelve pixels while narrower candles show marks.
 ///
 /// [`crate::footprint_config::FootprintConfig::detail_scale`] moves all four
 /// together, for a trader who wants detail earlier still (and tighter) or
@@ -163,7 +162,7 @@ fn detailed_min_width_for(style: FootprintStyle, columns: f32) -> f32 {
 
 const COMPACT_MIN_WIDTH: f32 = (QUANTITY_PX + QUANTITY_PADDING_PX) / TYPICAL_BODY_FRAC;
 
-const PROFILE_MIN_WIDTH: f32 = 10.0;
+const PROFILE_MIN_WIDTH: f32 = 12.0;
 
 const MARKS_MIN_WIDTH: f32 = 6.0;
 
@@ -178,10 +177,12 @@ const COMPACT_MIN_ROW: f32 = 11.0;
 #[cfg(test)]
 const PROFILE_MIN_ROW: f32 = 4.0;
 
-/// The dead band on level *downgrades*: the current level survives until the
-/// zoom is 15% past its floor, so a trackpad hovering on a boundary cannot
-/// blink the chart between modes mid-gesture.
+/// The dead band on most level transitions. A trackpad hovering on a boundary
+/// must not blink the chart between modes mid-gesture.
 const LEVEL_HYSTERESIS: f32 = 1.15;
+
+/// Narrow enough for one wheel step to reverse Marks/Profile, yet resist jitter.
+const PROFILE_HYSTERESIS: f32 = 1.02;
 
 /// Display-grouping multiples, smallest first. Integer multiples of the
 /// capture grid keep row merges exact; round values keep the effective
@@ -297,17 +298,10 @@ pub struct FootprintLod {
 }
 
 impl FootprintLod {
-    /// The level this zoom supports, sticky in BOTH directions (see
-    /// [`LEVEL_HYSTERESIS`]). `profile_row_px` is the configured Profile
-    /// floor — the "how fine may the bands get" knob.
-    ///
-    /// The dead band is two-sided on purpose: the price auto-fit breathes
-    /// with every pan and print, so the row height crosses a floor and
-    /// crosses back with a centimetre of mouse travel. With instant
-    /// upgrades against banded downgrades, the boundary blinks — up at
-    /// once, down 15% later, up at once again. A change in either
-    /// direction now has to clear the floor with 15% to spare before the
-    /// level moves; only the very first frame takes the strict answer.
+    /// Resolve zoom detail with a two-sided dead band against auto-fit jitter.
+    /// Marks/Profile uses the narrower band to reverse on one wheel step.
+    /// `profile_row_px` configures Profile's row floor; the first frame takes
+    /// the strict answer.
     pub fn resolve(
         &mut self,
         candle_width: f32,
@@ -315,30 +309,34 @@ impl FootprintLod {
         profile_row_px: f32,
         detailed_min: f32,
     ) -> DetailLevel {
-        let strict = level_for(candle_width, base_row_px, profile_row_px, detailed_min);
+        let at_zoom = |factor| {
+            level_for(
+                candle_width * factor,
+                base_row_px * factor,
+                profile_row_px,
+                detailed_min,
+            )
+        };
+        let strict = at_zoom(1.0);
+        let hysteresis = if matches!(
+            (self.level, strict),
+            (Some(DetailLevel::Profile), DetailLevel::Marks)
+                | (Some(DetailLevel::Marks), DetailLevel::Profile)
+        ) {
+            PROFILE_HYSTERESIS
+        } else {
+            LEVEL_HYSTERESIS
+        };
         let level = match self.level {
-            // The dead band defends exactly ONE step of boundary jitter.
-            // Further than that, the sticky state is not jitter — it is a
-            // leftover from another zoom era (the first frames' wild
-            // auto-fit spans) — and holding it is how "rows 100.00" wedges
-            // on a chart whose strict answer is Detailed.
+            // Only one level of jitter is sticky. Larger gaps can come from
+            // stale auto-fit spans and must snap to the strict answer.
             Some(current) if (strict as i8 - current as i8).abs() > 1 => strict,
             Some(current) if strict < current => {
-                let relaxed = level_for(
-                    candle_width * LEVEL_HYSTERESIS,
-                    base_row_px * LEVEL_HYSTERESIS,
-                    profile_row_px,
-                    detailed_min,
-                );
+                let relaxed = at_zoom(hysteresis);
                 if relaxed < current { strict } else { current }
             }
             Some(current) if strict > current => {
-                let confirmed = level_for(
-                    candle_width / LEVEL_HYSTERESIS,
-                    base_row_px / LEVEL_HYSTERESIS,
-                    profile_row_px,
-                    detailed_min,
-                );
+                let confirmed = at_zoom(1.0 / hysteresis);
                 if confirmed >= strict { strict } else { current }
             }
             _ => strict,
@@ -1957,6 +1955,69 @@ mod tests {
                 "width {width} blinked"
             );
         }
+    }
+
+    /// The annotated zoom sequence enters Profile after the fifth inward
+    /// wheel step and leaves it on the first step back. The legend's 4.2x and
+    /// 2.9x readings give the candle widths without relying on screenshot DPI.
+    #[test]
+    fn profile_enters_on_fifth_step_and_leaves_on_first_reverse() {
+        let opening_width = COMPACT_MIN_WIDTH / 4.2;
+        let wheel_factor = (4.2_f32 / 2.9).powf(0.25);
+        let mut lod = FootprintLod::default();
+        for step in 0..=5 {
+            let width = opening_width * wheel_factor.powi(step);
+            let expected = if step == 5 {
+                DetailLevel::Profile
+            } else {
+                DetailLevel::Marks
+            };
+            assert_eq!(
+                lod.resolve(width, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+                expected,
+                "inward wheel step {step} at {width:.1} px"
+            );
+        }
+        let previous_width = opening_width * wheel_factor.powi(4);
+        assert_eq!(
+            lod.resolve(
+                previous_width,
+                12.0,
+                PROFILE_MIN_ROW,
+                ladder_detailed_min_width()
+            ),
+            DetailLevel::Marks,
+            "the first outward step must restore Marks"
+        );
+        assert_eq!(
+            lod.resolve(
+                PROFILE_MIN_WIDTH * 1.01,
+                12.0,
+                PROFILE_MIN_ROW,
+                ladder_detailed_min_width()
+            ),
+            DetailLevel::Marks,
+            "a 1% nudge must not re-enter Profile"
+        );
+        assert_eq!(
+            lod.resolve(
+                PROFILE_MIN_WIDTH * 1.03,
+                12.0,
+                PROFILE_MIN_ROW,
+                ladder_detailed_min_width()
+            ),
+            DetailLevel::Profile
+        );
+        assert_eq!(
+            lod.resolve(
+                PROFILE_MIN_WIDTH * 0.99,
+                12.0,
+                PROFILE_MIN_ROW,
+                ladder_detailed_min_width()
+            ),
+            DetailLevel::Profile,
+            "a 1% retreat must not blink the profile"
+        );
     }
 
     /// The dead band defends one step of jitter, never a wedged state: a
