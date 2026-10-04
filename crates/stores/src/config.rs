@@ -148,25 +148,28 @@ impl FeedConfig {
     /// the feed-wide declaration.
     #[must_use]
     pub fn bubble_asset(&self, symbol: &str) -> BubbleAsset {
-        let declared = self
-            .symbol_bubble_presets
+        self.declared_asset(symbol).unwrap_or_else(|| BubbleAsset {
+            key: symbol.to_owned(),
+            preset: self.bubble_preset.clone(),
+        })
+    }
+
+    /// The `symbol_bubble_presets` entry naming `symbol`, if any: the exact
+    /// key, else the longest family pattern.
+    fn declared_asset(&self, symbol: &str) -> Option<BubbleAsset> {
+        let presets = &self.symbol_bubble_presets;
+        presets
             .get_key_value(symbol)
             .or_else(|| {
-                self.symbol_bubble_presets
+                presets
                     .iter()
                     .filter(|(key, _)| key_matches(key, symbol))
                     .max_by_key(|(key, _)| key.len())
-            });
-        match declared {
-            Some((key, preset)) => BubbleAsset {
+            })
+            .map(|(key, preset)| BubbleAsset {
                 key: key.clone(),
                 preset: Some(preset.clone()),
-            },
-            None => BubbleAsset {
-                key: symbol.to_owned(),
-                preset: self.bubble_preset.clone(),
-            },
-        }
+            })
     }
 
     /// The bubble preset declared for `symbol` on this feed, if any: its
@@ -337,14 +340,21 @@ impl AppConfig {
         self.feeds.iter().find(|f| f.id == id)
     }
 
-    /// The asset `symbol` belongs to on feed `feed_id`; a feed the config
-    /// does not carry declares nothing.
+    /// The asset `symbol` belongs to on feed `feed_id`. A symbol the feed
+    /// does not declare is still the asset another feed declares it as — a
+    /// recorded WINV26 replayed in a BTC tab is the mini index — and only
+    /// then the symbol alone on its feed's own declaration.
     #[must_use]
     pub fn bubble_asset(&self, feed_id: &str, symbol: &str) -> BubbleAsset {
-        self.feed(feed_id).map_or_else(
-            || BubbleAsset::undeclared(symbol),
-            |feed| feed.bubble_asset(symbol),
-        )
+        let feed = self.feed(feed_id);
+        feed.and_then(|feed| feed.declared_asset(symbol))
+            .or_else(|| self.feeds.iter().find_map(|any| any.declared_asset(symbol)))
+            .unwrap_or_else(|| {
+                feed.map_or_else(
+                    || BubbleAsset::undeclared(symbol),
+                    |feed| feed.bubble_asset(symbol),
+                )
+            })
     }
 
     /// Fold the user's added symbols into the catalog, in place.

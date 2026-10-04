@@ -220,7 +220,8 @@ pub fn resolve_at(
 
 /// File `current` for `track`'s asset in the store at `path`, writing only
 /// when the store changed. An unreadable store is left for the trader to
-/// see, never replaced.
+/// see, never replaced; either failure is reported once per change, not
+/// retried every frame.
 ///
 /// # Errors
 ///
@@ -228,6 +229,7 @@ pub fn resolve_at(
 pub fn file_at(path: &Path, track: &mut AssetTrack, current: &AssetBubbles) -> Result<(), String> {
     let (mut store, error) = load(path);
     if let Some(error) = error {
+        track.filed = current.clone();
         return Err(error);
     }
     if track.file(current, &mut store) {

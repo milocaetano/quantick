@@ -349,9 +349,9 @@ impl Tab {
 
     /// Put this tab's asset's bubble settings on screen: its stored ones,
     /// else the preset its feed declares, else the presets file's active
-    /// look ([`bubble_assets::AssetTrack::resolve`]). An unknown declared name is reported
-    /// and falls through — the presets file is user-edited, and a typo must
-    /// not silently restyle a market.
+    /// look ([`bubble_assets::AssetTrack::resolve`]). An unknown declared
+    /// name is reported and falls through — the presets file is user-edited,
+    /// and a typo must not silently restyle a market.
     pub fn apply_asset_bubbles(&mut self, config: &AppConfig) {
         let asset = config.bubble_asset(&self.feed_id, &self.symbol);
         let declared = asset.preset.clone();
@@ -977,6 +977,8 @@ impl Tab {
             self.symbol = link.symbol().to_string();
         }
         self.refresh_chip_label(config);
+        // A recording is its symbol's asset, and wears that asset's settings.
+        self.apply_asset_bubbles_after_switch(config);
         // Depth is not in a recording; the toggle is disabled by capability,
         // and the view must not keep drawing a book from the live feed.
         let generation = self.next_book_generation();
@@ -994,6 +996,7 @@ impl Tab {
         self.feed_id = feed_id;
         self.symbol = symbol;
         self.refresh_chip_label(config);
+        self.apply_asset_bubbles_after_switch(config);
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,

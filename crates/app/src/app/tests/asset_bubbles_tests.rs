@@ -183,3 +183,15 @@ fn candle_aggression_on_a_win_tab_does_not_reach_a_btc_tab_after_a_restart() {
         "the BTC tab opens without WIN's candle aggression"
     );
 }
+
+/// A recorded mini index session replayed in a BTC tab wears the mini index
+/// look, and BTC gets its own back when the replay closes.
+#[test]
+fn a_win_recording_in_a_btc_tab_wears_the_win_look() {
+    let mut app = app_on(shipped_config(), "binance", "BTCUSDT");
+    let btc = look(&app);
+    select_market(&mut app, "binance", "WINV26");
+    assert!(app.active_tab().tape().cached_config().native_tape());
+    select_market(&mut app, "binance", "BTCUSDT");
+    assert_eq!(look(&app), btc);
+}

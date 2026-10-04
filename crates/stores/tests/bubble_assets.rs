@@ -138,3 +138,17 @@ fn a_malformed_store_is_reported_rather_than_parsed() {
     assert!(bubble_assets::parse("assets = [").is_err());
     assert!(bubble_assets::validate("version = 1\n").is_ok());
 }
+
+#[test]
+fn a_win_recording_in_a_btc_tab_is_still_the_mini_index() {
+    let config = shipped_config();
+    let replayed = config.bubble_asset("binance", "WINV26");
+    assert_eq!(replayed.key, "WIN*");
+    assert_eq!(replayed.preset.as_deref(), Some(NATIVE_PRESET));
+    let btc = config.bubble_asset("binance", "BTCUSDT");
+    assert_eq!(btc.key, "BTCUSDT");
+    assert_eq!(btc.preset, None);
+    let unknown_feed = config.bubble_asset("no-such-feed", "ETHUSDT");
+    assert_eq!(unknown_feed.key, "ETHUSDT");
+    assert_eq!(unknown_feed.preset, None);
+}
