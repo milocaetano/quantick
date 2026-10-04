@@ -11,7 +11,8 @@
 //! trader changed from there, one entry per asset, in [`ASSETS_FILE`] in the
 //! cockpit home. An entry exists only while it differs from the declared look,
 //! so a preset updated in `bubbles.toml` still reaches every asset nobody
-//! tuned by hand.
+//! tuned by hand. The running app holds the store in memory and binds each
+//! view to its asset through [`crate::bubble_asset_store`].
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -20,8 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use quantick_orderflow::HeatmapConfig;
 
-use crate::bubble_presets::{BubblePreset, BubblePresetFile};
-use crate::config::BubbleAsset;
+use crate::bubble_presets::BubblePreset;
 
 /// The store's file name in the cockpit home.
 pub const ASSETS_FILE: &str = "bubble-assets.toml";
@@ -127,115 +127,6 @@ impl AssetSource {
             Self::Default => "default",
         }
     }
-}
-
-/// One view's binding to the asset it shows: which asset, where its settings
-/// came from, and what was last filed for it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct AssetTrack {
-    key: String,
-    /// Where [`Self::declared`] came from.
-    declared_source: AssetSource,
-    declared: AssetBubbles,
-    filed: AssetBubbles,
-}
-
-impl AssetTrack {
-    /// Resolve the settings `asset` opens on: its stored entry, else the
-    /// preset declared for it, else the presets file's active look, else the
-    /// code defaults. An unknown declared name falls through to the active
-    /// look; the caller reports it.
-    #[must_use]
-    pub fn resolve(
-        asset: BubbleAsset,
-        presets: &BubblePresetFile,
-        store: &AssetBubblesFile,
-        candle_aggression: bool,
-    ) -> (Self, AssetBubbles) {
-        let declared_preset = asset.preset.as_deref().and_then(|name| presets.get(name));
-        let (preset, source) = match declared_preset {
-            Some(preset) => (preset.clone(), AssetSource::Declared),
-            None => (
-                presets.get(&presets.active).cloned().unwrap_or_else(|| {
-                    BubblePreset::capture(String::new(), &HeatmapConfig::default())
-                }),
-                AssetSource::Default,
-            ),
-        };
-        let declared = AssetBubbles::declared(&preset, candle_aggression);
-        let settings = store.get(&asset.key).unwrap_or(&declared).clone();
-        let track = Self {
-            key: asset.key,
-            declared_source: source,
-            declared,
-            filed: settings.clone(),
-        };
-        (track, settings)
-    }
-
-    /// The asset's key in the store.
-    #[must_use]
-    pub fn key(&self) -> &str {
-        &self.key
-    }
-
-    /// Where the settings last filed came from: the asset's own once they
-    /// differ from the declared look.
-    #[must_use]
-    pub fn source(&self) -> AssetSource {
-        if self.filed == self.declared {
-            self.declared_source
-        } else {
-            AssetSource::Stored
-        }
-    }
-
-    /// Whether `current` differs from what was last filed for this asset.
-    #[must_use]
-    pub fn changed(&self, current: &AssetBubbles) -> bool {
-        &self.filed != current
-    }
-
-    /// File `current` for this asset in `store`, reporting whether the store
-    /// changed and must be written.
-    pub fn file(&mut self, current: &AssetBubbles, store: &mut AssetBubblesFile) -> bool {
-        self.filed = current.clone();
-        store.record(&self.key, current, &self.declared)
-    }
-}
-
-/// [`AssetTrack::resolve`] against the store at `path`, with the reason the
-/// store could not be read, if it could not.
-#[must_use]
-pub fn resolve_at(
-    path: &Path,
-    asset: BubbleAsset,
-    presets: &BubblePresetFile,
-    candle_aggression: bool,
-) -> (AssetTrack, AssetBubbles, Option<String>) {
-    let (store, error) = load(path);
-    let (track, settings) = AssetTrack::resolve(asset, presets, &store, candle_aggression);
-    (track, settings, error)
-}
-
-/// File `current` for `track`'s asset in the store at `path`, writing only
-/// when the store changed. An unreadable store is left for the trader to
-/// see, never replaced; either failure is reported once per change, not
-/// retried every frame.
-///
-/// # Errors
-///
-/// Returns why the store could not be read or written.
-pub fn file_at(path: &Path, track: &mut AssetTrack, current: &AssetBubbles) -> Result<(), String> {
-    let (mut store, error) = load(path);
-    if let Some(error) = error {
-        track.filed = current.clone();
-        return Err(error);
-    }
-    if track.file(current, &mut store) {
-        save_to(path, &store)?;
-    }
-    Ok(())
 }
 
 /// Parse the store, sanitizing every look the way the presets file does.

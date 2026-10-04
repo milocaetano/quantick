@@ -27,9 +27,12 @@ default_symbol = "BTCUSDT"
 #                   key is a symbol, or a prefix ending in `*` for a family of
 #                   dated contracts; the key is the asset whose settings the
 #                   matching symbols share. Bubble settings are per asset:
-#                   every change made while an asset is on screen is saved for
-#                   that asset alone (bubble-assets.toml in the cockpit home)
-#                   and restored whenever a tab shows it again.
+#                   every setting changed while an asset is on screen is saved
+#                   for that asset alone (bubble-assets.toml in the cockpit
+#                   home), reaches every tab showing it and is restored
+#                   whenever a tab shows it again. Wheeling or dragging the
+#                   tape moves the view only. A symbol two feeds offer opens
+#                   on the first one's declaration, whichever tab shows it.
 #   default_layout — optional: the canvas layout a tab on this feed opens
 #                   showing — "flow" (the default), "time" (a full-window
 #                   timeframe chart) or "time+flow" (the split). Startup-only:

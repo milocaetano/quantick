@@ -340,21 +340,50 @@ impl AppConfig {
         self.feeds.iter().find(|f| f.id == id)
     }
 
-    /// The asset `symbol` belongs to on feed `feed_id`. A symbol the feed
-    /// does not declare is still the asset another feed declares it as — a
-    /// recorded WINV26 replayed in a BTC tab is the mini index — and only
-    /// then the symbol alone on its feed's own declaration.
+    /// The asset `symbol` belongs to, whichever tab shows it, so one key
+    /// always opens on one declared look: the `symbol_bubble_presets` entry
+    /// naming it on any feed — an exact key over a family pattern, a longer
+    /// pattern over a shorter, config order on a tie — else the symbol alone
+    /// on the feed-wide preset of the first feed offering it, else the
+    /// symbol alone on nothing. A recorded WINV26 replayed in a BTC tab is
+    /// the mini index; a WDO$N recording is the B3 feed's WDO$N.
     #[must_use]
-    pub fn bubble_asset(&self, feed_id: &str, symbol: &str) -> BubbleAsset {
-        let feed = self.feed(feed_id);
-        feed.and_then(|feed| feed.declared_asset(symbol))
-            .or_else(|| self.feeds.iter().find_map(|any| any.declared_asset(symbol)))
-            .unwrap_or_else(|| {
-                feed.map_or_else(
+    pub fn bubble_asset(&self, symbol: &str) -> BubbleAsset {
+        let declared = self
+            .feeds
+            .iter()
+            .flat_map(|feed| &feed.symbol_bubble_presets)
+            .filter(|(key, _)| key_matches(key, symbol))
+            .min_by_key(|(key, _)| (key.as_str() != symbol, std::cmp::Reverse(key.len())));
+        match declared {
+            Some((key, preset)) => BubbleAsset {
+                key: key.clone(),
+                preset: Some(preset.clone()),
+            },
+            None => self
+                .feeds
+                .iter()
+                .find(|feed| feed.symbols.iter().any(|offered| offered == symbol))
+                .map_or_else(
                     || BubbleAsset::undeclared(symbol),
                     |feed| feed.bubble_asset(symbol),
-                )
+                ),
+        }
+    }
+
+    /// Every preset name some asset opens on: each feed's `bubble_preset`
+    /// and every `symbol_bubble_presets` value.
+    #[must_use]
+    pub fn opening_bubble_presets(&self) -> std::collections::BTreeSet<String> {
+        self.feeds
+            .iter()
+            .flat_map(|feed| {
+                feed.bubble_preset
+                    .iter()
+                    .chain(feed.symbol_bubble_presets.values())
             })
+            .cloned()
+            .collect()
     }
 
     /// Fold the user's added symbols into the catalog, in place.

@@ -56,9 +56,13 @@ fn a_crypto_tab_reopens_on_its_filed_custom_look() {
     for (feed, symbol) in [("binance", "BTCUSDT"), ("hyperliquid", "BTC")] {
         let mut app = app_on(shipped_config(), feed, symbol);
         let before = customize_crypto(&mut app);
-        app.active_tab_mut().file_asset_bubbles();
-        // What a restart runs for the tab it opens.
-        with_config(&mut app, |tab, config| tab.apply_asset_bubbles(config));
+        app.layer_wiring().maintain(&egui::Context::default());
+        // What a restart runs for the tab it opens: the store read back.
+        let path = crate::bubble_presets::assets_path();
+        let reread = quantick_stores::bubble_asset_store::AssetBubblesStore::load(path).shared();
+        with_config(&mut app, |tab, config| {
+            tab.bind_asset_bubbles(config, &reread)
+        });
         assert_eq!(appearance(&app), before);
     }
 }

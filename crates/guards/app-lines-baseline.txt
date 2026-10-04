@@ -74,5 +74,15 @@
 # cockpit home and its capture override (store_home.rs). Resolution, the store
 # document and its I/O live in quantick_stores::bubble_assets; source_presets.rs
 # and the presets loader left app in the same change. Measured remainder only.
-!budget 105084
-crates/app 105084
+# Raised by 85 more lines for its review round 1: the view tells a setting
+# from a gesture (`commit_config_changes` beside `apply_config`, so wheeling
+# the tape files nothing), wears what another tab filed for its asset and
+# files only on a noted edit (orderflow_view/asset_bubbles.rs); the panel
+# refuses to save over a look other assets open on and keeps an asset's own
+# settings across a presets reload (settings.rs); the shared store is held,
+# written once per change and reloaded by a workspace import
+# (workspace_store.rs, chart_layers_wiring.rs, workspace_bundle_adapter.rs).
+# The store, the binding, adoption, the gesture rule and the saved state live
+# in quantick_stores::bubble_asset_store with their tests. Measured remainder.
+!budget 105169
+crates/app 105169

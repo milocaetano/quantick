@@ -2,8 +2,10 @@
 //! asset opens on, the trader's changes are filed under that asset alone, and
 //! a filed asset reopens exactly as it was left.
 
-use quantick_stores::bubble_assets::{self, AssetBubblesFile, AssetSource, AssetTrack};
-use quantick_stores::bubble_presets;
+use quantick_orderflow::{HeatmapConfig, LaneWindow};
+use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore, SharedAssetBubbles};
+use quantick_stores::bubble_assets::{self, AssetBubbles, AssetSource};
+use quantick_stores::bubble_presets::{self, BubblePresetFile};
 use quantick_stores::config::{AppConfig, BubbleAsset};
 
 const NATIVE_PRESET: &str = "mini index regions";
@@ -17,6 +19,22 @@ fn asset(feed: &str, symbol: &str) -> BubbleAsset {
         .feed(feed)
         .expect("a shipped feed")
         .bubble_asset(symbol)
+}
+
+fn memory() -> SharedAssetBubbles {
+    AssetBubblesStore::default().shared()
+}
+
+fn bind(store: &SharedAssetBubbles, symbol: &str) -> (AssetBinding, AssetBubbles) {
+    bind_with(store, symbol, &bubble_presets::embedded())
+}
+
+fn bind_with(
+    store: &SharedAssetBubbles,
+    symbol: &str,
+    presets: &BubblePresetFile,
+) -> (AssetBinding, AssetBubbles) {
+    AssetBinding::bind(store.clone(), &shipped_config(), symbol, presets, false)
 }
 
 #[test]
@@ -36,13 +54,11 @@ fn the_win_family_is_one_asset_declared_by_a_config_pattern() {
 
 #[test]
 fn only_the_win_family_opens_on_the_native_tape() {
-    let presets = bubble_presets::embedded();
-    let store = AssetBubblesFile::default();
+    let store = memory();
     let config = shipped_config();
     for feed in &config.feeds {
         for symbol in &feed.symbols {
-            let (track, settings) =
-                AssetTrack::resolve(feed.bubble_asset(symbol), &presets, &store, false);
+            let (binding, settings) = bind(&store, symbol);
             let native = settings.look.live_lane.native_tape && settings.look.overlap_merge;
             assert_eq!(
                 native,
@@ -57,79 +73,35 @@ fn only_the_win_family_opens_on_the_native_tape() {
             );
             assert!(!settings.candle_aggression, "{symbol}");
             assert!(!settings.flow_ignore_opening, "{symbol}");
-            assert_ne!(track.source(), AssetSource::Stored, "{symbol}");
+            assert_ne!(binding.source(), AssetSource::Stored, "{symbol}");
         }
     }
 }
 
 #[test]
-fn a_win_edit_is_filed_for_win_alone_and_survives_a_restart() {
-    let presets = bubble_presets::embedded();
-    let mut store = AssetBubblesFile::default();
-    let (mut win, opened) =
-        AssetTrack::resolve(asset("metatrader-b3", "WINV26"), &presets, &store, false);
-    assert_eq!(win.source(), AssetSource::Declared);
-    assert_eq!(opened.look.name, NATIVE_PRESET);
-
-    let mut edited = opened.clone();
-    edited.candle_aggression = true;
-    edited.flow_ignore_opening = true;
-    edited.look.volume_dot_ignore_opening_burst_in_scale = true;
-    edited.look.live_lane.tape_only = true;
-    assert!(win.file(&edited, &mut store), "an edit is filed");
-    assert!(
-        !win.file(&edited, &mut store),
-        "an unchanged look files nothing"
-    );
-
-    // A restart reads the file back.
-    let text = bubble_assets::render(&store).expect("the store renders");
-    let reread = bubble_assets::parse(&text).expect("the store reparses");
-    assert_eq!(reread, store);
-    let (roll, restored) =
-        AssetTrack::resolve(asset("metatrader-b3", "WINZ26"), &presets, &reread, false);
-    assert_eq!(roll.source(), AssetSource::Stored);
-    assert_eq!(
-        restored, edited,
-        "the next WIN contract opens as WIN was left"
-    );
-
-    // BTC never saw any of it.
-    let (btc, settings) =
-        AssetTrack::resolve(asset("binance", "BTCUSDT"), &presets, &reread, false);
-    assert_eq!(btc.source(), AssetSource::Default);
-    assert_eq!(settings.look.name, presets.active);
-    assert!(!settings.candle_aggression && !settings.flow_ignore_opening);
-    assert!(!settings.look.live_lane.tape_only && !settings.look.live_lane.native_tape);
-}
-
-#[test]
 fn returning_to_the_declared_look_forgets_the_filed_entry() {
-    let presets = bubble_presets::embedded();
-    let mut store = AssetBubblesFile::default();
-    let (mut btc, opened) =
-        AssetTrack::resolve(asset("binance", "BTCUSDT"), &presets, &store, false);
+    let store = memory();
+    let (mut btc, opened) = bind(&store, "BTCUSDT");
     let mut edited = opened.clone();
     edited.look.bubbles.max_radius = 30.0;
-    assert!(btc.file(&edited, &mut store));
-    assert!(store.get("BTCUSDT").is_some());
-    assert!(btc.file(&opened, &mut store));
+    assert!(btc.file(edited));
+    assert!(store.borrow().get("BTCUSDT").is_some());
+    assert!(btc.file(opened));
     assert!(
-        store.get("BTCUSDT").is_none(),
+        store.borrow().get("BTCUSDT").is_none(),
         "a look equal to the declared one is not a setting of the asset's own"
     );
 }
 
 #[test]
 fn an_unknown_declared_preset_opens_on_the_default_look() {
+    let mut config = shipped_config();
+    config.feeds[0]
+        .symbol_bubble_presets
+        .insert("BTCUSDT".to_owned(), "no such preset".to_owned());
     let presets = bubble_presets::embedded();
-    let ghost = BubbleAsset {
-        key: "GHOST".to_owned(),
-        preset: Some("no such preset".to_owned()),
-    };
-    let (track, settings) =
-        AssetTrack::resolve(ghost, &presets, &AssetBubblesFile::default(), false);
-    assert_eq!(track.source(), AssetSource::Default);
+    let (binding, settings) = AssetBinding::bind(memory(), &config, "BTCUSDT", &presets, false);
+    assert_eq!(binding.source(), AssetSource::Default);
     assert_eq!(settings.look.name, presets.active);
 }
 
@@ -142,13 +114,145 @@ fn a_malformed_store_is_reported_rather_than_parsed() {
 #[test]
 fn a_win_recording_in_a_btc_tab_is_still_the_mini_index() {
     let config = shipped_config();
-    let replayed = config.bubble_asset("binance", "WINV26");
+    let replayed = config.bubble_asset("WINV26");
     assert_eq!(replayed.key, "WIN*");
     assert_eq!(replayed.preset.as_deref(), Some(NATIVE_PRESET));
-    let btc = config.bubble_asset("binance", "BTCUSDT");
+    let btc = config.bubble_asset("BTCUSDT");
     assert_eq!(btc.key, "BTCUSDT");
     assert_eq!(btc.preset, None);
-    let unknown_feed = config.bubble_asset("no-such-feed", "ETHUSDT");
-    assert_eq!(unknown_feed.key, "ETHUSDT");
-    assert_eq!(unknown_feed.preset, None);
+    let unknown = config.bubble_asset("NOSUCHSYMBOL");
+    assert_eq!(unknown.key, "NOSUCHSYMBOL");
+    assert_eq!(unknown.preset, None);
+}
+
+/// Review round 1, finding 9: a key resolves against one declared look,
+/// whichever tab shows it — a WDO$N recording in a crypto tab is the B3
+/// feed's WDO$N, on that feed's preset.
+#[test]
+fn one_asset_key_resolves_to_one_declared_look_whichever_feed_shows_it() {
+    let config = shipped_config();
+    let wdo = config.bubble_asset("WDO$N");
+    assert_eq!(wdo, asset("metatrader-b3", "WDO$N"));
+    assert_eq!(wdo.preset.as_deref(), Some("live lane pie"));
+    assert_eq!(
+        config.bubble_asset("XAUUSD").preset.as_deref(),
+        Some("live lane pie")
+    );
+}
+
+/// Review round 1, finding 2: an edit filed from one view reaches every
+/// other view on the asset, and their next filing starts from it instead of
+/// writing their stale copy over it.
+#[test]
+fn an_edit_in_one_view_reaches_another_view_on_the_same_asset() {
+    let store = memory();
+    let (mut a, opened) = bind(&store, "WIN$N");
+    let (mut b, _) = bind(&store, "WINV26");
+    let mut edited = opened.clone();
+    edited.look.bubbles.max_radius = 31.0;
+    a.note_change();
+    assert!(a.file(edited.clone()));
+    assert_eq!(a.adoption(), None, "a view does not adopt its own filing");
+
+    let (adopted, lane_moved) = b.adoption().expect("B learns A's edit");
+    assert_eq!(adopted, edited);
+    assert!(!lane_moved);
+    assert_eq!(b.adoption(), None, "once");
+
+    let mut later = adopted.clone();
+    later.flow_ignore_opening = true;
+    b.note_change();
+    assert!(b.file(later));
+    let stored = store.borrow().get("WIN*").cloned().expect("stored");
+    assert_eq!(
+        stored.look.bubbles.max_radius, 31.0,
+        "A's edit survives B's"
+    );
+    assert!(stored.flow_ignore_opening);
+}
+
+/// Review round 1, finding 1: wheeling or dragging the tape's window moves
+/// the view, not the asset; a window set on purpose is the asset's.
+#[test]
+fn a_navigated_lane_window_is_not_filed_but_a_chosen_one_is() {
+    let store = memory();
+    let (mut win, opened) = bind(&store, "WINV26");
+    let mut zoomed = opened.clone();
+    zoomed.look.live_lane.window = LaneWindow::Fixed { ms: 3_000 };
+    assert!(!win.file(zoomed.clone()), "navigation alone files nothing");
+    assert_ne!(win.source(), AssetSource::Stored);
+
+    // A real edit on a zoomed view files the edit, not the zoom.
+    zoomed.look.bubbles.max_radius = 29.0;
+    win.note_change();
+    assert!(win.file(zoomed.clone()));
+    let stored = store.borrow().get("WIN*").cloned().expect("stored");
+    assert_eq!(stored.look.live_lane.window, opened.look.live_lane.window);
+
+    let before = HeatmapConfig::default();
+    let mut after = before.clone();
+    after.live_lane.window = LaneWindow::Fixed { ms: 3_000 };
+    win.note_edit(&before, &after);
+    assert!(win.file(zoomed));
+    let stored = store.borrow().get("WIN*").cloned().expect("stored");
+    assert_eq!(
+        stored.look.live_lane.window,
+        LaneWindow::Fixed { ms: 3_000 }
+    );
+}
+
+/// Review round 1, finding 3: a reloaded presets file is the baseline the
+/// next filing compares against, so the asset is not pinned with an entry
+/// equal to its new declared look.
+#[test]
+fn a_reloaded_declared_look_is_the_new_baseline() {
+    let store = memory();
+    let mut presets = bubble_presets::embedded();
+    let (mut btc, opened) = bind_with(&store, "BTCUSDT", &presets);
+    let mut tuned = opened.clone();
+    tuned.look.bubbles.max_radius = 33.0;
+
+    // The presets file now declares exactly that look as the default.
+    let active = presets.active.clone();
+    let preset = presets
+        .presets
+        .iter_mut()
+        .find(|preset| preset.name == active)
+        .expect("the active preset");
+    preset.bubbles.max_radius = 33.0;
+    let fresh = btc
+        .refresh_declared(&presets)
+        .expect("an untuned asset follows its declared look");
+    assert_eq!(fresh, tuned);
+    btc.note_change();
+    assert!(!btc.file(tuned), "the new declared look is not an edit");
+    assert!(store.borrow().get("BTCUSDT").is_none());
+    assert_eq!(btc.source(), AssetSource::Default);
+}
+
+/// Review round 1, finding 4: a reload leaves an asset's own settings alone.
+#[test]
+fn a_reload_does_not_dress_a_tuned_asset() {
+    let store = memory();
+    let presets = bubble_presets::embedded();
+    let (mut win, opened) = bind_with(&store, "WINV26", &presets);
+    let mut tuned = opened;
+    tuned.flow_ignore_opening = true;
+    win.note_change();
+    assert!(win.file(tuned));
+    assert_eq!(win.refresh_declared(&presets), None);
+    assert_eq!(win.source(), AssetSource::Stored);
+}
+
+/// Review round 1, finding 5: a look other assets open on is not saved over
+/// from one asset.
+#[test]
+fn the_looks_assets_open_on_are_refused_as_save_names() {
+    let store = memory();
+    let presets = bubble_presets::embedded();
+    let (btc, _) = bind_with(&store, "BTCUSDT", &presets);
+    for name in [presets.active.as_str(), NATIVE_PRESET, "live lane pie"] {
+        assert!(btc.refuses_preset_name(name, &presets).is_some(), "{name}");
+    }
+    assert_eq!(btc.refuses_preset_name("my btc", &presets), None);
 }

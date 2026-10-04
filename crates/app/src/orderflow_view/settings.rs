@@ -40,8 +40,8 @@ use l2_sections::{
 impl OrderflowView {
     /// Picker, save and reload for the named bubble looks.
     ///
-    /// Saving stores the edited look. A source-owned look does not replace
-    /// the default that unrelated markets will open with.
+    /// Every change is kept for the asset on screen; saving names the look
+    /// as a preset any asset can pick, never over a look other assets open on.
     fn draw_bubble_presets(&mut self, ui: &mut egui::Ui) {
         // The picker reads the stored presets while the closure below wants to
         // mutate them, so it hands back an index and the name is read after.
@@ -69,7 +69,7 @@ impl OrderflowView {
                 });
             if ui
                 .small_button(icons::ARROW_CLOCKWISE)
-                .on_hover_text("reload the presets file from disk, discarding unsaved tweaks")
+                .on_hover_text("reload the presets file from disk; an asset with settings of its own keeps them")
                 .clicked()
             {
                 self.reload_presets();
@@ -83,7 +83,7 @@ impl OrderflowView {
             );
             if ui
                 .button("save")
-                .on_hover_text("write the current bubble settings to the presets file")
+                .on_hover_text("write the current bubble settings to the presets file as a preset any asset can pick")
                 .clicked()
             {
                 self.save_preset();
@@ -96,6 +96,9 @@ impl OrderflowView {
                 .clicked()
             {
                 let name = self.preset_name_draft.trim().to_owned();
+                if self.refused_preset_name(&name) {
+                    return;
+                }
                 self.presets.remove(&name);
                 self.persist_presets(format!("preset '{name}' removed"), bubble_presets::save);
             }
@@ -111,8 +114,11 @@ impl OrderflowView {
         }
         ui.small(format!("presets · {}", self.presets_source));
         if let Some(asset) = &self.asset {
+            let saved = asset
+                .unsaved()
+                .map_or_else(String::new, |why| format!(" — not saved: {why}"));
             ui.small(format!(
-                "settings saved for asset {} only ({})",
+                "settings kept for asset {} only ({}){saved}",
                 asset.key(),
                 asset.source().as_str()
             ));
@@ -135,7 +141,17 @@ impl OrderflowView {
         self.look_name = preset.name.clone();
         self.preset_name_draft = preset.name.clone();
         self.preset_status = Some(format!("'{}' applied", preset.name));
+        self.note_asset_change();
         true
+    }
+
+    /// Refuse saving over or removing `name` when other assets open on it.
+    fn refused_preset_name(&mut self, name: &str) -> bool {
+        let asset = self.asset.as_ref();
+        let refusal = asset.and_then(|asset| asset.refuses_preset_name(name, &self.presets));
+        refusal
+            .map(|refusal| self.preset_status = Some(refusal))
+            .is_some()
     }
 
     fn save_preset(&mut self) {
@@ -151,9 +167,13 @@ impl OrderflowView {
             self.preset_status = Some("name the preset before saving".to_owned());
             return;
         }
+        if self.refused_preset_name(&name) {
+            return;
+        }
         self.presets
             .upsert(BubblePreset::capture(&name, &self.config));
         self.look_name = name.clone();
+        self.note_asset_change();
         self.persist_presets(format!("'{name}' saved"), writer);
     }
 
@@ -197,6 +217,7 @@ impl OrderflowView {
     ) {
         self.presets = presets;
         self.presets_source = source;
+        self.follow_declared_look();
         match error {
             Some(message) => {
                 tracing::error!(
@@ -209,6 +230,7 @@ impl OrderflowView {
                 );
                 self.preset_status = Some(format!("presets not loaded — {message}"));
             }
+            None if self.asset.is_some() => {}
             None => {
                 let active = self.look_name.clone();
                 if active.is_empty() || self.presets.get(&active).is_none() {
@@ -412,6 +434,7 @@ impl OrderflowView {
         // No stored preset is on screen any more, so the
         // picker must not keep claiming one.
         self.look_name.clear();
-        self.preset_status = Some("bubble defaults restored (not saved)".to_owned());
+        self.note_asset_change();
+        self.preset_status = Some("bubble defaults restored for the asset on screen".to_owned());
     }
 }

@@ -53,7 +53,8 @@ use quantick_orderflow::{
     DotRungMemory, HeatmapConfig, LiveEdge, PaneGeometry, PriceWindow, lane_bars, lane_time_ticks,
     reserved_span_ms,
 };
-use quantick_stores::bubble_assets::{AssetBubbles, AssetBubblesFile, AssetSource, AssetTrack};
+use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore};
+use quantick_stores::bubble_assets::{AssetBubbles, AssetSource};
 use quantick_stores::bubble_presets;
 use quantick_stores::config::AppConfig;
 use rust_decimal::Decimal;
@@ -186,14 +187,11 @@ fn tape_padding_px(config: &HeatmapConfig, chart_width: f32, chart_height: f32) 
 fn win_asset_settings() -> AssetBubbles {
     let feeds: AppConfig =
         toml::from_str(include_str!("../../app/config/feeds.toml")).expect("shipped feeds parse");
-    let asset = feeds
-        .feed("metatrader-b3")
-        .expect("the B3 feed")
-        .bubble_asset("WINV26");
-    let (track, settings) = AssetTrack::resolve(
-        asset,
+    let (track, settings) = AssetBinding::bind(
+        AssetBubblesStore::default().shared(),
+        &feeds,
+        "WINV26",
         &bubble_presets::embedded(),
-        &AssetBubblesFile::default(),
         false,
     );
     assert_eq!(track.source(), AssetSource::Declared);

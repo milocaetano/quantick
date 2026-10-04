@@ -2,6 +2,8 @@
 //! default: the look every undeclared asset opens on stays the file's own.
 use super::*;
 use crate::bubble_presets::{BubblePresetFile, embedded, parse};
+use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore};
+use quantick_stores::bubble_assets::AssetSource;
 use std::path::PathBuf;
 
 fn from_document(document: BubblePresetFile) -> OrderflowView {
@@ -87,4 +89,60 @@ fn a_failed_save_keeps_the_view_and_says_so() {
             .unwrap()
             .starts_with("not saved")
     );
+}
+
+/// A view on the mini index, bound to its asset as a tab binds it.
+fn bound_win() -> OrderflowView {
+    let mut view = from_document(embedded());
+    let config: crate::config::AppConfig =
+        toml::from_str(include_str!("../../../../config/feeds.toml")).expect("shipped feeds");
+    let store = AssetBubblesStore::default().shared();
+    let (binding, settings) = AssetBinding::bind(store, &config, "WINV26", &view.presets, false);
+    view.bind_asset(binding, &settings);
+    view
+}
+
+/// Review round 1, finding 4: reloading the presets keeps the settings an
+/// asset made its own, and files nothing over them.
+#[test]
+fn reloading_keeps_the_settings_an_asset_made_its_own() {
+    let mut view = bound_win();
+    assert!(view.set_ignore_opening_burst_in_scale(true));
+    assert_eq!(view.sync_asset(false), None);
+    let edited = appearance(&view);
+    view.reload_presets_from((embedded(), PresetSource::Embedded, None));
+    assert_eq!(appearance(&view), edited, "WIN's edit is still on screen");
+    view.sync_asset(false);
+    assert_eq!(view.asset().expect("bound").source(), AssetSource::Stored);
+    let status = view.preset_status.clone().expect("a status");
+    assert!(status.contains("keeps its own settings"), "{status}");
+}
+
+/// Review round 1, finding 5: a look other assets open on is not saved over
+/// — nor removed — from one asset's panel.
+#[test]
+fn a_look_other_assets_open_on_is_not_saved_over_from_one_asset() {
+    let mut view = bound_win();
+    assert!(view.set_ignore_opening_burst_in_scale(true));
+    let active = embedded().active;
+    for name in ["mini index regions", active.as_str(), "live lane pie"] {
+        view.preset_name_draft = name.to_owned();
+        view.save_preset_with(|_| panic!("'{name}' reached the writer"));
+        let status = view.preset_status.clone().expect("a status");
+        assert!(status.contains("other assets open on"), "{status}");
+    }
+    view.preset_name_draft = "my win".to_owned();
+    assert!(save_document(&mut view).get("my win").is_some());
+}
+
+/// Review round 1, finding 8: the panel says what happens — restored
+/// defaults are kept for the asset, not left unsaved.
+#[test]
+fn restored_defaults_are_kept_for_the_asset_and_say_so() {
+    let mut view = bound_win();
+    view.reset_bubble_visuals();
+    let status = view.preset_status.clone().expect("a status");
+    assert!(!status.contains("not saved"), "{status}");
+    view.sync_asset(false);
+    assert_eq!(view.asset().expect("bound").source(), AssetSource::Stored);
 }

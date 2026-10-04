@@ -3,6 +3,7 @@
 use super::*;
 use crate::bubble_presets::BubblePreset;
 use quantick_orderflow::LaneWindow;
+use quantick_stores::bubble_assets::AssetSource;
 
 fn shipped_config() -> AppConfig {
     toml::from_str(include_str!("../../../config/feeds.toml")).expect("shipped feeds parse")
@@ -194,4 +195,114 @@ fn a_win_recording_in_a_btc_tab_wears_the_win_look() {
     assert!(app.active_tab().tape().cached_config().native_tape());
     select_market(&mut app, "binance", "BTCUSDT");
     assert_eq!(look(&app), btc);
+}
+
+fn maintain(app: &mut QuantickApp) {
+    app.layer_wiring().maintain(&egui::Context::default());
+}
+
+fn source(app: &QuantickApp) -> AssetSource {
+    app.active_tab()
+        .tape()
+        .asset()
+        .expect("a bound asset")
+        .source()
+}
+
+/// Review round 1, finding 1: wheeling the tape's window moves the view.
+/// It writes nothing and does not make the asset's settings its own.
+#[test]
+fn wheeling_the_tape_window_is_navigation_not_a_setting() {
+    let mut app = app_on(shipped_config(), "metatrader-b3", "WINV26");
+    let window = app.active_tab().tape().live_lane_window();
+    app.active_tab_mut().tape_mut().zoom_live_lane(2.0);
+    assert_ne!(app.active_tab().tape().live_lane_window(), window);
+    maintain(&mut app);
+    assert_eq!(source(&app), AssetSource::Declared);
+    assert!(
+        !crate::bubble_presets::assets_path().exists(),
+        "navigation writes nothing"
+    );
+
+    // A window chosen on purpose is a setting, written once.
+    let tape = app.active_tab_mut().tape_mut();
+    tape.set_live_lane_window(LaneWindow::Fixed { ms: 9_000 });
+    maintain(&mut app);
+    assert_eq!(source(&app), AssetSource::Stored);
+    assert!(crate::bubble_presets::assets_path().is_file());
+    let tape = app.active_tab().tape();
+    assert_eq!(tape.asset().expect("bound").unsaved(), None);
+}
+
+/// Review round 1, finding 2: two tabs on the mini index share its
+/// settings. An edit in one reaches the other, and the other's next edit
+/// keeps it instead of filing its stale look over it.
+#[test]
+fn an_edit_in_one_win_tab_reaches_the_other_and_survives_its_next_edit() {
+    let mut app = app_on(shipped_config(), "metatrader-b3", "WINV26");
+    app.arrangement_adapter()
+        .open_tab("binance".to_owned(), "BTCUSDT".to_owned(), None);
+    select_market(&mut app, "metatrader-b3", "WIN$N");
+    assert_eq!(app.tabs.active_index(), 1);
+    assert!(
+        app.active_tab_mut()
+            .tape_mut()
+            .set_ignore_opening_burst_in_scale(true)
+    );
+    // One frame files the edit, the next one dresses the other tab with it.
+    maintain(&mut app);
+    maintain(&mut app);
+
+    app.tabs.select(0);
+    let tape = app.active_tab().tape();
+    assert!(
+        tape.cached_config()
+            .volume_dots
+            .ignore_opening_burst_in_scale,
+        "the WINV26 tab wears the WIN$N tab's edit"
+    );
+    assert!(
+        app.active_tab_mut()
+            .tape_mut()
+            .set_ignore_flow_opening(true)
+    );
+    maintain(&mut app);
+    maintain(&mut app);
+
+    app.tabs.select(1);
+    let tape = app.active_tab().tape();
+    assert!(tape.ignore_flow_opening(), "and the other way round");
+    assert!(
+        tape.cached_config()
+            .volume_dots
+            .ignore_opening_burst_in_scale,
+        "the first edit survives the second tab's"
+    );
+}
+
+/// Review round 1, finding 6: opening a cockpit file dresses the tabs
+/// already open with its per-asset settings.
+#[test]
+fn an_imported_cockpit_dresses_the_open_tabs_with_its_asset_settings() {
+    let mut app = app_on(shipped_config(), "metatrader-b3", "WINV26");
+    let edit = |app: &mut QuantickApp, on: bool| {
+        let tape = app.active_tab_mut().tape_mut();
+        assert!(tape.set_ignore_opening_burst_in_scale(on));
+        maintain(app);
+    };
+    edit(&mut app, true);
+    let file = crate::scratch::ScratchFile::new("asset-bundle", "workspace.qws.toml");
+    app.workspace_bundle_adapter().export_workspace_to(&file);
+    edit(&mut app, false);
+    assert_eq!(source(&app), AssetSource::Declared);
+
+    app.workspace_bundle_adapter().import_workspace_from(&file);
+    let tape = app.active_tab().tape();
+    assert!(
+        tape.cached_config()
+            .volume_dots
+            .ignore_opening_burst_in_scale,
+        "the imported WIN settings are on screen"
+    );
+    assert_eq!(source(&app), AssetSource::Stored);
 }

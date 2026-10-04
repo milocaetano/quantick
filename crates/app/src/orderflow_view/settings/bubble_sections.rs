@@ -136,7 +136,7 @@ impl ClusteringSection<'_> {
             if config.native_tape() {
                 ui.add_enabled_ui(config.volume_dots.auto_full, |ui| {
                     ui.checkbox(&mut config.volume_dots.ignore_opening_burst_in_scale, "Ignore opening burst in scale")
-                        .on_hover_text("Exclude the first recorded 100 ms burst of each day from automatic sizing. Its volume and buy/sell pie stay exact, but its dot is capped. If opening data is missing, this uses the first available recorded burst. Save the preset to retain this preference.")
+                        .on_hover_text("Exclude the first recorded 100 ms burst of each day from automatic sizing. Its volume and buy/sell pie stay exact, but its dot is capped. If opening data is missing, this uses the first available recorded burst. Kept for the asset on screen.")
                         .on_disabled_hover_text("Use automatic sizing to ignore the opening burst in the size reference.");
                 });
             }

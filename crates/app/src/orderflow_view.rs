@@ -119,7 +119,7 @@ pub struct OrderflowView {
     /// panel's defaults replaced it. `presets.active` stays the file's own.
     look_name: String,
     /// The asset these settings belong to, bound by the tab.
-    asset: Option<quantick_stores::bubble_assets::AssetTrack>,
+    asset: Option<quantick_stores::bubble_asset_store::AssetBinding>,
     /// Scripted tape starvation: prints stop reaching the tape this many
     /// milliseconds after the first one, while the book keeps arriving.
     /// `None` — always, outside a capture run — feeds the tape every print.
@@ -703,7 +703,7 @@ impl OrderflowView {
         let before = self.config.clone();
         let width = self.config.live_lane.resolved_width_px(chart_width) - delta_px;
         self.config.live_lane.width_share = width / chart_width;
-        self.commit_config_changes(before);
+        self.apply_config(before);
     }
 
     /// Zoom the lane's time window by a multiplicative factor: `> 1` shows less market time in the
@@ -716,7 +716,7 @@ impl OrderflowView {
         }
         let before = self.config.clone();
         self.config.zoom_lane_window(factor);
-        self.commit_config_changes(before);
+        self.apply_config(before);
     }
 
     /// How much market time the tape shows, and in which language it was
@@ -980,7 +980,18 @@ impl OrderflowView {
         self.config.depth_visible() && self.published.status.is_syncing()
     }
 
+    /// A setting changed: the asset on screen files it at the next frame.
     fn commit_config_changes(&mut self, before: HeatmapConfig) -> bool {
+        if self.config != before
+            && let Some(asset) = &mut self.asset
+        {
+            asset.note_edit(&before, &self.config);
+        }
+        self.apply_config(before)
+    }
+
+    /// The same without a setting: a gesture, or an asset's settings worn.
+    fn apply_config(&mut self, before: HeatmapConfig) -> bool {
         self.config.sanitize();
         if self.config == before {
             return false;

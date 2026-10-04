@@ -238,6 +238,7 @@ fn an_opening_scale_set_by_control_is_read_back_and_kept_per_asset() {
     let filed = bubbles(&mut app, &mut observer);
     assert_eq!(filed["ignore_opening_burst_in_scale"], true);
     assert_eq!(filed["asset"]["source"], "stored");
+    assert_eq!(filed["asset"]["saved"], true, "{filed}");
 
     select_market(&mut app, "binance", "BTCUSDT");
     let btc = bubbles(&mut app, &mut observer);

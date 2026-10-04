@@ -29,15 +29,28 @@
           "description": "The preset the look on screen started from; empty once the panel's\ndefaults replaced it.",
           "type": "string"
         },
+        "save_error": {
+          "default": null,
+          "description": "Why they are not saved; absent when they are.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "saved": {
+          "description": "Whether the store file holds these settings. `false` when it could\nnot be read or written: they are kept in memory for this run only.",
+          "type": "boolean"
+        },
         "source": {
-          "description": "Where the settings came from: `stored` (changed for this asset),\n`declared` (the preset the feed config declares) or `default` (the\npresets file's active look).",
+          "description": "Where the settings came from: `stored` (changed for this asset; see\n`saved`), `declared` (the preset the feed config declares) or\n`default` (the presets file's active look).",
           "type": "string"
         }
       },
       "required": [
         "key",
         "source",
-        "preset"
+        "preset",
+        "saved"
       ],
       "type": "object"
     },
@@ -57,7 +70,7 @@
             }
           ],
           "default": null,
-          "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —\nis saved for this asset alone and restored whenever a tab shows it\nagain. Absent until the tab binds an asset."
+          "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —\nis saved for this asset alone, reaches every tab showing it, and is\nrestored whenever a tab shows it again. Wheeling or dragging the\ntape's window or width moves the view only. Absent until the tab\nbinds an asset."
         },
         "enabled": {
           "description": "Aggression bubbles are drawn over the chart. Beside the native tape,\nFLOW draws regional execution totals on the tick candles;\n`layers.visibility` names any block.",

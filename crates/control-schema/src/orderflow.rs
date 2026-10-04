@@ -344,8 +344,10 @@ pub struct BubblesStateSnapshot {
     /// it is on screen — the panel, `layers.visibility.set` on
     /// `bubble_overlap_merge`, `native_tape`, `tape_only` and the flow
     /// pane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —
-    /// is saved for this asset alone and restored whenever a tab shows it
-    /// again. Absent until the tab binds an asset.
+    /// is saved for this asset alone, reaches every tab showing it, and is
+    /// restored whenever a tab shows it again. Wheeling or dragging the
+    /// tape's window or width moves the view only. Absent until the tab
+    /// binds an asset.
     #[serde(default)]
     pub asset: Option<BubbleAssetSnapshot>,
 }
@@ -357,13 +359,19 @@ pub struct BubbleAssetSnapshot {
     /// names the symbol (`WIN*` covers every mini index contract), or the
     /// symbol itself.
     pub key: String,
-    /// Where the settings came from: `stored` (changed for this asset),
-    /// `declared` (the preset the feed config declares) or `default` (the
-    /// presets file's active look).
+    /// Where the settings came from: `stored` (changed for this asset; see
+    /// `saved`), `declared` (the preset the feed config declares) or
+    /// `default` (the presets file's active look).
     pub source: String,
     /// The preset the look on screen started from; empty once the panel's
     /// defaults replaced it.
     pub preset: String,
+    /// Whether the store file holds these settings. `false` when it could
+    /// not be read or written: they are kept in memory for this run only.
+    pub saved: bool,
+    /// Why they are not saved; absent when they are.
+    #[serde(default)]
+    pub save_error: Option<String>,
 }
 
 impl BubblesStateSnapshot {

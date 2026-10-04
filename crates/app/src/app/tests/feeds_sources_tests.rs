@@ -793,6 +793,7 @@ fn changing_feed_falls_back_to_a_valid_symbol() {
 fn each_symbol_of_a_feed_keeps_its_own_panel_look() {
     let mut config = test_config();
     config.feeds[0].bubble_preset = Some("live lane pie".to_string());
+    config.feeds[0].symbols.push("OTHERUSDT".to_string());
     let mut app = app_on(config, "binance", "TESTUSDT");
     assert_eq!(
         app.active_tab().tape().active_preset_for_test(),

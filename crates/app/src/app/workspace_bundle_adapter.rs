@@ -293,6 +293,17 @@ impl WorkspaceBundleAdapter<'_> {
             .restore(&(*self.arrangement.config).clone());
         self.arrangement.restore_workspace(workspace);
         self.restore_chart_layers();
+        // Every open tab wears the imported settings of its asset, so its
+        // next edit files over them rather than over what it showed before.
+        self.arrangement
+            .workspace
+            .bubble_assets()
+            .borrow_mut()
+            .reload();
+        self.arrangement
+            .tabs
+            .iter_mut()
+            .for_each(crate::tab::Tab::sync_asset_bubbles);
 
         // The layouts come last, once the tabs are the imported ones: every
         // pane is stripped and re-seeded from the imported file.
