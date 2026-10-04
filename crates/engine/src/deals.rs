@@ -368,6 +368,11 @@ impl BarBuilder for DealBarBuilder {
         None
     }
 
+    fn push_into(&mut self, trade: &Trade, closed: &mut Vec<Bar>) -> usize {
+        closed.extend(self.push(trade));
+        0
+    }
+
     fn partial(&self) -> Option<&Bar> {
         self.current.as_ref()
     }

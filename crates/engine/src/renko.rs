@@ -41,7 +41,10 @@
 //! prints. It holds its prints — they form the in-progress bar — until
 //! [`STEP_EVIDENCE_DISTANCES`] distances have shown the step, then cuts them
 //! from the first, exactly as a builder told that step at the start would
-//! have, and freezes it. A grid that narrowed later would make every brick
+//! have, and freezes it. The bricks those held prints close come out late, on
+//! the print that showed the step: [`push_into`](BarBuilder::push_into)
+//! counts them, and every consumer shows them as history, never as closes to
+//! act on. A grid that narrowed later would make every brick
 //! already shown the wrong height, so it is never followed: a print off the
 //! frozen grid is cut on it and counted
 //! ([`off_grid_prints`](crate::BarBuilderDiagnostics::off_grid_prints)),
@@ -345,39 +348,48 @@ fn brick(own: Option<Forming>, open: Decimal, close: Decimal, cleared_at_ms: i64
 }
 
 impl BarBuilder for RenkoBarBuilder {
-    /// The first brick `trade` closes. One print can close several; every
-    /// shared consumer calls [`push_into`](BarBuilder::push_into), and this
-    /// exists for the single-bar callers of the trait.
+    /// The brick `trade` closes, for code that names this type; every
+    /// consumer calls [`push_into`](BarBuilder::push_into).
+    ///
+    /// # Panics
+    ///
+    /// If `trade` closes more than one brick: refused in every build rather
+    /// than handing back the first and losing the rest.
     fn push(&mut self, trade: &Trade) -> Option<Bar> {
         let mut closed = Vec::new();
         self.push_into(trade, &mut closed);
-        debug_assert!(
+        assert!(
             closed.len() <= 1,
             "one print closed {} Renko bricks; call push_into",
             closed.len()
         );
-        closed.into_iter().next()
+        closed.pop()
     }
 
-    fn push_into(&mut self, trade: &Trade, closed: &mut Vec<Bar>) {
+    fn push_into(&mut self, trade: &Trade, closed: &mut Vec<Bar>) -> usize {
         if let Some(measure) = self.measure {
             self.cut(trade, measure, closed);
-            return;
+            return 0;
         }
         self.evidence.observe(trade.price);
-        self.held.push(trade.clone());
         let Some(measure) = self.earned_measure() else {
+            self.held.push(trade.clone());
             self.fold(trade);
-            return;
+            return 0;
         };
         // The step is known: every print held is cut from the first, as a
-        // builder told the step at the start would have cut it, and the step
-        // is never read again.
+        // builder told the step at the start would have cut it — history this
+        // print only releases — then this print, and the step is never read
+        // again.
         self.measure = Some(measure);
         self.forming = None;
+        let first = closed.len();
         for print in std::mem::take(&mut self.held) {
             self.cut(&print, measure, closed);
         }
+        let late = closed.len() - first;
+        self.cut(trade, measure, closed);
+        late
     }
 
     fn partial(&self) -> Option<&Bar> {
@@ -390,6 +402,12 @@ impl BarBuilder for RenkoBarBuilder {
             off_grid_prints: self.off_grid,
             ..BarBuilderDiagnostics::default()
         }
+    }
+
+    fn inferred_price_step(&self) -> Option<Decimal> {
+        // A step stated through `with_step` was told, not read: no print
+        // ever reached its evidence.
+        self.step().filter(|_| self.evidence.steps_seen() > 0)
     }
 }
 

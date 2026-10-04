@@ -660,10 +660,12 @@ mod tests {
             cache: None,
         };
         let mut builder = quantick_engine::bar_registry::BarConfiguration::from(quantick_engine::BarSpec::Tick(1)).build();
-        let bar = builder.push(&quantick_engine::Trade {
+        let mut closed = Vec::new();
+        builder.push_into(&quantick_engine::Trade {
             agg_id: 1, timestamp_ms: 0, price: rust_decimal::Decimal::from(100),
             quantity: rust_decimal::Decimal::ONE, side: quantick_engine::Side::Buy,
-        }).unwrap();
+        }, &mut closed);
+        let bar = closed.pop().unwrap();
         AvwapCache::refresh(&mut payload.cache, quantick_anchored_studies::AverageRequest {
             anchor_bar: 2.0, source: payload.source, bands: payload.bands,
         }, &quantick_anchored_studies::AverageInputs {

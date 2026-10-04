@@ -60,19 +60,17 @@ pub struct BarProgress {
 /// that in-progress bar is finalised, handed out, and the builder starts a
 /// fresh one.
 pub trait BarBuilder {
-    /// Feed one trade, in occurrence order.
+    /// Feed one trade, in occurrence order, to a rule that names its own type.
     ///
     /// Returns `Some(bar)` if this trade completed a bar, `None` if the trade
     /// only extended the in-progress bar. A trade is an atomic market event and
     /// is never split across bars (see the boundary rule the threshold builder
     /// documents).
     ///
-    /// One bar at most: a rule whose single print can complete several
-    /// overrides [`push_into`](BarBuilder::push_into), and that is the call
-    /// to make wherever such a rule can be configured.
-    ///
-    /// A configured builder — what the registry builds, a `dyn BarBuilder` —
-    /// has no `push`: the rule behind it may close several bars on one print.
+    /// One bar at most, so a configured builder — what the registry builds, a
+    /// `dyn BarBuilder` — has no `push`: the rule behind it may close several
+    /// bars on one print, and its holder calls
+    /// [`push_into`](BarBuilder::push_into), which hands back every one.
     ///
     /// ```compile_fail
     /// use quantick_engine::{Bar, BarBuilder, Trade, bar_registry::BUILTIN_BARS};
@@ -81,10 +79,12 @@ pub trait BarBuilder {
     ///     builder.push(trade)
     /// }
     /// ```
-    fn push(&mut self, trade: &Trade) -> Option<Bar>;
+    fn push(&mut self, trade: &Trade) -> Option<Bar>
+    where
+        Self: Sized;
 
     /// Feed one trade, in occurrence order, and append every bar it closed to
-    /// `closed`, oldest first.
+    /// `closed`, oldest first: the call chart, backtest and bot make.
     ///
     /// ```
     /// use quantick_engine::{Bar, BarBuilder, Trade, bar_registry::BUILTIN_BARS};
@@ -96,16 +96,18 @@ pub trait BarBuilder {
     /// }
     /// ```
     ///
-    /// The call the shared aggregator path makes — chart, backtest and bot.
-    /// The default is [`push`](BarBuilder::push): at most one bar per print,
-    /// so a rule that never closes two cuts exactly what it always cut. A rule
-    /// whose one print can complete several bars overrides it: a Renko print
-    /// clearing `k` brick levels closes `k` bricks, and the ones it cleared on
-    /// its way past hold none of its prints; the print that shows a Renko
-    /// builder its price step closes every brick of the prints it held.
-    fn push_into(&mut self, trade: &Trade, closed: &mut Vec<Bar>) {
-        closed.extend(self.push(trade));
-    }
+    /// A rule that never closes two bars on one print appends what
+    /// [`push`](BarBuilder::push) returns. A Renko print clearing `k` brick
+    /// levels closes `k` bricks, and the ones it cleared on its way past hold
+    /// none of its prints.
+    ///
+    /// Returns how many of the bars appended, counted from the first, were
+    /// cut from prints held before this one rather than closed by it: the
+    /// bricks a Renko builder cuts from the prints it held while it read its
+    /// price step. No one saw them close, so a consumer shows them as history
+    /// and acts on none of them. Zero for a rule that cuts every print as it
+    /// arrives.
+    fn push_into(&mut self, trade: &Trade, closed: &mut Vec<Bar>) -> usize;
 
     /// The in-progress bar — the trades seen since the last close — or `None`
     /// if no trade has arrived since the last bar closed.
@@ -142,5 +144,13 @@ pub trait BarBuilder {
     /// prints it is showing no bar for.
     fn diagnostics(&self) -> BarBuilderDiagnostics {
         BarBuilderDiagnostics::default()
+    }
+
+    /// The price step this builder read off its own prints and cuts on — a
+    /// Renko builder's, once its prints have shown it. Inferred, never
+    /// declared by a venue, so whoever reports it says so. `None` for a rule
+    /// that reads no step, one still reading it, and one told its step.
+    fn inferred_price_step(&self) -> Option<Decimal> {
+        None
     }
 }

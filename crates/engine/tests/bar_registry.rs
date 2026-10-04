@@ -83,12 +83,7 @@ fn subfloor_replace_commands_compare_the_effective_configuration() {
 #[test]
 fn registry_factory_cuts_the_committed_tape() {
     let config = BUILTIN_BARS.parse("tick:3").unwrap();
-    let mut builder = config.build();
-    let bars: Vec<_> = fixture::parse_trades(TAPE)
-        .unwrap()
-        .iter()
-        .filter_map(|trade| builder.push(trade))
-        .collect();
+    let bars = golden::replay(&mut *config.build(), &fixture::parse_trades(TAPE).unwrap());
     assert_eq!(
         golden::diff_bars(&fixture::parse_bars(EXPECTED).unwrap(), &bars),
         None
@@ -444,12 +439,8 @@ fn a_seventh_definition_uses_the_production_selection_projection_and_factory() {
         BarSpec::try_from(selection.spec()).is_err(),
         "the legacy enum refuses a new identity honestly"
     );
-    let mut builder = selection.spec().build();
-    let bars: Vec<_> = fixture::parse_trades(TAPE)
-        .unwrap()
-        .iter()
-        .filter_map(|trade| builder.push(trade))
-        .collect();
+    let trades = fixture::parse_trades(TAPE).unwrap();
+    let bars = golden::replay(&mut *selection.spec().build(), &trades);
     assert_eq!(
         golden::diff_bars(&fixture::parse_bars(EXPECTED).unwrap(), &bars),
         None
