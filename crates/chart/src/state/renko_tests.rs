@@ -79,7 +79,51 @@ fn the_chart_cuts_the_bricks_every_consumer_pins_for_win() {
         panic!("live: {report}");
     }
     assert_eq!(live.partial(), backfilled.partial());
+    assert_eq!(
+        live.backfill_boundary(),
+        Some(1),
+        "brick 0 is cut from prints held while the step was read: history"
+    );
     ladders_hold_their_bricks(&live);
+}
+
+/// Bricks a Renko builder cuts from the prints it held while it read its
+/// step were never closes anyone saw live: after a quiet backfill too short
+/// to show the step, and live prints that do, they sit behind the backfill
+/// boundary, and only the bricks the print that read the step closed itself
+/// sit after it — whether the chart cut them print by print or rebuilt them.
+#[test]
+fn bricks_cut_from_held_prints_land_behind_the_backfill_boundary() {
+    // One point a print through 163 closes 31 bricks while they are held;
+    // 170 is the sixty-fourth distance and clears three levels of its own.
+    let mut prices: Vec<i64> = (100..164).collect();
+    prices.push(170);
+    let tape = prints(&prices);
+    let renko = spec("renko:3");
+    let mut chart = ChartState::new(renko);
+    chart.ingest_backfill(&tape[..10]);
+    for trade in &tape[10..64] {
+        chart.ingest_live(trade);
+    }
+    assert!(chart.bars().is_empty(), "every print is held");
+    assert_eq!(chart.backfill_boundary(), Some(0));
+
+    chart.ingest_live(&tape[64]);
+    assert_eq!(chart.bars().len(), 34);
+    assert_eq!(
+        chart.backfill_boundary(),
+        Some(31),
+        "history, not live closes"
+    );
+    assert_eq!(Shown::of(&chart), oracle(renko, &tape, 10, false));
+
+    chart.set_spec(BarSpec::Tick(7));
+    chart.set_spec(renko);
+    assert_eq!(
+        chart.backfill_boundary(),
+        Some(31),
+        "a rebuild draws it there too"
+    );
 }
 
 #[test]

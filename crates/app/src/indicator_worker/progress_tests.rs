@@ -16,6 +16,7 @@ impl IndicatorWorker {
             events: output,
             partial_updates: std::cell::Cell::new(0),
             lane_traffic: std::cell::Cell::new(0),
+            bar_closes: std::cell::Cell::new(0),
         };
         (worker, move || run_observed(&rx, &events, observed))
     }

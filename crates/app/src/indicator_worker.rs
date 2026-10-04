@@ -133,6 +133,9 @@ pub(crate) struct IndicatorWorker {
     partial_updates: std::cell::Cell<usize>,
     #[cfg(test)]
     lane_traffic: std::cell::Cell<usize>,
+    /// Live bar closes sent, so a test can tell a close from history.
+    #[cfg(test)]
+    bar_closes: std::cell::Cell<usize>,
 }
 
 impl IndicatorWorker {
@@ -163,6 +166,8 @@ impl IndicatorWorker {
             partial_updates: std::cell::Cell::new(0),
             #[cfg(test)]
             lane_traffic: std::cell::Cell::new(0),
+            #[cfg(test)]
+            bar_closes: std::cell::Cell::new(0),
         }
     }
 
@@ -175,6 +180,10 @@ impl IndicatorWorker {
         if let WorkerCommand::Domain(IndicatorCommand::PartialUpdated { run, .. }) = &command {
             self.partial_updates.set(self.partial_updates.get() + 1);
             self.lane_traffic.set(self.lane_traffic.get() + run.len());
+        }
+        #[cfg(test)]
+        if let WorkerCommand::Domain(IndicatorCommand::BarClosed(_)) = &command {
+            self.bar_closes.set(self.bar_closes.get() + 1);
         }
         if self.commands.send(command).is_err() {
             tracing::error!(
@@ -216,6 +225,12 @@ impl IndicatorWorker {
     #[cfg(test)]
     pub(crate) fn lane_traffic_for_test(&self) -> usize {
         self.lane_traffic.get()
+    }
+
+    /// How many bars have been sent down this channel as live closes.
+    #[cfg(test)]
+    pub(crate) fn bar_closes_for_test(&self) -> usize {
+        self.bar_closes.get()
     }
 
     #[cfg(test)]

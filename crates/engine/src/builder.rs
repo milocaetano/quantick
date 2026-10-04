@@ -70,10 +70,31 @@ pub trait BarBuilder {
     /// One bar at most: a rule whose single print can complete several
     /// overrides [`push_into`](BarBuilder::push_into), and that is the call
     /// to make wherever such a rule can be configured.
+    ///
+    /// A configured builder — what the registry builds, a `dyn BarBuilder` —
+    /// has no `push`: the rule behind it may close several bars on one print.
+    ///
+    /// ```compile_fail
+    /// use quantick_engine::{Bar, BarBuilder, Trade, bar_registry::BUILTIN_BARS};
+    /// fn first_brick(trade: &Trade) -> Option<Bar> {
+    ///     let mut builder = BUILTIN_BARS.parse("renko:50").unwrap().build();
+    ///     builder.push(trade)
+    /// }
+    /// ```
     fn push(&mut self, trade: &Trade) -> Option<Bar>;
 
     /// Feed one trade, in occurrence order, and append every bar it closed to
     /// `closed`, oldest first.
+    ///
+    /// ```
+    /// use quantick_engine::{Bar, BarBuilder, Trade, bar_registry::BUILTIN_BARS};
+    /// fn every_brick(trade: &Trade) -> Vec<Bar> {
+    ///     let mut builder = BUILTIN_BARS.parse("renko:50").unwrap().build();
+    ///     let mut closed = Vec::new();
+    ///     builder.push_into(trade, &mut closed);
+    ///     closed
+    /// }
+    /// ```
     ///
     /// The call the shared aggregator path makes — chart, backtest and bot.
     /// The default is [`push`](BarBuilder::push): at most one bar per print,

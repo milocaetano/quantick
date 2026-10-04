@@ -1,7 +1,8 @@
 //! A Renko pane: no brick until its builder has read the price step, then
-//! every brick the prints it held close, appended; one print clearing several
-//! levels lands every brick it closed; and older history that reshapes the
-//! first bricks keeps the marks and the view on the market time they carry.
+//! every brick the prints it held close, appended as history; one print
+//! clearing several levels lands every brick it closed; and older history
+//! that reshapes the first bricks keeps the marks and the view on the market
+//! time they carry — while a tick pane's still shift by the bars it added.
 
 use super::*;
 use crate::viewport::Viewport;
@@ -58,6 +59,73 @@ fn a_renko_pane_appends_every_brick_the_print_that_reads_the_step_cuts() {
         .map(|slot| pane.closed_bar(slot).expect("a closed brick").close)
         .collect();
     assert_eq!(closes, [164, 166, 168].map(Decimal::from), "one per level");
+}
+
+/// Arm a strategy on a rectangle, so the pane queues it every live close.
+fn arm_a_strategy(pane: &mut ChartPane) {
+    let rectangle = drawings::DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == drawings::RECTANGLE_TOOL_ID)
+        .expect("the rectangle tool is registered");
+    pane.drawings.place(rectangle, ChartPoint::at(0.0, 100.0));
+    pane.drawings.place(rectangle, ChartPoint::at(30.0, 110.0));
+    let instance = crate::strategy_anchors::AnchoredInstance {
+        drawing: pane.drawings.items()[0].id,
+        preset: "BF".to_owned(),
+        spec: crate::strategy_presets::StoredPreset::starting_point(quantick_engine::Side::Sell),
+        armed: quantick_strategy::ArmedStrategy::new(
+            quantick_strategy::StrategyParams {
+                side: quantick_engine::Side::Sell,
+                quantity: Decimal::ONE,
+                tp_mult: Decimal::ONE,
+                sl_mult: Decimal::ONE,
+                rearm: quantick_strategy::Rearm::OneShot,
+                on_break: quantick_strategy::BreakPolicy::Ignore,
+                execution: quantick_strategy::Execution::Paper,
+            },
+            Box::new(quantick_strategy::ForceTrigger::new(
+                quantick_strategy::ForceParams::default_band(),
+            )),
+        ),
+        alarm: None,
+        cue: crate::audio::Cue::default(),
+        mark: crate::strategy_anchors::AlarmMark::Quiet,
+    };
+    assert!(pane.strategies.anchors.arm(instance).is_empty());
+}
+
+/// Bricks cut from the prints a Renko builder held while it read its step
+/// are history by the time they exist: they land behind the backfill
+/// boundary, reach the indicators as history rather than as live closes, and
+/// no armed strategy is handed one. Only the bricks the print that read the
+/// step closed itself are closes.
+#[test]
+fn bricks_cut_from_held_prints_reach_no_strategy_and_no_live_close() {
+    let mut pane = renko_pane();
+    arm_a_strategy(&mut pane);
+    // One point a print through 163 closes 31 bricks while they are held;
+    // 170, the sixty-fourth distance, reads the step and clears three more.
+    let mut prices: Vec<i64> = (100..164).collect();
+    prices.push(170);
+    let tape = prints(0, prices);
+    pane.ingest_backfill(&tape[..10]);
+    for trade in &tape[10..] {
+        pane.ingest_live_trade(trade);
+    }
+    assert_eq!(pane.closed_slots(), 34);
+    assert_eq!(pane.state.backfill_boundary(), Some(31));
+    assert_eq!(
+        pane.indicator_worker.bar_closes_for_test(),
+        3,
+        "only the three bricks the print closed itself are live closes"
+    );
+    let queued: Vec<usize> = pane
+        .strategies
+        .pending
+        .iter()
+        .map(|(_, slot)| *slot)
+        .collect();
+    assert_eq!(queued, [31, 32, 33], "no strategy is handed history");
 }
 
 /// The trader's mark and view sit on market time. Older history that
@@ -121,4 +189,52 @@ fn older_history_that_reshapes_bricks_keeps_marks_and_view_on_their_market_time(
         "and the view stay on their market time"
     );
     assert_ne!(added, holder, "a shift by the count lands a brick early");
+}
+
+/// Older history only shifts a tick pane's bars: a count partitions them
+/// from the first print, so the bars it added are the whole move. The view
+/// and the marks shift by that count and keep a pan's fraction of a bar;
+/// re-placed by market time instead, they would land on the first of the
+/// bars sharing a millisecond and lose the fraction.
+#[test]
+fn older_history_shifts_a_tick_panes_view_and_marks_by_the_bars_it_added() {
+    use crate::state::BarSpec;
+    let at = |agg_id: u64, timestamp_ms: i64| quantick_engine::Trade {
+        timestamp_ms,
+        ..print(agg_id, 100 + (agg_id % 3) as i64)
+    };
+    // Forty prints in one millisecond cut twenty two-print bars sharing it.
+    let shared_ms = 1_700_000_100_000;
+    let newer: Vec<_> = (20..60).map(|id| at(id, shared_ms)).collect();
+    let older: Vec<_> = (0..20)
+        .map(|id| at(id, 1_700_000_000_000 + id as i64))
+        .collect();
+    let mut pane = ChartPane::flow(1, BarSpec::Tick(2), "WINV26".to_owned());
+    pane.ingest_backfill(&newer);
+    assert_eq!(pane.closed_slots(), 20);
+    let line = drawings::DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == "horizontal-line")
+        .expect("the horizontal line is registered");
+    assert!(
+        pane.drawings
+            .place(line, ChartPoint::at_time(7.25, 101.0, Some(shared_ms)))
+    );
+    let px = pane.viewport.px_per_bar();
+    pane.viewport.pan_pixels(px * 10.5, pane.slots());
+    let edge = pane.viewport.right_edge_bar(pane.slots());
+    assert!((edge - 8.5).abs() < 1e-3, "parked half a bar off bar 8");
+
+    let added = pane.prepend_history(&older);
+    assert_eq!(added, 10);
+    assert_eq!(
+        pane.viewport.right_edge_bar(pane.slots()),
+        edge + 10.0,
+        "the view, its half bar kept"
+    );
+    assert_eq!(
+        pane.drawings.items()[0].points[0].bar,
+        17.25,
+        "and the mark"
+    );
 }

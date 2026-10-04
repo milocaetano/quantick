@@ -461,6 +461,14 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "call push_into")]
+    fn push_refuses_a_print_that_closes_several_bricks() {
+        let mut builder = RenkoBarBuilder::with_step(3, Decimal::ONE);
+        let _ = builder.push(&print(0, 10));
+        let _ = builder.push(&print(1, 17));
+    }
+
+    #[test]
     fn one_absurd_print_closes_at_most_the_cap_and_the_next_carries_on() {
         let mut builder = RenkoBarBuilder::with_step(3, Decimal::ONE);
         let mut closed = Vec::new();
@@ -544,6 +552,42 @@ mod tests {
         assert_eq!(read.partial(), told.partial());
         assert_eq!(closed[0].trade_count, 3, "the cell held 100, 101 and 102");
         assert!(closed[1..].iter().all(|brick| brick.trade_count == 2));
+    }
+
+    #[test]
+    fn the_print_that_reads_the_step_counts_the_bricks_its_held_prints_closed() {
+        // One point a print through 163 closes 31 bricks while they are held;
+        // 170, the sixty-fourth distance, reads the step, cuts them, and
+        // clears three levels of its own: those three are its closes, the
+        // 31 before them history cut late.
+        let mut builder = RenkoBarBuilder::new(3);
+        let mut closed = Vec::new();
+        for (i, price) in (100..164).enumerate() {
+            assert_eq!(builder.push_into(&print(i as u64, price), &mut closed), 0);
+        }
+        assert!(closed.is_empty(), "every print is held");
+        let late = builder.push_into(&print(64, 170), &mut closed);
+        assert_eq!((closed.len(), late), (34, 31));
+        assert_eq!(
+            levels(&closed[31]),
+            (Decimal::from(162), Decimal::from(164))
+        );
+        // Frozen, the step holds nothing back: every brick is the print's own.
+        assert_eq!(builder.push_into(&print(65, 180), &mut closed), 0);
+        assert_eq!(closed.len(), 39);
+    }
+
+    #[test]
+    fn the_step_is_reported_as_inferred_once_the_prints_have_shown_it() {
+        let (held, _) = read(&(0..64).map(|i| 100 + i % 2).collect::<Vec<_>>());
+        assert_eq!(held.inferred_price_step(), None, "sixty-three distances");
+        let (read, _) = read(&(0..65).map(|i| 100 + i % 2).collect::<Vec<_>>());
+        assert_eq!(read.inferred_price_step(), Some(Decimal::ONE));
+        assert_eq!(
+            RenkoBarBuilder::with_step(3, Decimal::ONE).inferred_price_step(),
+            None,
+            "a step the caller states is not one the builder inferred"
+        );
     }
 
     #[test]
