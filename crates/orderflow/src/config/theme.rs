@@ -1,7 +1,6 @@
 //! Portable order-flow render choices and theme colour arithmetic.
 
 use super::{BubbleStyle, HeatmapConfig, HeatmapTheme, LiveLaneStyle};
-use crate::constants::HEAT_LEVELS;
 use quantick_orderbook::BookSide;
 
 // A perceptually smoother Bookmap-style thermal ramp. It keeps the signature
@@ -404,7 +403,13 @@ pub fn heat_fill_parts(
     Some((resting_rgb(style.theme, side, intensity), alpha))
 }
 
-/// Snap an intensity onto one of the [`HEAT_LEVELS`] bands, clamped to `[0, 1]`.
+/// Number of discrete magnitude bands the heatmap collapses intensity into.
+/// Fewer bands read as flatter walls; more bands recover gradient but let the
+/// book's per-update jitter fragment a band. Eight keeps walls crisp while
+/// still separating quiet / medium / heavy liquidity.
+const HEAT_LEVELS: f32 = 8.0;
+
+/// Snap an intensity onto one of the `HEAT_LEVELS` bands, clamped to `[0, 1]`.
 pub fn quantize_heat(intensity: f32) -> f32 {
     ((intensity * HEAT_LEVELS).round() / HEAT_LEVELS).clamp(0.0, 1.0)
 }

@@ -257,7 +257,7 @@ impl OrderflowView {
         if self.immediate_tape() {
             let window_ms = self
                 .config
-                .lane_window_ms(quantick_orderflow::engine::PENDING_LANE_REFERENCE_MS);
+                .lane_window_ms(constants::IMMEDIATE_TAPE_REFERENCE_MS);
             let retained = self.lane_now_ms().and_then(|now| {
                 self.tape_rebuilds
                     .borrow()

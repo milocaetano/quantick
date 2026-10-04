@@ -5,9 +5,8 @@ use crate::orderflow_render::{PIE_START_ANGLE, SphereShading, add_shaded_sector}
 use crate::pane::constants::CANDLE_AGGRESSION_DOT_OPACITY;
 use crate::theme;
 use eframe::egui;
-use quantick_chart::flow_execution::flow_price_window;
 use quantick_layers::ChartLayer;
-use quantick_orderflow::projection::{CandleDotView, project_candle_dots};
+use quantick_orderflow::projection::{CandleDotView, PriceWindow, project_candle_dots};
 use rust_decimal::prelude::ToPrimitive as _;
 
 pub(super) const PACKAGE: Package = Package {
@@ -20,7 +19,7 @@ fn paint(pass: &mut FootprintPass<'_>) {
         return;
     }
     let frame = pass.frame;
-    let Some(prices) = flow_price_window(frame.scale.range()) else {
+    let Some(prices) = PriceWindow::from_f64_range(frame.scale.range()) else {
         return;
     };
     let view = CandleDotView {

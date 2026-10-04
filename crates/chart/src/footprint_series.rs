@@ -16,6 +16,7 @@
 //! answer off the closed bar's own `trade_count`: `pending + 1` means the
 //! closing trade is inside, `pending` means it opens the next ladder.
 
+use crate::tick_membership::TickMembership;
 use quantick_engine::bar_registry::BarConfiguration;
 use quantick_engine::{
     Bar, BarBuilder, BarFootprint, DEFAULT_LEVEL_CAP, DealSample, FootprintBuilder, Trade,
@@ -37,7 +38,7 @@ pub struct FootprintSeries {
     /// Trades fed since the last close — the counter the closing-trade
     /// question is answered against.
     pending: u64,
-    pub(crate) tick_membership: Option<crate::tick_membership::TickMembership>,
+    pub(crate) tick_membership: Option<TickMembership>,
 }
 
 pub(crate) fn seed_deal_counter(builder: &mut dyn BarBuilder, samples: &[DealSample]) {
@@ -120,7 +121,7 @@ impl FootprintSeries {
     /// A full bar rebuild resets source membership; ladder refolds do not.
     /// Only fixed tick bars, which admit every print, keep exact membership.
     pub(crate) fn reset_membership(&mut self, spec: &BarConfiguration) {
-        self.tick_membership = (spec.id() == "tick").then(Default::default);
+        self.tick_membership = TickMembership::applies_to(spec).then(Default::default);
     }
 
     /// The row width ladders are captured at (before any per-bar level-cap

@@ -278,7 +278,7 @@ const LANE_TICK_STEPS_MS: [i64; 15] = [
 ];
 
 /// The instants the tape's clock labels sit on: multiples of the finest
-/// step in [`LANE_TICK_STEPS_MS`] that puts at most `max_labels` of them in
+/// step in `LANE_TICK_STEPS_MS` that puts at most `max_labels` of them in
 /// `[end_ms - window_ms, end_ms]`, oldest first. Empty when nothing fits.
 #[must_use]
 pub fn lane_time_ticks(end_ms: i64, window_ms: i64, max_labels: usize) -> Vec<i64> {

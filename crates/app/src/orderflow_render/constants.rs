@@ -101,18 +101,26 @@ pub(super) const PATH_RGBA: [u8; 4] = [142, 166, 177, 95];
 pub(super) const FLOW_CAPTION_FONT_PX: f32 = 10.0;
 /// FLOW caption distance from the history pane's left edge, in pixels.
 pub(super) const FLOW_CAPTION_INSET_PX: f32 = 8.0;
-/// Width the FLOW caption leaves free of wrapped text, both sides together, in pixels.
-pub(super) const FLOW_CAPTION_WRAP_MARGIN_PX: f32 = 16.0;
+/// Width the FLOW caption leaves free of wrapped text: its inset on both sides, in pixels.
+pub(super) const FLOW_CAPTION_WRAP_MARGIN_PX: f32 = 2.0 * FLOW_CAPTION_INSET_PX;
 
 /// Text size of the first-contour quantity label, in points.
 pub(super) const FLOW_OPENING_LABEL_FONT_PX: f32 = 11.0;
 /// Drop-shadow offset behind the first-contour quantity label, in pixels.
 pub(super) const FLOW_OPENING_LABEL_SHADOW_OFFSET: egui::Vec2 = egui::vec2(1.0, 1.0);
 
-/// Horizontal padding of the FLOW inspection card, both sides together, in pixels.
-pub(super) const INSPECTION_PADDING_X_PX: f32 = 16.0;
-/// Vertical padding of the FLOW inspection card, top and bottom together, in pixels.
-pub(super) const INSPECTION_PADDING_Y_PX: f32 = 14.0;
+/// Where the inspection heading starts inside the card, in pixels.
+pub(super) const INSPECTION_TEXT_INSET: egui::Vec2 = egui::vec2(8.0, 4.0);
+/// Horizontal padding of the FLOW inspection card: the text inset on both sides, in pixels.
+pub(super) const INSPECTION_PADDING_X_PX: f32 = 2.0 * INSPECTION_TEXT_INSET.x;
+/// Gap between the bottom of the inspection heading and its detail rows, in pixels.
+pub(super) const INSPECTION_ROW_GAP_PX: f32 = 4.0;
+/// Detail rows' distance below the card top, beyond the heading's own height, in pixels.
+pub(super) const INSPECTION_DETAIL_TOP_PX: f32 = INSPECTION_TEXT_INSET.y + INSPECTION_ROW_GAP_PX;
+/// Space below the inspection detail rows, in pixels.
+pub(super) const INSPECTION_BOTTOM_PX: f32 = 6.0;
+/// Card height beyond its text: top inset, row gap and bottom space, in pixels.
+pub(super) const INSPECTION_PADDING_Y_PX: f32 = INSPECTION_DETAIL_TOP_PX + INSPECTION_BOTTOM_PX;
 /// Narrowest text column worth an inspection card; below it none is drawn, in pixels.
 pub(super) const INSPECTION_MIN_TEXT_WIDTH_PX: f32 = 80.0;
 /// Inspection card heading size, in points.
@@ -125,10 +133,6 @@ pub(super) const INSPECTION_GAP_ABOVE_PX: f32 = 8.0;
 pub(super) const INSPECTION_POINTER_OFFSET_PX: f32 = 12.0;
 /// Inspection card corner radius, in pixels.
 pub(super) const INSPECTION_CORNER_RADIUS_PX: f32 = 4.0;
-/// Gap between the inspection heading and its detail rows, in pixels.
-pub(super) const INSPECTION_ROW_GAP_PX: f32 = 8.0;
-/// Where the inspection heading starts inside the card, in pixels.
-pub(super) const INSPECTION_TEXT_INSET: egui::Vec2 = egui::vec2(8.0, 4.0);
 
 /// Chart width below which the tape header legend hides, in pixels.
 pub(super) const LEGEND_TAPE_MIN_CHART_WIDTH_PX: f32 = 90.0;
@@ -154,6 +158,16 @@ pub(super) const LEGEND_ROW_HEIGHT_PX: f32 = 17.0;
 pub(super) const LEGEND_ENTRY_GAP_PX: f32 = 3.0;
 /// Legend panel corner radius, in pixels.
 pub(super) const LEGEND_CORNER_RADIUS_PX: f32 = 4.0;
+/// Legend label size, in points.
+pub(super) const LEGEND_FONT_PX: f32 = 10.0;
+/// Height of one legend entry, in pixels: its label centres in it, its glyph on its midline.
+pub(super) const LEGEND_ENTRY_HEIGHT_PX: f32 = 14.0;
+/// Width of the liquidity ramp glyph, in pixels.
+pub(super) const LEGEND_HEAT_WIDTH_PX: f32 = 42.0;
+/// Width of a buy or sell aggression dot glyph, in pixels.
+pub(super) const LEGEND_DOT_WIDTH_PX: f32 = 12.0;
+/// Width of a depletion, L2 reduction or L2 gap band glyph, in pixels.
+pub(super) const LEGEND_BAND_WIDTH_PX: f32 = 18.0;
 
 /// Canvas colour the settings preview dresses its sample against.
 pub(super) const PREVIEW_CANVAS_BACKGROUND: egui::Color32 = egui::Color32::from_rgb(19, 23, 34);

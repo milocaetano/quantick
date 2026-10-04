@@ -11,6 +11,13 @@ pub struct TickMembership {
 }
 
 impl TickMembership {
+    /// Whether bars of `spec` keep exact membership: only fixed tick bars,
+    /// which admit every print.
+    #[must_use]
+    pub fn applies_to(spec: &quantick_engine::bar_registry::BarConfiguration) -> bool {
+        spec.id() == "tick"
+    }
+
     pub(crate) fn observe(
         &mut self,
         admitted: bool,

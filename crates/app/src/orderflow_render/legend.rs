@@ -5,8 +5,9 @@
 //! and it stands down rather than print over a stack of indicator chips.
 
 use crate::orderflow_render::constants::{
-    LEGEND_BORDER_WIDTH_PX, LEGEND_CORNER_RADIUS_PX, LEGEND_ENTRY_GAP_PX, LEGEND_ENTRY_PADDING_PX,
-    LEGEND_GLYPH_GAP_PX, LEGEND_INNER_MARGIN_PX, LEGEND_MIN_CHART_WIDTH_PX,
+    LEGEND_BAND_WIDTH_PX, LEGEND_BORDER_WIDTH_PX, LEGEND_CORNER_RADIUS_PX, LEGEND_DOT_WIDTH_PX,
+    LEGEND_ENTRY_GAP_PX, LEGEND_ENTRY_HEIGHT_PX, LEGEND_ENTRY_PADDING_PX, LEGEND_FONT_PX,
+    LEGEND_GLYPH_GAP_PX, LEGEND_HEAT_WIDTH_PX, LEGEND_INNER_MARGIN_PX, LEGEND_MIN_CHART_WIDTH_PX,
     LEGEND_MIN_CONTENT_WIDTH_PX, LEGEND_MIN_PANEL_WIDTH_PX, LEGEND_OUTER_MARGIN_PX,
     LEGEND_ROW_HEIGHT_PX, LEGEND_TAPE_MIN_CHART_WIDTH_PX, LEGEND_TAPE_ROW_HEIGHT_PX,
     MAX_LEGEND_TOP_INSET_FRAC,
@@ -26,14 +27,17 @@ pub(crate) fn draw_compact_legend(
 ) -> Option<egui::Rect> {
     let style = context.style.sanitized();
     let tape_header = style.live_lane.tape_only && style.live_lane.enabled;
-    if !style.show_legend
-        || context.layout.chart_rect.width()
-            < if tape_header {
-                LEGEND_TAPE_MIN_CHART_WIDTH_PX
-            } else {
-                LEGEND_MIN_CHART_WIDTH_PX
-            }
-    {
+    let (min_chart_width, row_height) = if tape_header {
+        (LEGEND_TAPE_MIN_CHART_WIDTH_PX, LEGEND_TAPE_ROW_HEIGHT_PX)
+    } else {
+        (LEGEND_MIN_CHART_WIDTH_PX, LEGEND_ROW_HEIGHT_PX)
+    };
+    let (outer_margin, inner_margin) = if tape_header {
+        (0.0, 0.0)
+    } else {
+        (LEGEND_OUTER_MARGIN_PX, LEGEND_INNER_MARGIN_PX)
+    };
+    if !style.show_legend || context.layout.chart_rect.width() < min_chart_width {
         return None;
     }
     // The corner may already be full — a tall stack of indicator chips over a
@@ -73,7 +77,7 @@ pub(crate) fn draw_compact_legend(
     if entries.is_empty() {
         return None;
     }
-    let font = egui::FontId::proportional(10.0);
+    let font = egui::FontId::proportional(LEGEND_FONT_PX);
     let galleys: Vec<_> = entries
         .iter()
         .map(|(_, label)| clip.layout_no_wrap(label.clone(), font.clone(), palette.legend_text))
@@ -86,30 +90,11 @@ pub(crate) fn draw_compact_legend(
         })
         .collect();
 
-    let outer_margin = if tape_header {
-        0.0
-    } else {
-        LEGEND_OUTER_MARGIN_PX
-    };
-    let inner_margin = if tape_header {
-        0.0
-    } else {
-        LEGEND_INNER_MARGIN_PX
-    };
     let max_panel_width = style.legend_max_width.min(
         (context.layout.chart_rect.width() - outer_margin * 2.0).max(LEGEND_MIN_PANEL_WIDTH_PX),
     );
     let max_content_width = (max_panel_width - inner_margin * 2.0).max(LEGEND_MIN_CONTENT_WIDTH_PX);
-    let flow = flow_layout(
-        &widths,
-        max_content_width,
-        if tape_header {
-            LEGEND_TAPE_ROW_HEIGHT_PX
-        } else {
-            LEGEND_ROW_HEIGHT_PX
-        },
-        LEGEND_ENTRY_GAP_PX,
-    );
+    let flow = flow_layout(&widths, max_content_width, row_height, LEGEND_ENTRY_GAP_PX);
     let panel_size = egui::vec2(
         (flow.size.x + inner_margin * 2.0).min(max_panel_width),
         flow.size.y + inner_margin * 2.0,
@@ -128,14 +113,11 @@ pub(crate) fn draw_compact_legend(
         panel_size,
     );
     if !tape_header {
-        clip.rect_filled(
-            panel,
-            egui::Rounding::same(LEGEND_CORNER_RADIUS_PX),
-            palette.legend_background,
-        );
+        let rounding = egui::Rounding::same(LEGEND_CORNER_RADIUS_PX);
+        clip.rect_filled(panel, rounding, palette.legend_background);
         clip.rect_stroke(
             panel,
-            egui::Rounding::same(LEGEND_CORNER_RADIUS_PX),
+            rounding,
             egui::Stroke::new(LEGEND_BORDER_WIDTH_PX, palette.legend_border),
         );
     }
@@ -150,8 +132,8 @@ pub(crate) fn draw_compact_legend(
         let item = origin + offset;
         draw_legend_glyph(&clip, *glyph, item, &palette, style.theme);
         let text_pos = egui::pos2(
-            item.x + glyph_width(*glyph) + 5.0,
-            item.y + (14.0 - galley.size().y) / 2.0,
+            item.x + glyph_width(*glyph) + LEGEND_GLYPH_GAP_PX,
+            item.y + (LEGEND_ENTRY_HEIGHT_PX - galley.size().y) / 2.0,
         );
         footprint = footprint.union(egui::Rect::from_min_size(text_pos, galley.size()));
         clip.galley(text_pos, galley, palette.legend_text);
@@ -162,9 +144,9 @@ pub(crate) fn draw_compact_legend(
 /// A key's glyph width, in pixels.
 const fn glyph_width(glyph: LegendGlyph) -> f32 {
     match glyph {
-        LegendGlyph::Heat => 42.0,
-        LegendGlyph::Buy | LegendGlyph::Sell => 12.0,
-        LegendGlyph::Aligned | LegendGlyph::DepthOnly | LegendGlyph::Gap => 18.0,
+        LegendGlyph::Heat => LEGEND_HEAT_WIDTH_PX,
+        LegendGlyph::Buy | LegendGlyph::Sell => LEGEND_DOT_WIDTH_PX,
+        LegendGlyph::Aligned | LegendGlyph::DepthOnly | LegendGlyph::Gap => LEGEND_BAND_WIDTH_PX,
     }
 }
 
@@ -212,11 +194,13 @@ fn draw_legend_glyph(
     palette: &Palette,
     theme: HeatmapTheme,
 ) {
-    let center = origin + egui::vec2(glyph_width(glyph) / 2.0, 7.0);
+    let center = origin + egui::vec2(glyph_width(glyph), LEGEND_ENTRY_HEIGHT_PX) / 2.0;
     match glyph {
         LegendGlyph::Heat => {
-            let rect =
-                egui::Rect::from_min_size(origin + egui::vec2(0.0, 3.0), egui::vec2(42.0, 8.0));
+            let rect = egui::Rect::from_min_size(
+                origin + egui::vec2(0.0, 3.0),
+                egui::vec2(LEGEND_HEAT_WIDTH_PX, 8.0),
+            );
             let mut mesh = egui::Mesh::default();
             for index in 0..12 {
                 let t0 = index as f32 / 12.0;
@@ -244,7 +228,7 @@ fn draw_legend_glyph(
             painter.circle_stroke(center, 5.0, egui::Stroke::new(0.8_f32, palette.sell));
         }
         LegendGlyph::Aligned => {
-            let band = egui::Rect::from_center_size(center, egui::vec2(18.0, 6.0));
+            let band = egui::Rect::from_center_size(center, egui::vec2(LEGEND_BAND_WIDTH_PX, 6.0));
             let mut mesh = egui::Mesh::default();
             // Resting wall on the left, consumed (fading) on the right.
             add_gradient_rect(
@@ -269,7 +253,7 @@ fn draw_legend_glyph(
             );
         }
         LegendGlyph::DepthOnly => {
-            let rect = egui::Rect::from_center_size(center, egui::vec2(18.0, 7.0));
+            let rect = egui::Rect::from_center_size(center, egui::vec2(LEGEND_BAND_WIDTH_PX, 7.0));
             let mut mesh = egui::Mesh::default();
             add_gradient_rect(
                 &mut mesh,
@@ -287,7 +271,7 @@ fn draw_legend_glyph(
             );
         }
         LegendGlyph::Gap => {
-            let rect = egui::Rect::from_center_size(center, egui::vec2(18.0, 8.0));
+            let rect = egui::Rect::from_center_size(center, egui::vec2(LEGEND_BAND_WIDTH_PX, 8.0));
             painter.rect_filled(rect, egui::Rounding::ZERO, palette.gap_fill);
             draw_dashed_vertical(
                 painter,

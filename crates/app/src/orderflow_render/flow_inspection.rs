@@ -1,8 +1,8 @@
 //! Passive inspection of the FLOW regions actually painted this frame.
 use crate::orderflow_render::constants::{
-    INSPECTION_CORNER_RADIUS_PX, INSPECTION_DETAIL_FONT_PX, INSPECTION_GAP_ABOVE_PX,
-    INSPECTION_HEADING_FONT_PX, INSPECTION_MIN_TEXT_WIDTH_PX, INSPECTION_PADDING_X_PX,
-    INSPECTION_PADDING_Y_PX, INSPECTION_POINTER_OFFSET_PX, INSPECTION_ROW_GAP_PX,
+    INSPECTION_CORNER_RADIUS_PX, INSPECTION_DETAIL_FONT_PX, INSPECTION_DETAIL_TOP_PX,
+    INSPECTION_GAP_ABOVE_PX, INSPECTION_HEADING_FONT_PX, INSPECTION_MIN_TEXT_WIDTH_PX,
+    INSPECTION_PADDING_X_PX, INSPECTION_PADDING_Y_PX, INSPECTION_POINTER_OFFSET_PX,
     INSPECTION_TEXT_INSET,
 };
 use crate::{paper_chrome::fmt_decimal, theme, timezone::TzOffset};
@@ -72,7 +72,7 @@ pub(crate) fn draw_flow_inspection(view: FlowInspection<'_>) -> Option<egui::Rec
         egui::Rounding::same(INSPECTION_CORNER_RADIUS_PX),
         theme::TAG_BG,
     );
-    let detail_y = heading.size().y + INSPECTION_ROW_GAP_PX;
+    let detail_y = heading.size().y + INSPECTION_DETAIL_TOP_PX;
     painter.galley(
         rect.min + INSPECTION_TEXT_INSET,
         heading,

@@ -5,6 +5,7 @@ use crate::config::FeedCapabilities;
 use crate::orderflow_view::OrderflowView;
 use crate::style::ChartStyle;
 use crate::toolrail::Tool;
+use quantick_chart::tick_membership::TickMembership;
 use quantick_layers::{ChartLayer, LayerActions, LayerBlock};
 use quantick_layers::{LayerEffect, LayerFacts, LayerSource, LayerState, VisibilityWrite};
 
@@ -14,7 +15,7 @@ impl ChartPane {
         LayerFacts {
             book_capture: capabilities.is_some_and(|value| value.book_capture),
             traded_volume: capabilities.is_some_and(|value| value.traded_volume),
-            tick_bars: self.state.spec().id() == "tick",
+            tick_bars: TickMembership::applies_to(self.state.spec()),
             native_candle_prices: self.state.tape_price_step().is_some()
                 && self.state.tape_reference_price().is_some(),
             ..tape.map_or_else(LayerFacts::default, OrderflowView::layer_facts)

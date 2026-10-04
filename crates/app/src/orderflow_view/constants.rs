@@ -1,6 +1,6 @@
 //! The order-flow view's tunables: the FLOW worker's queue and idle wait,
-//! the tape header inset, and the Bubbles tab's control domains and choices.
-//! One file, so retuning touches one place.
+//! the tape header inset and fallback lane references, and the Bubbles tab's
+//! control domains and choices. One file, so retuning touches one place.
 
 use std::ops::RangeInclusive;
 use std::time::Duration;
@@ -13,6 +13,10 @@ pub(super) const QUEUE_CHUNKS: usize = 2;
 pub(super) const PARTIAL_IDLE_WAIT: Duration = Duration::from_millis(250);
 /// Tape header distance from the lane divider, each side of its text, in pixels.
 pub(super) const TAPE_HEADER_INSET_PX: f32 = 6.0;
+/// Bar duration, in exchange ms, the tape window resolves against while no frame has a live edge.
+pub(super) const TAPE_BOUNDS_REFERENCE_MS: i64 = 15_000;
+/// Bar duration, in exchange ms, the immediate tape sizes its price-range window from.
+pub(super) const IMMEDIATE_TAPE_REFERENCE_MS: i64 = 15_000;
 
 // Bubbles tab controls (`settings/bubble_sections.rs`): each slider's and drag
 // field's domain, each drag field's speed, and each picker's choices.

@@ -42,7 +42,7 @@ pub struct LevelMemory {
 
 impl LevelMemory {
     /// The level this zoom supports, sticky in BOTH directions (see
-    /// [`LEVEL_HYSTERESIS`]). `profile_row_px` is the configured Profile
+    /// `LEVEL_HYSTERESIS`). `profile_row_px` is the configured Profile
     /// floor — the "how fine may the bands get" knob.
     ///
     /// The dead band is two-sided on purpose: the price auto-fit breathes

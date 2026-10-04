@@ -24,7 +24,7 @@ impl FlowExecutionGeometry {
         history: [f32; 4],
         inverted: bool,
     ) -> Option<Self> {
-        let prices = super::flow_price_window(range)?;
+        let prices = PriceWindow::from_f64_range(range)?;
         Some(Self {
             viewport,
             total,

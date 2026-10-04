@@ -65,7 +65,7 @@ pub const MAX_BUBBLE_MIN_RADIUS: f32 = 12.0;
 ///
 /// Written as a literal, not as `DEFAULT_BUBBLE_MAX_RADIUS * INV_PHI_4`, for
 /// one mechanical reason: the presets file stores floats to
-/// [`SERIALIZED_FLOAT_PLACES`] decimals, so a default carrying more precision
+/// `SERIALIZED_FLOAT_PLACES` decimals, so a default carrying more precision
 /// than that would come back different from a save-and-reload and every
 /// preset round trip would drift. The rungs are therefore the exact ladder
 /// rounded to what the file can hold — asserted by

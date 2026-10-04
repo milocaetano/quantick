@@ -14,7 +14,7 @@ use std::cmp::Reverse;
 use std::sync::Arc;
 
 use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive as _;
+use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::config::HeatmapConfig;
 use crate::grouping::EffectiveGrouping;
@@ -35,6 +35,15 @@ impl PriceWindow {
     #[must_use]
     pub fn new(low: Decimal, high: Decimal) -> Option<Self> {
         (high > low).then_some(Self { low, high })
+    }
+
+    /// The exact window of a `(low, high)` chart axis range; `None` when
+    /// either bound is not a finite decimal or the window is degenerate.
+    #[must_use]
+    pub fn from_f64_range(range: (f64, f64)) -> Option<Self> {
+        Decimal::from_f64(range.0)
+            .zip(Decimal::from_f64(range.1))
+            .and_then(|(low, high)| Self::new(low, high))
     }
 
     /// Map a visible price to normalized screen y.

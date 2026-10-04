@@ -27,9 +27,7 @@ mod past_tape;
 #[path = "engine_pending.rs"]
 mod pending;
 
-pub use crate::constants::{
-    LADDER_LEVELS_PER_SIDE, PENDING_LANE_REFERENCE_MS, PROJECTION_INTERVAL,
-};
+pub use crate::constants::{LADDER_LEVELS_PER_SIDE, PROJECTION_INTERVAL};
 
 /// Quantize the price window before it keys the projection cache, so a
 /// sub-pixel wiggle of the auto-fit range (which happens almost every frame on a
@@ -1119,9 +1117,7 @@ impl BookEngine {
             return None;
         }
         let layout = request.layout();
-        let low = Decimal::from_f64(request.price_range.0)?;
-        let high = Decimal::from_f64(request.price_range.1)?;
-        let prices = PriceWindow::new(low, high)?;
+        let prices = PriceWindow::from_f64_range(request.price_range)?;
         let live_edge = self.live_edge(request);
         let timeline = BarTimeline::from_bars(
             request.first_bar_index,

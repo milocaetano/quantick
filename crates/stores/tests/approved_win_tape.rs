@@ -55,7 +55,7 @@ use quantick_orderflow::{
 };
 use quantick_stores::bubble_presets;
 use rust_decimal::Decimal;
-use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
+use rust_decimal::prelude::ToPrimitive as _;
 
 /// 3,267 unchanged prints of WINV26 on 2026-09-22, 09:33:20 to 09:35:00.
 const TRADES: &str = include_str!("fixtures/win_2026_09_22_approved_tape.csv");
@@ -657,9 +657,7 @@ impl Pane {
             .volume_dots
             .as_ref()
             .and_then(|scale| view.dot_rungs.sizing(scale, chart_height));
-        let tape_prices = Decimal::from_f64(price_range.0)
-            .zip(Decimal::from_f64(price_range.1))
-            .and_then(|(low, high)| PriceWindow::new(low, high));
+        let tape_prices = PriceWindow::from_f64_range(price_range);
         let tape_time = match (frame.live_edge, frame.volume_dots.as_ref()) {
             (Some(mut edge), Some(dots)) => {
                 edge.now_ms = view.lane_now_ms().unwrap_or(edge.now_ms);

@@ -614,7 +614,7 @@ pub fn merge_dust_clusters(
 /// lands in, a mark claiming "this bar took X" about volume the neighbour
 /// traded. Clusters `bar_of` declines to place pass through untouched, the
 /// same rule the summary follows. Each fold anchors at its point of control
-/// ([`ClusterFold::finish_regional`]); `price_bucket` reports the region's
+/// (`ClusterFold::finish_regional`); `price_bucket` reports the region's
 /// lower edge and `price_span` its height. Quantities, ids and matched
 /// evidence are summed: nothing is dropped, and the caller runs this after
 /// evidence association, so folding moves no evidence.

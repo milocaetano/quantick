@@ -29,14 +29,16 @@ pub fn project_flow_executions<R: FlowRunner>(
     range: (f64, f64),
     clip: (f64, f64),
 ) {
-    if !enabled || slots.is_empty() || state.tick_membership().is_none() {
+    let Some(membership) = state
+        .tick_membership()
+        .filter(|_| enabled && !slots.is_empty())
+    else {
         session.clear();
         return;
-    }
-    let Some(prices) = flow_price_window(range) else {
+    };
+    let Some(prices) = PriceWindow::from_f64_range(range) else {
         return;
     };
-    let membership = state.tick_membership().unwrap();
     let span = |slots: std::ops::Range<usize>| {
         membership
             .range(slots.start)
@@ -95,14 +97,6 @@ pub fn project_flow_executions<R: FlowRunner>(
             })
             .collect(),
     });
-}
-
-/// The exact price window of an `(low, high)` chart axis range; `None` when
-/// either bound is not a finite decimal or the window is degenerate.
-pub fn flow_price_window(range: (f64, f64)) -> Option<PriceWindow> {
-    Decimal::from_f64(range.0)
-        .zip(Decimal::from_f64(range.1))
-        .and_then(|(low, high)| PriceWindow::new(low, high))
 }
 
 /// Factual regional price on the current chart axis, including inverted views.

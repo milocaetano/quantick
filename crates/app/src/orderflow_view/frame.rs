@@ -7,7 +7,7 @@
 //! the stack from borrowed inputs and hands them to the renderer; nothing
 //! here is retained between frames.
 
-use crate::orderflow_view::constants::TAPE_HEADER_INSET_PX;
+use crate::orderflow_view::constants::{TAPE_BOUNDS_REFERENCE_MS, TAPE_HEADER_INSET_PX};
 use std::sync::Arc;
 
 use eframe::egui;
@@ -240,10 +240,7 @@ impl OrderflowView {
             .frame
             .as_ref()
             .and_then(|frame| frame.live_edge);
-        let reference = edge.map_or(
-            quantick_orderflow::engine::PENDING_LANE_REFERENCE_MS,
-            |edge| edge.reference_ms,
-        );
+        let reference = edge.map_or(TAPE_BOUNDS_REFERENCE_MS, |edge| edge.reference_ms);
         (
             self.config.lane_window_ms(reference),
             self.tape_retained_from_ms(),

@@ -245,7 +245,7 @@ type LevelKey = (SideKey, Decimal);
 ///
 /// A run changes only when the *aggregated bucket total* changes meaningfully
 /// (more than ~10% relative, or a level appearing/vanishing — see
-/// [`quantity_diverged`]); smaller churn is absorbed into the open run, whose
+/// `quantity_diverged`); smaller churn is absorbed into the open run, whose
 /// recorded quantity stays the value observed when it opened. Moving quantity
 /// between exchange levels inside one bucket therefore does not create noise.
 /// Closed runs are bounded; active levels are retained separately so a

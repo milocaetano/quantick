@@ -528,7 +528,7 @@ impl TimeLabelFormat {
 /// Bar slots to advance between two time labels so that neighbours can never
 /// touch, given how wide one candle and one label are on screen.
 ///
-/// This is the time axis' [`thin_to_fit`]: the old rule asked for a fixed six
+/// This is the time axis' `thin_to_fit`: the old rule asked for a fixed six
 /// labels however narrow the strip had become, and six `HH:MM:SS` need some
 /// 300 px of text — which the history strip stops having once the live lane
 /// takes its share of the chart. Counting labels cannot answer a question
@@ -571,7 +571,7 @@ pub fn label_fits(x: f32, label_width_px: f32, left: f32, right: f32) -> bool {
     x - half >= left && x + half <= right
 }
 
-/// The widest [`TimeLabelFormat`] that still writes [`TIME_MIN_LABELS`] labels
+/// The widest [`TimeLabelFormat`] that still writes `TIME_MIN_LABELS` labels
 /// across a strip this wide, given each format's measured width.
 ///
 /// `measured` answers with the pixel width of a format's

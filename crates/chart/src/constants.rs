@@ -230,9 +230,18 @@ pub const DETAILED_MIN_ROW: f32 = 12.0;
 /// Compact's row-height floor, in pixels.
 pub const COMPACT_MIN_ROW: f32 = 11.0;
 
-/// The dead band on level *downgrades*: the current level survives until the
-/// zoom is 15% past its floor, so a trackpad hovering on a boundary cannot
-/// blink the chart between modes mid-gesture.
+/// The two-sided dead band around every footprint floor, as a ratio: a change
+/// in either direction must clear the floor with 15% to spare. A coarser
+/// answer waits until the zoom is 15% past failing the current floor; a finer
+/// one is adopted only once it clears its own floor by 15%. It holds the
+/// detail level ([`LevelMemory::resolve`], scaling candle width and row
+/// height) and the row multiple ([`LevelMemory::resolve_multiple`], scaling
+/// the row floor), across one step only — a further jump is taken at once.
+/// So a trackpad hovering on a boundary, or the auto-fit breathing with every
+/// print, cannot blink the chart between modes mid-gesture.
+///
+/// [`LevelMemory::resolve`]: crate::footprint_lod::LevelMemory::resolve
+/// [`LevelMemory::resolve_multiple`]: crate::footprint_lod::LevelMemory::resolve_multiple
 pub(crate) const LEVEL_HYSTERESIS: f32 = 1.15;
 
 /// Display-grouping multiples, smallest first. Integer multiples of the

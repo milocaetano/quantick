@@ -1,7 +1,8 @@
 //! Tunable cadences, windows and spans of the crate-root modules: the engine,
-//! the bar timeline, the tape view and the recorded tape history. One place
-//! for later config wiring; the projection keeps its own in
-//! `projection/constants.rs`.
+//! the native tape, the recorded tape history, the tape view and the bar
+//! timeline. One place for later config wiring; the projection keeps its own
+//! in `projection/constants.rs`, and `config/` keeps each render tunable
+//! beside the setting it shapes.
 
 use std::time::Duration;
 
@@ -24,7 +25,7 @@ pub const LADDER_LEVELS_PER_SIDE: usize = 128;
 
 /// The typical bar duration, in exchange milliseconds, a pending tape sizes
 /// its lane window from when the request carries none.
-pub const PENDING_LANE_REFERENCE_MS: i64 = 15_000;
+pub(crate) const PENDING_LANE_REFERENCE_MS: i64 = 15_000;
 
 // Native tape (retention metadata and display projection).
 
@@ -67,9 +68,3 @@ pub(crate) const DEFAULT_RESERVE_MS: i64 = 1_000;
 /// busy patch and leave the tape empty. Below a few seconds there is no tape
 /// left to read, whatever the bars did.
 pub(crate) const MIN_LANE_SPAN_MS: i64 = 4_000;
-
-/// Number of discrete magnitude bands the heatmap collapses intensity into.
-/// Fewer bands read as flatter walls; more bands recover gradient but let the
-/// book's per-update jitter fragment a band. Eight keeps walls crisp while
-/// still separating quiet / medium / heavy liquidity.
-pub(crate) const HEAT_LEVELS: f32 = 8.0;
