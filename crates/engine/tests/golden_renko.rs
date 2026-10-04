@@ -1,19 +1,24 @@
-//! Renko bricks as ProfitChart draws them, pinned twice: a hand-computed
-//! golden over ten prints, and the trader's ProfitChart 50R chart of WIN over
-//! a trimmed MetaTrader tape of the same two sessions.
+//! Renko bricks as ProfitChart draws them, pinned three ways: a
+//! hand-computed golden over ten prints on a stated step, the trader's
+//! ProfitChart 50R chart of WIN over a trimmed MetaTrader tape of the same two
+//! sessions, and the bricks every consumer cuts from that tape with the step
+//! read off its own prints.
 
-use quantick_engine::bar_registry::{BUILTIN_BARS, InstrumentFacts};
-use quantick_engine::{Bar, BarBuilder, RenkoBarBuilder, Trade, fixture, golden};
+use quantick_engine::bar_registry::BUILTIN_BARS;
+use quantick_engine::{
+    Bar, BarBuilder, BarBuilderDiagnostics, RenkoBarBuilder, Trade, fixture, golden,
+};
 use rust_decimal::Decimal;
 
 const TRADES: &str = include_str!("fixtures/renko_trades.csv");
 const EXPECTED: &str = include_str!("fixtures/renko_n3_expected.csv");
 const WIN_TAPE: &str = include_str!("fixtures/renko_win_50r_trades.csv");
+const WIN_EXPECTED: &str = include_str!("fixtures/renko_win_50r_expected.csv");
 
 #[test]
 fn renko_bricks_match_golden() {
     golden::assert_golden(
-        || RenkoBarBuilder::new(3, Some(Decimal::ONE)),
+        || RenkoBarBuilder::with_step(3, Decimal::ONE),
         TRADES,
         EXPECTED,
     );
@@ -32,7 +37,7 @@ fn closed_bricks(builder: &mut dyn BarBuilder, trades: &[Trade]) -> Vec<Bar> {
 #[test]
 fn a_print_clearing_two_levels_closes_two_bricks_and_the_second_holds_no_print() {
     let trades = fixture::parse_trades(TRADES).unwrap();
-    let mut builder = RenkoBarBuilder::new(3, Some(Decimal::ONE));
+    let mut builder = RenkoBarBuilder::with_step(3, Decimal::ONE);
     // Trades 1-7 close two bricks; trade 8 alone closes the next two.
     let before = closed_bricks(&mut builder, &trades[..7]);
     assert_eq!(before.len(), 2);
@@ -66,12 +71,16 @@ fn a_print_clearing_two_levels_closes_two_bricks_and_the_second_holds_no_print()
 }
 
 #[test]
-fn without_a_price_step_no_brick_is_cut() {
+fn no_brick_is_cut_until_the_prints_have_shown_the_step() {
+    // Ten prints show nine distances, far short of the evidence the step
+    // is frozen on: every print is held, in the forming bar, and said so.
     let trades = fixture::parse_trades(TRADES).unwrap();
-    let mut builder = RenkoBarBuilder::new(3, None);
+    let mut builder = RenkoBarBuilder::new(3);
     assert!(closed_bricks(&mut builder, &trades).is_empty());
+    assert_eq!(builder.step(), None);
     let forming = builder.partial().expect("every print is held");
     assert_eq!(forming.trade_count, trades.len() as u64);
+    assert_eq!(builder.diagnostics().held_prints, trades.len() as u64);
 }
 
 /// One brick of the reference: direction (`'U'` up, `'D'` down), open,
@@ -106,17 +115,43 @@ fn direction(bar: &Bar) -> char {
     if bar.close > bar.open { 'U' } else { 'D' }
 }
 
-/// `50R` on WIN, typed as the trader types it, on WIN's five-point step.
+/// `50R` on WIN, typed as the trader types it: the registry's builder, which
+/// reads WIN's five-point step off the tape.
 fn win_fifty_r() -> (Vec<Bar>, Option<Bar>) {
     let trades = fixture::parse_trades(WIN_TAPE).unwrap();
-    let mut builder = BUILTIN_BARS
-        .parse("renko:50")
-        .unwrap()
-        .build_for(InstrumentFacts {
-            price_step: Some(Decimal::from(5)),
-        });
+    let mut builder = BUILTIN_BARS.parse("renko:50").unwrap().build();
     let closed = closed_bricks(&mut *builder, &trades);
+    assert_eq!(
+        builder.diagnostics(),
+        BarBuilderDiagnostics::default(),
+        "every print cut, none held and none off the grid"
+    );
     (closed, builder.partial().cloned())
+}
+
+#[test]
+fn fifty_r_on_win_cuts_the_bricks_every_consumer_pins() {
+    let (closed, _) = win_fifty_r();
+    let expected = fixture::parse_bars(WIN_EXPECTED).unwrap();
+    if let Some(report) = golden::diff_bars(&expected, &closed) {
+        panic!("{report}");
+    }
+    // Deterministic, as the harness checks every golden.
+    golden::assert_golden(|| RenkoBarBuilder::new(50), WIN_TAPE, WIN_EXPECTED);
+}
+
+#[test]
+fn the_step_read_off_the_win_tape_is_its_five_point_tick() {
+    let trades = fixture::parse_trades(WIN_TAPE).unwrap();
+    let mut builder = RenkoBarBuilder::new(50);
+    let closed = closed_bricks(&mut builder, &trades);
+    assert_eq!(builder.step(), Some(Decimal::from(5)));
+    assert_eq!(builder.brick_height(), Some(Decimal::from(245)));
+    // The prints it held while reading the step are cut as a builder told
+    // the step from the first print would have cut them.
+    let mut told = RenkoBarBuilder::with_step(50, Decimal::from(5));
+    assert_eq!(closed, closed_bricks(&mut told, &trades));
+    assert_eq!(builder.partial(), told.partial());
 }
 
 #[test]
