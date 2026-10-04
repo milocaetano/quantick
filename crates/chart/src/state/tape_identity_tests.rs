@@ -39,7 +39,8 @@ impl Shown {
 }
 
 /// What a contiguous tape showed: `tape` folded in order, the first
-/// `backfilled` of it as history.
+/// `backfilled` of it as history, and with it every bar a later print cut
+/// late from prints the builder held.
 pub(super) fn oracle(
     spec: impl Into<BarConfiguration>,
     tape: &[Trade],
@@ -55,7 +56,10 @@ pub(super) fn oracle(
             boundary = Some(bars.len());
         }
         let first = bars.len();
-        builder.push_into(trade, &mut bars);
+        let late = builder.push_into(trade, &mut bars);
+        if late > 0 && index >= backfilled {
+            boundary = Some(first + late);
+        }
         if footprint {
             footprints.observe(tape, index, &bars[first..]);
         }

@@ -455,9 +455,20 @@ impl ChartPane {
         let bars_before = self.state.bars().len();
         self.state.ingest_live(trade);
         self.publish_tape_price_step();
+        // Bars the builder cut late from prints it held — Renko's, once it
+        // reads its step — landed behind the boundary: history the indicators
+        // take as history, and never a close handed to a strategy.
+        let live_from = bars_before.max(self.state.backfill_boundary().unwrap_or(0));
+        if live_from > bars_before {
+            self.lane.reset();
+            let mut history = self.closed_bars();
+            history.truncate(self.history_prefix.len() + live_from);
+            self.indicator_worker
+                .send(IndicatorCommand::Backfilled(history));
+        }
         // One print can close several bars — a Renko print clearing several
-        // levels, or the one that reads a Renko step — and each is an event.
-        for index in bars_before..self.state.bars().len() {
+        // levels — and each is an event.
+        for index in live_from..self.state.bars().len() {
             let closed = self.state.bars()[index].clone();
             self.lane.reset();
             self.indicator_worker

@@ -210,16 +210,21 @@ pub struct SessionRun {
 ///    on the previous bar fills here, which is why a decision can never act
 ///    on the print that triggered it.
 /// 2. `builder.push_into(print)` — every bar the print closed, oldest first:
-///    one at most for most rules, one per brick level a Renko print clears,
-///    and every brick of the prints a Renko builder held while it read its
-///    price step off them.
+///    one at most for most rules, one per brick level a Renko print clears.
 /// 3. On each close: the host evaluates indicators, then the strategy is
 ///    asked for commands, then `sim.apply` queues them for the *next* print.
+///    A bar cut late, from prints the builder held before this one — the
+///    bricks of the prints a Renko builder held while it read its step —
+///    only warms the indicators up: no one could act on it when it closed,
+///    so the strategy is not asked, as the chart hands it to no strategy.
 ///
-/// The builder is the one the chart builds from the same prints, so nothing
-/// is read ahead: a Renko step comes off the prints already played. What the
-/// rule could not cut — a session that never showed it the step, prints off
-/// the step it froze — is counted in [`Anomalies::bar_rule`].
+/// The builder is the chart's rule, built fresh for each session: within a
+/// session it cuts what the chart cuts from the same prints, and nothing is
+/// read ahead — a Renko step comes off the prints already played. The chart
+/// carries its bricks over a session's open instead, so a session's first
+/// bricks can differ between the two. What the rule could not cut — a
+/// session that never showed it the step, prints off the step it froze — is
+/// counted in [`Anomalies::bar_rule`].
 ///
 /// Indicator and simulator state are created here and dropped with the
 /// session: nothing carries over into the next recorded day.
@@ -269,11 +274,15 @@ pub fn run_session(
             }
             let _ = strategy.on_events(&events);
         }
-        builder.push_into(trade, &mut closed);
-        for bar in closed.drain(..) {
+        let late = builder.push_into(trade, &mut closed);
+        for (cut, bar) in closed.drain(..).enumerate() {
             host.push_closed_bar(&bar);
             let index = bars;
             bars += 1;
+            if cut < late {
+                // Cut from prints held before this one: warm-up, no order.
+                continue;
+            }
 
             // The view borrows the host and the simulator, so it must be gone
             // before `apply` can mutate the simulator. The block is the seam.

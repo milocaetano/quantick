@@ -135,6 +135,9 @@ pub struct ChartState {
 /// nothing before its first reading: such a print belongs to no bar, so it
 /// belongs to no ladder either, or the ladders drift off the bars they index
 /// by and the footprint series asserts on the first close.
+///
+/// Returns how many of the bars appended were cut late, from prints the
+/// builder held before this one ([`BarBuilder::push_into`]).
 fn fold_print<B, T>(
     builder: &mut B,
     footprints: &mut FootprintSeries,
@@ -142,13 +145,14 @@ fn fold_print<B, T>(
     tape: &T,
     index: usize,
     bars: &mut Vec<Bar>,
-) where
+) -> usize
+where
     B: BarBuilder + ?Sized,
     T: Index<usize, Output = Trade> + ?Sized,
 {
     let uncounted_before = builder.diagnostics().uncounted_trades;
     let first = bars.len();
-    builder.push_into(&tape[index], bars);
+    let late = builder.push_into(&tape[index], bars);
     if footprint_enabled {
         let closed = &bars[first..];
         if builder.diagnostics().uncounted_trades == uncounted_before {
@@ -161,6 +165,7 @@ fn fold_print<B, T>(
             }
         }
     }
+    late
 }
 
 impl ChartState {
@@ -373,7 +378,8 @@ impl ChartState {
     pub fn ingest_live(&mut self, trade: &Trade) {
         self.trades.push(trade.clone());
         self.observe_price(trade.price);
-        fold_print(
+        let first = self.bars.len();
+        let late = fold_print(
             &mut *self.builder,
             &mut self.footprints,
             self.footprint_enabled,
@@ -381,6 +387,12 @@ impl ChartState {
             self.trades.len() - 1,
             &mut self.bars,
         );
+        if late > 0 {
+            // Bars cut from prints the builder held — Renko's, while it read
+            // its step — closed before anyone saw them: history, behind the
+            // boundary, not closes this print made.
+            self.backfill_boundary = Some(first + late);
+        }
         self.refresh_partial();
         // Live ingest only ever *appends*: no bar already closed changes, and
         // no ladder already built is touched. So the series identity stands
@@ -431,7 +443,12 @@ impl ChartState {
             if self.backfill_done && i == self.backfill_trade_count {
                 boundary = Some(bars.len());
             }
-            fold_print(&mut *builder, footprints, enabled, trades, i, &mut bars);
+            let first = bars.len();
+            let late = fold_print(&mut *builder, footprints, enabled, trades, i, &mut bars);
+            // Live ingest's rule: a live print's late bars are history.
+            if late > 0 && (!self.backfill_done || i >= self.backfill_trade_count) {
+                boundary = Some(first + late);
+            }
         }
         // Backfill covered every retained trade (no live yet): boundary is the
         // end of the bar list.
@@ -505,7 +522,9 @@ impl ChartState {
         self.partial.as_ref()
     }
 
-    /// The number of purely-backfilled bars (the backfill/live divider index).
+    /// The backfill/live divider index: the bars before it are history — cut
+    /// from backfilled prints, or late from prints a builder held — and the
+    /// bars from it on closed live.
     #[must_use]
     pub fn backfill_boundary(&self) -> Option<usize> {
         self.backfill_boundary
