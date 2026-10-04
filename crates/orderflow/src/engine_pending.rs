@@ -6,8 +6,6 @@ use crate::projection::{
     DOT_WINDOW_LADDER_MS, DotZoom, PendingTape, PriceWindow, VolumeDots, into_lane_of, lane_relabel,
 };
 use crate::timeline::{BarTimeline, LiveEdge};
-use rust_decimal::Decimal;
-use rust_decimal::prelude::FromPrimitive as _;
 use std::sync::Arc;
 
 /// What a pending frame is placed on: the request's live edge and timeline,
@@ -58,10 +56,7 @@ impl PendingPlace {
             &request.closed,
             request.partial.as_ref(),
         );
-        let prices = PriceWindow::new(
-            Decimal::from_f64(request.price_range.0)?,
-            Decimal::from_f64(request.price_range.1)?,
-        )?;
+        let prices = PriceWindow::from_f64_range(request.price_range)?;
         Some(Self {
             edge,
             timeline,

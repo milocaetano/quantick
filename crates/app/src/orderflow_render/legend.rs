@@ -7,10 +7,10 @@
 use crate::orderflow_render::constants::{
     LEGEND_BAND_WIDTH_PX, LEGEND_BORDER_WIDTH_PX, LEGEND_CORNER_RADIUS_PX, LEGEND_DOT_WIDTH_PX,
     LEGEND_ENTRY_GAP_PX, LEGEND_ENTRY_HEIGHT_PX, LEGEND_ENTRY_PADDING_PX, LEGEND_FONT_PX,
-    LEGEND_GLYPH_GAP_PX, LEGEND_HEAT_WIDTH_PX, LEGEND_INNER_MARGIN_PX, LEGEND_MIN_CHART_WIDTH_PX,
-    LEGEND_MIN_CONTENT_WIDTH_PX, LEGEND_MIN_PANEL_WIDTH_PX, LEGEND_OUTER_MARGIN_PX,
-    LEGEND_ROW_HEIGHT_PX, LEGEND_TAPE_MIN_CHART_WIDTH_PX, LEGEND_TAPE_ROW_HEIGHT_PX,
-    MAX_LEGEND_TOP_INSET_FRAC,
+    LEGEND_GLYPH_GAP_PX, LEGEND_HEAT_HEIGHT_PX, LEGEND_HEAT_WIDTH_PX, LEGEND_INNER_MARGIN_PX,
+    LEGEND_MIN_CHART_WIDTH_PX, LEGEND_MIN_CONTENT_WIDTH_PX, LEGEND_MIN_PANEL_WIDTH_PX,
+    LEGEND_OUTER_MARGIN_PX, LEGEND_ROW_HEIGHT_PX, LEGEND_TAPE_MIN_CHART_WIDTH_PX,
+    LEGEND_TAPE_ROW_HEIGHT_PX, MAX_LEGEND_TOP_INSET_FRAC,
 };
 use eframe::egui;
 use quantick_orderflow::HeatmapTheme;
@@ -197,9 +197,9 @@ fn draw_legend_glyph(
     let center = origin + egui::vec2(glyph_width(glyph), LEGEND_ENTRY_HEIGHT_PX) / 2.0;
     match glyph {
         LegendGlyph::Heat => {
-            let rect = egui::Rect::from_min_size(
-                origin + egui::vec2(0.0, 3.0),
-                egui::vec2(LEGEND_HEAT_WIDTH_PX, 8.0),
+            let rect = egui::Rect::from_center_size(
+                center,
+                egui::vec2(LEGEND_HEAT_WIDTH_PX, LEGEND_HEAT_HEIGHT_PX),
             );
             let mut mesh = egui::Mesh::default();
             for index in 0..12 {

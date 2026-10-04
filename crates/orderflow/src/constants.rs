@@ -24,8 +24,11 @@ pub const PROJECTION_INTERVAL: Duration = Duration::from_millis(220);
 pub const LADDER_LEVELS_PER_SIDE: usize = 128;
 
 /// The typical bar duration, in exchange milliseconds, a pending tape sizes
-/// its lane window from when the request carries none.
-pub(crate) const PENDING_LANE_REFERENCE_MS: i64 = 15_000;
+/// its lane window from when the request carries none. The view reads the same
+/// value as its immediate tape's price-range window and as its tape-bounds
+/// fallback while no frame has a live edge; the three must agree, so this is
+/// their single owner.
+pub const PENDING_LANE_REFERENCE_MS: i64 = 15_000;
 
 // Native tape (retention metadata and display projection).
 

@@ -164,6 +164,8 @@ pub(super) const LEGEND_FONT_PX: f32 = 10.0;
 pub(super) const LEGEND_ENTRY_HEIGHT_PX: f32 = 14.0;
 /// Width of the liquidity ramp glyph, in pixels.
 pub(super) const LEGEND_HEAT_WIDTH_PX: f32 = 42.0;
+/// Height of the liquidity ramp glyph, in pixels.
+pub(super) const LEGEND_HEAT_HEIGHT_PX: f32 = 8.0;
 /// Width of a buy or sell aggression dot glyph, in pixels.
 pub(super) const LEGEND_DOT_WIDTH_PX: f32 = 12.0;
 /// Width of a depletion, L2 reduction or L2 gap band glyph, in pixels.

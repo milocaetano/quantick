@@ -68,5 +68,5 @@
 # Root authorized this exact measured remainder after independent baseline_visual
 # ownership/geometry review (2026-10-01); native Tape geometry is unchanged.
 # Lowered by 188 lines: PR #596 refactor moved pure logic to its headless owner.
-!budget 105056
-crates/app 105056
+!budget 105055
+crates/app 105055
