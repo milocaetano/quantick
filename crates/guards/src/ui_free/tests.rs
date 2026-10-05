@@ -280,10 +280,9 @@ fn a_total_far_below_its_ceiling_asks_for_tighten_and_tighten_lowers_both() {
 
     let applied = tighten(&root).expect("tighten runs");
     assert_eq!(applied.len(), 2, "{applied:?}");
-    let text = fs::read_to_string(root.join(BASELINE_FILE)).expect("baseline readable");
-    assert!(text.contains("crates/app 10"), "{text}");
-    assert!(text.contains("!budget 10"), "{text}");
-    assert!(text.contains("# fixture"), "comments survive: {text}");
+    let recorded = POLICY.baseline(&root).expect("parses");
+    assert_eq!(recorded.entry(ENTRY).map(|entry| entry.ceiling), Some(10));
+    assert_eq!(recorded.budget.map(|budget| budget.allowed), Some(10));
     assert_eq!(check(&root), Vec::new());
 }
 

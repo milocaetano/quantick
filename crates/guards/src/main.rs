@@ -210,7 +210,7 @@ fn tighten(root: &std::path::Path) -> ExitCode {
             root,
             guard.name,
             (ratchet.tighten)(root),
-            ratchet.policy.baseline_file,
+            &ratchet.policy.raises_dir(),
             ratchet.policy.budget_slack,
         );
     }
@@ -226,7 +226,7 @@ fn tighten_one(
     root: &std::path::Path,
     name: &str,
     result: Result<Vec<String>, String>,
-    baseline_file: &str,
+    raises_dir: &str,
     slack: usize,
 ) -> bool {
     match result {
@@ -250,9 +250,9 @@ fn tighten_one(
             // someone else's, whose `git status` then carries a change nobody
             // made on purpose.
             println!(
-                "tightened {} line(s) in {}:",
+                "tightened {} number(s) with a cut file in {}:",
                 applied.len(),
-                root.join(baseline_file).display()
+                root.join(raises_dir).display()
             );
             for line in &applied {
                 println!("{line}");

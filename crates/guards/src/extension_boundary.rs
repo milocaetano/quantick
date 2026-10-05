@@ -215,7 +215,8 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     if SOURCES
         .iter()
         .any(|source| relative.starts_with(&format!("{source}/")))
-        || [SHAPES_FILE, BUDGET_FILE].contains(&relative)
+        || relative == SHAPES_FILE
+        || POLICY.owns(relative)
     {
         check(root)
     } else {

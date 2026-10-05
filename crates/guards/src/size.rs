@@ -760,8 +760,9 @@ mod tests {
     /// the rewrite works line by line precisely so the rationale a reviewer
     /// left behind is not the price of a tightening.
     #[test]
-    fn tighten_lowers_a_ceiling_and_keeps_the_comments() {
+    fn tighten_lowers_a_ceiling_and_leaves_the_baseline_alone() {
         let root = scratch("tighten-lowers", 5_000, 100);
+        let before = fs::read_to_string(root.join(BASELINE_FILE)).expect("baseline is readable");
         let applied = tighten(&root).expect("the scratch baseline parses");
 
         assert_eq!(
@@ -769,26 +770,23 @@ mod tests {
             2,
             "the entry, and the budget that follows it down: {applied:?}"
         );
-        let written = fs::read_to_string(root.join(BASELINE_FILE)).expect("baseline is readable");
-        assert!(
-            written.contains("crates/probe/src/big.rs 100"),
-            "the ceiling was not lowered to the measured size: {written}"
+        let after = fs::read_to_string(root.join(BASELINE_FILE)).expect("baseline is readable");
+        assert_eq!(
+            before, after,
+            "the cut is a raise file, not a baseline edit"
         );
-        assert!(
-            written.contains("# an own-line comment the rewrite must not eat"),
-            "the rewrite dropped an own-line comment: {written}"
+        let recorded = baseline(&root).expect("the tightened baseline parses");
+        assert_eq!(
+            recorded
+                .entry("crates/probe/src/big.rs")
+                .map(|entry| entry.ceiling),
+            Some(100),
+            "the ceiling was not lowered to the measured size"
         );
-        // The case the first version lost: the parser accepts a comment
-        // *beside* an entry, so the rewrite has to put it back. Testing only
-        // the own-line spelling passed while this one silently deleted the
-        // justification a reviewer had signed.
-        assert!(
-            written.contains("# and a trailing one, raised on purpose"),
-            "the rewrite dropped a trailing comment: {written}"
-        );
-        assert!(
-            written.contains(&format!("{BUDGET_DIRECTIVE} 100")),
-            "the budget did not follow the ceiling down: {written}"
+        assert_eq!(
+            recorded.budget.map(|budget| budget.allowed),
+            Some(100),
+            "the budget did not follow the ceiling down"
         );
         assert!(check(&root).is_empty(), "the scratch tree is clean after");
         let _ = fs::remove_dir_all(&root);

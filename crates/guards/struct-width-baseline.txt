@@ -1,7 +1,7 @@
 # A raise is never an edit here: it is a new file in crates/guards/struct-width-baseline.d/ named for the
 # branch, holding signed deltas (`path +N`, `!budget +N`) and a comment
-# saying why. The guard adds them to these numbers; `--tighten` folds them in
-# when it lowers one. One file per branch is what keeps two open branches
+# saying why. The guard adds them to these numbers, and `--tighten` writes its
+# cuts there too. One file per branch is what keeps two open branches
 # from conflicting on the same line.
 #
 # The struct-width ratchet's recorded field counts

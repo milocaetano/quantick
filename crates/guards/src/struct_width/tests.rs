@@ -111,9 +111,12 @@ fn one_field_fewer_must_be_tightened_and_tighten_writes_it() {
     let found = lines(&check(root.path()));
     assert!(found.contains("down to 66 from 67"), "{found}");
     tighten(root.path()).expect("tighten runs");
-    let text = fs::read_to_string(root.join(BASELINE_FILE)).expect("readable");
-    assert!(text.contains("app::Tab 66"), "{text}");
-    assert!(text.contains("!budget 66"), "{text}");
+    let recorded = POLICY.baseline(root.path()).expect("parses");
+    assert_eq!(
+        recorded.entry("app::Tab").map(|entry| entry.ceiling),
+        Some(66)
+    );
+    assert_eq!(recorded.budget.map(|budget| budget.allowed), Some(66));
     assert!(check(root.path()).is_empty(), "{:?}", check(root.path()));
 }
 

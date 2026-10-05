@@ -30,9 +30,9 @@
 //! baseline records. A baseline of one total used to take an edit to the same
 //! two lines from every branch that grew `app` — nine of fifteen merged pull
 //! requests in a row — so any two open at once conflicted. A new file per
-//! branch cannot conflict with another branch's new file. `--tighten` folds
-//! the raises back into the baseline when it lowers a number, which is the
-//! one moment the baseline is rewritten anyway.
+//! branch cannot conflict with another branch's new file. `--tighten` writes
+//! its cuts the same way, so after a ratchet lands its baseline is never
+//! rewritten.
 
 use std::fs;
 use std::path::Path;
@@ -119,7 +119,7 @@ pub struct Entry {
     pub ceiling: usize,
     /// Index into the baseline file's lines, so a rewrite touches the number
     /// and leaves every comment where its author put it. `None` for an entry
-    /// only a raise file names, which a fold appends.
+    /// only a raise file names.
     pub line: Option<usize>,
 }
 
@@ -314,15 +314,27 @@ impl Policy {
         budget: &mut Option<Budget>,
     ) -> Result<Vec<String>, String> {
         let dir = self.raises_dir();
-        let Ok(listing) = fs::read_dir(root.join(&dir)) else {
-            return Ok(Vec::new());
+        let listing = match fs::read_dir(root.join(&dir)) {
+            Ok(listing) => listing,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(format!("{dir} is unreadable: {e}")),
         };
-        let mut names: Vec<String> = listing
-            .filter_map(Result::ok)
-            .filter(|item| item.path().is_file())
-            .map(|item| item.file_name().to_string_lossy().into_owned())
-            .filter(|name| name.ends_with(".txt"))
-            .collect();
+        // Anything but a flat `.txt` file is refused rather than skipped: a
+        // raise saved under the wrong name, or under `fix/` because the
+        // branch name has a slash, would otherwise be a signed raise the
+        // guard silently does not apply.
+        let mut names = Vec::new();
+        for item in listing {
+            let item = item.map_err(|e| format!("{dir} is unreadable: {e}"))?;
+            let name = item.file_name().to_string_lossy().into_owned();
+            if !item.path().is_file() || !name.ends_with(".txt") {
+                return Err(format!(
+                    "{dir}/{name}: a raise file is a flat `<branch>.txt`, with any `/` in the \
+                     branch spelled `-`"
+                ));
+            }
+            names.push(name);
+        }
         names.sort();
         let mut applied = Vec::new();
         for name in names {
@@ -384,6 +396,9 @@ impl Policy {
             }
             applied.push(relative);
         }
+        // A cut to zero is how a raise file drops an entry, so a deleted
+        // file's ceiling can go without an edit to the baseline.
+        entries.retain(|entry| entry.ceiling > 0);
         Ok(applied)
     }
 
@@ -420,8 +435,9 @@ impl Policy {
             None if actual > self.threshold => Some(Finding::new(
                 format!(
                     "  {path}: {actual} {unit}, over the {} threshold and absent from the \
-                     baseline — add `{path} {actual}`",
-                    self.threshold
+                     baseline — add `{path} +{actual}` in a raise file in {}/",
+                    self.threshold,
+                    self.raises_dir()
                 ),
                 self.remedy,
             )),
@@ -432,7 +448,11 @@ impl Policy {
     /// An entry whose file the scan no longer sees.
     pub fn stale(&self, path: &str) -> Finding {
         Finding::new(
-            format!("  {path}: in the baseline but no longer scanned — drop the stale entry"),
+            format!(
+                "  {path}: in the baseline but no longer scanned — drop the stale entry with \
+                 `{path} -<its ceiling>` in a raise file in {}/",
+                self.raises_dir()
+            ),
             self.remedy,
         )
     }
@@ -472,10 +492,10 @@ impl Policy {
         if total > budget.allowed + self.budget_headroom {
             return Some(Finding::new(
                 format!(
-                    "  {name}:{}: the tracked total is {total}, over the \
+                    "  {}: the tracked total is {total}, over the \
                      {BUDGET_DIRECTIVE} of {} (+{}) — this branch added weight without taking \
                      any away",
-                    budget.line + 1,
+                    self.budget_source(recorded, budget),
                     budget.allowed,
                     total - budget.allowed
                 ),
@@ -485,9 +505,9 @@ impl Policy {
         if budget.allowed.saturating_sub(total) > self.budget_slack {
             return Some(Finding::new(
                 format!(
-                    "  {name}:{}: the tracked total is {total}, down from the \
+                    "  {}: the tracked total is {total}, down from the \
                      {BUDGET_DIRECTIVE} of {} — good news, tighten the budget to {total}",
-                    budget.line + 1,
+                    self.budget_source(recorded, budget),
                     budget.allowed
                 ),
                 self.budget_slack_remedy,
@@ -530,10 +550,17 @@ impl Policy {
 
     /// Apply the one direction that never needs an argument: a file that
     /// shrank more than [`Policy::slack`] below its ceiling has its entry
-    /// rewritten to the size it actually is. Growth is untouched — that is
-    /// the decision a human signs.
+    /// cut to the size it actually is. Growth is untouched — that is the
+    /// decision a human signs.
     ///
-    /// Returns one line per entry rewritten.
+    /// The cut is written as a raise file of its own, never as an edit to the
+    /// baseline. Cuts compose the way the code changes behind them do: two
+    /// branches that each take lines out of a file each write their own
+    /// delta, and the merged ceiling is the merged file. A rewritten number
+    /// would instead be two edits to one line. The file is named for the
+    /// checked-out branch, and a second run on the branch appends to it.
+    ///
+    /// Returns one line per number cut.
     pub fn tighten(
         &self,
         root: &Path,
@@ -554,21 +581,13 @@ impl Policy {
         budgeted: &dyn Fn(&str) -> bool,
     ) -> Result<Vec<String>, String> {
         let recorded = self.baseline(root)?;
-        let file = root.join(self.baseline_file);
-        let text = fs::read_to_string(&file)
-            .map_err(|e| format!("{} is unreadable: {e}", file.display()))?;
-        let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
         let mut applied = Vec::new();
+        let mut cuts = Vec::new();
 
-        // The total as it will stand once every rewrite below has been
-        // applied, accumulated as they are decided rather than re-read
-        // afterwards: the rewritten text is not parsed again, so this is the
-        // only place the new sum exists.
+        // The total as it will stand once every cut below has been applied.
         // Seeded with what the guard measured outside the baseline, so the
         // number written here is the same total `budget_verdict` compares.
         let mut tightened_total = unrecorded;
-        // What each entry will say once written, raises included.
-        let mut numbers = Vec::with_capacity(recorded.entries.len());
 
         for entry in &recorded.entries {
             // An entry with no measured file keeps its ceiling and still
@@ -580,14 +599,13 @@ impl Policy {
                 .find(|(path, _)| path == &entry.path)
                 .map(|(_, actual)| *actual)
                 .filter(|actual| entry.ceiling.saturating_sub(*actual) > self.slack);
-            let number = lowered.unwrap_or(entry.ceiling);
             if budgeted(&entry.path) {
-                tightened_total += number;
+                tightened_total += lowered.unwrap_or(entry.ceiling);
             }
             if let Some(actual) = lowered {
                 applied.push(format!("  {}: {} -> {actual}", entry.path, entry.ceiling));
+                cuts.push(format!("{} -{}", entry.path, entry.ceiling - actual));
             }
-            numbers.push(number);
         }
 
         // The budget follows the ceilings down, and **only** down. Letting
@@ -599,96 +617,70 @@ impl Policy {
         // And only once the gap is wide enough to *be* a finding — the same
         // test `budget_verdict` applies. Lowering on any gap at all would
         // revoke headroom somebody deliberately signed for.
-        let budget_number = recorded.budget.as_ref().map(|budget| {
-            if budget.allowed.saturating_sub(tightened_total) > self.budget_slack {
-                applied.push(format!(
-                    "  {BUDGET_DIRECTIVE}: {} -> {tightened_total}",
-                    budget.allowed
-                ));
-                tightened_total
-            } else {
+        if let Some(budget) = &recorded.budget
+            && budget.allowed.saturating_sub(tightened_total) > self.budget_slack
+        {
+            applied.push(format!(
+                "  {BUDGET_DIRECTIVE}: {} -> {tightened_total}",
                 budget.allowed
-            }
-        });
+            ));
+            cuts.push(format!(
+                "{BUDGET_DIRECTIVE} -{}",
+                budget.allowed - tightened_total
+            ));
+        }
 
-        // Nothing lowered leaves every file alone, raises included: folding
-        // on every run would put the baseline back in each branch's diff,
-        // which is the conflict the raise files exist to remove.
-        if applied.is_empty() {
+        if cuts.is_empty() {
             return Ok(applied);
         }
-
-        // Every line whose number is not the one decided above is rewritten.
-        // Without raises that is exactly the lowered entries; with them it is
-        // also every entry a raise moved, now folded into the baseline.
-        let mut appended = Vec::new();
-        for (entry, number) in recorded.entries.iter().zip(&numbers) {
-            match entry.line {
-                Some(at) if recorded_number(&lines[at]) != Some(*number) => {
-                    lines[at] = rewrite(&lines[at], &entry.path, *number);
-                }
-                Some(_) => {}
-                None => appended.push(format!("{} {number}", entry.path)),
-            }
+        let dir = root.join(self.raises_dir());
+        fs::create_dir_all(&dir).map_err(|e| format!("{} is unwritable: {e}", dir.display()))?;
+        let file = dir.join(format!("{}.txt", branch_slug(root)));
+        let mut text = fs::read_to_string(&file).unwrap_or_default();
+        text.push_str("# Written by `cargo run -p quantick-guards -- --tighten`: these shrank.\n");
+        for cut in &cuts {
+            text.push_str(cut);
+            text.push('\n');
         }
-        if let (Some(budget), Some(number)) = (&recorded.budget, budget_number)
-            && recorded_number(&lines[budget.line]) != Some(number)
-        {
-            lines[budget.line] = rewrite(&lines[budget.line], BUDGET_DIRECTIVE, number);
-        }
-        lines.extend(appended);
-
-        // A raise file's comment is the signed reason for its number, so the
-        // fold carries it across rather than leaving it to `git log`.
-        for relative in &recorded.raise_files {
-            let path = root.join(relative);
-            let text =
-                fs::read_to_string(&path).map_err(|e| format!("{relative} is unreadable: {e}"))?;
-            lines.push(format!("# Folded from {relative}:"));
-            for raw in text.lines().filter(|raw| !raw.trim().is_empty()) {
-                if raw.trim_start().starts_with('#') {
-                    lines.push(raw.to_owned());
-                } else {
-                    lines.push(format!("# was: {}", raw.trim()));
-                }
-            }
-            applied.push(format!("  folded {relative}"));
-        }
-
-        let mut out = lines.join("\n");
-        out.push('\n');
-        fs::write(&file, out).map_err(|e| format!("{} is unwritable: {e}", file.display()))?;
-        for relative in &recorded.raise_files {
-            fs::remove_file(root.join(relative))
-                .map_err(|e| format!("{relative} could not be removed after the fold: {e}"))?;
-        }
-        if !recorded.raise_files.is_empty() {
-            // Only an empty directory goes; anything else in it stays.
-            let _ = fs::remove_dir(root.join(self.raises_dir()));
-        }
+        fs::write(&file, text).map_err(|e| format!("{} is unwritable: {e}", file.display()))?;
         Ok(applied)
     }
-}
 
-/// The number a baseline line records, if it records one.
-fn recorded_number(line: &str) -> Option<usize> {
-    let content = line.split('#').next().unwrap_or("").trim();
-    content.rsplit_once(char::is_whitespace)?.1.parse().ok()
-}
-
-/// Rewrite one baseline line to a new number, carrying any trailing comment
-/// across.
-///
-/// The file header advertises `#` and the parser honours it anywhere on the
-/// line, so an author may well have written the justification for a ceiling
-/// *beside* it — and that justification is the whole doctrine of these
-/// guards. A rewrite that dropped it would delete the signed decision while
-/// reporting only that a number went down.
-fn rewrite(line: &str, label: &str, number: usize) -> String {
-    match line.find('#').map(|at| &line[at..]) {
-        Some(comment) => format!("{label} {number}  {comment}"),
-        None => format!("{label} {number}"),
+    /// Where a budget finding's number comes from: the baseline's line, and
+    /// every raise file that moved it, so an author who opens that line and
+    /// reads a different number knows where the rest is.
+    fn budget_source(&self, recorded: &Baseline, budget: &Budget) -> String {
+        let at = format!("{}:{}", self.baseline_file, budget.line + 1);
+        match recorded.raise_files.len() {
+            0 => at,
+            raised => format!("{at} plus {raised} raise file(s) in {}/", self.raises_dir()),
+        }
     }
+}
+
+/// The checked-out branch as a raise file's name, `/` spelled `-`, read from
+/// the worktree's own `HEAD`; `tighten` when there is no branch to name.
+///
+/// Read rather than asked of `git`, because this crate has no dependencies
+/// and runs no processes. A worktree's `.git` is a file pointing at its git
+/// directory; the main checkout's is the directory itself.
+fn branch_slug(root: &Path) -> String {
+    let dot_git = root.join(".git");
+    let git_dir = match fs::read_to_string(&dot_git) {
+        Ok(pointer) => pointer
+            .trim()
+            .strip_prefix("gitdir:")
+            .map(|dir| Path::new(dir.trim()).to_path_buf()),
+        Err(_) => Some(dot_git),
+    };
+    git_dir
+        .and_then(|dir| fs::read_to_string(dir.join("HEAD")).ok())
+        .and_then(|head| {
+            head.trim()
+                .strip_prefix("ref: refs/heads/")
+                .map(|branch| branch.replace('/', "-"))
+        })
+        .unwrap_or_else(|| "tighten".to_owned())
 }
 
 #[cfg(test)]
@@ -850,21 +842,41 @@ mod tests {
         );
     }
 
+    /// A ceiling and the budget as the guard reads them, raises applied.
+    fn effective(dir: &crate::scratch_dir::ScratchDir, path: &str) -> (Option<usize>, usize) {
+        let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
+        let ceiling = recorded.entry(path).map(|entry| entry.ceiling);
+        (ceiling, recorded.budget.expect("budget").allowed)
+    }
+
     #[test]
-    fn tighten_lowers_an_entry_and_keeps_the_comment_beside_it() {
-        let dir = workspace("!budget 100\nsrc/a.md 90  # signed for the parser\n");
+    fn tighten_writes_a_cut_and_leaves_the_baseline_alone() {
+        let before = "!budget 100\nsrc/a.md 90  # signed for the parser\n";
+        let dir = workspace(before);
         let applied = POLICY
             .tighten(dir.path(), &[("src/a.md".into(), 20)], 0)
             .expect("tighten runs");
         let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
-        assert!(
-            text.contains("src/a.md 20  # signed for the parser"),
-            "{text}"
-        );
+        assert_eq!(text, before, "the baseline is never rewritten");
+        let cut = fs::read_to_string(dir.path().join("baseline.d/tighten.txt")).expect("cut");
+        assert!(cut.contains("src/a.md -70\n!budget -80\n"), "{cut}");
+        assert_eq!(effective(&dir, "src/a.md"), (Some(20), 20));
         assert!(
             applied.iter().any(|line| line.contains("90 -> 20")),
             "{applied:?}"
         );
+    }
+
+    #[test]
+    fn a_second_tighten_appends_to_the_branch_file() {
+        let dir = workspace("!budget 100\nsrc/a.md 90\n");
+        POLICY
+            .tighten(dir.path(), &[("src/a.md".into(), 60)], 0)
+            .expect("first tighten runs");
+        POLICY
+            .tighten(dir.path(), &[("src/a.md".into(), 30)], 0)
+            .expect("second tighten runs");
+        assert_eq!(effective(&dir, "src/a.md"), (Some(30), 30));
     }
 
     #[test]
@@ -873,8 +885,7 @@ mod tests {
         POLICY
             .tighten(dir.path(), &[("src/a.md".into(), 900)], 0)
             .expect("tighten runs");
-        let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
-        assert!(text.contains("src/a.md 40"), "{text}");
+        assert_eq!(effective(&dir, "src/a.md").0, Some(40));
     }
 
     #[test]
@@ -883,8 +894,7 @@ mod tests {
         POLICY
             .tighten(dir.path(), &[("src/a.md".into(), 10)], 0)
             .expect("tighten runs");
-        let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
-        assert!(text.contains("!budget 10"), "{text}");
+        assert_eq!(effective(&dir, "src/a.md").1, 10);
     }
 
     #[test]
@@ -893,9 +903,8 @@ mod tests {
         POLICY
             .tighten(dir.path(), &[("src/a.md".into(), 60)], 0)
             .expect("tighten runs");
-        let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
         // 60 is 40 under the budget, inside BUDGET_SLACK of 50.
-        assert!(text.contains("!budget 100"), "{text}");
+        assert_eq!(effective(&dir, "src/a.md"), (Some(60), 100));
     }
 
     #[test]
@@ -904,16 +913,17 @@ mod tests {
         POLICY
             .tighten(dir.path(), &[("src/a.md".into(), 10)], 0)
             .expect("tighten runs");
-        let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
         // 10 measured plus the 10 the vanished entry still holds.
-        assert!(text.contains("!budget 20"), "{text}");
+        assert_eq!(effective(&dir, "src/gone.md"), (Some(10), 20));
     }
 
     /// One raise file beside the scratch baseline.
     fn raise(dir: &crate::scratch_dir::ScratchDir, name: &str, text: &str) {
         let raises = dir.path().join("baseline.d");
-        fs::create_dir_all(&raises).expect("raises directory is creatable");
-        fs::write(raises.join(name), text).expect("raise file is writable");
+        let file = raises.join(name);
+        let parent = file.parent().expect("a raise file has a directory");
+        fs::create_dir_all(parent).expect("raises directory is creatable");
+        fs::write(file, text).expect("raise file is writable");
     }
 
     #[test]
@@ -975,20 +985,18 @@ mod tests {
     }
 
     #[test]
-    fn tighten_with_nothing_to_lower_leaves_the_raise_files_alone() {
+    fn tighten_with_nothing_to_lower_writes_nothing() {
         let dir = workspace("!budget 100\nsrc/a.md 90\n");
         raise(&dir, "x.txt", "src/a.md +10\n!budget +10\n");
         let applied = POLICY
             .tighten(dir.path(), &[("src/a.md".into(), 100)], 0)
             .expect("tighten runs");
         assert!(applied.is_empty(), "{applied:?}");
-        assert!(dir.path().join("baseline.d/x.txt").is_file());
-        let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
-        assert_eq!(text, "!budget 100\nsrc/a.md 90\n");
+        assert!(!dir.path().join("baseline.d/tighten.txt").exists());
     }
 
     #[test]
-    fn tighten_that_lowers_folds_every_raise_and_keeps_its_reason() {
+    fn tighten_cuts_a_raised_entry_from_its_raised_ceiling() {
         let dir = workspace("!budget 200\nsrc/a.md 90\nsrc/b.md 100\n");
         raise(&dir, "x.txt", "# signed for x\nsrc/b.md +10\n!budget +10\n");
         raise(&dir, "y.txt", "src/c.md +5  # new file\n!budget +5\n");
@@ -1003,20 +1011,55 @@ mod tests {
                 0,
             )
             .expect("tighten runs");
-        let text = fs::read_to_string(dir.path().join("baseline.txt")).expect("readable");
+        assert!(dir.path().join("baseline.d/x.txt").is_file());
+        let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
         // 20 + 110 + 5 = 135, 80 under the raised budget of 215.
-        assert!(text.contains("!budget 135\n"), "{text}");
-        assert!(text.contains("src/a.md 20\n"), "{text}");
-        assert!(text.contains("src/b.md 110\n"), "{text}");
-        assert!(text.contains("src/c.md 5\n"), "{text}");
+        assert_eq!(recorded.recorded(), 135);
+        assert_eq!(recorded.budget.expect("budget").allowed, 135);
+    }
+
+    #[test]
+    fn a_cut_to_zero_drops_the_entry() {
+        let dir = workspace("!budget 100\nsrc/a.md 90\nsrc/gone.md 10\n");
+        raise(&dir, "x.txt", "src/gone.md -10\n!budget -10\n");
+        let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
+        assert!(recorded.entry("src/gone.md").is_none());
         assert!(
-            text.contains("# Folded from baseline.d/x.txt:\n# signed for x\n"),
-            "{text}"
+            POLICY
+                .against(&recorded, &[], 0, &|path| path == "src/a.md")
+                .is_empty()
         );
-        assert!(text.contains("# was: src/c.md +5  # new file"), "{text}");
-        assert!(!dir.path().join("baseline.d").exists());
-        let reread = POLICY.baseline(dir.path()).expect("folded baseline parses");
-        assert_eq!(reread.recorded(), 135);
+    }
+
+    #[test]
+    fn a_nested_or_misnamed_raise_file_is_refused_rather_than_skipped() {
+        let dir = workspace("!budget 100\nsrc/a.md 90\n");
+        raise(&dir, "fix/branch.txt", "src/a.md +1\n");
+        let problem = POLICY.baseline(dir.path()).expect_err("nested");
+        assert!(
+            problem.contains("baseline.d/fix: a raise file is a flat"),
+            "{problem}"
+        );
+
+        let dir = workspace("!budget 100\nsrc/a.md 90\n");
+        raise(&dir, "feat-x.md", "src/a.md +1\n");
+        let problem = POLICY.baseline(dir.path()).expect_err("not .txt");
+        assert!(problem.contains("baseline.d/feat-x.md"), "{problem}");
+    }
+
+    #[test]
+    fn a_budget_finding_names_the_raise_files_behind_its_number() {
+        let dir = workspace("!budget 100\nsrc/a.md 90\n");
+        raise(&dir, "x.txt", "src/a.md +30\n!budget +5\n");
+        let recorded = POLICY.baseline(dir.path()).expect("baseline parses");
+        let finding = POLICY.budget_verdict(&recorded, 0).expect("over budget");
+        assert!(
+            finding
+                .line
+                .contains("baseline.txt:1 plus 1 raise file(s) in baseline.d/"),
+            "{}",
+            finding.line
+        );
     }
 
     /// A walk that missed a path has no total. The sum of what it did see is

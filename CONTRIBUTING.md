@@ -61,7 +61,8 @@ and a link to the follow-up that removes it.
 A ratchet raise is a new file in the baseline's `.d/` directory named for the
 branch (`crates/guards/app-lines-baseline.d/<branch>.txt` holding
 `crates/app +N`, `!budget +N` and a comment saying why), never an edit to the
-baseline, so two open branches cannot conflict on it. Update a branch with
+baseline, so two open branches cannot conflict on it; `--tighten` writes its
+cuts there the same way. Update a branch with
 `sh tools/merge_main.sh`: it regenerates the hook registry instead of leaving
 it for a hand merge.
 
