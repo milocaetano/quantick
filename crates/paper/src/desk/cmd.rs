@@ -208,7 +208,7 @@ impl Default for CmdTradingSettings {
         Self {
             enabled: true,
             buy: CmdModifier::Shift,
-            sell: CmdModifier::Ctrl,
+            sell: CmdModifier::Alt,
             // Auto is right at almost every price, and it is what shipped;
             // the choice exists for the trader who wants to be sure.
             kind: CmdEntryKind::Auto,

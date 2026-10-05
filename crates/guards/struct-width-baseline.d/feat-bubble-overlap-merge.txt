@@ -1,0 +1,11 @@
+# PR #596 (`feat/bubble-overlap-merge`): the branch's raises, moved here
+# from the baseline when main took raises as one file per branch (#609).
+# The comments below are the branch's own, as it wrote them in the
+# baseline.
+# Raised by one for `volume_dots`, the volume-dot style (switch and size
+# scale in one struct): a projection behaviour that sits beside
+# `bubble_candle_summary`, and is carried by the same presets and panel.
+# Merged with main at b16d700f: main's baseline records 330 and this
+# tree measures 331, the one field above.
+orderflow::HeatmapConfig +1
+!budget +1

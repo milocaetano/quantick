@@ -1,18 +1,11 @@
 //! Background thread that owns the [`BookEngine`].
 //!
-//! The UI thread never touches book state directly: it sends commands through
-//! a channel bounded by [`BOOK_COMMAND_QUEUE`] and reads the latest
-//! [`BookPublished`] snapshot from a shared mailbox. A full queue parks
-//! commands on the UI side, in order, and folds only superseded layouts
-//! ([`fold_parked`]); nothing blocks and nothing is dropped. Projection requests are coalesced latest-wins — when the
-//! worker falls behind (a dense book can take tens of milliseconds per
-//! projection), intermediate layouts are dropped and only the newest one is
-//! built. The UI keeps drawing the last published frame, so a slow projection
-//! can never block a frame.
-//!
-//! The worker blocks on `recv` while idle and exits when the last sender is
-//! dropped. The UI repaints on its own ~60 fps cadence, so no egui handle is
-//! needed here.
+//! The UI thread never touches book state: it sends commands through a channel
+//! bounded by [`BOOK_COMMAND_QUEUE`] and reads the latest [`BookPublished`] from
+//! a shared mailbox. A full queue parks commands UI-side, in order, folding only
+//! superseded layouts ([`fold_parked`]); nothing blocks or is dropped. Projection
+//! requests coalesce latest-wins, so a slow projection never blocks a frame.
+//! The worker blocks on `recv` while idle and exits with the last sender.
 
 use crate::live_envelope::BOOK_COMMAND_QUEUE;
 use crate::worker_progress::{
@@ -36,6 +29,13 @@ pub(crate) enum BookCommand {
         received_at_ms: i64,
     },
     Trade(Trade),
+    /// View-owned admission ordinal, independent of venue IDs/reconnections.
+    TapeTrade {
+        ordinal: u64,
+        trade: Trade,
+    },
+    /// A source/mode boundary; earlier requests cannot acknowledge this epoch.
+    TapeEpoch(u64),
     SetEnabled {
         enabled: bool,
         generation_floor: u64,
@@ -60,6 +60,8 @@ pub(crate) enum BookCommand {
     },
     ResetForSymbol(String),
     ResetSummaryCounters,
+    /// Hold the native tape at a past instant, or `None` for live.
+    TapeEnd(Option<i64>),
     Project(ProjectionRequest),
     /// Test barrier: acknowledged only after every earlier command in the
     /// queue has been applied and its effects published.
@@ -68,9 +70,30 @@ pub(crate) enum BookCommand {
 }
 
 /// UI-side handle: send commands, read the latest published snapshot.
+#[derive(Clone, Copy)]
+pub(crate) struct TapeFrameReceipt {
+    pub epoch: u64,
+    pub through_ordinal: u64,
+}
+
+#[derive(Clone)]
+pub(crate) struct BookPublication {
+    pub book: BookPublished,
+    pub tape_receipt: Option<TapeFrameReceipt>,
+}
+
+impl BookPublication {
+    fn initial() -> Self {
+        Self {
+            book: BookPublished::initial(),
+            tape_receipt: None,
+        }
+    }
+}
+
 pub(crate) struct BookWorker {
     commands: ObservedSender<BookCommand>,
-    published: Arc<Mutex<BookPublished>>,
+    published: Arc<Mutex<BookPublication>>,
 }
 
 impl BookWorker {
@@ -82,7 +105,7 @@ impl BookWorker {
 
     pub(crate) fn spawn_with_progress(symbol: &str, progress: WorkerProgress) -> Self {
         let (tx, rx) = sync_channel::<BookCommand>(BOOK_COMMAND_QUEUE);
-        let published = Arc::new(Mutex::new(BookPublished::initial()));
+        let published = Arc::new(Mutex::new(BookPublication::initial()));
         let shared = Arc::clone(&published);
         let engine_symbol = symbol.to_owned();
         let observed = progress.consumer();
@@ -120,7 +143,7 @@ impl BookWorker {
     /// Read every frame, so it is also the retry point for commands parked
     /// behind a full queue: one length read when nothing is parked.
     #[must_use]
-    pub(crate) fn published(&self) -> BookPublished {
+    pub(crate) fn publication(&self) -> BookPublication {
         self.commands.pump();
         self.published
             .lock()
@@ -128,18 +151,20 @@ impl BookWorker {
             .clone()
     }
 
-    /// Just the capture bucket from the published mailbox.
-    ///
-    /// The footprint's row width needs this every frame, including when every
-    /// order-flow layer is off and nothing else syncs. Cloning the whole
-    /// published state — a ladder and a projected frame — to read one
-    /// `Decimal` would be paying for the map in order to size a ladder.
+    #[cfg(test)]
+    pub(crate) fn published(&self) -> BookPublished {
+        self.publication().book
+    }
+
+    /// Just the capture bucket from the published mailbox: the footprint needs
+    /// it every frame, even with every layer off, without cloning the frame.
     pub(crate) fn published_base_grouping(&self) -> Decimal {
         // Read every frame even with every layer off, so it pumps too.
         self.commands.pump();
         self.published
             .lock()
             .expect("book published mailbox poisoned")
+            .book
             .base_price_grouping
     }
 
@@ -164,13 +189,10 @@ impl BookWorker {
     }
 }
 
-/// The superseding rule for commands parked behind a full queue: only a
-/// layout request folds, into a layout request parked right before it —
-/// the batch loop builds only the newest layout anyway. Prints and depth
-/// events keep their place and their order (parked prints *are* the kept
-/// batch the next frame retries); configuration changes keep theirs too,
-/// because applying one can prune retained history that the next one would
-/// not have.
+/// The superseding rule for commands parked behind a full queue: only a layout
+/// request folds, into one parked right before it (only the newest is built).
+/// Prints, depth and configuration keep their place and order: applying a
+/// configuration can prune history the next one would not have.
 pub(crate) fn fold_parked(older: &mut BookCommand, newer: BookCommand) -> Option<BookCommand> {
     match (&mut *older, newer) {
         (BookCommand::Project(request), BookCommand::Project(next)) => {
@@ -184,13 +206,16 @@ pub(crate) fn fold_parked(older: &mut BookCommand, newer: BookCommand) -> Option
 fn run(
     mut engine: BookEngine,
     rx: &Receiver<BookCommand>,
-    shared: &Arc<Mutex<BookPublished>>,
+    shared: &Arc<Mutex<BookPublication>>,
     progress: Arc<SharedProgress>,
 ) {
     let _lifecycle = progress.lifecycle(std::thread::panicking);
     // Kept across batches so the worker can re-project after data changes
     // without waiting for the UI to ask again.
     let mut last_request: Option<ProjectionRequest> = None;
+    let mut tape_epoch = 0;
+    let mut through_ordinal = 0;
+    let mut tape_receipt = None;
 
     while let Ok(first) = rx.recv() {
         let mut batch = vec![first];
@@ -209,6 +234,17 @@ fn run(
                     received_at_ms,
                 } => engine.handle_depth_event_at(event, received_at_ms),
                 BookCommand::Trade(trade) => engine.record_trade(&trade),
+                BookCommand::TapeTrade { ordinal, trade } => {
+                    engine.record_trade(&trade);
+                    through_ordinal = ordinal;
+                }
+                BookCommand::TapeEpoch(epoch) => {
+                    tape_epoch = epoch;
+                    through_ordinal = 0;
+                    tape_receipt = None;
+                    last_request = None;
+                    incoming_request = None;
+                }
                 BookCommand::SetEnabled {
                     enabled,
                     generation_floor,
@@ -230,9 +266,13 @@ fn run(
                 BookCommand::ResetForSymbol(symbol) => {
                     // A symbol change orphans any in-flight projection request.
                     last_request = None;
+                    incoming_request = None;
+                    tape_receipt = None;
+                    through_ordinal = 0;
                     engine.reset_for_symbol(symbol);
                 }
                 BookCommand::ResetSummaryCounters => engine.reset_summary_counters(),
+                BookCommand::TapeEnd(end_ms) => engine.set_tape_end(end_ms),
                 // Latest-wins: only the newest layout of this batch is built.
                 BookCommand::Project(request) => {
                     coalescing.projects += usize::from(incoming_request.is_some());
@@ -253,14 +293,21 @@ fn run(
         // this is a real rebuild or a no-op, so a chatty batch stays cheap.
         if let Some(request) = &last_request
             && engine.any_layer_enabled()
+            && engine.project_at(request, Instant::now()).is_some()
         {
-            engine.project_at(request, Instant::now());
+            tape_receipt = Some(TapeFrameReceipt {
+                epoch: tape_epoch,
+                through_ordinal,
+            });
         }
 
         coalescing.publishing();
         {
             let mut mailbox = shared.lock().expect("book published mailbox poisoned");
-            *mailbox = engine.published();
+            *mailbox = BookPublication {
+                book: engine.published(),
+                tape_receipt,
+            };
         }
         progress.finish(true);
         for ack in flushes {

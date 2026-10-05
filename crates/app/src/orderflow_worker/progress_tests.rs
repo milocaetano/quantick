@@ -16,7 +16,7 @@ impl BookWorker {
         progress: WorkerProgress,
     ) -> (Self, impl FnOnce() + Send) {
         let (commands, rx) = sync_channel(BOOK_COMMAND_QUEUE);
-        let published = Arc::new(Mutex::new(BookPublished::initial()));
+        let published = Arc::new(Mutex::new(BookPublication::initial()));
         let shared = Arc::clone(&published);
         let symbol = symbol.to_owned();
         let observed = progress.consumer();
@@ -38,7 +38,7 @@ fn delayed_producer_bookkeeping_does_not_block_real_flush_or_sample_recovery() {
     let progress = WorkerProgress::with_clock(clock.clone());
     let observer = progress.observer().clone();
     let (tx, rx) = std::sync::mpsc::sync_channel(TEST_QUEUE);
-    let shared = Arc::new(Mutex::new(BookPublished::initial()));
+    let shared = Arc::new(Mutex::new(BookPublication::initial()));
     let observed = progress.consumer();
     let tx = progress.bind(tx);
     let worker = std::thread::spawn(move || {
@@ -94,7 +94,9 @@ fn request(first_bar_index: usize) -> ProjectionRequest {
         lane: false,
         on_newest_bar: true,
         lane_reference_ms: None,
+        lane_now_ms: None,
         price_range: (98.0, 102.0),
+        dot_zoom: None,
     }
 }
 fn replay(worker: &BookWorker) -> Receiver<()> {

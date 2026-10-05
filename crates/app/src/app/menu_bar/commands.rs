@@ -29,6 +29,7 @@ pub(super) enum MenuCommand {
     OpenReplayBrowser,
     CloseReplay,
     ToggleDock,
+    ToggleLayer(crate::chart_layers::ChartLayer),
     /// Put the context charts away, or bring them back.
     ToggleContextCharts,
     ApplyLayoutPreset(&'static LayoutPreset),
@@ -87,6 +88,18 @@ pub(super) fn read_shortcuts(
     }
     if pressed(&DOCK_SHORTCUT) {
         commands.push(MenuCommand::ToggleDock);
+    }
+    if !ctx.wants_keyboard_input() {
+        for layer in [
+            crate::chart_layers::ChartLayer::Bubbles,
+            crate::chart_layers::ChartLayer::Footprint,
+        ] {
+            if let Some(shortcut) = crate::chart_layers::shortcuts::binding(layer)
+                && pressed(&shortcut)
+            {
+                commands.push(MenuCommand::ToggleLayer(layer));
+            }
+        }
     }
     if context_column && pressed(&COLLAPSE_CONTEXT_SHORTCUT) {
         commands.push(MenuCommand::ToggleContextCharts);

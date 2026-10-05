@@ -12,7 +12,9 @@ fn request(first_bar_index: usize) -> ProjectionRequest {
         lane: false,
         on_newest_bar: true,
         lane_reference_ms: None,
+        lane_now_ms: None,
         price_range: (90.0, 110.0),
+        dot_zoom: None,
     }
 }
 

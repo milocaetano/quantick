@@ -284,6 +284,7 @@ fn deal_oracle(
             &mut *builder,
             &mut footprints,
             footprint,
+            false,
             tape,
             index,
             &mut bars,

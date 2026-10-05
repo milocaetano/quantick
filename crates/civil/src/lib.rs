@@ -295,6 +295,21 @@ pub fn fmt_offset_minute(timestamp_ms: i64, tz: TzOffset) -> String {
     format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
 }
 
+/// Millisecond clock in the display timezone, optionally qualified by its date.
+pub fn fmt_offset_millisecond(timestamp_ms: i64, tz: TzOffset, date: bool) -> String {
+    let local = timestamp_ms.saturating_add(tz.offset_ms());
+    let (year, month, day, hour, minute, second) = civil_utc(local);
+    let clock = format!(
+        "{hour:02}:{minute:02}:{second:02}.{:03}",
+        local.rem_euclid(1000)
+    );
+    if date {
+        format!("{year:04}-{month:02}-{day:02} {clock}")
+    } else {
+        clock
+    }
+}
+
 /// `Jan`…`Dec`; anything outside 1..=12 is a bug upstream, and `???` says
 /// so rather than panicking inside a paint.
 fn month_abbr(month: i64) -> &'static str {
@@ -406,6 +421,23 @@ pub fn parse_iso_date(text: &str) -> Option<CivilDate> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn display_stamps_preserve_milliseconds_and_dates() {
+        let tz = TzOffset::new(-180);
+        assert_eq!(
+            fmt_offset_millisecond(10_799_999, tz, true),
+            "1969-12-31 23:59:59.999"
+        );
+        assert_eq!(
+            fmt_offset_millisecond(10_800_001, tz, true),
+            "1970-01-01 00:00:00.001"
+        );
+        assert_eq!(
+            fmt_offset_millisecond(10_800_001, tz, false),
+            "00:00:00.001"
+        );
+    }
 
     #[test]
     fn label_formats_sign_hours_and_minutes() {

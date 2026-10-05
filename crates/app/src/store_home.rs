@@ -85,6 +85,14 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
         local_keys: &[],
     },
     CockpitStore {
+        key: "bubble_assets",
+        file: quantick_stores::bubble_assets::ASSETS_FILE,
+        validate: quantick_stores::bubble_assets::validate,
+        path: crate::bubble_presets::assets_path,
+        in_bundle: true,
+        local_keys: &[],
+    },
+    CockpitStore {
         key: "chart_layers",
         file: crate::chart_layers::LAYERS_FILE,
         validate: crate::chart_layers::validate,
@@ -191,6 +199,10 @@ pub(crate) fn resolve(file: &str) -> PathBuf {
 /// trader's cockpit. Scenario harness only.
 #[cfg(any(feature = "scenario-harness", test))]
 const CAPTURE_OVERRIDES: &[(&str, &str)] = &[
+    (
+        quantick_stores::bubble_assets::ASSETS_FILE,
+        "QUANTICK_BUBBLE_ASSETS",
+    ),
     (crate::chart_layers::LAYERS_FILE, "QUANTICK_CHART_LAYERS"),
     (
         crate::drawings::presets::PRESETS_FILE,
@@ -224,6 +236,7 @@ const CAPTURE_OVERRIDES: &[(&str, &str)] = &[
 
 #[cfg(any(feature = "scenario-harness", test))]
 crate::hooks::declare_hooks![
+    "QUANTICK_BUBBLE_ASSETS",
     "QUANTICK_CHART_LAYERS",
     "QUANTICK_DRAWING_PRESETS",
     "QUANTICK_FOOTPRINT_SETTINGS",

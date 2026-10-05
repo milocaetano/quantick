@@ -1,5 +1,5 @@
-//! The tape switch: the chip in the canvas's top-right corner that takes the
-//! live lane off the canvas and puts it back.
+//! The tape switch: the top-right chip that takes the live lane off the canvas
+//! and puts it back. Tape-only panes keep it in the outer header.
 //!
 //! The chip's geometry, its click in the input pass and its paint in the draw
 //! pass live together so the pixel a press lands on is the pixel the chip is
@@ -8,61 +8,37 @@
 //! the click. Which layer the click flips, and what a hovered chip does to the
 //! crosshair, is the pane's to decide; the switch never reaches into it.
 
+use crate::pane::constants::{
+    TAPE_SWITCH_DOT_RADIUS_PX, TAPE_SWITCH_DOT_X_PX, TAPE_SWITCH_FILL_ALPHA, TAPE_SWITCH_FONT_PX,
+    TAPE_SWITCH_HOVER_FILL_ALPHA, TAPE_SWITCH_HOVER_STROKE_ALPHA, TAPE_SWITCH_INSET,
+    TAPE_SWITCH_LABEL_X_PX, TAPE_SWITCH_ROUNDING_PX, TAPE_SWITCH_SIZE, TAPE_SWITCH_STROKE_PX,
+};
 use eframe::egui;
 
 use crate::theme;
 use quantick_layers::ChartLayer;
 
-/// The tape switch's chip, in logical pixels.
-///
-/// A fixed size rather than one measured off its own text: the hit rect is
-/// registered in the input pass and painted in the pass after it, and two
-/// measurements of one chip are two chances for the button to be somewhere the
-/// click is not.
-const TAPE_SWITCH_SIZE: egui::Vec2 = egui::vec2(54.0, 18.0);
-/// Inset of that chip from the canvas's top-right corner.
-const TAPE_SWITCH_INSET: egui::Vec2 = egui::vec2(8.0, 4.0);
-/// Gap between the switch and whatever sits to its left.
-const TAPE_SWITCH_GAP_PX: f32 = 6.0;
-/// Room the switch takes off the right edge, for anything else that wants the
-/// same corner — the book status badge is the one thing that does.
-pub(super) const TAPE_SWITCH_RESERVED_PX: f32 =
-    TAPE_SWITCH_SIZE.x + TAPE_SWITCH_INSET.x + TAPE_SWITCH_GAP_PX;
-/// Corner radius of the chip, matching the status badge it sits beside.
-const TAPE_SWITCH_ROUNDING_PX: f32 = 3.0;
-/// Chip background opacity over the canvas, resting and hovered. The resting
-/// value is the status badge's, so the two read as one family of chrome.
-const TAPE_SWITCH_FILL_ALPHA: u8 = 165;
-const TAPE_SWITCH_HOVER_FILL_ALPHA: u8 = 210;
-/// Opacity of the hover outline, relative to the chip's own accent.
-const TAPE_SWITCH_HOVER_STROKE_ALPHA: f32 = 0.7;
-/// Width of every line the chip draws.
-const TAPE_SWITCH_STROKE_PX: f32 = 1.0;
-/// State dot: how far its centre sits from the chip's left edge, and its
-/// radius. Filled means the tape is on the canvas, hollow means it is not.
-const TAPE_SWITCH_DOT_X_PX: f32 = 9.0;
-const TAPE_SWITCH_DOT_RADIUS_PX: f32 = 3.0;
-/// Where the label starts, measured from the same edge as the dot.
-const TAPE_SWITCH_LABEL_X_PX: f32 = 17.0;
-/// Label size, matching the status badge's.
-const TAPE_SWITCH_FONT_PX: f32 = 11.0;
-/// The label itself. Short by necessity: the chip sits over market data.
+/// The label itself. Short enough for both the canvas and compact header.
 const TAPE_SWITCH_LABEL: &str = "tape";
 
 /// Where the tape switch sits on a canvas this size.
 ///
-/// The canvas's top-right corner: the tape's own corner, so the switch that
-/// puts it there and takes it away is on it. One function, read by the input
-/// pass and the paint pass alike.
+/// Tape-only panes use the outer header, leaving every plot pixel for prints.
+/// Input, paint and modifier arbitration share this rectangle.
 #[must_use]
-pub(crate) fn tape_switch_rect(chart_rect: egui::Rect) -> egui::Rect {
-    egui::Rect::from_min_size(
+pub(crate) fn tape_switch_rect(chart_rect: egui::Rect, tape_only: bool) -> egui::Rect {
+    let mut rect = egui::Rect::from_min_size(
         egui::pos2(
             chart_rect.right() - TAPE_SWITCH_INSET.x - TAPE_SWITCH_SIZE.x,
             chart_rect.top() + TAPE_SWITCH_INSET.y,
         ),
         TAPE_SWITCH_SIZE,
-    )
+    );
+    if tape_only {
+        rect.set_top(chart_rect.top() - crate::plot_area::PLOT_PADDING_PX + 1.0);
+        rect.set_bottom(chart_rect.top() - 1.0);
+    }
+    rect
 }
 
 /// The chip's state between the input pass and the paint pass. See the
@@ -101,8 +77,13 @@ impl TapeSwitch {
         chart_rect: egui::Rect,
         id: egui::Id,
         on: bool,
+        tape_only: bool,
     ) -> bool {
-        let response = ui.interact(tape_switch_rect(chart_rect), id, egui::Sense::click());
+        let response = ui.interact(
+            tape_switch_rect(chart_rect, tape_only),
+            id,
+            egui::Sense::click(),
+        );
         self.hovered = response.hovered();
         if response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -132,8 +113,9 @@ pub(super) fn paint_switch(
     chart_rect: egui::Rect,
     on: bool,
     hovered: bool,
+    tape_only: bool,
 ) {
-    let rect = tape_switch_rect(chart_rect);
+    let rect = tape_switch_rect(chart_rect, tape_only);
     let accent = if on { theme::ACCENT } else { theme::TEXT_MUTED };
     let rounding = egui::Rounding::same(TAPE_SWITCH_ROUNDING_PX);
     painter.rect_filled(

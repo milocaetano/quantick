@@ -3,7 +3,12 @@
 use rust_decimal::Decimal;
 
 mod bubbles;
+pub mod crown;
+pub mod dressing;
+pub mod labels;
 mod lane;
+pub mod legend;
+pub mod theme;
 
 pub use bubbles::{
     BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, DEFAULT_BUBBLE_MAX_RADIUS,
@@ -11,15 +16,74 @@ pub use bubbles::{
     DEFAULT_FRONT_LENGTH_SCALE, DEFAULT_LABEL_MIN_RADIUS, DEFAULT_LABEL_MIN_RADIUS_SHARE,
     DEFAULT_READABLE_MIN_RADIUS, DEFAULT_SPHERE_HIGHLIGHT, DEFAULT_SPHERE_SHADING, GOLDEN_ANGLE,
     INV_PHI, INV_PHI_2, INV_PHI_3, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS,
-    MAX_READABLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS, PHI,
+    MAX_READABLE_MIN_RADIUS, MIN_BUBBLE_MAX_RADIUS, PHI, bubble_halo_padding,
+    bubble_impact_ring_padding, bubble_radius, side_offset_y,
 };
 pub use lane::{
-    DEFAULT_LIVE_LANE_RADIUS_SCALE, DEFAULT_LIVE_LANE_SHARE, DEFAULT_LIVE_LANE_ZOOM,
-    LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle, MAX_LIVE_LANE_RADIUS_SCALE,
-    MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_LIVE_LANE_RADIUS_SCALE,
-    MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WIDTH_PX, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM,
-    format_window_ms, lane_lag_label, lane_window_label, same_lane_window,
+    CANDLE_DOT_RADIUS_SHARE, DEFAULT_LIVE_LANE_RADIUS_SCALE, DEFAULT_LIVE_LANE_SHARE,
+    DEFAULT_LIVE_LANE_ZOOM, DOT_TAPE_WINDOW_MS, LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle,
+    MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM,
+    MIN_LIVE_LANE_RADIUS_SCALE, MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WIDTH_PX,
+    MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, format_window_ms, lane_lag_label, lane_time_ticks,
+    lane_window_label, same_lane_window,
 };
+
+/// Contracts a volume dot holds at the largest radius, by default: a dot
+/// sums many prints, so it is drawn on a scale of its own, not on the
+/// prints' `size_reference_quantity`.
+/// 20 000 is tuned on the WINV26 replay with 2,000-tick bars, where a dot
+/// holds from tens to tens of thousands of contracts; a lighter market wants
+/// a smaller value, set per preset.
+pub const DEFAULT_VOLUME_DOT_FULL_QUANTITY: f64 = 20_000.0;
+
+/// See [`sane_volume_dot_full_quantity`].
+const MIN_VOLUME_DOT_FULL_QUANTITY: f64 = 1.0;
+
+/// See [`sane_volume_dot_full_quantity`].
+const MAX_VOLUME_DOT_FULL_QUANTITY: f64 = 10_000_000.0;
+
+/// Volume dots: whether bubbles are drawn as dots, and how many contracts a
+/// dot holds at the largest radius.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VolumeDotStyle {
+    /// Bubbles are drawn as volume dots. The layer `bubble_overlap_merge`,
+    /// the preset key `overlap_merge`.
+    pub enabled: bool,
+    /// Contracts a dot holds at the largest radius; area is proportional to
+    /// quantity below it, on both panes. The preset key
+    /// `volume_dot_full_quantity`.
+    pub full_quantity: f64,
+    /// Each pane sizes its dots against its own biggest dot on screen
+    /// instead of `full_quantity`, so the biggest is always full size and the
+    /// rest differ. The preset key `volume_dot_auto_full`.
+    pub auto_full: bool,
+    /// Ignore the first recorded 100 ms burst per UTC date in the optional
+    /// tape's automatic size reference. Executions remain visible and factual;
+    /// an oversized opening-containing dot is capped at the full radius.
+    pub ignore_opening_burst_in_scale: bool,
+}
+
+impl Default for VolumeDotStyle {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            full_quantity: DEFAULT_VOLUME_DOT_FULL_QUANTITY,
+            auto_full: true,
+            ignore_opening_burst_in_scale: false,
+        }
+    }
+}
+
+/// A dot's full-size quantity kept to `1..=10_000_000`, the default when it
+/// is not a number.
+#[must_use]
+pub fn sane_volume_dot_full_quantity(quantity: f64) -> f64 {
+    if quantity.is_finite() {
+        quantity.clamp(MIN_VOLUME_DOT_FULL_QUANTITY, MAX_VOLUME_DOT_FULL_QUANTITY)
+    } else {
+        DEFAULT_VOLUME_DOT_FULL_QUANTITY
+    }
+}
 
 /// Shortest history window accepted by the UI.
 pub const MIN_RETENTION_MS: i64 = 1_000;
@@ -243,6 +307,23 @@ pub struct HeatmapConfig {
     /// one behind the other. Prints in the live lane are never summarized —
     /// they have not finished happening.
     pub bubble_candle_summary: bool,
+    /// Whether bubbles are drawn as volume dots, Bookmap style, and how big a
+    /// dot is drawn.
+    ///
+    /// Off by default, and off draws exactly what it drew before. On, every
+    /// print lands in the dot keyed by its bar, a window of market time
+    /// anchored at exchange epoch 0 and a price level of whole native ticks
+    /// anchored at price zero; both sides share the dot, drawn as a pie. The
+    /// key is market data, so a window that has closed keeps its dot through
+    /// every roll, pan and refit; only a zoom across a ladder step picks
+    /// another window or level (`DOT_WINDOW_LADDER_MS`,
+    /// `DOT_LEVEL_LADDER_TICKS`). A dot is full size at
+    /// [`VolumeDotStyle::full_quantity`] contracts, one scale for every dot,
+    /// draws on the candles' radius range on both panes, sits at
+    /// its weighted price rounded to the tick and may overlap, the biggest on
+    /// top. The dust merge, the regional fold, the closed-bar summary and the
+    /// mark budget do not run; the [`BubbleStyle::min_quantity`] floor does.
+    pub volume_dots: VolumeDotStyle,
     /// Everything else the aggression-bubble panel owns: geometry (including
     /// the alpha and largest radius this used to carry as two flat fields),
     /// colour, consumption marks and labels.
@@ -338,6 +419,7 @@ impl Default for HeatmapConfig {
             bubble_region_rows: 1,
             bubble_region_ms: DEFAULT_BUBBLE_REGION_MS,
             bubble_candle_summary: false,
+            volume_dots: VolumeDotStyle::default(),
             bubbles: BubbleStyle::default(),
             live_lane: LiveLaneStyle::default(),
             show_depth: true,
@@ -364,6 +446,47 @@ impl Default for HeatmapConfig {
 }
 
 impl HeatmapConfig {
+    /// How the tape's window is decided: the lane's own setting. With volume
+    /// dots on, automatic no longer follows the bars, so the tape never
+    /// rescales when a bar closes: it is [`DOT_TAPE_WINDOW_MS`] divided by
+    /// the lane's zoom, which the time-axis gesture still edits. A pinned
+    /// window is kept as it is. The one place the window is resolved.
+    #[must_use]
+    pub fn lane_window(&self) -> LaneWindow {
+        match self.live_lane.window {
+            LaneWindow::Auto { zoom } if self.volume_dots.enabled => {
+                let mut window = LaneWindow::Fixed {
+                    ms: DOT_TAPE_WINDOW_MS,
+                };
+                window.zoom_by(zoom);
+                window
+            }
+            window => window,
+        }
+    }
+
+    /// Zoom the tape's time window by `factor` (`> 1` shows less market
+    /// time). With volume dots on, an automatic window is first pinned at
+    /// what it resolves to, so a squeeze goes past the automatic zoom's floor
+    /// up to [`MAX_LIVE_LANE_WINDOW_MS`]; otherwise the gesture speaks the
+    /// window's own language ([`LaneWindow::zoom_by`]).
+    pub fn zoom_lane_window(&mut self, factor: f32) {
+        if !factor.is_finite() || factor <= 0.0 {
+            return;
+        }
+        if self.volume_dots.enabled {
+            self.live_lane.window = self.lane_window();
+        }
+        self.live_lane.window.zoom_by(factor);
+    }
+
+    /// The tape's window in exchange milliseconds, against the bars' typical
+    /// duration `reference_ms`. See [`Self::lane_window`].
+    #[must_use]
+    pub fn lane_window_ms(&self, reference_ms: i64) -> i64 {
+        self.lane_window().resolve_ms(reference_ms)
+    }
+
     /// Whether the depth map has both something recorded and permission to
     /// draw it. Everything the depth layer projects hangs off this.
     #[must_use]
@@ -414,6 +537,30 @@ impl HeatmapConfig {
     #[must_use]
     pub fn lane_aggressions_drawn(&self) -> bool {
         self.lane_enabled() && self.lane_aggressions_visible()
+    }
+
+    /// Whether the pane shows the tape alone ([`LiveLaneStyle::tape_only`]):
+    /// asked for, and there is a tape to show. Presentation only: the full
+    /// width, the hidden candles and their marks.
+    #[must_use]
+    pub fn tape_only(&self) -> bool {
+        self.lane_enabled() && self.live_lane.tape_only
+    }
+
+    /// Whether the tape on the canvas is the native tape: execution
+    /// coordinates, the market clock, the whole window and a price axis
+    /// fitted by its prints, beside the candles or alone. Every processing
+    /// site asks this, never [`tape_only`](Self::tape_only).
+    ///
+    /// Tape only always draws it. Beside the candles it is a tape of
+    /// execution-coordinate volume dots, so the switch
+    /// ([`LiveLaneStyle::native_tape`]) builds it only with volume dots on;
+    /// without them the pane keeps the ordinary lane.
+    #[must_use]
+    pub fn native_tape(&self) -> bool {
+        self.lane_enabled()
+            && (self.live_lane.tape_only
+                || (self.live_lane.native_tape && self.volume_dots.enabled))
     }
 
     /// Whether any pane still draws the depth map.
@@ -498,6 +645,8 @@ impl HeatmapConfig {
         self.bubble_region_rows = self.bubble_region_rows.clamp(1, MAX_BUBBLE_REGION_ROWS);
         self.bubble_region_ms = self.bubble_region_ms.clamp(0, MAX_BUBBLE_REGION_MS);
         self.bubbles.sanitize();
+        self.volume_dots.full_quantity =
+            sane_volume_dot_full_quantity(self.volume_dots.full_quantity);
         self.live_lane.sanitize();
         self.liquidity_correlation_ms = self
             .liquidity_correlation_ms
@@ -515,6 +664,35 @@ impl HeatmapConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Volume dots have a full-size quantity of their own, 20 000 contracts by
+    /// default, kept to a range a dot can be drawn against.
+    #[test]
+    fn volume_dots_have_their_own_bounded_scale() {
+        let config = HeatmapConfig::default();
+        assert!(!config.volume_dots.enabled);
+        assert_eq!(
+            config.volume_dots.full_quantity,
+            DEFAULT_VOLUME_DOT_FULL_QUANTITY
+        );
+        assert_eq!(DEFAULT_VOLUME_DOT_FULL_QUANTITY, 20_000.0);
+        for (asked, kept) in [
+            (0.0, 1.0),
+            (-5.0, 1.0),
+            (f64::NAN, DEFAULT_VOLUME_DOT_FULL_QUANTITY),
+            (f64::INFINITY, DEFAULT_VOLUME_DOT_FULL_QUANTITY),
+            (1e12, 10_000_000.0),
+            (250.0, 250.0),
+        ] {
+            let mut config = HeatmapConfig::default();
+            config.volume_dots.full_quantity = asked;
+            assert_eq!(
+                config.sanitized().volume_dots.full_quantity,
+                kept,
+                "{asked}"
+            );
+        }
+    }
 
     #[test]
     fn defaults_are_off_and_bounded() {
@@ -623,6 +801,8 @@ mod tests {
                 enabled: true,
                 show_depth: true,
                 show_aggressions: true,
+                native_tape: false,
+                tape_only: false,
             },
             liquidity_correlation_ms: i64::MIN,
             max_history_runs: 0,
@@ -757,6 +937,74 @@ mod tests {
             config.lane_depth_drawn() && config.lane_aggressions_drawn(),
             "so switching the tape back on returns the tape that was switched off"
         );
+    }
+
+    /// Processing and presentation are two questions. The native tape decides
+    /// how the tape is built; tape only decides whether the candles give the
+    /// whole pane to it. Beside the candles the book still reaches them, and
+    /// only the candle-slot marks go, because the native tape keys every print
+    /// on its own execution time and price.
+    #[test]
+    fn the_native_tape_is_processing_and_tape_only_is_presentation() {
+        let mut config = HeatmapConfig::default();
+        assert!(!config.native_tape() && !config.tape_only());
+
+        // The native tape is drawn in execution-coordinate volume dots.
+        config.volume_dots.enabled = true;
+        config.live_lane.native_tape = true;
+        assert!(config.native_tape(), "beside the candles");
+        assert!(!config.tape_only(), "the candles stay on the pane");
+        let style = theme::OrderflowRenderStyle::from_config(&config, [0, 0, 0, 255]);
+        assert!(
+            !style.aggression_layer,
+            "the native tape makes no candle-slot marks"
+        );
+        assert_eq!(
+            style.depth_layer,
+            config.depth_visible(),
+            "the book still reaches the candles beside the tape"
+        );
+        assert!(style.lane_aggression_layer);
+
+        config.live_lane.native_tape = false;
+        config.live_lane.tape_only = true;
+        assert!(config.native_tape(), "tape only is always the native tape");
+        assert!(config.tape_only());
+        let style = theme::OrderflowRenderStyle::from_config(&config, [0, 0, 0, 255]);
+        assert!(!style.aggression_layer && !style.depth_layer);
+
+        config.live_lane.native_tape = true;
+        config.live_lane.enabled = false;
+        assert!(
+            !config.native_tape() && !config.tape_only(),
+            "with the tape off the original chart returns"
+        );
+    }
+
+    /// The native tape is a tape of execution-coordinate volume dots. Asked
+    /// for without them there is no such tape to build, so nothing about the
+    /// pane changes: the ordinary lane, its clock, and the candle bubbles it
+    /// always had. Tape only keeps drawing what it drew, dots or not.
+    #[test]
+    fn the_native_switch_without_volume_dots_leaves_the_ordinary_lane() {
+        let mut config = HeatmapConfig::default();
+        config.live_lane.native_tape = true;
+        assert!(!config.volume_dots.enabled);
+        assert!(!config.native_tape(), "no execution tape to build");
+        let style = theme::OrderflowRenderStyle::from_config(&config, [0, 0, 0, 255]);
+        assert_eq!(
+            style.aggression_layer, config.show_aggressions,
+            "the candles keep their bubbles"
+        );
+
+        config.live_lane.native_tape = false;
+        config.live_lane.tape_only = true;
+        assert!(
+            config.native_tape(),
+            "tape only is the native tape, dots or not"
+        );
+        let style = theme::OrderflowRenderStyle::from_config(&config, [0, 0, 0, 255]);
+        assert!(!style.aggression_layer);
     }
 
     #[test]

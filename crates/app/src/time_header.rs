@@ -104,12 +104,14 @@ impl HeaderLayout {
 ///
 /// `layout_name` is the layout this pane shows, drawn at the strip's far end
 /// so a glance at a split says which chart carries which set.
+/// `active_bar` replaces time controls with the applied non-time bar summary.
 pub fn draw(
     ui: &mut egui::Ui,
     strip: egui::Rect,
     interval_ms: &mut i64,
     salt: u64,
     layout_name: &str,
+    active_bar: Option<&str>,
 ) -> HeaderLayout {
     let mut changed = false;
     #[cfg(test)]
@@ -129,32 +131,42 @@ pub fn draw(
             .max_rect(strip.shrink2(CONTENT_PADDING))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    content.label(egui::RichText::new("time").small().color(theme::TEXT_FAINT));
-    for (label, preset_ms) in PRESETS {
-        let selected = *interval_ms == preset_ms;
-        let chip = content.selectable_label(selected, label);
-        #[cfg(test)]
-        if let Some(slot) = recorded.next() {
-            *slot = chip.rect;
-        }
-        if chip.clicked() && !selected {
-            *interval_ms = preset_ms;
-            changed = true;
-        }
-    }
-    let interval = content
-        .add(
-            egui::DragValue::new(interval_ms)
-                .range(
-                    crate::state::MIN_TIME_INTERVAL_MS as f64
-                        ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
-                )
-                .speed(crate::state::TIME_INTERVAL_DRAG_SPEED)
-                .suffix(" ms"),
+    content
+        .label(
+            egui::RichText::new(active_bar.unwrap_or("time"))
+                .small()
+                .color(theme::TEXT_FAINT),
         )
-        .on_hover_text("custom interval for this pane");
-    changed |= interval.changed();
-    let interval_rect = interval.rect;
+        .on_hover_text("Click this chart, then use BARS in the toolbar to change its bars");
+    let interval_rect = if active_bar.is_none() {
+        for (label, preset_ms) in PRESETS {
+            let selected = *interval_ms == preset_ms;
+            let chip = content.selectable_label(selected, label);
+            #[cfg(test)]
+            if let Some(slot) = recorded.next() {
+                *slot = chip.rect;
+            }
+            if chip.clicked() && !selected {
+                *interval_ms = preset_ms;
+                changed = true;
+            }
+        }
+        let interval = content
+            .add(
+                egui::DragValue::new(interval_ms)
+                    .range(
+                        crate::state::MIN_TIME_INTERVAL_MS as f64
+                            ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
+                    )
+                    .speed(crate::state::TIME_INTERVAL_DRAG_SPEED)
+                    .suffix(" ms"),
+            )
+            .on_hover_text("custom interval for this pane");
+        changed |= interval.changed();
+        interval.rect
+    } else {
+        egui::Rect::NOTHING
+    };
     #[cfg(not(test))]
     let _ = interval_rect;
     // The name takes the room the interval controls left and never more:
@@ -222,7 +234,7 @@ mod tests {
             egui::CentralPanel::default().show(ctx, |ui| {
                 let strip =
                     egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(width, HEIGHT_PX));
-                let header = draw(ui, strip, &mut interval_ms, 0, layout_name);
+                let header = draw(ui, strip, &mut interval_ms, 0, layout_name, None);
                 seen = Some((header.interval(), header.name()));
             });
         });

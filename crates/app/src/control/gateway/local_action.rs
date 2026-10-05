@@ -177,6 +177,8 @@ impl ControlAccess {
                 .map_err(|error| ControlError::invalid_request(error.to_string()))
         });
         self.replayed_author = None;
+        // A setting an action changed is the asset's before the next read.
+        app.tabs_mut().file_asset_bubbles();
         entry.result_code = Some(match &outcome {
             Ok(_) => quantick_control::id::ErrorCode::new("control.ok")
                 .expect("static result code is valid"),

@@ -1,0 +1,43 @@
+{
+  "$defs": {
+    "OpeningScaleTarget": {
+      "enum": [
+        "tape",
+        "candle"
+      ],
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "changed": {
+      "type": "boolean"
+    },
+    "ignore_opening_burst_in_scale": {
+      "type": "boolean"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "target": {
+      "$ref": "#/$defs/OpeningScaleTarget",
+      "default": "tape",
+      "description": "Tape is the backward-compatible default; Candle has an independent\ntransient FLOW preference, independent of the native Tape worker."
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "ignore_opening_burst_in_scale",
+    "changed"
+  ],
+  "title": "OpeningScaleResult",
+  "type": "object"
+}

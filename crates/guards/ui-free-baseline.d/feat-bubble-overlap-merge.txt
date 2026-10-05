@@ -1,0 +1,35 @@
+# PR #596 (`feat/bubble-overlap-merge`): the branch's raises, moved here
+# from the baseline when main took raises as one file per branch (#609).
+# The comments below are the branch's own, as it wrote them in the
+# baseline.
+# Raised by 7 lines for `fix/price-resolved-candle-aggression`: six pane-owned
+# reset-orchestration lines clear FLOW across spec/history/source changes before an
+# empty layout can return; the remainder is app control/readback binding. Portable
+# admission, retention and adoption policy lives in orderflow's FlowSession.
+# Reviewed and authorized by the root agent after independent flow_aggregation_ports
+# ownership review (2026-10-01); measured remainder only, no spare headroom.
+# Lowered by 23 lines: PR #596 refactor moved pure logic to its headless owner.
+# Review r2: the two app lane fallbacks collapsed into orderflow's PENDING_LANE_REFERENCE_MS (measured).
+# Raised by 48 lines for `feat/per-asset-bubble-config`'s addendum, "Save changes
+# for this asset": the `orderflow.bubbles.save_changes.set` action binding
+# (control/bubble_save.rs, its registration and schema documents) and the
+# view's switch and snapshot field (orderflow_view/asset_bubbles.rs) — an
+# action handler binds app ports and has no headless home. The switch, its
+# storage and what off holds on screen live in quantick_stores. Measured.
+# Raised by 18 lines merging #606 (Renko bars) into this branch: its 24
+# UI-free lines in app -- the pane handing indicators and strategies every
+# bar one print closes and keeping view and marks on market time when
+# history re-cuts a series (pane/series.rs, +20), and the chart read naming
+# the inferred step (control/chart.rs, +4) -- fit under main's ceiling
+# unsigned. Beside PR #596's signed growth the total is the sum of both
+# sides' measured growth: 24,178 + 82 + 24 = 24,284. Measured.
+# Merged with main at b16d700f (#607, #608, #609): main's baseline
+# records 24,266 and this tree measures 24,452 (+186). PR #596's signed
+# growth is the +82 above: 24,284 measured at the branch tip ec2a6724
+# against 24,202 at the merge base c040c621. The other 104 lines are
+# the same crates/app/src/paper_account.rs cut both sides banked (see
+# app-lines-baseline.d/feat-bubble-overlap-merge.txt).
+# 2026-10-05: the trader signed +104 — the PR and main each counted the same
+# 104-line CmdModifier/CmdEntryKind cut out of paper_account.rs.
+crates/app +186
+!budget +186

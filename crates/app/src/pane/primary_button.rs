@@ -17,9 +17,9 @@ use crate::paper_trading::ChartInput;
 use crate::plot_area::PlotAreas;
 use crate::toolrail::Tool;
 
-use super::axes_and_panes::PANE_DIVIDER_HANDLE_PX;
+use super::constants::PANE_DIVIDER_HANDLE_PX;
 use super::drawing_projection::DrawingProjection;
-use super::{PaneChrome, SharedPointer, tape_switch_rect};
+use super::{PaneChrome, SharedPointer};
 
 /// What the paper arbitration reads off the pane: the projection its handles
 /// are picked through, the drawings under the pointer, and whether the paper
@@ -28,6 +28,7 @@ pub(super) struct PaperArbitration<'a> {
     pub(super) projection: &'a DrawingProjection<'a>,
     pub(super) drawings: &'a Drawings,
     pub(super) layer_visible: bool,
+    pub(super) tape_switch: egui::Rect,
 }
 
 impl PaperArbitration<'_> {
@@ -110,7 +111,7 @@ impl PaperArbitration<'_> {
             .filter(|_| modifier_down)
             .is_some_and(|position| {
                 pane_chrome_hit(areas, position)
-                    || tape_switch_rect(areas.chart).contains(position)
+                    || self.tape_switch.contains(position)
                     || (chrome.toolrail.tool() == Tool::Pointer
                         && !over_chrome
                         && bands::band_at(bands, position)

@@ -3,7 +3,9 @@
 # Written by the "aggression bubbles" panel (save), and safe to edit by hand:
 # this file is the versioned record of how the tape is read. See README.md in
 # this folder.
-# `active` names the preset the panel opens on. Colour overrides are optional
+# `active` names the look an asset opens on when its feed declares none
+# (feeds.toml); every asset then keeps its own settings, saved per asset in the
+# cockpit home, and a save here never changes `active`. Colour overrides are optional
 # `[r, g, b]` triples; leave them out to follow the chart theme.
 #
 # The radii of every shipped preset are rungs of one golden-ratio ladder off
@@ -45,6 +47,13 @@ active = "default"
 #     price range, drawn as a pie of the buy and sell shares. The pie is the
 #     only mark that shows both sides of one price at once, and it is what
 #     keeps history reading as a summary instead of as a wall of specks.
+# The mini index regions preset enables overlap_merge and native_tape: a
+# volume-dot tape built from each print's own time and price, beside the tick
+# candles behind the draggable divider. Its time window and the one price axis
+# follow the tape; dot area is relative to the largest visible volume by
+# default. tape_only = true shows that tape alone, full width.
+# Other presets keep their existing candle and live-lane presentation.
+# overlap_merge replaces dust_merge, region_rows and candle_summary when enabled.
 [[presets]]
 name = "default"
 cluster_ms = 500
@@ -157,28 +166,11 @@ show_quantity_labels = true
 show_trade_count = false
 label_min_radius = 9.2
 
-# The regional read of the same WIN tape "mini index sweeps" was calibrated
-# on: same 300 ms clusters, then same-side clusters landing in a region four
-# visual rows tall fold into one bubble at their volume-weighted price within
-# a 1.5 s window (`region_rows` / `region_ms`). On the mini index — 5-point
-# ticks, sweeps that walk a band of levels in one push — the per-row marks of
-# a violent minute stack into bead necklaces; folded by region the same
-# prints become one mark per zone whose area says how much the zone took.
-# Numbers that moved relative to "sweeps", and why:
-#   * size_reference_quantity 600 → 1500 — a region sums what four rows and
-#     1.5 s took, so the sweeps reference would cap most real folds at max
-#     radius and flatten the hierarchy the fold exists to show. 1500 keeps a
-#     600-contract whale reading ~11 px while a full regional sweep earns the
-#     cap.
-#   * max_radius 13 → 18 (ladder rungs recomputed) — fewer, bigger marks can
-#     afford the room; the label floor moves with it.
-#   * min_quantity stays 50, applied to *regions*: with the regional fold on
-#     the projection moves the display floor to after the fold, so small
-#     prints still sum into their zone and only still-small regions are
-#     hidden — the mark's area never claims a thinned sum.
-#   * side_offset 2 → 5 — at 18 px radii the sweeps separation left a buy
-#     region and a sell region at one zone almost fully covering each other,
-#     which is the absorption read lost (trader-ux-review, Rafa).
+# The mini-index tape uses factual volume dots in its own pane.
+# The historical preset name is kept so saved WIN selections still resolve.
+# Short market-time groups retain quantity-weighted time and price; touching
+# dots merge at their weighted centre. The visible maximum sets the area scale.
+# No quantity floor delays the first print, and the left context keeps its bars.
 [[presets]]
 name = "mini index regions"
 cluster_ms = 300
@@ -186,23 +178,25 @@ dust_merge_ms = 1500
 candle_summary = true
 region_rows = 4
 region_ms = 1500
+overlap_merge = true
+volume_dot_auto_full = true
 
 [presets.bubbles]
 min_radius = 2.6262
 max_radius = 18.0
-opacity = 0.75
+opacity = 0.9
 outline_width = 1.0
-halo_strength = 0.15
+halo_strength = 0.0
 detail_min_radius = 4.2492
 readable_min_radius = 6.8754
 hollow_small_buys = false
-render_mode = "flat"
+render_mode = "sphere"
 sphere_shading = 0.34
 sphere_highlight = 0.18
-size_reference = "fixed"
+size_reference = "visible_max"
 size_reference_quantity = 1500.0
-min_quantity = 50.0
-side_offset = 5.0
+min_quantity = 0.0
+side_offset = 0.0
 consumption_mark = "crown"
 front_width = 1.6
 front_length_scale = 0.618
@@ -213,6 +207,9 @@ trail_opacity = 0.45
 show_quantity_labels = true
 show_trade_count = false
 label_min_radius = 12.6
+
+[presets.live_lane]
+native_tape = true
 
 # The one preset that keeps the older vertical front and the trail, because
 # that is what it is for: a slow tape where the question is which levels got

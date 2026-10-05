@@ -4,92 +4,54 @@
 //! Chrome, not data: everything it names keeps drawing while it is hidden,
 //! and it stands down rather than print over a stack of indicator chips.
 
+use crate::orderflow_render::constants::{
+    LEGEND_BAND_WIDTH_PX, LEGEND_BORDER_WIDTH_PX, LEGEND_CORNER_RADIUS_PX, LEGEND_DOT_WIDTH_PX,
+    LEGEND_ENTRY_GAP_PX, LEGEND_ENTRY_HEIGHT_PX, LEGEND_ENTRY_PADDING_PX, LEGEND_FONT_PX,
+    LEGEND_GLYPH_GAP_PX, LEGEND_HEAT_HEIGHT_PX, LEGEND_HEAT_WIDTH_PX, LEGEND_INNER_MARGIN_PX,
+    LEGEND_MIN_CHART_WIDTH_PX, LEGEND_MIN_CONTENT_WIDTH_PX, LEGEND_MIN_PANEL_WIDTH_PX,
+    LEGEND_OUTER_MARGIN_PX, LEGEND_ROW_HEIGHT_PX, LEGEND_TAPE_MIN_CHART_WIDTH_PX,
+    LEGEND_TAPE_ROW_HEIGHT_PX, MAX_LEGEND_TOP_INSET_FRAC,
+};
 use eframe::egui;
 use quantick_orderflow::HeatmapTheme;
+use quantick_orderflow::config::legend::{LegendGlyph, legend_entries};
 
 use super::bubbles::BubbleColors;
 use super::layout::RenderContext;
-use super::{
-    OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, rgba, thermal_rgb,
-};
+use super::{Palette, add_gradient_rect, draw_dashed_vertical, rgba, thermal_rgb};
 
-/// How far down the canvas the stack above the key may push it, as a share
-/// of the canvas height.
-///
-/// Past this the key would be reading as part of the chart rather than as its
-/// key — and a canvas whose top half is chips has no room for it at all, so it
-/// stands down instead of printing over them. Chrome yields to the chart;
-/// nothing it says is data (the layers keep drawing, and the trader can bring
-/// it back from the right-click menu).
-pub(super) const MAX_LEGEND_TOP_INSET_FRAC: f32 = 0.5;
-/// The key's hairline, included in its published painted footprint.
-const LEGEND_BORDER_WIDTH_PX: f32 = 0.75;
-
-/// The legend keys for this style, one per layer that can actually draw.
-///
-/// A layer draws when its family is active (L2 capture for the depth family,
-/// the bubbles switch for aggression) *and* its own display switch is on.
-/// Announcing anything else would describe a chart the viewer is not looking
-/// at — the legend is a key for what is on screen, not a feature list.
-///
-/// "On screen" means either pane. The canvas holds two of them and the layers
-/// are switched apart, so a key withheld because the candles are clear would
-/// deny a mark the tape is drawing right now — the legend has one canvas to
-/// describe, not one pane of it.
-pub(super) fn legend_entries(
-    style: &OrderflowRenderStyle,
-    liquidity_label: String,
-) -> Vec<(LegendGlyph, String)> {
-    let depth = style.depth_layer || style.lane_depth_layer;
-    let aggression = style.aggression_layer || style.lane_aggression_layer;
-    let mut entries = Vec::new();
-    if depth && style.show_liquidity {
-        entries.push((LegendGlyph::Heat, liquidity_label));
-    }
-    if aggression && style.show_buy {
-        entries.push((LegendGlyph::Buy, "buy aggression".to_owned()));
-    }
-    if aggression && style.show_sell {
-        entries.push((LegendGlyph::Sell, "sell aggression".to_owned()));
-    }
-    if depth && style.show_aligned {
-        entries.push((
-            LegendGlyph::Aligned,
-            "aggression-aligned depletion".to_owned(),
-        ));
-    }
-    if depth && style.show_unattributed {
-        entries.push((
-            LegendGlyph::DepthOnly,
-            "L2 reduction (unattributed)".to_owned(),
-        ));
-    }
-    if depth && style.show_gaps {
-        entries.push((LegendGlyph::Gap, "L2 gap".to_owned()));
-    }
-    entries
-}
-
-/// Draw a responsive legend inside the chart. Labels deliberately distinguish
-/// confirmed aggression from aligned or unattributed L2 reductions.
+/// Draw the canvas key, or a compact buy/sell key in the tape-only header.
 pub(crate) fn draw_compact_legend(
     painter: &egui::Painter,
     context: &RenderContext<'_>,
 ) -> Option<egui::Rect> {
     let style = context.style.sanitized();
-    if !style.show_legend || context.layout.chart_rect.width() < 150.0 {
+    let tape_header = style.live_lane.tape_only && style.live_lane.enabled;
+    let (min_chart_width, row_height) = if tape_header {
+        (LEGEND_TAPE_MIN_CHART_WIDTH_PX, LEGEND_TAPE_ROW_HEIGHT_PX)
+    } else {
+        (LEGEND_MIN_CHART_WIDTH_PX, LEGEND_ROW_HEIGHT_PX)
+    };
+    let (outer_margin, inner_margin) = if tape_header {
+        (0.0, 0.0)
+    } else {
+        (LEGEND_OUTER_MARGIN_PX, LEGEND_INNER_MARGIN_PX)
+    };
+    if !style.show_legend || context.layout.chart_rect.width() < min_chart_width {
         return None;
     }
     // The corner may already be full — a tall stack of indicator chips over a
     // short canvas. The key stands down rather than printing over them: it is
     // chrome, everything it names keeps drawing, and it comes back the moment
     // there is room (or a chip goes away).
-    if style.legend_top_inset > context.layout.chart_rect.height() * MAX_LEGEND_TOP_INSET_FRAC {
+    if !tape_header
+        && style.legend_top_inset > context.layout.chart_rect.height() * MAX_LEGEND_TOP_INSET_FRAC
+    {
         return None;
     }
     // The legend is a key for what is on screen, so the aggression swatches
     // follow the bubble panel's colour overrides.
-    let mut palette = Palette::for_theme(style.theme);
+    let mut palette = super::palette_for_theme(style.theme);
     let colors = BubbleColors::resolve(&palette, &style.bubbles);
     palette.buy = colors.buy;
     palette.sell = colors.sell;
@@ -100,11 +62,22 @@ pub(crate) fn draw_compact_legend(
     } else {
         "liquidity".to_owned()
     };
-    let entries = legend_entries(&style, liquidity_label);
+    let entries = if tape_header {
+        [
+            (style.show_buy, LegendGlyph::Buy, "Buy"),
+            (style.show_sell, LegendGlyph::Sell, "Sell"),
+        ]
+        .into_iter()
+        .filter(|(shown, _, _)| *shown && style.lane_aggression_layer)
+        .map(|(_, glyph, label)| (glyph, label.to_owned()))
+        .collect()
+    } else {
+        legend_entries(&style, liquidity_label)
+    };
     if entries.is_empty() {
         return None;
     }
-    let font = egui::FontId::proportional(10.0);
+    let font = egui::FontId::proportional(LEGEND_FONT_PX);
     let galleys: Vec<_> = entries
         .iter()
         .map(|(_, label)| clip.layout_no_wrap(label.clone(), font.clone(), palette.legend_text))
@@ -112,16 +85,16 @@ pub(crate) fn draw_compact_legend(
     let widths: Vec<f32> = entries
         .iter()
         .zip(&galleys)
-        .map(|((glyph, _), galley)| glyph.width() + 5.0 + galley.size().x + 10.0)
+        .map(|((glyph, _), galley)| {
+            glyph_width(*glyph) + LEGEND_GLYPH_GAP_PX + galley.size().x + LEGEND_ENTRY_PADDING_PX
+        })
         .collect();
 
-    let outer_margin = 6.0;
-    let inner_margin = 7.0;
-    let max_panel_width = style
-        .legend_max_width
-        .min((context.layout.chart_rect.width() - outer_margin * 2.0).max(120.0));
-    let max_content_width = (max_panel_width - inner_margin * 2.0).max(100.0);
-    let flow = flow_layout(&widths, max_content_width, 17.0, 3.0);
+    let max_panel_width = style.legend_max_width.min(
+        (context.layout.chart_rect.width() - outer_margin * 2.0).max(LEGEND_MIN_PANEL_WIDTH_PX),
+    );
+    let max_content_width = (max_panel_width - inner_margin * 2.0).max(LEGEND_MIN_CONTENT_WIDTH_PX);
+    let flow = flow_layout(&widths, max_content_width, row_height, LEGEND_ENTRY_GAP_PX);
     let panel_size = egui::vec2(
         (flow.size.x + inner_margin * 2.0).min(max_panel_width),
         flow.size.y + inner_margin * 2.0,
@@ -130,26 +103,37 @@ pub(crate) fn draw_compact_legend(
     // may have stacked indicator chips under it. Keep the legend below all of
     // it, so symbol/bar metadata and every chip remain readable at every
     // width — nothing at this corner prints over anything else.
+    let top_inset = if tape_header {
+        (context.layout.chart_rect.height() - panel_size.y).max(0.0) / 2.0
+    } else {
+        style.legend_top_inset
+    };
     let panel = egui::Rect::from_min_size(
-        context.layout.chart_rect.left_top()
-            + egui::vec2(outer_margin, outer_margin + style.legend_top_inset),
+        context.layout.chart_rect.left_top() + egui::vec2(outer_margin, outer_margin + top_inset),
         panel_size,
     );
-    clip.rect_filled(panel, egui::Rounding::same(4.0), palette.legend_background);
-    clip.rect_stroke(
-        panel,
-        egui::Rounding::same(4.0),
-        egui::Stroke::new(LEGEND_BORDER_WIDTH_PX, palette.legend_border),
-    );
+    if !tape_header {
+        let rounding = egui::Rounding::same(LEGEND_CORNER_RADIUS_PX);
+        clip.rect_filled(panel, rounding, palette.legend_background);
+        clip.rect_stroke(
+            panel,
+            rounding,
+            egui::Stroke::new(LEGEND_BORDER_WIDTH_PX, palette.legend_border),
+        );
+    }
 
-    let mut footprint = panel.expand(LEGEND_BORDER_WIDTH_PX / 2.0);
+    let mut footprint = panel.expand(if tape_header {
+        0.0
+    } else {
+        LEGEND_BORDER_WIDTH_PX / 2.0
+    });
     let origin = panel.left_top() + egui::vec2(inner_margin, inner_margin);
     for (((glyph, _), galley), offset) in entries.iter().zip(galleys).zip(flow.positions) {
         let item = origin + offset;
         draw_legend_glyph(&clip, *glyph, item, &palette, style.theme);
         let text_pos = egui::pos2(
-            item.x + glyph.width() + 5.0,
-            item.y + (14.0 - galley.size().y) / 2.0,
+            item.x + glyph_width(*glyph) + LEGEND_GLYPH_GAP_PX,
+            item.y + (LEGEND_ENTRY_HEIGHT_PX - galley.size().y) / 2.0,
         );
         footprint = footprint.union(egui::Rect::from_min_size(text_pos, galley.size()));
         clip.galley(text_pos, galley, palette.legend_text);
@@ -157,23 +141,12 @@ pub(crate) fn draw_compact_legend(
     Some(footprint.intersect(clip.clip_rect()))
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(super) enum LegendGlyph {
-    Heat,
-    Buy,
-    Sell,
-    Aligned,
-    DepthOnly,
-    Gap,
-}
-
-impl LegendGlyph {
-    const fn width(self) -> f32 {
-        match self {
-            Self::Heat => 42.0,
-            Self::Buy | Self::Sell => 12.0,
-            Self::Aligned | Self::DepthOnly | Self::Gap => 18.0,
-        }
+/// A key's glyph width, in pixels.
+const fn glyph_width(glyph: LegendGlyph) -> f32 {
+    match glyph {
+        LegendGlyph::Heat => LEGEND_HEAT_WIDTH_PX,
+        LegendGlyph::Buy | LegendGlyph::Sell => LEGEND_DOT_WIDTH_PX,
+        LegendGlyph::Aligned | LegendGlyph::DepthOnly | LegendGlyph::Gap => LEGEND_BAND_WIDTH_PX,
     }
 }
 
@@ -221,11 +194,13 @@ fn draw_legend_glyph(
     palette: &Palette,
     theme: HeatmapTheme,
 ) {
-    let center = origin + egui::vec2(glyph.width() / 2.0, 7.0);
+    let center = origin + egui::vec2(glyph_width(glyph), LEGEND_ENTRY_HEIGHT_PX) / 2.0;
     match glyph {
         LegendGlyph::Heat => {
-            let rect =
-                egui::Rect::from_min_size(origin + egui::vec2(0.0, 3.0), egui::vec2(42.0, 8.0));
+            let rect = egui::Rect::from_center_size(
+                center,
+                egui::vec2(LEGEND_HEAT_WIDTH_PX, LEGEND_HEAT_HEIGHT_PX),
+            );
             let mut mesh = egui::Mesh::default();
             for index in 0..12 {
                 let t0 = index as f32 / 12.0;
@@ -253,7 +228,7 @@ fn draw_legend_glyph(
             painter.circle_stroke(center, 5.0, egui::Stroke::new(0.8_f32, palette.sell));
         }
         LegendGlyph::Aligned => {
-            let band = egui::Rect::from_center_size(center, egui::vec2(18.0, 6.0));
+            let band = egui::Rect::from_center_size(center, egui::vec2(LEGEND_BAND_WIDTH_PX, 6.0));
             let mut mesh = egui::Mesh::default();
             // Resting wall on the left, consumed (fading) on the right.
             add_gradient_rect(
@@ -278,7 +253,7 @@ fn draw_legend_glyph(
             );
         }
         LegendGlyph::DepthOnly => {
-            let rect = egui::Rect::from_center_size(center, egui::vec2(18.0, 7.0));
+            let rect = egui::Rect::from_center_size(center, egui::vec2(LEGEND_BAND_WIDTH_PX, 7.0));
             let mut mesh = egui::Mesh::default();
             add_gradient_rect(
                 &mut mesh,
@@ -296,7 +271,7 @@ fn draw_legend_glyph(
             );
         }
         LegendGlyph::Gap => {
-            let rect = egui::Rect::from_center_size(center, egui::vec2(18.0, 8.0));
+            let rect = egui::Rect::from_center_size(center, egui::vec2(LEGEND_BAND_WIDTH_PX, 8.0));
             painter.rect_filled(rect, egui::Rounding::ZERO, palette.gap_fill);
             draw_dashed_vertical(
                 painter,

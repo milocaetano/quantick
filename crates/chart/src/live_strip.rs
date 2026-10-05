@@ -16,30 +16,14 @@
 //! histogram); painting lives in `OrderflowView::draw_live_strip`, which
 //! reads the published ladder's best bid/ask and the frame.
 
-use quantick_engine::Side;
 use rust_decimal::Decimal;
 
 use quantick_orderflow::projection::AggressionPrimitive;
 
-/// Width of the strip, in pixels. The proposal band is 72–96 px: wide enough
-/// for the histogram to read, narrow enough to never crowd the chart.
-pub const LIVE_STRIP_WIDTH_PX: f32 = 84.0;
-
-/// Stroke of the best bid/ask touch markers, in pixels.
-pub const TOUCH_MARKER_STROKE_PX: f32 = 1.5;
-
-/// Alpha of the strip's left border line, against the chart body.
-pub const STRIP_BORDER_ALPHA: f32 = 0.3;
-
-/// Left inset of the strip's content, in pixels, so the border stays visible.
-pub const STRIP_ROW_INSET_PX: f32 = 1.0;
-
-/// Opacity of the histogram bars.
-pub const HISTOGRAM_ALPHA: f32 = 0.8;
-
-/// Widest histogram bar, as a fraction of the strip's half width, leaving a
-/// sliver of background visible even at full scale.
-pub const HISTOGRAM_MAX_HALF_FRAC: f32 = 0.94;
+pub use crate::constants::{
+    HISTOGRAM_ALPHA, HISTOGRAM_MAX_HALF_FRAC, LIVE_STRIP_WIDTH_PX, STRIP_BORDER_ALPHA,
+    STRIP_ROW_INSET_PX, TOUCH_MARKER_STROKE_PX,
+};
 
 /// One histogram row: the forming bar's aggression at one price bucket,
 /// both sides together because the drawing mirrors them around one centre.
@@ -58,33 +42,11 @@ pub struct HistogramRow {
     pub sell: Decimal,
 }
 
-/// Split one mark's quantity into the two sides it actually carries.
-///
-/// Single-sided marks — every tape print — land wholly on their own side, with
-/// no arithmetic and no rounding. Only a two-sided summary is divided, by the
-/// buy share the projection already computed.
+/// Split one mark's quantity into the two sides it actually carries, by its
+/// exact bought quantity: a pie's `f32` share cannot hold a third of a
+/// contract, and the projection carries the exact figure beside it.
 fn split_by_side(cluster: &AggressionPrimitive) -> (Decimal, Decimal) {
-    let share = f64::from(cluster.buy_share);
-    if !share.is_finite() || share >= 1.0 {
-        return match cluster.side {
-            Side::Buy => (cluster.quantity, Decimal::ZERO),
-            Side::Sell => (Decimal::ZERO, cluster.quantity),
-        };
-    }
-    if share <= 0.0 {
-        return (Decimal::ZERO, cluster.quantity);
-    }
-    let Ok(buy_share) = Decimal::try_from(share) else {
-        return match cluster.side {
-            Side::Buy => (cluster.quantity, Decimal::ZERO),
-            Side::Sell => (Decimal::ZERO, cluster.quantity),
-        };
-    };
-    // Rounded to the quantity's own scale: the share is an `f32`, so the raw
-    // product carries float noise a contract count never has. The remainder is
-    // taken by subtraction, so the two sides still add up to exactly what
-    // traded whatever the rounding did.
-    let buy = (cluster.quantity * buy_share).round_dp(cluster.quantity.scale());
+    let buy = cluster.buy_quantity.clamp(Decimal::ZERO, cluster.quantity);
     (buy, cluster.quantity - buy)
 }
 
@@ -104,6 +66,10 @@ fn split_by_side(cluster: &AggressionPrimitive) -> (Decimal, Decimal) {
 /// the display grouping, so without this one price arrives as two keys and the
 /// strip draws two rows for it, each sized against a width that matches
 /// neither.
+///
+/// A mark spanning several rows — a regional fold, a volume dot many ticks
+/// tall — is one row covering its whole range, never its quantity in the
+/// row of its weighted price, where nothing may have traded.
 pub fn aggression_rows(
     aggressions: &[AggressionPrimitive],
     bar_open_ms: i64,
@@ -160,6 +126,7 @@ pub fn histogram_reference(rows: &[HistogramRow]) -> Decimal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quantick_engine::Side;
     use std::str::FromStr as _;
 
     fn dec(value: &str) -> Decimal {
@@ -184,11 +151,17 @@ mod tests {
             },
             live: false,
             price_bucket: dec(bucket),
+            price: dec(bucket),
             price_span: Decimal::ONE,
             trade_count: 1,
             first_timestamp_ms: last_ms,
             last_timestamp_ms: last_ms,
+            timestamp_quantity: Decimal::from(last_ms) * dec(quantity),
             matched_quantity: Decimal::ZERO,
+            buy_quantity: match side {
+                Side::Buy => dec(quantity),
+                Side::Sell => Decimal::ZERO,
+            },
             matched_fraction: 0.0,
             liquidity_event_ids: Vec::new(),
             x: 0.5,
@@ -239,6 +212,7 @@ mod tests {
         let mut pie = cluster(Side::Buy, "100", "10", 1_500);
         pie.live = false;
         pie.buy_share = 0.6;
+        pie.buy_quantity = dec("6");
         let mut tape = cluster(Side::Buy, "100", "6", 1_500);
         tape.live = true;
 
@@ -274,5 +248,31 @@ mod tests {
         assert_eq!(rows.len(), 1, "one price, one row");
         assert_eq!(rows[0].price_bucket, dec("100.00"));
         assert_eq!(rows[0].buy, dec("5"));
+    }
+
+    /// A pie is split by its exact bought quantity, never by the `f32` share,
+    /// which cannot hold a third of a contract.
+    #[test]
+    fn a_pie_splits_by_its_exact_buy_quantity() {
+        let mut pie = cluster(Side::Sell, "100", "3", 1_500);
+        pie.buy_quantity = Decimal::ONE;
+        pie.buy_share = 0.333_333_34;
+        let rows = aggression_rows(&[pie], 1_000, false, Decimal::ONE);
+        assert_eq!((rows[0].buy, rows[0].sell), (Decimal::ONE, dec("2")));
+    }
+
+    /// A volume dot many ticks tall is filed across its level, the way a
+    /// regional fold is: one row spanning the level, never the whole quantity
+    /// in the row of its weighted price, where nothing may have traded.
+    #[test]
+    fn a_volume_dot_is_filed_across_its_level() {
+        let mut dot = cluster(Side::Buy, "100", "4", 1_500);
+        dot.price_span = dec("5");
+        dot.price = dec("102");
+        let rows = aggression_rows(&[dot], 1_000, false, Decimal::ONE);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].price_bucket, dec("100"));
+        assert_eq!(rows[0].price_span, dec("5"), "the whole level");
+        assert_eq!(rows[0].buy, dec("4"));
     }
 }

@@ -5,19 +5,20 @@ use crate::config::FeedCapabilities;
 use crate::orderflow_view::OrderflowView;
 use crate::style::ChartStyle;
 use crate::toolrail::Tool;
+use quantick_chart::tick_membership::TickMembership;
 use quantick_layers::{ChartLayer, LayerActions, LayerBlock};
 use quantick_layers::{LayerEffect, LayerFacts, LayerSource, LayerState, VisibilityWrite};
 
 impl ChartPane {
-    pub(super) fn layer_facts(&self, capabilities: Option<FeedCapabilities>) -> LayerFacts {
-        let tape = self.orderflow.as_ref();
+    pub(crate) fn layer_facts(&self, capabilities: Option<FeedCapabilities>) -> LayerFacts {
+        let tape = self.orderflow.as_ref().map(OrderflowView::cached_config);
         LayerFacts {
-            flow_pane: tape.is_some(),
-            tape_on: tape.is_some_and(OrderflowView::lane_enabled),
-            capture_enabled: tape.is_some_and(OrderflowView::enabled),
-            depth_visible: tape.is_some_and(OrderflowView::depth_visible),
             book_capture: capabilities.is_some_and(|value| value.book_capture),
             traded_volume: capabilities.is_some_and(|value| value.traded_volume),
+            tick_bars: TickMembership::applies_to(self.state.spec()),
+            native_candle_prices: self.state.tape_price_step().is_some()
+                && self.state.tape_reference_price().is_some(),
+            ..tape.map_or_else(LayerFacts::default, OrderflowView::layer_facts)
         }
     }
     pub fn layer_switched_on(&self, layer: ChartLayer, style: &ChartStyle) -> bool {

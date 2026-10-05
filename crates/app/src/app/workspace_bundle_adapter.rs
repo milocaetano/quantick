@@ -144,13 +144,21 @@ impl WorkspaceBundleAdapter<'_> {
         }
     }
     /// Write every store that is still only in memory, so a bundle captured
-    /// next describes the screen rather than the last flush.
-    fn flush_cockpit_stores(&mut self) {
+    /// next describes the screen rather than the last flush. Returns what the
+    /// bundle still leaves out of the per-asset bubble settings, if anything.
+    fn flush_cockpit_stores(&mut self) -> String {
         // The layouts file is written debounced, off the frame path. An
         // export is the one moment worth paying it immediately, or the
         // bundle would carry the layouts as they stood a second ago.
         self.layout_adapter().flush_layouts();
         self.maintain_chart_layers();
+        let tabs = self.arrangement.tabs.iter_mut();
+        tabs.for_each(crate::tab::Tab::sync_asset_bubbles);
+        let assets = self.arrangement.workspace.bubble_assets();
+        let unsaved = assets.borrow_mut().write_now();
+        let tabs = self.arrangement.tabs.iter();
+        let views = tabs.filter_map(|tab| tab.tape().asset());
+        quantick_stores::bubble_asset_store::export_caveat(unsaved, views)
     }
 
     /// Export the whole cockpit to one file, and say what happened.
@@ -161,7 +169,7 @@ impl WorkspaceBundleAdapter<'_> {
         // silently redefined what the app opens on. It also keeps the harness
         // hook on exactly the menu's path.
         self.save_adapter().save_workspace("export");
-        self.flush_cockpit_stores();
+        let caveat = self.flush_cockpit_stores();
         let name = crate::workspace_bundle::recent_label(path);
         let outcome = crate::workspace_bundle::capture(
             &name,
@@ -183,11 +191,13 @@ impl WorkspaceBundleAdapter<'_> {
                     event_code = "WORKSPACE_EXPORTED",
                     path = %path.display(),
                     stores,
+                    left_out = caveat.as_str(),
                     action = "workspace_written",
                     "workspace exported"
                 );
+                // Honest about what the bubble settings per asset leave out.
                 self.note_workspace(format!(
-                    "Workspace exported to {} — {stores} settings groups",
+                    "Workspace exported to {} — {stores} settings groups{caveat}",
                     path.display()
                 ));
             }
@@ -293,6 +303,17 @@ impl WorkspaceBundleAdapter<'_> {
             .restore(&(*self.arrangement.config).clone());
         self.arrangement.restore_workspace(workspace);
         self.restore_chart_layers();
+        // Every open tab wears the imported settings of its asset, so its
+        // next edit files over them rather than over what it showed before.
+        self.arrangement
+            .workspace
+            .bubble_assets()
+            .borrow_mut()
+            .reload();
+        self.arrangement
+            .tabs
+            .iter_mut()
+            .for_each(crate::tab::Tab::sync_asset_bubbles);
 
         // The layouts come last, once the tabs are the imported ones: every
         // pane is stripped and re-seeded from the imported file.

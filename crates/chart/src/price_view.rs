@@ -9,29 +9,8 @@
 //! "Inverted chart" toggle flips it outright. This is the pure state behind
 //! all of that, unit-tested in CI.
 
+pub use crate::constants::{FLIP_REARM_FRACTION, FLIP_SPAN_FACTOR};
 use crate::geometry::PriceScale;
-
-/// How many auto-fit spans wide the price window can be stretched before an
-/// expanding drag flips the chart upside down instead of shrinking it further.
-///
-/// At 40× the visible bars occupy 1/40 — under 3% — of the pane: flat to the
-/// eye. Flipping there mirrors nothing legible, so the drag reads as one
-/// continuous motion — shrink, flatten, grow again upside down. Only the drag
-/// flips ([`PriceView::drag_zoom`]); the wheel zooms without a ceiling
-/// ([`PriceView::zoom`]), because zooming far out to read a wide range is a
-/// legitimate ask that must not turn the chart over.
-pub const FLIP_SPAN_FACTOR: f64 = 40.0;
-
-/// How far back inside [`FLIP_SPAN_FACTOR`] the span must contract before the
-/// drag may flip again.
-///
-/// A flip parks the window at the threshold, where any expanding pixel would
-/// cross it again: without this band a hand tremor at the boundary would
-/// strobe the chart's orientation at frame rate. 5% is ~8px of gutter travel
-/// (`AXIS_ZOOM_DRAG_PX · ln(1/0.95)`) — beyond any tremor, and invisible
-/// inside the ~550px gesture that reaches the threshold at all (the bars are
-/// equally flat at 95% and 100% of forty auto-fit spans).
-pub const FLIP_REARM_FRACTION: f64 = 0.95;
 
 /// The vertical price view: auto-fit or a manual price range, either way up.
 #[derive(Debug, Clone, Copy, Default)]
@@ -57,6 +36,21 @@ impl PriceView {
     #[must_use]
     pub fn is_auto(&self) -> bool {
         self.manual.is_none()
+    }
+
+    /// Explicit price framing, independent of whether a first auto-fit exists.
+    #[must_use]
+    pub fn manual_range(&self) -> Option<(f64, f64)> {
+        self.manual
+    }
+
+    /// Set an exact finite price range, preserving orientation.
+    pub fn set_manual_range(&mut self, low: f64, high: f64) -> bool {
+        if !low.is_finite() || !high.is_finite() || low >= high || !(high - low).is_finite() {
+            return false;
+        }
+        self.manual = Some((low, high));
+        true
     }
 
     /// Whether the chart is upside down.
@@ -118,6 +112,15 @@ impl PriceView {
         self.pan(delta_px * price_per_px * sign, auto);
     }
 
+    /// Pan the current resolved price window by a screen displacement.
+    /// The caller supplies its plot height; an unlaid-out plot cannot move.
+    pub fn pan_pixels(&mut self, delta_px: f64, height: f64, auto: (f64, f64)) {
+        if delta_px != 0.0 && height > 1.0 {
+            let (lo, hi) = self.resolve(auto);
+            self.pan_screen(delta_px, (hi - lo) / height, auto);
+        }
+    }
+
     /// Zoom the price span by `factor` around its centre: `> 1` expands the span
     /// (smaller candles), `< 1` compresses it (bigger candles).
     pub fn zoom(&mut self, factor: f64, auto: (f64, f64)) {
@@ -144,21 +147,28 @@ impl PriceView {
     /// wider (the wheel zooms without a ceiling) keeps its span and only
     /// turns over: snapping it back to the threshold would jump.
     pub fn drag_zoom(&mut self, factor: f64, auto: (f64, f64)) {
+        self.drag_zoom_against(factor, auto, auto.1 - auto.0);
+    }
+
+    /// [`Self::drag_zoom`] with the threshold counted in `reference_span`s
+    /// rather than in `auto`'s: an axis fitted to something narrower than
+    /// the bars — a few recent prints — still flips only once the bars are
+    /// flat.
+    pub fn drag_zoom_against(&mut self, factor: f64, auto: (f64, f64), reference_span: f64) {
         if factor <= 0.0 || !factor.is_finite() {
             return;
         }
-        let auto_span = auto.1 - auto.0;
         // The boundary zone: at 99% of the threshold and beyond the chart is
         // equally flat, so this one band is both where an expanding drag
         // flips and what a contraction must leave to re-arm — and comparing
         // against the zone rather than the exact threshold keeps a span the
         // cap parked one float ulp short of it from missing the flip.
-        let flip_zone = auto_span * FLIP_SPAN_FACTOR * FLIP_REARM_FRACTION;
-        if factor <= 1.0 || auto_span <= 0.0 {
+        let flip_zone = reference_span * FLIP_SPAN_FACTOR * FLIP_REARM_FRACTION;
+        if factor <= 1.0 || reference_span <= 0.0 {
             // Contracting: a plain zoom — and once the span drops back out
             // of the boundary zone, the next crossing may flip again.
             self.zoom(factor, auto);
-            if auto_span > 0.0 {
+            if reference_span > 0.0 {
                 let (lo, hi) = self.resolve(auto);
                 if hi - lo < flip_zone {
                     self.flip_parked = false;
@@ -175,7 +185,7 @@ impl PriceView {
             }
             return;
         }
-        let flip_span = auto_span * FLIP_SPAN_FACTOR;
+        let flip_span = reference_span * FLIP_SPAN_FACTOR;
         self.zoom(factor.min(flip_span / span), auto);
     }
 }
@@ -263,6 +273,22 @@ mod tests {
         v.drag_zoom(1.01, AUTO);
         assert!(v.is_inverted());
         assert_eq!(v.resolve(AUTO), (lo, hi));
+    }
+
+    #[test]
+    fn a_wider_reference_moves_the_threshold_out_with_it() {
+        let mut v = PriceView::new();
+        // The axis fits 10 wide, the bars 50: 400 is flat for the axis's
+        // fit, not for the bars, so the drag keeps shrinking them.
+        v.drag_zoom_against(1000.0, AUTO, 50.0);
+        let (lo, hi) = v.resolve(AUTO);
+        assert!(!v.is_inverted());
+        assert!(
+            ((hi - lo) - 2000.0).abs() < 1e-9,
+            "capped at forty reference spans: {lo}..{hi}"
+        );
+        v.drag_zoom_against(1.01, AUTO, 50.0);
+        assert!(v.is_inverted());
     }
 
     #[test]

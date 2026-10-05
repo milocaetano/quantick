@@ -85,6 +85,7 @@ pub(super) fn apply_launch_phase(
         layout(app, env);
         replay(app, env);
         dock_and_report(app, env);
+        price_axis(app, env);
         workspace(app, env);
     }
     // An env var is not a user edit: what the autostart hooks switched on
@@ -94,6 +95,19 @@ pub(super) fn apply_launch_phase(
     app.workspace.layers_mut().record(staged_layers);
     #[cfg(any(feature = "scenario-harness", test))]
     toast(app, env);
+}
+
+#[cfg(any(feature = "scenario-harness", test))]
+fn price_axis(app: &mut QuantickApp, env: &ScenarioInputs) {
+    let Some((low, high)) = env
+        .var("QUANTICK_PRICE_RANGE")
+        .and_then(|value| quantick_control_schema::price_axis::PriceAxisMode::parse_range(&value))
+    else {
+        return;
+    };
+    let pane = &mut app.active_tab_mut().flow_pane;
+    pane.sync_price_axis_mode();
+    pane.price_view.set_manual_range(low, high);
 }
 
 /// The order book and the live strip: the two the map opens with.
@@ -194,12 +208,13 @@ fn history(app: &mut QuantickApp, env: &ScenarioInputs) {
 #[cfg(any(feature = "scenario-harness", test))]
 fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
     // Same convenience for the aggression layer (bubbles + the live
-    // column's footprint). Same code path as the toolbar toggle.
+    // column's footprint), held for the run like the window: never filed.
     if env
         .var("QUANTICK_BUBBLES_AUTOSTART")
         .is_some_and(|value| value == "1")
     {
-        app.active_tab_mut().tape_mut().set_bubbles_enabled(true);
+        let tape = app.active_tab_mut().tape_mut();
+        tape.hold_for_run(|held| held.bubbles = Some(true));
     }
     // The chart upside down, through the very setter the axis menu's
     // checkbox calls. The inverted frame is otherwise only reachable by
@@ -261,11 +276,13 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
     // How much market time the tape shows: `auto` follows the bars, a
     // duration pins it (`90s`, `2min`, `120000ms`, or bare milliseconds).
     // Nonsense is refused rather than guessed at, so a typo photographs
-    // the default instead of an invented window.
+    // the default instead of an invented window. Navigation held for the
+    // run, never filed: it reaches the asset a replay autostart switches to.
     if let Some(value) = env.var("QUANTICK_TAPE_WINDOW")
         && let Some(window) = parse_tape_window(value.trim())
     {
-        app.active_tab_mut().tape_mut().set_live_lane_window(window);
+        let tape = app.active_tab_mut().tape_mut();
+        tape.hold_for_run(|held| held.window = Some(window));
     }
     // Same convenience for the candle footprint — the same field the
     // pane's layer menu writes, so a validation run sees exactly what a
@@ -822,6 +839,7 @@ crate::hooks::declare_hooks![
     "QUANTICK_PAPER_CALENDAR",
     "QUANTICK_PAPER_REPORT_AUTOSTART",
     "QUANTICK_PAPER_REPORT_LIST",
+    "QUANTICK_PRICE_RANGE",
     "QUANTICK_PROGRESSIVE_HISTORY",
     "QUANTICK_REPLAY_AUTOSTART",
     "QUANTICK_REPLAY_BROWSER",

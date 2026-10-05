@@ -12,6 +12,16 @@
 use quantick_engine::Bar;
 use rust_decimal::prelude::ToPrimitive as _;
 
+pub use crate::constants::{
+    AUTO_PAD_FRAC, AXIS_LABEL_FONT_PX, AXIS_LABEL_GAP_PX, TIME_LABEL_FONT_PX,
+};
+use crate::constants::{
+    AXIS_LABEL_MIN_GAP_PX, AXIS_LABEL_SPACING_PX, AXIS_MAX_DECIMALS, AXIS_MAX_TICKS,
+    AXIS_MIN_TICKS, AXIS_STEP_EPSILON, COMPACT_VALUE_DECIMALS, FALLBACK_BODY_HEIGHT,
+    FALLBACK_HALF_WIDTH, MAX_TAPE_PADDING_SHARE, SAFE_PIXEL_LIMIT, TAPE_AXIS_REFIT_SPAN_RATIO,
+    TIME_LABEL_MIN_GAP_PX, TIME_LABEL_SPACING_PX, TIME_MIN_LABELS,
+};
+
 /// A `Decimal` price as an `f64` for pixel math (display only).
 #[must_use]
 pub fn to_f64(price: rust_decimal::Decimal) -> f64 {
@@ -46,6 +56,20 @@ impl PriceScale {
         bottom: f32,
         pad_frac: f64,
     ) -> Option<Self> {
+        Self::auto_including(bars, partial, None, top, bottom, pad_frac)
+    }
+
+    /// [`Self::auto`] over the bars and, when there are bars at all, the
+    /// `(lo, hi)` price range `also` covers too.
+    #[must_use]
+    pub fn auto_including<'a>(
+        bars: impl IntoIterator<Item = &'a Bar>,
+        partial: Option<&'a Bar>,
+        also: Option<(f64, f64)>,
+        top: f32,
+        bottom: f32,
+        pad_frac: f64,
+    ) -> Option<Self> {
         let mut lo = f64::INFINITY;
         let mut hi = f64::NEG_INFINITY;
         for bar in bars.into_iter().chain(partial) {
@@ -54,6 +78,12 @@ impl PriceScale {
         }
         if !lo.is_finite() || !hi.is_finite() {
             return None;
+        }
+        if let Some((also_lo, also_hi)) =
+            also.filter(|(also_lo, also_hi)| also_lo.is_finite() && also_hi.is_finite())
+        {
+            lo = lo.min(also_lo);
+            hi = hi.max(also_hi);
         }
         // Pad; guarantee a non-zero span even when hi == lo (a flat range).
         let span = (hi - lo).max(f64::EPSILON);
@@ -177,7 +207,9 @@ impl PriceScale {
 
 /// The price window to draw a frame with, given what is in view.
 ///
-/// Normally that is [`PriceScale::auto`] over the visible bars. When the view
+/// Normally that is [`PriceScale::auto`] over the visible bars and, with the
+/// tape on, the `tape` price range its window covers, so the live price never
+/// leaves the axis while the candles are panned elsewhere. When the view
 /// holds none of them — a rebuild re-cut the series under a panned viewport,
 /// or the user panned into the empty space past the newest bar — the chart
 /// still has to read as a chart, with its axis, its tape and its badges, so
@@ -188,19 +220,86 @@ impl PriceScale {
 pub fn price_window<'a>(
     visible: impl IntoIterator<Item = &'a Bar>,
     visible_partial: Option<&'a Bar>,
+    tape: Option<(f64, f64)>,
     last: Option<(f64, f64)>,
     newest: Option<&Bar>,
     top: f32,
     bottom: f32,
 ) -> Option<PriceScale> {
-    PriceScale::auto(visible, visible_partial, top, bottom, AUTO_PAD_FRAC)
+    PriceScale::auto_including(visible, visible_partial, tape, top, bottom, AUTO_PAD_FRAC)
         .or_else(|| last.map(|(lo, hi)| PriceScale::from_range(lo, hi, top, bottom)))
         .or_else(|| PriceScale::auto(&[], newest, top, bottom, AUTO_PAD_FRAC))
 }
 
-/// Fraction of the price span left as breathing room above and below the
-/// candles, so they never touch the edges of the plot.
-pub const AUTO_PAD_FRAC: f64 = 0.05;
+/// The price window of a pane that shows only the tape.
+///
+/// Where the tape's prints traded and the last traded price, padded like
+/// [`price_window`]: no bar range enters it, so the axis follows the tape
+/// rather than the candles the pane no longer draws, and a last price past
+/// the prints still drags the axis with it. With no print on the tape the
+/// previous frame's window `last` holds while its radius-safe interior contains
+/// the recent prices. It refits after a margin breach or a contraction to half
+/// the prior useful span. With no recent prints it holds until the latest
+/// price breaches that margin; without a prior window, use the last price alone.
+/// `min_padding_px` reserves room for the largest tape dot without moving its
+/// centre away from its factual price. Zero keeps the standard five-percent fit.
+#[must_use]
+pub fn tape_price_window(
+    tape: Option<(f64, f64)>,
+    last_price: Option<f64>,
+    last: Option<(f64, f64)>,
+    top: f32,
+    bottom: f32,
+    min_padding_px: f32,
+) -> Option<PriceScale> {
+    let height = f64::from((bottom - top).max(0.0));
+    let inset = if height > 0.0 && min_padding_px.is_finite() {
+        (f64::from(min_padding_px.max(0.0)) / height).min(MAX_TAPE_PADDING_SHARE)
+    } else {
+        0.0
+    };
+    let pad_fraction = AUTO_PAD_FRAC.max(inset / (1.0 - 2.0 * inset));
+    let safe_range = |(lo, hi): (f64, f64)| {
+        let guard = (hi - lo) * inset;
+        (lo + guard, hi - guard)
+    };
+    let last_price = last_price.filter(|price| price.is_finite());
+    let Some((low, high)) = tape.filter(|(low, high)| low.is_finite() && high.is_finite()) else {
+        return last
+            .map(|(lo, hi)| {
+                let (safe_lo, safe_hi) = safe_range((lo, hi));
+                if let Some(price) = last_price
+                    && (price < safe_lo || price > safe_hi)
+                {
+                    let (lo, hi) = (lo.min(price), hi.max(price));
+                    let pad = (hi - lo).max(f64::EPSILON) * pad_fraction;
+                    PriceScale::from_range(lo - pad, hi + pad, top, bottom)
+                } else {
+                    PriceScale::from_range(lo, hi, top, bottom)
+                }
+            })
+            .or_else(|| {
+                let price = last_price?;
+                Some(PriceScale::from_range(price, price, top, bottom))
+            });
+    };
+    let (mut lo, mut hi) = (low.min(high), low.max(high));
+    if let Some(price) = last_price {
+        lo = lo.min(price);
+        hi = hi.max(price);
+    }
+    if let Some(previous) = last {
+        let (safe_lo, safe_hi) = safe_range(previous);
+        if lo >= safe_lo
+            && hi <= safe_hi
+            && hi - lo > (safe_hi - safe_lo) * TAPE_AXIS_REFIT_SPAN_RATIO
+        {
+            return Some(PriceScale::from_range(previous.0, previous.1, top, bottom));
+        }
+    }
+    let pad = (hi - lo).max(f64::EPSILON) * pad_fraction;
+    Some(PriceScale::from_range(lo - pad, hi + pad, top, bottom))
+}
 
 /// An axis-aligned candle body in pixel coordinates.
 ///
@@ -254,12 +353,6 @@ pub struct CandleGeometry {
     pub upper_wick: Option<VerticalSegment>,
     pub lower_wick: Option<VerticalSegment>,
 }
-
-// Constraining intermediates keeps additions and subtractions finite even for
-// hostile inputs close to `f32::MAX`.
-const SAFE_PIXEL_LIMIT: f32 = f32::MAX / 8.0;
-const FALLBACK_HALF_WIDTH: f32 = 0.5;
-const FALLBACK_BODY_HEIGHT: f32 = 1.0;
 
 fn safe_pixel(value: f32, fallback: f32) -> f32 {
     if value.is_finite() {
@@ -385,49 +478,12 @@ pub fn nice_ticks(lo: f64, hi: f64, target: usize) -> Vec<f64> {
     ticks
 }
 
-/// Pixels of axis height per label *asked for*.
-///
-/// The ask is not a promise: [`nice_ticks`] rounds the step to 1, 2 or 5,
-/// which can hand back half of what was asked or nearly double it. So an axis
-/// asks generously — one label per 20 pixels — and thins the result to fit
-/// ([`AXIS_LABEL_MIN_GAP_PX`]). Asking modestly instead is what left a 163 px
-/// CVD pane drawing a single label: an ask of three rounded down to one, and
-/// there was nothing left to thin.
-const AXIS_LABEL_SPACING_PX: f32 = 20.0;
-/// Fewest labels an axis asks for: below two there is no scale to read, only
-/// a number floating in a band.
-const AXIS_MIN_TICKS: usize = 2;
-/// Most labels an axis asks for, however tall it grows.
-const AXIS_MAX_TICKS: usize = 8;
-/// Least vertical room between two labels, in pixels. Below this the column
-/// reads as texture rather than as numbers, and the axis drops every other
-/// label until it clears.
-const AXIS_LABEL_MIN_GAP_PX: f32 = 18.0;
 /// Thresholds a tick label is abbreviated at, largest first, with the suffix
 /// that replaces the zeros. Below the smallest the value is printed as it is.
 ///
 /// Same spellings as the aggression bubbles' own `format_quantity`: one chart,
 /// one way to write a thousand.
 const AXIS_UNITS: [(f64, &str); 3] = [(1e9, "B"), (1e6, "M"), (1e3, "K")];
-/// Least horizontal room between two time labels, in pixels.
-///
-/// The horizontal twin of [`AXIS_LABEL_MIN_GAP_PX`]. Smaller than it because a
-/// time label is read as one word and its neighbours are far apart in bars;
-/// the price column is read as a column and needs more air.
-const TIME_LABEL_MIN_GAP_PX: f32 = 12.0;
-/// Comfortable distance between two time labels, in pixels.
-///
-/// The ask, as [`AXIS_LABEL_SPACING_PX`] is for price: a label roughly this
-/// far apart reads as a scale rather than as a ribbon of numbers. It is a
-/// floor on the spacing, never a cap — the collision rule can only push
-/// labels further apart.
-const TIME_LABEL_SPACING_PX: f32 = 110.0;
-/// Fewest time labels a strip is worth writing at a given format. Below two
-/// there is no scale to read, only an instant floating in a band — and that is
-/// the signal to write the same axis in a shorter format instead.
-const TIME_MIN_LABELS: usize = 2;
-/// Time label font size, in pixels.
-pub const TIME_LABEL_FONT_PX: f32 = 10.0;
 
 /// How a time label is written, longest first.
 ///
@@ -472,7 +528,7 @@ impl TimeLabelFormat {
 /// Bar slots to advance between two time labels so that neighbours can never
 /// touch, given how wide one candle and one label are on screen.
 ///
-/// This is the time axis' [`thin_to_fit`]: the old rule asked for a fixed six
+/// This is the time axis' `thin_to_fit`: the old rule asked for a fixed six
 /// labels however narrow the strip had become, and six `HH:MM:SS` need some
 /// 300 px of text — which the history strip stops having once the live lane
 /// takes its share of the chart. Counting labels cannot answer a question
@@ -515,7 +571,7 @@ pub fn label_fits(x: f32, label_width_px: f32, left: f32, right: f32) -> bool {
     x - half >= left && x + half <= right
 }
 
-/// The widest [`TimeLabelFormat`] that still writes [`TIME_MIN_LABELS`] labels
+/// The widest [`TimeLabelFormat`] that still writes `TIME_MIN_LABELS` labels
 /// across a strip this wide, given each format's measured width.
 ///
 /// `measured` answers with the pixel width of a format's
@@ -536,21 +592,6 @@ pub fn time_label_format(
         })
         .unwrap_or(TimeLabelFormat::Short)
 }
-
-/// Gap between the axis rule and a tick label, in pixels. Shared by the price
-/// gutter and every pane's, so the numbers form one column down the chart.
-pub const AXIS_LABEL_GAP_PX: f32 = 6.0;
-/// Tick label font size, in pixels. Shared for the same reason.
-pub const AXIS_LABEL_FONT_PX: f32 = 11.0;
-/// Most decimals a tick label ever shows. Past this the step is so fine that
-/// the digits stop distinguishing neighbouring labels.
-const AXIS_MAX_DECIMALS: usize = 4;
-/// Relative tolerance for "this many decimals writes the step back exactly".
-/// Steps are 1/2/5 × a power of ten, so the only error to absorb is the one
-/// binary floating point introduces.
-const AXIS_STEP_EPSILON: f64 = 1e-6;
-/// Decimals a compact readout shows below the smallest abbreviation unit.
-const COMPACT_VALUE_DECIMALS: usize = 2;
 
 /// One value for a compact readout (the indicator legend's last-value cell):
 /// the axis units' own spellings — `1.20M`, `3.40K` — so the legend and the
@@ -764,9 +805,30 @@ mod tests {
     #[test]
     fn a_populated_view_scales_to_what_it_shows() {
         let bars = vec![bar("100.0", "110.0")];
-        let window = price_window(&bars, None, Some((1.0, 2.0)), None, 0.0, 100.0).unwrap();
+        let window = price_window(&bars, None, None, Some((1.0, 2.0)), None, 0.0, 100.0).unwrap();
         let expected = PriceScale::auto(&bars, None, 0.0, 100.0, AUTO_PAD_FRAC).unwrap();
         assert_eq!(window, expected, "the fallback must not shadow real bars");
+    }
+
+    /// With the tape on, the fit includes the tape's own price range, so the
+    /// live price never leaves the axis while the candles are panned into a
+    /// past that traded elsewhere. A tape inside the bars changes nothing.
+    #[test]
+    fn the_fit_keeps_the_tape_on_the_axis() {
+        let bars = vec![bar("100.0", "110.0")];
+        let window = price_window(&bars, None, Some((120.0, 125.0)), None, None, 0.0, 100.0)
+            .expect("bars in view");
+        let (lo, hi) = window.range();
+        assert!(
+            lo < 100.0 && hi > 125.0,
+            "bars and tape, padded: {lo}..{hi}"
+        );
+        let inside = price_window(&bars, None, Some((102.0, 104.0)), None, None, 0.0, 100.0);
+        assert_eq!(
+            inside,
+            PriceScale::auto(&bars, None, 0.0, 100.0, AUTO_PAD_FRAC),
+            "a tape inside the bars leaves the fit alone"
+        );
     }
 
     /// The regression behind the dark chart: an empty view used to yield no
@@ -775,16 +837,24 @@ mod tests {
     #[test]
     fn an_empty_view_holds_the_last_window_instead_of_going_blank() {
         let newest = bar("100.0", "110.0");
-        let window = price_window(&[], None, Some((50.0, 60.0)), Some(&newest), 0.0, 100.0)
-            .expect("an empty view still draws");
+        let window = price_window(
+            &[],
+            None,
+            None,
+            Some((50.0, 60.0)),
+            Some(&newest),
+            0.0,
+            100.0,
+        )
+        .expect("an empty view still draws");
         assert_eq!(window.range(), (50.0, 60.0), "the axis holds still");
     }
 
     #[test]
     fn an_empty_view_with_no_history_falls_back_to_the_newest_bar() {
         let newest = bar("100.0", "110.0");
-        let window =
-            price_window(&[], None, None, Some(&newest), 0.0, 100.0).expect("the market is there");
+        let window = price_window(&[], None, None, None, Some(&newest), 0.0, 100.0)
+            .expect("the market is there");
         let (lo, hi) = window.range();
         assert!(
             lo < 100.0 && hi > 110.0,
@@ -794,7 +864,7 @@ mod tests {
 
     #[test]
     fn with_no_data_at_all_there_is_still_nothing_to_scale() {
-        assert!(price_window(&[], None, None, None, 0.0, 100.0).is_none());
+        assert!(price_window(&[], None, None, None, None, 0.0, 100.0).is_none());
     }
 
     #[test]
@@ -1235,5 +1305,139 @@ mod tests {
             "left half off the strip"
         );
         assert!(label_fits(25.0, 50.0, 0.0, 200.0), "exactly flush is fine");
+    }
+
+    /// A pane that shows only the tape fits its axis to where the tape
+    /// traded and the last price, padded like the candles' fit, and nothing
+    /// else: the candles it no longer draws have no say in it.
+    #[test]
+    fn a_tape_only_window_is_the_tapes_range_padded() {
+        let scale = tape_price_window(Some((995.0, 1_015.0)), Some(1_005.0), None, 0.0, 600.0, 0.0)
+            .expect("a tape to fit");
+        let (lo, hi) = scale.range();
+        assert!((lo - 994.0).abs() < 1e-9, "{lo}");
+        assert!((hi - 1_016.0).abs() < 1e-9, "{hi}");
+        // The last price moving past the tape drags the axis with it.
+        let (lo, hi) =
+            tape_price_window(Some((995.0, 1_015.0)), Some(1_035.0), None, 0.0, 600.0, 0.0)
+                .unwrap()
+                .range();
+        assert!(
+            (lo - 993.0).abs() < 1e-9 && (hi - 1_037.0).abs() < 1e-9,
+            "{lo} {hi}"
+        );
+        // No print on the tape: the last window holds still.
+        let held = tape_price_window(None, Some(1_005.0), Some((900.0, 1_100.0)), 0.0, 600.0, 0.0)
+            .unwrap()
+            .range();
+        assert_eq!(held, (900.0, 1_100.0));
+        assert!(tape_price_window(None, None, None, 0.0, 600.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn a_quiet_tape_keeps_a_new_last_price_inside_the_held_window() {
+        for price in [850.0, 1_150.0] {
+            let scale =
+                tape_price_window(None, Some(price), Some((900.0, 1_100.0)), 0.0, 600.0, 0.0)
+                    .expect("the newest price gives the tape a scale");
+            let (low, high) = scale.range();
+            assert!(low < price && price < high, "{price} outside {low}..{high}");
+        }
+    }
+
+    #[test]
+    fn the_tape_axis_holds_small_changes_inside_its_radius_safe_range() {
+        // At this height, the prior 90..130 axis has 96..124 available for
+        // factual prices after reserving 18 pixels for the extreme discs.
+        let prior = (90.0, 130.0);
+        let previous = PriceScale::from_range(prior.0, prior.1, 20.0, 140.0);
+        for recent in [
+            (100.0, 120.0),
+            (100.5, 119.5),
+            (101.0, 121.0),
+            (102.9, 117.1),
+        ] {
+            let scale =
+                tape_price_window(Some(recent), Some(110.0), Some(prior), 20.0, 140.0, 18.0)
+                    .expect("recent tape prices remain available");
+            assert_eq!(
+                scale.range(),
+                prior,
+                "small changes and expired extrema keep the axis still"
+            );
+            assert_eq!(
+                scale.y(105.0),
+                previous.y(105.0),
+                "unchanged historical price stays on its row"
+            );
+        }
+    }
+
+    #[test]
+    fn the_tape_axis_refits_when_the_recent_span_halves_or_a_candle_axis_was_inherited() {
+        // The prior useful span is 28 points; contraction to half of it
+        // should release the spare space instead of keeping an ever wider axis.
+        let contracted = tape_price_window(
+            Some((103.0, 117.0)),
+            Some(110.0),
+            Some((90.0, 130.0)),
+            20.0,
+            140.0,
+            18.0,
+        )
+        .unwrap();
+        assert_eq!(contracted.range(), (100.0, 120.0));
+
+        let inherited = tape_price_window(
+            Some((995.0, 1_015.0)),
+            Some(1_005.0),
+            Some((400.0, 1_600.0)),
+            0.0,
+            600.0,
+            0.0,
+        )
+        .unwrap();
+        assert_eq!(
+            inherited.range(),
+            (994.0, 1_016.0),
+            "a candle-wide range cannot make the tape tiny"
+        );
+    }
+
+    #[test]
+    fn a_tape_axis_deadband_never_clips_a_forming_disc_at_either_boundary() {
+        for last_price in [95.0, 125.0] {
+            for recent in [Some((100.0, 120.0)), None] {
+                let scale = tape_price_window(
+                    recent,
+                    Some(last_price),
+                    Some((90.0, 130.0)),
+                    20.0,
+                    140.0,
+                    18.0,
+                )
+                .unwrap();
+                assert_ne!(
+                    scale.range(),
+                    (90.0, 130.0),
+                    "a price inside the outer bounds can still breach the safe margin"
+                );
+                for inverted in [false, true] {
+                    let y = scale.with_inverted(inverted).y(last_price);
+                    assert!(
+                        y - 18.0 >= 20.0 - 1e-4 && y + 18.0 <= 140.0 + 1e-4,
+                        "the factual forming price keeps its whole disc: {y}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ordinary_candle_autofit_does_not_inherit_the_tape_deadband() {
+        let bars = [bar("100", "120")];
+        let scale =
+            price_window(&bars, None, None, Some((90.0, 130.0)), None, 20.0, 140.0).unwrap();
+        assert_eq!(scale.range(), (99.0, 121.0));
     }
 }

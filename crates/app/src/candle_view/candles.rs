@@ -35,9 +35,9 @@ pub struct BarSlot {
 
 /// Draw one candle from pure geometry and a resolved paint description.
 ///
-/// The heatmap is painted before this function and aggression bubbles after it.
-/// Translucent or absent fills therefore reveal liquidity without allowing
-/// candle contours to cover the aggression markers.
+/// The heatmap and regional FLOW circles precede this function; native Tape
+/// and ordinary aggression layers keep their own later passes. Candle body
+/// mode and alpha always come from the configured style.
 ///
 /// `bar_paint` is the colour an indicator asked this bar to wear (Pine's
 /// `barcolor`); `None` — the ordinary case — draws the trader's own direction

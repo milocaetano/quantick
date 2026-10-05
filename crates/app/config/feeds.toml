@@ -20,9 +20,24 @@ default_symbol = "BTCUSDT"
 #                   Supported today: "binance", "hyperliquid", "metatrader".
 #   symbols       — the assets offered for this feed (first is its fallback).
 #   bubble_preset — optional: a bubble preset (by name, from bubbles.toml)
-#                   applied whenever this feed is selected. Leave it out and
-#                   the panel keeps whatever preset is active. An unknown name
-#                   is reported and ignored.
+#                   each symbol of this feed opens on. Leave it out and a
+#                   symbol opens on bubbles.toml's `active` look. An unknown
+#                   name is reported and ignored.
+#   symbol_bubble_presets — optional: per asset, overriding bubble_preset. A
+#                   key is a symbol, or a prefix ending in `*` for a family of
+#                   dated contracts; the key is the asset whose settings the
+#                   matching symbols share. Bubble settings are per asset:
+#                   every setting changed while an asset is on screen is saved
+#                   for that asset alone (bubble-assets.toml in the cockpit
+#                   home), reaches every tab showing it and is restored
+#                   whenever a tab shows it again. Wheeling or dragging the
+#                   tape moves the view only. A tab resolves a symbol on its
+#                   own feed first (exact key, longest pattern, then
+#                   bubble_preset), so a pattern never captures another
+#                   venue's symbol; a symbol its feed does not offer (a
+#                   recording replayed there) takes the key another feed
+#                   declares for it. A key two feeds declare opens on the
+#                   first one's preset.
 #   default_layout — optional: the canvas layout a tab on this feed opens
 #                   showing — "flow" (the default), "time" (a full-window
 #                   timeframe chart) or "time+flow" (the split). Startup-only:
@@ -109,17 +124,17 @@ bubble_preset = "live lane pie"
 id = "metatrader-b3"
 name = "MetaTrader 5 — B3"
 provider = "metatrader"
-symbols = ["WIN$N", "WDO$N"]
+symbols = ["WIN$N", "WDO$N", "WINV26"]
 # The B3 mini index reads best as per-bar pie summaries: bars close in seconds
 # and the candle summary keeps the last bars carrying marks instead of leaving
 # the lane window bare.
 bubble_preset = "live lane pie"
-# The mini index itself goes one step further: its dense 5-point tape reads
-# as aggression per price *region*, not per row — the "mini index regions"
-# preset folds same-side marks landing in a four-row zone into one bubble
-# sized by the zone's summed volume. Per symbol because WDO$N on this same
-# feed keeps the feed-wide look above.
-symbol_bubble_presets = { "WIN$N" = "mini index regions" }
+# The mini index opens the flow pane as a tape with volume dots. `WIN*` is
+# the mini index as one asset: the continuous alias, the recorded September
+# contract and every later roll (WINZ26, ...) share that look and the edits
+# made to it. The mini dollar keeps the feed-wide look above. Every other
+# symbol is its own asset and opens on its own look.
+symbol_bubble_presets = { "WIN*" = "mini index regions" }
 # MetaTrader folds several B3 deals into one tick and keeps no count per
 # tick, so a chart cut by deals — the Trades chart the trader reads on
 # ProfitChart — exists only for days somebody recorded the counter. Record

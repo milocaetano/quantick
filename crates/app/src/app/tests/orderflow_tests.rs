@@ -410,7 +410,7 @@ fn the_canvas_switch_takes_the_tape_off_and_puts_it_back() {
             .chart_area
             .expect("the canvas laid out")
     };
-    let chip = crate::pane::tape_switch_rect(chart);
+    let chip = crate::pane::tape_switch_rect(chart, false);
     assert!(
         chart.contains_rect(chip),
         "the switch is on the canvas, not off its edge"

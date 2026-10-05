@@ -17,6 +17,8 @@
 //! every document names, and the starter scripts from `crates/app/scripts/`;
 //! both are read here at compile time only.
 
+pub mod bubble_asset_store;
+pub mod bubble_assets;
 pub mod bubble_presets;
 pub mod bundle;
 pub mod config;
