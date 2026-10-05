@@ -341,13 +341,14 @@ pub struct BubblesStateSnapshot {
     #[serde(default)]
     pub volume_dots: Option<VolumeDotsSnapshot>,
     /// The asset these bubble settings belong to. Every change made while
-    /// it is on screen — the panel, `layers.visibility.set` on
+    /// it is on screen — the panel, `layers.visibility.set` on `bubbles`,
     /// `bubble_overlap_merge`, `native_tape`, `tape_only` and the flow
     /// pane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —
-    /// is saved for this asset alone, reaches every tab showing it, and is
-    /// restored whenever a tab shows it again. Wheeling or dragging the
-    /// tape's window or width moves the view only. Absent until the tab
-    /// binds an asset.
+    /// belongs to this asset alone. While its `save_changes` is on it is
+    /// saved, reaches every tab showing the asset and is restored whenever
+    /// a tab shows it again; off, it stays on the pane it was made on for
+    /// the session. Wheeling or dragging the tape's window or width moves
+    /// the view only. Absent until the tab binds an asset.
     #[serde(default)]
     pub asset: Option<BubbleAssetSnapshot>,
 }

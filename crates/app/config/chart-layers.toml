@@ -19,9 +19,10 @@
 # rather than failing the launch. An id absent from *both* files means "whatever
 # the app decided" — the code default, a feed's preset or an autostart env var —
 # and `lane_marks` is deliberately one: it belongs to the order-flow preset,
-# which is its only home. `candle_aggression` is the other: it is saved per
-# asset with that asset's bubble settings, so it is off until switched on for
-# an asset, and on only for that asset.
+# which is its only home. `candle_aggression` and `bubbles` are the others:
+# each is saved per asset with that asset's bubble settings, so it opens on its
+# layer's default and changes for one asset only. A `bubbles` entry a file of
+# the trader's still holds from before is ignored.
 
 version = 1
 
@@ -32,7 +33,6 @@ version = 1
 # right-click on the canvas) is where a trader who wants that cost back gives
 # it back; the choice is then theirs and this file stops applying.
 heatmap = true
-bubbles = true
 footprint = true
 live_strip = true
 

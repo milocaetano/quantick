@@ -240,7 +240,6 @@ mod tests {
         let shipped = shipped_default();
         for layer in [
             ChartLayer::Heatmap,
-            ChartLayer::Bubbles,
             ChartLayer::Footprint,
             ChartLayer::LiveStrip,
         ] {
@@ -281,6 +280,10 @@ mod tests {
         assert!(
             !shipped.contains_key(&ChartLayer::LaneMarks),
             "the preset is the lane marks' only home"
+        );
+        assert!(
+            !shipped.contains_key(&ChartLayer::Bubbles),
+            "the aggression bubbles are each asset's own"
         );
     }
 

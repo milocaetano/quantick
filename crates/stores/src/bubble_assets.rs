@@ -4,7 +4,8 @@
 //! names: a symbol, or a family of dated contracts one config key declares
 //! (`WIN*`). Each asset keeps its own aggression-bubble settings — the panel's
 //! look, the tape mode, the tape's and the candles' opening-burst scale and
-//! the flow pane's candle aggression — so a change made while one market is on
+//! the flow pane's aggression bubbles and candle aggression switches — so a
+//! change made while one market is on
 //! screen never dresses another.
 //!
 //! The config declares the look an asset opens on; this store keeps what the
@@ -33,11 +34,25 @@ const fn format_version() -> u32 {
     FORMAT_VERSION
 }
 
+/// The aggression bubbles layer's default (`bubbles`, Ctrl+B): what an asset
+/// opens with, and what an entry written before the asset owned the switch
+/// reads. `ChartLayer::Bubbles` in `quantick-layers` declares it; the app
+/// pins the two equal, as this crate does not depend on that one.
+pub const BUBBLES_LAYER_DEFAULT: bool = true;
+
+const fn bubbles_layer_default() -> bool {
+    BUBBLES_LAYER_DEFAULT
+}
+
 /// One asset's bubble settings.
 ///
 /// Field order matters: TOML requires plain values before the `look` table.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetBubbles {
+    /// The flow pane draws the aggression bubbles: the chart layer's switch,
+    /// the asset's own like candle aggression.
+    #[serde(default = "bubbles_layer_default")]
+    pub bubbles: bool,
     /// The flow pane draws one aggression bubble per tick candle.
     #[serde(default)]
     pub candle_aggression: bool,
@@ -58,6 +73,7 @@ impl AssetBubbles {
         let mut config = HeatmapConfig::default();
         preset.apply_to(&mut config);
         Self {
+            bubbles: BUBBLES_LAYER_DEFAULT,
             candle_aggression,
             flow_ignore_opening: false,
             look: BubblePreset::capture(&preset.name, &config),

@@ -22,7 +22,10 @@
 //! written and no other tab wears it — another tab on the asset shows what
 //! is stored, and so does this one once it binds again or the app restarts.
 //! Switched on again, the screen of the view that switched it is filed and
-//! every other view on the asset wears that ([`AssetBinding::set_save_changes`]).
+//! every other view on the asset wears that ([`AssetBinding::set_save_changes`])
+//! — unless the store moved since that view last looked, and then the store's
+//! word wins there too. A view whose held changes give way says so
+//! ([`Adoption::dropped`]).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -288,6 +291,51 @@ pub struct AssetBinding {
     /// What this view shows that differs from [`Self::filed`] while saving
     /// is off for the asset: held on this screen, never filed.
     held: Option<AssetBubbles>,
+    /// Saving was switched on here while the store held something newer than
+    /// this view last saw: what it held gives way at the next adoption, and
+    /// nothing of it is filed before.
+    gives_way: bool,
+}
+
+/// What a view wears when another view filed for its asset, or a reload
+/// brought the asset's settings ([`AssetBinding::adoption`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Adoption {
+    pub settings: AssetBubbles,
+    /// They put the lane's width or window elsewhere.
+    pub lane_moved: bool,
+    /// Changes this view held with saving off are gone — logged as
+    /// `ASSET_BUBBLES_HELD_DROPPED`, for the view to tell the trader.
+    pub dropped: bool,
+}
+
+impl Adoption {
+    /// What the view tells the trader when changes it held gave way.
+    #[must_use]
+    pub fn notice(&self) -> Option<String> {
+        self.dropped
+            .then(|| "changes held on this tab were dropped for the saved ones".to_owned())
+    }
+}
+
+/// What a workspace export leaves out, as the caveat its report ends on:
+/// settings the file does not hold (`unsaved`, from
+/// [`AssetBubblesStore::write_now`]) and changes `views` hold with saving
+/// off, which are never filed. Empty when the bundle holds everything.
+pub fn export_caveat<'a>(
+    unsaved: Option<String>,
+    views: impl Iterator<Item = &'a AssetBinding>,
+) -> String {
+    let held = views.filter(|view| view.holds_unsaved());
+    let held: BTreeSet<&str> = held.map(AssetBinding::key).collect();
+    let mut caveat = unsaved.map_or_else(String::new, |why| {
+        format!("; bubble settings per asset as last saved, not as on screen ({why})")
+    });
+    if !held.is_empty() {
+        let held = held.into_iter().collect::<Vec<_>>().join(", ");
+        caveat += &format!("; not included: changes held with saving off for {held}");
+    }
+    caveat
 }
 
 impl AssetBinding {
@@ -339,6 +387,7 @@ impl AssetBinding {
             edited: false,
             lane_set: false,
             held: None,
+            gives_way: false,
         };
         tracing::info!(target: "quantick::app", schema_version = 1_u8,
             event_code = "ASSET_BUBBLES_APPLIED", symbol, asset = binding.key(),
@@ -372,20 +421,31 @@ impl AssetBinding {
     }
 
     /// Why the file does not hold the settings on screen; `None` when it
-    /// does. A change noted but not filed yet is not saved either, and with
-    /// saving off a change on screen never is.
+    /// does. The store's own failure comes first — an unreadable file, a
+    /// write refused, the save switch's own included — then a change noted
+    /// but not filed yet, or held because saving is off.
     #[must_use]
     pub fn unsaved(&self) -> Option<String> {
-        if !self.saves_changes() && (self.edited || self.held.is_some()) {
-            return Some(format!(
+        let screen = if self.holds_unsaved() {
+            Some(format!(
                 "saving is off for {} — the changes on screen last this session only",
                 self.asset.key
-            ));
+            ))
+        } else {
+            (self.edited || self.held.is_some())
+                .then(|| "changed on screen, not filed yet".to_owned())
+        };
+        match (self.store.borrow().unsaved(&self.asset.key), screen) {
+            (Some(store), Some(screen)) => Some(format!("{store}; {screen}")),
+            (store, screen) => store.or(screen),
         }
-        if self.edited {
-            return Some("changed on screen, not filed yet".to_owned());
-        }
-        self.store.borrow().unsaved(&self.asset.key)
+    }
+
+    /// Whether this view shows changes saving is off for: held on this
+    /// screen for the session, in no file and no export.
+    #[must_use]
+    pub fn holds_unsaved(&self) -> bool {
+        !self.saves_changes() && (self.edited || self.held.is_some())
     }
 
     /// What this view last filed or adopted.
@@ -411,17 +471,22 @@ impl AssetBinding {
     /// Switch saving the asset's changes on or off. Switched on, this view's
     /// screen is filed at its next filing — the lane included when it was
     /// set on purpose while saving was off — and every other view on the
-    /// asset drops what it held and wears that. Reports whether it moved.
+    /// asset drops what it held and wears that. When the store moved since
+    /// this view last looked — an import, another tab's filing — the store
+    /// is the newer word: this view drops what it held and wears it instead
+    /// ([`Self::adoption`]). Reports whether the switch moved.
     pub fn set_save_changes(&mut self, on: bool) -> bool {
         let mut store = self.store.borrow_mut();
+        let behind = store.revision(&self.asset.key) != self.seen;
         if !store.set_save_changes(&self.asset.key, on) {
             return false;
         }
-        if on {
+        if on && behind {
+            self.gives_way = true;
+        } else if on {
             // This view's screen is the one to file, not one to give way.
             self.seen = store.revision(&self.asset.key);
             self.edited = true;
-            self.held = None;
         }
         true
     }
@@ -449,34 +514,37 @@ impl AssetBinding {
     }
 
     /// File `current`, what the view shows, for the asset. The lane's width
-    /// and window stay as filed unless they were set on purpose since.
+    /// and window stay as filed — or as held, with saving off — unless they
+    /// were set on purpose since: navigation is never filed nor held.
     /// Reports whether the store changed. With saving off nothing is filed:
     /// what differs is held on this screen ([`Self::on_screen`]).
     pub fn file(&mut self, mut current: AssetBubbles) -> bool {
         if !self.lane_set {
-            let filed = &self.filed.look.live_lane;
-            current.look.live_lane.window = filed.window;
-            current.look.live_lane.width_share = filed.width_share;
+            let shown = &self.on_screen().look.live_lane;
+            current.look.live_lane.window = shown.window;
+            current.look.live_lane.width_share = shown.width_share;
         }
         self.edited = false;
+        self.lane_set = false;
         if !self.saves_changes() {
             self.held = (current != self.filed).then_some(current);
             return false;
         }
-        self.lane_set = false;
-        self.held = None;
-        if current == self.filed {
-            return false;
-        }
         let mut store = self.store.borrow_mut();
         let key = self.asset.key.as_str();
-        if store.reloaded_at > self.seen {
-            // An import rewrote the store: the file is the newer word, and
-            // the adoption that follows puts it on screen.
+        if self.gives_way || store.reloaded_at > self.seen {
+            // An import rewrote the store, or saving came on here behind
+            // another tab's filing: the store is the newer word, and the
+            // adoption that follows puts it on screen.
+            let by = if self.gives_way { "store" } else { "import" };
             tracing::warn!(target: "quantick::app", schema_version = 1_u8,
-                event_code = "ASSET_BUBBLES_EDIT_SUPERSEDED", asset = key, by = "import",
-                action = "adopt_imported_settings",
-                "an unfiled bubble edit gives way to the imported settings");
+                event_code = "ASSET_BUBBLES_EDIT_SUPERSEDED", asset = key, by,
+                action = "adopt_stored_settings",
+                "an unfiled bubble edit gives way to the asset's stored settings");
+            return false;
+        }
+        self.held = None;
+        if current == self.filed {
             return false;
         }
         if store.revision(key) != self.seen {
@@ -493,10 +561,10 @@ impl AssetBinding {
     }
 
     /// The settings another view filed for this asset since this one last
-    /// filed or adopted — or that a reload brought — with whether they move
-    /// the lane's width or window. Edits not yet filed here give way to them.
-    /// `None` when nothing changed.
-    pub fn adoption(&mut self) -> Option<(AssetBubbles, bool)> {
+    /// filed or adopted — or that a reload brought. Edits not yet filed
+    /// here, and changes held with saving off, give way to them. `None` when
+    /// nothing changed.
+    pub fn adoption(&mut self) -> Option<Adoption> {
         let store = self.store.borrow();
         let revision = store.revision(&self.asset.key);
         if revision == self.seen {
@@ -505,12 +573,23 @@ impl AssetBinding {
         let settings = store.get(&self.asset.key).unwrap_or(&self.declared).clone();
         drop(store);
         let lane_moved = lane_moved(self.on_screen(), &settings);
+        let dropped = self.held.take().is_some_and(|held| held != settings);
+        if dropped {
+            tracing::warn!(target: "quantick::app", schema_version = 1_u8,
+                event_code = "ASSET_BUBBLES_HELD_DROPPED", asset = self.asset.key.as_str(),
+                action = "wear_stored_settings",
+                "bubble changes a tab held with saving off gave way to the asset's stored settings");
+        }
         self.seen = revision;
         self.edited = false;
         self.lane_set = false;
-        self.held = None;
+        self.gives_way = false;
         self.filed = settings.clone();
-        Some((settings, lane_moved))
+        Some(Adoption {
+            settings,
+            lane_moved,
+            dropped,
+        })
     }
 
     /// Hand `presets`, reloaded by this view, to every other view on the

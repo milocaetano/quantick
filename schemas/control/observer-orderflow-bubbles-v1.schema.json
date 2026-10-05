@@ -75,7 +75,7 @@
             }
           ],
           "default": null,
-          "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —\nis saved for this asset alone, reaches every tab showing it, and is\nrestored whenever a tab shows it again. Wheeling or dragging the\ntape's window or width moves the view only. Absent until the tab\nbinds an asset."
+          "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on `bubbles`,\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —\nbelongs to this asset alone. While its `save_changes` is on it is\nsaved, reaches every tab showing the asset and is restored whenever\na tab shows it again; off, it stays on the pane it was made on for\nthe session. Wheeling or dragging the tape's window or width moves\nthe view only. Absent until the tab binds an asset."
         },
         "enabled": {
           "description": "Aggression bubbles are drawn over the chart. Beside the native tape,\nFLOW draws regional execution totals on the tick candles;\n`layers.visibility` names any block.",

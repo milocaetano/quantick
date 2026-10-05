@@ -8,11 +8,13 @@ use quantick_orderflow::LaneWindow;
 
 const NATIVE_PRESET: &str = "mini index regions";
 
-fn shipped_config() -> AppConfig {
+pub(super) fn shipped_config() -> AppConfig {
     toml::from_str(include_str!("../../app/config/feeds.toml")).expect("shipped feeds parse")
 }
 
-fn bind(store: &SharedAssetBubbles, symbol: &str) -> (AssetBinding, AssetBubbles) {
+/// Bind a view to `symbol`'s asset — the mini index on its B3 feed, any
+/// other symbol on Binance — over the shipped presets.
+pub(super) fn bind(store: &SharedAssetBubbles, symbol: &str) -> (AssetBinding, AssetBubbles) {
     let presets = bubble_presets::embedded();
     bind_with(store, symbol, &presets)
 }
@@ -277,7 +279,7 @@ fn the_later_filing_wins_and_an_import_wins_over_an_unfiled_edit() {
     assert!(a.file(first));
     assert!(b.file(second.clone()), "B's edit is filed, not dropped");
     assert_eq!(store.borrow().get("WIN*"), Some(&second));
-    let (adopted, _) = a.adoption().expect("A wears B's");
+    let adopted = a.adoption().expect("A wears B's").settings;
     assert_eq!(adopted, second);
 
     let mut file = AssetBubblesFile::default();
@@ -288,7 +290,7 @@ fn the_later_filing_wins_and_an_import_wins_over_an_unfiled_edit() {
     late.look.bubbles.max_radius = 26.0;
     b.note_edit();
     assert!(!b.file(late), "the import wins over B's unfiled edit");
-    assert_eq!(b.adoption().map(|(settings, _)| settings), Some(opened));
+    assert_eq!(b.adoption().map(|adopted| adopted.settings), Some(opened));
 }
 
 fn memory_store() -> SharedAssetBubbles {
@@ -310,7 +312,10 @@ fn a_reloaded_store_reaches_every_bound_view() {
     save_to(&path, &file).expect("an imported store");
 
     store.borrow_mut().reload();
-    let (adopted, _) = win.adoption().expect("the import reaches the view");
+    let adopted = win
+        .adoption()
+        .expect("the import reaches the view")
+        .settings;
     assert_eq!(adopted, imported);
     assert_eq!(win.source(), AssetSource::Stored);
 }

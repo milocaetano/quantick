@@ -22,6 +22,7 @@ impl OrderflowView {
     /// The settings on screen, with the flow pane's `candle_aggression`.
     pub(crate) fn asset_settings(&self, candle_aggression: bool) -> AssetBubbles {
         AssetBubbles {
+            bubbles: self.config.show_aggressions,
             candle_aggression,
             flow_ignore_opening: self.ignore_flow_opening(),
             look: BubblePreset::capture(&self.look_name, &self.config),
@@ -50,9 +51,10 @@ impl OrderflowView {
             let current = self.asset_settings(candle_aggression);
             self.asset.as_mut()?.file(current);
         }
-        let (settings, lane_moved) = self.asset.as_mut()?.adoption()?;
-        self.wear_asset(&settings, !lane_moved);
-        Some(settings.candle_aggression)
+        let adopted = self.asset.as_mut()?.adoption()?;
+        self.preset_status = adopted.notice().or_else(|| self.preset_status.take());
+        self.wear_asset(&adopted.settings, !adopted.lane_moved);
+        Some(adopted.settings.candle_aggression)
     }
 
     /// Switch "Save changes for this asset" ([`AssetBinding::set_save_changes`]):
@@ -60,11 +62,7 @@ impl OrderflowView {
     /// when no asset is bound, else whether the switch moved.
     pub(crate) fn set_save_asset_changes(&mut self, on: bool) -> Option<bool> {
         let changed = self.asset.as_mut()?.set_save_changes(on);
-        let status = if on {
-            "saved again"
-        } else {
-            "kept for this session only"
-        };
+        let status = ["kept for this session only", "saved again"][usize::from(on)];
         if changed {
             self.preset_status = Some(format!("changes for this asset are {status}"));
         }
@@ -122,6 +120,7 @@ impl OrderflowView {
         if let Some(window) = self.held_window {
             self.config.live_lane.window = window;
         }
+        self.config.show_aggressions = settings.bubbles;
         self.look_name.clone_from(&settings.look.name);
         self.preset_name_draft.clone_from(&settings.look.name);
         self.flow_execution
@@ -141,24 +140,5 @@ impl OrderflowView {
                 save_error: unsaved,
             }
         })
-    }
-}
-
-/// The panel's doors, for tests that drive it without drawing it.
-#[cfg(test)]
-impl OrderflowView {
-    /// A panel control's change, through the door the panel's draw takes.
-    pub(crate) fn edit_config_for_test(
-        &mut self,
-        edit: impl FnOnce(&mut quantick_orderflow::HeatmapConfig),
-    ) {
-        let before = self.config.clone();
-        edit(&mut self.config);
-        self.commit_config_changes(before);
-    }
-
-    /// Type `name` into the panel's preset name field.
-    pub(crate) fn set_preset_name_draft_for_test(&mut self, name: &str) {
-        name.clone_into(&mut self.preset_name_draft);
     }
 }

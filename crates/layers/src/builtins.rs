@@ -79,10 +79,11 @@ impl ChartLayer {
         hint: "confirmed executions from the trade stream, drawn where they printed, on the \
                  candles. Beside the native tape, one summary bubble per tick candle, as \
                  candle aggression draws it. The tape has a switch of its own and this one \
-                 never moves it — right-click the tape to reach it",
+                 never moves it — right-click the tape to reach it. Saved per asset with its \
+                 bubble settings while the asset's \"Save changes for this asset\" is on",
         source: LayerSource::Orderflow(OrderflowSwitch::Bubbles),
         scope: LayerScope::FlowPane,
-        persistence: Persistence::Layers,
+        persistence: Persistence::OrderflowPreset,
         requirement: Requirement::Volume,
         on_tape: false,
         needs_tape: false,

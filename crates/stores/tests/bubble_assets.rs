@@ -223,9 +223,10 @@ fn an_edit_in_one_view_reaches_another_view_on_the_same_asset() {
     assert!(a.file(edited.clone()));
     assert_eq!(a.adoption(), None, "a view does not adopt its own filing");
 
-    let (adopted, lane_moved) = b.adoption().expect("B learns A's edit");
+    let adoption = b.adoption().expect("B learns A's edit");
+    assert!(!adoption.lane_moved && !adoption.dropped);
+    let adopted = adoption.settings;
     assert_eq!(adopted, edited);
-    assert!(!lane_moved);
     assert_eq!(b.adoption(), None, "once");
 
     let mut later = adopted.clone();

@@ -5,11 +5,11 @@ use crate::bubble_presets::BubblePreset;
 use quantick_orderflow::LaneWindow;
 use quantick_stores::bubble_assets::AssetSource;
 
-fn shipped_config() -> AppConfig {
+pub(super) fn shipped_config() -> AppConfig {
     toml::from_str(include_str!("../../../config/feeds.toml")).expect("shipped feeds parse")
 }
 
-fn look(app: &QuantickApp) -> BubblePreset {
+pub(super) fn look(app: &QuantickApp) -> BubblePreset {
     let tape = app.active_tab().tape();
     BubblePreset::capture(tape.active_preset_for_test(), tape.cached_config())
 }
@@ -21,7 +21,7 @@ fn candle_aggression(app: &QuantickApp) -> bool {
 }
 
 /// The tab's own symbol switch, without a live feed behind it.
-fn select_market(app: &mut QuantickApp, feed: &str, symbol: &str) {
+pub(super) fn select_market(app: &mut QuantickApp, feed: &str, symbol: &str) {
     let tab = app.active_tab_mut();
     tab.feed_id = feed.to_owned();
     tab.symbol = symbol.to_owned();
@@ -197,7 +197,7 @@ fn a_win_recording_in_a_btc_tab_wears_the_win_look() {
     assert_eq!(look(&app), btc);
 }
 
-fn maintain(app: &mut QuantickApp) {
+pub(super) fn maintain(app: &mut QuantickApp) {
     app.layer_wiring().maintain(&egui::Context::default());
 }
 

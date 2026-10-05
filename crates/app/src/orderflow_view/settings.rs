@@ -172,7 +172,7 @@ impl OrderflowView {
         self.save_preset_with(bubble_presets::save);
     }
 
-    pub(crate) fn save_preset_with(
+    fn save_preset_with(
         &mut self,
         writer: impl FnOnce(&bubble_presets::BubblePresetFile) -> Result<std::path::PathBuf, String>,
     ) {
@@ -193,7 +193,7 @@ impl OrderflowView {
 
     /// Remove the preset the name field holds from the presets file, unless
     /// some asset opens on it.
-    pub(crate) fn delete_preset_with(
+    fn delete_preset_with(
         &mut self,
         writer: impl FnOnce(&bubble_presets::BubblePresetFile) -> Result<std::path::PathBuf, String>,
     ) {
@@ -235,7 +235,7 @@ impl OrderflowView {
         self.reload_presets_from(bubble_presets::load());
     }
 
-    pub(crate) fn reload_presets_from(
+    fn reload_presets_from(
         &mut self,
         (presets, source, error): (
             bubble_presets::BubblePresetFile,
@@ -383,7 +383,7 @@ impl OrderflowView {
                 ui.checkbox(&mut self.config.show_aggressions, "show aggression bubbles")
                     .on_hover_text(
                         "records and projects confirmed trades; does not start or stop L2 depth capture. \
-                         A chart layer switch (Ctrl+B), kept for every market — not an asset setting",
+                         The chart layer switch (Ctrl+B), one of this asset's bubble settings",
                     );
                 ui.add_enabled_ui(self.config.show_aggressions, |ui| {
                     self.draw_bubble_controls(ui);
@@ -448,7 +448,7 @@ impl OrderflowView {
 
     /// Restore the bubble layer's defaults and drop the preset claim, since
     /// no stored preset is on screen any more.
-    pub(crate) fn reset_bubble_visuals(&mut self) {
+    fn reset_bubble_visuals(&mut self) {
         let defaults = HeatmapConfig::default();
         self.config.bubble_cluster_ms = defaults.bubble_cluster_ms;
         self.config.bubble_dust_merge_ms = defaults.bubble_dust_merge_ms;
@@ -468,5 +468,48 @@ impl OrderflowView {
         self.look_name.clear();
         self.note_asset_lane_set();
         self.preset_status = Some("bubble defaults restored for the asset on screen".to_owned());
+    }
+}
+
+/// The panel's controls and buttons, for tests that drive it without
+/// drawing it: each door is the operation the control itself calls.
+#[cfg(test)]
+impl OrderflowView {
+    /// A panel control's change, through the door the panel's draw takes.
+    pub(crate) fn edit_config_for_test(&mut self, edit: impl FnOnce(&mut HeatmapConfig)) {
+        let before = self.config.clone();
+        edit(&mut self.config);
+        self.commit_config_changes(before);
+    }
+
+    /// Type `name` into the preset name field.
+    pub(crate) fn set_preset_name_draft_for_test(&mut self, name: &str) {
+        name.clone_into(&mut self.preset_name_draft);
+    }
+
+    /// "save", with the presets file written by `writer`.
+    pub(crate) fn press_save_preset_for_test(
+        &mut self,
+        writer: impl FnOnce(&bubble_presets::BubblePresetFile) -> Result<std::path::PathBuf, String>,
+    ) {
+        self.save_preset_with(writer);
+    }
+
+    /// "delete", with the presets file written by `writer`.
+    pub(crate) fn press_delete_preset_for_test(
+        &mut self,
+        writer: impl FnOnce(&bubble_presets::BubblePresetFile) -> Result<std::path::PathBuf, String>,
+    ) {
+        self.delete_preset_with(writer);
+    }
+
+    /// The reload button, over the presets file read from `path`.
+    pub(crate) fn press_reload_presets_for_test(&mut self, path: std::path::PathBuf) {
+        self.reload_presets_from(bubble_presets::load_from(Some(path)));
+    }
+
+    /// "reset bubble visuals".
+    pub(crate) fn press_reset_bubble_visuals_for_test(&mut self) {
+        self.reset_bubble_visuals();
     }
 }

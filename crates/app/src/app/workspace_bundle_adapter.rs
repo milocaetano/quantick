@@ -144,9 +144,9 @@ impl WorkspaceBundleAdapter<'_> {
         }
     }
     /// Write every store that is still only in memory, so a bundle captured
-    /// next describes the screen rather than the last flush. Returns why the
-    /// per-asset bubble settings are still not on disk, if they are not.
-    fn flush_cockpit_stores(&mut self) -> Option<String> {
+    /// next describes the screen rather than the last flush. Returns what the
+    /// bundle still leaves out of the per-asset bubble settings, if anything.
+    fn flush_cockpit_stores(&mut self) -> String {
         // The layouts file is written debounced, off the frame path. An
         // export is the one moment worth paying it immediately, or the
         // bundle would carry the layouts as they stood a second ago.
@@ -155,7 +155,10 @@ impl WorkspaceBundleAdapter<'_> {
         let tabs = self.arrangement.tabs.iter_mut();
         tabs.for_each(crate::tab::Tab::sync_asset_bubbles);
         let assets = self.arrangement.workspace.bubble_assets();
-        assets.borrow_mut().write_now()
+        let unsaved = assets.borrow_mut().write_now();
+        let tabs = self.arrangement.tabs.iter();
+        let views = tabs.filter_map(|tab| tab.tape().asset());
+        quantick_stores::bubble_asset_store::export_caveat(unsaved, views)
     }
 
     /// Export the whole cockpit to one file, and say what happened.
@@ -166,7 +169,7 @@ impl WorkspaceBundleAdapter<'_> {
         // silently redefined what the app opens on. It also keeps the harness
         // hook on exactly the menu's path.
         self.save_adapter().save_workspace("export");
-        let unsaved_assets = self.flush_cockpit_stores();
+        let caveat = self.flush_cockpit_stores();
         let name = crate::workspace_bundle::recent_label(path);
         let outcome = crate::workspace_bundle::capture(
             &name,
@@ -188,15 +191,11 @@ impl WorkspaceBundleAdapter<'_> {
                     event_code = "WORKSPACE_EXPORTED",
                     path = %path.display(),
                     stores,
-                    unsaved_assets = unsaved_assets.as_deref(),
+                    left_out = caveat.as_str(),
                     action = "workspace_written",
                     "workspace exported"
                 );
-                // Honest about the one store the disk refused: the bundle
-                // carries its last saved state, not the screen.
-                let caveat = unsaved_assets.map_or_else(String::new, |why| {
-                    format!("; bubble settings per asset as last saved, not as on screen ({why})")
-                });
+                // Honest about what the bubble settings per asset leave out.
                 self.note_workspace(format!(
                     "Workspace exported to {} — {stores} settings groups{caveat}",
                     path.display()

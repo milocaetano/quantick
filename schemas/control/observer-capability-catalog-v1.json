@@ -7117,7 +7117,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Sets an existing registered display switch on a stable pane ID through the same operation as the menu; grid affects the entire window.",
+      "description": "Sets an existing registered display switch on a stable pane ID through the same operation as the menu; grid affects the entire window. A switch whose persistence is orderflow_preset belongs to the asset the pane shows and is saved only while that asset's save switch is on (orderflow.bubbles asset.save_changes); chart_layers switches are saved for every market.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -7185,6 +7185,7 @@
                 "type": "string"
               },
               "persistence": {
+                "description": "Where the switch is kept: `chart_layers`, the chart-layers file every\nmarket shares; `orderflow_preset`, the bubble settings of the asset\nthe pane shows — saved only while that asset's save switch is on\n(`orderflow.bubbles` reports it as `asset.save_changes`).",
                 "type": "string"
               },
               "requested": {
@@ -10015,7 +10016,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Optionally changes opening calibration without changing executions, prices or grouping. The default target tape excludes the first recorded 100 ms burst per UTC date and caps its radius; it has no effect on a typed tape reference. Target candle requires active tick FLOW bubbles and has an independent pane preference. Both are saved for the asset the pane shows (orderflow.bubbles names it) and come back whenever a tab shows that asset. Target candle: only the region containing the canonical first recorded execution per UTC date excludes its opening portion from the visible reference and may grow uncapped with area proportional to gross volume. Other first-window regions contribute their full volume. Offscreen or evicted anchors never transfer to visible regions. A frame with no ordinary reference uses an explicitly reported full-volume fallback. Both preferences default off; first recorded activity is not an exchange auction flag.",
+      "description": "Optionally changes opening calibration without changing executions, prices or grouping. The default target tape excludes the first recorded 100 ms burst per UTC date and caps its radius; it has no effect on a typed tape reference. Target candle requires active tick FLOW bubbles and has an independent pane preference. Both belong to the asset the pane shows (orderflow.bubbles names it): saved for it, and back whenever a tab shows it, while its save switch is on (asset.save_changes); off, the change lasts on this pane for the session only. Target candle: only the region containing the canonical first recorded execution per UTC date excludes its opening portion from the visible reference and may grow uncapped with area proportional to gross volume. Other first-window regions contribute their full volume. Offscreen or evicted anchors never transfer to visible regions. A frame with no ordinary reference uses an explicitly reported full-volume fallback. Both preferences default off; first recorded activity is not an exchange auction flag.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -14573,6 +14574,7 @@
                 "type": "string"
               },
               "persistence": {
+                "description": "Where the switch is kept: `chart_layers`, the chart-layers file every\nmarket shares; `orderflow_preset`, the bubble settings of the asset\nthe pane shows — saved only while that asset's save switch is on\n(`orderflow.bubbles` reports it as `asset.save_changes`).",
                 "type": "string"
               },
               "requested": {
@@ -14728,7 +14730,7 @@
                   }
                 ],
                 "default": null,
-                "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —\nis saved for this asset alone, reaches every tab showing it, and is\nrestored whenever a tab shows it again. Wheeling or dragging the\ntape's window or width moves the view only. Absent until the tab\nbinds an asset."
+                "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on `bubbles`,\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —\nbelongs to this asset alone. While its `save_changes` is on it is\nsaved, reaches every tab showing the asset and is restored whenever\na tab shows it again; off, it stays on the pane it was made on for\nthe session. Wheeling or dragging the tape's window or width moves\nthe view only. Absent until the tab binds an asset."
               },
               "enabled": {
                 "description": "Aggression bubbles are drawn over the chart. Beside the native tape,\nFLOW draws regional execution totals on the tick candles;\n`layers.visibility` names any block.",
