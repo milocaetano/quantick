@@ -133,7 +133,7 @@ pub enum CursorHint {
 
 /// Everything the input pass needs from the frame, in plain values. The
 /// host gathers it, so the desk never reads raw input state itself.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChartFrame {
     /// The interactive band the press is tested against.
     pub chart: Bounds,
@@ -205,7 +205,7 @@ pub struct InputOutcome {
 }
 
 impl InputOutcome {
-    pub(super) fn owned(command: Option<ChartCommand>) -> Self {
+    pub(super) fn claimed(command: Option<ChartCommand>) -> Self {
         Self {
             owned: true,
             command,
@@ -273,12 +273,8 @@ impl Gesture {
     /// Drop the line in the hand without submitting it; answers whether
     /// there was one.
     pub fn drop_drag(&mut self) -> bool {
-        if self.drag == PaperDrag::None {
-            return false;
-        }
-        self.drag = PaperDrag::None;
         self.drag_price = None;
-        true
+        std::mem::take(&mut self.drag) != PaperDrag::None
     }
 
     /// Whether a *real* aim is on screen — one a held key put there, not

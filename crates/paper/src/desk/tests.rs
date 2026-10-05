@@ -388,12 +388,16 @@ fn frame(pointer: Point, aiming: bool, pressed: bool) -> ChartFrame {
         chart: chart(),
         pointer: Some(pointer),
         primary_pressed: pressed,
+        primary_down: false,
+        primary_released: false,
         keys: HeldKeys {
             shift: aiming,
             ..HeldKeys::default()
         },
+        canvas_claimed: false,
+        scroll_y: 0.0,
+        middle_pressed: false,
         layer_visible: true,
-        ..ChartFrame::default()
     }
 }
 
@@ -524,6 +528,63 @@ fn an_armed_click_asks_to_place_and_escape_peels_one_layer() {
     assert_eq!(desk.gesture.drag, PaperDrag::None);
     assert_eq!(desk.gesture.drag_price, None);
     assert!(!desk.cancel_gesture(), "and then nothing is left");
+}
+
+/// The armed click disarms only when the venue took the order: a refused
+/// price and an unreadable offset both leave it armed for the next click,
+/// and only the offset's complaint comes back for the host to show.
+#[test]
+fn an_armed_click_disarms_only_when_the_venue_takes_it() {
+    let dir = ScratchDir::new("desk-armed-carry");
+    let mut account = marked_account(&dir);
+    let mut desk = Desk::default();
+    let armed = ArmedPlacement {
+        side: Side::Sell,
+        kind: EntryKind::Limit,
+    };
+    desk.armed = Some(armed);
+
+    // A sell limit under the market is not a resting order.
+    let refused = desk.carry_out(
+        &mut account,
+        ChartCommand::PlaceArmed {
+            armed,
+            raw_price: 85.0,
+        },
+    );
+    assert_eq!(refused, Ok(()), "a venue refusal is the account's toast");
+    assert!(account.take_toast().is_some(), "the refusal is explained");
+    assert!(account.working_orders().is_empty());
+    assert_eq!(desk.armed, Some(armed), "refused, so still armed");
+
+    // An offset that does not parse never reaches the venue.
+    desk.ticket.stop_offset_text = "abc".to_owned();
+    let unreadable = desk.carry_out(
+        &mut account,
+        ChartCommand::PlaceArmed {
+            armed,
+            raw_price: 115.0,
+        },
+    );
+    assert_eq!(
+        unreadable,
+        Err("SIM: the stop offset must be a positive number of points - got `abc`".to_owned())
+    );
+    assert!(account.working_orders().is_empty());
+    assert_eq!(desk.armed, Some(armed), "unreadable, so still armed");
+
+    // Taken: one order rests, and the click is spent.
+    desk.ticket.stop_offset_text.clear();
+    let taken = desk.carry_out(
+        &mut account,
+        ChartCommand::PlaceArmed {
+            armed,
+            raw_price: 115.0,
+        },
+    );
+    assert_eq!(taken, Ok(()));
+    assert_eq!(account.working_orders().len(), 1);
+    assert_eq!(desk.armed, None, "taken, so disarmed");
 }
 
 /// The notch is the device's: learned from the smallest roll, never

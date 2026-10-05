@@ -16,11 +16,12 @@
 //! state this holds.
 
 use quantick_engine::Side;
-use quantick_sim::Bracket;
+use quantick_sim::{Bracket, EntryKind};
 use rust_decimal::Decimal;
 
 use crate::PaperAccount;
 use crate::account::AccountEnv;
+use crate::risk_sizing::RiskState;
 
 pub mod cmd;
 pub mod geometry;
@@ -178,6 +179,15 @@ impl Desk {
         self.ticket.form().bracket(side, reference)
     }
 
+    /// The risk read, and whether it blocks an entry: the one read the
+    /// entry button, the ticket's own line and the control plane share,
+    /// taken at the mark (zero while there is none) as a buy.
+    #[must_use]
+    pub fn risk_report(&self, account: &PaperAccount) -> (RiskState, bool) {
+        let reference = account.mark_price().unwrap_or_default();
+        account.risk_report(&self.account_env(account, Side::Buy, reference))
+    }
+
     /// The entry button's label for `side`; see [`ticket::entry_label`].
     ///
     /// The size the press would actually send. The risk-derived quantity
@@ -187,11 +197,7 @@ impl Desk {
     /// another is the plainest kind of lie this surface can tell.
     #[must_use]
     pub fn entry_label(&self, account: &PaperAccount, side: Side) -> String {
-        let reference = account.mark_price().unwrap_or_default();
-        let derived = account
-            .risk_report(&self.account_env(account, Side::Buy, reference))
-            .0
-            .derived_quantity();
+        let derived = self.risk_report(account).0.derived_quantity();
         ticket::entry_label(
             side,
             derived.or_else(|| self.ticket.quantity_preview()),
@@ -209,8 +215,74 @@ impl Desk {
     /// The source rebuilt its timeline: nothing armed, nothing in the hand.
     pub fn reset_timeline(&mut self) {
         self.armed = None;
-        self.gesture.drag = PaperDrag::None;
-        self.gesture.drag_price = None;
+        self.gesture.drop_drag();
+    }
+
+    /// Rest a limit/stop entry at `raw_price` with the ticket's quantity
+    /// and offsets; answers whether the simulator accepted it.
+    ///
+    /// # Errors
+    ///
+    /// The ticket's complaint about an offset that does not parse, for the
+    /// host to show beside the box; nothing reaches the venue then.
+    pub fn place_resting(
+        &self,
+        account: &mut PaperAccount,
+        side: Side,
+        kind: EntryKind,
+        raw_price: f64,
+    ) -> Result<bool, String> {
+        let price = account.snap(raw_price);
+        // The offsets are read here because an unreadable one is a message
+        // beside the box the trader typed in. Everything after is placement.
+        let ticket = self.ticket.parse_bracket(side, price)?;
+        let env = self.account_env(account, side, price);
+        Ok(account.place_resting(side, kind, price, ticket, &env))
+    }
+
+    /// Carry out what a press asked for, through the account's own funnel.
+    ///
+    /// # Errors
+    ///
+    /// The ticket's complaint when a placement's offsets do not parse; see
+    /// [`Self::place_resting`].
+    pub fn carry_out(
+        &mut self,
+        account: &mut PaperAccount,
+        command: ChartCommand,
+    ) -> Result<(), String> {
+        match command {
+            ChartCommand::ClosePosition => account.close_position(),
+            ChartCommand::AmendLeg { owner, leg, price } => account.amend_leg(owner, leg, price),
+            ChartCommand::AmendRung {
+                order,
+                index,
+                leg,
+                price,
+            } => account.amend_rung(order, index, leg, price),
+            ChartCommand::CancelOrder(id) => {
+                account.cancel_order(id);
+            }
+            ChartCommand::AmendOrder { id, price } => {
+                account.amend_order_price(id, price);
+            }
+            ChartCommand::PlaceResting {
+                side,
+                kind,
+                raw_price,
+            } => {
+                self.place_resting(account, side, kind, raw_price)?;
+            }
+            // The armed click: place at the clicked price and disarm on
+            // success. Stays armed on a rejection — the toast explains where
+            // the order may sit, and the user clicks again.
+            ChartCommand::PlaceArmed { armed, raw_price } => {
+                if self.place_resting(account, armed.side, armed.kind, raw_price)? {
+                    self.armed = None;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The aim the frame's pointer and held keys describe, or `None` where
@@ -384,7 +456,7 @@ impl Desk {
             && let Some(control) = self.gesture.control_at(account, pointer, frame.chart, axis)
         {
             let command = self.press_control(control, axis.price_at(pointer.y));
-            return InputOutcome::owned(command);
+            return InputOutcome::claimed(command);
         }
 
         // The aimed order. There is no separate target to hit: a label
@@ -402,7 +474,7 @@ impl Desk {
             && let Some(preview) = self.gesture.cmd_preview
             && !preview.forced
         {
-            return InputOutcome::owned(Some(ChartCommand::PlaceResting {
+            return InputOutcome::claimed(Some(ChartCommand::PlaceResting {
                 side: preview.side,
                 kind: preview.kind,
                 raw_price: preview.raw_price,
@@ -416,7 +488,7 @@ impl Desk {
             && frame.chart.contains(pointer)
             && let Some(axis) = axis
         {
-            return InputOutcome::owned(Some(ChartCommand::PlaceArmed {
+            return InputOutcome::claimed(Some(ChartCommand::PlaceArmed {
                 armed,
                 raw_price: axis.price_at(pointer.y),
             }));
@@ -432,7 +504,7 @@ impl Desk {
         {
             self.gesture.drag = target;
             self.gesture.drag_price = Some(axis.price_at(pointer.y));
-            return InputOutcome::owned(None);
+            return InputOutcome::claimed(None);
         }
 
         // Follow the pointer while dragging. A press that started on the
@@ -444,7 +516,7 @@ impl Desk {
             if let (Some(pointer), Some(axis)) = (frame.pointer, axis) {
                 self.follow(account, pointer, frame.chart, axis);
             }
-            return InputOutcome::owned(None);
+            return InputOutcome::claimed(None);
         }
 
         // Drop: submit the new price; the simulator answers (a rejection
@@ -452,7 +524,7 @@ impl Desk {
         // and repricing it are the same command — the bracket is replaced
         // wholesale either way.
         if frame.primary_released && !idle {
-            return InputOutcome::owned(self.release(account));
+            return InputOutcome::claimed(self.release(account));
         }
 
         InputOutcome {

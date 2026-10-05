@@ -390,9 +390,7 @@ impl PaperTrading {
 
     /// The risk read the control plane and the ticket's own line share.
     pub(crate) fn risk_report(&self) -> (crate::risk_sizing::RiskState, bool) {
-        let reference = self.account.mark_price().unwrap_or_default();
-        self.account
-            .risk_report(&self.account_env(Side::Buy, reference))
+        self.desk.risk_report(&self.account)
     }
 
     /// The bracket an armed entry would carry, at this size.

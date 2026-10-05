@@ -122,43 +122,14 @@ impl PaperTrading {
         outcome.owned
     }
 
-    /// Carry out what a press asked for, through the account's own funnel.
+    /// Carry out what a press asked for — the desk's `carry_out`, through
+    /// the account's own funnel. The host shows the ticket's complaint, and
+    /// re-reads the report if a close reached the journal.
     fn apply(&mut self, command: ChartCommand) {
-        match command {
-            ChartCommand::ClosePosition => self.account.close_position(),
-            ChartCommand::AmendLeg { owner, leg, price } => {
-                self.account.amend_leg(owner, leg, price);
-            }
-            ChartCommand::AmendRung {
-                order,
-                index,
-                leg,
-                price,
-            } => self.account.amend_rung(order, index, leg, price),
-            ChartCommand::CancelOrder(id) => {
-                let events = self.account.venue_mut().cancel(id);
-                self.account.handle_events(events);
-            }
-            ChartCommand::AmendOrder { id, price } => {
-                let events = self.account.venue_mut().amend_price(id, price);
-                self.account.handle_events(events);
-            }
-            ChartCommand::PlaceResting {
-                side,
-                kind,
-                raw_price,
-            } => {
-                self.place_resting(side, kind, raw_price);
-            }
-            // The armed click: place at the clicked price and disarm on
-            // success. Stays armed on a rejection — the toast explains where
-            // the order may sit, and the user clicks again.
-            ChartCommand::PlaceArmed { armed, raw_price } => {
-                if self.place_resting(armed.side, armed.kind, raw_price) {
-                    self.desk.armed = None;
-                }
-            }
+        if let Err(message) = self.desk.carry_out(&mut self.account, command) {
+            self.show_toast(message);
         }
+        self.account.follow_journal();
     }
 
     /// The overlay control under the pointer; see `Gesture::control_at`.
@@ -203,14 +174,16 @@ impl PaperTrading {
     /// Rest a limit/stop entry at `raw_price` with the ticket's quantity
     /// and offsets; returns whether the simulator accepted it.
     pub(super) fn place_resting(&mut self, side: Side, kind: EntryKind, raw_price: f64) -> bool {
-        let price = self.account.snap(raw_price);
-        // The offsets are read here because an unreadable one is a message
-        // beside the box the trader typed in. Everything after is placement.
-        let Some(ticket) = self.parse_bracket(side, price) else {
-            return false;
-        };
-        let env = self.account_env(side, price);
-        self.account.place_resting(side, kind, price, ticket, &env)
+        match self
+            .desk
+            .place_resting(&mut self.account, side, kind, raw_price)
+        {
+            Ok(placed) => placed,
+            Err(message) => {
+                self.show_toast(message);
+                false
+            }
+        }
     }
 
     /// Whether the ruler spent this frame's wheel travel. The chart asks

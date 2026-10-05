@@ -71,13 +71,12 @@ impl Ticket {
     #[must_use]
     pub fn form(&self) -> TicketForm {
         TicketForm {
-            quantity: match self.qty_text.trim().parse::<Decimal>() {
-                Ok(quantity) if quantity > Decimal::ZERO => Ok(quantity),
-                _ => Err(format!(
+            quantity: self.quantity_preview().ok_or_else(|| {
+                format!(
                     "SIM: quantity must be a positive number - got `{}`",
                     self.qty_text.trim(),
-                )),
-            },
+                )
+            }),
             // Both boxes or neither: one that does not parse fails the pair,
             // which is what `ticket_bracket`'s `?` did.
             offsets: match (
@@ -118,13 +117,7 @@ impl Ticket {
     /// instrument's minimum rather than "anything above zero", so the
     /// steppers can only ever land on a size the venue would take.
     pub fn step_quantity(&mut self, notches: Decimal, unit: Decimal, floor: Decimal) {
-        let current = self
-            .qty_text
-            .trim()
-            .parse::<Decimal>()
-            .ok()
-            .filter(|quantity| *quantity > Decimal::ZERO)
-            .unwrap_or(floor);
+        let current = self.quantity_preview().unwrap_or(floor);
         let next = current.saturating_add(notches.saturating_mul(unit));
         if next >= floor {
             self.qty_text = fmt_decimal(next);

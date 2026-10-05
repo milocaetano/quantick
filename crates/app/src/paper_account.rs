@@ -19,10 +19,10 @@
 //!
 //! It dereferences to the account, so every caller — the ticket, the dock,
 //! the control plane — keeps asking `account().place_intent(..)` and the
-//! rest of the money path by the names it already used. Only `on_trade` and
-//! `handle_events` re-read the report at once; a close any other core call
-//! journals waits for `settle`, which the frame runs before the report window
-//! paints. So the painted report never lags the journal it reads.
+//! rest of the money path by the names it already used. `on_trade`,
+//! `handle_events` and a chart command re-read the report at once; a close
+//! any other core call journals waits for `settle`, run before the report
+//! window paints. So the painted report never lags the journal it reads.
 
 use std::ops::{Deref, DerefMut};
 use std::path::PathBuf;
@@ -175,7 +175,7 @@ impl PaperAccount {
     /// trade is missing" report. Guarded rather than always gathered: this
     /// is the per-trade path, and building a `ReportEnv` for a window nobody
     /// has open is work a dense tape pays on every single close.
-    fn follow_journal(&mut self) {
+    pub(crate) fn follow_journal(&mut self) {
         if self.core.take_journal_changed() && self.report.is_open() {
             let (report, env) = self.report_parts();
             report.journal_changed(&env);
