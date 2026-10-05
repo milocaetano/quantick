@@ -9,7 +9,16 @@
 # Synchronized from main 5c7b7d1a (X3, #433): `--tighten` lowers QuantickApp
 # by 1, #433's net change to the root's measured lines, as on main
 # (10242 -> 10241 there).
-!budget 2794
-ChartState 568
+# Raised by 26 lines for Renko bars (`feat/renko-bars`, review round 2):
+# live ingest and the rebuild both put the backfill boundary after the bricks
+# a builder cuts late from the prints it held, so those bricks are history
+# that no strategy acts on, and two read accessors give the chart read the
+# rule's inferred price step and its held and off-grid prints. The rule and
+# the count of late bricks live in `quantick-engine`.
+# Merged with #606 on this branch, where `fold_print` lives in
+# `footprint_series.rs` (PR #596): ChartState measures 586, 18 of the 26
+# signed above, and QuantickApp keeps PR #596's tightened 2226.
+!budget 2812
+ChartState 586
 QuantickApp 2226
 # #526 G5: two root drawing impl modules and shared drawing/strategy operations leave the window.

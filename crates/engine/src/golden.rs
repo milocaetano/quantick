@@ -21,14 +21,13 @@ use crate::{Bar, BarBuilder, Trade, fixture};
 ///
 /// The trailing in-progress bar (if any) is intentionally *not* emitted: it is
 /// incomplete, and emitting it as if it were closed would be dishonest. Query
-/// [`BarBuilder::partial`] for it instead.
+/// [`BarBuilder::partial`] for it instead. A configured builder (a
+/// `dyn BarBuilder`) replays as well as a named one.
 #[must_use]
-pub fn replay<B: BarBuilder>(builder: &mut B, trades: &[Trade]) -> Vec<Bar> {
+pub fn replay<B: BarBuilder + ?Sized>(builder: &mut B, trades: &[Trade]) -> Vec<Bar> {
     let mut bars = Vec::with_capacity(trades.len());
     for trade in trades {
-        if let Some(bar) = builder.push(trade) {
-            bars.push(bar);
-        }
+        builder.push_into(trade, &mut bars);
     }
     bars
 }

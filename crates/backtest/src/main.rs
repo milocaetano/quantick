@@ -524,6 +524,7 @@ fn run(args: &Args) -> Result<usize, String> {
             .decimal("max_drawdown_points", outcome.report.max_drawdown_points)
             .count("rejections", outcome.anomalies.rejections())
             .count("brackets_dropped", outcome.anomalies.dropped_brackets())
+            .count("bar_rule_prints", outcome.anomalies.bar_rule_prints())
             .flag("open_at_end", outcome.open_at_end.is_some())
             .text(
                 "open_side",
@@ -555,6 +556,7 @@ fn run(args: &Args) -> Result<usize, String> {
         .maybe_decimal("profit_factor", outcome.aggregate.profit_factor)
         .count("rejections", outcome.anomalies.rejections())
         .count("brackets_dropped", outcome.anomalies.dropped_brackets())
+        .count("bar_rule_prints", outcome.anomalies.bar_rule_prints())
         .integer("elapsed_ms", elapsed.as_millis() as i64)
         .integer("prints_per_second", rate(prints_total, elapsed))
         .emit();

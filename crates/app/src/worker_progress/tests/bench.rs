@@ -148,12 +148,14 @@ fn indicator_fixture(spec: Spec) -> Vec<Vec<IndicatorCommand>> {
     };
     let mut bursts = Vec::with_capacity(WARMUP + MEASURED);
     let mut closed_count = 0_u64;
+    let mut cut = Vec::new();
     for burst in 0..WARMUP + MEASURED {
         let mut commands = Vec::with_capacity(STEPS + 1);
         for offset in 0..STEPS {
             let i = u64::try_from(burst * STEPS + offset + 1).unwrap();
             let trade = indicator_print(i);
-            if let Some(closed) = builder.push(&trade) {
+            builder.push_into(&trade, &mut cut);
+            for closed in cut.drain(..) {
                 assert!(matches!(spec, Spec::Dollar), "time fixture has no close");
                 assert!(i == 20_000 || i == 40_000, "independent dollar close index");
                 assert_indicator_bar(&closed, closed_count * 20_000 + 1, i);

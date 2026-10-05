@@ -28,10 +28,13 @@ fn resolved_registry_builder_has_the_direct_builder_ingest_budget() {
             } else {
                 Box::new(TickBarBuilder::new(50))
             };
+            let mut cut = Vec::with_capacity(1);
             let start = Instant::now();
             let mut closed = 0;
             for trade in &trades {
-                closed += usize::from(black_box(builder.push(black_box(trade))).is_some());
+                black_box(builder.push_into(black_box(trade), &mut cut));
+                closed += cut.len();
+                cut.clear();
             }
             let elapsed = start.elapsed().as_nanos();
             assert_eq!(closed, PRINTS as usize / 50);

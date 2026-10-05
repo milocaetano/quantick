@@ -311,6 +311,70 @@ impl Drop for BarResponseGate {
     }
 }
 
+/// The flow pane's entry in the chart read, checked against the scope's
+/// published schema.
+fn flow_pane_read(app: &QuantickApp) -> serde_json::Value {
+    let scope = observer_scope("chart.summary");
+    let mut registry = crate::control::standard_registry().unwrap();
+    let schema = registry
+        .descriptors()
+        .find(|descriptor| descriptor.scope_id == scope)
+        .map(|descriptor| descriptor.schema.clone())
+        .unwrap();
+    let capture = registry
+        .capture(app, &observer_instance(), std::slice::from_ref(&scope))
+        .unwrap()
+        .into_serialized()
+        .unwrap();
+    let value = &capture.scopes[&scope].value;
+    quantick_control::schema::validate_instance(&schema, value).unwrap();
+    let flow = app.active_tab().flow_pane.id.to_string();
+    value["panes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|pane| pane["pane_id"] == flow)
+        .unwrap()
+        .clone()
+}
+
+/// A Renko pane reads its price step off its own prints, and the chart read
+/// says so as data: how many prints the rule holds uncut while they have not
+/// shown it, then the step — named inferred — and the prints off it.
+#[test]
+fn the_chart_read_names_a_renko_panes_inferred_step_and_its_uncut_prints() {
+    let (mut app, _feed, _commands, _book) = test_app();
+    let renko = BUILTIN_BARS.parse("renko:3").unwrap();
+    assert!(app.active_tab_mut().set_pane_bar_spec(0, renko).unwrap());
+    // Two-point moves: sixty-four distances freeze a two-point step, and a
+    // print a point off it is cut on that step and counted.
+    let mut prices: Vec<i64> = (0..65).map(|i| 100 + 2 * (i % 2)).collect();
+    prices.push(105);
+    let tape: Vec<_> = prices
+        .iter()
+        .zip(1_u64..)
+        .map(|(price, id)| quantick_engine::Trade {
+            price: Decimal::from(*price),
+            ..trade(id)
+        })
+        .collect();
+    for print in &tape[..10] {
+        app.active_tab_mut().flow_pane.ingest_live_trade(print);
+    }
+    let holding = flow_pane_read(&app);
+    assert_eq!(holding["held_prints"], "10");
+    assert_eq!(holding["off_grid_prints"], "0");
+    assert!(holding.get("inferred_price_step").is_none(), "{holding}");
+
+    for print in &tape[10..] {
+        app.active_tab_mut().flow_pane.ingest_live_trade(print);
+    }
+    let read = flow_pane_read(&app);
+    assert_eq!(read["inferred_price_step"], "2", "{read}");
+    assert_eq!(read["held_prints"], "0");
+    assert_eq!(read["off_grid_prints"], "1");
+}
+
 #[test]
 fn delayed_bar_response_preserves_focused_operation_value() {
     delayed_bar_response_fixture(false);

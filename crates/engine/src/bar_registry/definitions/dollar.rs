@@ -10,6 +10,7 @@ pub static DOLLAR: BarDefinition = BarDefinition {
         unit: "quote_asset_notional",
         kind: NumberKind::Decimal,
         default: Decimal::from_parts(500_000, 0, 0, false, 0),
+        minimum: None,
         editor: NumberEditor {
             label: "notional",
             min: 1000.0,
@@ -25,5 +26,7 @@ pub static DOLLAR: BarDefinition = BarDefinition {
     requirements: super::VOLUME_INPUT,
     progress_unit: "notional",
     fixed_time_interval: false,
+    quick_alias: None,
+    path_dependent: false,
     factory: |value, _| Box::new(DollarBarBuilder::new(value)),
 };

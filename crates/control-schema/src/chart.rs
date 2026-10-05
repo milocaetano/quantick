@@ -60,6 +60,22 @@ pub struct ChartPaneSnapshot {
     /// produced before deal bars existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uncounted_prints: Option<WireU64>,
+    /// The price step the pane's rule read off the pane's own prints and
+    /// cuts on — a Renko pane's, once its prints have shown it. Inferred,
+    /// never declared by a venue. Absent for a rule that reads no step, and
+    /// for one still reading it: `held_prints` says how many it holds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inferred_price_step: Option<CanonicalDecimal>,
+    /// Prints the pane's rule holds uncut until they show it its price step
+    /// — a Renko pane's before its first brick. They form the in-progress
+    /// bar. Zero for every rule that reads no step. Optional on the wire, as
+    /// `uncounted_prints` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_prints: Option<WireU64>,
+    /// Prints off the price step the pane's rule froze: cut on that step and
+    /// counted, never snapped onto it. Zero for every rule that freezes none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub off_grid_prints: Option<WireU64>,
     pub venue_history_bar_count: WireU64,
     pub backfill_boundary_slot: Option<WireU64>,
     pub has_in_progress_bar: bool,

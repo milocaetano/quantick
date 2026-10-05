@@ -21,7 +21,7 @@ use crate::{
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
-    types::{DecimalRange, canonical_f32, wire_usize},
+    types::{DecimalRange, canonical_decimal, canonical_f32, wire_usize},
 };
 
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
@@ -89,6 +89,7 @@ fn pane_snapshot(
     config: &AppConfig,
 ) -> ChartPaneSnapshot {
     let seam = pane.seam_slot();
+    let rule = pane.state.rule_diagnostics();
     ChartPaneSnapshot {
         tab_id: WireU64::new(tab_id),
         pane_id: WireU64::new(pane.id),
@@ -102,7 +103,10 @@ fn pane_snapshot(
         timeline_revision: WireU64::new(pane.state.timeline_revision()),
         pagination_revision: WireU64::new(pane.pagination_revision()),
         closed_bar_count: wire_usize(pane.closed_slots()),
-        uncounted_prints: Some(WireU64::new(pane.state.uncounted_trades())),
+        uncounted_prints: Some(WireU64::new(rule.uncounted_trades)),
+        inferred_price_step: pane.state.inferred_price_step().map(canonical_decimal),
+        held_prints: Some(WireU64::new(rule.held_prints)),
+        off_grid_prints: Some(WireU64::new(rule.off_grid_prints)),
         venue_history_bar_count: wire_usize(seam),
         backfill_boundary_slot: pane
             .state

@@ -26,6 +26,9 @@ pub struct ParameterDescriptor {
     pub unit: &'static str,
     pub kind: NumberKind,
     pub default: Decimal,
+    /// The smallest value the rule is defined for, where that is more than
+    /// any positive value of its kind — a Renko brick needs two ticks.
+    pub minimum: Option<Decimal>,
     pub editor: NumberEditor,
 }
 
@@ -49,6 +52,7 @@ pub enum BarConfigurationError {
     UnknownParameter { parameter: String },
     InvalidCount { kind: String, parameter: String },
     InvalidNumber { kind: String, parameter: String },
+    BelowMinimum { kind: String, minimum: String },
     UnknownChoice { choice: String },
     InvalidInterval { parameter: String },
     IntervalOutOfRange { ms: i64, parameter: String },
@@ -73,6 +77,9 @@ impl std::fmt::Display for BarConfigurationError {
             ),
             Self::InvalidNumber { kind, parameter } => {
                 write!(f, "{kind} bars need a positive number, got '{parameter}'")
+            }
+            Self::BelowMinimum { kind, minimum } => {
+                write!(f, "{kind} bars need at least {minimum}")
             }
             Self::UnknownChoice { choice } => write!(f, "unknown bar parameter choice '{choice}'"),
             Self::InvalidInterval { parameter } => write!(
@@ -128,7 +135,18 @@ impl ParameterDescriptor {
                 })?,
             NumberKind::Duration => Decimal::from(parse_interval(text)?),
         };
+        self.check_minimum(id, value)?;
         Ok(value)
+    }
+
+    fn check_minimum(&self, id: &str, value: Decimal) -> Result<(), BarConfigurationError> {
+        match self.minimum {
+            Some(minimum) if value < minimum => Err(BarConfigurationError::BelowMinimum {
+                kind: id.to_owned(),
+                minimum: format!("{minimum} {}", self.unit),
+            }),
+            _ => Ok(()),
+        }
     }
 
     pub fn validate(&self, id: &str, value: Decimal) -> Result<(), BarConfigurationError> {
@@ -162,7 +180,7 @@ impl ParameterDescriptor {
                 });
             }
         }
-        Ok(())
+        self.check_minimum(id, value)
     }
 
     pub fn format(&self, value: Decimal) -> String {

@@ -15,6 +15,19 @@
 //! the series counts the trades it fed since the last close and reads the
 //! answer off the closed bar's own `trade_count`: `pending + 1` means the
 //! closing trade is inside, `pending` means it opens the next ladder.
+//!
+//! One trade can close several bars — a Renko print clearing several brick
+//! levels. The first holds the ladder that was forming; each after it holds
+//! the closing trade if its count says so, and otherwise nothing, so it gets
+//! an empty ladder rather than a borrowed one.
+//!
+//! And one trade can close bars out of prints already folded: a builder that
+//! holds its prints until it can measure them — Renko reading its price step
+//! — cuts them into several bars at once. The bars split those prints oldest
+//! first, each taking as many as its own count, and the series reads them
+//! again from the chart's tape, where they sit right before the trade.
+
+use std::ops::Index;
 
 use crate::tick_membership::TickMembership;
 use quantick_engine::bar_registry::BarConfiguration;
@@ -50,38 +63,55 @@ pub(crate) fn seed_deal_counter(builder: &mut dyn BarBuilder, samples: &[DealSam
     }
 }
 
-/// Push one print through `builder` and, with the footprint layer on, fold
-/// it into the ladders — unless the builder left it *uncounted*. A deal bar
-/// counts nothing before its first reading: such a print belongs to no bar,
-/// so it belongs to no ladder either, or the ladders drift off the bars they
-/// index by and the footprint series asserts on the first close.
-pub(crate) fn fold_print<B: BarBuilder + ?Sized>(
+/// Push print `index` of `tape` through `builder`, appending every bar it
+/// closed to `bars`, and, with the footprint layer on, fold it into the
+/// ladders — unless the builder left it *uncounted*. A deal bar counts
+/// nothing before its first reading: such a print belongs to no bar, so it
+/// belongs to no ladder either, or the ladders drift off the bars they index
+/// by and the footprint series asserts on the first close.
+///
+/// Returns how many of the bars appended were cut late, from prints the
+/// builder held before this one ([`BarBuilder::push_into`]).
+pub(crate) fn fold_print<B, T>(
     builder: &mut B,
     footprints: &mut FootprintSeries,
     footprint_enabled: bool,
     canonical: bool,
-    trade: &Trade,
-) -> Option<Bar> {
+    tape: &T,
+    index: usize,
+    bars: &mut Vec<Bar>,
+) -> usize
+where
+    B: BarBuilder + ?Sized,
+    T: Index<usize, Output = Trade> + ?Sized,
+{
+    let trade = &tape[index];
     let uncounted_before = builder.diagnostics().uncounted_trades;
     let pending = builder.partial().map_or(0, |bar| bar.trade_count);
-    let closed = builder.push(trade);
+    let first = bars.len();
+    let late = builder.push_into(trade, bars);
     let uncounted = builder.diagnostics().uncounted_trades != uncounted_before;
-    let included = closed
-        .as_ref()
-        .is_some_and(|bar| bar.trade_count == pending.saturating_add(1));
+    let closed = &bars[first..];
     if canonical && let Some(membership) = footprints.tick_membership.as_mut() {
-        membership.observe(!uncounted, closed.is_some(), included, trade);
+        // Installed only for fixed tick bars, which close at most one bar
+        // per print and never late.
+        let included = closed
+            .first()
+            .is_some_and(|bar| bar.trade_count == pending.saturating_add(1));
+        membership.observe(!uncounted, !closed.is_empty(), included, trade);
     }
     if footprint_enabled {
-        match (&closed, uncounted) {
-            (_, false) => footprints.observe_admitted(trade, closed.as_ref(), included),
+        if uncounted {
             // A rollover ended the bar and this print counts for nothing:
             // the ladder closes on what it held, the print folds nowhere.
-            (Some(bar), true) => footprints.close_without(bar),
-            (None, true) => {}
+            for bar in closed {
+                footprints.close_without(bar);
+            }
+        } else {
+            footprints.observe(tape, index, closed);
         }
     }
-    closed
+    late
 }
 
 impl FootprintSeries {
@@ -113,8 +143,10 @@ impl FootprintSeries {
     ) {
         let mut builder = spec.build();
         seed_deal_counter(&mut *builder, samples);
-        for trade in trades {
-            fold_print(&mut *builder, self, true, false, trade);
+        let mut cut = Vec::new();
+        for index in 0..trades.len() {
+            fold_print(&mut *builder, self, true, false, trades, index, &mut cut);
+            cut.clear();
         }
     }
 
@@ -140,53 +172,74 @@ impl FootprintSeries {
         self.pending = 0;
     }
 
-    /// Fold the trade the bar builder just consumed, `closed` being what that
-    /// same `push` returned. Must be called for every trade, in order.
-    pub fn observe(&mut self, trade: &Trade, closed: Option<&Bar>) {
-        let included = closed.is_some_and(|bar| bar.trade_count == self.pending.saturating_add(1));
-        self.observe_admitted(trade, closed, included);
-    }
-
-    /// Use the closing decision already made by the canonical chart fold.
-    pub(crate) fn observe_admitted(
-        &mut self,
-        trade: &Trade,
-        closed: Option<&Bar>,
-        closing_trade_included: bool,
-    ) {
-        let Some(bar) = closed else {
+    /// Fold print `index` of `tape` — the trade the bar builder just
+    /// consumed — `closed` being every bar that same push closed, oldest
+    /// first. Must be called for every counted print, in order, each at its
+    /// own place in `tape`.
+    pub fn observe<T>(&mut self, tape: &T, index: usize, closed: &[Bar])
+    where
+        T: Index<usize, Output = Trade> + ?Sized,
+    {
+        if closed
+            .first()
+            .is_some_and(|bar| bar.trade_count < self.pending)
+        {
+            self.split_held(tape, index, closed);
+            return;
+        }
+        let trade = &tape[index];
+        let mut placed = false;
+        for bar in closed {
+            let closing_trade_included =
+                !placed && bar.trade_count == self.pending.saturating_add(1);
+            debug_assert!(
+                closing_trade_included || bar.trade_count == self.pending,
+                "footprint trade counter drifted from the bar builder's"
+            );
+            if closing_trade_included {
+                self.builder.push(trade);
+                placed = true;
+            }
+            // Index alignment with `bars` is the invariant everything
+            // downstream indexes by: a bar that summarises no print still
+            // gets its (empty) ladder.
+            self.closed.push(self.builder.close_or_empty());
+            self.pending = 0;
+        }
+        if !placed {
+            // No bar closed, or the last one closed on its boundary: this
+            // trade forms the next one.
             self.builder.push(trade);
             self.pending = self.pending.saturating_add(1);
-            return;
-        };
+        }
+    }
 
+    /// The bars one push cut out of prints already folded into the forming
+    /// ladder, which summed them all: each bar takes its count of them,
+    /// oldest first, read again from `tape`, and what is left — the closing
+    /// trade included — forms the next ladder.
+    fn split_held<T>(&mut self, tape: &T, index: usize, closed: &[Bar])
+    where
+        T: Index<usize, Output = Trade> + ?Sized,
+    {
         debug_assert!(
-            closing_trade_included || bar.trade_count == self.pending,
+            closed.iter().map(|bar| bar.trade_count).sum::<u64>() <= self.pending + 1,
             "footprint trade counter drifted from the bar builder's"
         );
-        if closing_trade_included {
-            self.builder.push(trade);
-        }
-        match self.builder.close() {
-            Some(ladder) => self.closed.push(ladder),
-            None => {
-                // Unreachable through ChartState — a closed bar summarises at
-                // least one trade — but index alignment with `bars` is the
-                // invariant everything downstream indexes by, so restore it
-                // from the only trade at hand instead of panicking mid-feed.
-                self.builder.push(trade);
-                self.closed
-                    .push(self.builder.close().expect("pushed just above"));
-                self.pending = 0;
-                return;
+        let held = usize::try_from(self.pending).unwrap_or(usize::MAX);
+        let mut prints = (index.saturating_sub(held)..=index).map(|at| &tape[at]);
+        let _summed = self.builder.close();
+        for bar in closed {
+            let count = usize::try_from(bar.trade_count).unwrap_or(usize::MAX);
+            for print in prints.by_ref().take(count) {
+                self.builder.push(print);
             }
+            self.closed.push(self.builder.close_or_empty());
         }
-        if closing_trade_included {
-            self.pending = 0;
-        } else {
-            // The bar closed on its boundary; this trade opens the next one.
-            self.builder.push(trade);
-            self.pending = 1;
+        self.pending = 0;
+        for print in prints {
+            self.builder.push(print);
+            self.pending = self.pending.saturating_add(1);
         }
     }
 

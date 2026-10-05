@@ -32,5 +32,12 @@
 # view's switch and snapshot field (orderflow_view/asset_bubbles.rs) — an
 # action handler binds app ports and has no headless home. The switch, its
 # storage and what off holds on screen live in quantick_stores. Measured.
-!budget 24266
-crates/app 24266
+# Raised by 18 lines merging #606 (Renko bars) into this branch: its 24
+# UI-free lines in app -- the pane handing indicators and strategies every
+# bar one print closes and keeping view and marks on market time when
+# history re-cuts a series (pane/series.rs, +20), and the chart read naming
+# the inferred step (control/chart.rs, +4) -- fit under main's ceiling
+# unsigned. Beside PR #596's signed growth the total is the sum of both
+# sides' measured growth: 24,178 + 82 + 24 = 24,284. Measured.
+!budget 24284
+crates/app 24284

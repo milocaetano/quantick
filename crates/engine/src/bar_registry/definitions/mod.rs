@@ -13,6 +13,7 @@ register! {
     time => TIME,
     imbalance => IMBALANCE,
     trades => TRADES,
+    renko => RENKO,
 }
 
 use super::{InputRequirements, NumberEditor};
