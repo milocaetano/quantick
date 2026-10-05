@@ -740,3 +740,90 @@ fn an_unnamed_reset_close_invalidates_without_inventing_persistence_or_io_warnin
             .is_empty()
     );
 }
+
+/// Rest a buy limit at `price` under a market marked at 100.
+fn rest_limit(account: &mut PaperAccount, price: i64) -> quantick_sim::OrderId {
+    let events = account
+        .try_place_intent(OrderIntent::limit(
+            Side::Buy,
+            Decimal::ONE,
+            Decimal::from(price),
+        ))
+        .expect("the lock lets a one-lot limit through");
+    match events.as_slice() {
+        [VenueEvent::Placed(order)] => order.id,
+        other => panic!("expected one placement, got {other:?}"),
+    }
+}
+
+/// A cancel removes the named order and says so with a user cancellation.
+#[test]
+fn cancelling_an_order_removes_it_and_tells_the_host_why() {
+    let dir = ScratchDir::new("account-cancel-order");
+    let mut account = account(&dir, "CNCLX");
+    account.seed(&print(0, 100));
+    let first = rest_limit(&mut account, 95);
+    let second = rest_limit(&mut account, 90);
+
+    let events = account.cancel_order(first);
+
+    assert!(
+        matches!(
+            events.as_slice(),
+            [VenueEvent::Cancelled { order, reason: quantick_sim::CancelReason::User }]
+                if order.id == first
+        ),
+        "one user cancellation of the named order: {events:?}"
+    );
+    let ids: Vec<_> = account.working_orders().iter().map(|o| o.id).collect();
+    assert_eq!(ids, vec![second], "only the other order is left");
+}
+
+/// A reprice moves the price and nothing else: same id, same size, and the
+/// venue says it was updated rather than replaced.
+#[test]
+fn amending_an_order_price_moves_it_in_place() {
+    let dir = ScratchDir::new("account-amend-order");
+    let mut account = account(&dir, "AMNDX");
+    account.seed(&print(0, 100));
+    let first = rest_limit(&mut account, 95);
+    let second = rest_limit(&mut account, 90);
+    let before = account.working_orders().to_vec();
+
+    let events = account.amend_order_price(first, Decimal::from(97));
+
+    assert!(
+        matches!(events.as_slice(), [VenueEvent::Updated(order)] if order.id == first),
+        "one update of the named order: {events:?}"
+    );
+    let after = account.working_orders();
+    assert_eq!(after.len(), 2, "no order was added or removed");
+    let moved = after.iter().find(|o| o.id == first).expect("same id");
+    assert_eq!(moved.price, Some(Decimal::from(97)), "the price moved");
+    assert_eq!(moved.quantity, before[0].quantity, "the size did not");
+    let other = after.iter().find(|o| o.id == second).expect("neighbour");
+    assert_eq!(*other, before[1], "the other order is untouched");
+}
+
+/// A reprice the venue refuses leaves the order where it was.
+#[test]
+fn a_refused_reprice_leaves_the_order_resting() {
+    let dir = ScratchDir::new("account-amend-refused");
+    let mut account = account(&dir, "AMNRX");
+    account.seed(&print(0, 100));
+    let id = rest_limit(&mut account, 95);
+
+    // A buy limit above the market would fill at once, so it is not a
+    // resting price.
+    let events = account.amend_order_price(id, Decimal::from(105));
+
+    assert!(
+        matches!(events.as_slice(), [VenueEvent::Rejected(_)]),
+        "the venue refuses: {events:?}"
+    );
+    assert_eq!(
+        account.working_orders()[0].price,
+        Some(Decimal::from(95)),
+        "and the order stays at its price"
+    );
+}

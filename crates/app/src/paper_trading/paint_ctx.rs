@@ -1,19 +1,22 @@
 //! The frame's geometry: where a price is, and what is under the pointer.
 //!
 //! [`PaintCtx`] turns a price into a `y` and paints the lines, gutter chips
-//! and tags the chart layer is made of; the free functions beside it are the
-//! pure geometry a press has to agree with. They sit together and depend on
-//! nothing else in the module, so the ✕ is pressable exactly while it is
-//! painted: [`super::paint`] and [`super::input`] ask this file the same
-//! question and get the same rectangle.
+//! and tags the chart layer is made of. The geometry a press has to agree
+//! with is the desk's (`quantick_paper::desk::geometry`); the functions at
+//! the bottom of this file only carry it across the window's edge, so the ✕
+//! is pressable exactly while it is painted: the paint here and the desk's
+//! hit-test ask one function the same question and get the same rectangle.
 
 use eframe::egui;
+use quantick_paper::desk::geometry::{self, Bounds, Point};
+use quantick_paper::desk::geometry::{
+    LINE_GRAB_RADIUS_PX, TAG_BUTTON_PX, TAG_GAP_PX, TAG_HEIGHT_PX,
+};
+pub(crate) use quantick_paper::desk::geometry::{clamp_tag_center, dodged_chip_y};
 
 use super::{
-    CHIP_CLEAR_PX, CLOSE_DIVIDER_ALPHA, DRAG_HALO_COLOR, DRAG_HALO_EXTRA_WIDTH_PX, GUTTER_NOTCH_PX,
-    HANDLE_CLEAR_PX, HANDLE_SIZE, LINE_DRAG_WIDTH_PX, LINE_GRAB_RADIUS_PX, LINE_HOVER_WIDTH_PX,
-    ORDER_DASH_PX, ORDER_GAP_PX, TAG_BUTTON_PX, TAG_GAP_PX, TAG_HEIGHT_PX, TAG_HOVER_SLACK_PX,
-    TAG_PAD_X,
+    CLOSE_DIVIDER_ALPHA, DRAG_HALO_COLOR, DRAG_HALO_EXTRA_WIDTH_PX, GUTTER_NOTCH_PX,
+    LINE_DRAG_WIDTH_PX, LINE_HOVER_WIDTH_PX, ORDER_DASH_PX, ORDER_GAP_PX, TAG_PAD_X,
 };
 use crate::chart::PriceScale;
 use crate::theme;
@@ -335,96 +338,54 @@ impl PaintCtx<'_> {
     }
 }
 
-/// A tag's vertical center: the line's row, kept fully inside the plot.
-pub(crate) fn clamp_tag_center(y: f32, top: f32, bottom: f32) -> f32 {
-    let half = TAG_HEIGHT_PX / 2.0;
-    // A band too short to hold a tag has nothing to clamp into, and
-    // `f32::clamp` does not merely saturate there — it panics outright the
-    // moment its bounds cross. That band is reachable: `plot_split` floors
-    // the plot at 20 px, but `indicators::split_panes` then carves the
-    // indicator strips out of it with no floor of its own, so a squeezed
-    // window with enough panes really does leave the candles a few pixels.
-    // Centre the tag in what there is rather than taking a live session
-    // down.
-    if bottom - top <= TAG_HEIGHT_PX {
-        return f32::midpoint(top, bottom);
-    }
-    y.clamp(top + half, bottom - half)
+/// A window point, in the desk's plain values.
+pub(super) fn point(pos: egui::Pos2) -> Point {
+    Point::new(pos.x, pos.y)
 }
 
-/// The ✕ zone every closable tag reserves at its right edge — a fixed
-/// position derivable without measuring text, which is what lets the
-/// paint and the press-time geometric hit-test share one truth.
+/// A desk point, back in the window's type.
+pub(super) fn pos(point: Point) -> egui::Pos2 {
+    egui::pos2(point.x, point.y)
+}
+
+/// A window rectangle, in the desk's plain values.
+pub(super) fn bounds(rect: egui::Rect) -> Bounds {
+    Bounds::from_min_max(point(rect.min), point(rect.max))
+}
+
+/// A desk rectangle, back in the window's type.
+pub(super) fn rect(bounds: Bounds) -> egui::Rect {
+    egui::Rect::from_min_max(pos(bounds.min), pos(bounds.max))
+}
+
+/// The ✕ zone every closable tag reserves at its right edge; see
+/// `geometry::close_button_rect`.
 pub(crate) fn close_button_rect(tag_right: f32, center_y: f32) -> egui::Rect {
-    let right = tag_right - TAG_GAP_PX;
-    egui::Rect::from_min_max(
-        egui::pos2(right - TAG_BUTTON_PX, center_y - TAG_HEIGHT_PX / 2.0),
-        egui::pos2(right, center_y + TAG_HEIGHT_PX / 2.0),
-    )
+    rect(geometry::close_button_rect(tag_right, center_y))
 }
 
-/// Whether a bracket owner's `SL`/`TP` handles paint this frame.
-///
-/// The pointer clause is the one that is easy to miss. A pane that is not
-/// feeding paper input has no pointer here, and `reveal` can still be true
-/// over there — an order's tag opens on *every* pane at once, by design, so
-/// one hover reads on both charts. Without the clause the other pane drew a
-/// pressable-looking handle beside an order whose presses it does not take:
-/// the exact inversion of the layer rule that an invisible control is not a
-/// control, and no better.
+/// Whether a bracket owner's `SL`/`TP` handles paint this frame; see
+/// `geometry::handles_visible`.
 pub(super) fn handles_visible(
     pointer: Option<egui::Pos2>,
     reveal: bool,
     over_handle: bool,
 ) -> bool {
-    pointer.is_some() && (reveal || over_handle)
+    geometry::handles_visible(pointer.map(point), reveal, over_handle)
 }
 
-/// A bracket handle's rect: the ✕ column, one clear step above or below
-/// the entry line so it never overlaps the position tag between them.
+/// A bracket handle's rect; see `geometry::bracket_handle_rect`.
 pub(super) fn bracket_handle_rect(tag_right: f32, entry_y: f32, above: bool) -> egui::Rect {
-    let right = tag_right - TAG_GAP_PX;
-    let y = if above {
-        entry_y - HANDLE_CLEAR_PX - HANDLE_SIZE.y
-    } else {
-        entry_y + HANDLE_CLEAR_PX
-    };
-    egui::Rect::from_min_size(egui::pos2(right - HANDLE_SIZE.x, y), HANDLE_SIZE)
+    rect(geometry::bracket_handle_rect(tag_right, entry_y, above))
 }
 
-/// Keep a gutter chip legible when it would land on the last-price chip:
-/// push it just clear of the reserved row, towards its own side of the
-/// price, clamped into the pane. At the exact fill price (no distance at
-/// all) the chip steps down, below the last-price chip. When the reserved
-/// row itself hugs a pane edge the clamp can land the chip back inside the
-/// band — accepted: a chip pinned at the edge beats one pushed out of the
-/// pane, and the next print separates them.
-pub(super) fn dodged_chip_y(y: f32, reserved: Option<f32>, top: f32, bottom: f32) -> f32 {
-    let Some(reserved) = reserved else {
-        return y;
-    };
-    let delta = y - reserved;
-    if delta.abs() >= CHIP_CLEAR_PX {
-        return y;
-    }
-    let dodged = if delta >= 0.0 {
-        reserved + CHIP_CLEAR_PX
-    } else {
-        reserved - CHIP_CLEAR_PX
-    };
-    dodged.clamp(top, bottom)
-}
-
-/// The row around a line where its in-plot tag counts as hovered: the
-/// line's own grab band, plus the row a tag was clamped into near a chart
-/// edge (where the two part company). Text-free geometry on purpose — a
-/// press-time hit-test has no painter to measure a galley with, and the
-/// paint must be able to ask the same question.
-pub(super) fn tag_row_hit(pointer: egui::Pos2, y: f32, chart: egui::Rect) -> bool {
-    if !chart.contains(pointer) {
-        return false;
-    }
-    let center = clamp_tag_center(y, chart.top(), chart.bottom());
-    (pointer.y - y).abs() <= LINE_GRAB_RADIUS_PX
-        || (pointer.y - center).abs() <= TAG_HEIGHT_PX / 2.0 + TAG_HOVER_SLACK_PX
+/// The cmd preview's line and label; see `desk::cmd::cmd_preview_layout`.
+pub(super) fn cmd_preview_layout(
+    band: egui::Rect,
+    axis_x: f32,
+    pointer: egui::Pos2,
+) -> (egui::Pos2, egui::Pos2, egui::Rect) {
+    let (start, end, label) =
+        quantick_paper::desk::cmd::cmd_preview_layout(bounds(band), axis_x, point(pointer));
+    (pos(start), pos(end), rect(label))
 }

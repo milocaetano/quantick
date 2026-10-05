@@ -56,5 +56,7 @@
 # `quantick_chart::style::PremultipliedRgba`: `DrawingStyle` gains the one
 # crossing back to egui (`color32`, `set_color32`, `to_color32`,
 # `from_color32`) and the colour pickers edit a copy and write it back.
-!budget 104505
-crates/app 104505
+# Lowered to 102,843 when paper trading's deciding half moved into
+# `quantick-paper` (#607).
+!budget 102843
+crates/app 102843
