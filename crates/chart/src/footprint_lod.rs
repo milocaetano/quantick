@@ -8,12 +8,12 @@
 //! level is dropped. Every answer here is a pure function of pixels; the
 //! window asks, then paints.
 
-use crate::constants::LEVEL_HYSTERESIS;
 pub use crate::constants::{
     COMPACT_MIN_ROW, COMPACT_MIN_WIDTH, DETAILED_MIN_ROW, GLYPH_EM, GROUP_SNAP, LADDER_MIN_FONT_PX,
     MARKS_MIN_WIDTH, PROFILE_MIN_WIDTH, QUANTITY_GLYPHS, QUANTITY_PADDING_PX, QUANTITY_PX,
     TYPICAL_BODY_FRAC,
 };
+use crate::constants::{LEVEL_HYSTERESIS, PROFILE_HYSTERESIS};
 
 /// How much detail the current zoom supports. Ordered: more detail is greater.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -41,17 +41,11 @@ pub struct LevelMemory {
 }
 
 impl LevelMemory {
-    /// The level this zoom supports, sticky in BOTH directions (see
-    /// `LEVEL_HYSTERESIS`). `profile_row_px` is the configured Profile
-    /// floor — the "how fine may the bands get" knob.
-    ///
-    /// The dead band is two-sided on purpose: the price auto-fit breathes
-    /// with every pan and print, so the row height crosses a floor and
-    /// crosses back with a centimetre of mouse travel. With instant
-    /// upgrades against banded downgrades, the boundary blinks — up at
-    /// once, down 15% later, up at once again. A change in either
-    /// direction now has to clear the floor with 15% to spare before the
-    /// level moves; only the very first frame takes the strict answer.
+    /// Resolve zoom detail with a two-sided dead band against auto-fit jitter
+    /// (`LEVEL_HYSTERESIS`). Marks/Profile uses the narrower band
+    /// (`PROFILE_HYSTERESIS`) to reverse on one wheel step.
+    /// `profile_row_px` configures Profile's row floor; the first frame takes
+    /// the strict answer.
     pub fn resolve(
         &mut self,
         candle_width: f32,
@@ -59,30 +53,34 @@ impl LevelMemory {
         profile_row_px: f32,
         detailed_min: f32,
     ) -> DetailLevel {
-        let strict = level_for(candle_width, base_row_px, profile_row_px, detailed_min);
+        let at_zoom = |factor| {
+            level_for(
+                candle_width * factor,
+                base_row_px * factor,
+                profile_row_px,
+                detailed_min,
+            )
+        };
+        let strict = at_zoom(1.0);
+        let hysteresis = if matches!(
+            (self.level, strict),
+            (Some(DetailLevel::Profile), DetailLevel::Marks)
+                | (Some(DetailLevel::Marks), DetailLevel::Profile)
+        ) {
+            PROFILE_HYSTERESIS
+        } else {
+            LEVEL_HYSTERESIS
+        };
         let level = match self.level {
-            // The dead band defends exactly ONE step of boundary jitter.
-            // Further than that, the sticky state is not jitter — it is a
-            // leftover from another zoom era (the first frames' wild
-            // auto-fit spans) — and holding it is how "rows 100.00" wedges
-            // on a chart whose strict answer is Detailed.
+            // Only one level of jitter is sticky. Larger gaps can come from
+            // stale auto-fit spans and must snap to the strict answer.
             Some(current) if (strict as i8 - current as i8).abs() > 1 => strict,
             Some(current) if strict < current => {
-                let relaxed = level_for(
-                    candle_width * LEVEL_HYSTERESIS,
-                    base_row_px * LEVEL_HYSTERESIS,
-                    profile_row_px,
-                    detailed_min,
-                );
+                let relaxed = at_zoom(hysteresis);
                 if relaxed < current { strict } else { current }
             }
             Some(current) if strict > current => {
-                let confirmed = level_for(
-                    candle_width / LEVEL_HYSTERESIS,
-                    base_row_px / LEVEL_HYSTERESIS,
-                    profile_row_px,
-                    detailed_min,
-                );
+                let confirmed = at_zoom(1.0 / hysteresis);
                 if confirmed >= strict { strict } else { current }
             }
             _ => strict,

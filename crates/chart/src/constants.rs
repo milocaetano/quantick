@@ -210,15 +210,14 @@ pub const TYPICAL_BODY_FRAC: f32 = 0.72;
 /// The two levels that draw no text answer to geometry instead, and had no
 /// such excuse for waiting. Marks are a POC dot and a zone tick — visible from
 /// a candle six pixels wide. The profile is a textless histogram whose *shape*
-/// is the signal, readable at ten pixels where the old floor made it wait for
-/// eighteen.
+/// is the signal, readable at twelve pixels while narrower candles show marks.
 ///
 /// The footprint config's `detail_scale` moves all four together, for a trader
 /// who wants detail earlier still (and tighter) or later and roomier.
 pub const COMPACT_MIN_WIDTH: f32 = (QUANTITY_PX + QUANTITY_PADDING_PX) / TYPICAL_BODY_FRAC;
 
 /// Profile's candle-width floor, in pixels.
-pub const PROFILE_MIN_WIDTH: f32 = 10.0;
+pub const PROFILE_MIN_WIDTH: f32 = 12.0;
 
 /// Marks' candle-width floor, in pixels.
 pub const MARKS_MIN_WIDTH: f32 = 6.0;
@@ -243,6 +242,10 @@ pub const COMPACT_MIN_ROW: f32 = 11.0;
 /// [`LevelMemory::resolve`]: crate::footprint_lod::LevelMemory::resolve
 /// [`LevelMemory::resolve_multiple`]: crate::footprint_lod::LevelMemory::resolve_multiple
 pub(crate) const LEVEL_HYSTERESIS: f32 = 1.15;
+
+/// The narrower dead band between Marks and Profile: one wheel step must
+/// reverse that transition, yet a 1% nudge must not blink it.
+pub(crate) const PROFILE_HYSTERESIS: f32 = 1.02;
 
 /// Display-grouping multiples, smallest first. Integer multiples of the
 /// capture grid keep row merges exact; round values keep the effective

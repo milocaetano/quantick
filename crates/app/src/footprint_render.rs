@@ -1544,6 +1544,70 @@ mod tests {
         }
     }
 
+    /// The annotated zoom sequence enters Profile after the fifth inward
+    /// wheel step and leaves it on the first step back. The legend's 4.2x and
+    /// 2.9x readings give the candle widths without relying on screenshot DPI.
+    #[test]
+    fn profile_enters_on_fifth_step_and_leaves_on_first_reverse() {
+        let opening_width = COMPACT_MIN_WIDTH / 4.2;
+        let wheel_factor = (4.2_f32 / 2.9).powf(0.25);
+        let mut lod = FootprintLod::default();
+        for step in 0..=5 {
+            let width = opening_width * wheel_factor.powi(step);
+            let expected = if step == 5 {
+                DetailLevel::Profile
+            } else {
+                DetailLevel::Marks
+            };
+            assert_eq!(
+                lod.levels
+                    .resolve(width, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+                expected,
+                "inward wheel step {step} at {width:.1} px"
+            );
+        }
+        let previous_width = opening_width * wheel_factor.powi(4);
+        assert_eq!(
+            lod.levels.resolve(
+                previous_width,
+                12.0,
+                PROFILE_MIN_ROW,
+                ladder_detailed_min_width()
+            ),
+            DetailLevel::Marks,
+            "the first outward step must restore Marks"
+        );
+        assert_eq!(
+            lod.levels.resolve(
+                PROFILE_MIN_WIDTH * 1.01,
+                12.0,
+                PROFILE_MIN_ROW,
+                ladder_detailed_min_width()
+            ),
+            DetailLevel::Marks,
+            "a 1% nudge must not re-enter Profile"
+        );
+        assert_eq!(
+            lod.levels.resolve(
+                PROFILE_MIN_WIDTH * 1.03,
+                12.0,
+                PROFILE_MIN_ROW,
+                ladder_detailed_min_width()
+            ),
+            DetailLevel::Profile
+        );
+        assert_eq!(
+            lod.levels.resolve(
+                PROFILE_MIN_WIDTH * 0.99,
+                12.0,
+                PROFILE_MIN_ROW,
+                ladder_detailed_min_width()
+            ),
+            DetailLevel::Profile,
+            "a 1% retreat must not blink the profile"
+        );
+    }
+
     /// The dead band defends one step of jitter, never a wedged state: a
     /// level locked in the first frames' wild auto-fit span must snap to
     /// the strict answer the moment it is more than one step away.
