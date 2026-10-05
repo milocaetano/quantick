@@ -44,6 +44,20 @@
 # What the typed number means lives in `quantick-engine`
 # (`BarRegistry::quick_candidates`), and the change applies through the same
 # `set_pane_bar_spec` the control plane uses; there was no app code to move out.
+# Raised by 24 lines for Renko bars (`feat/renko-bars`): the pane hands the
+# indicators and the strategies every bar one print closes, the bricks a
+# builder cut late from prints it held as history and never as a close; it
+# puts the view and the marks back on their market time when older history
+# re-cuts a Renko series, and shifts every other series by the bars added;
+# and the chart read names the rule's inferred step and the prints it holds
+# or found off it. The rule, the step it reads off its own prints and the
+# query that reads `50R` live in `quantick-engine`.
+# Raised to 104,505 (+32) when a drawing's colour moved to the headless
+# `quantick_chart::style::PremultipliedRgba`: `DrawingStyle` gains the one
+# crossing back to egui (`color32`, `set_color32`, `to_color32`,
+# `from_color32`) and the colour pickers edit a copy and write it back.
+# Lowered to 102,843 when paper trading's deciding half moved into
+# `quantick-paper` (#607).
 # Raised by 344 lines for symmetric canvas collapse: the four draggable rails,
 # their hit areas and pointer routing live beside the egui canvas they draw.
 # Sizing state and workspace/control adapters share those transitions; this
@@ -55,5 +69,5 @@
 # Raised by 38 lines to repair reviewed collapse boundaries: visible-pane
 # focus, stale frame geometry and short-window rail reopening. The observer
 # and pointer now share the corrected visible-pane walk.
-!budget 104851
-crates/app 104851
+!budget 103245
+crates/app 103245

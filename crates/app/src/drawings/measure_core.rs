@@ -161,7 +161,7 @@ pub(super) fn readout_color(readout: &Readout, style: DrawingStyle) -> egui::Col
     match readout.rising {
         Some(true) => theme::BUY,
         Some(false) => theme::SELL,
-        None => style.color,
+        None => style.color32(),
     }
 }
 

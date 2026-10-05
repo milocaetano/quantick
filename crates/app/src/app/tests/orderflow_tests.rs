@@ -484,6 +484,45 @@ fn the_footprint_says_how_much_further_to_zoom() {
     );
 }
 
+/// Exercise the canvas wheel path as well as the LOD resolver: four inward
+/// rolls retain marks, the fifth paints a profile, and one roll back removes it.
+#[test]
+fn the_canvas_wheel_reverses_the_footprint_on_the_first_outward_step() {
+    let (mut app, _cmd_rx) = app_with_history(4_000);
+    let ctx = egui::Context::default();
+    app.active_tab_mut().flow_pane.footprint.visible = true;
+    app.active_tab_mut().flow_pane.viewport.set_px_per_bar(7.94);
+    run_frame(&mut app, &ctx);
+
+    let wheel = |delta| {
+        vec![
+            egui::Event::PointerMoved(egui::pos2(700.0, 450.0)),
+            egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, delta),
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]
+    };
+    for step in 1..=5 {
+        let texts = painted_text(&run_frame_with_events(&mut app, &ctx, wheel(40.0)));
+        let expected = if step == 5 { "profile" } else { "marks" };
+        assert!(
+            texts
+                .iter()
+                .any(|text| text.contains("footprint") && text.contains(expected)),
+            "wheel step {step} should show {expected}: {texts:?}"
+        );
+    }
+    let texts = painted_text(&run_frame_with_events(&mut app, &ctx, wheel(-40.0)));
+    assert!(
+        texts
+            .iter()
+            .any(|text| text.contains("footprint") && text.contains("marks")),
+        "one outward wheel step restores Marks: {texts:?}"
+    );
+}
+
 #[test]
 fn a_feed_declaring_a_bubble_preset_opens_wearing_it() {
     let mut config = test_config();

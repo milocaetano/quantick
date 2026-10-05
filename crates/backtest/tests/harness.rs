@@ -774,19 +774,7 @@ fn a_strategy_that_declares_no_indicator_reads_na_instead_of_panicking() {
 /// and the engine pins `BarSpec::build` to them (`crates/engine/tests/bar_spec.rs`).
 #[test]
 fn the_backtest_cuts_every_golden_the_chart_cuts() {
-    use quantick_engine::{Bar, fixture, golden};
-
-    /// Shows nothing, orders nothing: only keeps every bar it is shown.
-    struct Recorder(Vec<Bar>);
-    impl Strategy for Recorder {
-        fn name(&self) -> &str {
-            "recorder"
-        }
-        fn on_bar(&mut self, view: &BarView<'_>) -> Vec<Command> {
-            self.0.push(view.bar.clone());
-            Vec::new()
-        }
-    }
+    use quantick_engine::{fixture, golden};
 
     for (text, trades_csv, expected_csv) in [
         (
@@ -833,6 +821,124 @@ fn the_backtest_cuts_every_golden_the_chart_cuts() {
             "{text}: the run counts what it showed"
         );
     }
+}
+
+/// Shows nothing, orders nothing: only keeps every bar it is shown.
+struct Recorder(Vec<quantick_engine::Bar>);
+impl Strategy for Recorder {
+    fn name(&self) -> &str {
+        "recorder"
+    }
+    fn on_bar(&mut self, view: &BarView<'_>) -> Vec<Command> {
+        self.0.push(view.bar.clone());
+        Vec::new()
+    }
+}
+
+/// The backtest's half of the three-consumer proof for Renko: from WIN's
+/// tape, `renko:50` reads the five-point step off the prints as they play and
+/// cuts exactly the bricks the chart cuts from the same file
+/// (`crates/chart/src/state/renko_tests.rs`), the ones a print cleared on its
+/// way past included. Brick 0 is cut from prints held while the step was
+/// read: the chart puts it behind its backfill boundary, and here it warms
+/// the indicators up — row 0 — without the strategy being asked about it.
+/// No crate links both consumers, so the file is what they agree through.
+#[test]
+fn the_backtest_cuts_the_renko_bricks_the_chart_cuts() {
+    use quantick_engine::{fixture, golden};
+    let config = quantick_backtest::bars::parse_configuration("renko:50").unwrap();
+    let expected = fixture::parse_bars(include_str!(
+        "../../engine/tests/fixtures/renko_win_50r_expected.csv"
+    ))
+    .unwrap();
+    let mut session = synthetic(&tape_of(&["100"]));
+    session.trades = fixture::parse_trades(include_str!(
+        "../../engine/tests/fixtures/renko_win_50r_trades.csv"
+    ))
+    .unwrap();
+
+    let mut recorder = Recorder(Vec::new());
+    let run = run_session(&session, config, &mut recorder);
+    if let Some(report) = golden::diff_bars(&expected[1..], &recorder.0) {
+        panic!("{report}");
+    }
+    assert_eq!(run.bars, expected.len());
+    assert!(run.anomalies.is_clean(), "{:?}", run.anomalies);
+    let mut scripted = ScriptedOrders::new(Vec::new());
+    let _ = run_session(&session, config, &mut scripted);
+    assert_eq!(
+        scripted.seen,
+        (1..expected.len()).collect::<Vec<_>>(),
+        "brick 0 is indicator row 0, never a close the strategy is shown"
+    );
+}
+
+/// Bricks a Renko builder cuts from the prints it held while it read its
+/// step are history by the time they exist: the indicators warm up on them,
+/// the strategy is never asked about them, and no order comes of them — as
+/// on the chart, which queues them to no strategy. The bricks the print that
+/// read the step closed itself are closes like any other.
+#[test]
+fn bricks_cut_from_held_prints_warm_the_indicators_and_place_no_order() {
+    let config = quantick_backtest::bars::parse_configuration("renko:3").unwrap();
+    // One point a print through 163 closes 31 bricks while they are held;
+    // 170, the sixty-fourth distance, reads the step and clears three more.
+    let mut prices: Vec<String> = (100..164).map(|price| price.to_string()).collect();
+    prices.extend(["170", "170", "170"].map(str::to_owned));
+    let prices: Vec<&str> = prices.iter().map(String::as_str).collect();
+    let session = synthetic(&tape_of(&prices));
+    let buy = Command::PlaceMarket {
+        side: Side::Buy,
+        quantity: Decimal::ONE,
+        bracket: quantick_sim::Bracket::none(),
+    };
+    // A buy on every brick: the history's would fill on the next print.
+    let mut strategy = ScriptedOrders::new((0..34).map(|index| (index, buy)).collect());
+    let run = run_session(&session, config, &mut strategy);
+    assert_eq!(run.bars, 34);
+    assert_eq!(
+        strategy.seen,
+        [31, 32, 33],
+        "asked about the print's own bricks only"
+    );
+    assert_eq!(
+        run.open_at_end,
+        Some((Side::Buy, Decimal::from(3))),
+        "one buy per brick the print closed, none for the history"
+    );
+}
+
+/// A session too short to show a Renko builder its price step cuts no brick,
+/// and says so: every print it held is an anomaly of the run, not a quiet
+/// day. Prints off the step it froze are counted the same way.
+#[test]
+fn a_renko_session_that_never_shows_its_step_reports_every_print_uncut() {
+    let config = quantick_backtest::bars::parse_configuration("renko:3").unwrap();
+    let short = synthetic(&tape_of(&["100", "101", "102", "101", "103"]));
+    let mut recorder = Recorder(Vec::new());
+    let run = run_session(&short, config, &mut recorder);
+    assert_eq!(run.bars, 0);
+    assert_eq!(
+        run.anomalies.bar_rule.get("prints_held_uncut"),
+        Some(&5),
+        "{:?}",
+        run.anomalies
+    );
+    assert!(!run.anomalies.is_clean());
+
+    // Sixty-four two-point moves freeze a two-point step; a print a point
+    // off it is cut on that step and counted.
+    let mut prices: Vec<String> = (0..65).map(|i| (100 + 2 * (i % 2)).to_string()).collect();
+    prices.push("105".to_owned());
+    let prices: Vec<&str> = prices.iter().map(String::as_str).collect();
+    let run = run_session(&synthetic(&tape_of(&prices)), config, &mut recorder);
+    assert_eq!(
+        run.anomalies.bar_rule.get("prints_off_grid"),
+        Some(&1),
+        "{:?}",
+        run.anomalies
+    );
+    assert_eq!(run.anomalies.bar_rule.get("prints_held_uncut"), None);
 }
 
 /// The parser refuses a deal-count spec by name; a caller that builds one in

@@ -153,7 +153,7 @@ impl ArrangementAdapter<'_> {
         let trades_dir = self.workspace.trades_dir().to_path_buf();
         // Cmd trading is app-wide (the trades-dir rule): a new tab starts
         // with the settings every other tab already carries.
-        let cmd_trading = self.active_tab().paper.account().cmd_trading();
+        let cmd_trading = self.active_tab().paper.cmd_trading();
         let inherited_strategies = self
             .active_tab()
             .paper

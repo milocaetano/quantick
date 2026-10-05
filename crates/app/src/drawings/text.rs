@@ -95,7 +95,7 @@ fn shown(payload: &TextPayload, style: DrawingStyle) -> (&str, egui::Color32) {
     if payload.text.trim().is_empty() {
         (PLACEHOLDER, theme::TEXT_MUTED)
     } else {
-        (payload.text.as_str(), style.color)
+        (payload.text.as_str(), style.color32())
     }
 }
 
@@ -297,7 +297,7 @@ mod tests {
         let style = DrawingStyle::default();
         let (text, color) = shown(&payload, style);
         assert_eq!(text, "Daily high");
-        assert_eq!(color, style.color);
+        assert_eq!(color, style.color32());
     }
 
     /// Whitespace is not content: a note holding only spaces would otherwise

@@ -12444,6 +12444,39 @@
               "has_in_progress_bar": {
                 "type": "boolean"
               },
+              "held_prints": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Prints the pane's rule holds uncut until they show it its price step\n— a Renko pane's before its first brick. They form the in-progress\nbar. Zero for every rule that reads no step. Optional on the wire, as\n`uncounted_prints` is."
+              },
+              "inferred_price_step": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The price step the pane's rule read off the pane's own prints and\ncuts on — a Renko pane's, once its prints have shown it. Inferred,\nnever declared by a venue. Absent for a rule that reads no step, and\nfor one still reading it: `held_prints` says how many it holds."
+              },
+              "off_grid_prints": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Prints off the price step the pane's rule froze: cut on that step and\ncounted, never snapped onto it. Zero for every rule that freezes none."
+              },
               "pagination_revision": {
                 "$ref": "#/$defs/WireU64"
               },

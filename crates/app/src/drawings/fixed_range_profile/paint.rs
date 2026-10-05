@@ -244,7 +244,7 @@ impl<'a> ProfileFrame<'a> {
                         egui::pos2(fill_tip, row_bottom),
                     ),
                     egui::Rounding::ZERO,
-                    self.style.color.gamma_multiply(alpha),
+                    self.style.color32().gamma_multiply(alpha),
                 );
             }
         }
@@ -285,9 +285,9 @@ impl<'a> ProfileFrame<'a> {
         }
         for segment in &segments {
             let color = if segment.in_va {
-                style.color
+                style.color32()
             } else {
-                style.color.gamma_multiply(OUTLINE_OUT_VA_BRIGHTNESS)
+                style.color32().gamma_multiply(OUTLINE_OUT_VA_BRIGHTNESS)
             };
             self.painter.line_segment(
                 [segment.from, segment.to],
@@ -335,7 +335,7 @@ impl<'a> ProfileFrame<'a> {
                 ));
                 painter.add(egui::Shape::dashed_line(
                     &ends,
-                    egui::Stroke::new(width, style.color),
+                    egui::Stroke::new(width, style.color32()),
                     VA_DASH_PX,
                     VA_GAP_PX,
                 ));

@@ -59,6 +59,11 @@ impl BarBuilder for VolumeBarBuilder {
         self.inner.push(trade)
     }
 
+    fn push_into(&mut self, trade: &Trade, closed: &mut Vec<Bar>) -> usize {
+        closed.extend(self.push(trade));
+        0
+    }
+
     fn partial(&self) -> Option<&Bar> {
         self.inner.partial()
     }

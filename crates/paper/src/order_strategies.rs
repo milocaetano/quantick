@@ -24,10 +24,20 @@ use quantick_sim::{Bracket, ExitPart, LadderError, MAX_EXIT_PARTS};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+use crate::format::fmt_decimal;
+
 /// The most rows one strategy may carry — the simulator's own ladder bound,
 /// restated here so the editor can refuse a sixth row while it is being
 /// typed rather than at placement time.
 pub const MAX_ROWS: usize = MAX_EXIT_PARTS;
+
+/// The distance a freshly added rung starts at, in ticks.
+///
+/// A seed, not a default anyone lives with: the editor exists to change it,
+/// and a row that arrived at zero would be a row the strategy refuses. Named
+/// because it appears in three places - a new strategy, a new row, and a leg
+/// switched back on - and three copies of a starting point drift.
+pub const NEW_RUNG_TICKS: u32 = 20;
 
 /// One rung of a named strategy, in the units its editor shows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,6 +195,77 @@ fn offset(side: Side, entry: Decimal, tick: Decimal, ticks: u32, losing: bool) -
         entry.saturating_add(distance)
     } else {
         entry.saturating_sub(distance)
+    }
+}
+
+/// The editor's structural edits: what a new strategy, a new row and the
+/// one-line summary are, decided here so the window only draws them.
+impl OrderStrategy {
+    /// A ladder to start from: one rung covering the whole position, which
+    /// is the plain bracket a trader already knows, ready to be split.
+    /// `existing` is how many strategies the list holds already, which
+    /// names this one.
+    #[must_use]
+    pub fn starter(existing: usize) -> Self {
+        Self {
+            name: format!("Strategy {}", existing + 1),
+            rows: vec![StrategyRow {
+                share_percent: Decimal::ONE_HUNDRED,
+                gain_ticks: Some(NEW_RUNG_TICKS),
+                loss_ticks: Some(NEW_RUNG_TICKS),
+            }],
+        }
+    }
+
+    /// Split the exit one more time.
+    ///
+    /// A row added at zero makes the whole strategy invalid the instant it
+    /// appears - the shares no longer describe a whole position - and the
+    /// chart then silently stops projecting a ladder the ticket still says
+    /// is armed. The new row takes what is left of 100%, and when nothing is
+    /// left it halves the last row rather than arriving broken.
+    ///
+    /// # Panics
+    ///
+    /// When the shares already reach 100% and there is no row to halve,
+    /// which a strategy with shares has not got.
+    pub fn push_row(&mut self) {
+        let assigned: Decimal = self.rows.iter().map(|row| row.share_percent).sum();
+        let share = if assigned < Decimal::ONE_HUNDRED {
+            Decimal::ONE_HUNDRED - assigned
+        } else {
+            let last = self
+                .rows
+                .last_mut()
+                .expect("a strategy always has a row to split");
+            let half = (last.share_percent / Decimal::TWO).round_dp(2);
+            last.share_percent -= half;
+            half
+        };
+        self.rows.push(StrategyRow {
+            share_percent: share,
+            gain_ticks: Some(NEW_RUNG_TICKS),
+            loss_ticks: Some(NEW_RUNG_TICKS),
+        });
+    }
+
+    /// The strategy said in one line: the rungs, in the trader's own order.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        let rungs: Vec<String> = self
+            .rows
+            .iter()
+            .map(|row| {
+                let gain = row
+                    .gain_ticks
+                    .map_or_else(|| "runs".to_owned(), |ticks| format!("+{ticks}"));
+                let loss = row
+                    .loss_ticks
+                    .map_or_else(|| "no stop".to_owned(), |ticks| format!("-{ticks}"));
+                format!("{}% {gain}/{loss}", fmt_decimal(row.share_percent))
+            })
+            .collect();
+        rungs.join(" · ")
     }
 }
 

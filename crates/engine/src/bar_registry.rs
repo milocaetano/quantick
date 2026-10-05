@@ -6,7 +6,7 @@ pub mod definitions;
 mod parameters;
 mod quick_switch;
 pub use parameters::*;
-pub use quick_switch::QUICK_DURATION_SCALES_MS;
+pub use quick_switch::{QUICK_DURATION_SCALES_MS, QuickAlias, quick_query_text};
 
 use crate::BarBuilder;
 use rust_decimal::{Decimal, prelude::ToPrimitive};
@@ -24,6 +24,15 @@ pub struct BarDefinition {
     /// Closed bars partition a fixed duration, as required by candle/viewport consumers.
     /// A duration-shaped parameter alone does not imply this capability.
     pub fixed_time_interval: bool,
+    /// The quick switch's own name for this kind, if it has one.
+    pub quick_alias: Option<QuickAlias>,
+    /// Where a bar closes depends on the price path since the series began —
+    /// a Renko brick on the levels every brick before it set — so older
+    /// history can re-cut the first bars into a different number of them,
+    /// and an index moved by the net count added no longer names the same
+    /// market time. Consumers re-place what they anchored to a bar by its
+    /// market time instead; for every other rule they shift it by that count.
+    pub path_dependent: bool,
     pub factory: fn(Decimal, Option<&str>) -> Box<dyn BarBuilder>,
 }
 
@@ -187,16 +196,18 @@ impl BarConfiguration {
         }
     }
     /// Legacy in-memory/config restore used positive floors, including time <100ms.
-    /// Strict text/command construction goes through `configure` instead.
+    /// Strict text/command construction goes through `configure` instead. A
+    /// declared minimum is the floor of a rule defined from it upward.
     pub fn clamped(self) -> Self {
+        let floor = if self.definition.parameter.kind == NumberKind::Decimal {
+            DECIMAL_PARAM_FLOOR
+        } else {
+            Decimal::ONE
+        };
         Self {
-            parameter: self.parameter.max(
-                if self.definition.parameter.kind == NumberKind::Decimal {
-                    DECIMAL_PARAM_FLOOR
-                } else {
-                    Decimal::ONE
-                },
-            ),
+            parameter: self
+                .parameter
+                .max(self.definition.parameter.minimum.unwrap_or(floor)),
             ..self
         }
     }
@@ -284,6 +295,18 @@ impl BarRegistry {
                 {
                     return Err(invalid("duplicate parameter choice"));
                 }
+            }
+            if definition.quick_alias.is_some_and(|alias| {
+                !alias.suffix.is_ascii_alphabetic()
+                    || definitions[..i].iter().any(|other| {
+                        other
+                            .quick_alias
+                            .is_some_and(|taken| taken.suffix.eq_ignore_ascii_case(&alias.suffix))
+                    })
+            }) {
+                return Err(invalid(
+                    "a quick-switch suffix is one letter no other kind declares",
+                ));
             }
             if definitions[..i]
                 .iter()

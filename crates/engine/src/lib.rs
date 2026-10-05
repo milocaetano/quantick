@@ -13,8 +13,8 @@
 //!   [`Side`], exchange id and timestamp. Prices and quantities are
 //!   [`rust_decimal::Decimal`] for exact, deterministic arithmetic.
 //! - [`Bar`] — the OHLCV + order-flow summary of the trades in one sampling
-//!   bucket. The bucketing rule (tick / volume / dollar / time) lives in a bar
-//!   *builder*; the summary shape is shared.
+//!   bucket. The bucketing rule (tick / volume / dollar / time / Renko) lives
+//!   in a bar *builder*; the summary shape is shared.
 //! - [`bar_registry`] — stable definitions, parameter contracts and factories.
 //!   Chart, backtest and bot retain its resolved configurations. [`BarSpec`]
 //!   preserves the original enum API as an adapter to those definitions.
@@ -39,6 +39,7 @@ mod imbalance;
 mod price_grid;
 mod profile;
 mod profile_fold;
+mod renko;
 mod spec;
 pub mod threshold;
 mod tick;
@@ -58,6 +59,7 @@ pub use imbalance::{ImbalanceBarBuilder, ImbalanceUnit};
 pub use price_grid::PriceGrid;
 pub use profile::{ValueArea, VolumeProfile};
 pub use profile_fold::ProfileFold;
+pub use renko::{MAX_BRICKS_PER_PRINT, RenkoBarBuilder, STEP_EVIDENCE_DISTANCES};
 pub use spec::{
     BarKind, BarSpec, BarSpecError, DECIMAL_PARAM_FLOOR, DEFAULT_TIME_INTERVAL_MS,
     MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS, fmt_time_interval,

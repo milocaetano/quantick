@@ -563,6 +563,15 @@ impl FootprintBuilder {
         self.partial.take()
     }
 
+    /// Close the current bar even when no trade arrived since the last close:
+    /// the ladder of a bar that summarises no print — a Renko brick a print
+    /// cleared on its way past — is empty, never invented.
+    pub fn close_or_empty(&mut self) -> BarFootprint {
+        self.partial
+            .take()
+            .unwrap_or_else(|| BarFootprint::new(self.base_group))
+    }
+
     /// The in-progress ladder, if any trade arrived since the last close.
     #[must_use]
     pub fn partial(&self) -> Option<&BarFootprint> {

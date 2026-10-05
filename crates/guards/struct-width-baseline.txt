@@ -13,9 +13,8 @@
 # rule.
 # Raised by one Tab field for the right pane's independent collapse state;
 # the existing context flag still controls the left rail and old workspaces.
-!budget 362
+!budget 331
 app::ChartPane 35
-app::PaperTrading 31
 app::Tab 68
 app::ToolRail 32
 # Moved, not grown: #542 took `OrderflowHealthSnapshot` from `app` into

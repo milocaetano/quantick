@@ -43,7 +43,7 @@ pub use quantick_indicators::native::{
     AVWAP_BAND_MULTS as AVWAP_DEFAULT_MULTS, AVWAP_BAND_PAIRS,
 };
 /// Band *lines* fade with distance from the vwap; the trader's colour keeps
-/// carrying the object, so these are alphas over `style.color`, not hues.
+/// carrying the object, so these are alphas over `style.color32()`, not hues.
 const BAND_LINE_ALPHA: [f32; AVWAP_BAND_PAIRS] = [0.55, 0.40, 0.30];
 /// Band fills as fractions of the style's own `fill_alpha`, so the existing
 /// fill slider governs the whole stack and three pairs never add up to paint.
@@ -382,7 +382,7 @@ impl DrawingToolImpl for AnchoredVwapTool {
                     let alpha = (f32::from(style.fill_alpha) * BAND_FILL_FRAC[pair])
                         .round()
                         .clamp(0.0, 255.0);
-                    let color = style.color.gamma_multiply(alpha / 255.0);
+                    let color = style.color32().gamma_multiply(alpha / 255.0);
                     fill_pair(
                         painter,
                         &cache,
@@ -401,7 +401,7 @@ impl DrawingToolImpl for AnchoredVwapTool {
                     }
                     let band_stroke = egui::Stroke::new(
                         (style.width_px * BAND_WIDTH_FRAC).max(BAND_MIN_WIDTH_PX),
-                        style.color.gamma_multiply(*line_alpha),
+                        style.color32().gamma_multiply(*line_alpha),
                     );
                     for column in [1 + 2 * pair, 2 + 2 * pair] {
                         stroke_column(
@@ -458,7 +458,7 @@ impl DrawingToolImpl for AnchoredVwapTool {
                 painter.circle_stroke(
                     marker,
                     ANCHOR_RADIUS_PX,
-                    egui::Stroke::new(ANCHOR_RING_PX, style.color),
+                    egui::Stroke::new(ANCHOR_RING_PX, style.color32()),
                 );
             }
         }
@@ -660,10 +660,12 @@ mod tests {
             cache: None,
         };
         let mut builder = quantick_engine::bar_registry::BarConfiguration::from(quantick_engine::BarSpec::Tick(1)).build();
-        let bar = builder.push(&quantick_engine::Trade {
+        let mut closed = Vec::new();
+        builder.push_into(&quantick_engine::Trade {
             agg_id: 1, timestamp_ms: 0, price: rust_decimal::Decimal::from(100),
             quantity: rust_decimal::Decimal::ONE, side: quantick_engine::Side::Buy,
-        }).unwrap();
+        }, &mut closed);
+        let bar = closed.pop().unwrap();
         AvwapCache::refresh(&mut payload.cache, quantick_anchored_studies::AverageRequest {
             anchor_bar: 2.0, source: payload.source, bands: payload.bands,
         }, &quantick_anchored_studies::AverageInputs {
