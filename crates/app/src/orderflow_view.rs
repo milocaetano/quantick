@@ -10,6 +10,7 @@ use quantick_engine::{Bar, Trade};
 use quantick_orderbook::{BookSide, DepthEvent};
 use quantick_orderflow::engine::{BookLadder, BookPublished, CaptureStatus, OrderflowHealth};
 use quantick_orderflow::{HeatmapConfig, LaneWindow, reserved_span_ms};
+use quantick_stores::bubble_asset_store::RunHold;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
@@ -120,10 +121,10 @@ pub struct OrderflowView {
     look_name: String,
     /// The asset these settings belong to, bound by the tab.
     asset: Option<quantick_stores::bubble_asset_store::AssetBinding>,
-    /// A tape window a launch hook holds for this run: navigation, put back
-    /// whenever the view wears an asset's settings, so it reaches the asset
-    /// a replay autostart switches to. `None` outside a capture run.
-    held_window: Option<LaneWindow>,
+    /// What launch hooks hold for this run, never filed: put back whenever
+    /// the view wears an asset's settings, so it reaches the asset a replay
+    /// autostart switches to. Empty outside a capture run.
+    held: RunHold,
     /// Scripted tape starvation: prints stop reaching the tape this many
     /// milliseconds after the first one, while the book keeps arriving.
     /// `None` — always, outside a capture run — feeds the tape every print.
@@ -197,7 +198,7 @@ impl OrderflowView {
             preset_status,
             look_name,
             asset: None,
-            held_window: None,
+            held: RunHold::default(),
             starve_tape_after_ms: None,
             first_print_ms: None,
             dot_rungs: Default::default(),
@@ -747,12 +748,12 @@ impl OrderflowView {
         self.apply_config(before);
     }
 
-    /// Hold the tape's window at `window` for this run, through every asset
-    /// the view shows — a launch hook's navigation, never filed.
+    /// Hold what a launch hook asks for this run ([`RunHold`]); never filed.
     #[cfg(any(feature = "scenario-harness", test))]
-    pub fn hold_live_lane_window(&mut self, window: LaneWindow) {
-        self.held_window = Some(window);
-        self.navigate_live_lane_window(window);
+    pub fn hold_for_run(&mut self, hold: impl FnOnce(&mut RunHold)) {
+        let before = self.config.clone();
+        self.held.add(hold, &mut self.config);
+        self.apply_config(before);
     }
 
     /// Market time the lane is showing right now, in milliseconds — the label
@@ -999,6 +1000,7 @@ impl OrderflowView {
 
     /// A setting changed: the asset on screen files it at the next frame.
     fn commit_config_changes(&mut self, before: HeatmapConfig) -> bool {
+        self.held.release(&before, &self.config);
         if self.config != before
             && let Some(asset) = &mut self.asset
         {

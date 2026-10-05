@@ -17,8 +17,12 @@ fn saving_off_keeps_changes_on_one_screen_and_a_restart_keeps_only_the_switch() 
     let (mut other, _) = bind(&store, "WIN$N");
     let (btc, _) = bind(&store, "BTCUSDT");
     assert!(win.saves_changes(), "saving is on until switched off");
-    assert!(win.set_save_changes(false));
-    assert!(!win.set_save_changes(false), "already off");
+    assert_eq!(win.set_save_changes(false), SaveSwitch::Off);
+    assert_eq!(
+        win.set_save_changes(false),
+        SaveSwitch::Unmoved,
+        "already off"
+    );
     assert!(
         !other.saves_changes(),
         "the switch is the asset's, in every tab"
@@ -71,7 +75,7 @@ fn saving_on_again_files_the_screen_that_turned_it_on_and_other_tabs_wear_it() {
     let store = AssetBubblesStore::load(path.clone()).shared();
     let (mut win, opened) = bind(&store, "WINV26");
     let (mut other, _) = bind(&store, "WIN$N");
-    assert!(win.set_save_changes(false));
+    assert_eq!(win.set_save_changes(false), SaveSwitch::Off);
 
     let mut mine = opened.clone();
     mine.flow_ignore_opening = true;
@@ -83,7 +87,7 @@ fn saving_on_again_files_the_screen_that_turned_it_on_and_other_tabs_wear_it() {
     other.note_edit();
     assert!(!other.file(theirs));
 
-    assert!(win.set_save_changes(true));
+    assert_eq!(win.set_save_changes(true), SaveSwitch::ScreenStored);
     assert!(win.edited(), "the screen waits for the next filing");
     assert!(win.file(mine.clone()), "what is on screen is filed");
     assert_eq!(
@@ -115,7 +119,7 @@ fn switching_saving_on_behind_the_store_wears_the_store_and_files_nothing() {
     let store = AssetBubblesStore::load(path.clone()).shared();
     let (mut win, opened) = bind(&store, "WINV26");
     let (mut other, _) = bind(&store, "WIN$N");
-    assert!(win.set_save_changes(false));
+    assert_eq!(win.set_save_changes(false), SaveSwitch::Off);
     let mut stale = opened.clone();
     stale.flow_ignore_opening = true;
     win.note_edit();
@@ -125,11 +129,15 @@ fn switching_saving_on_behind_the_store_wears_the_store_and_files_nothing() {
     // before this one looked.
     let mut theirs = opened.clone();
     theirs.candle_aggression = true;
-    assert!(other.set_save_changes(true));
+    assert_eq!(other.set_save_changes(true), SaveSwitch::ScreenStored);
     assert!(other.file(theirs.clone()));
-    assert!(other.set_save_changes(false));
+    assert_eq!(other.set_save_changes(false), SaveSwitch::Off);
 
-    assert!(win.set_save_changes(true));
+    assert_eq!(
+        win.set_save_changes(true),
+        SaveSwitch::StoredTaken,
+        "behind the store, the screen gives way and the switch says so"
+    );
     win.note_edit();
     assert!(!win.file(stale.clone()), "the stale screen is not filed");
     let adopted = win.adoption().expect("the store is worn first");
@@ -142,7 +150,7 @@ fn switching_saving_on_behind_the_store_wears_the_store_and_files_nothing() {
     assert_eq!(win.unsaved(), Some("not written yet".to_owned()));
 
     // An import while saving is off wins the same way.
-    assert!(win.set_save_changes(false));
+    assert_eq!(win.set_save_changes(false), SaveSwitch::Off);
     win.note_edit();
     assert!(!win.file(stale.clone()));
     let mut imported = opened.clone();
@@ -152,7 +160,7 @@ fn switching_saving_on_behind_the_store_wears_the_store_and_files_nothing() {
     file.assets.insert("WIN*".to_owned(), imported.clone());
     save_to(&path, &file).expect("an imported store");
     store.borrow_mut().reload();
-    assert!(win.set_save_changes(true));
+    assert_eq!(win.set_save_changes(true), SaveSwitch::StoredTaken);
     win.note_edit();
     assert!(!win.file(stale), "the import is the newer word");
     assert_eq!(
@@ -169,7 +177,7 @@ fn switching_saving_on_behind_the_store_wears_the_store_and_files_nothing() {
 fn with_saving_off_navigation_after_a_lane_set_is_neither_held_nor_filed() {
     let store = AssetBubblesStore::default().shared();
     let (mut win, opened) = bind(&store, "WINV26");
-    assert!(win.set_save_changes(false));
+    assert_eq!(win.set_save_changes(false), SaveSwitch::Off);
     let mut set = opened.clone();
     set.look.live_lane.window = LaneWindow::Fixed { ms: 6_000 };
     win.note_lane_set();
@@ -189,7 +197,7 @@ fn with_saving_off_navigation_after_a_lane_set_is_neither_held_nor_filed() {
         "the set lane is held, the wheel's is not"
     );
 
-    assert!(win.set_save_changes(true));
+    assert_eq!(win.set_save_changes(true), SaveSwitch::ScreenStored);
     assert!(win.file(wheeled));
     assert_eq!(store.borrow().get("WIN*"), Some(&expected), "nor filed");
 }
@@ -204,7 +212,7 @@ fn a_failed_write_is_reported_before_saving_is_off() {
     std::fs::create_dir_all(path.with_extension("toml.tmp")).expect("a folder in the write's way");
     let store = AssetBubblesStore::load(path).shared();
     let (mut win, opened) = bind(&store, "WINV26");
-    assert!(win.set_save_changes(false));
+    assert_eq!(win.set_save_changes(false), SaveSwitch::Off);
     assert!(matches!(store.borrow_mut().flush(), Some(Err(_))));
     let mut edited = opened;
     edited.flow_ignore_opening = true;

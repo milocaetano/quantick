@@ -1,7 +1,7 @@
 //! The asset this view shows owns its bubble settings; see
 //! [`quantick_stores::bubble_asset_store`].
 use quantick_control_schema::orderflow::BubbleAssetSnapshot;
-use quantick_stores::bubble_asset_store::AssetBinding;
+use quantick_stores::bubble_asset_store::{AssetBinding, SaveSwitch};
 use quantick_stores::bubble_assets::AssetBubbles;
 
 use crate::bubble_presets::{BubblePreset, BubblePresetFile};
@@ -22,7 +22,7 @@ impl OrderflowView {
     /// The settings on screen, with the flow pane's `candle_aggression`.
     pub(crate) fn asset_settings(&self, candle_aggression: bool) -> AssetBubbles {
         AssetBubbles {
-            bubbles: self.config.show_aggressions,
+            bubbles: self.held.filed(self.config.show_aggressions, self.asset()),
             candle_aggression,
             flow_ignore_opening: self.ignore_flow_opening(),
             look: BubblePreset::capture(&self.look_name, &self.config),
@@ -58,15 +58,14 @@ impl OrderflowView {
     }
 
     /// Switch "Save changes for this asset" ([`AssetBinding::set_save_changes`]):
-    /// switched on, what this view shows is filed at the next sync. `None`
-    /// when no asset is bound, else whether the switch moved.
-    pub(crate) fn set_save_asset_changes(&mut self, on: bool) -> Option<bool> {
-        let changed = self.asset.as_mut()?.set_save_changes(on);
-        let status = ["kept for this session only", "saved again"][usize::from(on)];
-        if changed {
-            self.preset_status = Some(format!("changes for this asset are {status}"));
+    /// switched on, what this view shows is filed at the next sync — or gives
+    /// way to stored settings newer than it. `None` when no asset is bound.
+    pub(crate) fn set_save_asset_changes(&mut self, on: bool) -> Option<SaveSwitch> {
+        let switch = self.asset.as_mut()?.set_save_changes(on);
+        if let Some(status) = switch.status() {
+            self.preset_status = Some(status.to_owned());
         }
-        Some(changed)
+        Some(switch)
     }
 
     /// A setting outside the config changed: the look's name, the candles'
@@ -109,7 +108,7 @@ impl OrderflowView {
 
     /// Put `settings` on screen without counting it as an edit;
     /// `keep_navigation` leaves the lane's width and window where this
-    /// view's own gestures put them, and a held window stays held.
+    /// view's own gestures put them, and what a launch hook holds stays.
     fn wear_asset(&mut self, settings: &AssetBubbles, keep_navigation: bool) {
         let before = self.config.clone();
         settings.look.apply_to(&mut self.config);
@@ -117,10 +116,8 @@ impl OrderflowView {
             self.config.live_lane.window = before.live_lane.window;
             self.config.live_lane.width_share = before.live_lane.width_share;
         }
-        if let Some(window) = self.held_window {
-            self.config.live_lane.window = window;
-        }
         self.config.show_aggressions = settings.bubbles;
+        self.held.wear(&mut self.config);
         self.look_name.clone_from(&settings.look.name);
         self.preset_name_draft.clone_from(&settings.look.name);
         self.flow_execution

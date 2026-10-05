@@ -24,15 +24,19 @@
 //! Switched on again, the screen of the view that switched it is filed and
 //! every other view on the asset wears that ([`AssetBinding::set_save_changes`])
 //! — unless the store moved since that view last looked, and then the store's
-//! word wins there too. A view whose held changes give way says so
-//! ([`Adoption::dropped`]).
+//! word wins there too. The switch reports which happened ([`SaveSwitch`]),
+//! and a view whose held changes give way says so ([`Adoption::dropped`]).
+//!
+//! A launch hook is not a trader's edit: what one asks for — the tape's
+//! window, the aggression bubbles — is held on the view for the run and
+//! never filed ([`RunHold`]).
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use quantick_orderflow::HeatmapConfig;
+use quantick_orderflow::{HeatmapConfig, LaneWindow};
 
 use crate::bubble_assets::{self, AssetBubbles, AssetBubblesFile, AssetSource};
 use crate::bubble_presets::{BubblePreset, BubblePresetFile};
@@ -318,6 +322,93 @@ impl Adoption {
     }
 }
 
+/// What switching "Save changes for this asset" did to the switching view's
+/// screen ([`AssetBinding::set_save_changes`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveSwitch {
+    /// The switch already stood there: nothing moved.
+    Unmoved,
+    /// Switched off: the screen stays, and later changes are held on it.
+    Off,
+    /// Switched on: what the view shows is filed for the asset at its next
+    /// filing, and every other view on the asset wears it.
+    ScreenStored,
+    /// Switched on while the store held something newer than this view last
+    /// saw — another tab's filing, an import: the view's screen gives way to
+    /// the stored settings, and nothing of it is filed.
+    StoredTaken,
+}
+
+impl SaveSwitch {
+    /// Whether the switch moved.
+    #[must_use]
+    pub fn moved(self) -> bool {
+        self != Self::Unmoved
+    }
+
+    /// What the view tells the trader; `None` when nothing moved.
+    #[must_use]
+    pub fn status(self) -> Option<&'static str> {
+        match self {
+            Self::Unmoved => None,
+            Self::Off => Some("changes for this asset are kept for this session only"),
+            Self::ScreenStored => Some("changes for this asset are saved again"),
+            Self::StoredTaken => Some(
+                "changes for this asset are saved again · this tab took the saved settings, \
+                 changed elsewhere meanwhile",
+            ),
+        }
+    }
+}
+
+/// What launch hooks hold on a view for one run — the tape's window, the
+/// aggression bubbles switch: put back on every asset the view wears, so a
+/// hook reaches the asset a replay autostart switches to, and never filed.
+/// An env var is not a trader's edit. Empty outside a capture run.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct RunHold {
+    pub window: Option<LaneWindow>,
+    pub bubbles: Option<bool>,
+}
+
+impl RunHold {
+    /// Hold what `hold` adds for the run, and put everything held on
+    /// `config`, the view's screen.
+    pub fn add(&mut self, hold: impl FnOnce(&mut Self), config: &mut HeatmapConfig) {
+        hold(self);
+        self.wear(config);
+    }
+
+    /// Put what is held on `config`, the view's screen.
+    pub fn wear(&self, config: &mut HeatmapConfig) {
+        if let Some(window) = self.window {
+            config.live_lane.window = window;
+            config.live_lane.window.sanitize();
+        }
+        if let Some(on) = self.bubbles {
+            config.show_aggressions = on;
+        }
+    }
+
+    /// A setting changed on purpose from `before` to `after`: a bubbles
+    /// switch the trader set is theirs from now on, no longer held.
+    pub fn release(&mut self, before: &HeatmapConfig, after: &HeatmapConfig) {
+        if before.show_aggressions != after.show_aggressions {
+            self.bubbles = None;
+        }
+    }
+
+    /// The bubbles switch to file for a screen showing `shown`: while a
+    /// hook holds it, what `binding` last filed or held instead.
+    #[must_use]
+    pub fn filed(&self, shown: bool, binding: Option<&AssetBinding>) -> bool {
+        match (self.bubbles, binding) {
+            (Some(_), Some(binding)) => binding.on_screen().bubbles,
+            _ => shown,
+        }
+    }
+}
+
 /// What a workspace export leaves out, as the caveat its report ends on:
 /// settings the file does not hold (`unsaved`, from
 /// [`AssetBubblesStore::write_now`]) and changes `views` hold with saving
@@ -474,21 +565,24 @@ impl AssetBinding {
     /// asset drops what it held and wears that. When the store moved since
     /// this view last looked — an import, another tab's filing — the store
     /// is the newer word: this view drops what it held and wears it instead
-    /// ([`Self::adoption`]). Reports whether the switch moved.
-    pub fn set_save_changes(&mut self, on: bool) -> bool {
+    /// ([`Self::adoption`]). Reports which happened.
+    pub fn set_save_changes(&mut self, on: bool) -> SaveSwitch {
         let mut store = self.store.borrow_mut();
         let behind = store.revision(&self.asset.key) != self.seen;
         if !store.set_save_changes(&self.asset.key, on) {
-            return false;
+            return SaveSwitch::Unmoved;
         }
-        if on && behind {
+        if !on {
+            return SaveSwitch::Off;
+        }
+        if behind {
             self.gives_way = true;
-        } else if on {
-            // This view's screen is the one to file, not one to give way.
-            self.seen = store.revision(&self.asset.key);
-            self.edited = true;
+            return SaveSwitch::StoredTaken;
         }
-        true
+        // This view's screen is the one to file, not one to give way.
+        self.seen = store.revision(&self.asset.key);
+        self.edited = true;
+        SaveSwitch::ScreenStored
     }
 
     /// A setting changed: the panel, a menu, a control call or a layer

@@ -115,10 +115,10 @@ impl OrderflowView {
                 .checkbox(&mut save, "Save changes for this asset")
                 .on_hover_text(format!(
                     "On: a change here is saved for {key} alone and shown in every tab on {key}. \
-                     Off: a change applies to this tab for this session only — not saved, not \
-                     shown in other tabs, which keep what is saved; switching this tab to another \
-                     market and back, or restarting, brings back what is saved. Turning it back on \
-                     saves what this tab shows now for {key}.",
+                     Off: a change stays on this tab for this session only — not saved, not shown \
+                     in other tabs; another market and back, or a restart, brings back what is \
+                     saved. Back on, what this tab shows is saved for {key} — unless another tab \
+                     or an import changed what is saved meanwhile: then this tab shows that.",
                     key = asset.key()
                 ))
                 .changed()

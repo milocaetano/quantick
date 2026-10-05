@@ -3,7 +3,8 @@
 use super::*;
 use crate::bubble_presets::BubblePreset;
 use quantick_orderflow::LaneWindow;
-use quantick_stores::bubble_assets::AssetSource;
+use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore};
+use quantick_stores::bubble_assets::{AssetBubbles, AssetSource};
 
 pub(super) fn shipped_config() -> AppConfig {
     toml::from_str(include_str!("../../../config/feeds.toml")).expect("shipped feeds parse")
@@ -400,6 +401,62 @@ fn the_launch_window_hook_holds_through_a_switch_and_files_nothing() {
         !crate::bubble_presets::assets_path().exists(),
         "a launch hook writes nothing"
     );
+}
+
+/// Review of d326c7b7..99169799, finding 2: `QUANTICK_BUBBLES_AUTOSTART`
+/// holds the aggression bubbles on for one run, like the window hook: it
+/// reaches the asset a replay switches the tab to and is never filed, so
+/// the trader's stored "bubbles off" survives an unrelated edit — until the
+/// switch itself is set on purpose.
+#[test]
+fn the_bubbles_autostart_hook_holds_through_a_switch_and_files_nothing() {
+    let launch = AppLaunch {
+        scenario: crate::hooks::ScenarioInputs::from_pairs(&[("QUANTICK_BUBBLES_AUTOSTART", "1")]),
+        ..AppLaunch::default()
+    };
+    let (mut app, _evt, _cmd, _book) = test_app_with_launch(launch);
+    assert!(app.active_tab().tape().bubbles_enabled());
+    app.config = shipped_config();
+    // The trader switched the mini index's bubbles off in an earlier run.
+    let store = app.workspace.bubble_assets().clone();
+    let presets = app.active_tab().tape().bubble_presets().clone();
+    let win = ("metatrader-b3", "WINV26");
+    let (_, declared) = AssetBinding::bind(store.clone(), &app.config, win, &presets, false);
+    let off = AssetBubbles {
+        bubbles: false,
+        ..declared.clone()
+    };
+    assert!(store.borrow_mut().record("WIN*", &off, &declared));
+    maintain(&mut app);
+    let stored = || {
+        AssetBubblesStore::load(crate::bubble_presets::assets_path())
+            .get("WIN*")
+            .cloned()
+    };
+
+    select_market(&mut app, "binance", "WINV26");
+    let tape = app.active_tab().tape();
+    assert_eq!(tape.asset().expect("bound").key(), "WIN*");
+    assert!(tape.bubbles_enabled(), "held on through the switch");
+    maintain(&mut app);
+    assert_eq!(stored(), Some(off.clone()), "and filed nowhere");
+    let tape = app.active_tab_mut().tape_mut();
+    assert!(tape.set_ignore_opening_burst_in_scale(true));
+    maintain(&mut app);
+    let filed = stored().expect("WIN's settings");
+    assert!(
+        filed.look.volume_dot_ignore_opening_burst_in_scale,
+        "an edit is filed"
+    );
+    assert!(!filed.bubbles, "the held switch is not");
+
+    // Set on purpose, the switch is the trader's again: no longer held.
+    app.active_tab_mut().tape_mut().set_bubbles_enabled(false);
+    maintain(&mut app);
+    assert_eq!(stored().map(|win| win.bubbles), Some(false));
+    select_market(&mut app, "binance", "BTCUSDT");
+    select_market(&mut app, "binance", "WINV26");
+    assert!(!app.active_tab().tape().bubbles_enabled(), "released");
 }
 
 /// Review round 2, finding 3: an export carries an edit no frame filed

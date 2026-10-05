@@ -26,8 +26,8 @@ fn set<P: TabsPort + TabsMutPort + ?Sized>(
     let unbound =
         || invalid("the requested pane's bubbles belong to no asset; address the flow pane");
     let asset = view.asset().ok_or_else(unbound)?.key().to_owned();
-    let changed = view
+    let switch = view
         .set_save_asset_changes(input.save_changes)
         .ok_or_else(unbound)?;
-    serde_json::to_value(input.result(asset, changed)).map_err(invalid)
+    serde_json::to_value(input.result(asset, switch)).map_err(invalid)
 }

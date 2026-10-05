@@ -372,7 +372,10 @@ pub struct BubbleAssetSnapshot {
     /// Off, a change stays on the pane it was made on for this session — not
     /// stored, not shown in other tabs on the asset, which show the stored
     /// settings — and `saved` is `false` while one is on screen. Switched on
-    /// again, the switching pane's settings are stored for the asset.
+    /// again, the switching pane's settings are stored for the asset, unless
+    /// its stored settings changed since that pane last showed them: then
+    /// the pane wears those instead (the action's result `screen` says
+    /// which).
     #[serde(default = "save_changes_default")]
     pub save_changes: bool,
     /// Whether the store file holds the settings this pane shows. `false`

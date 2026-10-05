@@ -8,7 +8,7 @@ use super::asset_bubbles_tests::{look, maintain, select_market, shipped_config};
 use super::*;
 use crate::bubble_presets::{BubblePreset, BubblePresetFile, embedded, load_from};
 use crate::control::ActionOrigin;
-use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore};
+use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore, SaveSwitch};
 use quantick_stores::bubble_assets::{AssetBubbles, BUBBLES_LAYER_DEFAULT};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -43,13 +43,12 @@ fn stored_win() -> Option<AssetBubbles> {
 }
 
 /// One control action on the active tab's flow pane, through the registry
-/// every caller's action goes through.
-fn act(app: &mut QuantickApp, action: &str, mut input: Value) {
+/// every caller's action goes through, and its result.
+fn act(app: &mut QuantickApp, action: &str, mut input: Value) -> Value {
     input["tab_id"] = json!(app.tabs.active_id().to_string());
     input["pane_id"] = json!(app.active_tab().flow_pane.id.to_string());
-    if let Err(error) = app.control_action(action, 1, ActionOrigin::Human, input) {
-        panic!("{action}: {error:?}");
-    }
+    app.control_action(action, 1, ActionOrigin::Human, input)
+        .unwrap_or_else(|error| panic!("{action}: {error:?}"))
 }
 
 fn set_layer(app: &mut QuantickApp, layer: ChartLayer, visible: bool) {
@@ -163,7 +162,7 @@ fn an_export_names_the_changes_saving_off_holds_back() {
 fn with_saving_off_a_win_edit_stays_on_its_tab_until_the_tab_shows_win_again() {
     let mut app = two_win_tabs();
     let tape = app.active_tab_mut().tape_mut();
-    assert_eq!(tape.set_save_asset_changes(false), Some(true));
+    assert_eq!(tape.set_save_asset_changes(false), Some(SaveSwitch::Off));
     assert!(tape.set_ignore_opening_burst_in_scale(true));
     maintain(&mut app);
     maintain(&mut app);
@@ -225,7 +224,10 @@ fn switching_saving_on_again_saves_what_the_tab_shows_and_the_other_tab_wears_it
 
     app.tabs.select(0);
     let tape = app.active_tab_mut().tape_mut();
-    assert_eq!(tape.set_save_asset_changes(true), Some(true));
+    assert_eq!(
+        tape.set_save_asset_changes(true),
+        Some(SaveSwitch::ScreenStored)
+    );
     maintain(&mut app);
     maintain(&mut app);
     let stored = stored_win().expect("WIN's settings are saved");
@@ -241,6 +243,56 @@ fn switching_saving_on_again_saves_what_the_tab_shows_and_the_other_tab_wears_it
     assert!(
         !app.active_tab().tape().ignore_flow_opening(),
         "and drops what it held"
+    );
+}
+
+/// Review of d326c7b7..99169799, finding 1: switching saving on stores what
+/// the pane shows only when nothing newer is stored for the asset. Behind
+/// another tab's filing the pane's screen gives way to the stored settings
+/// instead, and the action's result says which happened.
+#[test]
+fn switching_saving_on_says_whether_the_screen_was_stored_or_gave_way() {
+    let mut app = two_win_tabs();
+    app.tabs.select(1);
+    let off = save_switch(&mut app, false);
+    assert_eq!(
+        (&off["changed"], &off["screen"]),
+        (&json!(true), &json!("kept"))
+    );
+    assert!(
+        app.active_tab_mut()
+            .tape_mut()
+            .set_ignore_flow_opening(true)
+    );
+    let on = save_switch(&mut app, true);
+    assert_eq!(on["screen"], "stored", "nothing newer is stored");
+    // Off again from the panel, before the first tab wore that filing.
+    let tape = app.active_tab_mut().tape_mut();
+    assert_eq!(tape.set_save_asset_changes(false), Some(SaveSwitch::Off));
+
+    // An edit there, then saving on: the other tab's filing is newer.
+    app.tabs.select(0);
+    let tape = app.active_tab_mut().tape_mut();
+    assert!(tape.set_ignore_opening_burst_in_scale(true));
+    let on = save_switch(&mut app, true);
+    assert_eq!(on["changed"], true);
+    assert_eq!(on["screen"], "replaced_by_stored");
+    maintain(&mut app);
+    assert!(!opening_excluded(&app), "this tab's screen gave way");
+    assert!(
+        app.active_tab().tape().ignore_flow_opening(),
+        "to the store"
+    );
+    let stored = stored_win().expect("WIN's settings");
+    assert!(stored.flow_ignore_opening);
+    assert!(
+        !stored.look.volume_dot_ignore_opening_burst_in_scale,
+        "nothing of this tab's screen is stored"
+    );
+    let again = save_switch(&mut app, true);
+    assert_eq!(
+        (&again["changed"], &again["screen"]),
+        (&json!(false), &json!("kept"))
     );
 }
 
@@ -295,12 +347,12 @@ fn panel_value(app: &mut QuantickApp) {
     tape.edit_config_for_test(|config| config.bubbles.max_radius += 3.0);
 }
 
-fn save_switch(app: &mut QuantickApp, on: bool) {
+fn save_switch(app: &mut QuantickApp, on: bool) -> Value {
     act(
         app,
         "orderflow.bubbles.save_changes.set",
         json!({ "save_changes": on }),
-    );
+    )
 }
 
 const EDITS: &[Edit] = &[
@@ -448,7 +500,9 @@ const EDITS: &[Edit] = &[
     },
     Edit {
         name: "saving switched off, by control call",
-        apply: |app, _| save_switch(app, false),
+        apply: |app, _| {
+            save_switch(app, false);
+        },
         presets: Presets::Untouched,
         moves_win: false,
     },
@@ -526,6 +580,14 @@ fn btc_declared(presets: &BubblePresetFile) -> (BubblePreset, bool, bool, AssetB
     )
 }
 
+/// The presets file at `path`, which must parse: a corrupt write falls back
+/// to the shipped presets and would pass every other check.
+fn parsed(path: PathBuf, at: &str) -> BubblePresetFile {
+    let (presets, _, error) = load_from(Some(path));
+    assert_eq!(error, None, "{at}: the presets file does not parse");
+    presets
+}
+
 /// The trader's request: "do not let it save for everyone when I change
 /// some configuration". Every kind of bubble edit on the mini index leaves
 /// BTC — on screen and after a restart — as the presets file in force
@@ -583,8 +645,8 @@ fn no_bubble_edit_on_win_reaches_btc_or_a_file_every_market_reads() {
         assert_eq!(presets_path.exists(), written, "{at}: presets file");
         let in_force = match edit.presets {
             Presets::Untouched => embedded(),
-            Presets::Written => load_from(Some(presets_path)).0,
-            Presets::HandEdited => load_from(Some(dir.join(HAND_EDITED))).0,
+            Presets::Written => parsed(presets_path, at),
+            Presets::HandEdited => parsed(dir.join(HAND_EDITED), at),
         };
         if written {
             assert_eq!(

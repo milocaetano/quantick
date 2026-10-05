@@ -13,7 +13,7 @@
       "description": "The pane whose bubble settings belong to an asset: the tab's flow\npane (`orderflow.bubbles` reports its `asset`)."
     },
     "save_changes": {
-      "description": "`true` stores every change for the asset again, starting with what\nthis pane shows now; `false` keeps later changes on the pane they are\nmade on, for this session only.",
+      "description": "`true` stores every change for the asset again, starting with what\nthis pane shows now — unless the asset's stored settings changed\nsince this pane last showed them (another tab's change, an import):\nthen this pane drops what it shows for the stored settings, and the\nresult's `screen` says so. `false` keeps later changes on the pane\nthey are made on, for this session only.",
       "type": "boolean"
     },
     "tab_id": {

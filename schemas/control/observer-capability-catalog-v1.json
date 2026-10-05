@@ -9918,7 +9918,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Switches the asset's \"Save changes for this asset\", which every tab on that asset shares; it starts on. On, a bubble setting changed on a pane is stored for the asset the pane shows and every tab on it wears it. Off, a change stays on the pane it was made on for this session: not stored, not shown in other tabs on the asset, which keep the stored settings; showing another market in that tab and back, or restarting, brings the stored settings back. Switching it on again stores what the addressed pane shows now and other tabs on the asset wear it. The switch itself is stored. No other asset and no shared presets file is touched.",
+      "description": "Switches the asset's \"Save changes for this asset\", which every tab on that asset shares; it starts on. On, a bubble setting changed on a pane is stored for the asset the pane shows and every tab on it wears it. Off, a change stays on the pane it was made on for this session: not stored, not shown in other tabs on the asset, which keep the stored settings; showing another market in that tab and back, or restarting, brings the stored settings back. Switching it on again stores what the addressed pane shows now and other tabs on the asset wear it — unless the asset's stored settings changed since that pane last showed them (another tab's change, an import): then the pane drops what it shows and wears the stored settings, and nothing of its screen is stored. The result's screen says which happened: stored, replaced_by_stored, or kept when the switch went off or did not move. The switch itself is stored. No other asset and no shared presets file is touched.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -9944,7 +9944,7 @@
             "description": "The pane whose bubble settings belong to an asset: the tab's flow\npane (`orderflow.bubbles` reports its `asset`)."
           },
           "save_changes": {
-            "description": "`true` stores every change for the asset again, starting with what\nthis pane shows now; `false` keeps later changes on the pane they are\nmade on, for this session only.",
+            "description": "`true` stores every change for the asset again, starting with what\nthis pane shows now — unless the asset's stored settings changed\nsince this pane last showed them (another tab's change, an import):\nthen this pane drops what it shows for the stored settings, and the\nresult's `screen` says so. `false` keeps later changes on the pane\nthey are made on, for this session only.",
             "type": "boolean"
           },
           "tab_id": {
@@ -9962,6 +9962,26 @@
       "module": "orderflow",
       "output_schema": {
         "$defs": {
+          "SwitchedScreen": {
+            "description": "What became of what the addressed pane showed.",
+            "oneOf": [
+              {
+                "const": "kept",
+                "description": "It stays on the pane: the switch went off, or did not move.",
+                "type": "string"
+              },
+              {
+                "const": "stored",
+                "description": "Saving came on and it is now the asset's stored settings, which\nevery tab on the asset wears.",
+                "type": "string"
+              },
+              {
+                "const": "replaced_by_stored",
+                "description": "Saving came on, but the asset's stored settings had changed since\nthe pane last showed them: the pane dropped what it showed and wears\nthe stored settings; nothing of its screen was stored.",
+                "type": "string"
+              }
+            ]
+          },
           "WireU64": {
             "pattern": "^(0|[1-9][0-9]*)$",
             "type": "string"
@@ -9982,6 +10002,10 @@
           "save_changes": {
             "type": "boolean"
           },
+          "screen": {
+            "$ref": "#/$defs/SwitchedScreen",
+            "description": "What became of what the addressed pane showed."
+          },
           "tab_id": {
             "$ref": "#/$defs/WireU64"
           }
@@ -9991,7 +10015,8 @@
           "pane_id",
           "asset",
           "save_changes",
-          "changed"
+          "changed",
+          "screen"
         ],
         "title": "SaveChangesResult",
         "type": "object"
@@ -10007,7 +10032,7 @@
       "revision_policy": "optional_for_additive",
       "risk_flags": [],
       "risk_reducing": false,
-      "stale_input_safety": "Stable tab and pane IDs are resolved before switching; a pane whose bubbles belong to no asset is refused. The result and orderflow.bubbles report the asset and its switch.",
+      "stale_input_safety": "Stable tab and pane IDs are resolved before switching; a pane whose bubbles belong to no asset is refused. The result and orderflow.bubbles report the asset and its switch; the result also reports what became of the pane's screen.",
       "title": "Save bubble changes for this asset",
       "version": 1
     },
@@ -14686,7 +14711,7 @@
               },
               "save_changes": {
                 "default": true,
-                "description": "The asset's \"Save changes for this asset\" (default on), the same in\nevery tab on it; `orderflow.bubbles.save_changes.set` switches it.\nOff, a change stays on the pane it was made on for this session — not\nstored, not shown in other tabs on the asset, which show the stored\nsettings — and `saved` is `false` while one is on screen. Switched on\nagain, the switching pane's settings are stored for the asset.",
+                "description": "The asset's \"Save changes for this asset\" (default on), the same in\nevery tab on it; `orderflow.bubbles.save_changes.set` switches it.\nOff, a change stays on the pane it was made on for this session — not\nstored, not shown in other tabs on the asset, which show the stored\nsettings — and `saved` is `false` while one is on screen. Switched on\nagain, the switching pane's settings are stored for the asset, unless\nits stored settings changed since that pane last showed them: then\nthe pane wears those instead (the action's result `screen` says\nwhich).",
                 "type": "boolean"
               },
               "save_error": {
