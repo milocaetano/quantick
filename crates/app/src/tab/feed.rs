@@ -25,6 +25,8 @@ use quantick_feed::{
     FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedNotice, MAX_REMEMBERED_GAPS,
     MIN_MARKED_GAP_MS, past_resume_floor,
 };
+use quantick_layers::ChartLayer;
+use quantick_stores::bubble_asset_store::{AssetBinding, SharedAssetBubbles};
 
 /// The window's history choices every tab mirrors on each frame's drain.
 #[derive(Clone, Copy, Debug)]
@@ -252,7 +254,6 @@ impl Tab {
         if self.active == (self.feed_id.clone(), self.symbol.clone()) {
             return;
         }
-        let (previous_feed, previous_symbol) = self.active.clone();
         let Some(provider) = config.provider_of(&self.feed_id) else {
             tracing::warn!(
                 target: "quantick::app",
@@ -327,73 +328,53 @@ impl Tab {
         self.active = (self.feed_id.clone(), self.symbol.clone());
         self.refresh_chip_label(config);
         self.ensure_book_capture(config);
-        self.apply_feed_bubble_preset_after_switch(config, &previous_feed, &previous_symbol);
+        self.apply_asset_bubbles_after_switch(config);
     }
 
-    /// Apply the arrived-at declared preset — when the switch crossed feeds,
-    /// or when it crossed symbols whose declared looks differ. A symbol hop
-    /// between two symbols that declare nothing of their own keeps the user's
-    /// panel tweaks, exactly as before per-symbol declarations existed: the
-    /// declared look belongs to the feed, and to the symbols that state one.
-    ///
-    /// Ordinary declarations remain sticky. A tape-only declaration is scoped:
-    /// leaving it for an undeclared market restores the prior panel appearance.
-    pub fn apply_feed_bubble_preset_after_switch(
-        &mut self,
-        config: &AppConfig,
-        previous_feed: &str,
-        previous_symbol: &str,
-    ) {
-        if previous_feed == self.feed_id {
-            let feed = config.feed(&self.feed_id);
-            let arrived = feed.and_then(|feed| feed.bubble_preset_for(&self.symbol));
-            let left = feed.and_then(|feed| feed.bubble_preset_for(previous_symbol));
-            if arrived == left {
-                return;
-            }
-        }
-        self.apply_feed_bubble_preset(config);
-    }
-
-    /// Apply the bubble preset declared for the current feed and symbol, if
-    /// one is declared ([`FeedConfig::bubble_preset_for`]'s ladder: the
-    /// symbol's own entry first, the feed-wide declaration behind it).
-    ///
-    /// An undeclared feed keeps the user's look, restoring it if a source had
-    /// temporarily declared a tape-only preset. Unknown names are ignored —
-    /// the presets file is user-edited, and a typo must not silently restyle it.
-    pub fn apply_feed_bubble_preset(&mut self, config: &AppConfig) {
-        let name = config
-            .feed(&self.feed_id)
-            .and_then(|feed| feed.bubble_preset_for(&self.symbol))
-            .map(str::to_owned);
-        let applied = self.tape_mut().apply_source_preset(name.as_deref());
-        let Some(name) = name else {
+    /// Bring the arrived-at asset's own bubble settings on screen, filing the
+    /// leaving asset's edits first. A hop inside one asset (`WIN$N` to
+    /// `WINV26`) keeps what is on screen, edits included.
+    pub fn apply_asset_bubbles_after_switch(&mut self, config: &AppConfig) {
+        let Some(binding) = self.tape().asset() else {
             return;
         };
-        if applied {
-            tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "FEED_BUBBLE_PRESET",
-                feed = %self.feed_id,
-                symbol = %self.symbol,
-                preset = name.as_str(),
-                action = "apply_preset",
-                "feed declares a bubble preset; applied"
-            );
-        } else {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "FEED_BUBBLE_PRESET_UNKNOWN",
-                feed = %self.feed_id,
-                symbol = %self.symbol,
-                preset = name.as_str(),
-                action = "keep_current_look",
-                "feed declares a bubble preset that is not in the presets file; ignoring"
-            );
+        if binding.key() == config.bubble_asset(&self.feed_id, &self.symbol).key {
+            return;
         }
+        let store = binding.store().clone();
+        self.sync_asset_bubbles();
+        self.bind_asset_bubbles(config, &store);
+    }
+
+    /// Put this tab's asset's bubble settings from `store` on screen
+    /// ([`AssetBinding::bind`]).
+    pub fn bind_asset_bubbles(&mut self, config: &AppConfig, store: &SharedAssetBubbles) {
+        let (candle, presets) = (
+            ChartLayer::CandleAggression.0.default_on,
+            self.tape().bubble_presets(),
+        );
+        let market = (self.feed_id.as_str(), self.symbol.as_str());
+        let (binding, settings) =
+            AssetBinding::bind(store.clone(), config, market, presets, candle);
+        self.set_candle_aggression(settings.candle_aggression);
+        self.tape_mut().bind_asset(binding, &settings);
+    }
+
+    /// The frame loop's step: wear what another tab filed for this asset,
+    /// else file what this tab changed — never a stale whole look over it.
+    pub fn sync_asset_bubbles(&mut self) {
+        let candle = self
+            .flow_pane
+            .layers
+            .requested(ChartLayer::CandleAggression);
+        if let Some(adopted) = self.tape_mut().sync_asset(candle) {
+            self.set_candle_aggression(adopted);
+        }
+    }
+
+    fn set_candle_aggression(&mut self, on: bool) {
+        let state = std::collections::BTreeMap::from([(ChartLayer::CandleAggression, on)]);
+        self.flow_pane.apply_layer_states(&state);
     }
 
     /// Open wearing the layout the feed declares, if it declares one.
@@ -959,6 +940,8 @@ impl Tab {
             self.symbol = link.symbol().to_string();
         }
         self.refresh_chip_label(config);
+        // A recording is its symbol's asset, and wears that asset's settings.
+        self.apply_asset_bubbles_after_switch(config);
         // Depth is not in a recording; the toggle is disabled by capability,
         // and the view must not keep drawing a book from the live feed.
         let generation = self.next_book_generation();
@@ -976,6 +959,7 @@ impl Tab {
         self.feed_id = feed_id;
         self.symbol = symbol;
         self.refresh_chip_label(config);
+        self.apply_asset_bubbles_after_switch(config);
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,

@@ -91,7 +91,7 @@ pub(crate) fn register_action(registry: &mut ActionRegistry) -> Result<(), Regis
     let mut descriptor = layout::descriptor(
         SET_VISIBILITY_CAPABILITY_ID,
         "Set chart layer visibility",
-        "Sets an existing registered display switch on a stable pane ID through the same operation as the menu; grid affects the entire window.",
+        "Sets an existing registered display switch on a stable pane ID through the same operation as the menu; grid affects the entire window. A switch whose persistence is orderflow_preset belongs to the asset the pane shows and is saved only while that asset's save switch is on (orderflow.bubbles asset.save_changes); chart_layers switches are saved for every market.",
         generated_schema::<SetVisibilityInput>(),
     );
     descriptor.module = ModuleId::new(MODULE_ID).expect("static module ID");

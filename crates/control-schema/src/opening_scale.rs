@@ -57,13 +57,15 @@ impl OpeningScaleInput {
 }
 
 pub fn descriptor() -> CapabilityDescriptor {
-    crate::layout::transient_descriptor::<OpeningScaleInput, OpeningScaleResult>(
+    let mut descriptor = crate::layout::transient_descriptor::<OpeningScaleInput, OpeningScaleResult>(
         OPENING_SCALE_CAPABILITY_ID,
         crate::orderflow::MODULE_ID,
         "Set opening burst size reference",
-        "Optionally changes opening calibration without changing executions, prices or grouping. The default target tape excludes the first recorded 100 ms burst per UTC date and caps its radius; it has no effect on a typed tape reference and remains transient until the bubble preset is saved. Target candle requires active tick FLOW bubbles and has an independent transient pane preference: only the region containing the canonical first recorded execution per UTC date excludes its opening portion from the visible reference and may grow uncapped with area proportional to gross volume. Other first-window regions contribute their full volume. Offscreen or evicted anchors never transfer to visible regions. A frame with no ordinary reference uses an explicitly reported full-volume fallback. Both preferences default off; first recorded activity is not an exchange auction flag.",
+        "Optionally changes opening calibration without changing executions, prices or grouping. The default target tape excludes the first recorded 100 ms burst per UTC date and caps its radius; it has no effect on a typed tape reference. Target candle requires active tick FLOW bubbles and has an independent pane preference. Both belong to the asset the pane shows (orderflow.bubbles names it): saved for it, and back whenever a tab shows it, while its save switch is on (asset.save_changes); off, the change lasts on this pane for the session only. Target candle: only the region containing the canonical first recorded execution per UTC date excludes its opening portion from the visible reference and may grow uncapped with area proportional to gross volume. Other first-window regions contribute their full volume. Offscreen or evicted anchors never transfer to visible regions. A frame with no ordinary reference uses an explicitly reported full-volume fallback. Both preferences default off; first recorded activity is not an exchange auction flag.",
         "Stable tab and pane IDs are resolved before changing only a reversible display preference; the result and orderflow.bubbles report its actual value.",
-    )
+    );
+    descriptor.persistence = quantick_control::registry::EffectPersistence::Durable;
+    descriptor
 }
 
 pub const READBACKS: &[crate::readback::Readback] = &[crate::readback::snapshot(

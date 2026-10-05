@@ -79,10 +79,11 @@ impl ChartLayer {
         hint: "confirmed executions from the trade stream, drawn where they printed, on the \
                  candles. Beside the native tape, one summary bubble per tick candle, as \
                  candle aggression draws it. The tape has a switch of its own and this one \
-                 never moves it — right-click the tape to reach it",
+                 never moves it — right-click the tape to reach it. Saved per asset with its \
+                 bubble settings while the asset's \"Save changes for this asset\" is on",
         source: LayerSource::Orderflow(OrderflowSwitch::Bubbles),
         scope: LayerScope::FlowPane,
-        persistence: Persistence::Layers,
+        persistence: Persistence::OrderflowPreset,
         requirement: Requirement::Volume,
         on_tape: false,
         needs_tape: false,
@@ -129,7 +130,7 @@ impl ChartLayer {
         id: "lane_marks",
         label: "live lane marks",
         hint: "the dashed line where the bar slots end and the tape begins, and the line on the \
-                 live edge itself. Saved with the order-flow preset, not with the other layers",
+                 live edge itself. Saved with the asset's bubble settings while its save switch is on, not with the other layers",
         source: LayerSource::Orderflow(OrderflowSwitch::Marks),
         scope: LayerScope::FlowPane,
         persistence: Persistence::OrderflowPreset,
@@ -201,7 +202,7 @@ impl ChartLayer {
                  volume its cell holds. Windows and levels are anchored in market time and price, \
                  so a closed dot never moves; zooming picks wider or narrower cells. Dots may \
                  overlap, the biggest on top. \
-                 Saved with the order-flow preset, not with the other layers",
+                 Saved with the asset's bubble settings while its save switch is on, not with the other layers",
         source: LayerSource::Orderflow(OrderflowSwitch::OverlapMerge),
         scope: LayerScope::FlowPane,
         persistence: Persistence::OrderflowPreset,
@@ -219,7 +220,7 @@ impl ChartLayer {
         hint: "the tape takes the whole canvas, Bookmap style: no candles and no candle marks, \
                time runs across the full width on the tape's own window, and the price axis \
                follows the tape's prints. Scrolling zooms the tape's window. \
-               Saved with the order-flow preset, not with the other layers",
+               Saved with the asset's bubble settings while its save switch is on, not with the other layers",
         source: LayerSource::Orderflow(OrderflowSwitch::TapeOnly),
         scope: LayerScope::FlowPane,
         persistence: Persistence::OrderflowPreset,
@@ -238,7 +239,7 @@ impl ChartLayer {
                clock, and the one price axis follows the tape's prints; manual Y still \
                applies. Beside the candles it keeps its share behind the draggable divider and \
                moving or zooming the candles never changes it. Needs volume dots; tape only \
-               always draws it. Saved with the order-flow preset, not with the other layers",
+               always draws it. Saved with the asset's bubble settings while its save switch is on, not with the other layers",
         source: LayerSource::Orderflow(OrderflowSwitch::NativeTape),
         scope: LayerScope::FlowPane,
         persistence: Persistence::OrderflowPreset,

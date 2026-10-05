@@ -84,6 +84,7 @@ mod tests {
                 "version = 1\nactive = 1\nnext_id = 2\n\n[[layouts]]\nid = 1\nname = \"Layout 1\"\n",
             ),
             ("indicator-presets.toml", "version = 1\npresets = []\n"),
+            ("bubble-assets.toml", "version = 1\n"),
             (
                 "chart-layers.toml",
                 "version = 1\n\n[layers]\ngrid = true\nheatmap = false\n",

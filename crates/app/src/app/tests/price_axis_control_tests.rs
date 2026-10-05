@@ -269,7 +269,7 @@ fn entering_tape_through_layers_or_a_source_preset_discards_candle_manual_framin
                 pane.orderflow
                     .as_mut()
                     .unwrap()
-                    .apply_source_preset(Some("mini index regions"))
+                    .apply_preset("mini index regions")
             );
         } else {
             enable_tape(&mut app);

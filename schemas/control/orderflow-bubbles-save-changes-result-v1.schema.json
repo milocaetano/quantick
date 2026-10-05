@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "SwitchedScreen": {
+      "description": "What became of what the addressed pane showed.",
+      "oneOf": [
+        {
+          "const": "kept",
+          "description": "It stays on the pane: the switch went off, or did not move.",
+          "type": "string"
+        },
+        {
+          "const": "stored",
+          "description": "Saving came on and it is now the asset's stored settings, which\nevery tab on the asset wears.",
+          "type": "string"
+        },
+        {
+          "const": "replaced_by_stored",
+          "description": "Saving came on, but the asset's stored settings had changed since\nthe pane last showed them: the pane dropped what it showed and wears\nthe stored settings; nothing of its screen was stored.",
+          "type": "string"
+        }
+      ]
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "asset": {
+      "description": "The asset whose switch this is: every tab on it shares it.",
+      "type": "string"
+    },
+    "changed": {
+      "type": "boolean"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "save_changes": {
+      "type": "boolean"
+    },
+    "screen": {
+      "$ref": "#/$defs/SwitchedScreen",
+      "description": "What became of what the addressed pane showed."
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "asset",
+    "save_changes",
+    "changed",
+    "screen"
+  ],
+  "title": "SaveChangesResult",
+  "type": "object"
+}

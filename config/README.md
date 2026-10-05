@@ -28,7 +28,7 @@ the chart over a bad colour triple would be the worse failure.
 ## bubbles.toml
 
 ```toml
-active = "default"        # the preset the panel opens on ("" = none)
+active = "default"        # the look an undeclared asset opens on ("" = none)
 
 [[presets]]
 name = "default"

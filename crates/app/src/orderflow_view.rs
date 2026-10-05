@@ -10,6 +10,7 @@ use quantick_engine::{Bar, Trade};
 use quantick_orderbook::{BookSide, DepthEvent};
 use quantick_orderflow::engine::{BookLadder, BookPublished, CaptureStatus, OrderflowHealth};
 use quantick_orderflow::{HeatmapConfig, LaneWindow, reserved_span_ms};
+use quantick_stores::bubble_asset_store::RunHold;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
@@ -18,6 +19,7 @@ use crate::orderflow_render::{OrderflowRenderStyle, ProjectedLayout};
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
+mod asset_bubbles;
 mod clock;
 mod constants;
 pub(crate) mod flow_execution;
@@ -32,7 +34,6 @@ mod pending;
 #[path = "orderflow_view/tests/pending_tests.rs"]
 mod pending_tests;
 mod settings;
-mod source_presets;
 #[cfg(test)]
 #[path = "orderflow_view/tests/tape_frame_tests.rs"]
 mod tape_frame_tests;
@@ -115,8 +116,15 @@ pub struct OrderflowView {
     preset_name_draft: String,
     /// Last preset action (or failure), shown verbatim in the panel.
     preset_status: Option<String>,
-    /// Appearance to restore after an automatically declared tape-only look.
-    source_preset_restore: Option<bubble_presets::BubblePreset>,
+    /// Name of the preset the look on screen started from; empty once the
+    /// panel's defaults replaced it. `presets.active` stays the file's own.
+    look_name: String,
+    /// The asset these settings belong to, bound by the tab.
+    asset: Option<quantick_stores::bubble_asset_store::AssetBinding>,
+    /// What launch hooks hold for this run, never filed: put back whenever
+    /// the view wears an asset's settings, so it reaches the asset a replay
+    /// autostart switches to. Empty outside a capture run.
+    held: RunHold,
     /// Scripted tape starvation: prints stop reaching the tape this many
     /// milliseconds after the first one, while the book keeps arriving.
     /// `None` — always, outside a capture run — feeds the tape every print.
@@ -157,9 +165,12 @@ impl OrderflowView {
             );
             preset_status = Some(format!("presets not loaded — {message}"));
         }
-        if let Some(active) = presets.get(&presets.active) {
-            active.apply_to(&mut config);
-        }
+        let look_name = presets
+            .get(&presets.active)
+            .map_or_else(String::new, |active| {
+                active.apply_to(&mut config);
+                active.name.clone()
+            });
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -185,7 +196,9 @@ impl OrderflowView {
             presets_source,
             preset_name_draft,
             preset_status,
-            source_preset_restore: None,
+            look_name,
+            asset: None,
+            held: RunHold::default(),
             starve_tape_after_ms: None,
             first_print_ms: None,
             dot_rungs: Default::default(),
@@ -236,6 +249,7 @@ impl OrderflowView {
             self.cached_health().floored_quantity,
             self.dot_scale(),
             &self.recorded_opening_bursts(),
+            self.asset_snapshot(),
         )
     }
 
@@ -695,7 +709,7 @@ impl OrderflowView {
         let before = self.config.clone();
         let width = self.config.live_lane.resolved_width_px(chart_width) - delta_px;
         self.config.live_lane.width_share = width / chart_width;
-        self.commit_config_changes(before);
+        self.apply_config(before);
     }
 
     /// Zoom the lane's time window by a multiplicative factor: `> 1` shows less market time in the
@@ -708,7 +722,7 @@ impl OrderflowView {
         }
         let before = self.config.clone();
         self.config.zoom_lane_window(factor);
-        self.commit_config_changes(before);
+        self.apply_config(before);
     }
 
     /// How much market time the tape shows, and in which language it was
@@ -719,15 +733,27 @@ impl OrderflowView {
     }
 
     /// Choose how the tape's window is decided: a preset, a custom duration,
-    /// or back to following the bars.
+    /// or back to following the bars. A setting of the asset on screen, even
+    /// when the wheel already shows that window.
     pub fn set_live_lane_window(&mut self, window: LaneWindow) {
-        if self.config.live_lane.window == window {
-            return;
-        }
+        self.note_asset_lane_set();
+        self.navigate_live_lane_window(window);
+    }
+
+    /// Move the tape's window as the wheel does: the view, not the asset.
+    pub fn navigate_live_lane_window(&mut self, window: LaneWindow) {
         let before = self.config.clone();
         self.config.live_lane.window = window;
         self.config.live_lane.window.sanitize();
-        self.commit_config_changes(before);
+        self.apply_config(before);
+    }
+
+    /// Hold what a launch hook asks for this run ([`RunHold`]); never filed.
+    #[cfg(any(feature = "scenario-harness", test))]
+    pub fn hold_for_run(&mut self, hold: impl FnOnce(&mut RunHold)) {
+        let before = self.config.clone();
+        self.held.add(hold, &mut self.config);
+        self.apply_config(before);
     }
 
     /// Market time the lane is showing right now, in milliseconds — the label
@@ -756,7 +782,7 @@ impl OrderflowView {
     /// Name of the preset the panel currently wears.
     #[cfg(test)]
     pub(crate) fn active_preset_for_test(&self) -> &str {
-        &self.presets.active
+        &self.look_name
     }
 
     /// Read-only view of the heatmap config, for app-level assertions.
@@ -972,7 +998,19 @@ impl OrderflowView {
         self.config.depth_visible() && self.published.status.is_syncing()
     }
 
+    /// A setting changed: the asset on screen files it at the next frame.
     fn commit_config_changes(&mut self, before: HeatmapConfig) -> bool {
+        self.held.release(&before, &self.config);
+        if self.config != before
+            && let Some(asset) = &mut self.asset
+        {
+            asset.note_edit();
+        }
+        self.apply_config(before)
+    }
+
+    /// The same without a setting: a gesture, or an asset's settings worn.
+    fn apply_config(&mut self, before: HeatmapConfig) -> bool {
         self.config.sanitize();
         if self.config == before {
             return false;
@@ -1390,7 +1428,7 @@ mod tests {
         assert_eq!(view.config.live_lane.width_share, 0.5);
         assert_eq!(view.config.live_lane.window, LaneWindow::Auto { zoom: 2.0 });
         assert_eq!(view.config.live_lane.cluster_ms, Some(50));
-        assert_eq!(view.presets.active, "wide");
+        assert_eq!(view.look_name, "wide");
         assert_eq!(view.preset_name_draft, "wide");
         // Untouched: the layer switch, retention, grouping, gamma, capture bucket.
         assert_eq!(view.config.show_aggressions, before.show_aggressions);
@@ -1403,7 +1441,7 @@ mod tests {
         let after = view.config.clone();
         assert!(!view.apply_preset("nope"));
         assert_eq!(view.config, after);
-        assert_eq!(view.presets.active, "wide");
+        assert_eq!(view.look_name, "wide");
     }
 
     fn snapshot_event(generation: u64) -> DepthEvent {

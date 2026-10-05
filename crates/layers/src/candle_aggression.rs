@@ -9,10 +9,10 @@ impl ChartLayer {
     pub const CandleAggression: Self = Self(&LayerDescriptor {
         id: "candle_aggression",
         label: "candle aggression",
-        hint: "one small, translucent buy/sell bubble per tick candle at its quantity-weighted trade price. Area follows visible candle volume; no numbers or candle restyling. Inferred sides are labelled in the status bar. Approximated and cap-coarsened rows are omitted. A context-pane toggle lasts for that context; chart-layers config sets startup defaults. The tape keeps its own settings",
+        hint: "one small, translucent buy/sell bubble per tick candle at its quantity-weighted trade price. Area follows visible candle volume; no numbers or candle restyling. Inferred sides are labelled in the status bar. Approximated and cap-coarsened rows are omitted. The flow pane's switch is saved per asset with its bubble settings while the asset's \"Save changes for this asset\" is on; a context-pane toggle lasts for that context. The tape keeps its own settings",
         source: LayerSource::Local,
         scope: LayerScope::Pane,
-        persistence: Persistence::Layers,
+        persistence: Persistence::OrderflowPreset,
         requirement: Requirement::Volume,
         on_tape: false,
         needs_tape: false,

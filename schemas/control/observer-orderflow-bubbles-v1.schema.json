@@ -18,11 +18,64 @@
       ],
       "type": "object"
     },
+    "BubbleAssetSnapshot": {
+      "description": "The asset a pane's bubble settings belong to.",
+      "properties": {
+        "key": {
+          "description": "The asset's key: the feed config's `symbol_bubble_presets` key that\nnames the symbol (`WIN*` covers every mini index contract), or the\nsymbol itself.",
+          "type": "string"
+        },
+        "preset": {
+          "description": "The preset the look on screen started from; empty once the panel's\ndefaults replaced it.",
+          "type": "string"
+        },
+        "save_changes": {
+          "default": true,
+          "description": "The asset's \"Save changes for this asset\" (default on), the same in\nevery tab on it; `orderflow.bubbles.save_changes.set` switches it.\nOff, a change stays on the pane it was made on for this session — not\nstored, not shown in other tabs on the asset, which show the stored\nsettings — and `saved` is `false` while one is on screen. Switched on\nagain, the switching pane's settings are stored for the asset, unless\nits stored settings changed since that pane last showed them: then\nthe pane wears those instead (the action's result `screen` says\nwhich).",
+          "type": "boolean"
+        },
+        "save_error": {
+          "default": null,
+          "description": "Why they are not saved; absent when they are.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "saved": {
+          "description": "Whether the store file holds the settings this pane shows. `false`\nuntil the next frame writes a change, while the file cannot be read\nor written — they are kept in memory, retried, for this run only —\nand while saving is off and a change is on screen.",
+          "type": "boolean"
+        },
+        "source": {
+          "description": "Where the settings came from: `stored` (changed for this asset; see\n`saved`), `declared` (the preset the feed config declares) or\n`default` (the presets file's active look).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "source",
+        "preset",
+        "saved"
+      ],
+      "type": "object"
+    },
     "BubblesStateSnapshot": {
       "properties": {
         "aggression_provenance": {
           "description": "Where the aggression these bubbles draw comes from.",
           "type": "string"
+        },
+        "asset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BubbleAssetSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on `bubbles`,\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —\nbelongs to this asset alone. While its `save_changes` is on it is\nsaved, reaches every tab showing the asset and is restored whenever\na tab shows it again; off, it stays on the pane it was made on for\nthe session. Wheeling or dragging the tape's window or width moves\nthe view only. Absent until the tab binds an asset."
         },
         "enabled": {
           "description": "Aggression bubbles are drawn over the chart. Beside the native tape,\nFLOW draws regional execution totals on the tick candles;\n`layers.visibility` names any block.",
@@ -43,7 +96,7 @@
         },
         "native_tape": {
           "default": false,
-          "description": "The tape is the native tape: each print at its own execution time\nand price, on the market clock over the whole window, with one price\naxis fitted by its prints (manual Y allowed). Beside the tick candles\nit keeps its share of the pane behind a draggable divider, and moving\nor zooming the candles never changes it. The tape the pane builds, not\nthe switch: true whenever `tape_only` is, and beside the candles only\nwith the tape on and `overlap_merge` (volume dots) on. The request is\nthe lane setting `native_tape`, saved with the order-flow preset and\nread back by `layers.visibility` as layer `native_tape`.",
+          "description": "The tape is the native tape: each print at its own execution time\nand price, on the market clock over the whole window, with one price\naxis fitted by its prints (manual Y allowed). Beside the tick candles\nit keeps its share of the pane behind a draggable divider, and moving\nor zooming the candles never changes it. The tape the pane builds, not\nthe switch: true whenever `tape_only` is, and beside the candles only\nwith the tape on and `overlap_merge` (volume dots) on. The request is\nthe lane setting `native_tape`, one of the asset's bubble settings\n(see `asset`), read back by `layers.visibility` as layer `native_tape`.",
           "type": "boolean"
         },
         "overlap_merge": {

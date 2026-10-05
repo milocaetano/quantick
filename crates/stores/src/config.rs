@@ -63,18 +63,19 @@ pub struct FeedConfig {
     /// and ignored rather than silently altering the panel.
     #[serde(default)]
     pub bubble_preset: Option<String>,
-    /// Bubble presets applied per symbol, by exact symbol name — overriding
-    /// [`bubble_preset`](Self::bubble_preset) for the symbols named here.
+    /// Bubble presets applied per asset — overriding
+    /// [`bubble_preset`](Self::bubble_preset) for the symbols a key matches.
     ///
-    /// An instrument can dictate its read more precisely than its venue: the
-    /// B3 mini index wants regional aggregation that the mini dollar on the
-    /// same feed does not. A symbol with no entry falls back to the feed's
-    /// declared preset, and then to whatever the panel has active — exactly
-    /// the ladder [`bubble_preset`](Self::bubble_preset) already describes.
-    /// Keys must be symbols this feed offers (the added-symbols sidecar
-    /// included), because a key that matches nothing has silence as its only
-    /// symptom; whether the preset *name* resolves stays the presets file's
-    /// business, reported when it is applied.
+    /// A key is an exact symbol, or a prefix ending in `*` naming a family of
+    /// dated contracts (`WIN*` is WIN$N, WINV26 and every later roll). The
+    /// key is the asset: symbols it matches share one set of bubble settings
+    /// (see [`Self::bubble_asset`]). An exact key wins over a pattern, and a
+    /// longer pattern over a shorter one. A symbol no key matches is its own
+    /// asset, on the feed's declared preset and then the presets file's
+    /// active one. Keys must match a symbol this feed offers (the
+    /// added-symbols sidecar included), because a key that matches nothing
+    /// has silence as its only symptom; whether the preset *name* resolves
+    /// stays the presets file's business, reported when it is applied.
     #[serde(default)]
     pub symbol_bubble_presets: BTreeMap<String, String>,
     /// The canvas layout a tab on this feed opens showing.
@@ -107,16 +108,63 @@ pub struct FeedConfig {
     pub record_deals: bool,
 }
 
+/// Marks a [`FeedConfig::symbol_bubble_presets`] key as a symbol prefix.
+pub const SYMBOL_FAMILY_WILDCARD: char = '*';
+
+/// The asset a symbol's bubble settings belong to, and the look it opens on
+/// before the trader changes any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BubbleAsset {
+    /// The stored settings' key: the matching declaration's key, or the
+    /// symbol itself when no declaration names it.
+    pub key: String,
+    /// The preset declared for it, if any.
+    pub preset: Option<String>,
+}
+
+/// Whether `key` (an exact symbol or a `PREFIX*` family) names `symbol`.
+fn key_matches(key: &str, symbol: &str) -> bool {
+    match key.strip_suffix(SYMBOL_FAMILY_WILDCARD) {
+        Some(prefix) => !prefix.is_empty() && symbol.starts_with(prefix),
+        None => key == symbol,
+    }
+}
+
 impl FeedConfig {
-    /// The bubble preset declared for `symbol` on this feed, if any: the
-    /// symbol's own entry when it has one, the feed-wide declaration
-    /// otherwise.
+    /// The asset `symbol` belongs to on this feed: the exact key naming it,
+    /// else the longest family pattern matching it, else the symbol alone on
+    /// the feed-wide declaration.
     #[must_use]
-    pub fn bubble_preset_for(&self, symbol: &str) -> Option<&str> {
-        self.symbol_bubble_presets
-            .get(symbol)
-            .map(String::as_str)
-            .or(self.bubble_preset.as_deref())
+    pub fn bubble_asset(&self, symbol: &str) -> BubbleAsset {
+        self.declared_asset(symbol).unwrap_or_else(|| BubbleAsset {
+            key: symbol.to_owned(),
+            preset: self.bubble_preset.clone(),
+        })
+    }
+
+    /// The `symbol_bubble_presets` entry naming `symbol`, if any: the exact
+    /// key, else the longest family pattern.
+    fn declared_asset(&self, symbol: &str) -> Option<BubbleAsset> {
+        let presets = &self.symbol_bubble_presets;
+        presets
+            .get_key_value(symbol)
+            .or_else(|| {
+                presets
+                    .iter()
+                    .filter(|(key, _)| key_matches(key, symbol))
+                    .max_by_key(|(key, _)| key.len())
+            })
+            .map(|(key, preset)| BubbleAsset {
+                key: key.clone(),
+                preset: Some(preset.clone()),
+            })
+    }
+
+    /// The bubble preset declared for `symbol` on this feed, if any: its
+    /// asset's entry when it has one, the feed-wide declaration otherwise.
+    #[must_use]
+    pub fn bubble_preset_for(&self, symbol: &str) -> Option<String> {
+        self.bubble_asset(symbol).preset
     }
 }
 
@@ -278,6 +326,66 @@ impl AppConfig {
     #[must_use]
     pub fn feed(&self, id: &str) -> Option<&FeedConfig> {
         self.feeds.iter().find(|f| f.id == id)
+    }
+
+    /// The asset `symbol` belongs to in a tab on `feed_id`, and the look it
+    /// opens on. The tab's feed decides first: its exact key, else its
+    /// longest family pattern. A symbol that feed offers stops there, on the
+    /// feed-wide preset — a pattern on another venue never captures it. A
+    /// symbol it does not offer (a recording replayed in the tab, a dated
+    /// roll typed in the source picker) takes the key some other feed
+    /// declares for it — exact over pattern, longer pattern over shorter —
+    /// else the feed-wide preset of the first feed offering it, else the tab
+    /// feed's own. A key declared on several feeds opens on the first one's
+    /// preset, so one key has one declared look whichever tab shows it.
+    #[must_use]
+    pub fn bubble_asset(&self, feed_id: &str, symbol: &str) -> BubbleAsset {
+        let tab_feed = self.feed(feed_id);
+        let offers = |feed: &FeedConfig| feed.symbols.iter().any(|offered| offered == symbol);
+        let asset = match tab_feed {
+            Some(feed) if offers(feed) => feed.bubble_asset(symbol),
+            _ => tab_feed
+                .and_then(|feed| feed.declared_asset(symbol))
+                .or_else(|| {
+                    self.feeds
+                        .iter()
+                        .filter_map(|feed| feed.declared_asset(symbol))
+                        .min_by_key(|asset| {
+                            (asset.key != symbol, std::cmp::Reverse(asset.key.len()))
+                        })
+                })
+                .or_else(|| {
+                    let offering = self.feeds.iter().find(|feed| offers(feed));
+                    offering.map(|feed| feed.bubble_asset(symbol))
+                })
+                .unwrap_or_else(|| BubbleAsset {
+                    key: symbol.to_owned(),
+                    preset: tab_feed.and_then(|feed| feed.bubble_preset.clone()),
+                }),
+        };
+        let first = self
+            .feeds
+            .iter()
+            .find_map(|feed| feed.symbol_bubble_presets.get(&asset.key));
+        BubbleAsset {
+            preset: first.cloned().or(asset.preset),
+            ..asset
+        }
+    }
+
+    /// Every preset name some asset opens on: each feed's `bubble_preset`
+    /// and every `symbol_bubble_presets` value.
+    #[must_use]
+    pub fn opening_bubble_presets(&self) -> std::collections::BTreeSet<String> {
+        self.feeds
+            .iter()
+            .flat_map(|feed| {
+                feed.bubble_preset
+                    .iter()
+                    .chain(feed.symbol_bubble_presets.values())
+            })
+            .cloned()
+            .collect()
     }
 
     /// Fold the user's added symbols into the catalog, in place.
@@ -532,10 +640,14 @@ impl AppConfig {
             // empty preset name is a config typo. Whether the name resolves
             // stays the presets file's business.
             for (symbol, preset) in &feed.symbol_bubble_presets {
-                if !feed.symbols.contains(symbol) {
+                if !feed
+                    .symbols
+                    .iter()
+                    .any(|offered| key_matches(symbol, offered))
+                {
                     return Err(format!(
-                        "feed '{}' maps a bubble preset for symbol '{symbol}', which it does \
-                         not offer",
+                        "feed '{}' maps a bubble preset for symbol '{symbol}', which matches \
+                         none of the symbols it offers",
                         feed.id
                     ));
                 }
@@ -1207,11 +1319,20 @@ mod tests {
         // The mini index alone reads regionally; the mini dollar beside it
         // falls back to the feed-wide look. That ladder is the whole point of
         // per-symbol declarations.
-        assert_eq!(b3.bubble_preset_for("WIN$N"), Some("mini index regions"));
-        assert_eq!(b3.bubble_preset_for("WINV26"), Some("mini index regions"));
-        assert_eq!(b3.bubble_preset_for("WDO$N"), Some("live lane pie"));
-        assert_eq!(binance.bubble_preset_for("BTCUSDT"), None);
-        assert_eq!(hyperliquid.bubble_preset_for("BTC"), None);
+        assert_eq!(
+            b3.bubble_preset_for("WIN$N").as_deref(),
+            Some("mini index regions")
+        );
+        assert_eq!(
+            b3.bubble_preset_for("WINV26").as_deref(),
+            Some("mini index regions")
+        );
+        assert_eq!(
+            b3.bubble_preset_for("WDO$N").as_deref(),
+            Some("live lane pie")
+        );
+        assert_eq!(binance.bubble_preset_for("BTCUSDT").as_deref(), None);
+        assert_eq!(hyperliquid.bubble_preset_for("BTC").as_deref(), None);
 
         // The default open is the split: timeframe context beside the flow
         // chart (user decision 2026-08-06). The other feeds declare nothing
@@ -1364,6 +1485,38 @@ mod tests {
             err.to_string().contains("GHOST"),
             "the message names the key: {err}"
         );
+    }
+
+    #[test]
+    fn a_family_pattern_must_match_an_offered_symbol() {
+        let text = |key: &str| {
+            format!(
+                r#"
+            default_feed = "b"
+            default_symbol = "WINV26"
+            [[feeds]]
+            id = "b"
+            name = "B"
+            provider = "binance"
+            symbols = ["WINV26"]
+            symbol_bubble_presets = {{ "{key}" = "default" }}
+        "#
+            )
+        };
+        for key in ["WDO*", "*"] {
+            let err = parse(&text(key), ConfigSource::Embedded, &AddedSymbols::default())
+                .expect_err("a pattern naming no offered symbol");
+            assert!(err.to_string().contains(key), "{err}");
+        }
+        let config = parse(
+            &text("WIN*"),
+            ConfigSource::Embedded,
+            &AddedSymbols::default(),
+        )
+        .expect("a family pattern matching an offered symbol");
+        let feed = config.feed("b").expect("feed");
+        assert_eq!(feed.bubble_asset("WINZ26").key, "WIN*");
+        assert_eq!(feed.bubble_asset("WDO$N").key, "WDO$N");
     }
 
     #[test]

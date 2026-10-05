@@ -13,7 +13,7 @@ fn native_split(app: &mut QuantickApp) {
     assert!(
         app.active_tab_mut()
             .tape_mut()
-            .apply_source_preset(Some("mini index regions"))
+            .apply_preset("mini index regions")
     );
     let config = app.active_tab().tape().cached_config();
     assert!(config.native_tape() && !config.tape_only());
@@ -771,4 +771,38 @@ fn an_ordinary_canvas_double_click_returns_to_live_at_the_existing_zoom_and_pric
         assert_eq!(pane.price_view.manual_range(), Some(manual));
         assert_eq!(pane.price_view.is_inverted(), inverted);
     }
+}
+
+/// Test agent D1 (review round 2, finding 8): the call is navigation, as
+/// its descriptor says — the wheel's path. The window it sets moves the view
+/// and is never filed as the asset's.
+#[test]
+fn the_tape_view_window_moves_the_view_and_is_not_filed() {
+    let ctx = egui::Context::default();
+    let (mut app, _, _) = split_app(&ctx);
+    app.layer_wiring().maintain(&ctx);
+    let asset_window = |app: &QuantickApp| {
+        let asset = app.active_tab().tape().asset().expect("bound");
+        asset.filed().look.live_lane.window
+    };
+    let filed = asset_window(&app);
+    let window = quantick_orderflow::LaneWindow::Fixed { ms: 3_000 };
+    assert_ne!(filed, window);
+    let directory = gateway_test_directory("tape-view-navigation");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let payload = input(&app, json!({"window": {"kind":"fixed","ms":3_000}}));
+    let (response, _) = unkeyed_call(&mut app, &mut client, CAPABILITY, payload);
+    assert_eq!(
+        success_result(&response)["tape"]["window"]["fixed_ms"],
+        3_000
+    );
+    app.layer_wiring().maintain(&ctx);
+    assert_eq!(app.active_tab().tape().live_lane_window(), window);
+    assert_eq!(asset_window(&app), filed, "the asset keeps its window");
+    disable_test_gateway(&mut app, &ctx);
 }

@@ -7117,7 +7117,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Sets an existing registered display switch on a stable pane ID through the same operation as the menu; grid affects the entire window.",
+      "description": "Sets an existing registered display switch on a stable pane ID through the same operation as the menu; grid affects the entire window. A switch whose persistence is orderflow_preset belongs to the asset the pane shows and is saved only while that asset's save switch is on (orderflow.bubbles asset.save_changes); chart_layers switches are saved for every market.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -7185,6 +7185,7 @@
                 "type": "string"
               },
               "persistence": {
+                "description": "Where the switch is kept: `chart_layers`, the chart-layers file every\nmarket shares; `orderflow_preset`, the bubble settings of the asset\nthe pane shows — saved only while that asset's save switch is on\n(`orderflow.bubbles` reports it as `asset.save_changes`).",
                 "type": "string"
               },
               "requested": {
@@ -9917,7 +9918,130 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Optionally changes opening calibration without changing executions, prices or grouping. The default target tape excludes the first recorded 100 ms burst per UTC date and caps its radius; it has no effect on a typed tape reference and remains transient until the bubble preset is saved. Target candle requires active tick FLOW bubbles and has an independent transient pane preference: only the region containing the canonical first recorded execution per UTC date excludes its opening portion from the visible reference and may grow uncapped with area proportional to gross volume. Other first-window regions contribute their full volume. Offscreen or evicted anchors never transfer to visible regions. A frame with no ordinary reference uses an explicitly reported full-volume fallback. Both preferences default off; first recorded activity is not an exchange auction flag.",
+      "description": "Switches the asset's \"Save changes for this asset\", which every tab on that asset shares; it starts on. On, a bubble setting changed on a pane is stored for the asset the pane shows and every tab on it wears it. Off, a change stays on the pane it was made on for this session: not stored, not shown in other tabs on the asset, which keep the stored settings; showing another market in that tab and back, or restarting, brings the stored settings back. Switching it on again stores what the addressed pane shows now and other tabs on the asset wear it — unless the asset's stored settings changed since that pane last showed them (another tab's change, an import): then the pane drops what it shows and wears the stored settings, and nothing of its screen is stored. The result's screen says which happened: stored, replaced_by_stored, or kept when the switch went off or did not move. The switch itself is stored. No other asset and no shared presets file is touched.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.bubbles.save_changes.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "pane_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The pane whose bubble settings belong to an asset: the tab's flow\npane (`orderflow.bubbles` reports its `asset`)."
+          },
+          "save_changes": {
+            "description": "`true` stores every change for the asset again, starting with what\nthis pane shows now — unless the asset's stored settings changed\nsince this pane last showed them (another tab's change, an import):\nthen this pane drops what it shows for the stored settings, and the\nresult's `screen` says so. `false` keeps later changes on the pane\nthey are made on, for this session only.",
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "save_changes"
+        ],
+        "title": "SaveChangesInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "SwitchedScreen": {
+            "description": "What became of what the addressed pane showed.",
+            "oneOf": [
+              {
+                "const": "kept",
+                "description": "It stays on the pane: the switch went off, or did not move.",
+                "type": "string"
+              },
+              {
+                "const": "stored",
+                "description": "Saving came on and it is now the asset's stored settings, which\nevery tab on the asset wears.",
+                "type": "string"
+              },
+              {
+                "const": "replaced_by_stored",
+                "description": "Saving came on, but the asset's stored settings had changed since\nthe pane last showed them: the pane dropped what it showed and wears\nthe stored settings; nothing of its screen was stored.",
+                "type": "string"
+              }
+            ]
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "asset": {
+            "description": "The asset whose switch this is: every tab on it shares it.",
+            "type": "string"
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "save_changes": {
+            "type": "boolean"
+          },
+          "screen": {
+            "$ref": "#/$defs/SwitchedScreen",
+            "description": "What became of what the addressed pane showed."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "asset",
+          "save_changes",
+          "changed",
+          "screen"
+        ],
+        "title": "SaveChangesResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs are resolved before switching; a pane whose bubbles belong to no asset is refused. The result and orderflow.bubbles report the asset and its switch; the result also reports what became of the pane's screen.",
+      "title": "Save bubble changes for this asset",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Optionally changes opening calibration without changing executions, prices or grouping. The default target tape excludes the first recorded 100 ms burst per UTC date and caps its radius; it has no effect on a typed tape reference. Target candle requires active tick FLOW bubbles and has an independent pane preference. Both belong to the asset the pane shows (orderflow.bubbles names it): saved for it, and back whenever a tab shows it, while its save switch is on (asset.save_changes); off, the change lasts on this pane for the session only. Target candle: only the region containing the canonical first recorded execution per UTC date excludes its opening portion from the visible reference and may grow uncapped with area proportional to gross volume. Other first-window regions contribute their full volume. Offscreen or evicted anchors never transfer to visible regions. A frame with no ordinary reference uses an explicitly reported full-volume fallback. Both preferences default off; first recorded activity is not an exchange auction flag.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -10013,7 +10137,7 @@
         "title": "OpeningScaleResult",
         "type": "object"
       },
-      "persistence": "transient",
+      "persistence": "durable",
       "preconditions": [],
       "read_only": false,
       "required_permissions": [
@@ -14475,6 +14599,7 @@
                 "type": "string"
               },
               "persistence": {
+                "description": "Where the switch is kept: `chart_layers`, the chart-layers file every\nmarket shares; `orderflow_preset`, the bubble settings of the asset\nthe pane shows — saved only while that asset's save switch is on\n(`orderflow.bubbles` reports it as `asset.save_changes`).",
                 "type": "string"
               },
               "requested": {
@@ -14573,11 +14698,64 @@
             ],
             "type": "object"
           },
+          "BubbleAssetSnapshot": {
+            "description": "The asset a pane's bubble settings belong to.",
+            "properties": {
+              "key": {
+                "description": "The asset's key: the feed config's `symbol_bubble_presets` key that\nnames the symbol (`WIN*` covers every mini index contract), or the\nsymbol itself.",
+                "type": "string"
+              },
+              "preset": {
+                "description": "The preset the look on screen started from; empty once the panel's\ndefaults replaced it.",
+                "type": "string"
+              },
+              "save_changes": {
+                "default": true,
+                "description": "The asset's \"Save changes for this asset\" (default on), the same in\nevery tab on it; `orderflow.bubbles.save_changes.set` switches it.\nOff, a change stays on the pane it was made on for this session — not\nstored, not shown in other tabs on the asset, which show the stored\nsettings — and `saved` is `false` while one is on screen. Switched on\nagain, the switching pane's settings are stored for the asset, unless\nits stored settings changed since that pane last showed them: then\nthe pane wears those instead (the action's result `screen` says\nwhich).",
+                "type": "boolean"
+              },
+              "save_error": {
+                "default": null,
+                "description": "Why they are not saved; absent when they are.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "saved": {
+                "description": "Whether the store file holds the settings this pane shows. `false`\nuntil the next frame writes a change, while the file cannot be read\nor written — they are kept in memory, retried, for this run only —\nand while saving is off and a change is on screen.",
+                "type": "boolean"
+              },
+              "source": {
+                "description": "Where the settings came from: `stored` (changed for this asset; see\n`saved`), `declared` (the preset the feed config declares) or\n`default` (the presets file's active look).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "source",
+              "preset",
+              "saved"
+            ],
+            "type": "object"
+          },
           "BubblesStateSnapshot": {
             "properties": {
               "aggression_provenance": {
                 "description": "Where the aggression these bubbles draw comes from.",
                 "type": "string"
+              },
+              "asset": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/BubbleAssetSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on `bubbles`,\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —\nbelongs to this asset alone. While its `save_changes` is on it is\nsaved, reaches every tab showing the asset and is restored whenever\na tab shows it again; off, it stays on the pane it was made on for\nthe session. Wheeling or dragging the tape's window or width moves\nthe view only. Absent until the tab binds an asset."
               },
               "enabled": {
                 "description": "Aggression bubbles are drawn over the chart. Beside the native tape,\nFLOW draws regional execution totals on the tick candles;\n`layers.visibility` names any block.",
@@ -14598,7 +14776,7 @@
               },
               "native_tape": {
                 "default": false,
-                "description": "The tape is the native tape: each print at its own execution time\nand price, on the market clock over the whole window, with one price\naxis fitted by its prints (manual Y allowed). Beside the tick candles\nit keeps its share of the pane behind a draggable divider, and moving\nor zooming the candles never changes it. The tape the pane builds, not\nthe switch: true whenever `tape_only` is, and beside the candles only\nwith the tape on and `overlap_merge` (volume dots) on. The request is\nthe lane setting `native_tape`, saved with the order-flow preset and\nread back by `layers.visibility` as layer `native_tape`.",
+                "description": "The tape is the native tape: each print at its own execution time\nand price, on the market clock over the whole window, with one price\naxis fitted by its prints (manual Y allowed). Beside the tick candles\nit keeps its share of the pane behind a draggable divider, and moving\nor zooming the candles never changes it. The tape the pane builds, not\nthe switch: true whenever `tape_only` is, and beside the candles only\nwith the tape on and `overlap_merge` (volume dots) on. The request is\nthe lane setting `native_tape`, one of the asset's bubble settings\n(see `asset`), read back by `layers.visibility` as layer `native_tape`.",
                 "type": "boolean"
               },
               "overlap_merge": {

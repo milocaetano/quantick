@@ -26,5 +26,11 @@
 # ownership review (2026-10-01); measured remainder only, no spare headroom.
 # Lowered by 23 lines: PR #596 refactor moved pure logic to its headless owner.
 # Review r2: the two app lane fallbacks collapsed into orderflow's PENDING_LANE_REFERENCE_MS (measured).
-!budget 24218
-crates/app 24218
+# Raised by 48 lines for `feat/per-asset-bubble-config`'s addendum, "Save changes
+# for this asset": the `orderflow.bubbles.save_changes.set` action binding
+# (control/bubble_save.rs, its registration and schema documents) and the
+# view's switch and snapshot field (orderflow_view/asset_bubbles.rs) — an
+# action handler binds app ports and has no headless home. The switch, its
+# storage and what off holds on screen live in quantick_stores. Measured.
+!budget 24266
+crates/app 24266

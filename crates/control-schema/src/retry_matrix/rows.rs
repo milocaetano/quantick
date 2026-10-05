@@ -12,6 +12,7 @@ use crate::{analysis, attention, feed, indicator_guide, layers, layout, notify, 
 pub const FAMILIES: &[&[Readback]] = &[
     analysis::READBACKS,
     attention::READBACKS,
+    crate::bubble_save::READBACKS,
     feed::READBACKS,
     indicator_guide::READBACKS,
     layers::READBACKS,

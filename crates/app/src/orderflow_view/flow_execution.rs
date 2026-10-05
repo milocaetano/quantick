@@ -28,7 +28,11 @@ impl OrderflowView {
         self.flow_execution.ignore_opening()
     }
     pub(crate) fn set_ignore_flow_opening(&mut self, value: bool) -> bool {
-        self.flow_execution.set_ignore_opening(value)
+        let changed = self.flow_execution.set_ignore_opening(value);
+        if changed {
+            self.note_asset_change();
+        }
+        changed
     }
     pub(crate) fn project_flow_executions(
         &mut self,

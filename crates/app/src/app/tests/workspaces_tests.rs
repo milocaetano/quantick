@@ -478,8 +478,9 @@ fn switching_to_a_feed_with_a_declared_preset_applies_it_then() {
 
     // The switch path runs this after installing the new feed handle.
     app.active_tab_mut().feed_id = "mt".to_string();
+    app.active_tab_mut().symbol = "WINQ26".to_string();
     with_config(&mut app, |tab, config| {
-        tab.apply_feed_bubble_preset_after_switch(config, "binance", "TESTUSDT")
+        tab.apply_asset_bubbles_after_switch(config)
     });
     assert_eq!(
         app.active_tab().tape().active_preset_for_test(),
@@ -506,7 +507,7 @@ fn a_symbol_hop_onto_a_symbol_declared_preset_applies_it() {
 
     app.active_tab_mut().symbol = "ETHUSDT".to_string();
     with_config(&mut app, |tab, config| {
-        tab.apply_feed_bubble_preset_after_switch(config, "binance", "TESTUSDT")
+        tab.apply_asset_bubbles_after_switch(config)
     });
     assert_eq!(
         app.active_tab().tape().active_preset_for_test(),
@@ -515,7 +516,7 @@ fn a_symbol_hop_onto_a_symbol_declared_preset_applies_it() {
 
     app.active_tab_mut().symbol = "TESTUSDT".to_string();
     with_config(&mut app, |tab, config| {
-        tab.apply_feed_bubble_preset_after_switch(config, "binance", "ETHUSDT")
+        tab.apply_asset_bubbles_after_switch(config)
     });
     assert_eq!(
         app.active_tab().tape().active_preset_for_test(),

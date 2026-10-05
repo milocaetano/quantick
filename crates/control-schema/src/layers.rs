@@ -35,6 +35,10 @@ pub struct LayerSnapshot {
     pub id: String,
     pub label: String,
     pub scope: String,
+    /// Where the switch is kept: `chart_layers`, the chart-layers file every
+    /// market shares; `orderflow_preset`, the bubble settings of the asset
+    /// the pane shows — saved only while that asset's save switch is on
+    /// (`orderflow.bubbles` reports it as `asset.save_changes`).
     pub persistence: String,
     pub requested: bool,
     /// Visibility eligible under current layer policy; no pixel geometry is claimed.

@@ -53,7 +53,10 @@ use quantick_orderflow::{
     DotRungMemory, HeatmapConfig, LiveEdge, PaneGeometry, PriceWindow, lane_bars, lane_time_ticks,
     reserved_span_ms,
 };
+use quantick_stores::bubble_asset_store::{AssetBinding, AssetBubblesStore};
+use quantick_stores::bubble_assets::{AssetBubbles, AssetSource};
 use quantick_stores::bubble_presets;
+use quantick_stores::config::AppConfig;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
@@ -179,7 +182,24 @@ fn tape_padding_px(config: &HeatmapConfig, chart_width: f32, chart_height: f32) 
     TapeHorizontalGeometry::native_price_inset_px(config, chart_width, chart_height)
 }
 
-/// Apply the mode's switches over the shipped "mini index regions" preset.
+/// What a WINV26 tab opens on: the shipped feed config's WIN asset, resolved
+/// with nothing stored for it — the same resolution the app's tab runs.
+fn win_asset_settings() -> AssetBubbles {
+    let feeds: AppConfig =
+        toml::from_str(include_str!("../../app/config/feeds.toml")).expect("shipped feeds parse");
+    let (track, settings) = AssetBinding::bind(
+        AssetBubblesStore::default().shared(),
+        &feeds,
+        ("metatrader-b3", "WINV26"),
+        &bubble_presets::embedded(),
+        false,
+    );
+    assert_eq!(track.source(), AssetSource::Declared);
+    assert_eq!(settings.look.name, "mini index regions");
+    settings
+}
+
+/// Apply the mode's switches over the shipped WIN asset's look.
 fn switch_mode(config: &mut HeatmapConfig, mode: Mode) {
     match mode {
         Mode::Beside => {
@@ -516,10 +536,7 @@ impl Pane {
     fn new(mode: Mode, path: Path) -> Self {
         let mut view = View::new();
         let before = view.config.clone();
-        bubble_presets::embedded()
-            .get("mini index regions")
-            .expect("the shipped WIN preset")
-            .apply_to(&mut view.config);
+        win_asset_settings().look.apply_to(&mut view.config);
         switch_mode(&mut view.config, mode);
         view.commit_config_changes(&before);
         assert!(native(&view.config), "the approved tape is the native tape");

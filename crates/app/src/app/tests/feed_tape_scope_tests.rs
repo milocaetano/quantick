@@ -1,4 +1,4 @@
-//! Automatically declared tape looks are scoped; existing crypto looks survive.
+//! The WIN tape look is WIN's: every other market keeps, and gets back, its own.
 use super::*;
 use crate::bubble_presets::BubblePreset;
 use quantick_orderflow::LaneWindow;
@@ -14,13 +14,11 @@ fn appearance(app: &QuantickApp) -> BubblePreset {
 
 fn select_market(app: &mut QuantickApp, feed: &str, symbol: &str) {
     let tab = app.active_tab_mut();
-    let previous_feed = tab.feed_id.clone();
-    let previous_symbol = tab.symbol.clone();
     tab.feed_id = feed.to_owned();
     tab.symbol = symbol.to_owned();
     tab.tape_mut().reset_for_symbol(symbol);
     with_config(app, |tab, config| {
-        tab.apply_feed_bubble_preset_after_switch(config, &previous_feed, &previous_symbol);
+        tab.apply_asset_bubbles_after_switch(config)
     });
 }
 
@@ -54,18 +52,23 @@ fn automatic_win_look_restores_the_prior_custom_crypto_appearance() {
 }
 
 #[test]
-fn a_crypto_tab_keeps_the_existing_custom_active_preset_at_startup() {
+fn a_crypto_tab_reopens_on_its_filed_custom_look() {
     for (feed, symbol) in [("binance", "BTCUSDT"), ("hyperliquid", "BTC")] {
         let mut app = app_on(shipped_config(), feed, symbol);
-        // Presets load before this same owner call during tab creation.
         let before = customize_crypto(&mut app);
-        with_config(&mut app, |tab, config| tab.apply_feed_bubble_preset(config));
+        app.layer_wiring().maintain(&egui::Context::default());
+        // What a restart runs for the tab it opens: the store read back.
+        let path = crate::bubble_presets::assets_path();
+        let reread = quantick_stores::bubble_asset_store::AssetBubblesStore::load(path).shared();
+        with_config(&mut app, |tab, config| {
+            tab.bind_asset_bubbles(config, &reread)
+        });
         assert_eq!(appearance(&app), before);
     }
 }
 
 #[test]
-fn an_explicit_arriving_preset_wins_and_clears_the_prior_scope() {
+fn a_declared_look_stays_with_its_market() {
     let mut app = app_on(shipped_config(), "binance", "BTCUSDT");
     let before = customize_crypto(&mut app);
     select_market(&mut app, "metatrader-b3", "WINV26");
@@ -76,8 +79,8 @@ fn an_explicit_arriving_preset_wins_and_clears_the_prior_scope() {
     select_market(&mut app, "binance", "BTCUSDT");
     assert_eq!(
         appearance(&app),
-        declared,
-        "ordinary declarations keep their look"
+        before,
+        "BTC gets its own look back, not the mini dollar's"
     );
 }
 
@@ -99,7 +102,7 @@ fn a_tape_scope_ends_on_an_undeclared_symbol_inside_the_same_feed() {
 }
 
 #[test]
-fn a_same_declared_tape_hop_keeps_edits_and_the_original_return_look() {
+fn a_hop_inside_the_win_family_keeps_edits_and_btc_its_own_look() {
     let mut app = app_on(shipped_config(), "binance", "BTCUSDT");
     let before = customize_crypto(&mut app);
     select_market(&mut app, "metatrader-b3", "WIN$N");
@@ -108,17 +111,9 @@ fn a_same_declared_tape_hop_keeps_edits_and_the_original_return_look() {
         .set_live_lane_window(LaneWindow::Fixed { ms: 7_000 });
     let edited_win = appearance(&app);
     select_market(&mut app, "metatrader-b3", "WINV26");
-    assert_eq!(
-        appearance(&app),
-        edited_win,
-        "same declaration preserves hand edits"
-    );
+    assert_eq!(appearance(&app), edited_win, "one asset, one set of edits");
     select_market(&mut app, "binance", "BTCUSDT");
-    assert_eq!(
-        appearance(&app),
-        before,
-        "a scope captures its prior look only once"
-    );
+    assert_eq!(appearance(&app), before, "BTC's own look");
 }
 
 #[test]
@@ -131,11 +126,11 @@ fn an_undeclared_custom_feed_still_keeps_the_users_manual_tape_look() {
     );
     let before = appearance(&app);
     with_config(&mut app, |tab, config| {
-        tab.apply_feed_bubble_preset_after_switch(config, "custom-feed", "WINV26");
+        tab.apply_asset_bubbles_after_switch(config)
     });
     assert_eq!(
         appearance(&app),
         before,
-        "manual selection never arms an automatic scope"
+        "a manual choice is the asset's own"
     );
 }

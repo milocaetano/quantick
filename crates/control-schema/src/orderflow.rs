@@ -317,8 +317,8 @@ pub struct BubblesStateSnapshot {
     /// or zooming the candles never changes it. The tape the pane builds, not
     /// the switch: true whenever `tape_only` is, and beside the candles only
     /// with the tape on and `overlap_merge` (volume dots) on. The request is
-    /// the lane setting `native_tape`, saved with the order-flow preset and
-    /// read back by `layers.visibility` as layer `native_tape`.
+    /// the lane setting `native_tape`, one of the asset's bubble settings
+    /// (see `asset`), read back by `layers.visibility` as layer `native_tape`.
     #[serde(default)]
     pub native_tape: bool,
     /// The pane shows the tape alone, Bookmap style: the native tape takes
@@ -340,6 +340,56 @@ pub struct BubblesStateSnapshot {
     /// absent when the pane last drew no dots.
     #[serde(default)]
     pub volume_dots: Option<VolumeDotsSnapshot>,
+    /// The asset these bubble settings belong to. Every change made while
+    /// it is on screen — the panel, `layers.visibility.set` on `bubbles`,
+    /// `bubble_overlap_merge`, `native_tape`, `tape_only` and the flow
+    /// pane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —
+    /// belongs to this asset alone. While its `save_changes` is on it is
+    /// saved, reaches every tab showing the asset and is restored whenever
+    /// a tab shows it again; off, it stays on the pane it was made on for
+    /// the session. Wheeling or dragging the tape's window or width moves
+    /// the view only. Absent until the tab binds an asset.
+    #[serde(default)]
+    pub asset: Option<BubbleAssetSnapshot>,
+}
+
+/// The asset a pane's bubble settings belong to.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BubbleAssetSnapshot {
+    /// The asset's key: the feed config's `symbol_bubble_presets` key that
+    /// names the symbol (`WIN*` covers every mini index contract), or the
+    /// symbol itself.
+    pub key: String,
+    /// Where the settings came from: `stored` (changed for this asset; see
+    /// `saved`), `declared` (the preset the feed config declares) or
+    /// `default` (the presets file's active look).
+    pub source: String,
+    /// The preset the look on screen started from; empty once the panel's
+    /// defaults replaced it.
+    pub preset: String,
+    /// The asset's "Save changes for this asset" (default on), the same in
+    /// every tab on it; `orderflow.bubbles.save_changes.set` switches it.
+    /// Off, a change stays on the pane it was made on for this session — not
+    /// stored, not shown in other tabs on the asset, which show the stored
+    /// settings — and `saved` is `false` while one is on screen. Switched on
+    /// again, the switching pane's settings are stored for the asset, unless
+    /// its stored settings changed since that pane last showed them: then
+    /// the pane wears those instead (the action's result `screen` says
+    /// which).
+    #[serde(default = "save_changes_default")]
+    pub save_changes: bool,
+    /// Whether the store file holds the settings this pane shows. `false`
+    /// until the next frame writes a change, while the file cannot be read
+    /// or written — they are kept in memory, retried, for this run only —
+    /// and while saving is off and a change is on screen.
+    pub saved: bool,
+    /// Why they are not saved; absent when they are.
+    #[serde(default)]
+    pub save_error: Option<String>,
+}
+
+const fn save_changes_default() -> bool {
+    true
 }
 
 impl BubblesStateSnapshot {
@@ -348,6 +398,7 @@ impl BubblesStateSnapshot {
         floored_quantity: rust_decimal::Decimal,
         dot_scale: Option<&quantick_orderflow::DotScale>,
         opening_bursts: &[i64],
+        asset: Option<BubbleAssetSnapshot>,
     ) -> Self {
         Self {
             enabled: config.show_aggressions,
@@ -360,6 +411,7 @@ impl BubblesStateSnapshot {
             ignore_opening_burst_in_scale: config.volume_dots.ignore_opening_burst_in_scale,
             recorded_opening_windows_ms: opening_bursts.to_vec(),
             volume_dots: dot_scale.map(Into::into),
+            asset,
         }
     }
 }

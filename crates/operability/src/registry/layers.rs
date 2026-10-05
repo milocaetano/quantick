@@ -117,4 +117,14 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         )],
         mapping: capability!("orderflow.tape.opening_scale.set"),
     },
+    UiBehaviour {
+        id: "orderflow.bubbles.save_changes.set",
+        title: "Choose whether bubble changes are saved for the asset on screen",
+        reach: "Bubbles settings, Save changes for this asset",
+        keys: &[(
+            Source::Authored,
+            "the per-asset save switch is a checkbox under the bubble preset picker",
+        )],
+        mapping: capability!("orderflow.bubbles.save_changes.set"),
+    },
 ];
