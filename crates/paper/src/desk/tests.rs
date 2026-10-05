@@ -826,3 +826,87 @@ fn a_leg_tag_says_what_it_is_and_what_it_is_worth() {
         "#3 SL 95 -5 pts · on fill"
     );
 }
+
+/// Rest two buy limits under the 100 mark, through the same command a
+/// press carries, and answer their ids in the order they were placed.
+fn rest_two_limits(desk: &mut Desk, account: &mut PaperAccount) -> (OrderId, OrderId) {
+    for raw_price in [95.0, 90.0] {
+        desk.carry_out(
+            account,
+            ChartCommand::PlaceResting {
+                side: Side::Buy,
+                kind: EntryKind::Limit,
+                raw_price,
+            },
+        )
+        .expect("the default ticket has no offsets to refuse");
+    }
+    let ids: Vec<OrderId> = account.working_orders().iter().map(|o| o.id).collect();
+    assert_eq!(ids.len(), 2, "both limits rest");
+    (ids[0], ids[1])
+}
+
+/// The cancel the chart's cross asks for reaches the venue: the order it
+/// names is gone from the working list, and its neighbour is untouched.
+#[test]
+fn a_chart_cancel_removes_exactly_the_order_it_names() {
+    let dir = ScratchDir::new("desk-cancel-carry");
+    let mut account = marked_account(&dir);
+    let mut desk = Desk::default();
+    let (first, second) = rest_two_limits(&mut desk, &mut account);
+
+    assert_eq!(
+        desk.carry_out(&mut account, ChartCommand::CancelOrder(first)),
+        Ok(())
+    );
+
+    let left: Vec<_> = account.working_orders().iter().collect();
+    assert_eq!(left.len(), 1, "one order is left");
+    assert_eq!(left[0].id, second, "the other order is the one that stays");
+    assert_eq!(
+        left[0].price,
+        Some(Decimal::from(90)),
+        "and it still rests where it was placed"
+    );
+
+    // A stale id, such as a second click on a cross already acted on,
+    // changes nothing.
+    assert_eq!(
+        desk.carry_out(&mut account, ChartCommand::CancelOrder(first)),
+        Ok(())
+    );
+    assert_eq!(account.working_orders().len(), 1, "a stale cancel is inert");
+}
+
+/// The drop of an order line's drag reaches the venue: the order keeps its
+/// id and moves to the dropped price, and no other order is touched.
+#[test]
+fn a_chart_reprice_moves_the_order_it_names_and_no_other() {
+    let dir = ScratchDir::new("desk-amend-carry");
+    let mut account = marked_account(&dir);
+    let mut desk = Desk::default();
+    let (first, second) = rest_two_limits(&mut desk, &mut account);
+    let before: Vec<_> = account.working_orders().to_vec();
+
+    assert_eq!(
+        desk.carry_out(
+            &mut account,
+            ChartCommand::AmendOrder {
+                id: first,
+                price: Decimal::from(97),
+            },
+        ),
+        Ok(())
+    );
+
+    let after = account.working_orders();
+    assert_eq!(after.len(), 2, "a reprice neither adds nor removes");
+    let moved = after.iter().find(|o| o.id == first).expect("same id");
+    assert_eq!(moved.price, Some(Decimal::from(97)), "the line moved");
+    assert_eq!(moved.quantity, before[0].quantity, "nothing else changed");
+    let other = after.iter().find(|o| o.id == second).expect("neighbour");
+    assert_eq!(
+        *other, before[1],
+        "the other order is byte for byte as it was"
+    );
+}
