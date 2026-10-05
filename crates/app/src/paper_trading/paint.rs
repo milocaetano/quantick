@@ -573,18 +573,9 @@ impl PaperTrading {
         // label says so - at the pointer, at the moment it matters - and it
         // erases itself the first time the wheel is rolled, so a trader who
         // knows never reads it twice.
+        // Under the label the press was laid out against: the same band, the
+        // same pointer, so the same rect.
         if preview.bracket.is_empty() && !self.desk.ruler.rolled {
-            let (_, _, label) = cmd_preview_layout(
-                egui::Rect::from_min_max(
-                    ctx.chart_rect.min,
-                    egui::pos2(
-                        ctx.tag_right.min(ctx.chart_rect.right()),
-                        ctx.chart_rect.max.y,
-                    ),
-                ),
-                ctx.axis_x,
-                pos(preview.pointer),
-            );
             ctx.painter.text(
                 egui::pos2(label.center().x, label.max.y + 3.0),
                 egui::Align2::CENTER_TOP,

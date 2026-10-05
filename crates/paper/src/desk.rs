@@ -383,26 +383,7 @@ impl Desk {
             && let Some(axis) = axis
             && let Some(control) = self.gesture.control_at(account, pointer, frame.chart, axis)
         {
-            let command = match control {
-                PaperControl::ClosePosition => Some(ChartCommand::ClosePosition),
-                PaperControl::ClearLeg { owner, leg } => Some(ChartCommand::AmendLeg {
-                    owner,
-                    leg,
-                    price: None,
-                }),
-                PaperControl::ClearRung { order, index, leg } => Some(ChartCommand::AmendRung {
-                    order,
-                    index,
-                    leg,
-                    price: None,
-                }),
-                PaperControl::CancelOrder(id) => Some(ChartCommand::CancelOrder(id)),
-                PaperControl::Handle { owner, leg } => {
-                    self.gesture.drag = PaperDrag::CreateLeg { owner, leg };
-                    self.gesture.drag_price = Some(axis.price_at(pointer.y));
-                    None
-                }
-            };
+            let command = self.press_control(control, axis.price_at(pointer.y));
             return InputOutcome::owned(command);
         }
 
@@ -461,11 +442,7 @@ impl Desk {
         // blocked (that leg's own line is its handle).
         if frame.primary_down && !idle {
             if let (Some(pointer), Some(axis)) = (frame.pointer, axis) {
-                let y = pointer.y.clamp(frame.chart.top(), frame.chart.bottom());
-                self.gesture.drag_price = Some(axis.price_at(y));
-                if self.gesture.drag == PaperDrag::CreatePending {
-                    self.gesture.decide_pending_leg(account, y, axis);
-                }
+                self.follow(account, pointer, frame.chart, axis);
             }
             return InputOutcome::owned(None);
         }
@@ -475,33 +452,78 @@ impl Desk {
         // and repricing it are the same command — the bracket is replaced
         // wholesale either way.
         if frame.primary_released && !idle {
-            let drag = std::mem::take(&mut self.gesture.drag);
-            let command = self.gesture.drag_price.take().and_then(|price| {
-                let price = account.snap(price);
-                match drag {
-                    PaperDrag::Leg { owner, leg } | PaperDrag::CreateLeg { owner, leg } => {
-                        Some(ChartCommand::AmendLeg {
-                            owner,
-                            leg,
-                            price: Some(price),
-                        })
-                    }
-                    PaperDrag::Order(id) => Some(ChartCommand::AmendOrder { id, price }),
-                    PaperDrag::Rung { order, index, leg } => Some(ChartCommand::AmendRung {
-                        order,
-                        index,
-                        leg,
-                        price: Some(price),
-                    }),
-                    PaperDrag::None | PaperDrag::Blocked | PaperDrag::CreatePending => None,
-                }
-            });
-            return InputOutcome::owned(command);
+            return InputOutcome::owned(self.release(account));
         }
 
         InputOutcome {
             owned: self.gesture.drag != PaperDrag::None,
             command: None,
+        }
+    }
+
+    /// Carry the line in the hand to the pointer, held inside the chart,
+    /// and let a pending entry-line press decide its leg.
+    fn follow(
+        &mut self,
+        account: &PaperAccount,
+        pointer: Point,
+        chart: Bounds,
+        axis: &dyn PriceAxis,
+    ) {
+        let y = pointer.y.clamp(chart.top(), chart.bottom());
+        self.gesture.drag_price = Some(axis.price_at(y));
+        if self.gesture.drag == PaperDrag::CreatePending {
+            self.gesture.decide_pending_leg(account, y, axis);
+        }
+    }
+
+    /// What a press on an overlay control asks for. A handle asks for
+    /// nothing yet: it puts its leg in the hand at `price`, and the release
+    /// asks.
+    fn press_control(&mut self, control: PaperControl, price: f64) -> Option<ChartCommand> {
+        match control {
+            PaperControl::ClosePosition => Some(ChartCommand::ClosePosition),
+            PaperControl::ClearLeg { owner, leg } => Some(ChartCommand::AmendLeg {
+                owner,
+                leg,
+                price: None,
+            }),
+            PaperControl::ClearRung { order, index, leg } => Some(ChartCommand::AmendRung {
+                order,
+                index,
+                leg,
+                price: None,
+            }),
+            PaperControl::CancelOrder(id) => Some(ChartCommand::CancelOrder(id)),
+            PaperControl::Handle { owner, leg } => {
+                self.gesture.drag = PaperDrag::CreateLeg { owner, leg };
+                self.gesture.drag_price = Some(price);
+                None
+            }
+        }
+    }
+
+    /// Let go of the line in the hand: what it asks for at the snapped
+    /// price it was dropped on, if anything.
+    fn release(&mut self, account: &PaperAccount) -> Option<ChartCommand> {
+        let drag = std::mem::take(&mut self.gesture.drag);
+        let price = account.snap(self.gesture.drag_price.take()?);
+        match drag {
+            PaperDrag::Leg { owner, leg } | PaperDrag::CreateLeg { owner, leg } => {
+                Some(ChartCommand::AmendLeg {
+                    owner,
+                    leg,
+                    price: Some(price),
+                })
+            }
+            PaperDrag::Order(id) => Some(ChartCommand::AmendOrder { id, price }),
+            PaperDrag::Rung { order, index, leg } => Some(ChartCommand::AmendRung {
+                order,
+                index,
+                leg,
+                price: Some(price),
+            }),
+            PaperDrag::None | PaperDrag::Blocked | PaperDrag::CreatePending => None,
         }
     }
 }
