@@ -45,6 +45,35 @@ pub const DEFAULT_CANDLE_GAP: f32 = 2.0;
 /// worse than a bar touching its neighbour, so the gap yields before the body.
 pub const MIN_BODY_WIDTH_PX: f32 = 1.0;
 
+/// An 8-bit RGBA colour with its colour channels premultiplied by alpha — the
+/// byte layout a GPU painter stores, kept here without the painter's type.
+///
+/// Opaque colours read as plain RGB. A translucent one is premultiplied: the
+/// conversion from straight alpha is the renderer's (it is gamma-aware), so
+/// this type never performs it and only carries the bytes it was given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PremultipliedRgba([u8; 4]);
+
+impl PremultipliedRgba {
+    /// An opaque colour.
+    #[must_use]
+    pub const fn from_rgb(r: u8, g: u8, b: u8) -> Self {
+        Self([r, g, b, 255])
+    }
+
+    /// Already-premultiplied channels, in `[r, g, b, a]` order.
+    #[must_use]
+    pub const fn from_premultiplied(rgba: [u8; 4]) -> Self {
+        Self(rgba)
+    }
+
+    /// The premultiplied channels, in `[r, g, b, a]` order.
+    #[must_use]
+    pub const fn to_array(self) -> [u8; 4] {
+        self.0
+    }
+}
+
 const DEFAULT_BACKGROUND: [u8; 3] = [19, 23, 34];
 const DEFAULT_GRID: [u8; 3] = [35, 41, 54];
 
@@ -510,6 +539,19 @@ fn rgba(rgb: [u8; 3], opacity: f32) -> [u8; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_premultiplied_colour_carries_its_bytes_untouched() {
+        assert_eq!(
+            PremultipliedRgba::from_rgb(138, 180, 248).to_array(),
+            [138, 180, 248, 255]
+        );
+        let translucent = [27, 117, 162, 128];
+        assert_eq!(
+            PremultipliedRgba::from_premultiplied(translucent).to_array(),
+            translucent
+        );
+    }
 
     fn alpha(opacity: f32) -> u8 {
         (opacity * 255.0).round() as u8

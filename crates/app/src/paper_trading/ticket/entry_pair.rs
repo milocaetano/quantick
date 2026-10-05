@@ -52,10 +52,10 @@ fn entry_button(
     width: f32,
 ) -> Option<EntryPress> {
     let color = theme::side_color(side);
-    let armed = ticket.account.armed;
+    let armed = ticket.desk.armed;
     let armed_here = armed.is_some_and(|armed| armed.side == side);
     let armed_other = armed.is_some_and(|armed| armed.side != side);
-    let label = match (ticket.order_type, armed_here) {
+    let label = match (ticket.desk.ticket.order_type, armed_here) {
         (_, true) => "Click a price…".to_owned(),
         (EntryKind::Market, _) => ticket.entry_label(side),
         (kind, _) => format!(
@@ -63,6 +63,8 @@ fn entry_button(
             side_word_upper(side),
             kind_word(kind).to_uppercase(),
             ticket
+                .desk
+                .ticket
                 .quantity_preview()
                 .map_or_else(String::new, fmt_decimal),
         ),
@@ -89,7 +91,7 @@ fn entry_button(
     if !response.clicked() {
         return None;
     }
-    Some(match (ticket.order_type, armed_here) {
+    Some(match (ticket.desk.ticket.order_type, armed_here) {
         (_, true) => EntryPress::Disarm,
         (EntryKind::Market, _) => EntryPress::Fire(side),
         (EntryKind::Limit | EntryKind::Stop, _) => EntryPress::Arm(side),

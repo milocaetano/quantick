@@ -535,7 +535,9 @@ impl NewObjectDefaults<'_> {
 /// Ui's data (set by the tool impl before calling the editor).
 fn drawing_color_of(ui: &egui::Ui) -> egui::Color32 {
     ui.data(|data| data.get_temp(egui::Id::new("fib-editor-drawing-color")))
-        .unwrap_or(crate::drawings::DEFAULT_DRAWING_COLOR)
+        .unwrap_or(crate::drawings::to_color32(
+            crate::drawings::DEFAULT_DRAWING_COLOR,
+        ))
 }
 
 /// Stash the drawing colour for [`drawing_color_of`].

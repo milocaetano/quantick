@@ -9,12 +9,14 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::Side;
-use quantick_sim::{Command, EntryKind, Position};
+use quantick_sim::{Command, EntryKind};
 use rust_decimal::Decimal;
 
+use quantick_paper::desk::ticket::parse_offset;
+
 use super::{
-    ArmedPlacement, PaperTrading, TradingTabAction, kind_short, kind_word, reveal_folder,
-    side_word, side_word_upper,
+    ArmedPlacement, PaperTrading, TradingTabAction, cmd, kind_short, kind_word, reveal_folder,
+    side_word_upper, strategies,
 };
 use crate::paper_chrome::{caption, fmt_decimal, fmt_signed_points, pill_toggle, points_color};
 use crate::paper_report::LedgerAction;
@@ -28,94 +30,19 @@ use entry_pair::{EntryPress, entry_pair};
 use position_card::{CardCommand, PositionCard};
 
 impl PaperTrading {
-    /// The form quantity, parsed without side effects — the label builders
-    /// peek at it every frame and must not toast.
-    pub(super) fn quantity_preview(&self) -> Option<Decimal> {
-        match self.qty_text.trim().parse::<Decimal>() {
-            Ok(quantity) if quantity > Decimal::ZERO => Some(quantity),
-            _ => None,
-        }
-    }
-
     /// State-aware entry label: what pressing this side's button would do to
     /// the open position — `SELL 1 (closes)`, `SELL 5 (reverses to short
-    /// 4)`. Whether a press closes or flips hangs on a quantity field the
-    /// toolbar never shows, so the button itself must say. Falls back to the
-    /// bare side word while the form quantity does not parse — the click
-    /// will toast the correction.
+    /// 4)`. Decided by the desk; see `Desk::entry_label`.
     #[must_use]
     pub fn entry_label(&self, side: Side) -> String {
-        let word = side_word_upper(side);
-        // The size the press would actually send. The risk-derived quantity
-        // is written into the field by the ticket, so a toolbar reading the
-        // field while the dock is closed promised a size the click did not
-        // send - the button naming one number and the order carrying
-        // another is the plainest kind of lie this surface can tell.
-        let derived = self.risk_report().0.derived_quantity();
-        let Some(qty) = derived.or_else(|| self.quantity_preview()) else {
-            return word.to_owned();
-        };
-        let qty_text = fmt_decimal(qty);
-        let Some(position) = self.account.venue().position() else {
-            return format!("{word} {qty_text}");
-        };
-        if position.side == side {
-            return format!(
-                "{word} {qty_text} (adds to {})",
-                fmt_decimal(position.quantity.saturating_add(qty)),
-            );
-        }
-        match qty.cmp(&position.quantity) {
-            std::cmp::Ordering::Less => format!(
-                "{word} {qty_text} (closes {qty_text} of {})",
-                fmt_decimal(position.quantity),
-            ),
-            std::cmp::Ordering::Equal => format!("{word} {qty_text} (closes)"),
-            std::cmp::Ordering::Greater => format!(
-                "{word} {qty_text} (reverses to {} {})",
-                match side {
-                    Side::Buy => "long",
-                    Side::Sell => "short",
-                },
-                fmt_decimal(qty.saturating_sub(position.quantity)),
-            ),
-        }
+        self.desk.entry_label(&self.account, side)
     }
 
     /// The entry buttons' hover text: the quantity and protective offsets
     /// the press will use, which the toolbar itself has no widgets for.
     #[must_use]
     pub fn entry_hover(&self, side: Side) -> String {
-        let quantity = match self.quantity_preview() {
-            Some(qty) => format!("quantity {}", fmt_decimal(qty)),
-            None => "the quantity is not a positive number".to_owned(),
-        };
-        let bracket = match (
-            parse_offset(&self.stop_offset_text),
-            parse_offset(&self.profit_offset_text),
-        ) {
-            (Ok(None), Ok(None)) => "no protective bracket set".to_owned(),
-            (Ok(stop), Ok(profit)) => {
-                let mut parts = Vec::new();
-                if let Some(stop) = stop {
-                    parts.push(format!("stop {} pts", fmt_decimal(stop)));
-                }
-                if let Some(profit) = profit {
-                    parts.push(format!("target {} pts", fmt_decimal(profit)));
-                }
-                format!("{} on fill", parts.join(" / "))
-            }
-            _ => "an offset field needs fixing".to_owned(),
-        };
-        let hotkey = match side {
-            Side::Buy => "Shift+B",
-            Side::Sell => "Shift+S",
-        };
-        format!(
-            "simulated market {} - fills at the next print; {quantity}, {bracket} \
-             (Trading tab) · {hotkey}",
-            side_word(side),
-        )
+        self.desk.ticket.entry_hover(side)
     }
 
     // ------------------------------------------------------------------
@@ -141,6 +68,8 @@ impl PaperTrading {
             return;
         };
         let quantity = self
+            .desk
+            .ticket
             .quantity_preview()
             .map_or_else(|| "?".to_owned(), fmt_decimal);
         let price = self.account.snap(raw_price);
@@ -178,7 +107,7 @@ impl PaperTrading {
     /// The Trading dock tab: position, ticket, working orders, session
     /// strip. See `docs/ux/paper-trading.md` §3.
     pub fn draw_trading_tab(&mut self, ui: &mut egui::Ui) -> Option<TradingTabAction> {
-        self.hovered_order = None;
+        self.desk.gesture.hovered_order = None;
         ui.label(
             egui::RichText::new(
                 "Simulated fills from the tape - no broker. Results are in points; a currency here is the point value you declared.",
@@ -226,8 +155,12 @@ impl PaperTrading {
             mark: venue.mark_price(),
             realized: venue.realized_points(),
             has_working_orders: !venue.working_orders().is_empty(),
-            stop_offset: parse_offset(&self.stop_offset_text).ok().flatten(),
-            profit_offset: parse_offset(&self.profit_offset_text).ok().flatten(),
+            stop_offset: parse_offset(&self.desk.ticket.stop_offset_text)
+                .ok()
+                .flatten(),
+            profit_offset: parse_offset(&self.desk.ticket.profit_offset_text)
+                .ok()
+                .flatten(),
         };
         match card.show(ui) {
             None => {}
@@ -261,8 +194,8 @@ impl PaperTrading {
             // rather than adding a second number beside it: one quantity on
             // screen is the quantity that will be sent.
             let derived = fmt_decimal(quantity);
-            if self.qty_text != derived {
-                self.qty_text = derived;
+            if self.desk.ticket.qty_text != derived {
+                self.desk.ticket.qty_text = derived;
             }
         }
         self.draw_quantity_row(ui, derived_quantity.is_none());
@@ -279,7 +212,8 @@ impl PaperTrading {
             ui.label(egui::RichText::new(sentence).color(colour).small());
         }
         self.draw_order_fields(ui);
-        let strategies_changed = self.draw_strategy_row(ui);
+        let strategies_changed =
+            strategies::draw_strategy_row(ui, &mut self.account, &mut self.desk.strategy_editor);
         // The whole risk surface, in its own module: this file already
         // carries the order form, and a second feature inside it is how the
         // trunk grew the first time.
@@ -291,12 +225,12 @@ impl PaperTrading {
                 settings: editor.settings,
                 capital: editor.capital,
                 book: editor.book,
-                amount_text: &mut self.risk_amount_text,
-                percent_text: &mut self.risk_percent_text,
-                capital_text: &mut self.capital_text,
-                point_value_text: &mut self.point_value_text,
-                size_step_text: &mut self.size_step_text,
-                currency_text: &mut self.currency_text,
+                amount_text: &mut self.desk.ticket.risk_amount_text,
+                percent_text: &mut self.desk.ticket.risk_percent_text,
+                capital_text: &mut self.desk.ticket.capital_text,
+                point_value_text: &mut self.desk.ticket.point_value_text,
+                size_step_text: &mut self.desk.ticket.size_step_text,
+                currency_text: &mut self.desk.ticket.currency_text,
             },
         );
         ui.add_space(4.0);
@@ -307,19 +241,19 @@ impl PaperTrading {
         let ready = self.account.ready() && !risk_blocks;
         match entry_pair(ui, self, ready) {
             None => {}
-            Some(EntryPress::Disarm) => self.account.armed = None,
+            Some(EntryPress::Disarm) => self.desk.armed = None,
             Some(EntryPress::Fire(side)) => self.market(side),
             Some(EntryPress::Arm(side)) => {
-                self.account.armed = Some(ArmedPlacement {
+                self.desk.armed = Some(ArmedPlacement {
                     side,
-                    kind: self.order_type,
+                    kind: self.desk.ticket.order_type,
                 });
             }
         }
         ui.label(
-            egui::RichText::new(if self.account.armed.is_some() {
+            egui::RichText::new(if self.desk.armed.is_some() {
                 "Click the chart at your price. Esc cancels."
-            } else if self.order_type == EntryKind::Market {
+            } else if self.desk.ticket.order_type == EntryKind::Market {
                 "Market orders fill at the next print."
             } else {
                 "The button arms a click; the next chart click rests the order there."
@@ -328,7 +262,12 @@ impl PaperTrading {
             .small(),
         );
         OrderEntryChanges {
-            cmd_trading: self.draw_cmd_trading_settings(ui),
+            cmd_trading: cmd::draw_cmd_trading_settings(
+                ui,
+                &mut self.desk.cmd_trading,
+                &mut self.desk.ruler,
+                &self.account,
+            ),
             strategies: strategies_changed,
             risk: risk_changed,
         }
@@ -354,7 +293,9 @@ impl PaperTrading {
                 {
                     self.step_quantity(-step);
                 }
-                ui.add(egui::TextEdit::singleline(&mut self.qty_text).desired_width(56.0));
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.desk.ticket.qty_text).desired_width(56.0),
+                );
                 if ui
                     .small_button("+")
                     .on_hover_text(format!("{hint} more (Shift: ten steps)"))
@@ -377,12 +318,12 @@ impl PaperTrading {
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Type").color(theme::TEXT_MUTED).small());
             for kind in [EntryKind::Market, EntryKind::Limit, EntryKind::Stop] {
-                let on = self.order_type == kind;
+                let on = self.desk.ticket.order_type == kind;
                 if pill_toggle(ui, kind_word(kind), on, "how the entry meets the market").clicked()
                     && !on
                 {
-                    self.order_type = kind;
-                    self.account.armed = None;
+                    self.desk.ticket.order_type = kind;
+                    self.desk.armed = None;
                 }
             }
         });
@@ -392,7 +333,10 @@ impl PaperTrading {
                     "optional protective stop, this many points on the losing side of the \
                      entry; empty places no stop",
                 );
-            ui.add(egui::TextEdit::singleline(&mut self.stop_offset_text).desired_width(52.0));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.desk.ticket.stop_offset_text)
+                    .desired_width(52.0),
+            );
             ui.label(
                 egui::RichText::new("Target")
                     .color(theme::TEXT_MUTED)
@@ -402,19 +346,16 @@ impl PaperTrading {
                 "optional profit target, this many points on the winning side of the \
                  entry; empty places no target",
             );
-            ui.add(egui::TextEdit::singleline(&mut self.profit_offset_text).desired_width(52.0));
+            ui.add(
+                egui::TextEdit::singleline(&mut self.desk.ticket.profit_offset_text)
+                    .desired_width(52.0),
+            );
             ui.label(egui::RichText::new("pts").color(theme::TEXT_FAINT).small());
         });
     }
 
     /// Walk the typed quantity by `notches` of the instrument's own size
-    /// step.
-    ///
-    /// The step is the instrument's, not one. A hard-coded 1 is already
-    /// wrong on any instrument whose lot is fractional — a press moved a
-    /// crypto size by a hundred thousand steps — and the floor is the
-    /// instrument's minimum rather than "anything above zero", so the
-    /// steppers can only ever land on a size the venue would take.
+    /// step, never below its minimum; see `Ticket::step_quantity`.
     pub(super) fn step_quantity(&mut self, notches: Decimal) {
         let (unit, floor) = self
             .account
@@ -423,17 +364,7 @@ impl PaperTrading {
             .map_or((Decimal::ONE, Decimal::ONE), |money| {
                 (money.size_step, money.min_size)
             });
-        let current = self
-            .qty_text
-            .trim()
-            .parse::<Decimal>()
-            .ok()
-            .filter(|quantity| *quantity > Decimal::ZERO)
-            .unwrap_or(floor);
-        let next = current.saturating_add(notches.saturating_mul(unit));
-        if next >= floor {
-            self.qty_text = fmt_decimal(next);
-        }
+        self.desk.ticket.step_quantity(notches, unit, floor);
     }
 
     fn draw_pending_orders(&mut self, ui: &mut egui::Ui) {
@@ -526,7 +457,7 @@ impl PaperTrading {
             });
             // One hover, two surfaces: the row lifts its chart line.
             if response.response.hovered() {
-                self.hovered_order = Some(order.id);
+                self.desk.gesture.hovered_order = Some(order.id);
             }
         }
     }
@@ -629,6 +560,14 @@ impl PaperTrading {
         self.account.report_parts()
     }
 
+    /// The strategy editor window, drawn from the app's own frame - a
+    /// window that lives inside a dock tab disappears the moment the trader
+    /// looks at another panel. Returns true when anything changed, so the
+    /// app can persist it.
+    pub(crate) fn draw_strategy_editor(&mut self, ctx: &egui::Context) -> bool {
+        strategies::draw_strategy_editor(ctx, &mut self.account, &mut self.desk.strategy_editor)
+    }
+
     /// The trades ledger tab. Returns what the ledger asked of the host.
     pub fn draw_trades_tab(&mut self, ui: &mut egui::Ui, tz: TzOffset) -> Option<LedgerAction> {
         let (report, env) = self.account.report_parts();
@@ -671,7 +610,7 @@ impl PaperTrading {
     /// It no longer draws anything. The message it produces goes to the
     /// window's one toast, through [`Self::take_toast`].
     pub fn settle(&mut self) {
-        self.hovered_order = None;
+        self.desk.gesture.hovered_order = None;
         self.account.settle();
     }
 
@@ -711,28 +650,4 @@ struct OrderEntryChanges {
     /// The risk per trade, the capital or an instrument's money moved, so
     /// the sidecar wants writing and the other tabs want telling.
     risk: bool,
-}
-
-/// Empty means "none"; otherwise a strictly positive decimal.
-pub(super) fn parse_offset(text: &str) -> Result<Option<Decimal>, String> {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    match trimmed.parse::<Decimal>() {
-        Ok(value) if value > Decimal::ZERO => Ok(Some(value)),
-        _ => Err(trimmed.to_owned()),
-    }
-}
-
-/// A protective price the ticket's offset away from the average entry:
-/// the losing side for a stop, the winning side for a target. A long's
-/// stop and a short's target sit below the entry; the other two above.
-fn offset_price(position: &Position, offset: Decimal, stop: bool) -> Decimal {
-    let below = (position.side == Side::Buy) == stop;
-    if below {
-        position.avg_price.saturating_sub(offset)
-    } else {
-        position.avg_price.saturating_add(offset)
-    }
 }

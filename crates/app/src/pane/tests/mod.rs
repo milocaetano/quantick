@@ -1448,7 +1448,7 @@ fn a_horizontal_level_marks_itself_on_the_price_axis() {
         assert!(pane.drawings.place(tool, ChartPoint::at(100.0, price)));
     }
     for item in pane.drawings.items_mut() {
-        item.style.color = red;
+        item.style.set_color32(red);
     }
 
     let levels = axis_levels_of(&pane, &scale);
@@ -1529,7 +1529,7 @@ fn the_live_price_is_painted_over_a_level_and_not_under_it() {
     // Dark, so `theme::ink_on` gives it the light ink and the two chips
     // are told apart by their text as well as by their fill.
     let level_colour = egui::Color32::from_rgb(0x0B, 0x1B, 0x3A);
-    pane.drawings.items_mut()[0].style.color = level_colour;
+    pane.drawings.items_mut()[0].style.set_color32(level_colour);
     let levels = axis_levels_of(&pane, &scale);
     assert_eq!(levels.len(), 1, "one level to be covered or not");
 
@@ -2979,7 +2979,9 @@ fn g6_badge_pane() -> ChartPane {
         .unwrap();
     pane.drawings.place(rectangle, ChartPoint::at(90.0, 100.0));
     pane.drawings.place(rectangle, ChartPoint::at(95.0, 110.0));
-    pane.drawings.items_mut()[0].style.color = egui::Color32::from_rgb(11, 77, 143);
+    pane.drawings.items_mut()[0]
+        .style
+        .set_color32(egui::Color32::from_rgb(11, 77, 143));
     pane.drawings.select(None);
     let id = pane.drawings.items()[0].id;
     let instance = crate::strategy_anchors::AnchoredInstance {
@@ -3055,7 +3057,11 @@ fn g6_characterization_hidden_badges_and_actual_stage_order() {
             .find(|tool| tool.id() == drawings::RECTANGLE_TOOL_ID)
             .unwrap();
         pane.drawings.place(rectangle, ChartPoint::at(92.0, 102.0));
-        pane.drawings.draft_mut().unwrap().style.color = egui::Color32::from_rgb(227, 91, 17);
+        pane.drawings
+            .draft_mut()
+            .unwrap()
+            .style
+            .set_color32(egui::Color32::from_rgb(227, 91, 17));
         pane.gestures.hover = Some(ChartPoint::at(98.0, 107.0));
         pane.drawings.set_all_hidden(all_hidden);
         let under = g6_badge_output(&pane, &band, DrawPass::UnderCandles);

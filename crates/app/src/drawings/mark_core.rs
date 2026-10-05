@@ -186,7 +186,7 @@ pub(super) fn paint(
         // The halo pass paints stroke geometry only, like every other tool.
         painter.add(egui::Shape::closed_line(
             outline,
-            egui::Stroke::new(style.width_px, style.color),
+            egui::Stroke::new(style.width_px, style.color32()),
         ));
         return;
     }
@@ -194,7 +194,7 @@ pub(super) fn paint(
     // chart, where a thin outline reads as something drawn by hand.
     painter.add(egui::Shape::convex_polygon(
         outline,
-        style.color,
+        style.color32(),
         egui::Stroke::NONE,
     ));
 }

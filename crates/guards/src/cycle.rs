@@ -97,8 +97,8 @@ pub const REMEDY: &str = "A module cycle is two modules welded into one: neither
      by moving what they share *down* into a module below both — `plot_area` came out of \
      `pane`, `paper_chrome` out of `paper_trading` — and not by re-exporting one from the \
      other, which hides the edge without removing it. If the cycle is genuinely deliberate, \
-     raise the crate's entry in crates/guards/cycle-baseline.txt with the reason written \
-     beside it, and lower another entry in the same change.";
+     write a new file in crates/guards/cycle-baseline.d/ named for the branch that raises the \
+     crate's entry (`<crate> +N`) and lowers another (`<crate> -N`), with the reason beside it.";
 
 pub const BUDGET_REMEDY: &str = "The cycle budget is every welded module pair this repository has signed for. It is the \
      one number that says whether the codebase is getting easier or harder to take apart, so \
@@ -600,7 +600,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     // crate's real count is the edit that matters here — and a hook that
     // answered only the budget would have called that edit clean and left
     // the suite to find it. The scan is a few hundred small reads.
-    if relative == BASELINE_FILE {
+    if POLICY.owns(relative) {
         return check(root);
     }
     let Some(crate_name) = crate_of(relative) else {

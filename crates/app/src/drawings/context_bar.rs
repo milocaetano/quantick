@@ -837,7 +837,7 @@ fn draw_color_slot(ui: &mut egui::Ui, bar: &mut ContextBar, object: &BarObject<'
         let swatch =
             egui::Rect::from_center_size(rect.center(), egui::vec2(SWATCH_SIDE_PX, SWATCH_SIDE_PX));
         let painter = ui.painter();
-        painter.rect_filled(swatch, egui::Rounding::same(4.0), object.style.color);
+        painter.rect_filled(swatch, egui::Rounding::same(4.0), object.style.color32());
         painter.rect_stroke(
             swatch,
             egui::Rounding::same(4.0),
@@ -1064,7 +1064,7 @@ fn draw_color_popover(
             if ui.is_rect_visible(rect) {
                 let painter = ui.painter();
                 painter.rect_filled(rect, egui::Rounding::same(4.0), swatch);
-                if object.style.color == swatch {
+                if object.style.color32() == swatch {
                     // The ring is TEXT_PRIMARY, not ACCENT: ACCENT is itself
                     // one of the eight, and a ring would vanish on it.
                     painter.rect_stroke(
@@ -1085,7 +1085,7 @@ fn draw_color_popover(
                 swatch_rects.push(rect);
             }
             if response.clicked() {
-                object.style.color = swatch;
+                object.style.set_color32(swatch);
                 intent.edited = true;
             }
         }
@@ -1100,10 +1100,9 @@ fn draw_color_popover(
                 .small()
                 .color(theme::TEXT_SUPPORT),
         );
-        if ui
-            .color_edit_button_srgba(&mut object.style.color)
-            .changed()
-        {
+        let mut color = object.style.color32();
+        if ui.color_edit_button_srgba(&mut color).changed() {
+            object.style.set_color32(color);
             intent.edited = true;
         }
     });

@@ -157,7 +157,7 @@ fn draw_inner(
     let size_px = tool
         .glyph_size(drawing)
         .map_or(INLINE_TEXT_FALLBACK_PX, |size| size.px);
-    let color = drawing.style.color;
+    let color = drawing.style.color32();
     if drawing.locked {
         close(&mut ask, chrome);
         return ask;

@@ -189,9 +189,9 @@ fn the_quantity_steppers_walk_the_instruments_own_size_step() {
             min_size: Decimal::new(1, 5),
             ..win_money()
         }));
-    paper.qty_text = "0.00002".to_owned();
+    paper.desk.ticket.qty_text = "0.00002".to_owned();
     paper.step_quantity(Decimal::ONE);
-    assert_eq!(paper.qty_text, "0.00003");
+    assert_eq!(paper.desk.ticket.qty_text, "0.00003");
     paper.step_quantity(-Decimal::ONE);
-    assert_eq!(paper.qty_text, "0.00002");
+    assert_eq!(paper.desk.ticket.qty_text, "0.00002");
 }

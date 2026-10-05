@@ -895,7 +895,9 @@ fn arm_drawing_from_toolbox(
 /// Count the line segments painted in the drawing colour — how many
 /// strokes of *this* object are on screen, across every pane.
 fn drawing_strokes(output: &egui::FullOutput) -> usize {
-    let color = egui::epaint::ColorMode::Solid(crate::drawings::DEFAULT_DRAWING_COLOR);
+    let color = egui::epaint::ColorMode::Solid(crate::drawings::to_color32(
+        crate::drawings::DEFAULT_DRAWING_COLOR,
+    ));
     output
         .shapes
         .iter()

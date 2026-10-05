@@ -852,7 +852,7 @@ fn hidden_drawing_neither_paints_nor_hit_tests() {
         .selected_mut()
         .expect("placement selects the line")
         .style
-        .color = marker;
+        .set_color32(marker);
     assert!(
         painted_line_with_color(&run_frame(&mut app, &ctx), marker),
         "the visible line paints its stroke"

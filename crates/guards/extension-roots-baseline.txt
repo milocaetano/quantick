@@ -1,3 +1,9 @@
+# A raise is never an edit here: it is a new file in crates/guards/extension-roots-baseline.d/ named for the
+# branch, holding signed deltas (`path +N`, `!budget +N`) and a comment
+# saying why. The guard adds them to these numbers, and `--tighten` writes its
+# cuts there too. One file per branch is what keeps two open branches
+# from conflicting on the same line.
+#
 # Origin 0bd50f9b815a05e2ba8d0c9804324dbb415f6658: QuantickApp 10243; ChartState 429.
 # Separate source union caps; native ownership extraction lowers only QuantickApp.
 # Pull request #306 adds retained deal readings to ChartState and 23 lines of

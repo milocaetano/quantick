@@ -1,0 +1,77 @@
+# PR #596 (`feat/bubble-overlap-merge`): the branch's raises, moved here
+# from the baseline when main took raises as one file per branch (#609).
+# The comments below are the branch's own, as it wrote them in the
+# baseline.
+# Raised by 78 lines for the tape's reconciliations beside the frame
+# (`fix/pr596-tape-rebuild-off-ui`): the pane's rebuild thread,
+# `orderflow_render/tape_rebuild.rs`, which a headless crate may not spawn
+# (it runs the newest rebuild, drops a superseded one where it ran and logs
+# both), and its wiring: the frame's projection handed to the bubble pass
+# and the axis fit reading the stand-in. Pricing the work, the stand-in and
+# the adoption live in `quantick_orderflow::projection::TapeRebuilds`, below
+# `app`, with their tests.
+# Raised by 717 lines for `fix/price-resolved-candle-aggression` after retiring
+# its superseded price-band renderer/observer while preserving baseline CandleAggression.
+# App owns FLOW bubble/inspection/chrome paint, canonical ChartState capture wiring,
+# and its bounded lazy worker thread. Admission, retention, scale, coverage and
+# result adoption live in orderflow's FlowSession/FlowTapeSource, with pure tests.
+# Reviewed and authorized by the root agent after independent flow_aggregation_ports
+# ownership review (2026-10-01); measured remainder only, no spare headroom.
+# Another 13 lines name the existing paint policies and back FLOW regions with
+# an exact-radius opaque canvas disc, authorized by the root agent (2026-10-01).
+# Another 5 lines apply the named 70-percent first-contour opacity for FLOW,
+# authorized by the root agent (2026-10-01); the final contour pass is unchanged.
+# The final 80 lines keep idle-wait transport in the app and reuse bubble paint
+# with centred quantitative FLOW sectors; publication policy stays in orderflow.
+# Root authorized this exact measured remainder after independent baseline_visual
+# ownership/geometry review (2026-10-01); native Tape geometry is unchanged.
+# Lowered by 188 lines: PR #596 refactor moved pure logic to its headless owner.
+# Raised by 29 lines for `feat/per-asset-bubble-config`: a tab binds its asset's
+# bubble settings and files them back, a replay included (tab/feed.rs), the view applies and captures
+# them (orderflow_view/asset_bubbles.rs), and the store is registered with the
+# cockpit home and its capture override (store_home.rs). Resolution, the store
+# document and its I/O live in quantick_stores::bubble_assets; source_presets.rs
+# and the presets loader left app in the same change. Measured remainder only.
+# Raised by 85 more lines for its review round 1: the view tells a setting
+# from a gesture (`commit_config_changes` beside `apply_config`, so wheeling
+# the tape files nothing), wears what another tab filed for its asset and
+# files only on a noted edit (orderflow_view/asset_bubbles.rs); the panel
+# refuses to save over a look other assets open on and keeps an asset's own
+# settings across a presets reload (settings.rs); the shared store is held,
+# written once per change and reloaded by a workspace import
+# (workspace_store.rs, chart_layers_wiring.rs, workspace_bundle_adapter.rs).
+# The store, the binding, adoption, the gesture rule and the saved state live
+# in quantick_stores::bubble_asset_store with their tests. Measured remainder.
+# Raised by 72 more lines for its review round 2 blockers: the wheel's path
+# beside the purposeful one for the tape window, so `chart.tape_view.set` and
+# the QUANTICK_TAPE_WINDOW hook move the view only (orderflow_view.rs,
+# price_axis.rs, launch_hooks.rs); the panel marks a width or window it set
+# (bubble_sections.rs); a view files before it adopts and takes presets
+# another tab reloaded (orderflow_view/asset_bubbles.rs); an action files
+# what it changed before the next read (local_action.rs, control_host.rs);
+# an export files and writes the asset store and says when it could not
+# (workspace_bundle_adapter.rs). Tab-feed resolution, per-asset saved state,
+# write retry and presets publication live in quantick_stores. Measured.
+# Raised by 90 more lines for its addendum, "Save changes for this asset":
+# the panel's checkbox and the preset delete as a door the audit test drives
+# (settings.rs), the view's switch and its snapshot field
+# (orderflow_view/asset_bubbles.rs), and the `orderflow.bubbles.save_changes.set`
+# action binding (control/bubble_save.rs, registered in actions.rs and mod.rs).
+# The switch, its storage and what off holds on screen live in
+# quantick_stores::bubble_asset_store with their tests. Measured remainder.
+# Merged with #606 on this branch: PR #596's signed 105,331 and #606's
+# signed +24 (in the baseline) measured 105,353 together, 2 under their
+# sum.
+# Merged with main at b16d700f (#607, #608, #609): main's baseline
+# records 102,843 and this tree measures 103,829 (+986). PR #596's signed
+# growth is +882: 105,353 measured at the branch tip ec2a6724 against
+# 104,471 at the merge base c040c621. The other 104 lines are
+# crates/app/src/paper_account.rs: the branch paid for part of its growth
+# by moving the cmd-trading vocabulary (`CmdModifier`, `CmdEntryKind`,
+# 104 lines) out of `app`, and #607 moved the same lines into
+# `quantick_paper::desk::cmd` and lowered main's ceiling by them too, so
+# the merged tree cannot count that cut twice.
+# 2026-10-05: the trader signed +104 — the PR and main each counted the same
+# 104-line CmdModifier/CmdEntryKind cut out of paper_account.rs.
+crates/app +986
+!budget +986

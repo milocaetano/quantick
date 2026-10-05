@@ -12,11 +12,11 @@ use egui_phosphor::regular as icons;
 use quantick_sim::{Command, Position};
 use rust_decimal::Decimal;
 
-use super::offset_price;
 use crate::paper_chrome::{
     fmt_decimal, fmt_points, fmt_signed_points, points_color, position_word,
 };
 use crate::theme;
+use quantick_paper::desk::ticket::offset_price;
 
 /// What a press on the card asks of the account.
 #[derive(Debug, Clone, PartialEq, Eq)]

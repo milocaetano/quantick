@@ -139,6 +139,13 @@ impl PaperAccount {
         events
     }
 
+    /// Move one working order to `price` — the drop of its line's drag.
+    pub fn amend_order_price(&mut self, id: OrderId, price: Decimal) -> Vec<VenueEvent> {
+        let events = self.venue.amend_price(id, price);
+        self.handle_events(events.clone());
+        events
+    }
+
     /// Hand one [`Command`] to the attached venue.
     ///
     /// The chart's own gestures build [`OrderIntent`]s and call the port

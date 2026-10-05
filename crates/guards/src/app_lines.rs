@@ -43,9 +43,9 @@ pub const SLACK: usize = size::SLACK;
 pub const REMEDY: &str = "Over the ceiling, the UI crate grew. New code that is not drawing \
     belongs in a crate below `app`; code that is drawing docks as a new file against an existing \
     port, and pays for itself by moving as many lines out of crates/app in the same change. A \
-    deliberate raise is the `crates/app` entry and the !budget in \
-    crates/guards/app-lines-baseline.txt, both raised and signed with a reason in the same \
-    change. A total that fell needs no argument: `cargo run -p quantick-guards -- --tighten` \
+    deliberate raise is a new file in crates/guards/app-lines-baseline.d/ named for the branch, \
+    `crates/app +N` and `!budget +N` with a comment saying why, never an edit to the baseline \
+    every open branch would conflict on. A total that fell needs no argument: `cargo run -p quantick-guards -- --tighten` \
     writes the new number.";
 
 /// What the guard asks for when the budget has fallen far below its entry.
@@ -107,7 +107,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
 /// question; anything else is out of scope.
 pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     let in_scope =
-        (relative.starts_with(SOURCE) && size::tracked(relative)) || relative == BASELINE_FILE;
+        (relative.starts_with(SOURCE) && size::tracked(relative)) || POLICY.owns(relative);
     if in_scope { check(root) } else { Vec::new() }
 }
 
