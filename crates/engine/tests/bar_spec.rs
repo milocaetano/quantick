@@ -52,11 +52,7 @@ const GOLDENS: [(&str, &str, &str); 5] = [
 ];
 
 fn cut(spec: &BarSpec, trades: &[Trade]) -> Vec<Bar> {
-    let mut builder = spec.build();
-    trades
-        .iter()
-        .filter_map(|trade| builder.push(trade))
-        .collect()
+    golden::replay(&mut *spec.build(), trades)
 }
 
 #[test]
@@ -440,10 +436,10 @@ fn build_dispatches_every_kind() {
         BarSpec::Trades(1),
     ] {
         let kind = spec.kind();
-        let mut builder = spec.build();
-        let closed = builder.push(&trade);
+        let mut closed = Vec::new();
+        spec.build().push_into(&trade, &mut closed);
         if matches!(kind, BarKind::Tick | BarKind::Imbalance) {
-            assert!(closed.is_some(), "{kind:?}(1) closes immediately");
+            assert_eq!(closed.len(), 1, "{kind:?}(1) closes immediately");
         }
     }
 }

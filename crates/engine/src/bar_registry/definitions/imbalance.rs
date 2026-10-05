@@ -12,6 +12,7 @@ pub static IMBALANCE: BarDefinition = BarDefinition {
         unit: "target_trades",
         kind: NumberKind::Count,
         default: Decimal::from_parts(100, 0, 0, false, 0),
+        minimum: None,
         editor: NumberEditor {
             label: "target trades",
             min: 2.0,
@@ -43,6 +44,8 @@ pub static IMBALANCE: BarDefinition = BarDefinition {
     requirements: super::PRINTS,
     progress_unit: "ticks",
     fixed_time_interval: false,
+    quick_alias: None,
+    path_dependent: false,
     factory: |value, choice| {
         Box::new(ImbalanceBarBuilder::with_unit(
             value.to_u64().expect("count representation"),

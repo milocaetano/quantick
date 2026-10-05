@@ -265,16 +265,27 @@ impl ChartPane {
         self.publish_tape_price_step();
     }
 
-    /// Prepend older trades and shift everything anchored to a bar index by the
-    /// number of bars they added, which is what this returns.
+    /// Prepend older trades, keeping the view and the marks on the bars they
+    /// were on, and return how many net bars the trades added.
     pub fn prepend_history(&mut self, trades: &[quantick_engine::Trade]) -> usize {
         if !trades.is_empty() {
             self.bump_pagination_revision();
         }
-        // Older bars shift every index up; keep the view steady.
+        let path_dependent = self.state.spec().definition().path_dependent;
+        let anchor = path_dependent.then(|| (self.right_edge_time(), self.slots()));
         let added = self.state.prepend_history(trades);
-        self.viewport.shift_right_edge(added as isize);
-        self.drawings.shift_bars(added as isize);
+        if let Some((edge_time, old_slots)) = anchor {
+            // A Renko series re-cut from an older first print can hold a
+            // different number of bricks, so the view and the marks go back
+            // to market time.
+            self.viewport
+                .reanchor(edge_time.and_then(|ms| self.slot_at_time(ms)), self.slots());
+            self.reanchor_drawings(old_slots);
+        } else {
+            // Older bars shift every index up by `added`; keep the view steady.
+            self.viewport.shift_right_edge(added as isize);
+            self.drawings.shift_bars(added as isize);
+        }
         // Indicator columns shift with them: the rebuild below is a round-trip
         // away, and until it lands every value would otherwise be drawn
         // `added` slots off its own candle.
@@ -446,12 +457,21 @@ impl ChartPane {
         let bars_before = self.state.bars().len();
         self.state.ingest_live(trade);
         self.publish_tape_price_step();
-        // At most one bar closes per trade (an atomic market event is never
-        // split), so "grew" identifies exactly the bar that closed.
-        let bars_after = self.state.bars().len();
-        if bars_after > bars_before
-            && let Some(closed) = self.state.bars().last().cloned()
-        {
+        // Bars the builder cut late from prints it held — Renko's, once it
+        // reads its step — landed behind the boundary: history the indicators
+        // take as history, and never a close handed to a strategy.
+        let live_from = bars_before.max(self.state.backfill_boundary().unwrap_or(0));
+        if live_from > bars_before {
+            self.lane.reset();
+            let mut history = self.closed_bars();
+            history.truncate(self.history_prefix.len() + live_from);
+            self.indicator_worker
+                .send(IndicatorCommand::Backfilled(history));
+        }
+        // One print can close several bars — a Renko print clearing several
+        // levels — and each is an event.
+        for index in live_from..self.state.bars().len() {
+            let closed = self.state.bars()[index].clone();
             self.lane.reset();
             self.indicator_worker
                 .send(IndicatorCommand::BarClosed(closed.clone()));
@@ -461,7 +481,7 @@ impl ChartPane {
             // space the drawings' anchors live in, or the region's time
             // window would be off by the prefix length.
             if !self.strategies.anchors.is_empty() {
-                let slot = self.history_prefix.len() + bars_after - 1;
+                let slot = self.history_prefix.len() + index;
                 self.strategies.pending.push((closed, slot));
             }
         }

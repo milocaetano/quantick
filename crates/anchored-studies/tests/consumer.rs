@@ -2,7 +2,7 @@ use quantick_anchored_studies::{
     AnchoredAverage, AverageInputs, AverageRequest, AvwapBand, ProfileInputs, ProfileRequest,
     RangeProfile,
 };
-use quantick_engine::{BarSpec, Trade, bar_registry::BarConfiguration};
+use quantick_engine::{BarSpec, Trade, bar_registry::BarConfiguration, golden};
 use quantick_indicators::SourceId;
 use rust_decimal::Decimal;
 fn trade(id: u64, ms: i64, price: i64, qty: i64) -> Trade {
@@ -32,10 +32,7 @@ fn refresh_reproduces_the_kernel_over_the_pane_bars() {
         trade(12, 4_200, 80, 8),
     ];
     let mut builder = BarConfiguration::from(BarSpec::Tick(3)).build();
-    let closed: Vec<_> = trades
-        .iter()
-        .filter_map(|trade| builder.push(trade))
-        .collect();
+    let closed = golden::replay(&mut *builder, &trades);
     assert_eq!(closed.len(), 4, "the tape cuts four closed bars");
     let mut owned = None;
     AnchoredAverage::refresh(
@@ -87,11 +84,10 @@ fn refresh_reproduces_the_kernel_over_the_pane_bars() {
 
 #[test]
 fn profile_consumer_advances_real_candles_without_app() {
-    let mut builder = BarConfiguration::from(BarSpec::Tick(1)).build();
-    let bars: Vec<_> = [trade(1, 1_000, 100, 2), trade(2, 2_000, 104, 3)]
-        .iter()
-        .filter_map(|trade| builder.push(trade))
-        .collect();
+    let bars = golden::replay(
+        &mut *BarConfiguration::from(BarSpec::Tick(1)).build(),
+        &[trade(1, 1_000, 100, 2), trade(2, 2_000, 104, 3)],
+    );
     let mut owned = None;
     let inputs = ProfileInputs {
         closed: &[],

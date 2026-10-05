@@ -1,0 +1,23 @@
+# Expected Renko bricks for renko_trades.csv, N = 3 on a 1.0 step (S = 2.0).
+# Hand-computed. A brick closes once a print trades one step past its far
+# edge: S past the last close to continue, 2S to reverse. The print that
+# closes a brick opens the next one; a brick it clears on its way past holds
+# none of its prints.
+#   Brick 0 = the cell [10, 12] holding the first print, broken up by trade 4
+#     (13 >= 12 + 1): up 10->12 on trades 1-3.
+#   Brick 1 = up 12->14, closed by trade 7 (15 >= 14 + 1), on trades 4-6;
+#     trade 6 at 11 is a wick below its open.
+#   Brick 2 = the reversal down 12->10, closed by trade 8 (7 <= 10 - 1), on
+#     trade 7; trade 7 at 15 is its upper wick.
+#   Brick 3 = down 10->8, also cleared by trade 8 (7 <= 8 - 1): no prints,
+#     zero volume, stamped with trade 8's time.
+#   Brick 4 = down 8->6, closed by trade 9 (3 <= 6 - 1), on trade 8.
+#   Brick 5 = down 6->4, also cleared by trade 9 (3 <= 4 - 1): no prints.
+# Trades 9 and 10 leave a forming brick open on the last close, 4.0.
+open_time,close_time,open,high,low,close,buy_volume,sell_volume,trade_count
+1000,1200,10.0,12.0,10.0,12.0,3.0,1.0,3
+1300,1500,12.0,14.0,11.0,14.0,1.0,3.0,3
+1600,1600,12.0,15.0,10.0,10.0,1.0,0,1
+1700,1700,10.0,10.0,8.0,8.0,0,0,0
+1700,1700,8.0,8.0,6.0,6.0,0,3.0,1
+1800,1800,6.0,6.0,4.0,4.0,0,0,0

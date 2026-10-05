@@ -83,12 +83,7 @@ fn subfloor_replace_commands_compare_the_effective_configuration() {
 #[test]
 fn registry_factory_cuts_the_committed_tape() {
     let config = BUILTIN_BARS.parse("tick:3").unwrap();
-    let mut builder = config.build();
-    let bars: Vec<_> = fixture::parse_trades(TAPE)
-        .unwrap()
-        .iter()
-        .filter_map(|trade| builder.push(trade))
-        .collect();
+    let bars = golden::replay(&mut *config.build(), &fixture::parse_trades(TAPE).unwrap());
     assert_eq!(
         golden::diff_bars(&fixture::parse_bars(EXPECTED).unwrap(), &bars),
         None
@@ -177,7 +172,9 @@ fn every_family_member_exposes_the_same_parameter_contract() {
         ("time:1m", "interval_ms", "milliseconds", false, false),
         ("imbalance:100", "target", "target_trades", false, false),
         ("trades:2000", "count", "deals", false, true),
+        ("renko:50", "ticks", "ticks", false, false),
     ];
+    assert_eq!(BUILTIN_BARS.definitions().len(), expected.len());
     for (definition, (text, name, unit, volume, deals)) in
         BUILTIN_BARS.definitions().iter().zip(expected)
     {
@@ -197,6 +194,67 @@ fn every_family_member_exposes_the_same_parameter_contract() {
         assert!(config.requirements().traded_volume);
         assert_eq!(config.choice(), Some(unit));
     }
+}
+
+#[test]
+fn a_quick_switch_suffix_is_one_letter_no_other_kind_declares() {
+    use quantick_engine::bar_registry::{
+        BarConfigurationError, BarDefinition, QuickAlias,
+        definitions::{RENKO, TICK},
+    };
+    static DIGIT: BarDefinition = BarDefinition {
+        id: "digit",
+        quick_alias: Some(QuickAlias {
+            suffix: '5',
+            noun: "Digits",
+        }),
+        ..TICK
+    };
+    static TWIN: BarDefinition = BarDefinition {
+        id: "twin",
+        quick_alias: Some(QuickAlias {
+            suffix: 'r',
+            noun: "Twins",
+        }),
+        ..TICK
+    };
+    for registry in [
+        BarRegistry::new([&DIGIT]),
+        BarRegistry::new([&RENKO, &TWIN]),
+    ] {
+        assert!(matches!(
+            registry,
+            Err(BarConfigurationError::InvalidDefinition { .. })
+        ));
+    }
+    assert!(BarRegistry::new([&RENKO, &TICK]).is_ok());
+}
+
+#[test]
+fn a_parameter_below_the_declared_minimum_is_refused() {
+    use quantick_engine::bar_registry::definitions::RENKO;
+    use rust_decimal::Decimal;
+    assert!(RENKO.configure(Decimal::ONE, None).is_err());
+    assert!(RENKO.configure(Decimal::TWO, None).is_ok());
+    let mut selection = BarSelection::new(BUILTIN_BARS.parse("renko:2").unwrap());
+    assert_eq!(
+        selection.update(
+            SelectionCommand::Parameter {
+                name: "ticks",
+                value: Decimal::ONE,
+            },
+            BarInputAvailability::PRINTS,
+        ),
+        Err(
+            quantick_engine::bar_selection::SelectionError::Configuration(
+                quantick_engine::bar_registry::BarConfigurationError::BelowMinimum {
+                    kind: "renko".to_owned(),
+                    minimum: "2 ticks".to_owned(),
+                }
+            )
+        )
+    );
+    assert_eq!(selection.spec().to_config_string(), "renko:2");
 }
 
 #[test]
@@ -381,12 +439,8 @@ fn a_seventh_definition_uses_the_production_selection_projection_and_factory() {
         BarSpec::try_from(selection.spec()).is_err(),
         "the legacy enum refuses a new identity honestly"
     );
-    let mut builder = selection.spec().build();
-    let bars: Vec<_> = fixture::parse_trades(TAPE)
-        .unwrap()
-        .iter()
-        .filter_map(|trade| builder.push(trade))
-        .collect();
+    let trades = fixture::parse_trades(TAPE).unwrap();
+    let bars = golden::replay(&mut *selection.spec().build(), &trades);
     assert_eq!(
         golden::diff_bars(&fixture::parse_bars(EXPECTED).unwrap(), &bars),
         None

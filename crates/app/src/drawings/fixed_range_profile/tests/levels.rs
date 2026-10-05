@@ -27,7 +27,7 @@ fn grouped_cache(rows: &[(i64, i64)], group: Decimal) -> FrvpCache {
     use quantick_engine::{BarSpec, Side, Trade, bar_registry::BarConfiguration};
     let mut builder = BarConfiguration::from(BarSpec::Tick(1)).build();
     let mut footprint = quantick_engine::FootprintBuilder::new(group, 4096);
-    let mut last = None;
+    let mut closed = Vec::new();
     for &(price, quantity) in rows {
         let trade = Trade {
             agg_id: 1,
@@ -36,10 +36,10 @@ fn grouped_cache(rows: &[(i64, i64)], group: Decimal) -> FrvpCache {
             quantity: Decimal::from(quantity),
             side: Side::Buy,
         };
-        last = builder.push(&trade);
+        builder.push_into(&trade, &mut closed);
         footprint.push(&trade);
     }
-    let bars = vec![last.expect("fixture trade closes a bar"); 20];
+    let bars = vec![closed.pop().expect("fixture trade closes a bar"); 20];
     let ladder = footprint.close().expect("the fixture traded");
     let mut owned = None;
     FrvpCache::refresh(

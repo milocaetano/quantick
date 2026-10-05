@@ -115,17 +115,22 @@ fn the_backtest_drives_the_same_paper_account_the_chart_trades_through() {
     let steps = script();
     let mut builder = SPEC.build();
     let mut bars = 0_usize;
+    let mut closed = Vec::new();
     for trade in &session.trades {
         account.on_trade(trade);
-        if builder.push(trade).is_none() {
-            continue;
+        let late = builder.push_into(trade, &mut closed);
+        for cut in 0..closed.len() {
+            let index = bars;
+            bars += 1;
+            if cut < late {
+                continue;
+            }
+            for (_, command) in steps.iter().filter(|(at, _)| *at == index) {
+                let events = account.dispatch(*command);
+                account.handle_events(events);
+            }
         }
-        let index = bars;
-        bars += 1;
-        for (_, command) in steps.iter().filter(|(at, _)| *at == index) {
-            let events = account.dispatch(*command);
-            account.handle_events(events);
-        }
+        closed.clear();
     }
 
     assert_eq!(bars, reference.bars, "the same bars closed");

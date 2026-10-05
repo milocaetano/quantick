@@ -13,6 +13,7 @@ pub static TIME: BarDefinition = BarDefinition {
         unit: "milliseconds",
         kind: NumberKind::Duration,
         default: Decimal::from_parts(DEFAULT_TIME_INTERVAL_MS as u32, 0, 0, false, 0),
+        minimum: None,
         editor: NumberEditor {
             label: "",
             min: MIN_TIME_INTERVAL_MS as f64,
@@ -29,6 +30,8 @@ pub static TIME: BarDefinition = BarDefinition {
     requirements: super::PRINTS,
     progress_unit: "ms",
     fixed_time_interval: true,
+    quick_alias: None,
+    path_dependent: false,
     factory: |value, _| {
         Box::new(TimeBarBuilder::new(
             value.to_i64().expect("interval representation"),

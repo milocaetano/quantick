@@ -3,13 +3,14 @@
 //!
 //! A bare digit typed over the focused chart opens a list of every bar the
 //! number can mean (`15` minutes, seconds, hours, ticks, volume, dollar,
-//! imbalance, trades). The engine's registry writes the list; this file only
-//! reads keys and draws it. Enter applies the highlighted row to the pane the
-//! switch opened over, through the same path `layout.pane.set_bar_spec` takes,
+//! imbalance, trades, Renko); a letter after it (`50R`) keeps the kind that
+//! declares it. The engine's registry reads the query and writes the list;
+//! this file only reads keys and draws it. Enter applies the highlighted row
+//! to the pane it opened over through `layout.pane.set_bar_spec`'s own path,
 //! so an agent reaches the same outcome by that capability.
 
 use eframe::egui;
-use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration};
+use quantick_engine::bar_registry::{BUILTIN_BARS, BarConfiguration, quick_query_text};
 
 use super::{Surface, SurfaceEnv, SurfaceResponse};
 use crate::pane::PaneSide;
@@ -19,8 +20,6 @@ use crate::theme;
 const TOP_MARGIN_PX: f32 = 24.0;
 /// Wide enough for the longest summary, `imbalance(dollar 100000)`.
 const WIDTH_PX: f32 = 260.0;
-/// Longest number the switch accepts; more digits than any bar rule reads.
-const MAX_DIGITS: usize = 9;
 
 /// One bar change the trader chose: which pane, and the rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,7 +61,7 @@ impl BarSwitchSurface {
     /// Open over `side` of tab `tab` with `query` typed.
     pub fn open(&mut self, tab: u64, side: PaneSide, query: &str) {
         self.open = Some(Open {
-            query: query.chars().take(MAX_DIGITS).collect(),
+            query: quick_query_text(query),
             selected: 0,
             tab,
             side,
@@ -79,8 +78,7 @@ impl BarSwitchSurface {
     pub fn candidates(&self) -> Vec<BarConfiguration> {
         self.open
             .as_ref()
-            .and_then(|open| open.query.parse::<u64>().ok())
-            .map(|number| BUILTIN_BARS.quick_candidates(number))
+            .map(|open| BUILTIN_BARS.quick_matches(&open.query))
             .unwrap_or_default()
     }
 
@@ -155,7 +153,6 @@ impl Surface for BarSwitchSurface {
             let edit = ui.add(
                 egui::TextEdit::singleline(&mut open.query)
                     .id(query_id)
-                    .char_limit(MAX_DIGITS)
                     .hint_text("bar size")
                     .desired_width(f32::INFINITY),
             );
@@ -182,8 +179,11 @@ impl Surface for BarSwitchSurface {
                     },
                 );
             });
-            open.query.retain(|character| character.is_ascii_digit());
-            // A new number is a new list: a highlight kept by index would land
+            let kept = quick_query_text(&open.query);
+            if kept != open.query {
+                open.query = kept;
+            }
+            // A new query is a new list: a highlight kept by index would land
             // on a different kind (15's fourth row is tick, 150's is volume).
             if open.query != asked {
                 open.selected = 0;
@@ -192,7 +192,7 @@ impl Surface for BarSwitchSurface {
                 ui.label(egui::RichText::new("no bar at this size").color(theme::TEXT_SUPPORT));
             }
             for (index, config) in candidates.iter().enumerate() {
-                let row = ui.selectable_label(index == open.selected, config.summary());
+                let row = ui.selectable_label(index == open.selected, config.quick_label());
                 if row.clicked() {
                     clicked = Some(index);
                 }

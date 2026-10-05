@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use quantick_engine::Side;
+use quantick_engine::{BarBuilderDiagnostics, Side};
 use quantick_indicators::{IndicatorHost, InstanceId};
 use quantick_replay::Session;
 use quantick_sim::{ClosedTrade, PerformanceReport, RejectReason, Simulator, VenueEvent};
@@ -41,6 +41,11 @@ pub struct Anomalies {
     /// land here, and without them a zero-trade run under `--retest-limit`
     /// is indistinguishable from "no cut ever happened".
     pub cancels: BTreeMap<&'static str, u64>,
+    /// Prints the bar rule could not cut as it measures, by reason code:
+    /// `prints_held_uncut`, a session that never showed a Renko builder its
+    /// price step, so every print was held and none cut; `prints_off_grid`,
+    /// prints off the step it froze, cut on that step and counted.
+    pub bar_rule: BTreeMap<&'static str, u64>,
 }
 
 impl Anomalies {
@@ -62,12 +67,19 @@ impl Anomalies {
         self.cancels.values().sum()
     }
 
-    /// True when the run produced no refusal of any kind. Cancels are not
-    /// refusals — an order standing down by its own rule is the rule
-    /// working — so they do not dirty a run.
+    /// Total prints the bar rule could not cut as it measures.
+    #[must_use]
+    pub fn bar_rule_prints(&self) -> u64 {
+        self.bar_rule.values().sum()
+    }
+
+    /// True when the run produced no refusal of any kind and the bar rule
+    /// cut every print as it measures. Cancels are not refusals — an order
+    /// standing down by its own rule is the rule working — so they do not
+    /// dirty a run.
     #[must_use]
     pub fn is_clean(&self) -> bool {
-        self.rejected.is_empty() && self.brackets_dropped.is_empty()
+        self.rejected.is_empty() && self.brackets_dropped.is_empty() && self.bar_rule.is_empty()
     }
 
     /// Fold another run's counts into this one.
@@ -80,6 +92,21 @@ impl Anomalies {
         }
         for (code, count) in &other.cancels {
             *self.cancels.entry(code).or_default() += count;
+        }
+        for (code, count) in &other.bar_rule {
+            *self.bar_rule.entry(code).or_default() += count;
+        }
+    }
+
+    /// What the bar rule reports once the session's last print is in.
+    fn observe_rule(&mut self, diagnostics: BarBuilderDiagnostics) {
+        for (code, count) in [
+            ("prints_held_uncut", diagnostics.held_prints),
+            ("prints_off_grid", diagnostics.off_grid_prints),
+        ] {
+            if count > 0 {
+                *self.bar_rule.entry(code).or_default() += count;
+            }
         }
     }
 
@@ -182,9 +209,22 @@ pub struct SessionRun {
 ///    actions meet the print **before** anything looks at it. An order placed
 ///    on the previous bar fills here, which is why a decision can never act
 ///    on the print that triggered it.
-/// 2. `builder.push(print)` — at most one bar closes per print.
-/// 3. On a close: the host evaluates indicators, then the strategy is asked
-///    for commands, then `sim.apply` queues them for the *next* print.
+/// 2. `builder.push_into(print)` — every bar the print closed, oldest first:
+///    one at most for most rules, one per brick level a Renko print clears.
+/// 3. On each close: the host evaluates indicators, then the strategy is
+///    asked for commands, then `sim.apply` queues them for the *next* print.
+///    A bar cut late, from prints the builder held before this one — the
+///    bricks of the prints a Renko builder held while it read its step —
+///    only warms the indicators up: no one could act on it when it closed,
+///    so the strategy is not asked, as the chart hands it to no strategy.
+///
+/// The builder is the chart's rule, built fresh for each session: within a
+/// session it cuts what the chart cuts from the same prints, and nothing is
+/// read ahead — a Renko step comes off the prints already played. The chart
+/// carries its bricks over a session's open instead, so a session's first
+/// bricks can differ between the two. What the rule could not cut — a
+/// session that never showed it the step, prints off the step it froze — is
+/// counted in [`Anomalies::bar_rule`].
 ///
 /// Indicator and simulator state are created here and dropped with the
 /// session: nothing carries over into the next recorded day.
@@ -218,6 +258,7 @@ pub fn run_session(
     let mut sim = Simulator::new();
     let mut anomalies = Anomalies::default();
     let mut bars = 0usize;
+    let mut closed = Vec::new();
 
     for trade in &session.trades {
         let events = sim.on_trade(trade);
@@ -233,40 +274,45 @@ pub fn run_session(
             }
             let _ = strategy.on_events(&events);
         }
-        let Some(bar) = builder.push(trade) else {
-            continue;
-        };
-        host.push_closed_bar(&bar);
-        let index = bars;
-        bars += 1;
-
-        // The view borrows the host and the simulator, so it must be gone
-        // before `apply` can mutate the simulator. The block is the seam.
-        let commands = {
-            let view = BarView {
-                bar: &bar,
-                index,
-                signals: Signals::new(&host, &slots),
-                account: Account {
-                    position: sim.position(),
-                    orders: sim.orders(),
-                    mark_price: sim.mark_price(),
-                    mark_timestamp_ms: sim.mark_timestamp_ms(),
-                    closed_trades: sim.closed_trades().len(),
-                    realized_points: sim.realized_points(),
-                },
-            };
-            strategy.on_bar(&view)
-        };
-        for command in commands {
-            let events = sim.apply(command);
-            for event in &events {
-                anomalies.observe(event);
+        let late = builder.push_into(trade, &mut closed);
+        for (cut, bar) in closed.drain(..).enumerate() {
+            host.push_closed_bar(&bar);
+            let index = bars;
+            bars += 1;
+            if cut < late {
+                // Cut from prints held before this one: warm-up, no order.
+                continue;
             }
-            let _ = strategy.on_events(&events);
+
+            // The view borrows the host and the simulator, so it must be gone
+            // before `apply` can mutate the simulator. The block is the seam.
+            let commands = {
+                let view = BarView {
+                    bar: &bar,
+                    index,
+                    signals: Signals::new(&host, &slots),
+                    account: Account {
+                        position: sim.position(),
+                        orders: sim.orders(),
+                        mark_price: sim.mark_price(),
+                        mark_timestamp_ms: sim.mark_timestamp_ms(),
+                        closed_trades: sim.closed_trades().len(),
+                        realized_points: sim.realized_points(),
+                    },
+                };
+                strategy.on_bar(&view)
+            };
+            for command in commands {
+                let events = sim.apply(command);
+                for event in &events {
+                    anomalies.observe(event);
+                }
+                let _ = strategy.on_events(&events);
+            }
         }
     }
     strategy.end_of_session();
+    anomalies.observe_rule(builder.diagnostics());
 
     let trades = sim.closed_trades().to_vec();
     SessionRun {
@@ -450,5 +496,23 @@ mod tests {
         assert_eq!(total.rejected.get("no_market_price"), Some(&4));
         assert_eq!(total.dropped_brackets(), 2);
         assert!(Anomalies::default().is_clean());
+    }
+
+    #[test]
+    fn prints_the_bar_rule_could_not_cut_dirty_the_run_and_add_up() {
+        let mut a = Anomalies::default();
+        a.observe_rule(quantick_engine::BarBuilderDiagnostics {
+            held_prints: 7,
+            ..Default::default()
+        });
+        a.observe_rule(quantick_engine::BarBuilderDiagnostics::default());
+        assert_eq!(a.bar_rule.get("prints_held_uncut"), Some(&7));
+        assert_eq!(a.bar_rule.get("prints_off_grid"), None, "zero is no entry");
+        assert!(!a.is_clean());
+
+        let mut total = Anomalies::default();
+        total.absorb(&a);
+        total.absorb(&a);
+        assert_eq!(total.bar_rule_prints(), 14);
     }
 }

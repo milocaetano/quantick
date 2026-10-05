@@ -12,12 +12,15 @@
 
 pub use quantick_engine::ImbalanceUnit;
 use quantick_engine::trade_tape::TradeTape;
-use quantick_engine::{Bar, BarBuilder, BarFootprint, BarProgress, DealSample, PriceGrid, Trade};
+use quantick_engine::{
+    Bar, BarBuilder, BarBuilderDiagnostics, BarFootprint, BarProgress, DealSample, PriceGrid, Trade,
+};
 /// The bar vocabulary lives in the engine, one definition for the chart, the
 /// backtest and the bot. Re-exported so the chart's callers keep finding it
 /// here, with the imbalance unit beside it.
 pub use quantick_engine::{BarKind, BarSpec, MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS};
 use rust_decimal::Decimal;
+use std::ops::Index;
 
 use crate::footprint_series::{self, FootprintSeries};
 
@@ -128,30 +131,43 @@ pub struct ChartState {
     readings_held: bool,
 }
 
-/// Push one print through `builder` and, with the footprint layer on, fold
-/// it into the ladders — unless the builder left it *uncounted*. A deal bar
-/// counts nothing before its first reading: such a print belongs to no bar,
-/// so it belongs to no ladder either, or the ladders drift off the bars they
-/// index by and the footprint series asserts on the first close.
-fn fold_print<B: BarBuilder + ?Sized>(
+/// Push print `index` of `tape` through `builder`, appending every bar it
+/// closed to `bars`, and, with the footprint layer on, fold it into the
+/// ladders — unless the builder left it *uncounted*. A deal bar counts
+/// nothing before its first reading: such a print belongs to no bar, so it
+/// belongs to no ladder either, or the ladders drift off the bars they index
+/// by and the footprint series asserts on the first close.
+///
+/// Returns how many of the bars appended were cut late, from prints the
+/// builder held before this one ([`BarBuilder::push_into`]).
+fn fold_print<B, T>(
     builder: &mut B,
     footprints: &mut FootprintSeries,
     footprint_enabled: bool,
-    trade: &Trade,
-) -> Option<Bar> {
+    tape: &T,
+    index: usize,
+    bars: &mut Vec<Bar>,
+) -> usize
+where
+    B: BarBuilder + ?Sized,
+    T: Index<usize, Output = Trade> + ?Sized,
+{
     let uncounted_before = builder.diagnostics().uncounted_trades;
-    let closed = builder.push(trade);
+    let first = bars.len();
+    let late = builder.push_into(&tape[index], bars);
     if footprint_enabled {
-        let uncounted = builder.diagnostics().uncounted_trades != uncounted_before;
-        match (&closed, uncounted) {
-            (_, false) => footprints.observe(trade, closed.as_ref()),
+        let closed = &bars[first..];
+        if builder.diagnostics().uncounted_trades == uncounted_before {
+            footprints.observe(tape, index, closed);
+        } else {
             // A rollover ended the bar and this print counts for nothing:
             // the ladder closes on what it held, the print folds nowhere.
-            (Some(bar), true) => footprints.close_without(bar),
-            (None, true) => {}
+            for bar in closed {
+                footprints.close_without(bar);
+            }
         }
     }
-    closed
+    late
 }
 
 impl ChartState {
@@ -306,25 +322,39 @@ impl ChartState {
         self.builder.diagnostics().uncounted_trades
     }
 
+    /// Prints the current rule left uncounted, holds while it reads its
+    /// price step, or found off the step it froze.
+    #[must_use]
+    pub fn rule_diagnostics(&self) -> BarBuilderDiagnostics {
+        self.builder.diagnostics()
+    }
+
+    /// The price step the current rule read off this chart's prints, once it
+    /// has one: inferred, never declared by a venue.
+    #[must_use]
+    pub fn inferred_price_step(&self) -> Option<Decimal> {
+        self.builder.inferred_price_step()
+    }
+
     /// Ingest backfilled history (a slice, or another chart's tape) as one
     /// batch — once, before any live trades — then mark the boundary.
     pub fn ingest_backfill<'a>(&mut self, trades: impl IntoIterator<Item = &'a Trade> + Clone) {
+        let start = self.trades.len();
         self.trades.extend(trades.clone());
-        for trade in trades.clone() {
+        for trade in trades {
             self.observe_price(trade.price);
         }
         self.backfill_trade_count = self.trades.len();
         self.backfill_done = true;
-        for trade in trades {
-            let closed = fold_print(
+        for index in start..self.trades.len() {
+            fold_print(
                 &mut *self.builder,
                 &mut self.footprints,
                 self.footprint_enabled,
-                trade,
+                &self.trades,
+                index,
+                &mut self.bars,
             );
-            if let Some(bar) = closed {
-                self.bars.push(bar);
-            }
         }
         self.backfill_boundary = Some(self.bars.len());
         self.refresh_partial();
@@ -364,14 +394,19 @@ impl ChartState {
     pub fn ingest_live(&mut self, trade: &Trade) {
         self.trades.push(trade.clone());
         self.observe_price(trade.price);
-        let closed = fold_print(
+        let first = self.bars.len();
+        let late = fold_print(
             &mut *self.builder,
             &mut self.footprints,
             self.footprint_enabled,
-            trade,
+            &self.trades,
+            self.trades.len() - 1,
+            &mut self.bars,
         );
-        if let Some(bar) = closed {
-            self.bars.push(bar);
+        if late > 0 {
+            // Bars cut late from prints the builder held (Renko's, while it
+            // read its step) closed unseen: history, behind the boundary.
+            self.backfill_boundary = Some(first + late);
         }
         self.refresh_partial();
         // Live ingest only ever *appends*: no bar already closed changes, and
@@ -417,18 +452,17 @@ impl ChartState {
         let mut bars = Vec::new();
         let mut boundary = None;
         self.footprints.reset(self.footprints.base_group());
-        for (i, trade) in self.trades.iter().enumerate() {
+        let (footprints, trades) = (&mut self.footprints, &self.trades);
+        let enabled = self.footprint_enabled;
+        for i in 0..trades.len() {
             if self.backfill_done && i == self.backfill_trade_count {
                 boundary = Some(bars.len());
             }
-            let closed = fold_print(
-                &mut *builder,
-                &mut self.footprints,
-                self.footprint_enabled,
-                trade,
-            );
-            if let Some(bar) = closed {
-                bars.push(bar);
+            let first = bars.len();
+            let late = fold_print(&mut *builder, footprints, enabled, trades, i, &mut bars);
+            // Live ingest's rule: a live print's late bars are history.
+            if late > 0 && (!self.backfill_done || i >= self.backfill_trade_count) {
+                boundary = Some(first + late);
             }
         }
         // Backfill covered every retained trade (no live yet): boundary is the
@@ -503,7 +537,8 @@ impl ChartState {
         self.partial.as_ref()
     }
 
-    /// The number of purely-backfilled bars (the backfill/live divider index).
+    /// The backfill/live divider index: the bars before it are history —
+    /// backfilled, or cut late from prints a builder held — the rest live.
     #[must_use]
     pub fn backfill_boundary(&self) -> Option<usize> {
         self.backfill_boundary
@@ -613,8 +648,11 @@ impl ChartState {
         // counts every print as uncounted, and the ladders would be empty
         // under bars that are not.
         seed_deal_counter(&mut *builder, &self.deal_samples);
-        for trade in &self.trades {
-            fold_print(&mut *builder, &mut self.footprints, true, trade);
+        let mut cut = Vec::new();
+        let (footprints, trades) = (&mut self.footprints, &self.trades);
+        for i in 0..trades.len() {
+            fold_print(&mut *builder, footprints, true, trades, i, &mut cut);
+            cut.clear();
         }
     }
 
@@ -673,6 +711,9 @@ impl ChartState {
 
 #[cfg(test)]
 mod bar_spec_parity_tests;
+
+#[cfg(test)]
+mod renko_tests;
 
 #[cfg(test)]
 mod tape_identity_tests;
