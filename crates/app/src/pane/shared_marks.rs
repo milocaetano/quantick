@@ -275,10 +275,12 @@ impl PaneHitTest<'_> {
             // rather than by pretending to sit on the edge bar.
             let style = if clamped {
                 DrawingStyle {
-                    color: drawing
-                        .style
-                        .color
-                        .gamma_multiply(crate::drawings::CLAMPED_OPACITY),
+                    color: crate::drawings::from_color32(
+                        drawing
+                            .style
+                            .color32()
+                            .gamma_multiply(crate::drawings::CLAMPED_OPACITY),
+                    ),
                     fill_alpha: 0,
                     ..drawing.style
                 }

@@ -52,5 +52,11 @@
 # and the chart read names the rule's inferred step and the prints it holds
 # or found off it. The rule, the step it reads off its own prints and the
 # query that reads `50R` live in `quantick-engine`.
-!budget 102847
-crates/app 102847
+# Raised to 104,505 (+32) when a drawing's colour moved to the headless
+# `quantick_chart::style::PremultipliedRgba`: `DrawingStyle` gains the one
+# crossing back to egui (`color32`, `set_color32`, `to_color32`,
+# `from_color32`) and the colour pickers edit a copy and write it back.
+# Lowered to 102,843 when paper trading's deciding half moved into
+# `quantick-paper` (#607).
+!budget 102843
+crates/app 102843

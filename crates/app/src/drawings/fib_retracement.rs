@@ -57,7 +57,7 @@ impl DrawingToolImpl for FibRetracement {
         drawing: &mut Drawing,
         host: &mut dyn PresetHost,
     ) -> bool {
-        fib::remember_drawing_color(ui, drawing.style.color);
+        fib::remember_drawing_color(ui, drawing.style.color32());
         fib::draw_levels_tab(ui, drawing, host)
     }
     fn paint(

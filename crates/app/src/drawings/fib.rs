@@ -598,9 +598,9 @@ fn format_label(mode: LabelMode, level: &FibLevelSpec, price: f64) -> String {
 }
 
 fn level_color(level: &FibLevelSpec, style: DrawingStyle) -> egui::Color32 {
-    level
-        .color
-        .map_or(style.color, |[r, g, b]| egui::Color32::from_rgb(r, g, b))
+    level.color.map_or(style.color32(), |[r, g, b]| {
+        egui::Color32::from_rgb(r, g, b)
+    })
 }
 
 /// The effective log flag: the explicit choice, honoured only while every
@@ -765,7 +765,7 @@ pub(super) fn paint(
 
     // Anchor guides while selected: dashed A-B (and B-C for extension).
     if ctxt.selected && !ctxt.halo && points.len() >= 2 {
-        let guide = egui::Stroke::new(1.0_f32, style.color);
+        let guide = egui::Stroke::new(1.0_f32, style.color32());
         painter.add(egui::Shape::dashed_line(
             &[points[0], points[1]],
             guide,

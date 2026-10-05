@@ -88,7 +88,7 @@ impl DrawingPass<'_> {
             // the mirrored marks use for the same reason.
             let style = if drawing.off_series || drawing.foreign_market {
                 DrawingStyle {
-                    color: crate::drawings::painted_color(drawing),
+                    color: crate::drawings::from_color32(crate::drawings::painted_color(drawing)),
                     fill_alpha: 0,
                     ..drawing.style
                 }
