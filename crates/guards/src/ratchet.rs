@@ -659,7 +659,8 @@ impl Policy {
 }
 
 /// The checked-out branch as a raise file's name, `/` spelled `-`, read from
-/// the worktree's own `HEAD`; `tighten` when there is no branch to name.
+/// the worktree's own `HEAD`; `tighten-<commit>` on a detached `HEAD`, and
+/// `tighten` with no repository at all.
 ///
 /// Read rather than asked of `git`, because this crate has no dependencies
 /// and runs no processes. A worktree's `.git` is a file pointing at its git
@@ -675,10 +676,11 @@ fn branch_slug(root: &Path) -> String {
     };
     git_dir
         .and_then(|dir| fs::read_to_string(dir.join("HEAD")).ok())
-        .and_then(|head| {
-            head.trim()
-                .strip_prefix("ref: refs/heads/")
-                .map(|branch| branch.replace('/', "-"))
+        .map(|head| match head.trim().strip_prefix("ref: refs/heads/") {
+            Some(branch) => branch.replace('/', "-"),
+            // A detached HEAD names its commit, so two detached runs on
+            // different commits still write two files.
+            None => format!("tighten-{}", head.trim().get(..8).unwrap_or("detached")),
         })
         .unwrap_or_else(|| "tighten".to_owned())
 }

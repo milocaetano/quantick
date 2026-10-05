@@ -31,10 +31,29 @@ if [ "${1:-}" != "--continue" ]; then
         : >"$marker"
     fi
     git merge --no-commit --no-ff origin/main || true
+    # Up to date, or refused: nothing was merged, so nothing to regenerate.
+    git rev-parse -q --verify MERGE_HEAD >/dev/null || rm -f "$marker"
 fi
 
-if ! git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+regenerate() {
+    # Written beside, then moved: a build failure must not leave the registry
+    # truncated. A stale live bubbles file breaks the launch the generator runs.
+    env -u QUANTICK_BUBBLES cargo run -q -p quantick-app --features harness -- \
+        --dump-hook-registry >"$registry.new"
+    mv "$registry.new" "$registry"
     rm -f "$marker"
+}
+
+if ! git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+    if [ -f "$marker" ]; then
+        # The merge was committed by hand before the registry was regenerated.
+        regenerate
+        if ! git diff --quiet -- "$registry"; then
+            echo "The merge was committed with a stale $registry; it is regenerated now — commit it." >&2
+            exit 1
+        fi
+        exit 0
+    fi
     if git merge-base --is-ancestor origin/main HEAD; then
         exit 0
     fi
@@ -51,13 +70,8 @@ if [ -n "$others" ]; then
 fi
 
 if [ -f "$marker" ]; then
-    # Written beside, then moved: a build failure must not leave the registry
-    # truncated. A stale live bubbles file breaks the launch the generator runs.
-    env -u QUANTICK_BUBBLES cargo run -q -p quantick-app --features harness -- \
-        --dump-hook-registry >"$registry.new"
-    mv "$registry.new" "$registry"
+    regenerate
     git add "$registry"
-    rm -f "$marker"
 fi
 
 git commit --no-edit
