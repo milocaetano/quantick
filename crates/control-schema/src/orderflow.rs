@@ -317,8 +317,8 @@ pub struct BubblesStateSnapshot {
     /// or zooming the candles never changes it. The tape the pane builds, not
     /// the switch: true whenever `tape_only` is, and beside the candles only
     /// with the tape on and `overlap_merge` (volume dots) on. The request is
-    /// the lane setting `native_tape`, saved with the order-flow preset and
-    /// read back by `layers.visibility` as layer `native_tape`.
+    /// the lane setting `native_tape`, one of the asset's bubble settings
+    /// (see `asset`), read back by `layers.visibility` as layer `native_tape`.
     #[serde(default)]
     pub native_tape: bool,
     /// The pane shows the tape alone, Bookmap style: the native tape takes

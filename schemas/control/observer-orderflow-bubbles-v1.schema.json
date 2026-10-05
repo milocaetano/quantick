@@ -96,7 +96,7 @@
         },
         "native_tape": {
           "default": false,
-          "description": "The tape is the native tape: each print at its own execution time\nand price, on the market clock over the whole window, with one price\naxis fitted by its prints (manual Y allowed). Beside the tick candles\nit keeps its share of the pane behind a draggable divider, and moving\nor zooming the candles never changes it. The tape the pane builds, not\nthe switch: true whenever `tape_only` is, and beside the candles only\nwith the tape on and `overlap_merge` (volume dots) on. The request is\nthe lane setting `native_tape`, saved with the order-flow preset and\nread back by `layers.visibility` as layer `native_tape`.",
+          "description": "The tape is the native tape: each print at its own execution time\nand price, on the market clock over the whole window, with one price\naxis fitted by its prints (manual Y allowed). Beside the tick candles\nit keeps its share of the pane behind a draggable divider, and moving\nor zooming the candles never changes it. The tape the pane builds, not\nthe switch: true whenever `tape_only` is, and beside the candles only\nwith the tape on and `overlap_merge` (volume dots) on. The request is\nthe lane setting `native_tape`, one of the asset's bubble settings\n(see `asset`), read back by `layers.visibility` as layer `native_tape`.",
           "type": "boolean"
         },
         "overlap_merge": {
