@@ -18,5 +18,10 @@
 # Q16 (#453, the paper account into `paper`) and Q17 (#452, the control-plane
 # host into `control-host`) moved out of `app`; the same independent count
 # agrees. This closes #443's A2.
-!budget 24233
-crates/app 24233
+# Raised to 24,622 (+389) when a drawing's colour moved to the headless
+# `quantick_chart::style::PremultipliedRgba`: `drawings/presets.rs` named
+# egui only to build a colour, so the whole file now counts as UI-free. It
+# still cannot leave `app` without `DrawingStyle` and `DrawingTool`, which
+# `app` owns; it moves with them.
+!budget 24622
+crates/app 24622

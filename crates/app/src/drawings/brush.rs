@@ -116,7 +116,7 @@ impl DrawingToolImpl for Brush {
         }
         painter.add(egui::Shape::line(
             points.to_vec(),
-            egui::Stroke::new(style.width_px, style.color),
+            egui::Stroke::new(style.width_px, style.color32()),
         ));
     }
     fn hit_test(

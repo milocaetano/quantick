@@ -2211,7 +2211,7 @@ fn a_saved_default_style_reaches_the_next_drawing_and_only_that() {
             .drawings
             .selected_mut()
             .expect("the placed line is selected");
-        drawing.style.color = mine;
+        drawing.style.set_color32(mine);
         drawing.style.width_px = 2.5;
     }
     let edited = app.active_tab().flow_pane.drawings.items()[0].style;
@@ -3959,7 +3959,7 @@ fn the_marks_are_born_in_the_colour_of_the_side_they_mean() {
             .last()
             .expect("the mark was placed");
         assert_eq!(placed.tool.id(), id);
-        assert_eq!(placed.style.color, expected, "{id} was born wrong");
+        assert_eq!(placed.style.color32(), expected, "{id} was born wrong");
     }
 }
 
@@ -4015,7 +4015,9 @@ fn the_bar_recolours_a_drawing_in_two_clicks() {
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
     run_frame(&mut app, &ctx);
-    let before = app.active_tab().flow_pane.drawings.items()[0].style.color;
+    let before = app.active_tab().flow_pane.drawings.items()[0]
+        .style
+        .color32();
     let undo_before = app.active_tab().flow_pane.drawings.undo_depth();
 
     let swatch = app
@@ -4038,7 +4040,9 @@ fn the_bar_recolours_a_drawing_in_two_clicks() {
     click_chart(&mut app, &ctx, buy.center());
     run_frame(&mut app, &ctx);
 
-    let after = app.active_tab().flow_pane.drawings.items()[0].style.color;
+    let after = app.active_tab().flow_pane.drawings.items()[0]
+        .style
+        .color32();
     assert_ne!(after, before, "the swatch has to reach the object");
     assert_eq!(after, theme::BUY);
     assert_eq!(

@@ -229,9 +229,11 @@ impl StyleTab<'_, '_> {
         let tool = edited.tool;
         let mut actions = InspectorActions::default();
         ui.label("Style");
-        actions.edited |= ui
-            .color_edit_button_srgba(&mut edited.style.color)
-            .changed();
+        let mut color = edited.style.color32();
+        if ui.color_edit_button_srgba(&mut color).changed() {
+            edited.style.set_color32(color);
+            actions.edited = true;
+        }
         // Capability-driven, like the fill slider below: a tool with no
         // stroke has no line width, and the repo's rule is that an
         // unsupported property is *absent*, not present and inert. Caught by
