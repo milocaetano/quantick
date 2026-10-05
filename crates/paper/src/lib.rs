@@ -4,7 +4,11 @@
 //! protects, sizes and journals ([`account`]), the risk-per-trade policy it
 //! sizes with ([`risk_sizing`]), the exit ladders a trader keeps
 //! ([`order_strategies`]), and the report numbers read back from the journal
-//! it writes ([`report`]), on the civil-date law of `quantick-civil`.
+//! it writes ([`report`]), on the civil-date law of `quantick-civil`. In
+//! front of the account sits the ticket's deciding half ([`desk`]): what the
+//! typed boxes say, how far the ruler is wound, what a held key aims and
+//! what a press on the chart asks for, as a functional core over plain
+//! values that the chart's host paints and carries out.
 //!
 //! `CLAUDE.md` promises one engine and three consumers. For bars that is the
 //! aggregator; for paper trading it is this crate. The chart drives the

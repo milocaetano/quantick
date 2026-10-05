@@ -52,5 +52,5 @@
 # and the chart read names the rule's inferred step and the prints it holds
 # or found off it. The rule, the step it reads off its own prints and the
 # query that reads `50R` live in `quantick-engine`.
-!budget 104473
-crates/app 104473
+!budget 102847
+crates/app 102847

@@ -11,9 +11,8 @@
 # Recorded at main bcfb5f19 when the guard landed. `OrderflowHealthSnapshot`
 # was private in `app` then, and invisible to the report's old `pub struct`-only
 # rule.
-!budget 361
+!budget 330
 app::ChartPane 35
-app::PaperTrading 31
 app::Tab 67
 app::ToolRail 32
 # Moved, not grown: #542 took `OrderflowHealthSnapshot` from `app` into
