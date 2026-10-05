@@ -151,6 +151,7 @@ fn session(recorded: &Baseline) -> Baseline {
             .cloned()
             .collect(),
         budget: recorded.budget.clone(),
+        raise_files: recorded.raise_files.clone(),
     }
 }
 
@@ -162,8 +163,9 @@ pub const REMEDY: &str = "A context file over its ceiling is a cost every sessio
                           references/ file beside the skill for detail that only some runs need. \
                           A skill's references/ are read on demand, so a dimension or a step that \
                           most reviews waive costs nothing until it is in scope. Raising a \
-                          ceiling on purpose is still allowed: change the number in \
-                          crates/guards/context-baseline.txt and say why in a comment. A file \
+                          ceiling on purpose is still allowed: write a new file in \
+                          crates/guards/context-baseline.d/ named for the branch, `<path> +N` \
+                          with a comment saying why. A file \
                           that shrank needs no argument — `cargo run -p quantick-guards -- \
                           --tighten` writes the new number.";
 
@@ -468,7 +470,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     // where a raise is actually written, and a hook that saw every skill edit
     // while missing the one edit that spends the budget would report the
     // symptom and never the act.
-    if relative == BASELINE_FILE {
+    if POLICY.owns(relative) {
         return match POLICY.baseline(root) {
             // The budget covers files with no entry, so answering it needs the
             // scan. It is fifteen `stat` calls over known paths, not a walk
