@@ -16,10 +16,16 @@ mod risk_tests;
 
 // The items the split gave owners; `super::*` still carries the ticket
 // itself, the module's constants and the account's vocabulary.
-use super::cmd::{cmd_preview_layout, resolve_cmd_kind};
-use super::paint_ctx::{PaintCtx, bracket_handle_rect, dodged_chip_y, handles_visible};
+use super::paint_ctx::{PaintCtx, bracket_handle_rect, cmd_preview_layout, handles_visible, pos};
 use super::*;
+// The desk's vocabulary and geometry, which the tests below arrange and
+// measure against; the rules themselves are tested in `quantick_paper`.
 use crate::timezone::TzOffset;
+use quantick_paper::desk::PaperDrag;
+use quantick_paper::desk::cmd::CMD_LABEL_CURSOR_GAP_PX;
+use quantick_paper::desk::geometry::{TAG_BUTTON_PX, TAG_GAP_PX};
+use quantick_paper::order_strategies::NEW_RUNG_TICKS;
+use quantick_sim::{BracketTarget, EntryKind};
 // Journalling tests read back the folders the writer created; the
 // helper that lists them lives with the rest of the shared chrome.
 use crate::paper_chrome::list_symbol_folders;
@@ -72,8 +78,8 @@ fn utc_dates_format_from_the_same_civil_math() {
 #[test]
 fn market_offsets_become_a_bracket_around_the_reference() {
     let mut paper = PaperTrading::new();
-    paper.stop_offset_text = "5".to_owned();
-    paper.profit_offset_text = "10".to_owned();
+    paper.desk.ticket.stop_offset_text = "5".to_owned();
+    paper.desk.ticket.profit_offset_text = "10".to_owned();
     let bracket = paper
         .parse_bracket(Side::Buy, Decimal::from(100))
         .expect("both parse");
@@ -89,7 +95,7 @@ fn market_offsets_become_a_bracket_around_the_reference() {
 #[test]
 fn a_bad_offset_toasts_and_blocks_the_order() {
     let mut paper = PaperTrading::new();
-    paper.stop_offset_text = "abc".to_owned();
+    paper.desk.ticket.stop_offset_text = "abc".to_owned();
     assert!(paper.parse_bracket(Side::Buy, Decimal::from(100)).is_none());
     assert!(
         paper.account.peek_toast().is_some(),
@@ -128,7 +134,7 @@ fn dragging_a_working_orders_handle_arms_the_position_it_opens() {
     // Press the handle, drag down to 90, release.
     paper.handle_chart_input(&frame_at(chart, &scale, handle.center(), true, true, false));
     assert_eq!(
-        paper.drag,
+        paper.desk.gesture.drag,
         PaperDrag::CreateLeg {
             owner: BracketTarget::Order(id),
             leg: Leg::StopLoss,
@@ -207,8 +213,8 @@ fn a_pane_without_the_pointer_paints_no_bracket_handles() {
 fn a_working_orders_legs_are_draggable_and_clearable() {
     let mut paper = PaperTrading::new();
     paper.account.venue_mut().seed(&print(0, 100));
-    paper.stop_offset_text = "5".to_owned();
-    paper.profit_offset_text = "15".to_owned();
+    paper.desk.ticket.stop_offset_text = "5".to_owned();
+    paper.desk.ticket.profit_offset_text = "15".to_owned();
     assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
     let id = paper.working_orders()[0].id;
     assert_eq!(
@@ -286,106 +292,6 @@ fn a_working_orders_leg_is_judged_against_the_order_not_the_market() {
     );
 }
 
-/// The stated kind wins where both are conceivable to a trader but only
-/// one can rest — which is every price except the mark.
-///
-/// The pairing to read here is the second and third assertion: at 95,
-/// with the market at 100, `Auto` yields a limit. Ask for a stop at that
-/// same price and the aim stands down instead of handing you the limit.
-/// That is the whole feature: the click that lands is the order you came
-/// to place, or no click at all.
-#[test]
-fn a_stated_entry_kind_is_honoured_or_the_aim_stands_down() {
-    let mark = Decimal::from(100);
-    let below = Decimal::from(95);
-    let above = Decimal::from(105);
-
-    // Auto reads the market, exactly as it always has.
-    assert_eq!(
-        resolve_cmd_kind(CmdEntryKind::Auto, Side::Buy, below, mark),
-        Some(EntryKind::Limit),
-        "a buy below the market waits at a limit"
-    );
-    assert_eq!(
-        resolve_cmd_kind(CmdEntryKind::Auto, Side::Buy, above, mark),
-        Some(EntryKind::Stop),
-        "and above it stops in"
-    );
-
-    // A stated kind takes the price where it is valid...
-    assert_eq!(
-        resolve_cmd_kind(CmdEntryKind::Limit, Side::Buy, below, mark),
-        Some(EntryKind::Limit)
-    );
-    assert_eq!(
-        resolve_cmd_kind(CmdEntryKind::Stop, Side::Buy, above, mark),
-        Some(EntryKind::Stop)
-    );
-
-    // ...and stands the aim down where it is not, rather than silently
-    // placing the other kind. A trader who came to buy a pullback must
-    // never be handed a breakout stop.
-    assert_eq!(
-        resolve_cmd_kind(CmdEntryKind::Stop, Side::Buy, below, mark),
-        None,
-        "a buy stop cannot arm below the market, so nothing is offered"
-    );
-    assert_eq!(
-        resolve_cmd_kind(CmdEntryKind::Limit, Side::Buy, above, mark),
-        None,
-        "and a buy limit above it would fill at once"
-    );
-
-    // A sell mirrors, on every choice.
-    assert_eq!(
-        resolve_cmd_kind(CmdEntryKind::Limit, Side::Sell, above, mark),
-        Some(EntryKind::Limit)
-    );
-    assert_eq!(
-        resolve_cmd_kind(CmdEntryKind::Stop, Side::Sell, below, mark),
-        Some(EntryKind::Stop)
-    );
-    assert_eq!(
-        resolve_cmd_kind(CmdEntryKind::Limit, Side::Sell, below, mark),
-        None
-    );
-
-    // On the mark nothing rests, whatever was asked for: a resting order
-    // there fills on the next print, which is a market order wearing the
-    // wrong name.
-    for choice in CmdEntryKind::ALL {
-        assert_eq!(
-            resolve_cmd_kind(choice, Side::Buy, mark, mark),
-            None,
-            "{choice:?} rests nothing on the mark"
-        );
-    }
-}
-
-/// The choice survives a restart, and an unknown token in a
-/// hand-edited sidecar falls back rather than refusing to open.
-#[test]
-fn the_entry_kind_choice_is_remembered_and_unknown_tokens_fall_back() {
-    let state = crate::paper_state::PaperState {
-        cmd_entry_kind: Some("stop".to_owned()),
-        ..Default::default()
-    };
-    assert_eq!(
-        CmdTradingSettings::from_state(&state).kind,
-        CmdEntryKind::Stop
-    );
-
-    let state = crate::paper_state::PaperState {
-        cmd_entry_kind: Some("teleport".to_owned()),
-        ..Default::default()
-    };
-    assert_eq!(
-        CmdTradingSettings::from_state(&state).kind,
-        CmdEntryKind::Auto,
-        "a token this build does not know is the default, not a crash"
-    );
-}
-
 /// The aim itself obeys the choice: same pointer, same market, one
 /// preview and one silence.
 #[test]
@@ -400,18 +306,18 @@ fn the_aim_obeys_the_stated_kind() {
     // y 250 is price 95 — below the market, where a buy limit rests.
     let aim = egui::pos2(400.0, 250.0);
 
-    paper.account.cmd_trading.kind = CmdEntryKind::Auto;
+    paper.desk.cmd_trading.kind = CmdEntryKind::Auto;
     paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, false));
     assert_eq!(
-        paper.cmd_preview.map(|preview| preview.kind),
+        paper.desk.gesture.cmd_preview.map(|preview| preview.kind),
         Some(EntryKind::Limit),
         "auto offers the kind that can rest there"
     );
 
-    paper.account.cmd_trading.kind = CmdEntryKind::Stop;
+    paper.desk.cmd_trading.kind = CmdEntryKind::Stop;
     paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, false));
     assert!(
-        paper.cmd_preview.is_none(),
+        paper.desk.gesture.cmd_preview.is_none(),
         "a trader who asked for a stop is shown no limit"
     );
 
@@ -452,13 +358,18 @@ fn the_strategys_ladder_is_both_projected_and_placed() {
     paper
         .account_mut()
         .set_order_strategies(vec![halves()], Some("halves"));
-    paper.qty_text = "2".to_owned();
+    paper.desk.ticket.qty_text = "2".to_owned();
     let (chart, scale) = chart_and_scale(80.0, 120.0);
     // y = 250 is 95: below the mark, so a buy rests as a limit there.
     let aim = egui::pos2(400.0, 250.0);
 
     paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
-    let projected = paper.cmd_preview.expect("the aim is up").bracket;
+    let projected = paper
+        .desk
+        .gesture
+        .cmd_preview
+        .expect("the aim is up")
+        .bracket;
     let parts: Vec<_> = projected.parts().copied().collect();
     assert_eq!(parts.len(), 2, "both rungs are projected: {parts:?}");
     assert_eq!(parts[0].quantity, Some(Decimal::ONE));
@@ -493,14 +404,21 @@ fn the_ruler_works_with_a_strategy_armed_and_yields_when_it_is_put_away() {
     paper
         .account_mut()
         .set_order_strategies(vec![halves()], Some("halves"));
-    paper.qty_text = "2".to_owned();
+    paper.desk.ticket.qty_text = "2".to_owned();
     let (chart, scale) = chart_and_scale(80.0, 120.0);
     let aim = egui::pos2(400.0, 250.0);
 
     // With the ruler at zero the armed ladder is what the aim projects.
     paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
     assert_eq!(
-        paper.cmd_preview.expect("aim up").bracket.parts().count(),
+        paper
+            .desk
+            .gesture
+            .cmd_preview
+            .expect("aim up")
+            .bracket
+            .parts()
+            .count(),
         2,
         "the ladder projects while the ruler is put away"
     );
@@ -510,8 +428,8 @@ fn the_ruler_works_with_a_strategy_armed_and_yields_when_it_is_put_away() {
         paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
     }
     assert!(paper.consumed_scroll(), "the wheel belonged to the ruler");
-    assert_eq!(paper.ruler_notches, 3);
-    let preview = paper.cmd_preview.expect("aim up");
+    assert_eq!(paper.desk.ruler.notches, 3);
+    let preview = paper.desk.gesture.cmd_preview.expect("aim up");
     assert_eq!(
         preview.bracket.stop_loss(),
         Some(Decimal::from(92)),
@@ -524,9 +442,16 @@ fn the_ruler_works_with_a_strategy_armed_and_yields_when_it_is_put_away() {
     for _ in 0..3 {
         paper.handle_chart_input(&ruler_frame(chart, &scale, aim, -40.0));
     }
-    assert_eq!(paper.ruler_notches, 0);
+    assert_eq!(paper.desk.ruler.notches, 0);
     assert_eq!(
-        paper.cmd_preview.expect("aim up").bracket.parts().count(),
+        paper
+            .desk
+            .gesture
+            .cmd_preview
+            .expect("aim up")
+            .bracket
+            .parts()
+            .count(),
         2,
         "the armed ladder is back"
     );
@@ -564,7 +489,7 @@ fn setting_the_ruler_by_name_lands_where_the_wheel_would() {
         by_wheel.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
     }
 
-    assert_eq!(by_name.ruler_notches, by_wheel.ruler_notches);
+    assert_eq!(by_name.desk.ruler.notches, by_wheel.desk.ruler.notches);
     // And the bound is the same bound: a caller cannot reach past what
     // the wheel itself clamps to.
     assert_eq!(by_name.set_ruler_ticks(u32::MAX), RULER_MAX_NOTCHES);
@@ -582,7 +507,7 @@ fn the_market_buttons_honour_the_selected_strategy() {
     paper
         .account_mut()
         .set_order_strategies(vec![halves()], Some("halves"));
-    paper.qty_text = "2".to_owned();
+    paper.desk.ticket.qty_text = "2".to_owned();
 
     paper.market(Side::Buy);
     paper.on_trade(&print(1, 100));
@@ -655,7 +580,7 @@ fn a_laddered_position_reads_as_protected_and_offers_no_handle() {
     paper
         .account_mut()
         .set_order_strategies(vec![halves()], Some("halves"));
-    paper.qty_text = "2".to_owned();
+    paper.desk.ticket.qty_text = "2".to_owned();
     paper.market(Side::Buy);
     paper.on_trade(&print(1, 100));
 
@@ -697,7 +622,7 @@ fn a_rung_of_a_resting_order_moves_and_leaves_the_strategy_alone() {
     paper
         .account_mut()
         .set_order_strategies(vec![halves()], Some("halves"));
-    paper.qty_text = "2".to_owned();
+    paper.desk.ticket.qty_text = "2".to_owned();
     let (chart, scale) = chart_and_scale(80.0, 120.0);
     // y = 250 is 95: below the mark, so a buy rests as a limit there.
     let aim = egui::pos2(400.0, 250.0);
@@ -810,7 +735,7 @@ fn an_unusable_strategy_is_named_in_the_ticket_not_left_silent() {
         .set_order_strategies(vec![broken], Some("halves"));
     let (chart, scale) = chart_and_scale(80.0, 120.0);
     paper.handle_chart_input(&ruler_frame(chart, &scale, egui::pos2(400.0, 250.0), 0.0));
-    let preview = paper.cmd_preview.expect("the aim is still up");
+    let preview = paper.desk.gesture.cmd_preview.expect("the aim is still up");
     assert!(
         preview.bracket.is_empty(),
         "an unusable ladder projects nothing - which is why it must be named"
@@ -827,12 +752,12 @@ fn repro_the_aim_projects_a_ladder_at_quantity_one() {
         .account_mut()
         .set_order_strategies(vec![halves()], Some("halves"));
     // qty_text is left at its default.
-    assert_eq!(paper.qty_text, "1");
+    assert_eq!(paper.desk.ticket.qty_text, "1");
     let (chart, scale) = chart_and_scale(80.0, 120.0);
     let aim = egui::pos2(400.0, 250.0);
     paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
 
-    let preview = paper.cmd_preview.expect("the aim is up");
+    let preview = paper.desk.gesture.cmd_preview.expect("the aim is up");
     let parts: Vec<_> = preview.bracket.parts().copied().collect();
     println!("quantity one -> parts: {parts:?}");
     assert!(
@@ -858,15 +783,18 @@ fn the_first_roll_moves_the_ruler_whatever_the_wheel_reports() {
 
         paper.handle_chart_input(&ruler_frame(chart, &scale, aim, notch));
         assert_eq!(
-            paper.ruler_notches, 1,
+            paper.desk.ruler.notches, 1,
             "one notch of {notch} px is one tick"
         );
 
         paper.handle_chart_input(&ruler_frame(chart, &scale, aim, notch * 3.0));
-        assert_eq!(paper.ruler_notches, 4, "three more notches at {notch} px");
+        assert_eq!(
+            paper.desk.ruler.notches, 4,
+            "three more notches at {notch} px"
+        );
 
         paper.handle_chart_input(&ruler_frame(chart, &scale, aim, -notch * 2.0));
-        assert_eq!(paper.ruler_notches, 2, "and it walks back");
+        assert_eq!(paper.desk.ruler.notches, 2, "and it walks back");
     }
 }
 
@@ -879,19 +807,16 @@ fn escape_clears_the_ruler_but_only_after_an_armed_placement() {
     paper.seed(&print(0, 100));
     let (chart, scale) = chart_and_scale(80.0, 120.0);
     paper.handle_chart_input(&ruler_frame(chart, &scale, egui::pos2(400.0, 250.0), 40.0));
-    assert_eq!(paper.ruler_notches, 1, "the ruler stands");
-    paper.account.armed = Some(ArmedPlacement {
+    assert_eq!(paper.desk.ruler.notches, 1, "the ruler stands");
+    paper.desk.armed = Some(ArmedPlacement {
         side: Side::Buy,
         kind: EntryKind::Limit,
     });
 
     assert!(paper.cancel_interaction(), "the first press has work to do");
-    assert!(
-        paper.account.armed.is_none(),
-        "and it disarmed the placement"
-    );
+    assert!(paper.desk.armed.is_none(), "and it disarmed the placement");
     assert_eq!(
-        paper.ruler_notches, 1,
+        paper.desk.ruler.notches, 1,
         "the distance survives - it was not what the trader was cancelling"
     );
 
@@ -899,7 +824,7 @@ fn escape_clears_the_ruler_but_only_after_an_armed_placement() {
         paper.cancel_interaction(),
         "the second press reaches the ruler"
     );
-    assert_eq!(paper.ruler_notches, 0);
+    assert_eq!(paper.desk.ruler.notches, 0);
     assert!(
         !paper.cancel_interaction(),
         "and then there is nothing left"
@@ -914,9 +839,9 @@ fn escape_clears_the_ruler() {
     paper.seed(&print(0, 100));
     let (chart, scale) = chart_and_scale(80.0, 120.0);
     paper.handle_chart_input(&ruler_frame(chart, &scale, egui::pos2(400.0, 250.0), 200.0));
-    assert!(paper.ruler_notches > 0, "the ruler is standing");
+    assert!(paper.desk.ruler.notches > 0, "the ruler is standing");
     assert!(paper.cancel_interaction(), "escape had something to cancel");
-    assert_eq!(paper.ruler_notches, 0, "and it put the ruler away");
+    assert_eq!(paper.desk.ruler.notches, 0, "and it put the ruler away");
 }
 
 /// The gesture the ruler is made of is the one Windows reports sideways.
@@ -937,8 +862,8 @@ fn the_ruler_steps_on_the_travel_the_pane_hands_it() {
     for _ in 0..3 {
         paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
     }
-    assert_eq!(paper.ruler_notches, 3);
-    let preview = paper.cmd_preview.expect("the aim is up");
+    assert_eq!(paper.desk.ruler.notches, 3);
+    let preview = paper.desk.gesture.cmd_preview.expect("the aim is up");
     assert_eq!(preview.bracket.stop_loss(), Some(Decimal::from(92)));
     assert_eq!(preview.bracket.take_profit(), Some(Decimal::from(98)));
 }
@@ -958,9 +883,15 @@ fn rolling_back_to_zero_leaves_no_stop_and_no_target() {
     for _ in 0..4 {
         paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
     }
-    assert_eq!(paper.ruler_notches, 4);
+    assert_eq!(paper.desk.ruler.notches, 4);
     assert!(
-        !paper.cmd_preview.expect("aim up").bracket.is_empty(),
+        !paper
+            .desk
+            .gesture
+            .cmd_preview
+            .expect("aim up")
+            .bracket
+            .is_empty(),
         "the ruler is drawing a pair"
     );
 
@@ -968,9 +899,18 @@ fn rolling_back_to_zero_leaves_no_stop_and_no_target() {
     for _ in 0..5 {
         paper.handle_chart_input(&ruler_frame(chart, &scale, aim, -40.0));
     }
-    assert_eq!(paper.ruler_notches, 0, "it reaches zero and stops there");
+    assert_eq!(
+        paper.desk.ruler.notches, 0,
+        "it reaches zero and stops there"
+    );
     assert!(
-        paper.cmd_preview.expect("aim up").bracket.is_empty(),
+        paper
+            .desk
+            .gesture
+            .cmd_preview
+            .expect("aim up")
+            .bracket
+            .is_empty(),
         "and nothing is left on the chart to place"
     );
 
@@ -981,7 +921,13 @@ fn rolling_back_to_zero_leaves_no_stop_and_no_target() {
     assert!(paper.cancel_interaction());
     paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
     assert!(
-        paper.cmd_preview.expect("aim up").bracket.is_empty(),
+        paper
+            .desk
+            .gesture
+            .cmd_preview
+            .expect("aim up")
+            .bracket
+            .is_empty(),
         "escape leaves the aim as bare as rolling back does"
     );
 }
@@ -993,7 +939,7 @@ fn rolling_back_to_zero_leaves_no_stop_and_no_target() {
 fn the_strategy_combo_changes_what_the_aim_draws() {
     let mut paper = PaperTrading::new();
     paper.seed(&print(0, 100));
-    paper.qty_text = "2".to_owned();
+    paper.desk.ticket.qty_text = "2".to_owned();
     let (chart, scale) = chart_and_scale(80.0, 120.0);
     let aim = egui::pos2(400.0, 250.0);
 
@@ -1003,7 +949,13 @@ fn the_strategy_combo_changes_what_the_aim_draws() {
         .set_order_strategies(vec![halves()], None);
     paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
     assert!(
-        paper.cmd_preview.expect("aim up").bracket.is_empty(),
+        paper
+            .desk
+            .gesture
+            .cmd_preview
+            .expect("aim up")
+            .bracket
+            .is_empty(),
         "with no strategy the aim is bare until the wheel is rolled"
     );
 
@@ -1013,7 +965,14 @@ fn the_strategy_combo_changes_what_the_aim_draws() {
         .set_order_strategies(vec![halves()], Some("halves"));
     paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
     assert_eq!(
-        paper.cmd_preview.expect("aim up").bracket.parts().count(),
+        paper
+            .desk
+            .gesture
+            .cmd_preview
+            .expect("aim up")
+            .bracket
+            .parts()
+            .count(),
         2,
         "selecting a strategy puts its rungs on the aim"
     );
@@ -1024,7 +983,13 @@ fn the_strategy_combo_changes_what_the_aim_draws() {
         .set_order_strategies(vec![halves()], None);
     paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
     assert!(
-        paper.cmd_preview.expect("aim up").bracket.is_empty(),
+        paper
+            .desk
+            .gesture
+            .cmd_preview
+            .expect("aim up")
+            .bracket
+            .is_empty(),
         "and choosing none takes it away"
     );
 }
@@ -1100,11 +1065,11 @@ fn a_symbol_switch_forgets_the_ruler_and_the_tick() {
     });
     let (chart, scale) = chart_and_scale(77_000.0, 79_000.0);
     paper.handle_chart_input(&ruler_frame(chart, &scale, egui::pos2(400.0, 250.0), 40.0));
-    assert!(paper.ruler_notches > 0);
+    assert!(paper.desk.ruler.notches > 0);
     assert_eq!(paper.account.tick(), Decimal::new(1, 2));
 
     paper.set_symbol("WIN$N");
-    assert_eq!(paper.ruler_notches, 0, "the distance does not travel");
+    assert_eq!(paper.desk.ruler.notches, 0, "the distance does not travel");
     // The tick falls back to the coarsest until the new tape prints:
     // erring coarse means a wider step, never a phantom precision the
     // new market has not shown.
@@ -1131,14 +1096,14 @@ fn a_symbol_switch_forgets_the_ruler_and_the_tick() {
 #[test]
 fn the_first_symbol_of_a_session_keeps_a_standing_ruler() {
     let mut paper = PaperTrading::new();
-    paper.ruler_notches = 6;
+    paper.desk.ruler.notches = 6;
     paper.set_symbol("BTCUSDT");
     assert_eq!(
-        paper.ruler_notches, 6,
+        paper.desk.ruler.notches, 6,
         "arriving at the opening instrument is not a switch"
     );
     paper.set_symbol("WIN$N");
-    assert_eq!(paper.ruler_notches, 0, "leaving one still forgets");
+    assert_eq!(paper.desk.ruler.notches, 0, "leaving one still forgets");
 }
 
 /// Pressing the wheel puts the ruler away, and only while an aim is up.
@@ -1151,17 +1116,23 @@ fn pressing_the_wheel_puts_the_ruler_away() {
     for _ in 0..3 {
         paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 40.0));
     }
-    assert_eq!(paper.ruler_notches, 3);
+    assert_eq!(paper.desk.ruler.notches, 3);
 
     let mut press = ruler_frame(chart, &scale, aim, 0.0);
     press.middle_pressed = true;
     paper.handle_chart_input(&press);
     assert_eq!(
-        paper.ruler_notches, 0,
+        paper.desk.ruler.notches, 0,
         "the wheel that walked it out puts it away"
     );
     assert!(
-        paper.cmd_preview.expect("aim up").bracket.is_empty(),
+        paper
+            .desk
+            .gesture
+            .cmd_preview
+            .expect("aim up")
+            .bracket
+            .is_empty(),
         "and the aim is bare again"
     );
 
@@ -1173,7 +1144,7 @@ fn pressing_the_wheel_puts_the_ruler_away() {
     bare.modifiers = egui::Modifiers::default();
     bare.middle_pressed = true;
     paper.handle_chart_input(&bare);
-    assert_eq!(paper.ruler_notches, 2, "no aim, no claim on the press");
+    assert_eq!(paper.desk.ruler.notches, 2, "no aim, no claim on the press");
 }
 
 /// A frame with the aim's modifier held and wheel travel to spend.
@@ -1212,7 +1183,7 @@ fn the_wheel_walks_the_projected_bracket_out_symmetrically() {
     let aim = egui::pos2(400.0, 250.0);
 
     paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 0.0));
-    let preview = paper.cmd_preview.expect("the aim is up");
+    let preview = paper.desk.gesture.cmd_preview.expect("the aim is up");
     assert_eq!(preview.kind, EntryKind::Limit);
     assert_eq!(preview.ruler_ticks, 0, "the ruler starts off");
     assert_eq!(preview.bracket.stop_loss(), None, "and projects nothing");
@@ -1222,8 +1193,8 @@ fn the_wheel_walks_the_projected_bracket_out_symmetrically() {
         paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 50.0));
     }
     assert!(paper.consumed_scroll(), "the wheel belonged to the ruler");
-    assert_eq!(paper.ruler_notches, 3);
-    let preview = paper.cmd_preview.expect("the aim is still up");
+    assert_eq!(paper.desk.ruler.notches, 3);
+    let preview = paper.desk.gesture.cmd_preview.expect("the aim is still up");
     assert_eq!(
         preview.bracket.stop_loss(),
         Some(Decimal::from(92)),
@@ -1237,8 +1208,8 @@ fn the_wheel_walks_the_projected_bracket_out_symmetrically() {
 
     // One notch back down.
     paper.handle_chart_input(&ruler_frame(chart, &scale, aim, -50.0));
-    assert_eq!(paper.ruler_notches, 2);
-    let preview = paper.cmd_preview.expect("still aiming");
+    assert_eq!(paper.desk.ruler.notches, 2);
+    let preview = paper.desk.gesture.cmd_preview.expect("still aiming");
     assert_eq!(preview.bracket.stop_loss(), Some(Decimal::from(93)));
     assert_eq!(preview.bracket.take_profit(), Some(Decimal::from(97)));
 }
@@ -1258,13 +1229,13 @@ fn one_unreadable_offset_stands_the_whole_bracket_down() {
     paper.seed(&print(0, 100));
     let reference = Decimal::from(100);
 
-    paper.stop_offset_text = "2".to_owned();
-    paper.profit_offset_text = "5".to_owned();
+    paper.desk.ticket.stop_offset_text = "2".to_owned();
+    paper.desk.ticket.profit_offset_text = "5".to_owned();
     let both = paper.armed_bracket(Side::Buy, reference, Decimal::ONE);
     assert_eq!(both.stop_loss(), Some(Decimal::from(98)));
     assert_eq!(both.take_profit(), Some(Decimal::from(105)));
 
-    paper.stop_offset_text = "abc".to_owned();
+    paper.desk.ticket.stop_offset_text = "abc".to_owned();
     let spoiled = paper.armed_bracket(Side::Buy, reference, Decimal::ONE);
     assert_eq!(
         spoiled.stop_loss(),
@@ -1298,7 +1269,7 @@ fn the_ruler_mirrors_for_a_sell() {
         paper.handle_chart_input(&frame);
     }
 
-    let preview = paper.cmd_preview.expect("the sell aim is up");
+    let preview = paper.desk.gesture.cmd_preview.expect("the sell aim is up");
     assert_eq!(preview.side, Side::Sell);
     assert_eq!(
         preview.bracket.stop_loss(),
@@ -1321,9 +1292,12 @@ fn without_an_aim_the_wheel_is_left_to_the_chart() {
     let mut frame = ruler_frame(chart, &scale, egui::pos2(400.0, 250.0), 150.0);
     frame.modifiers = egui::Modifiers::default();
     paper.handle_chart_input(&frame);
-    assert!(paper.cmd_preview.is_none(), "no modifier, no aim");
+    assert!(
+        paper.desk.gesture.cmd_preview.is_none(),
+        "no modifier, no aim"
+    );
     assert!(!paper.consumed_scroll(), "so the wheel is not the ruler's");
-    assert_eq!(paper.ruler_notches, 0);
+    assert_eq!(paper.desk.ruler.notches, 0);
 }
 
 /// What the ruler shows is what the click places.
@@ -1336,7 +1310,7 @@ fn the_order_the_click_places_carries_the_rulers_bracket() {
     for _ in 0..5 {
         paper.handle_chart_input(&ruler_frame(chart, &scale, aim, 50.0));
     }
-    assert_eq!(paper.ruler_notches, 5);
+    assert_eq!(paper.desk.ruler.notches, 5);
 
     let mut press = ruler_frame(chart, &scale, aim, 0.0);
     press.primary_pressed = true;
@@ -1429,15 +1403,15 @@ fn cmd_frame<'a>(
 fn escape_cancels_the_armed_placement_then_the_grabbed_line() {
     let mut paper = PaperTrading::new();
     paper.seed(&print(0, 100));
-    paper.account.armed = Some(ArmedPlacement {
+    paper.desk.armed = Some(ArmedPlacement {
         side: Side::Buy,
         kind: EntryKind::Limit,
     });
     assert!(paper.cancel_interaction(), "the armed placement dies first");
-    assert!(paper.account.armed.is_none());
+    assert!(paper.desk.armed.is_none());
     assert!(!paper.cancel_interaction(), "nothing left to cancel");
 
-    paper.stop_offset_text = "10".to_owned();
+    paper.desk.ticket.stop_offset_text = "10".to_owned();
     paper.market(Side::Buy);
     paper.on_trade(&print(1, 100));
     let (chart, scale) = chart_and_scale(80.0, 120.0);
@@ -1461,7 +1435,7 @@ fn escape_cancels_the_armed_placement_then_the_grabbed_line() {
 fn an_armed_click_places_the_order_at_the_clicked_price_and_disarms() {
     let mut paper = PaperTrading::new();
     paper.seed(&print(0, 100));
-    paper.account.armed = Some(ArmedPlacement {
+    paper.desk.armed = Some(ArmedPlacement {
         side: Side::Buy,
         kind: EntryKind::Limit,
     });
@@ -1469,10 +1443,7 @@ fn an_armed_click_places_the_order_at_the_clicked_price_and_disarms() {
     // y = 300 sits at price 95 on this scale.
     let consumed = paper.handle_chart_input(&frame(chart, &scale, 300.0, true, true, false));
     assert!(consumed, "the armed click never reaches the chart pan");
-    assert!(
-        paper.account.armed.is_none(),
-        "a successful placement disarms"
-    );
+    assert!(paper.desk.armed.is_none(), "a successful placement disarms");
     assert_eq!(paper.account.venue().working_orders().len(), 1);
     assert_eq!(
         paper.account.venue().working_orders()[0].price,
@@ -1484,7 +1455,7 @@ fn an_armed_click_places_the_order_at_the_clicked_price_and_disarms() {
 fn a_rejected_armed_click_stays_armed_and_teaches() {
     let mut paper = PaperTrading::new();
     paper.seed(&print(0, 100));
-    paper.account.armed = Some(ArmedPlacement {
+    paper.desk.armed = Some(ArmedPlacement {
         side: Side::Buy,
         kind: EntryKind::Limit,
     });
@@ -1493,7 +1464,7 @@ fn a_rejected_armed_click_stays_armed_and_teaches() {
     let consumed = paper.handle_chart_input(&frame(chart, &scale, 100.0, true, true, false));
     assert!(consumed);
     assert!(
-        paper.account.armed.is_some(),
+        paper.desk.armed.is_some(),
         "the user clicks again after the toast"
     );
     assert!(paper.account.venue().working_orders().is_empty());
@@ -1510,7 +1481,7 @@ fn a_rejected_armed_click_stays_armed_and_teaches() {
 fn hover_cursors_announce_draggable_and_creatable_lines() {
     let mut paper = PaperTrading::new();
     paper.seed(&print(0, 100));
-    paper.stop_offset_text = "10".to_owned();
+    paper.desk.ticket.stop_offset_text = "10".to_owned();
     paper.market(Side::Buy);
     paper.on_trade(&print(1, 100));
     let (chart, scale) = chart_and_scale(80.0, 120.0);
@@ -1558,11 +1529,15 @@ fn the_cmd_gesture_previews_and_a_label_click_places_the_order() {
         shift,
         false,
     ));
-    let preview = paper.cmd_preview.expect("preview above the mark");
+    let preview = paper
+        .desk
+        .gesture
+        .cmd_preview
+        .expect("preview above the mark");
     assert_eq!((preview.side, preview.kind), (Side::Buy, EntryKind::Stop));
     assert_eq!(preview.price, Decimal::from(110));
     assert_eq!(
-        preview.pointer,
+        pos(preview.pointer),
         egui::pos2(400.0, 100.0),
         "the aim is the hand"
     );
@@ -1573,7 +1548,11 @@ fn the_cmd_gesture_previews_and_a_label_click_places_the_order() {
         shift,
         false,
     ));
-    let preview = paper.cmd_preview.expect("preview below the mark");
+    let preview = paper
+        .desk
+        .gesture
+        .cmd_preview
+        .expect("preview below the mark");
     assert_eq!((preview.side, preview.kind), (Side::Buy, EntryKind::Limit));
 
     // The sell key mirrors the table.
@@ -1584,7 +1563,7 @@ fn the_cmd_gesture_previews_and_a_label_click_places_the_order() {
         ctrl,
         false,
     ));
-    let preview = paper.cmd_preview.expect("sell above the mark");
+    let preview = paper.desk.gesture.cmd_preview.expect("sell above the mark");
     assert_eq!((preview.side, preview.kind), (Side::Sell, EntryKind::Limit));
 
     // Both keys is ambiguous, no key is no gesture.
@@ -1595,9 +1574,12 @@ fn the_cmd_gesture_previews_and_a_label_click_places_the_order() {
         both,
         false,
     ));
-    assert!(paper.cmd_preview.is_none(), "ambiguity shows nothing");
+    assert!(
+        paper.desk.gesture.cmd_preview.is_none(),
+        "ambiguity shows nothing"
+    );
     paper.handle_chart_input(&frame(chart, &scale, 100.0, false, false, false));
-    assert!(paper.cmd_preview.is_none(), "no key, no line");
+    assert!(paper.desk.gesture.cmd_preview.is_none(), "no key, no line");
 
     // The click places exactly what the preview said, wherever in the
     // plot it lands, through the same path as the right-click menu —
@@ -1633,7 +1615,10 @@ fn the_cmd_gesture_previews_and_a_label_click_places_the_order() {
         shift,
         false,
     ));
-    assert!(paper.cmd_preview.is_none(), "the toggle hides the gesture");
+    assert!(
+        paper.desk.gesture.cmd_preview.is_none(),
+        "the toggle hides the gesture"
+    );
 }
 
 /// Off-screen render proof (for environments where no window can
@@ -1655,7 +1640,10 @@ fn the_cmd_preview_paints_line_label_and_price_chip() {
         shift,
         false,
     ));
-    assert!(paper.cmd_preview.is_some(), "the held key builds a preview");
+    assert!(
+        paper.desk.gesture.cmd_preview.is_some(),
+        "the held key builds a preview"
+    );
 
     let ctx = egui::Context::default();
     let output = ctx.run(egui::RawInput::default(), |ctx| {
@@ -1684,109 +1672,6 @@ fn the_cmd_preview_paints_line_label_and_price_chip() {
     );
 }
 
-/// The aim label rides the pointer instead of parking at the right
-/// edge — the whole point of the change — while the dashed line still
-/// reaches the axis, so label and price chip stay one statement.
-#[test]
-fn the_cmd_label_follows_the_pointer_and_the_line_reaches_the_axis() {
-    let band = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
-    let mut previous: Option<f32> = None;
-    for x in [200.0_f32, 400.0, 600.0] {
-        let (start, end, label) = cmd_preview_layout(band, band.right(), egui::pos2(x, 250.0));
-        assert_eq!(end.x, 800.0, "the line always reaches the axis");
-        assert_eq!(start.x, x, "the line starts under the cursor");
-        assert_eq!(
-            label.right(),
-            x - CMD_LABEL_CURSOR_GAP_PX,
-            "the label rides a fixed gap off the pointer"
-        );
-        assert_eq!(label.width(), CMD_LABEL_WIDTH_PX);
-        assert_eq!(label.center().y, 250.0);
-        assert!(
-            !label.contains(egui::pos2(x, 250.0)),
-            "never under the cursor it belongs to"
-        );
-        if let Some(previous) = previous {
-            assert!(label.left() > previous, "moving right moves the label");
-        }
-        previous = Some(label.left());
-    }
-}
-
-/// The tape lane is not a wall. Its divider ends the *band* — where a
-/// press can still land — and the label stops there with it, but the
-/// line carries on to the axis, because a gap across the widest lane on
-/// the chart is exactly where a trader loses the order.
-#[test]
-fn the_aim_line_crosses_the_live_lane_to_the_axis() {
-    // A chart 1000 wide whose live tape lane opens at 700: the band the
-    // aim lays out against stops at the divider, the gutter does not.
-    let band = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(700.0, 400.0));
-    let axis_x = 1000.0;
-    let (start, end, label) = cmd_preview_layout(band, axis_x, egui::pos2(400.0, 250.0));
-    assert_eq!(
-        end.x, axis_x,
-        "the line spans the lane instead of stopping at its divider"
-    );
-    assert!(
-        end.x > band.right(),
-        "and it is the lane it crosses, not the plot it started in"
-    );
-    assert_eq!(start.x, 400.0, "it still starts under the cursor");
-    assert!(
-        label.right() <= band.right(),
-        "the label stays inside the band a press can reach: {label:?}"
-    );
-}
-
-/// A pane with no live lane hands the same x twice, and the line must
-/// not double back on itself.
-#[test]
-fn the_aim_line_ends_at_the_axis_with_no_lane_open() {
-    let band = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
-    let (_, end, _) = cmd_preview_layout(band, 800.0, egui::pos2(400.0, 250.0));
-    assert_eq!(end.x, 800.0, "band right and axis coincide");
-    // A gutter reported left of the plot (a pane mid-resize) must never
-    // shorten the line to a stub pointing the wrong way.
-    let (start, end, _) = cmd_preview_layout(band, 10.0, egui::pos2(400.0, 250.0));
-    assert!(end.x >= start.x, "never a line running backwards");
-}
-
-/// The two edges: near the left one the label flips to the pointer's
-/// right rather than leaving the band, and near the right one the line
-/// starts further left so there is still a line to read.
-#[test]
-fn the_cmd_layout_clamps_at_both_edges_of_the_band() {
-    let band = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 400.0));
-
-    let pointer = egui::pos2(20.0, 250.0);
-    let (_, _, label) = cmd_preview_layout(band, band.right(), pointer);
-    assert!(label.left() >= band.left(), "never off the left edge");
-    assert_eq!(
-        label.left(),
-        pointer.x + CMD_LABEL_CURSOR_GAP_PX,
-        "no room on the left, so it flips right"
-    );
-    assert!(!label.contains(pointer), "still clear of the cursor");
-
-    let pointer = egui::pos2(780.0, 250.0);
-    let (start, end, label) = cmd_preview_layout(band, band.right(), pointer);
-    assert!(label.right() <= band.right(), "never off the right edge");
-    assert_eq!(
-        end.x - start.x,
-        CMD_LINE_MIN_PX,
-        "close to the axis the line starts further left"
-    );
-    assert!(!label.contains(pointer), "still clear of the cursor");
-
-    // A band narrower than the label plus its gap cannot hold both; it
-    // parks at the left edge rather than running off-plot to the left.
-    let sliver = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 400.0));
-    let (start, _, label) = cmd_preview_layout(sliver, sliver.right(), egui::pos2(50.0, 250.0));
-    assert_eq!(label.left(), sliver.left(), "a sliver parks at its edge");
-    assert_eq!(start.x, sliver.left(), "and the line spans what there is");
-}
-
 /// Paint and press read one geometry: the label the layout hands the
 /// painter is the label the pointer that produced it was measured
 /// against (the overlay-controls rule), and the preview carries that
@@ -1802,9 +1687,13 @@ fn the_cmd_preview_carries_the_pointer_the_paint_lays_out_from() {
     let (chart, scale) = chart_and_scale(80.0, 120.0);
     let aim = egui::pos2(180.0, 300.0);
     paper.handle_chart_input(&cmd_frame(chart, &scale, aim, shift, false));
-    let preview = paper.cmd_preview.expect("the held key builds a preview");
-    assert_eq!(preview.pointer, aim, "the aim is the pointer, whole");
-    let (_, _, label) = cmd_preview_layout(chart, chart.right(), preview.pointer);
+    let preview = paper
+        .desk
+        .gesture
+        .cmd_preview
+        .expect("the held key builds a preview");
+    assert_eq!(pos(preview.pointer), aim, "the aim is the pointer, whole");
+    let (_, _, label) = cmd_preview_layout(chart, chart.right(), pos(preview.pointer));
     assert_eq!(
         label.right(),
         aim.x - CMD_LABEL_CURSOR_GAP_PX,
@@ -1844,7 +1733,10 @@ fn the_aim_yields_the_pixel_to_a_drawing_already_under_it() {
         !paper.handle_chart_input(&over_drawing),
         "the press belongs to the drawing"
     );
-    assert!(paper.cmd_preview.is_none(), "and nothing aims over it");
+    assert!(
+        paper.desk.gesture.cmd_preview.is_none(),
+        "and nothing aims over it"
+    );
     assert!(paper.working_orders().is_empty(), "so nothing was placed");
     assert_eq!(
         paper.hover_cursor(aim, chart, &scale),
@@ -1876,7 +1768,10 @@ fn the_aim_paints_only_in_the_band_it_was_aimed_in() {
         shift,
         false,
     ));
-    assert!(paper.cmd_preview.is_some(), "aimed on this band");
+    assert!(
+        paper.desk.gesture.cmd_preview.is_some(),
+        "aimed on this band"
+    );
 
     // The same simulator drawn against a narrower band — the other
     // pane of a split, whose right edge stops short of that x.
@@ -1901,47 +1796,6 @@ fn the_aim_paints_only_in_the_band_it_was_aimed_in() {
     );
 }
 
-/// The capture hook: a side, and optionally where along the band to
-/// park the hand the run does not have.
-#[test]
-fn the_cmd_preview_hook_parses_a_side_and_an_optional_x() {
-    assert_eq!(
-        CmdPreviewForce::parse("buy"),
-        Some(CmdPreviewForce {
-            side: Side::Buy,
-            x_fraction: None
-        })
-    );
-    assert_eq!(
-        CmdPreviewForce::parse("SELL@0.15"),
-        Some(CmdPreviewForce {
-            side: Side::Sell,
-            x_fraction: Some(0.15)
-        })
-    );
-    assert_eq!(
-        CmdPreviewForce::parse("buy@9"),
-        Some(CmdPreviewForce {
-            side: Side::Buy,
-            x_fraction: Some(1.0)
-        }),
-        "out of range clamps into the band"
-    );
-    for bad in [
-        "buy@left", "buy@nan", "buy@NaN", "buy@inf", "buy@", "buy@0,15",
-    ] {
-        assert_eq!(
-            CmdPreviewForce::parse(bad),
-            Some(CmdPreviewForce {
-                side: Side::Buy,
-                x_fraction: None
-            }),
-            "a bad fraction still paints, mid-band: {bad}"
-        );
-    }
-    assert_eq!(CmdPreviewForce::parse("hold"), None);
-}
-
 /// The parked x is what a capture run states, so it wins over a real
 /// pointer that in such a run is nobody's aim — and without it the
 /// hook keeps its old mid-band park.
@@ -1950,7 +1804,7 @@ fn the_forced_preview_aims_where_the_hook_says() {
     let mut paper = PaperTrading::new();
     paper.seed(&print(0, 100));
     let (chart, scale) = chart_and_scale(80.0, 120.0);
-    paper.cmd_preview_force = Some(CmdPreviewForce {
+    paper.desk.gesture.cmd_preview_force = Some(CmdPreviewForce {
         side: Side::Sell,
         x_fraction: Some(0.25),
     });
@@ -1961,12 +1815,16 @@ fn the_forced_preview_aims_where_the_hook_says() {
         egui::Modifiers::default(),
         false,
     ));
-    let preview = paper.cmd_preview.expect("the hook forces a preview");
+    let preview = paper
+        .desk
+        .gesture
+        .cmd_preview
+        .expect("the hook forces a preview");
     assert_eq!(preview.side, Side::Sell);
     assert_eq!(preview.pointer.x, 200.0, "a quarter into an 800px band");
     assert_eq!(preview.pointer.y, 100.0, "the real hand still sets price");
 
-    paper.cmd_preview_force = Some(CmdPreviewForce {
+    paper.desk.gesture.cmd_preview_force = Some(CmdPreviewForce {
         side: Side::Sell,
         x_fraction: None,
     });
@@ -1978,7 +1836,13 @@ fn the_forced_preview_aims_where_the_hook_says() {
         false,
     ));
     assert_eq!(
-        paper.cmd_preview.expect("still forced").pointer.x,
+        paper
+            .desk
+            .gesture
+            .cmd_preview
+            .expect("still forced")
+            .pointer
+            .x,
         700.0,
         "with no stated x the real pointer is left alone"
     );
@@ -2146,10 +2010,10 @@ fn a_cancel_offered_this_frame_survives_a_paint_with_no_pointer() {
 fn a_bracket_leg_tag_is_a_pill_until_the_pointer_reaches_it() {
     let mut paper = PaperTrading::new();
     // The capture hook forces every tag open; this test is about the resting pill.
-    paper.order_hover_force = false;
+    paper.desk.gesture.order_hover_force = false;
     paper.seed(&print(0, 100));
-    paper.stop_offset_text = "5".to_owned();
-    paper.profit_offset_text = "15".to_owned();
+    paper.desk.ticket.stop_offset_text = "5".to_owned();
+    paper.desk.ticket.profit_offset_text = "15".to_owned();
     // A buy limit at 95 (y 250): its stop at 90 (y 300), target at 110 (y 100).
     assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
     let id = paper.working_orders()[0].id.0;
@@ -2191,9 +2055,9 @@ fn a_bracket_leg_tag_is_a_pill_until_the_pointer_reaches_it() {
 #[test]
 fn a_position_leg_rests_as_the_leg_and_its_points() {
     let mut paper = PaperTrading::new();
-    paper.order_hover_force = false;
+    paper.desk.gesture.order_hover_force = false;
     paper.seed(&print(0, 100));
-    paper.stop_offset_text = "10".to_owned();
+    paper.desk.ticket.stop_offset_text = "10".to_owned();
     paper.market(Side::Buy);
     paper.on_trade(&print(1, 100));
     let (chart, scale) = chart_and_scale(80.0, 120.0);
@@ -2219,10 +2083,10 @@ fn a_position_leg_rests_as_the_leg_and_its_points() {
 #[test]
 fn a_leg_offers_its_clear_exactly_while_it_paints_one() {
     let mut paper = PaperTrading::new();
-    paper.order_hover_force = false;
+    paper.desk.gesture.order_hover_force = false;
     paper.seed(&print(0, 100));
-    paper.stop_offset_text = "5".to_owned();
-    paper.profit_offset_text = "24.5".to_owned();
+    paper.desk.ticket.stop_offset_text = "5".to_owned();
+    paper.desk.ticket.profit_offset_text = "24.5".to_owned();
     assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 95.0));
     let (chart, scale) = chart_and_scale(80.0, 120.0);
     let x = chart.right() - TAG_GAP_PX - TAG_BUTTON_PX / 2.0;
@@ -2287,7 +2151,10 @@ fn a_hidden_layer_paints_nothing_and_takes_no_press() {
         !paper.handle_chart_input(&hidden),
         "the press is the chart's"
     );
-    assert!(paper.cmd_preview.is_none(), "and nothing is aimed");
+    assert!(
+        paper.desk.gesture.cmd_preview.is_none(),
+        "and nothing is aimed"
+    );
     assert_eq!(
         paper.working_orders().len(),
         1,
@@ -2312,7 +2179,7 @@ fn the_aim_stands_down_over_paper_lines_controls_and_an_armed_ticket() {
     };
     let mut paper = PaperTrading::new();
     paper.seed(&print(0, 100));
-    paper.stop_offset_text = "10".to_owned();
+    paper.desk.ticket.stop_offset_text = "10".to_owned();
     paper.market(Side::Buy);
     paper.on_trade(&print(1, 100));
     let (chart, scale) = chart_and_scale(80.0, 120.0);
@@ -2320,7 +2187,10 @@ fn the_aim_stands_down_over_paper_lines_controls_and_an_armed_ticket() {
     // y 300 is the stop at 90 — a line a press would grab.
     let on_stop = egui::pos2(400.0, 300.0);
     paper.handle_chart_input(&cmd_frame(chart, &scale, on_stop, shift, false));
-    assert!(paper.cmd_preview.is_none(), "the stop line keeps its pixel");
+    assert!(
+        paper.desk.gesture.cmd_preview.is_none(),
+        "the stop line keeps its pixel"
+    );
     assert_eq!(
         paper.hover_cursor(on_stop, chart, &scale),
         Some(egui::CursorIcon::ResizeVertical),
@@ -2331,7 +2201,7 @@ fn the_aim_stands_down_over_paper_lines_controls_and_an_armed_ticket() {
         "the press is paper's"
     );
     assert_eq!(
-        paper.drag,
+        paper.desk.gesture.drag,
         PaperDrag::Leg {
             owner: BracketTarget::Position,
             leg: Leg::StopLoss,
@@ -2342,7 +2212,7 @@ fn the_aim_stands_down_over_paper_lines_controls_and_an_armed_ticket() {
     paper.cancel_interaction();
 
     // An armed placement is an intent already stated.
-    paper.account.armed = Some(ArmedPlacement {
+    paper.desk.armed = Some(ArmedPlacement {
         side: Side::Buy,
         kind: EntryKind::Limit,
     });
@@ -2354,7 +2224,7 @@ fn the_aim_stands_down_over_paper_lines_controls_and_an_armed_ticket() {
         false,
     ));
     assert!(
-        paper.cmd_preview.is_none(),
+        paper.desk.gesture.cmd_preview.is_none(),
         "the armed ticket keeps the click"
     );
     assert!(paper.handle_chart_input(&cmd_frame(
@@ -2365,7 +2235,7 @@ fn the_aim_stands_down_over_paper_lines_controls_and_an_armed_ticket() {
         true
     )));
     assert!(
-        paper.account.armed.is_none(),
+        paper.desk.armed.is_none(),
         "the armed placement fired and disarmed"
     );
     let orders = paper.working_orders();
@@ -2386,7 +2256,7 @@ fn a_forced_aim_paints_but_never_places() {
     let mut paper = PaperTrading::new();
     paper.seed(&print(0, 100));
     let (chart, scale) = chart_and_scale(80.0, 120.0);
-    paper.cmd_preview_force = Some(CmdPreviewForce {
+    paper.desk.gesture.cmd_preview_force = Some(CmdPreviewForce {
         side: Side::Buy,
         x_fraction: Some(0.5),
     });
@@ -2398,7 +2268,7 @@ fn a_forced_aim_paints_but_never_places() {
         egui::Modifiers::default(),
         true
     )));
-    assert!(paper.cmd_preview.is_some(), "it still paints");
+    assert!(paper.desk.gesture.cmd_preview.is_some(), "it still paints");
     assert!(paper.working_orders().is_empty(), "and never places");
     assert_eq!(
         paper.hover_cursor(aim, chart, &scale),
@@ -2417,8 +2287,8 @@ fn a_dragged_order_keeps_its_full_statement() {
     let (chart, scale) = chart_and_scale(80.0, 120.0);
     assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
     let id = paper.working_orders()[0].id;
-    paper.drag = PaperDrag::Order(id);
-    paper.drag_price = Some(88.0);
+    paper.desk.gesture.drag = PaperDrag::Order(id);
+    paper.desk.gesture.drag_price = Some(88.0);
     // The frame decides; the paint reads. A button-free frame leaves
     // the drag exactly where it was.
     paper.handle_chart_input(&cmd_frame(
@@ -2555,7 +2425,7 @@ fn the_order_hover_hook_opens_the_tag_with_no_pointer() {
         !layer_shapes(&paper, chart, &scale, None).contains(&format!("#{id}")),
         "no hand, no open tag"
     );
-    paper.order_hover_force = true;
+    paper.desk.gesture.order_hover_force = true;
     paper.handle_chart_input(&cmd_frame(
         chart,
         &scale,
@@ -2578,7 +2448,7 @@ fn hovering_the_dock_row_opens_the_chart_tag() {
     let (chart, scale) = chart_and_scale(80.0, 120.0);
     assert!(paper.place_resting(Side::Buy, EntryKind::Limit, 90.0));
     let id = paper.working_orders()[0].id;
-    paper.hovered_order = Some(id);
+    paper.desk.gesture.hovered_order = Some(id);
     // The dock draws before the canvas, so the frame that carries the
     // row's hover is the frame the chart reads.
     paper.handle_chart_input(&cmd_frame(
@@ -2600,17 +2470,9 @@ fn hovering_the_dock_row_opens_the_chart_tag() {
 /// Every tag, every ✕ hit-test and the aim's own layout run through
 /// this, so the panic would take a live session down.
 #[test]
-fn a_band_too_short_for_a_tag_centres_it_instead_of_panicking() {
-    // Shorter than a tag, and flat: the two cases that cross the bounds.
-    assert_eq!(clamp_tag_center(5.0, 0.0, 10.0), 5.0);
-    assert_eq!(clamp_tag_center(99.0, 40.0, 40.0), 40.0);
-    assert_eq!(clamp_tag_center(-99.0, 0.0, TAG_HEIGHT_PX), 10.0);
-    // And with room, it still clamps exactly as before.
-    assert_eq!(clamp_tag_center(0.0, 0.0, 400.0), 10.0);
-    assert_eq!(clamp_tag_center(400.0, 0.0, 400.0), 390.0);
-    assert_eq!(clamp_tag_center(200.0, 0.0, 400.0), 200.0);
-
-    // The paint and the press both survive it end to end.
+fn a_band_too_short_for_a_tag_survives_the_paint_and_the_press() {
+    // The clamp's own table is `quantick_paper::desk`'s; the paint and the
+    // press both survive it end to end.
     let mut paper = PaperTrading::new();
     paper.seed(&print(0, 100));
     let sliver = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(800.0, 12.0));
@@ -2630,32 +2492,10 @@ fn a_band_too_short_for_a_tag_centres_it_instead_of_panicking() {
 }
 
 #[test]
-fn cmd_modifier_tokens_round_trip_and_state_defaults_fill_gaps() {
-    for modifier in CmdModifier::ALL {
-        assert_eq!(CmdModifier::parse(modifier.as_str()), Some(modifier));
-    }
-    assert_eq!(CmdModifier::parse("hyper"), None);
-    let state = crate::paper_state::PaperState {
-        cmd_trading_enabled: Some(false),
-        cmd_buy_modifier: Some("alt".to_owned()),
-        cmd_sell_modifier: Some("hyper".to_owned()),
-        ..Default::default()
-    };
-    let settings = CmdTradingSettings::from_state(&state);
-    assert!(!settings.enabled);
-    assert_eq!(settings.buy, CmdModifier::Alt);
-    assert_eq!(
-        settings.sell,
-        CmdModifier::Ctrl,
-        "an unknown token falls back to the default"
-    );
-}
-
-#[test]
 fn dragging_the_stop_loss_reprices_it_on_release() {
     let mut paper = PaperTrading::new();
     paper.seed(&print(0, 100));
-    paper.stop_offset_text = "10".to_owned();
+    paper.desk.ticket.stop_offset_text = "10".to_owned();
     paper.market(Side::Buy);
     paper.on_trade(&print(1, 100));
     assert_eq!(
@@ -2717,8 +2557,8 @@ fn dragging_from_the_entry_line_creates_the_missing_leg() {
 fn a_fully_bracketed_entry_line_blocks_the_gesture_but_never_moves() {
     let mut paper = PaperTrading::new();
     paper.seed(&print(0, 100));
-    paper.stop_offset_text = "10".to_owned();
-    paper.profit_offset_text = "10".to_owned();
+    paper.desk.ticket.stop_offset_text = "10".to_owned();
+    paper.desk.ticket.profit_offset_text = "10".to_owned();
     paper.market(Side::Buy);
     paper.on_trade(&print(1, 100));
     let (chart, scale) = chart_and_scale(80.0, 120.0);
@@ -2761,7 +2601,7 @@ fn the_order_tags_close_is_geometric_and_beats_the_armed_click() {
     });
     paper.account.handle_events(events);
     // The trap that used to swallow every chart click.
-    paper.account.armed = Some(ArmedPlacement {
+    paper.desk.armed = Some(ArmedPlacement {
         side: Side::Sell,
         kind: EntryKind::Stop,
     });
@@ -2789,10 +2629,14 @@ fn the_order_tags_close_is_geometric_and_beats_the_armed_click() {
         "the order is gone and the armed click placed nothing"
     );
     assert!(
-        paper.account.armed.is_some(),
+        paper.desk.armed.is_some(),
         "the armed placement neither fired nor died"
     );
-    assert_eq!(paper.drag, PaperDrag::None, "and nothing started dragging");
+    assert_eq!(
+        paper.desk.gesture.drag,
+        PaperDrag::None,
+        "and nothing started dragging"
+    );
 }
 
 /// A bracket handle press starts the create-drag — its rect is the
@@ -2845,23 +2689,23 @@ fn entry_labels_disclose_what_the_press_would_do() {
         "BUY 1",
         "flat is a plain entry"
     );
-    paper.qty_text = "x".to_owned();
+    paper.desk.ticket.qty_text = "x".to_owned();
     assert_eq!(
         paper.entry_label(Side::Sell),
         "SELL",
         "an unparseable quantity promises nothing"
     );
-    paper.qty_text = "2".to_owned();
+    paper.desk.ticket.qty_text = "2".to_owned();
     paper.seed(&print(0, 100));
     paper.market(Side::Buy);
     paper.on_trade(&print(1, 100));
 
-    paper.qty_text = "1".to_owned();
+    paper.desk.ticket.qty_text = "1".to_owned();
     assert_eq!(paper.entry_label(Side::Buy), "BUY 1 (adds to 3)");
     assert_eq!(paper.entry_label(Side::Sell), "SELL 1 (closes 1 of 2)");
-    paper.qty_text = "2".to_owned();
+    paper.desk.ticket.qty_text = "2".to_owned();
     assert_eq!(paper.entry_label(Side::Sell), "SELL 2 (closes)");
-    paper.qty_text = "5".to_owned();
+    paper.desk.ticket.qty_text = "5".to_owned();
     assert_eq!(
         paper.entry_label(Side::Sell),
         "SELL 5 (reverses to short 3)"
@@ -2895,7 +2739,7 @@ fn the_status_cell_distinguishes_open_from_flat() {
 #[test]
 fn the_close_button_names_the_position_it_exits() {
     let mut paper = PaperTrading::new();
-    paper.qty_text = "3".to_owned();
+    paper.desk.ticket.qty_text = "3".to_owned();
     paper.seed(&print(0, 100));
     paper.market(Side::Sell);
     paper.on_trade(&print(1, 100));
@@ -2911,11 +2755,11 @@ fn the_close_button_names_the_position_it_exits() {
 #[test]
 fn reverse_flips_the_position_with_the_forms_bracket() {
     let mut paper = PaperTrading::new();
-    paper.qty_text = "2".to_owned();
+    paper.desk.ticket.qty_text = "2".to_owned();
     paper.seed(&print(0, 100));
     paper.market(Side::Buy);
     paper.on_trade(&print(1, 100));
-    paper.stop_offset_text = "5".to_owned();
+    paper.desk.ticket.stop_offset_text = "5".to_owned();
     paper.reverse_position();
     paper.on_trade(&print(2, 100));
     let position = paper
@@ -2930,31 +2774,6 @@ fn reverse_flips_the_position_with_the_forms_bracket() {
         Some(Decimal::from(105)),
         "the new short is protected by the form's offset"
     );
-}
-
-/// The chip dodge: lines keep their price, chips clear the last-price
-/// row by the minimum, and the fill-moment tie steps down.
-#[test]
-fn paper_chips_dodge_the_last_price_chip_never_the_line() {
-    // No reservation, or far enough away: the chip stays at its line.
-    assert_eq!(dodged_chip_y(100.0, None, 0.0, 400.0), 100.0);
-    assert_eq!(dodged_chip_y(100.0, Some(200.0), 0.0, 400.0), 100.0);
-    // Inside the band: pushed just clear, towards its own side.
-    assert_eq!(
-        dodged_chip_y(210.0, Some(200.0), 0.0, 400.0),
-        200.0 + CHIP_CLEAR_PX
-    );
-    assert_eq!(
-        dodged_chip_y(190.0, Some(200.0), 0.0, 400.0),
-        200.0 - CHIP_CLEAR_PX
-    );
-    // The fill moment: entry == last price, and the chip steps down.
-    assert_eq!(
-        dodged_chip_y(200.0, Some(200.0), 0.0, 400.0),
-        200.0 + CHIP_CLEAR_PX
-    );
-    // Never dodged out of the pane.
-    assert_eq!(dodged_chip_y(398.0, Some(399.0), 0.0, 400.0), 383.0);
 }
 
 #[test]
@@ -3080,14 +2899,14 @@ fn a_timeline_reset_journals_the_flatten_and_clears_the_form_state() {
     paper.seed(&print(0, 100));
     paper.market(Side::Buy);
     paper.on_trade(&print(1, 100));
-    paper.account.armed = Some(ArmedPlacement {
+    paper.desk.armed = Some(ArmedPlacement {
         side: Side::Buy,
         kind: EntryKind::Limit,
     });
     paper.on_timeline_reset();
     assert!(paper.account.venue().position().is_none());
     assert!(
-        paper.account.armed.is_none(),
+        paper.desk.armed.is_none(),
         "an armed click dies with the timeline"
     );
     assert!(

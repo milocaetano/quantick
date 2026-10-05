@@ -105,7 +105,7 @@ impl PaperSettingsAdapter<'_> {
     }
 
     fn persist_cmd_trading(&mut self) {
-        let settings = self.active().account().cmd_trading();
+        let settings = self.active().cmd_trading();
         for tab in self.tabs.iter_mut() {
             tab.paper.set_cmd_trading(settings);
         }

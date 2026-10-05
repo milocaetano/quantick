@@ -10,6 +10,12 @@
 //! - Closed trades are journaled to the history folder the moment they
 //!   close, one self-contained CSV row per trade (`quantick_sim::history`);
 //!   nothing else survives a session, and every surface says "SIM".
+//!
+//! What this host decides is nothing. The ticket's text, the ruler, the cmd
+//! aim and which line or ✕ a press lands on are `quantick_paper::desk`'s
+//! functional core, and the money path is the account's; this module paints
+//! them, reads the window's input into plain values for the desk, and
+//! carries out the command a press comes back with.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -17,8 +23,15 @@ use std::path::{Path, PathBuf};
 use eframe::egui;
 use quantick_engine::{Side, Trade};
 #[cfg(any(feature = "scenario-harness", test))]
+use quantick_paper::desk::CmdPreviewForce;
+use quantick_paper::desk::Desk;
+#[cfg(any(feature = "scenario-harness", test))]
+use quantick_paper::desk::ruler::RULER_MAX_NOTCHES;
+// The words every order surface speaks, decided beside the account.
+use quantick_paper::format::{kind_short, kind_word, side_word_upper};
+#[cfg(any(feature = "scenario-harness", test))]
 use quantick_sim::OrderIntent;
-use quantick_sim::{Bracket, BracketTarget, ClosedTrade, EntryKind, OrderId};
+use quantick_sim::{Bracket, ClosedTrade};
 // The journal's own format, and the command type the sim takes, are named
 // only by the tests that drive one; the writing moved to `paper_account`.
 #[cfg(test)]
@@ -27,11 +40,16 @@ use rust_decimal::Decimal;
 
 use crate::chart::PriceScale;
 // One date law for every trade surface - see `paper_calendar`.
-pub(crate) use crate::paper_account::{
-    ArmedPlacement, CmdEntryKind, CmdModifier, CmdTradingSettings, Leg, PaperControl, side_word,
-};
-use crate::paper_chrome::{PositionSummary, fmt_decimal};
+pub(crate) use crate::paper_account::{Leg, side_word};
+use crate::paper_chrome::PositionSummary;
 use crate::theme;
+// The desk's values, under the names the app's callers already use.
+pub(crate) use quantick_paper::desk::{
+    ArmedPlacement, CmdEntryKind, CmdModifier, CmdTradingSettings,
+};
+// The press-side answer, named by the tests that ask what a pixel holds.
+#[cfg(test)]
+pub(crate) use quantick_paper::desk::PaperControl;
 // The report's anchor date is formatted only under test.
 #[cfg(test)]
 use quantick_civil::civil_utc;
@@ -46,18 +64,14 @@ pub(crate) use crate::paper_report::LedgerScope;
 
 mod cmd;
 mod input;
-mod leg_tag;
 mod paint;
 mod paint_ctx;
-mod ruler;
 mod strategies;
 mod ticket;
 
-use cmd::{CmdPreview, CmdPreviewForce};
 // The tag geometry, named by the tests that press a ✕ where one was painted.
 #[cfg(test)]
 pub(crate) use paint_ctx::{clamp_tag_center, close_button_rect};
-use ticket::parse_offset;
 
 /// `=<rungs>` rests entry orders around the mark as soon as the tape has
 /// one, so the in-plot order tag can be photographed at all. The scripted
@@ -91,9 +105,6 @@ const PAPER_ORDERS_STEP_FRACTION: Decimal = Decimal::from_parts(6, 0, 0, false, 
 /// Rungs past this are refused — a capture wants a tag or two, not a book.
 #[cfg(any(feature = "scenario-harness", test))]
 const PAPER_ORDERS_MAX_RUNGS: u8 = 4;
-/// Grab distance for order lines — the drawings' select radius, so the two
-/// grammars feel identical under the pointer.
-const LINE_GRAB_RADIUS_PX: f32 = 10.0;
 /// Dash geometry of a pending order's line (the last-price line's rhythm).
 const ORDER_DASH_PX: f32 = 4.0;
 /// Gap between dashes of a pending order's line.
@@ -105,33 +116,6 @@ const ORDER_GAP_PX: f32 = 4.0;
 /// enough to find on a busy heat map — the levels it marks are the ones a
 /// trader is about to commit size against.
 const GUTTER_NOTCH_PX: f32 = 6.0;
-
-/// The smallest wheel travel that can still count as a notch.
-///
-/// A floor, not the notch itself: how many pixels a mouse reports per notch
-/// is the mouse's business, not ours. This build guessed 50 and met a mouse
-/// that reports 40 — under which every roll computed zero ticks and the
-/// ruler silently refused to move. The notch is *learned* from the smallest
-/// travel actually seen (`ruler_notch_px`), and this floor only keeps a
-/// trackpad's near-zero jitter from being mistaken for one.
-const RULER_MIN_NOTCH_PX: f32 = 1.0;
-
-/// The distance a freshly added rung starts at, in ticks.
-///
-/// A seed, not a default anyone lives with: the editor exists to change it,
-/// and a row that arrived at zero would be a row the strategy refuses. Named
-/// because it appears in three places - a new strategy, a new row, and a leg
-/// switched back on - and three copies of a starting point drift.
-const NEW_RUNG_TICKS: u32 = 20;
-
-/// The furthest the ruler walks from the aim, counted in *notches*.
-///
-/// A tick count cannot be the bound once a notch is worth more than a tick:
-/// at five points a notch on a one-cent instrument, the second roll would
-/// hit a 999-tick ceiling and the ruler would stop dead at ten points —
-/// short of every distance it exists to measure. Two hundred rolls is a
-/// wrist's worth of wheel in either direction, whatever the step is worth.
-const RULER_MAX_NOTCHES: u32 = 200;
 
 /// What the strategy selector calls "no strategy" - the bare order.
 const STRATEGY_NONE: &str = "<None>";
@@ -164,29 +148,10 @@ const LINE_DRAG_WIDTH_PX: f32 = 2.0;
 const DRAG_HALO_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(40, 40, 40, 40);
 /// How much wider than the line the halo pass paints.
 const DRAG_HALO_EXTRA_WIDTH_PX: f32 = 3.5;
-/// Height of an in-plot tag (fits mono 11 plus its padding).
-const TAG_HEIGHT_PX: f32 = 20.0;
-/// Gap between a tag's right edge and the plot's right edge — the inside
-/// mirror of the gutter chips' `AXIS_LABEL_GAP_PX`.
-const TAG_GAP_PX: f32 = 6.0;
 /// Horizontal padding inside a tag.
 const TAG_PAD_X: f32 = 6.0;
-/// Width of the ✕ zone a hovered tag reveals. An overlay convenience —
-/// every action here has a ≥ 28 px twin in the chrome.
-const TAG_BUTTON_PX: f32 = 20.0;
-/// How far around a tag the hover that reveals the bracket handles still
-/// counts.
-const TAG_HOVER_SLACK_PX: f32 = 4.0;
 /// Alpha of the ink hairline between a chip tag's ✕ zone and its words.
 const CLOSE_DIVIDER_ALPHA: u8 = 90;
-/// Size of a labelled SL/TP bracket handle on the entry line.
-const HANDLE_SIZE: egui::Vec2 = egui::vec2(20.0, 14.0);
-/// Vertical clearance between the entry line and a bracket handle — past
-/// the tag's half height, so handle and tag never overlap.
-const HANDLE_CLEAR_PX: f32 = 12.0;
-/// How far (in pixels) a press on the entry line must travel before it
-/// commits to creating one bracket leg — the drawings' drag threshold.
-const CREATE_DECIDE_THRESHOLD_PX: f32 = 4.0;
 
 /// `=buy`/`=sell` forces the cmd-trading preview for a capture run, and an
 /// optional `@<fraction>` parks the virtual pointer at that fraction of the
@@ -201,9 +166,6 @@ const CMD_PREVIEW_ENV: &str = "QUANTICK_CMD_PREVIEW";
 /// compact pill opens under a pointer no scripted run has.
 #[cfg(any(feature = "scenario-harness", test))]
 const PAPER_ORDER_HOVER_ENV: &str = "QUANTICK_PAPER_ORDER_HOVER";
-/// Shortest cmd-trading preview line: the pointer near the right edge
-/// still gets a line long enough to read as one, by starting left of it.
-const CMD_LINE_MIN_PX: f32 = 120.0;
 /// Most dash segments the aim line is allowed to paint. It now runs from
 /// the pointer all the way to the axis, which ties the label beside the
 /// hand to the price on the gutter — but on a maximised chart that is
@@ -211,60 +173,6 @@ const CMD_LINE_MIN_PX: f32 = 120.0;
 /// dash *every frame the modifier is held*. Past this the dash period
 /// stretches instead, so the cost is bounded and the rhythm still reads.
 const CMD_LINE_MAX_DASHES: f32 = 96.0;
-/// The preview label's fixed width: paint and press share this exact
-/// rect, so the two can never disagree (the overlay-controls rule).
-const CMD_LABEL_WIDTH_PX: f32 = 116.0;
-/// Clear space between the pointer and the label riding beside it. The
-/// label must not sit under the crosshair it belongs to — the cursor and
-/// the candle beneath it stay readable — while staying close enough to
-/// read as one statement with the aim.
-const CMD_LABEL_CURSOR_GAP_PX: f32 = 14.0;
-/// Vertical clearance between a paper chip's centre and the last-price
-/// chip's, in pixels — just over one chip height, so the two can never
-/// overprint. At the instant a market order fills, the entry price *is* the
-/// last price, and without this the one persistent "you are long" statement
-/// is born unreadable.
-const CHIP_CLEAR_PX: f32 = 16.0;
-
-/// Which simulated line the pointer is dragging.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-enum PaperDrag {
-    #[default]
-    None,
-    /// Moving a protective leg that already exists.
-    Leg { owner: BracketTarget, leg: Leg },
-    /// Pulling a leg into existence, from its owner's line or its labelled
-    /// handle; release submits it, exactly like repricing an existing one.
-    CreateLeg { owner: BracketTarget, leg: Leg },
-    /// Repricing a working order.
-    Order(OrderId),
-    /// The press landed on the position's entry line: an average entry is
-    /// history, not an order, so the geometry stays put — but the gesture
-    /// still belongs to the line (the chart must not pan under it). This is
-    /// the state for a fully bracketed position, whose legs are their own
-    /// handles.
-    Blocked,
-    /// The press landed on the position's entry line and at least one leg
-    /// is missing: the first committed pull decides which leg the drag
-    /// creates (profit side → take profit, losing side → stop loss). A
-    /// working order needs no such state — its line already means
-    /// "reprice", so its legs are born from their handles alone.
-    CreatePending,
-    /// Moving one rung of a resting entry's ladder.
-    ///
-    /// The rung belongs to the *order*, not to the strategy that shaped it:
-    /// the strategy was the template, the order carries a copy, and hauling
-    /// this line edits the copy. Nothing is written back to the named
-    /// ladder, so the next order still rests with what the trader saved.
-    ///
-    /// A filled position needs no such state — its rungs are working orders
-    /// by then, and their own lines already mean "reprice".
-    Rung {
-        order: OrderId,
-        index: usize,
-        leg: Leg,
-    },
-}
 
 /// What the Trading tab asked of its host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -322,134 +230,20 @@ pub struct ChartInput<'a> {
     pub layer_visible: bool,
 }
 
-/// One frame's answer for one working order's in-plot tag: computed by
-/// `handle_chart_input`, read by the paint *and* by the press.
-///
-/// A shared **value**, not a shared formula. The two sides are handed
-/// different pointers (`hover_pos` for the paint, `latest_pos` for the
-/// press) and different rects (the whole chart vs. the band left of the
-/// tape lane), so asking them to recompute the same predicate is asking
-/// them to disagree — and a ✕ that one side paints and the other side does
-/// not is a cancel the trader never saw coming.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct OpenTag {
-    key: TagKey,
-    /// The ✕ is painted with the full statement, so a press may act on it.
-    /// False while the order is being dragged: a moving order offers no
-    /// cancel, and its tag is on a different row from its resting price.
-    cancel: bool,
-}
-
-/// Whose tag an [`OpenTag`] opens: a working order's, or one leg of a
-/// bracket (see `leg_tag`) — the same two states, one contract.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TagKey {
-    Order(OrderId),
-    Leg(BracketTarget, Leg),
-}
-
-/// The app-side trading host: the venue, order-entry form state,
-/// chart-layer interaction, journal and report.
+/// The app-side trading host: the account, the desk that decides what the
+/// ticket and the chart gesture mean, and the paint and widgets around both.
 pub struct PaperTrading {
     /// Whether `QUANTICK_PAPER_ORDER_BRACKET` asked the capture hook's
     /// resting orders to carry protective legs.
     #[cfg_attr(not(any(feature = "scenario-harness", test)), allow(dead_code))]
     order_bracket_demo: bool,
-    /// This frame's cmd preview — input computes, paint reads, one
-    /// geometry both sides.
-    cmd_preview: Option<CmdPreview>,
-    /// This frame's opened order tags — same contract as `cmd_preview`:
-    /// input computes, paint and press both read. Empty is the common
-    /// case, so this allocates nothing on an ordinary frame.
-    open_tags: Vec<OpenTag>,
-    /// Whether this frame paints the paper layer. Same contract again, and
-    /// the gate lives *here* so that every reader honours it: an unpainted
-    /// line offers no cursor, no control and no press, whoever asks.
-    layer_visible: bool,
-    /// Harness override: paint the preview for this side, optionally at a
-    /// stated x, with nobody at the keyboard (`QUANTICK_CMD_PREVIEW`).
-    cmd_preview_force: Option<CmdPreviewForce>,
-    /// Harness override: every resting order's tag opens, with nobody at
-    /// the mouse (`QUANTICK_PAPER_ORDER_HOVER`).
-    order_hover_force: bool,
     /// Harness override: how many rungs of resting orders to place on the
     /// first mark (`QUANTICK_PAPER_ORDERS`); `None` once they are placed.
     #[cfg_attr(not(any(feature = "scenario-harness", test)), allow(dead_code))]
     orders_demo: Option<u8>,
-    // Order-entry form.
-    qty_text: String,
-    order_type: EntryKind,
-    stop_offset_text: String,
-    profit_offset_text: String,
-    /// Whether the strategy editor window is up.
-    strategy_editor_open: bool,
-    /// An edit inside the editor that has not been saved yet.
-    ///
-    /// A name is typed one character at a time and a `DragValue` fires every
-    /// frame it is held; persisting each of those would read, parse and
-    /// rewrite the sidecar - and clone the list into every tab - dozens of
-    /// times for one word, on the UI thread. The edits live in memory and
-    /// the save happens when the editor closes, which is also when the
-    /// trader has finished saying what they meant.
-    strategy_dirty: bool,
-    /// Which strategy the editor has open; `None` while the list is empty.
-    strategy_editing: Option<usize>,
-    /// How many *notches* the wheel has walked the projected bracket out
-    /// from the aim. Sticky across aims within a session: a trader who
-    /// decided their distance should not have to re-roll it for the next
-    /// setup — but not across instruments, where the step itself changes.
-    ruler_notches: u32,
-    /// What the trader typed for this instrument's step, in points. Empty
-    /// follows the instrument (see `RULER_DEFAULT_STEP_FRACTION`).
-    ruler_step_text: String,
-    /// The step each instrument was last given, in points, by symbol.
-    ///
-    /// Keyed by the bare symbol rather than by feed and symbol: the step
-    /// describes the instrument's price geometry, not who streams it, and a
-    /// recorded session must not make a trader relearn their wheel. The
-    /// journal is already keyed this way.
-    ruler_steps: BTreeMap<String, Decimal>,
-    /// What the trader typed for the fixed risk per trade.
-    risk_amount_text: String,
-    /// What the trader typed for the percentage of capital.
-    risk_percent_text: String,
-    /// What the trader typed for this instrument's point value.
-    point_value_text: String,
-    /// What the trader typed for this instrument's size step.
-    size_step_text: String,
-    /// What the trader typed for this instrument's currency code.
-    currency_text: String,
-    /// What the trader typed for the capital in this instrument's currency.
-    capital_text: String,
-    /// Sub-notch wheel travel not yet worth a tick (a trackpad's scroll
-    /// arrives in fractions of a notch).
-    ruler_travel_px: f32,
-    /// Whether the wheel has ever been rolled over an aim this session.
-    ///
-    /// Only the hint under the aim's label reads it: an affordance nobody
-    /// can see needs saying once, and saying it forever is clutter a trader
-    /// has to look past on every aim they take.
-    ruler_rolled: bool,
-    /// How much travel this pointing device reports for one notch, learned
-    /// from the smallest roll seen rather than assumed.
-    ///
-    /// A mouse reports a fixed step per detent — 40 px here, 50 on the
-    /// machine this was written on, something else on the next one — and a
-    /// trackpad reports a continuous stream. Taking the smallest non-zero
-    /// travel as the notch makes "one notch, one tick" true on all of them,
-    /// and makes the first roll count instead of being swallowed.
-    ruler_notch_px: f32,
-    /// Whether the ruler spent this frame's wheel travel, so the chart's
-    /// zoom can leave it alone.
-    scroll_consumed: bool,
-    // Chart-layer drag.
-    drag: PaperDrag,
-    drag_price: Option<f64>,
-    /// The working order hovered in the dock this frame — its chart line
-    /// lifts, so one hover reads on both surfaces. Cleared after the chart
-    /// consumed it ([`PaperTrading::settle`] runs last in the frame).
-    hovered_order: Option<OrderId>,
-    /// The acknowledgement waiting to be handed to the window's one toast —
+    /// The deciding half of the ticket and the chart gesture: what was
+    /// typed, how far the ruler stands, what is aimed, armed and grabbed.
+    desk: Desk,
     /// The policy half: the venue, the journal, the risk, the
     /// strategies and the events. Reached by the control plane
     /// through [`Self::account`]; this module only draws it.
@@ -459,30 +253,6 @@ pub struct PaperTrading {
 impl Default for PaperTrading {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn side_word_upper(side: Side) -> &'static str {
-    match side {
-        Side::Buy => "BUY",
-        Side::Sell => "SELL",
-    }
-}
-
-fn kind_word(kind: EntryKind) -> &'static str {
-    match kind {
-        EntryKind::Market => "market",
-        EntryKind::Limit => "limit",
-        EntryKind::Stop => "stop",
-    }
-}
-
-/// Three-letter order kind for the compact chart tags (`LMT`, `STP`, `MKT`).
-fn kind_short(kind: EntryKind) -> &'static str {
-    match kind {
-        EntryKind::Market => "MKT",
-        EntryKind::Limit => "LMT",
-        EntryKind::Stop => "STP",
     }
 }
 
@@ -496,17 +266,6 @@ fn leg_color(leg: Leg) -> egui::Color32 {
     match leg {
         Leg::StopLoss => theme::SELL,
         Leg::TakeProfit => theme::BUY,
-    }
-}
-
-/// Whether the modifier is held. `Ctrl` reads the platform command key, so the
-/// binding keeps meaning "the control-ish key" on every OS. A pixel-side read
-/// for the same reason as [`leg_color`]: the key state is the window's.
-fn modifier_is_down(modifier: CmdModifier, modifiers: egui::Modifiers) -> bool {
-    match modifier {
-        CmdModifier::Shift => modifiers.shift,
-        CmdModifier::Ctrl => modifiers.command,
-        CmdModifier::Alt => modifiers.alt,
     }
 }
 
@@ -541,35 +300,8 @@ impl PaperTrading {
         let host = Self {
             account: crate::paper_account::PaperAccount::with_trades_dir(dir),
             order_bracket_demo: false,
-            cmd_preview: None,
-            open_tags: Vec::new(),
-            layer_visible: true,
-            cmd_preview_force: None,
-            order_hover_force: false,
             orders_demo: None,
-            qty_text: "1".to_owned(),
-            order_type: EntryKind::Market,
-            stop_offset_text: String::new(),
-            profit_offset_text: String::new(),
-            strategy_editor_open: false,
-            strategy_dirty: false,
-            strategy_editing: None,
-            ruler_notches: 0,
-            ruler_step_text: String::new(),
-            ruler_steps: BTreeMap::new(),
-            risk_amount_text: String::new(),
-            risk_percent_text: String::new(),
-            point_value_text: String::new(),
-            size_step_text: String::new(),
-            currency_text: String::new(),
-            capital_text: String::new(),
-            ruler_travel_px: 0.0,
-            ruler_rolled: false,
-            ruler_notch_px: f32::INFINITY,
-            scroll_consumed: false,
-            drag: PaperDrag::None,
-            drag_price: None,
-            hovered_order: None,
+            desk: Desk::default(),
         };
         #[cfg(any(feature = "scenario-harness", test))]
         let host = host.with_launch_hooks();
@@ -584,19 +316,20 @@ impl PaperTrading {
     fn with_launch_hooks(mut self) -> Self {
         self.order_bracket_demo =
             crate::hooks::captured::var(PAPER_ORDER_BRACKET_ENV).is_some_and(|value| value == "1");
-        self.cmd_preview_force = crate::hooks::captured::var(CMD_PREVIEW_ENV).and_then(|value| {
-            CmdPreviewForce::parse(&value).or_else(|| {
-                tracing::warn!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "CMD_PREVIEW_AUTOSTART_UNKNOWN",
-                    value = %value,
-                    "QUANTICK_CMD_PREVIEW wants `buy` or `sell`, optionally `@<0..1>`"
-                );
-                None
-            })
-        });
-        self.order_hover_force =
+        self.desk.gesture.cmd_preview_force = crate::hooks::captured::var(CMD_PREVIEW_ENV)
+            .and_then(|value| {
+                CmdPreviewForce::parse(&value).or_else(|| {
+                    tracing::warn!(
+                        target: "quantick::app",
+                        schema_version = 1_u8,
+                        event_code = "CMD_PREVIEW_AUTOSTART_UNKNOWN",
+                        value = %value,
+                        "QUANTICK_CMD_PREVIEW wants `buy` or `sell`, optionally `@<0..1>`"
+                    );
+                    None
+                })
+            });
+        self.desk.gesture.order_hover_force =
             crate::hooks::captured::var(PAPER_ORDER_HOVER_ENV).is_some_and(|value| value == "1");
         self.orders_demo = crate::hooks::captured::var(PAPER_ORDERS_ENV).and_then(|value| {
             value
@@ -619,84 +352,30 @@ impl PaperTrading {
                     None
                 })
         });
-        self.strategy_editor_open =
+        self.desk.strategy_editor.open =
             crate::hooks::captured::var(STRATEGY_EDITOR_ENV).is_some_and(|value| value == "1");
-        self.ruler_notches = crate::hooks::captured::var(RULER_TICKS_ENV)
+        self.desk.ruler.notches = crate::hooks::captured::var(RULER_TICKS_ENV)
             .and_then(|value| value.trim().parse::<u32>().ok())
             .map_or(0, |notches| notches.min(RULER_MAX_NOTCHES));
         self
     }
 
-    /// Everything the account needs from the ticket for one call.
-    ///
-    /// Built per call and never kept: a stored copy would answer for the form
-    /// the trader used to have typed, which is `ReportEnv`'s reason too.
-    /// The reading half of [`Self::parse_bracket`]: the same arithmetic with
-    /// no toast, so the projection can ask what the ticket says without
-    /// putting a message on screen every frame.
-    fn ticket_bracket(&self, side: Side, reference: Decimal) -> Bracket {
-        self.ticket_form().bracket(side, reference)
-    }
-
+    /// Everything the account needs from the ticket for one call; see
+    /// [`Desk::account_env`].
     fn account_env(&self, side: Side, price: Decimal) -> crate::paper_account::AccountEnv {
-        crate::paper_account::AccountEnv {
-            ruler_levels: match self.ruler_levels(side, price) {
-                (Some(stop), Some(target)) => Some((stop, target)),
-                _ => None,
-            },
-            form: self.ticket_form(),
-        }
-    }
-
-    /// The three typed boxes, read. The quantity carries its own complaint so
-    /// that the account can raise it only if it ever reaches the box.
-    fn ticket_form(&self) -> crate::paper_account::TicketForm {
-        crate::paper_account::TicketForm {
-            quantity: match self.qty_text.trim().parse::<Decimal>() {
-                Ok(quantity) if quantity > Decimal::ZERO => Ok(quantity),
-                _ => Err(format!(
-                    "SIM: quantity must be a positive number - got `{}`",
-                    self.qty_text.trim(),
-                )),
-            },
-            // Both boxes or neither: one that does not parse fails the pair,
-            // which is what `ticket_bracket`'s `?` did.
-            offsets: match (
-                parse_offset(&self.stop_offset_text),
-                parse_offset(&self.profit_offset_text),
-            ) {
-                (Ok(stop), Ok(profit)) => Some((stop, profit)),
-                _ => None,
-            },
-        }
+        self.desk.account_env(&self.account, side, price)
     }
 
     /// The bracket the ticket's offsets describe, or the complaint about the
     /// text that does not parse - which is toasted here, beside the box.
     fn parse_bracket(&mut self, side: Side, reference: Decimal) -> Option<Bracket> {
-        let stop_offset = match parse_offset(&self.stop_offset_text) {
-            Ok(value) => value,
-            Err(got) => {
-                self.show_toast(format!(
-                    "SIM: the stop offset must be a positive number of points - got `{got}`"
-                ));
-                return None;
+        match self.desk.ticket.parse_bracket(side, reference) {
+            Ok(bracket) => Some(bracket),
+            Err(message) => {
+                self.show_toast(message);
+                None
             }
-        };
-        let profit_offset = match parse_offset(&self.profit_offset_text) {
-            Ok(value) => value,
-            Err(got) => {
-                self.show_toast(format!(
-                    "SIM: the profit offset must be a positive number of points - got `{got}`"
-                ));
-                return None;
-            }
-        };
-        let form = crate::paper_account::TicketForm {
-            quantity: Ok(Decimal::ONE),
-            offsets: Some((stop_offset, profit_offset)),
-        };
-        Some(form.bracket(side, reference))
+        }
     }
 
     /// What the risk per trade says about the entry the aim is holding.
@@ -833,6 +512,72 @@ impl PaperTrading {
         self.account().working_orders()
     }
 
+    // ------------------------------------------------------------------
+    // The desk, reached by name
+    //
+    // The cmd gesture's settings and the ruler are the desk's; these are
+    // the names the app, the control plane and the sidecar already call.
+    // ------------------------------------------------------------------
+
+    /// Install cmd-trading settings — the app's fan-out on boot and on a
+    /// change made in any tab (one gesture, one meaning, everywhere).
+    pub fn set_cmd_trading(&mut self, settings: CmdTradingSettings) {
+        self.desk.set_cmd_trading(settings);
+    }
+
+    /// The cmd-trading settings, for the app to persist.
+    #[must_use]
+    pub(crate) fn cmd_trading(&self) -> CmdTradingSettings {
+        self.desk.cmd_trading
+    }
+
+    /// Drop the frame's preview — the pane calls this when a drawing tool
+    /// owns the hand, so a stale line never keeps painting.
+    pub fn clear_cmd_preview(&mut self) {
+        self.desk.gesture.cmd_preview = None;
+    }
+
+    /// Put the ruler at `notches`, clamped to what the wheel itself can
+    /// reach, and answer with where it landed — the named form of rolling
+    /// the wheel.
+    pub(crate) fn set_ruler_ticks(&mut self, notches: u32) -> u32 {
+        self.desk.ruler.set_ticks(notches)
+    }
+
+    /// How far one notch walks this instrument's ruler, in points.
+    #[must_use]
+    pub(crate) fn ruler_step(&self) -> Decimal {
+        self.desk.ruler_step(&self.account)
+    }
+
+    /// Name this instrument's step, in points. A value that is not positive
+    /// clears it, which puts the instrument back on the derived default.
+    #[cfg(test)]
+    pub(crate) fn set_ruler_step(&mut self, step: Option<Decimal>) {
+        self.desk.ruler.set_step(self.account.symbol(), step);
+    }
+
+    /// Every step the trader has named, by symbol, for the sidecar.
+    pub(crate) fn ruler_steps(&self) -> &BTreeMap<String, Decimal> {
+        &self.desk.ruler.steps
+    }
+
+    /// Replace the remembered steps wholesale, from the sidecar.
+    pub(crate) fn set_ruler_steps(&mut self, steps: BTreeMap<String, Decimal>) {
+        self.desk.ruler.set_steps(steps, self.account.symbol());
+    }
+
+    /// Clear the ruler, so the next aim starts from the entry again.
+    pub(crate) fn clear_ruler(&mut self) -> bool {
+        self.desk.ruler.clear()
+    }
+
+    /// How far the ruler stands from the aim, in ticks; zero when it is off.
+    #[must_use]
+    pub(crate) fn ruler_ticks(&self) -> u32 {
+        self.desk.ruler.notches
+    }
+
     /// Follow the app's active symbol. A change retargets the journal; the
     /// simulator itself was already flattened by the timeline reset that
     /// every switch performs.
@@ -840,17 +585,7 @@ impl PaperTrading {
         let Some(arriving) = self.account.set_symbol(symbol) else {
             return;
         };
-        // The ruler goes with the instrument for the reason the tick does -
-        // see `PaperAccount::set_symbol`. Arriving is not a switch.
-        if !arriving {
-            self.ruler_notches = 0;
-        }
-        self.ruler_travel_px = 0.0;
-        self.ruler_step_text = self
-            .ruler_steps
-            .get(symbol)
-            .map(|step| fmt_decimal(*step))
-            .unwrap_or_default();
+        self.desk.ruler.follow_symbol(symbol, arriving);
     }
 
     /// Feed one live print through the simulator and act on what it did.
@@ -969,9 +704,7 @@ impl PaperTrading {
         // file and the bot buffer; what is left here is the pointer state
         // and the sentence.
         let reset = self.account.reset_timeline();
-        self.account.armed = None;
-        self.drag = PaperDrag::None;
-        self.drag_price = None;
+        self.desk.reset_timeline();
         if reset.had_position && reset.all_saved {
             self.show_toast(
                 "SIM position flattened - the timeline was rebuilt under it.".to_owned(),
@@ -1009,18 +742,6 @@ impl PaperTrading {
         };
         self.account.reverse_position(bracket);
     }
-
-    // ------------------------------------------------------------------
-    // Import
-    // ------------------------------------------------------------------
-
-    // ------------------------------------------------------------------
-    // Export
-    // ------------------------------------------------------------------
-
-    // ------------------------------------------------------------------
-    // Events, journal, parsing
-    // ------------------------------------------------------------------
 }
 
 /// `YYYY-MM-DD` in UTC — the report's anchor date.

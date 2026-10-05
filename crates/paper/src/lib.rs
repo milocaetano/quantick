@@ -22,6 +22,7 @@
 //! venue time, so the same replay writes the same bytes.
 
 pub mod account;
+pub mod desk;
 pub mod format;
 pub mod home;
 pub mod order_strategies;

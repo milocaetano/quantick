@@ -13,13 +13,17 @@ use quantick_sim::{Bracket, BracketTarget, OrderRole, signed_points};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 
-use super::cmd::{CmdPreview, cmd_preview_layout};
-use super::leg_tag::LegPaint;
-use super::paint_ctx::{PaintCtx, bracket_handle_rect, clamp_tag_center, handles_visible};
+use quantick_paper::desk::geometry::TAG_HOVER_SLACK_PX;
+use quantick_paper::desk::leg_tag::{LegPaint, leg_tag_text};
+use quantick_paper::desk::{CmdPreview, PaperDrag, TagKey};
+
+use super::paint_ctx::{
+    PaintCtx, bracket_handle_rect, clamp_tag_center, cmd_preview_layout, handles_visible, pos,
+};
 use super::{
     CMD_LINE_MAX_DASHES, LINE_HOVER_WIDTH_PX, LINE_WIDTH_PX, Leg, ORDER_DASH_PX, ORDER_GAP_PX,
-    POSITION_LINE_WIDTH_PX, PaperDrag, PaperTrading, TAG_HOVER_SLACK_PX, TagKey, kind_short,
-    kind_word, leg_color, side_word, side_word_upper,
+    POSITION_LINE_WIDTH_PX, PaperTrading, kind_short, kind_word, leg_color, side_word,
+    side_word_upper,
 };
 use crate::chart::PriceScale;
 use crate::paper_chrome::{fmt_decimal, fmt_signed_points, points_color, position_word};
@@ -63,9 +67,11 @@ impl PaperTrading {
 
         for order in self.account.venue().working_orders() {
             let Some(level) = order.price else { continue };
-            let dragged = self.drag == PaperDrag::Order(order.id);
+            let dragged = self.desk.gesture.drag == PaperDrag::Order(order.id);
             let price = if dragged {
-                self.drag_price
+                self.desk
+                    .gesture
+                    .drag_price
                     .unwrap_or_else(|| level.to_f64().unwrap_or_default())
             } else {
                 level.to_f64().unwrap_or_default()
@@ -86,14 +92,14 @@ impl PaperTrading {
             // At rest the tag is a pill; it opens under the pointer. Read,
             // never recomputed — this frame's input already decided it,
             // from the pointer and the rect the *press* will use.
-            let open = self.open_tag(TagKey::Order(order.id));
+            let open = self.desk.gesture.open_tag(TagKey::Order(order.id));
             let expanded = open.is_some();
             // The line's own emphasis keeps its own 10 px band: that band
             // is `line_at`'s, so a line that lights up is a line the press
             // can actually grab. The tag opens over a wider row and near a
             // chart edge over a different one, which is why the two
             // questions stayed separate.
-            let hovered = ctx.hovers_line(y) || self.hovered_order == Some(order.id);
+            let hovered = ctx.hovers_line(y) || self.desk.gesture.hovered_order == Some(order.id);
             let shown = if dragged {
                 self.account.snap(price)
             } else {
@@ -193,7 +199,7 @@ impl PaperTrading {
             self.draw_bracket_of(&ctx, BracketTarget::Position, false, position_reveal);
         }
 
-        if let Some(armed) = self.account.armed {
+        if let Some(armed) = self.desk.armed {
             let hint = format!(
                 "click a price to place your {} {} - Esc cancels",
                 side_word(armed.side),
@@ -301,7 +307,7 @@ impl PaperTrading {
                 // whole bracket's leg does: what the trader sees moving is
                 // what the release will submit.
                 let dragging = order.is_some_and(|id| {
-                    self.drag
+                    self.desk.gesture.drag
                         == PaperDrag::Rung {
                             order: id,
                             index,
@@ -309,7 +315,9 @@ impl PaperTrading {
                         }
                 });
                 let shown = if dragging {
-                    self.drag_price
+                    self.desk
+                        .gesture
+                        .drag_price
                         .map_or(level, |price| self.account.snap(price))
                 } else {
                     level
@@ -386,7 +394,7 @@ impl PaperTrading {
                 },
             );
         }
-        if self.drag != PaperDrag::None {
+        if self.desk.gesture.drag != PaperDrag::None {
             return;
         }
         let reference_y = ctx.scale.y(reference.to_f64().unwrap_or_default());
@@ -419,6 +427,64 @@ impl PaperTrading {
         }
     }
 
+    /// One protective leg: its resting line and tag, the drag that reprices
+    /// it, or — while a create-drag runs and the leg does not exist yet —
+    /// the dashed preview of where release would put it. The tag gains the
+    /// live R:R read once both legs are known, which is what turns the drag
+    /// into a decision. The words are the desk's (`leg_tag_text`); the open
+    /// form is this frame's [`TagKey::Leg`] answer, so the ✕ is pressable
+    /// exactly while it is painted.
+    fn draw_bracket_leg(&self, ctx: &PaintCtx<'_>, paint: &LegPaint) {
+        let identity = (paint.owner, paint.leg);
+        let drag = self.desk.gesture.drag;
+        let amending = matches!(drag, PaperDrag::Leg { owner, leg } if (owner, leg) == identity);
+        let creating = matches!(drag, PaperDrag::CreateLeg { owner, leg } if (owner, leg) == identity)
+            && paint.level.is_none();
+        let resting = paint.level.map(|level| level.to_f64().unwrap_or_default());
+        let price = if amending || creating {
+            self.desk.gesture.drag_price.or(resting)
+        } else {
+            resting
+        };
+        let Some(price) = price else { return };
+        let y = ctx.scale.y(price);
+        if !ctx.in_range(y) {
+            return;
+        }
+        let dragging = amending || creating;
+        let hovered = ctx.hovers_line(y);
+        let shown = if dragging {
+            self.account.snap(price)
+        } else {
+            paint.level.unwrap_or_else(|| self.account.snap(price))
+        };
+        let color = leg_color(paint.leg);
+        // Dashed while it is being created (it is not placed yet) and while
+        // it rides an unfilled order (it is a promise that arms on the
+        // fill). Solid only once it is a live exit on an open position.
+        ctx.level_line(
+            y,
+            color,
+            creating || paint.pending,
+            LINE_WIDTH_PX,
+            hovered,
+            dragging,
+        );
+        ctx.gutter_chip(y, color, &fmt_decimal(shown));
+        let open = self
+            .desk
+            .gesture
+            .open_tag(TagKey::Leg(paint.owner, paint.leg));
+        let text = leg_tag_text(paint, shown, dragging || open.is_some(), dragging);
+        ctx.chip_tag(
+            y,
+            color,
+            &text,
+            open.is_some_and(|tag| tag.cancel),
+            paint.pending,
+        );
+    }
+
     /// The cmd-trading preview: a dashed line at the pointer's price
     /// running out to the right edge, the label riding beside the cursor,
     /// and the exact price on the gutter — the trader reads what this
@@ -427,12 +493,12 @@ impl PaperTrading {
     /// the pointer to the price on the axis, so it spans the whole way
     /// rather than hugging the edge.
     pub(super) fn draw_cmd_preview(&self, ctx: &PaintCtx<'_>) {
-        let Some(preview) = self.cmd_preview else {
+        let Some(preview) = self.desk.gesture.cmd_preview else {
             return;
         };
         // Only the pane that owns paper input paints the aim — except in
         // a harness run, whose panes never own a pointer at all.
-        if ctx.pointer.is_none() && self.cmd_preview_force.is_none() {
+        if ctx.pointer.is_none() && self.desk.gesture.cmd_preview_force.is_none() {
             return;
         }
         if !ctx.in_range(preview.pointer.y) {
@@ -460,7 +526,7 @@ impl PaperTrading {
         if preview.pointer.x < band.left() || preview.pointer.x > band.right() {
             return;
         }
-        let (start, end, label) = cmd_preview_layout(band, ctx.axis_x, preview.pointer);
+        let (start, end, label) = cmd_preview_layout(band, ctx.axis_x, pos(preview.pointer));
         // The gesture in progress reads a step above a resting order's
         // line: this is the one thing on the chart the next click acts on.
         // The dash period stretches on a very wide plot rather than paying
@@ -480,6 +546,8 @@ impl PaperTrading {
         ctx.painter
             .rect_filled(label, egui::Rounding::same(3.0), color);
         let quantity = self
+            .desk
+            .ticket
             .quantity_preview()
             .map_or_else(|| "?".to_owned(), fmt_decimal);
         let text = format!(
@@ -505,7 +573,7 @@ impl PaperTrading {
         // label says so - at the pointer, at the moment it matters - and it
         // erases itself the first time the wheel is rolled, so a trader who
         // knows never reads it twice.
-        if preview.bracket.is_empty() && !self.ruler_rolled {
+        if preview.bracket.is_empty() && !self.desk.ruler.rolled {
             let (_, _, label) = cmd_preview_layout(
                 egui::Rect::from_min_max(
                     ctx.chart_rect.min,
@@ -515,7 +583,7 @@ impl PaperTrading {
                     ),
                 ),
                 ctx.axis_x,
-                preview.pointer,
+                pos(preview.pointer),
             );
             ctx.painter.text(
                 egui::pos2(label.center().x, label.max.y + 3.0),

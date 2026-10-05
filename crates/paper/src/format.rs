@@ -10,6 +10,7 @@
 //! Presentation only: nothing here holds state or reads a clock.
 
 use quantick_engine::Side;
+use quantick_sim::EntryKind;
 use rust_decimal::Decimal;
 
 /// The open position, read-only, as every chrome surface reports it — the
@@ -31,6 +32,32 @@ pub fn position_word(side: Side) -> &'static str {
     match side {
         Side::Buy => "LONG",
         Side::Sell => "SHORT",
+    }
+}
+
+/// `BUY`/`SELL` — the register an entry button and an order tag speak.
+pub fn side_word_upper(side: Side) -> &'static str {
+    match side {
+        Side::Buy => "BUY",
+        Side::Sell => "SELL",
+    }
+}
+
+/// The order kind in a sentence: `market`, `limit`, `stop`.
+pub fn kind_word(kind: EntryKind) -> &'static str {
+    match kind {
+        EntryKind::Market => "market",
+        EntryKind::Limit => "limit",
+        EntryKind::Stop => "stop",
+    }
+}
+
+/// Three-letter order kind for the compact chart tags (`LMT`, `STP`, `MKT`).
+pub fn kind_short(kind: EntryKind) -> &'static str {
+    match kind {
+        EntryKind::Market => "MKT",
+        EntryKind::Limit => "LMT",
+        EntryKind::Stop => "STP",
     }
 }
 
