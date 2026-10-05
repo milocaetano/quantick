@@ -1,3 +1,9 @@
+# A raise is never an edit here: it is a new file in crates/guards/ui-free-baseline.d/ named for the
+# branch, holding signed deltas (`path +N`, `!budget +N`) and a comment
+# saying why. The guard adds them to these numbers; `--tighten` folds them in
+# when it lowers one. One file per branch is what keeps two open branches
+# from conflicting on the same line.
+#
 # The app-ui-free ratchet's ceiling (`crates/guards/src/ui_free.rs`): the
 # production lines of every crates/app/src file that never names `egui` or
 # `eframe` in code, summed, less the files `ui-free-exemptions.txt` signs for.
@@ -9,8 +15,7 @@
 # consumer, and rebuilds the largest crate on every change. This number may
 # only fall. Moving such code into a headless crate lowers it, and
 # `cargo run -p quantick-guards -- --tighten` writes the lower number once it
-# sits more than 200 below. A raise is this entry and the budget, both raised
-# in the same change with a comment saying why.
+# sits more than 200 below.
 #
 # Recorded at campaign tip 317772a5 (#443, Q18): 50,795 lines in 130 files,
 # measured by the guard and by an independent script. Lowered by `--tighten`

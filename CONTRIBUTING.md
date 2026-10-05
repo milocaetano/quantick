@@ -56,6 +56,15 @@ A lint that starts firing gets fixed, never allow-ed. If one genuinely cannot
 be fixed where it surfaced, it is recorded in that lints table with a reason
 and a link to the follow-up that removes it.
 
+## Raises and merges
+
+A ratchet raise is a new file in the baseline's `.d/` directory named for the
+branch (`crates/guards/app-lines-baseline.d/<branch>.txt` holding
+`crates/app +N`, `!budget +N` and a comment saying why), never an edit to the
+baseline, so two open branches cannot conflict on it. Update a branch with
+`sh tools/merge_main.sh`: it regenerates the hook registry instead of leaving
+it for a hand merge.
+
 ## Commit style
 
 Conventional style, imperative mood, English: `feat: ...`, `fix: ...`, `docs: ...`, `test: ...`.

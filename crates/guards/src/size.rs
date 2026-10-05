@@ -152,9 +152,9 @@ pub const REMEDY: &str = "A file over its ceiling means a capability docked by e
                           instead of by adding a module. The fix asked for is the one in the \
                           new-extension skill: give the capability its own file and a port to \
                           dock into, so the edit here is a registration line rather than a body. \
-                          An exception on purpose is still allowed — record the file and its \
-                          ceiling in crates/guards/size-baseline.txt with a comment saying why, \
-                          and raise its !budget line by as much in the same change, so a \
+                          An exception on purpose is still allowed — write a new file in \
+                          crates/guards/size-baseline.d/ named for the branch, `<path> +N` and \
+                          `!budget +N` with a comment saying why, so a \
                           reviewer argues with a visible decision instead of missing an \
                           invisible one. A \
                           file that shrank needs no argument at all: `cargo run -p \
@@ -549,7 +549,7 @@ pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     // every `.rs` change while missing the one edit that spends the budget
     // would report the symptom and never the act. Answered from the baseline
     // alone, with no file walk.
-    if relative == BASELINE_FILE {
+    if POLICY.owns(relative) {
         return match baseline(root) {
             Ok(recorded) => POLICY.budget_verdict(&recorded, 0).into_iter().collect(),
             Err(problem) => vec![POLICY.unparsed(&problem)],

@@ -1,3 +1,9 @@
+# A raise is never an edit here: it is a new file in crates/guards/struct-width-baseline.d/ named for the
+# branch, holding signed deltas (`path +N`, `!budget +N`) and a comment
+# saying why. The guard adds them to these numbers; `--tighten` folds them in
+# when it lowers one. One file per branch is what keeps two open branches
+# from conflicting on the same line.
+#
 # The struct-width ratchet's recorded field counts
 # (`crates/guards/src/struct_width.rs`): one `<crate>::<Struct> <fields>` entry
 # for every struct of 30 or more fields in production source, at any
@@ -5,8 +11,7 @@
 #
 # A struct over its count fails. The slack is zero, so a struct that lost a
 # field fails too until `cargo run -p quantick-guards -- --tighten` writes the
-# new count, and the field cannot quietly come back. A raise is the entry and
-# the budget, both raised in the same change with a comment saying why.
+# new count, and the field cannot quietly come back.
 #
 # Recorded at main bcfb5f19 when the guard landed. `OrderflowHealthSnapshot`
 # was private in `app` then, and invisible to the report's old `pub struct`-only

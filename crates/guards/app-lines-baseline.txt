@@ -1,3 +1,9 @@
+# A raise is never an edit here: it is a new file in crates/guards/app-lines-baseline.d/ named for the
+# branch, holding signed deltas (`path +N`, `!budget +N`) and a comment
+# saying why. The guard adds them to these numbers; `--tighten` folds them in
+# when it lowers one. One file per branch is what keeps two open branches
+# from conflicting on the same line.
+#
 # The app-lines ratchet's ceiling (`crates/guards/src/app_lines.rs`): the
 # production lines of every tracked file under crates/app/, as the size guard
 # counts them (top-level `#[cfg(test)]` items and `tests/` excluded). One
@@ -7,9 +13,7 @@
 # An absolute count rather than `app`'s share of the workspace: a share falls
 # whenever another crate grows, so it can improve while the trunk does not.
 # This number may only fall. `cargo run -p quantick-guards -- --tighten`
-# writes the lower number once it sits more than 200 below. A raise is this
-# entry and the budget, both raised in the same change with a comment saying
-# why.
+# writes the lower number once it sits more than 200 below.
 #
 # Recorded at main bcfb5f19 when the guard landed: 121,743 lines, the same
 # number `--report` prints as `crate.lines.app`. Tightened to 103,598 after
