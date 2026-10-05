@@ -149,7 +149,9 @@ impl SavedDrawingExt for SavedDrawing {
                 SavedBand::AllBands => DrawingBand::AllBands,
             },
             style: DrawingStyle {
-                color: eframe::egui::Color32::from_rgba_unmultiplied(r, g, b, a),
+                color: crate::drawings::from_color32(
+                    eframe::egui::Color32::from_rgba_unmultiplied(r, g, b, a),
+                ),
                 #[allow(clippy::cast_possible_truncation)]
                 width_px: (self.width_px as f32).clamp(
                     crate::drawings::MIN_DRAWING_WIDTH_PX,
@@ -406,6 +408,47 @@ mod tests {
         let drawing = saved.to_drawing(DrawingId(1)).unwrap();
         assert_eq!(drawing.scope, DrawingScope::AllCharts);
         assert!(SavedDrawing::from_drawing(&drawing).shared);
+    }
+
+    /// Both files were written by `save` at c040c621, before drawing colours
+    /// left egui: `drawings.toml` as saved, `drawings-resaved.toml` after one
+    /// pass through live drawings. A translucent colour already changes on
+    /// that pass (the live colour is premultiplied); this pins it, not fixes it.
+    #[test]
+    fn a_drawings_file_from_before_the_headless_colour_loads_and_saves_unchanged() {
+        const SAVED: &str = include_str!("../fixtures/layouts/drawings.toml");
+        const RESAVED: &str = include_str!("../fixtures/layouts/drawings-resaved.toml");
+        let dir = crate::scratch::ScratchDir::new("layouts-colour");
+        let path = dir.join(LAYOUTS_FILE);
+        let key = DrawingKey {
+            feed: "binance".to_owned(),
+            symbol: "BTCUSDT".to_owned(),
+            pane: 0,
+        };
+
+        let mut book = parse(SAVED).unwrap();
+        save(&path, &book);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), SAVED);
+
+        let saved = book.active().drawings(&key).unwrap().to_vec();
+        assert_eq!(saved.len(), 3, "an opaque and two translucent colours");
+        let live: Vec<Drawing> = saved
+            .iter()
+            .map(|entry| entry.to_drawing(DrawingId(entry.id.unwrap())).unwrap())
+            .collect();
+        for (entry, drawing) in saved.iter().zip(&live) {
+            let [r, g, b, a] = entry.color;
+            assert_eq!(
+                drawing.style.color32(),
+                eframe::egui::Color32::from_rgba_unmultiplied(r, g, b, a),
+                "the painted colour is the one egui made from the file"
+            );
+        }
+        book.active_mut()
+            .set_drawings(&key, live.iter().map(SavedDrawing::from_drawing).collect());
+        save(&path, &book);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), RESAVED);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

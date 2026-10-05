@@ -30,7 +30,7 @@ struct StoredStyle {
 
 impl StoredStyle {
     fn from_style(style: DrawingStyle) -> Self {
-        let [red, green, blue, _] = style.color.to_array();
+        let [red, green, blue, _] = style.color32().to_array();
         Self {
             color: format!("#{red:02x}{green:02x}{blue:02x}"),
             width_px: style.width_px,
@@ -48,7 +48,11 @@ impl StoredStyle {
         }
         let channel = |at: usize| u8::from_str_radix(&hex[at..at + 2], 16).ok();
         Some(DrawingStyle {
-            color: super::egui::Color32::from_rgb(channel(0)?, channel(2)?, channel(4)?),
+            color: quantick_chart::style::PremultipliedRgba::from_rgb(
+                channel(0)?,
+                channel(2)?,
+                channel(4)?,
+            ),
             width_px: self
                 .width_px
                 .clamp(super::MIN_DRAWING_WIDTH_PX, super::MAX_DRAWING_WIDTH_PX),
@@ -411,7 +415,7 @@ fill_alpha = 12
     fn a_default_style_survives_a_restart() {
         let path = scratch_path("default-style");
         let mine = DrawingStyle {
-            color: super::super::egui::Color32::from_rgb(0xFF, 0xA0, 0x10),
+            color: quantick_chart::style::PremultipliedRgba::from_rgb(0xFF, 0xA0, 0x10),
             width_px: 2.5,
             fill_alpha: 40,
         };

@@ -44,7 +44,8 @@ mod payload;
 mod store;
 mod style;
 
-// The name the whole subsystem reaches through `super::`.
+// The test modules reach egui through `use super::*`.
+#[cfg(test)]
 use eframe::egui;
 
 /// The handle every caller outside this module holds a tool by; the port it
@@ -70,7 +71,7 @@ pub use object::{
 pub use payload::{DrawingPayload, NoPayload};
 pub use store::Drawings;
 use store::{UNDO_HISTORY_LIMIT, UndoEntry};
-pub(crate) use style::{CLAMPED_OPACITY, painted_color};
+pub(crate) use style::{CLAMPED_OPACITY, from_color32, painted_color, to_color32};
 pub use style::{
     DEFAULT_DRAWING_COLOR, DrawingStyle, GlyphSize, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX,
     MIN_DRAWING_WIDTH_PX,

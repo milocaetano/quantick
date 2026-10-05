@@ -458,7 +458,10 @@ impl DrawingTool {
     pub fn default_style(self) -> DrawingStyle {
         let stock = DrawingStyle::default();
         DrawingStyle {
-            color: self.0.default_color().unwrap_or(DEFAULT_DRAWING_COLOR),
+            color: self
+                .0
+                .default_color()
+                .map_or(DEFAULT_DRAWING_COLOR, super::from_color32),
             width_px: self.0.default_width_px().unwrap_or(stock.width_px),
             fill_alpha: self.0.default_fill_alpha().unwrap_or(stock.fill_alpha),
         }
@@ -588,7 +591,7 @@ impl DrawingTool {
     ) {
         if ctxt.selected {
             let halo_style = DrawingStyle {
-                color: SELECTION_HALO_COLOR,
+                color: super::from_color32(SELECTION_HALO_COLOR),
                 width_px: style.width_px + SELECTION_HALO_EXTRA_WIDTH_PX,
                 fill_alpha: 0,
             };

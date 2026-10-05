@@ -120,7 +120,7 @@ fn a_saved_default_shapes_the_next_object_and_never_the_ones_already_drawn() {
     assert!(!drawings.place(fib, ChartPoint::at(1.0, 100.0)));
     assert!(drawings.place(fib, ChartPoint::at(9.0, 200.0)));
     let mine = DrawingStyle {
-        color: egui::Color32::from_rgb(0x20, 0xC0, 0x80),
+        color: crate::drawings::from_color32(egui::Color32::from_rgb(0x20, 0xC0, 0x80)),
         width_px: 2.5,
         fill_alpha: 30,
     };
@@ -1030,7 +1030,7 @@ fn selection_preserves_the_drawing_color_and_adds_white_handles() {
     let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(500.0, 300.0));
     let color = egui::Color32::from_rgb(0xFF, 0x9F, 0x43);
     let style = DrawingStyle {
-        color,
+        color: crate::drawings::from_color32(color),
         ..DrawingStyle::default()
     };
     let line = tool("horizontal-line");
@@ -1687,7 +1687,7 @@ fn style_defaults_are_per_tool_and_additive() {
     for tool in DRAWING_TOOLS {
         let style = tool.default_style();
         if tool.id() == "anchored-vwap" {
-            assert_eq!(style.color, crate::theme::DRAW_CYAN);
+            assert_eq!(style.color32(), crate::theme::DRAW_CYAN);
             assert!(style.width_px > stock.width_px, "a series outweighs a note");
             assert!(style.fill_alpha > stock.fill_alpha);
             declaring += 1;

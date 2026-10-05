@@ -233,7 +233,7 @@ pub fn paint_off_band_caret(
             egui::pos2(x - OFF_BAND_CARET_HALF_PX, base),
             egui::pos2(x + OFF_BAND_CARET_HALF_PX, base),
         ],
-        drawing.style.color,
+        drawing.style.color32(),
         egui::Stroke::NONE,
     ));
 }

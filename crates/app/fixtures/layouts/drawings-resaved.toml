@@ -1,0 +1,82 @@
+version = 1
+active = 1
+next_id = 2
+
+[[layouts]]
+id = 1
+name = "Layout 1"
+indicators = []
+
+[[layouts.drawings]]
+feed = "binance"
+symbol = "BTCUSDT"
+pane = 0
+
+[[layouts.drawings.items]]
+id = 1
+tool = "horizontal-line"
+color = [
+    255,
+    200,
+    0,
+    255,
+]
+width_px = 1.5
+fill_alpha = 0
+locked = false
+hidden = false
+shared = false
+
+[[layouts.drawings.items.points]]
+time_ms = 1000
+price = 1.0
+bar = 3.0
+
+[layouts.drawings.items.band]
+axis = "price"
+
+[[layouts.drawings.items]]
+id = 2
+tool = "horizontal-line"
+color = [
+    27,
+    117,
+    162,
+    128,
+]
+width_px = 1.5
+fill_alpha = 0
+locked = false
+hidden = false
+shared = false
+
+[[layouts.drawings.items.points]]
+time_ms = 1000
+price = 2.0
+bar = 3.0
+
+[layouts.drawings.items.band]
+axis = "price"
+
+[[layouts.drawings.items]]
+id = 3
+tool = "horizontal-line"
+color = [
+    95,
+    14,
+    39,
+    51,
+]
+width_px = 1.5
+fill_alpha = 0
+locked = false
+hidden = false
+shared = false
+
+[[layouts.drawings.items.points]]
+time_ms = 1000
+price = 3.0
+bar = 3.0
+
+[layouts.drawings.items.band]
+axis = "price"
