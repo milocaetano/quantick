@@ -150,33 +150,51 @@ pub(crate) fn draw_live_lane_marks(painter: &egui::Painter, context: &RenderCont
     if !style.live_lane.show_marks {
         return;
     }
-    // Both marks belong to the lane; without a live edge there is no lane.
+    let rect = context.layout.chart_rect;
+    draw_lane_boundary(painter, rect, context.layout.lane_width_px, &style);
+    // The divider is layout; only the moving time mark needs a market clock.
     let Some(now_x) = context.projection.live_now_x else {
         return;
     };
-    let Some(divider_x) = context.layout.lane_left_x() else {
+    if context.layout.lane_left_x().is_none() {
         return;
-    };
-    let rect = context.layout.chart_rect;
+    }
     let palette = super::palette_for_theme(style.theme);
     let clip = painter.with_clip_rect(rect);
-    for (x, dash, gap, color) in [
-        (
-            divider_x,
-            LANE_DIVIDER_DASH_PX,
-            LANE_DIVIDER_GAP_PX,
-            palette.lane_divider,
-        ),
-        (
-            context.layout.x(now_x),
+    let x = context.layout.x(now_x);
+    if x.is_finite() && rect.x_range().contains(x) {
+        draw_dashed_vertical(
+            &clip,
+            x,
+            rect,
             LANE_NOW_DASH_PX,
             LANE_NOW_GAP_PX,
             palette.lane_now,
-        ),
-    ] {
-        if x.is_finite() && rect.x_range().contains(x) {
-            draw_dashed_vertical(&clip, x, rect, dash, gap, color, LANE_MARK_WIDTH_PX);
-        }
+            LANE_MARK_WIDTH_PX,
+        );
+    }
+}
+
+/// Draw the reserved tape edge even before any depth, trade or projection arrives.
+pub(crate) fn draw_lane_boundary(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    lane_width: f32,
+    style: &super::OrderflowRenderStyle,
+) {
+    if !style.live_lane.show_marks {
+        return;
+    }
+    if let Some(x) = super::lane_divider_x(rect, lane_width) {
+        draw_dashed_vertical(
+            &painter.with_clip_rect(rect),
+            x,
+            rect,
+            LANE_DIVIDER_DASH_PX,
+            LANE_DIVIDER_GAP_PX,
+            super::palette_for_theme(style.theme).lane_divider,
+            LANE_MARK_WIDTH_PX,
+        );
     }
 }
 

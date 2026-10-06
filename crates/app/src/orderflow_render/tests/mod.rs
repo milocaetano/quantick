@@ -1461,61 +1461,6 @@ fn panning_and_zooming_the_candles_never_move_the_lane() {
     }
 }
 
-/// The lane never draws marks it cannot place, and hiding them is exactly
-/// one switch away.
-#[test]
-fn the_lane_marks_need_a_lane_a_live_edge_and_permission() {
-    let viewport = Viewport::new();
-    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
-    let style = OrderflowRenderStyle::default();
-    let mut projection = HeatmapProjection::empty(
-        true,
-        quantick_orderflow::EffectiveGrouping::resolve(
-            quantick_orderflow::DisplayGrouping::Native,
-            rust_decimal::Decimal::ONE,
-            rust_decimal::Decimal::from(100),
-        ),
-    );
-    projection.live_now_x = Some(0.95);
-
-    let with_lane = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 5.0);
-    let drawn = painted(|painter| {
-        draw_live_lane_marks(painter, &RenderContext::new(&projection, with_lane, &style));
-    });
-    assert!(
-        drawn.matches("LineSegment").count() >= 2,
-        "both the boundary and the live-time line must draw: {drawn}"
-    );
-
-    // No live edge: the frame is history, and history has no present.
-    let mut settled = projection.clone();
-    settled.live_now_x = None;
-    // No lane at all: nothing to divide.
-    let no_lane = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 0.0);
-    // Switched off by the user.
-    let hidden = OrderflowRenderStyle {
-        live_lane: LiveLaneStyle {
-            show_marks: false,
-            ..LiveLaneStyle::default()
-        },
-        ..OrderflowRenderStyle::default()
-    };
-    let nothing = painted(|_| {});
-    for (frame, layout, style) in [
-        (&settled, with_lane, &style),
-        (&projection, no_lane, &style),
-        (&projection, with_lane, &hidden),
-    ] {
-        assert_eq!(
-            painted(|painter| draw_live_lane_marks(
-                painter,
-                &RenderContext::new(frame, layout, style)
-            )),
-            nothing
-        );
-    }
-}
-
 #[test]
 fn the_lane_is_the_only_region_wider_than_a_candle() {
     let viewport = Viewport::new(); // candle_width 8, following

@@ -40,6 +40,7 @@ use crate::ui_state::WorkspaceExt;
 
 mod arrangement_baseline_tests;
 mod bar_registry_tests;
+mod bare_canvas;
 mod chart_view_tests;
 mod control_launch_baselines;
 mod control_plane_tests;
@@ -431,14 +432,8 @@ fn app_with_history_and_launch(
     launch: AppLaunch,
 ) -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
     let (mut app, evt_tx, cmd_rx, _book_tx) = test_app_with_launch(launch);
-    // A bare canvas, the one every caller here was written against: the
-    // strip stands beside the price axis and takes width from the candles,
-    // so leaving it on moves every hard-coded pointer coordinate in the
-    // drawing and inspector tests onto it — a collision about layout,
-    // never about what those tests assert. Which layers a launch opens
-    // with is a different question, and `test_app` keeps the shipped
-    // answer intact for the test that reads it
-    // (`each_layer_switch_moves_exactly_one_owner`).
+    // Omit the forming-bar strip. Drawing fixtures also turn off the tape in
+    // bare_canvas; native-tape fixtures retain its shipped source setting.
     app.active_tab_mut().flow_pane.set_layer_visible(
         ChartLayer::LiveStrip,
         false,

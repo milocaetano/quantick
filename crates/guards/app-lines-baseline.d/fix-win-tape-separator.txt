@@ -1,0 +1,4 @@
+# Issue #613: keep the requested tape boundary drawable without a market clock
+# or a worker frame. These lines are egui layout/paint adapters in their owners.
+crates/app +49
+!budget +49

@@ -33,7 +33,9 @@ mod tape_rebuild;
 pub(crate) use bubbles::draw_aggression_bubbles;
 pub(crate) use bubbles::{SphereShading, add_shaded_sector};
 pub(crate) use constants::PIE_START_ANGLE;
-pub(crate) use heatmap::{draw_heatmap_background, draw_liquidity_events, draw_live_lane_marks};
+pub(crate) use heatmap::{
+    draw_heatmap_background, draw_lane_boundary, draw_liquidity_events, draw_live_lane_marks,
+};
 pub(crate) use layout::{ProjectedLayout, RenderContext, lane_divider_x};
 pub(crate) use legend::draw_compact_legend;
 pub(crate) use preview::draw_preview;

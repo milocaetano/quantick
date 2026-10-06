@@ -22,6 +22,10 @@
 use eframe::egui;
 use rust_decimal::prelude::ToPrimitive as _;
 
+#[cfg(test)]
+#[path = "draw_chart/tests/lane_boundary.rs"]
+mod lane_boundary_tests;
+
 use crate::bands::{Band, Bands};
 use crate::chart::PriceScale;
 use crate::orderflow_view::{LiveLane, OrderflowView};
@@ -356,11 +360,6 @@ impl ChartPane {
             .hover_pos
             .filter(|position| chart_rect.contains(*position))
             .map(|position| position.x);
-        if total == 0 {
-            self.paint_empty_pane(painter, area, chart_rect, chrome);
-            return None;
-        }
-
         // Tape only: the tape is the whole canvas and the candles get none of
         // it, even before the tape has a live edge to run to. The native tape
         // beside the candles keeps its share and fits the shared price axis.
@@ -370,6 +369,10 @@ impl ChartPane {
             self.viewport.snap_to_live();
         }
         let live_lane = self.lay_out_lane(chart_rect, tape_only);
+        if total == 0 {
+            self.paint_empty_pane(painter, area, chart_rect, chrome);
+            return None;
+        }
         let history_right = self.frame.lane_divider_x.unwrap_or(chart_rect.right());
         let history_rect = egui::Rect::from_min_max(
             chart_rect.min,
@@ -431,7 +434,9 @@ impl ChartPane {
         let lane_width_px = if tape_only {
             chart_rect.width()
         } else {
-            live_lane.map_or(0.0, |lane| lane.width_px)
+            self.orderflow
+                .as_ref()
+                .map_or(0.0, |view| view.lane_width_px(chart_rect.width()))
         };
         // Everything left of the divider is the candles' pane. They pan and
         // zoom inside it exactly as they did when it was the whole chart.
@@ -469,6 +474,16 @@ impl ChartPane {
             theme::TEXT_MUTED,
         );
         if let Some(orderflow) = self.orderflow.as_ref() {
+            let width = self
+                .frame
+                .lane_divider_x
+                .map_or(0.0, |x| chart_rect.right() - x);
+            orderflow.draw_lane_boundary(
+                painter,
+                chart_rect,
+                width,
+                background_color(chrome.style),
+            );
             self.layer_renderers.status(&mut StatusPass {
                 owner: orderflow,
                 painter,

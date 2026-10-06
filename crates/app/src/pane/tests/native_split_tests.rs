@@ -63,6 +63,9 @@ fn a_native_split_pane_fits_the_shared_axis_to_visible_candles_and_tape() {
         LANE_PX,
         "beside the candles the tape keeps its share"
     );
+    let mut offline_layout = layout(true);
+    offline_layout.live_lane = None;
+    assert_eq!(offline_layout.lane_width_px(), LANE_PX);
     let ctx = egui::Context::default();
     let painter = egui::Painter::new(ctx, egui::LayerId::background(), rect);
     let fitted = |native_tape: bool, price_view: &PriceView, tape_range| {

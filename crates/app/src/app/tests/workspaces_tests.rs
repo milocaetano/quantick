@@ -1,5 +1,5 @@
+use super::bare_canvas::app_with_history;
 use super::*;
-
 #[test]
 fn bundle_baseline_refused_import_still_flushes_pending_layouts() {
     let (mut app, _evt, _cmd, _book) = test_app();
