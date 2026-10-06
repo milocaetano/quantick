@@ -44,6 +44,7 @@ fn selected(model: &mut QuickRangeModel, context: RangeContext) {
             position: [30.0, 10.0],
             anchor: anchor(4.5),
             threshold_px: 4.0,
+            level: false,
         },
         context,
     );
@@ -60,6 +61,7 @@ fn a_click_never_becomes_a_temporary_range() {
             position: [14.0, 10.0],
             anchor: anchor(2.5),
             threshold_px: 4.0,
+            level: false,
         },
         ctx,
     );
@@ -91,6 +93,65 @@ fn a_drag_settles_one_range_and_a_second_press_replaces_it() {
     assert!(model.view().is_none());
 }
 
+/// Shift levels the ruler: the far anchor keeps the near anchor's price and
+/// its own bar, frame by frame, from the opening drag on; letting go of the
+/// modifier hands the price back to the pointer.
+#[test]
+fn shift_holds_the_far_anchor_at_the_near_anchors_price() {
+    let mut model = QuickRangeModel::default();
+    let ctx = context();
+    press(&mut model, ctx);
+    let drag = |model: &mut QuickRangeModel, bar: f32, level: bool| {
+        model.update(
+            Command::Drag {
+                position: [30.0 + bar, 10.0],
+                anchor: anchor(bar),
+                threshold_px: 4.0,
+                level,
+            },
+            ctx,
+        );
+        model.view().expect("past the threshold").anchors
+    };
+    for bar in [4.5, 9.5] {
+        let [near, far] = drag(&mut model, bar, true);
+        assert_eq!(near, anchor(1.5));
+        assert_eq!((far.bar, far.price), (bar, near.price));
+    }
+    assert_eq!(drag(&mut model, 9.5, false)[1], anchor(9.5));
+}
+
+/// Held means a live gesture under the hand, not a settled range and not
+/// a press the model refused: the paper layer stands down on this alone.
+#[test]
+fn only_a_pressed_or_dragging_range_is_held() {
+    let mut model = QuickRangeModel::default();
+    let ctx = context();
+    assert!(!model.held());
+    press(&mut model, ctx);
+    assert!(model.held(), "pressed");
+    model.update(Command::Release, ctx);
+    assert!(!model.held(), "a click released");
+    selected(&mut model, ctx);
+    assert!(!model.held(), "a settled range");
+    model.update(
+        Command::Press {
+            position: [10.0, 10.0],
+            anchor: anchor(1.5),
+            eligibility: GestureEligibility {
+                pointer_tool: false,
+                unoccluded: true,
+                area: GestureArea {
+                    min: [0.0; 2],
+                    max: [100.0; 2],
+                },
+            },
+        },
+        ctx,
+    );
+    assert!(!model.held(), "a refused press");
+}
+
 #[test]
 fn leaving_the_owning_tab_drops_even_an_unreleased_range() {
     let mut model = QuickRangeModel::default();
@@ -113,6 +174,7 @@ fn foreign_pane_input_does_not_complete_a_gesture() {
             position: [50.0, 10.0],
             anchor: anchor(10.5),
             threshold_px: 4.0,
+            level: false,
         },
         RangeContext {
             owner: Owner {
@@ -184,6 +246,7 @@ fn all_three_actions_preserve_future_coordinates() {
                 position: [30.0, 10.0],
                 anchor: future,
                 threshold_px: 4.0,
+                level: false,
             },
             ctx,
         );

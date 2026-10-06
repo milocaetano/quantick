@@ -14,8 +14,8 @@ use egui_phosphor::regular as icons;
 use super::line_core::{Extend, line_ends};
 use super::{
     DrawContext, Drawing, DrawingPayload, DrawingStyle, DrawingToolImpl, Handles, PresetHost,
-    Constrain, ToolShortcut, distance_to_segment, drawing_fill, drawing_stroke, level_with,
-    off_line_by, unit_normal,
+    Constrain, ToolShortcut, dashed_segment, distance_to_segment, drawing_fill, drawing_stroke,
+    level_with, off_line_by, unit_normal,
 };
 
 pub(super) static TOOL: ParallelChannel = ParallelChannel;
@@ -361,28 +361,6 @@ fn baseline(
     }
 }
 
-/// Paint a dashed segment. egui's dashed helper allocates a `Vec` of shapes
-/// per call; a channel repaints every frame, so the midline walks the segment
-/// itself and emits plain line segments.
-fn dashed_segment(painter: &egui::Painter, from: egui::Pos2, to: egui::Pos2, stroke: egui::Stroke) {
-    let span = to - from;
-    let length = span.length();
-    if length <= f32::EPSILON {
-        return;
-    }
-    let step = MIDLINE_DASH_PX + MIDLINE_GAP_PX;
-    let direction = span / length;
-    let mut travelled = 0.0_f32;
-    while travelled < length {
-        let dash_end = (travelled + MIDLINE_DASH_PX).min(length);
-        painter.line_segment(
-            [from + direction * travelled, from + direction * dash_end],
-            stroke,
-        );
-        travelled += step;
-    }
-}
-
 impl DrawingToolImpl for ParallelChannel {
     fn id(&self) -> &'static str {
         "parallel-channel"
@@ -520,7 +498,7 @@ impl DrawingToolImpl for ParallelChannel {
         // widened underneath itself reads as a smear, so the midline is
         // geometry-only.
         if let Some((from, to)) = channel.midline.filter(|_| !ctxt.halo) {
-            dashed_segment(painter, from, to, stroke);
+            dashed_segment(painter, from, to, stroke, MIDLINE_DASH_PX, MIDLINE_GAP_PX);
         }
     }
     fn hit_test(

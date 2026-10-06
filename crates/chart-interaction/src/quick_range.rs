@@ -132,6 +132,8 @@ pub enum Command {
         position: [f32; 2],
         anchor: Anchor,
         threshold_px: f32,
+        /// Shift is down: the far anchor holds the near anchor's price.
+        level: bool,
     },
     Release,
     Dismiss,
@@ -195,6 +197,24 @@ impl QuickRangeModel {
         }
     }
 
+    /// A gesture is under the hand: pressed, or still dragging. A settled
+    /// range, or a secondary press the model refused, is not.
+    pub fn held(&self) -> bool {
+        match self.state {
+            State::Idle => false,
+            State::Pressed { .. } => true,
+            State::Selected(view) => view.phase == Phase::Dragging,
+        }
+    }
+
+    fn near_anchor(&self) -> Option<Anchor> {
+        match self.state {
+            State::Idle => None,
+            State::Pressed { anchor, .. } => Some(anchor),
+            State::Selected(view) => Some(view.anchors[0]),
+        }
+    }
+
     pub fn view(&self) -> Option<RangeView> {
         match self.state {
             State::Selected(view) => Some(view),
@@ -238,9 +258,13 @@ impl QuickRangeModel {
             }
             Command::Drag {
                 position,
-                anchor,
+                mut anchor,
                 threshold_px,
+                level,
             } if anchor.valid() && threshold_px.is_finite() && threshold_px >= 0.0 => {
+                if let (true, Some(near)) = (level, self.near_anchor()) {
+                    anchor.price = near.price;
+                }
                 match &mut self.state {
                     State::Pressed {
                         context: start_context,

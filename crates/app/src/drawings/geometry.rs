@@ -2,6 +2,36 @@
 
 use eframe::egui;
 
+/// Paint `from`–`to` as `dash_px` dashes separated by `gap_px` gaps, starting
+/// on a dash. egui's dashed helper allocates a `Vec` of shapes per call; a
+/// drawing repaints every frame, so this walks the segment itself and emits
+/// plain line segments.
+pub fn dashed_segment(
+    painter: &egui::Painter,
+    from: egui::Pos2,
+    to: egui::Pos2,
+    stroke: egui::Stroke,
+    dash_px: f32,
+    gap_px: f32,
+) {
+    let span = to - from;
+    let length = span.length();
+    let step = dash_px + gap_px;
+    if !(length > f32::EPSILON && length.is_finite() && step > 0.0 && step.is_finite()) {
+        return;
+    }
+    let direction = span / length;
+    let mut travelled = 0.0_f32;
+    while travelled < length {
+        let dash_end = (travelled + dash_px).min(length);
+        painter.line_segment(
+            [from + direction * travelled, from + direction * dash_end],
+            stroke,
+        );
+        travelled += step;
+    }
+}
+
 pub fn distance_to_segment(position: egui::Pos2, start: egui::Pos2, end: egui::Pos2) -> f32 {
     let segment = end - start;
     let length_sq = segment.length_sq();

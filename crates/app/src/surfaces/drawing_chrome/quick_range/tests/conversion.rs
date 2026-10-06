@@ -31,6 +31,7 @@ fn ready() -> QuickRange {
             position: [40.0, 40.0],
             anchor: core::Anchor { bar: 4.5, ..anchor },
             threshold_px: 4.0,
+            level: false,
         },
         context,
     );

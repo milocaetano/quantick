@@ -396,6 +396,65 @@ fn quick_range_fibonacci_actions_use_the_dragged_move() {
     }
 }
 
+/// Shift during a held secondary drag levels the ruler, and the buy
+/// modifier never trades there: the paper aim stands down while the button
+/// is held, so even a primary press under Shift rests nothing.
+#[test]
+fn shift_levels_a_secondary_drag_and_never_rests_an_order() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    let (_, start, end) = quick_range_ends(&app);
+    let shift = egui::Modifiers::SHIFT;
+    let frame = |app: &mut QuantickApp, events: Vec<egui::Event>| {
+        run_frame_with_modifiers(app, &ctx, events, shift);
+    };
+
+    frame(
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(start),
+            secondary_button(start, true),
+        ],
+    );
+    frame(&mut app, vec![egui::Event::PointerMoved(end)]);
+    frame(
+        &mut app,
+        vec![egui::Event::PointerMoved(end), secondary_button(end, false)],
+    );
+    let retracement = crate::surfaces::drawing_chrome::QuickRangeAction::Retracement;
+    click_quick_range_action(&mut app, &ctx, retracement);
+    let points = &app.active_tab().flow_pane.drawings.items()[0].points;
+    assert!((points[1].bar - 160.5).abs() < 0.01, "{points:?}");
+    assert_eq!(
+        points[0].price, points[1].price,
+        "Shift held the far end level"
+    );
+
+    // The new fib is selected; Escape clears it so the next press can open
+    // a range rather than be refused under the selection.
+    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
+    let elsewhere = end + egui::vec2(-40.0, 30.0);
+    frame(
+        &mut app,
+        vec![
+            egui::Event::PointerMoved(start),
+            secondary_button(start, true),
+        ],
+    );
+    frame(&mut app, vec![egui::Event::PointerMoved(elsewhere)]);
+    assert!(app.drawings.chrome.quick_range.held(), "a live range");
+    for pressed in [true, false] {
+        frame(&mut app, vec![pointer_button(elsewhere, pressed)]);
+    }
+    frame(&mut app, vec![secondary_button(elsewhere, false)]);
+    run_frame(&mut app, &ctx);
+    assert!(
+        app.active_tab().paper.working_orders().is_empty(),
+        "no order rests while the range is held"
+    );
+}
+
 #[test]
 fn independent_annotations_do_not_run_the_temporary_conversion_plan() {
     for (capability, version, anchors) in [
@@ -472,6 +531,7 @@ fn quick_range_serialization_failure_keeps_range_without_refusal_toast() {
         egui::pos2(30.0, 30.0),
         ChartPoint::at(2.5, 101.0),
         4.0,
+        false,
         || {
             let tool = crate::drawings::DrawingTool::by_id("measure").unwrap();
             crate::drawings::NewDrawing {
@@ -1707,6 +1767,31 @@ fn holding_shift_lays_a_channel_dead_level() {
         "and it still ran along the tape: {:?}",
         draft.points
     );
+}
+
+/// A Shift-levelled ruler is level to the bit: the far anchor copies the
+/// near price rather than reading it back off the screen, where the magnet
+/// would also pull it onto its own bar's print. The flat readout can then
+/// compare exactly and never hide a real move.
+#[test]
+fn shift_levels_the_armed_ruler_to_the_exact_price() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    app.toolrail.set_magnet(true);
+    run_frame(&mut app, &ctx);
+
+    let y = price_y(&app, PaneSide::Flow, 100.0);
+    arm_drawing_from_toolbox(&mut app, &ctx, "measure");
+    drag_chart_with(
+        &mut app,
+        &ctx,
+        egui::pos2(600.0, y),
+        egui::pos2(800.0, y - 60.0),
+        egui::Modifiers::SHIFT,
+    );
+    let points = &app.active_tab().flow_pane.drawings.items()[0].points;
+    assert_eq!(points[0].price, points[1].price, "{points:?}");
+    assert!(points[1].bar > points[0].bar, "{points:?}");
 }
 
 /// The same drag without the modifier keeps the slope the hand gave it —

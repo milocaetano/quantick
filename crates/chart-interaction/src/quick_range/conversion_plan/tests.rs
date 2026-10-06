@@ -31,6 +31,7 @@ fn dragging(model: &mut QuickRangeModel, context: RangeContext) {
                 ..anchor
             },
             threshold_px: 4.0,
+            level: false,
         },
         context,
     );

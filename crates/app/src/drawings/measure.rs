@@ -1,8 +1,9 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
+use super::line_core::levelled_far_end;
 use super::measure_core::{BOTH_AXES, MEASURE_FAMILY, Measured, hit_measure, paint_measure};
-use super::{DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, ToolShortcut};
+use super::{Constrain, DrawContext, DrawingStyle, DrawingToolImpl, ToolFamily, ToolShortcut};
 
 pub(super) static TOOL: Measure = Measure;
 
@@ -22,10 +23,19 @@ impl DrawingToolImpl for Measure {
         icons::RULER
     }
     fn hover_text(&self) -> &'static str {
-        "Ruler - drag a leg to read it in points, percent, bars and time (M)"
+        "Ruler - drag a leg to read it in points, percent, bars and time, Shift to keep it level (M)"
     }
     fn required_points(&self) -> usize {
         2
+    }
+    /// Shift holds the far end at the near end's price, as on a trend line.
+    fn pending_anchor(
+        &self,
+        placed: &[egui::Pos2],
+        cursor: egui::Pos2,
+        constrain: Constrain,
+    ) -> egui::Pos2 {
+        levelled_far_end(placed, cursor, constrain)
     }
     fn shortcut(&self) -> Option<ToolShortcut> {
         Some(ToolShortcut {
@@ -36,8 +46,13 @@ impl DrawingToolImpl for Measure {
     fn family(&self) -> Option<ToolFamily> {
         Some(MEASURE_FAMILY)
     }
+    /// The ruler is a leg in a dashed hint box; a fill would hide the
+    /// candles it measures.
     fn supports_fill(&self) -> bool {
-        true
+        false
+    }
+    fn default_fill_alpha(&self) -> Option<u8> {
+        Some(0)
     }
     fn paint(
         &self,
