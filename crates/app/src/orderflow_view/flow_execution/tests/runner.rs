@@ -1,4 +1,6 @@
 use super::*;
+#[path = "recorded_performance.rs"]
+mod recorded_performance;
 use quantick_engine::{Side, Trade};
 use quantick_orderflow::projection::{
     PriceWindow,
