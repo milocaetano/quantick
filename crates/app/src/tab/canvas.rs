@@ -382,31 +382,18 @@ impl Tab {
                 pane.frame.clear_hidden();
             }
         }
-        // The time pane has no tape of its own (§11), so its footprint rows
-        // adopt the flow pane's capture bucket — the instrument's grid is a
-        // fact about the market, not about which pane shows it.
-        //
-        // Which is why there is no longer a gate here. This used to run only
-        // while the time pane's *footprint layer* was visible, and that
-        // contradicted the sentence above it: the ladders have a second
-        // consumer now, and a fixed-range volume profile folds them with the
-        // layer hidden. So the same profile, on the same market, read at the
-        // flow pane's bucket on one chart and at the default on the other — a
-        // hundredfold difference in row height on WDO, which paints as a slab
-        // beside a wash. Two surfaces that are the same thing have to behave
-        // the same way.
-        //
-        // Unconditional is also cheap: `set_footprint_group` returns
-        // immediately when the bucket has not changed, which is every frame
-        // but the one after a market switch.
-        if let (Some(time), Some(base)) = (
-            time_panes.first_mut(),
-            flow_pane
-                .orderflow
-                .as_ref()
-                .map(|tape| tape.base_capture_grouping()),
-        ) {
-            time.state.set_footprint_group(base);
+        // Read the worker's current grid even when the flow pane is collapsed.
+        // Every context inherits it, including collapsed panes and hidden
+        // footprint layers: fixed-range profiles consume the same ladders. The setter
+        // does no refold when the grid is unchanged.
+        if let Some(base) = flow_pane
+            .orderflow
+            .as_mut()
+            .map(|tape| tape.capture_grouping_now())
+        {
+            for pane in time_panes.iter_mut() {
+                pane.state.set_footprint_group(base);
+            }
         }
         // Context panes carry addresses `1..`, the flow pane `0` — the order
         // `Tab::pane_at` uses, never the order they sit in.

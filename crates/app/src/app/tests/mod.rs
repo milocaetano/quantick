@@ -1,7 +1,6 @@
 // The `app.rs` unit tests, split by the subsystem each one exercises.
 //
 // Child modules reach the app's private items without widening APIs.
-// Integration tests in `crates/app/tests/` see only the public API.
 //
 // The shared harness -- `test_app`, the `run_frame` family, the paint readers
 // -- lives here in the parent, and one `use super::*` per file is all any of
@@ -58,6 +57,7 @@ mod menu_bar_tests;
 mod orderflow_tests;
 mod panes_layout_tests;
 mod paper_trading_tests;
+mod profile_grid_tests;
 mod profile_pointer_tests;
 mod published_schema_compatibility_tests;
 mod quick_range_control_tests;

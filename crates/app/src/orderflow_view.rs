@@ -414,23 +414,18 @@ impl OrderflowView {
     }
 
     /// The capture bucket, taking whatever the engine has published since the last look.
-    /// [`base_capture_grouping`](Self::base_capture_grouping) reads the mirror as it stands, which
-    /// is stale for the footprint's row width: every `sync_published` site is gated on a layer or
-    /// dock tab being open, yet the ladder draws with all of them off. Reading through here keeps
-    /// the rows from depending on a diagnostics log having run.
+    /// The UI mirror can lag while its consumers are hidden. Reading through here keeps
+    /// profile and footprint rows from depending on a diagnostics log having run.
     pub fn capture_grouping_now(&mut self) -> Decimal {
         let base = self.worker.published_base_grouping();
-        // The mirror takes it too: a split's other pane reads the row width through
-        // `base_capture_grouping` (`&self`), so leaving the mirror behind would let two panes of
-        // one chart draw the same market on different rows.
+        // The mirror adopts the same base as every drawing consumer.
         self.published.base_price_grouping = base;
         self.adopt_base(base);
         base
     }
 
-    /// The capture bucket the book engine derived for this instrument: the declared `price_step`
-    /// where the feed reports one, else the auto-sized base. The footprint adopts it as its row
-    /// grid so the two ladders never disagree.
+    /// The last capture bucket adopted into the UI mirror.
+    #[cfg(test)]
     #[must_use]
     pub fn base_capture_grouping(&self) -> Decimal {
         self.published.base_price_grouping
@@ -1061,19 +1056,15 @@ mod tests {
     use crate::chart::PriceScale;
     use crate::live_strip;
 
-    /// The ask, in one test: the toolbar governs the candles and nothing else.
-    /// Every one of the four movements — each layer switched off *and* back on
-    /// — has to leave the tape exactly where the trader left it.
+    impl OrderflowView {
+        pub(crate) fn published_capture_grouping_for_test(&self) -> Decimal {
+            self.worker.flush();
+            self.worker.published_base_grouping()
+        }
+    }
 
     #[test]
     fn a_direct_read_of_the_capture_bucket_leaves_the_mirror_agreeing() {
-        // Two readers of one number. `capture_grouping_now` takes it straight
-        // from the worker mailbox, because the footprint's row width is needed
-        // on frames where nothing syncs; `base_capture_grouping` reads the
-        // mirror and takes `&self`, and is how a split hands the row width to
-        // its other pane. If the direct read does not leave the mirror behind,
-        // the two panes of one chart draw the same market on different rows.
-        //
         // The worker is flushed but the view is deliberately NOT synced: a sync
         // would write the mirror by itself and the test would pass either way.
         let mut view = OrderflowView::new("WINV26");
