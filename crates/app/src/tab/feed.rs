@@ -577,11 +577,13 @@ impl Tab {
                     }
                     self.history_trades += trades.len();
                     let trades = std::sync::Arc::new(trades);
+                    let defer = self.defer_history(trades.len());
                     let mut pending = false;
                     // Each pane cuts the older trades into its own bars, so
                     // each shifts its own anchors by its own count.
                     for pane in self.panes_mut() {
-                        pending |= pane.receive_history(std::sync::Arc::clone(&trades), true);
+                        pending |=
+                            pane.receive_history(std::sync::Arc::clone(&trades), true, defer);
                     }
                     // The first engine bar just moved backwards in time, and
                     // the prefix was trimmed against where it used to be. Any
@@ -620,9 +622,11 @@ impl Tab {
                     }
                     self.history_trades += trades.len();
                     let trades = std::sync::Arc::new(trades);
+                    let defer = self.defer_history(trades.len());
                     let mut pending = false;
                     for pane in self.panes_mut() {
-                        pending |= pane.receive_history(std::sync::Arc::clone(&trades), false);
+                        pending |=
+                            pane.receive_history(std::sync::Arc::clone(&trades), false, defer);
                     }
                     if !pending {
                         self.refold_history_prefix();
@@ -671,6 +675,14 @@ impl Tab {
         live
     }
 
+    fn defer_history(&self, count: usize) -> bool {
+        self.panes().any(|(pane, _)| {
+            pane.history_pending()
+                || pane.state.trades().len() + count
+                    > quantick_chart::history_publication::HISTORY_WORKER_TRADES
+        })
+    }
+
     fn poll_history_publication(&mut self, tab_id: u64) {
         let mut ready = true;
         for pane in self.panes_mut() {
@@ -679,8 +691,11 @@ impl Tab {
         if self.panes().any(|(pane, _)| pane.history_failed()) {
             self.loading.set_active(LoadingTask::HistoryRebuild, false);
             self.loading.set_active(LoadingTask::History, false);
-            self.abandon_history_run();
-            self.raise_history_note("History could not be built. Load older to retry.");
+            const FAILED: &str = "History could not be built. Load older to retry.";
+            if self.history_note() != Some(FAILED) {
+                self.abandon_history_run();
+                self.raise_history_note(FAILED);
+            }
             return;
         }
         let mut changed = false;

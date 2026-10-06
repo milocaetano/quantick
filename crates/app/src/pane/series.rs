@@ -308,11 +308,9 @@ impl ChartPane {
         &mut self,
         trades: std::sync::Arc<Vec<quantick_engine::Trade>>,
         page: bool,
+        defer: bool,
     ) -> bool {
-        if self.history_worker.pending()
-            || self.state.trades().len() + trades.len()
-                > super::history_worker::HISTORY_WORKER_TRADES
-        {
+        if defer {
             self.history_worker.enqueue(trades, page);
             true
         } else {

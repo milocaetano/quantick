@@ -2,5 +2,5 @@
 # drawings, indicators, loading tracker and the shared control snapshot.
 # Deterministic recut and publication policy live in chart; the app only binds
 # its frame and runtime. Exact measured remainder, subject to high review.
-crates/app +76
-!budget +76
+crates/app +77
+!budget +77

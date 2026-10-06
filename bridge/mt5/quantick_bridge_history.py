@@ -91,7 +91,7 @@ class HistoryMixin:
             # said out loud. A silent amputation is the same defect as the
             # clock window one layer down: the chart would open on a partial
             # day looking exactly like a complete one.
-            ticks = ticks[-cap:]
+            ticks = ticks[self.page_start(ticks, len(ticks), cap):]
             log(
                 "BRIDGE_BACKFILL_TRUNCATED",
                 symbol=self.symbol,

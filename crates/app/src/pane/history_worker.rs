@@ -1,5 +1,4 @@
 //! The UI's runtime adapter for the headless history publication owner.
-pub(super) use quantick_chart::history_publication::HISTORY_WORKER_TRADES;
 use quantick_chart::history_publication::{
     HistoryPublication, HistoryRunner, HistoryRunnerStopped,
 };

@@ -4,5 +4,8 @@
 # Admission, coalescing, cancellation and bounded catch-up live in chart.
 # Runtime threads and the UI/control binding have no headless owner.
 # Exact measured remainder; subject to independent high review.
-crates/app +198
-!budget +198
+# The additional 26 lines make admission tab-wide for mixed-size panes,
+# publish a persistent failure once, and keep retry reachable after the venue
+# exhausts paging. Deterministic retry still belongs to chart.
+crates/app +224
+!budget +224

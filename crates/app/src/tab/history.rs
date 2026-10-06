@@ -862,6 +862,9 @@ impl Tab {
     /// Told the time rather than reading a clock, the way `replay` is, so a
     /// test can walk past the linger without sleeping through it.
     pub fn expire_history_note(&mut self, now: std::time::Instant) {
+        if self.panes().any(|(pane, _)| pane.history_failed()) {
+            return;
+        }
         if self.history_note.is_some_and(|note| {
             now.saturating_duration_since(note.raised_at) >= HISTORY_NOTE_LINGER
         }) {

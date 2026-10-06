@@ -15,6 +15,17 @@ use crate::toolbar::{self, ToolbarAction};
 
 use super::QuantickApp;
 
+// A failed recut still owns older prints after venue paging is exhausted.
+// The history button retries those retained pages through its ordinary action.
+fn toolbar_caps(
+    tab: &crate::tab::Tab,
+    config: &crate::config::AppConfig,
+) -> crate::config::FeedCapabilities {
+    let mut caps = tab.capabilities(config);
+    caps.history_paging |= tab.panes().any(|(pane, _)| pane.history_failed());
+    caps
+}
+
 impl QuantickApp {
     /// Build the toolbar's model from the app's state, draw it, and carry
     /// out whatever it asked (§6 — the toolbar module owns grouping and the
@@ -62,7 +73,7 @@ impl QuantickApp {
                         .unwrap_or("not recorded"),
                 ),
             });
-        let capabilities = self.active_tab().capabilities(&self.config);
+        let capabilities = toolbar_caps(self.active_tab(), &self.config);
         let candles_held = self.active_tab().venue_candles_held();
         let older_candles = self.active_tab().older_candles(capabilities);
         let feed_display_name = self.active_tab().feed_display_name(&self.config).to_owned();
