@@ -9,7 +9,35 @@ use std::sync::{
     mpsc::{self, Receiver, Sender},
 };
 
+#[cfg(not(test))]
 pub(super) type HistoryWorker = HistoryPublication<RecutThread>;
+
+/// Hold the real worker's publication at a deterministic UI test boundary.
+#[cfg(test)]
+#[derive(Default)]
+pub(super) struct HistoryWorker {
+    publication: HistoryPublication<RecutThread>,
+    pub held: bool,
+}
+#[cfg(test)]
+impl HistoryWorker {
+    pub fn poll(&mut self, state: &ChartState) -> bool {
+        self.publication.poll(state) && !self.held
+    }
+}
+#[cfg(test)]
+impl std::ops::Deref for HistoryWorker {
+    type Target = HistoryPublication<RecutThread>;
+    fn deref(&self) -> &Self::Target {
+        &self.publication
+    }
+}
+#[cfg(test)]
+impl std::ops::DerefMut for HistoryWorker {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.publication
+    }
+}
 enum Job {
     Recut(HistoryRebuild, Arc<AtomicBool>),
     Retire(ChartState),

@@ -35,6 +35,44 @@ fn renko_pane() -> ChartPane {
 }
 
 #[test]
+fn repeated_history_publications_preserve_fractional_pan_and_future_projection() {
+    for projection in [false, true] {
+        let mut pane = renko_pane();
+        pane.ingest_backfill(&prints(1000, (1000..1400).collect()));
+        for first in [800, 600, 400] {
+            let slots = pane.slots();
+            pane.viewport.snap_to_live();
+            pane.viewport
+                .pan_pixels(if projection { -25.5 } else { 45.5 }, slots);
+            let before = pane.viewport.right_edge_bar(slots);
+            let reference = (before.floor() as usize).min(slots - 1);
+            let time = pane.slot_open_time(reference).unwrap();
+            let offset = before - reference as f32;
+            pane.receive_history(
+                std::sync::Arc::new(prints(first, (first as i64..first as i64 + 200).collect())),
+                true,
+                true,
+            );
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !pane.prepare_history() {
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::yield_now();
+            }
+            assert!(pane.install_history());
+            assert!(
+                !pane.viewport.follows_live(),
+                "publication must not reacquire follow"
+            );
+            let expected = pane.slot_at_time(time).unwrap() as f32 + offset;
+            assert!(
+                (pane.viewport.right_edge_bar(pane.slots()) - expected).abs() < 0.001,
+                "fractional input survives every publication"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_renko_pane_appends_every_brick_the_print_that_reads_the_step_cuts() {
     let mut pane = renko_pane();
     // A climb of one point a print: sixty-three distances read no step.

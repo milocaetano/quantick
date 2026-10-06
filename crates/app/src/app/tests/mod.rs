@@ -1,10 +1,7 @@
 // The `app.rs` unit tests, split by the subsystem each one exercises.
 //
-// They stay child modules of `crate::app` rather than moving to
-// `crates/app/tests/`: an integration test is a separate crate and sees only
-// `quantick-app`'s public API, while these reach `QuantickApp`'s private
-// items. A child module sees its ancestor's private items, so the split costs
-// no widened visibility anywhere in production code.
+// Child modules reach the app's private items without widening APIs.
+// Integration tests in `crates/app/tests/` see only the public API.
 //
 // The shared harness -- `test_app`, the `run_frame` family, the paint readers
 // -- lives here in the parent, and one `use super::*` per file is all any of
@@ -48,7 +45,9 @@ mod control_port_tests;
 mod drawing_demo_baselines;
 mod drawings_tests;
 mod feeds_sources_tests;
+mod history_interaction_tests;
 mod history_publication_tests;
+mod history_reach_completion_tests;
 mod indicator_operations_tests;
 mod indicators_tests;
 mod input_ui_tests;

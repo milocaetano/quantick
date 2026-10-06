@@ -275,19 +275,26 @@ impl ChartPane {
             self.bump_pagination_revision();
         }
         let path_dependent = self.state.spec().definition().path_dependent;
-        let anchor = path_dependent.then(|| (self.right_edge_time(), self.slots()));
+        let anchor = path_dependent.then(|| self.history_view_anchor());
         let added = self.state.prepend_history(trades);
         self.finish_history_prepend(added, anchor);
         added
     }
 
-    fn finish_history_prepend(&mut self, added: usize, anchor: Option<(Option<i64>, usize)>) {
-        if let Some((edge_time, old_slots)) = anchor {
+    fn history_view_anchor(&self) -> (Option<i64>, f32, usize) {
+        let slots = self.slots();
+        let edge = self.viewport.right_edge_bar(slots);
+        let reference = (edge.floor().max(0.0) as usize).min(slots.saturating_sub(1));
+        (self.right_edge_time(), edge - reference as f32, slots)
+    }
+
+    fn finish_history_prepend(&mut self, added: usize, anchor: Option<(Option<i64>, f32, usize)>) {
+        if let Some((edge_time, offset, old_slots)) = anchor {
             // A Renko series re-cut from an older first print can hold a
             // different number of bricks, so the view and the marks go back
             // to market time.
             self.viewport
-                .reanchor(edge_time.and_then(|ms| self.slot_at_time(ms)), self.slots());
+                .reanchor_history(edge_time.and_then(|ms| self.slot_at_time(ms)), offset);
             self.reanchor_drawings(old_slots);
         } else {
             // Older bars shift every index up by `added`; keep the view steady.
@@ -339,6 +346,11 @@ impl ChartPane {
         self.history_worker.poll(&self.state)
     }
 
+    #[cfg(test)]
+    pub(crate) fn hold_history_publication(&mut self, held: bool) {
+        self.history_worker.held = held;
+    }
+
     pub fn install_history(&mut self) -> bool {
         let Some(candidate) = self.history_worker.take_ready(&self.state) else {
             return false;
@@ -348,7 +360,7 @@ impl ChartPane {
             .spec()
             .definition()
             .path_dependent
-            .then(|| (self.right_edge_time(), self.slots()));
+            .then(|| self.history_view_anchor());
         let added = candidate
             .bars()
             .len()

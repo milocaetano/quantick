@@ -25,6 +25,18 @@ pub enum ProviderKind {
 }
 
 impl ProviderKind {
+    /// Bound each campaign request by the transport's live-service behavior.
+    /// The local bridge serves one capped block per loop; Binance awaits
+    /// REST pages on its receive loop, so a campaign must not enlarge them.
+    #[must_use]
+    pub fn campaign_page_size(self, configured: usize) -> usize {
+        let ceiling = crate::history_reach::CAMPAIGN_PAGE_PRINTS;
+        match self {
+            Self::MetaTrader => ceiling,
+            Self::Binance | Self::Hyperliquid => configured.clamp(1, ceiling),
+        }
+    }
+
     /// Whether a session of this provider *may* carry the venue's deal
     /// counter — the static half, narrowed at hello the way
     /// [`capabilities`](Self::capabilities) is: a MetaTrader session on a
@@ -435,6 +447,17 @@ impl MetaTraderSettings {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn campaign_sizes_respect_the_transports_live_receive_loop() {
+        use super::ProviderKind;
+        assert_eq!(ProviderKind::MetaTrader.campaign_page_size(2000), 100_000);
+        assert_eq!(ProviderKind::Binance.campaign_page_size(2000), 2000);
+        assert_eq!(ProviderKind::Binance.campaign_page_size(0), 1);
+        assert_eq!(
+            ProviderKind::Binance.campaign_page_size(usize::MAX),
+            100_000
+        );
+    }
     use super::*;
 
     /// Settings listening on `addr`, mapping `ports`.

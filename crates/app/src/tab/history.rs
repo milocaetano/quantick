@@ -589,12 +589,8 @@ impl Tab {
 
     /// Reach into the past, as far as [`Self::history_reach`] says.
     ///
-    /// The named call behind the `+ older` button, the overflow entry and the
-    /// `QUANTICK_LOAD_OLDER` hook — one path, so an operator without a mouse
-    /// reaches exactly what a click reaches. Non-blocking: with a reach of one
-    /// page this is the single request it always was, and with a longer reach
-    /// it is the first of a run each reply continues
-    /// ([`Self::settle_history_page`]).
+    /// Shared by `+ older`, overflow and `QUANTICK_LOAD_OLDER`. Each reply
+    /// continues a campaign through [`Self::settle_history_page`].
     pub fn request_older_history(&mut self, tab_id: u64, config: &AppConfig) {
         let mut retried = false;
         for pane in self.panes_mut() {
@@ -608,10 +604,7 @@ impl Tab {
             || self.loading.is_active(LoadingTask::History)
             || self.panes().any(|(pane, _)| pane.history_pending())
         {
-            // A run already has its one permitted request out, and the reply
-            // is what sends the next. Pressing again would raise a second wait
-            // on the same indicator and ask the transport for two pages it
-            // will not serve at once.
+            // Only the outstanding reply may admit another request.
             tracing::debug!(
                 target: "quantick::app",
                 event_code = "HISTORY_REACH_ALREADY_RUNNING",
@@ -621,16 +614,20 @@ impl Tab {
             );
             return;
         }
-        // Whatever the last press had to say is spent the moment this one is
-        // made: the outcome on screen must be the outcome of the press the
-        // trader is waiting on, never the one before it.
+        // A new press owns its own outcome.
         self.history_note = None;
-        // Read before the request goes out: the anchor is where the chart
-        // reached *before* this run, and everything older arrived because of
-        // it. That is what makes a second press fetch the session before the
-        // one the first press brought in, rather than finding its work done.
+        // Keep the original reach anchor throughout every bounded request.
         let anchor_ms = self.oldest_retained_trade_ms();
-        if !self.send_load_older() {
+        let page_size = if self.history_reach.runs_a_campaign() {
+            config
+                .provider_of(&self.feed_id)
+                .map_or(self.history_step.max(1), |provider| {
+                    provider.campaign_page_size(self.history_step)
+                })
+        } else {
+            self.history_step.max(1)
+        };
+        if !self.send_load_older(page_size) {
             // Nothing was even asked, so nothing will answer. Said on screen
             // rather than only in the log: to the trader this is a press that
             // did nothing, which is the whole bug.
@@ -638,20 +635,16 @@ impl Tab {
             return;
         }
         if self.history_reach.runs_a_campaign() {
-            // A chart holding no prints has nothing to page back *from*, so
-            // the single request above is the whole of this press: the next
-            // one, with a tape under it, starts the run.
+            // An empty chart has no anchor and asks only once.
             let held = self.flow_pane.state.trades().len();
-            // The trader's live choice outranks the config seed: the toolbar
-            // and the control plane both write the window's value, and a run
-            // started after that must reach what they asked for rather than
-            // what the file said at startup.
+            // The live choice outranks the startup seed.
             let bounds = history_reach::ReachBounds {
                 span_ms: i64::from(self.history_reach_span_minutes) * 60_000,
                 ..config.history.reach_bounds()
             };
-            self.campaign =
-                anchor_ms.map(|anchor| Campaign::new(anchor, held, bounds, self.history_reach));
+            self.campaign = anchor_ms.map(|anchor| {
+                Campaign::new(anchor, held, bounds, self.history_reach).with_page_size(page_size)
+            });
         }
     }
 
@@ -659,15 +652,13 @@ impl Tab {
     ///
     /// Returns whether the command went out. A refusal is the end of whatever
     /// asked for it: nothing will answer, so nothing may keep waiting.
-    fn send_load_older(&mut self) -> bool {
-        match self.commands.try_send(FeedCommand::LoadOlder {
-            count: self.history_step.max(1),
-        }) {
+    fn send_load_older(&mut self, count: usize) -> bool {
+        match self.commands.try_send(FeedCommand::LoadOlder { count }) {
             Ok(()) => {
                 self.loading.begin(LoadingTask::History);
                 tracing::info!(
                     target: "quantick::app",
-                    count = self.history_step,
+                    count,
                     reach = self.history_reach.token(),
                     "requested older history"
                 );
@@ -708,12 +699,8 @@ impl Tab {
             .map(|trade| trade.timestamp_ms)
     }
 
-    /// Decide what a page that just landed means for the reach that asked —
-    /// and leave the trader something to read when it means nothing arrived.
-    ///
-    /// Rate: **rare** — once per history reply. The scan inside
-    /// [`Campaign::advance`] stops at the anchor, so its cost is the page that
-    /// arrived rather than the whole retained tape.
+    /// Judge each published page against the original reach and report an
+    /// incomplete stop honestly. Called once per reply, never per frame.
     pub(super) fn settle_history_page(&mut self, tab_id: u64, page_len: usize) {
         let Some(mut campaign) = self.campaign.take() else {
             if page_len == 0 {
@@ -747,7 +734,7 @@ impl Tab {
         let can_page = self.feed_capabilities.borrow().history_paging;
         match campaign.advance(self.flow_pane.state.trades(), can_page) {
             CampaignStep::Ask => {
-                if self.send_load_older() {
+                if self.send_load_older(campaign.request_count()) {
                     self.campaign = Some(campaign);
                 } else {
                     // Nothing will answer, so the run is over. Said out loud

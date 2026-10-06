@@ -52,17 +52,17 @@ pub const PREVIOUS_SESSION_LEAD_MS: i64 = 3 * 60 * 60 * 1_000;
 /// starts from where this one reached, because the anchor moves with it.
 pub const MAX_CAMPAIGN_PAGES: u32 = 64;
 
-/// Prints one campaign may pull before it stops and lets the trader decide.
-///
-/// The page budget bounds *round trips*; this bounds *work*. Every page is
-/// prepended through `ChartState::prepend_history`, which re-cuts every bar
-/// the chart holds — so the cost of a run is the tape it fetched, not the
-/// number of requests, and a trader who raised the page size to 50 000 would
-/// otherwise buy sixty-four of those rebuilds with one press. A quarter of a
-/// million prints is a heavy session's worth: enough that a reach lands in one
-/// press on any ordinary tape, bounded enough that the frame it costs is one
-/// frame.
-pub const MAX_CAMPAIGN_PRINTS: usize = 250_000;
+/// Prints requested per campaign page on transports that stream large blocks.
+/// Recutting beside the frame permits useful progress without hundreds of
+/// full-series publications. This stays below the bridge's 200,000-print cap.
+pub const CAMPAIGN_PAGE_PRINTS: usize = 100_000;
+
+/// Fetched-print safety ceiling, separate from the bounded work per request.
+/// The bridge's opening-session envelope uses the same four million prints:
+/// a measured dense B3 session contains 1,525,621 prints. The former 250,000
+/// synchronous-work ceiling could not reach the advertised session target.
+/// Reaching this ceiling still reports an incomplete campaign, never success.
+pub const MAX_CAMPAIGN_PRINTS: usize = 4_000_000;
 
 /// Replies that may bring nothing new before a campaign gives up.
 ///
@@ -408,6 +408,8 @@ pub struct Campaign {
     /// mid-run is calling that run off — `tab.rs` drops the campaign — rather
     /// than redirecting it at a goal it has already spent pages against.
     reach: HistoryReach,
+    /// Fixed at admission from the transport's bounded request policy.
+    page_size: usize,
 }
 
 impl Campaign {
@@ -430,7 +432,24 @@ impl Campaign {
             idle_pages: 0,
             bounds,
             reach,
+            page_size: CAMPAIGN_PAGE_PRINTS,
         }
+    }
+
+    /// Keep transport work bounded independently of the requested time reach.
+    #[must_use]
+    pub fn with_page_size(mut self, page_size: usize) -> Self {
+        self.page_size = page_size.clamp(1, CAMPAIGN_PAGE_PRINTS);
+        self
+    }
+
+    /// Clip the next request to this campaign's remaining print allowance.
+    #[must_use]
+    pub fn request_count(&self) -> usize {
+        self.page_size.min(
+            MAX_CAMPAIGN_PRINTS
+                .saturating_sub(self.prints_seen.saturating_sub(self.prints_at_start)),
+        )
     }
 
     /// The oldest print held when this campaign started.
@@ -1035,10 +1054,16 @@ mod tests {
         // newer than that.
         let mut tape = run(anchor - MAX_CAMPAIGN_PRINTS as i64, 1, MAX_CAMPAIGN_PRINTS);
         tape.extend_from_slice(&today);
+        assert_eq!(campaign.advance(&tape[7..], true), CampaignStep::Ask);
+        assert_eq!(
+            campaign.request_count(),
+            7,
+            "the last request cannot overspend the ceiling"
+        );
         assert_eq!(
             campaign.advance(&tape, true),
             CampaignStep::Stop(CampaignEnd::PrintsPulled),
-            "a quarter of a million prints is one press's worth of re-cutting"
+            "the retained-work ceiling must report an incomplete reach"
         );
     }
 
