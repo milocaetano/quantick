@@ -352,15 +352,6 @@ impl Tab {
         self.pane_mut(self.focused_side())
     }
 
-    /// The pane holding the drawing selection — which is not always the
-    /// focused one.
-    ///
-    /// A shared mark can be taken from either chart it appears on, and it
-    /// stays in the store of the pane it was drawn on. So the inspector, the
-    /// keyboard and the object manager follow the *object*, not the pane the
-    /// pointer happens to be over: selecting a level on the time pane and
-    /// pressing Delete has to delete that level, wherever it lives.
-    ///
     /// Make the pane with id `pane` the one the drawing chrome speaks for:
     /// focus it and drop every other pane's selection, so
     /// [`Self::drawing_side`] answers it. The chart menu's object entries
@@ -378,6 +369,15 @@ impl Tab {
         true
     }
 
+    /// The pane holding the drawing selection — which is not always the
+    /// focused one.
+    ///
+    /// A shared mark can be taken from either chart it appears on, and it
+    /// stays in the store of the pane it was drawn on. So the inspector, the
+    /// keyboard and the object manager follow the *object*, not the pane the
+    /// pointer happens to be over: selecting a level on the time pane and
+    /// pressing Delete has to delete that level, wherever it lives.
+    ///
     /// Exactly one pane holds a selection at a time
     /// ([`Self::apply_shared_interactions`] drops the other's), so this asks
     /// the focused pane first and takes the answer it finds.
