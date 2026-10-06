@@ -363,6 +363,9 @@ The only message that travels this way. Sent when the trader asks the chart for
 more history than it holds, and only to a session whose hello declared
 `history_paging`.
 
+Keep at most one request outstanding. The Python bridge logs and ignores an
+extra command while busy; it preserves the admitted request and its cursor.
+
 - `count` — how many ticks the chart wants. A bound, not a promise: the bridge
   sends what the terminal has and says so with `history_end`. A bridge should
   cap it against its own limit (the Python bridge: 200 000) rather than trust
@@ -431,11 +434,14 @@ everything already charted. A bridge that reused the backfill markers would have
 quantick prepend the opening window on every reconnect and append a paged block
 to the live tape.
 
-- `count_hint` — *optional*, like `backfill_start`'s. A bridge that walks the
-  terminal before it knows the count should send `history_start` **first and
-  bare**, then walk: the search is the slow part, the feed drops a session it
-  has heard nothing from for its read timeout, and a bridge that waits until it
-  can fill in a count spends that whole wait silent.
+- `count_hint` — *optional*, like `backfill_start`'s. The Python bridge gathers
+  one terminal window per loop turn, including cold floor discovery, while
+  live ticks, book images and heartbeats continue between turns. It sends
+  `history_start` only when the page is ready, followed by the entire page and
+  `history_end` without interleaving live ticks. Every tick between those
+  markers is history. A bridge that announces before searching must keep the
+  connection alive with heartbeats and must not send live ticks inside the
+  block. The read timeout measures silence, not total request duration.
 - `scanned_to_ms` — *optional*: the oldest instant the search actually
   **reached**, in server time. Not the oldest tick sent — the two come apart
   constantly, and the difference is what keeps paging moving.

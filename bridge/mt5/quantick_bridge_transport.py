@@ -27,7 +27,7 @@ class TransportMixin:
 
     Mixed into `Session`, which owns everything read here. State:
     `sock`, `outbox`, `inbox`, `symbol`, `digits`, `offset_s`,
-    `book_subscribed`. Behaviour from a sibling: `serve_load_older`
+    `book_subscribed`. Behaviour from a sibling: `queue_load_older`
     (`HistoryMixin`).
     """
 
@@ -79,7 +79,7 @@ class TransportMixin:
         return int((time.time() + self.offset_s) * 1000)
 
     def pump_commands(self) -> None:
-        """Serve whatever quantick asked for since the last poll.
+        """Admit whatever quantick asked for since the last poll.
 
         Called from the same loop that pumps ticks, so the terminal is touched
         from one thread only. The read never blocks: `select` with a zero
@@ -96,7 +96,7 @@ class TransportMixin:
             except (KeyError, TypeError, ValueError):
                 log("BRIDGE_MALFORMED_COMMAND", got=json.dumps(request), action="ignore")
                 continue
-            self.serve_load_older(count, before_ms)
+            self.queue_load_older(count, before_ms)
 
     def read_requests(self) -> list[dict]:
         """Every complete NDJSON command quantick has sent, decoded.
@@ -114,9 +114,7 @@ class TransportMixin:
             reads += 1
             chunk = self.sock.recv(COMMAND_READ_BYTES)
             if not chunk:
-                # quantick closed its side. The next outbound write raises and
-                # the caller reconnects; there is nothing to decide here.
-                break
+                raise ConnectionError("quantick closed the command socket")
             self.inbox += chunk
             while b"\n" in self.inbox:
                 line, self.inbox = self.inbox.split(b"\n", 1)
@@ -150,6 +148,7 @@ class TransportMixin:
         return requests
 
     def close(self, reason: str) -> None:
+        self.cancel_history()
         if self.book_subscribed:
             mt5.market_book_release(self.symbol)
             self.book_subscribed = False

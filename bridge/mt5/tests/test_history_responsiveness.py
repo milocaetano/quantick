@@ -40,14 +40,18 @@ class HistoryResponsiveness(unittest.TestCase):
 
     def test_an_older_request_waits_for_opening_without_repeating_the_morning(self):
         self.session.pending_opening = [[tick_at(3000)], [tick_at(2000)]]
-        requests = []
-        self.session.walk_back = lambda wanted, before: (requests.append((wanted, before)) or ([], False, before, 0))
+        self.terminal.ticks = [tick_at(1000)]
         self.session.serve_load_older(10, 4000)
-        self.assertEqual(requests, [])
+        self.assertEqual(self.terminal.tick_calls, [])
         self.session.pump_opening()
-        self.assertEqual(requests, [])
+        self.assertEqual(self.terminal.tick_calls, [])
         self.session.pump_opening()
-        self.assertEqual(requests, [(10, 2000)])
+        self.assertEqual(self.terminal.tick_calls, [])
+        self.assertEqual(self.session.pending_history_request, (10, 2000))
+        for _ in range(5):
+            self.session.pump_history()
+        self.assertIsNone(self.session.pending_history_request)
+        self.assertEqual([message["time_ms"] for message in self.session.sent if message["type"] == "tick"], [3000, 2000, 1000])
         self.assertEqual(sum(message["type"] == "history_end" and not message.get("opening", False) for message in self.session.sent), 1)
 
     def test_a_group_larger_than_the_consumer_cap_is_refused_honestly(self):

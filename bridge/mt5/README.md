@@ -86,6 +86,11 @@ behind is one click away. The Expert Advisor does not implement this; quantick
 disables the button rather than offering one that returns nothing. The wire
 details are in `PROTOCOL.md` (`load_older`, `history_start`/`history_end`).
 
+The Python bridge searches one terminal window per loop turn, so live ticks
+and depth polls run between windows. A ready page is then serialized and sent
+as one contiguous history block. A slow terminal call or that bounded page
+send still pauses polling; this does not promise an uninterrupted live cadence.
+
 The one thing it will refuse to do is guess: MetaTrader stamps everything in
 server wall time and exposes no server clock to outside processes, so the
 offset is measured from a *moving* tick. Run it once while the market trades

@@ -205,6 +205,8 @@ def session_for(bridge, terminal, **args):
     # than no buffer at all.
     session.outbox = bytearray()
     session.pending_opening = []
+    session.pending_history_request = None
+    session.history_steps = None
     session.last_heartbeat = 0.0
     session.cursor_msc = 0
     session.sent_at_cursor = 0

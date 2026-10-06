@@ -215,6 +215,8 @@ class Session(TransportMixin, TicksMixin, HistoryMixin, RatesMixin):
         # Slices of the opening session still to go out, newest first. Drained
         # one per loop pass by `pump_opening`.
         self.pending_opening: list = []
+        self.pending_history_request: tuple[int, int] | None = None
+        self.history_steps = None
         # Outbound bytes waiting for `flush`. A bytearray rather than a list of
         # lines: the socket wants one buffer and this is already it.
         self.outbox = bytearray()
@@ -348,6 +350,7 @@ def run_session(args: argparse.Namespace, offset_s: int) -> None:
                 # After the pumps and the commands: a trader's click and a live
                 # print both outrank filling in this morning's history.
                 session.pump_opening()
+                session.pump_history()
                 session.maybe_heartbeat()
                 # Everything this pass produced leaves before the loop waits.
                 # The buffer's size cap bounds memory; this bounds *latency*,
@@ -357,10 +360,9 @@ def run_session(args: argparse.Namespace, offset_s: int) -> None:
                 # Sleep to the nearest due deadline instead of spinning: the
                 # terminal reads cost microseconds, the waiting is the loop.
                 idle = min(next_tick, next_book) - time.monotonic()
-                # Not while the opening session is still going out: there is
-                # work in hand, and sleeping on it would stretch a fill that
-                # takes ten seconds into one that takes minutes.
-                if idle > 0 and not session.pending_opening:
+                # Pending opening slices and older-history windows are ready
+                # work; the next pass still runs live pumps when they are due.
+                if idle > 0 and not session.pending_opening and session.pending_history_request is None:
                     time.sleep(min(idle, 0.05))
         except KeyboardInterrupt:
             session.close("interrupted")
