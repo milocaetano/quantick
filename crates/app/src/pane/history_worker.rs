@@ -20,8 +20,12 @@ pub(super) struct RecutThread {
 }
 impl HistoryRunner for RecutThread {
     fn start(&mut self, rebuild: HistoryRebuild, cancelled: Arc<AtomicBool>) -> bool {
-        let (jobs, _) = self.channels.get_or_insert_with(spawn);
-        jobs.send(Job::Recut(rebuild, cancelled)).is_ok()
+        if self.channels.is_none() {
+            self.channels = spawn();
+        }
+        self.channels
+            .as_ref()
+            .is_some_and(|(jobs, _)| jobs.send(Job::Recut(rebuild, cancelled)).is_ok())
     }
     fn finished(&mut self) -> Result<Option<ChartState>, HistoryRunnerStopped> {
         let Some((_, results)) = &self.channels else {
@@ -40,7 +44,7 @@ impl HistoryRunner for RecutThread {
     }
 }
 
-fn spawn() -> (Sender<Job>, Receiver<ChartState>) {
+fn spawn() -> Option<(Sender<Job>, Receiver<ChartState>)> {
     let (jobs, inbox) = mpsc::channel();
     let (outbox, results) = mpsc::channel();
     std::thread::Builder::new().name("quantick-history-recut".to_owned()).spawn(move || {
@@ -58,6 +62,6 @@ fn spawn() -> (Sender<Job>, Receiver<ChartState>) {
                 Job::Retire(state) => drop(state),
             }
         }
-    }).expect("spawn history recut worker");
-    (jobs, results)
+    }).ok()?;
+    Some((jobs, results))
 }
