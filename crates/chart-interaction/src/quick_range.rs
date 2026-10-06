@@ -197,6 +197,16 @@ impl QuickRangeModel {
         }
     }
 
+    /// A gesture is under the hand: pressed, or still dragging. A settled
+    /// range, or a secondary press the model refused, is not.
+    pub fn held(&self) -> bool {
+        match self.state {
+            State::Idle => false,
+            State::Pressed { .. } => true,
+            State::Selected(view) => view.phase == Phase::Dragging,
+        }
+    }
+
     fn near_anchor(&self) -> Option<Anchor> {
         match self.state {
             State::Idle => None,

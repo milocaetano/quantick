@@ -1,10 +1,11 @@
-# Raised by 118 lines for the ruler's dashed box (`feat/measure-dashed-box`):
+# Raised by 130 lines for the ruler's dashed box (`feat/measure-dashed-box`):
 # all of it painting, hit-testing and wording in the measure tool that owns
 # them. The ruler draws a solid leg, a dot on each anchor and a thin dashed
 # hint box clipped to the chart, never a fill, and a level leg reads bars and
 # elapsed only. The dash walker moved out of the parallel channel into the
 # shared drawings geometry so both tools use one copy. Shift levels the ruler
 # (armed tool and secondary-button range, the latter decided headless in
-# chart-interaction); the pane's few lines keep that modifier from trading.
-crates/app +118
-!budget +118
+# chart-interaction); the pane's few lines keep that modifier from trading
+# only while a range is live, and seat a levelled anchor on the exact price.
+crates/app +130
+!budget +130

@@ -66,8 +66,6 @@ const RULER_BOX_DASH_PX: f32 = 4.0;
 const RULER_BOX_GAP_PX: f32 = 3.0;
 /// Narrower than this the box lies on the leg and says nothing.
 const RULER_BOX_MIN_SIDE_PX: f32 = 1.0;
-/// Relative: a levelled far end comes back through the screen an ulp off.
-const LEVEL_TOLERANCE: f64 = 1e-9;
 
 /// What the measured leg says, already worded. Empty lines never happen: an
 /// axis that is suppressed contributes no line at all.
@@ -128,9 +126,8 @@ pub(super) fn readout(anchors: &[ChartPoint], axes: Axes, unit: ValueUnit<'_>) -
     };
     let mut lines = Vec::with_capacity(2);
     let mut rising = None;
-    // A level ruler has no move to word: its plate is bars and elapsed only.
-    let level = (to.price - from.price).abs()
-        <= LEVEL_TOLERANCE * from.price.abs().max(to.price.abs()).max(1.0);
+    // Exactly level (Shift copies the price) has no move to word: bars and elapsed only.
+    let level = to.price == from.price;
 
     if axes.price && !(axes.time && level) {
         let delta = to.price - from.price;
@@ -496,20 +493,17 @@ mod tests {
     }
 
     /// A level ruler words no move: no `0 pts`, no `0.00%`, just how long it
-    /// is — also when the far end came back through the screen an ulp off.
-    /// Price range keeps its zero line.
+    /// is. Price range keeps its zero line.
     #[test]
     fn a_flat_move_claims_no_direction() {
-        for far in [100.0, 100.0 + 1e-12] {
-            let readout = readout(
-                &anchors((0.0, 100.0, 0), (3.0, far, 5_000)),
-                BOTH_AXES,
-                ValueUnit::Price,
-            )
-            .expect("anchors");
-            assert_eq!(readout.lines, ["3 bars   5s"]);
-            assert_eq!(readout.rising, None);
-        }
+        let level = readout(
+            &anchors((0.0, 100.0, 0), (3.0, 100.0, 5_000)),
+            BOTH_AXES,
+            ValueUnit::Price,
+        )
+        .expect("anchors");
+        assert_eq!(level.lines, ["3 bars   5s"]);
+        assert_eq!(level.rising, None);
         let price = readout(
             &anchors((0.0, 100.0, 0), (3.0, 100.0, 5_000)),
             PRICE_ONLY,
@@ -517,6 +511,20 @@ mod tests {
         )
         .expect("anchors");
         assert_eq!(price.lines, ["+0.00 pts   +0.00%"]);
+    }
+
+    /// Flat means equal, not "small next to the level": on a cumulative axis
+    /// near a billion, half a unit is still a move and keeps its line.
+    #[test]
+    fn a_small_move_on_a_large_axis_is_not_flat() {
+        let readout = readout(
+            &anchors((0.0, 1e9, 0), (3.0, 1e9 + 0.5, 5_000)),
+            BOTH_AXES,
+            ValueUnit::Indicator("CVD"),
+        )
+        .expect("anchors");
+        assert_eq!(readout.lines, ["+0.500000  ·  CVD", "3 bars   5s"]);
+        assert_eq!(readout.rising, Some(true));
     }
 
     #[test]

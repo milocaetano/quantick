@@ -107,9 +107,9 @@ impl PaperArbitration<'_> {
         // *unselected* object's handle keeps its pixel too.
         let modifiers = ui.input(|input| input.modifiers);
         let modifier_down = modifiers.shift || modifiers.command || modifiers.alt;
-        // A held secondary button is the quick range's, where Shift levels
-        // the ruler (`quick_range.rs`): the aim stands down, no press places.
-        let range_held = ui.input(|input| input.pointer.secondary_down());
+        // A live quick range (not a raw right button) owns the hand and Shift
+        // levels it (`quick_range.rs`): the aim stands down, no press places.
+        let range_held = chrome.drawing_chrome.quick_range.held();
         let canvas_claimed = pointer_position
             .filter(|_| modifier_down)
             .is_some_and(|position| {

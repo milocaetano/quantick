@@ -121,6 +121,37 @@ fn shift_holds_the_far_anchor_at_the_near_anchors_price() {
     assert_eq!(drag(&mut model, 9.5, false)[1], anchor(9.5));
 }
 
+/// Held means a live gesture under the hand, not a settled range and not
+/// a press the model refused: the paper layer stands down on this alone.
+#[test]
+fn only_a_pressed_or_dragging_range_is_held() {
+    let mut model = QuickRangeModel::default();
+    let ctx = context();
+    assert!(!model.held());
+    press(&mut model, ctx);
+    assert!(model.held(), "pressed");
+    model.update(Command::Release, ctx);
+    assert!(!model.held(), "a click released");
+    selected(&mut model, ctx);
+    assert!(!model.held(), "a settled range");
+    model.update(
+        Command::Press {
+            position: [10.0, 10.0],
+            anchor: anchor(1.5),
+            eligibility: GestureEligibility {
+                pointer_tool: false,
+                unoccluded: true,
+                area: GestureArea {
+                    min: [0.0; 2],
+                    max: [100.0; 2],
+                },
+            },
+        },
+        ctx,
+    );
+    assert!(!model.held(), "a refused press");
+}
+
 #[test]
 fn leaving_the_owning_tab_drops_even_an_unreleased_range() {
     let mut model = QuickRangeModel::default();

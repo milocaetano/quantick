@@ -243,6 +243,10 @@ impl QuickRange {
         }
     }
 
+    pub fn held(&self) -> bool {
+        self.model.held()
+    }
+
     pub fn release(&mut self, owner: Owner) {
         self.model.update(Command::Release, owner.context());
     }

@@ -349,7 +349,7 @@ impl PlacementRead<'_, '_> {
         let total = self.projection.series.slots();
         // Only bounded non-freehand drafts use shaping. Projecting a whole
         // brush stroke here would allocate and walk it up to three times/frame.
-        let shaped = match (drawings.draft(), band.scale.as_ref()) {
+        let (shaped, level_price) = match (drawings.draft(), band.scale.as_ref()) {
             (Some(draft), Some(scale)) if draft.tool == tool && !tool.freehand() => {
                 let placed = self.projection.projected_drawing_points(
                     draft,
@@ -357,13 +357,21 @@ impl PlacementRead<'_, '_> {
                     total,
                     scale,
                 );
-                tool.pending_anchor(&placed, position, self.constrain)
+                let shaped = tool.pending_anchor(&placed, position, self.constrain);
+                // A levelled far end copies the near price; a screen trip lands ulps off.
+                let level = match (self.constrain, placed.as_slice(), draft.points.first()) {
+                    (drawings::Constrain::Level, [start], Some(near)) if shaped.y == start.y => {
+                        Some(near.price)
+                    }
+                    _ => None,
+                };
+                (shaped, level)
             }
-            _ => position,
+            _ => (position, None),
         };
         // Do not re-clamp shaped output: the tool's pixel floor prevents a
         // degenerate shape and may deliberately extend just outside the band.
-        let point = self.projection.drawing_point_at(
+        let mut point = self.projection.drawing_point_at(
             shaped,
             self.history_right,
             total,
@@ -371,6 +379,9 @@ impl PlacementRead<'_, '_> {
             tool.anchor_snap(),
             band,
         )?;
+        if let Some(price) = level_price {
+            point.price = price;
+        }
         Some((band, point))
     }
 }

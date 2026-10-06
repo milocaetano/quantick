@@ -1354,6 +1354,77 @@ fn an_armed_tool_does_not_also_cancel_the_order_under_the_pointer() {
     );
 }
 
+/// A right button held with no quick range under it — this press lands on
+/// the order tag, outside the range's gesture area — keeps nothing from
+/// paper: the ✕ still cancels. Only a live range stands the paper layer down.
+#[test]
+fn a_right_button_with_no_quick_range_leaves_the_close_live() {
+    let ctx = egui::Context::default();
+    let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+    evt_tx
+        .try_send(FeedEvent::Backfilled(vec![
+            trade(2),
+            trade(6),
+            trade(10),
+            trade(14),
+            trade(18),
+        ]))
+        .unwrap();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
+    let price = Decimal::new(1005, 1);
+    app.active_tab_mut()
+        .paper
+        .apply_sim_command_for_tests(quantick_sim::Command::PlaceLimit {
+            side: quantick_engine::Side::Buy,
+            quantity: Decimal::ONE,
+            price,
+            bracket: quantick_sim::Bracket::none(),
+            cancel_at: None,
+            flat_only: false,
+        });
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+
+    let chart = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .chart_area
+        .expect("the pane laid out");
+    let tag_right = app
+        .active_tab()
+        .flow_pane
+        .frame
+        .lane_divider_x
+        .unwrap_or(chart.right());
+    let y = price_y(&app, PaneSide::Flow, 100.5);
+    let close = crate::paper_trading::close_button_rect(
+        tag_right,
+        crate::paper_trading::clamp_tag_center(y, chart.top(), chart.bottom()),
+    )
+    .center();
+    let secondary = |pressed| egui::Event::PointerButton {
+        pos: close,
+        button: egui::PointerButton::Secondary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(close), secondary(true)],
+    );
+    for pressed in [true, false] {
+        run_frame_with_events(&mut app, &ctx, vec![pointer_button(close, pressed)]);
+    }
+    assert!(
+        app.active_tab().paper.working_orders().is_empty(),
+        "the close cancels while the right button is still down"
+    );
+    run_frame_with_events(&mut app, &ctx, vec![secondary(false)]);
+}
+
 #[test]
 fn a_moved_inspector_keeps_its_position_across_selection_changes() {
     let (mut app, _commands) = app_with_history(200);
