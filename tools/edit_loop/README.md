@@ -75,15 +75,18 @@ selected crate. That executable proposal is unchanged, but its additive
 allowance was not approved for the first fixed calibration: five seconds
 would tolerate disproportionate regressions in subsecond package tests.
 
-The committed first Linux calibration intentionally uses tighter limits:
+### Historical calibration and identity amendments
+
+The first Linux calibration used the following proportional limits:
 `ceil(1.25 * max(all five baseline samples) * 1000) / 1000`, with no additive
 allowance. The independently reviewed ceilings are app 55.947 seconds,
 orderflow 1.022 seconds and pine 1.242 seconds. The 25% margin is an explicit
 operational policy, not a measured confidence interval or cross-run noise
 bound. Upward millisecond rounding keeps the margin proportional for small
-crates. Calibration source/time, host, jobs, protocol and the active enforcement
-profile identity remain in `budgets.json`; the original complete series and
-unapproved automatic proposal remain external review evidence.
+crates. Its measurement timestamp was `2026-09-17T04:50:55.698671+00:00`.
+The historical contract and its identity amendments remain recorded here;
+`budgets.json` holds the current reviewed calibration. The original complete
+series and unapproved automatic proposal remain external review evidence.
 
 The [reviewed LAYOUT identity amendment](https://github.com/milocaetano/quantick/issues/526#issuecomment-5710664745)
 adopts those same numerical limits for root-manifest SHA256
@@ -111,6 +114,50 @@ are equal. This is applicability, not recalibration or evidence of unchanged
 package-test cost. The same fresh ordinary final-head five-sample enforcement,
 limits, host, toolchain, jobs, protocol, ranking, representatives and restoration
 rules remain mandatory. No automatic future identity refresh is authorized.
+
+The later [A2 owner-extraction amendment](https://github.com/milocaetano/quantick/pull/532)
+retained those original numerical ceilings and bound root SHA256
+`6a95332565bb825490d409ffdd7dda498c9e063c2605324d54c6c7dfe6322cad`.
+It added the backpressure, chart, control-schema, operability, sources and
+stores members to the preceding root identity, preserving every other parsed
+manifest value. Its [ordinary-run evidence](https://github.com/milocaetano/quantick/actions/runs/35431426021)
+and the original calibration identity remain part of that amendment's history.
+
+### Reviewed 2026-10-06 calibration
+
+The [reference series](https://github.com/milocaetano/quantick/actions/runs/37407876085)
+measured clean `9ffb13ec954ab5fd338c199ed142184b7123334d` starting at
+`2026-10-06T03:12:53.222399+00:00`. Every warm-up, control and five-sample
+package series completed with passing tests and restored source metadata;
+the old contract failed on orderflow cost. Earlier main runs on
+[September 28](https://github.com/milocaetano/quantick/actions/runs/36417755712)
+and [October 5](https://github.com/milocaetano/quantick/actions/runs/37309067007)
+already failed on the changed top-three selection. Expanded tape/seal/rebuild
+regressions and control-schema growth were present in the reference commit.
+
+This full recalibration has an [independent dataset and numerical review](https://github.com/milocaetano/quantick/pull/614#issuecomment-6008933490).
+The reference app maximum (55.071 seconds) fits the previous 55.947-second
+ceiling; the earlier PR series (56.283-58.103 seconds) exceeds it. These separate
+hosted series do not establish the cause of that difference. The linked review
+retains the comparison and a nonblocking follow-up for an unused test oracle;
+this calibration retains the existing test workload unchanged.
+
+The calibration
+uses the actual selected crates and representatives. Each fixed ceiling is
+`ceil(1.25 * max(all five reference samples) * 1000) / 1000`:
+
+| Package | Representative source | Ceiling (seconds) |
+| --- | --- | ---: |
+| quantick-app | `crates/app/src/control/gateway/server.rs` | 68.839 |
+| quantick-orderflow | `crates/orderflow/src/engine.rs` | 42.802 |
+| quantick-control-schema | `crates/control-schema/src/evidence.rs` | 3.384 |
+
+Host class, pinned toolchain, jobs, profiles, frozen selection and measurement
+protocol are unchanged. The reference alone supplies these limits. The two
+earlier PR attempts retain their [warm-up test failure](https://github.com/milocaetano/quantick/actions/runs/37403827866/job/112076806794)
+and [completed over-budget series](https://github.com/milocaetano/quantick/actions/runs/37403827866/job/112080474236)
+as diagnostic evidence. Completion requires a separate ordinary run at the
+final committed head against this fixed contract.
 
 Do not replace these reviewed limits with automatic proposal output,
 recalibrate from each checked run, discard slow samples, relax a limit to
