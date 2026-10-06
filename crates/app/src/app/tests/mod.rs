@@ -47,6 +47,7 @@ mod control_port_tests;
 mod drawing_demo_baselines;
 mod drawings_tests;
 mod feeds_sources_tests;
+mod history_publication_tests;
 mod indicator_operations_tests;
 mod indicators_tests;
 mod input_ui_tests;

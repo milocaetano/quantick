@@ -66,16 +66,19 @@ pub enum LoadingTask {
     ReplaySession,
     /// Venue candle history is on its way for a time pane.
     VenueHistory,
+    /// Older prints are being cut into a coherent replacement series.
+    HistoryRebuild,
 }
 
 impl LoadingTask {
     /// Every task, in the order the overlay stacks their rows.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::History,
         Self::BarRebuild,
         Self::BookSync,
         Self::ReplaySession,
         Self::VenueHistory,
+        Self::HistoryRebuild,
     ];
 
     /// What the row says, without the trailing ellipsis.
@@ -87,6 +90,7 @@ impl LoadingTask {
             Self::BookSync => "syncing order book",
             Self::ReplaySession => "loading replay session",
             Self::VenueHistory => "loading venue history",
+            Self::HistoryRebuild => "building history",
         }
     }
 
@@ -112,7 +116,9 @@ impl LoadingTask {
             // Venue candles exist for the time panes and nothing else asks for
             // them.
             Self::VenueHistory => LoadingScope::TimePanes,
-            Self::History | Self::BarRebuild | Self::ReplaySession => LoadingScope::Whole,
+            Self::History | Self::BarRebuild | Self::ReplaySession | Self::HistoryRebuild => {
+                LoadingScope::Whole
+            }
         }
     }
 

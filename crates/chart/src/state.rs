@@ -22,6 +22,8 @@ pub use quantick_engine::{BarKind, BarSpec, MAX_TIME_INTERVAL_MS, MIN_TIME_INTER
 use rust_decimal::Decimal;
 
 use crate::footprint_series::{self, FootprintSeries, fold_print, seed_deal_counter};
+mod history_rebuild;
+pub use history_rebuild::HistoryRebuild;
 
 /// Any UI `f64` as a positive [`Decimal`].
 ///
@@ -398,39 +400,7 @@ impl ChartState {
     /// Replay every retained trade through a fresh builder for the current spec,
     /// recomputing the bars and the backfill/live boundary.
     fn rebuild(&mut self) {
-        self.readings_held = false;
-        let mut builder = self.spec.build();
-        // Readings first, prints after: the builder joins each print to the
-        // newest reading strictly before it, so the order between the two
-        // streams is immaterial as long as every reading is in hand.
-        seed_deal_counter(&mut *builder, &self.deal_samples);
-        let mut bars = Vec::new();
-        let mut boundary = None;
-        self.footprints.reset(self.footprints.base_group());
-        self.footprints.reset_membership(&self.spec);
-        let (ladders, trades) = (&mut self.footprints, &self.trades);
-        let enabled = self.footprint_enabled;
-        for i in 0..trades.len() {
-            if self.backfill_done && i == self.backfill_trade_count {
-                boundary = Some(bars.len());
-            }
-            let first = bars.len();
-            let late = fold_print(&mut *builder, ladders, enabled, true, trades, i, &mut bars);
-            // Live ingest's rule: a live print's late bars are history.
-            if late > 0 && (!self.backfill_done || i >= self.backfill_trade_count) {
-                boundary = Some(first + late);
-            }
-        }
-        // Backfill covered every retained trade (no live yet): boundary is the
-        // end of the bar list.
-        if self.backfill_done && boundary.is_none() {
-            boundary = Some(bars.len());
-        }
-        self.partial = builder.partial().cloned();
-        self.builder = builder;
-        self.bars = bars;
-        self.backfill_boundary = boundary;
-        self.bump_series_revision();
+        history_rebuild::rebuild_until(self, || false);
     }
 
     fn refresh_partial(&mut self) {

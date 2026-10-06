@@ -1,0 +1,13 @@
+# Issue #610: the app schedules chart-owned history recuts beside the frame,
+# keeps the displayed chart readable, installs all pane results in one drain,
+# reanchors drawings and indicators, and binds loading/error/retry readback.
+# Admission, coalescing, cancellation and bounded catch-up live in chart.
+# Runtime threads and the UI/control binding have no headless owner.
+# Exact measured remainder; subject to independent high review.
+# The additional 26 lines make admission tab-wide for mixed-size panes,
+# publish a persistent failure once, and keep retry reachable after the venue
+# exhausts paging. Deterministic retry still belongs to chart.
+# Four runtime-only lines admit fallible OS thread creation through the existing
+# chart-owned bounded failure/retry policy; the domain cannot spawn threads.
+crates/app +228
+!budget +228

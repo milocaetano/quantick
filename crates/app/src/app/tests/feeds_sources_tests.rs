@@ -277,10 +277,9 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
 }
 
 #[test]
-fn loader_survives_until_every_pending_load_is_answered() {
-    // Two "load older" clicks land while the initial backfill is still in
-    // flight: three loads pending. The first reply must NOT hide the
-    // indicator - only the last one may.
+fn loader_tracks_only_accepted_history_requests() {
+    // Clicks during a pending load share its wait; only a settled reply
+    // admits another request and lets the indicator disappear.
     let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
@@ -289,24 +288,23 @@ fn loader_survives_until_every_pending_load_is_answered() {
     );
 
     let tab_id = app.tabs.active_id();
-    with_config(&mut app, |tab, config| {
-        tab.request_older_history(tab_id, config)
-    });
-    let tab_id = app.tabs.active_id();
-    with_config(&mut app, |tab, config| {
-        tab.request_older_history(tab_id, config)
-    });
-    assert_eq!(app.active_tab().loading.count(LoadingTask::History), 3);
+    let config = app.config.clone();
+    app.active_tab_mut().request_older_history(tab_id, &config);
+    app.active_tab_mut().request_older_history(tab_id, &config);
+    assert_eq!(app.active_tab().loading.count(LoadingTask::History), 1);
 
     evt_tx.try_send(FeedEvent::Backfilled(Vec::new())).unwrap();
     let tab_id = app.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
-        2,
-        "older loads still pending"
+        0,
+        "initial loading never queued an older request"
     );
 
+    app.active_tab_mut().request_older_history(tab_id, &config);
+    app.active_tab_mut().request_older_history(tab_id, &config);
+    assert_eq!(app.active_tab().loading.count(LoadingTask::History), 1);
     evt_tx
         .try_send(FeedEvent::HistoryPrepended(Vec::new()))
         .unwrap();
@@ -314,10 +312,12 @@ fn loader_survives_until_every_pending_load_is_answered() {
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
-        1,
-        "one reply answers one load"
+        0,
+        "one reply answers the only admitted load"
     );
 
+    app.active_tab_mut().request_older_history(tab_id, &config);
+    assert_eq!(app.active_tab().loading.count(LoadingTask::History), 1);
     evt_tx
         .try_send(FeedEvent::HistoryPrepended(Vec::new()))
         .unwrap();
@@ -334,33 +334,32 @@ fn loader_survives_until_every_pending_load_is_answered() {
 fn rejected_request_does_not_arm_the_loader() {
     // With the command channel closed the request never reaches the feed,
     // so no reply will ever come - the count must not grow.
-    let (mut app, _evt_tx, cmd_rx, _book_tx) = test_app();
-    drop(cmd_rx);
+    let (mut app, evt_tx, cmd_rx, _book_tx) = test_app();
     let tab_id = app.tabs.active_id();
+    evt_tx.try_send(FeedEvent::Backfilled(Vec::new())).unwrap();
+    app.active_tab_mut().drain_feed(tab_id);
+    drop(cmd_rx);
     with_config(&mut app, |tab, config| {
         tab.request_older_history(tab_id, config)
     });
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
-        1,
-        "only the initial backfill"
+        0,
+        "the closed channel cannot create an unanswerable wait"
     );
 }
 
 #[test]
 fn a_source_reset_restarts_the_history_wait() {
-    // Loads queued before a reset will never be answered; the refill after
-    // the reset is the one load left in flight.
+    // The admitted older request is abandoned; the reset starts one refill.
     let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
     let tab_id = app.tabs.active_id();
+    evt_tx.try_send(FeedEvent::Backfilled(Vec::new())).unwrap();
+    app.active_tab_mut().drain_feed(tab_id);
     with_config(&mut app, |tab, config| {
         tab.request_older_history(tab_id, config)
     });
-    let tab_id = app.tabs.active_id();
-    with_config(&mut app, |tab, config| {
-        tab.request_older_history(tab_id, config)
-    });
-    assert_eq!(app.active_tab().loading.count(LoadingTask::History), 3);
+    assert_eq!(app.active_tab().loading.count(LoadingTask::History), 1);
     app.active_tab_mut()
         .flow_pane
         .drawings

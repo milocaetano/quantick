@@ -50,6 +50,7 @@ mod frame;
 mod frame_layout;
 mod frame_stages;
 mod gestures;
+mod history_worker;
 mod layer_painters;
 mod layers;
 mod placement_gestures;

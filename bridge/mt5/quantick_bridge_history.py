@@ -22,6 +22,7 @@ from quantick_bridge_core import (
     SESSION_GAP_MS,
     SESSION_WALK_MAX_SPAN_MS,
     SESSION_WALK_MAX_WINDOWS,
+    BridgeExit,
     log,
     mt5,
 )
@@ -90,7 +91,7 @@ class HistoryMixin:
             # said out loud. A silent amputation is the same defect as the
             # clock window one layer down: the chart would open on a partial
             # day looking exactly like a complete one.
-            ticks = ticks[-cap:]
+            ticks = ticks[self.page_start(ticks, len(ticks), cap):]
             log(
                 "BRIDGE_BACKFILL_TRUNCATED",
                 symbol=self.symbol,
@@ -121,12 +122,15 @@ class HistoryMixin:
         # cap arrives trimmed, and the surplus is dropped with nothing on the
         # chart to say so.
         slice_ticks = max(1, min(self.args.opening_slice_ticks, MAX_SLICE_TICKS_THE_FEED_ACCEPTS))
-        opening = ticks[-slice_ticks:] if len(ticks) else ticks
-        rest = ticks[:-slice_ticks] if len(ticks) > slice_ticks else []
-        self.pending_opening = [
-            rest[max(0, start - slice_ticks) : start]
-            for start in range(len(rest), 0, -slice_ticks)
-        ]
+        end = len(ticks)
+        start = self.page_start(ticks, end, slice_ticks)
+        opening = ticks[start:end]
+        self.pending_opening = []
+        end = start
+        while end:
+            start = self.page_start(ticks, end, slice_ticks)
+            self.pending_opening.append(ticks[start:end])
+            end = start
         if self.pending_opening:
             log(
                 "BRIDGE_OPENING_SLICED",
@@ -164,6 +168,10 @@ class HistoryMixin:
         self.flush()
         if not remaining:
             log("BRIDGE_OPENING_COMPLETE", symbol=self.symbol)
+            pending = getattr(self, "pending_history_request", None)
+            if pending is not None:
+                self.pending_history_request = None
+                self.serve_load_older(*pending)
 
     def send_backfill(self, ticks: list) -> None:
         """Put one block on the wire and leave the live cursor after it.
@@ -451,6 +459,13 @@ class HistoryMixin:
         read timeout. Announcing first means the wait is spent inside a block
         the feed knows is coming, and the heartbeats below keep it that way.
         """
+        if self.pending_opening:
+            # The opening owns the morning until its last slice is delivered.
+            # Replying below a partially painted floor would overlap the parked
+            # slices and make the feed discard them as already charted.
+            floor_ms = int(self.pending_opening[-1][0]["time_msc"])
+            self.pending_history_request = (count, min(before_ms, floor_ms))
+            return
         wanted = max(1, min(count, LOAD_OLDER_MAX_TICKS))
         started = time.monotonic()
         # No count_hint: it is optional precisely so a bridge that has not
@@ -537,7 +552,7 @@ class HistoryMixin:
                     action="answer_with_what_is_in_hand",
                 )
                 break
-            fresh = [t for t in found if int(t["time_msc"]) < cursor_ms]
+            fresh = self.older_than(found, cursor_ms)
             if len(fresh):
                 pages.append(fresh)
                 held += len(fresh)
@@ -557,8 +572,8 @@ class HistoryMixin:
 
         # Oldest page first, and the surplus trimmed off the *front*: the ticks
         # nearest the chart are the ones the trader is about to look at.
-        ticks = [tick for page in reversed(pages) for tick in page]
-        trimmed = max(0, len(ticks) - wanted)
+        ticks = self.join_windows(pages)
+        trimmed = self.page_start(ticks, len(ticks), wanted)
         if trimmed:
             ticks = ticks[trimmed:]
 
@@ -579,6 +594,32 @@ class HistoryMixin:
         else:
             scanned_to_ms = cursor_ms
         return ticks, exhausted, scanned_to_ms, calls
+
+    def page_start(self, ticks, end: int, wanted: int) -> int:
+        """Keep a timestamp group whole at a newest-first page boundary.
+
+        The feed's backwards cursor is a millisecond, so splitting a group
+        would make the unsent prints at that millisecond unreachable. Prefer
+        a shorter page; when the entire page is one group, keep it whole.
+        """
+        start = max(0, end - wanted)
+        if start == 0:
+            return 0
+        stamp = int(ticks[start]["time_msc"])
+        if int(ticks[start - 1]["time_msc"]) != stamp:
+            return start
+        right = start
+        while right < end and int(ticks[right]["time_msc"]) == stamp:
+            right += 1
+        if right < end:
+            return right
+        while start and int(ticks[start - 1]["time_msc"]) == stamp:
+            start -= 1
+        if end - start > MAX_SLICE_TICKS_THE_FEED_ACCEPTS:
+            log("BRIDGE_HISTORY_MILLISECOND_TOO_DENSE", symbol=self.symbol,
+                time_ms=stamp, count=end - start, action="refuse_incomplete_block")
+            raise BridgeExit
+        return start
 
     def earliest_tick_ms(self, newest_ms: int | None = None) -> int | None:
         """The oldest tick the terminal holds for this symbol, or None.

@@ -277,6 +277,11 @@ impl ChartPane {
         let path_dependent = self.state.spec().definition().path_dependent;
         let anchor = path_dependent.then(|| (self.right_edge_time(), self.slots()));
         let added = self.state.prepend_history(trades);
+        self.finish_history_prepend(added, anchor);
+        added
+    }
+
+    fn finish_history_prepend(&mut self, added: usize, anchor: Option<(Option<i64>, usize)>) {
         if let Some((edge_time, old_slots)) = anchor {
             // A Renko series re-cut from an older first print can hold a
             // different number of bricks, so the view and the marks go back
@@ -296,7 +301,63 @@ impl ChartPane {
         self.publish_tape_price_step();
         // Older trades re-cut every bar; replay from scratch.
         self.send_indicator_rebuild();
-        added
+    }
+
+    /// Queue a large recut without replacing the readable chart.
+    pub fn receive_history(
+        &mut self,
+        trades: std::sync::Arc<Vec<quantick_engine::Trade>>,
+        page: bool,
+        defer: bool,
+    ) -> bool {
+        if defer {
+            self.history_worker.enqueue(trades, page);
+            true
+        } else {
+            self.prepend_history(&trades);
+            false
+        }
+    }
+
+    pub fn history_pending(&self) -> bool {
+        self.history_worker.pending()
+    }
+
+    pub fn history_failed(&self) -> bool {
+        self.history_worker.failed()
+    }
+    pub fn retry_history(&mut self) -> bool {
+        self.history_worker.retry()
+    }
+
+    pub fn take_history_page(&mut self) -> Option<usize> {
+        self.history_worker.take_page()
+    }
+
+    /// Install a complete recut and catch up the live tail before moving anchors.
+    pub fn prepare_history(&mut self) -> bool {
+        self.history_worker.poll(&self.state)
+    }
+
+    pub fn install_history(&mut self) -> bool {
+        let Some(candidate) = self.history_worker.take_ready(&self.state) else {
+            return false;
+        };
+        let anchor = self
+            .state
+            .spec()
+            .definition()
+            .path_dependent
+            .then(|| (self.right_edge_time(), self.slots()));
+        let added = candidate
+            .bars()
+            .len()
+            .saturating_sub(self.state.bars().len());
+        let old = std::mem::replace(&mut self.state, candidate);
+        self.bump_pagination_revision();
+        self.finish_history_prepend(added, anchor);
+        self.history_worker.retire(old);
+        true
     }
 
     /// Where a market instant sits on this pane's series, as a fractional
@@ -390,6 +451,7 @@ impl ChartPane {
     /// Reset the tape while optionally retaining deal-counter readings for a
     /// rebuild of the same market.
     pub fn reset_series_with(&mut self, keep_readings: bool) {
+        self.history_worker.cancel();
         if let Some(owner) = self.orderflow.as_mut() {
             owner.reset_flow_executions();
         }

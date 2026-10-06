@@ -1,0 +1,5 @@
+# Issue #610: one pane-owned HistoryPublication owner docks the chart recut
+# runner. Its entire admission/queue/cancellation state lives behind that field.
+# Exact one-field amendment, subject to independent high review.
+app::ChartPane +1
+!budget +1
