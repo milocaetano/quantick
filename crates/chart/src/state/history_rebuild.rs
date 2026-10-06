@@ -5,6 +5,7 @@ use std::sync::Arc;
 use super::ChartState;
 use crate::footprint_series::{FootprintSeries, fold_print, seed_deal_counter};
 use quantick_engine::Trade;
+const CANCELLATION_CHECK_TRADES: usize = 4096;
 
 /// The old tape shares immutable chunks. Scheduling this work copies at most
 /// its append tail; recutting and joining the older pages happen in `run`.
@@ -46,7 +47,7 @@ impl HistoryRebuild {
         }
         let mut tape = quantick_engine::trade_tape::TradeTape::new();
         for page in self.pages.iter().rev() {
-            for chunk in page.chunks(4096) {
+            for chunk in page.chunks(CANCELLATION_CHECK_TRADES) {
                 if cancelled() {
                     return None;
                 }
@@ -82,7 +83,7 @@ pub(super) fn rebuild_until(state: &mut ChartState, mut cancelled: impl FnMut() 
     let (ladders, trades) = (&mut state.footprints, &state.trades);
     let enabled = state.footprint_enabled;
     for i in 0..trades.len() {
-        if i.is_multiple_of(4096) && cancelled() {
+        if i.is_multiple_of(CANCELLATION_CHECK_TRADES) && cancelled() {
             return false;
         }
         if state.backfill_done && i == state.backfill_trade_count {

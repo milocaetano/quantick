@@ -11,6 +11,7 @@ use std::sync::{
 pub const HISTORY_WORKER_TRADES: usize = 50_000;
 /// Maximum live tail folded during one publication poll.
 const LIVE_CATCHUP_TRADES: usize = 4096;
+const MAX_WORKER_FAILURES: u8 = 2;
 
 /// The scheduling boundary. The runner owns threads and result delivery.
 pub trait HistoryRunner: Default {
@@ -204,7 +205,7 @@ impl<R: HistoryRunner> HistoryPublication<R> {
 
     fn record_failure(&mut self) {
         self.failures += 1;
-        self.failed = self.failures >= 2;
+        self.failed = self.failures >= MAX_WORKER_FAILURES;
     }
 
     pub fn failed(&self) -> bool {
