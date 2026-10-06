@@ -161,3 +161,17 @@ pub enum DeleteOutcome {
     NeedsConfirmation,
     NothingSelected,
 }
+
+#[cfg(test)]
+mod drawing_model_tests {
+    use super::DrawingAuthor;
+
+    #[test]
+    fn author_label_names_the_client_then_its_actor_kind() {
+        let author = DrawingAuthor {
+            actor_kind: "agent".to_owned(),
+            client_name: "Claude Code".to_owned(),
+        };
+        assert_eq!(author.label(), "Claude Code (agent)");
+    }
+}
