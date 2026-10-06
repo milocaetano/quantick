@@ -382,14 +382,14 @@ impl Tab {
                 pane.frame.clear_hidden();
             }
         }
-        // Every context pane inherits the instrument's capture grid from
-        // the flow tape, including collapsed panes and hidden footprint
-        // layers: fixed-range profiles consume the same ladders. The setter
+        // Read the worker's current grid even when the flow pane is collapsed.
+        // Every context inherits it, including collapsed panes and hidden
+        // footprint layers: fixed-range profiles consume the same ladders. The setter
         // does no refold when the grid is unchanged.
         if let Some(base) = flow_pane
             .orderflow
-            .as_ref()
-            .map(|tape| tape.base_capture_grouping())
+            .as_mut()
+            .map(|tape| tape.capture_grouping_now())
         {
             for pane in time_panes.iter_mut() {
                 pane.state.set_footprint_group(base);

@@ -7,6 +7,12 @@ use quantick_engine::bar_registry::BUILTIN_BARS;
 const SIDES: [PaneSide; 3] = [PaneSide::Flow, PaneSide::Time(0), PaneSide::Time(1)];
 
 fn profile_fixture(ctx: &egui::Context, collapsed: bool) -> QuantickApp {
+    let mut app = profile_fixture_unadopted(ctx, collapsed);
+    app.active_tab_mut().tape_mut().flush_for_test();
+    app
+}
+
+fn profile_fixture_unadopted(ctx: &egui::Context, collapsed: bool) -> QuantickApp {
     let (mut app, events, _commands, _book) = test_app();
     app.active_tab_mut().restore_canvas(
         CanvasLayout::TimeTimeAndFlow,
@@ -56,7 +62,12 @@ fn profile_fixture(ctx: &egui::Context, collapsed: bool) -> QuantickApp {
     events.try_send(FeedEvent::Backfilled(prints)).unwrap();
     let tab_id = app.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
-    app.active_tab_mut().tape_mut().flush_for_test();
+    assert_eq!(
+        app.active_tab_mut()
+            .tape_mut()
+            .published_capture_grouping_for_test(),
+        Decimal::from(5)
+    );
     app
 }
 
@@ -109,6 +120,49 @@ fn assert_market_grid(app: &QuantickApp) {
             app.active_tab().pane(side).state.footprint_group(),
             Decimal::from(5),
             "{side:?} must inherit the instrument capture grid"
+        );
+    }
+}
+
+#[test]
+fn collapsed_flow_adopts_published_grid_before_context_profiles_draw() {
+    let ctx = egui::Context::default();
+    let mut app = profile_fixture_unadopted(&ctx, false);
+    app.active_tab_mut().set_flow_collapsed(true);
+    let before = app.active_tab_mut().tape_mut().base_capture_grouping();
+    assert_ne!(before, Decimal::from(5), "the view mirror must start stale");
+    for side in [PaneSide::Time(0), PaneSide::Time(1)] {
+        let pane = app.active_tab_mut().pane_mut(side);
+        let end = pane.slots().saturating_sub(1) as f32;
+        place_profile(pane, 0.0, end);
+    }
+    // Fix the summary clock so diagnostics cannot adopt the worker's grid.
+    let now = Instant::now();
+    app.health.last_summary = now;
+    app.health.last_frame = None;
+    let _ = ctx.run(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, TEST_WINDOW)),
+            ..Default::default()
+        },
+        |ctx| app.draw_frame(ctx, now),
+    );
+    assert!(app.active_tab().pane(PaneSide::Flow).frame.area.is_none());
+    assert_eq!(app.health.last_summary, now);
+    for side in [PaneSide::Time(0), PaneSide::Time(1)] {
+        let pane = app.active_tab().pane(side);
+        assert!(pane.frame.area.is_some());
+        assert_eq!(pane.state.footprint_group(), Decimal::from(5), "{side:?}");
+        let (profile, levels) = profile(pane);
+        assert_eq!(profile.group(), Decimal::from(5));
+        assert_eq!(profile.total_volume(), Decimal::from(480));
+        assert_eq!(
+            levels,
+            LevelPrices {
+                poc: Decimal::new(1_000_125, 1),
+                vah: Decimal::from(100_025),
+                val: Decimal::from(100_010),
+            }
         );
     }
 }
