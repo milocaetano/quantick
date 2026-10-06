@@ -78,6 +78,7 @@
 //! | `MT5_MAP_SUMMARY` | per-session mapping ledger | audit drops & side sources here |
 //! | `MT5_BOOK_AVAILABLE` | bridge declares a DOM | — |
 //! | `MT5_BOOK_UNSUPPORTED_BY_BRIDGE` | no DOM on this session | recompile the EA, or the symbol has no book |
+//! | `MT5_BOOK_OFFLINE` | no usable initial image within 10 s, or no fresh valid image for 30 s | book only; trades/history stay connected, next usable image recovers automatically |
 //! | `MT5_BOOK_SYNCHRONIZED` | first DOM image accepted; heatmap is live | — |
 //! | `MT5_BOOK_CROSSED` | crossed image rejected (first occurrence) | normal during B3's pre-open auction |
 //! | `MT5_BOOK_MALFORMED` | unreadable level; whole image rejected | bridge/feed version skew |

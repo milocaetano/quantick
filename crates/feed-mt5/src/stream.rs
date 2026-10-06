@@ -35,6 +35,7 @@ use crate::protocol::{self, BridgeMsg};
 
 mod blocks;
 mod connection;
+mod depth;
 mod events;
 mod ports;
 mod publish;

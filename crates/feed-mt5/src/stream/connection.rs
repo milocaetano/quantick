@@ -16,7 +16,8 @@ use crate::map::{MapOutcome, PriceContext, TickMapper};
 use crate::protocol::{self, BridgeMsg, FeedMsg, SCHEMA_VERSION};
 use crate::session::SeqTracker;
 
-use super::blocks::{DepthSession, RatesBlock};
+use super::blocks::RatesBlock;
+use super::depth::{DEPTH_CHECK_INTERVAL, DepthSession};
 use super::events::{ConnEnd, Mt5Event, Mt5Status};
 use super::publish::{publish_latency, send_live};
 use super::reader::{BoundedLine, BoundedLineReader};
@@ -64,6 +65,8 @@ struct PagedBlock {
 /// wait on both at once; naming them lets the wait stay one `select!` with one
 /// timeout rather than two loops racing over one reader.
 enum SessionInput {
+    /// Low-frequency depth availability check, independent of bridge liveness.
+    DepthCheck,
     /// A line from the bridge (or the error that ended the read).
     Line(std::io::Result<BoundedLine>),
     /// The consumer wants ticks older than `before_utc_ms`.
@@ -74,6 +77,25 @@ enum SessionInput {
         /// strictly older than this.
         before_utc_ms: i64,
     },
+}
+
+/// Wait on independent requests, depth deadlines and cancel-safe socket reads.
+async fn next_session_input(
+    lines: &mut BoundedLineReader<tokio::net::tcp::OwnedReadHalf>,
+    mut pending_request: std::pin::Pin<&mut impl std::future::Future<Output = (u64, i64)>>,
+    depth_check: &mut tokio::time::Interval,
+) -> SessionInput {
+    tokio::select! {
+        // A busy tape cannot starve a click or the low-frequency depth check.
+        biased;
+        (count, before_utc_ms) = pending_request.as_mut() => {
+            SessionInput::Request { count, before_utc_ms }
+        }
+        _ = depth_check.tick() => SessionInput::DepthCheck,
+        // The reader retains each partial line across a cancelled fill_buf;
+        // nothing consumed from the socket is lost when another branch wakes.
+        line = lines.next_line() => SessionInput::Line(line),
+    }
 }
 
 /// What happened to one attempt to ask the bridge for older ticks.
@@ -337,37 +359,17 @@ pub(super) async fn serve_connection(
     let pending_request = config.history_pager.take_request();
     tokio::pin!(pending_request);
 
+    let mut depth_check = tokio::time::interval(DEPTH_CHECK_INTERVAL);
+    depth_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut read_deadline = tokio::time::Instant::now() + config.read_timeout;
+
     let end = loop {
-        // One wait covers both directions, under the bridge-liveness timeout.
-        //
-        // The timeout is rebuilt each pass, so a wake from *either* branch
-        // restarts it: a click buys a silent bridge one more `read_timeout`
-        // before it is declared lost. That is a bounded and rare extension — a
-        // click is a human action, and the pager allows one outstanding at a
-        // time — not an indefinite one, which is why the timeout stays out here
-        // rather than being tracked against the read alone.
-        let input = tokio::time::timeout(config.read_timeout, async {
-            tokio::select! {
-                // Biased so a busy tape cannot starve the click: this branch is
-                // ready at most once per trader action, the read branch on
-                // nearly every pass.
-                biased;
-                (count, before_utc_ms) = &mut pending_request => {
-                    pending_request.set(config.history_pager.take_request());
-                    SessionInput::Request { count, before_utc_ms }
-                }
-                // `next_line` is cancel-safe, and the reader outlives this
-                // `select!` so the state it keeps is still there next pass.
-                // Its awaits are all `fill_buf`, and every byte it takes from
-                // the `BufReader` is appended to the partial-line buffer in the
-                // same synchronous step that consumes it — including the
-                // multi-`fill_buf` path a line longer than the buffer takes.
-                // So a cancelled poll leaves the two exactly as consistent as
-                // an uncancelled one: nothing consumed is unrecorded, and
-                // nothing recorded is unconsumed.
-                line = lines.next_line() => SessionInput::Line(line),
-            }
-        })
+        // Only inbound data or a paging request refresh bridge liveness.
+        // The depth timer must never keep a silent socket alive.
+        let input = tokio::time::timeout_at(
+            read_deadline,
+            next_session_input(&mut lines, pending_request.as_mut(), &mut depth_check),
+        )
         .await;
 
         let line = match input {
@@ -381,10 +383,22 @@ pub(super) async fn serve_connection(
                 );
                 break ConnEnd::BridgeGone("silent".to_string());
             }
+            Ok(SessionInput::DepthCheck) => {
+                if depth
+                    .check(&config.book_capture, generation_offset, tx)
+                    .await
+                    .is_err()
+                {
+                    break ConnEnd::UiGone;
+                }
+                continue;
+            }
             Ok(SessionInput::Request {
                 count,
                 before_utc_ms,
             }) => {
+                pending_request.set(config.history_pager.take_request());
+                read_deadline = tokio::time::Instant::now() + config.read_timeout;
                 match answer_page_request(
                     &mut outgoing,
                     &config.symbol,
@@ -469,6 +483,7 @@ pub(super) async fn serve_connection(
             }
             Ok(SessionInput::Line(Ok(BoundedLine::Line(line)))) => line,
         };
+        read_deadline = tokio::time::Instant::now() + config.read_timeout;
         if line.trim().is_empty() {
             continue;
         }
@@ -563,7 +578,13 @@ pub(super) async fn serve_connection(
             }
             Ok(BridgeMsg::Book(image)) => {
                 match depth
-                    .observe(image, &config.book_capture, generation_offset, tx)
+                    .observe(
+                        image,
+                        &config.book_capture,
+                        generation_offset,
+                        tx,
+                        tokio::time::Instant::now(),
+                    )
                     .await
                 {
                     Ok(()) => {}

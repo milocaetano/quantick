@@ -398,7 +398,9 @@ impl CaptureStatus {
                 last_update_id,
             } => format!("book live · gen {generation} · #{last_update_id}"),
             Self::Resyncing { reason } => format!("book resync · {reason}"),
-            Self::Disconnected { error_class } => format!("book down · {error_class}"),
+            Self::Disconnected { error_class } => {
+                format!("book offline · {error_class}").replace('_', " ")
+            }
             Self::Error => "book error".to_owned(),
         }
     }

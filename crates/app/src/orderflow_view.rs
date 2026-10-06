@@ -2038,7 +2038,7 @@ mod tests {
         assert!(!view.status_badge_visible(), "the switch did not move");
         let failing = badge_text(&mut view);
         assert!(
-            failing.contains("book down"),
+            failing.contains("book offline"),
             "a dead book may never be hidden chrome: {failing:?}"
         );
     }
