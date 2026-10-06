@@ -60,6 +60,7 @@ pub(crate) fn registered_layers() -> quantick_layers::LayerRegistry {
     render_registry::standard().layers()
 }
 mod menus;
+mod objects_menu;
 mod pointer_hit;
 mod primary_button;
 mod quick_range;

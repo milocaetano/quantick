@@ -292,6 +292,7 @@ impl ChartPane {
             } else {
                 "what this chart draws"
             });
+        self.draw_objects_menu_entries(ui);
         ui.separator();
         if let Some(price) = self.context_menu.price {
             // Stable for the menu's whole life: re-reading the pointer while

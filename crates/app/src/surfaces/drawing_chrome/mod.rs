@@ -61,6 +61,7 @@ pub(crate) mod inline_editor;
 pub(crate) mod inspector;
 pub(crate) mod launch;
 pub(crate) mod manager;
+pub(crate) mod object_row;
 mod quick_range;
 #[cfg(any(feature = "drawing-harness", test))]
 pub(crate) use launch::DrawingChromeLaunch;

@@ -313,4 +313,30 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
              corrects a level by deleting and replacing it. Tracked in issue 401"
         ),
     },
+    UiBehaviour {
+        id: "drawing.hide",
+        title: "Hide or show one drawing without deleting it",
+        reach: "the canvas right-click menu, drawing section and objects submenu; the object                 manager",
+        keys: &[(
+            Source::Authored,
+            "the Hide and Show buttons on the menu rows and the manager rows",
+        )],
+        mapping: excluded!(
+            PendingCapability,
+            "`annotate.*` places and removes; nothing toggles an object that already exists.              Tracked in issue 401"
+        ),
+    },
+    UiBehaviour {
+        id: "drawing.clear_all",
+        title: "Delete every drawing on a chart, behind a count-bearing confirmation",
+        reach: "the canvas right-click menu's clear objects entry; the object manager's Delete all",
+        keys: &[(
+            Source::Authored,
+            "a menu entry and a manager button that both open the same confirmation",
+        )],
+        mapping: excluded!(
+            PendingCapability,
+            "the annotate tier never discards work done by hand: `annotate.remove` refuses an              object the trader drew, so an operator removes its own marks one by one. Tracked              in issue 401"
+        ),
+    },
 ];
