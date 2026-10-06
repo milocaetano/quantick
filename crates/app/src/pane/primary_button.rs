@@ -107,6 +107,9 @@ impl PaperArbitration<'_> {
         // *unselected* object's handle keeps its pixel too.
         let modifiers = ui.input(|input| input.modifiers);
         let modifier_down = modifiers.shift || modifiers.command || modifiers.alt;
+        // A held secondary button is the quick range's, where Shift levels
+        // the ruler (`quick_range.rs`): the aim stands down, no press places.
+        let range_held = ui.input(|input| input.pointer.secondary_down());
         let canvas_claimed = pointer_position
             .filter(|_| modifier_down)
             .is_some_and(|position| {
@@ -153,11 +156,11 @@ impl PaperArbitration<'_> {
                 chart: drawing_area,
                 scale: drawing_scale.as_ref(),
                 pointer: pointer_position,
-                primary_pressed: primary_pressed && !over_chrome,
+                primary_pressed: primary_pressed && !over_chrome && !range_held,
                 primary_down,
                 primary_released,
                 modifiers,
-                canvas_claimed,
+                canvas_claimed: canvas_claimed || range_held,
                 scroll_y: paper_scroll,
                 middle_pressed: ui
                     .input(|input| input.pointer.button_pressed(egui::PointerButton::Middle)),

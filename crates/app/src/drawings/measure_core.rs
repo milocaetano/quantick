@@ -64,6 +64,10 @@ const RULER_DOT_RADIUS_PX: f32 = 3.0;
 const RULER_BOX_WIDTH_PX: f32 = 1.0;
 const RULER_BOX_DASH_PX: f32 = 4.0;
 const RULER_BOX_GAP_PX: f32 = 3.0;
+/// Narrower than this the box lies on the leg and says nothing.
+const RULER_BOX_MIN_SIDE_PX: f32 = 1.0;
+/// Relative: a levelled far end comes back through the screen an ulp off.
+const LEVEL_TOLERANCE: f64 = 1e-9;
 
 /// What the measured leg says, already worded. Empty lines never happen: an
 /// axis that is suppressed contributes no line at all.
@@ -124,8 +128,11 @@ pub(super) fn readout(anchors: &[ChartPoint], axes: Axes, unit: ValueUnit<'_>) -
     };
     let mut lines = Vec::with_capacity(2);
     let mut rising = None;
+    // A level ruler has no move to word: its plate is bars and elapsed only.
+    let level = (to.price - from.price).abs()
+        <= LEVEL_TOLERANCE * from.price.abs().max(to.price.abs()).max(1.0);
 
-    if axes.price {
+    if axes.price && !(axes.time && level) {
         let delta = to.price - from.price;
         rising = (delta != 0.0).then_some(delta > 0.0);
         let mut price_line = format_points(delta);
@@ -215,7 +222,7 @@ pub(super) fn paint_measure(
     let stroke = drawing_stroke(style);
 
     if axes == BOTH_AXES {
-        paint_ruler(painter, area, [*from, *to], stroke, halo);
+        paint_ruler(painter, chart_rect, area, [*from, *to], stroke, halo);
     } else {
         // The halo pass is stroke-only, like every other tool: no fill, no plate.
         if !halo && style.fill_alpha > 0 {
@@ -249,6 +256,7 @@ pub(super) fn paint_measure(
 /// smears, and a widened dot is a blot.
 fn paint_ruler(
     painter: &egui::Painter,
+    chart_rect: egui::Rect,
     area: egui::Rect,
     leg: [egui::Pos2; 2],
     stroke: egui::Stroke,
@@ -265,19 +273,44 @@ fn paint_ruler(
         area.right_bottom(),
         area.left_bottom(),
     ];
-    for (index, start) in corners.iter().enumerate() {
-        let end = corners[(index + 1) % corners.len()];
-        dashed_segment(
+    let boxed = area.width().min(area.height()) >= RULER_BOX_MIN_SIDE_PX;
+    for (index, start) in corners.iter().enumerate().filter(|_| boxed) {
+        dash_visible(
             painter,
-            *start,
-            end,
+            chart_rect,
+            [*start, corners[(index + 1) % 4]],
             outline,
-            RULER_BOX_DASH_PX,
-            RULER_BOX_GAP_PX,
         );
     }
     for anchor in leg {
         painter.circle_filled(anchor, RULER_DOT_RADIUS_PX, stroke.color);
+    }
+}
+
+/// Dash the part of a box side inside `clip`, in the phase the whole side
+/// has there: an off-screen side costs nothing and the dashes never crawl.
+fn dash_visible(
+    painter: &egui::Painter,
+    clip: egui::Rect,
+    side: [egui::Pos2; 2],
+    stroke: egui::Stroke,
+) {
+    let [from, to] = side;
+    let direction = (to - from).normalized();
+    let (start, end) = (clip.clamp(from), clip.clamp(to));
+    let (near, far) = ((start - from).dot(direction), (end - from).dot(direction));
+    // Sides are axis-aligned: one outside the clip clamps across itself.
+    if far > near && (start - from).dot(direction.rot90()).abs() <= 1e-3 {
+        let step = RULER_BOX_DASH_PX + RULER_BOX_GAP_PX;
+        let first = from + direction * ((near / step).floor() * step);
+        dashed_segment(
+            painter,
+            first,
+            end,
+            stroke,
+            RULER_BOX_DASH_PX,
+            RULER_BOX_GAP_PX,
+        );
     }
 }
 
@@ -462,15 +495,28 @@ mod tests {
         assert_eq!(readout.lines[1], "9 bars");
     }
 
+    /// A level ruler words no move: no `0 pts`, no `0.00%`, just how long it
+    /// is — also when the far end came back through the screen an ulp off.
+    /// Price range keeps its zero line.
     #[test]
     fn a_flat_move_claims_no_direction() {
-        let readout = readout(
+        for far in [100.0, 100.0 + 1e-12] {
+            let readout = readout(
+                &anchors((0.0, 100.0, 0), (3.0, far, 5_000)),
+                BOTH_AXES,
+                ValueUnit::Price,
+            )
+            .expect("anchors");
+            assert_eq!(readout.lines, ["3 bars   5s"]);
+            assert_eq!(readout.rising, None);
+        }
+        let price = readout(
             &anchors((0.0, 100.0, 0), (3.0, 100.0, 5_000)),
-            BOTH_AXES,
+            PRICE_ONLY,
             ValueUnit::Price,
         )
         .expect("anchors");
-        assert_eq!(readout.rising, None);
+        assert_eq!(price.lines, ["+0.00 pts   +0.00%"]);
     }
 
     #[test]
@@ -535,6 +581,15 @@ mod tests {
 
     /// Every shape one measurement paints, in paint order.
     fn painted(axes: Axes, style: DrawingStyle, halo: bool) -> Vec<egui::Shape> {
+        painted_leg(axes, style, halo, LEG)
+    }
+
+    fn painted_leg(
+        axes: Axes,
+        style: DrawingStyle,
+        halo: bool,
+        leg: [egui::Pos2; 2],
+    ) -> Vec<egui::Shape> {
         let anchors = anchors((0.0, 100.0, 0), (10.0, 110.0, 60_000));
         let ctx = egui::Context::default();
         let input = egui::RawInput {
@@ -553,7 +608,7 @@ mod tests {
                 halo,
                 primary_band: true,
             };
-            paint_measure(&painter, CHART, style, &LEG, measured);
+            paint_measure(&painter, CHART, style, &leg, measured);
         });
         output
             .shapes
@@ -604,12 +659,72 @@ mod tests {
                 "alpha {fill_alpha}: the ruler's box is dashed segments, not a rect"
             );
         }
-        assert!(
-            !crate::drawings::DrawingTool::by_id("measure")
-                .expect("measure is registered")
-                .supports_fill(),
-            "the ruler offers no fill control"
-        );
+        let measure = crate::drawings::DrawingTool::by_id("measure").expect("registered");
+        assert!(!measure.supports_fill(), "the ruler offers no fill control");
+        assert_eq!(measure.default_style().fill_alpha, 0, "nor opens with one");
+    }
+
+    /// A far end scrolled a long way off costs only the dashes on screen,
+    /// and each one sits where the whole side would put it: the pattern is
+    /// counted from the corner, not from the chart's edge.
+    #[test]
+    fn the_ruler_box_dashes_only_what_is_on_screen_in_phase() {
+        let leg = [egui::pos2(100.0, 200.0), egui::pos2(100_000.0, 100.0)];
+        let area = span_rect(CHART, leg[0], leg[1], BOTH_AXES);
+        let shapes = painted_leg(BOTH_AXES, filled(0), false, leg);
+        let dashes: Vec<_> = segments(&shapes)
+            .into_iter()
+            .filter(|(points, _)| *points != leg)
+            .collect();
+        let step = RULER_BOX_DASH_PX + RULER_BOX_GAP_PX;
+        assert!(dashes.len() < 2 * (CHART.width() / step) as usize + 20);
+        for ([start, end], _) in dashes {
+            assert!(CHART.expand(step).contains(start), "{start:?} off screen");
+            let along = if start.y != end.y {
+                continue;
+            } else if start.y == area.top() {
+                start.x - area.left()
+            } else if start.y == area.bottom() {
+                area.right() - start.x
+            } else {
+                continue;
+            };
+            let phase = along.rem_euclid(step);
+            assert!(phase.min(step - phase) < 0.05, "{start:?} out of phase");
+        }
+    }
+
+    /// A level leg has no box to hint at: it would be drawn over the leg.
+    #[test]
+    fn a_level_ruler_draws_no_box() {
+        let leg = [egui::pos2(100.0, 150.0), egui::pos2(300.0, 150.0)];
+        let shapes = painted_leg(BOTH_AXES, filled(0), false, leg);
+        assert_eq!(segments(&shapes), [(leg, filled(0).width_px)]);
+        assert_eq!(dots(&shapes).len(), 2);
+    }
+
+    /// A zero, negative or non-finite step would never advance the walker,
+    /// and a non-finite side has no length to walk.
+    #[test]
+    fn a_dash_pattern_that_cannot_advance_paints_nothing() {
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            let (from, to) = (egui::pos2(0.0, 0.0), egui::pos2(50.0, 0.0));
+            let stroke = egui::Stroke::new(1.0_f32, egui::Color32::WHITE);
+            for (dash, gap) in [
+                (0.0, 0.0),
+                (2.0, -2.0),
+                (f32::NAN, 1.0),
+                (f32::INFINITY, 1.0),
+            ] {
+                dashed_segment(&painter, from, to, stroke, dash, gap);
+            }
+            dashed_segment(&painter, from, egui::pos2(f32::NAN, 0.0), stroke, 4.0, 3.0);
+            // The control: the same side at 4 + 3 is eight dashes.
+            dashed_segment(&painter, from, to, stroke, 4.0, 3.0);
+        });
+        assert_eq!(output.shapes.len(), 8);
     }
 
     #[test]

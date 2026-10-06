@@ -48,12 +48,13 @@ impl QuickRangeView<'_> {
                 price_band.rect.bottom(),
             ],
         };
-        let (pressed, down, released, pointer) = ui.input(|input| {
+        let (pressed, down, released, pointer, shift) = ui.input(|input| {
             (
                 input.pointer.secondary_pressed(),
                 input.pointer.secondary_down(),
                 input.pointer.secondary_released(),
                 input.pointer.latest_pos(),
+                input.modifiers.shift,
             )
         });
         // A held secondary button borrows the ruler's projection and saved
@@ -112,6 +113,8 @@ impl QuickRangeView<'_> {
                         position,
                         anchor,
                         range_threshold_px,
+                        // Levels the ruler; `primary_button.rs` keeps it from trading.
+                        shift,
                         || drawings::new_drawing_from_defaults(chrome.presets, measure),
                     );
                 }

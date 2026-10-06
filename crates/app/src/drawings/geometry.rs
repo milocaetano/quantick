@@ -16,10 +16,10 @@ pub fn dashed_segment(
 ) {
     let span = to - from;
     let length = span.length();
-    if length <= f32::EPSILON {
+    let step = dash_px + gap_px;
+    if !(length > f32::EPSILON && length.is_finite() && step > 0.0 && step.is_finite()) {
         return;
     }
-    let step = dash_px + gap_px;
     let direction = span / length;
     let mut travelled = 0.0_f32;
     while travelled < length {

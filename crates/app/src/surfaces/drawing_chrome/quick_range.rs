@@ -226,6 +226,7 @@ impl QuickRange {
         position: egui::Pos2,
         value: ChartPoint,
         threshold_px: f32,
+        level: bool,
         opening: impl FnOnce() -> NewDrawing,
     ) {
         let transition = self.model.update(
@@ -233,6 +234,7 @@ impl QuickRange {
                 position: [position.x, position.y],
                 anchor: anchor(value),
                 threshold_px,
+                level,
             },
             owner.context(),
         );

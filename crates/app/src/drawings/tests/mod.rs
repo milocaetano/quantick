@@ -526,7 +526,7 @@ fn shift_reaches_exactly_the_tools_with_an_angle_to_hold() {
         .map(DrawingTool::id)
         .collect();
     levelled.sort_unstable();
-    assert_eq!(levelled, vec!["parallel-channel", "trend-line"]);
+    assert_eq!(levelled, vec!["measure", "parallel-channel", "trend-line"]);
 }
 
 /// The host skips the shaping port for a freehand draft, and the reason
@@ -1678,8 +1678,9 @@ fn a_tool_may_own_its_handles_and_the_host_paints_hits_and_drags_them() {
 }
 
 /// The style-default port is additive: a tool that declares nothing is
-/// born in the stock look, and the one that declares (the anchored VWAP,
-/// a series) is born in its own — colour, weight and fill together.
+/// born in the stock look, and the ones that declare are born in their own
+/// — the anchored VWAP (a series) in colour, weight and fill together, the
+/// ruler with no fill at all.
 #[test]
 fn style_defaults_are_per_tool_and_additive() {
     let stock = DrawingStyle::default();
@@ -1691,6 +1692,9 @@ fn style_defaults_are_per_tool_and_additive() {
             assert!(style.width_px > stock.width_px, "a series outweighs a note");
             assert!(style.fill_alpha > stock.fill_alpha);
             declaring += 1;
+        } else if tool.id() == "measure" {
+            assert_eq!((style.width_px, style.fill_alpha), (stock.width_px, 0));
+            declaring += 1;
         } else {
             assert_eq!(
                 (style.width_px, style.fill_alpha),
@@ -1700,7 +1704,7 @@ fn style_defaults_are_per_tool_and_additive() {
             );
         }
     }
-    assert_eq!(declaring, 1, "exactly one tool declares today");
+    assert_eq!(declaring, 2, "exactly two tools declare today");
 }
 
 /// The context-menu port is additive too: exactly the tools that declare

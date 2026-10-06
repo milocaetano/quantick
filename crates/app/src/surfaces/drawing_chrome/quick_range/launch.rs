@@ -132,7 +132,9 @@ impl QuickRange {
                 },
             },
         );
-        self.drag(owner, egui::pos2(10.0, 0.0), anchors[1], 4.0, || look);
+        self.drag(owner, egui::pos2(10.0, 0.0), anchors[1], 4.0, false, || {
+            look
+        });
         if ready {
             self.release(owner);
         }
