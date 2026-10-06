@@ -61,6 +61,8 @@ pub struct BookStats {
     pub crossed: u64,
     /// Images rejected because a level was unparseable or negative.
     pub malformed: u64,
+    /// Images without any resting liquidity; not evidence of a live DOM.
+    pub empty: u64,
     /// Level rows skipped for having no usable price (MT5 market orders).
     pub market_rows: u64,
     /// Images whose timestamp went backwards and was held at the last value.
@@ -77,7 +79,7 @@ impl BookStats {
     /// Total images that published nothing.
     #[must_use]
     pub fn skipped(&self) -> u64 {
-        self.unchanged + self.crossed + self.malformed
+        self.unchanged + self.crossed + self.malformed + self.empty
     }
 
     /// Emit the whole ledger as one structured log line (AI-first: a log
@@ -96,6 +98,7 @@ impl BookStats {
             unchanged = self.unchanged,
             crossed = self.crossed,
             malformed = self.malformed,
+            empty = self.empty,
             market_rows = self.market_rows,
             clamped_timestamps = self.clamped_timestamps,
             "mt5 book mapping summary"
@@ -214,6 +217,16 @@ impl BookMapper {
                 image.seq,
                 "book image had an unparseable or negative level; keeping the previous image",
             );
+            return None;
+        }
+
+        if self
+            .bids
+            .iter()
+            .chain(&self.asks)
+            .all(|level| level.quantity().is_zero())
+        {
+            self.stats.empty += 1;
             return None;
         }
 

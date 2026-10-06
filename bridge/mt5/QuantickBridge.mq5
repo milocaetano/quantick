@@ -86,6 +86,8 @@ input int    InpPumpIntervalMs   = 25;          // Safety-net pump interval (OnT
 // enough that a mistyped 0 cannot spin the terminal's timer thread.
 #define PUMP_INTERVAL_MIN_MS 5
 #define PUMP_INTERVAL_MAX_MS 1000
+// Confirm unchanged valid depth, and probe unavailable depth, without busy retries.
+#define BOOK_REFRESH_INTERVAL_MS 5000
 
 int      g_socket           = INVALID_HANDLE;
 ulong    g_seq              = 0; // per-session tick sequence, from 1
@@ -112,6 +114,7 @@ ulong    g_book_seq         = 0;     // per-session book image number, from 1
 ulong    g_book_sent        = 0;
 ulong    g_book_skipped     = 0;     // images identical to the previous one
 long     g_book_last_ms     = 0;     // throttle cursor (local ms)
+long     g_book_retry_at_ms = 0;     // unavailable DOM probe deadline
 string   g_book_last_body   = "";    // last image's levels, for change detection
 
 //+------------------------------------------------------------------+
@@ -392,15 +395,23 @@ bool SendBook()
       return(true);
 
    long now_ms = (long)(GetMicrosecondCount() / 1000);
+   if(now_ms < g_book_retry_at_ms)
+      return(true);
    if(InpBookMinIntervalMs > 0 && (now_ms - g_book_last_ms) < InpBookMinIntervalMs)
       return(true);
 
    MqlBookInfo book[];
    if(!MarketBookGet(_Symbol, book))
-      return(true); // transient; the next book event retries
+     {
+      g_book_retry_at_ms = now_ms + BOOK_REFRESH_INTERVAL_MS;
+      g_book_last_body = "";
+      return(true);
+     }
+   g_book_retry_at_ms = 0;
 
    string bids = "";
    string asks = "";
+   bool   has_liquidity = false;
    int    n    = ArraySize(book);
    for(int i = 0; i < n; i++)
      {
@@ -410,9 +421,12 @@ bool SendBook()
          continue;
       if(book[i].price <= 0.0)
          continue;
+      string quantity = BookVolumeText(book[i]);
+      if(!has_liquidity && StringToDouble(quantity) > 0.0)
+         has_liquidity = true;
       string level = StringFormat("[\"%s\",\"%s\"]",
                                   DoubleToString(book[i].price, _Digits),
-                                  BookVolumeText(book[i]));
+                                  quantity);
       if(book[i].type == BOOK_TYPE_BUY)
         {
          if(StringLen(bids) > 0)
@@ -427,11 +441,20 @@ bool SendBook()
         }
      }
 
+   if(StringLen(bids) == 0 && StringLen(asks) == 0)
+     {
+      g_book_retry_at_ms = now_ms + BOOK_REFRESH_INTERVAL_MS;
+      g_book_last_body = "";
+      return(true);
+     }
+   // Preserve zero images on the wire, without busy-polling unusable DOM.
+   if(!has_liquidity)
+      g_book_retry_at_ms = now_ms + BOOK_REFRESH_INTERVAL_MS;
    string body = StringFormat("\"bids\":[%s],\"asks\":[%s]", bids, asks);
-   if(body == g_book_last_body)
+   if(body == g_book_last_body && now_ms - g_book_last_ms < BOOK_REFRESH_INTERVAL_MS)
      {
       g_book_skipped++;
-      return(true); // identical image: sending it would only cost bandwidth
+      return(true); // unchanged depth is confirmed only at the refresh cadence
      }
    g_book_last_body = body;
    g_book_last_ms   = now_ms;
@@ -546,6 +569,8 @@ bool StartSession()
    g_book_sent        = 0;
    g_book_skipped     = 0;
    g_book_last_body   = "";
+   g_book_retry_at_ms = 0;
+   g_book_last_ms     = 0;
 
    string basis = SymbolInfoString(_Symbol, SYMBOL_BASIS);
    if(basis == "")
@@ -969,6 +994,11 @@ void OnTimer()
       return;
      }
    Pump();
+   if((long)(GetMicrosecondCount() / 1000) - g_book_last_ms >= BOOK_REFRESH_INTERVAL_MS && !SendBook())
+     {
+      Disconnect("book refresh failed");
+      return;
+     }
    MaybeHeartbeat();
    if(!FlushOut())
       Disconnect("send failed");

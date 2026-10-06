@@ -20,6 +20,10 @@ from quantick_bridge_core import (
     mt5,
 )
 
+# An unavailable DOM needs only a quiet probe, independent of the live tape.
+BOOK_UNAVAILABLE_RETRY_MS = 5_000
+BOOK_REFRESH_INTERVAL_MS = 5_000
+
 
 class TicksMixin:
     """The live half of a session: ticks, the book, and the heartbeat.
@@ -28,7 +32,7 @@ class TicksMixin:
     `args`, `symbol`, `tape`, `deal_counter`, `seq`, `cursor_msc`, `sent_at_cursor`,
     `ticks_sent`, `offset_s`, `last_heartbeat`, `pump_round_limits`,
     `book_subscribed`, `book_sent`, `book_seq`, `book_skipped`,
-    `last_book_body`, `last_book_ms`. Behaviour from siblings: `send`,
+    `last_book_body`, `last_book_ms`, lazy `book_retry_at_ms`. Behaviour from siblings: `send`,
     `flush`, `price`, `server_now_ms` (`TransportMixin`).
     """
 
@@ -220,17 +224,23 @@ class TicksMixin:
         )
 
     def pump_book(self) -> None:
-        """Send one complete DOM image, when it differs from the last one."""
+        """Send changed DOM promptly and confirm unchanged available depth quietly."""
         if not self.book_subscribed:
             return
         now = time.monotonic() * 1000.0
+        if now < getattr(self, "book_retry_at_ms", 0.0):
+            return
         if now - self.last_book_ms < self.args.book_min_interval_ms:
             return
         book = mt5.market_book_get(self.symbol)
         if not book:
+            self.book_retry_at_ms = now + BOOK_UNAVAILABLE_RETRY_MS
+            self.last_book_body = None
             return
+        self.book_retry_at_ms = 0.0
 
         bids, asks = [], []
+        has_liquidity = False
         for item in book:
             # BOOK_TYPE_*_MARKET rows are orders waiting to cross, not resting
             # liquidity at a price: they carry no level to draw.
@@ -243,10 +253,21 @@ class TicksMixin:
             if item.price <= 0:
                 continue
             volume = item.volume_dbl if item.volume_dbl > 0 else float(item.volume)
-            side.append([self.price(item.price), _volume_text(volume)])
+            quantity = _volume_text(volume)
+            has_liquidity = has_liquidity or float(quantity) > 0
+            side.append([self.price(item.price), quantity])
+
+        if not bids and not asks:
+            self.book_retry_at_ms = now + BOOK_UNAVAILABLE_RETRY_MS
+            self.last_book_body = None
+            return
+
+        if not has_liquidity:
+            # Keep the zero image on the wire, but probe unusable DOM quietly.
+            self.book_retry_at_ms = now + BOOK_UNAVAILABLE_RETRY_MS
 
         body = json.dumps({"bids": bids, "asks": asks}, separators=(",", ":"))
-        if body == self.last_book_body:
+        if body == self.last_book_body and now - self.last_book_ms < BOOK_REFRESH_INTERVAL_MS:
             self.book_skipped += 1
             return
         self.last_book_body = body

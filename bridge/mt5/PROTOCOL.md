@@ -210,10 +210,21 @@ snapshot-plus-delta form the rest of quantick speaks
   duplicates). Prices carry `digits` decimals.
 - Limit levels only. `BOOK_TYPE_*_MARKET` rows are orders waiting to cross,
   not resting liquidity, and the bridge excludes them.
-- The bridge sends an image only when it differs from the previous one, and at
-  most every `InpBookMinIntervalMs` (default 20 ms).
+- Changed images are sent at most every `InpBookMinIntervalMs` (default 20 ms).
+  Both bridges also read and resend unchanged available DOM every five seconds
+  to confirm availability; the feed deduplicates these confirmations.
 
-Empty sides are legitimate (auction, halted book), not an error. A **crossed**
+One empty side is legitimate (auction, halted book). An image with no resting
+liquidity on either side does not establish a live book. MT5 depth capture
+stops loading after ten seconds without a usable initial image and reports
+`disconnected` / `no_depth_signal`; after a live image, thirty seconds without
+a usable image reports `disconnected` / `stale_depth`. These are book-only
+offline states, not a claim that the market is closed or the terminal lost.
+Capture changes and deadlines are checked once per second: capture detection
+and expiry can each add up to one second to the initial wait, and expiry can
+add up to one second to the stale limit. The next valid image starts a fresh
+snapshot automatically; there is no reconnect or resubscription loop. The Python bridge probes an empty DOM once
+per five seconds while ticks and history continue. A **crossed**
 image (best bid ≥ best ask) is real during B3's pre-open auction; the feed
 rejects and counts it, keeping the last uncrossed image.
 
