@@ -581,57 +581,88 @@ fn a_rebuilt_chart_still_paints_itself() {
 #[test]
 fn squeezing_shows_more_bars_and_never_merges_any() {
     let (mut app, _cmd_rx) = app_with_history(4_000);
-    let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
-    let slots = app.active_tab().flow_pane.slots();
-    let bars_across = |viewport: &crate::viewport::Viewport| {
-        let (start, end) = viewport.visible_range(800.0, slots);
-        end - start
+    // Unique opaque colors distinguish candle bodies and outlines from
+    // chrome and the optional depth-clearing rectangle under each candle.
+    let fill = egui::Color32::from_rgb(13, 57, 191);
+    let outline = egui::Color32::from_rgb(197, 31, 83);
+    app.style.candles = crate::style::CandleStyle {
+        bull_fill: [13, 57, 191],
+        bear_fill: [13, 57, 191],
+        bull_outline: [197, 31, 83],
+        bear_outline: [197, 31, 83],
+        fill_opacity: 1.0,
+        outline_opacity: 1.0,
+        ..Default::default()
     };
+    let ctx = egui::Context::default();
+    for depth_visible in [false, true] {
+        app.active_tab_mut()
+            .tape_mut()
+            .set_depth_visible(depth_visible);
+        run_frame(&mut app, &ctx);
+        app.active_tab_mut().tape_mut().flush_for_test();
 
-    // Where zooming out used to stop.
-    app.active_tab_mut().flow_pane.viewport.set_px_per_bar(2.0);
-    let shallow = run_frame(&mut app, &ctx);
-    let shallow_bars = bars_across(&app.active_tab().flow_pane.viewport);
-    let shallow_rects = painted_rects(&shallow);
-
-    // As far out as it now goes: twice the bars, each still its own candle.
-    app.active_tab_mut()
-        .flow_pane
-        .viewport
-        .set_px_per_bar(crate::viewport::MIN_PX_PER_BAR);
-    let deep = run_frame(&mut app, &ctx);
-    let deep_bars = bars_across(&app.active_tab().flow_pane.viewport);
-    let deep_rects = painted_rects(&deep);
-    let viewport = app.active_tab().flow_pane.viewport;
-    // Not an exact 2x: `visible_range` is deliberately generous by a bar
-    // at each edge, and the cushion must absorb that at both zooms.
-    assert!(
-        deep_bars + 4 >= 2 * shallow_bars,
-        "history in the window: {deep_bars} vs {shallow_bars}"
-    );
-    assert!(
-        (viewport.candle_width() - viewport.px_per_bar()).abs() < f32::EPSILON,
-        "one bar, one candle, at the deepest squeeze"
-    );
-    // The law held at the *paint* level, where a fold would actually
-    // happen. The chrome's rectangles are a constant, so the growth from
-    // shallow to deep is the extra bars' candles alone: at least two
-    // rectangles each (body fill + outline — a draw-side fold would erase
-    // them), and boundedly few (a layer forgetting its zoom gate would
-    // blow past any per-bar budget).
-    let extra_bars = deep_bars - shallow_bars;
-    let extra_rects = deep_rects.saturating_sub(shallow_rects);
-    assert!(
-        extra_rects >= 2 * extra_bars && extra_rects <= 8 * extra_bars,
-        "each of the {extra_bars} extra bars drawn as its own candle: {extra_rects} extra rects"
-    );
-    assert!(
-        !painted_text(&deep)
-            .iter()
-            .any(|text| text.contains("bars per candle") || text.contains("bars grouped")),
-        "and nothing on the canvas claims otherwise"
-    );
+        let mut sample = |px_per_bar| {
+            app.active_tab_mut()
+                .flow_pane
+                .viewport
+                .set_px_per_bar(px_per_bar);
+            let output = run_frame(&mut app, &ctx);
+            let pane = &app.active_tab().flow_pane;
+            let area = crate::bands::drawing_area(
+                pane.frame.chart_rect.expect("the chart was painted"),
+                pane.frame.lane_divider_x,
+            );
+            let slots = pane.slots();
+            let (start, end) = pane.viewport.visible_range(area.width(), slots);
+            let rects = painted_rects(&output);
+            let bodies: Vec<_> = rects
+                .iter()
+                .filter(|rect| rect.fill == fill)
+                .map(|rect| rect.rect)
+                .collect();
+            let outlines: Vec<_> = rects
+                .iter()
+                .filter(|rect| rect.stroke.color == outline)
+                .map(|rect| rect.rect)
+                .collect();
+            assert_eq!(
+                bodies.len(),
+                end - start,
+                "one body per visible bar at {px_per_bar} px, depth={depth_visible}"
+            );
+            assert_eq!(
+                outlines, bodies,
+                "each candle body has exactly one matching outline"
+            );
+            for (body, slot) in bodies.iter().zip(start..end) {
+                let expected_x = pane.viewport.x_center(slot, area.right(), slots);
+                assert!(
+                    (body.center().x - expected_x).abs() < 0.01,
+                    "bar {slot} owns its candle at {px_per_bar} px"
+                );
+            }
+            (output, end - start)
+        };
+        let (_, shallow_bars) = sample(2.0);
+        let (deep, deep_bars) = sample(crate::viewport::MIN_PX_PER_BAR);
+        let viewport = app.active_tab().flow_pane.viewport;
+        // The visible range includes a spare bar at the edge at both zooms.
+        assert!(
+            deep_bars + 4 >= 2 * shallow_bars,
+            "history in the window: {deep_bars} vs {shallow_bars}"
+        );
+        assert!(
+            (viewport.candle_width() - viewport.px_per_bar()).abs() < f32::EPSILON,
+            "one bar, one candle, at the deepest squeeze"
+        );
+        assert!(
+            !painted_text(&deep)
+                .iter()
+                .any(|text| text.contains("bars per candle") || text.contains("bars grouped")),
+            "and nothing on the canvas claims otherwise"
+        );
+    }
 }
 
 /// Pushing the chart left is how a projected channel or a Fibonacci
