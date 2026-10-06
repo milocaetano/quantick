@@ -6,5 +6,5 @@
 # already live in drawings::collection, and the menu queues the manager's own
 # asks on the drawing chrome (`ask_from_menu`) rather than applying them.
 # Measured remainder only.
-crates/app +220
-!budget +220
+crates/app +242
+!budget +242

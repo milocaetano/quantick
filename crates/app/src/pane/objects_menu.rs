@@ -23,8 +23,9 @@ const OBJECTS_MENU_MAX_HEIGHT_PX: f32 = 320.0;
 
 /// What both entries say about their reach: this pane's own objects. A mark
 /// shared from the other chart is painted here but belongs to that chart.
-const OBJECTS_REACH_HINT: &str = "objects drawn on this chart; a mark shared from the other \
-                                  chart is listed and cleared there";
+const OBJECTS_REACH_HINT: &str = "objects drawn on this chart, its all-charts marks included \
+                                  (they leave every chart); a mark shared from another chart \
+                                  is listed and cleared on that chart";
 
 impl ChartPane {
     /// The two menu entries. Disabled, not absent, on an empty chart, so the
@@ -46,8 +47,8 @@ impl ChartPane {
             let clear = ui
                 .button("clear objects…")
                 .on_hover_text(
-                    "delete every object drawn on this chart after a confirmation; Ctrl+Z \
-                     brings them back",
+                    "delete every object drawn on this chart, its all-charts marks from every \
+                     chart too, after a confirmation; Ctrl+Z brings them back",
                 )
                 .on_disabled_hover_text("nothing is drawn on this chart");
             #[cfg(test)]
@@ -91,7 +92,16 @@ impl ChartPane {
                     let _ = rects;
                 }
             });
-        chrome.ask_from_menu(self.id, ask);
+        let clicked = ask
+            .manager_select
+            .or(ask.manager_toggle_hidden)
+            .or(ask.manager_toggle_locked)
+            .or(ask.manager_bring_to_front)
+            .or(ask.manager_delete)
+            .is_some();
+        if clicked {
+            chrome.ask_from_menu(self.id, ask);
+        }
     }
 
     /// The question "clear objects…" raised, over this chart until answered.

@@ -144,6 +144,11 @@ impl Tab {
         // the guarantee that a foreign mark can only be looked at.
         self.paint_shared_drawings(ui.painter());
 
+        // A chart menu's object ask applies on the chart it was opened on.
+        if let Some(pane) = chrome.drawing_chrome.menu_target() {
+            self.aim_drawing_at(pane);
+        }
+
         // The position HUD rides the pane that owns order entry (the focused
         // one). It draws here, after the pane pass, because its buttons need
         // the paper host mutably — inside the pass that borrow is pinned
@@ -687,14 +692,12 @@ impl Tab {
         context_bands: &[egui::Rect],
         flow_area: egui::Rect,
     ) {
-        // A right-click focuses too: the menu it opens names this chart, so
-        // the edits it makes and the Ctrl+Z after them must land here.
-        let (pressed, secondary) = ui.input(|input| {
-            let secondary = input.pointer.secondary_pressed();
-            let position = (input.pointer.primary_pressed() || secondary)
+        let pressed = ui.input(|input| {
+            input
+                .pointer
+                .primary_pressed()
                 .then(|| input.pointer.interact_pos())
-                .flatten();
-            (position, secondary)
+                .flatten()
         });
         let Some(position) = pressed else { return };
         // A press egui routed to another layer belongs to whatever floats
@@ -715,20 +718,6 @@ impl Tab {
             self.focus = PaneSide::Time(slot);
         } else if !self.flow_collapsed && flow_area.contains(position) {
             self.focus = PaneSide::Flow;
-        } else {
-            return;
-        }
-        if secondary {
-            // One selection per tab: a sibling's would pull the drawing
-            // chrome, and the menu's edits with it, onto the other chart.
-            let focus = self.focus;
-            for side in self
-                .sides()
-                .filter(|side| *side != focus)
-                .collect::<Vec<_>>()
-            {
-                self.pane_mut(side).drawings.select(None);
-            }
         }
     }
 

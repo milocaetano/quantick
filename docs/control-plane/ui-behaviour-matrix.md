@@ -227,7 +227,7 @@ declares nothing here is a guard failure.
 | `trade.ticket.ruler.set` | the ruler wheel on the chart aim |
 | `trade.ticket.strategy.select` | the Trading panel strategy selector |
 | `toolrail.visible.toggle` | a View menu entry whose label the source computes, so no literal to claim |
-| `drawing.remove` | the object context bar and the canvas right-click menu, resolved per click |
+| `drawing.remove` | the object context bar, the canvas right-click menu and the object manager rows, resolved per click |
 | `drawing.duplicate` | the Duplicate button, Ctrl+D and the native copy and paste events are read per frame by `app/drawing_input.rs` and the context bar, not entries in a hotkey registry |
 | `drawing.quick_range_profile` | a secondary-button drag read per frame by `pane/quick_range.rs`, and the action bar `surfaces/drawing_chrome/quick_range.rs` lays out over it; neither is an entry in a registry the drift guard walks |
 | `drawing.quick_range_fib_retracement` | the quick-range action bar delegates to the registered Fibonacci retracement tool |

@@ -234,7 +234,8 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
                 submenu), the object manager, Delete",
         keys: &[(
             Source::Authored,
-            "the object context bar and the canvas right-click menu, resolved per click",
+            "the object context bar, the canvas right-click menu and the object manager rows, \
+             resolved per click",
         )],
         mapping: capability!("annotate.remove"),
     },

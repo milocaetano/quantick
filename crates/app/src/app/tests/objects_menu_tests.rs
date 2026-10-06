@@ -213,39 +213,50 @@ fn a_menu_ask_for_another_chart_is_dropped() {
     assert_eq!(count(&app), 2);
 }
 
-/// A right-click focuses the chart it lands on and drops a sibling's
-/// selection, so the menu's edits and the Ctrl+Z after them land there.
+/// The menu's ask lands on the chart it was opened on even while another
+/// chart holds the focus and a selection, and the Ctrl+Z after it does too.
 #[test]
-fn a_right_click_focuses_its_chart_and_drops_a_sibling_selection() {
+fn a_menu_ask_applies_on_its_own_chart_and_so_does_the_undo() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
-    app.active_tab_mut().focus = PaneSide::Flow;
+    let rectangle = drawings::DRAWING_TOOLS
+        .into_iter()
+        .find(|tool| tool.id() == "rectangle")
+        .expect("the rectangle tool is registered");
+    let time = app.active_tab_mut().pane_mut(PaneSide::Time(0));
+    for first in [1.0, 11.0] {
+        time.drawings
+            .place(rectangle, drawings::ChartPoint::at(first, 100.0));
+        time.drawings
+            .place(rectangle, drawings::ChartPoint::at(first + 4.0, 110.0));
+    }
+    time.drawings.select(None);
+    let time_id = time.id;
     place_rectangles(&mut app, 1);
     app.active_tab_mut().flow_pane.drawings.select(Some(0));
-    let chart = app
-        .active_tab()
-        .pane(PaneSide::Time(0))
-        .frame
-        .chart_area
-        .expect("the context pane reported its rect");
-    let pos = chart.center();
-    run_frame_with_events(
+    app.active_tab_mut().focus = PaneSide::Flow;
+
+    app.drawings.chrome.ask_from_menu(
+        time_id,
+        crate::surfaces::drawing_chrome::DrawingChromeAsk {
+            delete_all: true,
+            ..Default::default()
+        },
+    );
+    run_frame(&mut app, &ctx);
+    let tab = app.active_tab();
+    assert!(tab.pane(PaneSide::Time(0)).drawings.items().is_empty());
+    assert_eq!(count(&app), 1, "the focused chart keeps its object");
+
+    run_frame_with_modifiers(
         &mut app,
         &ctx,
-        vec![
-            egui::Event::PointerMoved(pos),
-            egui::Event::PointerButton {
-                pos,
-                button: egui::PointerButton::Secondary,
-                pressed: true,
-                modifiers: egui::Modifiers::default(),
-            },
-        ],
+        vec![key_press_with(egui::Key::Z, egui::Modifiers::COMMAND)],
+        egui::Modifiers::COMMAND,
     );
     let tab = app.active_tab();
-    assert_eq!(tab.focused_side(), PaneSide::Time(0));
-    assert_eq!(tab.flow_pane.drawings.selected(), None);
-    assert_eq!(tab.drawing_side(), PaneSide::Time(0));
+    assert_eq!(tab.pane(PaneSide::Time(0)).drawings.items().len(), 2);
+    assert_eq!(count(&app), 1);
 }
 
 /// On an empty chart both entries are painted but disabled.

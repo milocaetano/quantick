@@ -361,6 +361,23 @@ impl Tab {
     /// pointer happens to be over: selecting a level on the time pane and
     /// pressing Delete has to delete that level, wherever it lives.
     ///
+    /// Make the pane with id `pane` the one the drawing chrome speaks for:
+    /// focus it and drop every other pane's selection, so
+    /// [`Self::drawing_side`] answers it. The chart menu's object entries
+    /// act through the drawing chrome on the chart they were opened on, and
+    /// the Ctrl+Z after them must land there too. `false` if no pane has it.
+    pub fn aim_drawing_at(&mut self, pane: u64) -> bool {
+        let Some(side) = self.sides().find(|side| self.pane(*side).id == pane) else {
+            return false;
+        };
+        self.focus = side;
+        let others: Vec<_> = self.sides().filter(|other| *other != side).collect();
+        for other in others {
+            self.pane_mut(other).drawings.select(None);
+        }
+        true
+    }
+
     /// Exactly one pane holds a selection at a time
     /// ([`Self::apply_shared_interactions`] drops the other's), so this asks
     /// the focused pane first and takes the answer it finds.

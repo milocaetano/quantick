@@ -1000,6 +1000,12 @@ impl DrawingChromeSurface {
         }
     }
 
+    /// The pane a queued menu ask names, for the host to aim the chrome at
+    /// before it draws.
+    pub(crate) fn menu_target(&self) -> Option<u64> {
+        self.menu_ask.as_ref().map(|(pane, _)| *pane)
+    }
+
     /// Whether a locked object's delete is awaiting its answer. The keyboard
     /// owns Escape and the Delete key, so it reads and clears this by name
     /// rather than reaching into the surface.
