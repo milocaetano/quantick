@@ -520,7 +520,7 @@ class HistoryMixin:
         all. A consumer paging from its oldest trade would ask for the same
         window forever; paging from this always advances.
         """
-        floor_ms = self.earliest_tick_ms(before_ms)
+        floor_ms = self.earliest_tick_ms()
         flags = self.tick_flags()
         pages: list = []
         held = 0

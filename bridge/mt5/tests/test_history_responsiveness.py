@@ -55,6 +55,14 @@ class HistoryResponsiveness(unittest.TestCase):
         with self.assertRaises(self.bridge.BridgeExit):
             self.session.page_start(ticks, len(ticks), 200_000)
 
+    def test_a_cold_older_walk_validates_a_distant_terminal_floor(self):
+        claimed = 300_000_000
+        self.terminal.ticks = [tick_at(claimed - 1000)]
+        self.bridge.mt5.copy_ticks_from = lambda *args: [tick_at(claimed)]
+        self.session.walk_back(10, claimed + 3 * 86_400_000)
+        self.assertIsNone(self.session.earliest_ms)
+        self.assertTrue(any(to_s * 1000 <= claimed for _, to_s, _ in self.terminal.tick_calls))
+
 
 if __name__ == "__main__":
     unittest.main()
