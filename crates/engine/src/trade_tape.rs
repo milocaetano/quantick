@@ -32,6 +32,7 @@
 
 use std::iter::FusedIterator;
 use std::ops::{Bound, Index, RangeBounds};
+use std::sync::Arc;
 
 use crate::Trade;
 
@@ -56,12 +57,26 @@ const OFFSET_MASK: usize = CHUNK_TRADES - 1;
 #[derive(Debug, Default)]
 pub struct TradeTape {
     /// The full chunks, oldest first: [`CHUNK_TRADES`] prints each.
-    full: Vec<Vec<Trade>>,
+    full: Vec<Arc<Vec<Trade>>>,
     /// The newest chunk, the one an append writes to: allocated at
     /// [`CHUNK_TRADES`] capacity with its first print and never grown, and
     /// empty only while the whole tape is. Kept beside the directory rather
     /// than in it, so a print's append reads nothing but this.
     tail: Vec<Trade>,
+}
+
+/// Completed chunks are immutable and shared; only the append tail is copied.
+/// A snapshot therefore copies at most one chunk of prints, independent of the
+/// length of the session. Its tail retains full capacity for bounded appends.
+impl Clone for TradeTape {
+    fn clone(&self) -> Self {
+        let mut tail = Vec::with_capacity(self.tail.capacity());
+        tail.extend_from_slice(&self.tail);
+        Self {
+            full: self.full.clone(),
+            tail,
+        }
+    }
 }
 
 impl TradeTape {
@@ -106,7 +121,10 @@ impl TradeTape {
     #[must_use]
     #[inline]
     pub fn first(&self) -> Option<&Trade> {
-        self.full.first().unwrap_or(&self.tail).first()
+        self.full
+            .first()
+            .map_or(&self.tail, |chunk| &**chunk)
+            .first()
     }
 
     /// The newest print held.
@@ -154,9 +172,10 @@ impl TradeTape {
         }
         let held = std::mem::take(self);
         self.extend_from_slice(older);
-        for chunk in held.full.into_iter().chain([held.tail]) {
+        for chunk in held.full {
             self.extend_from_slice(&chunk);
         }
+        self.extend_from_slice(&held.tail);
     }
 
     /// Every print, oldest first.
@@ -209,7 +228,7 @@ impl TradeTape {
         let whole = self
             .full
             .partition_point(|chunk| chunk.last().is_some_and(&mut pred));
-        let chunk = self.full.get(whole).unwrap_or(&self.tail);
+        let chunk = self.full.get(whole).map_or(&self.tail, |chunk| &**chunk);
         (whole << CHUNK_SHIFT) + chunk.partition_point(pred)
     }
 
@@ -282,7 +301,7 @@ impl TradeTape {
     fn open_tail(&mut self) {
         let filled = std::mem::replace(&mut self.tail, Vec::with_capacity(CHUNK_TRADES));
         if !filled.is_empty() {
-            self.full.push(filled);
+            self.full.push(Arc::new(filled));
         }
     }
 }
@@ -334,7 +353,7 @@ impl FromIterator<Trade> for TradeTape {
 #[derive(Clone, Debug)]
 pub struct Slices<'a> {
     head: &'a [Trade],
-    middle: std::slice::Iter<'a, Vec<Trade>>,
+    middle: std::slice::Iter<'a, Arc<Vec<Trade>>>,
     tail: &'a [Trade],
 }
 

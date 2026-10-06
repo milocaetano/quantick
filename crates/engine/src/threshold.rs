@@ -83,7 +83,7 @@ impl<M: Measure> ThresholdBarBuilder<M> {
     }
 }
 
-impl<M: Measure> BarBuilder for ThresholdBarBuilder<M> {
+impl<M: Measure + Send> BarBuilder for ThresholdBarBuilder<M> {
     fn push(&mut self, trade: &Trade) -> Option<Bar> {
         match &mut self.current {
             None => self.current = Some(Bar::opened_by(trade)),

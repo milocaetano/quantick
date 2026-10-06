@@ -46,6 +46,7 @@ pub struct ChartPane {
     /// would share a drag.
     pub id: u64,
     pub state: ChartState,
+    pub(super) history_worker: history_worker::HistoryWorker,
     /// Identity of the closed-bar prefix used by append-only control-plane pagination. A live bar
     /// closing appends past a page's high-water mark and leaves this unchanged; anything that can
     /// rewrite, prepend, remove or re-cut a closed bar advances it, so a cursor rejects a mixed
@@ -300,6 +301,7 @@ impl ChartPane {
             id,
             spec: selector,
             state: ChartState::new(spec),
+            history_worker: Default::default(),
             pagination_revision: 0,
             orderflow,
             indicator_worker: IndicatorWorker::spawn(),

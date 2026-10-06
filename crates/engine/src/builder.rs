@@ -59,7 +59,7 @@ pub struct BarProgress {
 /// chart can render the rightmost bar forming in real time. When a bucket fills,
 /// that in-progress bar is finalised, handed out, and the builder starts a
 /// fresh one.
-pub trait BarBuilder {
+pub trait BarBuilder: Send {
     /// Feed one trade, in occurrence order, to a rule that names its own type.
     ///
     /// Returns `Some(bar)` if this trade completed a bar, `None` if the trade

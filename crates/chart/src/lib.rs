@@ -18,6 +18,7 @@ pub mod footprint_lod;
 pub mod footprint_projection;
 pub mod footprint_series;
 pub mod geometry;
+pub mod history_publication;
 pub mod indicator_style;
 pub mod live_strip;
 pub mod price_axis_fit;

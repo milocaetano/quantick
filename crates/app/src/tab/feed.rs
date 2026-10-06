@@ -512,6 +512,7 @@ impl Tab {
                 }
                 SourceDrainStage::ReceiveAvailable => {
                     live = self.receive_available(tab_id, &mut wall_clock_ms);
+                    self.poll_history_publication(tab_id);
                 }
                 SourceDrainStage::PublishLatestPartial => {
                     // Additional final publication; event handlers retain their own sends.
@@ -565,30 +566,37 @@ impl Tab {
                 Ok(FeedEvent::HistoryPrepended(trades)) => {
                     // The reply — even an empty one — answers exactly one
                     // pending load; the indicator survives until the last one.
-                    self.loading.end(LoadingTask::History);
                     // The MetaTrader bridge delivers its recovery window on
                     // this event rather than as backfill, so a resumed session
                     // is filtered here too. Prepending it would put a block the
                     // chart already holds in front of the bars it duplicates.
                     if self.resume_floor_ms.is_some() {
+                        self.loading.end(LoadingTask::History);
                         live |= self.ingest_resumed(&trades);
                         continue;
                     }
                     self.history_trades += trades.len();
+                    let trades = std::sync::Arc::new(trades);
+                    let mut pending = false;
                     // Each pane cuts the older trades into its own bars, so
                     // each shifts its own anchors by its own count.
                     for pane in self.panes_mut() {
-                        pane.prepend_history(&trades);
+                        pending |= pane.receive_history(std::sync::Arc::clone(&trades), true);
                     }
                     // The first engine bar just moved backwards in time, and
                     // the prefix was trimmed against where it used to be. Any
                     // venue candle now covering a re-cut minute has to go.
-                    self.refold_history_prefix();
+                    if !pending {
+                        self.refold_history_prefix();
+                    }
                     // And the reach that asked for this page decides whether
                     // to ask for another, and what to tell the trader if it
                     // will not. After the prepend, so it judges the tape the
                     // trader can actually see.
-                    self.settle_history_page(tab_id, trades.len());
+                    if !pending {
+                        self.loading.end(LoadingTask::History);
+                        self.settle_history_page(tab_id, trades.len());
+                    }
                 }
                 Ok(FeedEvent::OpeningPrepended { trades, remaining }) => {
                     // What is left of the fill, so the chart and an operator
@@ -611,10 +619,14 @@ impl Tab {
                         continue;
                     }
                     self.history_trades += trades.len();
+                    let trades = std::sync::Arc::new(trades);
+                    let mut pending = false;
                     for pane in self.panes_mut() {
-                        pane.prepend_history(&trades);
+                        pending |= pane.receive_history(std::sync::Arc::clone(&trades), false);
                     }
-                    self.refold_history_prefix();
+                    if !pending {
+                        self.refold_history_prefix();
+                    }
                 }
                 Ok(FeedEvent::Live(trade)) => {
                     if self.resume_floor_ms.is_some() {
@@ -657,6 +669,43 @@ impl Tab {
             }
         }
         live
+    }
+
+    fn poll_history_publication(&mut self, tab_id: u64) {
+        let mut ready = true;
+        for pane in self.panes_mut() {
+            ready &= pane.prepare_history();
+        }
+        if self.panes().any(|(pane, _)| pane.history_failed()) {
+            self.loading.set_active(LoadingTask::HistoryRebuild, false);
+            self.loading.set_active(LoadingTask::History, false);
+            self.abandon_history_run();
+            self.raise_history_note("History could not be built. Load older to retry.");
+            return;
+        }
+        let mut changed = false;
+        let mut pending = false;
+        for pane in self.panes_mut() {
+            if ready {
+                changed |= pane.install_history();
+            }
+            pending |= pane.history_pending();
+        }
+        self.loading
+            .set_active(LoadingTask::HistoryRebuild, pending);
+        if changed {
+            self.refold_history_prefix();
+        }
+        if !pending {
+            let page_len = self.flow_pane.take_history_page();
+            for pane in &mut self.time_panes {
+                pane.take_history_page();
+            }
+            if let Some(page_len) = page_len {
+                self.loading.end(LoadingTask::History);
+                self.settle_history_page(tab_id, page_len);
+            }
+        }
     }
 
     /// Take the newest feed notice, if the feed sent any this frame.

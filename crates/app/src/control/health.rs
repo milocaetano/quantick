@@ -148,6 +148,7 @@ const fn loading_task_id(task: LoadingTask) -> &'static str {
         LoadingTask::BookSync => "book_sync",
         LoadingTask::ReplaySession => "replay_session",
         LoadingTask::VenueHistory => "venue_history",
+        LoadingTask::HistoryRebuild => "history_rebuild",
     }
 }
 

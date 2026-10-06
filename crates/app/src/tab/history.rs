@@ -596,7 +596,18 @@ impl Tab {
     /// it is the first of a run each reply continues
     /// ([`Self::settle_history_page`]).
     pub fn request_older_history(&mut self, tab_id: u64, config: &AppConfig) {
-        if self.campaign.is_some() {
+        let mut retried = false;
+        for pane in self.panes_mut() {
+            retried |= pane.retry_history();
+        }
+        if retried {
+            self.history_note = None;
+            return;
+        }
+        if self.campaign.is_some()
+            || self.loading.is_active(LoadingTask::History)
+            || self.panes().any(|(pane, _)| pane.history_pending())
+        {
             // A run already has its one permitted request out, and the reply
             // is what sends the next. Pressing again would raise a second wait
             // on the same indicator and ask the transport for two pages it

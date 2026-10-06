@@ -27,6 +27,23 @@ fn trade(i: usize) -> Trade {
     }
 }
 
+#[test]
+fn a_snapshot_shares_completed_chunks_and_keeps_an_independent_append_tail() {
+    let mut tape: TradeTape = (0..CHUNK_TRADES + 7).map(trade).collect();
+    let mut snapshot = tape.clone();
+    assert!(std::ptr::eq(&tape[0], &snapshot[0]));
+    assert!(!std::ptr::eq(&tape[CHUNK_TRADES], &snapshot[CHUNK_TRADES]));
+    let snapshot_capacity = snapshot.capacity();
+    tape.push(trade(CHUNK_TRADES + 7));
+    snapshot.push(trade(CHUNK_TRADES + 8));
+    assert_eq!(snapshot.capacity(), snapshot_capacity);
+    assert_eq!(tape.last().unwrap().agg_id, CHUNK_TRADES as u64 + 8);
+    assert_eq!(snapshot.last().unwrap().agg_id, CHUNK_TRADES as u64 + 9);
+    snapshot.prepend(&[trade(0)]);
+    assert_eq!(snapshot.len(), tape.len() + 1);
+    assert_eq!(tape[0], trade(0));
+}
+
 /// A deterministic stream of batch sizes: small, around a chunk, and larger.
 struct Lcg(u64);
 
