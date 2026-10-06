@@ -240,6 +240,7 @@ class TicksMixin:
         self.book_retry_at_ms = 0.0
 
         bids, asks = [], []
+        has_liquidity = False
         for item in book:
             # BOOK_TYPE_*_MARKET rows are orders waiting to cross, not resting
             # liquidity at a price: they carry no level to draw.
@@ -252,12 +253,18 @@ class TicksMixin:
             if item.price <= 0:
                 continue
             volume = item.volume_dbl if item.volume_dbl > 0 else float(item.volume)
-            side.append([self.price(item.price), _volume_text(volume)])
+            quantity = _volume_text(volume)
+            has_liquidity = has_liquidity or float(quantity) > 0
+            side.append([self.price(item.price), quantity])
 
         if not bids and not asks:
             self.book_retry_at_ms = now + BOOK_UNAVAILABLE_RETRY_MS
             self.last_book_body = None
             return
+
+        if not has_liquidity:
+            # Keep the zero image on the wire, but probe unusable DOM quietly.
+            self.book_retry_at_ms = now + BOOK_UNAVAILABLE_RETRY_MS
 
         body = json.dumps({"bids": bids, "asks": asks}, separators=(",", ":"))
         if body == self.last_book_body and now - self.last_book_ms < BOOK_REFRESH_INTERVAL_MS:

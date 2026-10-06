@@ -411,6 +411,7 @@ bool SendBook()
 
    string bids = "";
    string asks = "";
+   bool   has_liquidity = false;
    int    n    = ArraySize(book);
    for(int i = 0; i < n; i++)
      {
@@ -420,9 +421,12 @@ bool SendBook()
          continue;
       if(book[i].price <= 0.0)
          continue;
+      string quantity = BookVolumeText(book[i]);
+      if(!has_liquidity && StringToDouble(quantity) > 0.0)
+         has_liquidity = true;
       string level = StringFormat("[\"%s\",\"%s\"]",
                                   DoubleToString(book[i].price, _Digits),
-                                  BookVolumeText(book[i]));
+                                  quantity);
       if(book[i].type == BOOK_TYPE_BUY)
         {
          if(StringLen(bids) > 0)
@@ -443,6 +447,9 @@ bool SendBook()
       g_book_last_body = "";
       return(true);
      }
+   // Preserve zero images on the wire, without busy-polling unusable DOM.
+   if(!has_liquidity)
+      g_book_retry_at_ms = now_ms + BOOK_REFRESH_INTERVAL_MS;
    string body = StringFormat("\"bids\":[%s],\"asks\":[%s]", bids, asks);
    if(body == g_book_last_body && now_ms - g_book_last_ms < BOOK_REFRESH_INTERVAL_MS)
      {
