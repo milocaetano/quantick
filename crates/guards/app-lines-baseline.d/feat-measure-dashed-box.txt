@@ -1,0 +1,8 @@
+# Raised by 62 lines for the ruler's dashed box (`feat/measure-dashed-box`):
+# all of it painting and hit-testing in the measure tool that owns them. The
+# ruler draws a solid leg, a dot on each anchor and a thin dashed hint box,
+# never a fill. The dash walker moved out of the parallel channel into the
+# shared drawings geometry so both tools use one copy; its new dash and gap
+# arguments and doc comment are the rest of the growth.
+crates/app +62
+!budget +62

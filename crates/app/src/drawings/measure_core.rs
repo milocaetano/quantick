@@ -13,7 +13,9 @@
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
-use super::{ChartPoint, DrawingStyle, ToolFamily, ValueUnit, drawing_fill, drawing_stroke};
+use super::{
+    ChartPoint, DrawingStyle, ToolFamily, ValueUnit, dashed_segment, drawing_fill, drawing_stroke,
+};
 use crate::theme;
 
 /// The one rail family every measurement tool declares.
@@ -55,6 +57,13 @@ const READOUT_RADIUS_PX: f32 = 3.0;
 /// The plate under the readout. Opaque enough to stay legible over candles,
 /// dark enough not to become a second chart object.
 const READOUT_PLATE: egui::Color32 = egui::Color32::from_rgba_premultiplied(14, 18, 26, 216);
+/// The ruler's anchor dots: big enough to find the end of the leg, small
+/// enough to stay under the selection ring.
+const RULER_DOT_RADIUS_PX: f32 = 3.0;
+/// The ruler's box is a hint, so it never outweighs the leg.
+const RULER_BOX_WIDTH_PX: f32 = 1.0;
+const RULER_BOX_DASH_PX: f32 = 4.0;
+const RULER_BOX_GAP_PX: f32 = 3.0;
 
 /// What the measured leg says, already worded. Empty lines never happen: an
 /// axis that is suppressed contributes no line at all.
@@ -205,12 +214,16 @@ pub(super) fn paint_measure(
     let area = span_rect(chart_rect, *from, *to, axes);
     let stroke = drawing_stroke(style);
 
-    // The halo pass is stroke-only, like every other tool: no fill, no plate.
-    if !halo && style.fill_alpha > 0 {
-        painter.rect_filled(area, egui::Rounding::ZERO, drawing_fill(style));
+    if axes == BOTH_AXES {
+        paint_ruler(painter, area, [*from, *to], stroke, halo);
+    } else {
+        // The halo pass is stroke-only, like every other tool: no fill, no plate.
+        if !halo && style.fill_alpha > 0 {
+            painter.rect_filled(area, egui::Rounding::ZERO, drawing_fill(style));
+        }
+        painter.rect_stroke(area, egui::Rounding::ZERO, stroke);
+        painter.line_segment([*from, *to], stroke);
     }
-    painter.rect_stroke(area, egui::Rounding::ZERO, stroke);
-    painter.line_segment([*from, *to], stroke);
     // The stroke crosses every band a time-only measurement passes through;
     // the plate is stamped once. Three copies of "17 bars 4m 21s" down the
     // screen are not three facts.
@@ -228,6 +241,44 @@ pub(super) fn paint_measure(
         &readout,
         readout_color(&readout, style),
     );
+}
+
+/// The ruler: a solid leg with a dot on each anchor, inside a thin dashed box
+/// that only hints at the span. Never filled — a tinted box hides the candles
+/// the leg is measuring. The halo pass widens the leg alone: a widened dash
+/// smears, and a widened dot is a blot.
+fn paint_ruler(
+    painter: &egui::Painter,
+    area: egui::Rect,
+    leg: [egui::Pos2; 2],
+    stroke: egui::Stroke,
+    halo: bool,
+) {
+    painter.line_segment(leg, stroke);
+    if halo {
+        return;
+    }
+    let outline = egui::Stroke::new(stroke.width.min(RULER_BOX_WIDTH_PX), stroke.color);
+    let corners = [
+        area.left_top(),
+        area.right_top(),
+        area.right_bottom(),
+        area.left_bottom(),
+    ];
+    for (index, start) in corners.iter().enumerate() {
+        let end = corners[(index + 1) % corners.len()];
+        dashed_segment(
+            painter,
+            *start,
+            end,
+            outline,
+            RULER_BOX_DASH_PX,
+            RULER_BOX_GAP_PX,
+        );
+    }
+    for anchor in leg {
+        painter.circle_filled(anchor, RULER_DOT_RADIUS_PX, stroke.color);
+    }
 }
 
 /// The rectangle a measurement covers, with a suppressed axis spanning the
@@ -291,7 +342,8 @@ fn paint_plate(
 }
 
 /// Hit-test a measurement: its border and its leg, plus the interior while
-/// the fill is visible — the same rule the shapes follow.
+/// the fill is visible — the same rule the shapes follow. The ruler is never
+/// filled, so its interior never takes the click.
 pub(super) fn hit_measure(
     chart_rect: egui::Rect,
     style: DrawingStyle,
@@ -310,7 +362,7 @@ pub(super) fn hit_measure(
     if !area.expand(radius_px).contains(position) {
         return false;
     }
-    style.fill_alpha > 0 || !area.shrink(radius_px).contains(position)
+    (axes != BOTH_AXES && style.fill_alpha > 0) || !area.shrink(radius_px).contains(position)
 }
 
 #[cfg(test)]
@@ -466,5 +518,187 @@ mod tests {
             "a crypto-sized move must not round to +0.00: {}",
             readout.lines[0]
         );
+    }
+
+    const CHART: egui::Rect = egui::Rect {
+        min: egui::pos2(0.0, 0.0),
+        max: egui::pos2(500.0, 300.0),
+    };
+    const LEG: [egui::Pos2; 2] = [egui::pos2(100.0, 200.0), egui::pos2(300.0, 100.0)];
+
+    fn filled(fill_alpha: u8) -> DrawingStyle {
+        DrawingStyle {
+            fill_alpha,
+            ..DrawingStyle::default()
+        }
+    }
+
+    /// Every shape one measurement paints, in paint order.
+    fn painted(axes: Axes, style: DrawingStyle, halo: bool) -> Vec<egui::Shape> {
+        let anchors = anchors((0.0, 100.0, 0), (10.0, 110.0, 60_000));
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(CHART),
+            ..Default::default()
+        };
+        let output = ctx.run(input, |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("measure-test"),
+            ));
+            let measured = Measured {
+                anchors: &anchors,
+                axes,
+                unit: ValueUnit::Price,
+                halo,
+                primary_band: true,
+            };
+            paint_measure(&painter, CHART, style, &LEG, measured);
+        });
+        output
+            .shapes
+            .into_iter()
+            .map(|clipped| clipped.shape)
+            .collect()
+    }
+
+    fn rects_on(shapes: &[egui::Shape], area: egui::Rect) -> Vec<&egui::epaint::RectShape> {
+        shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                egui::Shape::Rect(rect) if rect.rect == area => Some(rect),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn segments(shapes: &[egui::Shape]) -> Vec<([egui::Pos2; 2], f32)> {
+        shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                egui::Shape::LineSegment { points, stroke } => Some((*points, stroke.width)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn dots(shapes: &[egui::Shape]) -> Vec<&egui::epaint::CircleShape> {
+        shapes
+            .iter()
+            .filter_map(|shape| match shape {
+                egui::Shape::Circle(circle) => Some(circle),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A stored fill — an old preset, an old object — must not tint the ruler:
+    /// the box is a hint, never a solid rectangle over the candles.
+    #[test]
+    fn the_ruler_paints_no_fill_and_no_solid_box_whatever_the_stored_alpha() {
+        let area = span_rect(CHART, LEG[0], LEG[1], BOTH_AXES);
+        for fill_alpha in [0, 80, 255] {
+            let shapes = painted(BOTH_AXES, filled(fill_alpha), false);
+            assert!(
+                rects_on(&shapes, area).is_empty(),
+                "alpha {fill_alpha}: the ruler's box is dashed segments, not a rect"
+            );
+        }
+        assert!(
+            !crate::drawings::DrawingTool::by_id("measure")
+                .expect("measure is registered")
+                .supports_fill(),
+            "the ruler offers no fill control"
+        );
+    }
+
+    #[test]
+    fn the_ruler_puts_a_filled_dot_on_both_anchors() {
+        let style = filled(0);
+        let shapes = painted(BOTH_AXES, style, false);
+        let dots = dots(&shapes);
+        assert_eq!(dots.len(), 2, "one dot per anchor");
+        for (dot, anchor) in dots.iter().zip(LEG) {
+            assert_eq!(dot.center, anchor);
+            assert_eq!(dot.radius, RULER_DOT_RADIUS_PX);
+            assert_eq!(dot.fill, style.color32());
+        }
+    }
+
+    /// One solid leg corner to corner; every other segment is a short, thin
+    /// dash lying on one of the box's four sides.
+    #[test]
+    fn the_ruler_box_is_a_thin_dashed_outline_around_a_solid_leg() {
+        let area = span_rect(CHART, LEG[0], LEG[1], BOTH_AXES);
+        let shapes = painted(BOTH_AXES, filled(0), false);
+        let (legs, dashes): (Vec<_>, Vec<_>) = segments(&shapes)
+            .into_iter()
+            .partition(|(points, _)| *points == LEG);
+        assert_eq!(legs.len(), 1, "exactly one solid leg");
+        let on_side = |p: egui::Pos2| {
+            let on_x = (p.x - area.left()).abs() < 1e-3 || (p.x - area.right()).abs() < 1e-3;
+            let on_y = (p.y - area.top()).abs() < 1e-3 || (p.y - area.bottom()).abs() < 1e-3;
+            on_x || on_y
+        };
+        // 200 px sides fit 29 dashes at 4 + 3, 100 px sides 15: 88 in all.
+        assert_eq!(dashes.len(), 88);
+        for ([start, end], width) in dashes {
+            assert!(
+                on_side(start) && on_side(end),
+                "{start:?}-{end:?} is off the box"
+            );
+            assert!(start.distance(end) <= RULER_BOX_DASH_PX + 1e-3);
+            assert!(width <= RULER_BOX_WIDTH_PX);
+        }
+    }
+
+    /// The halo widens the leg alone: no dashes to smear, no dots to blot,
+    /// and no plate.
+    #[test]
+    fn the_ruler_halo_is_the_leg_alone() {
+        let shapes = painted(BOTH_AXES, filled(80), true);
+        assert_eq!(shapes.len(), 1, "{shapes:?}");
+        assert_eq!(segments(&shapes), [(LEG, filled(80).width_px)]);
+    }
+
+    #[test]
+    fn the_ruler_interior_lets_clicks_through_even_with_a_stored_fill() {
+        let style = filled(80);
+        let inside = egui::pos2(150.0, 120.0);
+        assert!(!hit_measure(CHART, style, &LEG, inside, 4.0, BOTH_AXES));
+        // Border, leg and anchors still take it.
+        for grab in [egui::pos2(200.0, 100.0), egui::pos2(200.0, 150.0), LEG[0]] {
+            assert!(
+                hit_measure(CHART, style, &LEG, grab, 4.0, BOTH_AXES),
+                "{grab:?}"
+            );
+        }
+    }
+
+    /// Price range and date range keep their filled band, its solid border
+    /// and its interior hit, exactly as before the ruler changed.
+    #[test]
+    fn price_and_date_range_keep_their_fill_border_and_interior_hit() {
+        let style = filled(80);
+        for axes in [PRICE_ONLY, TIME_ONLY] {
+            let area = span_rect(CHART, LEG[0], LEG[1], axes);
+            let shapes = painted(axes, style, false);
+            let rects = rects_on(&shapes, area);
+            assert!(rects.iter().any(|rect| rect.fill == drawing_fill(style)));
+            assert!(
+                rects
+                    .iter()
+                    .any(|rect| rect.stroke == drawing_stroke(style))
+            );
+            assert_eq!(segments(&shapes), [(LEG, style.width_px)]);
+            assert!(dots(&shapes).is_empty());
+            let inside = egui::pos2(150.0, 120.0);
+            assert!(hit_measure(CHART, style, &LEG, inside, 4.0, axes));
+            assert!(!hit_measure(CHART, filled(0), &LEG, inside, 4.0, axes));
+        }
+        for id in ["price-range", "date-range"] {
+            let tool = crate::drawings::DrawingTool::by_id(id).expect("registered");
+            assert!(tool.supports_fill(), "{id} keeps its fill control");
+        }
     }
 }

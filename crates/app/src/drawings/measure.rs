@@ -36,8 +36,10 @@ impl DrawingToolImpl for Measure {
     fn family(&self) -> Option<ToolFamily> {
         Some(MEASURE_FAMILY)
     }
+    /// The ruler is a leg in a dashed hint box; a fill would hide the
+    /// candles it measures.
     fn supports_fill(&self) -> bool {
-        true
+        false
     }
     fn paint(
         &self,
