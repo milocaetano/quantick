@@ -327,3 +327,61 @@ fn the_tape_key_fits_the_external_header_without_covering_any_print() {
         }
     }
 }
+
+/// Layout owns the boundary; only the time marker needs a live edge.
+#[test]
+fn the_lane_marks_need_a_lane_and_permission_but_keep_the_offline_boundary() {
+    let viewport = Viewport::new();
+    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
+    let style = OrderflowRenderStyle::default();
+    let mut projection = HeatmapProjection::empty(
+        true,
+        quantick_orderflow::EffectiveGrouping::resolve(
+            quantick_orderflow::DisplayGrouping::Native,
+            rust_decimal::Decimal::ONE,
+            rust_decimal::Decimal::from(100),
+        ),
+    );
+    projection.live_now_x = Some(0.95);
+
+    let with_lane = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 5.0);
+    let drawn = painted(|painter| {
+        draw_live_lane_marks(painter, &RenderContext::new(&projection, with_lane, &style));
+    });
+    assert!(
+        drawn.matches("LineSegment").count() >= 2,
+        "both the boundary and the live-time line must draw: {drawn}"
+    );
+
+    // No live edge: keep the requested boundary without inventing market time.
+    let mut settled = projection.clone();
+    settled.live_now_x = None;
+    // No lane at all: nothing to divide.
+    let no_lane = ProjectedLayout::new(rect, &viewport, 4, 0, 4, 0.0);
+    // Switched off by the user.
+    let hidden = OrderflowRenderStyle {
+        live_lane: LiveLaneStyle {
+            show_marks: false,
+            ..LiveLaneStyle::default()
+        },
+        ..OrderflowRenderStyle::default()
+    };
+    let nothing = painted(|_| {});
+    let offline = painted(|painter| {
+        draw_live_lane_marks(painter, &RenderContext::new(&settled, with_lane, &style));
+    });
+    assert_ne!(offline, nothing);
+    assert!(offline.matches("LineSegment").count() < drawn.matches("LineSegment").count());
+    for (frame, layout, style) in [
+        (&projection, no_lane, &style),
+        (&projection, with_lane, &hidden),
+    ] {
+        assert_eq!(
+            painted(|painter| draw_live_lane_marks(
+                painter,
+                &RenderContext::new(frame, layout, style)
+            )),
+            nothing
+        );
+    }
+}

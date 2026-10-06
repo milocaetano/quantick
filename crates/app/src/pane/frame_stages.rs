@@ -190,10 +190,12 @@ impl<'a> FlowFrame<'a> {
 
     /// Resting liquidity: the bottom visual layer.
     pub(super) fn heatmap(&self, owner: Option<&OrderflowView>) {
-        if let Some(owner) = owner
-            && let Some(projection) = self.projection.as_deref()
-        {
-            self.renderers.heatmap(&mut self.pass(owner, projection));
+        if let Some(owner) = owner {
+            if let Some(projection) = self.projection.as_deref() {
+                self.renderers.heatmap(&mut self.pass(owner, projection));
+            } else {
+                owner.draw_lane_boundary(self.painter, self.rect, self.lane_width, self.background);
+            }
         }
     }
 

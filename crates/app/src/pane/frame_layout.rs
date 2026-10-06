@@ -119,7 +119,10 @@ impl FrameLayout {
         if self.tape_only {
             self.chart_rect.width()
         } else {
-            self.live_lane.map_or(0.0, |lane| lane.width_px)
+            self.live_lane.map_or(
+                self.chart_rect.right() - self.history_rect.right(),
+                |lane| lane.width_px,
+            )
         }
     }
 

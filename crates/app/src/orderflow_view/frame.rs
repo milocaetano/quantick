@@ -46,6 +46,18 @@ pub(super) fn status_color(status: &CaptureStatus) -> egui::Color32 {
 }
 
 impl OrderflowView {
+    /// The requested tape boundary remains visible while its worker has no frame.
+    pub(crate) fn draw_lane_boundary(
+        &self,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        lane_width: f32,
+        background: egui::Color32,
+    ) {
+        let style = OrderflowRenderStyle::from_config(&self.config, background.to_array());
+        crate::orderflow_render::draw_lane_boundary(painter, rect, lane_width, &style);
+    }
+
     /// Request projection of the visible bar slice and return the newest
     /// already-built frame. Never blocks: a heavy projection only delays the
     /// next frame swap, not the UI.
