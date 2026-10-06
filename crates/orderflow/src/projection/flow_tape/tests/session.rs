@@ -102,9 +102,9 @@ fn queue_full_keeps_one_bounded_packet_and_copies_only_new_ordinals() {
             chunk(1, range)
         });
     }
-    assert_eq!(copied, [0..2048, 2048..4096, 4096..6144]);
+    assert_eq!(copied, [0..2048, 2048..4096, 4096..8192]);
     assert_eq!(session.submitted.count(0..10000), 4096);
-    assert_eq!(session.unsent.as_ref().unwrap().executions.len(), 2048);
+    assert_eq!(session.unsent.as_ref().unwrap().executions.len(), 4096);
     while session.progress().pending {
         session.runner.pump();
         project(&mut session, request.clone());
@@ -120,6 +120,63 @@ fn queue_full_keeps_one_bounded_packet_and_copies_only_new_ordinals() {
         10000
     );
     assert_eq!(session.runner.cache.loaded(), 10000);
+}
+
+#[test]
+fn cold_admission_grows_after_the_first_partial_and_preserves_the_complete_frame() {
+    let request = cold_request(0, 65_536);
+    let mut session = FlowSession::<Runner>::default();
+    let mut copied = Vec::new();
+    for _ in 0..16 {
+        session.project(request.clone(), |range| {
+            copied.push(range.clone());
+            cold_chunk(1, range)
+        });
+        if !session.progress().pending {
+            break;
+        }
+        session.runner.pump();
+    }
+    assert!(
+        !session.progress().pending,
+        "cold fill completes within sixteen frames"
+    );
+    assert_eq!(copied[..4], [0..2048, 2048..4096, 4096..8192, 8192..16384]);
+    assert!(copied.iter().all(|range| range.len() <= MAX_SOURCE_CHUNK));
+    assert_eq!(copied.last().unwrap().end, request.requested.end);
+    assert!(copied.windows(2).all(|pair| pair[0].end == pair[1].start));
+
+    let mut complete = FlowWorkerCache::default();
+    complete.select_request(&request);
+    complete.append(&cold_chunk(1, request.requested.clone()));
+    assert_eq!(session.frame_handle().unwrap(), &complete.project(&request));
+}
+
+#[test]
+fn changing_epoch_discards_a_grown_refused_packet_before_new_admission() {
+    let mut session = FlowSession::<Runner>::default();
+    let request = cold_request(0, 65_536);
+    for _ in 0..4 {
+        session.project(request.clone(), |range| cold_chunk(1, range));
+    }
+    assert_eq!(session.unsent.as_ref().unwrap().executions.len(), 4096);
+    let mut replacement = request;
+    replacement.epoch = 2;
+    let mut copied = Vec::new();
+    session.project(replacement.clone(), |range| {
+        copied.push(range.clone());
+        cold_chunk(2, range)
+    });
+    assert_eq!(copied.len(), 1);
+    assert_eq!(copied[0], 0..SOURCE_CHUNK);
+    assert_eq!(session.unsent.as_ref().unwrap().epoch, 2);
+    session.runner.pump();
+    session.project(replacement, |range| cold_chunk(2, range));
+    assert_eq!(
+        session.runner.cache.loaded(),
+        0,
+        "old queued packets never enter the new source"
+    );
 }
 #[test]
 fn metadata_only_append_does_not_wake_or_recapture_pinned_history() {

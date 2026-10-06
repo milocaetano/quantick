@@ -28,9 +28,13 @@ pub const LARGE_REGION_REFERENCE_DIVISOR: u32 = 4;
 /// candles while the retained source stays bounded.
 pub(crate) const KEEP_MARGIN_SLOTS: usize = 32;
 
-/// Most source executions sent to the runner in one packet, and the least
+/// Executions in the first source packet, and the least
 /// growth a cold fill waits for before its first partial publication.
 pub(crate) const SOURCE_CHUNK: usize = 2048;
+
+/// Cold admission grows after its first useful partial, capped at eight base
+/// packets per frame. Source capture stays bounded even for a whole-day view.
+pub(crate) const MAX_SOURCE_CHUNK: usize = 8 * SOURCE_CHUNK;
 
 /// A fresh partial publication starts once the loaded source falls under
 /// the last publication's count divided by this: substantial eviction, not

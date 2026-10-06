@@ -1,6 +1,7 @@
 //! Source packets are nondropping; view requests may supersede older layouts.
 use super::constants::{
-    EVICTION_RESET_DIVISOR, KEEP_MARGIN_SLOTS, PUBLICATION_GROWTH_FACTOR, SOURCE_CHUNK,
+    EVICTION_RESET_DIVISOR, KEEP_MARGIN_SLOTS, MAX_SOURCE_CHUNK, PUBLICATION_GROWTH_FACTOR,
+    SOURCE_CHUNK,
 };
 use super::*;
 use std::ops::Range;
@@ -336,9 +337,13 @@ impl<R: FlowRunner> FlowSession<R> {
             && room > 0
             && let Some(gap) = self.submitted.first_gap(request.requested.clone())
         {
-            let end = gap
-                .end
-                .min(gap.start.saturating_add(SOURCE_CHUNK.min(room)));
+            // Keep the first partial small, then use the already accepted
+            // coverage to grow cold-fill throughput without an unbounded copy.
+            let chunk = self
+                .submitted
+                .count(request.requested.clone())
+                .clamp(SOURCE_CHUNK, MAX_SOURCE_CHUNK);
+            let end = gap.end.min(gap.start.saturating_add(chunk.min(room)));
             self.unsent = Some(capture(gap.start..end));
         }
         if let Some(packet) = self.unsent.take() {
@@ -378,3 +383,7 @@ impl<R: FlowRunner> FlowSession<R> {
 #[cfg(test)]
 #[path = "tests/session.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/recorded_performance.rs"]
+mod recorded_performance;
