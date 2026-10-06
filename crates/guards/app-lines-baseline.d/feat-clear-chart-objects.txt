@@ -3,6 +3,8 @@
 # row and delete-all question moved into one shared egui widget
 # (surfaces/drawing_chrome/object_row.rs) so both lists draw the same row. All
 # egui layout; the store commands (delete_all, set_hidden_at, delete_selected)
-# already live in drawings::collection. Measured remainder only.
-crates/app +252
-!budget +252
+# already live in drawings::collection, and the menu queues the manager's own
+# asks on the drawing chrome (`ask_from_menu`) rather than applying them.
+# Measured remainder only.
+crates/app +220
+!budget +220

@@ -687,12 +687,14 @@ impl Tab {
         context_bands: &[egui::Rect],
         flow_area: egui::Rect,
     ) {
-        let pressed = ui.input(|input| {
-            input
-                .pointer
-                .primary_pressed()
+        // A right-click focuses too: the menu it opens names this chart, so
+        // the edits it makes and the Ctrl+Z after them must land here.
+        let (pressed, secondary) = ui.input(|input| {
+            let secondary = input.pointer.secondary_pressed();
+            let position = (input.pointer.primary_pressed() || secondary)
                 .then(|| input.pointer.interact_pos())
-                .flatten()
+                .flatten();
+            (position, secondary)
         });
         let Some(position) = pressed else { return };
         // A press egui routed to another layer belongs to whatever floats
@@ -713,6 +715,20 @@ impl Tab {
             self.focus = PaneSide::Time(slot);
         } else if !self.flow_collapsed && flow_area.contains(position) {
             self.focus = PaneSide::Flow;
+        } else {
+            return;
+        }
+        if secondary {
+            // One selection per tab: a sibling's would pull the drawing
+            // chrome, and the menu's edits with it, onto the other chart.
+            let focus = self.focus;
+            for side in self
+                .sides()
+                .filter(|side| *side != focus)
+                .collect::<Vec<_>>()
+            {
+                self.pane_mut(side).drawings.select(None);
+            }
         }
     }
 

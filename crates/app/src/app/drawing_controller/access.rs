@@ -74,7 +74,7 @@ impl DrawingReadAccess<'_> {
         crate::bands::band_of(self.pane().frame.cached_bands(), drawing)
     }
     pub(super) fn band_label(&self, drawing: &drawings::Drawing) -> crate::bands::BandLabel {
-        crate::bands::label_for(&self.focused().indicators, drawing)
+        crate::bands::label_for(&self.pane().indicators, drawing)
     }
     pub(super) fn projected_points(
         &self,

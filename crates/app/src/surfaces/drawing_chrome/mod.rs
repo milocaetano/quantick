@@ -691,6 +691,10 @@ pub(crate) struct Shared {
 #[derive(Default)]
 pub(crate) struct DrawingChromeSurface {
     pub(crate) quick_range: quick_range::QuickRange,
+    /// What the chart menu's object entries asked for, tagged with the pane
+    /// they listed. Applied with this frame's asks only when that pane is the
+    /// one the chrome speaks for, so a menu never edits another chart.
+    menu_ask: Option<(u64, DrawingChromeAsk)>,
     shared: Shared,
     inspector: inspector::Inspector,
     bar: context_bar::ContextBarState,
@@ -979,7 +983,21 @@ impl DrawingChromeSurface {
         ask.merge(inline_editor::draw(self, ctx, env));
         ask.merge(inspector::draw_floating(self, ctx, env));
         ask.merge(manager::draw(self, ctx, env));
+        if let Some((pane, menu)) = self.menu_ask.take()
+            && pane == env.pane_id
+        {
+            ask.merge(menu);
+        }
         ask
+    }
+
+    /// Queue the chart menu's ask for pane `pane`, merged with any earlier
+    /// one for the same pane that has not been applied yet.
+    pub(crate) fn ask_from_menu(&mut self, pane: u64, ask: DrawingChromeAsk) {
+        match &mut self.menu_ask {
+            Some((queued, earlier)) if *queued == pane => earlier.merge(ask),
+            _ => self.menu_ask = Some((pane, ask)),
+        }
     }
 
     /// Whether a locked object's delete is awaiting its answer. The keyboard

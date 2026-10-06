@@ -8,7 +8,7 @@
 
 use eframe::egui;
 
-use super::object_row::{LockedDelete, RowAction, delete_all_question, object_row};
+use super::object_row::{delete_all_question, object_row};
 use super::{
     DRAWING_MANAGER_DEFAULT_POSITION, DRAWING_MANAGER_GAP_PX, DrawingChromeAsk,
     DrawingChromeSurface, DrawingEnv, INSPECTOR_DEFAULT_WIDTH_PX, INSPECTOR_FALLBACK_HEIGHT_PX,
@@ -114,21 +114,15 @@ pub(crate) fn draw(
                 // Walked in reverse: the manager lists top-most first, the
                 // same order hit-testing resolves overlap.
                 for index in (0..count).rev() {
-                    let row = &rows[index];
-                    let response = object_row(ui, row, LockedDelete::Confirm);
+                    let rects = object_row(ui, &rows[index], index, &mut ask);
                     #[cfg(test)]
-                    chrome
-                        .manager
-                        .action_rects
-                        .extend(response.rects.into_iter().map(|(label, rect)| (index, label, rect)));
-                    match response.action {
-                        Some(RowAction::Select) => ask.manager_select = Some(index),
-                        Some(RowAction::ToggleHidden) => ask.manager_toggle_hidden = Some(index),
-                        Some(RowAction::ToggleLocked) => ask.manager_toggle_locked = Some(index),
-                        Some(RowAction::BringToFront) => ask.manager_bring_to_front = Some(index),
-                        Some(RowAction::Delete) => ask.manager_delete = Some(index),
-                        None => {}
-                    }
+                    chrome.manager.action_rects.extend(
+                        rects
+                            .into_iter()
+                            .map(|(label, rect)| (index, label, rect)),
+                    );
+                    #[cfg(not(test))]
+                    let _ = rects;
                 }
             });
         ui.separator();

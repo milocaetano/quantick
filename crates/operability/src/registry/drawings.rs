@@ -230,7 +230,8 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "drawing.remove",
         title: "Delete a drawing",
-        reach: "the object context bar, the canvas right-click menu, Delete",
+        reach: "the object context bar, the canvas right-click menu (drawing section and objects \
+                submenu), the object manager, Delete",
         keys: &[(
             Source::Authored,
             "the object context bar and the canvas right-click menu, resolved per click",
@@ -316,14 +317,17 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "drawing.hide",
         title: "Hide or show one drawing without deleting it",
-        reach: "the canvas right-click menu, drawing section and objects submenu; the object                 manager",
+        reach: "the object context bar, Alt+H, the canvas right-click menu (drawing section and \
+                objects submenu), the object manager",
         keys: &[(
             Source::Authored,
-            "the Hide and Show buttons on the menu rows and the manager rows",
+            "Alt+H is read per frame by `app/drawing_controller/input.rs`; the Hide and Show \
+             buttons on the menu and manager rows are widgets, not hotkey registry entries",
         )],
         mapping: excluded!(
             PendingCapability,
-            "`annotate.*` places and removes; nothing toggles an object that already exists.              Tracked in issue 401"
+            "`annotate.*` places and removes; nothing toggles an object that already exists. \
+             Tracked in issue 401"
         ),
     },
     UiBehaviour {
@@ -332,11 +336,13 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
         reach: "the canvas right-click menu's clear objects entry; the object manager's Delete all",
         keys: &[(
             Source::Authored,
-            "a menu entry and a manager button that both open the same confirmation",
+            "a menu entry and a manager button that ask the same question",
         )],
         mapping: excluded!(
             PendingCapability,
-            "the annotate tier never discards work done by hand: `annotate.remove` refuses an              object the trader drew, so an operator removes its own marks one by one. Tracked              in issue 401"
+            "the annotate tier never discards work done by hand: `annotate.remove` refuses an \
+             object the trader drew, so an operator removes its own marks one by one. Tracked \
+             in issue 401"
         ),
     },
 ];

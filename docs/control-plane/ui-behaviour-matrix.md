@@ -147,15 +147,15 @@ The three exclusion classes are closed:
 | `tool.triangle` | Arm the triangle | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
 | `tool.vertical-line` | Arm the vertical line | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401 |
 | `attention.mark.create` | Take a mark of what is under the pointer | Ctrl+M | `attention.mark.create` | — |
-| `drawing.remove` | Delete a drawing | the object context bar, the canvas right-click menu, Delete | `annotate.remove` | — |
+| `drawing.remove` | Delete a drawing | the object context bar, the canvas right-click menu (drawing section and objects submenu), the object manager, Delete | `annotate.remove` | — |
 | `drawing.duplicate` | Copy a drawing: duplicate it in place, or copy it and paste it on any chart | the object context bar's Duplicate button, Ctrl+D; on the focused pane, Ctrl+C then Ctrl+V or any native copy and paste (Windows: Ctrl+Insert, Shift+Insert) | — | `pending_capability` — no capability copies an object; `annotate.*` places four shapes afresh, so an operator re-creates a copy rather than duplicating one. Tracked in issue 401 |
 | `drawing.quick_range_profile` | Measure a range with a right-drag and turn it into a volume profile | a secondary-button drag on the price band with the Pointer tool, then the range's action bar; a chart click or Escape dismisses the temporary range | `annotate.fixed_range_profile.create` | — |
 | `drawing.quick_range_fib_retracement` | Measure a range with a right-drag and turn it into a Fibonacci retracement | a secondary-button drag on the price band with the Pointer tool, then the range's Fib Retracement action | `annotate.fib_retracement.create` | — |
 | `drawing.quick_range_fib_projection` | Measure a range with a right-drag and project it from the final point | a secondary-button drag on the price band with the Pointer tool, then the range's Fib Projection action | `annotate.fib_projection.create` | — |
 | `drawing.rename` | Rename a drawing | the canvas right-click menu, drawing section | — | `pending_capability` — `annotate.*` places and removes; nothing edits an object that already exists. Tracked in issue 401 |
 | `drawing.select_and_move` | Select a drawing and drag it, or one of its handles | primary click and drag on the canvas | — | `pending_capability` — an object can be placed and removed by capability and not moved, so an operator corrects a level by deleting and replacing it. Tracked in issue 401 |
-| `drawing.hide` | Hide or show one drawing without deleting it | the canvas right-click menu, drawing section and objects submenu; the object                 manager | — | `pending_capability` — `annotate.*` places and removes; nothing toggles an object that already exists.              Tracked in issue 401 |
-| `drawing.clear_all` | Delete every drawing on a chart, behind a count-bearing confirmation | the canvas right-click menu's clear objects entry; the object manager's Delete all | — | `pending_capability` — the annotate tier never discards work done by hand: `annotate.remove` refuses an              object the trader drew, so an operator removes its own marks one by one. Tracked              in issue 401 |
+| `drawing.hide` | Hide or show one drawing without deleting it | the object context bar, Alt+H, the canvas right-click menu (drawing section and objects submenu), the object manager | — | `pending_capability` — `annotate.*` places and removes; nothing toggles an object that already exists. Tracked in issue 401 |
+| `drawing.clear_all` | Delete every drawing on a chart, behind a count-bearing confirmation | the canvas right-click menu's clear objects entry; the object manager's Delete all | — | `pending_capability` — the annotate tier never discards work done by hand: `annotate.remove` refuses an object the trader drew, so an operator removes its own marks one by one. Tracked in issue 401 |
 | `workspace.bookmark.delete` | Forget a named arrangement | Workspace menu, Delete | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
 | `workspace.bookmark.open` | Reopen a named arrangement | Workspace menu, Open | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
 | `workspace.bookmark.save` | Keep these tabs and panels under a name | Workspace menu, Save as… | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
@@ -234,8 +234,8 @@ declares nothing here is a guard failure.
 | `drawing.quick_range_fib_projection` | the quick-range action bar delegates to the registered Fibonacci projection tool |
 | `drawing.rename` | the rename box inside the canvas right-click menu |
 | `drawing.select_and_move` | a primary click and drag on the canvas |
-| `drawing.hide` | the Hide and Show buttons on the menu rows and the manager rows |
-| `drawing.clear_all` | a menu entry and a manager button that both open the same confirmation |
+| `drawing.hide` | Alt+H is read per frame by `app/drawing_controller/input.rs`; the Hide and Show buttons on the menu and manager rows are widgets, not hotkey registry entries |
+| `drawing.clear_all` | a menu entry and a manager button that ask the same question |
 
 ## Appendix: registry entries that are not behaviours
 
