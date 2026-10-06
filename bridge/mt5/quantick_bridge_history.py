@@ -33,7 +33,8 @@ class HistoryMixin:
 
     Mixed into `Session`, which owns everything read here. State:
     `args`, `symbol`, `cursor_msc`, `sent_at_cursor`, `offset_s`,
-    `pending_opening`, `earliest_ms`, `earliest_known`. Behaviour from
+    `pending_opening`, `pending_history_request`, `history_steps`,
+    `earliest_ms`, `earliest_known`. Behaviour from
     siblings: `send`, `flush`, `server_now_ms` (`TransportMixin`),
     `send_tick`, `tick_flags`, `maybe_heartbeat` (`TicksMixin`).
     """
@@ -168,10 +169,6 @@ class HistoryMixin:
         self.flush()
         if not remaining:
             log("BRIDGE_OPENING_COMPLETE", symbol=self.symbol)
-            pending = getattr(self, "pending_history_request", None)
-            if pending is not None:
-                self.pending_history_request = None
-                self.serve_load_older(*pending)
 
     def send_backfill(self, ticks: list) -> None:
         """Put one block on the wire and leave the live cursor after it.
@@ -446,37 +443,60 @@ class HistoryMixin:
 
     # -- back-channel ------------------------------------------------------
 
-    def serve_load_older(self, count: int, before_ms: int) -> None:
-        """Send one block of ticks older than `before_ms`.
-
-        Always sends both markers, even around an empty block: quantick shows a
-        spinner from the moment it asks, and `history_end` is what stops it.
-
-        The opening marker goes out *before* the walk, not after. The walk is
-        the slow part — up to `LOAD_OLDER_MAX_PAGES` blocking terminal calls,
-        and on the first click of a session a reach for the very oldest tick on
-        disk — and the feed drops a session it has heard nothing from for its
-        read timeout. Announcing first means the wait is spent inside a block
-        the feed knows is coming, and the heartbeats below keep it that way.
-        """
+    def queue_load_older(self, count: int, before_ms: int) -> bool:
+        """Admit one request, keeping its cursor until its one reply is sent."""
+        if self.pending_history_request is not None:
+            # The feed admits one outstanding request. A duplicate or a peer
+            # violating that contract must not replace its cursor or add work.
+            log("BRIDGE_LOAD_OLDER_BUSY", symbol=self.symbol, action="ignore")
+            return False
         if self.pending_opening:
             # The opening owns the morning until its last slice is delivered.
             # Replying below a partially painted floor would overlap the parked
             # slices and make the feed discard them as already charted.
             floor_ms = int(self.pending_opening[-1][0]["time_msc"])
-            self.pending_history_request = (count, min(before_ms, floor_ms))
+            before_ms = min(before_ms, floor_ms)
+        self.pending_history_request = (count, before_ms)
+        return True
+
+    def pump_history(self) -> None:
+        """Search at most one terminal window, or emit one complete ready page.
+
+        Live ticks must stay outside history markers: the feed treats every
+        tick inside them as history. Collection yields before opening a block;
+        emission stays contiguous and bounded by the existing page limit.
+        """
+        if self.pending_opening or self.pending_history_request is None:
             return
+        if self.history_steps is None:
+            self.history_steps = self._history_steps(*self.pending_history_request)
+        try:
+            next(self.history_steps)
+        except StopIteration:
+            self.cancel_history()
+
+    def cancel_history(self) -> None:
+        """Release collected windows when this connection ends."""
+        if self.history_steps is not None:
+            self.history_steps.close()
+        self.history_steps = None
+        self.pending_history_request = None
+
+    def serve_load_older(self, count: int, before_ms: int) -> None:
+        """Synchronous helper; the live loop uses queue_load_older/pump_history."""
+        if not self.queue_load_older(count, before_ms):
+            return
+        while not self.pending_opening and self.pending_history_request is not None:
+            self.pump_history()
+            self.maybe_heartbeat()
+
+    def _history_steps(self, count: int, before_ms: int):
         wanted = max(1, min(count, LOAD_OLDER_MAX_TICKS))
         started = time.monotonic()
-        # No count_hint: it is optional precisely so a bridge that has not
-        # counted yet can still frame the block.
+        ticks, exhausted, scanned_to_ms, calls = yield from self._walk_back_steps(wanted, before_ms)
+        # Live ticks, book images and heartbeats have kept the connection alive
+        # between search windows. From here to history_end nothing interleaves.
         self.send({"type": "history_start"})
-        # Out now, not at the bottom of the loop: the docstring above promises
-        # this marker precedes the walk, and the walk can take seconds. Left in
-        # the buffer it would wait for a heartbeat or for the walk to finish,
-        # which is the silence the promise exists to prevent.
-        self.flush()
-        ticks, exhausted, scanned_to_ms, calls = self.walk_back(wanted, before_ms)
         page_sent_ms = self.server_now_ms()
         for tick in ticks:
             self.send_tick(tick, page_sent_ms)
@@ -501,6 +521,16 @@ class HistoryMixin:
         )
 
     def walk_back(self, wanted: int, before_ms: int) -> tuple[list, bool, int, int]:
+        """Synchronous search helper sharing the live loop's resumable walk."""
+        steps = self._walk_back_steps(wanted, before_ms)
+        while True:
+            try:
+                next(steps)
+                self.maybe_heartbeat()
+            except StopIteration as result:
+                return result.value
+
+    def _walk_back_steps(self, wanted: int, before_ms: int):
         """Collect up to `wanted` ticks from before `before_ms`.
 
         Walks backwards in windows rather than asking for one wide range: the
@@ -520,7 +550,7 @@ class HistoryMixin:
         all. A consumer paging from its oldest trade would ask for the same
         window forever; paging from this always advances.
         """
-        floor_ms = self.earliest_tick_ms()
+        floor_ms = yield from self._earliest_tick_steps()
         flags = self.tick_flags()
         pages: list = []
         held = 0
@@ -551,6 +581,7 @@ class HistoryMixin:
                     mt5_error=str(mt5.last_error()),
                     action="answer_with_what_is_in_hand",
                 )
+                yield
                 break
             fresh = self.older_than(found, cursor_ms)
             if len(fresh):
@@ -565,10 +596,9 @@ class HistoryMixin:
                     window_s * LOAD_OLDER_WINDOW_GROWTH, LOAD_OLDER_MAX_WINDOW_S
                 )
             cursor_ms = from_s * 1000
-            # The walk can take seconds and nothing else runs while it does. A
-            # heartbeat here is what keeps the feed from declaring the bridge
-            # silent mid-answer and dropping the session the answer belongs to.
-            self.maybe_heartbeat()
+            # Give live/book/heartbeat pumps a turn after every terminal call,
+            # including the last, before collecting or emitting anything else.
+            yield
 
         # Oldest page first, and the surplus trimmed off the *front*: the ticks
         # nearest the chart are the ones the trader is about to look at.
@@ -622,6 +652,15 @@ class HistoryMixin:
         return start
 
     def earliest_tick_ms(self, newest_ms: int | None = None) -> int | None:
+        """Synchronous opening-session helper over the same floor validation."""
+        steps = self._earliest_tick_steps(newest_ms)
+        while True:
+            try:
+                next(steps)
+            except StopIteration as result:
+                return result.value
+
+    def _earliest_tick_steps(self, newest_ms: int | None = None):
         """The oldest tick the terminal holds for this symbol, or None.
 
         Asked once per session and cached, the failure included: a terminal
@@ -650,17 +689,19 @@ class HistoryMixin:
         """
         if self.earliest_known:
             return self.earliest_ms
-        self.earliest_known = True
         found = mt5.copy_ticks_from(self.symbol, 0, 1, mt5.COPY_TICKS_ALL)
         if found is None or not len(found):
+            self.earliest_known = True
             log(
                 "BRIDGE_TICK_FLOOR_UNKNOWN",
                 symbol=self.symbol,
                 mt5_error=str(mt5.last_error()),
                 note="paging still works; it just never claims to have reached the end",
             )
+            yield
             return None
         claimed = int(found[0]["time_msc"])
+        yield
         if newest_ms is not None and newest_ms - claimed > SESSION_WALK_MAX_SPAN_MS:
             # Two days or more below the newest print this symbol has: whatever
             # else that is, it is not the failure this check exists for, which
@@ -669,6 +710,7 @@ class HistoryMixin:
             # two-day range fetch on the startup path -- measured at 1.1 s on
             # WINV26, against 0 ms for this comparison.
             self.earliest_ms = claimed
+            self.earliest_known = True
             log("BRIDGE_TICK_FLOOR", symbol=self.symbol, earliest_ms=claimed, checked="unnecessary")
             return claimed
         to_s = claimed // 1000
@@ -684,6 +726,7 @@ class HistoryMixin:
         # more: `older_than` would build a filtered copy of a two-day window on
         # the startup path, and the answer is one bit.
         older = self.any_older_than(below, claimed)
+        self.earliest_known = True
         if older:
             log(
                 "BRIDGE_TICK_FLOOR_IMPLAUSIBLE",
@@ -694,7 +737,9 @@ class HistoryMixin:
                 note="the terminal named an oldest tick with ticks underneath it; "
                 "walking back is not stopped by it",
             )
+            yield
             return None
         self.earliest_ms = claimed
         log("BRIDGE_TICK_FLOOR", symbol=self.symbol, earliest_ms=self.earliest_ms)
+        yield
         return self.earliest_ms

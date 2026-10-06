@@ -1,10 +1,7 @@
 // The `app.rs` unit tests, split by the subsystem each one exercises.
 //
-// They stay child modules of `crate::app` rather than moving to
-// `crates/app/tests/`: an integration test is a separate crate and sees only
-// `quantick-app`'s public API, while these reach `QuantickApp`'s private
-// items. A child module sees its ancestor's private items, so the split costs
-// no widened visibility anywhere in production code.
+// Child modules reach the app's private items without widening APIs.
+// Integration tests in `crates/app/tests/` see only the public API.
 //
 // The shared harness -- `test_app`, the `run_frame` family, the paint readers
 // -- lives here in the parent, and one `use super::*` per file is all any of
@@ -48,7 +45,9 @@ mod control_port_tests;
 mod drawing_demo_baselines;
 mod drawings_tests;
 mod feeds_sources_tests;
+mod history_interaction_tests;
 mod history_publication_tests;
+mod history_reach_completion_tests;
 mod indicator_operations_tests;
 mod indicators_tests;
 mod input_ui_tests;
@@ -577,13 +576,11 @@ fn recording_at(dir: &std::path::Path) -> quantick_replay::Session {
         .expect("the recording this test just wrote parses")
 }
 
-/// How many rectangles the frame painted — candle bodies dominate it, so
-/// it stands in for "how many candles were drawn" when a test holds the
-/// one-bar-one-candle law at the paint level rather than at an accessor.
-fn painted_rects(output: &egui::FullOutput) -> usize {
-    fn walk(shape: &egui::Shape, found: &mut usize) {
+/// The frame's rectangles, so assertions can identify the layer they test.
+fn painted_rects(output: &egui::FullOutput) -> Vec<&egui::epaint::RectShape> {
+    fn walk<'a>(shape: &'a egui::Shape, found: &mut Vec<&'a egui::epaint::RectShape>) {
         match shape {
-            egui::Shape::Rect(_) => *found += 1,
+            egui::Shape::Rect(rect) => found.push(rect),
             egui::Shape::Vec(shapes) => {
                 for shape in shapes {
                     walk(shape, found);
@@ -592,7 +589,7 @@ fn painted_rects(output: &egui::FullOutput) -> usize {
             _ => {}
         }
     }
-    let mut found = 0;
+    let mut found = Vec::new();
     for clipped in &output.shapes {
         walk(&clipped.shape, &mut found);
     }

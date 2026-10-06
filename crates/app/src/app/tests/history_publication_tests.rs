@@ -1,6 +1,62 @@
 use super::*;
 
 #[test]
+fn the_load_older_hook_keeps_its_action_while_opening_history_is_publishing() {
+    let (mut app, events, mut commands, _book) = test_app();
+    while commands.try_recv().is_ok() {}
+    let tab_id = app.tabs.active_id();
+    for pane in app.active_tab_mut().panes_mut() {
+        pane.hold_history_publication(true);
+    }
+    // MT5 opens the feed with an empty reply, then translates its initial
+    // bridge backfill into HistoryPrepended while an early live print lands.
+    events.try_send(FeedEvent::Backfilled(Vec::new())).unwrap();
+    events
+        .try_send(FeedEvent::HistoryPrepended(
+            (0..60_000).map(trade).collect(),
+        ))
+        .unwrap();
+    events.try_send(FeedEvent::Live(trade(60_000))).unwrap();
+    app.active_tab_mut().drain_feed(tab_id);
+    assert!(app.active_tab().flow_pane.slots() > 0);
+    assert!(app.active_tab().flow_pane.history_pending());
+    assert!(
+        app.active_tab()
+            .loading
+            .is_active(LoadingTask::HistoryRebuild)
+    );
+    assert!(!app.active_tab().loading.is_active(LoadingTask::History));
+    app.chrome.harness.arm_load_older(1, 10);
+    app.chrome
+        .harness
+        .apply_load_older(&mut app.tabs, &app.config);
+    assert!(commands.try_recv().is_err());
+    assert_eq!(
+        app.chrome.harness.load_older_remaining(),
+        Some((1, 10)),
+        "early live bars must not consume an action refused during publication"
+    );
+
+    for pane in app.active_tab_mut().panes_mut() {
+        pane.hold_history_publication(false);
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while app.active_tab().flow_pane.history_pending() {
+        app.active_tab_mut().drain_feed(tab_id);
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    app.chrome
+        .harness
+        .apply_load_older(&mut app.tabs, &app.config);
+    assert!(matches!(
+        commands.try_recv(),
+        Ok(FeedCommand::LoadOlder { .. })
+    ));
+    assert_eq!(app.chrome.harness.load_older_remaining(), None);
+}
+
+#[test]
 #[ignore = "manual comparable history recut and frame-work benchmark"]
 fn benchmark_history_frame_work() {
     for (held, page) in [(500_000, 200_000), (1_000_000, 2_000), (1_000_000, 200_000)] {

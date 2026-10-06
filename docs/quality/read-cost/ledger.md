@@ -87,3 +87,4 @@ a bound.
 | 561 | 2026-09-20 | feat/slim-hub-modules | main | 27148 | 31 | `crates/app/src/replay_get_data.rs` (996) |
 | 562 | 2026-09-20 | fix/ship-gate-reads-advisories | main | 0 | 0 | — |
 | 606 | 2026-10-04 | feat/renko-bars | main | 15959 | 37 | `crates/app/src/pane/pointer_gestures.rs` (535) |
+| 619 | 2026-10-06 | fix/history-session-interaction | main | 3882 | 8 | `crates/app/src/replay_view.rs` (783) |

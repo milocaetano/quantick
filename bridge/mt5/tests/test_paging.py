@@ -307,7 +307,7 @@ def test_a_failed_window_answers_with_what_is_in_hand():
     check("and no claim about the tape", exhausted is False, exhausted)
 
 
-def test_the_block_is_announced_before_the_walk_and_always_bracketed():
+def test_an_empty_history_reply_is_always_bracketed():
     term = FakeTerminal(0, NOW)
     cursor = NOW * 1000
     bridge = load_bridge(term)
@@ -318,7 +318,7 @@ def test_the_block_is_announced_before_the_walk_and_always_bracketed():
     kinds = [m["type"] for m in session.sent]
     check("an empty block is still bracketed", kinds == ["history_start", "history_end"], kinds)
     check(
-        "the start is announced before anything is known",
+        "the optional count hint remains absent",
         "count_hint" not in session.sent[0],
         session.sent[0],
     )

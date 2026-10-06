@@ -293,6 +293,17 @@ impl Viewport {
         }
     }
 
+    /// A history publication keeps the current fractional pan or future
+    /// projection beside its newly resolved reference bar. Unlike a deliberate
+    /// series switch, publication never reacquires the live-follow latch.
+    pub fn reanchor_history(&mut self, bar: Option<usize>, offset: f32) {
+        if self.right_bar.is_some()
+            && let Some(bar) = bar
+        {
+            self.right_bar = Some((bar as f32 + offset).max(0.0));
+        }
+    }
+
     /// The x-pixel centre of bar `index`, given the chart's right edge x and the
     /// series length. The newest bar sits half a candle in from `chart_right`.
     #[must_use]

@@ -214,26 +214,9 @@ pub fn inline(ui: &mut egui::Ui, label: &str) {
 /// it never covers the symbol header on the left or the book status badge on
 /// the right.
 ///
-/// Called once per scope with that surface's own rect, so a wait is drawn on
-/// the pane it is about rather than across a canvas whose other panes have
-/// nothing to wait for. A scope with nothing active draws nothing at all — no
-/// backdrop, no reserved space — which is what keeps a quiet pane quiet.
-///
-/// `note` is what a wait that has *finished* left behind — the outcome of a
-/// "load older" press that reached nothing, drawn in the row the spinner just
-/// vacated. It belongs here rather than in a surface of its own because this
-/// is where the trader was already looking: they watched "loading history…"
-/// appear when they pressed, and the answer to that press has no business
-/// arriving anywhere else. The caller decides when it has had its time
-/// ([`crate::tab::HISTORY_NOTE_LINGER`]); this draws whatever it is handed.
-///
-/// It draws in a layer of its own, above the chart's floating chrome. Painted
-/// straight onto the canvas it sat *underneath* anything the panes put in an
-/// `egui::Area` — the indicator legend is one, and on a split canvas the
-/// legend's corner lands right where this backdrop is centred, so the message
-/// was being read through a card on top of it. A statement about the app
-/// still working is not something to half-hide behind chrome, and it is gone
-/// again in seconds, so it takes the front.
+/// Paints above floating chrome without registering input. Each scope uses
+/// its surface's rect and draws nothing when idle. A finished request's note
+/// occupies the history row until the caller's `HISTORY_NOTE_LINGER` expires.
 pub fn overlay_scoped(
     ui: &mut egui::Ui,
     area: egui::Rect,
@@ -253,16 +236,11 @@ pub fn overlay_scoped(
     {
         return;
     }
-    // A layer rather than an `egui::Area`: an area is laid out from the
-    // previous frame's state and paints nothing on the frame it first
-    // appears, which is precisely the frame a wait begins — the overlay would
-    // arrive late every time, and `a_rebuilt_chart_still_paints_itself` says
-    // so. `with_layer_id` keeps the drawing immediate and only moves it up.
+    // Status paints immediately without registering any input region above
+    // the chart. Even a hover-only foreground widget is unnecessary here.
     let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("loading_overlay"));
-    ui.with_layer_id(layer, |ui| {
-        ui.set_clip_rect(area);
-        draw_rows(ui, area, tracker, scope, note);
-    });
+    let painter = ui.ctx().layer_painter(layer).with_clip_rect(area);
+    draw_rows(&painter, area, tracker, scope, note);
 }
 
 /// The overlay's rows, in whatever layer the caller put them in.
@@ -273,18 +251,26 @@ pub fn overlay_scoped(
 /// the spinner's column so the two never jump sideways past each other, and it
 /// is drawn in [`TEXT_MUTED`] because it is a remark rather than a heading.
 fn draw_rows(
-    ui: &mut egui::Ui,
+    painter: &egui::Painter,
     area: egui::Rect,
     tracker: &LoadingTracker,
     scope: LoadingScope,
     note: Option<&str>,
 ) {
     let font = egui::FontId::proportional(LABEL_FONT_SIZE);
-    let painter = ui.painter().clone();
     let mut galleys: Vec<_> = tracker
         .active()
         .filter(|task| task.scope() == scope)
+        .filter(|task| {
+            *task != LoadingTask::HistoryRebuild || !tracker.is_active(LoadingTask::History)
+        })
         .map(|task| {
+            // Network and recut are phases of one wait, with one stable row.
+            let task = if task == LoadingTask::HistoryRebuild {
+                LoadingTask::History
+            } else {
+                task
+            };
             painter.layout_no_wrap(format!("{}…", task.label()), font.clone(), TEXT_PRIMARY)
         })
         .collect();
@@ -318,10 +304,7 @@ fn draw_rows(
             egui::vec2(SPINNER_SIZE, SPINNER_SIZE),
         );
         if row < spinners {
-            ui.put(
-                spinner,
-                egui::Spinner::new().size(SPINNER_SIZE).color(AMBER),
-            );
+            paint_spinner(painter, spinner);
         }
         let text_pos = egui::pos2(
             spinner.right() + GAP,
@@ -332,9 +315,104 @@ fn draw_rows(
     }
 }
 
+fn paint_spinner(painter: &egui::Painter, rect: egui::Rect) {
+    painter.ctx().request_repaint();
+    let angle = painter.ctx().input(|input| input.time) as f32 * std::f32::consts::TAU;
+    let radius = rect.height() * 0.5 - 2.0;
+    let points = (0..20)
+        .map(|step| {
+            let angle = angle + step as f32 * std::f32::consts::PI / 20.0;
+            rect.center() + radius * egui::vec2(angle.cos(), angle.sin())
+        })
+        .collect();
+    painter.add(egui::Shape::line(points, egui::Stroke::new(3.0_f32, AMBER)));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn network_and_publication_keep_one_identical_history_row() {
+        let ctx = egui::Context::default();
+        for (network, rebuild) in [(true, false), (true, true), (false, true), (true, false)] {
+            let mut tracker = LoadingTracker::new();
+            tracker.set_active(LoadingTask::History, network);
+            tracker.set_active(LoadingTask::HistoryRebuild, rebuild);
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    overlay_scoped(ui, ui.max_rect(), &tracker, LoadingScope::Whole, None);
+                });
+            });
+            let rows: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = &shape.shape {
+                        Some(text.galley.text())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            assert_eq!(rows, ["loading history…"]);
+        }
+    }
+
+    #[test]
+    fn loading_layers_leave_chart_pointer_input_available() {
+        let ctx = egui::Context::default();
+        let mut tracker = LoadingTracker::new();
+        tracker.begin(LoadingTask::History);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
+        let mut frame = |events, building| {
+            tracker.set_active(LoadingTask::HistoryRebuild, building);
+            let mut dragged = false;
+            let _ = ctx.run(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ctx| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let area = ui.max_rect();
+                        dragged = ui
+                            .interact(area, egui::Id::new("chart"), egui::Sense::drag())
+                            .dragged();
+                        overlay_scoped(ui, area, &tracker, LoadingScope::Whole, None);
+                    });
+                },
+            );
+            dragged
+        };
+        for building in [false, true, false, true] {
+            frame(Vec::new(), building);
+            frame(Vec::new(), building);
+            for start in [
+                egui::pos2(100.0, 25.0),
+                egui::pos2(800.0, 200.0),
+                egui::pos2(150.0, 600.0),
+            ] {
+                let button = |pos, pressed| egui::Event::PointerButton {
+                    pos,
+                    pressed,
+                    button: egui::PointerButton::Primary,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                frame(
+                    vec![egui::Event::PointerMoved(start), button(start, true)],
+                    building,
+                );
+                let end = start + egui::vec2(30.0, 0.0);
+                assert!(
+                    frame(vec![egui::Event::PointerMoved(end)], building),
+                    "chart drag at {start:?} while building={building}"
+                );
+                frame(vec![button(end, false)], building);
+            }
+        }
+    }
 
     #[test]
     fn counts_overlapping_operations_and_drains_to_zero() {

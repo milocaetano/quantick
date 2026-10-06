@@ -261,6 +261,7 @@ impl Harness {
     /// have every page after the first refused and answered empty — a capture
     /// of the drop path rather than of the feature.
     pub(crate) fn apply_load_older(&mut self, tabs: &mut ArrangementHost, config: &AppConfig) {
+        use LoadingTask::{History, HistoryRebuild};
         let Some(pages) = self.load_older_pages() else {
             return;
         };
@@ -280,9 +281,10 @@ impl Harness {
             }
             return;
         }
-        if tab.loading.is_active(LoadingTask::History) {
-            // The previous page is still coming. Asking now would be refused
-            // and answered empty, which is not what the hook is for.
+        if tab.loading.is_active(History) || tab.loading.is_active(HistoryRebuild) {
+            // A page or its publication is still pending. An early live print
+            // can supply bars before the initial recut is ready; keep the
+            // action owed until request_older_history can admit it.
             return;
         }
         tab.request_older_history(tab_id, config);
