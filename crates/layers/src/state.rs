@@ -1,3 +1,4 @@
+//! Requested layer state and the effective-visibility policy over caller-supplied facts.
 use crate::{ChartLayer, LayerBlock, LayerRegistry, LayerScope, LayerSource, Requirement, blocks};
 
 /// Facts needed by policy, supplied by the caller; no clock or feature state is owned here.
@@ -5,10 +6,17 @@ use crate::{ChartLayer, LayerBlock, LayerRegistry, LayerScope, LayerSource, Requ
 pub struct LayerFacts {
     pub flow_pane: bool,
     pub tape_on: bool,
+    pub tape_only: bool,
+    /// The tape is the native tape, beside the candles or alone.
+    pub native_tape: bool,
+    /// The pane keys its prints as volume dots, which the native tape is.
+    pub volume_dots: bool,
     pub book_capture: bool,
     pub traded_volume: bool,
     pub capture_enabled: bool,
     pub depth_visible: bool,
+    pub tick_bars: bool,
+    pub native_candle_prices: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,8 +138,32 @@ impl LayerState {
         if !Self::draws(layer, facts) {
             return Some(blocks::WRONG_PANE);
         }
+        if layer == ChartLayer::LiveStrip && facts.tape_only {
+            return Some(blocks::TAPE_ONLY_STRIP);
+        }
+        if facts.tape_only
+            && [
+                ChartLayer::Footprint,
+                ChartLayer::Drawings,
+                ChartLayer::TradePaint,
+                ChartLayer::Heatmap,
+                ChartLayer::Bubbles,
+                ChartLayer::CandleAggression,
+            ]
+            .contains(&layer)
+        {
+            return Some(blocks::TAPE_ONLY_CANDLES);
+        }
+        // Tape only draws the native tape whatever the switch says, so the
+        // switch has nothing to change there.
+        if layer == ChartLayer::NativeTape && facts.tape_only {
+            return Some(blocks::TAPE_ONLY_DRAWS_NATIVE_TAPE);
+        }
         if layer.0.needs_tape && !facts.tape_on {
             return Some(blocks::TAPE_OFF);
+        }
+        if layer == ChartLayer::NativeTape && !facts.volume_dots {
+            return Some(blocks::NATIVE_TAPE_NEEDS_VOLUME_DOTS);
         }
         let missing = match layer.0.requirement {
             Requirement::None => None,
@@ -140,9 +172,15 @@ impl LayerState {
             Requirement::BookOrVolume => (!facts.book_capture && !facts.traded_volume)
                 .then_some(blocks::NO_BOOK_AND_NO_VOLUME),
         };
-        missing.or_else(|| {
-            (layer.0.needs_depth && !facts.depth_visible).then_some(blocks::DEPTH_MAP_HIDDEN)
-        })
+        missing
+            .or_else(|| {
+                crate::candle_aggression::draws_summary(layer, facts)
+                    .then(|| crate::candle_aggression::blocked(facts))
+                    .flatten()
+            })
+            .or_else(|| {
+                (layer.0.needs_depth && !facts.depth_visible).then_some(blocks::DEPTH_MAP_HIDDEN)
+            })
     }
     pub fn restorable(layer: ChartLayer, facts: LayerFacts) -> bool {
         layer.0.scope != LayerScope::Window && Self::draws(layer, facts)

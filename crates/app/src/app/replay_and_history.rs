@@ -210,7 +210,8 @@ impl Harness {
     }
 
     /// The scripted view hooks (`QUANTICK_CANDLE_WIDTH`, `QUANTICK_PAN_PX`),
-    /// re-applied every frame to the active tab's flow pane.
+    /// re-applied every frame to the first visible context candle pane beside
+    /// a tape-only flow pane, or to the flow pane in ordinary mode.
     ///
     /// Every frame rather than once at boot, for two reasons. A pan needs bars
     /// to move over and at boot there are none — repeating it is what makes
@@ -230,7 +231,12 @@ impl Harness {
         if width.is_none() && pan.is_none() {
             return;
         }
-        let pane = &mut active_with_id(tabs).1.flow_pane;
+        let tab = active_with_id(tabs).1;
+        let pane = if tab.shows_context_charts() && tab.tape().cached_config().tape_only() {
+            &mut tab.time_panes[0]
+        } else {
+            &mut tab.flow_pane
+        };
         if let Some(px) = width {
             pane.viewport.set_px_per_bar(px);
         }

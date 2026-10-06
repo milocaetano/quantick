@@ -15,6 +15,11 @@ use quantick_orderbook::BookSide;
 use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
 use std::str::FromStr as _;
 
+mod candle_dots_tests;
+mod dots_tests;
+mod pending_tests;
+mod tier_geometry_tests;
+
 fn dec(value: &str) -> Decimal {
     Decimal::from_str(value).unwrap()
 }
@@ -2972,15 +2977,15 @@ fn bench_the_live_half_under_the_live_lane_pie_preset() {
     let prices = PriceWindow::new(dec("90"), dec("520")).unwrap();
 
     // The half the app keeps: built once here, exactly as the cache does.
-    let settled = project_settled(&history, &timeline, prices);
+    let settled = project_settled(&history, &timeline, prices, None);
     for _ in 0..3 {
-        let _ = project_live(&history, &timeline, prices, &settled);
+        let _ = project_live(&history, &timeline, prices, &settled, None);
     }
     let runs = 60;
     let started = std::time::Instant::now();
     let mut marks = 0;
     for _ in 0..runs {
-        marks = project_live(&history, &timeline, prices, &settled)
+        marks = project_live(&history, &timeline, prices, &settled, None)
             .aggressions
             .len();
     }

@@ -370,17 +370,8 @@ pub enum ToolbarAction {
     /// under two different capabilities. A feed can page one and not the
     /// other, so they are two actions rather than one with a mode.
     LoadOlderCandles,
-    /// Show or hide the L2 depth map. Display-only: the recorder keeps
-    /// running, so reopening the map brings its history back whole.
-    SetHeatmap(bool),
-    /// Turn the aggression layer on or off.
-    SetBubbles(bool),
-    /// Show or hide the live strip (the book's current depth beside the
-    /// price axis). Display-only: capture is untouched.
-    SetLiveStrip(bool),
-    /// Show or hide the candle footprint — the per-price ladder inside the
-    /// bars. Display-only: the ladders keep accumulating either way.
-    SetFootprint(bool),
+    /// Set one layer through the same operation as its chart menu.
+    SetLayer(LayerToggle, bool),
     /// Open the footprint's settings window. Like every other right-click in
     /// this group, looking is not enabling: it opens with the layer off too,
     /// because configuring before switching on is a legitimate order of
@@ -457,7 +448,7 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                     if plan.panels_inline {
                         let panels = IconButton::new(icons::SIDEBAR_SIMPLE, TOOLBAR_ICON)
                             .active(model.dock_visible)
-                            .hover_text("show or hide the panels dock (Ctrl+B)")
+                            .hover_text("show or hide the panels dock (Ctrl+Shift+B)")
                             .show(ui);
                         if panels.clicked() {
                             actions.push(ToolbarAction::ToggleDock);
@@ -1110,7 +1101,7 @@ impl LayerToggle {
     fn hover_text(self) -> &'static str {
         match self {
             Self::Bubbles => {
-                "aggression bubbles: confirmed executions from the trade stream — \
+                "aggression bubbles (Ctrl+B): confirmed executions from the trade stream — \
                  right-click for settings"
             }
             Self::Heatmap => {
@@ -1118,7 +1109,7 @@ impl LayerToggle {
                  loses nothing. Right-click for settings"
             }
             Self::Footprint => {
-                "candle footprint: the buy/sell split per price inside each bar — detail follows \
+                "candle footprint (Ctrl+F): the buy/sell split per price inside each bar — detail follows \
                  the zoom. Right-click for style and thresholds"
             }
             Self::LiveStrip => {
@@ -1130,12 +1121,7 @@ impl LayerToggle {
 
     #[must_use]
     fn toggle_action(self, on: bool) -> ToolbarAction {
-        match self {
-            Self::Bubbles => ToolbarAction::SetBubbles(on),
-            Self::Heatmap => ToolbarAction::SetHeatmap(on),
-            Self::Footprint => ToolbarAction::SetFootprint(on),
-            Self::LiveStrip => ToolbarAction::SetLiveStrip(on),
-        }
+        ToolbarAction::SetLayer(self, on)
     }
 
     /// Where a right-click goes: the panel that configures the layer. Looking

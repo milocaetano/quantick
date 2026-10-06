@@ -167,6 +167,40 @@
       "pattern": "^[A-Za-z0-9_-]{21}[AQgw]$",
       "type": "string"
     },
+    "LaneWindowSnapshot": {
+      "description": "How wide the live lane's window is, said the way the setting says it. An\n`auto` window follows the recent bars' typical duration, so publishing one\nresolved number would report a measurement as a setting.",
+      "properties": {
+        "fixed_ms": {
+          "description": "Present for `fixed`: the exchange milliseconds shown in the band.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "milliseconds"
+        },
+        "mode": {
+          "description": "`auto` or `fixed`.",
+          "type": "string"
+        },
+        "zoom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Present for `auto`: `1.0` fits about one bar's worth of market time.",
+          "x-unit": "ratio"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
     "ModuleId": {
       "description": "A module contributing control-plane behavior.",
       "maxLength": 128,
@@ -260,6 +294,48 @@
       "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){1,7}$",
       "type": "string"
     },
+    "TapeViewSnapshot": {
+      "description": "The tape's time frame as a pane reports it.",
+      "properties": {
+        "end_unix_ms": {
+          "description": "The past instant the right edge is held at; absent while it follows\nlive, where the edge is the moving tape clock.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "follows_live": {
+          "description": "The right edge is now. False while the tape is held in the past.",
+          "type": "boolean"
+        },
+        "retained_from_unix_ms": {
+          "description": "First instant the retained tape is complete from: a past end cannot\nhold the window further back than half of it before this.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "window": {
+          "$ref": "#/$defs/LaneWindowSnapshot"
+        },
+        "window_ms": {
+          "description": "The market time the tape shows now, resolved.",
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "milliseconds"
+        }
+      },
+      "required": [
+        "follows_live",
+        "window",
+        "window_ms"
+      ],
+      "type": "object"
+    },
     "ViewportSnapshot": {
       "properties": {
         "chart_width_px": {
@@ -301,6 +377,17 @@
         },
         "right_edge_bar": {
           "$ref": "#/$defs/CanonicalDecimal"
+        },
+        "tape": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TapeViewSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The native tape's own time frame; absent without a native tape."
         },
         "visible_end_slot_exclusive": {
           "$ref": "#/$defs/WireU64"

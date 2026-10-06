@@ -57,9 +57,9 @@ const SOURCE: &str = "crates/";
 /// What the guard asks for when a struct is over, under or missing its entry.
 pub const REMEDY: &str = "A struct past its recorded field count absorbed a subsystem instead \
     of docking against one. Group the new state into an owner type the struct holds as one \
-    field, or take as many fields out in the same change. A deliberate raise is the struct's \
-    entry and the !budget in crates/guards/struct-width-baseline.txt, both raised and signed \
-    with a reason in the same change. A struct that lost fields needs no argument: `cargo run \
+    field, or take as many fields out in the same change. A deliberate raise is a new file in \
+    crates/guards/struct-width-baseline.d/ named for the branch, `<crate>::<Struct> +N` and \
+    `!budget +N` with a comment saying why, never an edit to the baseline. A struct that lost fields needs no argument: `cargo run \
     -p quantick-guards -- --tighten` writes the new count.";
 
 /// What the guard asks for when the budget sits above the recorded counts.
@@ -251,7 +251,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
 /// edit to the baseline re-runs the whole check, stale entries and budget
 /// included.
 pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
-    if relative == BASELINE_FILE {
+    if POLICY.owns(relative) {
         return check(root);
     }
     if !size::tracked(relative) {

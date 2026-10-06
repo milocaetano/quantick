@@ -67,6 +67,7 @@ pub(crate) const LAYERS_FILE: &str = "chart-layers.toml";
 
 pub(crate) use quantick_layers::{ChartLayer, LayerBlock};
 mod session;
+pub(crate) mod shortcuts;
 pub(crate) use session::{maintain, restore};
 
 /// The layer-visibility file the app opens with and writes back to.
@@ -239,7 +240,6 @@ mod tests {
         let shipped = shipped_default();
         for layer in [
             ChartLayer::Heatmap,
-            ChartLayer::Bubbles,
             ChartLayer::Footprint,
             ChartLayer::LiveStrip,
         ] {
@@ -280,6 +280,10 @@ mod tests {
         assert!(
             !shipped.contains_key(&ChartLayer::LaneMarks),
             "the preset is the lane marks' only home"
+        );
+        assert!(
+            !shipped.contains_key(&ChartLayer::Bubbles),
+            "the aggression bubbles are each asset's own"
         );
     }
 

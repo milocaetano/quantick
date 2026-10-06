@@ -1,3 +1,9 @@
+# A raise is never an edit here: it is a new file in crates/guards/size-baseline.d/ named for the
+# branch, holding signed deltas (`path +N`, `!budget +N`) and a comment
+# saying why. The guard adds them to these numbers, and `--tighten` writes its
+# cuts there too. One file per branch is what keeps two open branches
+# from conflicting on the same line.
+#
 # The size ratchet's exceptions: one `path ceiling` pair per line, plus the
 # one `!budget` directive capping their sum. `#` starts a comment.
 #

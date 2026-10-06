@@ -1,3 +1,9 @@
+# A raise is never an edit here: it is a new file in crates/guards/extension-roots-baseline.d/ named for the
+# branch, holding signed deltas (`path +N`, `!budget +N`) and a comment
+# saying why. The guard adds them to these numbers, and `--tighten` writes its
+# cuts there too. One file per branch is what keeps two open branches
+# from conflicting on the same line.
+#
 # Origin 0bd50f9b815a05e2ba8d0c9804324dbb415f6658: QuantickApp 10243; ChartState 429.
 # Separate source union caps; native ownership extraction lowers only QuantickApp.
 # Pull request #306 adds retained deal readings to ChartState and 23 lines of
@@ -15,7 +21,10 @@
 # that no strategy acts on, and two read accessors give the chart read the
 # rule's inferred price step and its held and off-grid prints. The rule and
 # the count of late bricks live in `quantick-engine`.
-!budget 2830
-ChartState 593
-QuantickApp 2237
+# Merged with #606 on this branch, where `fold_print` lives in
+# `footprint_series.rs` (PR #596): ChartState measures 586, 18 of the 26
+# signed above, and QuantickApp keeps PR #596's tightened 2226.
+!budget 2812
+ChartState 586
+QuantickApp 2226
 # #526 G5: two root drawing impl modules and shared drawing/strategy operations leave the window.

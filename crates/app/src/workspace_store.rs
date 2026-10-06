@@ -116,6 +116,8 @@ pub(crate) struct StorePaths {
     pub(crate) indicator_presets: PathBuf,
     /// Where the workspace persists.
     pub(crate) ui_state: PathBuf,
+    /// Where each asset's bubble settings persist.
+    pub(crate) bubble_assets: PathBuf,
 }
 
 use quantick_layers::SavedLayers;
@@ -149,6 +151,8 @@ pub(crate) struct WorkspaceStore {
     trades_dir: PathBuf,
     /// The in-flight trades-folder dialog, if any. One at a time.
     trades_dir_picker: Option<std::sync::mpsc::Receiver<Option<PathBuf>>>,
+    /// Every asset's bubble settings, which every tab binds to.
+    bubble_assets: quantick_stores::bubble_asset_store::SharedAssetBubbles,
 }
 
 #[cfg(test)]
@@ -162,7 +166,6 @@ impl WorkspaceStore {
     /// store pointed at a scratch file by `QUANTICK_*` still writes there.
     pub(crate) fn new(paths: StorePaths, layouts: LayoutStore, trades_dir: PathBuf) -> Self {
         Self {
-            paths,
             layouts,
             layers: SavedLayers::default(),
             session: WorkspaceCommitSession::default(),
@@ -170,7 +173,17 @@ impl WorkspaceStore {
             picker: crate::workspace_picker::WorkspacePickerHost::default(),
             trades_dir,
             trades_dir_picker: None,
+            bubble_assets: quantick_stores::bubble_asset_store::AssetBubblesStore::load(
+                paths.bubble_assets.clone(),
+            )
+            .shared(),
+            paths,
         }
+    }
+
+    /// Every asset's bubble settings, which every tab binds to.
+    pub(crate) fn bubble_assets(&self) -> &quantick_stores::bubble_asset_store::SharedAssetBubbles {
+        &self.bubble_assets
     }
 
     /// Where the picker's added instruments persist.

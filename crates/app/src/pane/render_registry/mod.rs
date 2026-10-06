@@ -2,7 +2,8 @@
 //! it consumes; no contribution can call back into QuantickApp.
 use eframe::egui;
 use quantick_layers::{ChartLayer, LayerRegistry, RegistrationError};
-mod candles;
+mod candle_aggression;
+pub(super) mod candles;
 mod days;
 mod dividers;
 mod flow;
@@ -26,6 +27,10 @@ pub(super) use paper::{PaperPass, TradesPass};
 pub(super) struct FootprintPass<'a> {
     pub frame: &'a LayerFrame<'a>,
     pub lod: &'a mut FootprintLod,
+    pub footprint_visible: bool,
+    pub candle_aggression: bool,
+    pub native_grid: Option<quantick_orderflow::projection::CandleDotGrid>,
+    pub current_partial: Option<&'a quantick_engine::BarFootprint>,
 }
 pub(super) struct CanvasPass<'a> {
     pub painter: &'a egui::Painter,
@@ -158,9 +163,12 @@ const PACKAGES: &[Package] = &[
     Package {
         layers: &[ChartLayer::Footprint],
         contributions: &[Contribution::Footprint(|pass| {
-            crate::footprint_render::draw_layer(pass.frame, pass.lod);
+            if pass.footprint_visible {
+                crate::footprint_render::draw_layer(pass.frame, pass.lod);
+            }
         })],
     },
+    candle_aggression::PACKAGE,
     Package {
         layers: &[],
         contributions: &[Contribution::Canvas(|pass| {
@@ -172,6 +180,7 @@ const PACKAGES: &[Package] = &[
                     pass.rect,
                     pass.visible(ChartLayer::TapeChart, on),
                     pass.tape_hovered,
+                    pass.facts.tape_only,
                 );
             }
         })],

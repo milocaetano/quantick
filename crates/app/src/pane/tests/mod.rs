@@ -24,6 +24,9 @@ use crate::viewport::Viewport;
 use super::painting::{LIVE_CHIP_MARGIN_PX, LIVE_CHIP_VPAD_PX, LIVE_CHIP_WIDTH_PX};
 use super::*;
 
+mod native_split_tests;
+mod tape_only_tests;
+
 /// A frame nobody builds is a surface nobody draws. The strip and the
 /// lane's marks are the two surfaces that need the projection without
 /// being the depth map or the bubbles, so each of them alone has to keep
@@ -309,6 +312,7 @@ fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
                 lane_strip: Some(strip),
                 window_ms: 30_000,
                 tape_age: age,
+                clock: None,
             }
             .paint()
         })
@@ -372,6 +376,7 @@ fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
                 lane_strip: Some(strip),
                 window_ms: 30_000,
                 tape_age: late_by(41_000),
+                clock: None,
             }
             .paint()
         })
@@ -421,6 +426,7 @@ fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
             lane_strip: Some(hair),
             window_ms: 30_000,
             tape_age: Some(quantick_orderflow::TapeAge::NothingYet(90_000)),
+            clock: None,
         }
         .paint()
     });
@@ -447,7 +453,8 @@ fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
             painter,
             lane_strip: None,
             window_ms: 30_000,
-            tape_age: late_by(41_000)
+            tape_age: late_by(41_000),
+            clock: None,
         }
         .paint()),
         painted(|_| {}),
@@ -458,7 +465,7 @@ fn the_tape_axis_speaks_only_when_the_tape_is_behind() {
 #[test]
 fn the_tape_switch_sits_in_the_canvas_top_right_corner() {
     let chart = egui::Rect::from_min_max(egui::pos2(60.0, 80.0), egui::pos2(1_000.0, 700.0));
-    let chip = tape_switch_rect(chart);
+    let chip = tape_switch_rect(chart, false);
     assert!(chart.contains_rect(chip), "on the canvas, not off its edge");
     assert!(chip.right() < chart.right(), "inset from the right edge");
     assert!(chip.top() > chart.top(), "and from the top");
@@ -470,7 +477,7 @@ fn the_tape_switch_sits_in_the_canvas_top_right_corner() {
     // one corner, so a resized window never leaves it behind.
     let moved = chart.translate(egui::vec2(37.0, -11.0));
     assert_eq!(
-        tape_switch_rect(moved),
+        tape_switch_rect(moved, false),
         chip.translate(egui::vec2(37.0, -11.0))
     );
 }

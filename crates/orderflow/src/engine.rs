@@ -7,7 +7,7 @@
 //! dedicated thread and the UI only reads published snapshots.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use quantick_engine::{Bar, Trade};
 use quantick_orderbook::{BookLevel, DepthEvent, DepthResyncReason, DepthStatus};
@@ -15,23 +15,21 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::{
-    BarTimeline, HeatmapConfig, HeatmapProjection, HistoryStatus, LiquidityHistory, LiveEdge,
-    PriceWindow, SettledProjection, project_live, project_settled, reserved_span_ms,
+    BarTimeline, DotScale, DotZoom, HeatmapConfig, HeatmapProjection, HistoryStatus,
+    LiquidityHistory, LiveEdge, PriceWindow, SettledProjection, VolumeDots, project_settled,
+    reserved_span_ms,
 };
 
-/// Minimum interval between dirty rebuilds of the finished half of the chart.
-///
-/// History or bar-boundary changes mark the projection dirty. This cadence
-/// coalesces a burst of updates, while a clean projection remains cached
-/// indefinitely. The live half ignores this interval entirely — see
-/// [`BookEngine::project_at`].
-pub const PROJECTION_INTERVAL: Duration = Duration::from_millis(220);
+#[path = "engine_live_tape.rs"]
+mod live_tape;
+#[path = "engine_past_tape.rs"]
+mod past_tape;
+#[path = "engine_pending.rs"]
+mod pending;
 
-/// Maximum raw book levels per side copied into a published [`BookLadder`].
-/// Bounds the per-batch copy in [`BookEngine::published`] and the memory the
-/// UI clones per frame; deeper books stay fully captured in history, they are
-/// just not republished level-by-level.
-pub const LADDER_LEVELS_PER_SIDE: usize = 128;
+pub use crate::constants::{
+    LADDER_LEVELS_PER_SIDE, PENDING_LANE_REFERENCE_MS, PROJECTION_INTERVAL,
+};
 
 /// Quantize the price window before it keys the projection cache, so a
 /// sub-pixel wiggle of the auto-fit range (which happens almost every frame on a
@@ -114,6 +112,14 @@ pub struct VisibleOrderflow {
     pub projection: Arc<HeatmapProjection>,
     pub first_bar_index: usize,
     pub slot_count: usize,
+    /// The market-time edge used to project this frame. A painter can advance
+    /// its cached tape positions between worker publications from this clock.
+    pub live_edge: Option<LiveEdge>,
+    /// The rungs and size scales this frame's volume dots were built on;
+    /// `None` when the frame holds no dots.
+    pub volume_dots: Option<DotScale>,
+    /// Accepted prints `projection` does not hold yet, beside it.
+    pub tape_overlay: Option<Arc<crate::projection::TapeOverlay>>,
 }
 
 impl VisibleOrderflow {
@@ -207,7 +213,20 @@ pub struct ProjectionRequest {
     /// bars were visible, changed how much market time the tape showed. The
     /// candles' viewport is not a statement about the tape.
     pub lane_reference_ms: Option<i64>,
+    /// Current market time supplied by the caller for an independent tape.
+    /// Ordinary lanes retain their event-anchored clock when this is `None`.
+    pub lane_now_ms: Option<i64>,
     pub price_range: (f64, f64),
+    /// The rungs the view chose for volume dots
+    /// ([`HeatmapConfig::volume_dots`]). `None` from a caller with no
+    /// canvas, which then gets plain marks — though with volume dots enabled
+    /// the tape still keeps off the bars (`HeatmapConfig::lane_window`), since
+    /// the lane window follows the setting, not the dot zoom.
+    ///
+    /// Not part of [`Self::layout`]: the finished half depends only on the
+    /// candles' level, and the cache keys on it, so a new tape window or tape
+    /// level never rebuilds it.
+    pub dot_zoom: Option<DotZoom>,
 }
 
 impl ProjectionRequest {
@@ -240,9 +259,22 @@ struct ProjectionCache {
     /// where the tape starts, which is what lets this cache stay valid while
     /// the trader moves the tape's speed.
     seam_ms: Option<i64>,
+    /// The candles' level, in ticks, this half was keyed on; `None` when it
+    /// holds no dots. Part of the key because a zoom across a ladder step
+    /// re-keys every closed dot. The tape's rungs are not: the tape is the
+    /// live half's.
+    dot_rungs: Option<i64>,
     /// The finished half of the chart, reused until the layout moves or a dirty
     /// revision is old enough to rebuild.
     settled: Arc<SettledProjection>,
+}
+
+/// The series' typical bar duration a request carries, or failing that the
+/// one its own closed bars suggest: what the lane's window is sized from.
+fn typical_bar_ms(request: &ProjectionRequest) -> i64 {
+    request
+        .lane_reference_ms
+        .unwrap_or_else(|| reserved_span_ms(&request.closed))
 }
 
 /// Health data consumed by the periodic AI-first application summary.
@@ -446,6 +478,10 @@ pub struct BookPublished {
     /// without a user action, so the UI mirrors it from here.
     pub base_price_grouping: Decimal,
     pub frame: Option<Arc<VisibleOrderflow>>,
+    /// The native tape held at a past instant ([`BookEngine::set_tape_end`]).
+    pub past_tape: Option<Arc<crate::projection::PastTape>>,
+    /// First instant the retained tape is complete from.
+    pub tape_retained_from_ms: Option<i64>,
     /// Current book around the spread; `None` while capture is off or the
     /// book has no snapshot yet. Shared through `Arc` so the per-frame clone
     /// of this snapshot stays cheap.
@@ -461,6 +497,8 @@ impl BookPublished {
             live_end_ms: None,
             base_price_grouping: HeatmapConfig::default().price_grouping,
             frame: None,
+            past_tape: None,
+            tape_retained_from_ms: None,
             ladder: None,
         }
     }
@@ -515,11 +553,9 @@ pub struct BookEngine {
     /// UI never flashes to an empty heatmap between rebuilds; cleared by hard
     /// resets (symbol change, grouping reset, capture off).
     last_frame: Option<Arc<VisibleOrderflow>>,
-    /// Price window of the newest projection request, kept so published
-    /// ladders clip to what the user is looking at. `None` until the first
-    /// request (or after a symbol reset): the ladder then falls back to the
-    /// best levels of each side.
-    visible_price_window: Option<(Decimal, Decimal)>,
+    /// What the view last asked beside its frame: the price window published
+    /// ladders clip to, and where the native tape is held.
+    view: past_tape::ViewAsk,
 }
 
 impl BookEngine {
@@ -557,7 +593,7 @@ impl BookEngine {
             settled_revision: 0,
             projection_cache: None,
             last_frame: None,
-            visible_price_window: None,
+            view: past_tape::ViewAsk::default(),
         }
     }
 
@@ -623,7 +659,7 @@ impl BookEngine {
         self.last_frame = None;
         // A new market has a new price scale; the old view window would clip
         // the ladder to prices that no longer exist.
-        self.visible_price_window = None;
+        self.view.price_window = None;
     }
 
     /// Commit a capture toggle only after its feed command was accepted.
@@ -684,6 +720,7 @@ impl BookEngine {
         if config == self.config {
             return;
         }
+        self.view.past_tape = None;
         self.config = config;
         self.invalidate_projection();
         if !self.config.any_layer_enabled() {
@@ -1023,7 +1060,7 @@ impl BookEngine {
     /// worker notes the window for every request, so the ladder keeps
     /// following the view even while every heatmap layer is toggled off.
     pub fn note_price_window(&mut self, price_range: (f64, f64)) {
-        self.visible_price_window = match (
+        self.view.price_window = match (
             Decimal::from_f64(price_range.0),
             Decimal::from_f64(price_range.1),
         ) {
@@ -1046,14 +1083,18 @@ impl BookEngine {
         if !request.lane {
             return None;
         }
-        let reference_ms = request
-            .lane_reference_ms
-            .unwrap_or_else(|| reserved_span_ms(&request.closed));
+        let reference_ms = typical_bar_ms(request);
+        // Both print-only and book-backed feeds have a factual latest event.
+        // Only the independent tape advances on the supplied market clock.
+        let latest_ms = self.history.latest_ms()?;
+        let now_ms = if self.config.native_tape() {
+            request.lane_now_ms.unwrap_or(latest_ms).max(latest_ms)
+        } else {
+            latest_ms
+        };
         Some(LiveEdge {
-            // Whichever stream is running. Reading this off the book alone is
-            // what left a prints-only feed with no live edge, and so no tape.
-            now_ms: self.history.latest_ms()?,
-            window_ms: self.config.live_lane.window_ms(reference_ms),
+            now_ms,
+            window_ms: self.config.lane_window_ms(reference_ms),
             reference_ms,
             on_newest_bar: request.on_newest_bar,
         })
@@ -1073,26 +1114,39 @@ impl BookEngine {
         request: &ProjectionRequest,
         cache_now: Instant,
     ) -> Option<Arc<VisibleOrderflow>> {
+        let held = self.view.past_tape.take();
         if !self.config.any_layer_enabled() {
             return None;
         }
         let layout = request.layout();
-        let low = Decimal::from_f64(request.price_range.0)?;
-        let high = Decimal::from_f64(request.price_range.1)?;
-        let prices = PriceWindow::new(low, high)?;
+        let prices = PriceWindow::from_f64_range(request.price_range)?;
+        let live_edge = self.live_edge(request);
         let timeline = BarTimeline::from_bars(
             request.first_bar_index,
             &request.closed,
             request.partial.as_ref(),
-            self.live_edge(request),
+            live_edge,
         );
+        let timeline = if self.config.native_tape() {
+            timeline.with_full_lane_coverage()
+        } else {
+            timeline
+        };
         if timeline.is_empty() {
             return None;
         }
+        // The view chose the rungs; the engine only applies them.
+        let dots = request
+            .dot_zoom
+            .as_ref()
+            .filter(|_| self.config.volume_dots.enabled)
+            .map(|zoom| VolumeDots::resolve(zoom, &request.closed, request.partial.as_ref()));
+        let dot_rungs = dots.as_ref().map(|dots| dots.candle_level_ticks);
 
         let settled = match &self.projection_cache {
             Some(cache)
                 if cache.layout == layout
+                    && cache.dot_rungs == dot_rungs
                     && cache.seam_ms == timeline.live_boundary_ms()
                     && ((cache.settled_revision == self.settled_revision
                         && cache.timeline_revision == request.timeline_revision)
@@ -1104,7 +1158,12 @@ impl BookEngine {
             }
             _ => {
                 let projection_started = Instant::now();
-                let settled = Arc::new(project_settled(&self.history, &timeline, prices));
+                let settled = Arc::new(project_settled(
+                    &self.history,
+                    &timeline,
+                    prices,
+                    dots.as_ref(),
+                ));
                 self.last_projection_ms = projection_started.elapsed().as_secs_f32() * 1000.0;
                 self.last_projection_cells = settled.cells.len();
                 self.last_dropped_cells = settled.dropped_cells;
@@ -1117,6 +1176,7 @@ impl BookEngine {
                     timeline_revision: request.timeline_revision,
                     settled_revision: self.settled_revision,
                     seam_ms: timeline.live_boundary_ms(),
+                    dot_rungs,
                     settled: Arc::clone(&settled),
                 });
                 settled
@@ -1124,8 +1184,7 @@ impl BookEngine {
         };
 
         let live_started = Instant::now();
-        let live = project_live(&self.history, &timeline, prices, &settled);
-        let projection = settled.with_live(live, &self.config);
+        let projection = self.project_live_half(&timeline, prices, &settled, dots.as_ref());
         self.last_live_ms = live_started.elapsed().as_secs_f32() * 1000.0;
         self.last_projection_aggressions = projection.aggressions.len();
         self.last_projection_liquidity_events = projection.liquidity_events.len();
@@ -1136,7 +1195,13 @@ impl BookEngine {
             projection: Arc::new(projection),
             first_bar_index: request.first_bar_index,
             slot_count: timeline.region_count(),
+            live_edge,
+            volume_dots: dots
+                .as_ref()
+                .map(|dots| dots.scale(&self.config, request.price_range)),
+            tape_overlay: None,
         });
+        self.view.past_tape = self.project_past(request, &settled, dots.as_ref(), prices, held);
         self.last_frame = Some(Arc::clone(&frame));
         Some(frame)
     }
@@ -1158,13 +1223,18 @@ impl BookEngine {
         }
     }
 
-    /// Adopt a price-derived capture bucket while history is still empty (so no
-    /// data is discarded), keeping config and history in sync.
+    /// Adopt a price-derived capture bucket before synchronized book history.
+    /// The independent tape may already contain its opening executions.
     fn apply_auto_base(&mut self, base: Decimal, source: &'static str) {
         if base <= Decimal::ZERO || base == self.config.price_grouping {
             return;
         }
-        match self.history.reset_price_grouping(base) {
+        let reset = if self.config.native_tape() {
+            self.history.resize_capture_grouping(base)
+        } else {
+            self.history.reset_price_grouping(base)
+        };
+        match reset {
             Ok(_) => {
                 self.config.price_grouping = base;
                 tracing::info!(
@@ -1213,16 +1283,10 @@ impl BookEngine {
     /// Goes through `capture_base`, so the ladder and the liquidity map are
     /// sized by one rule rather than by two that have to be kept in step.
     pub fn size_from_tape(&mut self, step: Decimal, reference_price: Option<Decimal>) {
-        // `apply_auto_base` resizes by *discarding* history — the bucket width
-        // is the grid every run and aggression was recorded against, and there
-        // is no reindexing them. Its own doc says "while history is still empty
-        // (so no data is discarded)" and the snapshot caller honours that; this
-        // has to as well. The cost of not doing so is not a wrong number: the
-        // grid only ever narrows, so one later print would resize mid-session,
-        // clear the run store, and leave every delta after it unsynchronized —
-        // a heat map blank until the venue happens to resync. The chart this
-        // exists for has no depth at all, so its history never leaves `Empty`
-        // and the gate costs it nothing.
+        // A capture resize discards L2 runs, so never infer a different grid
+        // after synchronized depth arrives. `Empty` describes book coverage,
+        // not the tape: its opening executions can precede this inference and
+        // the native-tape path retains those exact facts in `apply_auto_base`.
         if !self.auto_base
             || self.venue_price_step.is_some()
             || !matches!(self.history.status(), HistoryStatus::Empty)
@@ -1334,6 +1398,8 @@ impl BookEngine {
             },
             base_price_grouping: self.config.price_grouping,
             frame: self.last_frame.clone(),
+            past_tape: self.view.past_tape.clone(),
+            tape_retained_from_ms: self.history.tape_retained_from_ms(),
             ladder: self.ladder(),
         }
     }
@@ -1355,7 +1421,7 @@ impl BookEngine {
         // to say so.
         let level =
             |(&price, &quantity): (&Decimal, &Decimal)| BookLevel::new(price, quantity).ok();
-        let (bids, asks): (Vec<BookLevel>, Vec<BookLevel>) = match self.visible_price_window {
+        let (bids, asks): (Vec<BookLevel>, Vec<BookLevel>) = match self.view.price_window {
             Some((low, high)) => (
                 book.bids()
                     .range(low..=high)
@@ -1403,6 +1469,8 @@ fn resync_reason_code(reason: &DepthResyncReason) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     impl BookEngine {
@@ -1448,6 +1516,9 @@ mod tests {
             projection: Arc::new(projection),
             first_bar_index: 40,
             slot_count: 10,
+            live_edge: None,
+            volume_dots: None,
+            tape_overlay: None,
         };
 
         // No cells: no boundary — the paint must not invent a cut.
@@ -1609,7 +1680,9 @@ mod tests {
             lane: true,
             on_newest_bar: true,
             lane_reference_ms: None,
+            lane_now_ms: None,
             price_range,
+            dot_zoom: None,
         }
     }
 
@@ -2018,6 +2091,117 @@ mod tests {
             engine.health().arrival_latency_ms,
             Some(33),
             "mismatched, stale and rejected data cannot repopulate health"
+        );
+    }
+
+    /// Volume dots run on the frame the engine publishes, and only when both
+    /// the trader opted in and the view handed over the rungs its zoom chose:
+    /// off, or with no zoom, the frame is exactly the plain one. The engine is
+    /// a pure function of those rungs. The finished half keys on the candles'
+    /// level alone, so a new candle level rebuilds it; a new tape window or
+    /// tape level does not. The rungs and the size references reach the
+    /// health report.
+    #[test]
+    fn volume_dots_need_the_setting_and_the_zoom() {
+        let zoom = |tape_window_ms: i64, tape_level_ticks: i64, candle_level_ticks: i64| DotZoom {
+            native_tape: false,
+            tape_window_ms,
+            tape_level_ticks,
+            candle_level_ticks,
+            lane_bars: vec![(900, 1_100)],
+        };
+        let engine_with = |dots: bool| {
+            let mut engine = BookEngine::new("BTCUSDT");
+            engine.set_enabled(true, 10);
+            engine.handle_depth_event(snapshot_event(10));
+            engine.apply_visual_config(HeatmapConfig {
+                show_aggressions: true,
+                volume_dots: crate::config::VolumeDotStyle {
+                    enabled: dots,
+                    ..crate::config::VolumeDotStyle::default()
+                },
+                ..engine.config.clone()
+            });
+            for (agg_id, timestamp_ms, quantity, side) in
+                [(1, 1_050, 3, Side::Buy), (2, 1_060, 2, Side::Sell)]
+            {
+                engine.record_trade(&Trade {
+                    agg_id,
+                    timestamp_ms,
+                    price: Decimal::from(101),
+                    quantity: Decimal::from(quantity),
+                    side,
+                });
+            }
+            engine
+        };
+        let frame = |engine: &mut BookEngine, dot_zoom: Option<DotZoom>| {
+            let request = ProjectionRequest {
+                dot_zoom,
+                ..request(&[bar(900, 1_100)], (98.0, 102.0))
+            };
+            let frame = engine.project(&request).unwrap();
+            (*frame.projection).clone()
+        };
+        let plain = frame(&mut engine_with(false), None);
+        assert_eq!(plain.aggressions.len(), 2, "a buy and a sell, apart");
+        assert_eq!(
+            frame(&mut engine_with(false), Some(zoom(100, 1, 1))),
+            plain,
+            "off is today's frame"
+        );
+        // No zoom, no rungs to key on: the marks are the plain ones, though
+        // the tape is already the fixed dots tape.
+        let unzoomed = frame(&mut engine_with(true), None);
+        assert!(!unzoomed.volume_dots, "no zoom, no rungs to key on");
+        let ids = |frame: &HeatmapProjection| {
+            let marks = frame.aggressions.iter();
+            marks
+                .map(|mark| (mark.agg_ids.clone(), mark.quantity))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&unzoomed), ids(&plain));
+
+        let mut engine = engine_with(true);
+        let dots = frame(&mut engine, Some(zoom(100, 1, 1)));
+        assert!(dots.volume_dots);
+        let tape: Vec<_> = dots.aggressions.iter().filter(|mark| mark.live).collect();
+        assert_eq!(tape.len(), 1, "one level, one window: a pie");
+        assert_eq!(tape[0].quantity, Decimal::from(5));
+        assert_eq!(tape[0].buy_quantity, Decimal::from(3));
+        let reported = ProjectionRequest {
+            dot_zoom: Some(zoom(100, 1, 1)),
+            ..request(&[bar(900, 1_100)], (98.0, 102.0))
+        };
+        let scale = engine.project(&reported).unwrap().volume_dots.clone();
+        let scale = scale.expect("the rungs are reported");
+        assert_eq!(
+            (
+                scale.tape_window_ms,
+                scale.tape_level_ticks,
+                scale.candle_level_ticks
+            ),
+            (100, 1, 1)
+        );
+        assert_eq!(
+            scale.volume_dot_full_quantity,
+            Decimal::from(20_000),
+            "the dots' own typed full-size quantity"
+        );
+        assert!(scale.auto_full, "sized relative to each pane by default");
+        assert_eq!(scale.price_range, (98.0, 102.0));
+        let builds = engine.health().projection_builds;
+        frame(&mut engine, Some(zoom(250, 5, 1)));
+        assert_eq!(
+            engine.health().projection_builds,
+            builds,
+            "the tape's rungs leave the finished half alone"
+        );
+        frame(&mut engine, Some(zoom(250, 5, 5)));
+        assert_eq!(
+            engine.health().projection_builds,
+            builds + 1,
+            "a new candle level rebuilds it"
         );
     }
 
@@ -2449,3 +2633,23 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "engine_clock_tests.rs"]
+mod clock_tests;
+
+#[cfg(test)]
+#[path = "engine_opening_tests.rs"]
+mod opening_tests;
+
+#[cfg(test)]
+#[path = "engine_native_tape_tests.rs"]
+mod native_tape_tests;
+
+#[cfg(test)]
+#[path = "engine_past_tape_tests.rs"]
+mod past_tape_tests;
+
+#[cfg(test)]
+#[path = "engine_tape_seal_tests.rs"]
+mod tape_seal_tests;

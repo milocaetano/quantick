@@ -9,10 +9,10 @@
 //! Every one is a plain value or a borrow the frame already holds: nothing
 //! here allocates, and nothing reads the pane past the fields it is handed.
 
+use crate::pane::constants::LIVE_LADDER_REFRESH_S;
 use eframe::egui;
 use quantick_engine::{Bar, BarFootprint};
 
-use crate::chart;
 use crate::orderflow_view::LiveLane;
 use crate::plot_area::PlotAreas;
 use crate::price_view::PriceView;
@@ -22,11 +22,6 @@ use super::PaneChrome;
 use super::draw_frame::DrawFrame;
 use super::footprint::PaneFootprint;
 
-/// How often the forming bar's footprint ladder is re-snapshotted for
-/// drawing, in seconds. ~10 Hz: the eye reads the pattern, not the ticking
-/// digits, and a layout that repaints per print reflows under the pointer.
-const LIVE_LADDER_REFRESH_S: f64 = 0.1;
-
 /// What the frame's opening writes decided, for the stages after them.
 pub(super) struct FrameStart {
     pub(super) canvas_background: egui::Color32,
@@ -35,6 +30,8 @@ pub(super) struct FrameStart {
     /// The footprint layer will paint — which is not the same as the
     /// ladders accumulating: a range profile turns those on alone.
     pub(super) footprint_paints: bool,
+    /// The per-candle summary paints, whichever switch asked for it.
+    pub(super) candle_aggression: bool,
 }
 
 /// Snapshot the forming bar's ladder at ~10 Hz rather than per print;
@@ -100,6 +97,11 @@ pub(super) struct FrameLayout {
     /// Where the indicator panes' vertical guide goes: the pointer's x while
     /// it is over the chart.
     pub(super) indicator_guide_x: Option<f32>,
+    /// The pane shows the tape alone: no candles, the tape full width.
+    pub(super) tape_only: bool,
+    /// The native tape fits the one price axis, padded by `tape_padding_px`.
+    pub(super) native_tape: bool,
+    pub(super) tape_padding_px: f32,
 }
 
 /// Both bar series the frame reads: the venue prefix, the engine's closed
@@ -114,20 +116,28 @@ impl FrameLayout {
     /// The width the live lane takes off the chart's right edge, `0` without
     /// one.
     pub(super) fn lane_width_px(&self) -> f32 {
-        self.live_lane.map_or(0.0, |lane| lane.width_px)
+        if self.tape_only {
+            self.chart_rect.width()
+        } else {
+            self.live_lane.map_or(0.0, |lane| lane.width_px)
+        }
     }
 
     /// The visible slices and the price scale, as the [`DrawFrame`] every
     /// painter reads, plus the auto-fitted range the next frame's input
-    /// handler converts pixels with. `None` when nothing yields a scale.
+    /// handler converts pixels with and the span its gutter drag flips
+    /// against. `None` when nothing yields a scale.
+    /// The native tape and visible candles share a fit; tape only fits its
+    /// prints, and ordinary charts fit their own bars.
     pub(super) fn resolve<'a>(
         &'a self,
         painter: &'a egui::Painter,
         series: Series<'a>,
+        tape_range: Option<(f64, f64)>,
         last_auto_range: Option<(f64, f64)>,
         price_view: &PriceView,
         canvas_background: egui::Color32,
-    ) -> Option<(DrawFrame<'a>, (f64, f64))> {
+    ) -> Option<(DrawFrame<'a>, (f64, f64), f64)> {
         let Series {
             prefix,
             closed,
@@ -156,20 +166,25 @@ impl FrameLayout {
             ..closed_end.saturating_sub(prefix.len()).min(closed.len())];
         let partial_visible = partial.filter(|_| closed_total >= start && closed_total < end);
 
-        // Auto-fit the visible bars, then apply any manual price pan/zoom. A
+        // Auto-fit the pane's own source, then apply explicit price pan/zoom. A
         // window with no bars in it still gets a scale (the last one, then the
         // newest bar), because a chart that draws nothing at all is
         // indistinguishable from a hung app — which is exactly how the blank
         // frame after a rebuild read.
-        let auto_scale = chart::price_window(
+        let newest = partial.or_else(|| closed.last());
+        let (auto_range, flip_span) = quantick_chart::price_axis_fit::PriceAxisFit {
+            native_tape: self.native_tape,
+            tape_only: self.tape_only,
+            tape_range,
+            previous_auto: last_auto_range,
+            bounds: (chart_rect.top(), chart_rect.bottom()),
+            tape_padding_px: self.tape_padding_px,
+        }
+        .resolve(
             visible_prefix.iter().chain(visible_state),
             partial_visible,
-            last_auto_range,
-            partial.or_else(|| closed.last()),
-            chart_rect.top(),
-            chart_rect.bottom(),
+            newest,
         )?;
-        let auto_range = auto_scale.range();
         let scale = price_view.scale(auto_range, chart_rect.top(), chart_rect.bottom());
         let frame = DrawFrame {
             painter,
@@ -192,7 +207,7 @@ impl FrameLayout {
             canvas_background,
             cw,
         };
-        Some((frame, auto_range))
+        Some((frame, auto_range, flip_span))
     }
 }
 

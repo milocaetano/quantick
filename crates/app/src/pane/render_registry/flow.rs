@@ -14,6 +14,9 @@ pub(super) const PACKAGE: Package = Package {
         quantick_layers::ChartLayer::FlowLegend,
         quantick_layers::ChartLayer::BookStatus,
         quantick_layers::ChartLayer::DepthGaps,
+        quantick_layers::ChartLayer::BubbleOverlapMerge,
+        quantick_layers::ChartLayer::TapeOnly,
+        quantick_layers::ChartLayer::NativeTape,
     ],
     contributions: &[
         Contribution::Heatmap(background),
@@ -33,6 +36,7 @@ pub(in crate::pane) struct FlowPass<'a> {
     pub background: egui::Color32,
     pub lane_width: f32,
     pub inverted: bool,
+    pub price_range: (f64, f64),
 }
 pub(in crate::pane) struct LegendPass<'a> {
     pub owner: &'a OrderflowView,
@@ -63,7 +67,7 @@ fn status(p: &mut StatusPass<'_>) {
     p.owner.draw_status_badge(
         p.painter,
         p.rect,
-        super::super::tape_switch::TAPE_SWITCH_RESERVED_PX,
+        super::super::constants::TAPE_SWITCH_RESERVED_PX,
     );
 }
 fn background(p: &mut FlowPass<'_>) {
@@ -88,6 +92,7 @@ fn aggressions(p: &mut FlowPass<'_>) {
         p.background,
         p.lane_width,
         p.inverted,
+        p.price_range,
     );
 }
 fn legend(p: &mut LegendPass<'_>) {

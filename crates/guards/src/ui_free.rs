@@ -79,9 +79,9 @@ pub const REMEDY: &str = "Over the ceiling, the UI crate gained code that never 
     library. Such code belongs in a headless crate below `app`, where the headless guard scans \
     it and backtest and the bot can reuse it — move it there, or move as many UI-free lines out \
     of crates/app in the same change. A file only `app` can hold is exempted by one line in \
-    crates/guards/ui-free-exemptions.txt with its reason; a deliberate raise is the `crates/app` \
-    entry and the !budget in crates/guards/ui-free-baseline.txt, both raised and signed in the \
-    same change. A total that fell needs no argument: `cargo run -p quantick-guards -- \
+    crates/guards/ui-free-exemptions.txt with its reason; a deliberate raise is a new file in \
+    crates/guards/ui-free-baseline.d/ named for the branch, `crates/app +N` and `!budget +N` with \
+    a comment saying why, never an edit to the baseline. A total that fell needs no argument: `cargo run -p quantick-guards -- \
     --tighten` writes the new number.";
 
 /// What the guard asks for when the budget has fallen far below the entry it
@@ -236,7 +236,7 @@ pub fn check(root: &Path) -> Vec<Finding> {
 /// the whole question; anything else is out of scope.
 pub fn check_file(root: &Path, relative: &str) -> Vec<Finding> {
     let in_scope = (relative.starts_with(SOURCE) && size::tracked(relative))
-        || relative == BASELINE_FILE
+        || POLICY.owns(relative)
         || relative == EXEMPTIONS_FILE;
     if in_scope { check(root) } else { Vec::new() }
 }

@@ -212,7 +212,7 @@ impl QuantickApp {
             FrameStage::IndicatorMaintenance => {
                 surfaces::reload_changed_scripts(&mut self.indicators, &mut self.tabs);
                 self.layout_adapter().apply_pending_indicator_state();
-                self.layer_wiring().maintain();
+                self.layer_wiring().maintain(ctx);
             }
             FrameStage::StatusLine => self.draw_status_line(ctx, scratch),
             FrameStage::LayoutDialogs => self.layout_adapter().draw_layout_delete_confirm(ctx),

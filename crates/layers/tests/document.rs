@@ -12,8 +12,12 @@ fn explicit_choice_overrides_defaults_but_absence_inherits() {
         &LayerRegistry::default(),
     );
     assert_eq!(states.get(&L::Heatmap), Some(&false));
-    assert_eq!(states.get(&L::Bubbles), Some(&true));
+    assert_eq!(states.get(&L::Footprint), Some(&true));
     assert!(!states.contains_key(&L::LaneMarks));
+    assert!(
+        !states.contains_key(&L::Bubbles),
+        "each asset's own, ignored in this file"
+    );
 }
 #[test]
 fn legacy_files_inherit_new_defaults() {
@@ -24,7 +28,7 @@ fn legacy_files_inherit_new_defaults() {
         ),
         &LayerRegistry::default(),
     );
-    for layer in [L::Heatmap, L::Bubbles, L::Footprint, L::LiveStrip] {
+    for layer in [L::Heatmap, L::Footprint, L::LiveStrip] {
         assert_eq!(states.get(&layer), Some(&true));
     }
     assert_eq!(states.get(&L::BackfillDivider), Some(&false));

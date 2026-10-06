@@ -125,6 +125,8 @@ impl Tab {
         area: egui::Rect,
         chrome: &mut CanvasChrome<'_>,
     ) {
+        let monotonic_ms = (ui.input(|input| input.time).max(0.0) * 1_000.0) as u64;
+        self.update_tape_clock_at(monotonic_ms);
         let frame = self.canvas_frame(area);
         let rects = self.draw_context_column(ui, &frame);
 
@@ -303,6 +305,11 @@ impl Tab {
     /// Each context chart carries its own timeframe selector (§11): its BARS
     /// group, beside the toolbar's, which keeps governing the flow pane.
     fn draw_time_header(&mut self, ui: &mut egui::Ui, slot: usize, header: egui::Rect) {
+        let applied = self.time_panes[slot].state.spec();
+        let active_bar = applied
+            .time_interval_ms()
+            .is_none()
+            .then(|| applied.summary());
         let mut interval_ms = self.time_panes[slot]
             .spec
             .retained(BarKind::Time)
@@ -314,6 +321,7 @@ impl Tab {
             &mut interval_ms,
             self.time_panes[slot].id,
             &self.time_panes[slot].layout_label,
+            active_bar.as_deref(),
         );
         #[cfg(test)]
         if slot == 0 {

@@ -35,11 +35,43 @@ pub struct LayerSnapshot {
     pub id: String,
     pub label: String,
     pub scope: String,
+    /// Where the switch is kept: `chart_layers`, the chart-layers file every
+    /// market shares; `orderflow_preset`, the bubble settings of the asset
+    /// the pane shows — saved only while that asset's save switch is on
+    /// (`orderflow.bubbles` reports it as `asset.save_changes`).
     pub persistence: String,
     pub requested: bool,
     /// Visibility eligible under current layer policy; no pixel geometry is claimed.
     pub effective: bool,
     pub blocked_reason: Option<String>,
+}
+
+impl LayerSnapshot {
+    pub fn from_policy(
+        layer: quantick_layers::ChartLayer,
+        requested: bool,
+        facts: quantick_layers::LayerFacts,
+    ) -> Self {
+        use quantick_layers::{LayerScope, LayerState, Persistence};
+        Self {
+            id: layer.id().to_owned(),
+            label: layer.label().to_owned(),
+            scope: match layer.0.scope {
+                LayerScope::Window => "window",
+                LayerScope::Pane => "pane",
+                LayerScope::FlowPane => "flow_pane",
+            }
+            .to_owned(),
+            persistence: match layer.0.persistence {
+                Persistence::Layers => "chart_layers",
+                Persistence::OrderflowPreset => "orderflow_preset",
+            }
+            .to_owned(),
+            requested,
+            effective: LayerState::effective(layer, requested, facts),
+            blocked_reason: LayerState::blocked(layer, facts).map(|block| block.code.to_owned()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]

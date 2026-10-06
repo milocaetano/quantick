@@ -2,6 +2,7 @@
 //! Rendering, transport admission and drawing-store mutation belong to callers.
 
 pub mod annotation;
+mod constants;
 pub mod drawing_commands;
 pub mod live_trade_plan;
 pub mod quick_range;
@@ -17,3 +18,5 @@ pub mod source_drain_plan;
 pub mod stage_registry;
 
 pub mod tab_drain_plan;
+
+pub mod tape_drag;

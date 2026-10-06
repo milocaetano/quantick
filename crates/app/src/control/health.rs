@@ -17,7 +17,7 @@ use crate::{
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
-    types::{canonical_f32, wire_usize},
+    types::wire_usize,
 };
 
 pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
@@ -46,57 +46,8 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
     )
 }
 
-/// The module's revision key: the per-tab subsystem state, without the
-/// frame averages. Those move on every painted frame, and a revision that
-/// advanced on every capture would mark nothing; what the key tracks is a
-/// change in what the tabs report about their feed, book and engines.
-///
-/// The tape figures are coarsened here for the same reason, and it is not a
-/// detail: `arrival_latency_ms` is rewritten on every drained print, so
-/// carrying it verbatim would wake every `quantick_wait_for_change` waiter on
-/// every trade — turning a subsystem watch into a print ticker, and paying a
-/// full snapshot serialisation for each tick. What a waiter actually wants to
-/// hear is that the tape *became* late, or that the hop changed, so that is
-/// what the key holds. The milliseconds stay in the projection, where a reader
-/// that asked for them gets them.
-fn revision<P: TabsPort + HealthPort + ?Sized>(app: &P) -> Vec<TabRevisionKey> {
-    snapshot(app)
-        .tabs
-        .into_iter()
-        .map(|mut tab| {
-            let tape = tab.tape.as_ref().map(tape_revision_key);
-            // Dropped from the key, not from the projection: these are the
-            // per-print milliseconds the doc above explains.
-            tab.tape = None;
-            TabRevisionKey { tab, tape }
-        })
-        .collect()
-}
-
-/// One tab's revision key: everything it reports, with the tape's own
-/// millisecond figures replaced by the coarse reading above.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TabRevisionKey {
-    tab: TabHealthSnapshot,
-    tape: Option<TapeRevisionKey>,
-}
-
-/// What a waiter is told about the tape: which hop, and late or not.
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct TapeRevisionKey {
-    dominant_hop: Option<String>,
-    late: bool,
-}
-
-fn tape_revision_key(tape: &TapeHealthSnapshot) -> TapeRevisionKey {
-    TapeRevisionKey {
-        dominant_hop: tape.dominant_hop.clone(),
-        // The chart's own threshold, so a waiter and a trader are told the
-        // tape went late at the same instant rather than at two.
-        late: tape
-            .arrival_latency_ms
-            .is_some_and(|ms| ms > crate::metrics::HIGH_LAG_MS),
-    }
+fn revision<P: TabsPort + HealthPort + ?Sized>(app: &P) -> Vec<TabHealthRevisionKey> {
+    snapshot(app).revision_keys(crate::metrics::HIGH_LAG_MS)
 }
 
 fn project<P: TabsPort + HealthPort + ?Sized>(app: &P, _context: CaptureContext) -> HealthSnapshot {
@@ -106,23 +57,13 @@ fn project<P: TabsPort + HealthPort + ?Sized>(app: &P, _context: CaptureContext)
 fn snapshot<P: TabsPort + HealthPort + ?Sized>(app: &P) -> HealthSnapshot {
     let frame = app.health_reads().frame_metrics();
     HealthSnapshot {
-        frame: FrameHealthSnapshot {
-            wall_average_ms: frame
-                .wall_average_ms
-                .and_then(|value| canonical_f32(value, METRIC_DECIMAL_PLACES)),
-            wall_worst_ms: frame
-                .wall_worst_ms
-                .and_then(|value| canonical_f32(value, METRIC_DECIMAL_PLACES)),
-            frames_per_second: frame
-                .frames_per_second
-                .and_then(|value| canonical_f32(value, METRIC_DECIMAL_PLACES)),
-            cpu_average_ms: frame
-                .cpu_average_ms
-                .and_then(|value| canonical_f32(value, METRIC_DECIMAL_PLACES)),
-            cpu_worst_ms: frame
-                .cpu_worst_ms
-                .and_then(|value| canonical_f32(value, METRIC_DECIMAL_PLACES)),
-        },
+        frame: FrameHealthSnapshot::from_measurements(
+            frame.wall_average_ms,
+            frame.wall_worst_ms,
+            frame.frames_per_second,
+            frame.cpu_average_ms,
+            frame.cpu_worst_ms,
+        ),
         tabs: app
             .tab_reads()
             .tabs()
@@ -184,57 +125,20 @@ fn tape_health(tab: &Tab) -> Option<TapeHealthSnapshot> {
 }
 
 fn pane_health(pane: &ChartPane, side: PaneSide) -> PaneHealthSnapshot {
-    let indicators = pane.indicators.all();
-    let indicator_issues = indicators
-        .iter()
-        .flat_map(|view| {
-            let source_kind = if view.kind.starts_with("native.") {
-                "native"
-            } else {
-                "script"
-            };
-            let user_text_redacted = source_kind == "script";
-            let error = view.error.as_ref().map(|error| IndicatorIssueSnapshot {
-                slot_id: WireU64::new(view.slot.0),
-                source_kind: source_kind.to_owned(),
-                state: "error".to_owned(),
-                detail: "runtime_evaluation_failed".to_owned(),
-                user_text_redacted,
-                bar_index: Some(wire_usize(error.bar_index)),
-            });
-            let stale = view.stale.as_ref().map(|_| IndicatorIssueSnapshot {
-                slot_id: WireU64::new(view.slot.0),
-                source_kind: source_kind.to_owned(),
-                state: "stale".to_owned(),
-                detail: "reload_failed_running_version_retained".to_owned(),
-                user_text_redacted,
-                bar_index: None,
-            });
-            [error, stale].into_iter().flatten()
-        })
-        .collect();
-    PaneHealthSnapshot {
-        pane_id: WireU64::new(pane.id),
-        side: side.into(),
-        indicator_count: wire_usize(indicators.len()),
-        indicator_error_count: wire_usize(
-            indicators
-                .iter()
-                .filter(|view| view.error.is_some())
-                .count(),
-        ),
-        indicator_stale_count: wire_usize(
-            indicators
-                .iter()
-                .filter(|view| view.stale.is_some())
-                .count(),
-        ),
-        indicator_issues,
-        orderflow: pane
-            .orderflow
-            .as_ref()
-            .map(|view| orderflow_health(view.cached_health())),
-    }
+    PaneHealthSnapshot::from_indicators(
+        pane.id,
+        side.into(),
+        pane.indicators
+            .all()
+            .iter()
+            .map(|view| IndicatorHealthRead {
+                slot_id: view.slot.0,
+                kind: &view.kind,
+                error_bar_index: view.error.as_ref().map(|error| error.bar_index),
+                stale: view.stale.is_some(),
+            }),
+        pane.orderflow.as_ref().map(|view| view.cached_health()),
+    )
 }
 
 const fn loading_task_id(task: LoadingTask) -> &'static str {

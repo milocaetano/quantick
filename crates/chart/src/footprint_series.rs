@@ -29,7 +29,11 @@
 
 use std::ops::Index;
 
-use quantick_engine::{Bar, BarFootprint, DEFAULT_LEVEL_CAP, FootprintBuilder, Trade};
+use crate::tick_membership::TickMembership;
+use quantick_engine::bar_registry::BarConfiguration;
+use quantick_engine::{
+    Bar, BarBuilder, BarFootprint, DEFAULT_LEVEL_CAP, DealSample, FootprintBuilder, Trade,
+};
 use rust_decimal::Decimal;
 
 /// Row width used until the feed reports the instrument's real `price_step` —
@@ -47,6 +51,67 @@ pub struct FootprintSeries {
     /// Trades fed since the last close — the counter the closing-trade
     /// question is answered against.
     pending: u64,
+    pub(crate) tick_membership: Option<TickMembership>,
+}
+
+pub(crate) fn seed_deal_counter(builder: &mut dyn BarBuilder, samples: &[DealSample]) {
+    let Some(input) = builder.deal_counter_input() else {
+        return;
+    };
+    for sample in samples {
+        input.observe(*sample);
+    }
+}
+
+/// Push print `index` of `tape` through `builder`, appending every bar it
+/// closed to `bars`, and, with the footprint layer on, fold it into the
+/// ladders — unless the builder left it *uncounted*. A deal bar counts
+/// nothing before its first reading: such a print belongs to no bar, so it
+/// belongs to no ladder either, or the ladders drift off the bars they index
+/// by and the footprint series asserts on the first close.
+///
+/// Returns how many of the bars appended were cut late, from prints the
+/// builder held before this one ([`BarBuilder::push_into`]).
+pub(crate) fn fold_print<B, T>(
+    builder: &mut B,
+    footprints: &mut FootprintSeries,
+    footprint_enabled: bool,
+    canonical: bool,
+    tape: &T,
+    index: usize,
+    bars: &mut Vec<Bar>,
+) -> usize
+where
+    B: BarBuilder + ?Sized,
+    T: Index<usize, Output = Trade> + ?Sized,
+{
+    let trade = &tape[index];
+    let uncounted_before = builder.diagnostics().uncounted_trades;
+    let pending = builder.partial().map_or(0, |bar| bar.trade_count);
+    let first = bars.len();
+    let late = builder.push_into(trade, bars);
+    let uncounted = builder.diagnostics().uncounted_trades != uncounted_before;
+    let closed = &bars[first..];
+    if canonical && let Some(membership) = footprints.tick_membership.as_mut() {
+        // Installed only for fixed tick bars, which close at most one bar
+        // per print and never late.
+        let included = closed
+            .first()
+            .is_some_and(|bar| bar.trade_count == pending.saturating_add(1));
+        membership.observe(!uncounted, !closed.is_empty(), included, trade);
+    }
+    if footprint_enabled {
+        if uncounted {
+            // A rollover ended the bar and this print counts for nothing:
+            // the ladder closes on what it held, the print folds nowhere.
+            for bar in closed {
+                footprints.close_without(bar);
+            }
+        } else {
+            footprints.observe(tape, index, closed);
+        }
+    }
+    late
 }
 
 impl FootprintSeries {
@@ -58,7 +123,37 @@ impl FootprintSeries {
             base_group,
             closed: Vec::new(),
             pending: 0,
+            tick_membership: None,
         }
+    }
+
+    pub(crate) fn for_chart(base_group: Decimal, spec: &BarConfiguration) -> Self {
+        let mut series = Self::new(base_group);
+        series.reset_membership(spec);
+        series
+    }
+
+    /// Replay retained prints through the canonical close decision without changing
+    /// membership. Deal readings seed the scratch builder before the prints.
+    pub(crate) fn refold(
+        &mut self,
+        spec: BarConfiguration,
+        trades: &quantick_engine::trade_tape::TradeTape,
+        samples: &[DealSample],
+    ) {
+        let mut builder = spec.build();
+        seed_deal_counter(&mut *builder, samples);
+        let mut cut = Vec::new();
+        for index in 0..trades.len() {
+            fold_print(&mut *builder, self, true, false, trades, index, &mut cut);
+            cut.clear();
+        }
+    }
+
+    /// A full bar rebuild resets source membership; ladder refolds do not.
+    /// Only fixed tick bars, which admit every print, keep exact membership.
+    pub(crate) fn reset_membership(&mut self, spec: &BarConfiguration) {
+        self.tick_membership = TickMembership::applies_to(spec).then(Default::default);
     }
 
     /// The row width ladders are captured at (before any per-bar level-cap

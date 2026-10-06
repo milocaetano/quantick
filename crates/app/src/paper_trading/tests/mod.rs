@@ -1260,8 +1260,7 @@ fn the_ruler_mirrors_for_a_sell() {
     let aim = egui::pos2(400.0, 250.0);
     let mut frame = ruler_frame(chart, &scale, aim, 50.0);
     frame.modifiers = egui::Modifiers {
-        ctrl: true,
-        command: true,
+        alt: true,
         ..Default::default()
     };
     // Four notches, one roll each.
@@ -1508,13 +1507,13 @@ fn the_cmd_gesture_previews_and_a_label_click_places_the_order() {
         shift: true,
         ..Default::default()
     };
-    let ctrl = egui::Modifiers {
-        command: true,
+    let alt = egui::Modifiers {
+        alt: true,
         ..Default::default()
     };
     let both = egui::Modifiers {
         shift: true,
-        command: true,
+        alt: true,
         ..Default::default()
     };
     let mut paper = PaperTrading::new();
@@ -1560,7 +1559,7 @@ fn the_cmd_gesture_previews_and_a_label_click_places_the_order() {
         chart,
         &scale,
         egui::pos2(400.0, 100.0),
-        ctrl,
+        alt,
         false,
     ));
     let preview = paper.desk.gesture.cmd_preview.expect("sell above the mark");
@@ -3219,4 +3218,19 @@ fn a_close_refreshes_an_open_report_by_itself() {
         1,
         "the close re-read the journal without a manual refresh"
     );
+}
+
+#[test]
+fn default_cmd_trading_does_not_arm_a_sell_with_ctrl() {
+    let mut paper = PaperTrading::new();
+    paper.seed(&print(0, 100));
+    let (chart, scale) = chart_and_scale(80.0, 120.0);
+    paper.handle_chart_input(&cmd_frame(
+        chart,
+        &scale,
+        egui::pos2(400.0, 100.0),
+        egui::Modifiers::CTRL | egui::Modifiers::COMMAND,
+        false,
+    ));
+    assert!(paper.desk.gesture.cmd_preview.is_none());
 }

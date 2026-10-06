@@ -299,6 +299,24 @@ pub fn descriptor(
     }
 }
 
+/// A transient cockpit capability another module owns: [`descriptor`]'s
+/// effect, permissions and retry policy, with its own module, output schema
+/// and stale-input note. Nothing it changes is saved.
+pub(crate) fn transient_descriptor<Input: schemars::JsonSchema, Output: schemars::JsonSchema>(
+    id: &str,
+    module: &str,
+    title: &str,
+    description: &str,
+    stale_input_safety: &str,
+) -> CapabilityDescriptor {
+    let mut descriptor = descriptor(id, title, description, generated_schema::<Input>());
+    descriptor.module = ModuleId::new(module).expect("static module ID");
+    descriptor.output_schema = generated_schema::<Output>();
+    descriptor.persistence = EffectPersistence::Transient;
+    descriptor.stale_input_safety = Some(stale_input_safety.to_owned());
+    descriptor
+}
+
 pub const RESIZE_PAIR_CAPABILITY_ID: &str = "layout.pane.resize_pair";
 
 /// The scene reports the same splitter's current bounds after an uncertain call.

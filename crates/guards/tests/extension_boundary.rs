@@ -279,10 +279,11 @@ fn cross_root_shrink_cannot_buy_growth_and_tighten_only_lowers() {
     assert!(findings(&root).contains("QuantickApp: 5"));
     assert_cli_rejected(&root, "crates/app/src/app.rs", "QuantickApp: 5");
     boundary::tighten(&root).unwrap();
-    let baseline = fs::read_to_string(root.join(boundary::BUDGET_FILE)).unwrap();
-    assert!(baseline.contains("QuantickApp 4"));
-    assert!(baseline.contains("ChartState 1"));
-    assert!(baseline.contains("!budget 5"));
+    let baseline = boundary::POLICY.baseline(&root).unwrap();
+    let ceiling = |name: &str| baseline.entry(name).map(|entry| entry.ceiling);
+    assert_eq!(ceiling("QuantickApp"), Some(4));
+    assert_eq!(ceiling("ChartState"), Some(1));
+    assert_eq!(baseline.budget.map(|budget| budget.allowed), Some(5));
     assert!(findings(&root).contains("QuantickApp: 5"));
 }
 

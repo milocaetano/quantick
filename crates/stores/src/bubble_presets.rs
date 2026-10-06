@@ -50,6 +50,14 @@ const fn default_region_ms() -> i64 {
     DEFAULT_BUBBLE_REGION_MS
 }
 
+const fn default_true() -> bool {
+    true
+}
+
+const fn default_volume_dot_full_quantity() -> f64 {
+    quantick_orderflow::DEFAULT_VOLUME_DOT_FULL_QUANTITY
+}
+
 /// One named snapshot of the aggression-bubble panel's *appearance*.
 ///
 /// Deliberately not a switch: whether the layer draws at all stays a live
@@ -75,6 +83,23 @@ pub struct BubblePreset {
     /// reads as a tape or as a summary.
     #[serde(default)]
     pub candle_summary: bool,
+    /// Whether bubbles are drawn as Bookmap-style volume dots. Off unless a
+    /// preset says so, so a file written before the switch existed draws
+    /// exactly what it drew.
+    #[serde(default)]
+    pub overlap_merge: bool,
+    /// Contracts a volume dot holds at the largest radius. A file written
+    /// before dots had a scale of their own loads the default.
+    #[serde(default = "default_volume_dot_full_quantity")]
+    pub volume_dot_full_quantity: f64,
+    /// The full size is still to be read from the market once. A file
+    /// written before the automatic scale existed loads it on.
+    #[serde(default = "default_true")]
+    pub volume_dot_auto_full: bool,
+    /// Exclude the first recorded native burst from the tape's automatic
+    /// reference while retaining all its executions. Older looks leave it off.
+    #[serde(default)]
+    pub volume_dot_ignore_opening_burst_in_scale: bool,
     /// Height of one aggression region in visual price rows; one is off. A
     /// preset written before regions existed simply omits the key and keeps
     /// per-row marks.
@@ -102,6 +127,12 @@ impl BubblePreset {
             cluster_ms: config.bubble_cluster_ms,
             dust_merge_ms: config.bubble_dust_merge_ms,
             candle_summary: config.bubble_candle_summary,
+            overlap_merge: config.volume_dots.enabled,
+            volume_dot_full_quantity: config.volume_dots.full_quantity,
+            volume_dot_auto_full: config.volume_dots.auto_full,
+            volume_dot_ignore_opening_burst_in_scale: config
+                .volume_dots
+                .ignore_opening_burst_in_scale,
             region_rows: config.bubble_region_rows,
             region_ms: config.bubble_region_ms,
             bubbles: config.bubbles.clone(),
@@ -128,6 +159,14 @@ impl BubblePreset {
         config.bubble_cluster_ms = self.cluster_ms;
         config.bubble_dust_merge_ms = self.dust_merge_ms;
         config.bubble_candle_summary = self.candle_summary;
+        config.volume_dots = quantick_orderflow::VolumeDotStyle {
+            enabled: self.overlap_merge,
+            full_quantity: quantick_orderflow::sane_volume_dot_full_quantity(
+                self.volume_dot_full_quantity,
+            ),
+            auto_full: self.volume_dot_auto_full,
+            ignore_opening_burst_in_scale: self.volume_dot_ignore_opening_burst_in_scale,
+        };
         config.bubble_region_rows = self.region_rows;
         config.bubble_region_ms = self.region_ms;
         config.bubbles = self.bubbles.clone();
@@ -145,6 +184,25 @@ impl BubblePreset {
         config.live_lane.enabled = visibility.0;
         config.live_lane.show_depth = visibility.1;
         config.live_lane.show_aggressions = visibility.2;
+    }
+}
+
+impl BubblePreset {
+    /// Clamp every stored number into the range the panel can set.
+    pub(crate) fn sanitize(&mut self) {
+        self.cluster_ms = self
+            .cluster_ms
+            .clamp(0, quantick_orderflow::config::MAX_BUBBLE_CLUSTER_MS);
+        self.volume_dot_full_quantity =
+            quantick_orderflow::sane_volume_dot_full_quantity(self.volume_dot_full_quantity);
+        self.region_rows = self
+            .region_rows
+            .clamp(1, quantick_orderflow::config::MAX_BUBBLE_REGION_ROWS);
+        self.region_ms = self
+            .region_ms
+            .clamp(0, quantick_orderflow::config::MAX_BUBBLE_REGION_MS);
+        self.bubbles.sanitize();
+        self.live_lane.sanitize();
     }
 }
 
@@ -201,17 +259,7 @@ impl BubblePresetFile {
                 return false;
             }
             seen.push(preset.name.clone());
-            preset.cluster_ms = preset
-                .cluster_ms
-                .clamp(0, quantick_orderflow::config::MAX_BUBBLE_CLUSTER_MS);
-            preset.region_rows = preset
-                .region_rows
-                .clamp(1, quantick_orderflow::config::MAX_BUBBLE_REGION_ROWS);
-            preset.region_ms = preset
-                .region_ms
-                .clamp(0, quantick_orderflow::config::MAX_BUBBLE_REGION_MS);
-            preset.bubbles.sanitize();
-            preset.live_lane.sanitize();
+            preset.sanitize();
             true
         });
         let active = std::mem::take(&mut self.active).trim().to_owned();
@@ -256,6 +304,34 @@ pub fn parse(text: &str) -> Result<BubblePresetFile, String> {
 #[must_use]
 pub fn embedded() -> BubblePresetFile {
     parse(EMBEDDED_DEFAULT).unwrap_or_default()
+}
+
+/// Load presets from `explicit` (an operator's path) or [`PRESETS_PATH`],
+/// falling back to the embedded file.
+///
+/// Returns the presets, where they came from, and — when an external file
+/// exists but could not be read or parsed — the error to surface. In that case
+/// the returned presets are the embedded ones, and the source says so.
+#[must_use]
+pub fn load_from(explicit: Option<PathBuf>) -> (BubblePresetFile, PresetSource, Option<String>) {
+    let (path, source): (PathBuf, fn(PathBuf) -> PresetSource) = match explicit {
+        Some(path) => (path, PresetSource::EnvPath),
+        None => (PathBuf::from(PRESETS_PATH), PresetSource::WorkingDir),
+    };
+    if !path.is_file() {
+        return (embedded(), PresetSource::Embedded, None);
+    }
+    let failure = |message: String| (embedded(), PresetSource::Embedded, Some(message));
+    match std::fs::read_to_string(&path) {
+        Ok(text) => match parse(&text) {
+            Ok(file) => {
+                report_retired_keys(&text, &path);
+                (file, source(path), None)
+            }
+            Err(message) => failure(format!("{}: {message}", path.display())),
+        },
+        Err(error) => failure(format!("cannot read {}: {error}", path.display())),
+    }
 }
 
 /// Keys a presets file may still carry from before a setting was replaced,
@@ -349,7 +425,9 @@ const PRESET_FILE_HEADER: &str = "\
 # Written by the \"aggression bubbles\" panel (save), and safe to edit by hand:
 # this file is the versioned record of how the tape is read. See README.md in
 # this folder.
-# `active` names the preset the panel opens on. Colour overrides are optional
+# `active` names the look an asset opens on when its feed declares none
+# (feeds.toml); every asset then keeps its own settings, saved per asset in the
+# cockpit home, and a save here never changes `active`. Colour overrides are optional
 # `[r, g, b]` triples; leave them out to follow the chart theme.
 
 ";
@@ -541,6 +619,12 @@ mod tests {
     fn a_preset_round_trips_through_the_panel_state() {
         let mut config = HeatmapConfig {
             bubble_cluster_ms: 50,
+            volume_dots: quantick_orderflow::VolumeDotStyle {
+                enabled: true,
+                full_quantity: 2_500.0,
+                auto_full: false,
+                ignore_opening_burst_in_scale: false,
+            },
             bubbles: BubbleStyle {
                 side_offset: 9.0,
                 size_reference: BubbleSizeReference::VisibleMax,
@@ -555,6 +639,10 @@ mod tests {
         preset.apply_to(&mut other);
         assert_eq!(other.bubbles, config.bubbles);
         assert_eq!(other.bubble_cluster_ms, 50);
+        assert_eq!(
+            other.volume_dots, config.volume_dots,
+            "the dots' look travels"
+        );
         // Nothing outside the bubble panel moves — least of all the switch that
         // would start recording trades.
         assert_eq!(
@@ -574,6 +662,119 @@ mod tests {
 
         config.bubbles.side_offset = 0.0;
         assert_ne!(BubblePreset::capture("mine", &config), preset);
+    }
+
+    #[test]
+    fn tape_only_is_a_persisted_preset_mode_with_an_unchanged_default() {
+        let mut configured = HeatmapConfig::default();
+        assert!(!configured.live_lane.tape_only);
+        configured.live_lane.tape_only = true;
+        let preset = BubblePreset::capture("tape only", &configured);
+        assert!(preset.live_lane.tape_only, "the chosen mode is captured");
+        let mut file = BubblePresetFile::default();
+        file.upsert(preset);
+        let restored = parse(&render(&file).expect("serialize preset")).expect("read preset");
+        let mut target = HeatmapConfig::default();
+        restored.get("tape only").unwrap().apply_to(&mut target);
+        assert!(target.live_lane.tape_only, "the mode survives application");
+        embedded().get("default").unwrap().apply_to(&mut target);
+        assert!(!target.live_lane.tape_only, "the default restores candles");
+        assert!(
+            !target.volume_dots.enabled,
+            "the default keeps legacy bubbles"
+        );
+    }
+
+    /// The mini index preset opens the native tape beside the tick candles:
+    /// the tape is built from execution time and price, and the candles keep
+    /// their side of the divider. No other preset touches either switch.
+    #[test]
+    fn the_mini_index_preset_opens_the_tape_without_changing_other_presets() {
+        let presets = embedded();
+        let mut config = HeatmapConfig::default();
+        presets
+            .get("mini index regions")
+            .unwrap()
+            .apply_to(&mut config);
+        assert!(config.live_lane.native_tape);
+        assert!(config.native_tape());
+        assert!(!config.live_lane.tape_only, "the candles stay beside it");
+        assert!(!config.tape_only());
+        assert!(config.volume_dots.enabled);
+        for preset in &presets.presets {
+            if preset.name != "mini index regions" {
+                assert!(!preset.live_lane.tape_only, "{} keeps candles", preset.name);
+                assert!(
+                    !preset.live_lane.native_tape,
+                    "{} keeps its own tape",
+                    preset.name
+                );
+            }
+        }
+        let mut target = HeatmapConfig::default();
+        let mut file = BubblePresetFile::default();
+        file.upsert(BubblePreset::capture("native", &config));
+        let restored = parse(&render(&file).expect("serialize preset")).expect("read preset");
+        restored.get("native").unwrap().apply_to(&mut target);
+        assert!(
+            target.native_tape() && !target.tape_only(),
+            "the mode survives"
+        );
+        embedded().get("default").unwrap().apply_to(&mut target);
+        assert!(
+            !target.native_tape(),
+            "the default restores the ordinary tape"
+        );
+    }
+
+    /// A presets file written before volume dots had a scale of their own
+    /// loads unchanged, with the default full-size quantity.
+    #[test]
+    fn a_preset_without_the_dot_scale_loads_the_default() {
+        let file = parse("active = \"old\"\n\n[[presets]]\nname = \"old\"\noverlap_merge = true\n")
+            .expect("an old file");
+        let preset = file.get("old").expect("the preset");
+        assert_eq!(preset.volume_dot_full_quantity, 20_000.0);
+        let mut config = HeatmapConfig::default();
+        preset.apply_to(&mut config);
+        assert!(config.volume_dots.enabled);
+        assert_eq!(config.volume_dots.full_quantity, 20_000.0);
+    }
+
+    #[test]
+    fn opening_burst_scale_is_opt_in_and_roundtrips_with_the_chosen_look() {
+        let old = parse(
+            r#"active = "old"
+
+[[presets]]
+name = "old"
+"#,
+        )
+        .expect("an older file remains readable");
+        let mut config = HeatmapConfig::default();
+        old.get("old").unwrap().apply_to(&mut config);
+        assert!(!config.volume_dots.ignore_opening_burst_in_scale);
+        for preset in &embedded().presets {
+            assert!(
+                !preset.volume_dot_ignore_opening_burst_in_scale,
+                "{} remains unchanged until explicitly chosen",
+                preset.name
+            );
+        }
+        config.volume_dots.ignore_opening_burst_in_scale = true;
+        let mut file = BubblePresetFile::default();
+        file.upsert(BubblePreset::capture("opening scale", &config));
+        let text = render(&file).unwrap();
+        assert!(text.contains("volume_dot_ignore_opening_burst_in_scale = true"));
+        let restored = parse(&text).unwrap();
+        let mut target = HeatmapConfig::default();
+        restored.get("opening scale").unwrap().apply_to(&mut target);
+        assert!(target.volume_dots.ignore_opening_burst_in_scale);
+        old.get("old").unwrap().apply_to(&mut target);
+        assert!(
+            !target.volume_dots.ignore_opening_burst_in_scale,
+            "an older/default look restores its explicit default"
+        );
     }
 
     /// A preset is a look. Now that the tape's visibility lives in the same
@@ -693,6 +894,10 @@ mod tests {
             cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
             dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,
             candle_summary: false,
+            overlap_merge: false,
+            volume_dot_full_quantity: quantick_orderflow::DEFAULT_VOLUME_DOT_FULL_QUANTITY,
+            volume_dot_auto_full: true,
+            volume_dot_ignore_opening_burst_in_scale: false,
             region_rows: 1,
             region_ms: DEFAULT_BUBBLE_REGION_MS,
             bubbles: BubbleStyle {

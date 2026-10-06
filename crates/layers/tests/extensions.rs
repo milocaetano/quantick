@@ -78,7 +78,10 @@ fn independent_headless_consumer_keeps_all_external_owners_authoritative() {
             external[&layer.0.source]
         }
     };
-    assert_eq!(state.requested_mask(read).count_ones(), 21);
+    // Every layer the chart-layers file persists: preset-owned layers,
+    // candle aggression and the aggression bubbles among them, are saved
+    // per asset instead.
+    assert_eq!(state.requested_mask(read).count_ones(), 20);
     external.insert(LayerSource::Orderflow(OrderflowSwitch::Depth), false);
     assert_eq!(
         state
@@ -88,6 +91,6 @@ fn independent_headless_consumer_keeps_all_external_owners_authoritative() {
                 external[&layer.0.source]
             })
             .count_ones(),
-        20
+        19
     );
 }

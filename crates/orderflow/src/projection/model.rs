@@ -2,7 +2,8 @@
 //! draws, the two halves of a frame they arrive in, and the three rules a
 //! reader of those primitives shares with the pipeline that built them — how
 //! a quantity maps to intensity, how it maps to area, and which reduction
-//! markers survive the frame's safety cap.
+//! markers survive the frame's safety cap — plus the `(low, high)` price span
+//! an axis fit reads off a set of marks.
 //!
 //! Nothing here walks the tape or the book. The pipeline in the parent module
 //! builds these values; [`SettledProjection::with_live`] is the one operation
@@ -13,7 +14,7 @@ use std::cmp::Reverse;
 use std::sync::Arc;
 
 use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive as _;
+use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::config::HeatmapConfig;
 use crate::grouping::EffectiveGrouping;
@@ -36,12 +37,29 @@ impl PriceWindow {
         (high > low).then_some(Self { low, high })
     }
 
+    /// The exact window of a `(low, high)` chart axis range; `None` when
+    /// either bound is not a finite decimal or the window is degenerate.
+    #[must_use]
+    pub fn from_f64_range(range: (f64, f64)) -> Option<Self> {
+        Decimal::from_f64(range.0)
+            .zip(Decimal::from_f64(range.1))
+            .and_then(|(low, high)| Self::new(low, high))
+    }
+
     /// Map a visible price to normalized screen y.
     #[must_use]
     pub fn y(&self, price: Decimal) -> Option<f64> {
         if price < self.low || price > self.high {
             return None;
         }
+        self.y_unclamped(price)
+    }
+
+    /// Map any price to normalized screen y, outside `[0, 1]` when it is off
+    /// the window: for a mark the painter clips rather than the projection
+    /// drops.
+    #[must_use]
+    pub fn y_unclamped(&self, price: Decimal) -> Option<f64> {
         ((self.high - price) / (self.high - self.low)).to_f64()
     }
 }
@@ -104,14 +122,24 @@ pub struct AggressionPrimitive {
     /// bubble, the whole region for a regional fold. Range-drawing consumers
     /// (the live strip's histogram) read this instead of assuming one row.
     pub price_span: Decimal,
+    /// The cluster's quantity-weighted price. Native tape dots retain it without
+    /// rounding and draw at this price. Legacy mixed-pane volume dots retain
+    /// their tick-rounded price and draw at their level's centre.
+    pub price: Decimal,
     /// Number of aggregate trades represented by this bubble.
     pub trade_count: usize,
     /// Earliest exchange timestamp represented by this bubble.
     pub first_timestamp_ms: i64,
     /// Latest exchange timestamp represented by this bubble.
     pub last_timestamp_ms: i64,
+    /// Exact sum of exchange timestamp times quantity. This retains execution
+    /// time even while a forming dot's displayed position follows NOW.
+    pub timestamp_quantity: Decimal,
     /// Exact bubble quantity aligned with compatible liquidity reductions.
     pub matched_quantity: Decimal,
+    /// The exact bought share of [`quantity`](Self::quantity), which
+    /// `buy_share` only approximates; the sold share is the rest.
+    pub buy_quantity: Decimal,
     /// `[0,1]` fraction of bubble quantity aligned with reductions.
     pub matched_fraction: f32,
     /// Factual liquidity-event ids receiving matched bubble quantity.
@@ -231,6 +259,14 @@ pub struct HeatmapProjection {
     pub cells: Arc<Vec<HeatmapCell>>,
     /// Visible aggressive executions.
     pub aggressions: Vec<AggressionPrimitive>,
+    /// Native tape facts before the user floor, for exact pending handoff.
+    pub tape_facts: Option<Arc<TapeFacts>>,
+    /// Whether [`aggressions`](Self::aggressions) are volume dots
+    /// ([`HeatmapConfig::volume_dots`]): one mark per bar, window of
+    /// market time and price level, both sides in it, on one per-pane
+    /// size scale and one radius range for both panes, listed smallest first
+    /// so the biggest paints on top.
+    pub volume_dots: bool,
     /// Visible factual displayed-liquidity reductions.
     pub liquidity_events: Vec<LiquidityEventPrimitive>,
     /// Visible continuity gaps. Shared for the reason [`cells`](Self::cells) is.
@@ -259,7 +295,30 @@ pub struct HeatmapProjection {
     pub dropped_liquidity_events: usize,
 }
 
+/// Exact native dots and their retention horizon across an asynchronous swap.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TapeFacts {
+    pub clusters: Vec<crate::interaction::AggressionCluster>,
+    pub evicted_through_ms: Option<i64>,
+    pub floored_quantity: Decimal,
+    /// First recorded native window per recent UTC date, not the visible front.
+    pub opening_bursts: Vec<i64>,
+    /// The display floor the frame's marks were cut at.
+    pub floor: Decimal,
+    /// The cells a painter may keep from an earlier frame; `None` rereads all.
+    pub seal: Option<super::TapeSeal>,
+}
+
 impl HeatmapProjection {
+    /// Whether the candles hold every print their bars traded while the tape
+    /// also shows the newest ones: a bar summary, or volume dots, whose tape
+    /// is a zoom of its own. A consumer summing a bar reads the candles
+    /// alone, or it counts the tape's contracts twice.
+    #[must_use]
+    pub fn candles_hold_every_print(&self) -> bool {
+        self.summarized || self.volume_dots
+    }
+
     /// A frame with nothing to draw: the seed the chart's render tests build a
     /// projection from, so they exercise the same struct the pipeline emits.
     /// Not `cfg(test)`: those tests live in the crate that links this one.
@@ -273,6 +332,8 @@ impl HeatmapProjection {
             floored_quantity: Decimal::ZERO,
             cells: Arc::new(Vec::new()),
             aggressions: Vec::new(),
+            tape_facts: None,
+            volume_dots: false,
             liquidity_events: Vec::new(),
             gaps: Arc::new(Vec::new()),
             live_now_x: None,
@@ -304,6 +365,9 @@ pub struct SettledProjection {
     /// Whether this half's marks are bar summaries. See
     /// [`HeatmapProjection::summarized`].
     pub summarized: bool,
+    /// Whether this half's marks are volume dots. See
+    /// [`HeatmapProjection::volume_dots`].
+    pub volume_dots: bool,
     /// Whether the feature was enabled in sanitized configuration.
     pub enabled: bool,
     /// Visible heatmap rectangles.
@@ -351,6 +415,8 @@ pub struct SettledProjection {
 pub struct LiveMarks {
     /// Bubbles for the prints after [`SettledProjection::live_from_ms`].
     pub aggressions: Vec<AggressionPrimitive>,
+    /// Native facts for the independent tape, before its display floor.
+    pub tape_facts: Option<Arc<TapeFacts>>,
     /// Markers for the reductions those same prints were matched against.
     pub liquidity_events: Vec<LiquidityEventPrimitive>,
     /// Reductions the safety cap left out of this half.
@@ -369,6 +435,7 @@ impl SettledProjection {
         Self {
             enabled,
             summarized: false,
+            volume_dots: false,
             floored_quantity: Decimal::ZERO,
             cells: Arc::new(Vec::new()),
             aggressions: Vec::new(),
@@ -412,6 +479,11 @@ impl SettledProjection {
                 .then_with(|| a.price_bucket.cmp(&b.price_bucket))
                 .then_with(|| a.agg_id.cmp(&b.agg_id))
         });
+        // Dots overlap by design, so the smallest paints first and the biggest
+        // stays on top; a tie keeps the time order above.
+        if self.volume_dots {
+            aggressions.sort_by_key(|mark| mark.quantity);
+        }
 
         // The display switches — the aggression layer's master switch and the
         // per-side ones — are *not* applied here. A projection is the fact the
@@ -439,6 +511,8 @@ impl SettledProjection {
             floored_quantity: self.floored_quantity + live.floored_quantity,
             cells: Arc::clone(&self.cells),
             aggressions,
+            tape_facts: live.tape_facts,
+            volume_dots: self.volume_dots,
             liquidity_events,
             gaps: Arc::clone(&self.gaps),
             live_now_x: live.live_now_x,
@@ -510,4 +584,25 @@ pub fn normalized_area_size(quantity: Decimal, reference: Decimal) -> f32 {
         .unwrap_or(0.0)
         .clamp(0.0, 1.0)
         .sqrt() as f32
+}
+
+/// The `(low, high)` of `prices`, as `f64`, or `None` when there are none.
+/// Folded exactly in [`Decimal`] and converted once at the ends.
+pub(crate) fn price_span(prices: impl IntoIterator<Item = Decimal>) -> Option<(f64, f64)> {
+    let mut prices = prices.into_iter();
+    let first = prices.next()?;
+    let (low, high) = prices.fold((first, first), |(low, high), price| {
+        (low.min(price), high.max(price))
+    });
+    Some((low.to_f64()?, high.to_f64()?))
+}
+
+/// The `(low, high)` of already converted `prices`, or `None` when there are
+/// none.
+pub(crate) fn f64_span(prices: impl IntoIterator<Item = f64>) -> Option<(f64, f64)> {
+    prices.into_iter().fold(None, |range, price| {
+        Some(range.map_or((price, price), |(low, high): (f64, f64)| {
+            (low.min(price), high.max(price))
+        }))
+    })
 }

@@ -1,0 +1,60 @@
+{
+  "kind": "UNCHANGED_RECORDED_MARKET_SLICE",
+  "symbol": "WINV26",
+  "session": "2026-09-22",
+  "timezone": "-03:00",
+  "source": "MetaTrader 5 COPY_TICKS_TRADE, exported by Quantick",
+  "source_recording": "WINV26/2026-09-22.csv",
+  "source_sha256": "983bc91a5a438de38f0f3bc830467c9085ec9cd0ebd11f865fae95ea7d0104bb",
+  "fixture_file": "win_2026_09_22_historical_tape.csv",
+  "fixture_sha256": "94f7b050fb7c08f0423bac997b034c20fd6c8202b707c1b5b284c6f04ebae9a4",
+  "fixture_bytes": 92712,
+  "selection_inclusive_local": [
+    "2026-09-22 09:07:09.000",
+    "2026-09-22 09:07:40.083"
+  ],
+  "trade_rows": 1879,
+  "first_original_trade_ordinal": 62392,
+  "last_original_trade_ordinal": 64270,
+  "first_row": "2026-09-22,09:07:09.019,187485,187475,187480,2,B",
+  "last_row": "2026-09-22,09:07:40.083,187535,187490,187495,20,B",
+  "source_header_unchanged": true,
+  "trade_rows_byte_exact": true,
+  "rows_contiguous_and_original_order": true,
+  "note": "A selected recorded slice, not the full trading session. Source trade ordinals are one-based excluding metadata/header lines; fixture row index plus 62392 recovers the source ordinal.",
+  "regression": {
+    "before": {
+      "now_local": "2026-09-22 09:07:40.000",
+      "now_epoch_ms": 1790078860000,
+      "fixture_trade_rows": 1844,
+      "last_original_trade_ordinal": 64235
+    },
+    "after": {
+      "now_local": "2026-09-22 09:07:40.083",
+      "now_epoch_ms": 1790078860083,
+      "fixture_trade_rows": 1879,
+      "last_original_trade_ordinal": 64270
+    },
+    "lane_window_ms": 30000,
+    "fixed_price_range": [
+      "187400",
+      "187550"
+    ],
+    "geometry_px": [
+      640,
+      400
+    ],
+    "max_radius_px": 15,
+    "native_dot_window_ms": 100,
+    "note": "Compare closed output memberships and exact moments across these prefixes. The window boundary removes older cells while new trades arrive; groups about 10 seconds behind NOW must not regroup because the visible size reference changes.",
+    "historical_source_ordinals": [
+      63755,
+      63756,
+      63757,
+      63758,
+      63759,
+      63760,
+      63761
+    ]
+  }
+}

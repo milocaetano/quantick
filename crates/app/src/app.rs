@@ -658,6 +658,7 @@ impl QuantickApp {
                     footprint_settings: footprint_settings_path,
                     indicator_presets: indicator_presets_path,
                     ui_state: ui_state::default_path(),
+                    bubble_assets: crate::bubble_presets::assets_path(),
                 },
                 LayoutStore::new(
                     loaded_layouts.0,
@@ -672,10 +673,9 @@ impl QuantickApp {
         let config = app.config.clone();
         app.active_tab_mut().refresh_chip_label(&config);
         app.active_tab_mut().ensure_book_capture(&config);
-        // A feed that declares its own look opens wearing it.
-        app.active_tab_mut().apply_feed_bubble_preset(&config);
-        // Same for a declared opening layout: a feed the user reads by
-        // timeframe can open straight on the timeframe chart.
+        let assets = app.workspace.bubble_assets().clone();
+        app.active_tab_mut().bind_asset_bubbles(&config, &assets);
+        // A feed read by timeframe can open straight on the timeframe chart.
         app.active_tab_mut().apply_feed_declared_layout(&config);
         // The code's own baseline, and nothing more: what a launch actually
         // opens with is `config/chart-layers.toml`, applied by

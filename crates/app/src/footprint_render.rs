@@ -13,15 +13,19 @@
 //! illegible and present at the same time.
 //!
 //! Everything that decides (levels, grouping, zone coalescing, quantity
-//! formatting) is a pure function tested without egui; only the painting
-//! itself touches the frame.
+//! formatting) is a pure function tested without egui — the level ladder in
+//! [`quantick_chart::footprint_lod`], the ladder arithmetic in
+//! [`quantick_chart::footprint_projection`]; only the painting itself touches
+//! the frame.
 
 use std::collections::BTreeMap;
 
 use eframe::egui;
 use quantick_engine::{BarFootprint, FootprintLevel, Side, StackedZone};
 use rust_decimal::Decimal;
-use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
+#[cfg(test)]
+use rust_decimal::prelude::FromPrimitive as _;
+use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::chart::PriceScale;
 use crate::footprint_config::{CandleTreatment, FootprintStyle, StylePlate};
@@ -32,78 +36,21 @@ use crate::theme;
 use bar::cluster_column_px_from;
 use bar::{BarPaint, draw_bar, draw_poc_dot, draw_zone_mark};
 use heat::{HeatScale, heat_scale};
+use quantick_chart::footprint_lod::{
+    COMPACT_MIN_ROW, COMPACT_MIN_WIDTH, DETAILED_MIN_ROW, DetailLevel, GLYPH_EM, GROUP_SNAP,
+    LADDER_MIN_FONT_PX, LevelMemory, PROFILE_MIN_WIDTH, QUANTITY_GLYPHS, QUANTITY_PADDING_PX,
+    QUANTITY_PX, TYPICAL_BODY_FRAC,
+};
+#[cfg(test)]
+use quantick_chart::footprint_lod::{MARKS_MIN_WIDTH, level_for};
+use quantick_chart::footprint_projection::{
+    ADAPTIVE_FLOOR_BARS, ZoneMark, adaptive_min_qty, bar_delta, coalesce_zones, fmt_delta, fmt_qty,
+    poc_of, regroup, zones_of,
+};
 
 mod bar;
 mod heat;
 
-/// How much detail the current zoom supports. Ordered: more detail is greater.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum DetailLevel {
-    /// Below every readable threshold: the layer paints nothing and the
-    /// legend says why, because an on-but-invisible layer reads as broken.
-    Off,
-    /// POC dot and stacked-zone marks only. Nothing here is a number.
-    Marks,
-    /// Textless histogram per row, POC emphasized, zone ticks on the edge.
-    Profile,
-    /// One abbreviated delta number per row.
-    Compact,
-    /// The full sell × buy ladder with imbalance highlights and the extreme
-    /// ratio badges.
-    Detailed,
-}
-
-/// Smallest font the ladder draws its quantities at, in pixels.
-///
-/// Seven, down from eight. Monospace digits hold their shape a size below what
-/// prose needs — they are a fixed, familiar alphabet of ten — and every text
-/// floor below is measured from this number, so a pixel here is worth several
-/// pixels of candle in how soon the numbers arrive.
-const LADDER_MIN_FONT_PX: f32 = 7.0;
-
-/// Advance width of a monospace glyph, as a fraction of the font size.
-const GLYPH_EM: f32 = 0.6;
-
-/// Glyphs in the widest quantity the ladder writes (`58.1k`).
-const QUANTITY_GLYPHS: f32 = 5.0;
-
-/// Width of that quantity at the smallest font, in pixels.
-const QUANTITY_PX: f32 = QUANTITY_GLYPHS * GLYPH_EM * LADDER_MIN_FONT_PX;
-
-/// Clearance kept around a quantity inside the body it is drawn in.
-///
-/// A pixel and a half a side, not the six the row layout reserves when it is
-/// *sizing* the font: what a floor has to guarantee is that the digits do not
-/// reach the next candle, and the body already sits inside a gap
-/// ([`crate::style::DEFAULT_CANDLE_GAP`]) that keeps them apart.
-const QUANTITY_PADDING_PX: f32 = 3.0;
-
-/// The share of a slot a candle body takes at the default style. The numbers
-/// are drawn inside the *body*, so this is what turns a text budget into a
-/// candle width.
-const TYPICAL_BODY_FRAC: f32 = 0.72;
-
-/// Candle-width floors per level, in pixels — the typography budget of what
-/// each level draws.
-///
-/// The two text levels are **derived, never chosen**: Compact fits one
-/// quantity across the body, Detailed one per half of it. Writing them as
-/// arithmetic is what keeps the retune honest — the floors moved because
-/// [`LADDER_MIN_FONT_PX`] moved (8 px → 7 px), and anyone tightening them
-/// further has to move a number that means something first.
-///
-/// That gap is much of why the layer read as *slow to arrive*: a trader zoomed
-/// in for numbers, got marks, and had nothing saying how much further to go
-/// (the legend now says it).
-///
-/// The two levels that draw no text answer to geometry instead, and had no
-/// such excuse for waiting. Marks are a POC dot and a zone tick — visible from
-/// a candle six pixels wide. The profile is a textless histogram whose *shape*
-/// is the signal, readable at twelve pixels while narrower candles show marks.
-///
-/// [`crate::footprint_config::FootprintConfig::detail_scale`] moves all four
-/// together, for a trader who wants detail earlier still (and tighter) or
-/// later and roomier.
 /// Clearance between a number and the bar's central axis, per side.
 ///
 /// The floors below are budgets for text anchored *at* `xc`; the ladder
@@ -160,40 +107,10 @@ fn detailed_min_width_for(style: FootprintStyle, columns: f32) -> f32 {
     (text + furniture) / TYPICAL_BODY_FRAC
 }
 
-const COMPACT_MIN_WIDTH: f32 = (QUANTITY_PX + QUANTITY_PADDING_PX) / TYPICAL_BODY_FRAC;
-
-const PROFILE_MIN_WIDTH: f32 = 12.0;
-
-const MARKS_MIN_WIDTH: f32 = 6.0;
-
-/// Row-height floors per level. Profile rows survive down to hairline bands;
-/// text rows need a legible line.
-const DETAILED_MIN_ROW: f32 = 12.0;
-
-const COMPACT_MIN_ROW: f32 = 11.0;
-
 /// The Profile floor moved into config (`profile_row_px`, same default);
 /// the constant stays as the tests' reference value for that default.
 #[cfg(test)]
 const PROFILE_MIN_ROW: f32 = 4.0;
-
-/// The dead band on most level transitions. A trackpad hovering on a boundary
-/// must not blink the chart between modes mid-gesture.
-const LEVEL_HYSTERESIS: f32 = 1.15;
-
-/// Narrow enough for one wheel step to reverse Marks/Profile, yet resist jitter.
-const PROFILE_HYSTERESIS: f32 = 1.02;
-
-/// Display-grouping multiples, smallest first. Integer multiples of the
-/// capture grid keep row merges exact; round values keep the effective
-/// grouping a number a trader can say out loud. The ladder runs to 10 000×
-/// deliberately: a feed that never reports its tick leaves the capture grid
-/// on the 0.01 fallback, and an index future at 180 000 needs a 200–500×
-/// merge before a row is even one visible pixel — capping at 100× silently
-/// locked those charts in Marks at every zoom.
-const GROUP_SNAP: [i64; 16] = [
-    1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000, 10_000,
-];
 
 /// Hard cap of painted cells per frame, the heatmap's own budget: beyond it
 /// the layer stops and the legend says "capped" instead of eating the frame.
@@ -273,8 +190,8 @@ pub fn candle_dressing(
 /// applied, per pane.
 #[derive(Debug, Default)]
 pub struct FootprintLod {
-    level: Option<DetailLevel>,
-    k: Option<i64>,
+    /// The detail level and row multiple, each held through its dead band.
+    pub(crate) levels: LevelMemory,
     /// The adaptive imbalance floor and the state it was computed from:
     /// `(closed bar count, capture group)`. See [`Self::adaptive_floor`].
     floor: Option<(usize, Decimal, Decimal)>,
@@ -295,56 +212,11 @@ pub struct FootprintLod {
     /// its own dead band, so the boundary is crossed once and the stale answer
     /// survives a single frame of a gesture.
     drawn_style: Option<crate::footprint_config::FootprintStyle>,
+    /// Candles per aggression-summary mark, held through a steady zoom.
+    pub(crate) candle_groups: quantick_orderflow::projection::CandleGroupMemory,
 }
 
 impl FootprintLod {
-    /// Resolve zoom detail with a two-sided dead band against auto-fit jitter.
-    /// Marks/Profile uses the narrower band to reverse on one wheel step.
-    /// `profile_row_px` configures Profile's row floor; the first frame takes
-    /// the strict answer.
-    pub fn resolve(
-        &mut self,
-        candle_width: f32,
-        base_row_px: f32,
-        profile_row_px: f32,
-        detailed_min: f32,
-    ) -> DetailLevel {
-        let at_zoom = |factor| {
-            level_for(
-                candle_width * factor,
-                base_row_px * factor,
-                profile_row_px,
-                detailed_min,
-            )
-        };
-        let strict = at_zoom(1.0);
-        let hysteresis = if matches!(
-            (self.level, strict),
-            (Some(DetailLevel::Profile), DetailLevel::Marks)
-                | (Some(DetailLevel::Marks), DetailLevel::Profile)
-        ) {
-            PROFILE_HYSTERESIS
-        } else {
-            LEVEL_HYSTERESIS
-        };
-        let level = match self.level {
-            // Only one level of jitter is sticky. Larger gaps can come from
-            // stale auto-fit spans and must snap to the strict answer.
-            Some(current) if (strict as i8 - current as i8).abs() > 1 => strict,
-            Some(current) if strict < current => {
-                let relaxed = at_zoom(hysteresis);
-                if relaxed < current { strict } else { current }
-            }
-            Some(current) if strict > current => {
-                let confirmed = at_zoom(1.0 / hysteresis);
-                if confirmed >= strict { strict } else { current }
-            }
-            _ => strict,
-        };
-        self.level = Some(level);
-        level
-    }
-
     /// The adaptive imbalance floor, recomputed only when the closed-bar
     /// count or the capture grid changes.
     ///
@@ -426,232 +298,6 @@ impl FootprintLod {
         self.heat = Some((visible.0, visible.1, bars, k, scale));
         scale
     }
-
-    /// The display multiple, with the same dead band the level has: the
-    /// price auto-fit breathes with every new high of the live bar, and a
-    /// ladder that restructures from 2-tick to 5-tick rows on one print and
-    /// back on the next is unreadable. The current `k` survives until it is
-    /// 15% past failing its floor, and a finer one is adopted only once it
-    /// clears the floor with 15% to spare.
-    fn resolve_multiple(&mut self, base_row_px: f32, min_row_px: f32) -> Option<i64> {
-        let strict = display_multiple(base_row_px, min_row_px);
-        let snap_position = |k: i64| GROUP_SNAP.iter().position(|snap| *snap == k);
-        let k = match (self.k, strict) {
-            (Some(current), Some(strict_k)) if current != strict_k => {
-                // Same one-step rule as the level: the dead band defends
-                // boundary jitter, never a multiple wedged eras away (the
-                // snap quantization can leave the strict answer exactly on
-                // its floor, where the 15% adoption margin is unreachable —
-                // without this, a stale 10 000× from the first frames'
-                // auto-fit span holds forever).
-                let one_step_apart = matches!(
-                    (snap_position(current), snap_position(strict_k)),
-                    (Some(a), Some(b)) if a.abs_diff(b) <= 1
-                );
-                if !one_step_apart {
-                    strict_k
-                } else if strict_k > current {
-                    if base_row_px * current as f32 >= min_row_px / LEVEL_HYSTERESIS {
-                        current
-                    } else {
-                        strict_k
-                    }
-                } else if base_row_px * strict_k as f32 >= min_row_px * LEVEL_HYSTERESIS {
-                    strict_k
-                } else {
-                    current
-                }
-            }
-            (_, strict) => strict?,
-        };
-        self.k = Some(k);
-        Some(k)
-    }
-}
-
-/// What `candle_width` and the *achievable* row height allow. A thin base row
-/// is not a refusal — the display grouping can merge up to [`GROUP_SNAP`]'s
-/// largest multiple — so each level asks whether some multiple reaches its
-/// row floor.
-fn level_for(
-    candle_width: f32,
-    base_row_px: f32,
-    profile_row_px: f32,
-    detailed_min: f32,
-) -> DetailLevel {
-    let row_reachable = |min_row: f32| display_multiple(base_row_px, min_row).is_some();
-    if candle_width >= detailed_min && row_reachable(DETAILED_MIN_ROW) {
-        DetailLevel::Detailed
-    } else if candle_width >= COMPACT_MIN_WIDTH && row_reachable(COMPACT_MIN_ROW) {
-        DetailLevel::Compact
-    } else if candle_width >= PROFILE_MIN_WIDTH && row_reachable(profile_row_px) {
-        DetailLevel::Profile
-    } else if candle_width >= MARKS_MIN_WIDTH {
-        DetailLevel::Marks
-    } else {
-        DetailLevel::Off
-    }
-}
-
-/// The smallest snap multiple whose rows reach `min_row_px`, or `None` when
-/// even the coarsest is too thin (a chart zoomed so far out that one snap row
-/// is still under the floor).
-fn display_multiple(base_row_px: f32, min_row_px: f32) -> Option<i64> {
-    GROUP_SNAP
-        .into_iter()
-        .find(|k| base_row_px * (*k as f32) >= min_row_px)
-}
-
-/// Fold a ladder onto rows `k` buckets tall. `k = 1` is the identity; the
-/// merge is exact because display buckets are integer multiples of capture
-/// buckets sharing the zero anchor.
-fn regroup(fp: &BarFootprint, k: i64) -> BTreeMap<i64, FootprintLevel> {
-    let mut rows: BTreeMap<i64, FootprintLevel> = BTreeMap::new();
-    for (&bucket, level) in fp.levels() {
-        let row = rows.entry(bucket.div_euclid(k)).or_default();
-        row.buy = row.buy.saturating_add(level.buy);
-        row.sell = row.sell.saturating_add(level.sell);
-        row.trade_count += level.trade_count;
-    }
-    rows
-}
-
-/// Abbreviate a quantity for a fixed-width cell: `58.1k`, `1.2M`, `736`,
-/// `0.523`. Three decimals below 1 (a 1-minute BTC row's delta usually
-/// lives there), two up to 100, so a dense ladder's cells stay the same
-/// visual weight.
-fn fmt_qty(qty: Decimal) -> String {
-    let value = qty.to_f64().unwrap_or(0.0);
-    let magnitude = value.abs();
-    // Suffix thresholds sit at the value that *rounds* to the next unit:
-    // 999.96k would print "1000.0k" — seven glyphs where the cell budget
-    // assumes five — so it rolls to "1.0M" instead.
-    if magnitude >= 999_950.0 {
-        format!("{:.1}M", value / 1_000_000.0)
-    } else if magnitude >= 999.95 {
-        format!("{:.1}k", value / 1_000.0)
-    } else if magnitude >= 100.0 {
-        format!("{value:.0}")
-    } else if value == value.trunc() {
-        // A whole number of contracts is written as one. "92.00" spends two
-        // fifths of a cell on characters that carry nothing, and in a ladder
-        // that width is not free — it is taken out of the font size every
-        // other number is drawn at. Instruments that trade in fractions still
-        // get their decimals below.
-        format!("{value:.0}")
-    } else if magnitude >= 1.0 {
-        format!("{value:.2}")
-    } else {
-        format!("{value:.3}")
-    }
-}
-
-/// A delta for display: a value that *rounds* to zero prints as an unsigned
-/// `"0"` — "-0.00" reads as broken software, and the sign on nothing is a
-/// wrong-side whisper. Returns `None` exactly when the row is balanced at
-/// display resolution, so callers can also skip the winner color.
-fn fmt_delta(delta: Decimal) -> Option<String> {
-    let text = fmt_qty(delta);
-    if text
-        .trim_start_matches('-')
-        .chars()
-        .all(|c| c == '0' || c == '.')
-    {
-        return None;
-    }
-    Some(text)
-}
-
-/// A bar's whole-ladder delta: who won the bar. Saturating, like every
-/// other quantity fold here — a corrupt feed must not panic the paint.
-fn bar_delta(fp: &BarFootprint) -> Decimal {
-    fp.levels()
-        .values()
-        .fold(Decimal::ZERO, |sum, cell| sum.saturating_add(cell.delta()))
-}
-
-/// One stacked zone spanning one or more adjacent bars, in display buckets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ZoneMark {
-    pub first_slot: usize,
-    pub last_slot: usize,
-    pub low_bucket: i64,
-    pub high_bucket: i64,
-    pub side: Side,
-}
-
-/// Coalesce per-bar stacked zones across adjacent bars: a zone continuing at
-/// an overlapping price range in the next bar is one market fact, not two
-/// marks. Then keep at most `cap`, tallest stacks first — and report whether
-/// anything was dropped, because a silently thinned signal reads as absence.
-fn coalesce_zones(mut zones: Vec<(usize, StackedZone)>, cap: usize) -> (Vec<ZoneMark>, bool) {
-    zones.sort_by_key(|(slot, zone)| (*slot, zone.low_bucket, zone.side == Side::Sell));
-    let mut marks: Vec<ZoneMark> = Vec::new();
-    for (slot, zone) in zones {
-        let merged = marks.iter_mut().find(|mark| {
-            mark.side == zone.side
-                && slot > mark.first_slot
-                && slot <= mark.last_slot + 1
-                && zone.low_bucket <= mark.high_bucket
-                && zone.high_bucket >= mark.low_bucket
-        });
-        match merged {
-            Some(mark) => {
-                mark.last_slot = mark.last_slot.max(slot);
-                mark.low_bucket = mark.low_bucket.min(zone.low_bucket);
-                mark.high_bucket = mark.high_bucket.max(zone.high_bucket);
-            }
-            None => marks.push(ZoneMark {
-                first_slot: slot,
-                last_slot: slot,
-                low_bucket: zone.low_bucket,
-                high_bucket: zone.high_bucket,
-                side: zone.side,
-            }),
-        }
-    }
-    let dropped = marks.len() > cap;
-    if dropped {
-        // Tallest stacks carry the most memory; ties resolve by place so the
-        // pick is deterministic frame over frame.
-        marks.sort_by_key(|mark| {
-            (
-                std::cmp::Reverse(mark.high_bucket - mark.low_bucket),
-                mark.first_slot,
-                mark.low_bucket,
-            )
-        });
-        marks.truncate(cap);
-        marks.sort_by_key(|mark| (mark.first_slot, mark.low_bucket));
-    }
-    (marks, dropped)
-}
-
-/// How many of the newest *closed* bars feed the adaptive imbalance floor.
-const ADAPTIVE_FLOOR_BARS: usize = 50;
-
-/// The adaptive imbalance quantity floor: the 60th percentile of per-row
-/// total volume over the newest closed bars. One fixed number cannot serve
-/// WIN contracts and BTC fractions at once (20 is right on one and absurd on
-/// the other); a percentile of what is actually printing adapts to the
-/// instrument and the regime. Closed bars only, independent of what is on
-/// screen: a floor that moved with every live print or every pan would
-/// rewrite the highlights of history while the trader reads them. The
-/// config surface adds a manual override on top.
-fn adaptive_min_qty<'a>(ladders: impl Iterator<Item = &'a BarFootprint>) -> Decimal {
-    let mut volumes: Vec<f64> = ladders
-        .flat_map(|fp| fp.levels().values())
-        .map(|level| level.volume().to_f64().unwrap_or(0.0))
-        .collect();
-    if volumes.is_empty() {
-        return Decimal::ZERO;
-    }
-    // Only the p60 is read, so partition around it instead of ordering the
-    // whole vector: linear rather than n log n over up to a few thousand
-    // rows. See `FootprintLod::adaptive_floor` for why this runs rarely.
-    let index = (volumes.len().saturating_sub(1)) * 60 / 100;
-    let (_, p60, _) = volumes.select_nth_unstable_by(index, f64::total_cmp);
-    Decimal::from_f64(*p60).unwrap_or(Decimal::ZERO)
 }
 
 /// Everything one frame of the layer needs, borrowed from the pane's draw.
@@ -758,7 +404,7 @@ impl LayerPlan {
             .config
             .style
             .resolve_auto(|style| scaled_width >= detailed_min_width(style, frame.config));
-        let level = lod.resolve(
+        let level = lod.levels.resolve(
             scaled_width,
             base_row_px,
             frame.config.profile_row_px,
@@ -859,6 +505,7 @@ impl<'p, 'f> LayerPass<'p, 'f> {
             _ => frame.config.profile_row_px,
         };
         let k = lod
+            .levels
             .resolve_multiple(plan.base_row_px, min_row)
             .unwrap_or(GROUP_SNAP[GROUP_SNAP.len() - 1]);
         let min_qty = match frame.config.imbalance_min_qty {
@@ -1046,67 +693,6 @@ impl<'p, 'f> LayerPass<'p, 'f> {
             );
         }
     }
-}
-
-/// POC of already-regrouped rows: highest volume, ties to the lowest row —
-/// the engine's own rule, restated on display rows.
-fn poc_of(rows: &BTreeMap<i64, FootprintLevel>) -> Option<i64> {
-    let mut best: Option<(i64, Decimal)> = None;
-    for (&row, level) in rows {
-        let volume = level.volume();
-        match best {
-            Some((_, best_volume)) if volume <= best_volume => {}
-            _ => best = Some((row, volume)),
-        }
-    }
-    best.map(|(row, _)| row)
-}
-
-/// Diagonal stacked zones on display rows: same rule the engine applies to
-/// capture buckets, run over the rows the eye actually compares.
-fn zones_of(
-    rows: &BTreeMap<i64, FootprintLevel>,
-    ratio: Decimal,
-    min_qty: Decimal,
-    min_run: usize,
-) -> Vec<StackedZone> {
-    let side_qty = |row: i64, side: Side| -> Decimal {
-        rows.get(&row)
-            .map(|level| match side {
-                Side::Buy => level.buy,
-                Side::Sell => level.sell,
-            })
-            .unwrap_or(Decimal::ZERO)
-    };
-    let dominates = |qty: Decimal, other: Decimal| -> bool {
-        qty >= ratio.saturating_mul(other) && qty.saturating_sub(other) >= min_qty
-    };
-    let mut zones = Vec::new();
-    for side in [Side::Buy, Side::Sell] {
-        let buckets: Vec<i64> = rows
-            .iter()
-            .filter(|&(&row, level)| match side {
-                Side::Buy => dominates(level.buy, side_qty(row - 1, Side::Sell)),
-                Side::Sell => dominates(level.sell, side_qty(row + 1, Side::Buy)),
-            })
-            .map(|(&row, _)| row)
-            .collect();
-        let mut run_start = 0usize;
-        for i in 0..buckets.len() {
-            let run_breaks = i + 1 == buckets.len() || buckets[i + 1] != buckets[i] + 1;
-            if run_breaks {
-                if i + 1 - run_start >= min_run.max(1) {
-                    zones.push(StackedZone {
-                        low_bucket: buckets[run_start],
-                        high_bucket: buckets[i],
-                        side,
-                    });
-                }
-                run_start = i + 1;
-            }
-        }
-    }
-    zones
 }
 
 /// Inset of the cluster's columns from its box, and the gutter between them.
@@ -1897,7 +1483,7 @@ mod tests {
         let mut lod = FootprintLod::default();
         // The first frame takes the strict answer.
         assert_eq!(
-            lod.resolve(
+            lod.levels.resolve(
                 floor * 1.2,
                 12.0,
                 PROFILE_MIN_ROW,
@@ -1907,7 +1493,7 @@ mod tests {
         );
         // Just under the floor: inside the 15% band, the level holds.
         assert_eq!(
-            lod.resolve(
+            lod.levels.resolve(
                 floor * 0.95,
                 12.0,
                 PROFILE_MIN_ROW,
@@ -1917,7 +1503,7 @@ mod tests {
         );
         // 15% past the floor: the downgrade happens.
         assert_eq!(
-            lod.resolve(
+            lod.levels.resolve(
                 floor * 0.83,
                 12.0,
                 PROFILE_MIN_ROW,
@@ -1929,7 +1515,7 @@ mod tests {
         // so the level holds — an instant upgrade against a banded downgrade
         // is a blinker at the boundary.
         assert_eq!(
-            lod.resolve(
+            lod.levels.resolve(
                 floor * 1.1,
                 12.0,
                 PROFILE_MIN_ROW,
@@ -1938,7 +1524,7 @@ mod tests {
             DetailLevel::Compact
         );
         assert_eq!(
-            lod.resolve(
+            lod.levels.resolve(
                 floor * 1.2,
                 12.0,
                 PROFILE_MIN_ROW,
@@ -1950,7 +1536,8 @@ mod tests {
         // hair must not change the level once settled.
         for width in [floor * 1.02, floor * 0.98, floor * 1.02, floor * 0.98] {
             assert_eq!(
-                lod.resolve(width, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+                lod.levels
+                    .resolve(width, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
                 DetailLevel::Detailed,
                 "width {width} blinked"
             );
@@ -1973,14 +1560,15 @@ mod tests {
                 DetailLevel::Marks
             };
             assert_eq!(
-                lod.resolve(width, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+                lod.levels
+                    .resolve(width, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
                 expected,
                 "inward wheel step {step} at {width:.1} px"
             );
         }
         let previous_width = opening_width * wheel_factor.powi(4);
         assert_eq!(
-            lod.resolve(
+            lod.levels.resolve(
                 previous_width,
                 12.0,
                 PROFILE_MIN_ROW,
@@ -1990,7 +1578,7 @@ mod tests {
             "the first outward step must restore Marks"
         );
         assert_eq!(
-            lod.resolve(
+            lod.levels.resolve(
                 PROFILE_MIN_WIDTH * 1.01,
                 12.0,
                 PROFILE_MIN_ROW,
@@ -2000,7 +1588,7 @@ mod tests {
             "a 1% nudge must not re-enter Profile"
         );
         assert_eq!(
-            lod.resolve(
+            lod.levels.resolve(
                 PROFILE_MIN_WIDTH * 1.03,
                 12.0,
                 PROFILE_MIN_ROW,
@@ -2009,7 +1597,7 @@ mod tests {
             DetailLevel::Profile
         );
         assert_eq!(
-            lod.resolve(
+            lod.levels.resolve(
                 PROFILE_MIN_WIDTH * 0.99,
                 12.0,
                 PROFILE_MIN_ROW,
@@ -2028,166 +1616,22 @@ mod tests {
         let mut lod = FootprintLod::default();
         // Locked at Marks by a startup-era span (rows unreachable)...
         assert_eq!(
-            lod.resolve(100.0, 0.0001, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+            lod.levels
+                .resolve(100.0, 0.0001, PROFILE_MIN_ROW, ladder_detailed_min_width()),
             DetailLevel::Marks
         );
         // ...then the real span arrives: two steps away, no band, snap.
         assert_eq!(
-            lod.resolve(100.0, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+            lod.levels
+                .resolve(100.0, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
             DetailLevel::Detailed
         );
 
         // Same for the row multiple: a 10 000x from a wild span must not
         // hold once the strict answer is orders of magnitude finer.
         let mut lod = FootprintLod::default();
-        assert_eq!(lod.resolve_multiple(0.0005, 4.0), Some(10_000));
-        assert_eq!(lod.resolve_multiple(0.09, 4.0), Some(50));
-    }
-
-    #[test]
-    fn display_multiple_snaps_to_round_row_groups() {
-        assert_eq!(display_multiple(12.0, 11.0), Some(1));
-        assert_eq!(display_multiple(6.0, 11.0), Some(2));
-        assert_eq!(display_multiple(1.0, 11.0), Some(20));
-        assert_eq!(display_multiple(0.1, 11.0), Some(200));
-        assert_eq!(display_multiple(0.1, 4.0), Some(50));
-        // The fallback-grid regression: a 0.01 capture grid on an index
-        // future leaves base rows at ~0.026 px — the ladder must still
-        // reach a drawable row instead of locking the level at Marks.
-        assert_eq!(display_multiple(0.026, 4.0), Some(200));
-        assert_eq!(display_multiple(0.026, 12.0), Some(500));
-        assert_eq!(display_multiple(0.0001, 12.0), None);
-    }
-
-    #[test]
-    fn regrouping_by_integer_multiples_is_exact() {
-        let mut builder = FootprintBuilder::new(dec("0.5"), DEFAULT_LEVEL_CAP);
-        for (i, price) in ["100.0", "100.5", "101.0", "101.5"].iter().enumerate() {
-            builder.push(&Trade {
-                agg_id: i as u64,
-                timestamp_ms: i as i64,
-                price: dec(price),
-                quantity: dec("1"),
-                side: Side::Buy,
-            });
-        }
-        let fp = builder.close().unwrap();
-        let rows = regroup(&fp, 2);
-        // Buckets 200..=203 halve into rows 100 and 101, two units each.
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[&100].buy, dec("2"));
-        assert_eq!(rows[&101].buy, dec("2"));
-        // k = 1 is the identity.
-        assert_eq!(&regroup(&fp, 1), fp.levels());
-    }
-
-    #[test]
-    fn quantities_abbreviate_into_fixed_weight_cells() {
-        assert_eq!(fmt_qty(dec("58100")), "58.1k");
-        assert_eq!(fmt_qty(dec("1230000")), "1.2M");
-        assert_eq!(fmt_qty(dec("736")), "736");
-        assert_eq!(fmt_qty(dec("0.5234")), "0.523");
-        assert_eq!(fmt_qty(dec("12.345")), "12.35");
-        assert_eq!(fmt_qty(dec("-1500")), "-1.5k");
-        // A value that rounds past its suffix rolls to the next one: never
-        // "1000.0k" — seven glyphs where the cell budget assumes five.
-        assert_eq!(fmt_qty(dec("999960")), "1.0M");
-        assert_eq!(fmt_qty(dec("999.96")), "1.0k");
-    }
-
-    /// A delta that rounds to zero at display resolution has no sign and no
-    /// text at all: "-0.00" reads as broken software, and the minus on
-    /// nothing is a wrong-side whisper (panel must-fix).
-    #[test]
-    fn display_zero_deltas_are_never_signed() {
-        assert_eq!(fmt_delta(dec("-0.0004")), None);
-        assert_eq!(fmt_delta(dec("0.0003")), None);
-        assert_eq!(fmt_delta(dec("0")), None);
-        assert_eq!(fmt_delta(dec("-0.43")).as_deref(), Some("-0.430"));
-        assert_eq!(fmt_delta(dec("58100")).as_deref(), Some("58.1k"));
-    }
-
-    #[test]
-    fn adjacent_bars_at_one_price_coalesce_into_one_zone_mark() {
-        let zone = |low: i64, high: i64| StackedZone {
-            low_bucket: low,
-            high_bucket: high,
-            side: Side::Buy,
-        };
-        let (marks, dropped) = coalesce_zones(
-            vec![
-                (10, zone(100, 103)),
-                (11, zone(101, 104)),
-                (14, zone(100, 103)),
-            ],
-            MAX_ZONE_MARKS,
-        );
-        assert!(!dropped);
-        assert_eq!(
-            marks,
-            vec![
-                ZoneMark {
-                    first_slot: 10,
-                    last_slot: 11,
-                    low_bucket: 100,
-                    high_bucket: 104,
-                    side: Side::Buy,
-                },
-                // Slot 14 does not touch slot 11: a separate market fact.
-                ZoneMark {
-                    first_slot: 14,
-                    last_slot: 14,
-                    low_bucket: 100,
-                    high_bucket: 103,
-                    side: Side::Buy,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn the_zone_cap_keeps_the_tallest_stacks_and_says_it_dropped_some() {
-        let zones: Vec<(usize, StackedZone)> = (0..40)
-            .map(|i| {
-                (
-                    i * 2, // gaps, so nothing coalesces
-                    StackedZone {
-                        low_bucket: 1000 + i as i64 * 10,
-                        high_bucket: 1000 + i as i64 * 10 + (i as i64 % 7),
-                        side: Side::Sell,
-                    },
-                )
-            })
-            .collect();
-        let (marks, dropped) = coalesce_zones(zones, 5);
-        assert!(dropped);
-        assert_eq!(marks.len(), 5);
-        // Every survivor is at least as tall as the tallest loser would be.
-        assert!(
-            marks
-                .iter()
-                .all(|mark| mark.high_bucket - mark.low_bucket >= 5)
-        );
-    }
-
-    #[test]
-    fn the_adaptive_floor_reads_the_screens_own_percentile() {
-        let mut builder = FootprintBuilder::new(dec("1"), DEFAULT_LEVEL_CAP);
-        for (i, qty) in ["1", "2", "3", "4", "100"].iter().enumerate() {
-            builder.push(&Trade {
-                agg_id: i as u64,
-                timestamp_ms: i as i64,
-                price: Decimal::from(100 + i as i64),
-                quantity: dec(qty),
-                side: Side::Buy,
-            });
-        }
-        let fp = builder.close().unwrap();
-        let floor = adaptive_min_qty(std::iter::once(&fp));
-        // Five levels, p60 lands on the third-smallest volume: one big
-        // print does not drag the floor up to itself.
-        assert_eq!(floor, dec("3"));
-        assert_eq!(adaptive_min_qty(std::iter::empty()), Decimal::ZERO);
+        assert_eq!(lod.levels.resolve_multiple(0.0005, 4.0), Some(10_000));
+        assert_eq!(lod.levels.resolve_multiple(0.09, 4.0), Some(50));
     }
 
     /// The floor is a fact about the closed bars, so it is computed once and
@@ -2246,44 +1690,6 @@ mod tests {
         // cuts are measured on without moving a single slot.
         scale(&mut lod, (11, 60), 101, 5);
         assert_eq!(calls.get(), 5, "the price zoom regrouped the rows");
-    }
-
-    /// The bar's delta is the sum of its rows', and a bar balanced at
-    /// display resolution prints no chip at all.
-    #[test]
-    fn a_bars_delta_is_the_sum_of_its_rows() {
-        let mut builder = FootprintBuilder::new(dec("1"), DEFAULT_LEVEL_CAP);
-        for (i, (price, qty, side)) in [
-            ("100", "3", Side::Buy),
-            ("101", "1", Side::Sell),
-            ("102", "0.5", Side::Buy),
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            builder.push(&Trade {
-                agg_id: i as u64,
-                timestamp_ms: i as i64,
-                price: dec(price),
-                quantity: dec(qty),
-                side,
-            });
-        }
-        assert_eq!(bar_delta(&builder.close().unwrap()), dec("2.5"));
-
-        let mut builder = FootprintBuilder::new(dec("1"), DEFAULT_LEVEL_CAP);
-        for (i, side) in [Side::Buy, Side::Sell].into_iter().enumerate() {
-            builder.push(&Trade {
-                agg_id: i as u64,
-                timestamp_ms: i as i64,
-                price: dec("100"),
-                quantity: dec("2"),
-                side,
-            });
-        }
-        let flat = builder.close().unwrap();
-        assert_eq!(bar_delta(&flat), Decimal::ZERO);
-        assert_eq!(fmt_delta(bar_delta(&flat)), None, "no winner, no chip");
     }
 
     /// A layer that does not paint does not dress. This is the whole reason

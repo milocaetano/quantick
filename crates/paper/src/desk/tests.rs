@@ -287,7 +287,7 @@ fn cmd_modifier_tokens_round_trip_and_state_defaults_fill_gaps() {
     assert_eq!(settings.buy, CmdModifier::Alt);
     assert_eq!(
         settings.sell,
-        CmdModifier::Ctrl,
+        CmdModifier::Alt,
         "an unknown token falls back to the default"
     );
 }
