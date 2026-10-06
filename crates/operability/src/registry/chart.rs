@@ -91,6 +91,13 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
         mapping: capability!("layout.pane.collapse", "layout.pane.expand"),
     },
     UiBehaviour {
+        id: "layout.flow.collapse",
+        title: "Put the flow chart away, or bring it back",
+        reach: "drag the vertical canvas divider toward the right edge or drag its rail left",
+        keys: &[(Source::Authored, "the right-side canvas rail and divider")],
+        mapping: capability!("layout.flow.collapse", "layout.flow.expand"),
+    },
+    UiBehaviour {
         id: "layout.pane.focus",
         title: "Make another chart the focused one",
         reach: "click anywhere on a chart",

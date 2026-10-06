@@ -761,6 +761,33 @@ fn workspace(app: &mut QuantickApp, env: &ScenarioInputs) {
             ),
         }
     }
+    // Stage the same collapse state the divider and its rail change. This
+    // follows the layout choice because set_layout opens every selected pane.
+    let tab = app.active_tab_mut();
+    if env.var("QUANTICK_PANE_COLLAPSED").as_deref() == Some("1") {
+        tab.set_context_collapsed(true);
+    }
+    if env.var("QUANTICK_FLOW_PANE_COLLAPSED").as_deref() == Some("1") {
+        tab.set_flow_collapsed(true);
+    }
+    let upper = env.var("QUANTICK_CONTEXT_UPPER_COLLAPSED").as_deref() == Some("1");
+    let lower = env.var("QUANTICK_CONTEXT_LOWER_COLLAPSED").as_deref() == Some("1");
+    if tab.layout == CanvasLayout::TimeTimeAndFlow && (upper ^ lower) {
+        let shares = tab.context_height_shares();
+        let shares = [
+            shares
+                .first()
+                .copied()
+                .filter(|share| *share > 0.0)
+                .unwrap_or(0.5),
+            shares
+                .get(1)
+                .copied()
+                .filter(|share| *share > 0.0)
+                .unwrap_or(0.5),
+        ];
+        tab.restore_context_heights(&shares, &[upper, lower]);
+    }
     // The Workspace menu's own path, so a validation run can see the save
     // confirmation without a click. A menu entry cannot be reached by an
     // env var, but the state it produces has to be
@@ -820,6 +847,8 @@ crate::hooks::declare_hooks![
     "QUANTICK_BUBBLES_AUTOSTART",
     "QUANTICK_BUBBLE_BUDGET",
     "QUANTICK_DOCK_TAB",
+    "QUANTICK_CONTEXT_LOWER_COLLAPSED",
+    "QUANTICK_CONTEXT_UPPER_COLLAPSED",
     "QUANTICK_FOOTPRINT_STYLE",
     "QUANTICK_HISTORY_REACH",
     "QUANTICK_HISTORY_REACH_SPAN_MINUTES",
@@ -836,6 +865,8 @@ crate::hooks::declare_hooks![
     "QUANTICK_LEGEND_COLLAPSED",
     "QUANTICK_LIVE_STRIP_AUTOSTART",
     "QUANTICK_PANE_LAYOUTS",
+    "QUANTICK_PANE_COLLAPSED",
+    "QUANTICK_FLOW_PANE_COLLAPSED",
     "QUANTICK_PAPER_CALENDAR",
     "QUANTICK_PAPER_REPORT_AUTOSTART",
     "QUANTICK_PAPER_REPORT_LIST",

@@ -638,6 +638,13 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         ("layout.pane.expand", LAYOUT_V2, json!({}), Readback::Moves),
+        (
+            "layout.flow.collapse",
+            LAYOUT_V2,
+            json!({}),
+            Readback::Moves,
+        ),
+        ("layout.flow.expand", LAYOUT_V2, json!({}), Readback::Moves),
         ("layout.pane.resize_pair", 1, Value::Null, Readback::Moves),
         // Seven places cannot come back as they were sent, so v2 refuses
         // them — and the readback stays where it was.
@@ -987,6 +994,8 @@ fn layout_v2_answers_with_the_exact_share_and_v1_is_still_there() {
         ("layout.pane.move", json!({ "from": "1", "to": "2" })),
         ("layout.pane.collapse", json!({})),
         ("layout.pane.expand", json!({})),
+        ("layout.flow.collapse", json!({})),
+        ("layout.flow.expand", json!({})),
         (
             "layout.pane.set_interval",
             json!({ "pane": "1", "interval_ms": 300_000 }),

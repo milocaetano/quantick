@@ -48,6 +48,47 @@ fn collapsed_context_canvases_are_hidden_in_both_scene_and_workspace() {
     assert_eq!(visible, 1, "only the flow canvas remains visible");
 }
 
+#[test]
+fn folded_flow_and_upper_context_have_no_stale_geometry_or_scene_canvases() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(40);
+    run_frame(&mut app, &ctx);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let tab = app.active_tab();
+    assert!(tab.flow_pane.frame.chart_area.is_some());
+    assert!(tab.time_panes[0].frame.chart_area.is_some());
+    let hidden_ids = [tab.flow_pane.id, tab.time_panes[0].id];
+    let visible_id = tab.time_panes[1].id;
+
+    let tab = app.active_tab_mut();
+    tab.restore_context_heights(&[0.4, 0.6], &[true, false]);
+    tab.set_flow_collapsed(true);
+    run_frame(&mut app, &ctx);
+
+    let tab = app.active_tab();
+    assert_eq!(tab.focused_side(), PaneSide::Time(1));
+    for pane in [&tab.flow_pane, &tab.time_panes[0]] {
+        assert!(pane.frame.chart_area.is_none());
+        assert!(pane.frame.plot_area.is_none());
+        assert!(pane.frame.price_gutter.is_none());
+        let viewport = crate::control::chart::viewport_snapshot(pane);
+        assert!(!viewport.geometry_available);
+        assert_eq!(viewport.visible_start_slot.0, 0);
+        assert_eq!(viewport.visible_end_slot_exclusive.0, 0);
+        assert!(viewport.price_range.is_none());
+    }
+    assert!(tab.time_panes[1].frame.chart_area.is_some());
+    let scene = observer_scene(&app);
+    let ids = scene_control_ids(&scene);
+    for id in hidden_ids {
+        assert!(!ids.contains(&format!("pane.{id}.canvas")));
+    }
+    assert!(ids.contains(&format!("pane.{visible_id}.canvas")));
+}
+
 /// The same app, plus the notice sender its feed would hold. The other
 /// ends come back so the caller keeps the channels open, exactly as a live
 /// feed thread would.

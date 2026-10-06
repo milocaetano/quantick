@@ -30,5 +30,14 @@
 # `app` owns; it moves with them.
 # Lowered to 24,266 when paper trading's deciding half moved into
 # `quantick-paper` (#607).
-!budget 24266
-crates/app 24266
+# Raised by 76 lines for the Tab-owned collapse transitions and control/workspace
+# adapters: they address live egui pane identities and cannot run headlessly.
+# Raised by 34 lines for harness-only launch adapters that apply those same
+# live tab transitions after the requested canvas layout has been selected.
+# Raised by 5 lines to keep the observer's visible-pane walk aligned with
+# the actual live canvas, including the new horizontal and vertical rails.
+# Raised to 24,436 when main merged in: the branch's signed raises above
+# (115 lines) sat on 55 lines of slack that #607's lowering removed, so
+# the branch's true growth over its base is 170 lines.
+!budget 24436
+crates/app 24436

@@ -1481,24 +1481,64 @@ fn a_three_chart_canvas_resizes_its_context_rows_up_and_down() {
     );
     run_frame_at(&mut app, &ctx, TEST_WINDOW);
 
-    let bottom = app
-        .active_tab()
-        .pane(PaneSide::Time(1))
-        .frame
-        .area
-        .expect("the lower context chart remains drawn");
-    let chart_floor = crate::canvas_layout::MIN_PANE_WIDTH_PX
-        - crate::time_header::HEIGHT_PX
-        - crate::canvas_layout::CANVAS_DIVIDER_PX;
+    assert!(app.active_tab().pane_collapsed(PaneSide::Time(1)));
     assert!(
-        bottom.height() >= chart_floor,
-        "the lower chart remains readable at the drag limit: {} < {chart_floor}",
-        bottom.height()
+        app.active_tab()
+            .pane(PaneSide::Time(1))
+            .frame
+            .area
+            .is_none()
+    );
+    assert!(
+        app.active_tab()
+            .pane(PaneSide::Time(0))
+            .frame
+            .area
+            .is_some()
     );
     assert!(
         app.active_tab().context_divider_rect(0).is_some(),
         "the handle remains available to reverse the drag"
     );
+
+    let handle = app.active_tab().context_divider_rect(0).unwrap();
+    drag_sized(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        handle.center(),
+        egui::pos2(handle.center().x, TEST_WINDOW.y / 2.0),
+    );
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    assert!(!app.active_tab().pane_collapsed(PaneSide::Time(1)));
+
+    let handle = app.active_tab().context_divider_rect(0).unwrap();
+    drag_sized(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        handle.center(),
+        egui::pos2(handle.center().x, 0.0),
+    );
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    assert!(app.active_tab().pane_collapsed(PaneSide::Time(0)));
+    assert!(
+        app.active_tab()
+            .pane(PaneSide::Time(0))
+            .frame
+            .area
+            .is_none()
+    );
+    let handle = app.active_tab().context_divider_rect(0).unwrap();
+    drag_sized(
+        &mut app,
+        &ctx,
+        TEST_WINDOW,
+        handle.center(),
+        egui::pos2(handle.center().x, TEST_WINDOW.y / 2.0),
+    );
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    assert!(!app.active_tab().pane_collapsed(PaneSide::Time(0)));
 
     let short_window = egui::vec2(TEST_WINDOW.x, 440.0);
     run_frame_at(&mut app, &ctx, short_window);
@@ -1507,7 +1547,6 @@ fn a_three_chart_canvas_resizes_its_context_rows_up_and_down() {
         .active_tab()
         .context_divider_rect(0)
         .expect("the short canvas keeps its divider");
-    let before = [height(&app, 0), height(&app, 1)];
     drag_sized(
         &mut app,
         &ctx,
@@ -1516,10 +1555,13 @@ fn a_three_chart_canvas_resizes_its_context_rows_up_and_down() {
         egui::pos2(divider.center().x, 0.0),
     );
     run_frame_at(&mut app, &ctx, short_window);
-    assert_eq!(
-        [height(&app, 0), height(&app, 1)],
-        before,
-        "a canvas too short for two floors refuses to erase either chart"
+    assert!(app.active_tab().pane_collapsed(PaneSide::Time(0)));
+    assert!(
+        app.active_tab()
+            .pane(PaneSide::Time(1))
+            .frame
+            .area
+            .is_some()
     );
 }
 
@@ -1595,16 +1637,13 @@ fn addressed_context_pair_resize_is_discoverable_clamped_and_atomic() {
     )
     .unwrap();
     run_frame(&mut app, &ctx);
+    assert!(app.active_tab().pane_collapsed(PaneSide::Time(1)));
     assert!(
         app.active_tab()
             .pane(PaneSide::Time(1))
             .frame
             .area
-            .unwrap()
-            .height()
-            >= crate::canvas_layout::MIN_PANE_WIDTH_PX
-                - crate::time_header::HEIGHT_PX
-                - crate::canvas_layout::CANVAS_DIVIDER_PX
+            .is_none()
     );
     app.active_tab_mut().set_context_collapsed(true);
     assert!(
@@ -1929,7 +1968,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
 /// (e) Dragging the divider moves it, and stops at the quarter §11
 /// promises each pane.
 #[test]
-fn dragging_the_divider_resizes_the_panes_and_stops_at_the_minimum() {
+fn dragging_the_divider_resizes_then_collapses_the_flow_pane() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = split_app(&ctx, 200);
     let flow_before = app
@@ -1963,57 +2002,42 @@ fn dragging_the_divider_resizes_the_panes_and_stops_at_the_minimum() {
         "at the flow pane's expense"
     );
 
-    // Now shove it far past the minimum: it stops, it does not collapse.
-    for _ in 0..6 {
-        let grab = app
-            .active_tab()
-            .canvas_divider_rect()
-            .expect("registered")
-            .center();
-        drag_chart(&mut app, &ctx, grab, egui::pos2(grab.x + 400.0, grab.y));
+    // Carry the same drag beyond the floor to dismiss the right chart.
+    for _ in 0..8 {
+        let Some(divider) = app.active_tab().canvas_divider_rect() else {
+            break;
+        };
+        drag_chart(
+            &mut app,
+            &ctx,
+            divider.center(),
+            divider.center() + egui::vec2(400.0, 0.0),
+        );
         run_frame(&mut app, &ctx);
+        if app.active_tab().flow_collapsed {
+            break;
+        }
     }
-    // Asserted on what is *drawn*, not on the stored share. The floor
-    // moved: it is a width in pixels applied by the splitter every frame,
-    // rather than a quarter of the canvas held on the field. A trader is
-    // promised a readable flow pane, not a particular fraction, and the
-    // fraction was the wrong thing to pin — holding it as a second floor
-    // is what made collapse-by-drag unreachable.
-    let flow_width = app
-        .active_tab()
-        .flow_pane
-        .frame
-        .chart_area
-        .expect("laid out")
-        .width();
-    // "Stops at the minimum" is the claim, so the test is that it stops:
-    // shove it further still and the pane must not move. Asserted this way
-    // rather than against the floor in pixels, because the floor governs
-    // the *pane* while the only rect a test can read is the chart inside
-    // it — the price axis and the tape both take a slice first, and a test
-    // that re-derives their widths is a second copy of the layout.
-    let settled = flow_width;
-    for _ in 0..4 {
-        let grab = app
-            .active_tab()
-            .canvas_divider_rect()
-            .expect("registered")
-            .center();
-        drag_chart(&mut app, &ctx, grab, egui::pos2(grab.x + 400.0, grab.y));
-        run_frame(&mut app, &ctx);
-    }
-    let after = app
-        .active_tab()
-        .flow_pane
-        .frame
-        .chart_area
-        .expect("laid out")
-        .width();
-    assert!(
-        (after - settled).abs() < 1.0,
-        "the flow pane kept shrinking past its floor: {settled}px then {after}px"
-    );
-    assert!(after > 0.0, "the flow pane was squeezed away entirely");
+    assert!(app.active_tab().flow_collapsed);
+    assert!(app.active_tab().flow_pane.frame.area.is_none());
+    assert!(app.active_tab().flow_rail_rect().is_some());
+}
+
+#[test]
+fn a_right_rail_reopens_the_flow_chart_by_dragging_left() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    let restore = app.active_tab().split_fraction;
+    assert!(app.active_tab_mut().set_flow_collapsed(true));
+    run_frame(&mut app, &ctx);
+    let rail = app.active_tab().flow_rail_rect().expect("right rail drawn");
+    assert!(rail.width() >= crate::canvas_layout::COLLAPSED_PANE_WIDTH_PX - 1.0);
+    assert!(app.active_tab().flow_pane.frame.area.is_none());
+    slow_primary_drag(&mut app, &ctx, rail.center(), egui::vec2(-20.0, 0.0), 18);
+    run_frame(&mut app, &ctx);
+    assert!(!app.active_tab().flow_collapsed);
+    assert!(app.active_tab().flow_pane.frame.area.is_some());
+    assert!(app.active_tab().split_fraction < restore + 0.5);
 }
 
 #[test]

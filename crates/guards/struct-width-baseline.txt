@@ -16,9 +16,11 @@
 # Recorded at main bcfb5f19 when the guard landed. `OrderflowHealthSnapshot`
 # was private in `app` then, and invisible to the report's old `pub struct`-only
 # rule.
-!budget 330
+# Raised by one Tab field for the right pane's independent collapse state;
+# the existing context flag still controls the left rail and old workspaces.
+!budget 331
 app::ChartPane 35
-app::Tab 67
+app::Tab 68
 app::ToolRail 32
 # Moved, not grown: #542 took `OrderflowHealthSnapshot` from `app` into
 # `control-schema` with the same 31 fields; the budget is unchanged.

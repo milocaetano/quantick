@@ -49,6 +49,10 @@ capability that cannot change application state.
 | `indicator.script.attach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
 | `indicator.script.detach` | 1 | `indicator` | no | `annotate`, `annotate.script` |
 | `layers.visibility.set` | 1 | `layers` | no | `cockpit`, `cockpit.layout` |
+| `layout.flow.collapse` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.flow.collapse` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.flow.expand` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
+| `layout.flow.expand` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.focus.set` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.focus.set` | 2 | `layout` | no | `cockpit`, `cockpit.layout` |
 | `layout.pane.collapse` | 1 | `layout` | no | `cockpit`, `cockpit.layout` |
@@ -84,4 +88,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-59 capabilities registered.
+63 capabilities registered.

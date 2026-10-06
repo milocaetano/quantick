@@ -50,6 +50,8 @@ pub const RESIZE_CAPABILITY_ID: &str = "layout.pane.resize";
 pub const COLLAPSE_CAPABILITY_ID: &str = "layout.pane.collapse";
 
 pub const EXPAND_CAPABILITY_ID: &str = "layout.pane.expand";
+pub const FLOW_COLLAPSE_CAPABILITY_ID: &str = "layout.flow.collapse";
+pub const FLOW_EXPAND_CAPABILITY_ID: &str = "layout.flow.expand";
 
 pub const FOCUS_CAPABILITY_ID: &str = "layout.focus.set";
 
@@ -217,6 +219,8 @@ pub struct LayoutResult {
     pub fraction: f64,
     /// Whether the context column is collapsed to its rail.
     pub collapsed: bool,
+    /// Whether the flow pane is folded against the right rail.
+    pub flow_collapsed: bool,
     /// Whether the call changed anything. `false` is a real answer: applying
     /// the layout that is already showing is a no-op, not a failure.
     pub changed: bool,
@@ -344,6 +348,7 @@ pub const LAYOUT_COLLAPSE_PROOF: &[&str] =
 
 /// The layout-tab calls have one version and are not called by the v2 test.
 pub const LAYOUT_TAB_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST];
+pub const FLOW_COLLAPSE_PROOF: &[&str] = &[EVERY_OPTIONAL_TEST];
 
 /// `layout.pane.set_bar_spec` has a v2, which the every-optional-row test
 /// drives; the v2 test predates it and does not call it.
@@ -377,6 +382,22 @@ pub const READBACKS: &[Readback] = &[
         "tabs[].context_collapsed",
         "the tab's context column no longer reads collapsed",
         LAYOUT_PROOF,
+    ),
+    snapshot(
+        FLOW_COLLAPSE_CAPABILITY_ID,
+        Optional,
+        workspace::SCOPE_ID,
+        "tabs[].flow_collapsed",
+        "the tab's flow pane reads collapsed",
+        FLOW_COLLAPSE_PROOF,
+    ),
+    snapshot(
+        FLOW_EXPAND_CAPABILITY_ID,
+        Optional,
+        workspace::SCOPE_ID,
+        "tabs[].flow_collapsed",
+        "the tab's flow pane no longer reads collapsed",
+        FLOW_COLLAPSE_PROOF,
     ),
     snapshot(
         "layout.pane.move",

@@ -62,5 +62,16 @@
 # `from_color32`) and the colour pickers edit a copy and write it back.
 # Lowered to 102,843 when paper trading's deciding half moved into
 # `quantick-paper` (#607).
-!budget 102843
-crates/app 102843
+# Raised by 344 lines for symmetric canvas collapse: the four draggable rails,
+# their hit areas and pointer routing live beside the egui canvas they draw.
+# Sizing state and workspace/control adapters share those transitions; this
+# change adds no trade-path work or new dependency to the UI crate.
+# Raised by another 14 lines to expose the new rails from harness-only launch
+# hooks and verify their state after layout selection.
+# Raised by 6 lines to name the restored collapse state as one argument,
+# keeping the public restore operation within the repository's lint limit.
+# Raised by 38 lines to repair reviewed collapse boundaries: visible-pane
+# focus, stale frame geometry and short-window rail reopening. The observer
+# and pointer now share the corrected visible-pane walk.
+!budget 103245
+crates/app 103245

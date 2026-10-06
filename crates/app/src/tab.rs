@@ -199,6 +199,14 @@ pub struct LegendFold {
     pub time: bool,
 }
 
+/// The collapsed columns and context bands restored with a saved canvas.
+pub(crate) struct CanvasCollapseRestore<'a> {
+    pub context: bool,
+    pub flow: bool,
+    pub heights: &'a [f32],
+    pub collapsed_slots: &'a [bool],
+}
+
 /// How long the outcome of a *load older* press stays on screen.
 ///
 /// Long enough to read one short line without hunting for it, short enough
@@ -554,10 +562,12 @@ pub struct Tab {
     pub split_fraction: f32,
     /// Whether the context column is collapsed to its rail.
     pub context_collapsed: bool,
+    /// Whether the flow pane is folded against the right canvas edge.
+    pub flow_collapsed: bool,
     /// Retained context heights and the geometry of their last drawn stack.
     context_stack: context_resize::ContextStack,
     /// Pixel width and opening direction of the divider drag in flight.
-    canvas_drag: Option<(f32, bool)>,
+    canvas_drag: Option<(f32, bool, bool)>,
     /// The canvas width the last drawn frame used. See
     /// [`Self::last_canvas_width`].
     last_canvas_width: f32,
@@ -658,7 +668,8 @@ impl Tab {
             pending_context_panes: 0,
             layout: CanvasLayout::Single,
             split_fraction: DEFAULT_PANE_FRACTION,
-            context_collapsed: pane_collapsed_hook(),
+            context_collapsed: false,
+            flow_collapsed: false,
             context_stack: context_resize::ContextStack::default(),
             canvas_drag: None,
             last_canvas_width: 0.0,
@@ -804,6 +815,11 @@ impl Tab {
         self.collapsed_rail
     }
 
+    #[cfg(test)]
+    pub(crate) fn flow_rail_rect(&self) -> Option<egui::Rect> {
+        self.flow_collapsed.then_some(self.collapsed_rail).flatten()
+    }
+
     /// Where the dividers between stacked context charts landed.
     #[cfg(test)]
     pub(crate) fn context_divider_rect(&self, index: usize) -> Option<egui::Rect> {
@@ -906,22 +922,6 @@ impl Tab {
         self.forced_latency.or(*self.feed_latency.borrow())
     }
 }
-
-/// `QUANTICK_PANE_COLLAPSED=1` opens every tab with its context panes folded.
-/// A capture hook: compiled only with the scenario harness (or under test).
-fn pane_collapsed_hook() -> bool {
-    #[cfg(any(feature = "scenario-harness", test))]
-    {
-        crate::hooks::captured::var("QUANTICK_PANE_COLLAPSED").is_some_and(|value| value == "1")
-    }
-    #[cfg(not(any(feature = "scenario-harness", test)))]
-    {
-        false
-    }
-}
-
-#[cfg(any(feature = "scenario-harness", test))]
-crate::hooks::declare_hooks!["QUANTICK_PANE_COLLAPSED"];
 
 #[cfg(test)]
 mod tests;

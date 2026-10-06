@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 49 |
+| Reachable by capability | 50 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
 | Excluded: `pending_capability` | 55 |
-| **Total** | **112** |
+| **Total** | **113** |
 
-82 of the 112 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 30 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+82 of the 113 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 31 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -73,6 +73,7 @@ The three exclusion classes are closed:
 | `chart.tape.zoom` | Zoom the tape's time window in or out | wheel over the native tape; drag or wheel on its time strip; its window menu | `chart.tape_view.set` | — |
 | `chart.zoom` | Zoom the chart's time window in or out | wheel on the canvas; drag on the time axis | — | `pending_capability` — `chart.window.read` reports the time window; no capability changes its zoom. Price-axis zoom has its own capability above. Tracked in issue 401 |
 | `layout.context.collapse` | Put the context charts away, or bring them back | View menu, Ctrl+0 | `layout.pane.collapse`, `layout.pane.expand` | — |
+| `layout.flow.collapse` | Put the flow chart away, or bring it back | drag the vertical canvas divider toward the right edge or drag its rail left | `layout.flow.collapse`, `layout.flow.expand` | — |
 | `layout.pane.focus` | Make another chart the focused one | click anywhere on a chart | `layout.focus.set` | — |
 | `layout.pane.move` | Move a context chart up or down the column | View → Move chart, and the drag the menu entry exists to replace | `layout.pane.move` | — |
 | `layout.pane.resize` | Resize columns or adjacent context charts | drag the horizontal or vertical divider between two charts | `layout.pane.resize`, `layout.pane.resize_pair` | — |
@@ -188,7 +189,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 30 |
+| `authored` | 31 |
 
 ## Appendix: rows no registry stands behind
 
@@ -206,6 +207,7 @@ declares nothing here is a guard failure.
 | `chart.tape.pan` | a pointer drag over the tape the canvas handles directly; no registry names it |
 | `chart.tape.zoom` | a wheel over the tape and its time strip the canvas handles directly |
 | `chart.zoom` | a wheel and an axis drag the canvas handles directly; no registry names it |
+| `layout.flow.collapse` | the right-side canvas rail and divider |
 | `layout.pane.focus` | a click anywhere on a pane; the focus follows it without a named control |
 | `layout.pane.resize` | a drag on the divider between two panes |
 | `layer.candle_aggression.toggle` | the per-pane candle aggression layer is opt-in and has no toolbar duplicate |

@@ -51,6 +51,11 @@
     },
     "WorkspacePane": {
       "properties": {
+        "collapsed": {
+          "default": false,
+          "description": "A folded pane retains its identity and data behind its rail.",
+          "type": "boolean"
+        },
         "focused": {
           "type": "boolean"
         },
@@ -94,6 +99,11 @@
         },
         "feed_id": {
           "type": "string"
+        },
+        "flow_collapsed": {
+          "default": false,
+          "description": "The right-hand chart has a draggable rail instead of its body.",
+          "type": "boolean"
         },
         "focused_pane": {
           "$ref": "#/$defs/PaneSideDto"

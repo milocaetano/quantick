@@ -102,6 +102,19 @@ mod shared_routing_tests {
         assert!(tab.pane_at(3).is_none(), "there is no fourth pane");
     }
 
+    #[test]
+    fn flow_and_upper_context_collapsed_focus_the_visible_lower_chart() {
+        let mut tab = tab_with_context_panes(2);
+        tab.layout = CanvasLayout::TimeTimeAndFlow;
+        tab.restore_context_heights(&[0.4, 0.6], &[true, false]);
+        tab.set_flow_collapsed(true);
+        for stale_focus in [PaneSide::Flow, PaneSide::Time(0), PaneSide::Time(9)] {
+            tab.focus = stale_focus;
+            assert_eq!(tab.focused_side(), PaneSide::Time(1));
+            assert_eq!(tab.focused_pane().id, 101);
+        }
+    }
+
     /// A shared mark belongs to the pane whose store holds it, and an edit
     /// made on a mirror has to land *there* — not on "the other pane".
     ///
@@ -527,7 +540,12 @@ mod collapse_path_tests {
         tab.restore_canvas(
             CanvasLayout::TimeTimeAndFlow,
             None,
-            false,
+            CanvasCollapseRestore {
+                context: false,
+                flow: false,
+                heights: &[],
+                collapsed_slots: &[],
+            },
             Some(PaneSide::Time(1)),
             &[60_000, 900_000],
             LegendFold::default(),
@@ -562,6 +580,30 @@ mod collapse_path_tests {
         );
     }
 
+    #[test]
+    fn canvas_restore_keeps_right_and_vertical_collapse_state() {
+        let mut tab = tab();
+        tab.restore_canvas(
+            CanvasLayout::TimeTimeAndFlow,
+            Some(0.42),
+            CanvasCollapseRestore {
+                context: false,
+                flow: true,
+                heights: &[0.4, 0.6],
+                collapsed_slots: &[true, false],
+            },
+            Some(PaneSide::Flow),
+            &[60_000, 300_000],
+            LegendFold::default(),
+        );
+        assert!(tab.flow_collapsed);
+        assert!(tab.pane_collapsed(PaneSide::Time(0)));
+        assert!(!tab.pane_collapsed(PaneSide::Time(1)));
+        assert_eq!(tab.context_height_shares(), vec![0.4, 0.6]);
+        assert_eq!(tab.context_collapsed_slots(), vec![true, false]);
+        assert_eq!(tab.split_fraction, 0.42);
+    }
+
     /// over the trader's file.
     #[test]
     fn a_restored_workspace_keeps_its_collapsed_column() {
@@ -569,7 +611,12 @@ mod collapse_path_tests {
         tab.restore_canvas(
             CanvasLayout::TimeAndFlow,
             Some(0.42),
-            true,
+            CanvasCollapseRestore {
+                context: true,
+                flow: false,
+                heights: &[],
+                collapsed_slots: &[],
+            },
             Some(PaneSide::Flow),
             &[],
             LegendFold {
