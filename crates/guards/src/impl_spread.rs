@@ -21,7 +21,8 @@
 //! # What is counted
 //!
 //! The definition is `tools/outside_score/measure.py`'s, ported in [`lex`]
-//! so the guard and the score never disagree about one tree: test files and
+//! so the guard and the score agree on every tree whose crates have distinct
+//! directory names, as this tree's do: test files and
 //! `#[cfg(test)]` items are out, a crate's production lines are its non-blank
 //! code lines once comments and literals are blanked, and an inherent impl is
 //! an `impl` at the start of a line whose header holds no `for`. Trait impls
@@ -195,6 +196,17 @@ impl Inventory {
     }
 }
 
+/// An entry that vanished between `read_dir` and its stat (an editor's atomic
+/// save, a temp file) is no entry, not a directory that cannot be listed.
+/// Any other error stays an error.
+fn skip_vanished<T>(entry: std::io::Result<T>) -> std::io::Result<Option<T>> {
+    match entry {
+        Ok(value) => Ok(Some(value)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 /// Every `.rs` file under `dir` that is not a test file, filed under
 /// `krate`. A subdirectory holding its own `Cargo.toml` is another crate:
 /// walked as one when `nested`, skipped otherwise. `target/` is build output
@@ -202,13 +214,16 @@ impl Inventory {
 fn inventory(root: &Path, dir: &str, krate: &str, nested: bool, found: &mut Inventory) {
     let listed = fs::read_dir(root.join(dir)).and_then(|entries| {
         entries
-            .map(|entry| {
-                let entry = entry?;
-                Ok((
-                    entry.file_name(),
-                    entry.file_type()?,
-                    entry.metadata()?.len(),
-                ))
+            .filter_map(|entry| {
+                skip_vanished((|| {
+                    let entry = entry?;
+                    Ok((
+                        entry.file_name(),
+                        entry.file_type()?,
+                        entry.metadata()?.len(),
+                    ))
+                })())
+                .transpose()
             })
             .collect::<std::io::Result<Vec<_>>>()
     });

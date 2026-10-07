@@ -367,3 +367,13 @@ fn check_file_on_a_crate_deleted_whole_answers_as_the_tree_does() {
     let at_edit = lines(&check_file(&root, "crates/gone/src/lib.rs"));
     assert_eq!(at_edit, expected);
 }
+
+#[test]
+fn a_vanished_entry_is_skipped_and_other_errors_stay_errors() {
+    use std::io::{Error, ErrorKind};
+    assert_eq!(skip_vanished(Ok(7)).unwrap(), Some(7));
+    let gone = skip_vanished::<u8>(Err(Error::from(ErrorKind::NotFound)));
+    assert_eq!(gone.unwrap(), None);
+    let denied = skip_vanished::<u8>(Err(Error::from(ErrorKind::PermissionDenied)));
+    assert_eq!(denied.unwrap_err().kind(), ErrorKind::PermissionDenied);
+}
