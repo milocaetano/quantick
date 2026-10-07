@@ -8,12 +8,12 @@
 
 use eframe::egui;
 
+use super::object_row::{delete_all_question, object_row};
 use super::{
     DRAWING_MANAGER_DEFAULT_POSITION, DRAWING_MANAGER_GAP_PX, DrawingChromeAsk,
     DrawingChromeSurface, DrawingEnv, INSPECTOR_DEFAULT_WIDTH_PX, INSPECTOR_FALLBACK_HEIGHT_PX,
     MANAGER_AREA_ID, clamp_into_chart,
 };
-use crate::theme;
 use crate::toolrail::ToolboxDock;
 
 /// The manager's own state.
@@ -114,126 +114,23 @@ pub(crate) fn draw(
                 // Walked in reverse: the manager lists top-most first, the
                 // same order hit-testing resolves overlap.
                 for index in (0..count).rev() {
-                    let row = &rows[index];
-                    ui.horizontal(|ui| {
-                        let mut label = egui::RichText::new(&row.name);
-                        if row.hidden {
-                            label = label.weak();
-                        }
-                        if ui.selectable_label(row.selected, label).clicked() {
-                            ask.manager_select = Some(index);
-                        }
-                        if let Some(author) = &row.author {
-                            ui.label(
-                                egui::RichText::new("assistant")
-                                    .small()
-                                    .color(theme::TEXT_SUPPORT),
-                            )
-                            .on_hover_text(format!("Placed by {author}, not by you"));
-                        }
-                        if row.locked {
-                            ui.label(egui::RichText::new("locked").small());
-                        }
-                        if row.hidden {
-                            ui.label(egui::RichText::new("hidden").small());
-                        }
-                        // Which band an object is on, for the objects that are
-                        // not on the candles. An object nothing on screen is
-                        // showing — its indicator removed, hidden, collapsed
-                        // or errored — is listed in amber and says which of
-                        // those it is. It still exists; deleting it stays the
-                        // trader's call.
-                        if let Some(chip) = row.band.chip() {
-                            let text = egui::RichText::new(chip).small();
-                            match row.band.hint() {
-                                Some(hint) => {
-                                    ui.label(text.color(theme::AMBER)).on_hover_text(hint);
-                                }
-                                None => {
-                                    ui.label(text);
-                                }
-                            }
-                        }
-                        if row.foreign_market {
-                            // The one state the chart alone cannot explain:
-                            // the mark resolves onto real bars, at a price
-                            // that belonged to another instrument.
-                            ui.label(egui::RichText::new("other market").small())
-                                .on_hover_text(
-                                    "Drawn while this tab showed a different instrument. The                                      moment still exists here; the price does not mean the                                      same thing",
-                                );
-                        }
-                        if row.off_series {
-                            // The mark outlived the bars it was drawn on and
-                            // the chart fades it (§D7b). The list is where it
-                            // can be found and removed, since a clamped object
-                            // may be nowhere near the window the trader is
-                            // looking at.
-                            ui.label(egui::RichText::new("off series").small())
-                                .on_hover_text(
-                                    "Drawn at a moment this chart's bars do not cover. It is                                      shown at the nearest edge, faded, until you move or                                      delete it",
-                                );
-                        }
-                        if row.shared {
-                            // Which marks are global is a question the list
-                            // must answer at a glance (Marina, §D7).
-                            ui.label(egui::RichText::new("all charts").small())
-                                .on_hover_text(
-                                    "Also drawn on the other chart of this tab, at the same \
-                                     moment in market time",
-                                );
-                        }
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                let delete = ui.small_button("Delete");
-                                #[cfg(test)]
-                                chrome
-                                    .manager
-                                    .action_rects
-                                    .push((index, "Delete", delete.rect));
-                                if delete.clicked() {
-                                    ask.manager_delete = Some(index);
-                                }
-                                let front = ui.small_button("Front");
-                                #[cfg(test)]
-                                chrome.manager.action_rects.push((index, "Front", front.rect));
-                                if front.clicked() {
-                                    ask.manager_bring_to_front = Some(index);
-                                }
-                                let lock =
-                                    ui.small_button(if row.locked { "Unlock" } else { "Lock" });
-                                #[cfg(test)]
-                                chrome.manager.action_rects.push((index, "Lock", lock.rect));
-                                if lock.clicked() {
-                                    ask.manager_toggle_locked = Some(index);
-                                }
-                                let eye = ui.small_button(if row.hidden { "Show" } else { "Hide" });
-                                #[cfg(test)]
-                                chrome.manager.action_rects.push((index, "Eye", eye.rect));
-                                if eye.clicked() {
-                                    ask.manager_toggle_hidden = Some(index);
-                                }
-                            },
-                        );
-                    });
+                    let rects = object_row(ui, &rows[index], index, &mut ask);
+                    #[cfg(test)]
+                    chrome.manager.action_rects.extend(
+                        rects
+                            .into_iter()
+                            .map(|(label, rect)| (index, label, rect)),
+                    );
+                    #[cfg(not(test))]
+                    let _ = rects;
                 }
             });
         ui.separator();
         if confirm_delete_all && count > 0 {
-            // The count-bearing gate (audit M7): deleting everything is one
-            // command, but never one stray click — and locked objects go too,
-            // which the question says out loud.
-            ui.horizontal(|ui| {
-                ui.label(format!("Delete all {count} drawing(s), locked included?"));
-                if ui.button("Delete all").clicked() {
-                    ask.delete_all = true;
-                    confirm_delete_all = false;
-                }
-                if ui.button("Keep").clicked() {
-                    confirm_delete_all = false;
-                }
-            });
+            if let Some(delete) = delete_all_question(ui, count) {
+                ask.delete_all = delete;
+                confirm_delete_all = false;
+            }
         } else {
             confirm_delete_all = false;
             ui.horizontal(|ui| {

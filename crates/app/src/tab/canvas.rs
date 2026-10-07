@@ -144,6 +144,11 @@ impl Tab {
         // the guarantee that a foreign mark can only be looked at.
         self.paint_shared_drawings(ui.painter());
 
+        // A chart menu's object ask applies on the chart it was opened on.
+        if let Some(pane) = chrome.drawing_chrome.menu_target() {
+            self.aim_drawing_at(pane);
+        }
+
         // The position HUD rides the pane that owns order entry (the focused
         // one). It draws here, after the pane pass, because its buttons need
         // the paper host mutably — inside the pass that borrow is pinned

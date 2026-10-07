@@ -10,7 +10,7 @@
 
 use eframe::egui;
 
-use crate::drawings::{self, DrawingAuthor};
+use crate::drawings;
 use crate::pane::DRAWING_ANCHOR_RADIUS_PX;
 use crate::toolrail::{Tool, ToolRail};
 
@@ -106,19 +106,14 @@ impl DrawingController {
             .items()
             .iter()
             .enumerate()
-            .map(
-                |(index, drawing)| crate::surfaces::drawing_chrome::ManagerRow {
-                    name: drawing.display_label(index),
-                    selected: selected == Some(index),
-                    locked: drawing.locked,
-                    hidden: drawing.hidden,
-                    shared: drawing.scope == drawings::DrawingScope::AllCharts,
-                    off_series: drawing.off_series,
-                    foreign_market: drawing.foreign_market,
-                    author: drawing.author.as_ref().map(DrawingAuthor::label),
-                    band: host.band_label(drawing),
-                },
-            )
+            .map(|(index, drawing)| {
+                crate::surfaces::drawing_chrome::ManagerRow::of(
+                    index,
+                    drawing,
+                    selected == Some(index),
+                    host.band_label(drawing),
+                )
+            })
             .collect()
     }
     fn selected_drawing_bbox(&self, host: &DrawingReadAccess<'_>) -> Option<egui::Rect> {

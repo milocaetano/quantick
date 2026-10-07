@@ -51,6 +51,14 @@ pub struct PaneContextMenu {
     /// The chart-layer submenu's latest painted rectangle. A launch hook uses
     /// the same button geometry to expand it for visual validation.
     pub(crate) chart_layers_rect: Option<egui::Rect>,
+    /// "clear objects…" was clicked: the confirmation shows until answered.
+    pub(crate) confirm_clear: bool,
+    /// Test-only trace of the objects submenu's row buttons: index, label, rect.
+    #[cfg(test)]
+    pub object_rects: Vec<(usize, &'static str, egui::Rect)>,
+    /// Test-only: where "clear objects…" was painted.
+    #[cfg(test)]
+    pub clear_objects_rect: Option<egui::Rect>,
 }
 
 impl PaneContextMenu {
@@ -136,6 +144,7 @@ impl ChartPane {
         // button only, so it shares no gesture with the pan, the zoom or the
         // drawing tools — a pan that ends anywhere never opens it.
         chart.context_menu(|ui| self.draw_layer_menu(ui, chrome));
+        self.draw_clear_objects_confirm(&chart.ctx, areas.chart, chrome.drawing_chrome);
         // While the menu is open the pointer is reading it, not the chart, so
         // no crosshair chases it across the candles behind it.
         if chart.context_menu_opened() {

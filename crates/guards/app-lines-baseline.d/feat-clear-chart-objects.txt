@@ -1,0 +1,10 @@
+# feat/clear-chart-objects: the chart right-click menu's "objects" submenu and
+# confirmed "clear objects…" (pane/objects_menu.rs), and the object manager's
+# row and delete-all question moved into one shared egui widget
+# (surfaces/drawing_chrome/object_row.rs) so both lists draw the same row. All
+# egui layout; the store commands (delete_all, set_hidden_at, delete_selected)
+# already live in drawings::collection, and the menu queues the manager's own
+# asks on the drawing chrome (`ask_from_menu`) rather than applying them.
+# Measured remainder only.
+crates/app +242
+!budget +242

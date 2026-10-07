@@ -1,0 +1,6 @@
+# feat/clear-chart-objects: `Tab::aim_drawing_at` (tab/panes.rs) points the
+# drawing chrome at the pane a chart menu's object ask names — focus plus one
+# selection per tab — so the edit, its toast and the Ctrl+Z after it land on
+# that chart. It reads and writes the tab's panes, which only `app` holds.
+crates/app +16
+!budget +16
