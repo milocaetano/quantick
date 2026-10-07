@@ -4,11 +4,26 @@ use super::*;
 use quantick_control::error::codes;
 use serde_json::{Value, json};
 
-const ACTIONS: [(&str, u32, usize); 3] = [
+const ACTIONS: [(&str, u32, usize); 6] = [
     (crate::control::PROFILE_CAPABILITY_ID, 2, 2),
     (crate::control::FIB_RETRACEMENT_CAPABILITY_ID, 1, 2),
     (crate::control::FIB_PROJECTION_CAPABILITY_ID, 1, 3),
+    (crate::control::ZONE_CAPABILITY_ID, 2, 2),
+    (crate::control::TREND_LINE_CAPABILITY_ID, 1, 2),
+    (crate::control::PARALLEL_CHANNEL_CAPABILITY_ID, 1, 3),
 ];
+
+/// The quick-range actions whose button calls one single-drawing capability.
+const WIRED: [quantick_chart_interaction::quick_range::Action; 5] = {
+    use quantick_chart_interaction::quick_range::Action;
+    [
+        Action::Profile,
+        Action::Retracement,
+        Action::Projection,
+        Action::Rectangle,
+        Action::TrendLine,
+    ]
+};
 
 fn exact_input(app: &QuantickApp, count: usize) -> Value {
     let pane = app.active_tab().drawing_pane();
@@ -154,11 +169,9 @@ fn all_actions_resolve_fractional_market_and_first_future_slots_exactly() {
 
 #[test]
 fn quick_range_wire_round_trip_preserves_near_boundary_coordinates_for_all_actions() {
-    use quantick_chart_interaction::quick_range::{
-        Action, Anchor, Owner, PlaceRequest, RangeContext,
-    };
+    use quantick_chart_interaction::quick_range::{Anchor, Owner, PlaceRequest, RangeContext};
     for duplicate_times in [false, true] {
-        for (action, (capability, version, count)) in Action::ALL.into_iter().zip(ACTIONS) {
+        for (action, (capability, version, count)) in WIRED.into_iter().zip(ACTIONS) {
             let ctx = egui::Context::default();
             let (mut app, _commands) = app_with_history(8);
             if duplicate_times {

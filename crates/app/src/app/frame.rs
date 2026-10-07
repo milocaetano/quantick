@@ -639,6 +639,9 @@ impl QuantickApp {
     }
 }
 
+const QUICK_RANGE_REFUSED: &str =
+    "The drawing could not be placed; the temporary range is still available.";
+
 impl QuantickApp {
     /// The registered capability runs synchronously before the remaining drawing
     /// response. Invalid input still leaves those ordinary commands to execute.
@@ -647,6 +650,12 @@ impl QuantickApp {
         mut ask: crate::surfaces::drawing_chrome::DrawingChromeAsk,
         now: Instant,
     ) {
+        let mut host = super::drawing_controller::DrawingAccess::new(&mut self.tabs);
+        match self.drawings.begin_pending_placement(&mut ask, &mut host) {
+            Some(Ok(tool)) => self.toolrail.arm(crate::toolrail::Tool::Drawing(tool)),
+            Some(Err(true)) => self.surfaces.toast.note(QUICK_RANGE_REFUSED, now),
+            _ => {}
+        }
         if let Some(action) = self.drawings.begin_registered_action(&mut ask) {
             let pending = action.pending;
             let result = self.control_action(
@@ -665,10 +674,7 @@ impl QuantickApp {
             if let Err(error) = result {
                 tracing::warn!(target:"quantick::control",event_code="QUICK_RANGE_PROFILE_REFUSED",code=%error.code,error=%error.message,"the quick-range drawing could not be placed");
                 if explain {
-                    self.surfaces.toast.note(
-                        "The drawing could not be placed; the temporary range is still available.",
-                        now,
-                    );
+                    self.surfaces.toast.note(QUICK_RANGE_REFUSED, now);
                 }
             }
         }

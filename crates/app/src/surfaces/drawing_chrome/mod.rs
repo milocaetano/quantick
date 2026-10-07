@@ -68,9 +68,11 @@ pub(crate) use launch::DrawingChromeLaunch;
 #[cfg(any(feature = "quick-range-harness", test))]
 pub(crate) use quick_range::{QUICK_RANGE_HOOKS, QuickRangeLaunch};
 
+#[cfg(test)]
+pub(crate) use quick_range::Action as QuickRangeAction;
 pub(crate) use quick_range::{
-    Action as QuickRangeAction, ActionUi as QuickRangeActionUi, Control as QuickRangeControl,
-    Owner as QuickRangeOwner,
+    ACTION_COUNT as QUICK_RANGE_ACTION_COUNT, ActionUi as QuickRangeActionUi,
+    Control as QuickRangeControl, Owner as QuickRangeOwner,
 };
 
 use eframe::egui;

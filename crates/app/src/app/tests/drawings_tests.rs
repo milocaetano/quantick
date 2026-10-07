@@ -197,7 +197,7 @@ mod placement_characterization {
     }
 }
 
-fn secondary_button(position: egui::Pos2, pressed: bool) -> egui::Event {
+pub(super) fn secondary_button(position: egui::Pos2, pressed: bool) -> egui::Event {
     egui::Event::PointerButton {
         pos: position,
         button: egui::PointerButton::Secondary,
@@ -206,7 +206,7 @@ fn secondary_button(position: egui::Pos2, pressed: bool) -> egui::Event {
     }
 }
 
-fn drag_quick_range(
+pub(super) fn drag_quick_range(
     app: &mut QuantickApp,
     ctx: &egui::Context,
     start: egui::Pos2,
@@ -228,7 +228,7 @@ fn drag_quick_range(
     );
 }
 
-fn quick_range_action(
+pub(super) fn quick_range_action(
     app: &QuantickApp,
     action: crate::surfaces::drawing_chrome::QuickRangeAction,
 ) -> crate::surfaces::drawing_chrome::QuickRangeControl {
@@ -240,7 +240,7 @@ fn quick_range_action(
         .expect("the requested quick-range action is present")
 }
 
-fn click_quick_range_action(
+pub(super) fn click_quick_range_action(
     app: &mut QuantickApp,
     ctx: &egui::Context,
     action: crate::surfaces::drawing_chrome::QuickRangeAction,
@@ -652,7 +652,7 @@ fn a_future_space_range_still_creates_a_volume_profile() {
 
 /// Where a secondary drag starts and ends on the flow pane: bar 80.5 and bar
 /// 160.5, above and below the chart's middle.
-fn quick_range_ends(app: &QuantickApp) -> (egui::Rect, egui::Pos2, egui::Pos2) {
+pub(super) fn quick_range_ends(app: &QuantickApp) -> (egui::Rect, egui::Pos2, egui::Pos2) {
     let pane = &app.active_tab().flow_pane;
     let chart = pane
         .frame

@@ -95,6 +95,32 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
         ),
         create_fib_projection,
     )?;
+    for (id, version, title, description, handler) in [
+        (
+            ZONE_CAPABILITY_ID,
+            ZONE_CHART_CAPABILITY_VERSION,
+            "Place a zone",
+            "Draws a rectangle on two chart coordinates, including projected space beyond the latest bar.",
+            create_chart_zone as super::actions::ActionHandler,
+        ),
+        (
+            TREND_LINE_CAPABILITY_ID,
+            CAPABILITY_VERSION,
+            "Place a trend line",
+            "Draws a trend line between two chart coordinates.",
+            create_trend_line,
+        ),
+        (
+            PARALLEL_CHANNEL_CAPABILITY_ID,
+            CAPABILITY_VERSION,
+            "Place a parallel channel",
+            "Draws a channel whose base joins the first two chart coordinates and whose width reaches the third.",
+            create_parallel_channel,
+        ),
+    ] {
+        registry.register(chart_descriptor(id, version, title, description), handler)?;
+    }
+    registry.register(horizontal_levels_descriptor(), create_horizontal_levels)?;
     registry.register(remove_descriptor(), remove_annotation)?;
     Ok(())
 }
@@ -162,34 +188,84 @@ fn create_fib_projection<P: TabsPort + TabsMutPort + ?Sized>(
     place_chart(app, access, actor, input, "fib-extension")
 }
 
-fn place_chart<P: TabsPort + TabsMutPort + ?Sized>(
+fn create_chart_zone<P: TabsPort + TabsMutPort + ?Sized>(
     app: &mut P,
     access: &mut ControlAccess,
     actor: &ActorContext,
     input: &Value,
-    tool_id: &str,
 ) -> Result<Value, ControlError> {
+    place_chart(app, access, actor, input, ZONE_TOOL_ID)
+}
+
+fn create_trend_line<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    place_chart(app, access, actor, input, TREND_LINE_TOOL_ID)
+}
+
+fn create_parallel_channel<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    place_chart(app, access, actor, input, PARALLEL_CHANNEL_TOOL_ID)
+}
+
+/// One horizontal line per distinct price of the two anchors, each anchored
+/// at the earlier bar. Every coordinate resolves before anything is placed.
+fn create_horizontal_levels<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    use quantick_chart_interaction::quick_range::horizontal_levels;
     let input: ChartAnnotationInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let tool = drawings::DrawingTool::by_id(tool_id).ok_or_else(|| {
+    let tool = registered_tool(HORIZONTAL_LINE_TOOL_ID)?;
+    let (tab_id, pane_side) = resolve_target(app, input.target.as_ref())?;
+    let author = annotation_author(access, actor);
+    let opening = [(); 2].map(|()| app.tab_reads().new_drawing(tool));
+    let pane = control_pane_mut(app, tab_id, pane_side)?;
+    let validated = series::resolve(pane, tab_id, &input, 2)?;
+    let left = validated[usize::from(validated[1].point.bar < validated[0].point.bar)];
+    let levels = horizontal_levels([validated[0].point, validated[1].point]);
+    let mut annotations = Vec::with_capacity(levels.prices().len());
+    for (&price, fresh) in levels.prices().iter().zip(opening) {
+        let mut anchor = left;
+        anchor.point.price = price;
+        let point = ChartPoint::at_time(anchor.point.bar, price, anchor.point.time_ms);
+        let name = input.name.clone();
+        let placed = install(pane, tool, vec![point], fresh, author.clone(), name, None)?;
+        let target = (tab_id, pane.id, pane_side);
+        annotations.push(chart_result(placed, target, tool, &[anchor], actor));
+    }
+    let result = ChartAnnotationSetResult { annotations };
+    journal_annotation(access, actor, ANNOTATION_CREATED_EVENT_KIND, &result)?;
+    serde_json::to_value(result)
+        .map_err(|error| ControlError::invalid_request(format!("annotation result: {error}")))
+}
+
+fn registered_tool(tool_id: &str) -> Result<drawings::DrawingTool, ControlError> {
+    drawings::DrawingTool::by_id(tool_id).ok_or_else(|| {
         capability_unavailable(format!(
             "the `{tool_id}` drawing tool is not registered in this build"
         ))
-    })?;
-    let required = tool.required_points();
-    let (tab_id, pane_side) = resolve_target(app, input.target.as_ref())?;
-    let author = annotation_author(access, actor);
-    let fresh = app.tab_reads().new_drawing(tool);
-    let pane = control_pane_mut(app, tab_id, pane_side)?;
+    })
+}
 
-    let validated = series::resolve(pane, tab_id, &input, required)?;
-    let points: Vec<_> = validated
-        .iter()
-        .map(|anchor| {
-            ChartPoint::at_time(anchor.point.bar, anchor.point.price, anchor.point.time_ms)
-        })
-        .collect();
-    let resolved = validated
+fn chart_result(
+    (annotation_id, label): (u64, String),
+    (tab_id, pane_id, pane_side): (u64, u64, crate::pane::PaneSide),
+    tool: drawings::DrawingTool,
+    validated: &[quantick_chart_interaction::annotation::ResolvedAnchor],
+    actor: &ActorContext,
+) -> ChartAnnotationResult {
+    let anchors = validated
         .iter()
         .map(|anchor| {
             let price = canonical_f64(anchor.point.price, ANNOTATION_PRICE_DECIMALS)
@@ -211,20 +287,52 @@ fn place_chart<P: TabsPort + TabsMutPort + ?Sized>(
             }
         })
         .collect();
-    let (annotation_id, label) = install(pane, tool, points, fresh, author, input.name, None)?;
-    let result = ChartAnnotationResult {
+    ChartAnnotationResult {
         annotation_id: WireU64::new(annotation_id),
         tab_id: WireU64::new(tab_id),
-        pane_id: WireU64::new(pane.id),
+        pane_id: WireU64::new(pane_id),
         pane_side: pane_side.into(),
         tool_id: tool.id().to_owned(),
-        anchors: resolved,
+        anchors,
         author: AnnotationAuthor {
             actor_kind: actor_kind_name(actor.actor_kind).to_owned(),
             client_name: actor.client_name.clone(),
         },
         label,
-    };
+    }
+}
+
+fn place_chart<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+    tool_id: &str,
+) -> Result<Value, ControlError> {
+    let input: ChartAnnotationInput = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let tool = registered_tool(tool_id)?;
+    let required = tool.required_points();
+    let (tab_id, pane_side) = resolve_target(app, input.target.as_ref())?;
+    let author = annotation_author(access, actor);
+    let fresh = app.tab_reads().new_drawing(tool);
+    let pane = control_pane_mut(app, tab_id, pane_side)?;
+
+    let validated = series::resolve(pane, tab_id, &input, required)?;
+    let points: Vec<_> = validated
+        .iter()
+        .map(|anchor| {
+            ChartPoint::at_time(anchor.point.bar, anchor.point.price, anchor.point.time_ms)
+        })
+        .collect();
+    let placed = install(pane, tool, points, fresh, author, input.name, None)?;
+    let result = chart_result(
+        placed,
+        (tab_id, pane.id, pane_side),
+        tool,
+        &validated,
+        actor,
+    );
     journal_annotation(access, actor, ANNOTATION_CREATED_EVENT_KIND, &result)?;
     serde_json::to_value(result)
         .map_err(|error| ControlError::invalid_request(format!("annotation result: {error}")))

@@ -10,10 +10,55 @@ pub enum Action {
     Profile,
     Retracement,
     Projection,
+    /// A rectangle on the range's box corners.
+    Rectangle,
+    /// A trend line on the leg's two anchors.
+    TrendLine,
+    /// Horizontal lines at the box's top and bottom prices.
+    Horizontal,
+    /// The leg becomes a channel's base; the trader's next click sets its width.
+    Channel,
 }
 
 impl Action {
-    pub const ALL: [Self; 3] = [Self::Profile, Self::Retracement, Self::Projection];
+    pub const ALL: [Self; 7] = [
+        Self::Profile,
+        Self::Retracement,
+        Self::Projection,
+        Self::Rectangle,
+        Self::TrendLine,
+        Self::Horizontal,
+        Self::Channel,
+    ];
+
+    /// The conversion leaves a pending placement for the trader's next click
+    /// instead of a finished drawing.
+    pub fn arms_placement(self) -> bool {
+        self == Self::Channel
+    }
+}
+
+/// The prices a horizontal conversion marks: the range's top, then its
+/// bottom. A range with no height marks its one price once.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HorizontalLevels {
+    prices: [f64; 2],
+    len: usize,
+}
+
+impl HorizontalLevels {
+    pub fn prices(&self) -> &[f64] {
+        &self.prices[..self.len]
+    }
+}
+
+pub fn horizontal_levels(anchors: [Anchor; 2]) -> HorizontalLevels {
+    let [a, b] = anchors.map(|anchor| anchor.price);
+    let (top, bottom) = if a >= b { (a, b) } else { (b, a) };
+    HorizontalLevels {
+        prices: [top, bottom],
+        len: if top == bottom { 1 } else { 2 },
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

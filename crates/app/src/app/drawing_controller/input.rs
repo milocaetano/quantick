@@ -518,18 +518,55 @@ impl DrawingController {
             tracing::warn!(target:"quantick::control",event_code="QUICK_RANGE_INPUT_INVALID","the quick-range drawing coordinates could not be serialized");
             return None;
         };
-        let version = match operation.action {
-            crate::surfaces::drawing_chrome::QuickRangeAction::Profile => {
-                crate::control::PROFILE_CAPABILITY_VERSION
-            }
-            _ => crate::control::FIB_CAPABILITY_VERSION,
-        };
         Some(RegisteredDrawingAction {
             capability: operation.action.capability_id(),
-            version,
+            version: operation.action.capability_version(),
             input,
             pending: PendingDrawingAction(request.conversion),
         })
+    }
+    /// A conversion the trader finishes by hand: the range's leg becomes the
+    /// draft's first anchors and the returned tool is armed so the next click
+    /// places the rest through the tool's own placement. `Err(explain)` when
+    /// the draft could not start; `None` when no such conversion was asked.
+    pub(crate) fn begin_pending_placement(
+        &mut self,
+        ask: &mut crate::surfaces::drawing_chrome::DrawingChromeAsk,
+        host: &mut DrawingAccess<'_>,
+    ) -> Option<Result<crate::drawings::DrawingTool, bool>> {
+        use crate::surfaces::drawing_chrome::QuickRangeActionUi as _;
+        use quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome;
+        let request = ask
+            .place_quick_range
+            .take_if(|placement| placement.conversion.request().action.arms_placement())?;
+        let operation = *request.conversion.request();
+        let tool = crate::drawings::DrawingTool::by_id(operation.action.tool_id());
+        let seeded = tool.is_some_and(|tool| {
+            let points = operation.anchors.map(|anchor| {
+                crate::drawings::ChartPoint::at_time(anchor.bar, anchor.price, anchor.time_ms)
+            });
+            let opening = crate::drawings::new_drawing_from_defaults(&self.presets, tool);
+            host.seed_draft(
+                operation.context.owner.tab,
+                request.side,
+                tool,
+                &points,
+                opening,
+            )
+        });
+        let outcome = if seeded {
+            PlacementOutcome::Placed
+        } else {
+            PlacementOutcome::ActionRefused
+        };
+        let readback = self
+            .chrome
+            .quick_range
+            .finish_conversion(request.conversion, outcome);
+        match tool {
+            Some(tool) if seeded => Some(Ok(tool)),
+            _ => Some(Err(readback.explain_refusal)),
+        }
     }
     pub(crate) fn finish_registered_action(
         &mut self,

@@ -24,6 +24,11 @@ pub(crate) const BAR_ID: &str = "quick_range_context_bar";
 pub(crate) const ACTION_CONTROL_ID: &str = "quick_range.fixed_range_profile";
 pub(crate) const RETRACEMENT_CONTROL_ID: &str = "quick_range.fib_retracement";
 pub(crate) const PROJECTION_CONTROL_ID: &str = "quick_range.fib_projection";
+pub(crate) const RECTANGLE_CONTROL_ID: &str = "quick_range.rectangle";
+pub(crate) const TREND_LINE_CONTROL_ID: &str = "quick_range.trend_line";
+pub(crate) const HORIZONTAL_CONTROL_ID: &str = "quick_range.horizontal_levels";
+pub(crate) const CHANNEL_CONTROL_ID: &str = "quick_range.parallel_channel";
+pub(crate) const ACTION_COUNT: usize = Action::ALL.len();
 const STALE_REASON_WIDTH_PX: f32 = 180.0;
 
 #[cfg(test)]
@@ -36,6 +41,7 @@ pub(crate) trait ActionUi {
     fn control_id(self) -> &'static str;
     fn tool_id(self) -> &'static str;
     fn capability_id(self) -> &'static str;
+    fn capability_version(self) -> u32;
     fn label(self) -> &'static str;
 }
 impl ActionUi for Action {
@@ -44,6 +50,10 @@ impl ActionUi for Action {
             Self::Profile => 0,
             Self::Retracement => 1,
             Self::Projection => 2,
+            Self::Rectangle => 3,
+            Self::TrendLine => 4,
+            Self::Horizontal => 5,
+            Self::Channel => 6,
         }
     }
 
@@ -52,6 +62,10 @@ impl ActionUi for Action {
             Self::Profile => ACTION_CONTROL_ID,
             Self::Retracement => RETRACEMENT_CONTROL_ID,
             Self::Projection => PROJECTION_CONTROL_ID,
+            Self::Rectangle => RECTANGLE_CONTROL_ID,
+            Self::TrendLine => TREND_LINE_CONTROL_ID,
+            Self::Horizontal => HORIZONTAL_CONTROL_ID,
+            Self::Channel => CHANNEL_CONTROL_ID,
         }
     }
 
@@ -60,6 +74,10 @@ impl ActionUi for Action {
             Self::Profile => crate::frvp::TOOL_ID,
             Self::Retracement => "fib-retracement",
             Self::Projection => "fib-extension",
+            Self::Rectangle => crate::control::ZONE_TOOL_ID,
+            Self::TrendLine => crate::control::TREND_LINE_TOOL_ID,
+            Self::Horizontal => crate::control::HORIZONTAL_LINE_TOOL_ID,
+            Self::Channel => crate::control::PARALLEL_CHANNEL_TOOL_ID,
         }
     }
 
@@ -68,6 +86,18 @@ impl ActionUi for Action {
             Self::Profile => crate::control::PROFILE_CAPABILITY_ID,
             Self::Retracement => crate::control::FIB_RETRACEMENT_CAPABILITY_ID,
             Self::Projection => crate::control::FIB_PROJECTION_CAPABILITY_ID,
+            Self::Rectangle => crate::control::ZONE_CAPABILITY_ID,
+            Self::TrendLine => crate::control::TREND_LINE_CAPABILITY_ID,
+            Self::Horizontal => crate::control::HORIZONTAL_LEVELS_CAPABILITY_ID,
+            Self::Channel => crate::control::PARALLEL_CHANNEL_CAPABILITY_ID,
+        }
+    }
+
+    fn capability_version(self) -> u32 {
+        match self {
+            Self::Profile => crate::control::PROFILE_CAPABILITY_VERSION,
+            Self::Rectangle => crate::control::ZONE_CHART_CAPABILITY_VERSION,
+            _ => crate::control::FIB_CAPABILITY_VERSION,
         }
     }
 
@@ -76,6 +106,10 @@ impl ActionUi for Action {
             Self::Profile => "Fixed-range volume profile",
             Self::Retracement => "Fib retracement",
             Self::Projection => "Fib projection",
+            Self::Rectangle => "Rectangle",
+            Self::TrendLine => "Trend line",
+            Self::Horizontal => "Horizontal lines at the range's high and low",
+            Self::Channel => "Parallel channel - click to set its width",
         }
     }
 }
@@ -135,7 +169,7 @@ pub(crate) struct QuickRange {
     side: Option<PaneSide>,
     look: Option<NewDrawing>,
     geometry: Option<Geometry>,
-    action_rects: [Option<egui::Rect>; 3],
+    action_rects: [Option<egui::Rect>; ACTION_COUNT],
     #[cfg(any(feature = "quick-range-harness", test))]
     demo_requested: Option<(bool, bool)>,
     #[cfg(any(feature = "quick-range-harness", test))]
@@ -216,7 +250,7 @@ impl QuickRange {
         if self.model.context() == Some(owner.context()) && self.model.view().is_none() {
             self.side = Some(owner.side);
             self.geometry = None;
-            self.action_rects = [None; 3];
+            self.action_rects = [None; ACTION_COUNT];
         }
     }
 
@@ -256,7 +290,7 @@ impl QuickRange {
             .model
             .update(Command::Dismiss, self.model.context().unwrap_or_default());
         self.geometry = None;
-        self.action_rects = [None; 3];
+        self.action_rects = [None; ACTION_COUNT];
         result.consumed
     }
 
@@ -307,13 +341,18 @@ impl QuickRange {
     }
 
     #[cfg(test)]
+    pub fn paint_anchors(&self) -> Option<[ChartPoint; 2]> {
+        self.model.view().map(|view| view.anchors.map(point))
+    }
+
+    #[cfg(test)]
     pub fn control(&self, tab: u64) -> Option<Control> {
         self.controls(tab)?
             .into_iter()
             .find(|control| control.action == Action::Profile)
     }
 
-    pub fn controls(&self, tab: u64) -> Option<[Control; 3]> {
+    pub fn controls(&self, tab: u64) -> Option<[Control; ACTION_COUNT]> {
         let view = self.model.view()?;
         if view.context.owner.tab != tab
             || view.phase == Phase::Dragging
@@ -364,15 +403,13 @@ pub(super) fn draw(
         right_limit,
     }) = quick.geometry.take()
     else {
-        quick.action_rects = [None; 3];
+        quick.action_rects = [None; ACTION_COUNT];
         return DrawingChromeAsk::default();
     };
-    let [Some(profile), Some(retracement), Some(projection)] =
-        Action::ALL.map(|action| drawings::DrawingTool::by_id(action.tool_id()))
-    else {
+    let tools = Action::ALL.map(|action| drawings::DrawingTool::by_id(action.tool_id()));
+    if tools.iter().any(Option::is_none) {
         return DrawingChromeAsk::default();
-    };
-    let tools = [profile, retracement, projection];
+    }
     let mut size = drawings::context_bar::single_action_bar_size();
     size.x += TOOLRAIL_ICON.hit * (Action::ALL.len() - 1) as f32;
     if view.phase == Phase::Stale {
@@ -381,7 +418,7 @@ pub(super) fn draw(
     let position = drawings::context_bar::place(chart, right_limit, bounds, size);
     let rect = egui::Rect::from_min_size(position, size);
     let mut clicked = None;
-    let mut action_rects = [None; 3];
+    let mut action_rects = [None; ACTION_COUNT];
     egui::Area::new(egui::Id::new(BAR_ID))
         .order(egui::Order::Foreground)
         .fixed_pos(position)
@@ -390,7 +427,7 @@ pub(super) fn draw(
             drawings::context_bar::floating_frame().show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
-                    for (action, tool) in Action::ALL.into_iter().zip(tools) {
+                    for (action, tool) in Action::ALL.into_iter().zip(tools.into_iter().flatten()) {
                         let response = IconButton::new(tool.icon(), TOOLRAIL_ICON)
                             .vector_icon(tool.icon_strokes(), tool.icon_dots(), tool.icon_letter())
                             .enabled(view.actionable())

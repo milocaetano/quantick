@@ -32,6 +32,11 @@ pub const ANNOTATE_CHART_PERMISSION_ID: &str = "annotate.chart";
 pub const LABEL_CAPABILITY_ID: &str = "annotate.label.create";
 pub const ARROW_CAPABILITY_ID: &str = "annotate.arrow.create";
 pub const ZONE_CAPABILITY_ID: &str = "annotate.zone.create";
+/// Version 2 of the zone takes future-aware chart anchors.
+pub const ZONE_CHART_CAPABILITY_VERSION: u32 = 2;
+pub const TREND_LINE_CAPABILITY_ID: &str = "annotate.trend_line.create";
+pub const HORIZONTAL_LEVELS_CAPABILITY_ID: &str = "annotate.horizontal_levels.create";
+pub const PARALLEL_CHANNEL_CAPABILITY_ID: &str = "annotate.parallel_channel.create";
 pub const PROFILE_CAPABILITY_ID: &str = "annotate.fixed_range_profile.create";
 pub const PROFILE_CAPABILITY_VERSION: u32 = 2;
 pub const FIB_RETRACEMENT_CAPABILITY_ID: &str = "annotate.fib_retracement.create";
@@ -53,6 +58,9 @@ pub const UI_BOUNDED_COST_ID: &str = "ui_bounded";
 pub const LABEL_TOOL_ID: &str = "text";
 pub const ARROW_TOOL_ID: &str = "arrow";
 pub const ZONE_TOOL_ID: &str = "rectangle";
+pub const TREND_LINE_TOOL_ID: &str = "trend-line";
+pub const HORIZONTAL_LINE_TOOL_ID: &str = "horizontal-line";
+pub const PARALLEL_CHANNEL_TOOL_ID: &str = "parallel-channel";
 
 /// The longest label an annotation may carry. A note is a sentence on a
 /// chart, not a document; the bound is what keeps one call from covering the
@@ -177,6 +185,12 @@ pub struct ChartAnnotationResult {
     pub label: String,
 }
 
+/// One call that places several objects, in placement order.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ChartAnnotationSetResult {
+    pub annotations: Vec<ChartAnnotationResult>,
+}
+
 /// What an annotation returns: the object's stable id, where it actually
 /// landed, and the authorship the trader sees on it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -290,6 +304,18 @@ pub fn chart_descriptor(
     descriptor.version = version;
     descriptor.input_schema = generated_schema::<ChartAnnotationInput>();
     descriptor.output_schema = generated_schema::<ChartAnnotationResult>();
+    descriptor
+}
+
+/// Two chart anchors in, one horizontal line per distinct price out.
+pub fn horizontal_levels_descriptor() -> CapabilityDescriptor {
+    let mut descriptor = chart_descriptor(
+        HORIZONTAL_LEVELS_CAPABILITY_ID,
+        CAPABILITY_VERSION,
+        "Place horizontal levels",
+        "Draws a horizontal line at the top and at the bottom price of two chart coordinates; one line when both prices are equal.",
+    );
+    descriptor.output_schema = generated_schema::<ChartAnnotationSetResult>();
     descriptor
 }
 

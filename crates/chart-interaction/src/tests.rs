@@ -396,6 +396,10 @@ fn a_shift_levelled_range_marks_one_horizontal_level() {
 #[test]
 fn only_the_channel_waits_for_the_traders_third_point() {
     for action in Action::ALL {
-        assert_eq!(action.arms_placement(), action == Action::Channel, "{action:?}");
+        assert_eq!(
+            action.arms_placement(),
+            action == Action::Channel,
+            "{action:?}"
+        );
     }
 }
