@@ -323,11 +323,7 @@ impl Tab {
                 tab = tab_id,
                 bars = received,
                 last,
-                action = match &taken {
-                    quantick_feed::candle_base::SeamMinutesTaken::Kept => "parked_beside_the_days",
-                    quantick_feed::candle_base::SeamMinutesTaken::JoinBase(_) => "joined_the_minute_base",
-                    quantick_feed::candle_base::SeamMinutesTaken::Discarded => "discarded_stale",
-                },
+                action = taken.token(),
                 "minutes for the seam lead arrived"
             );
             if let (quantick_feed::candle_base::SeamMinutesTaken::JoinBase(minutes), Some(base)) =

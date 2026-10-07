@@ -24,3 +24,9 @@ crates/app +108
 # stays reads and writes the tab's panes and its command channel. +102.
 crates/app +247
 !budget +247
+# feat/daily-weekly-monthly-bars, seam-lead honesty round (+109): the same
+# wiring as the ui-free raise beside it (+46) and the widget half of the two
+# UI fixes — the interval drag's month routing and the pointer tag measured
+# and written as a date on calendar charts. Decisions headless as above.
+crates/app +109
+!budget +109

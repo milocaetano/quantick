@@ -109,6 +109,18 @@ pub enum SeamMinutesTaken {
     Discarded,
 }
 
+impl SeamMinutesTaken {
+    /// A stable token for the structured log.
+    #[must_use]
+    pub const fn token(&self) -> &'static str {
+        match self {
+            Self::Kept => "parked_beside_the_days",
+            Self::JoinBase(_) => "joined_the_minute_base",
+            Self::Discarded => "discarded_stale",
+        }
+    }
+}
+
 /// The wish a seam's own minutes are parked under: none. They cover a day at
 /// most, so no pane wanting minutes gets them back as its base.
 const SEAM_ONLY_MS: i64 = 0;

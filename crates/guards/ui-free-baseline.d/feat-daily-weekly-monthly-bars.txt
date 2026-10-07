@@ -15,3 +15,13 @@ crates/app +71
 # panes and channel, which only `app` holds.
 crates/app +103
 !budget +103
+# feat/daily-weekly-monthly-bars, seam-lead honesty round (+46): the tab
+# routes a seam-minutes reply into the minute base and asks up to the first
+# trade, the control plane labels a seam bar or a first venue week partial,
+# the interval drag routes a typed month to the month setting, and the
+# pointer's tag writes a calendar chart's date. The decisions are headless
+# (quantick_feed::candle_base, candles::seam_lead, starts_inside_bucket,
+# quantick_chart's seam_bar_partial, quantick_control_schema's labels); these
+# lines carry them out on the tab, its panes and its widgets.
+crates/app +46
+!budget +46

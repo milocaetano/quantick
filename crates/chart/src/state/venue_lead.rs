@@ -126,13 +126,31 @@ impl VenueLead {
             .or(forming)
             .map(|bar| bar.open_time)
     }
+
+    /// Whether the first bar knowingly misses part of its bucket: a time
+    /// chart's first print came after the bucket opened, and no lead that
+    /// reaches that print is merged in front of it.
+    pub(super) fn seam_partial(
+        &self,
+        spec: BarConfiguration,
+        bars: &[Bar],
+        forming: Option<&Bar>,
+    ) -> bool {
+        let (Some(interval), Some(first)) = (
+            spec.time_interval_ms(),
+            self.first_print_open_ms(bars, forming),
+        ) else {
+            return false;
+        };
+        let merged = self.bar.is_none() || self.merged_lead(spec, bars, forming).is_some();
+        time_bucket_start(first, interval) < first && !(self.covers && merged)
+    }
 }
 
 impl ChartState {
     /// Merge `lead` into the first bar where it fits (see [`self`]); `None`
-    /// takes it away. `covers_seam` is whether the lead — or, with none, the
-    /// venue's record — leaves nothing of the first bar's bucket before its
-    /// first print unaccounted for. Whether either changed.
+    /// takes it away. `covers_seam`: nothing of the bucket before the first
+    /// print is left out. Whether either changed.
     pub fn set_venue_lead(&mut self, lead: Option<Bar>, covers_seam: bool) -> bool {
         let changed = self.venue_lead.replace(lead, covers_seam, &mut self.bars);
         if changed {
@@ -150,19 +168,12 @@ impl ChartState {
         self.venue_lead.merged_lead(spec, &self.bars, forming)
     }
 
-    /// Whether the first bar knowingly misses part of its bucket: a time
-    /// chart's first print came after the bucket opened, and no lead that
-    /// reaches that print is merged in front of it. True on a chart with no
-    /// venue history at all, whose first bar is the prints' alone.
+    /// Whether the first bar knowingly misses part of its bucket — true on a
+    /// chart with no venue history, whose first bar is the prints' alone.
     #[must_use]
     pub fn seam_bar_partial(&self) -> bool {
-        let (Some(interval), Some(first)) =
-            (self.spec.time_interval_ms(), self.first_print_open_ms())
-        else {
-            return false;
-        };
-        let merged = self.venue_lead.bar.is_none() || self.venue_lead().is_some();
-        time_bucket_start(first, interval) < first && !(self.venue_lead.covers && merged)
+        let forming = self.builder.partial();
+        self.venue_lead.seam_partial(self.spec, &self.bars, forming)
     }
 
     /// The first bar's open as its prints alone cut it: what a lead is cut
