@@ -37,6 +37,7 @@ use crate::ui_state::WorkspaceExt;
 mod arrangement_baseline_tests;
 mod bar_registry_tests;
 mod bare_canvas;
+mod bench_batches;
 mod calendar_history_tests;
 mod chart_view_tests;
 mod control_launch_baselines;
@@ -78,6 +79,7 @@ mod workspaces_tests;
 
 use super::*;
 use crate::chart::PriceScale;
+use bench_batches::{BatchReading, BestBatches};
 use settled_frame::{frame_instant, pin_frame_clock, settle_workers, settled_frame};
 
 use rust_decimal::Decimal;
@@ -715,7 +717,19 @@ fn drag_sized(
     start: egui::Pos2,
     end: egui::Pos2,
 ) {
-    run_frame_sized(
+    drag_sized_from_press(app, ctx, size, start, end);
+}
+
+/// [`drag_sized`], returning the press frame's output so a test can check
+/// what the press itself landed on.
+fn drag_sized_from_press(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+    size: egui::Vec2,
+    start: egui::Pos2,
+    end: egui::Pos2,
+) -> egui::FullOutput {
+    let press = run_frame_sized(
         app,
         ctx,
         size,
@@ -739,6 +753,7 @@ fn drag_sized(
         vec![egui::Event::PointerMoved(end), pointer_button(end, false)],
         egui::Modifiers::NONE,
     );
+    press
 }
 
 fn run_frame_at(app: &mut QuantickApp, ctx: &egui::Context, size: egui::Vec2) {
@@ -1357,7 +1372,8 @@ fn close_requested_frame(app: &mut QuantickApp, ctx: &egui::Context) {
         .or_default()
         .events
         .push(egui::ViewportEvent::Close);
-    let _ = ctx.run(input, |ctx| app.draw_frame(ctx, Instant::now()));
+    let now = frame_instant(ctx);
+    let _ = ctx.run(input, |ctx| app.draw_frame(ctx, now));
 }
 
 /// A tool the tests can star without caring which one it is.
@@ -2324,11 +2340,8 @@ const BENCH_DRAWINGS_PER_PANE: usize = 40;
 const BENCH_BOOK_LEVELS_PER_SIDE: i64 = 128;
 const BENCH_CLOSED_TRADES: usize = 120;
 
-/// Measure the core capture in batches: `(best median, best p99, best
-/// worst)` in microseconds, each the minimum of that statistic across the
-/// batches. A noisy neighbour can only make a batch look slower, never
-/// faster, so each statistic's best reading is the capture's own cost.
-fn measure_core_capture_us() -> (u64, u64, u64) {
+/// Measure the core capture in batches; see [`BestBatches`].
+fn measure_core_capture_us() -> BestBatches {
     const WARMUP_CAPTURES: usize = 25;
     const MEASURED_CAPTURES: usize = 500;
     const BATCHES: usize = 3;
@@ -2343,36 +2356,33 @@ fn measure_core_capture_us() -> (u64, u64, u64) {
     for _ in 0..WARMUP_CAPTURES {
         drop(registry.capture(&app, &instance, &scopes).unwrap());
     }
-    let mut best = (u64::MAX, u64::MAX, u64::MAX);
+    let mut readings = Vec::with_capacity(BATCHES);
     for _ in 0..BATCHES {
         let mut elapsed_us = Vec::with_capacity(MEASURED_CAPTURES);
         for _ in 0..MEASURED_CAPTURES {
             drop(registry.capture(&app, &instance, &scopes).unwrap());
             elapsed_us.push(registry.performance().last_capture_us);
         }
-        elapsed_us.sort_unstable();
-        let median_us = elapsed_us[elapsed_us.len() / 2];
-        let p99_index = (elapsed_us.len() * 99).div_ceil(100).saturating_sub(1);
-        let p99_us = elapsed_us[p99_index];
-        let worst_us = *elapsed_us.last().unwrap();
+        let BatchReading {
+            median_us,
+            p99_us,
+            worst_us,
+        } = BatchReading::of(elapsed_us);
         println!(
             "CONTROL_CORE_CAPTURE {{\"capture_median_us\":{median_us},\"capture_p99_us\":{p99_us},\"capture_worst_us\":{worst_us},\"captures\":{MEASURED_CAPTURES}}}"
         );
-        best = (
-            best.0.min(median_us),
-            best.1.min(p99_us),
-            best.2.min(worst_us),
-        );
+        readings.push(BatchReading {
+            median_us,
+            p99_us,
+            worst_us,
+        });
     }
-    best
+    BestBatches::of(&readings)
 }
 
-/// Measure the maximum chart-window capture (the reviewed 32-bar page)
-/// in batches: `(best median, best p99, worst of the best batch)` in
-/// microseconds, where "best" is the batch with the lowest p99. A noisy
-/// neighbour can only make a batch look slower, never faster, so the best
-/// batch is the honest reading of the capture's own cost.
-fn measure_max_chart_window_capture_us() -> (u64, u64, u64) {
+/// Measure the maximum chart-window capture (the reviewed 32-bar page) in
+/// batches; see [`BestBatches`].
+fn measure_max_chart_window_capture_us() -> BestBatches {
     use crate::control::chart::{ChartWindowQuery, ChartWindowRange, chart_window};
     use quantick_control::{limits::CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS, wire::WireU64};
 
@@ -2396,7 +2406,7 @@ fn measure_max_chart_window_capture_us() -> (u64, u64, u64) {
     for _ in 0..WARMUP_CAPTURES {
         drop(chart_window(&app, &instance, &query, None).unwrap());
     }
-    let mut best = (u64::MAX, u64::MAX, u64::MAX);
+    let mut readings = Vec::with_capacity(BATCHES);
     for _ in 0..BATCHES {
         let mut elapsed_us = Vec::with_capacity(MEASURED_CAPTURES);
         for _ in 0..MEASURED_CAPTURES {
@@ -2404,19 +2414,21 @@ fn measure_max_chart_window_capture_us() -> (u64, u64, u64) {
             drop(chart_window(&app, &instance, &query, None).unwrap());
             elapsed_us.push(u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX));
         }
-        elapsed_us.sort_unstable();
-        let median_us = elapsed_us[elapsed_us.len() / 2];
-        let p99_index = (elapsed_us.len() * 99).div_ceil(100).saturating_sub(1);
-        let p99_us = elapsed_us[p99_index];
-        let worst_us = *elapsed_us.last().unwrap();
+        let BatchReading {
+            median_us,
+            p99_us,
+            worst_us,
+        } = BatchReading::of(elapsed_us);
         println!(
             "CONTROL_MAX_CHART_WINDOW_CAPTURE {{\"capture_median_us\":{median_us},\"capture_p99_us\":{p99_us},\"capture_worst_us\":{worst_us},\"captures\":{MEASURED_CAPTURES},\"bars\":{CONTROL_CHART_WINDOW_MAX_PAGE_ITEMS}}}"
         );
-        if p99_us < best.1 {
-            best = (median_us, p99_us, worst_us);
-        }
+        readings.push(BatchReading {
+            median_us,
+            p99_us,
+            worst_us,
+        });
     }
-    best
+    BestBatches::of(&readings)
 }
 
 /// Put the pointer over `slot` of the flow pane, the way the cursor tests

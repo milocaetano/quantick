@@ -148,10 +148,14 @@ fn reload_case(late: bool, failed: bool) -> egui::Rect {
     app.active_tab_mut().notice =
         FeedNotice::attention("Fixture transport is paused", "Choose how to recover.");
     app.chrome.feed_popup_tab = Some(app.tabs.active_id());
-    let mut output = frame(&mut app, &ctx, Vec::new(), &mut spawn, late);
-    for _ in 0..2 {
-        output = frame(&mut app, &ctx, Vec::new(), &mut spawn, late);
+    for _ in 0..3 {
+        let _ = frame(&mut app, &ctx, Vec::new(), &mut spawn, late);
     }
+    // The report and the popup's chip move with the book worker's
+    // publication: land it before reading either, and click where two
+    // consecutive frames agree the button is.
+    settle_workers(&mut app);
+    let mut output = frame(&mut app, &ctx, Vec::new(), &mut spawn, late);
     assert!(
         report_text(&ctx, &output)
             .iter()
@@ -160,10 +164,6 @@ fn reload_case(late: bool, failed: bool) -> egui::Rect {
     let before_click = ctx
         .memory(|memory| memory.area_rect(egui::Id::new("Simulated performance")))
         .unwrap();
-    // The popup hangs off a chip the book worker's publication can move:
-    // land it, and click where two consecutive frames agree it is.
-    settle_workers(&mut app);
-    output = frame(&mut app, &ctx, Vec::new(), &mut spawn, late);
     let at = painted_text_center(&output, "Reload").expect("actual popup Reload button");
     output = frame(&mut app, &ctx, Vec::new(), &mut spawn, late);
     assert_eq!(

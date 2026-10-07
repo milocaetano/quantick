@@ -110,6 +110,8 @@ fn candle_aggression_opt_in_preserves_candles_and_the_right_tape() {
             "ordinary/BTC defaults stay off"
         );
     }
+    // Ink and tape configuration are both read at this settled state.
+    settle_workers(&mut app);
     let before = run_frame(&mut app, &ctx);
     let left = &app.active_tab().time_panes[0];
     assert!(
@@ -119,7 +121,6 @@ fn candle_aggression_opt_in_preserves_candles_and_the_right_tape() {
     let chart = left.frame.chart_rect.unwrap();
     let ink = candle_ink(&before, chart);
     assert!(!ink.is_empty(), "the test observes actual candle paint");
-    settle_workers(&mut app);
     let tape = format!("{:?}", app.active_tab().tape().cached_config());
     app.active_tab_mut().time_panes[0].set_layer_visible(layer, true, &mut Default::default());
     let after = run_frame(&mut app, &ctx);

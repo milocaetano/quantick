@@ -176,25 +176,17 @@ fn precise_profile_painted_row_moves_and_visible_handle_resizes() {
         hover.platform_output.cursor_icon,
         egui::CursorIcon::ResizeNwSe
     );
-    // The press itself must still land on the handle, not the body.
-    let press = run_frame_with_events(
+    let press = drag_sized_from_press(
         &mut app,
         &ctx,
-        vec![
-            egui::Event::PointerMoved(handle),
-            pointer_button(handle, true),
-        ],
+        TEST_WINDOW,
+        handle,
+        handle - egui::vec2(30.0, 0.0),
     );
+    // The press itself must still land on the handle, not the body.
     assert_eq!(
         press.platform_output.cursor_icon,
         egui::CursorIcon::ResizeNwSe
-    );
-    let end = handle - egui::vec2(30.0, 0.0);
-    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
-    run_frame_with_events(
-        &mut app,
-        &ctx,
-        vec![egui::Event::PointerMoved(end), pointer_button(end, false)],
     );
     let resized = &app.active_tab().flow_pane.drawings.items()[0].points;
     assert_eq!(resized[0].bar, moved[0].bar);
