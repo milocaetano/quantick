@@ -63,9 +63,18 @@ mod tests {
                 EscapeLayer::InlineText,
                 EscapeLayer::Draft,
                 EscapeLayer::Selection,
-                EscapeLayer::HistoryRun,
-                EscapeLayer::Pointer
+                EscapeLayer::Pointer,
+                EscapeLayer::HistoryRun
             ]
         );
+    }
+    #[test]
+    fn an_armed_tool_takes_escape_before_a_history_run() {
+        let mut visited = Vec::new();
+        consume_escape(|layer| {
+            visited.push(layer);
+            layer == EscapeLayer::Pointer
+        });
+        assert!(!visited.contains(&EscapeLayer::HistoryRun));
     }
 }

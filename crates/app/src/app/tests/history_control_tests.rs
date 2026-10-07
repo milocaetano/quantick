@@ -111,3 +111,77 @@ fn a_history_load_runs_reads_back_and_cancels_through_the_control_plane() {
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
 }
+
+/// What `workspace.summary` says about the History button.
+fn summary_reach(app: &mut QuantickApp, client: &mut LocalClient) -> (Value, Value, Value) {
+    let (response, _) = unkeyed_call(
+        app,
+        client,
+        "snapshot.read",
+        json!({ "scopes": ["workspace.summary"] }),
+    );
+    let summary = success_result(&response)["scopes"]["workspace.summary"]["value"].clone();
+    (
+        summary["history_reach"].clone(),
+        summary["history_reach_span_minutes"].clone(),
+        summary["history_target"].clone(),
+    )
+}
+
+/// A press by mouse and the same press by `feed.history.load` leave the
+/// window in one state: the main click's default, the summary and the saved
+/// workspace all name the target pressed. The frozen v1 field keeps the
+/// tokens it documents; the target itself reads in `history_target`.
+#[test]
+fn a_mouse_press_and_a_control_press_leave_the_same_state() {
+    use quantick_feed::history_reach::HistoryReach;
+    let ctx = egui::Context::default();
+    for (reach, legacy) in [
+        (HistoryReach::Hours(4), "span"),
+        (HistoryReach::Sessions(1), "previous-session"),
+        (HistoryReach::Sessions(3), ""),
+    ] {
+        let mut states = Vec::new();
+        for by_control in [false, true] {
+            let (mut app, _commands) = app_with_history(4);
+            run_frame(&mut app, &ctx);
+            let directory = gateway_test_directory("history-agree");
+            grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+            enable_test_gateway(&mut app, &ctx, &directory, 4);
+            let mut observer = connect(&directory, &options("observer", &[]));
+            let mut cockpit = connect(
+                &directory,
+                &options("cockpit", &["cockpit", "cockpit.layout"]),
+            );
+            if by_control {
+                let (pressed, _) = unkeyed_call(
+                    &mut app,
+                    &mut cockpit,
+                    "feed.history.load",
+                    json!({ "reach": reach.token() }),
+                );
+                success_result(&pressed);
+            } else {
+                app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(reach));
+            }
+            let summary = summary_reach(&mut app, &mut observer);
+            assert_eq!(summary.0, legacy, "{reach:?}: the v1 field keeps its tokens");
+            // An hours target is what a v1 `span` of its minutes meant.
+            let span_minutes = match reach {
+                HistoryReach::Hours(hours) => hours * 60,
+                HistoryReach::Sessions(_) => app.history.history_reach_span_minutes,
+            };
+            assert_eq!(summary.1, span_minutes.to_string(), "{reach:?}");
+            assert_eq!(summary.2, reach.token().as_str(), "{reach:?}");
+            states.push((
+                app.history.history_reach,
+                app.active_tab().main_history_reach(),
+                summary,
+            ));
+            disable_test_gateway(&mut app, &ctx);
+            std::fs::remove_dir_all(directory).ok();
+        }
+        assert_eq!(states[0], states[1], "{reach:?}: mouse and control agree");
+        assert_eq!(states[0].0, reach, "the main click's default follows");
+    }
+}
