@@ -696,11 +696,11 @@ impl Tab {
         live
     }
 
-    /// Whether a page landing while the resume floor stands is the history
-    /// run's reply rather than the new session's recovery window: a request
-    /// is out, and the page brings nothing newer than the oldest print
-    /// charted — a recovery window replays the live edge. An empty page is
-    /// taken as the reply, because a run left waiting on one waits forever.
+    /// Whether a page under the resume floor is the run's reply, not the
+    /// session's recovery window (which replays the live edge): a request is
+    /// out, and the page is empty, lands on an empty chart, or is no newer
+    /// than the oldest print charted. Where the two cannot be told apart the
+    /// page is the reply, since a run left waiting on one waits forever.
     fn answers_history_run(&self, page: &[quantick_engine::Trade]) -> bool {
         self.history_run.awaiting_reply()
             && page.last().is_none_or(|newest| {
@@ -708,7 +708,7 @@ impl Tab {
                     .state
                     .trades()
                     .first()
-                    .is_some_and(|oldest| newest.timestamp_ms <= oldest.timestamp_ms)
+                    .is_none_or(|oldest| newest.timestamp_ms <= oldest.timestamp_ms)
             })
     }
 
