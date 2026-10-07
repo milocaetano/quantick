@@ -917,6 +917,7 @@ fn a_quote_driven_feed_says_so_where_the_side_note_goes() {
                 deal_counter: false,
                 ohlcv_history: false,
                 ohlcv_generation: 0,
+                ohlcv_daily_generation: 0,
             }),
             latency: feed::unsplit_latency(),
             commands: cmd_tx,

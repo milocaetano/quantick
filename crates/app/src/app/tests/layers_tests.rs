@@ -1104,6 +1104,7 @@ fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
                 deal_counter: false,
                 ohlcv_history: false,
                 ohlcv_generation: 0,
+                ohlcv_daily_generation: 0,
             }),
             commands: cmd_tx,
             replay: None,

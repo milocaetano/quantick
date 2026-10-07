@@ -1275,6 +1275,7 @@ mod tests {
                 deal_counter: false,
                 ohlcv_history: true,
                 ohlcv_generation: 0,
+                ohlcv_daily_generation: 0,
             }
         );
         assert_eq!(config.side_note("hyperliquid"), None);

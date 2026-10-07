@@ -1619,6 +1619,7 @@ fn app_backfilled_with(
                 deal_counter: false,
                 ohlcv_history: true,
                 ohlcv_generation: 0,
+                ohlcv_daily_generation: 0,
             }),
             latency: feed::unsplit_latency(),
             commands: cmd_tx,

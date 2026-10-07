@@ -382,6 +382,7 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
             // wherever it draws them, so the trader reads what they got.
             ohlcv_history: request.session.context.is_some(),
             ohlcv_generation: 0,
+            ohlcv_daily_generation: 0,
         }),
         commands: cmd_tx,
         // A recording has no chain to attribute: its prints are as old as the

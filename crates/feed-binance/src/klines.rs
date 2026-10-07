@@ -38,9 +38,6 @@ pub const KLINE_INTERVAL_1M: &str = "1m";
 /// longer. Binance opens a `1d` kline at 00:00 UTC.
 pub const KLINE_INTERVAL_1D: &str = "1d";
 
-/// Milliseconds in the [`KLINE_INTERVAL_1D`] bucket.
-pub const ONE_DAY_MS: i64 = 86_400_000;
-
 /// Milliseconds in the [`KLINE_INTERVAL_1M`] bucket.
 pub const ONE_MINUTE_MS: i64 = 60_000;
 

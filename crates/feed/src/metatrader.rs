@@ -272,6 +272,7 @@ fn session_capabilities(
     book_levels: Option<u32>,
     has_block: bool,
     ohlcv_generation: u64,
+    ohlcv_daily_generation: u64,
     history_paging: bool,
     deal_counter: bool,
 ) -> FeedCapabilities {
@@ -292,6 +293,7 @@ fn session_capabilities(
         // Carried across the hello rather than reset: a reconnect does not
         // un-deliver the blocks that came before it.
         ohlcv_generation,
+        ohlcv_daily_generation,
     }
 }
 
@@ -588,6 +590,7 @@ impl Mt5Feed {
                     *book_levels,
                     self.candles.block().is_some(),
                     self.candles.generation(),
+                    self.candles.daily_generation(),
                     *history_paging,
                     *deal_counter,
                 ));
@@ -858,11 +861,13 @@ impl Mt5Feed {
                  is placed in the UTC day holding most of it"
             );
         }
-        let generation = self.candles.store(OhlcvBlock {
+        self.candles.store(OhlcvBlock {
             interval_ms,
             bars,
             complete: !partial,
         });
+        let (generation, daily_generation) =
+            (self.candles.generation(), self.candles.daily_generation());
         // A block is in hand, and — the part the boolean cannot say — the
         // answer just changed. A replacement block on a reconnect moves the
         // counter even though the flag was already true, which is the only way
@@ -870,6 +875,7 @@ impl Mt5Feed {
         self.caps_tx.send_modify(|caps| {
             caps.ohlcv_history = true;
             caps.ohlcv_generation = generation;
+            caps.ohlcv_daily_generation = daily_generation;
         });
     }
 
@@ -1842,7 +1848,7 @@ mod tests {
     fn a_session_reports_exactly_what_its_symbol_offers() {
         // An exchange contract on the Python bridge: prints trades, publishes
         // a book, sends candles, answers "load older".
-        let exchange = session_capabilities(TapeKind::Trades, Some(10), true, 0, true, false);
+        let exchange = session_capabilities(TapeKind::Trades, Some(10), true, 0, 0, true, false);
         assert!(exchange.traded_volume);
         assert!(exchange.book_capture);
         assert!(exchange.ohlcv_history);
@@ -1851,7 +1857,7 @@ mod tests {
         // A broker-quoted CFD behind the Expert Advisor: none of the four.
         // Every fact comes from the same hello, and none is inferable from the
         // provider being MetaTrader.
-        let cfd = session_capabilities(TapeKind::Quotes, None, false, 0, false, false);
+        let cfd = session_capabilities(TapeKind::Quotes, None, false, 0, 0, false, false);
         assert!(!cfd.traded_volume);
         assert!(!cfd.book_capture);
         assert!(!cfd.ohlcv_history);
@@ -1860,20 +1866,21 @@ mod tests {
         // A bridge that subscribed to a DOM with no levels in it has no book
         // either — "declared" is not "has".
         assert!(
-            !session_capabilities(TapeKind::Trades, Some(0), true, 0, true, false).book_capture
+            !session_capabilities(TapeKind::Trades, Some(0), true, 0, 0, true, false).book_capture
         );
 
         // The four are independent: a CFD the Python bridge serves still has
         // candles and still pages, because the terminal keeps rates and ticks
         // for quoted symbols too.
-        let quoted = session_capabilities(TapeKind::Quotes, None, true, 0, true, false);
+        let quoted = session_capabilities(TapeKind::Quotes, None, true, 0, 0, true, false);
         assert!(quoted.ohlcv_history);
         assert!(quoted.history_paging);
 
         // And paging follows the bridge, not the venue: the same exchange
         // contract behind a bridge too old to read its socket offers no button.
         assert!(
-            !session_capabilities(TapeKind::Trades, Some(10), true, 0, false, false).history_paging
+            !session_capabilities(TapeKind::Trades, Some(10), true, 0, 0, false, false)
+                .history_paging
         );
     }
 

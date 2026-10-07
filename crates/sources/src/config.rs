@@ -80,6 +80,7 @@ impl ProviderKind {
                 deal_counter: false,
                 ohlcv_history: true,
                 ohlcv_generation: 0,
+                ohlcv_daily_generation: 0,
             },
             // `recentTrades` is a short recovery window, not a pageable
             // historical API. Trades and the visible 20-level book are factual;
@@ -96,6 +97,7 @@ impl ProviderKind {
                 deal_counter: false,
                 ohlcv_history: true,
                 ohlcv_generation: 0,
+                ohlcv_daily_generation: 0,
             },
             // The bridge streams the terminal's Depth of Market. Whether a
             // given session really has one (symbol, account, EA version) is
@@ -116,6 +118,7 @@ impl ProviderKind {
                 deal_counter: false,
                 ohlcv_history: false,
                 ohlcv_generation: 0,
+                ohlcv_daily_generation: 0,
             },
         }
     }
@@ -201,7 +204,16 @@ pub struct FeedCapabilities {
     /// feed: Binance and Hyperliquid answer whenever they are asked, so nothing
     /// ever changes behind the consumer's back. Read this as "the answer
     /// changed, ask again if you care", never as "how many blocks exist".
+    ///
+    /// The answer to a request for *minutes*; a request for days has its own
+    /// counter beside it, [`ohlcv_daily_generation`](Self::ohlcv_daily_generation),
+    /// so a daily block landing does not tell a minute chart to throw away
+    /// the base it holds.
     pub ohlcv_generation: u64,
+    /// The same counter for the answer to a request for daily candles. It
+    /// moves when that answer changes — a daily block arrived, or, while
+    /// none usable is held, the minutes standing in for it did.
+    pub ohlcv_daily_generation: u64,
 }
 
 impl FeedCapabilities {
@@ -216,6 +228,18 @@ impl FeedCapabilities {
             deal_counter: false,
             ohlcv_history: false,
             ohlcv_generation: 0,
+            ohlcv_daily_generation: 0,
+        }
+    }
+
+    /// The generation of the answer to a candle request at
+    /// `base_interval_ms`: days for a day or longer, minutes otherwise.
+    #[must_use]
+    pub fn ohlcv_generation_for(&self, base_interval_ms: i64) -> u64 {
+        if base_interval_ms >= quantick_engine::time_bucket::DAY_MS {
+            self.ohlcv_daily_generation
+        } else {
+            self.ohlcv_generation
         }
     }
 }

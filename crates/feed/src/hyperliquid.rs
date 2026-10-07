@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_hyperliquid::{
-    Backoff, CANDLE_INTERVAL_1D, CANDLE_INTERVAL_1M, HYPERLIQUID_WS_URL, ONE_DAY_MS, ONE_MINUTE_MS,
+    Backoff, CANDLE_INTERVAL_1D, CANDLE_INTERVAL_1M, HYPERLIQUID_WS_URL, ONE_MINUTE_MS,
     TradeMapper,
     depth::{DepthEvent, HYPERLIQUID_LEVELS_PER_SIDE, run_depth_with_reconnect},
     fetch_candle_history, run_trades_with_reconnect,
@@ -380,7 +380,7 @@ fn spawn_ohlcv(
     // Both bases are native here, as on Binance: a `1d` candle opens at
     // 00:00 UTC, the engine's own day.
     let (candle_interval, interval_ms) = if interval_ms == crate::OHLCV_DAILY_INTERVAL_MS {
-        (CANDLE_INTERVAL_1D, ONE_DAY_MS)
+        (CANDLE_INTERVAL_1D, quantick_engine::time_bucket::DAY_MS)
     } else {
         (CANDLE_INTERVAL_1M, ONE_MINUTE_MS)
     };

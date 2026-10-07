@@ -16,7 +16,7 @@ use tracing::{error, info, warn};
 use quantick_engine::Trade;
 use quantick_feed_binance::{
     BINANCE_WS_BASE, Backoff, BinanceHttp, BinanceKlineHttp, KLINE_INTERVAL_1D, KLINE_INTERVAL_1M,
-    ONE_DAY_MS, ONE_MINUTE_MS, agg_trade_url, backfill, backfill_before,
+    ONE_MINUTE_MS, agg_trade_url, backfill, backfill_before,
     depth::{
         BinanceDepthHttp, DepthEvent, DepthSessionConfig, MAX_DEPTH_LIMIT, run_depth_with_reconnect,
     },
@@ -487,7 +487,7 @@ fn spawn_ohlcv(
     // Binance serves both bases natively: `1d` klines open at 00:00 UTC, the
     // engine's own day.
     let (kline_interval, interval_ms) = if interval_ms == crate::OHLCV_DAILY_INTERVAL_MS {
-        (KLINE_INTERVAL_1D, ONE_DAY_MS)
+        (KLINE_INTERVAL_1D, quantick_engine::time_bucket::DAY_MS)
     } else {
         (KLINE_INTERVAL_1M, ONE_MINUTE_MS)
     };
