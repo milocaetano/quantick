@@ -130,7 +130,8 @@ fn without_mut_and_dyn(text: &[char]) -> Vec<char> {
 }
 
 /// `strip_leading_generics`: the header after a leading `<...>`, or the
-/// header unchanged when it does not open with one.
+/// header unchanged when it does not open with one. Index 0 is the `<`, so a
+/// `>` always has a character before it.
 fn strip_leading_generics(header: &[char]) -> &[char] {
     let start = header
         .iter()
@@ -144,7 +145,9 @@ fn strip_leading_generics(header: &[char]) -> &[char] {
     for (index, c) in trimmed.iter().enumerate() {
         match c {
             '<' => depth += 1,
-            '>' => {
+            // The `>` of a `->` in a bound such as `F: Fn() -> bool` closes
+            // nothing.
+            '>' if trimmed[index - 1] != '-' => {
                 depth -= 1;
                 if depth == 0 {
                     return &trimmed[index + 1..];

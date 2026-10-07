@@ -1,59 +1,16 @@
 use super::*;
 use crate::scratch_dir::ScratchDir;
 use std::fs;
+use std::path::PathBuf;
 
-// --- The port of `measure.py`, against the script's own fixtures ------------
+// --- The port of `measure.py`, against the shared corpus ---------------------
 //
-// The expected numbers below are the ones `tools/outside_score/test_measure.py`
-// asserts for the same text, so the two definitions are pinned to each other
-// and not only each to itself.
+// `tools/outside_score/fixtures/expected.tsv` is read here and by
+// `tools/outside_score/test_measure.py`, so the two definitions are pinned to
+// one table rather than each to a hand-copied number.
 
-/// `test_measure.py`'s `LIB`, verbatim.
-const LIB: &str = r#####"//! A crate. The word fn in a comment is not a function. {
-use std::fmt;
-
-pub(crate) fn tricky<'a>(s: &'a str) -> usize {
-    let raw = r#"fn fake() { "quoted" }"#; let c = '{'; let q = '\'';
-    let b = b'}'; let text = "unbalanced { brace and fn inside";
-    s.len() + raw.len() + text.len() + (c as usize) + (q as usize) + (b as usize)
-}
-
-/* block /* nested { */ comment } */
-pub(super) fn short() -> u8 {
-    let v: Option<u8> = None;
-    v.unwrap()
-}
-
-pub trait Shape {
-    fn area(&self) -> f64;
-}
-
-pub struct Square;
-
-impl Square {
-    pub fn side(&self) -> f64 { 1.0 }
-}
-
-impl fmt::Display for Square {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "sq") }
-}
-
-pub fn evens() -> impl Iterator<Item = u8> {
-    (0..4).filter(|n| n % 2 == 0)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn a_test_is_not_production() {
-        let _ = "QUANTICK_TEST_ONLY";
-        panic!("never counted");
-    }
-}
-"#####;
-
-fn lines_of(source: &str) -> usize {
-    lex::code_lines(&lex::production(source))
+fn corpus() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/outside_score/fixtures")
 }
 
 fn impls_of(source: &str) -> Vec<String> {
@@ -61,67 +18,44 @@ fn impls_of(source: &str) -> Vec<String> {
 }
 
 #[test]
-fn the_scripts_fixture_measures_as_the_script_counts_it() {
-    // "LIB: 23 lines of code outside comments and the cfg(test) module".
-    assert_eq!(lines_of(LIB), 23);
-    // `impl fmt::Display for Square` and `-> impl Iterator` are not counted.
-    assert_eq!(impls_of(LIB), vec!["Square".to_owned()]);
+fn the_shared_corpus_measures_as_the_script_counts_it() {
+    let dir = corpus();
+    let table = fs::read_to_string(dir.join("expected.tsv")).expect("the corpus table is readable");
+    let rows: Vec<&str> = table
+        .lines()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect();
+    assert!(!rows.is_empty(), "the corpus table holds no row");
+    for row in rows {
+        let columns: Vec<&str> = row.split('\t').collect();
+        let [name, lines, impls] = columns[..] else {
+            panic!("`{row}` is not `file<TAB>lines<TAB>impls`");
+        };
+        let source = fs::read_to_string(dir.join(name)).expect("a corpus file is readable");
+        let production = lex::production(&source);
+        let lines: usize = lines.parse().expect("the line column is a count");
+        assert_eq!(
+            lex::code_lines(&production),
+            lines,
+            "{name}: production lines"
+        );
+        let expected: Vec<String> = match impls {
+            "-" => Vec::new(),
+            names => names.split(',').map(str::to_owned).collect(),
+        };
+        assert_eq!(lex::inherent_impls(&production), expected, "{name}: impls");
+    }
 }
 
 #[test]
-fn inner_any_and_all_cfg_test_are_test_code_and_not_test_is_not() {
+fn an_arrow_in_a_bound_does_not_close_the_generics() {
+    // The `>` of `->` once closed `<F: Fn() -> bool>` early and named the
+    // type `bool`.
+    assert_eq!(impls_of("impl<F: Fn() -> bool> Pane<F> {\n}\n"), ["Pane"]);
     assert_eq!(
-        lines_of("#![cfg(test)]\npub fn helper() {\n    let _ = 1;\n}\n"),
-        0
+        impls_of("impl<F: Fn(u8) -> Option<u8>, G> Gate<F, G> {\n}\n"),
+        ["Gate"]
     );
-    assert_eq!(
-        lines_of(
-            "#[cfg(any(test, feature = \"fake\"))]\npub fn fake() -> u8 {\n    \
-             Some(1).unwrap()\n}\n"
-        ),
-        0
-    );
-    assert_eq!(
-        lines_of("#[cfg(all(unix, test))]\npub fn late() -> u8 {\n    Some(2).unwrap()\n}\n"),
-        0
-    );
-    assert_eq!(lines_of("#[cfg(not(test))]\npub fn live() {\n}\n"), 3);
-}
-
-// The two below were run through `measure.py`'s `inherent_impls` and
-// `code_lines`; the expected values are what the script returned.
-
-#[test]
-fn an_impl_header_is_named_by_its_last_segment_without_generics_or_dyn() {
-    let source = "\
-impl dyn Shape {\n}\n\
-impl<T: Clone> Holder<T> where T: Send {\n}\n\
-impl crate::view::Pane {\n}\n\
-impl<'a> &'a mut Cursor {\n}\n\
-impl &mut Slot {\n}\n\
-unsafe impl Buffer {\n}\n";
-    // A header that still opens with a lifetime names nothing, as in the
-    // script.
-    assert_eq!(
-        impls_of(source),
-        ["Shape", "Holder", "Pane", "Slot", "Buffer"].map(str::to_owned)
-    );
-    assert_eq!(lines_of(source), 12);
-}
-
-#[test]
-fn trait_impls_impl_trait_comments_and_literals_name_no_type() {
-    let source = "\
-impl std::fmt::Display for Hub {\n}\n\
-impl<T> From<T> for Hub {\n}\n\
-unsafe impl Send for Hub {}\n\
-pub fn take(hub: impl Into<Hub>) {}\n\
-pub fn make() -> impl Fn() -> u8 {\n    || 1\n}\n\
-// impl Hub {\n\
-/* impl Hub { */\n\
-const TEXT: &str = \"\nimpl Hub {\n\";\n";
-    assert!(impls_of(source).is_empty(), "{:?}", impls_of(source));
-    assert_eq!(lines_of(source), 11);
 }
 
 #[test]
@@ -134,17 +68,17 @@ fn test_files_are_the_scripts_test_files() {
 }
 
 #[test]
-fn a_nested_crate_is_named_by_its_own_manifest() {
+fn a_nested_crate_is_keyed_by_its_own_directory() {
     let root = ScratchDir::new("impl-spread-crate-of");
     fs::create_dir_all(root.join("crates/viewer/re_view/src")).expect("creatable");
     fs::write(root.join("crates/viewer/re_view/Cargo.toml"), "[package]\n").expect("writable");
     assert_eq!(
         crate_of(&root, "crates/viewer/re_view/src/lib.rs").as_deref(),
-        Some("re_view")
+        Some("crates/viewer/re_view")
     );
     assert_eq!(
         crate_of(&root, "crates/viewer/src/lib.rs").as_deref(),
-        Some("viewer")
+        Some("crates/viewer")
     );
     assert_eq!(crate_of(&root, "crates/stray.rs"), None);
 }
@@ -209,21 +143,20 @@ fn a_spread_at_the_ceiling_is_clean() {
 }
 
 #[test]
-fn one_file_past_the_ceiling_fails_and_names_the_type() {
+fn one_file_past_the_ceiling_fails_under_the_baseline_key_and_names_the_type() {
     let root = tree(4, 3);
     let found = lines(&check(&root));
+    // The path slot is the key a raise names, so `impl-spread +1` is the
+    // raise a copy of the finding leads to; the type follows.
     assert!(
-        found.contains("big::Hub: 4 files holding its inherent impls, ceiling 3 (+1)"),
+        found.starts_with(
+            "  impl-spread: 4 files holding one type's inherent impls, ceiling 3 (+1) — \
+             big::Hub spans crates/big/src/part_0.rs, "
+        ),
         "{found}"
     );
-    assert!(
-        !check_file(&root, "crates/big/src/part_0.rs").is_empty(),
-        "the edit-time check sees the spread from a file holding one of its impls"
-    );
-    assert!(
-        check_file(&root, "crates/big/src/lib.rs").is_empty(),
-        "a file holding none of the type's impls is not the one to blame"
-    );
+    raise(&root, "impl-spread +1\n!budget +1\n");
+    assert!(check(&root).is_empty(), "{:?}", check(&root));
 }
 
 #[test]
@@ -252,7 +185,7 @@ fn a_spread_that_fell_must_be_tightened_and_tighten_lowers_it() {
     // Once tightened, the file cannot quietly come back.
     fs::write(root.join("crates/big/src/part_2.rs"), hub_impl(2)).expect("writable");
     let found = lines(&check(&root));
-    assert!(found.contains("big::Hub: 3 files"), "{found}");
+    assert!(found.contains("(+1) — big::Hub spans"), "{found}");
 }
 
 #[test]
@@ -266,7 +199,10 @@ fn crates_at_or_under_the_line_are_ignored() {
     source.push_str("pub const ONE_MORE: u8 = 0;\n");
     fs::write(&lib, source).expect("writable");
     let found = lines(&check(&root));
-    assert!(found.contains("small::Hub: 9 files"), "{found}");
+    assert!(
+        found.contains("impl-spread: 9 files") && found.contains("small::Hub spans"),
+        "{found}"
+    );
 }
 
 #[test]
@@ -311,4 +247,123 @@ fn any_entry_but_the_ceiling_is_stale() {
         found.contains("app::Hub: in the baseline but no longer"),
         "{found}"
     );
+}
+
+#[test]
+fn nested_crates_sharing_a_leaf_name_are_two_crates() {
+    let root = tree(3, 3);
+    for parent in ["left", "right"] {
+        add_crate(&root, &format!("{parent}/view"), 2, QUALIFYING_LINES + 1);
+        fs::write(
+            root.join(format!("crates/{parent}/view/Cargo.toml")),
+            "[package]\n",
+        )
+        .expect("writable");
+    }
+    // Merged by leaf name, `view::Hub` would span four files.
+    assert_eq!(measured(&root), Ok(3));
+    assert!(check(&root).is_empty(), "{:?}", check(&root));
+}
+
+// --- The edit-time path agrees with the whole tree ---------------------------
+
+/// `check`'s lines that an edit inside crate `leaf` can change: its own
+/// types over the ceiling and every tree-wide line, not another crate's type.
+fn restricted(root: &Path, leaf: &str) -> Vec<String> {
+    check(root)
+        .into_iter()
+        .map(|finding| finding.line)
+        .filter(|line| !line.contains(" spans ") || line.contains(&format!(" {leaf}::")))
+        .collect()
+}
+
+/// Every source file of crate `leaf`, the ones holding no impl included,
+/// answers at edit time exactly what the whole tree says about that crate.
+fn assert_agree(root: &Path, leaf: &str) {
+    let expected = restricted(root, leaf);
+    let src = root.join(format!("crates/{leaf}/src"));
+    let mut names: Vec<String> = fs::read_dir(&src)
+        .expect("listable")
+        .map(|entry| {
+            entry
+                .expect("readable")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    for name in names {
+        let relative = format!("crates/{leaf}/src/{name}");
+        let at_edit: Vec<String> = check_file(root, &relative)
+            .into_iter()
+            .map(|finding| finding.line)
+            .collect();
+        assert_eq!(at_edit, expected, "{relative}");
+    }
+}
+
+#[test]
+fn check_file_agrees_with_check_at_over_and_under_the_ceiling() {
+    for (files, ceiling) in [(3, 3), (4, 3), (2, 3)] {
+        let root = tree(files, ceiling);
+        assert!(!check(&root).is_empty() || files == ceiling);
+        assert_agree(&root, "big");
+    }
+}
+
+#[test]
+fn check_file_reports_a_fall_from_a_file_holding_no_impl() {
+    // `big` drops to the line: nothing qualifies, the ceiling fell to zero,
+    // and the file that did it holds no impl.
+    let root = tree(3, 3);
+    let lib = root.join("crates/big/src/lib.rs");
+    let source = fs::read_to_string(&lib).expect("readable");
+    let shorter = source.replacen("pub const C0: u8 = 0;\n", "", 1);
+    fs::write(&lib, shorter).expect("writable");
+    let found = lines(&check(&root));
+    assert!(found.contains("impl-spread: down to 0 from 3"), "{found}");
+    assert_agree(&root, "big");
+}
+
+#[test]
+fn check_file_reports_a_crate_crossing_the_line_from_a_file_holding_no_impl() {
+    let root = tree(3, 3);
+    add_crate(&root, "small", 9, QUALIFYING_LINES);
+    assert_agree(&root, "small");
+    let lib = root.join("crates/small/src/lib.rs");
+    let mut source = fs::read_to_string(&lib).expect("readable");
+    source.push_str("pub const ONE_MORE: u8 = 0;\n");
+    fs::write(&lib, source).expect("writable");
+    assert!(lines(&check(&root)).contains("small::Hub spans"));
+    assert_agree(&root, "small");
+    // The other crate's file is not answerable for `small::Hub`.
+    assert_agree(&root, "big");
+}
+
+#[test]
+fn check_file_sees_a_fall_held_by_another_crate() {
+    // `small` holds the widest spread; once it narrows, an edit anywhere sees
+    // the ceiling fall, and `big` alone below the ceiling settles nothing.
+    let root = tree(2, 3);
+    add_crate(&root, "small", 3, QUALIFYING_LINES + 1);
+    assert!(check(&root).is_empty(), "{:?}", check(&root));
+    assert_agree(&root, "big");
+    // Same three lines, no impl: `small` still qualifies.
+    fs::write(
+        root.join("crates/small/src/part_2.rs"),
+        "pub const A: u8 = 0;\npub const B: u8 = 0;\npub const C: u8 = 0;\n",
+    )
+    .expect("writable");
+    assert!(lines(&check(&root)).contains("down to 2 from 3"));
+    assert_agree(&root, "big");
+    assert_agree(&root, "small");
+}
+
+#[test]
+fn check_file_on_a_crate_deleted_whole_answers_as_the_tree_does() {
+    let root = tree(3, 3);
+    let expected = lines(&check(&root));
+    let at_edit = lines(&check_file(&root, "crates/gone/src/lib.rs"));
+    assert_eq!(at_edit, expected);
 }
