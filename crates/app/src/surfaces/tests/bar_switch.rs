@@ -117,6 +117,26 @@ fn focusing_another_pane_closes_it_without_a_change() {
     assert!(!surface.is_open());
 }
 
+/// The hook opens on the first frame, before a restored workspace has put
+/// focus on the time pane. It follows the focus there instead of closing,
+/// and applies to the pane that holds it.
+#[test]
+fn the_hook_opened_switch_follows_focus_to_the_time_pane() {
+    let ctx = egui::Context::default();
+    let mut surface = BarSwitchSurface::default();
+    surface.open_following_focus(0, crate::pane::PaneSide::Flow, "15");
+    frame(&mut surface, &ctx, Vec::new());
+    let mut env = SurfaceEnv::quiet(Instant::now());
+    env.focused_side = crate::pane::PaneSide::Time(0);
+    frame_in(&mut surface, &ctx, Vec::new(), &env);
+    assert!(surface.is_open(), "still open over the time pane");
+    let response = frame_in(&mut surface, &ctx, vec![key(egui::Key::Enter)], &env);
+    assert_eq!(
+        response.bar_switch.map(|request| request.side),
+        Some(crate::pane::PaneSide::Time(0))
+    );
+}
+
 #[test]
 fn losing_the_keyboard_closes_it_and_leaves_enter_alone() {
     let ctx = egui::Context::default();

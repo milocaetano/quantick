@@ -35,6 +35,10 @@ struct Open {
     selected: usize,
     tab: u64,
     side: PaneSide,
+    /// Opened by the harness hook on the first frame, before the workspace's
+    /// focus has settled: it follows the focused pane rather than closing
+    /// when focus lands somewhere else.
+    follows_focus: bool,
     /// Focus is requested once, on the frame the list opens.
     focus_pending: bool,
 }
@@ -65,8 +69,18 @@ impl BarSwitchSurface {
             selected: 0,
             tab,
             side,
+            follows_focus: false,
             focus_pending: true,
         });
+    }
+
+    /// [`Self::open`] for the harness hook: the popup follows the focused
+    /// pane instead of closing when it moves.
+    pub fn open_following_focus(&mut self, tab: u64, side: PaneSide, query: &str) {
+        self.open(tab, side, query);
+        if let Some(open) = self.open.as_mut() {
+            open.follows_focus = true;
+        }
     }
 
     #[cfg(test)]
@@ -114,6 +128,10 @@ impl Surface for BarSwitchSurface {
         let query_id = egui::Id::new(id).with("query");
         // The switch answers for the pane it opened over: once another pane
         // is focused, nothing it holds applies.
+        if open.follows_focus {
+            open.tab = env.active_tab;
+            open.side = env.focused_side;
+        }
         let pane_moved = env.active_tab != open.tab || env.focused_side != open.side;
         // Keys are the switch's only while its field holds the keyboard; once
         // focus is elsewhere they belong to whoever holds it.
@@ -227,7 +245,7 @@ impl Surface for BarSwitchSurface {
         if let Some(query) =
             crate::hooks::captured::var("QUANTICK_BAR_SWITCH").filter(|query| !query.is_empty())
         {
-            self.open(env.active_tab, env.focused_side, &query);
+            self.open_following_focus(env.active_tab, env.focused_side, &query);
         }
     }
 }
