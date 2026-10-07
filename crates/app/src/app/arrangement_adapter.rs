@@ -264,6 +264,8 @@ impl ArrangementAdapter<'_> {
         plan: quantick_workspace::arrangement::Transition,
     ) -> Result<(), quantick_workspace::arrangement::ArrangementError> {
         let closed = self.tabs.close_planned(plan)?;
+        let runtime = &closed.runtime;
+        tracing::info!(target: "quantick::app", schema_version = 1_u8, event_code = "TAB_CLOSED", tab = closed.id, feed = %runtime.feed_id, symbol = %runtime.symbol, tabs = self.tabs.len(), action = "drop_feed_and_workers", "closing a market tab");
         self.indicators.forget_tab(closed.id);
         let layouts = self.workspace.layouts_mut().session_mut();
         for (pane, _) in closed.runtime.panes() {
