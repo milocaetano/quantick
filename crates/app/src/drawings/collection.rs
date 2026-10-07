@@ -4,7 +4,9 @@
 //! Placement and the geometry edits that follow it live in
 //! [`super::placement`]; this module owns the book they write into.
 
-use super::{DeleteOutcome, Drawing, DrawingId, Drawings, UNDO_HISTORY_LIMIT, UndoEntry};
+use super::{
+    DeleteOutcome, Drawing, DrawingId, Drawings, PlacementBatch, UNDO_HISTORY_LIMIT, UndoEntry,
+};
 // Named only by the test-side authorship setter below.
 #[cfg(test)]
 use super::DrawingAuthor;
@@ -301,6 +303,35 @@ impl Drawings {
         };
         self.record(before);
         true
+    }
+
+    /// Open a call that places several objects. The history is set aside,
+    /// so the steps each placement records cannot clear redo or push the
+    /// oldest step past [`UNDO_HISTORY_LIMIT`].
+    pub fn begin_placements(&mut self) -> PlacementBatch {
+        PlacementBatch {
+            baseline: self.snapshot(),
+            undo: std::mem::take(&mut self.undo),
+            redo: std::mem::take(&mut self.redo),
+            selected: self.selected,
+        }
+    }
+
+    /// The call succeeded: its placements fold into one undo step from the
+    /// state before the first one, so one Ctrl+Z takes them all back.
+    pub fn commit_placements(&mut self, batch: PlacementBatch) {
+        self.undo = batch.undo;
+        self.redo = batch.redo;
+        self.record(batch.baseline);
+    }
+
+    /// The call failed part-way: objects, undo, redo and selection return
+    /// to exactly where the call began, so nothing keeps half of it.
+    pub fn retract_placements(&mut self, batch: PlacementBatch) {
+        self.undo = batch.undo;
+        self.redo = batch.redo;
+        self.restore(batch.baseline);
+        self.selected = batch.selected;
     }
 
     /// Remove every object an operator other than the trader placed, and

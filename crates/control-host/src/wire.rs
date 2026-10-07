@@ -2,7 +2,11 @@
 //! every projection speaks, and the canonical-number helpers that keep two
 //! scopes comparable without either being rounded first.
 
-use quantick_control::wire::{CanonicalDecimal, WireU64};
+use quantick_control::annotation::{
+    ANNOTATION_PRICE_DECIMALS, AnnotationAuthor, ChartResolvedAnchor, ResolvedAnchor,
+    canonical_bar_position,
+};
+use quantick_control::wire::{ActorContext, CanonicalDecimal, WireU64};
 use quantick_engine::bar_registry::BarConfiguration;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive as _;
@@ -120,4 +124,36 @@ pub fn actor_kind_name(kind: quantick_control::wire::ActorKind) -> &'static str 
         quantick_control::wire::ActorKind::Automation => "automation",
         quantick_control::wire::ActorKind::Agent => "agent",
     }
+}
+
+/// Who acted, as an annotation result names them. The result always says so,
+/// even when the object carries no author because the trader placed it.
+pub fn acting_author(actor: &ActorContext) -> AnnotationAuthor {
+    AnnotationAuthor {
+        actor_kind: actor_kind_name(actor.actor_kind).to_owned(),
+        client_name: actor.client_name.clone(),
+    }
+}
+
+/// Where one chart anchor landed, on the wire: a market slot with that slot's
+/// time, or a projected bar position beyond the latest bar. `None` when a
+/// coordinate is not finite or a market slot carries no time.
+pub fn chart_resolved_anchor(
+    slot: Option<usize>,
+    time_unix_ms: Option<i64>,
+    bar_position: f32,
+    price: f64,
+) -> Option<ChartResolvedAnchor> {
+    let price = canonical_f64(price, ANNOTATION_PRICE_DECIMALS)?;
+    Some(match slot {
+        Some(slot) => ChartResolvedAnchor::Market(ResolvedAnchor {
+            slot: wire_usize(slot),
+            time_unix_ms: time_unix_ms?,
+            price,
+        }),
+        None => ChartResolvedAnchor::Future {
+            bar_position: canonical_bar_position(bar_position)?,
+            price,
+        },
+    })
 }

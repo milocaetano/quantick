@@ -10,10 +10,91 @@ pub enum Action {
     Profile,
     Retracement,
     Projection,
+    /// A rectangle on the range's box corners.
+    Rectangle,
+    /// A trend line on the leg's two anchors.
+    TrendLine,
+    /// Horizontal lines at the box's top and bottom prices.
+    Horizontal,
+    /// The leg becomes a channel's base; the trader's next click sets its width.
+    Channel,
 }
 
 impl Action {
-    pub const ALL: [Self; 3] = [Self::Profile, Self::Retracement, Self::Projection];
+    pub const ALL: [Self; 7] = [
+        Self::Profile,
+        Self::Retracement,
+        Self::Projection,
+        Self::Rectangle,
+        Self::TrendLine,
+        Self::Horizontal,
+        Self::Channel,
+    ];
+
+    /// This action's position in [`Action::ALL`]: its button's slot on the bar.
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The stable id the scene and the control plane name this button by.
+    pub fn control_id(self) -> &'static str {
+        match self {
+            Self::Profile => "quick_range.fixed_range_profile",
+            Self::Retracement => "quick_range.fib_retracement",
+            Self::Projection => "quick_range.fib_projection",
+            Self::Rectangle => "quick_range.rectangle",
+            Self::TrendLine => "quick_range.trend_line",
+            Self::Horizontal => "quick_range.horizontal_levels",
+            Self::Channel => "quick_range.parallel_channel",
+        }
+    }
+
+    /// The button's hover text, and the label the scene reports for it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Profile => "Fixed-range volume profile",
+            Self::Retracement => "Fib retracement",
+            Self::Projection => "Fib projection",
+            Self::Rectangle => "Rectangle",
+            Self::TrendLine => "Trend line",
+            Self::Horizontal => "Horizontal lines at the range's high and low",
+            Self::Channel => "Parallel channel - click to set its width",
+        }
+    }
+
+    /// The conversion leaves a pending placement for the trader's next click
+    /// instead of a finished drawing.
+    pub fn arms_placement(self) -> bool {
+        self == Self::Channel
+    }
+}
+
+/// The prices a horizontal conversion marks: the range's top, then its
+/// bottom. A range with no height marks its one price once.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HorizontalLevels {
+    prices: [f64; 2],
+    len: usize,
+}
+
+impl HorizontalLevels {
+    pub fn prices(&self) -> &[f64] {
+        &self.prices[..self.len]
+    }
+
+    /// The same prices, by value.
+    pub fn into_prices(self) -> impl Iterator<Item = f64> {
+        self.prices.into_iter().take(self.len)
+    }
+}
+
+pub fn horizontal_levels(anchors: [Anchor; 2]) -> HorizontalLevels {
+    let [a, b] = anchors.map(|anchor| anchor.price);
+    let (top, bottom) = if a >= b { (a, b) } else { (b, a) };
+    HorizontalLevels {
+        prices: [top, bottom],
+        len: if top == bottom { 1 } else { 2 },
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

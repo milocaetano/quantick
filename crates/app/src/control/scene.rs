@@ -245,10 +245,18 @@ fn push_quick_range<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
     };
     for control in actions {
         let bounds = rect_bounds(control.rect);
+        // A button that only arms a placement is a tool, not a call: the
+        // trader's next click finishes it, so no capability is what pressing
+        // it does.
+        let arms = control.action.arms_placement();
         controls.push(SceneControlSnapshot {
             control_id: control.action.control_id().to_owned(),
             label: control.action.label().to_owned(),
-            role: SceneRoleDto::Action,
+            role: if arms {
+                SceneRoleDto::Tool
+            } else {
+                SceneRoleDto::Action
+            },
             owner: SceneOwnerSnapshot {
                 // A contextual toolbar over the chart. Reusing the region kind is
                 // also schema-compatible for existing scene clients; the owner ID
@@ -268,7 +276,7 @@ fn push_quick_range<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
                 }
             },
             bounds: bounds.into_snapshot(),
-            capability_id: Some(control.action.capability_id().to_owned()),
+            capability_id: (!arms).then(|| control.action.capability_id().to_owned()),
         });
     }
 }

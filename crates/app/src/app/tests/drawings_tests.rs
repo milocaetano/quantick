@@ -196,7 +196,7 @@ mod placement_characterization {
     }
 }
 
-fn secondary_button(position: egui::Pos2, pressed: bool) -> egui::Event {
+pub(super) fn secondary_button(position: egui::Pos2, pressed: bool) -> egui::Event {
     egui::Event::PointerButton {
         pos: position,
         button: egui::PointerButton::Secondary,
@@ -205,7 +205,7 @@ fn secondary_button(position: egui::Pos2, pressed: bool) -> egui::Event {
     }
 }
 
-fn drag_quick_range(
+pub(super) fn drag_quick_range(
     app: &mut QuantickApp,
     ctx: &egui::Context,
     start: egui::Pos2,
@@ -227,7 +227,7 @@ fn drag_quick_range(
     );
 }
 
-fn quick_range_action(
+pub(super) fn quick_range_action(
     app: &QuantickApp,
     action: crate::surfaces::drawing_chrome::QuickRangeAction,
 ) -> crate::surfaces::drawing_chrome::QuickRangeControl {
@@ -239,7 +239,7 @@ fn quick_range_action(
         .expect("the requested quick-range action is present")
 }
 
-fn click_quick_range_action(
+pub(super) fn click_quick_range_action(
     app: &mut QuantickApp,
     ctx: &egui::Context,
     action: crate::surfaces::drawing_chrome::QuickRangeAction,
@@ -319,15 +319,45 @@ fn a_secondary_drag_is_temporary_until_it_is_dismissed_or_converted() {
             "quick_range.fib_projection",
             crate::control::FIB_PROJECTION_CAPABILITY_ID,
         ),
+        (
+            "quick_range.rectangle",
+            crate::control::RECTANGLE_CAPABILITY_ID,
+        ),
+        (
+            "quick_range.trend_line",
+            crate::control::TREND_LINE_CAPABILITY_ID,
+        ),
+        (
+            "quick_range.horizontal_levels",
+            crate::control::HORIZONTAL_LEVELS_CAPABILITY_ID,
+        ),
     ] {
         let control = scene
             .controls
             .iter()
             .find(|control| control.control_id == control_id)
-            .expect("each Fibonacci action has a stable semantic control");
+            .expect("each action has a stable semantic control");
         assert_eq!(control.capability_id.as_deref(), Some(capability_id));
+        assert_eq!(
+            control.role,
+            quantick_control_schema::scene::SceneRoleDto::Action
+        );
         assert!(control.availability.available);
     }
+    let channel = scene
+        .controls
+        .iter()
+        .find(|control| control.control_id == "quick_range.parallel_channel")
+        .expect("the channel button has a stable semantic control");
+    assert_eq!(
+        channel.capability_id, None,
+        "pressing it only arms a placement; the trader's click finishes it"
+    );
+    assert_eq!(
+        channel.role,
+        quantick_control_schema::scene::SceneRoleDto::Tool
+    );
+    assert!(channel.availability.available);
     assert!(
         app.active_tab().flow_pane.drawings.items().is_empty(),
         "the ruler is transient, not a persistent drawing"
@@ -651,7 +681,7 @@ fn a_future_space_range_still_creates_a_volume_profile() {
 
 /// Where a secondary drag starts and ends on the flow pane: bar 80.5 and bar
 /// 160.5, above and below the chart's middle.
-fn quick_range_ends(app: &QuantickApp) -> (egui::Rect, egui::Pos2, egui::Pos2) {
+pub(super) fn quick_range_ends(app: &QuantickApp) -> (egui::Rect, egui::Pos2, egui::Pos2) {
     let pane = &app.active_tab().flow_pane;
     let chart = pane
         .frame

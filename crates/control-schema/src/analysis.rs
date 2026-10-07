@@ -364,6 +364,7 @@ pub fn colour(value: Rgba8) -> String {
 pub const ANNOTATION_TEST: &str = "an_interrupted_annotation_is_resolved_by_its_readback";
 
 pub const CREATED_BY_CALLER: &str = "a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead";
+pub const CREATED_LEVELS_BY_CALLER: &str = "one `horizontal-line` per distinct price of the two anchors, authored by the caller, that the pre-call reading lacked: two when the prices differ, one when they are equal. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead";
 /// How a client reconciles an interrupted call that puts a drawing on the chart, or takes one off.
 ///
 /// `retry_matrix` joins every family's rows into one table; a row belongs
@@ -402,7 +403,31 @@ pub const READBACKS: &[Readback] = &[
         &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
     ),
     snapshot(
+        "annotate.horizontal_levels.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_LEVELS_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
         "annotate.label.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
+        "annotate.parallel_channel.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
+        "annotate.rectangle.create",
         Forbidden,
         DRAWINGS_SCOPE_ID,
         "tabs[].panes[].drawings[].author.client_name",
@@ -415,6 +440,14 @@ pub const READBACKS: &[Readback] = &[
         DRAWINGS_SCOPE_ID,
         "tabs[].panes[].drawings[].drawing_id",
         "the named `annotation_id` is no longer listed; when the pane's `drawings_truncated` is set an unlisted id proves nothing, so read `events.read` `annotate.object.removed` from the pre-call cursor, which is journaled only for a removal that happened",
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
+        "annotate.trend_line.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
         &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
     ),
     snapshot(

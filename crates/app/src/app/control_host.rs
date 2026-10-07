@@ -519,7 +519,10 @@ impl<'a> ChromeReads<'a> {
     /// All drawing actions in the temporary range's visible action bar.
     pub(crate) fn quick_range_actions(
         self,
-    ) -> Option<[crate::surfaces::drawing_chrome::QuickRangeControl; 3]> {
+    ) -> Option<
+        [crate::surfaces::drawing_chrome::QuickRangeControl;
+            crate::surfaces::drawing_chrome::QUICK_RANGE_ACTION_COUNT],
+    > {
         self.drawing_chrome
             .quick_range
             .controls(self.tabs.id_at(self.tabs.active_index()))

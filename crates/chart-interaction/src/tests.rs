@@ -336,3 +336,86 @@ fn a_headless_executor_consumes_the_same_effect_and_completion_event() {
     assert!(!model.present());
     assert_eq!(consumer.placed.len(), 1);
 }
+
+#[test]
+fn the_shape_actions_follow_the_original_three() {
+    assert_eq!(
+        Action::ALL[3..],
+        [
+            Action::Rectangle,
+            Action::TrendLine,
+            Action::Horizontal,
+            Action::Channel,
+        ]
+    );
+}
+
+#[test]
+fn horizontal_levels_mark_the_top_then_the_bottom_of_the_range() {
+    let low = Anchor {
+        bar: 1.5,
+        price: 99.0,
+        time_ms: Some(1000),
+    };
+    let high = Anchor {
+        bar: 9.5,
+        price: 104.25,
+        time_ms: None,
+    };
+    assert_eq!(horizontal_levels([low, high]).prices(), [104.25, 99.0]);
+    assert_eq!(horizontal_levels([high, low]).prices(), [104.25, 99.0]);
+}
+
+#[test]
+fn a_shift_levelled_range_marks_one_horizontal_level() {
+    let mut model = QuickRangeModel::default();
+    let ctx = context();
+    press(&mut model, ctx);
+    model.update(
+        Command::Drag {
+            position: [40.0, 30.0],
+            anchor: anchor(9.5),
+            threshold_px: 4.0,
+            level: true,
+        },
+        ctx,
+    );
+    model.update(Command::Release, ctx);
+    let Some(Effect::Place(request)) = model
+        .update(Command::Convert(Action::Horizontal), ctx)
+        .effect
+    else {
+        panic!("a levelled range is actionable");
+    };
+    assert_eq!(
+        horizontal_levels(request.anchors).prices(),
+        [anchor(1.5).price]
+    );
+}
+
+#[test]
+fn only_the_channel_waits_for_the_traders_third_point() {
+    for action in Action::ALL {
+        assert_eq!(
+            action.arms_placement(),
+            action == Action::Channel,
+            "{action:?}"
+        );
+    }
+}
+
+#[test]
+fn every_action_names_its_own_slot_control_and_label() {
+    for (slot, action) in Action::ALL.into_iter().enumerate() {
+        assert_eq!(action.index(), slot, "{action:?}");
+        assert!(
+            action.control_id().starts_with("quick_range."),
+            "{action:?}"
+        );
+        assert!(!action.label().is_empty(), "{action:?}");
+        for other in &Action::ALL[slot + 1..] {
+            assert_ne!(action.control_id(), other.control_id());
+            assert_ne!(action.label(), other.label());
+        }
+    }
+}

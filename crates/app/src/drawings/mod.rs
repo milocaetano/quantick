@@ -70,8 +70,9 @@ pub use object::{
     Duplicated, NewDrawing, PaneKey,
 };
 pub use payload::{DrawingPayload, NoPayload};
-pub use store::Drawings;
-use store::{UNDO_HISTORY_LIMIT, UndoEntry};
+pub(crate) use store::UNDO_HISTORY_LIMIT;
+use store::UndoEntry;
+pub use store::{Drawings, PlacementBatch};
 pub(crate) use style::{CLAMPED_OPACITY, from_color32, painted_color, to_color32};
 pub use style::{
     DEFAULT_DRAWING_COLOR, DrawingStyle, GlyphSize, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX,

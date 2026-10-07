@@ -29,7 +29,10 @@ use super::{
     actions::ActionRegistry,
     gateway::ControlAccess,
     journal::{EventActor, NewEvent},
-    types::{PaneSideDto, actor_kind_name, canonical_f64, known_error, wire_usize},
+    types::{
+        PaneSideDto, acting_author, actor_kind_name, canonical_f64, chart_resolved_anchor,
+        known_error, wire_usize,
+    },
 };
 
 pub(crate) use quantick_control::annotation::*;
@@ -95,6 +98,18 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
         ),
         create_fib_projection,
     )?;
+    // In `shape_descriptors` order: rectangle, trend line, parallel channel.
+    let shapes: [super::actions::ActionHandler; 3] = [
+        |app, access, actor, input| place_chart(app, access, actor, input, ZONE_TOOL_ID),
+        |app, access, actor, input| place_chart(app, access, actor, input, TREND_LINE_TOOL_ID),
+        |app, access, actor, input| {
+            place_chart(app, access, actor, input, PARALLEL_CHANNEL_TOOL_ID)
+        },
+    ];
+    for (descriptor, handler) in shape_descriptors().into_iter().zip(shapes) {
+        registry.register(descriptor, handler)?;
+    }
+    registry.register(horizontal_levels_descriptor(), create_horizontal_levels)?;
     registry.register(remove_descriptor(), remove_annotation)?;
     Ok(())
 }
@@ -162,6 +177,101 @@ fn create_fib_projection<P: TabsPort + TabsMutPort + ?Sized>(
     place_chart(app, access, actor, input, "fib-extension")
 }
 
+/// One horizontal line per distinct price of the two anchors, each anchored
+/// at the earlier bar. Every coordinate resolves before anything is placed,
+/// the lines go on all or none, and each line is journaled as its own
+/// created object, exactly as a single-shape create journals one.
+fn create_horizontal_levels<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    use quantick_chart_interaction::annotation::horizontal_level_anchors;
+    let input: ChartAnnotationInput = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let tool = registered_tool(HORIZONTAL_LINE_TOOL_ID)?;
+    let (tab_id, pane_side) = resolve_target(app, input.target.as_ref())?;
+    let author = annotation_author(access, actor);
+    let opening = [(); 2].map(|()| app.tab_reads().new_drawing(tool));
+    let pane = control_pane_mut(app, tab_id, pane_side)?;
+    let validated = series::resolve(pane, tab_id, &input, 2)?;
+    let levels: Vec<_> = horizontal_level_anchors([validated[0], validated[1]]).collect();
+    let placed = install_all(pane, levels.iter().zip(opening), |pane, (anchor, fresh)| {
+        let point = ChartPoint::at_time(anchor.point.bar, anchor.point.price, anchor.point.time_ms);
+        let name = input.name.clone();
+        install(pane, tool, vec![point], fresh, author.clone(), name, None)
+    })?;
+    let target = (tab_id, pane.id, pane_side);
+    let annotations: Vec<_> = placed
+        .into_iter()
+        .zip(&levels)
+        .map(|(placed, anchor)| {
+            chart_result(placed, target, tool, std::slice::from_ref(anchor), actor)
+        })
+        .collect();
+    for annotation in &annotations {
+        journal_annotation(access, actor, ANNOTATION_CREATED_EVENT_KIND, annotation)?;
+    }
+    serde_json::to_value(ChartAnnotationSetResult { annotations })
+        .map_err(|error| ControlError::invalid_request(format!("annotation result: {error}")))
+}
+
+/// Install every placement or none, as one undo step: when one fails, the
+/// call's placements are retracted and undo, redo and selection return to
+/// where the call began, before the error is returned.
+pub(crate) fn install_all<T>(
+    pane: &mut ChartPane,
+    placements: impl IntoIterator<Item = T>,
+    mut install_one: impl FnMut(&mut ChartPane, T) -> Result<(u64, String), ControlError>,
+) -> Result<Vec<(u64, String)>, ControlError> {
+    let batch = pane.drawings.begin_placements();
+    let placed: Result<Vec<_>, _> = placements
+        .into_iter()
+        .map(|placement| install_one(pane, placement))
+        .collect();
+    match placed {
+        Ok(_) => pane.drawings.commit_placements(batch),
+        Err(_) => pane.drawings.retract_placements(batch),
+    }
+    placed
+}
+
+fn registered_tool(tool_id: &str) -> Result<drawings::DrawingTool, ControlError> {
+    drawings::DrawingTool::by_id(tool_id).ok_or_else(|| {
+        capability_unavailable(format!(
+            "the `{tool_id}` drawing tool is not registered in this build"
+        ))
+    })
+}
+
+fn chart_result(
+    (annotation_id, label): (u64, String),
+    (tab_id, pane_id, pane_side): (u64, u64, crate::pane::PaneSide),
+    tool: drawings::DrawingTool,
+    validated: &[quantick_chart_interaction::annotation::ResolvedAnchor],
+    actor: &ActorContext,
+) -> ChartAnnotationResult {
+    let anchors = validated
+        .iter()
+        .map(|anchor| {
+            let point = anchor.point;
+            chart_resolved_anchor(anchor.slot, point.time_ms, point.bar, point.price)
+                .expect("a validated anchor is finite and a market one has time")
+        })
+        .collect();
+    ChartAnnotationResult {
+        annotation_id: WireU64::new(annotation_id),
+        tab_id: WireU64::new(tab_id),
+        pane_id: WireU64::new(pane_id),
+        pane_side: pane_side.into(),
+        tool_id: tool.id().to_owned(),
+        anchors,
+        author: acting_author(actor),
+        label,
+    }
+}
+
 fn place_chart<P: TabsPort + TabsMutPort + ?Sized>(
     app: &mut P,
     access: &mut ControlAccess,
@@ -171,11 +281,7 @@ fn place_chart<P: TabsPort + TabsMutPort + ?Sized>(
 ) -> Result<Value, ControlError> {
     let input: ChartAnnotationInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let tool = drawings::DrawingTool::by_id(tool_id).ok_or_else(|| {
-        capability_unavailable(format!(
-            "the `{tool_id}` drawing tool is not registered in this build"
-        ))
-    })?;
+    let tool = registered_tool(tool_id)?;
     let required = tool.required_points();
     let (tab_id, pane_side) = resolve_target(app, input.target.as_ref())?;
     let author = annotation_author(access, actor);
@@ -189,42 +295,14 @@ fn place_chart<P: TabsPort + TabsMutPort + ?Sized>(
             ChartPoint::at_time(anchor.point.bar, anchor.point.price, anchor.point.time_ms)
         })
         .collect();
-    let resolved = validated
-        .iter()
-        .map(|anchor| {
-            let price = canonical_f64(anchor.point.price, ANNOTATION_PRICE_DECIMALS)
-                .expect("validated finite price");
-            match anchor.slot {
-                Some(slot) => ChartResolvedAnchor::Market(ResolvedAnchor {
-                    slot: wire_usize(slot),
-                    time_unix_ms: anchor
-                        .point
-                        .time_ms
-                        .expect("a resolved market anchor has time"),
-                    price,
-                }),
-                None => ChartResolvedAnchor::Future {
-                    bar_position: canonical_bar_position(anchor.point.bar)
-                        .expect("validated finite bar position"),
-                    price,
-                },
-            }
-        })
-        .collect();
-    let (annotation_id, label) = install(pane, tool, points, fresh, author, input.name, None)?;
-    let result = ChartAnnotationResult {
-        annotation_id: WireU64::new(annotation_id),
-        tab_id: WireU64::new(tab_id),
-        pane_id: WireU64::new(pane.id),
-        pane_side: pane_side.into(),
-        tool_id: tool.id().to_owned(),
-        anchors: resolved,
-        author: AnnotationAuthor {
-            actor_kind: actor_kind_name(actor.actor_kind).to_owned(),
-            client_name: actor.client_name.clone(),
-        },
-        label,
-    };
+    let placed = install(pane, tool, points, fresh, author, input.name, None)?;
+    let result = chart_result(
+        placed,
+        (tab_id, pane.id, pane_side),
+        tool,
+        &validated,
+        actor,
+    );
     journal_annotation(access, actor, ANNOTATION_CREATED_EVENT_KIND, &result)?;
     serde_json::to_value(result)
         .map_err(|error| ControlError::invalid_request(format!("annotation result: {error}")))
@@ -283,11 +361,7 @@ fn place<P: TabsPort + TabsMutPort + ?Sized>(
 ) -> Result<Value, ControlError> {
     let input: AnnotationInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let tool = drawings::DrawingTool::by_id(tool_id).ok_or_else(|| {
-        capability_unavailable(format!(
-            "the `{tool_id}` drawing tool is not registered in this build"
-        ))
-    })?;
+    let tool = registered_tool(tool_id)?;
     let required = tool.required_points();
     if input.anchors.len() != required {
         return Err(ControlError::invalid_request(format!(
@@ -353,12 +427,7 @@ fn place<P: TabsPort + TabsMutPort + ?Sized>(
         pane_side: pane_side.into(),
         tool_id: tool.id().to_owned(),
         anchors: resolved,
-        // The result always says who acted, even when the object carries no
-        // author because the trader placed it themselves.
-        author: AnnotationAuthor {
-            actor_kind: actor_kind_name(actor.actor_kind).to_owned(),
-            client_name: actor.client_name.clone(),
-        },
+        author: acting_author(actor),
         label,
     };
     journal_annotation(access, actor, ANNOTATION_CREATED_EVENT_KIND, &result)?;

@@ -181,6 +181,31 @@ impl<'a> DrawingAccess<'a> {
             .runtime_mut(active)
             .arm_strategy_instance(alerts, side, copy, spec, label)
     }
+    /// Start a draft of `tool` on one pane from `points`. Refused when that
+    /// pane already holds a draft: the trader's work in progress stands.
+    pub(super) fn seed_draft(
+        &mut self,
+        tab: u64,
+        side: PaneSide,
+        tool: drawings::DrawingTool,
+        points: &[drawings::ChartPoint],
+        opening: drawings::NewDrawing,
+    ) -> bool {
+        let Some(tab) = self.tabs.by_id_mut(tab) else {
+            return false;
+        };
+        let drawings = &mut tab.pane_mut(side).drawings;
+        if drawings.draft().is_some() || points.len() >= tool.required_points() {
+            return false;
+        }
+        let mut opening = Some(opening);
+        for point in points {
+            drawings.place_with(tool, &drawings::DrawingBand::Price, *point, |_| {
+                opening.take().expect("one opening look per draft")
+            });
+        }
+        drawings.draft_len() == points.len()
+    }
     pub(crate) fn remove_authored(&mut self) -> usize {
         let mut removed = 0;
         for tab in self.tabs.iter_mut() {

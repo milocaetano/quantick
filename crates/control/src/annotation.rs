@@ -32,6 +32,16 @@ pub const ANNOTATE_CHART_PERMISSION_ID: &str = "annotate.chart";
 pub const LABEL_CAPABILITY_ID: &str = "annotate.label.create";
 pub const ARROW_CAPABILITY_ID: &str = "annotate.arrow.create";
 pub const ZONE_CAPABILITY_ID: &str = "annotate.zone.create";
+/// A rectangle on future-aware chart anchors. Its own id rather than a second
+/// zone version, so a version-less caller of the zone keeps the zone's shape.
+pub const RECTANGLE_CAPABILITY_ID: &str = "annotate.rectangle.create";
+pub const RECTANGLE_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
+pub const TREND_LINE_CAPABILITY_ID: &str = "annotate.trend_line.create";
+pub const TREND_LINE_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
+pub const HORIZONTAL_LEVELS_CAPABILITY_ID: &str = "annotate.horizontal_levels.create";
+pub const HORIZONTAL_LEVELS_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
+pub const PARALLEL_CHANNEL_CAPABILITY_ID: &str = "annotate.parallel_channel.create";
+pub const PARALLEL_CHANNEL_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
 pub const PROFILE_CAPABILITY_ID: &str = "annotate.fixed_range_profile.create";
 pub const PROFILE_CAPABILITY_VERSION: u32 = 2;
 pub const FIB_RETRACEMENT_CAPABILITY_ID: &str = "annotate.fib_retracement.create";
@@ -53,6 +63,9 @@ pub const UI_BOUNDED_COST_ID: &str = "ui_bounded";
 pub const LABEL_TOOL_ID: &str = "text";
 pub const ARROW_TOOL_ID: &str = "arrow";
 pub const ZONE_TOOL_ID: &str = "rectangle";
+pub const TREND_LINE_TOOL_ID: &str = "trend-line";
+pub const HORIZONTAL_LINE_TOOL_ID: &str = "horizontal-line";
+pub const PARALLEL_CHANNEL_TOOL_ID: &str = "parallel-channel";
 
 /// The longest label an annotation may carry. A note is a sentence on a
 /// chart, not a document; the bound is what keeps one call from covering the
@@ -177,6 +190,12 @@ pub struct ChartAnnotationResult {
     pub label: String,
 }
 
+/// One call that places several objects, in placement order.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ChartAnnotationSetResult {
+    pub annotations: Vec<ChartAnnotationResult>,
+}
+
 /// What an annotation returns: the object's stable id, where it actually
 /// landed, and the authorship the trader sees on it.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -290,6 +309,43 @@ pub fn chart_descriptor(
     descriptor.version = version;
     descriptor.input_schema = generated_schema::<ChartAnnotationInput>();
     descriptor.output_schema = generated_schema::<ChartAnnotationResult>();
+    descriptor
+}
+
+/// The single-drawing shapes on chart anchors: rectangle, trend line,
+/// parallel channel, in that order.
+pub fn shape_descriptors() -> [CapabilityDescriptor; 3] {
+    [
+        chart_descriptor(
+            RECTANGLE_CAPABILITY_ID,
+            RECTANGLE_CAPABILITY_VERSION,
+            "Place a rectangle",
+            "Draws a rectangle on two chart coordinates, including projected space beyond the latest bar.",
+        ),
+        chart_descriptor(
+            TREND_LINE_CAPABILITY_ID,
+            TREND_LINE_CAPABILITY_VERSION,
+            "Place a trend line",
+            "Draws a trend line between two chart coordinates.",
+        ),
+        chart_descriptor(
+            PARALLEL_CHANNEL_CAPABILITY_ID,
+            PARALLEL_CHANNEL_CAPABILITY_VERSION,
+            "Place a parallel channel",
+            "Draws a channel whose base joins the first two chart coordinates and whose width reaches the third.",
+        ),
+    ]
+}
+
+/// Two chart anchors in, one horizontal line per distinct price out.
+pub fn horizontal_levels_descriptor() -> CapabilityDescriptor {
+    let mut descriptor = chart_descriptor(
+        HORIZONTAL_LEVELS_CAPABILITY_ID,
+        HORIZONTAL_LEVELS_CAPABILITY_VERSION,
+        "Place horizontal levels",
+        "Draws a horizontal line at the top and at the bottom price of two chart coordinates; one line when both prices are equal.",
+    );
+    descriptor.output_schema = generated_schema::<ChartAnnotationSetResult>();
     descriptor
 }
 

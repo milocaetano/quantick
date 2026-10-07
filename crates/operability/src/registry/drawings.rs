@@ -7,13 +7,15 @@ use super::{ExclusionClass, Mapping, PENDING_SURFACE, Source, UiBehaviour};
 
 /// A drawing tool the rail arms, for which no capability places the object.
 ///
-/// The six registered `annotate.*.create` capabilities place text, arrows,
-/// rectangles, fixed-range profiles and both Fibonacci tools; the other
-/// sixteen registered tools have no counterpart.
+/// The registered `annotate.*.create` capabilities place text, arrows,
+/// rectangles, fixed-range profiles, both Fibonacci tools, trend lines,
+/// horizontal lines and parallel channels; the other thirteen registered
+/// tools have no counterpart.
 const PENDING_DRAWING_TOOL: Mapping = Mapping::Excluded {
     class: ExclusionClass::PendingCapability,
     reason: "no `annotate.*` capability places this shape; only text, arrow, rectangle, \
-             fixed-range profile and the two Fibonacci tools have one. Tracked in issue 401",
+             fixed-range profile, the two Fibonacci tools, trend line, horizontal line and \
+             parallel channel have one. Tracked in issue 401",
 };
 
 /// The tool rail.
@@ -144,7 +146,7 @@ pub(super) const TOOL_RAIL: &[UiBehaviour] = &[
         title: "Arm the horizontal line",
         reach: "tool rail, family flyout, canvas right-click",
         keys: &[(Source::DrawingTool, "horizontal-line")],
-        mapping: PENDING_DRAWING_TOOL,
+        mapping: capability!("annotate.horizontal_levels.create"),
     },
     UiBehaviour {
         id: "tool.horizontal-ray",
@@ -165,7 +167,7 @@ pub(super) const TOOL_RAIL: &[UiBehaviour] = &[
         title: "Arm the parallel channel",
         reach: "tool rail, family flyout, canvas right-click",
         keys: &[(Source::DrawingTool, "parallel-channel")],
-        mapping: PENDING_DRAWING_TOOL,
+        mapping: capability!("annotate.parallel_channel.create"),
     },
     UiBehaviour {
         id: "tool.price-range",
@@ -186,7 +188,7 @@ pub(super) const TOOL_RAIL: &[UiBehaviour] = &[
         title: "Arm the rectangle",
         reach: "tool rail, family flyout, canvas right-click",
         keys: &[(Source::DrawingTool, "rectangle")],
-        mapping: capability!("annotate.zone.create"),
+        mapping: capability!("annotate.zone.create", "annotate.rectangle.create"),
     },
     UiBehaviour {
         id: "tool.text",
@@ -200,7 +202,7 @@ pub(super) const TOOL_RAIL: &[UiBehaviour] = &[
         title: "Arm the trend line",
         reach: "tool rail, family flyout, canvas right-click",
         keys: &[(Source::DrawingTool, "trend-line")],
-        mapping: PENDING_DRAWING_TOOL,
+        mapping: capability!("annotate.trend_line.create"),
     },
     UiBehaviour {
         id: "tool.triangle",
@@ -289,6 +291,52 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
             "the quick-range action bar delegates to the registered Fibonacci projection tool",
         )],
         mapping: capability!("annotate.fib_projection.create"),
+    },
+    UiBehaviour {
+        id: "drawing.quick_range_rectangle",
+        title: "Measure a range with a right-drag and turn its box into a rectangle",
+        reach: "a secondary-button drag on the price band with the Pointer tool, then the \
+                range's Rectangle action",
+        keys: &[(
+            Source::Authored,
+            "the quick-range action bar delegates to the registered rectangle tool",
+        )],
+        mapping: capability!("annotate.rectangle.create"),
+    },
+    UiBehaviour {
+        id: "drawing.quick_range_trend_line",
+        title: "Measure a range with a right-drag and turn its leg into a trend line",
+        reach: "a secondary-button drag on the price band with the Pointer tool, then the \
+                range's Trend line action",
+        keys: &[(
+            Source::Authored,
+            "the quick-range action bar delegates to the registered trend line tool",
+        )],
+        mapping: capability!("annotate.trend_line.create"),
+    },
+    UiBehaviour {
+        id: "drawing.quick_range_horizontal_levels",
+        title: "Measure a range with a right-drag and mark its high and low with horizontal lines",
+        reach: "a secondary-button drag on the price band with the Pointer tool, then the \
+                range's Horizontal lines action; one line when the range has no height",
+        keys: &[(
+            Source::Authored,
+            "the quick-range action bar places one registered horizontal line per distinct price",
+        )],
+        mapping: capability!("annotate.horizontal_levels.create"),
+    },
+    UiBehaviour {
+        id: "drawing.quick_range_parallel_channel",
+        title: "Measure a range with a right-drag and turn its leg into a parallel channel's base",
+        reach: "a secondary-button drag on the price band with the Pointer tool, then the \
+                range's Parallel channel action, then a click above or below the leg that sets \
+                the channel's width",
+        keys: &[(
+            Source::Authored,
+            "the quick-range action bar arms the registered parallel channel tool with the leg \
+             as its first two anchors; the third is the trader's click",
+        )],
+        mapping: capability!("annotate.parallel_channel.create"),
     },
     UiBehaviour {
         id: "drawing.rename",

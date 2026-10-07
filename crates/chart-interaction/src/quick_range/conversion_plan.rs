@@ -44,6 +44,18 @@ pub enum PlacementOutcome {
     ActionRefused,
 }
 
+impl PlacementOutcome {
+    /// What a placement that got as far as the action reports: placed, or
+    /// refused by the action.
+    pub fn of(placed: bool) -> Self {
+        if placed {
+            Self::Placed
+        } else {
+            Self::ActionRefused
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ConversionReadback {
     pub view: Option<RangeView>,

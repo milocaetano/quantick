@@ -1,0 +1,7 @@
+# feat/quick-range-shapes: the four shape capabilities place through the
+# pane's drawing store, which only `app` holds, and the channel seeds a draft
+# and arms its tool; names, levels and wire shapes live below `app`. The
+# horizontal levels install all-or-nothing as one undo step (the store's
+# placement batch) and journal one created event per line.
+crates/app +189
+!budget +189

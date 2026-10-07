@@ -282,6 +282,7 @@ impl DrawingController {
         let mut output = DrawingEffects::default();
         let effects = &mut output;
         let mut ask = ask;
+        self.apply_pending_placement(&mut ask, host, effects, now);
         self.apply_selection_edit(&mut ask, host, effects, now);
         self.apply_preferences_and_copy(&mut ask, host, effects, alerts, now);
         self.apply_clear(&mut ask, host, effects, now);
@@ -491,6 +492,8 @@ impl DrawingController {
 }
 
 pub(crate) struct RegisteredDrawingAction {
+    /// The quick-range button's control id, for the refusal log.
+    pub(crate) action_id: &'static str,
     pub(crate) capability: &'static str,
     pub(crate) version: u32,
     pub(crate) input: serde_json::Value,
@@ -510,7 +513,9 @@ impl DrawingController {
         if ask.dismiss_quick_range {
             self.chrome.quick_range.dismiss();
         }
-        let request = ask.place_quick_range.take()?;
+        let request = ask
+            .place_quick_range
+            .take_if(|placement| !placement.conversion.request().action.arms_placement())?;
         let operation = request.conversion.request();
         let Some(input) = crate::control::quick_range_input(operation, request.side) else {
             self.chrome.quick_range.finish_conversion(
@@ -520,18 +525,50 @@ impl DrawingController {
             tracing::warn!(target:"quantick::control",event_code="QUICK_RANGE_INPUT_INVALID","the quick-range drawing coordinates could not be serialized");
             return None;
         };
-        let version = match operation.action {
-            crate::surfaces::drawing_chrome::QuickRangeAction::Profile => {
-                crate::control::PROFILE_CAPABILITY_VERSION
-            }
-            _ => crate::control::FIB_CAPABILITY_VERSION,
-        };
         Some(RegisteredDrawingAction {
+            action_id: operation.action.control_id(),
             capability: operation.action.capability_id(),
-            version,
+            version: operation.action.capability_version(),
             input,
             pending: PendingDrawingAction(request.conversion),
         })
+    }
+    /// A conversion the trader finishes by hand: the range's leg becomes the
+    /// draft's first anchors and the tool is armed so the next click places
+    /// the rest through the tool's own placement.
+    fn apply_pending_placement(
+        &mut self,
+        ask: &mut crate::surfaces::drawing_chrome::DrawingChromeAsk,
+        host: &mut DrawingAccess<'_>,
+        effects: &mut DrawingEffects,
+        now: Instant,
+    ) {
+        use crate::{drawings, surfaces::drawing_chrome::QuickRangeActionUi as _};
+        use quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome;
+        let Some(request) = ask
+            .place_quick_range
+            .take_if(|placement| placement.conversion.request().action.arms_placement())
+        else {
+            return;
+        };
+        let operation = *request.conversion.request();
+        let (tab, side) = (operation.context.owner.tab, request.side);
+        let points = operation
+            .anchors
+            .map(|anchor| drawings::ChartPoint::at_time(anchor.bar, anchor.price, anchor.time_ms));
+        let seeded = drawings::DrawingTool::by_id(operation.action.tool_id()).filter(|tool| {
+            let opening = drawings::new_drawing_from_defaults(&self.presets, *tool);
+            host.seed_draft(tab, side, *tool, &points, opening)
+        });
+        let outcome = PlacementOutcome::of(seeded.is_some());
+        let readback = self
+            .chrome
+            .quick_range
+            .finish_conversion(request.conversion, outcome);
+        effects.arm = seeded;
+        if readback.explain_refusal {
+            effects.note(super::QUICK_RANGE_REFUSED, now);
+        }
     }
     pub(crate) fn finish_registered_action(
         &mut self,
