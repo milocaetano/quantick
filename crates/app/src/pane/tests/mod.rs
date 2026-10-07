@@ -1598,14 +1598,12 @@ fn a_level_drawn_on_an_indicator_band_never_reaches_the_price_axis() {
     let mut pane = pane_with_indicator("native.cvd", vec![vec![0.0, 40.0, -20.0]]);
     pane.frame.chart_area = Some(TEST_PLOT);
     pane.frame.auto_range = Some((0.0, 100.0));
-    let band = DrawingBand::Indicator(
-        pane.indicators.pane_key(
-            pane.indicators
-                .visible_panes()
-                .next()
-                .expect("one pane indicator"),
-        ),
-    );
+    let band = DrawingBand::Indicator(crate::bands::pane_key(
+        pane.indicators
+            .visible_panes()
+            .next()
+            .expect("one pane indicator"),
+    ));
     let tool = drawings::DrawingTool::by_id("horizontal-line").expect("a registered tool");
     assert!(
         pane.drawings
@@ -2185,21 +2183,15 @@ fn the_chevron_and_the_divider_are_never_drawing_surfaces() {
 fn a_band_key_survives_remove_and_re_add() {
     let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
     let first = add_indicator_view(&mut pane, "native.cvd", vec![vec![0.0]]);
-    let before = pane
-        .indicators
-        .pane_key(pane.indicators.all().first().expect("one view"));
+    let before = crate::bands::pane_key(pane.indicators.all().first().expect("one view"));
     pane.indicators.remove(first);
     add_indicator_view(&mut pane, "native.cvd", vec![vec![0.0]]);
-    let after = pane
-        .indicators
-        .pane_key(pane.indicators.all().first().expect("one view"));
+    let after = crate::bands::pane_key(pane.indicators.all().first().expect("one view"));
     assert_eq!(before, after, "the same pane, so the same key");
 
     // And a different indicator must never inherit it.
     add_indicator_view(&mut pane, "script.zigzag.pine", vec![vec![0.0]]);
-    let other = pane
-        .indicators
-        .pane_key(pane.indicators.all().last().expect("two views"));
+    let other = crate::bands::pane_key(pane.indicators.all().last().expect("two views"));
     assert_ne!(before, other);
 }
 
@@ -2214,13 +2206,10 @@ fn removing_a_pane_does_not_renumber_the_one_that_outlives_it() {
     let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".to_owned());
     let first = add_indicator_view(&mut pane, "native.cvd", vec![vec![0.0]]);
     add_indicator_view(&mut pane, "native.cvd", vec![vec![0.0]]);
-    let survivor = pane
-        .indicators
-        .pane_key(pane.indicators.all().last().expect("two views"));
+    let survivor = crate::bands::pane_key(pane.indicators.all().last().expect("two views"));
     pane.indicators.remove(first);
     assert_eq!(
-        pane.indicators
-            .pane_key(pane.indicators.all().first().expect("one view left")),
+        crate::bands::pane_key(pane.indicators.all().first().expect("one view left")),
         survivor,
         "the surviving pane keeps the key its drawings were placed with"
     );
@@ -2229,9 +2218,7 @@ fn removing_a_pane_does_not_renumber_the_one_that_outlives_it() {
     // takes, so *its* drawings come home instead of piling onto the
     // survivor's.
     add_indicator_view(&mut pane, "native.cvd", vec![vec![0.0]]);
-    let readded = pane
-        .indicators
-        .pane_key(pane.indicators.all().last().expect("two views"));
+    let readded = crate::bands::pane_key(pane.indicators.all().last().expect("two views"));
     assert_ne!(readded, survivor);
     assert_eq!(readded.ordinal, 0);
 }
@@ -2343,7 +2330,7 @@ fn two_panes_of_the_same_kind_get_different_keys() {
         .indicators
         .all()
         .iter()
-        .map(|view| pane.indicators.pane_key(view))
+        .map(crate::bands::pane_key)
         .collect();
     assert_eq!(keys[0].ordinal, 0);
     assert_eq!(keys[1].ordinal, 1);
@@ -3128,7 +3115,7 @@ fn g6_characterization_band_metadata_precedes_cached_geometry() {
     let mut pane = pane_with_indicator("native.cvd", vec![vec![1.0]]);
     let view = &pane.indicators.all()[0];
     let slot = view.slot;
-    let key = pane.indicators.pane_key(view);
+    let key = crate::bands::pane_key(view);
     let mut drawing = g6_badge_pane().drawings.items()[0].clone();
     drawing.band = DrawingBand::Indicator(key);
     assert!(pane.frame.bands.is_empty());

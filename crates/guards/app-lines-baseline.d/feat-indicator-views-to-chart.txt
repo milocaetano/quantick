@@ -1,0 +1,5 @@
+# Written by `cargo run -p quantick-guards -- --tighten`: these shrank.
+crates/app -578
+!budget -578
+# feat/indicator-views-to-chart: `IndicatorView`, `IndicatorViews` and
+# `PaneSizing` moved from crates/app/src/indicators into quantick-chart.

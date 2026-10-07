@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 quantick-chart-interaction = { path = "../chart-interaction" }
 quantick-engine = { path = "../engine" }
+quantick-indicator-session = { path = "../indicator-session" }
 quantick-indicators = { path = "../indicators" }
 quantick-orderflow = { path = "../orderflow" }
 rust_decimal = { workspace = true }
