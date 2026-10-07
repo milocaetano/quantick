@@ -22,7 +22,7 @@ use eframe::egui;
 use smallvec::SmallVec;
 
 use crate::chart::PriceScale;
-use crate::drawings::{Drawing, DrawingBand, ValueUnit};
+use crate::drawings::{Drawing, DrawingBand, PaneKey, ValueUnit};
 use crate::indicators::{IndicatorView, IndicatorViews};
 use crate::plot_area::PlotAreas;
 
@@ -101,6 +101,19 @@ pub struct PriceBand {
     pub inverted: bool,
 }
 
+/// The durable identity of the pane `view` draws in: the band key an
+/// object anchored there stores.
+///
+/// Both halves are fixed at birth, so nothing a trader does to the *other*
+/// indicators — hiding one, collapsing one, removing one — can move a
+/// drawing from the pane it was placed on.
+pub(crate) fn pane_key(view: &IndicatorView) -> PaneKey {
+    PaneKey {
+        kind: Arc::clone(&view.kind),
+        ordinal: view.ordinal,
+    }
+}
+
 /// Carve one chart pane into its bands.
 ///
 /// The indicator scale is built from `view.scale.resolve(last_auto)` — the
@@ -135,7 +148,7 @@ pub fn carve(
         );
         let range = view.last_auto.map(|auto| view.scale.resolve(auto));
         out.push(Band {
-            key: DrawingBand::Indicator(indicators.pane_key(view)),
+            key: DrawingBand::Indicator(pane_key(view)),
             rect,
             scale: range
                 .filter(|_| !slot.collapsed)
@@ -362,7 +375,7 @@ pub(crate) fn label_for(
             .all()
             .iter()
             .filter(|view| !view.descriptor.overlay)
-            .find(|view| &indicators.pane_key(view) == key)
+            .find(|view| &pane_key(view) == key)
             .map_or_else(
                 || BandLabel::Parked(std::sync::Arc::clone(&key.kind)),
                 |view| {
@@ -399,7 +412,7 @@ pub(crate) fn samples_at(indicators: &IndicatorViews, slot: usize) -> Vec<(Drawi
                 .columns
                 .iter()
                 .find_map(|column| column.get(slot).copied().filter(|v| v.is_finite()))?;
-            Some((DrawingBand::Indicator(indicators.pane_key(view)), value))
+            Some((DrawingBand::Indicator(pane_key(view)), value))
         })
         .collect()
 }

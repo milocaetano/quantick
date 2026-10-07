@@ -61,12 +61,15 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // told the time, and whether the worker unwound.
     ("backpressure", &[]),
     // The headless chart model: bar state over the engine, plus the
-    // geometry, style and strip the window paints from.
+    // geometry, style and strip the window paints from. `indicator-session`
+    // for the slot ids and event deltas the UI's copy of indicator state is
+    // applied from; the session reaches `pine` and `indicators`, never back.
     (
         "chart",
         &[
             "chart-interaction",
             "engine",
+            "indicator-session",
             "indicators",
             "orderbook",
             "orderflow",

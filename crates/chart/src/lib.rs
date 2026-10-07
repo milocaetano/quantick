@@ -4,7 +4,9 @@
 //! trades in, bars out, for whichever bar spec the trader picked.
 //! [`geometry`] maps those bars to pixels, [`viewport`] decides which of them
 //! are on screen, [`style`] says how a candle looks and [`live_strip`] shapes
-//! the forming bar's aggression. None of it names a renderer: every module is
+//! the forming bar's aggression. [`indicator_views`] is the UI's copy of the
+//! indicator session's output, and the height each indicator pane asks for.
+//! None of it names a renderer: every module is
 //! unit-tested in CI without a display, and a second consumer — a backtest
 //! report, an agent reading the chart — reaches the same code the window
 //! paints from.
@@ -20,6 +22,7 @@ pub mod footprint_series;
 pub mod geometry;
 pub mod history_publication;
 pub mod indicator_style;
+pub mod indicator_views;
 pub mod live_strip;
 pub mod price_axis_fit;
 pub mod price_view;

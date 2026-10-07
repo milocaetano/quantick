@@ -7,8 +7,9 @@ use quantick_indicators::{
     EvalError, IndicatorDescriptor, InputValue, ObjectSnapshot, PreviewFrame, Rgba8,
 };
 
+use quantick_indicator_session::{LaneSample, SlotId};
+
 use crate::indicator_style::ResolvedPlot;
-use crate::indicator_worker::{LaneSample, SlotId};
 use crate::price_view::PriceView;
 
 use super::PaneSizing;
@@ -27,11 +28,12 @@ pub struct IndicatorView {
     pub slot: SlotId,
     /// The constructor it was added through (`native.cvd`, `script.zigzag`),
     /// durable across remove + re-add in a way the slot id is not — see
-    /// [`crate::indicator_worker::IndicatorSource::kind_id`]. Drawings
+    /// [`quantick_indicator_session::IndicatorSource::kind_id`]. Drawings
     /// anchored to this pane are keyed on it.
     ///
-    /// Shared rather than cloned: it is copied into a [`crate::drawings::PaneKey`]
-    /// on every band carve, which runs twice per pane per frame.
+    /// Shared rather than cloned: it is copied into a
+    /// [`quantick_chart_interaction::drawing_model::PaneKey`] on every band
+    /// carve, which runs twice per pane per frame.
     pub kind: Arc<str>,
     /// Which instance of that kind this is, assigned **once, at birth** as
     /// the lowest ordinal no live view of the kind is using.
@@ -118,7 +120,7 @@ pub struct IndicatorView {
     ///
     /// The gesture that zooms the pane runs before the frame that draws it,
     /// so it needs the range the renderer actually used — the same handshake
-    /// [`crate::pane::PaneFrame::auto_range`] performs for the candles.
+    /// the app's `PaneFrame::auto_range` performs for the candles.
     pub last_auto: Option<(f64, f64)>,
 }
 
@@ -128,7 +130,7 @@ impl IndicatorView {
     /// A hidden indicator asks for nothing: the eye toggle is the trader
     /// saying "not now", and a pane that vanished while its colours stayed on
     /// the candles would be unexplainable from the screen.
-    pub(crate) fn bar_paint(&self, row: usize) -> Option<Rgba8> {
+    pub fn bar_paint(&self, row: usize) -> Option<Rgba8> {
         if self.hidden {
             return None;
         }
@@ -136,7 +138,7 @@ impl IndicatorView {
     }
 
     /// The paint this indicator asks for on the bar that is forming.
-    pub(crate) fn forming_paint(&self) -> Option<Rgba8> {
+    pub fn forming_paint(&self) -> Option<Rgba8> {
         if self.hidden {
             return None;
         }
@@ -146,7 +148,7 @@ impl IndicatorView {
     /// The draw objects to render right now: the forming bar's transient
     /// set while a preview is live, else the committed set (latest-wins,
     /// like plot previews).
-    pub(crate) fn render_objects(&self) -> &ObjectSnapshot {
+    pub fn render_objects(&self) -> &ObjectSnapshot {
         self.preview
             .as_ref()
             .and_then(|frame| frame.objects.as_ref())
@@ -160,19 +162,19 @@ impl IndicatorView {
     /// chart draws is resolved through here, so a colour changed in the dialog
     /// cannot reach one drawing path and miss another. Two `Vec` lookups and a
     /// few `Option`s: it runs once per plot per frame and allocates nothing.
-    pub(crate) fn plot_style(&self, index: usize) -> Option<ResolvedPlot> {
+    pub fn plot_style(&self, index: usize) -> Option<ResolvedPlot> {
         let spec = self.descriptor.plots.get(index)?;
         Some(self.style.resolve(index, spec))
     }
 
     /// The label the UI shows for this indicator.
-    pub(crate) fn label(&self) -> &str {
+    pub fn label(&self) -> &str {
         &self.label
     }
 
     /// The same label, shareable. The band carve runs twice per pane per
     /// frame and would otherwise clone this string every time.
-    pub(crate) fn label_shared(&self) -> Arc<str> {
+    pub fn label_shared(&self) -> Arc<str> {
         Arc::clone(&self.label)
     }
 

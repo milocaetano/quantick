@@ -17,9 +17,7 @@ crates/app/src/drawings/defaults.rs the preset-host port: what a new mark opens 
 crates/app/src/drawings/object.rs `Drawing` and `NewDrawing`; every mark holds the `DrawingTool` that paints it, so they cannot leave the registry behind. Its value types live in `quantick-chart-interaction`'s `drawing_model`.
 crates/app/src/drawings/payload.rs the port each drawing tool implements for its own state; the implementations are the tools, and the tools are `app`.
 crates/app/src/drawings/store.rs the per-pane collection of `Drawing`s, whose behaviour is the pane's gestures beside it.
-crates/app/src/indicators/mod.rs a facade of re-exports: it names no library because every leaf it addresses does.
-crates/app/src/indicators/view.rs one indicator as the UI sees it, keyed on the `indicator_worker` slot ids `app` owns and sized against its own pane.
-crates/app/src/indicators/views.rs the UI's copy of indicator state, applied from `indicator_worker` events that only `app` produces. Moving this pair into `indicator-session` is a named follow-up, not a line this change can move.
+crates/app/src/indicators/mod.rs a facade of re-exports: its one local leaf names the library, and the rest is `quantick_chart::indicator_views` re-addressed.
 crates/app/src/pane.rs a facade of re-exports: it names no library because every leaf it addresses does.
 crates/app/src/pane/chrome.rs what one frame hands a pane around its plot area: the tool rail, the drawings and the paper account, all app-owned.
 crates/app/src/theme.rs a facade of re-exports: it names no library because every leaf it addresses does.

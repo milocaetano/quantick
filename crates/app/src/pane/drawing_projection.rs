@@ -301,7 +301,7 @@ impl DrawingProjection<'_> {
             DrawingBand::AllBands => None,
             DrawingBand::Indicator(_) => {
                 let view = self.indicators.visible_panes().find(|view| {
-                    DrawingBand::Indicator(self.indicators.pane_key(view)) == band.key
+                    DrawingBand::Indicator(crate::bands::pane_key(view)) == band.key
                 })?;
                 bands::magnet_value_of(view, row, pointer_y, scale, MAGNET_REACH_PX)
             }
