@@ -28,9 +28,8 @@ impl Tab {
     /// pane object it is. `bars → time` on the flow pane earns the same span
     /// the split's time pane gets.
     fn any_pane_wants_venue_history(&self) -> bool {
-        std::iter::once(&self.flow_pane)
-            .chain(self.time_pane())
-            .any(|pane| match pane.state.spec().time_interval_ms() {
+        self.panes()
+            .any(|(pane, _)| match pane.state.spec().time_interval_ms() {
                 // Cut by time: the venue's candles fold into this pane's own
                 // interval, which is what the prefix has always been. An
                 // interval no whole number of minutes fits into still folds to
@@ -46,21 +45,37 @@ impl Tab {
             })
     }
 
-    /// Discard the base when the panes now want a different one — a time pane
-    /// moved from 5m to 1d, or back — so the next poll asks for it. Every
-    /// prefix goes with it: a prefix folded from the old base would sit under
+    /// Follow the panes to the base they want now — a time pane moved from 5m
+    /// to 1d, or back. Every pane counts: one base serves the whole stack, so
+    /// a 1d pane over a 5m one still folds from minutes.
+    ///
+    /// A settled base is parked rather than dropped, and the one parked for
+    /// the new wish comes back with what *load older* learned about it, so a
+    /// trip to 1d and back neither refetches the minutes nor loses the history
+    /// paged into them. With nothing parked, every prefix goes and the next
+    /// poll asks: a prefix folded from the old base would otherwise sit under
     /// the new interval until the answer landed. Reports whether a prefix
     /// changed.
     fn follow_wanted_ohlcv_interval(&mut self) -> bool {
-        let panes = std::iter::once(&self.flow_pane).chain(self.time_pane());
         let wanted = quantick_feed::candle_base::CandleBaseInterval::wanted_for(
-            panes.map(|pane| pane.state.spec().time_interval_ms()),
+            self.panes()
+                .map(|(pane, _)| pane.state.spec().time_interval_ms()),
             self.venue_lead_in,
         );
         let Some(was_ms) = self.ohlcv_interval.want(wanted) else {
             return false;
         };
-        let held = self.ohlcv_base.is_some() || self.ohlcv_pending;
+        let pending = self.ohlcv_pending;
+        let held = self.ohlcv_base.is_some() || pending;
+        // A base still filling is not parked: its remaining slices are stale.
+        let settled = if pending {
+            None
+        } else {
+            self.ohlcv_base.take()
+        };
+        let restored = self
+            .ohlcv_interval
+            .swap_parked(was_ms, settled, self.ohlcv_older_exhausted);
         tracing::info!(
             target: "quantick::app",
             schema_version = 1_u8,
@@ -68,17 +83,26 @@ impl Tab {
             symbol = %self.symbol,
             was_ms,
             now_ms = wanted,
-            action = if held { "discard_and_refetch" } else { "fetch" },
+            action = match (&restored, held) {
+                (Some(_), _) => "restore_parked",
+                (None, true) => "park_and_fetch",
+                (None, false) => "fetch",
+            },
             "the panes now fold from a different candle base"
         );
-        if !held {
-            return false;
-        }
         self.ohlcv_base = None;
         self.ohlcv_reaching_back = None;
         self.ohlcv_older_exhausted = false;
         // Slices of the superseded answer may still be on their way.
-        self.ohlcv_stale = self.ohlcv_pending;
+        self.ohlcv_stale = pending;
+        if let Some(restored) = restored {
+            self.ohlcv_base = Some(restored.bars);
+            self.ohlcv_older_exhausted = restored.older_exhausted;
+            return self.refold_history_prefix();
+        }
+        if !held {
+            return false;
+        }
         let mut changed = false;
         for pane in self.panes_mut() {
             changed |= pane.install_history_prefix(Vec::new());
@@ -93,7 +117,9 @@ impl Tab {
     /// beside it — but a recording that *has* one is, because that file is the
     /// run-up it was downloaded to carry. One request at a time, and a base
     /// already held is not re-fetched: changing a pane's interval is a
-    /// different fold over the same bars.
+    /// different fold over the same bars, and a move between the minute and
+    /// the daily base brings back the one parked for it (see
+    /// `follow_wanted_ohlcv_interval`) — only a base never fetched is asked.
     pub(super) fn request_ohlcv_history(&mut self, tab_id: u64, config: &AppConfig) {
         // Not gated on the source. A recording answers this from the context
         // file downloaded beside it — the run-up it exists to carry — and the
@@ -171,13 +197,14 @@ impl Tab {
         let capable = capabilities.ohlcv_history;
         let rising = capable && !self.ohlcv_capable;
         self.ohlcv_capable = capable;
-        if capabilities.ohlcv_generation != self.ohlcv_generation {
-            // The venue re-answered. A reconnect can carry a longer block than
+        if self.ohlcv_interval.observe(&capabilities) {
+            // The venue re-answered the base this chart wants — each base has
+            // its own generation, so a daily block landing leaves a minute
+            // chart's base alone. A reconnect can carry a longer block than
             // the one held, or a corrected one, so what is held goes whether or
             // not it had bars in it — the guard below then lets a fresh request
             // through, and the reply reinstalls the prefix by the same path the
             // first one took.
-            self.ohlcv_generation = capabilities.ohlcv_generation;
             self.ohlcv_base = None;
             // And with it, everything learned by reaching back through it. The
             // oldest bucket a request was measured against is gone, so a reply

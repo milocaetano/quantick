@@ -467,12 +467,23 @@ pub struct Tab {
     /// `None` until a reply lands; `Some(empty)` after one that carried
     /// nothing, which is what keeps a failed or unsupported fetch from being
     /// retried every frame. Held by the tab rather than the pane because it is
-    /// the *market's* history: changing the pane's interval refolds it, and
-    /// only a change of market throws it away.
+    /// the *market's* history: changing the pane's interval refolds it, a move
+    /// between the minute and the daily base parks it in
+    /// [`Self::ohlcv_interval`] until it is wanted again, and only a change of
+    /// market (or a new answer from the venue) throws it away.
     ohlcv_base: Option<Vec<quantick_engine::Bar>>,
-    /// The interval the candles in [`Self::ohlcv_base`] were served at, and
-    /// the one the panes want — minutes, or days for a chart cut at a day or
-    /// longer.
+    /// The interval the candles in [`Self::ohlcv_base`] were served at, the
+    /// one the panes want — minutes, or days for a chart cut at a day or
+    /// longer — the base parked for the other wish, and the candle
+    /// generations already acted on.
+    ///
+    /// A pull feed leaves the generations at zero forever — it answers
+    /// whenever asked, so nothing changes behind us. A push feed moves one
+    /// every time a block changes the answer to that base's request, including
+    /// a replacement for one already delivered, and that is the only signal
+    /// saying "the answer changed, ask again". A rising *capability* edge
+    /// cannot say it: the flag rises once and stays, so a block arriving after
+    /// an empty answer would sit unread.
     ohlcv_interval: quantick_feed::candle_base::CandleBaseInterval,
     /// Whether a fetch is out. One at a time — the *closing* reply is what
     /// clears it, and every provider always sends one. A progressive fetch
@@ -517,15 +528,6 @@ pub struct Tab {
     /// reshapes an answer already being fetched, which is the honest
     /// behaviour — the venue was asked one way and is answering that way.
     pub progressive_history: bool,
-    /// The candle generation this tab has already acted on.
-    ///
-    /// A pull feed leaves it at zero forever — it answers whenever asked, so
-    /// nothing changes behind us. A push feed moves it every time it stores a
-    /// block, including a replacement for one already delivered, and that is
-    /// the only signal saying "the answer changed, ask again". A rising
-    /// *capability* edge cannot say it: the flag rises once and stays, so a
-    /// block arriving after an empty answer would sit unread.
-    ohlcv_generation: u64,
     /// What `ohlcv_history` said last frame, so the rising edge can be seen.
     ///
     /// MetaTrader narrows its capabilities when the bridge says hello, which
@@ -664,7 +666,6 @@ impl Tab {
             ohlcv_reaching_back: None,
             ohlcv_older_exhausted: false,
             progressive_history: true,
-            ohlcv_generation: 0,
             ohlcv_capable: false,
             time_panes: SmallVec::new(),
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
@@ -728,6 +729,7 @@ impl Tab {
             // here.
             self.ohlcv_reaching_back = None;
             self.ohlcv_older_exhausted = false;
+            self.ohlcv_interval.drop_parked();
             self.ohlcv_capable = false;
             for pane in self.panes_mut() {
                 pane.install_history_prefix(Vec::new());
@@ -836,7 +838,7 @@ impl Tab {
     /// the feed's as new — what a reconnect storing a fresh block does.
     #[cfg(test)]
     pub fn forget_ohlcv_generation_for_test(&mut self) {
-        self.ohlcv_generation = u64::MAX;
+        self.ohlcv_interval.forget_generations();
     }
 
     /// How many feed sessions this tab has taken over; see the field.

@@ -36,12 +36,62 @@ fn daily_history(count: i64) -> Vec<quantick_engine::Bar> {
 }
 
 fn set_time_pane(app: &mut QuantickApp, interval_ms: i64) {
+    set_pane(app, PaneSide::Time(0), interval_ms);
+}
+
+fn set_pane(app: &mut QuantickApp, side: PaneSide, interval_ms: i64) {
     let tab = app.active_tab_mut();
-    tab.pane_mut(PaneSide::Time(0))
+    tab.pane_mut(side)
         .spec
         .retain(crate::state::BarSpec::Time(interval_ms));
     tab.apply_spec_changes();
     tab.apply_spec_changes();
+}
+
+/// [`history_app`] whose capabilities the test can move, as a push feed's do.
+fn push_feed_app(
+    ctx: &egui::Context,
+) -> (
+    QuantickApp,
+    mpsc::Sender<FeedEvent>,
+    mpsc::Receiver<FeedCommand>,
+    tokio::sync::watch::Sender<FeedCapabilities>,
+) {
+    let (evt_tx, evt_rx) = mpsc::channel(64);
+    let (_book_tx, book_rx) = mpsc::channel(64);
+    let (cmd_tx, cmd_rx) = mpsc::channel(16);
+    let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
+        book_capture: false,
+        history_paging: true,
+        traded_volume: true,
+        deal_counter: false,
+        ohlcv_history: true,
+        ohlcv_generation: 1,
+        ohlcv_daily_generation: 1,
+    });
+    let mut app = QuantickApp::new(
+        test_config(),
+        "binance",
+        "TESTUSDT",
+        BarSpec::Tick(1),
+        FeedHandle {
+            events: evt_rx,
+            book_events: book_rx,
+            notices: feed::silent_notices(),
+            capabilities: caps_rx,
+            latency: feed::unsplit_latency(),
+            commands: cmd_tx,
+            replay: None,
+        },
+    );
+    let trades: Vec<_> = (0..200).map(minute_trade).collect();
+    evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
+    app.drain_tabs();
+    run_frame(&mut app, ctx);
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    run_frame(&mut app, ctx);
+    run_frame(&mut app, ctx);
+    (app, evt_tx, cmd_rx, caps_tx)
 }
 
 fn answer(events: &mpsc::Sender<FeedEvent>, interval_ms: i64, bars: Vec<quantick_engine::Bar>) {
@@ -100,18 +150,50 @@ fn a_weekly_pane_asks_for_daily_candles_and_folds_them_into_monday_weeks() {
     assert_eq!(app.active_tab().venue_candles_held(), 35);
 }
 
-/// Back to an intraday interval, the daily base cannot fold to it: it goes,
-/// and the minutes are asked for again.
+/// Back to an intraday interval, the daily base cannot fold to it — but the
+/// minutes the chart held before, including what *load older* paged in, come
+/// back as they were: nothing is asked again and nothing is lost.
 #[test]
-fn leaving_a_daily_pane_for_minutes_fetches_minutes_again() {
+fn a_trip_to_a_daily_pane_and_back_keeps_the_paged_minutes() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_ohlcv_bases(&mut commands);
-    answer(&events, quantick_feed::OHLCV_BASE_INTERVAL_MS, Vec::new());
+    answer(
+        &events,
+        quantick_feed::OHLCV_BASE_INTERVAL_MS,
+        venue_history(120),
+    );
     app.drain_tabs();
-    set_time_pane(&mut app, DAY_MS);
+    let tab_id = app.tabs.active_id();
+    let capabilities = app.active_tab().capabilities(&app.config);
+    assert!(
+        app.active_tab_mut()
+            .request_older_ohlcv_history(tab_id, capabilities),
+        "load older goes out"
+    );
+    answer(
+        &events,
+        quantick_feed::OHLCV_BASE_INTERVAL_MS,
+        venue_history_range(-240, -120),
+    );
     app.drain_tabs();
     drain_ohlcv_bases(&mut commands);
+    assert_eq!(app.active_tab().venue_candles_held(), 240);
+    let five_minutes = 5 * quantick_feed::OHLCV_BASE_INTERVAL_MS;
+    set_time_pane(&mut app, five_minutes);
+    let seam_on_minutes = app.active_tab().pane(PaneSide::Time(0)).seam_slot();
+    assert_eq!(seam_on_minutes, 48, "240 minutes are 48 five-minute bars");
+
+    set_time_pane(&mut app, DAY_MS);
+    app.drain_tabs();
+    assert_eq!(
+        drain_ohlcv_bases(&mut commands)
+            .iter()
+            .map(|asked| asked.0)
+            .collect::<Vec<_>>(),
+        vec![quantick_feed::OHLCV_DAILY_INTERVAL_MS],
+        "the days are asked for once"
+    );
     answer(
         &events,
         quantick_feed::OHLCV_DAILY_INTERVAL_MS,
@@ -120,17 +202,92 @@ fn leaving_a_daily_pane_for_minutes_fetches_minutes_again() {
     app.drain_tabs();
     assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 10);
 
-    set_time_pane(&mut app, 5 * quantick_feed::OHLCV_BASE_INTERVAL_MS);
+    set_time_pane(&mut app, five_minutes);
+    app.drain_tabs();
     assert_eq!(
         app.active_tab().pane(PaneSide::Time(0)).seam_slot(),
-        0,
-        "no daily candle stands under a five-minute chart"
+        seam_on_minutes,
+        "the paged minutes are back under the five-minute chart"
+    );
+    assert_eq!(app.active_tab().venue_candles_held(), 240);
+    assert!(
+        drain_ohlcv_bases(&mut commands).is_empty(),
+        "nothing is fetched again"
+    );
+
+    // And the days are parked in turn: back to 1d asks nothing either.
+    set_time_pane(&mut app, DAY_MS);
+    app.drain_tabs();
+    assert_eq!(app.active_tab().pane(PaneSide::Time(0)).seam_slot(), 10);
+    assert!(drain_ohlcv_bases(&mut commands).is_empty());
+}
+
+/// A 1d pane stacked over a 5m one: one base serves both, so the stack
+/// folds from minutes and the 5m pane gets its history.
+#[test]
+fn a_daily_pane_over_an_intraday_one_still_folds_from_minutes() {
+    let ctx = egui::Context::default();
+    let (mut app, events, mut commands) = history_app(&ctx);
+    drain_ohlcv_bases(&mut commands);
+    app.active_tab_mut()
+        .set_layout(CanvasLayout::TimeTimeAndFlow);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let five_minutes = 5 * quantick_feed::OHLCV_BASE_INTERVAL_MS;
+    set_pane(&mut app, PaneSide::Time(1), five_minutes);
+    set_pane(&mut app, PaneSide::Time(0), DAY_MS);
+    app.drain_tabs();
+    assert!(
+        drain_ohlcv_bases(&mut commands)
+            .iter()
+            .all(|asked| asked.0 == quantick_feed::OHLCV_BASE_INTERVAL_MS),
+        "the 5m pane below keeps the stack on minutes"
+    );
+    answer(
+        &events,
+        quantick_feed::OHLCV_BASE_INTERVAL_MS,
+        venue_history(3 * 1_440),
     );
     app.drain_tabs();
-    let asked = drain_ohlcv_bases(&mut commands);
-    assert_eq!(asked.len(), 1, "{asked:?}");
-    assert_eq!(asked[0].0, quantick_feed::OHLCV_BASE_INTERVAL_MS);
-    assert_eq!(asked[0].1, quantick_feed::TIME_HISTORY_SPAN_MS);
+    let tab = app.active_tab();
+    assert_eq!(tab.pane(PaneSide::Time(0)).seam_slot(), 3, "three days");
+    assert_eq!(
+        tab.pane(PaneSide::Time(1)).seam_slot(),
+        3 * 288,
+        "and three days of five-minute bars"
+    );
+}
+
+/// A daily block landing on a push feed moves only the daily generation: a
+/// chart folding minutes keeps its base and asks for nothing.
+#[test]
+fn a_daily_generation_leaves_a_minute_chart_alone() {
+    let ctx = egui::Context::default();
+    let (mut app, events, mut commands, caps) = push_feed_app(&ctx);
+    drain_ohlcv_bases(&mut commands);
+    answer(
+        &events,
+        quantick_feed::OHLCV_BASE_INTERVAL_MS,
+        venue_history(120),
+    );
+    app.drain_tabs();
+    assert_eq!(app.active_tab().venue_candles_held(), 120);
+
+    caps.send_modify(|caps| caps.ohlcv_daily_generation = 2);
+    app.drain_tabs();
+    assert_eq!(app.active_tab().venue_candles_held(), 120, "base kept");
+    assert!(drain_ohlcv_bases(&mut commands).is_empty(), "nothing asked");
+
+    caps.send_modify(|caps| caps.ohlcv_generation = 2);
+    app.drain_tabs();
+    assert_eq!(
+        drain_ohlcv_bases(&mut commands)
+            .iter()
+            .map(|asked| asked.0)
+            .collect::<Vec<_>>(),
+        vec![quantick_feed::OHLCV_BASE_INTERVAL_MS],
+        "the minutes' own generation still asks again"
+    );
 }
 
 /// A provider without daily candles — a bridge that pushes only M1 —
