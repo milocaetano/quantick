@@ -2,11 +2,15 @@
 //! coarser interval, putting an older slice in front of the ones held, and
 //! trimming them to the seam where the chart's own bars begin.
 //!
-//! [`fold`] groups **by time**: every provider delivers candle history at one
-//! interval ([`quantick_feed::OHLCV_BASE_INTERVAL_MS`], a minute) and the time
-//! pane shows whatever its header asks for, so folding locally is what makes
-//! changing that free — a chip click is a different fold over bars already
-//! held, not a round trip to a venue. The row merge lives in [`merge_into`],
+//! [`fold`] groups **by time**: every provider delivers candle history at a
+//! base interval ([`crate::OHLCV_BASE_INTERVAL_MS`], a minute, or
+//! [`crate::OHLCV_DAILY_INTERVAL_MS`] for a pane cut at a day or longer) and
+//! the time pane shows whatever its header asks for, so folding locally is
+//! what makes changing that free — a chip click is a different fold over bars
+//! already held, not a round trip to a venue. The buckets are the engine's own
+//! ([`quantick_engine::time_bucket`]): a day at 00:00 UTC, a week from Monday,
+//! a calendar month — the law the forming bar on the same pane is cut by, so
+//! history and live meet at the seam. The row merge lives in [`merge_into`],
 //! for the reason `Bar::extend` is public in the engine: the summary of a run
 //! of bars is a fact about those bars, and a second implementation of it is a
 //! second answer waiting to drift.
@@ -22,47 +26,72 @@
 //! without a feed and re-run without drift.
 
 use quantick_engine::Bar;
+use quantick_engine::time_bucket::{DAY_MS, WEEK_MS, calendar_months, time_bucket_start};
 
-use crate::OHLCV_BASE_INTERVAL_MS;
-
-/// Whether `interval_ms` can be folded to from the base interval at all.
+/// Whether `interval_ms` can be folded to from `base_interval_ms` candles.
 ///
 /// A whole number of base candles or nothing: 5m and 1h are exact unions of
 /// minutes, 90s and 100ms are not, and a bucket built from a fraction of a
 /// candle would be inventing where the missing part went. The sub-minute range
 /// simply gets no prefix — an honest absence rather than an approximation.
+/// Weeks and calendar months open on a day boundary, so any base that tiles a
+/// day folds to them; a daily base folds to nothing shorter than a day.
 #[must_use]
-pub fn is_foldable(interval_ms: i64) -> bool {
-    interval_ms >= OHLCV_BASE_INTERVAL_MS && interval_ms % OHLCV_BASE_INTERVAL_MS == 0
+pub fn is_foldable(base_interval_ms: i64, interval_ms: i64) -> bool {
+    if base_interval_ms <= 0 {
+        return false;
+    }
+    let tiles_a_day = base_interval_ms <= DAY_MS && DAY_MS % base_interval_ms == 0;
+    if calendar_months(interval_ms).is_some() || (interval_ms > 0 && interval_ms % WEEK_MS == 0) {
+        return tiles_a_day;
+    }
+    interval_ms >= base_interval_ms && interval_ms % base_interval_ms == 0
 }
 
-/// Fold `base` candles up to `interval_ms`, or return nothing when the
-/// interval is not a whole number of base candles.
+/// The instant that places a venue candle in a bucket: the middle of the span
+/// it covers.
 ///
-/// Bars are bucketed by the epoch-aligned window their `open_time` falls in,
-/// which is the same alignment a venue uses for its own coarser candles. Each
-/// bucket takes the first bar's open, the highest high, the lowest low and the
-/// last bar's close; volumes and trade counts add up.
+/// For a candle aligned to the bucket law — every minute, and a daily candle
+/// opening at 00:00 UTC — this is the bucket its `open_time` names, so nothing
+/// moves. It matters for a daily candle cut at a server's own midnight
+/// (MetaTrader's D1 on a server three hours ahead of UTC opens at 21:00 the
+/// day before): the candle lands in the UTC day holding most of it rather
+/// than the one its first hours fall in.
+#[must_use]
+pub fn placement_ms(bar: &Bar) -> i64 {
+    let span = bar.close_time.saturating_sub(bar.open_time).max(0);
+    bar.open_time.saturating_add(span / 2)
+}
+
+/// Fold `base` candles, each `base_interval_ms` long, up to `interval_ms`, or
+/// return nothing when the interval is not a whole number of base candles.
+///
+/// Bars are bucketed by the engine's bucket law at their [`placement_ms`] —
+/// the epoch-aligned window for a fixed interval, Monday 00:00 UTC for weeks
+/// and the calendar month for months — which is the same alignment a venue
+/// uses for its own coarser candles. Each bucket takes the first bar's open,
+/// the highest high, the lowest low and the last bar's close; volumes and
+/// trade counts add up.
 ///
 /// `base` is expected ascending by `open_time`, as every provider delivers it.
 /// Buckets with nothing in them are skipped rather than emitted flat — the
 /// engine's empty-interval rule, kept across the fold: a gap is the honest
 /// record that nothing traded.
 #[must_use]
-pub fn fold(base: &[Bar], interval_ms: i64) -> Vec<Bar> {
-    if !is_foldable(interval_ms) || base.is_empty() {
+pub fn fold(base: &[Bar], base_interval_ms: i64, interval_ms: i64) -> Vec<Bar> {
+    if !is_foldable(base_interval_ms, interval_ms) || base.is_empty() {
         return Vec::new();
     }
     let mut out: Vec<Bar> = Vec::with_capacity(
         base.len()
-            / usize::try_from(interval_ms / OHLCV_BASE_INTERVAL_MS)
+            / usize::try_from(interval_ms / base_interval_ms)
                 .unwrap_or(1)
                 .max(1)
             + 1,
     );
     let mut open_bucket: Option<i64> = None;
     for bar in base {
-        let bucket = bucket_start(bar.open_time, interval_ms);
+        let bucket = bucket_start(placement_ms(bar), interval_ms);
         match (open_bucket, out.last_mut()) {
             // Same bucket as the bar before it: merge in.
             (Some(current), Some(folded)) if current == bucket => merge_into(folded, bar),
@@ -99,17 +128,16 @@ pub fn merge_into(folded: &mut Bar, bar: &Bar) {
     folded.trade_count = folded.trade_count.saturating_add(bar.trade_count);
 }
 
-/// The start of the `interval_ms` window containing `time_ms`.
+/// The start of the `interval_ms` window containing `time_ms` — the engine's
+/// bucket law ([`time_bucket_start`]), so a fold and the live builder agree on
+/// every boundary.
 ///
-/// Epoch-aligned and floor-divided, so a negative timestamp (a fixture before
-/// 1970, never a real market) lands in the window below it rather than
-/// rounding toward zero into the wrong bucket.
+/// Floor-divided, so a negative timestamp (a fixture before 1970, never a real
+/// market) lands in the window below it rather than rounding toward zero into
+/// the wrong bucket.
 #[must_use]
 pub fn bucket_start(time_ms: i64, interval_ms: i64) -> i64 {
-    if interval_ms <= 0 {
-        return time_ms;
-    }
-    time_ms.div_euclid(interval_ms) * interval_ms
+    time_bucket_start(time_ms, interval_ms)
 }
 
 /// Put an older slice of venue candles in front of the ones already held,
@@ -161,7 +189,9 @@ pub fn trim_to_seam(
     let Some(seam) = seam_bucket_ms(first_engine_bar, partial, interval_ms) else {
         return folded;
     };
-    folded.retain(|bar| bar.open_time < seam);
+    // By the bucket a folded bar was placed in, not its stamp: a server-day
+    // candle opening the evening before still covers the seam's own day.
+    folded.retain(|bar| bucket_start(placement_ms(bar), interval_ms) < seam);
     folded
 }
 
@@ -258,6 +288,7 @@ impl OlderCandles {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::OHLCV_BASE_INTERVAL_MS;
     use rust_decimal::Decimal;
 
     /// One base candle: minute `minute`, prices derived from `seed` so a merge
@@ -279,16 +310,25 @@ mod tests {
 
     #[test]
     fn only_whole_multiples_of_the_base_interval_fold() {
-        assert!(is_foldable(60_000), "the base interval folds to itself");
-        assert!(is_foldable(300_000), "5m");
-        assert!(is_foldable(3_600_000), "1h");
-        assert!(!is_foldable(90_000), "90s is not a whole number of minutes");
-        assert!(!is_foldable(1_000), "and nothing below the base folds");
-        assert!(!is_foldable(0));
-        assert!(!is_foldable(-60_000));
+        assert!(
+            is_foldable(OHLCV_BASE_INTERVAL_MS, 60_000),
+            "the base interval folds to itself"
+        );
+        assert!(is_foldable(OHLCV_BASE_INTERVAL_MS, 300_000), "5m");
+        assert!(is_foldable(OHLCV_BASE_INTERVAL_MS, 3_600_000), "1h");
+        assert!(
+            !is_foldable(OHLCV_BASE_INTERVAL_MS, 90_000),
+            "90s is not a whole number of minutes"
+        );
+        assert!(
+            !is_foldable(OHLCV_BASE_INTERVAL_MS, 1_000),
+            "and nothing below the base folds"
+        );
+        assert!(!is_foldable(OHLCV_BASE_INTERVAL_MS, 0));
+        assert!(!is_foldable(OHLCV_BASE_INTERVAL_MS, -60_000));
 
         assert!(
-            fold(&[candle(0, 0)], 90_000).is_empty(),
+            fold(&[candle(0, 0)], OHLCV_BASE_INTERVAL_MS, 90_000).is_empty(),
             "an interval that cannot be folded to gets no bars, not approximate ones"
         );
     }
@@ -298,7 +338,7 @@ mod tests {
         // Minutes 0..5 into one bucket, with the extremes in the middle.
         let base: Vec<Bar> = (0..5).map(|m| candle(m, m)).collect();
 
-        let folded = fold(&base, 5 * OHLCV_BASE_INTERVAL_MS);
+        let folded = fold(&base, OHLCV_BASE_INTERVAL_MS, 5 * OHLCV_BASE_INTERVAL_MS);
 
         assert_eq!(folded.len(), 1);
         let bar = &folded[0];
@@ -330,7 +370,7 @@ mod tests {
         // first bucket holds three bars, not five.
         let base: Vec<Bar> = (7..13).map(|m| candle(m, 0)).collect();
 
-        let folded = fold(&base, 5 * OHLCV_BASE_INTERVAL_MS);
+        let folded = fold(&base, OHLCV_BASE_INTERVAL_MS, 5 * OHLCV_BASE_INTERVAL_MS);
 
         assert_eq!(folded.len(), 2);
         assert_eq!(folded[0].open_time, 7 * OHLCV_BASE_INTERVAL_MS);
@@ -347,7 +387,7 @@ mod tests {
         // Nothing traded between minute 1 and minute 20.
         let base = vec![candle(0, 0), candle(1, 1), candle(20, 2)];
 
-        let folded = fold(&base, 5 * OHLCV_BASE_INTERVAL_MS);
+        let folded = fold(&base, OHLCV_BASE_INTERVAL_MS, 5 * OHLCV_BASE_INTERVAL_MS);
 
         assert_eq!(
             folded.len(),
@@ -361,15 +401,165 @@ mod tests {
     #[test]
     fn folding_to_the_base_interval_returns_what_it_was_given() {
         let base: Vec<Bar> = (0..4).map(|m| candle(m, m)).collect();
-        assert_eq!(fold(&base, OHLCV_BASE_INTERVAL_MS), base);
-        assert!(fold(&[], 5 * OHLCV_BASE_INTERVAL_MS).is_empty());
+        assert_eq!(
+            fold(&base, OHLCV_BASE_INTERVAL_MS, OHLCV_BASE_INTERVAL_MS),
+            base
+        );
+        assert!(fold(&[], OHLCV_BASE_INTERVAL_MS, 5 * OHLCV_BASE_INTERVAL_MS).is_empty());
     }
 
     #[test]
     fn the_fold_is_deterministic() {
         let base: Vec<Bar> = (0..37).map(|m| candle(m, m % 7)).collect();
-        let once = fold(&base, 15 * OHLCV_BASE_INTERVAL_MS);
-        let twice = fold(&base, 15 * OHLCV_BASE_INTERVAL_MS);
+        let once = fold(&base, OHLCV_BASE_INTERVAL_MS, 15 * OHLCV_BASE_INTERVAL_MS);
+        let twice = fold(&base, OHLCV_BASE_INTERVAL_MS, 15 * OHLCV_BASE_INTERVAL_MS);
         assert_eq!(once, twice, "same bars in, same bars out");
+    }
+
+    use quantick_engine::time_bucket::CALENDAR_MONTH_MS;
+
+    /// 2024-01-29T00:00:00Z, a Monday.
+    const MON_29_JAN_2024: i64 = 1_706_486_400_000;
+
+    /// One daily candle `day` days after Monday 2024-01-29, opening `shift_ms`
+    /// away from 00:00 UTC.
+    fn daily(day: i64, shift_ms: i64) -> Bar {
+        let open_time = MON_29_JAN_2024 + day * DAY_MS + shift_ms;
+        Bar {
+            open_time,
+            close_time: open_time + DAY_MS - 1,
+            ..candle(0, day)
+        }
+    }
+
+    #[test]
+    fn a_daily_base_folds_to_days_weeks_and_months_but_nothing_shorter() {
+        assert!(is_foldable(DAY_MS, DAY_MS));
+        assert!(is_foldable(DAY_MS, 2 * DAY_MS));
+        assert!(is_foldable(DAY_MS, WEEK_MS));
+        assert!(is_foldable(DAY_MS, CALENDAR_MONTH_MS));
+        assert!(!is_foldable(DAY_MS, 3_600_000), "a day holds no hour");
+        assert!(is_foldable(OHLCV_BASE_INTERVAL_MS, CALENDAR_MONTH_MS));
+        assert!(is_foldable(OHLCV_BASE_INTERVAL_MS, WEEK_MS));
+        assert!(
+            !is_foldable(5 * 3_600_000, WEEK_MS),
+            "five-hour candles do not tile the Monday a week opens on"
+        );
+        assert!(!is_foldable(0, DAY_MS));
+    }
+
+    #[test]
+    fn daily_candles_fold_to_monday_weeks_and_calendar_months() {
+        // Monday 29 January to Sunday 3 March 2024: five whole weeks.
+        let base: Vec<Bar> = (0..35).map(|day| daily(day, 0)).collect();
+
+        let weeks = fold(&base, DAY_MS, WEEK_MS);
+        assert_eq!(weeks.len(), 5);
+        for (index, week) in weeks.iter().enumerate() {
+            let monday = MON_29_JAN_2024 + i64::try_from(index).unwrap() * WEEK_MS;
+            assert_eq!(week.open_time, monday, "week {index} opens on its Monday");
+            assert_eq!(week.close_time, monday + WEEK_MS - 1);
+        }
+
+        let months = fold(&base, DAY_MS, CALENDAR_MONTH_MS);
+        let days_in: Vec<i64> = months
+            .iter()
+            .map(|month| (month.close_time + 1 - month.open_time) / DAY_MS)
+            .collect();
+        assert_eq!(
+            days_in,
+            [3, 29, 3],
+            "the end of January, a leap February, March's start"
+        );
+        assert_eq!(
+            months[1].open_time,
+            MON_29_JAN_2024 + 3 * DAY_MS,
+            "1 February"
+        );
+    }
+
+    /// A MetaTrader D1 candle is cut at the server's midnight. On a server two
+    /// hours ahead of UTC, Monday's candle opens at 22:00 on Sunday — and
+    /// still belongs to Monday's week, where most of it lies.
+    #[test]
+    fn a_server_day_candle_lands_in_the_utc_day_holding_most_of_it() {
+        let two_hours = 2 * 3_600_000;
+        let base: Vec<Bar> = (6..9).map(|day| daily(day, -two_hours)).collect();
+
+        let weeks = fold(&base, DAY_MS, WEEK_MS);
+        assert_eq!(weeks.len(), 2, "Sunday's candle, then Monday and Tuesday's");
+        assert_eq!(
+            bucket_start(placement_ms(&weeks[1]), WEEK_MS),
+            MON_29_JAN_2024 + WEEK_MS
+        );
+
+        // The pane's own bars begin on Tuesday: Monday's server-day candle
+        // stays, Tuesday's goes, though both open the evening before.
+        let first_engine = Bar {
+            open_time: MON_29_JAN_2024 + 8 * DAY_MS + 3_600_000,
+            close_time: MON_29_JAN_2024 + 8 * DAY_MS + 3_600_000,
+            ..candle(0, 0)
+        };
+        let days = trim_to_seam(
+            fold(&base, DAY_MS, DAY_MS),
+            Some(&first_engine),
+            None,
+            DAY_MS,
+        );
+        assert_eq!(days.len(), 2);
+        assert_eq!(days[1].open_time, MON_29_JAN_2024 + 7 * DAY_MS - two_hours);
+    }
+
+    /// The seam rule: history folded from venue candles and bars the engine
+    /// cuts from trades at the same instants fall into the same buckets, with
+    /// the same prices, for a day, a week and a calendar month.
+    #[test]
+    fn the_fold_and_the_live_builder_agree_on_every_calendar_bucket() {
+        use quantick_engine::{BarBuilder, Side, TimeBarBuilder, Trade};
+        // Every six hours from 25 January to 5 March 2024.
+        let start = MON_29_JAN_2024 - 4 * DAY_MS;
+        let minutes: Vec<i64> = (0..160).map(|step| start + step * 6 * 3_600_000).collect();
+        for interval in [DAY_MS, WEEK_MS, CALENDAR_MONTH_MS] {
+            let base: Vec<Bar> = minutes
+                .iter()
+                .enumerate()
+                .map(|(seed, &open_time)| Bar {
+                    open_time,
+                    close_time: open_time + OHLCV_BASE_INTERVAL_MS - 1,
+                    ..candle(0, i64::try_from(seed).unwrap())
+                })
+                .collect();
+            let folded = fold(&base, OHLCV_BASE_INTERVAL_MS, interval);
+
+            let mut builder = TimeBarBuilder::new(interval);
+            let mut built = Vec::new();
+            for bar in &base {
+                for price in [bar.open, bar.close] {
+                    let trade = Trade {
+                        agg_id: 0,
+                        timestamp_ms: bar.open_time + 1_000,
+                        price,
+                        quantity: Decimal::ONE,
+                        side: Side::Buy,
+                    };
+                    built.extend(builder.push(&trade));
+                }
+            }
+            built.extend(builder.partial().cloned());
+
+            let buckets = |bars: &[Bar]| -> Vec<i64> {
+                bars.iter()
+                    .map(|bar| bucket_start(bar.open_time, interval))
+                    .collect()
+            };
+            assert_eq!(buckets(&folded), buckets(&built), "{interval}");
+            for (venue, live) in folded.iter().zip(&built) {
+                assert_eq!(
+                    (venue.open, venue.close),
+                    (live.open, live.close),
+                    "{interval}"
+                );
+            }
+        }
     }
 }

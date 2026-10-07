@@ -38,7 +38,7 @@ hello                        exactly once, first line
 backfill_start               optional block, at most once, right after hello
   tick × N                   historical ticks (CopyTicks)
 backfill_end
-rates_start                  optional block, at most once, after backfill_end
+rates_start                  optional block, at most once per interval, after backfill_end
   rate × N                   batched historical candles (CopyRates)
 rates_end
 tick | book | heartbeat × …  live, until the session ends
@@ -241,9 +241,16 @@ with the tick window. Sent **once, after `backfill_end`**, by a bridge whose
 hello declared `"rates": true`; the transport is one-way, so this block arrives
 unasked and the feed holds it until something requests it.
 
-- `interval_ms` — what each candle covers. `60000` (M1) is what ships: one base
-  series, resampled locally to whatever the pane shows, which is the only
-  contract a push-only transport can keep.
+- `interval_ms` — what each candle covers. `60000` (M1) is the intraday base:
+  one series, resampled locally to whatever the pane shows, which is the only
+  contract a push-only transport can keep. A second block at `86400000` (D1,
+  `--rates-daily-years`, five by default) follows the M1 one, so a daily,
+  weekly or monthly chart reaches years back; the feed holds each block beside
+  the other and answers a request at the interval it asks for, falling back to
+  M1 when no D1 block came. A D1 candle opens at the **server's** midnight;
+  quantick buckets in UTC and places each one in the UTC day holding most of
+  it (its midpoint), which is exact for a session that trades inside one UTC
+  day and the nearest day otherwise.
 - `count_hint` — *optional*, like `backfill_start`'s.
 - `bars` — `[time_ms, open, high, low, close, volume]`, ascending. `time_ms` is
   the **bucket start in server time** (see hello), prices are decimal strings

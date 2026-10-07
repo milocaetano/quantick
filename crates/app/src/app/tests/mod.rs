@@ -37,6 +37,7 @@ use crate::ui_state::WorkspaceExt;
 mod arrangement_baseline_tests;
 mod bar_registry_tests;
 mod bare_canvas;
+mod calendar_history_tests;
 mod chart_view_tests;
 mod control_launch_baselines;
 mod control_plane_tests;

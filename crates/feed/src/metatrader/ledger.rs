@@ -275,9 +275,12 @@ impl TapeLedger {
 /// and simply does. Holding it here is what lets this provider answer the same
 /// `FetchOhlcv` as the others: the request does not reach a venue, it reads
 /// what already arrived.
+///
+/// One block per interval: a bridge pushes its M1 block and, when it serves
+/// them, a D1 block beside it, and each replaces only its own predecessor.
 #[derive(Default)]
 pub(super) struct CandleShelf {
-    block: Option<OhlcvBlock>,
+    blocks: std::collections::BTreeMap<i64, OhlcvBlock>,
     /// How many times the candle answer has changed. The boolean capability
     /// is a latch — it rises with the first block and cannot fall — so an
     /// empty first block would otherwise be the last word: a consumer that
@@ -288,18 +291,25 @@ pub(super) struct CandleShelf {
 }
 
 impl CandleShelf {
+    /// The finest block held, if any — whether candles are on hand at all.
     pub(super) fn block(&self) -> Option<&OhlcvBlock> {
-        self.block.as_ref()
+        self.blocks.values().next()
+    }
+
+    /// The block at `interval_ms`, or the finest one held when there is none
+    /// at that interval.
+    pub(super) fn block_for(&self, interval_ms: i64) -> Option<&OhlcvBlock> {
+        self.blocks.get(&interval_ms).or_else(|| self.block())
     }
 
     pub(super) fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// Hold a new block, replacing any earlier one. Returns the generation the
-    /// capability must now publish.
+    /// Hold a new block, replacing any earlier one at its interval. Returns the
+    /// generation the capability must now publish.
     pub(super) fn store(&mut self, block: OhlcvBlock) -> u64 {
-        self.block = Some(block);
+        self.blocks.insert(block.interval_ms, block);
         self.generation = self.generation.saturating_add(1);
         self.generation
     }
@@ -468,5 +478,31 @@ mod ledger_tests {
         assert_eq!(shelf.store(block(false)), 1);
         assert_eq!(shelf.store(block(true)), 2);
         assert!(shelf.block().is_some_and(|held| held.complete));
+    }
+
+    #[test]
+    fn a_daily_block_sits_beside_the_minutes_and_answers_its_own_interval() {
+        let mut shelf = CandleShelf::default();
+        let block = |interval_ms| OhlcvBlock {
+            interval_ms,
+            bars: Vec::new(),
+            complete: true,
+        };
+        shelf.store(block(60_000));
+        assert_eq!(
+            shelf.block_for(86_400_000).map(|held| held.interval_ms),
+            Some(60_000),
+            "no daily block yet: the minutes answer, tagged as minutes"
+        );
+        assert_eq!(shelf.store(block(86_400_000)), 2);
+        assert_eq!(
+            shelf.block_for(86_400_000).map(|held| held.interval_ms),
+            Some(86_400_000)
+        );
+        assert_eq!(
+            shelf.block_for(60_000).map(|held| held.interval_ms),
+            Some(60_000),
+            "the daily block replaced nothing"
+        );
     }
 }

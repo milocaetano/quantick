@@ -460,8 +460,9 @@ pub struct Tab {
     pub time_panes: SmallVec<[ChartPane; MAX_CONTEXT_PANES]>,
     /// `SYMBOL · venue`, as the strip shows it — see [`Self::chip_label`].
     chip_label: String,
-    /// The venue's own 1-minute candles for this market, fetched once and
-    /// folded locally to whatever interval the time pane shows.
+    /// The venue's own candles for this market — one-minute, or daily for
+    /// charts cut at a day or longer — fetched once and folded locally to
+    /// whatever interval the time pane shows.
     ///
     /// `None` until a reply lands; `Some(empty)` after one that carried
     /// nothing, which is what keeps a failed or unsupported fetch from being
@@ -469,6 +470,10 @@ pub struct Tab {
     /// the *market's* history: changing the pane's interval refolds it, and
     /// only a change of market throws it away.
     ohlcv_base: Option<Vec<quantick_engine::Bar>>,
+    /// The interval the candles in [`Self::ohlcv_base`] were served at, and
+    /// the one the panes want — minutes, or days for a chart cut at a day or
+    /// longer.
+    ohlcv_interval: quantick_feed::candle_base::CandleBaseInterval,
     /// Whether a fetch is out. One at a time — the *closing* reply is what
     /// clears it, and every provider always sends one. A progressive fetch
     /// stays pending across all of its slices: it is one request throughout,
@@ -653,6 +658,7 @@ impl Tab {
             flow_pane: ChartPane::flow(flow_pane_id, spec, symbol.clone()),
             chip_label: String::new(),
             ohlcv_base: None,
+            ohlcv_interval: quantick_feed::candle_base::CandleBaseInterval::default(),
             ohlcv_pending: false,
             ohlcv_stale: false,
             ohlcv_reaching_back: None,

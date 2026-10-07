@@ -1,0 +1,10 @@
+# feat/daily-weekly-monthly-bars: the time header and the BARS row draw a
+# calendar month's name where a millisecond drag would clamp it
+# (time_header.rs, toolbar/bar_parameters.rs), and the tab follows the candle
+# base its panes want — discarding a minute base for a daily one and back
+# (tab/history.rs `follow_wanted_ohlcv_interval`, the CandleAsk wiring in both
+# requests). The base decisions themselves (which base, admit, ask) live in
+# quantick_feed::candle_base; what stays reads and writes the tab's panes.
+# Measured remainder only.
+crates/app +108
+!budget +108

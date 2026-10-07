@@ -36,12 +36,54 @@ impl Tab {
                 // interval no whole number of minutes fits into still folds to
                 // nothing, so it still wants none — the lead-in does not change
                 // that, because the pane would draw the answer and discard it.
-                Some(interval) => crate::resample::is_foldable(interval),
+                Some(interval) => {
+                    crate::resample::is_foldable(quantick_feed::OHLCV_BASE_INTERVAL_MS, interval)
+                }
                 // Cut by trades: no fold exists, so candles are wanted only
                 // when the trader asked for the lead-in that installs them
                 // unfolded.
                 None => self.venue_lead_in,
             })
+    }
+
+    /// Discard the base when the panes now want a different one — a time pane
+    /// moved from 5m to 1d, or back — so the next poll asks for it. Every
+    /// prefix goes with it: a prefix folded from the old base would sit under
+    /// the new interval until the answer landed. Reports whether a prefix
+    /// changed.
+    fn follow_wanted_ohlcv_interval(&mut self) -> bool {
+        let panes = std::iter::once(&self.flow_pane).chain(self.time_pane());
+        let wanted = quantick_feed::candle_base::CandleBaseInterval::wanted_for(
+            panes.map(|pane| pane.state.spec().time_interval_ms()),
+            self.venue_lead_in,
+        );
+        let Some(was_ms) = self.ohlcv_interval.want(wanted) else {
+            return false;
+        };
+        let held = self.ohlcv_base.is_some() || self.ohlcv_pending;
+        tracing::info!(
+            target: "quantick::app",
+            schema_version = 1_u8,
+            event_code = "OHLCV_BASE_INTERVAL_CHANGED",
+            symbol = %self.symbol,
+            was_ms,
+            now_ms = wanted,
+            action = if held { "discard_and_refetch" } else { "fetch" },
+            "the panes now fold from a different candle base"
+        );
+        if !held {
+            return false;
+        }
+        self.ohlcv_base = None;
+        self.ohlcv_reaching_back = None;
+        self.ohlcv_older_exhausted = false;
+        // Slices of the superseded answer may still be on their way.
+        self.ohlcv_stale = self.ohlcv_pending;
+        let mut changed = false;
+        for pane in self.panes_mut() {
+            changed |= pane.install_history_prefix(Vec::new());
+        }
+        changed
     }
 
     /// Ask the venue for its candle history, if there is anything to ask.
@@ -53,7 +95,6 @@ impl Tab {
     /// already held is not re-fetched: changing a pane's interval is a
     /// different fold over the same bars.
     pub(super) fn request_ohlcv_history(&mut self, tab_id: u64, config: &AppConfig) {
-        let progressive = self.progressive_history;
         // Not gated on the source. A recording answers this from the context
         // file downloaded beside it — the run-up it exists to carry — and the
         // capability is already false on one that has none, so a replay
@@ -67,9 +108,14 @@ impl Tab {
         {
             return;
         }
-        let slice_ms = progressive.then_some(quantick_feed::OHLCV_SLICE_SPAN_MS);
+        let quantick_feed::candle_base::CandleAsk {
+            interval_ms,
+            span_ms,
+            slice_ms,
+        } = self.ohlcv_interval.ask(self.progressive_history);
         let command = FeedCommand::FetchOhlcv {
-            span_ms: quantick_feed::TIME_HISTORY_SPAN_MS,
+            interval_ms,
+            span_ms,
             slice_ms,
             // The opening request: back from the live edge. Reaching further
             // than one span is `request_older_ohlcv_history`'s job.
@@ -87,9 +133,10 @@ impl Tab {
                     event_code = "OHLCV_REQUESTED",
                     tab = tab_id,
                     symbol = %self.symbol,
-                    span_ms = quantick_feed::TIME_HISTORY_SPAN_MS,
+                    interval_ms,
+                    span_ms,
                     slice_ms = slice_ms.unwrap_or(0),
-                    action = if progressive { "await_slices" } else { "await_single_reply" },
+                    action = if slice_ms.is_some() { "await_slices" } else { "await_single_reply" },
                     "asked the venue for candle history"
                 );
             }
@@ -153,6 +200,10 @@ impl Tab {
                 self.ohlcv_base = None;
             }
         }
+        // A pane that changed interval since the last frame may want the
+        // other base; the refold on that change already discarded it, and this
+        // catches any path that changed a spec without one.
+        self.follow_wanted_ohlcv_interval();
         // Unconditional: every guard inside makes this a no-op once the
         // request is out or answered, and asking here is what actually retries
         // a request the command channel refused. The feed ignores a duplicate
@@ -319,7 +370,11 @@ impl Tab {
     /// span, and assigning it over the base would throw away the twelve that
     /// had already been drawn.
     fn take_ohlcv_slice(&mut self, interval_ms: i64, bars: Vec<quantick_engine::Bar>) -> bool {
-        if interval_ms != quantick_feed::OHLCV_BASE_INTERVAL_MS && !bars.is_empty() {
+        let base_is_empty = self.ohlcv_base.as_ref().is_none_or(Vec::is_empty);
+        let admitted = self
+            .ohlcv_interval
+            .admit(interval_ms, base_is_empty, !bars.is_empty());
+        if let Err(expected_ms) = admitted {
             // The event tags its own interval so a consumer never has to
             // guess; a base this fold was not written for is refused rather
             // than folded wrongly.
@@ -328,7 +383,7 @@ impl Tab {
                 schema_version = 1_u8,
                 event_code = "OHLCV_UNEXPECTED_BASE",
                 interval_ms,
-                expected_ms = quantick_feed::OHLCV_BASE_INTERVAL_MS,
+                expected_ms,
                 action = if self.ohlcv_base.is_some() {
                     "refuse_slice_keep_prefix"
                 } else {
@@ -477,11 +532,14 @@ impl Tab {
         // windows are closed at both ends, so anything else would re-fetch the
         // candle already on screen.
         let before_ms = oldest.saturating_sub(1);
-        let slice_ms = self
-            .progressive_history
-            .then_some(quantick_feed::OHLCV_SLICE_SPAN_MS);
+        let quantick_feed::candle_base::CandleAsk {
+            interval_ms,
+            span_ms,
+            slice_ms,
+        } = self.ohlcv_interval.ask(self.progressive_history);
         let command = FeedCommand::FetchOhlcv {
-            span_ms: quantick_feed::TIME_HISTORY_SPAN_MS,
+            interval_ms,
+            span_ms,
             slice_ms,
             before_ms: Some(before_ms),
         };
@@ -496,7 +554,8 @@ impl Tab {
                     event_code = "OHLCV_OLDER_REQUESTED",
                     tab = tab_id,
                     symbol = %self.symbol,
-                    span_ms = quantick_feed::TIME_HISTORY_SPAN_MS,
+                    interval_ms,
+                    span_ms,
                     before_ms,
                     slice_ms = slice_ms.unwrap_or(0),
                     action = "await_prepend",
@@ -540,14 +599,22 @@ impl Tab {
     /// Reports whether any prefix actually changed — an installed prefix
     /// rebuilds the indicators, so the caller can skip sending a second one.
     pub fn refold_history_prefix(&mut self) -> bool {
+        // A change of interval can change the base itself (minutes and days
+        // are different fetches); the discard clears every prefix, and the
+        // next poll asks for the new base.
+        if self.follow_wanted_ohlcv_interval() {
+            return true;
+        }
         let Self {
             ohlcv_base,
+            ohlcv_interval,
             flow_pane,
             time_panes,
             venue_lead_in,
             ..
         } = self;
         let venue_lead_in = *venue_lead_in;
+        let base_interval_ms = ohlcv_interval.held_ms();
         let Some(base) = ohlcv_base.as_ref() else {
             return false;
         };
@@ -559,7 +626,7 @@ impl Tab {
             // invented one.
             let prefix = match pane.state.spec().time_interval_ms() {
                 Some(interval) => {
-                    let folded = crate::resample::fold(base, interval);
+                    let folded = crate::resample::fold(base, base_interval_ms, interval);
                     trim_to_seam(
                         folded,
                         pane.state.bars().first(),
@@ -574,12 +641,16 @@ impl Tab {
                 // bar, the two sit side by side and each says what it is.
                 // Asked for, never assumed: without the switch the honest
                 // answer is still no prefix at all.
-                None if venue_lead_in => trim_borrowed_to_seam(
-                    base,
-                    pane.state.bars().first(),
-                    pane.state.partial(),
-                    quantick_feed::OHLCV_BASE_INTERVAL_MS,
-                ),
+                None if venue_lead_in
+                    && base_interval_ms == quantick_feed::OHLCV_BASE_INTERVAL_MS =>
+                {
+                    trim_borrowed_to_seam(
+                        base,
+                        pane.state.bars().first(),
+                        pane.state.partial(),
+                        base_interval_ms,
+                    )
+                }
                 None => Vec::new(),
             };
             changed |= pane.install_history_prefix(prefix);

@@ -285,7 +285,7 @@ class Session(TransportMixin, TicksMixin, HistoryMixin, RatesMixin):
         # Candle history is announced only when this session will really send
         # it, so a feed knows immediately whether a time pane has anything
         # coming rather than waiting on a block that never arrives.
-        if self.args.rates_months > 0:
+        if self.args.rates_months > 0 or self.args.rates_daily_years > 0:
             hello["rates"] = True
         # This bridge reads its socket, so quantick may write to it. A bridge
         # that does not declare this is never written to: the request would sit
@@ -317,6 +317,8 @@ class Session(TransportMixin, TicksMixin, HistoryMixin, RatesMixin):
         self.backfill()
         if self.args.rates_months > 0:
             self.send_rates()
+        if self.args.rates_daily_years > 0:
+            self.send_daily_rates()
         log(
             "BRIDGE_SESSION_STARTED",
             symbol=self.symbol,
@@ -411,6 +413,15 @@ def main() -> int:
         help=(
             "months of M1 candle history to send after the tick backfill "
             "(0 disables the block, and the session declares no candles)"
+        ),
+    )
+    parser.add_argument(
+        "--rates-daily-years",
+        type=int,
+        default=5,
+        help=(
+            "years of D1 candle history to send after the M1 block, for daily, "
+            "weekly and monthly charts (0 disables the block)"
         ),
     )
     parser.add_argument(

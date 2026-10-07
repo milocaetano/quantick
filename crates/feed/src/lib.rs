@@ -21,6 +21,7 @@
 //! states the rule in full.
 
 pub mod binance;
+pub mod candle_base;
 pub mod candles;
 pub mod clock;
 pub use quantick_sources::config;
@@ -79,7 +80,8 @@ pub const DEFAULT_BACKFILL_TARGET: usize = 1000;
 /// paid by the trader who wants it rather than by everyone who does not.
 pub const TIME_HISTORY_SPAN_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
 
-/// The one interval every provider delivers candle history in: one minute.
+/// The interval every provider delivers intraday candle history in: one
+/// minute.
 ///
 /// A single base series, resampled locally to whatever the pane shows, is what
 /// makes this work across four very different transports. The venues disagree
@@ -88,6 +90,45 @@ pub const TIME_HISTORY_SPAN_MS: i64 = 7 * 24 * 60 * 60 * 1_000;
 /// the only contract all of them can keep. It also makes switching a pane's
 /// interval free — no refetch, just a different fold over bars already held.
 pub const OHLCV_BASE_INTERVAL_MS: i64 = 60_000;
+
+/// The base a pane cut at a day or longer asks for instead: one UTC day.
+///
+/// A week of minutes is seven daily bars, and the quarter the deepest minute
+/// reach gets to is thirteen weekly ones — a daily, weekly or monthly chart
+/// needs years, which only the venue's own daily candles reach in a few
+/// requests. Asked for, never assumed: a provider that cannot serve days
+/// answers in minutes, tagged as such, and the fold builds the days from them
+/// over the shorter reach.
+pub const OHLCV_DAILY_INTERVAL_MS: i64 = quantick_engine::time_bucket::DAY_MS;
+
+/// How far back one request for daily candles reaches: five years.
+///
+/// Two Binance pages of a thousand days, one MetaTrader `CopyRates` call —
+/// long enough for a monthly chart to say something, short enough to land in
+/// the time a minute request takes. *Load older* reaches another span.
+pub const DAILY_HISTORY_SPAN_MS: i64 = 1_826 * OHLCV_DAILY_INTERVAL_MS;
+
+/// The candle base a pane cut at `interval_ms` folds from: days for a day or
+/// longer that is a whole number of them (or calendar months), minutes for
+/// everything else.
+#[must_use]
+pub fn ohlcv_base_interval_for(interval_ms: i64) -> i64 {
+    if candles::is_foldable(OHLCV_DAILY_INTERVAL_MS, interval_ms) {
+        OHLCV_DAILY_INTERVAL_MS
+    } else {
+        OHLCV_BASE_INTERVAL_MS
+    }
+}
+
+/// How far one candle request at `base_interval_ms` reaches.
+#[must_use]
+pub fn ohlcv_span_for(base_interval_ms: i64) -> i64 {
+    if base_interval_ms >= OHLCV_DAILY_INTERVAL_MS {
+        DAILY_HISTORY_SPAN_MS
+    } else {
+        TIME_HISTORY_SPAN_MS
+    }
+}
 
 /// How much of the span one progressive slice covers: two days.
 ///
@@ -184,11 +225,12 @@ pub enum FeedEvent {
     /// which reply is the closing one.
     ///
     OhlcvHistory {
-        /// The interval each bar covers. Always
-        /// [`OHLCV_BASE_INTERVAL_MS`] today, and tagged rather than assumed:
-        /// a consumer resampling these must never have to guess what it is
-        /// resampling *from*, and a venue that one day serves a different base
-        /// would otherwise be an invisible change.
+        /// The interval each bar covers: [`OHLCV_BASE_INTERVAL_MS`] or
+        /// [`OHLCV_DAILY_INTERVAL_MS`], as served — which is not always as
+        /// asked, since a provider without daily candles answers a daily
+        /// request in minutes. Tagged rather than assumed: a consumer
+        /// resampling these must never have to guess what it is resampling
+        /// *from*.
         interval_ms: i64,
         /// Closed candles, ascending by `open_time`, deduplicated.
         ///
@@ -311,8 +353,13 @@ pub enum FeedCommand {
     ///   as "not measured", never as "measured and found balanced".
     ///
     FetchOhlcv {
+        /// The candle interval asked for: [`OHLCV_BASE_INTERVAL_MS`], or
+        /// [`OHLCV_DAILY_INTERVAL_MS`] for a pane cut at a day or longer (see
+        /// [`ohlcv_base_interval_for`]). A provider that cannot serve it
+        /// answers at the finest interval it can, and the reply says which.
+        interval_ms: i64,
         /// How far back to reach, in milliseconds. See
-        /// [`TIME_HISTORY_SPAN_MS`].
+        /// [`TIME_HISTORY_SPAN_MS`] and [`DAILY_HISTORY_SPAN_MS`].
         span_ms: i64,
         /// The newest millisecond this request covers, inclusive. `None` means
         /// *now* — the opening request, reaching back from the live edge.
