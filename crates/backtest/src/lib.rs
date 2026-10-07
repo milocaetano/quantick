@@ -20,8 +20,9 @@
 //!     (a) sim.on_trade(trade)      resting orders meet the tape
 //!     (b) builder.push_into(trade) every bar the print closed, in order
 //!           -> host.push_closed_bar(bar)
-//!           -> strategy.on_bar(view)     reads indicators, returns commands
-//!              (not for a bar cut late, from prints the builder held)
+//!           -> strategy.on_closed_bar(..)  reads indicators, steps the
+//!              bar through the lent simulator (not for a bar cut late,
+//!              from prints the builder held)
 //!     (c) sim.apply(command)       queued for the *next* print
 //! ```
 //!
@@ -62,4 +63,4 @@ pub mod strategy;
 pub use bars::BarSpec;
 pub use report::{render_aggregate, render_run, render_session};
 pub use run::{Anomalies, Distribution, RunOutcome, SessionRun, run_session};
-pub use strategy::{Account, BarView, Signals, Strategy};
+pub use strategy::{Account, BarView, Signals, SimPort, Strategy};

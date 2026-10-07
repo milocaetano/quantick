@@ -19,9 +19,10 @@ use quantick_replay::Session;
 use quantick_sim::{ClosedTrade, PerformanceReport, RejectReason, Simulator, VenueEvent};
 use rust_decimal::Decimal;
 
-use crate::strategy::{Account, BarView, Signals, Strategy};
+use crate::strategy::{Account, Signals, SimPort, Strategy};
 use quantick_engine::bar_registry::BarConfiguration;
 use quantick_engine::bar_selection::BarInputAvailability;
+use quantick_strategy::runner::StrategyPort;
 
 /// Everything the tape refused, counted rather than swallowed.
 ///
@@ -166,6 +167,43 @@ pub fn cancel_code(reason: &quantick_sim::CancelReason) -> &'static str {
     }
 }
 
+/// The simulator lent to a strategy for one step, every event a command
+/// produces counted on its way back.
+struct SimVenue<'a> {
+    sim: &'a mut Simulator,
+    anomalies: &'a mut Anomalies,
+}
+
+impl StrategyPort for SimVenue<'_> {
+    fn apply(&mut self, command: quantick_sim::Command) -> Vec<VenueEvent> {
+        let events = self.sim.apply(command);
+        for event in &events {
+            self.anomalies.observe(event);
+        }
+        events
+    }
+
+    /// No position and no resting order (queued market actions are
+    /// impossible here — the print that runs a bar's close drained the
+    /// queue before the bar could close).
+    fn is_flat(&self) -> bool {
+        self.account().is_flat()
+    }
+}
+
+impl SimPort for SimVenue<'_> {
+    fn account(&self) -> Account<'_> {
+        Account {
+            position: self.sim.position(),
+            orders: self.sim.orders(),
+            mark_price: self.sim.mark_price(),
+            mark_timestamp_ms: self.sim.mark_timestamp_ms(),
+            closed_trades: self.sim.closed_trades().len(),
+            realized_points: self.sim.realized_points(),
+        }
+    }
+}
+
 /// What one recorded session produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRun {
@@ -211,8 +249,9 @@ pub struct SessionRun {
 ///    on the print that triggered it.
 /// 2. `builder.push_into(print)` — every bar the print closed, oldest first:
 ///    one at most for most rules, one per brick level a Renko print clears.
-/// 3. On each close: the host evaluates indicators, then the strategy is
-///    asked for commands, then `sim.apply` queues them for the *next* print.
+/// 3. On each close: the host evaluates indicators, then the strategy steps
+///    the bar through the simulator it is lent ([`Strategy::on_closed_bar`]),
+///    whose `sim.apply` queues its commands for the *next* print.
 ///    A bar cut late, from prints the builder held before this one — the
 ///    bricks of the prints a Renko builder held while it read its step —
 ///    only warms the indicators up: no one could act on it when it closed,
@@ -267,13 +306,13 @@ pub fn run_session(
         }
         // Self-protection commands (a dropped bracket's close) apply now;
         // applying one emits nothing, so the echo terminates.
-        for command in strategy.on_events(&events) {
-            let events = sim.apply(command);
-            for event in &events {
-                anomalies.observe(event);
-            }
-            let _ = strategy.on_events(&events);
-        }
+        strategy.on_print_events(
+            &events,
+            &mut SimVenue {
+                sim: &mut sim,
+                anomalies: &mut anomalies,
+            },
+        );
         let late = builder.push_into(trade, &mut closed);
         for (cut, bar) in closed.drain(..).enumerate() {
             host.push_closed_bar(&bar);
@@ -283,32 +322,15 @@ pub fn run_session(
                 // Cut from prints held before this one: warm-up, no order.
                 continue;
             }
-
-            // The view borrows the host and the simulator, so it must be gone
-            // before `apply` can mutate the simulator. The block is the seam.
-            let commands = {
-                let view = BarView {
-                    bar: &bar,
-                    index,
-                    signals: Signals::new(&host, &slots),
-                    account: Account {
-                        position: sim.position(),
-                        orders: sim.orders(),
-                        mark_price: sim.mark_price(),
-                        mark_timestamp_ms: sim.mark_timestamp_ms(),
-                        closed_trades: sim.closed_trades().len(),
-                        realized_points: sim.realized_points(),
-                    },
-                };
-                strategy.on_bar(&view)
-            };
-            for command in commands {
-                let events = sim.apply(command);
-                for event in &events {
-                    anomalies.observe(event);
-                }
-                let _ = strategy.on_events(&events);
-            }
+            strategy.on_closed_bar(
+                &bar,
+                index,
+                Signals::new(&host, &slots),
+                &mut SimVenue {
+                    sim: &mut sim,
+                    anomalies: &mut anomalies,
+                },
+            );
         }
     }
     strategy.end_of_session();

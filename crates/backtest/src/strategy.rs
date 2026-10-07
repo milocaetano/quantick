@@ -19,6 +19,7 @@
 use quantick_engine::Bar;
 use quantick_indicators::{Indicator, IndicatorHost, InstanceId, PlotId};
 use quantick_sim::{Command, Order, Position, VenueEvent};
+use quantick_strategy::runner::StrategyPort;
 use rust_decimal::Decimal;
 
 /// A trading rule the harness can run.
@@ -48,14 +49,17 @@ pub trait Strategy {
     /// Commands take effect from the **next** print onwards: this bar has
     /// already happened. A strategy that returns nothing is the common case
     /// and costs nothing — an empty `Vec` does not allocate.
-    fn on_bar(&mut self, view: &BarView<'_>) -> Vec<Command>;
+    ///
+    /// The default returns nothing: a strategy that steps through the port
+    /// itself overrides [`Strategy::on_closed_bar`] instead.
+    fn on_bar(&mut self, view: &BarView<'_>) -> Vec<Command> {
+        let _ = view;
+        Vec::new()
+    }
 
     /// What the simulator reported — fills, placements, rejections,
     /// closures — in tape order: once after each print, and once after the
-    /// commands a bar's [`Strategy::on_bar`] issued were applied. The live
-    /// chart feeds its armed instances the same stream, so a strategy that
-    /// follows its own operation (the `force-region` kernel does) behaves
-    /// identically under both consumers.
+    /// commands a bar's [`Strategy::on_bar`] issued were applied.
     ///
     /// The returned commands are the strategy protecting itself mid-print —
     /// the kernel closes an operation whose bracket the simulator dropped
@@ -68,9 +72,57 @@ pub trait Strategy {
         Vec::new()
     }
 
+    /// A print's simulator events, with the simulator lent through `port`
+    /// to answer them.
+    ///
+    /// The default hands them to [`Strategy::on_events`], applies each
+    /// answer and echoes its events back once. The `force-region` kernel
+    /// overrides it to run the strategy crate's shared runner — the very
+    /// step the live chart feeds its armed instances through, so it behaves
+    /// identically under both consumers.
+    fn on_print_events(&mut self, events: &[VenueEvent], port: &mut dyn SimPort) {
+        for command in self.on_events(events) {
+            let echoed = port.apply(command);
+            let _ = self.on_events(&echoed);
+        }
+    }
+
+    /// A bar just closed, with the simulator lent through `port`.
+    ///
+    /// The default builds the [`BarView`], asks [`Strategy::on_bar`], and
+    /// applies each command in order, echoing its events through
+    /// [`Strategy::on_events`]. A strategy that steps itself through the
+    /// shared runner overrides this instead.
+    fn on_closed_bar(
+        &mut self,
+        bar: &Bar,
+        index: usize,
+        signals: Signals<'_>,
+        port: &mut dyn SimPort,
+    ) {
+        let commands = self.on_bar(&BarView {
+            bar,
+            index,
+            signals,
+            account: port.account(),
+        });
+        for command in commands {
+            let echoed = port.apply(command);
+            let _ = self.on_events(&echoed);
+        }
+    }
+
     /// Called once after the last print of a session, before the next one.
     /// The default does nothing; a stateful rule resets here.
     fn end_of_session(&mut self) {}
+}
+
+/// The simulator as the run loop lends it for one step: the strategy
+/// crate's [`StrategyPort`] — apply a command, read the flat gate — plus the
+/// read-only [`Account`] a [`BarView`] carries.
+pub trait SimPort: StrategyPort {
+    /// What the simulator holds right now.
+    fn account(&self) -> Account<'_>;
 }
 
 /// Everything a strategy may look at when a bar closes.

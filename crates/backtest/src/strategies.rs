@@ -11,16 +11,17 @@
 //! the signal source (native EMAs for a compiled script) changes nothing
 //! about how orders are placed.
 
-use quantick_engine::Side;
+use quantick_engine::{Bar, Side};
 use quantick_indicators::{
     Indicator, PlotId, SourceId,
     native::{Cvd, Ema},
 };
 use quantick_pine::{CompiledScript, PineError, ScriptIndicator};
 use quantick_sim::{Bracket, Command};
+use quantick_strategy::runner;
 use rust_decimal::Decimal;
 
-use crate::strategy::{Account, BarView, Strategy};
+use crate::strategy::{Account, BarView, Signals, SimPort, Strategy};
 
 /// Protective distances in points, applied to each entry.
 ///
@@ -327,19 +328,32 @@ impl Strategy for ForceRegion {
         &self.name
     }
 
-    fn on_bar(&mut self, view: &BarView<'_>) -> Vec<Command> {
-        // The recorded session is the region's whole life, so the time
-        // window is always active. The flat gate mirrors the chart's:
-        // no position and no resting order (queued market actions are
-        // impossible here — the print that runs this bar's close drained
-        // the queue before the bar could close).
-        let flat = view.account.position.is_none() && view.account.orders.is_empty();
-        self.instance
-            .on_closed_bar(view.bar, &self.region, true, flat)
+    fn on_print_events(&mut self, events: &[quantick_sim::VenueEvent], port: &mut dyn SimPort) {
+        runner::deliver_print_events(std::slice::from_mut(&mut self.instance), events, port);
     }
 
-    fn on_events(&mut self, events: &[quantick_sim::VenueEvent]) -> Vec<Command> {
-        self.instance.on_sim_events(events)
+    fn on_closed_bar(
+        &mut self,
+        bar: &Bar,
+        index: usize,
+        _signals: Signals<'_>,
+        port: &mut dyn SimPort,
+    ) {
+        // The shared runner the chart steps its drawings through, with the
+        // region fixed: the recorded session is the region's whole life, so
+        // the time window is always active. The flat gate is the port's, as
+        // the chart's is its paper account's.
+        let region = self.region;
+        // No alarm rides a backtest instance, so the runner never asks the
+        // clock it is handed and no cue comes back.
+        let _ = runner::step_closed_bar(
+            std::slice::from_mut(&mut self.instance),
+            bar,
+            index,
+            |(), _| Some((region, true)),
+            port,
+            0,
+        );
     }
 
     fn end_of_session(&mut self) {
