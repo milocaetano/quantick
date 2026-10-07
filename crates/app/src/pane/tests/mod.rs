@@ -2726,7 +2726,7 @@ fn every_paused_region_has_a_word_for_the_badge_and_shuts_the_gate() {
         .place(rectangle, drawings::ChartPoint::at(30.0, 110.0));
     let id = pane.drawings.items()[0].id;
     assert!(
-        pane.strategies.region(&pane.drawings, id, 5).is_some(),
+        crate::pane::strategies::drawing_region(&pane.drawings, id, 5).is_some(),
         "nothing wrong: the region is testable"
     );
     for break_it in [
@@ -2741,7 +2741,7 @@ fn every_paused_region_has_a_word_for_the_badge_and_shuts_the_gate() {
         pane.drawings.items_mut()[index] = drawing;
         assert!(word.is_some(), "this fault owes the badge a word");
         assert!(
-            pane.strategies.region(&pane.drawings, id, 5).is_none(),
+            crate::pane::strategies::drawing_region(&pane.drawings, id, 5).is_none(),
             "and shuts the gate: {word:?}"
         );
         // Put it back for the next fault.

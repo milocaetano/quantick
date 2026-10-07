@@ -31,22 +31,13 @@ pub(super) fn evaluate(
             continue;
         }
         // The batch to each instance, applying what it answers with —
-        // the self-protection close after a dropped bracket. Applying
-        // a returned command emits no events of its own (kernel
-        // contract), so one echo settles it.
-        if !print_events.is_empty() {
-            for index in 0..pane.strategies.anchors.instances.len() {
-                let responses = pane.strategies.anchors.instances[index]
-                    .armed
-                    .on_sim_events(&print_events);
-                for command in responses {
-                    let events = paper.account_mut().apply_strategy_command(command);
-                    let _ = pane.strategies.anchors.instances[index]
-                        .armed
-                        .on_sim_events(&events);
-                }
-            }
-        }
+        // the self-protection close after a dropped bracket — through the
+        // runner the backtest steps its instance through too.
+        quantick_strategy::runner::deliver_print_events(
+            &mut pane.strategies.anchors.instances,
+            &print_events,
+            paper,
+        );
         let bars = pane.strategies.take_bars();
         if !bars.is_empty() {
             // An instance whose drawing was deleted from a surface that
@@ -70,40 +61,18 @@ pub(super) fn evaluate(
             }
         }
         for (bar, slot) in &bars {
-            for index in 0..pane.strategies.anchors.instances.len() {
-                let drawing = pane.strategies.anchors.instances[index].drawing;
-                // A region that cannot honestly be tested (hidden, off
-                // its series, another market) holds fire but never
-                // starves the ruler: the trigger's contract is every
-                // closed bar, so the gates shut instead of the feed.
-                let (region, active) = pane
-                    .strategies
-                    .region(&pane.drawings, drawing, *slot)
-                    .unwrap_or((
-                        quantick_strategy::Region::new(
-                            rust_decimal::Decimal::ZERO,
-                            rust_decimal::Decimal::ZERO,
-                        ),
-                        false,
-                    ));
-                let flat = paper.is_flat();
-                let commands = pane.strategies.anchors.instances[index]
-                    .armed
-                    .on_closed_bar(bar, &region, active, flat);
-                // The alarm judges the same bar, from the kernel's own
-                // reading of it rather than from whether an order went
-                // out — a busy account and a spent one shot silence the
-                // order, never the signal. Every closed bar is offered,
-                // qualifying or not: a preview that failed to hold is
-                // reported here, and this bar's repeat budget resets.
-                sounds.extend(pane.strategies.anchors.instances[index].alarm_on_closed_bar(now_ms));
-                for command in commands {
-                    let events = paper.account_mut().apply_strategy_command(command);
-                    let _ = pane.strategies.anchors.instances[index]
-                        .armed
-                        .on_sim_events(&events);
-                }
-            }
+            // Region, flat gate, kernel, alarm, then the commands applied
+            // and echoed — instance by instance, in the shared runner. The
+            // region comes from the drawing as it stands for this slot.
+            let drawings = &pane.drawings;
+            sounds.extend(quantick_strategy::runner::step_closed_bar(
+                &mut pane.strategies.anchors.instances,
+                bar,
+                *slot,
+                |drawing, slot| crate::pane::strategies::drawing_region(drawings, drawing, slot),
+                paper,
+                now_ms,
+            ));
         }
         // The bar still forming, judged for the alarm only. Nothing
         // here can place an order or move a state machine: the kernel's
@@ -136,16 +105,9 @@ pub(super) fn evaluate(
                     continue;
                 }
                 let drawing = pane.strategies.anchors.instances[index].drawing;
-                let (region, active) = pane
-                    .strategies
-                    .region(&pane.drawings, drawing, slot)
-                    .unwrap_or((
-                        quantick_strategy::Region::new(
-                            rust_decimal::Decimal::ZERO,
-                            rust_decimal::Decimal::ZERO,
-                        ),
-                        false,
-                    ));
+                let (region, active) = quantick_strategy::runner::region_or_hold(
+                    crate::pane::strategies::drawing_region(&pane.drawings, drawing, slot),
+                );
                 sounds.extend(
                     pane.strategies.anchors.instances[index]
                         .alarm_on_forming_bar(&partial, &region, active, progress, now_ms),
@@ -156,6 +118,19 @@ pub(super) fn evaluate(
     }
     paper.account_mut().set_bot_listening(watching > 0);
     pending_sounds.extend(sounds);
+}
+
+/// The paper account as the strategy runner reaches it: commands go in
+/// through the same funnel every strategy command takes, and the flat gate
+/// is the account's own.
+impl quantick_strategy::runner::StrategyPort for crate::paper_trading::PaperTrading {
+    fn apply(&mut self, command: quantick_sim::Command) -> Vec<quantick_sim::VenueEvent> {
+        self.account_mut().apply_strategy_command(command)
+    }
+
+    fn is_flat(&self) -> bool {
+        crate::paper_trading::PaperTrading::is_flat(self)
+    }
 }
 
 impl Tab {

@@ -63,6 +63,7 @@ mod armed;
 mod force;
 pub mod presets;
 mod region;
+pub mod runner;
 #[cfg(test)]
 mod scratch;
 pub mod sound;
