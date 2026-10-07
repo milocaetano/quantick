@@ -11,8 +11,8 @@
 
 use quantick_engine::Bar;
 
-use crate::config::FeedCapabilities;
 use crate::candles::{SeamLead, is_foldable, merge_older_candles, seam_lead};
+use crate::config::FeedCapabilities;
 use crate::{
     OHLCV_BASE_INTERVAL_MS, OHLCV_DAILY_INTERVAL_MS, OHLCV_SLICE_SPAN_MS, OhlcvSlice,
     ohlcv_base_interval_for, ohlcv_span_for,
@@ -282,11 +282,9 @@ impl CandleBaseInterval {
         held: &[Bar],
         seams: impl IntoIterator<Item = (i64, i64)>,
     ) -> Option<CandleAsk> {
-        let on_days = self.held_ms >= OHLCV_DAILY_INTERVAL_MS
-            && self.wanted_ms >= OHLCV_DAILY_INTERVAL_MS;
-        if !on_days
-            || self.seam_minutes != SeamMinutes::NotAsked
-            || self.parked_minutes().is_some()
+        let on_days =
+            self.held_ms >= OHLCV_DAILY_INTERVAL_MS && self.wanted_ms >= OHLCV_DAILY_INTERVAL_MS;
+        if !on_days || self.seam_minutes != SeamMinutes::NotAsked || self.parked_minutes().is_some()
         {
             return None;
         }
@@ -559,11 +557,7 @@ mod candle_base_tests {
         let minutes: Vec<Bar> = (0..(2 * 1_440))
             .map(|index| candle(8 * DAY_MS + index * minute))
             .collect();
-        base.take_seam_minutes(
-            minute,
-            minutes.clone(),
-            OhlcvSlice::Last { complete: true },
-        );
+        base.take_seam_minutes(minute, minutes.clone(), OhlcvSlice::Last { complete: true });
         assert!(!base.seam_minutes_out());
         assert_eq!(base.parked_minutes(), Some(minutes.as_slice()));
         assert_eq!(base.held_ms(), day, "the days are still the base");
@@ -573,7 +567,11 @@ mod candle_base_tests {
             .expect("a lead");
         assert_eq!(lead.open_time, 9 * DAY_MS);
         assert_eq!(lead.trade_count, 6 * 60, "00:00 to 06:00, no more");
-        assert_eq!(base.seam_minutes_ask(&days, seams), None, "parked: not again");
+        assert_eq!(
+            base.seam_minutes_ask(&days, seams),
+            None,
+            "parked: not again"
+        );
 
         let was = base.want(minute).unwrap();
         assert_eq!(
