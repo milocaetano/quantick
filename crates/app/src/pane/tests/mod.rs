@@ -24,6 +24,7 @@ use crate::viewport::Viewport;
 use super::painting::{LIVE_CHIP_MARGIN_PX, LIVE_CHIP_VPAD_PX, LIVE_CHIP_WIDTH_PX};
 use super::*;
 
+mod calendar_slot_tests;
 mod native_split_tests;
 mod tape_only_tests;
 
