@@ -1,0 +1,10 @@
+# Trades for the weekly golden test (interval = 1w, weeks start Monday 00:00 UTC).
+# Trade 1 is the last millisecond of Sunday 2024-01-07, so it belongs to the
+# week of Monday 2024-01-01; trade 2 is Monday 2024-01-08 00:00 and opens the
+# next week; trade 3 is Sunday 2024-01-14 noon, still that week; trade 4 is
+# Monday 2024-01-15 and leaves a forming week.
+agg_id,timestamp_ms,price,quantity,side
+1,1704671999999,100.0,1.0,buy
+2,1704672000000,101.0,1.0,sell
+3,1705233600000,102.0,2.0,buy
+4,1705276800000,103.0,1.0,buy

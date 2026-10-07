@@ -1,0 +1,7 @@
+# Expected 1w bars for calendar_week_trades.csv. Hand-computed.
+#   Bar 0 = week of Monday 2024-01-01, trade 1 alone.
+#   Bar 1 = week of Monday 2024-01-08, trades 2,3.
+# Trade 4 opens the week of Monday 2024-01-15 and is the forming bar.
+open_time,close_time,open,high,low,close,buy_volume,sell_volume,trade_count
+1704671999999,1704671999999,100.0,100.0,100.0,100.0,1.0,0,1
+1704672000000,1705233600000,101.0,102.0,101.0,102.0,2.0,1.0,2
