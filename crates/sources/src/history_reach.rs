@@ -87,18 +87,19 @@ pub const BYTES_PER_HELD_PRINT: usize = 146;
 /// The memory a tab's tapes may grow to through history runs, **every pane's
 /// copy together**: each pane holds its own copy of the tape, so a split with
 /// a time pane spends this twice as fast (see [`TapeFacts::copies`]).
-pub const HELD_TAPE_CEILING_BYTES: usize = 1_536 * 1024 * 1024;
+pub const HELD_TAPE_CEILING_BYTES: usize = 4 * 1024 * 1024 * 1024;
 
-/// [`HELD_TAPE_CEILING_BYTES`] in prints, across every copy: about eleven
-/// million, which holds five dense B3 sessions and today on a one-pane tab.
-/// A tab with two panes reaches about three dense days before it stops at
-/// [`CampaignEnd::MemoryCeiling`], and says so.
+/// [`HELD_TAPE_CEILING_BYTES`] in prints, across every copy: about
+/// twenty-nine million, which holds five dense B3 sessions and today on a
+/// three-pane tab (a flow pane and two context panes), the trader's WIN setup.
+/// A fourth pane stops a five-day run at [`CampaignEnd::MemoryCeiling`], and
+/// says so.
 pub const MAX_HELD_PRINTS: usize = HELD_TAPE_CEILING_BYTES / BYTES_PER_HELD_PRINT;
 
 // A measured dense session fits one session's budget, and five of them plus
-// today fit under the ceiling on one pane: checked when the crate compiles.
+// today fit under the ceiling on three panes: checked when the crate compiles.
 const _: () = assert!(PRINTS_PER_SESSION_BUDGET >= MEASURED_DENSE_SESSION_PRINTS);
-const _: () = assert!(6 * MEASURED_DENSE_SESSION_PRINTS < MAX_HELD_PRINTS);
+const _: () = assert!(3 * 6 * MEASURED_DENSE_SESSION_PRINTS < MAX_HELD_PRINTS);
 
 /// Requests beyond the print budget's own, for replies that cross dead time
 /// (a weekend, a holiday) and bring nothing.
