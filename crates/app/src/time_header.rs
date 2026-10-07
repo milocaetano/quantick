@@ -6,11 +6,14 @@
 //! one. It sits in a strip carved off the top of the pane rather than
 //! floating over it, so nothing is ever painted across market data.
 //!
-//! The presets are the four timeframes a context chart is actually read at;
-//! the drag beside them accepts the same interval domain the BARS group does
+//! The presets are the timeframes a context chart is actually read at, from a
+//! minute to a calendar month; the drag beside them accepts the same fixed
+//! interval domain the BARS group does
 //! ([`crate::state::MIN_TIME_INTERVAL_MS`]..=[`crate::state::MAX_TIME_INTERVAL_MS`]),
 //! so a timeframe this row does not name is still one gesture away — and every
-//! preset it does name is a value the other control accepts.
+//! preset it does name is a value the other control accepts. A calendar month
+//! has no millisecond length to drag, so while one is chosen the drag gives way
+//! to its name.
 
 use eframe::egui;
 
@@ -25,7 +28,8 @@ pub const HEIGHT_PX: f32 = 24.0;
 const CONTENT_PADDING: egui::Vec2 = egui::vec2(8.0, 2.0);
 
 /// The named timeframes, in the order they are offered.
-pub const PRESETS: [(&str, i64); 4] = quantick_engine::bar_registry::TIME_PRESETS;
+pub const PRESETS: [(&str, i64); quantick_engine::bar_registry::TIME_PRESETS.len()] =
+    quantick_engine::bar_registry::TIME_PRESETS;
 
 /// The interval a time pane opens on when the split is first shown: M1, the
 /// timeframe a flow trader glances at for context. The engine's default for a
@@ -151,17 +155,29 @@ pub fn draw(
                 changed = true;
             }
         }
-        let interval = content
-            .add(
-                egui::DragValue::new(interval_ms)
-                    .range(
-                        crate::state::MIN_TIME_INTERVAL_MS as f64
-                            ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
-                    )
-                    .speed(crate::state::TIME_INTERVAL_DRAG_SPEED)
-                    .suffix(" ms"),
-            )
-            .on_hover_text("custom interval for this pane");
+        let interval = if quantick_engine::time_bucket::calendar_months(*interval_ms).is_some() {
+            // A month is a calendar unit, not a duration: dragging its nominal
+            // millisecond size would walk into values no chart accepts.
+            content
+                .label(
+                    egui::RichText::new(quantick_engine::fmt_time_interval(*interval_ms))
+                        .small()
+                        .color(theme::TEXT_MUTED),
+                )
+                .on_hover_text("calendar months, in UTC; pick a chip to change")
+        } else {
+            content
+                .add(
+                    egui::DragValue::new(interval_ms)
+                        .range(
+                            crate::state::MIN_TIME_INTERVAL_MS as f64
+                                ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
+                        )
+                        .speed(crate::state::TIME_INTERVAL_DRAG_SPEED)
+                        .suffix(" ms"),
+                )
+                .on_hover_text("custom interval for this pane")
+        };
         changed |= interval.changed();
         interval.rect
     } else {
@@ -274,10 +290,45 @@ mod tests {
     fn every_preset_lies_inside_the_shared_interval_domain() {
         for (label, ms) in PRESETS {
             assert!(
-                (crate::state::MIN_TIME_INTERVAL_MS..=crate::state::MAX_TIME_INTERVAL_MS)
-                    .contains(&ms),
+                quantick_engine::bar_registry::is_time_interval(ms),
                 "{label} is outside the interval domain both controls share"
             );
+            assert_eq!(
+                quantick_engine::fmt_time_interval(ms),
+                label,
+                "a chip reads as the spec it sets"
+            );
         }
+    }
+
+    /// The day, week and month charts are one click away, and choosing the
+    /// month chip lights it rather than leaving a drag holding a value no
+    /// chart accepts.
+    #[test]
+    fn the_calendar_chips_are_offered_and_a_month_stays_a_month() {
+        for wanted in ["1d", "1w", "1mo"] {
+            assert!(
+                PRESETS.iter().any(|(label, _)| *label == wanted),
+                "{wanted} is a chip"
+            );
+        }
+        let ctx = egui::Context::default();
+        let mut interval_ms = quantick_engine::time_bucket::CALENDAR_MONTH_MS;
+        let mut changed = None;
+        for _ in 0..2 {
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let strip =
+                        egui::Rect::from_min_size(ui.max_rect().min, egui::vec2(600.0, HEIGHT_PX));
+                    changed = Some(draw(ui, strip, &mut interval_ms, 0, "", None).changed);
+                });
+            });
+        }
+        assert_eq!(changed, Some(false), "drawing a month changes nothing");
+        assert_eq!(
+            interval_ms,
+            quantick_engine::time_bucket::CALENDAR_MONTH_MS,
+            "no drag clamps the month to a fixed interval"
+        );
     }
 }

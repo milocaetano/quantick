@@ -133,7 +133,9 @@ pub enum BarSpec {
     /// N notional per bar.
     Dollar(Decimal),
     /// N milliseconds per bar, inside
-    /// [`MIN_TIME_INTERVAL_MS`]..=[`MAX_TIME_INTERVAL_MS`] when parsed.
+    /// [`MIN_TIME_INTERVAL_MS`]..=[`MAX_TIME_INTERVAL_MS`] when parsed — or a
+    /// whole number of [`crate::time_bucket::CALENDAR_MONTH_MS`], which reads
+    /// as that many calendar months (see [`crate::time_bucket`]).
     Time(i64),
     /// The adaptive imbalance rule: the measure θ accumulates (trades, volume
     /// or dollar — López de Prado's TIB/VIB/DIB) and the target trades per
@@ -210,8 +212,8 @@ impl BarSpec {
     /// Parse a `kind:parameter` spec string: `tick:50`, `trades:2000`,
     /// `volume:5`, `dollar:500000`, `imbalance:100` (also
     /// `imbalance:volume:500` / `imbalance:dollar:500` to pick what θ
-    /// accumulates), `time:1m` (also `time:30s`, `time:1h`, `time:1500ms` or a
-    /// bare millisecond count).
+    /// accumulates), `time:1m` (also `time:30s`, `time:1h`, `time:1d`,
+    /// `time:1w`, `time:1mo`, `time:1500ms` or a bare millisecond count).
     ///
     /// Every rule a chart control enforces holds here too — a positive
     /// parameter, and a time interval inside
@@ -333,10 +335,11 @@ impl std::fmt::Display for BarSpecError {
             }
             Self::IntervalOutOfRange { param, .. } => write!(
                 f,
-                "time interval '{param}' is outside {}..={} — the domain both time-bar \
-                 controls accept",
+                "time interval '{param}' is outside {}..={} and is not 1mo..={}mo — the \
+                 domain both time-bar controls accept",
                 fmt_time_interval(MIN_TIME_INTERVAL_MS),
                 fmt_time_interval(MAX_TIME_INTERVAL_MS),
+                crate::time_bucket::MAX_CALENDAR_MONTHS,
             ),
         }
     }

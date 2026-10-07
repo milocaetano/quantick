@@ -44,6 +44,7 @@ mod spec;
 pub mod threshold;
 mod tick;
 mod time;
+pub mod time_bucket;
 mod trade;
 mod volume;
 

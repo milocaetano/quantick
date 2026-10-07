@@ -72,6 +72,20 @@ pub(super) fn draw(ui: &mut egui::Ui, selection: &mut BarSelection, inputs: BarI
                 }
                 response
             }
+            NumberKind::Duration
+                if quantick_engine::time_bucket::calendar_months(
+                    value.to_i64().expect("interval representation"),
+                )
+                .is_some() =>
+            {
+                // A calendar month has no fixed length to drag: its name
+                // stands where the drag would, and the chips change it.
+                ui.label(
+                    egui::RichText::new(definition.parameter.format(value))
+                        .small()
+                        .color(theme::TEXT_MUTED),
+                )
+            }
             NumberKind::Duration => {
                 let mut interval = value.to_i64().expect("interval representation");
                 let response = ui.add(

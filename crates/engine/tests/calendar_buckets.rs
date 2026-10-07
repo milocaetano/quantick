@@ -88,7 +88,10 @@ fn the_parsed_spec_builds_the_same_calendar_bars() {
         ("time:1d", DAY_TRADES, DAY_EXPECTED),
     ] {
         let spec = BarSpec::parse(spec).unwrap();
-        golden::assert_golden(|| spec.build(), trades, expected);
+        let trades = quantick_engine::fixture::parse_trades(trades).unwrap();
+        let expected = quantick_engine::fixture::parse_bars(expected).unwrap();
+        let bars = golden::replay(&mut *spec.build(), &trades);
+        assert_eq!(golden::diff_bars(&expected, &bars), None, "{spec:?}");
     }
 }
 

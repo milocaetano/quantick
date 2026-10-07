@@ -6,9 +6,12 @@
 //! they are nearly free once the builder skeleton exists.
 //!
 //! Crucially, the interval boundary is derived **only from trade timestamps**,
-//! never from a wall clock: a trade at time `t` falls in the bucket starting at
-//! `floor(t / interval) * interval`. Reading the host clock would make the same
-//! fixture produce different bars on different runs — a determinism violation.
+//! never from a wall clock: a trade at time `t` falls in the bucket
+//! [`time_bucket_start`] names — `floor(t / interval) * interval` for a fixed
+//! interval, Monday 00:00 UTC for whole weeks and the calendar month for
+//! months (see [`crate::time_bucket`]). Reading the host clock would make the
+//! same fixture produce different bars on different runs — a determinism
+//! violation.
 //!
 //! # Empty-interval policy: skip, don't fabricate
 //!
@@ -25,6 +28,7 @@
 
 use rust_decimal::Decimal;
 
+use crate::time_bucket::{time_bucket_end, time_bucket_start};
 use crate::{Bar, BarBuilder, BarProgress, Trade};
 
 /// Builds time bars: one bar per `interval_ms` interval that contains trades.
@@ -67,9 +71,9 @@ impl TimeBarBuilder {
     }
 
     /// The start (epoch ms) of the interval a trade at `timestamp_ms` belongs
-    /// to. Uses Euclidean division so it floors correctly for any timestamp.
+    /// to — the engine's one bucket law, which floors for any timestamp.
     fn bucket_of(&self, timestamp_ms: i64) -> i64 {
-        timestamp_ms.div_euclid(self.interval_ms) * self.interval_ms
+        time_bucket_start(timestamp_ms, self.interval_ms)
     }
 }
 
@@ -113,15 +117,19 @@ impl BarBuilder for TimeBarBuilder {
     /// A quiet stretch therefore freezes the readout instead of running it out:
     /// the bar closes on the first trade of a later interval, so with no trades
     /// there is nothing yet to close it.
+    ///
+    /// The target is this bucket's own length, which for a calendar month is
+    /// the month's days rather than the nominal interval.
     fn progress(&self) -> Option<BarProgress> {
         let bar = self.current.as_ref()?;
+        let length = time_bucket_end(self.bucket_start, self.interval_ms) - self.bucket_start;
         let elapsed = bar
             .close_time
             .saturating_sub(self.bucket_start)
-            .clamp(0, self.interval_ms);
+            .clamp(0, length);
         Some(BarProgress {
             done: Decimal::from(elapsed),
-            target: Decimal::from(self.interval_ms),
+            target: Decimal::from(length),
         })
     }
 }

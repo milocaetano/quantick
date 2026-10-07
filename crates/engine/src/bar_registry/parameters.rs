@@ -1,6 +1,10 @@
 //! Neutral parameter contracts, shared by text, controls and configuration.
 use rust_decimal::{Decimal, prelude::ToPrimitive};
 
+use crate::time_bucket::{
+    CALENDAR_MONTH_MS, DAY_MS, MAX_CALENDAR_MONTHS, WEEK_MS, calendar_months,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NumberKind {
     Count,
@@ -86,9 +90,13 @@ impl std::fmt::Display for BarConfigurationError {
                 f,
                 "'{parameter}' is not a time interval, like '1m' or '30s'"
             ),
-            Self::IntervalOutOfRange { parameter, .. } => {
-                write!(f, "time interval '{parameter}' is outside 100ms..=24h")
-            }
+            Self::IntervalOutOfRange { parameter, .. } => write!(
+                f,
+                "time interval '{parameter}' is outside {}..={} and is not 1mo..={}mo",
+                fmt_time_interval(MIN_TIME_INTERVAL_MS),
+                fmt_time_interval(MAX_TIME_INTERVAL_MS),
+                MAX_CALENDAR_MONTHS,
+            ),
             Self::DuplicateKind { kind } => write!(f, "duplicate bar registration '{kind}'"),
             Self::LegacyKindUnavailable { kind } => {
                 write!(f, "bar kind '{kind}' has no legacy BarSpec representation")
@@ -102,16 +110,52 @@ impl std::fmt::Display for BarConfigurationError {
 impl std::error::Error for BarConfigurationError {}
 
 pub const MIN_TIME_INTERVAL_MS: i64 = 100;
-pub const MAX_TIME_INTERVAL_MS: i64 = 86_400_000;
+/// The longest *fixed* interval: four weeks. Longer bars are calendar months
+/// (see [`crate::time_bucket`]), which [`is_time_interval`] admits beside the
+/// fixed range.
+pub const MAX_TIME_INTERVAL_MS: i64 = 4 * WEEK_MS;
 pub const DEFAULT_TIME_INTERVAL_MS: i64 = 60_000;
 pub const TIME_INTERVAL_DRAG_SPEED: f64 = 100.0;
 pub const DECIMAL_PARAM_FLOOR: Decimal = Decimal::from_parts(1, 0, 0, false, 8);
-pub const TIME_PRESETS: [(&str, i64); 4] = [
+pub const TIME_PRESETS: [(&str, i64); 7] = [
     ("1m", 60_000),
     ("5m", 300_000),
     ("15m", 900_000),
     ("1h", 3_600_000),
+    ("1d", DAY_MS),
+    ("1w", WEEK_MS),
+    ("1mo", CALENDAR_MONTH_MS),
 ];
+
+/// Whether `ms` is an interval a time bar accepts: a fixed duration inside
+/// [`MIN_TIME_INTERVAL_MS`]..=[`MAX_TIME_INTERVAL_MS`], or a whole number of
+/// calendar months up to a year.
+#[must_use]
+pub fn is_time_interval(ms: i64) -> bool {
+    (MIN_TIME_INTERVAL_MS..=MAX_TIME_INTERVAL_MS).contains(&ms) || calendar_months(ms).is_some()
+}
+
+/// The units an interval is written in, longest first — the order
+/// [`fmt_time_interval`] tries them. `mo` precedes `ms` and `m` so a suffix is
+/// read whole.
+const INTERVAL_UNITS: [(&str, i64); 7] = [
+    ("mo", CALENDAR_MONTH_MS),
+    ("w", WEEK_MS),
+    ("d", DAY_MS),
+    ("h", 3_600_000),
+    ("m", 60_000),
+    ("s", 1_000),
+    ("ms", 1),
+];
+
+/// The scale of a unit suffix (`s`, `m`, `h`, `d`, `w`, `mo`), in either case.
+#[must_use]
+pub fn interval_unit_ms(suffix: &str) -> Option<i64> {
+    INTERVAL_UNITS
+        .iter()
+        .find(|(unit, _)| unit.eq_ignore_ascii_case(suffix))
+        .map(|(_, scale)| *scale)
+}
 
 impl ParameterDescriptor {
     pub fn parse(&self, id: &str, text: &str) -> Result<Decimal, BarConfigurationError> {
@@ -173,7 +217,7 @@ impl ParameterDescriptor {
         }
         if self.kind == NumberKind::Duration {
             let ms = value.to_i64().expect("validated interval");
-            if !(MIN_TIME_INTERVAL_MS..=MAX_TIME_INTERVAL_MS).contains(&ms) {
+            if !is_time_interval(ms) {
                 return Err(BarConfigurationError::IntervalOutOfRange {
                     ms,
                     parameter: value.to_string(),
@@ -193,26 +237,25 @@ impl ParameterDescriptor {
 }
 
 fn parse_interval(text: &str) -> Result<i64, BarConfigurationError> {
-    let (digits, scale) = if let Some(v) = text.strip_suffix("ms") {
-        (v, 1)
-    } else if let Some(v) = text.strip_suffix('h') {
-        (v, 3_600_000)
-    } else if let Some(v) = text.strip_suffix('m') {
-        (v, 60_000)
-    } else if let Some(v) = text.strip_suffix('s') {
-        (v, 1_000)
+    // A bare number is milliseconds; a suffix must be a unit, written in
+    // lower case as `fmt_time_interval` writes it, or the text is no interval.
+    let digits = text.trim_end_matches(|c: char| c.is_ascii_alphabetic());
+    let suffix = &text[digits.len()..];
+    let scale = if suffix.is_empty() {
+        Some(1)
     } else {
-        (text, 1)
+        INTERVAL_UNITS
+            .iter()
+            .find(|(unit, _)| *unit == suffix)
+            .map(|(_, scale)| *scale)
     };
-    let ms = digits
-        .parse::<i64>()
-        .ok()
-        .and_then(|v| v.checked_mul(scale))
+    let ms = scale
+        .and_then(|scale| digits.parse::<i64>().ok()?.checked_mul(scale))
         .filter(|v| *v > 0)
         .ok_or_else(|| BarConfigurationError::InvalidInterval {
             parameter: text.to_owned(),
         })?;
-    if !(MIN_TIME_INTERVAL_MS..=MAX_TIME_INTERVAL_MS).contains(&ms) {
+    if !is_time_interval(ms) {
         return Err(BarConfigurationError::IntervalOutOfRange {
             ms,
             parameter: text.to_owned(),
@@ -221,14 +264,18 @@ fn parse_interval(text: &str) -> Result<i64, BarConfigurationError> {
     Ok(ms)
 }
 
+/// An interval in the largest unit that writes it back exactly: `1mo`, `1w`,
+/// `2d`, `36h`, `5m`, `90s`, `1500ms`. A month is named only where
+/// [`calendar_months`] reads one, so `30d` stays thirty days.
 pub fn fmt_time_interval(ms: i64) -> String {
-    if ms >= 3_600_000 && ms % 3_600_000 == 0 {
-        format!("{}h", ms / 3_600_000)
-    } else if ms >= 60_000 && ms % 60_000 == 0 {
-        format!("{}m", ms / 60_000)
-    } else if ms >= 1_000 && ms % 1_000 == 0 {
-        format!("{}s", ms / 1_000)
-    } else {
-        format!("{ms}ms")
+    if let Some(months) = calendar_months(ms) {
+        return format!("{months}mo");
     }
+    INTERVAL_UNITS[1..]
+        .iter()
+        .find(|(_, scale)| ms >= *scale && ms % scale == 0)
+        .map_or_else(
+            || format!("{ms}ms"),
+            |(unit, scale)| format!("{}{unit}", ms / scale),
+        )
 }

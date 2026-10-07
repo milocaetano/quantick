@@ -93,13 +93,13 @@ fn typed_text_keeps_its_digits_and_the_last_letter() {
 
 #[test]
 fn durations_outside_the_interval_range_are_left_out() {
-    // 30 hours passes a day.
-    let thirty = configs(30);
-    assert!(thirty.contains(&"time:30m".to_owned()));
-    assert!(!thirty.iter().any(|spec| spec == "time:30h"));
-    let big = configs(100_000);
+    // 700 hours passes four weeks, the longest fixed interval.
+    let seven_hundred = configs(700);
+    assert!(seven_hundred.contains(&"time:700m".to_owned()));
+    assert!(!seven_hundred.iter().any(|spec| spec == "time:700h"));
+    let big = configs(10_000_000);
     assert!(!big.iter().any(|spec| spec.starts_with("time:")));
-    assert!(big.contains(&"tick:100000".to_owned()));
+    assert!(big.contains(&"tick:10000000".to_owned()));
 }
 
 #[test]

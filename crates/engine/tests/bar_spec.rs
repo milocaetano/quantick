@@ -272,8 +272,9 @@ fn a_spec_no_control_could_produce_does_not_parse() {
         "imbalance:volume:",
         "time:0",
         "time:50ms",
-        "time:25h",
-        "time:1w",
+        "time:5w",
+        "time:13mo",
+        "time:1y",
         "grid:1",
         "candles:5",
     ] {
@@ -341,11 +342,11 @@ fn a_refusal_names_its_reason_as_a_variant_and_keeps_its_sentence() {
             "imbalance bars need a positive whole trade target, got '1.5'",
         ),
         (
-            "time:1w",
+            "time:1y",
             BarSpecError::NotAnInterval {
-                text: "1w".to_owned(),
+                text: "1y".to_owned(),
             },
-            "'1w' is not a time interval, like '1m' or '30s'",
+            "'1y' is not a time interval, like '1m' or '30s'",
         ),
         (
             "time:50ms",
@@ -353,7 +354,8 @@ fn a_refusal_names_its_reason_as_a_variant_and_keeps_its_sentence() {
                 ms: 50,
                 param: "50ms".to_owned(),
             },
-            "time interval '50ms' is outside 100ms..=24h — the domain both time-bar controls accept",
+            "time interval '50ms' is outside 100ms..=4w and is not 1mo..=12mo — the domain both \
+             time-bar controls accept",
         ),
     ];
     for (text, variant, sentence) in cases {
