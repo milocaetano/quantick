@@ -3,5 +3,5 @@
 # which only `app` holds; their geometry and wire shapes moved below. The
 # store's placement batch for a multi-line call (drawings/collection.rs) and the
 # scene's tool role for the channel button bind the same app-only state.
-crates/app +86
-!budget +86
+crates/app +111
+!budget +111

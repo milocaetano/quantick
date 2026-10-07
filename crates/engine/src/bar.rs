@@ -86,6 +86,24 @@ impl Bar {
         self.trade_count += 1;
     }
 
+    /// Fold `later`, the bar that follows this one in time, into this one.
+    ///
+    /// The summary of a run of bars, and the only one: the first bar's open
+    /// and stamp stay, the extremes are taken, the later bar's close and
+    /// stamp end it, and volumes and trade counts add up — saturating, for
+    /// the reason [`extend`](Bar::extend) does. A folded venue candle and the
+    /// venue history put in front of a chart's first bar both summarise
+    /// through here, so the two cannot drift apart.
+    pub fn absorb(&mut self, later: &Self) {
+        self.high = self.high.max(later.high);
+        self.low = self.low.min(later.low);
+        self.close = later.close;
+        self.close_time = later.close_time;
+        self.buy_volume = self.buy_volume.saturating_add(later.buy_volume);
+        self.sell_volume = self.sell_volume.saturating_add(later.sell_volume);
+        self.trade_count = self.trade_count.saturating_add(later.trade_count);
+    }
+
     /// Total traded quantity: `buy_volume + sell_volume`.
     ///
     /// Saturates rather than panicking on the (physically impossible) overflow,
@@ -185,6 +203,37 @@ mod tests {
         }
 
         assert_eq!(folded.as_ref(), builder.partial());
+    }
+
+    /// Absorbing a later bar is the summary of the run of both: the first
+    /// bar's open and stamp, the extremes, the later bar's close and stamp,
+    /// volumes and counts added — the same bar the builder cuts from the two
+    /// runs of trades taken as one.
+    #[test]
+    fn absorbing_a_later_bar_summarises_both_runs_as_one() {
+        let trades = [
+            trade(0, "36000.0", "1.0", Side::Buy),
+            trade(1, "36010.5", "0.25", Side::Sell),
+            trade(2, "35990.25", "2.5", Side::Buy),
+            trade(3, "36005.0", "0.75", Side::Sell),
+        ];
+        let fold = |run: &[Trade]| {
+            let mut bar = Bar::opened_by(&run[0]);
+            for t in &run[1..] {
+                bar.extend(t);
+            }
+            bar
+        };
+        let mut earlier = fold(&trades[..2]);
+        earlier.absorb(&fold(&trades[2..]));
+        assert_eq!(earlier, fold(&trades));
+
+        let mut saturated = fold(&trades[..1]);
+        saturated.buy_volume = Decimal::MAX;
+        saturated.trade_count = u64::MAX;
+        saturated.absorb(&fold(&trades[2..]));
+        assert_eq!(saturated.buy_volume, Decimal::MAX);
+        assert_eq!(saturated.trade_count, u64::MAX);
     }
 
     /// Side totals saturate rather than panicking: the quantities come from an

@@ -62,8 +62,9 @@ const W_SOURCE_SHRUNK: f32 = 260.0;
 const W_BARS: f32 = 160.0;
 /// The bar-parameter label + drag value (every kind but time).
 const W_BAR_PARAM: f32 = 150.0;
-/// The time kind's parameter row: four preset chips plus the custom drag.
-const W_TIME_PARAM: f32 = 260.0;
+/// The time kind's parameter row: seven preset chips (1m to 1mo) plus the
+/// custom drag.
+const W_TIME_PARAM: f32 = 365.0;
 /// The imbalance kind's parameter row: three unit chips plus the target
 /// label and drag. Underestimating this makes the collapse plan draw a row
 /// wider than it budgeted instead of folding it.
@@ -1607,6 +1608,8 @@ mod tests {
                             deal_counter: false,
                             ohlcv_history: !replaying,
                             ohlcv_generation: 0,
+                            ohlcv_daily_generation: 0,
+                            ohlcv_aggressor_split: false,
                         },
                         layers: layer_states([true, false, false, false]),
                         dock_visible: true,
@@ -1699,6 +1702,8 @@ mod tests {
                         deal_counter: false,
                         ohlcv_history: true,
                         ohlcv_generation: 0,
+                        ohlcv_daily_generation: 0,
+                        ohlcv_aggressor_split: false,
                     },
                     layers: layer_states([false, false, false, false]),
                     dock_visible: true,
@@ -1782,6 +1787,8 @@ mod tests {
                             deal_counter: false,
                             ohlcv_history: false,
                             ohlcv_generation: 0,
+                            ohlcv_daily_generation: 0,
+                            ohlcv_aggressor_split: false,
                         },
                         layers: layer_states([false, false, false, false]),
                         dock_visible: true,
@@ -1856,6 +1863,8 @@ mod tests {
                         deal_counter: false,
                         ohlcv_history: true,
                         ohlcv_generation: 0,
+                        ohlcv_daily_generation: 0,
+                        ohlcv_aggressor_split: false,
                     },
                     layers: layer_states([false, false, false, false]),
                     dock_visible: true,

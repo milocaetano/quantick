@@ -1,7 +1,8 @@
 //! A typed number read as every registered bar at that size — ProfitChart's
 //! quick period switch. The registry, not a fixed list, decides what is offered.
-//! A letter after the number (`50R`) narrows the list to the kind declaring it.
-use super::{BarConfiguration, BarDefinition, BarRegistry, NumberKind};
+//! A letter after the number (`50R`) narrows the list to the kind declaring it;
+//! a unit after it (`5m`, `1d`, `1w`, `1mo`) to the time bars in that unit.
+use super::{BarConfiguration, BarDefinition, BarRegistry, NumberKind, interval_unit_ms};
 use rust_decimal::Decimal;
 
 /// How a bare number reads as a duration, in the order offered: minutes, as
@@ -20,9 +21,14 @@ pub struct QuickAlias {
     pub noun: &'static str,
 }
 
+/// The one two-letter suffix the switch reads: calendar months (`1mo`). Every
+/// other suffix is a single letter, so `m` stays minutes.
+const MONTH_SUFFIX: &str = "mo";
+
 /// What the switch keeps of typed text: its digits, at most nine, then the
 /// last letter typed — a second letter replaces the first rather than
-/// spelling a word no kind declares.
+/// spelling a word no kind declares. The one exception is `mo`, kept whole
+/// when it ends the text, so typing `1m` then `o` reads as a month.
 ///
 /// This is the switch's only length limit. A field capping its own length
 /// would refuse the letter typed after a full query, which has to reach this
@@ -34,7 +40,13 @@ pub fn quick_query_text(typed: &str) -> String {
         .filter(char::is_ascii_digit)
         .take(QUICK_MAX_DIGITS)
         .collect();
-    query.extend(typed.chars().rev().find(char::is_ascii_alphabetic));
+    let letters: String = typed.chars().filter(char::is_ascii_alphabetic).collect();
+    let tail = letters.len().saturating_sub(MONTH_SUFFIX.len());
+    if letters.len() >= MONTH_SUFFIX.len() && letters[tail..].eq_ignore_ascii_case(MONTH_SUFFIX) {
+        query.push_str(&letters[tail..]);
+    } else {
+        query.extend(letters.chars().last());
+    }
     query
 }
 
@@ -58,32 +70,40 @@ impl BarRegistry {
 
     /// Every configuration typed text can mean: the number alone reads as
     /// every kind ([`Self::quick_candidates`]); a letter after it, in either
-    /// case, keeps the kind whose [`QuickAlias`] declares that letter.
-    /// Anything else — no number, two letters — means nothing.
+    /// case, keeps the kind whose [`QuickAlias`] declares that letter, and a
+    /// duration unit (`s`, `m`, `h`, `d`, `w`, `mo`) keeps the duration kinds
+    /// read in that unit — `1d`, `1w` and `1mo` are the daily, weekly and
+    /// monthly time bars. Anything else — no number, two letters — means
+    /// nothing.
     #[must_use]
     pub fn quick_matches(&self, query: &str) -> Vec<BarConfiguration> {
         let digits = query.trim_end_matches(|c: char| c.is_ascii_alphabetic());
-        let mut letters = query[digits.len()..].chars();
-        let suffix = letters.next();
-        if letters.next().is_some() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        let suffix = &query[digits.len()..];
+        let unit = interval_unit_ms(suffix).filter(|_| !suffix.eq_ignore_ascii_case("ms"));
+        if (suffix.len() > 1 && unit.is_none()) || !digits.bytes().all(|byte| byte.is_ascii_digit())
+        {
             return Vec::new();
         }
         let Ok(number) = digits.parse::<u64>() else {
             return Vec::new();
         };
-        let candidates = self.quick_candidates(number);
-        match suffix {
-            None => candidates,
-            Some(letter) => candidates
-                .into_iter()
-                .filter(|config| {
-                    config
-                        .definition()
-                        .quick_alias
-                        .is_some_and(|alias| alias.suffix.eq_ignore_ascii_case(&letter))
-                })
-                .collect(),
-        }
+        let Some(letter) = suffix.chars().next() else {
+            return self.quick_candidates(number);
+        };
+        let durations = unit.into_iter().flat_map(|scale| {
+            self.definitions()
+                .iter()
+                .copied()
+                .filter(|definition| definition.parameter.kind == NumberKind::Duration)
+                .flat_map(move |definition| scaled_readings(definition, number, &[scale]))
+        });
+        let aliased = self.quick_candidates(number).into_iter().filter(|config| {
+            config
+                .definition()
+                .quick_alias
+                .is_some_and(|alias| alias.suffix.eq_ignore_ascii_case(&letter))
+        });
+        durations.chain(aliased).collect()
     }
 }
 
@@ -106,8 +126,19 @@ impl BarConfiguration {
 }
 
 fn readings(definition: &'static BarDefinition, number: u64) -> Vec<BarConfiguration> {
+    scaled_readings(definition, number, &QUICK_DURATION_SCALES_MS)
+}
+
+/// `number` read as `definition` at each duration scale given (a count kind
+/// ignores the scales), with every choice, dropping what the definition
+/// rejects.
+fn scaled_readings(
+    definition: &'static BarDefinition,
+    number: u64,
+    scales: &[i64],
+) -> Vec<BarConfiguration> {
     let values: Vec<Decimal> = if definition.parameter.kind == NumberKind::Duration {
-        QUICK_DURATION_SCALES_MS
+        scales
             .iter()
             .filter_map(|scale| i64::try_from(number).ok()?.checked_mul(*scale))
             .map(Decimal::from)

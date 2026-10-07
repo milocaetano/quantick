@@ -455,8 +455,10 @@ startup-scoped like `default_feed`); the factory default stays Flow.
 - **One engine, one tape.** Both panes are fed the same trades from the
   tab's feed; the time pane is a second `ChartState` with `BarSpec::Time`.
   No second bar-building path exists.
-- **Time pane header** carries an inline timeframe selector — `1m 5m 15m 1h`
-  presets plus the existing custom interval drag. The toolbar's BARS group
+- **Time pane header** carries an inline timeframe selector — `1m 5m 15m 1h
+  1d 1w 1mo` presets plus the existing custom interval drag (a calendar month
+  shows its name instead: it has no fixed length to drag). Days open at 00:00
+  UTC, weeks on Monday, months on the 1st. The toolbar's BARS group
   governs the *focused* pane — the same pane the status bar reads and
   indicator commands land on, so the chrome never disagrees with itself
   about which chart a command describes.

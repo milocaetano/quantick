@@ -24,6 +24,7 @@ use rust_decimal::Decimal;
 use crate::footprint_series::{self, FootprintSeries, fold_print, seed_deal_counter};
 mod history_rebuild;
 pub use history_rebuild::HistoryRebuild;
+mod venue_lead;
 
 /// Any UI `f64` as a positive [`Decimal`].
 ///
@@ -121,6 +122,9 @@ pub struct ChartState {
     /// next rebuild, so anything replaying the series meanwhile — the
     /// footprint refold — leaves them out too, and cuts where the bars are.
     readings_held: bool,
+    /// The venue's history of the first bar's bucket before its first print,
+    /// merged into that bar (see [`venue_lead`]).
+    venue_lead: venue_lead::VenueLead,
 }
 
 impl ChartState {
@@ -146,6 +150,7 @@ impl ChartState {
             footprint_enabled: false,
             deal_samples: Vec::new(),
             readings_held: false,
+            venue_lead: venue_lead::VenueLead::default(),
         }
     }
 
@@ -381,6 +386,8 @@ impl ChartState {
             return;
         }
         self.spec = spec;
+        // A lead was cut for the old spec's bucket.
+        self.venue_lead = venue_lead::VenueLead::default();
         self.rebuild();
     }
 
@@ -405,6 +412,8 @@ impl ChartState {
 
     fn refresh_partial(&mut self) {
         self.partial = self.builder.partial().cloned();
+        self.venue_lead
+            .seat(self.spec, &mut self.bars, &mut self.partial);
     }
 
     fn bump_timeline_revision(&mut self) {

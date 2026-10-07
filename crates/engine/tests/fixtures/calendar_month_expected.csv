@@ -1,0 +1,7 @@
+# Expected 1mo bars for calendar_month_trades.csv. Hand-computed.
+#   Bar 0 = January 2024 [2024-01-01, 2024-02-01), trades 1,2.
+#   Bar 1 = February 2024 [2024-02-01, 2024-03-01) — 29 days, trades 3,4.
+# Trade 5 opens March 2024 and is the forming bar, not a closed one.
+open_time,close_time,open,high,low,close,buy_volume,sell_volume,trade_count
+1705312800000,1706745599999,100.0,101.0,100.0,101.0,1.0,2.0,2
+1706745600000,1709251199999,102.0,102.0,99.0,99.0,1.0,3.0,2

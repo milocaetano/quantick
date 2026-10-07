@@ -57,9 +57,10 @@ impl ChartPane {
     /// on its boundary.
     pub fn partial_bucket_slot(&self) -> Option<usize> {
         let interval = self.state.spec().time_interval_ms()?;
-        let first = self.state.bars().first().or_else(|| self.state.partial())?;
-        let opens_inside =
-            crate::resample::bucket_start(first.open_time, interval) != first.open_time;
+        // The first print, not the bar's open: a venue lead in front of it
+        // completes the candle, never the prints a ladder folds.
+        let first = self.state.first_print_open_ms()?;
+        let opens_inside = crate::resample::bucket_start(first, interval) != first;
         opens_inside.then(|| self.seam_slot())
     }
 
@@ -196,6 +197,25 @@ impl ChartPane {
     /// drawings keep their bars, the indicator columns keep their candles
     /// until the rebuild lands. Returns whether anything changed.
     pub fn install_history_prefix(&mut self, bars: Vec<quantick_engine::Bar>) -> bool {
+        self.install_venue_history(bars, None, false)
+    }
+
+    /// [`Self::install_history_prefix`], with the venue's seam `lead` merged
+    /// into the first engine bar (`ChartState::set_venue_lead`), and whether
+    /// it leaves nothing of that bar's bucket unaccounted for.
+    pub fn install_venue_history(
+        &mut self,
+        bars: Vec<quantick_engine::Bar>,
+        lead: Option<quantick_engine::Bar>,
+        covers_seam: bool,
+    ) -> bool {
+        if self.state.set_venue_lead(lead, covers_seam)
+            && !prefix_differs(&self.history_prefix, &bars)
+        {
+            self.bump_pagination_revision();
+            self.send_indicator_rebuild();
+            return true;
+        }
         // Any time-cutting pane may carry one (audit S1) — the flow pane
         // showing time bars included. On a pane with a tape the flow layers
         // simply have nothing to draw over the prefix: a venue candle has no

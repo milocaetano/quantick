@@ -1,0 +1,7 @@
+# Expected 1d bars for calendar_day_trades.csv. Hand-computed.
+#   Bar 0 = 2024-02-28, trade 1 alone.
+#   Bar 1 = 2024-02-29, trades 2,3.
+# Trade 4 opens 2024-03-01 and is the forming bar.
+open_time,close_time,open,high,low,close,buy_volume,sell_volume,trade_count
+1709164799999,1709164799999,100.0,100.0,100.0,100.0,1.0,0,1
+1709164800000,1709251140000,101.0,102.0,101.0,102.0,1.0,1.0,2

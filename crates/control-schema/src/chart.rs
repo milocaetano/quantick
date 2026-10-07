@@ -156,6 +156,9 @@ pub struct BarProvenanceContext {
     pub engine_price: String,
     pub engine_volume: String,
     pub engine_side: String,
+    /// Whether the venue's candles carry its own aggressor split, rather
+    /// than half the volume on each side.
+    pub venue_aggressor_split: bool,
 }
 
 impl BarSnapshot {
@@ -225,6 +228,40 @@ impl BarSnapshot {
                 },
             },
         }
+    }
+}
+
+impl BarSnapshot {
+    /// The seam bar holds `lead` — the venue's candles of its bucket before
+    /// the first print — as well as the prints: each provenance it summarises
+    /// is named, venue first, as they sit in time. Where the venue reports no
+    /// trade count, or no aggressor split, the bar's count holds the prints'
+    /// alone and its buy, sell and delta hold the venue's even split: both
+    /// are said, never folded into the prints' own label.
+    pub fn mark_venue_lead(&mut self, lead: &quantick_engine::Bar, context: &BarProvenanceContext) {
+        let provenance = &mut self.provenance;
+        provenance.source = format!("venue_ohlcv+{}", provenance.source);
+        provenance.price = format!("venue_candle+{}", provenance.price);
+        provenance.volume = format!("venue_reported+{}", provenance.volume);
+        let venue_side = if context.venue_aggressor_split {
+            "venue_reported"
+        } else {
+            "venue_even_split_not_measured"
+        };
+        provenance.aggressor_side = format!("{venue_side}+{}", provenance.aggressor_side);
+        let venue_count = if lead.trade_count == 0 {
+            "venue_unavailable"
+        } else {
+            "venue_reported"
+        };
+        provenance.trade_count = format!("{venue_count}+derived_from_trades");
+    }
+
+    /// The bar knowingly omits a stretch of its bucket — the seconds before
+    /// the first print no candle speaks for, or the start of history cutting
+    /// into it — closed or forming.
+    pub fn mark_partial(&mut self) {
+        self.provenance.completeness = "partial".to_owned();
     }
 }
 
@@ -452,5 +489,79 @@ impl ChartBarPage {
             has_more: next_cursor.is_some(),
             next_cursor,
         })
+    }
+}
+
+#[cfg(test)]
+mod venue_lead_label_tests {
+    use super::*;
+
+    fn context(venue_aggressor_split: bool) -> BarProvenanceContext {
+        BarProvenanceContext {
+            engine_price: "venue_or_broker_trade".to_owned(),
+            engine_volume: "venue_reported".to_owned(),
+            engine_side: "inferred_or_derived".to_owned(),
+            venue_aggressor_split,
+        }
+    }
+
+    fn bar(trade_count: u64) -> quantick_engine::Bar {
+        quantick_engine::Bar {
+            open_time: 0,
+            close_time: 59_999,
+            open: rust_decimal::Decimal::ONE,
+            high: rust_decimal::Decimal::ONE,
+            low: rust_decimal::Decimal::ONE,
+            close: rust_decimal::Decimal::ONE,
+            buy_volume: rust_decimal::Decimal::ONE,
+            sell_volume: rust_decimal::Decimal::ONE,
+            trade_count,
+        }
+    }
+
+    fn seam_bar(state: BarStateDto, context: &BarProvenanceContext) -> BarSnapshot {
+        BarSnapshot::from_bar(3, &bar(9), state, 3, None, context)
+    }
+
+    /// MetaTrader's lead reports no trade count and no aggressor split: the
+    /// seam bar says its count is the prints' alone and its side the venue's
+    /// even split, and a bar missing the seconds before its first print is
+    /// partial whether it is closed or forming.
+    #[test]
+    fn a_lead_without_a_count_or_a_split_says_so() {
+        let mt5 = context(false);
+        let mut snapshot = seam_bar(BarStateDto::Closed, &mt5);
+        snapshot.mark_venue_lead(&bar(0), &mt5);
+        snapshot.mark_partial();
+        let provenance = &snapshot.provenance;
+        assert_eq!(
+            provenance.trade_count,
+            "venue_unavailable+derived_from_trades"
+        );
+        assert_eq!(
+            provenance.aggressor_side,
+            "venue_even_split_not_measured+inferred_or_derived"
+        );
+        assert_eq!(provenance.completeness, "partial");
+        let mut forming = seam_bar(BarStateDto::InProgress, &mt5);
+        forming.mark_partial();
+        assert_eq!(forming.provenance.completeness, "partial");
+        assert_eq!(forming.state, BarStateDto::InProgress);
+    }
+
+    /// Binance's klines carry the venue's own count and taker-buy split.
+    #[test]
+    fn a_lead_with_the_venue_s_count_and_split_is_reported() {
+        let binance = context(true);
+        let mut snapshot = seam_bar(BarStateDto::Closed, &binance);
+        snapshot.mark_venue_lead(&bar(42), &binance);
+        let provenance = &snapshot.provenance;
+        assert_eq!(provenance.trade_count, "venue_reported+derived_from_trades");
+        assert_eq!(
+            provenance.aggressor_side,
+            "venue_reported+inferred_or_derived"
+        );
+        assert_eq!(provenance.source, "venue_ohlcv+live_trades");
+        assert_eq!(provenance.completeness, "complete");
     }
 }

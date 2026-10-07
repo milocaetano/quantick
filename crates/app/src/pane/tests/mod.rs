@@ -24,6 +24,7 @@ use crate::viewport::Viewport;
 use super::painting::{LIVE_CHIP_MARGIN_PX, LIVE_CHIP_VPAD_PX, LIVE_CHIP_WIDTH_PX};
 use super::*;
 
+mod calendar_slot_tests;
 mod native_split_tests;
 mod tape_only_tests;
 
@@ -1122,6 +1123,7 @@ fn the_compass_names_the_candle_under_the_pointer() {
                 Some(pointer_compass::PointerBar {
                     slot,
                     open_time_unix_ms: BAR_ZERO_MS + slot as i64 * 60_000,
+                    interval_ms: pane.state.spec().time_interval_ms(),
                 }),
                 "every pixel of candle {slot} reads candle {slot}'s own instant"
             );

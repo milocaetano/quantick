@@ -30,8 +30,13 @@ use tracing::{debug, info, warn};
 
 use crate::backfill::{BINANCE_REST_BASE, FeedError, MAX_PAGE_LIMIT};
 
-/// The one interval quantick asks for; everything longer is folded locally.
+/// The intraday interval quantick asks for; everything longer is folded
+/// locally.
 pub const KLINE_INTERVAL_1M: &str = "1m";
+
+/// The daily interval quantick asks for when a chart is cut at a day or
+/// longer. Binance opens a `1d` kline at 00:00 UTC.
+pub const KLINE_INTERVAL_1D: &str = "1d";
 
 /// Milliseconds in the [`KLINE_INTERVAL_1M`] bucket.
 pub const ONE_MINUTE_MS: i64 = 60_000;
