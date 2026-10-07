@@ -55,6 +55,8 @@ const CLIENT_NAME: &str = "quantick integration test";
 mod asset_bubbles_save_tests;
 #[path = "candle_aggression_tests.rs"]
 mod candle_aggression;
+#[path = "history_control_tests.rs"]
+mod history_control_tests;
 #[path = "layer_control_tests.rs"]
 mod layer_control;
 #[path = "native_tape_readback_tests.rs"]
@@ -586,6 +588,15 @@ const LAYOUT_V2: u32 = 2;
 /// store this test is about.
 fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
     vec![
+        // First, while the tab's feed still pages: the feed rows below
+        // retire it. The load starts a run; the cancel ends it.
+        (
+            "feed.history.load",
+            1,
+            json!({ "reach": "hours:2" }),
+            Readback::Moves,
+        ),
+        ("feed.history.cancel", 1, json!({}), Readback::Moves),
         ("layers.visibility.set", 1, Value::Null, Readback::Moves),
         ("chart.price_axis.set", 1, Value::Null, Readback::Moves),
         ("chart.tape_view.set", 1, Value::Null, Readback::Moves),
@@ -833,7 +844,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         if capability == "layout.tab.create" {
             first_layout = before.first().cloned().expect("a layout is open");
         }
-        if capability.starts_with("feed.") {
+        if capability.starts_with("feed.") && !capability.starts_with("feed.history.") {
             // No venue socket from a test; see the feed test above.
             app.active_tab_mut().feed_id = "retired-feed".to_owned();
         }

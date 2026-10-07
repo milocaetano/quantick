@@ -227,13 +227,14 @@ pub struct HistorySettings {
     /// A stretch with no prints longer than this reads as the market having
     /// been closed rather than as a quiet patch. Minutes.
     pub session_gap_minutes: u32,
-    /// How far past a session's last print the *previous session* reach keeps
-    /// going, so the day before is on screen to compare against rather than
-    /// merely touched. Minutes.
+    /// Read and ignored: the old *previous session* reach's lead past a
+    /// close. The session targets now land on a session's open, so nothing
+    /// reads it; it stays so a config written for that reach still loads.
+    /// Minutes.
     pub previous_session_lead_minutes: u32,
-    /// How far back one press of the *by time* reach pulls, in minutes of
-    /// **traded** time: nights and weekends are crossed to find them, never
-    /// counted toward them.
+    /// What a workspace saved with the old *by time* reach (token `span`)
+    /// reaches back by, in minutes of **traded** time, rounded up to whole
+    /// hours of the `hours:N` target it now loads as.
     ///
     /// Here rather than as a `const` for the same reason as the two above, and
     /// more so: this one is the trader's own answer to "how much more tape do
@@ -259,8 +260,6 @@ impl HistorySettings {
     pub fn reach_bounds(&self) -> history_reach::ReachBounds {
         history_reach::ReachBounds {
             session_gap_ms: i64::from(self.session_gap_minutes) * 60_000,
-            previous_session_lead_ms: i64::from(self.previous_session_lead_minutes) * 60_000,
-            span_ms: i64::from(self.reach_span_minutes) * 60_000,
         }
     }
 
@@ -272,11 +271,9 @@ impl HistorySettings {
                     .to_string(),
             );
         }
-        // The campaign cannot reach past its own span cap, so a larger value
-        // here is a promise no press can keep: every run would end on
-        // `SpanCovered` or a budget and never on `ReachMet`. Refused at load
-        // with the number that would work, the way every other config error
-        // is, rather than silently clamped somewhere the trader cannot see.
+        // No hours target reaches past the span cap, so a larger value here
+        // is a promise no press can keep. Refused at load with the number that
+        // would work, rather than silently clamped where nobody can see.
         let ceiling = history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000;
         if i64::from(self.reach_span_minutes) > ceiling {
             return Err(format!(
@@ -2061,10 +2058,6 @@ mod tests {
         let (config, _) = sample();
         let bounds = config.history.reach_bounds();
         assert_eq!(bounds.session_gap_ms, history_reach::SESSION_GAP_MS);
-        assert_eq!(
-            bounds.previous_session_lead_ms,
-            history_reach::PREVIOUS_SESSION_LEAD_MS
-        );
     }
 
     /// And a venue with different hours reaches the campaign through the file,
@@ -2086,7 +2079,6 @@ mod tests {
         let config = parse(text, ConfigSource::Embedded, &AddedSymbols::default()).unwrap();
         let bounds = config.history.reach_bounds();
         assert_eq!(bounds.session_gap_ms, 90 * 60_000);
-        assert_eq!(bounds.previous_session_lead_ms, 360 * 60_000);
     }
 
     /// A gap of zero would make every print its own session, so the file is

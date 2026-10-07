@@ -46,9 +46,9 @@ fn displayed() -> ChartState {
 fn multi_day_pages_coalesce_and_live_catchup_is_bounded_before_publication() {
     let mut state = displayed();
     let mut publication = HistoryPublication::<ManualRunner>::default();
-    publication.enqueue(Arc::new((10..20).map(trade).collect()), true);
+    publication.enqueue(Arc::new((10..20).map(trade).collect()));
     assert!(!publication.poll(&state));
-    publication.enqueue(Arc::new((1..10).map(trade).collect()), false);
+    publication.enqueue(Arc::new((1..10).map(trade).collect()));
     assert_eq!(
         state.trades().len(),
         10,
@@ -71,11 +71,6 @@ fn multi_day_pages_coalesce_and_live_catchup_is_bounded_before_publication() {
     assert!(publication.take_ready(&state).is_none());
     assert!(publication.poll(&state));
     let candidate = publication.take_ready(&state).unwrap();
-    assert_eq!(
-        publication.take_page(),
-        Some(10),
-        "opening slices do not count as replies"
-    );
     state.prepend_history(&(1..20).map(trade).collect::<Vec<_>>());
     assert_eq!(candidate.bars(), state.bars());
     assert_eq!(candidate.partial(), state.partial());
@@ -89,7 +84,7 @@ fn multi_day_pages_coalesce_and_live_catchup_is_bounded_before_publication() {
 fn a_spec_change_restarts_pending_pages_and_source_cancel_rejects_late_results() {
     let mut state = displayed();
     let mut publication = HistoryPublication::<ManualRunner>::default();
-    publication.enqueue(Arc::new((1..20).map(trade).collect()), true);
+    publication.enqueue(Arc::new((1..20).map(trade).collect()));
     publication.poll(&state);
     let old_cancel = Arc::clone(&publication.active.as_ref().unwrap().cancelled);
     state.set_spec(BarSpec::Time(5000));
@@ -98,7 +93,7 @@ fn a_spec_change_restarts_pending_pages_and_source_cancel_rejects_late_results()
     publication.runner.complete();
     assert!(publication.poll(&state));
     assert_eq!(publication.take_ready(&state).unwrap().spec(), state.spec());
-    publication.enqueue(Arc::new(vec![trade(0)]), false);
+    publication.enqueue(Arc::new(vec![trade(0)]));
     publication.poll(&state);
     let cancelled = Arc::clone(&publication.active.as_ref().unwrap().cancelled);
     publication.cancel();
@@ -107,7 +102,6 @@ fn a_spec_change_restarts_pending_pages_and_source_cancel_rejects_late_results()
     let empty = ChartState::new(BarSpec::Tick(3));
     assert!(publication.poll(&empty));
     assert!(publication.take_ready(&state).is_none());
-    assert_eq!(publication.take_page(), None);
 }
 
 #[derive(Default)]
@@ -126,7 +120,7 @@ impl HistoryRunner for RefusedRunner {
 fn repeated_worker_failures_stop_and_a_retry_keeps_all_accepted_pages() {
     let state = displayed();
     let mut publication = HistoryPublication::<RefusedRunner>::default();
-    publication.enqueue(Arc::new((1..20).map(trade).collect()), true);
+    publication.enqueue(Arc::new((1..20).map(trade).collect()));
     publication.poll(&state);
     publication.poll(&state);
     assert!(publication.failed());
@@ -145,5 +139,61 @@ fn repeated_worker_failures_stop_and_a_retry_keeps_all_accepted_pages() {
         publication.queued[0].len(),
         19,
         "retry does not fetch or drop accepted history"
+    );
+}
+
+#[test]
+fn a_held_publication_keeps_every_page_and_recuts_once_on_release() {
+    let state = displayed();
+    let mut publication = HistoryPublication::<ManualRunner>::default();
+    publication.hold(true);
+    publication.enqueue(Arc::new((10..20).map(trade).collect()));
+    assert!(!publication.poll(&state), "nothing is published while held");
+    assert!(publication.runner.job.is_none(), "and no recut starts");
+    publication.enqueue(Arc::new((1..10).map(trade).collect()));
+    assert!(!publication.poll(&state));
+    assert!(publication.pending(), "the pages are kept, not dropped");
+    publication.hold(false);
+    assert!(!publication.poll(&state));
+    publication.runner.complete();
+    assert!(publication.poll(&state));
+    let candidate = publication
+        .take_ready(&state)
+        .expect("one recut of both pages");
+    assert_eq!(candidate.trades().len(), 29);
+    assert!(publication.runner.job.is_none(), "exactly one recut ran");
+}
+
+/// A pane built while pages wait gets every one of them: the page a recut is
+/// working on and the pages held behind it, oldest arrival first.
+#[test]
+fn the_unpublished_pages_are_every_page_not_yet_on_the_display() {
+    let state = displayed();
+    let mut publication = HistoryPublication::<ManualRunner>::default();
+    assert!(publication.unpublished_pages().is_empty());
+    publication.enqueue(Arc::new((10..20).map(trade).collect()));
+    publication.poll(&state);
+    assert!(publication.runner.job.is_some(), "a recut is working on it");
+    publication.hold(true);
+    publication.enqueue(Arc::new((1..10).map(trade).collect()));
+    let lengths: Vec<usize> = publication
+        .unpublished_pages()
+        .iter()
+        .map(|page| page.len())
+        .collect();
+    assert_eq!(lengths, [10, 9]);
+    publication.hold(false);
+    publication.runner.complete();
+    while !publication.poll(&state) {
+        if publication.runner.job.is_some() {
+            publication.runner.complete();
+        }
+    }
+    publication
+        .take_ready(&state)
+        .expect("both pages published");
+    assert!(
+        publication.unpublished_pages().is_empty(),
+        "a published page is no longer owed to anyone"
     );
 }

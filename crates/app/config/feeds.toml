@@ -219,33 +219,25 @@ US30 = 9103
 # trades_dir = "paper-trades"
 
 # ---------------------------------------------------------------------------
-# How far a "load older" press reaches.
+# How the History button finds a session.
 #
-# The chart's `+ older` button has a reach beside its page size: one page of
-# trades, or the *previous session* — keep asking until the tape reaches back
-# past the market's last close, plus a lead into the session before it, so
-# yesterday is on screen to compare against.
-#
-# Neither value below is a fact about every venue, which is why they live here
-# rather than in the binary. The market's last close is read out of the tape
-# itself — a stretch with no prints at all longer than `session_gap_minutes` is
-# the market having been shut, not a quiet patch — so an instrument with a real
-# lunch break wants a longer gap before that pause reads as a close. And a
-# trader comparing an opening range against yesterday's may want more of it
-# than the three hours that ship.
+# A session's open is read out of the tape itself — a stretch with no prints
+# at all longer than `session_gap_minutes` is the market having been shut,
+# not a quiet patch — so an instrument with a real lunch break wants a longer
+# gap before that pause reads as a close. It is a fact about a venue, not
+# about quantick, which is why it lives here rather than in the binary.
 #
 # The defaults are sized against B3's index future: it runs 09:00-18:25 with no
 # break, so the overnight stretch is about fourteen hours and the quietest
 # in-session minute is nowhere near one. A market that never closes has no such
-# gap at all, and a press there reaches back two days and stops.
+# gap at all, and there a day is 24 hours of tape.
 #
-# `reach_span_minutes` is the third, and the only one of them a trader is
-# likely to change often: it is how far one press of the *by time* reach pulls,
-# in minutes of **traded** time. Nights and weekends are crossed to find those
-# minutes and add nothing to them, so "120" means two hours of tape wherever
-# the run has to go to reach them — which is what makes a reach in time
-# answerable at all. It seeds the toolbar's own box, so this is the value the
-# window opens on rather than a ceiling on it.
+# The History button's targets are `+N h` of traded time before the oldest
+# print and `N days` back to the Nth previous session's open, found from the
+# same gaps. `previous_session_lead_minutes` is read and ignored now: the
+# session targets land on a session's open. `reach_span_minutes` is what a
+# workspace saved with the old *by time* reach meant; it loads as the whole
+# hours covering it.
 #
 # The section is optional; absent, the defaults below apply.
 #

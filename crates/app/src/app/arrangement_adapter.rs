@@ -305,17 +305,18 @@ impl ArrangementAdapter<'_> {
         // default on startup, whatever the trader picked when a bookmark is
         // opened mid-session. Never a silent fallback to something else: the
         // reach decides how much a press fetches.
+        // Through the setter, so a hand-edited workspace cannot restore a span
+        // no hours target could reach. Read first: an old `span` token means it.
+        if let Some(minutes) = chrome.history_reach_span_minutes {
+            self.history.set_span_minutes(minutes);
+        }
+        let span = self.history.history_reach_span_minutes;
         if let Some(reach) = chrome
             .history_reach
             .as_deref()
-            .and_then(history_reach::HistoryReach::from_token)
+            .and_then(|token| history_reach::HistoryReach::from_legacy_span(token, span))
         {
             self.history.history_reach = reach;
-        }
-        // Through the setter, so a hand-edited workspace cannot restore a span
-        // the campaign could never reach.
-        if let Some(minutes) = chrome.history_reach_span_minutes {
-            self.history.set_span_minutes(minutes);
         }
         self.history.venue_lead_in = chrome.venue_lead_in;
         self.drawing_chrome
@@ -465,7 +466,7 @@ impl ArrangementRead<'_> {
                 != self.config.history.reach_span_minutes)
                 .then_some(self.history.history_reach_span_minutes),
             history_reach: (self.history.history_reach != history_reach::HistoryReach::default())
-                .then(|| self.history.history_reach.token().to_owned()),
+                .then(|| self.history.history_reach.token()),
             venue_lead_in: self.history.venue_lead_in,
             inspector_position: self.drawing_chrome.remembered_inspector_position(),
         };

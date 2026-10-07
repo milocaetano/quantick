@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use quantick_indicators::{ObjectSnapshot, Rgba8, resolve_bar_paint};
 
-use crate::indicator_worker::{IndicatorEvent, SlotId};
+use quantick_indicator_session::{IndicatorEvent, SlotId};
+
 use crate::price_view::PriceView;
 
 use super::{IndicatorView, MAX_PANES, PaneSizing};
@@ -23,29 +24,17 @@ pub struct IndicatorViews {
 }
 
 impl IndicatorViews {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
     /// Reserve a slot id for an add command about to be sent, remembering
     /// which constructor it answers to (see [`IndicatorView::kind`]).
-    pub(crate) fn allocate_slot(&mut self, kind: impl AsRef<str>) -> SlotId {
+    pub fn allocate_slot(&mut self, kind: impl AsRef<str>) -> SlotId {
         let slot = SlotId(self.next_slot);
         self.next_slot += 1;
         self.pending_kinds.insert(slot, Arc::from(kind.as_ref()));
         slot
-    }
-
-    /// The durable identity of the pane `view` draws in.
-    ///
-    /// Both halves are fixed at birth, so nothing a trader does to the *other*
-    /// indicators — hiding one, collapsing one, removing one — can move a
-    /// drawing from the pane it was placed on.
-    pub(crate) fn pane_key(&self, view: &IndicatorView) -> crate::drawings::PaneKey {
-        crate::drawings::PaneKey {
-            kind: Arc::clone(&view.kind),
-            ordinal: view.ordinal,
-        }
     }
 
     /// The lowest ordinal no live view of `kind` is using.
@@ -76,7 +65,7 @@ impl IndicatorViews {
     /// Apply one worker delta. Events for slots the UI already removed are
     /// dropped silently — commands and events cross on the channel, and the
     /// remove always wins.
-    pub(crate) fn apply(&mut self, event: IndicatorEvent) {
+    pub fn apply(&mut self, event: IndicatorEvent) {
         match event {
             IndicatorEvent::Rebuilt {
                 slot,
@@ -190,7 +179,7 @@ impl IndicatorViews {
         }
     }
 
-    pub(crate) fn view_mut(&mut self, slot: SlotId) -> Option<&mut IndicatorView> {
+    pub fn view_mut(&mut self, slot: SlotId) -> Option<&mut IndicatorView> {
         self.views.iter_mut().find(|v| v.slot == slot)
     }
 
@@ -198,7 +187,7 @@ impl IndicatorViews {
     ///
     /// One question per frame instead of one per visible bar: on the ordinary
     /// chart, where nothing paints, this is the whole cost of the feature.
-    pub(crate) fn paints_any(&self) -> bool {
+    pub fn paints_any(&self) -> bool {
         self.views.iter().any(|view| {
             !view.hidden
                 && (!view.bar_paints.is_empty()
@@ -212,12 +201,12 @@ impl IndicatorViews {
     /// Goes through [`resolve_bar_paint`] — the same function the host uses
     /// for the backtest and the bot — so a trader and a bot reading the same
     /// chart can never be shown different colours.
-    pub(crate) fn bar_paint(&self, row: usize) -> Option<Rgba8> {
+    pub fn bar_paint(&self, row: usize) -> Option<Rgba8> {
         resolve_bar_paint(self.views.iter().map(|view| view.bar_paint(row)))
     }
 
     /// The same, for the bar that is forming.
-    pub(crate) fn forming_paint(&self) -> Option<Rgba8> {
+    pub fn forming_paint(&self) -> Option<Rgba8> {
         resolve_bar_paint(self.views.iter().map(IndicatorView::forming_paint))
     }
 
@@ -234,7 +223,7 @@ impl IndicatorViews {
     ///
     /// `includes_forming` puts the forming bar at the newest end of the fold,
     /// where it outranks every committed bar sharing the slot.
-    pub(crate) fn slot_paint(
+    pub fn slot_paint(
         &self,
         rows: std::ops::Range<usize>,
         includes_forming: bool,
@@ -246,7 +235,7 @@ impl IndicatorViews {
     }
 
     /// Drop a slot UI-side (the worker gets the Remove command separately).
-    pub(crate) fn remove(&mut self, slot: SlotId) {
+    pub fn remove(&mut self, slot: SlotId) {
         self.views.retain(|v| v.slot != slot);
         self.pending_kinds.remove(&slot);
     }
@@ -259,7 +248,7 @@ impl IndicatorViews {
     /// renderer would draw every value `added` slots to the left of the
     /// candle it belongs to. `NaN` is the honest filler: it renders as a gap,
     /// which is exactly what "not computed yet" means here.
-    pub(crate) fn shift_rows(&mut self, added: usize) {
+    pub fn shift_rows(&mut self, added: usize) {
         if added == 0 {
             return;
         }
@@ -282,26 +271,26 @@ impl IndicatorViews {
     }
 
     /// Flip the render-side eye toggle.
-    pub(crate) fn toggle_hidden(&mut self, slot: SlotId) {
+    pub fn toggle_hidden(&mut self, slot: SlotId) {
         if let Some(view) = self.view_mut(slot) {
             view.hidden = !view.hidden;
         }
     }
 
     /// All views, in add order (for the manager UI).
-    pub(crate) fn all(&self) -> &[IndicatorView] {
+    pub fn all(&self) -> &[IndicatorView] {
         &self.views
     }
 
     /// Overlay indicators that should draw on the price chart right now.
-    pub(crate) fn visible_overlays(&self) -> impl Iterator<Item = &IndicatorView> {
+    pub fn visible_overlays(&self) -> impl Iterator<Item = &IndicatorView> {
         self.views
             .iter()
             .filter(|v| v.descriptor.overlay && !v.hidden && v.error.is_none())
     }
 
     /// Pane indicators that get a pane right now, capped at [`MAX_PANES`].
-    pub(crate) fn visible_panes(&self) -> impl Iterator<Item = &IndicatorView> {
+    pub fn visible_panes(&self) -> impl Iterator<Item = &IndicatorView> {
         self.views
             .iter()
             .filter(|v| is_visible_pane(v))
@@ -313,14 +302,11 @@ impl IndicatorViews {
     /// because how tall each one gets is one decision about all of them.
     ///
     /// Written into a caller-owned array rather than returned as a `Vec`:
-    /// [`plot_split`](crate::plot_area::plot_split) runs more than once per frame,
+    /// the app's `plot_split` runs more than once per frame,
     /// and there is no reason for a chart to reach the allocator sixty times a
     /// second for at most [`MAX_PANES`] copies of an eight-byte enum. Returns
     /// the slice actually written.
-    pub(crate) fn pane_sizing<'a>(
-        &self,
-        buffer: &'a mut [PaneSizing; MAX_PANES],
-    ) -> &'a [PaneSizing] {
+    pub fn pane_sizing<'a>(&self, buffer: &'a mut [PaneSizing; MAX_PANES]) -> &'a [PaneSizing] {
         let mut count = 0;
         for view in self.visible_panes() {
             buffer[count] = view.sizing;
@@ -332,7 +318,7 @@ impl IndicatorViews {
     /// The same panes, in the same order, mutable: the renderer records the
     /// range it fitted and the axis gesture moves the scale, both on the view
     /// the pane rect belongs to.
-    pub(crate) fn visible_panes_mut(&mut self) -> impl Iterator<Item = &mut IndicatorView> {
+    pub fn visible_panes_mut(&mut self) -> impl Iterator<Item = &mut IndicatorView> {
         self.views
             .iter_mut()
             .filter(|v| is_visible_pane(v))

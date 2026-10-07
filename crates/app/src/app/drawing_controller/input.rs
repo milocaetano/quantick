@@ -135,9 +135,11 @@ impl DrawingController {
                 selected
             }
             EscapeLayer::Pointer => {
+                let armed = tools.tool() != Tool::Pointer;
                 tools.arm(Tool::Pointer);
-                true
+                armed
             }
+            EscapeLayer::HistoryRun => host.cancel_history(),
         });
     }
     fn apply_edit_keys(

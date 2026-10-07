@@ -161,7 +161,11 @@ impl TabsPort for FakeWindow {
 
 impl TabsMutPort for FakeWindow {
     fn tabs_mut(&mut self) -> TabsMut<'_> {
-        TabsMut::new(&mut self.tabs, &self.config)
+        TabsMut::new(
+            &mut self.tabs,
+            &self.config,
+            &mut self.history.history_reach,
+        )
     }
 }
 

@@ -1,0 +1,3 @@
+# Written by `cargo run -p quantick-guards -- --tighten`: these shrank.
+app::Tab -1
+!budget -1

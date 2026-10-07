@@ -18,11 +18,22 @@ pub(super) type HistoryWorker = HistoryPublication<RecutThread>;
 pub(super) struct HistoryWorker {
     publication: HistoryPublication<RecutThread>,
     pub held: bool,
+    /// Reads as a failed rebuild until a retry, keeping every page.
+    pub fail: bool,
 }
 #[cfg(test)]
 impl HistoryWorker {
     pub fn poll(&mut self, state: &ChartState) -> bool {
-        self.publication.poll(state) && !self.held
+        self.fail || (self.publication.poll(state) && !self.held)
+    }
+    pub fn pending(&self) -> bool {
+        !self.fail && self.publication.pending()
+    }
+    pub fn failed(&self) -> bool {
+        self.fail || self.publication.failed()
+    }
+    pub fn retry(&mut self) -> bool {
+        std::mem::take(&mut self.fail) | self.publication.retry()
     }
 }
 #[cfg(test)]
