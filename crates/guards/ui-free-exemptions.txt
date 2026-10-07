@@ -14,7 +14,7 @@ crates/app/src/control/indicator_guide.rs the registered action mutates app-owne
 crates/app/src/control/analysis.rs snapshots live app panes and indicator views, which no headless crate owns.
 crates/app/src/candle_view.rs a facade of re-exports: it names no library because every leaf it addresses does.
 crates/app/src/drawings/defaults.rs the preset-host port: what a new mark opens with, stated in `DrawingStyle` and `DrawingTool`, the tool registry's own types.
-crates/app/src/drawings/object.rs the drawn object's model; every mark holds the `DrawingTool` that paints it, so the model cannot leave the registry behind.
+crates/app/src/drawings/object.rs `Drawing` and `NewDrawing`; every mark holds the `DrawingTool` that paints it, so they cannot leave the registry behind. Its value types live in `quantick-chart-interaction`'s `drawing_model`.
 crates/app/src/drawings/payload.rs the port each drawing tool implements for its own state; the implementations are the tools, and the tools are `app`.
 crates/app/src/drawings/store.rs the per-pane collection of `Drawing`s, whose behaviour is the pane's gestures beside it.
 crates/app/src/indicators/mod.rs a facade of re-exports: it names no library because every leaf it addresses does.

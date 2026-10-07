@@ -28,9 +28,10 @@ mod placement;
 mod tool;
 
 // The envelope every tool and every feature outside the subsystem speaks,
-// one leaf per question: what a mark is (`object`), what it looks like
-// (`style`), what a tool declares to the rail (`family`), what a tool is
-// handed to paint (`context`), what a tool's own state travels in
+// one leaf per question: what a mark is (`object`, over the anchor, band and
+// identity values `quantick_chart_interaction::drawing_model` owns), what it
+// looks like (`style`), what a tool declares to the rail (`family`), what a
+// tool is handed to paint (`context`), what a tool's own state travels in
 // (`payload`), what a new object opens with (`defaults`), where the marks of
 // one pane live (`store`), and the screen geometry they share (`geometry`).
 // The leaves are private: the re-exports below are the subsystem's address,
