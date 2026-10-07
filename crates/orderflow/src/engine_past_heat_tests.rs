@@ -159,8 +159,14 @@ fn a_tape_panned_into_the_past_keeps_the_book_it_stood_beside() {
     );
     for side in [RestingSide::Bid, RestingSide::Ask] {
         let cells: Vec<_> = heat.cells.iter().filter(|cell| cell.side == side).collect();
-        let from = cells.iter().map(|cell| cell.x0).fold(f64::INFINITY, f64::min);
-        let to = cells.iter().map(|cell| cell.x1).fold(f64::NEG_INFINITY, f64::max);
+        let from = cells
+            .iter()
+            .map(|cell| cell.x0)
+            .fold(f64::INFINITY, f64::min);
+        let to = cells
+            .iter()
+            .map(|cell| cell.x1)
+            .fold(f64::NEG_INFINITY, f64::max);
         assert!(
             (from - lane).abs() < 1e-9 && (to - 1.0).abs() < 1e-9,
             "the {side:?} wall stood the whole visible window: {from}..{to}"

@@ -49,9 +49,15 @@ impl BookEngine {
         let window_ms = self.config.lane_window_ms(reference_ms).max(1);
         let latest_end = end_ms.min(self.history.latest_ms()?);
         let retained = self.history.tape_retained_from_ms();
-        if let Some(reused) =
-            held.and_then(|held| held.reused_at(latest_end, window_ms, dots, retained))
-        {
+        if let Some(reused) = held.and_then(|held| {
+            held.reused_at(
+                latest_end,
+                window_ms,
+                dots,
+                retained,
+                (&self.history, prices, settled),
+            )
+        }) {
             return Some(Arc::new(reused));
         }
         project_past_tape(

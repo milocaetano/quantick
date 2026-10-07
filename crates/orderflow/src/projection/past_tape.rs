@@ -7,6 +7,7 @@ use std::sync::Arc;
 use quantick_engine::Bar;
 
 use super::model::price_span;
+use super::past_heat::{PastHeat, project_past_heat};
 use super::{
     DotHorizon, HeatmapProjection, PriceWindow, SettledProjection, TapeFacts, TierCut,
     TierGrouping, VolumeDots, cluster_tier, lane_grouping, refine_tier, tier_primitives,
@@ -58,12 +59,15 @@ pub struct PastTape {
     pub rungs: (i64, i64),
     /// The native facts (`live` marks) and their exact tape facts.
     pub projection: Arc<HeatmapProjection>,
+    /// The book the history kept over the same blocks.
+    pub heat: Arc<PastHeat>,
 }
 
 impl PastTape {
     /// This stretch again for a window ending at `end_ms`, when nothing in it
     /// can change: the same blocks and rungs, every print that could join
-    /// them delivered, none evicted. A held drag re-reads no history.
+    /// them delivered, none evicted. A held drag re-reads no history; its
+    /// book is re-read only when the price axis or the map's scale moved.
     #[must_use]
     pub fn reused_at(
         &self,
@@ -71,6 +75,7 @@ impl PastTape {
         window_ms: i64,
         dots: &VolumeDots,
         retained_from_ms: Option<i64>,
+        book: (&LiquidityHistory, PriceWindow, &SettledProjection),
     ) -> Option<Self> {
         let (block_ms, from_ms, until_ms) = past_span(end_ms, window_ms, dots.tape_window_ms);
         let rungs = (dots.tape_window_ms, dots.tape_level_ticks);
@@ -84,9 +89,17 @@ impl PastTape {
             );
         let frozen = self.settled_through_ms >= until_ms
             && retained_from_ms.is_none_or(|retained| retained <= from_ms);
+        let (history, prices, settled) = book;
         (same && frozen).then(|| Self {
             end_ms,
             retained_from_ms,
+            heat: if self.heat.fits(prices, settled) {
+                Arc::clone(&self.heat)
+            } else {
+                Arc::new(project_past_heat(
+                    history, from_ms, until_ms, prices, settled,
+                ))
+            },
             ..self.clone()
         })
     }
@@ -116,8 +129,9 @@ pub struct PastBars<'a> {
 }
 
 /// Project the native tape for a window ending at `end_ms`, through the same
-/// clustering, folding and flooring the live tape runs. Only prints: depth
-/// reductions are matched on the live tape alone.
+/// clustering, folding and flooring the live tape runs, beside the book the
+/// history kept over the same blocks. Depth reductions are matched on the
+/// live tape alone.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn project_past_tape(
@@ -217,5 +231,8 @@ pub fn project_past_tape(
         retained_from_ms: history.tape_retained_from_ms(),
         rungs: (dots.tape_window_ms, dots.tape_level_ticks),
         projection: Arc::new(projection),
+        heat: Arc::new(project_past_heat(
+            history, from_ms, until_ms, prices, settled,
+        )),
     })
 }

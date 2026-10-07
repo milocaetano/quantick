@@ -19,6 +19,7 @@ mod dots;
 pub mod flow_tape;
 mod fold;
 mod model;
+mod past_heat;
 mod past_tape;
 mod pending;
 mod pending_overlay;
@@ -51,6 +52,7 @@ pub use model::{
     LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, TapeFacts,
     normalized_area_size, normalized_log_intensity,
 };
+pub use past_heat::{PastHeat, project_past_heat};
 pub use past_tape::{PastBars, PastTape, past_block_ms, past_span, project_past_tape};
 pub use pending::PendingTape;
 pub use tape::{TapeDotGeometry, merge_tape_dots, position_tape_at};
