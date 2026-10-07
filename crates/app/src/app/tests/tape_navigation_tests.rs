@@ -790,7 +790,7 @@ fn the_tape_view_window_moves_the_view_and_is_not_filed() {
     let (mut app, _, _) = split_app(&ctx);
     app.layer_wiring().maintain(&ctx);
     let asset_window = |app: &QuantickApp| {
-        let asset = app.active_tab().tape().look.asset().expect("bound");
+        let asset = app.active_tab().tape().asset().expect("bound");
         asset.filed().look.live_lane.window
     };
     let filed = asset_window(&app);

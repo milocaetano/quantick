@@ -12,6 +12,7 @@ use quantick_orderflow::engine::{BookLadder, BookPublished, CaptureStatus, Order
 use quantick_orderflow::pane_tape::PaneTape;
 use quantick_orderflow::{HeatmapConfig, LaneWindow, reserved_span_ms};
 use quantick_stores::bubble_asset_store::AssetBinding;
+use quantick_stores::bubble_asset_store::SaveSwitch;
 use quantick_stores::bubble_assets::AssetBubbles;
 use quantick_stores::bubble_look::{BubbleLook, LoadedPresets};
 use rust_decimal::Decimal;
@@ -101,7 +102,7 @@ pub struct OrderflowView {
     /// changes through [`Self::sync_published`].
     config: HeatmapConfig,
     /// The book thread: commands in, publications out.
-    pub(crate) worker: BookWorker,
+    worker: BookWorker,
     published: BookPublished,
     /// Engine bucket last adopted into the mirror, to detect auto-base moves.
     last_seen_base: Decimal,
@@ -113,7 +114,7 @@ pub struct OrderflowView {
     pending_capture_grouping_previous: Option<Decimal>,
     /// The bubble look on screen: its presets, the asset it is kept for and
     /// what launch hooks hold over it.
-    pub(crate) look: BubbleLook,
+    look: BubbleLook,
     /// Scripted tape starvation: prints stop reaching the tape this many
     /// milliseconds after the first one, while the book keeps arriving.
     /// `None` — always, outside a capture run — feeds the tape every print.
@@ -125,7 +126,7 @@ pub struct OrderflowView {
     dot_rungs: quantick_orderflow::DotRungMemory,
     /// The lane's market clock and the prints drawn before the worker
     /// publishes them.
-    pub(crate) pane_tape: PaneTape,
+    pane_tape: PaneTape,
     tape_dots: std::cell::RefCell<quantick_orderflow::projection::TapeDotMemory>,
     /// The tape's reconciliations too large for a frame, run beside it.
     tape_rebuilds: std::cell::RefCell<crate::orderflow_render::PaneTapeRebuilds>,
@@ -201,9 +202,7 @@ impl OrderflowView {
             self.cached_config(),
             self.cached_health().floored_quantity,
             self.dot_scale(),
-            &self
-                .pane_tape
-                .opening_bursts(self.published.frame.as_deref()),
+            &self.recorded_opening_bursts(),
             self.look.asset().map(|binding| {
                 quantick_control_schema::orderflow::BubbleAssetSnapshot::of(
                     binding,
@@ -978,11 +977,12 @@ impl OrderflowView {
     }
 
     /// A setting changed from outside the panel — a layer switch, a control
-    /// call. `edit` writes the config and says whether it did; a write goes
-    /// through the one door every change takes.
-    pub(crate) fn edit_config(&mut self, edit: impl FnOnce(&mut HeatmapConfig) -> bool) -> bool {
+    /// call. A write goes through the one door every change takes; returns
+    /// whether `edit` changed anything.
+    pub(crate) fn edit_config(&mut self, edit: impl FnOnce(&mut HeatmapConfig)) -> bool {
         let before = self.config.clone();
-        if !edit(&mut self.config) {
+        edit(&mut self.config);
+        if self.config == before {
             return false;
         }
         self.commit_config_changes(before);
@@ -1034,6 +1034,64 @@ impl OrderflowView {
         self.pane_tape.lane_now_ms(self.config.native_tape())
     }
 
+    /// Advance the lane's clock to the host's monotonic instant
+    /// ([`PaneTape::follow_live`]).
+    pub(crate) fn set_live_clock_at(&mut self, applied_ms: Option<i64>, monotonic_ms: u64) {
+        let native_tape = self.config.native_tape();
+        self.pane_tape
+            .follow_live(native_tape, applied_ms, monotonic_ms);
+    }
+
+    /// Place the lane's clock at the replay's position
+    /// ([`PaneTape::follow_replay`]).
+    pub(crate) fn set_replay_clock_at(
+        &mut self,
+        position_ms: i64,
+        applied_ms: Option<i64>,
+        next_unapplied_ms: Option<i64>,
+    ) {
+        let native_tape = self.config.native_tape();
+        self.pane_tape
+            .follow_replay(native_tape, position_ms, applied_ms, next_unapplied_ms);
+    }
+
+    /// Every opening burst the source recorded, the published ones folded.
+    pub(crate) fn recorded_opening_bursts(&self) -> Vec<i64> {
+        self.pane_tape
+            .opening_bursts(self.published.frame.as_deref())
+    }
+
+    /// The worker's progress, for the health summary.
+    pub(crate) fn worker_progress(&self) -> crate::worker_progress::ProgressSnapshot {
+        self.worker.progress()
+    }
+
+    pub fn reset_summary_counters(&mut self) {
+        self.worker.send(BookCommand::ResetSummaryCounters);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_worker_for_test(symbol: &str, worker: BookWorker) -> Self {
+        let mut view = Self::new(symbol);
+        view.worker = worker;
+        view
+    }
+
+    /// The stored presets, which an asset's declared look names.
+    pub(crate) fn bubble_presets(&self) -> &bubble_presets::BubblePresetFile {
+        self.look.presets()
+    }
+
+    /// The asset this view's settings belong to, once a tab has bound one.
+    pub(crate) fn asset(&self) -> Option<&AssetBinding> {
+        self.look.asset()
+    }
+
+    /// Switch "Save changes for this asset" ([`BubbleLook::set_save_changes`]).
+    pub(crate) fn set_save_asset_changes(&mut self, on: bool) -> Option<SaveSwitch> {
+        self.look.set_save_changes(on)
+    }
+
     /// Start the same-frame tape over: its prints, their dots and its held
     /// end go, and the worker hears the new epoch.
     fn reset_pending_tape(&mut self) {
@@ -1063,7 +1121,8 @@ impl OrderflowView {
     /// then wear what another view filed since ([`BubbleLook::sync`]).
     /// Returns the candle aggression to put on the flow pane when it adopted.
     pub(crate) fn sync_asset(&mut self, candle_aggression: bool) -> Option<bool> {
-        if self.look.take_reloaded_presets()? {
+        self.look.asset()?;
+        if self.look.take_reloaded_presets() {
             self.follow_declared_look(false);
         }
         let flow_ignore_opening = self.flow_execution.ignore_opening();
@@ -1076,16 +1135,16 @@ impl OrderflowView {
 
     /// Take the presets file `loaded` again ([`BubbleLook::reload`]).
     fn reload_presets_from(&mut self, loaded: LoadedPresets) {
-        if let Some((settings, keep_navigation)) = self.look.reload(loaded, &mut self.config) {
-            self.wear_asset(&settings, keep_navigation);
+        if let Some(worn) = self.look.reload(loaded, &mut self.config) {
+            self.wear_asset(&worn.settings, worn.keep_navigation);
         }
     }
 
     /// Wear the asset's declared look when nobody tuned it
     /// ([`BubbleLook::follow_declared`]).
     fn follow_declared_look(&mut self, reloaded_here: bool) {
-        if let Some((settings, keep_navigation)) = self.look.follow_declared(reloaded_here) {
-            self.wear_asset(&settings, keep_navigation);
+        if let Some(worn) = self.look.follow_declared(reloaded_here) {
+            self.wear_asset(&worn.settings, worn.keep_navigation);
         }
     }
 

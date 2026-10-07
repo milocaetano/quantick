@@ -52,8 +52,7 @@ fn frame(view: &mut OrderflowView, prints: &[Trade]) -> Option<Arc<VisibleOrderf
         partial.extend(trade);
     }
     let now = prints.iter().map(|trade| trade.timestamp_ms).max().unwrap();
-    view.pane_tape
-        .follow_replay(view.config.native_tape(), now, Some(now), None);
+    view.set_replay_clock_at(now, Some(now), None);
     view.project_visible(
         VisibleBarTimeline::new(prints.len() as u64, 0, &[], Some(&partial)),
         true,
@@ -84,21 +83,15 @@ fn tape(frame: &VisibleOrderflow) -> Vec<quantick_orderflow::AggressionPrimitive
 fn recorded_opening_metadata_survives_mode_changes_but_resets_with_the_source() {
     let (mut view, _, held) = held_view(false);
     view.record_trade(&print(1, 1_017, 100, 74_365, Side::Buy));
-    let ordinary_mode = view
-        .pane_tape
-        .opening_bursts(view.published.frame.as_deref());
+    let ordinary_mode = view.recorded_opening_bursts();
     let before = view.config.clone();
     view.config.live_lane.tape_only = true;
     view.commit_config_changes(before);
     view.record_trade(&print(1, 2_017, 110, 25, Side::Sell));
-    let enabled_later = view
-        .pane_tape
-        .opening_bursts(view.published.frame.as_deref());
-    view.edit_config(|config| config.set_ignore_opening_burst_in_scale(true));
+    let enabled_later = view.recorded_opening_bursts();
+    view.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = true);
     view.stage_capture_grouping_for_test(Decimal::from(5));
-    let regrouped = view
-        .pane_tape
-        .opening_bursts(view.published.frame.as_deref());
+    let regrouped = view.recorded_opening_bursts();
     let shown = frame(&mut view, &[print(1, 2_017, 110, 25, Side::Sell)]).unwrap();
     let same_frame = shown
         .tape_projection()
@@ -108,13 +101,9 @@ fn recorded_opening_metadata_survives_mode_changes_but_resets_with_the_source() 
         .opening_bursts
         .clone();
     view.reset_for_symbol("WINV26");
-    let reset = view
-        .pane_tape
-        .opening_bursts(view.published.frame.as_deref());
+    let reset = view.recorded_opening_bursts();
     view.record_trade(&print(1, 4_017, 120, 2, Side::Buy));
-    let restarted = view
-        .pane_tape
-        .opening_bursts(view.published.frame.as_deref());
+    let restarted = view.recorded_opening_bursts();
     held.release();
     assert_eq!(ordinary_mode, [1_000]);
     assert_eq!(
@@ -229,12 +218,7 @@ fn a_pending_new_price_extreme_is_in_the_fit_before_any_worker_publication() {
     let next = print(2, 1_101, 200, 2, Side::Sell);
     view.record_trade(&next);
     held.reached();
-    view.pane_tape.follow_replay(
-        view.config.native_tape(),
-        next.timestamp_ms,
-        Some(next.timestamp_ms),
-        None,
-    );
+    view.set_replay_clock_at(next.timestamp_ms, Some(next.timestamp_ms), None);
     let fit_before_projection = view.tape_price_range();
     let shown = frame(&mut view, &[first, next]);
     held.release();
@@ -667,12 +651,7 @@ fn a_subfloor_price_extreme_keeps_the_same_fit_after_worker_acknowledgement() {
     let extreme = print(2, 1_101, 200, 6, Side::Sell);
     view.record_trade(&extreme);
     held.reached();
-    view.pane_tape.follow_replay(
-        view.config.native_tape(),
-        extreme.timestamp_ms,
-        Some(extreme.timestamp_ms),
-        None,
-    );
+    view.set_replay_clock_at(extreme.timestamp_ms, Some(extreme.timestamp_ms), None);
     let immediate_range = view.tape_price_range();
     let prints = [first, extreme];
     let immediate = tape(&frame(&mut view, &prints).unwrap());

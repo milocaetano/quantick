@@ -23,8 +23,7 @@ fn zooming_the_tape_repositions_the_cached_frame_before_the_worker_answers() {
     trade.timestamp_ms = 1_000;
     view.record_trade(&trade);
     partial.extend(&trade);
-    view.pane_tape
-        .follow_replay(view.config.native_tape(), 9_000, Some(1_000), None);
+    view.set_replay_clock_at(9_000, Some(1_000), None);
     let _ = view.project_visible(
         VisibleBarTimeline::new(1, 0, &[], Some(&partial)),
         true,
@@ -133,12 +132,7 @@ fn real_worker_tape_print_to_egui_latency() {
         view.record_trade(&trade);
         // Hold the market clock inside this open 100 ms window throughout
         // observation: waiting for the window to close cannot pass this test.
-        view.pane_tape.follow_replay(
-            view.config.native_tape(),
-            trade.timestamp_ms,
-            Some(trade.timestamp_ms),
-            None,
-        );
+        view.set_replay_clock_at(trade.timestamp_ms, Some(trade.timestamp_ms), None);
         let mut ui_frames = 0_u32;
         loop {
             let frame_started = Instant::now();

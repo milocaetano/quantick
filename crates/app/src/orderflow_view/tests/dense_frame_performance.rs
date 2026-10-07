@@ -192,8 +192,7 @@ fn dense_113_second_tape_same_frame_ui_stages() {
         for trade in &prefix {
             view.record_trade(trade);
         }
-        view.pane_tape
-            .follow_replay(view.config.native_tape(), NOW_MS, Some(NOW_MS), None);
+        view.set_replay_clock_at(NOW_MS, Some(NOW_MS), None);
         let _ = project(&mut view, &bars, &partial, rect);
         initial.release();
         view.flush_for_test();
@@ -229,8 +228,7 @@ fn dense_113_second_tape_same_frame_ui_stages() {
             view.record_trade(trade);
         }
         held.reached();
-        view.pane_tape
-            .follow_replay(view.config.native_tape(), NOW_MS, Some(NOW_MS), None);
+        view.set_replay_clock_at(NOW_MS, Some(NOW_MS), None);
         assert_eq!(view.pane_tape.pending().len(), 20);
         let request = ProjectionRequest {
             timeline_revision: 1,
@@ -251,9 +249,7 @@ fn dense_113_second_tape_same_frame_ui_stages() {
             }),
         };
         let pending = timed("complete_pending_frame", ignore_opening, || {
-            view.pane_tape
-                .complete_frame(&view.config, &request, view.published.frame.as_ref())
-                .unwrap()
+            view.complete_pending_frame(&request).unwrap()
         });
         assert_conserved(&pending, &expected);
         let frame = timed("project_visible", ignore_opening, || {

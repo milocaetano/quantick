@@ -25,7 +25,7 @@ fn appearance(view: &OrderflowView) -> BubblePreset {
 }
 
 fn ignore_opening(view: &mut OrderflowView, on: bool) -> bool {
-    view.edit_config(|config| config.set_ignore_opening_burst_in_scale(on))
+    view.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = on)
 }
 
 /// A view on the mini index, bound to its asset as a tab binds it.

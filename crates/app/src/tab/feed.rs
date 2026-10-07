@@ -335,7 +335,7 @@ impl Tab {
     /// leaving asset's edits first. A hop inside one asset (`WIN$N` to
     /// `WINV26`) keeps what is on screen, edits included.
     pub fn apply_asset_bubbles_after_switch(&mut self, config: &AppConfig) {
-        let Some(binding) = self.tape().look.asset() else {
+        let Some(binding) = self.tape().asset() else {
             return;
         };
         if binding.key() == config.bubble_asset(&self.feed_id, &self.symbol).key {
@@ -351,7 +351,7 @@ impl Tab {
     pub fn bind_asset_bubbles(&mut self, config: &AppConfig, store: &SharedAssetBubbles) {
         let (candle, presets) = (
             ChartLayer::CandleAggression.0.default_on,
-            self.tape().look.presets(),
+            self.tape().bubble_presets(),
         );
         let market = (self.feed_id.as_str(), self.symbol.as_str());
         let (binding, settings) =

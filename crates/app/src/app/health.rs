@@ -77,7 +77,7 @@ impl QuantickApp {
 
         self.health.envelope.warn(&envelope);
         self.health.trades_since_summary = 0;
-        self.active_tab().tape().worker.reset_summary_counters();
+        self.active_tab_mut().tape_mut().reset_summary_counters();
         self.health.last_summary = now;
     }
 

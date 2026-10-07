@@ -106,12 +106,7 @@ impl Chart {
 
     fn clock(&mut self, view: &mut OrderflowView, now_ms: i64) {
         self.now_ms = self.now_ms.max(now_ms);
-        view.pane_tape.follow_replay(
-            view.config.native_tape(),
-            self.now_ms,
-            Some(self.now_ms),
-            None,
-        );
+        view.set_replay_clock_at(self.now_ms, Some(self.now_ms), None);
     }
 
     fn fit(&self, view: &OrderflowView) -> (f64, f64) {
@@ -385,9 +380,7 @@ fn recorded_113_second_tape_ui_stages_around_40000_prints() {
             chart.prices = chart.fit(&view);
             let request = chart.request();
             let first = once(target, opening, "complete_pending_frame", || {
-                view.pane_tape
-                    .complete_frame(&view.config, &request, view.published.frame.as_ref())
-                    .unwrap()
+                view.complete_pending_frame(&request).unwrap()
             });
             conserved(&first, &trades[..target], chart.now_ms);
             let first_output = once(target, opening, "changed_draw_and_egui", || {
@@ -399,9 +392,7 @@ fn recorded_113_second_tape_ui_stages_around_40000_prints() {
             }));
 
             repeated(target, opening, "complete_pending_frame", || {
-                view.pane_tape
-                    .complete_frame(&view.config, &request, view.published.frame.as_ref())
-                    .unwrap()
+                view.complete_pending_frame(&request).unwrap()
             });
             let frame = repeated(target, opening, "project_visible", || {
                 chart.project(&mut view)

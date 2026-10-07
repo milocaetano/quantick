@@ -36,10 +36,7 @@ fn recorded_native_sort_and_buffer_costs_at_40000_prints() {
     chart.clock(&mut view, trades[TARGET - 1].timestamp_ms + 40);
     chart.prices = chart.fit(&view);
     let request = chart.request();
-    let frame = view
-        .pane_tape
-        .complete_frame(&view.config, &request, view.published.frame.as_ref())
-        .unwrap();
+    let frame = view.complete_pending_frame(&request).unwrap();
     conserved(&frame, trades, chart.now_ms);
     let published = view.published.frame.as_ref().unwrap();
     let facts = published.projection.tape_facts.as_ref().unwrap();

@@ -134,11 +134,6 @@ impl BookWorker {
         }
     }
 
-    /// Start the worker's per-summary counters over, at the summary's cadence.
-    pub(crate) fn reset_summary_counters(&self) {
-        self.send(BookCommand::ResetSummaryCounters);
-    }
-
     pub(crate) fn progress(&self) -> ProgressSnapshot {
         self.commands.snapshot()
     }

@@ -98,11 +98,19 @@ impl OrderflowView {
         // only thing a gate here could add is a bar snapshot older than the
         // prints it is supposed to place — which is how a fresh print ends up
         // outside the timeline and drawn nowhere.
-        let frame =
-            self.pane_tape
-                .complete_frame(&self.config, &request, self.published.frame.as_ref());
+        let frame = self.complete_pending_frame(&request);
         self.worker.send(BookCommand::Project(request));
         frame
+    }
+
+    /// The published frame, with the prints the worker has not published
+    /// yet overlaid ([`quantick_orderflow::pane_tape::PaneTape::complete_frame`]).
+    pub(super) fn complete_pending_frame(
+        &mut self,
+        request: &ProjectionRequest,
+    ) -> Option<Arc<VisibleOrderflow>> {
+        self.pane_tape
+            .complete_frame(&self.config, request, self.published.frame.as_ref())
     }
 
     /// Draw resting liquidity, coverage gaps and factual liquidity changes

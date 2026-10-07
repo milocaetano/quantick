@@ -18,16 +18,12 @@ impl Tab {
                     .map(|trade| trade.timestamp_ms),
             )
         });
-        let view = self.tape_mut();
-        let native_tape = view.cached_config().native_tape();
         match replay {
             Some((position_ms, next_ms)) => {
-                view.pane_tape
-                    .follow_replay(native_tape, position_ms, applied_ms, next_ms);
+                self.tape_mut()
+                    .set_replay_clock_at(position_ms, applied_ms, next_ms);
             }
-            None => view
-                .pane_tape
-                .follow_live(native_tape, applied_ms, monotonic_ms),
+            None => self.tape_mut().set_live_clock_at(applied_ms, monotonic_ms),
         }
     }
 }

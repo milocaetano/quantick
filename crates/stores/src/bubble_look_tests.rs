@@ -2,8 +2,8 @@
 //! default: the look every undeclared asset opens on stays the file's own.
 use super::*;
 use crate::bubble_asset_store::AssetBubblesStore;
+use crate::bubble_asset_store::bubble_asset_store_tests::bind;
 use crate::bubble_presets::{embedded, parse};
-use crate::config::AppConfig;
 
 /// One view's screen: the look and the config it dresses.
 struct Screen {
@@ -160,15 +160,7 @@ fn deleting_removes_the_drafted_preset_and_writes_the_file() {
 #[test]
 fn a_look_other_assets_open_on_is_not_saved_over_from_one_asset() {
     let (mut screen, _) = Screen::edited_win();
-    let feeds: AppConfig =
-        toml::from_str(include_str!("../../app/config/feeds.toml")).expect("shipped feeds");
-    let (binding, _) = AssetBinding::bind(
-        AssetBubblesStore::default().shared(),
-        &feeds,
-        ("metatrader-b3", "WINV26"),
-        screen.look.presets(),
-        false,
-    );
+    let (binding, _) = bind(&AssetBubblesStore::default().shared(), "WINV26");
     screen.look.bind(binding);
     let active = embedded().active;
     for name in ["mini index regions", active.as_str(), "live lane pie"] {

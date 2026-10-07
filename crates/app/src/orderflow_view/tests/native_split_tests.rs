@@ -55,12 +55,7 @@ fn session(view: &mut OrderflowView) -> (Vec<Bar>, Bar) {
         }
     }
     let forming = forming.expect("a forming candle");
-    view.pane_tape.follow_replay(
-        view.config.native_tape(),
-        13_000,
-        Some(forming.close_time),
-        None,
-    );
+    view.set_replay_clock_at(13_000, Some(forming.close_time), None);
     (closed, forming)
 }
 

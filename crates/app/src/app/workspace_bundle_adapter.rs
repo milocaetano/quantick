@@ -157,7 +157,7 @@ impl WorkspaceBundleAdapter<'_> {
         let assets = self.arrangement.workspace.bubble_assets();
         let unsaved = assets.borrow_mut().write_now();
         let tabs = self.arrangement.tabs.iter();
-        let views = tabs.filter_map(|tab| tab.tape().look.asset());
+        let views = tabs.filter_map(|tab| tab.tape().asset());
         quantick_stores::bubble_asset_store::export_caveat(unsaved, views)
     }
 

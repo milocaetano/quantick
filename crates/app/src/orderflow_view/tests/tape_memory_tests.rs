@@ -40,8 +40,7 @@ fn paint(
     now_ms: i64,
     prices: (f64, f64),
 ) -> Vec<(egui::Pos2, f32)> {
-    view.pane_tape
-        .follow_replay(view.config.native_tape(), now_ms, Some(now_ms), None);
+    view.set_replay_clock_at(now_ms, Some(now_ms), None);
     let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(640.0, 400.0));
     let output = egui::Context::default().run(egui::RawInput::default(), |ctx| {
         view.draw_aggressions(
@@ -244,8 +243,7 @@ fn tape_history_is_cleared_by_source_replay_mode_and_explicit_visual_changes() {
 fn retained_weighted_prices_participate_in_fit_after_an_old_member_expires() {
     let (mut view, hold) = memory_view();
     let _ = seed_closed_history(&mut view);
-    view.pane_tape.follow_replay(
-        view.config.native_tape(),
+    view.set_replay_clock_at(
         WIN_TIME_MS + WINDOW_MS + 200,
         Some(WIN_TIME_MS + WINDOW_MS + 200),
         None,

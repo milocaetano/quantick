@@ -22,9 +22,15 @@ use crate::bubble_presets::{BubblePreset, BubblePresetFile, PresetSource};
 /// and why it could not be read, if it could not.
 pub type LoadedPresets = (BubblePresetFile, PresetSource, Option<String>);
 
-/// An asset's settings for the caller to put on screen, and whether the
-/// lane's width and window must stay where the view's own gestures put them.
-pub type Worn = (AssetBubbles, bool);
+/// An asset's settings for the caller to put on screen.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Worn {
+    /// The settings to wear.
+    pub settings: AssetBubbles,
+    /// Whether the lane's width and window stay where the view's own
+    /// gestures put them.
+    pub keep_navigation: bool,
+}
 
 /// The look one view shows, and everything that decides it.
 #[derive(Debug)]
@@ -210,15 +216,19 @@ impl BubbleLook {
         self.name_draft.clone_from(&settings.look.name);
     }
 
-    /// Take the presets another view reloaded. `None` when no asset is
-    /// bound; `Some(true)` when presets arrived, and the caller follows the
-    /// declared look ([`Self::follow_declared`]).
-    pub fn take_reloaded_presets(&mut self) -> Option<bool> {
-        let Some(presets) = self.asset.as_mut()?.take_reloaded_presets() else {
-            return Some(false);
+    /// Take the presets another view reloaded: whether any arrived, and the
+    /// caller follows the declared look ([`Self::follow_declared`]). Never
+    /// any while no asset is bound.
+    pub fn take_reloaded_presets(&mut self) -> bool {
+        let reloaded = self
+            .asset
+            .as_mut()
+            .and_then(AssetBinding::take_reloaded_presets);
+        let Some(presets) = reloaded else {
+            return false;
         };
         self.presets = presets;
-        Some(true)
+        true
     }
 
     /// Re-read the asset's declared look from the presets: an asset nobody
@@ -236,7 +246,10 @@ impl BubbleLook {
                     "presets reloaded · '{}' applied",
                     settings.look.name
                 ));
-                Some((settings, !lane_moved))
+                Some(Worn {
+                    settings,
+                    keep_navigation: !lane_moved,
+                })
             }
             None => {
                 self.status = Some(format!(

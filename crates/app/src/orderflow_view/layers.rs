@@ -34,10 +34,7 @@ const SWITCHES: [Switch; 12] = [
     ),
 ];
 fn commit(view: &mut V, change: impl FnOnce(&mut HeatmapConfig)) {
-    view.edit_config(|config| {
-        change(config);
-        true
-    });
+    view.edit_config(change);
 }
 /// Whether `switch` stands on for `view`.
 pub(crate) fn layer_switch(view: &V, switch: OrderflowSwitch) -> bool {

@@ -25,10 +25,9 @@ fn set<P: TabsPort + TabsMutPort + ?Sized>(
         .ok_or_else(|| invalid("the requested pane has no order-flow view"))?;
     let unbound =
         || invalid("the requested pane's bubbles belong to no asset; address the flow pane");
-    let asset = view.look.asset().ok_or_else(unbound)?.key().to_owned();
+    let asset = view.asset().ok_or_else(unbound)?.key().to_owned();
     let switch = view
-        .look
-        .set_save_changes(input.save_changes)
+        .set_save_asset_changes(input.save_changes)
         .ok_or_else(unbound)?;
     serde_json::to_value(input.result(asset, switch)).map_err(invalid)
 }
