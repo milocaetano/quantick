@@ -365,8 +365,12 @@ impl PaneContextMenu {
                     ui.separator();
                 }
                 // Deleted while the menu was open (undo, another surface):
-                // the section vanishes instead of acting on a ghost.
-                None => self.drawing = None,
+                // the section vanishes instead of acting on a ghost, and
+                // takes its half-typed name with it.
+                None => {
+                    self.drawing = None;
+                    self.rename.clear();
+                }
             }
         }
         // Tools that place at the bar under the right-click (the anchored
@@ -467,7 +471,9 @@ impl PaneContextMenu {
         );
         #[cfg(test)]
         self.menu_rects.push(("Rename", rename.rect));
-        if rename.lost_focus() {
+        // An unchanged blur records nothing: the same guard `close` applies.
+        let current = drawing.name.as_deref().unwrap_or_default();
+        if rename.lost_focus() && self.rename.trim() != current {
             intents.push(PaneMenuIntent::RenameDrawing {
                 id,
                 name: self.rename.clone(),
@@ -514,6 +520,7 @@ impl PaneContextMenu {
             if delete.clicked() {
                 intents.push(PaneMenuIntent::DeleteDrawing(id));
                 self.drawing = None;
+                self.rename.clear();
                 ui.close_menu();
             }
             delete

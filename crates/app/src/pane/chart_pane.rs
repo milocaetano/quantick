@@ -854,10 +854,12 @@ impl ChartPane {
     /// The one place a menu's ask writes the pane. Each arm calls the same
     /// pane operation the click called before menus answered with intents.
     /// That is not a claim that each is a control-plane capability: several
-    /// (the anchored VWAP's place, rename, lock and hide of a drawing, an
-    /// indicator's hide, the footprint settings, clear objects) have no
-    /// control capability today — a gap that predates this apply site.
-    /// Drawing intents name the drawing by id and do nothing if it is gone.
+    /// (the anchored VWAP's place; select, rename, lock, hide and delete of a
+    /// drawing; the strategy seat's add, disarm, re-arm and remove — control
+    /// has only `trade.strategy.select`; an indicator's hide, the footprint
+    /// settings, clear objects) have no control capability today — a gap
+    /// that predates this apply site. Drawing and strategy intents name the
+    /// drawing by id and do nothing if it is gone.
     pub(crate) fn apply_menu_intent(
         &mut self,
         intent: PaneMenuIntent,
@@ -937,6 +939,12 @@ impl ChartPane {
                     self.strategies.popup_request = Some(id);
                 }
             }
+            // The drawing went without its strategy being swept yet: the
+            // seat that asked is gone, so nothing is done in its name.
+            PaneMenuIntent::StrategyDisarm(id)
+            | PaneMenuIntent::StrategyRearm(id)
+            | PaneMenuIntent::StrategyRemove(id)
+                if self.drawings.index_of(id).is_none() => {}
             PaneMenuIntent::StrategyDisarm(id) => self.strategies.disarm(id),
             PaneMenuIntent::StrategyRearm(id) => {
                 let series = drawing_projection::PaneSeriesRead {

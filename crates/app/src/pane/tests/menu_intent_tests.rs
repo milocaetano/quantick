@@ -1,12 +1,66 @@
-//! The menus' one apply site: an intent in, the pane's state out. No egui
-//! frame runs here — the menus' clicks are covered where they are drawn; this
-//! pins what each answer does once the pane applies it.
+//! The menus' one apply site: an intent in, the pane's state out — and, for
+//! the drawing section, the intent a real click on the menu produces.
 
 use quantick_orderflow::LaneWindow;
 
 use super::*;
 use crate::drawings::DrawingId;
-use crate::pane::menus::PaneMenuIntent;
+use crate::pane::menus::{PaneMenuHosts, PaneMenuIntent};
+
+const SCREEN: egui::Rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(400.0, 700.0));
+
+/// One frame of the layer menu, drawn the way the pane draws it; returns the
+/// intents it answered with, unapplied.
+fn menu_frame(
+    pane: &mut ChartPane,
+    ctx: &egui::Context,
+    events: Vec<egui::Event>,
+) -> Vec<PaneMenuIntent> {
+    with_chrome(Tool::Pointer, |chrome| {
+        let mut intents = Vec::new();
+        let _ = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(SCREEN),
+                events,
+                ..Default::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let (menu, view) = pane.menu_parts(chrome.capabilities, chrome.style);
+                    let hosts = PaneMenuHosts {
+                        paper: &mut *chrome.paper,
+                    };
+                    intents.extend(menu.draw_layer_menu(ui, &view, hosts));
+                });
+            },
+        );
+        intents
+    })
+}
+
+/// Lay the menu out, then click the drawing-section entry named `label`.
+fn click_entry(pane: &mut ChartPane, ctx: &egui::Context, label: &str) -> Vec<PaneMenuIntent> {
+    let _ = menu_frame(pane, ctx, Vec::new());
+    let pos = pane
+        .context_menu
+        .menu_rects
+        .iter()
+        .find(|(entry, _)| *entry == label)
+        .unwrap_or_else(|| panic!("{label} is offered"))
+        .1
+        .center();
+    let button = |pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::default(),
+    };
+    menu_frame(
+        pane,
+        ctx,
+        vec![egui::Event::PointerMoved(pos), button(true), button(false)],
+    )
+}
 
 fn tool(id: &str) -> drawings::DrawingTool {
     drawings::DRAWING_TOOLS
@@ -174,13 +228,129 @@ fn a_closing_menu_commits_the_rename_in_flight_and_only_a_changed_one() {
 }
 
 #[test]
-fn closing_on_a_deleted_drawing_still_empties_the_rename_buffer() {
+fn the_menus_delete_lets_go_of_the_drawing_and_its_half_typed_name() {
+    let ctx = egui::Context::default();
     let (mut pane, id) = pane_with_rectangle();
     pane.context_menu.drawing = Some(id);
     pane.context_menu.rename = "half typed".to_owned();
-    apply(&mut pane, vec![PaneMenuIntent::DeleteDrawing(id)]);
-    assert!(pane.context_menu.close(&pane.drawings).is_none());
+
+    let intents = click_entry(&mut pane, &ctx, "Delete");
+    assert!(matches!(
+        intents.as_slice(),
+        [PaneMenuIntent::DeleteDrawing(deleted)] if *deleted == id
+    ));
+    apply(&mut pane, intents);
+    assert!(pane.drawings.items().is_empty());
+    assert_eq!(pane.context_menu.drawing, None);
     assert!(pane.context_menu.rename.is_empty());
+    assert!(pane.context_menu.close(&pane.drawings).is_none());
+}
+
+#[test]
+fn a_drawing_deleted_under_the_open_menu_drops_its_section_and_name() {
+    let ctx = egui::Context::default();
+    let (mut pane, id) = pane_with_rectangle();
+    pane.context_menu.drawing = Some(id);
+    pane.context_menu.rename = "half typed".to_owned();
+    assert!(pane.drawings.remove_by_id(id));
+
+    assert!(menu_frame(&mut pane, &ctx, Vec::new()).is_empty());
+    assert_eq!(pane.context_menu.drawing, None);
+    assert!(pane.context_menu.rename.is_empty());
+    assert!(
+        pane.context_menu.menu_rects.is_empty(),
+        "no section for a ghost"
+    );
+}
+
+#[test]
+fn the_strategy_seat_answers_each_click_with_its_intent() {
+    let ctx = egui::Context::default();
+    let (mut pane, id) = pane_with_rectangle();
+    pane.context_menu.drawing = Some(id);
+    arm_strategy(&mut pane, id);
+
+    let disarm = click_entry(&mut pane, &ctx, "Disarm");
+    assert!(matches!(
+        disarm.as_slice(),
+        [PaneMenuIntent::StrategyDisarm(drawing)] if *drawing == id
+    ));
+    apply(&mut pane, disarm);
+
+    let rearm = click_entry(&mut pane, &ctx, "Re-arm");
+    assert!(matches!(
+        rearm.as_slice(),
+        [PaneMenuIntent::StrategyRearm(drawing)] if *drawing == id
+    ));
+
+    let remove = click_entry(&mut pane, &ctx, "Remove strategy");
+    assert!(matches!(
+        remove.as_slice(),
+        [PaneMenuIntent::StrategyRemove(drawing)] if *drawing == id
+    ));
+}
+
+#[test]
+fn strategy_intents_leave_an_unswept_strategy_alone_once_its_drawing_is_gone() {
+    use quantick_strategy::ArmedState;
+    let (mut pane, id) = pane_with_rectangle();
+    arm_strategy(&mut pane, id);
+    // Removed without the orphan sweep: the instance is still on the anchors.
+    assert!(pane.drawings.remove_by_id(id));
+
+    apply(
+        &mut pane,
+        vec![
+            PaneMenuIntent::StrategyDisarm(id),
+            PaneMenuIntent::StrategyRearm(id),
+            PaneMenuIntent::StrategyRemove(id),
+        ],
+    );
+    assert!(matches!(strategy_state(&pane, id), Some(ArmedState::Armed)));
+}
+
+#[test]
+fn an_unchanged_rename_blur_records_nothing() {
+    let ctx = egui::Context::default();
+    let (mut pane, id) = pane_with_rectangle();
+    pane.context_menu.drawing = Some(id);
+    pane.context_menu.rename = String::new();
+    // Focus the field, then click away from it: the blur of an untouched
+    // name asks for no rename, so no undo step is recorded.
+    let _ = click_entry(&mut pane, &ctx, "Rename");
+    let away = egui::pos2(390.0, 690.0);
+    let button = |pressed| egui::Event::PointerButton {
+        pos: away,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::default(),
+    };
+    let blur = menu_frame(
+        &mut pane,
+        &ctx,
+        vec![egui::Event::PointerMoved(away), button(true), button(false)],
+    );
+    assert!(
+        !blur
+            .iter()
+            .any(|intent| matches!(intent, PaneMenuIntent::RenameDrawing { .. })),
+        "an unchanged blur asks for no rename"
+    );
+
+    // The control: the same focus-and-blur with a changed name does rename,
+    // so the silence above is the guard's, not a blur that never happened.
+    pane.context_menu.rename = "new name".to_owned();
+    let _ = click_entry(&mut pane, &ctx, "Rename");
+    let blur = menu_frame(
+        &mut pane,
+        &ctx,
+        vec![egui::Event::PointerMoved(away), button(true), button(false)],
+    );
+    assert!(
+        blur.iter()
+            .any(|intent| matches!(intent, PaneMenuIntent::RenameDrawing { name, .. } if name == "new name")),
+        "a changed blur renames"
+    );
 }
 
 #[test]

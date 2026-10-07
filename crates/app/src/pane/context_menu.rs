@@ -104,8 +104,8 @@ impl PaneContextMenu {
     /// The buffer is emptied either way, so a drawing deleted under the
     /// menu leaves no name behind for the next one.
     pub(super) fn close(&mut self, drawings: &Drawings) -> Option<PaneMenuIntent> {
-        let id = self.drawing.take()?;
         let name = std::mem::take(&mut self.rename);
+        let id = self.drawing.take()?;
         let index = drawings.index_of(id)?;
         let current = drawings.items()[index].name.clone().unwrap_or_default();
         (name.trim() != current).then_some(PaneMenuIntent::RenameDrawing { id, name })
