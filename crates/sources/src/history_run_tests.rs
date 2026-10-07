@@ -2,7 +2,9 @@
 //! hidden-tab pause, cancellation and the honest end.
 
 use super::*;
-use crate::history_reach::{CAMPAIGN_PAGE_PRINTS, CampaignEnd, HistoryReach, ReachBounds};
+use crate::history_reach::{
+    CAMPAIGN_PAGE_PRINTS, CampaignEnd, HistoryReach, MAX_HELD_PRINTS, ReachBounds, TapeFacts,
+};
 use quantick_engine::{Side, Trade};
 use rust_decimal::Decimal;
 
@@ -39,6 +41,7 @@ fn loading() -> HistoryRun {
         run.begin(
             YESTERDAY,
             &today[..],
+            &TapeFacts::default(),
             ReachBounds::default(),
             CAMPAIGN_PAGE_PRINTS
         ),
@@ -203,9 +206,47 @@ fn a_target_already_on_the_chart_finishes_without_a_request() {
     let mut run = HistoryRun::default();
     run.press(YESTERDAY, true);
     let held: Vec<Trade> = (18..=20).flat_map(session).collect();
-    match run.begin(YESTERDAY, &held[..], ReachBounds::default(), 1_000) {
+    match run.begin(
+        YESTERDAY,
+        &held[..],
+        &TapeFacts::default(),
+        ReachBounds::default(),
+        1_000,
+    ) {
         RunAction::Finished(outcome) => assert_eq!(outcome.end, CampaignEnd::AlreadyThere),
         other => panic!("{other:?}"),
     }
     assert_eq!(run.press(YESTERDAY, true), Press::Start, "nothing is out");
+}
+
+#[test]
+fn a_press_on_a_chart_at_the_memory_ceiling_finishes_without_a_request() {
+    let mut run = HistoryRun::default();
+    run.press(YESTERDAY, true);
+    let today = session(20);
+    let full = TapeFacts {
+        copies: MAX_HELD_PRINTS / (today.len() - 1),
+        outages: Vec::new(),
+    };
+    match run.begin(YESTERDAY, &today[..], &full, ReachBounds::default(), 1_000) {
+        RunAction::Finished(outcome) => assert_eq!(outcome.end, CampaignEnd::MemoryCeiling),
+        other => panic!("{other:?}"),
+    }
+    assert!(!run.awaiting_reply(), "nothing was sent");
+    assert_eq!(run.status(), RunStatus::Idle);
+}
+
+#[test]
+fn a_reply_clears_the_request_out_even_after_a_cancel() {
+    let mut run = loading();
+    assert!(run.awaiting_reply());
+    assert!(matches!(run.cancel(), Cancelled::Run(_)));
+    assert!(
+        run.awaiting_reply(),
+        "the feed still owes the reply to the request already out"
+    );
+    assert_eq!(run.press(YESTERDAY, true), Press::Queued);
+    assert_eq!(run.on_reply(&[], true, true), RunAction::Wait);
+    assert!(!run.awaiting_reply());
+    assert_eq!(run.poll(true, true), Poll::Begin(YESTERDAY));
 }

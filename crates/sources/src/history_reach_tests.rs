@@ -46,7 +46,13 @@ fn bounds() -> ReachBounds {
 
 /// Start a campaign that must run, or fail the test with what it did instead.
 fn running(held: &[Trade], reach: HistoryReach) -> Campaign {
-    match Campaign::start(held, reach, bounds(), CAMPAIGN_PAGE_PRINTS) {
+    match Campaign::start(
+        held,
+        &TapeFacts::default(),
+        reach,
+        bounds(),
+        CAMPAIGN_PAGE_PRINTS,
+    ) {
         CampaignStart::Run(campaign) => campaign,
         other => panic!(
             "{reach:?} over {} prints did not run: {other:?}",
@@ -203,7 +209,7 @@ fn the_page_budget_covers_the_print_budget_and_is_capped() {
 fn a_target_already_on_the_chart_sends_no_request() {
     // Days 10..=12 held, live edge inside day 12: yesterday's open is there.
     let held = sessions(10, 12);
-    match Campaign::start(&held[..], HistoryReach::Sessions(1), bounds(), 1_000) {
+    match Campaign::start(&held[..], &TapeFacts::default(), HistoryReach::Sessions(1), bounds(), 1_000) {
         CampaignStart::AlreadyMet(outcome) => {
             assert_eq!(outcome.end, CampaignEnd::AlreadyThere);
             assert_eq!(outcome.oldest_ms, Some(held[0].timestamp_ms));
@@ -215,7 +221,7 @@ fn a_target_already_on_the_chart_sends_no_request() {
 #[test]
 fn an_empty_chart_has_nothing_to_page_back_from() {
     assert!(matches!(
-        Campaign::start(&[] as &[Trade], HistoryReach::Hours(2), bounds(), 1_000),
+        Campaign::start(&[] as &[Trade], &TapeFacts::default(), HistoryReach::Hours(2), bounds(), 1_000),
         CampaignStart::NothingCharted(outcome) if outcome.end == CampaignEnd::NothingCharted
     ));
 }
@@ -417,13 +423,23 @@ fn the_print_budget_ends_a_run_partial_and_clips_the_last_request() {
     );
 }
 
+/// Facts for a tab whose every pane holds its own copy of the tape, with as
+/// many copies as leave `per_copy` prints of the ceiling to each.
+fn copies_leaving(per_copy: usize) -> TapeFacts {
+    TapeFacts {
+        copies: MAX_HELD_PRINTS / per_copy,
+        outages: Vec::new(),
+    }
+}
+
 #[test]
-fn the_memory_ceiling_counts_what_the_chart_already_held() {
+fn the_memory_ceiling_counts_every_panes_copy_of_the_tape() {
     let today = session(20);
-    let held_already = MAX_HELD_PRINTS - 10;
-    let mut campaign = match Campaign::start_with_held(
+    let facts = copies_leaving(today.len() + 10);
+    let per_copy = MAX_HELD_PRINTS / facts.copies;
+    let mut campaign = match Campaign::start(
         &today[..],
-        held_already,
+        &facts,
         HistoryReach::Sessions(5),
         bounds(),
         CAMPAIGN_PAGE_PRINTS,
@@ -431,11 +447,114 @@ fn the_memory_ceiling_counts_what_the_chart_already_held() {
         CampaignStart::Run(campaign) => campaign,
         other => panic!("{other:?}"),
     };
-    assert_eq!(campaign.next_request(), 10);
-    let page = run(today[0].timestamp_ms - 10 * MINUTE, MINUTE, 10);
+    let room = per_copy - today.len();
+    assert_eq!(
+        campaign.next_request(),
+        room,
+        "every pane holds the page, so each copy's share bounds the request"
+    );
+    let page = run(today[0].timestamp_ms - room as i64 * MINUTE, MINUTE, room);
     assert_eq!(
         campaign.advance(&page, true),
         CampaignStep::Stop(CampaignEnd::MemoryCeiling)
+    );
+}
+
+#[test]
+fn a_press_at_the_memory_ceiling_asks_for_nothing_and_says_why() {
+    let today = session(20);
+    let facts = copies_leaving(today.len() - 1);
+    match Campaign::start(
+        &today[..],
+        &facts,
+        HistoryReach::Sessions(1),
+        bounds(),
+        CAMPAIGN_PAGE_PRINTS,
+    ) {
+        CampaignStart::AtCeiling(outcome) => {
+            assert_eq!(outcome.end, CampaignEnd::MemoryCeiling);
+            assert!(!outcome.complete());
+            assert!(
+                outcome
+                    .sentence(|ms| format!("<{ms}>"))
+                    .contains(CampaignEnd::MemoryCeiling.reason()),
+                "the note names the ceiling"
+            );
+        }
+        other => panic!("a full chart must not send a one-print request: {other:?}"),
+    }
+}
+
+/// Today with a two-hour hole at 11:00 that the feed marked as its own
+/// outage, and the outage it marked.
+fn today_with_an_outage() -> (Vec<Trade>, Outage) {
+    let today: Vec<Trade> = session(20)
+        .into_iter()
+        .filter(|trade| {
+            let minute_of_day = (trade.timestamp_ms - 20 * DAY) / MINUTE;
+            !(11 * 60 < minute_of_day && minute_of_day < 13 * 60)
+        })
+        .collect();
+    let outage = Outage {
+        from_ms: 20 * DAY + 11 * HOUR,
+        to_ms: 20 * DAY + 13 * HOUR,
+    };
+    (today, outage)
+}
+
+#[test]
+fn a_feed_outage_inside_today_is_not_counted_as_a_close() {
+    let (today, outage) = today_with_an_outage();
+    let facts = TapeFacts {
+        copies: 1,
+        outages: vec![outage],
+    };
+    let mut campaign = match Campaign::start(
+        &today[..],
+        &facts,
+        HistoryReach::Sessions(1),
+        bounds(),
+        CAMPAIGN_PAGE_PRINTS,
+    ) {
+        CampaignStart::Run(campaign) => campaign,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        campaign.advance(&session(19), true),
+        CampaignStep::Ask,
+        "the night before today is the first close, not the outage"
+    );
+    assert_eq!(
+        campaign.advance(&session(18)[500..], true),
+        CampaignStep::Stop(CampaignEnd::ReachMet)
+    );
+    let outcome = campaign.finish(CampaignEnd::ReachMet);
+    assert_eq!(
+        outcome.reached_open_ms,
+        Some(session(19)[0].timestamp_ms),
+        "yesterday's open, not today's"
+    );
+    assert_eq!(outcome.outages_crossed, 1);
+    let sentence = outcome.sentence(|ms| format!("<{ms}>"));
+    assert!(
+        sentence.contains("feed outage"),
+        "the note says a hole was crossed: {sentence}"
+    );
+}
+
+/// The residual limit, pinned: a hole nobody marked reads as a close, so
+/// the count is off by one session. Only outages the feed reported are known.
+#[test]
+fn an_unmarked_hole_inside_today_still_reads_as_a_close() {
+    let (today, _) = today_with_an_outage();
+    let mut campaign = running(&today, HistoryReach::Sessions(1));
+    assert_eq!(
+        campaign.advance(&session(19)[500..], true),
+        CampaignStep::Stop(CampaignEnd::ReachMet)
+    );
+    assert_eq!(
+        campaign.finish(CampaignEnd::ReachMet).reached_open_ms,
+        Some(today[0].timestamp_ms)
     );
 }
 
@@ -531,7 +650,7 @@ fn an_hours_run_reports_traded_time() {
 fn a_run_already_there_says_so() {
     let held = sessions(10, 12);
     let CampaignStart::AlreadyMet(outcome) =
-        Campaign::start(&held[..], HistoryReach::Sessions(1), bounds(), 1_000)
+        Campaign::start(&held[..], &TapeFacts::default(), HistoryReach::Sessions(1), bounds(), 1_000)
     else {
         panic!("met");
     };
@@ -550,8 +669,8 @@ fn the_start_reads_a_chunked_tape_as_it_reads_a_slice() {
     tape.extend(run(close + 14 * HOUR, 1_000, CHUNK_TRADES - 300));
     let chunked: TradeTape = tape.iter().cloned().collect();
     for reach in HistoryReach::PRESETS {
-        let over_slice = Campaign::start(&tape[..], reach, bounds(), 1_000);
-        let over_tape = Campaign::start(&chunked, reach, bounds(), 1_000);
+        let over_slice = Campaign::start(&tape[..], &TapeFacts::default(), reach, bounds(), 1_000);
+        let over_tape = Campaign::start(&chunked, &TapeFacts::default(), reach, bounds(), 1_000);
         assert_eq!(over_slice, over_tape, "{reach:?}");
     }
 }
@@ -570,6 +689,7 @@ fn the_press_walk_over_five_dense_sessions_costs_one_pass() {
     let started = std::time::Instant::now();
     let start = Campaign::start(
         &tape,
+        &TapeFacts::default(),
         HistoryReach::Sessions(10),
         bounds(),
         CAMPAIGN_PAGE_PRINTS,
@@ -584,6 +704,7 @@ fn the_press_walk_over_five_dense_sessions_costs_one_pass() {
     let started = std::time::Instant::now();
     let _ = Campaign::start(
         &slice[..],
+        &TapeFacts::default(),
         HistoryReach::Sessions(10),
         bounds(),
         CAMPAIGN_PAGE_PRINTS,
