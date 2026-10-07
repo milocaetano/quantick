@@ -142,6 +142,8 @@ impl Tab {
         pane.price_view
             .set_inverted(self.flow_pane.price_view.is_inverted());
         self.time_panes.push(pane);
+        // Its copy counts against a running campaign's memory ceiling.
+        self.history_run.set_tape_copies(self.panes().count());
         // One pane per frame, for the reason the first one waits a frame at
         // all: seeding replays every retained trade, and building three at
         // once would hold the render thread for three times as long. The

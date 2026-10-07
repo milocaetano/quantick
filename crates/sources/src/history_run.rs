@@ -226,6 +226,19 @@ impl HistoryRun {
             .map_or(Cancelled::Nothing, Cancelled::Queued)
     }
 
+    /// The tab's panes changed mid-run; see [`Campaign::set_copies`].
+    pub fn set_tape_copies(&mut self, copies: usize) {
+        if let Some(campaign) = self.campaign.as_mut() {
+            campaign.set_copies(copies);
+        }
+    }
+
+    /// The copies the running campaign's ceiling counts, while one runs.
+    #[must_use]
+    pub fn tape_copies(&self) -> Option<usize> {
+        self.campaign.as_ref().map(Campaign::copies)
+    }
+
     /// The chart could not be rebuilt: end the run where it stood, as
     /// [`Self::cancel`] does, but keep a press queued behind the rebuild so
     /// the retry runs it rather than dropping it unannounced.

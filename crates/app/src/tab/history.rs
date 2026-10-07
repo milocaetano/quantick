@@ -803,6 +803,12 @@ impl Tab {
         }
     }
 
+    /// The pane copies the running campaign's memory ceiling counts.
+    #[cfg(test)]
+    pub fn history_tape_copies(&self) -> Option<usize> {
+        self.history_run.tape_copies()
+    }
+
     /// Whether a run is paging. Read by the toolbar and the control plane.
     #[must_use]
     pub const fn history_reach_running(&self) -> bool {

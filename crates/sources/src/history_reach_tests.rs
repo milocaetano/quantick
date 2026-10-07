@@ -467,6 +467,36 @@ fn the_memory_ceiling_counts_every_panes_copy_of_the_tape() {
 }
 
 #[test]
+fn a_pane_opened_mid_run_lowers_the_ceiling_for_the_pages_still_to_come() {
+    let today = session(20);
+    let facts = copies_leaving(today.len() + 10);
+    let start = || match Campaign::start(
+        &today[..],
+        &facts,
+        HistoryReach::Sessions(5),
+        bounds(),
+        CAMPAIGN_PAGE_PRINTS,
+    ) {
+        CampaignStart::Run(campaign) => campaign,
+        other => panic!("{other:?}"),
+    };
+    let page = run(today[0].timestamp_ms - 5 * MINUTE, MINUTE, 5);
+    let mut unchanged = start();
+    unchanged.next_request();
+    assert_eq!(unchanged.advance(&page, true), CampaignStep::Ask);
+
+    let mut split = start();
+    split.next_request();
+    split.set_copies(facts.copies * 2);
+    assert_eq!(split.copies(), facts.copies * 2);
+    assert_eq!(
+        split.advance(&page, true),
+        CampaignStep::Stop(CampaignEnd::MemoryCeiling),
+        "twice the copies halve each copy's share, which the tape already passed"
+    );
+}
+
+#[test]
 fn a_press_at_the_memory_ceiling_asks_for_nothing_and_says_why() {
     let today = session(20);
     let facts = copies_leaving(today.len() - 1);

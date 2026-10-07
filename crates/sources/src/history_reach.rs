@@ -697,6 +697,19 @@ impl Campaign {
         CampaignStart::Run(campaign)
     }
 
+    /// Panes holding a copy of the tape, as the ceiling counts them.
+    #[must_use]
+    pub const fn copies(&self) -> usize {
+        self.copies
+    }
+
+    /// A pane was opened (or closed) mid-run and holds its own copy of
+    /// everything charted and held: the ceiling for the pages still to come
+    /// follows. A run already past the new share stops on its next reply.
+    pub fn set_copies(&mut self, copies: usize) {
+        self.copies = copies.max(1);
+    }
+
     /// Prints one copy of the tape may hold: the ceiling shared by every
     /// pane's copy.
     fn ceiling(&self) -> usize {

@@ -69,6 +69,11 @@ fn a_pane_opened_during_a_run_ends_with_the_whole_tape() {
         }
     }
     assert!(app.active_tab().time_pane().is_some(), "the split opened");
+    assert_eq!(
+        app.active_tab().history_tape_copies(),
+        Some(2),
+        "the run's memory ceiling counts the new pane's copy"
+    );
 
     // Yesterday, then the close before it: the run ends and releases.
     let yesterday_close = previous_close_minute(-120);
