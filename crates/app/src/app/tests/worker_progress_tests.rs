@@ -86,9 +86,9 @@ fn existing_summary_entrypoint_emits_owned_normal_degraded_and_recovered_workers
     book_clock.at(10);
     book.send(BookCommand::Flush(book_ack_tx));
     book_clock.at(40);
-    app.tabs.runtime_mut(1).flow_pane.orderflow = Some(
-        crate::orderflow_view::OrderflowView::with_worker_for_test("TESTUSDT", book),
-    );
+    let mut view = crate::orderflow_view::OrderflowView::new("TESTUSDT");
+    view.worker = book;
+    app.tabs.runtime_mut(1).flow_pane.orderflow = Some(view);
     let indicator_thread = tracing::subscriber::with_default(subscriber, || {
         let normal_at = app.health.last_summary + Duration::from_secs(2);
         app.maybe_emit_summary(normal_at, &ctx);

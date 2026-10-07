@@ -98,7 +98,9 @@ impl OrderflowView {
         // only thing a gate here could add is a bar snapshot older than the
         // prints it is supposed to place — which is how a fresh print ends up
         // outside the timeline and drawn nowhere.
-        let frame = self.complete_pending_frame(&request);
+        let frame =
+            self.pane_tape
+                .complete_frame(&self.config, &request, self.published.frame.as_ref());
         self.worker.send(BookCommand::Project(request));
         frame
     }

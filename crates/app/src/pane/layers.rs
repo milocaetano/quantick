@@ -3,6 +3,7 @@
 use super::{ChartPane, PaneChrome};
 use crate::config::FeedCapabilities;
 use crate::orderflow_view::OrderflowView;
+use crate::orderflow_view::layers::{layer_facts, layer_switch, set_layer_switch};
 use crate::style::ChartStyle;
 use crate::toolrail::Tool;
 use quantick_chart::tick_membership::TickMembership;
@@ -18,7 +19,7 @@ impl ChartPane {
             tick_bars: TickMembership::applies_to(self.state.spec()),
             native_candle_prices: self.state.tape_price_step().is_some()
                 && self.state.tape_reference_price().is_some(),
-            ..tape.map_or_else(LayerFacts::default, OrderflowView::layer_facts)
+            ..tape.map_or_else(LayerFacts::default, layer_facts)
         }
     }
     pub fn layer_switched_on(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
@@ -27,7 +28,7 @@ impl ChartPane {
             LayerSource::Orderflow(switch) => self
                 .orderflow
                 .as_ref()
-                .is_some_and(|owner| owner.layer_switch(switch)),
+                .is_some_and(|owner| layer_switch(owner, switch)),
             LayerSource::Footprint => self.footprint.visible,
             LayerSource::Grid => style.canvas.grid_enabled,
             LayerSource::Drawings => !self.drawings.all_hidden(),
@@ -57,7 +58,7 @@ impl ChartPane {
             LayerSource::Local => unreachable!("local transitions are applied by LayerState"),
             LayerSource::Orderflow(switch) => {
                 if let Some(owner) = self.orderflow.as_mut() {
-                    owner.set_layer_switch(switch, effect.visible);
+                    set_layer_switch(owner, switch, effect.visible);
                 }
             }
             LayerSource::Footprint => self.footprint.visible = effect.visible,
@@ -89,7 +90,7 @@ impl ChartPane {
             LayerSource::Orderflow(switch) => self
                 .orderflow
                 .as_ref()
-                .is_some_and(|owner| owner.layer_switch(switch)),
+                .is_some_and(|owner| layer_switch(owner, switch)),
             _ => false,
         })
     }

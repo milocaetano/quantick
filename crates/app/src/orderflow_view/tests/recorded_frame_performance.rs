@@ -106,7 +106,12 @@ impl Chart {
 
     fn clock(&mut self, view: &mut OrderflowView, now_ms: i64) {
         self.now_ms = self.now_ms.max(now_ms);
-        view.set_replay_clock_at(self.now_ms, Some(self.now_ms), None);
+        view.pane_tape.follow_replay(
+            view.config.native_tape(),
+            self.now_ms,
+            Some(self.now_ms),
+            None,
+        );
     }
 
     fn fit(&self, view: &OrderflowView) -> (f64, f64) {
@@ -358,7 +363,7 @@ fn recorded_113_second_tape_ui_stages_around_40000_prints() {
             chart.prices = chart.fit(&view);
             let _ = chart.project(&mut view);
             view.flush_for_test();
-            assert!(view.pending_tape.is_empty());
+            assert!(view.pane_tape.pending().is_empty());
             let published_native = view
                 .published
                 .frame
@@ -380,7 +385,9 @@ fn recorded_113_second_tape_ui_stages_around_40000_prints() {
             chart.prices = chart.fit(&view);
             let request = chart.request();
             let first = once(target, opening, "complete_pending_frame", || {
-                view.complete_pending_frame(&request).unwrap()
+                view.pane_tape
+                    .complete_frame(&view.config, &request, view.published.frame.as_ref())
+                    .unwrap()
             });
             conserved(&first, &trades[..target], chart.now_ms);
             let first_output = once(target, opening, "changed_draw_and_egui", || {
@@ -392,7 +399,9 @@ fn recorded_113_second_tape_ui_stages_around_40000_prints() {
             }));
 
             repeated(target, opening, "complete_pending_frame", || {
-                view.complete_pending_frame(&request).unwrap()
+                view.pane_tape
+                    .complete_frame(&view.config, &request, view.published.frame.as_ref())
+                    .unwrap()
             });
             let frame = repeated(target, opening, "project_visible", || {
                 chart.project(&mut view)
@@ -419,7 +428,7 @@ fn recorded_113_second_tape_ui_stages_around_40000_prints() {
                 frame
             });
             conserved(&combined, &trades[..target], chart.now_ms);
-            assert_eq!(view.pending_tape.len(), 20);
+            assert_eq!(view.pane_tape.pending().len(), 20);
             let expired = trades[..target]
                 .iter()
                 .filter(|trade| trade.timestamp_ms.div_euclid(100) * 100 < chart.now_ms - WINDOW_MS)

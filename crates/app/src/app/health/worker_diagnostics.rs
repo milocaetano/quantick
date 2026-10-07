@@ -34,7 +34,7 @@ pub(super) fn pane_workers(
     std::iter::once(("indicator", pane.indicator_worker.progress())).chain(
         pane.orderflow
             .as_ref()
-            .map(|view| ("orderflow", view.worker_progress())),
+            .map(|view| ("orderflow", view.worker.progress())),
     )
 }
 

@@ -36,7 +36,7 @@ pub(super) fn select_market(app: &mut QuantickApp, feed: &str, symbol: &str) {
 fn edit_win(app: &mut QuantickApp) -> BubblePreset {
     let tape = app.active_tab_mut().tape_mut();
     tape.set_live_lane_window(LaneWindow::Fixed { ms: 7_000 });
-    assert!(tape.set_ignore_opening_burst_in_scale(true));
+    assert!(tape.edit_config(|config| config.set_ignore_opening_burst_in_scale(true)));
     look(app)
 }
 
@@ -205,6 +205,7 @@ pub(super) fn maintain(app: &mut QuantickApp) {
 fn source(app: &QuantickApp) -> AssetSource {
     app.active_tab()
         .tape()
+        .look
         .asset()
         .expect("a bound asset")
         .source()
@@ -232,7 +233,7 @@ fn wheeling_the_tape_window_is_navigation_not_a_setting() {
     assert_eq!(source(&app), AssetSource::Stored);
     assert!(crate::bubble_presets::assets_path().is_file());
     let tape = app.active_tab().tape();
-    assert_eq!(tape.asset().expect("bound").unsaved(), None);
+    assert_eq!(tape.look.asset().expect("bound").unsaved(), None);
 }
 
 /// Review round 1, finding 2: two tabs on the mini index share its
@@ -248,7 +249,7 @@ fn an_edit_in_one_win_tab_reaches_the_other_and_survives_its_next_edit() {
     assert!(
         app.active_tab_mut()
             .tape_mut()
-            .set_ignore_opening_burst_in_scale(true)
+            .edit_config(|config| config.set_ignore_opening_burst_in_scale(true))
     );
     // One frame files the edit, the next one dresses the other tab with it.
     maintain(&mut app);
@@ -288,7 +289,7 @@ fn an_imported_cockpit_dresses_the_open_tabs_with_its_asset_settings() {
     let mut app = app_on(shipped_config(), "metatrader-b3", "WINV26");
     let edit = |app: &mut QuantickApp, on: bool| {
         let tape = app.active_tab_mut().tape_mut();
-        assert!(tape.set_ignore_opening_burst_in_scale(on));
+        assert!(tape.edit_config(|config| config.set_ignore_opening_burst_in_scale(on)));
         maintain(app);
     };
     edit(&mut app, true);
@@ -316,7 +317,7 @@ fn a_dated_roll_no_feed_lists_opens_on_its_tab_feeds_look() {
     let mut app = app_on(shipped_config(), "metatrader-b3", "WDO$N");
     select_market(&mut app, "metatrader-b3", "WDOX26");
     assert_eq!(look(&app).name, "live lane pie");
-    let asset = app.active_tab().tape().asset().expect("bound");
+    let asset = app.active_tab().tape().look.asset().expect("bound");
     assert_eq!(asset.key(), "WDOX26");
     assert_eq!(asset.source(), AssetSource::Declared);
 }
@@ -334,7 +335,7 @@ fn an_unfiled_edit_is_filed_even_when_another_tab_filed_first() {
     assert!(
         app.active_tab_mut()
             .tape_mut()
-            .set_ignore_opening_burst_in_scale(true)
+            .edit_config(|config| config.set_ignore_opening_burst_in_scale(true))
     );
     app.tabs.select(1);
     assert!(
@@ -392,7 +393,7 @@ fn the_launch_window_hook_holds_through_a_switch_and_files_nothing() {
     app.config = shipped_config();
     select_market(&mut app, "binance", "WINV26");
     let tape = app.active_tab().tape();
-    assert_eq!(tape.asset().expect("bound").key(), "WIN*");
+    assert_eq!(tape.look.asset().expect("bound").key(), "WIN*");
     assert!(tape.cached_config().native_tape(), "the WIN look is on");
     assert_eq!(tape.live_lane_window(), held, "the held window too");
     maintain(&mut app);
@@ -419,7 +420,7 @@ fn the_bubbles_autostart_hook_holds_through_a_switch_and_files_nothing() {
     app.config = shipped_config();
     // The trader switched the mini index's bubbles off in an earlier run.
     let store = app.workspace.bubble_assets().clone();
-    let presets = app.active_tab().tape().bubble_presets().clone();
+    let presets = app.active_tab().tape().look.presets().clone();
     let win = ("metatrader-b3", "WINV26");
     let (_, declared) = AssetBinding::bind(store.clone(), &app.config, win, &presets, false);
     let off = AssetBubbles {
@@ -436,12 +437,12 @@ fn the_bubbles_autostart_hook_holds_through_a_switch_and_files_nothing() {
 
     select_market(&mut app, "binance", "WINV26");
     let tape = app.active_tab().tape();
-    assert_eq!(tape.asset().expect("bound").key(), "WIN*");
+    assert_eq!(tape.look.asset().expect("bound").key(), "WIN*");
     assert!(tape.bubbles_enabled(), "held on through the switch");
     maintain(&mut app);
     assert_eq!(stored(), Some(off.clone()), "and filed nowhere");
     let tape = app.active_tab_mut().tape_mut();
-    assert!(tape.set_ignore_opening_burst_in_scale(true));
+    assert!(tape.edit_config(|config| config.set_ignore_opening_burst_in_scale(true)));
     maintain(&mut app);
     let filed = stored().expect("WIN's settings");
     assert!(
@@ -465,11 +466,11 @@ fn the_bubbles_autostart_hook_holds_through_a_switch_and_files_nothing() {
 fn an_export_files_pending_edits_and_says_when_the_disk_refused_them() {
     let mut app = app_on(shipped_config(), "metatrader-b3", "WINV26");
     let tape = app.active_tab_mut().tape_mut();
-    assert!(tape.set_ignore_opening_burst_in_scale(true));
+    assert!(tape.edit_config(|config| config.set_ignore_opening_burst_in_scale(true)));
     let file = crate::scratch::ScratchFile::new("asset-export", "workspace.qws.toml");
     app.workspace_bundle_adapter().export_workspace_to(&file);
     let tape = app.active_tab_mut().tape_mut();
-    assert!(tape.set_ignore_opening_burst_in_scale(false));
+    assert!(tape.edit_config(|config| config.set_ignore_opening_burst_in_scale(false)));
     maintain(&mut app);
     app.workspace_bundle_adapter().import_workspace_from(&file);
     assert!(

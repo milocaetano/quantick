@@ -32,7 +32,7 @@ fn opening_excluded(app: &QuantickApp) -> bool {
 }
 
 fn saves_changes(app: &QuantickApp) -> bool {
-    let asset = app.active_tab().tape().asset().expect("a bound asset");
+    let asset = app.active_tab().tape().look.asset().expect("a bound asset");
     asset.saves_changes()
 }
 
@@ -162,12 +162,18 @@ fn an_export_names_the_changes_saving_off_holds_back() {
 fn with_saving_off_a_win_edit_stays_on_its_tab_until_the_tab_shows_win_again() {
     let mut app = two_win_tabs();
     let tape = app.active_tab_mut().tape_mut();
-    assert_eq!(tape.set_save_asset_changes(false), Some(SaveSwitch::Off));
-    assert!(tape.set_ignore_opening_burst_in_scale(true));
+    assert_eq!(tape.look.set_save_changes(false), Some(SaveSwitch::Off));
+    assert!(tape.edit_config(|config| config.set_ignore_opening_burst_in_scale(true)));
     maintain(&mut app);
     maintain(&mut app);
     assert!(opening_excluded(&app), "the edit is on screen");
-    let why = app.active_tab().tape().asset().expect("bound").unsaved();
+    let why = app
+        .active_tab()
+        .tape()
+        .look
+        .asset()
+        .expect("bound")
+        .unsaved();
     assert!(why.expect("not saved").contains("saving is off"));
     assert_eq!(stored_win(), None, "nothing is written for WIN");
 
@@ -196,7 +202,7 @@ fn with_saving_off_a_win_edit_stays_on_its_tab_until_the_tab_shows_win_again() {
     assert!(
         app.active_tab_mut()
             .tape_mut()
-            .set_ignore_opening_burst_in_scale(true)
+            .edit_config(|config| config.set_ignore_opening_burst_in_scale(true))
     );
     maintain(&mut app);
     let reread = AssetBubblesStore::load(crate::bubble_presets::assets_path()).shared();
@@ -211,8 +217,8 @@ fn with_saving_off_a_win_edit_stays_on_its_tab_until_the_tab_shows_win_again() {
 fn switching_saving_on_again_saves_what_the_tab_shows_and_the_other_tab_wears_it() {
     let mut app = two_win_tabs();
     let tape = app.active_tab_mut().tape_mut();
-    tape.set_save_asset_changes(false);
-    assert!(tape.set_ignore_opening_burst_in_scale(true));
+    tape.look.set_save_changes(false);
+    assert!(tape.edit_config(|config| config.set_ignore_opening_burst_in_scale(true)));
     maintain(&mut app);
     app.tabs.select(1);
     let other = app.active_tab_mut().tape_mut();
@@ -225,7 +231,7 @@ fn switching_saving_on_again_saves_what_the_tab_shows_and_the_other_tab_wears_it
     app.tabs.select(0);
     let tape = app.active_tab_mut().tape_mut();
     assert_eq!(
-        tape.set_save_asset_changes(true),
+        tape.look.set_save_changes(true),
         Some(SaveSwitch::ScreenStored)
     );
     maintain(&mut app);
@@ -234,7 +240,12 @@ fn switching_saving_on_again_saves_what_the_tab_shows_and_the_other_tab_wears_it
     assert!(stored.look.volume_dot_ignore_opening_burst_in_scale);
     assert!(!stored.flow_ignore_opening, "not the other tab's held edit");
     assert_eq!(
-        app.active_tab().tape().asset().expect("bound").unsaved(),
+        app.active_tab()
+            .tape()
+            .look
+            .asset()
+            .expect("bound")
+            .unsaved(),
         None
     );
 
@@ -268,12 +279,12 @@ fn switching_saving_on_says_whether_the_screen_was_stored_or_gave_way() {
     assert_eq!(on["screen"], "stored", "nothing newer is stored");
     // Off again from the panel, before the first tab wore that filing.
     let tape = app.active_tab_mut().tape_mut();
-    assert_eq!(tape.set_save_asset_changes(false), Some(SaveSwitch::Off));
+    assert_eq!(tape.look.set_save_changes(false), Some(SaveSwitch::Off));
 
     // An edit there, then saving on: the other tab's filing is newer.
     app.tabs.select(0);
     let tape = app.active_tab_mut().tape_mut();
-    assert!(tape.set_ignore_opening_burst_in_scale(true));
+    assert!(tape.edit_config(|config| config.set_ignore_opening_burst_in_scale(true)));
     let on = save_switch(&mut app, true);
     assert_eq!(on["changed"], true);
     assert_eq!(on["screen"], "replaced_by_stored");

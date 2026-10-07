@@ -192,11 +192,12 @@ fn dense_113_second_tape_same_frame_ui_stages() {
         for trade in &prefix {
             view.record_trade(trade);
         }
-        view.set_replay_clock_at(NOW_MS, Some(NOW_MS), None);
+        view.pane_tape
+            .follow_replay(view.config.native_tape(), NOW_MS, Some(NOW_MS), None);
         let _ = project(&mut view, &bars, &partial, rect);
         initial.release();
         view.flush_for_test();
-        assert!(view.pending_tape.is_empty());
+        assert!(view.pane_tape.pending().is_empty());
         let published = view
             .published
             .frame
@@ -228,8 +229,9 @@ fn dense_113_second_tape_same_frame_ui_stages() {
             view.record_trade(trade);
         }
         held.reached();
-        view.set_replay_clock_at(NOW_MS, Some(NOW_MS), None);
-        assert_eq!(view.pending_tape.len(), 20);
+        view.pane_tape
+            .follow_replay(view.config.native_tape(), NOW_MS, Some(NOW_MS), None);
+        assert_eq!(view.pane_tape.pending().len(), 20);
         let request = ProjectionRequest {
             timeline_revision: 1,
             first_bar_index: 0,
@@ -249,7 +251,9 @@ fn dense_113_second_tape_same_frame_ui_stages() {
             }),
         };
         let pending = timed("complete_pending_frame", ignore_opening, || {
-            view.complete_pending_frame(&request).unwrap()
+            view.pane_tape
+                .complete_frame(&view.config, &request, view.published.frame.as_ref())
+                .unwrap()
         });
         assert_conserved(&pending, &expected);
         let frame = timed("project_visible", ignore_opening, || {
@@ -308,7 +312,7 @@ fn dense_113_second_tape_same_frame_ui_stages() {
         });
         assert_conserved(&combined, &expected);
         assert_eq!(
-            view.pending_tape.len(),
+            view.pane_tape.pending().len(),
             20,
             "the held worker cannot acknowledge the suffix"
         );

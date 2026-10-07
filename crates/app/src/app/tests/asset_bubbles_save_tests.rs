@@ -91,7 +91,7 @@ fn save_changes_is_the_assets_permission_checked_retry_safe_and_read_back() {
     assert!(
         app.active_tab_mut()
             .tape_mut()
-            .set_ignore_opening_burst_in_scale(true)
+            .edit_config(|config| config.set_ignore_opening_burst_in_scale(true))
     );
     maintain(&mut app);
     let held = asset_read(&mut app, &mut observer);
