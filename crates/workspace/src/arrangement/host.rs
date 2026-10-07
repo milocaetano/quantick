@@ -34,11 +34,11 @@ impl<R: TabRuntime> Topology for Entries<'_, R> {
 
 /// Mutable borrows contain runtimes only. Entry identity and physical order
 /// never escape, even through indexing or whole-value runtime replacement.
-pub struct Arrangement<R: TabRuntime> {
+pub struct Arrangement<R> {
     lifecycle: ArrangementLifecycle,
     runtimes: Vec<TabEntry<R>>,
 }
-impl<R: TabRuntime> Arrangement<R> {
+impl<R> Arrangement<R> {
     pub fn new(id: TabId, runtime: R) -> Self {
         Self {
             lifecycle: ArrangementLifecycle::new(id),
@@ -114,6 +114,9 @@ impl<R: TabRuntime> Arrangement<R> {
         self.position(id)
             .map(|index| &mut self.runtimes[index].runtime)
     }
+}
+/// Lifecycle commands read the runtimes' market facts.
+impl<R: TabRuntime> Arrangement<R> {
     pub fn select(&mut self, index: usize) {
         if let Ok(plan) = self
             .lifecycle
@@ -204,7 +207,6 @@ impl<R: TabRuntime> Arrangement<R> {
         };
         let mut runtime = self.runtimes.remove(index).runtime;
         runtime.close();
-        tracing::info!(target: "quantick::app", schema_version = 1_u8, event_code = "TAB_CLOSED", tab = id.0, feed = %runtime.feed(), symbol = %runtime.symbol(), tabs = self.runtimes.len(), action = "drop_feed_and_workers", "closing a market tab");
         self.lifecycle
             .commit(plan, &Entries(&self.runtimes))
             .expect("removal landed exactly once");
@@ -217,7 +219,7 @@ pub struct ClosedTab<R> {
     pub id: u64,
     pub runtime: R,
 }
-impl<R: TabRuntime> Index<usize> for Arrangement<R> {
+impl<R> Index<usize> for Arrangement<R> {
     type Output = R;
     fn index(&self, index: usize) -> &Self::Output {
         &self.runtimes[index].runtime

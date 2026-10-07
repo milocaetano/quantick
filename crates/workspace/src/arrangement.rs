@@ -1,8 +1,9 @@
 //! Deterministic tab identity and selection decisions over borrowed host facts.
 //!
 //! The host owns the sole physical order. Only validated transition effects may
-//! alter it; runtime-only borrows cannot change identity or order. No runtime,
-//! clock, worker or UI type is stored here.
+//! alter it; runtime-only borrows cannot change identity or order. The
+//! decisions store no runtime, clock, worker or UI type; [`Arrangement`] owns
+//! the runtimes in physical order and applies the decided effects to them.
 
 mod host;
 mod restore;
