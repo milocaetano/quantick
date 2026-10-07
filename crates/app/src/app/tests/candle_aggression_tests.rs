@@ -60,6 +60,9 @@ fn context_fixture(
         app.active_tab().time_panes[0].state.tape_price_step(),
         Some(Decimal::from(5))
     );
+    // The book worker adopts its auto-sized capture bucket off-thread; land
+    // that publication before any test reads the tape's configuration.
+    settled_frame(&mut app, ctx);
     (app, events, commands)
 }
 
@@ -116,9 +119,13 @@ fn candle_aggression_opt_in_preserves_candles_and_the_right_tape() {
     let chart = left.frame.chart_rect.unwrap();
     let ink = candle_ink(&before, chart);
     assert!(!ink.is_empty(), "the test observes actual candle paint");
+    settle_workers(&mut app);
     let tape = format!("{:?}", app.active_tab().tape().cached_config());
     app.active_tab_mut().time_panes[0].set_layer_visible(layer, true, &mut Default::default());
     let after = run_frame(&mut app, &ctx);
+    // Anything the toggle sent the book worker is published before the
+    // right tape is compared, so a change it caused cannot hide in flight.
+    settle_workers(&mut app);
     let left = &app.active_tab().time_panes[0];
     assert!(
         left.orderflow.is_none(),

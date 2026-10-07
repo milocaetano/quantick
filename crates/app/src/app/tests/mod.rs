@@ -68,6 +68,7 @@ mod quick_range_shape_tests;
 mod retry_readback_tests;
 mod screenshot_evidence_tests;
 mod session_length_tests;
+mod settled_frame;
 mod toolrail_launch_baselines;
 mod toolrail_tests;
 mod workspace_bundle_menu_baseline_tests;
@@ -77,6 +78,7 @@ mod workspaces_tests;
 
 use super::*;
 use crate::chart::PriceScale;
+use settled_frame::{frame_instant, pin_frame_clock, settle_workers, settled_frame};
 
 use rust_decimal::Decimal;
 use tokio::sync::mpsc;
@@ -701,7 +703,8 @@ fn run_frame_sized(
         modifiers,
         ..Default::default()
     };
-    ctx.run(input, |ctx| app.draw_frame(ctx, Instant::now()))
+    let now = frame_instant(ctx);
+    ctx.run(input, |ctx| app.draw_frame(ctx, now))
 }
 
 /// A press-drag-release in a window of `size`.
@@ -2321,6 +2324,10 @@ const BENCH_DRAWINGS_PER_PANE: usize = 40;
 const BENCH_BOOK_LEVELS_PER_SIDE: i64 = 128;
 const BENCH_CLOSED_TRADES: usize = 120;
 
+/// Measure the core capture in batches: `(best median, best p99, best
+/// worst)` in microseconds, each the minimum of that statistic across the
+/// batches. A noisy neighbour can only make a batch look slower, never
+/// faster, so each statistic's best reading is the capture's own cost.
 fn measure_core_capture_us() -> (u64, u64, u64) {
     const WARMUP_CAPTURES: usize = 25;
     const MEASURED_CAPTURES: usize = 500;
@@ -2351,9 +2358,11 @@ fn measure_core_capture_us() -> (u64, u64, u64) {
         println!(
             "CONTROL_CORE_CAPTURE {{\"capture_median_us\":{median_us},\"capture_p99_us\":{p99_us},\"capture_worst_us\":{worst_us},\"captures\":{MEASURED_CAPTURES}}}"
         );
-        if p99_us < best.1 {
-            best = (median_us, p99_us, worst_us);
-        }
+        best = (
+            best.0.min(median_us),
+            best.1.min(p99_us),
+            best.2.min(worst_us),
+        );
     }
     best
 }

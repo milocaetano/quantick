@@ -42,9 +42,13 @@ fn profile_app() -> (QuantickApp, mpsc::Receiver<FeedCommand>, egui::Context) {
     payload.show_labels = false;
     pane.drawings.select(None);
     let ctx = egui::Context::default();
+    pin_frame_clock(&ctx);
     for _ in 0..3 {
         run_frame_at(&mut app, &ctx, TEST_WINDOW);
     }
+    // The book worker's publication moves the lane divider and the price
+    // scale every target below is read against; land it now.
+    settled_frame(&mut app, &ctx);
     (app, commands, ctx)
 }
 
@@ -163,19 +167,34 @@ fn precise_profile_painted_row_moves_and_visible_handle_resizes() {
         .clone();
     assert_ne!(moved[0].bar, before[0].bar);
     assert!(((moved[1].bar - moved[0].bar) - (before[1].bar - before[0].bar)).abs() < 0.1);
-    // Drive the visible affordance after the move has refreshed its range.
+    // Drive the visible affordance after the move has refreshed its range,
+    // on the geometry the settled frame painted.
+    settled_frame(&mut app, &ctx);
     let handle = profile_handle(&app, 1);
     let hover = run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(handle)]);
     assert_eq!(
         hover.platform_output.cursor_icon,
         egui::CursorIcon::ResizeNwSe
     );
-    drag_sized(
+    // The press itself must still land on the handle, not the body.
+    let press = run_frame_with_events(
         &mut app,
         &ctx,
-        TEST_WINDOW,
-        handle,
-        handle - egui::vec2(30.0, 0.0),
+        vec![
+            egui::Event::PointerMoved(handle),
+            pointer_button(handle, true),
+        ],
+    );
+    assert_eq!(
+        press.platform_output.cursor_icon,
+        egui::CursorIcon::ResizeNwSe
+    );
+    let end = handle - egui::vec2(30.0, 0.0);
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(end)]);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(end), pointer_button(end, false)],
     );
     let resized = &app.active_tab().flow_pane.drawings.items()[0].points;
     assert_eq!(resized[0].bar, moved[0].bar);

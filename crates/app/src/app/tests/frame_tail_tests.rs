@@ -19,6 +19,7 @@ fn frame(
     spawn: &mut crate::tab::LiveFeedSpawn<'_>,
     late: bool,
 ) -> egui::FullOutput {
+    let now = frame_instant(ctx);
     ctx.run(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW)),
@@ -30,7 +31,7 @@ fn frame(
                 use quantick_chart_interaction::frame_tail_plan::FrameTailStage::*;
                 app.draw_frame_test_order(
                     ctx,
-                    Instant::now(),
+                    now,
                     spawn,
                     [
                         SettlePaperPanels,
@@ -42,7 +43,7 @@ fn frame(
             } else {
                 app.draw_frame_test_order(
                     ctx,
-                    Instant::now(),
+                    now,
                     spawn,
                     quantick_chart_interaction::frame_tail_plan::FrameTailPlan::stages(),
                 );
@@ -81,6 +82,7 @@ fn report_text(ctx: &egui::Context, output: &egui::FullOutput) -> Vec<String> {
 
 fn reload_case(late: bool, failed: bool) -> egui::Rect {
     let ctx = egui::Context::default();
+    pin_frame_clock(&ctx);
     let (mut app, _commands) = app_with_history(50);
     let dir = crate::scratch::ScratchDir::new("frame-tail-reload");
     let calls = std::cell::Cell::new(0);
@@ -158,7 +160,17 @@ fn reload_case(late: bool, failed: bool) -> egui::Rect {
     let before_click = ctx
         .memory(|memory| memory.area_rect(egui::Id::new("Simulated performance")))
         .unwrap();
+    // The popup hangs off a chip the book worker's publication can move:
+    // land it, and click where two consecutive frames agree it is.
+    settle_workers(&mut app);
+    output = frame(&mut app, &ctx, Vec::new(), &mut spawn, late);
     let at = painted_text_center(&output, "Reload").expect("actual popup Reload button");
+    output = frame(&mut app, &ctx, Vec::new(), &mut spawn, late);
+    assert_eq!(
+        painted_text_center(&output, "Reload"),
+        Some(at),
+        "the Reload button holds still before the click"
+    );
     let click = vec![
         egui::Event::PointerMoved(at),
         egui::Event::PointerButton {

@@ -2122,7 +2122,7 @@ fn observer_per_scope_capture_cost() {
 
 #[test]
 fn observer_core_capture_stays_within_the_ui_budget() {
-    // The always-on guard judges the median of the best batch: a typical
+    // The always-on guard judges the best batch median: a typical
     // coherent capture of every scope must fit the budget, and that
     // reading survives a loaded test runner. The tail is measured by the
     // ignored sibling below, on a quiet machine, and recorded in
