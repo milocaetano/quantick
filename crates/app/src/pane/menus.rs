@@ -9,8 +9,10 @@
 //! The menus are a view component: they own the menu's own state
 //! ([`PaneContextMenu`]), read the pane through a [`PaneMenuView`], and answer
 //! with [`PaneMenuIntent`]s. Nothing here writes the pane; the pane applies
-//! every intent in one place, `ChartPane::apply_menu_intent`, so a click and a
-//! scripted caller share the same operation.
+//! every intent in one place, `ChartPane::apply_menu_intent`, through the same
+//! operations a click always used. One host still writes its own state from
+//! inside the menu: the paper ticket's trade section
+//! ([`PaneMenuHosts::paper`]), which belongs to the tab, not the pane.
 //!
 //! No hook is declared or read here: `pane.rs` names every `QUANTICK_*` it
 //! mentions in a comment only, so the generated registry is unchanged by this
@@ -18,10 +20,12 @@
 
 use eframe::egui;
 
-use crate::drawings::{ChartPoint, DrawingTool, Drawings};
+use crate::config::FeedCapabilities;
+use crate::drawings::{ChartPoint, DrawingId, DrawingTool, Drawings};
 use crate::indicator_worker::SlotId;
 use crate::indicators::IndicatorViews;
 use crate::paper_trading::PaperTrading;
+use crate::style::ChartStyle;
 use crate::surfaces::drawing_chrome::DrawingChromeAsk;
 use crate::theme;
 use quantick_layers::{ChartLayer, LayerBlock};
@@ -31,6 +35,7 @@ use quantick_orderflow::{
 };
 
 use super::drawing_projection::PaneSeriesRead;
+use super::layers::PaneLayerRead;
 use super::{PaneContextMenu, PaneStrategies};
 
 /// One thing a pane menu asked the pane to do. The menus never write the
@@ -52,15 +57,25 @@ pub(crate) enum PaneMenuIntent {
     /// An indicator's hide/show checkbox.
     ToggleIndicatorHidden(SlotId),
     /// The right-click landed on this drawing: it is selected, like a press.
-    SelectDrawing(usize),
+    /// Every drawing intent names the drawing by id; one gone by the time
+    /// the pane applies it is a no-op.
+    SelectDrawing(DrawingId),
     /// The drawing section's rename committed.
-    RenameDrawing { index: usize, name: String },
+    RenameDrawing { id: DrawingId, name: String },
     /// Lock or unlock the drawing.
-    SetDrawingLocked { index: usize, locked: bool },
+    SetDrawingLocked { id: DrawingId, locked: bool },
     /// Hide or show the drawing.
-    SetDrawingHidden { index: usize, hidden: bool },
+    SetDrawingHidden { id: DrawingId, hidden: bool },
     /// Delete the drawing, and the strategy armed on it.
-    DeleteDrawing(usize),
+    DeleteDrawing(DrawingId),
+    /// "Add strategy…": ask for the strategy popup over this region.
+    StrategyAdd(DrawingId),
+    /// Call off the strategy riding this drawing.
+    StrategyDisarm(DrawingId),
+    /// Watch this region again with the same parameters.
+    StrategyRearm(DrawingId),
+    /// Detach the strategy from this drawing.
+    StrategyRemove(DrawingId),
     /// An object-manager ask from the objects submenu or "clear objects…".
     ObjectsAsk(Box<DrawingChromeAsk>),
 }
@@ -73,9 +88,8 @@ pub(crate) struct LayerRow {
     pub(crate) visible: bool,
 }
 
-/// What the tape's section reads: its layers and its lane window.
+/// What the tape's section reads besides its layers: its lane window.
 pub(crate) struct TapeMenuView {
-    pub(crate) layers: Vec<LayerRow>,
     pub(crate) window: LaneWindow,
     pub(crate) reference_ms: Option<i64>,
 }
@@ -84,19 +98,63 @@ pub(crate) struct TapeMenuView {
 pub(crate) struct PaneMenuView<'a> {
     pub(crate) drawings: &'a Drawings,
     pub(crate) indicators: &'a IndicatorViews,
+    pub(crate) strategies: &'a PaneStrategies,
     pub(crate) series: PaneSeriesRead<'a>,
-    /// The candles' layer switches, in registry order.
-    pub(crate) chart_layers: Vec<LayerRow>,
+    /// Where the layer rows are read from — only when a section that shows
+    /// them is drawn, so a closed "chart layers" submenu costs nothing.
+    pub(crate) layers: PaneLayerRead<'a>,
+    pub(crate) capabilities: FeedCapabilities,
+    pub(crate) style: &'a ChartStyle,
     /// FLOW's opening-scale preference, `Some` where the entry applies.
     pub(crate) flow_opening: Option<bool>,
     /// The tape's section, `Some` when the menu was opened on a tape.
     pub(crate) tape: Option<TapeMenuView>,
 }
 
-/// The sibling components that draw their own entries into the menu.
+/// The layer rows a menu draws, read where the pane's layer answers are.
+impl PaneLayerRead<'_> {
+    /// One side's layer switches as a menu draws them, in registry order:
+    /// the candles' (`on_tape == false`) or the tape's.
+    pub(crate) fn rows(
+        &self,
+        on_tape: bool,
+        capabilities: FeedCapabilities,
+        style: &ChartStyle,
+    ) -> Vec<LayerRow> {
+        self.layers
+            .registry()
+            .layers()
+            .iter()
+            .copied()
+            .filter(|layer| layer.on_tape() == on_tape)
+            .map(|layer| self.row(layer, capabilities, style))
+            .collect()
+    }
+    /// One layer's switch as a menu draws it: the answer to both questions a
+    /// checkbox asks, read once.
+    pub(crate) fn row(
+        &self,
+        layer: ChartLayer,
+        capabilities: FeedCapabilities,
+        style: &ChartStyle,
+    ) -> LayerRow {
+        LayerRow {
+            layer,
+            blocked: self.blocked(layer, capabilities),
+            visible: self.visible(layer, style),
+        }
+    }
+}
+
+impl PaneMenuView<'_> {
+    fn layer_rows(&self, on_tape: bool) -> Vec<LayerRow> {
+        self.layers.rows(on_tape, self.capabilities, self.style)
+    }
+}
+
+/// The host that still draws, and writes, its own entries in the menu.
 pub(crate) struct PaneMenuHosts<'a> {
     pub(crate) paper: &'a mut PaperTrading,
-    pub(crate) strategies: &'a mut PaneStrategies,
 }
 
 impl PaneContextMenu {
@@ -107,14 +165,12 @@ impl PaneContextMenu {
     /// so a layer wears one label, one hover text and one disabled reason
     /// whichever door a trader came through.
     ///
-    /// Returns why the layer could not be switched, for the caller that has a
-    /// sub-entry to gate on the same answer.
+    /// Returns the switch the trader asked for, if any.
     pub(crate) fn layer_checkbox(
         &mut self,
         ui: &mut egui::Ui,
         row: LayerRow,
-        intents: &mut Vec<PaneMenuIntent>,
-    ) -> Option<LayerBlock> {
+    ) -> Option<PaneMenuIntent> {
         let LayerRow {
             layer,
             blocked,
@@ -138,10 +194,11 @@ impl PaneContextMenu {
         self.layer_menu_rects.push((layer, response.rect));
         if let Some(reason) = blocked {
             response.on_disabled_hover_text(reason.explanation);
-        } else if response.changed() {
-            intents.push(PaneMenuIntent::SetLayerVisible { layer, visible });
+            return None;
         }
-        blocked
+        response
+            .changed()
+            .then_some(PaneMenuIntent::SetLayerVisible { layer, visible })
     }
 
     /// The candles' layer checkboxes: the list the menu has always shown.
@@ -156,8 +213,9 @@ impl PaneContextMenu {
         view: &PaneMenuView<'_>,
         intents: &mut Vec<PaneMenuIntent>,
     ) {
-        for &row in &view.chart_layers {
-            let blocked = self.layer_checkbox(ui, row, intents);
+        for row in view.layer_rows(false) {
+            intents.extend(self.layer_checkbox(ui, row));
+            let blocked = row.blocked;
             // The footprint's knobs live in a window of their own (the
             // Profitchart-style properties dialog, the boss's ask); the menu
             // offers the door. Available with the layer off too — configuring
@@ -200,6 +258,7 @@ impl PaneContextMenu {
     fn draw_tape_menu_section(
         &mut self,
         ui: &mut egui::Ui,
+        view: &PaneMenuView<'_>,
         tape: &TapeMenuView,
         intents: &mut Vec<PaneMenuIntent>,
     ) {
@@ -214,8 +273,8 @@ impl PaneContextMenu {
         // row is read through `layer_visible` and written through
         // `set_layer_visible`, which is also what puts these three in the
         // layer state file.
-        for &row in &tape.layers {
-            let _ = self.layer_checkbox(ui, row, intents);
+        for row in view.layer_rows(true) {
+            intents.extend(self.layer_checkbox(ui, row));
         }
 
         let reference_ms = tape.reference_ms;
@@ -302,7 +361,7 @@ impl PaneContextMenu {
         if let Some(id) = self.drawing {
             match view.drawings.index_of(id) {
                 Some(index) => {
-                    self.draw_drawing_menu_section(ui, view, index, hosts.strategies, &mut intents);
+                    self.draw_drawing_menu_section(ui, view, index, &mut intents);
                     ui.separator();
                 }
                 // Deleted while the menu was open (undo, another surface):
@@ -353,7 +412,7 @@ impl PaneContextMenu {
         // on it answers for it, keeping the primary menu focused on actions.
         if self.on_tape {
             if let Some(tape) = &view.tape {
-                self.draw_tape_menu_section(ui, tape, &mut intents);
+                self.draw_tape_menu_section(ui, view, tape, &mut intents);
             }
             ui.separator();
         }
@@ -389,10 +448,10 @@ impl PaneContextMenu {
         ui: &mut egui::Ui,
         view: &PaneMenuView<'_>,
         index: usize,
-        strategies: &mut PaneStrategies,
         intents: &mut Vec<PaneMenuIntent>,
     ) {
         let drawing = &view.drawings.items()[index];
+        let id = drawing.id;
         ui.label(
             egui::RichText::new(drawing.display_label(index))
                 .size(11.0)
@@ -410,11 +469,17 @@ impl PaneContextMenu {
         self.menu_rects.push(("Rename", rename.rect));
         if rename.lost_focus() {
             intents.push(PaneMenuIntent::RenameDrawing {
-                index,
+                id,
                 name: self.rename.clone(),
             });
         }
-        strategies.draw_menu_entries(ui, view.drawings, index, view.series, self);
+        intents.extend(view.strategies.draw_menu_entries(
+            ui,
+            view.drawings,
+            index,
+            view.series,
+            self,
+        ));
         let locked = drawing.locked;
         let hidden = drawing.hidden;
         let lock = ui
@@ -425,7 +490,7 @@ impl PaneContextMenu {
             .push((if locked { "Unlock" } else { "Lock" }, lock.rect));
         if lock.clicked() {
             intents.push(PaneMenuIntent::SetDrawingLocked {
-                index,
+                id,
                 locked: !locked,
             });
             ui.close_menu();
@@ -436,7 +501,7 @@ impl PaneContextMenu {
             .push((if hidden { "Show" } else { "Hide" }, eye.rect));
         if eye.clicked() {
             intents.push(PaneMenuIntent::SetDrawingHidden {
-                index,
+                id,
                 hidden: !hidden,
             });
             ui.close_menu();
@@ -447,7 +512,7 @@ impl PaneContextMenu {
         } else {
             let delete = ui.button("Delete");
             if delete.clicked() {
-                intents.push(PaneMenuIntent::DeleteDrawing(index));
+                intents.push(PaneMenuIntent::DeleteDrawing(id));
                 self.drawing = None;
                 ui.close_menu();
             }

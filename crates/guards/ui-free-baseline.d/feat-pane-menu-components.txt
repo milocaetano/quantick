@@ -1,0 +1,7 @@
+# feat/pane-menu-components: PaneLayerRead (pane/layers.rs) borrows the
+# five fields every layer answer reads, so the layer menu can read layer
+# rows lazily beside its own &mut state while ChartPane lends both out.
+# It reads ChartPane's LayerState, OrderflowView, ChartState, PaneFootprint
+# and Drawings, which only app holds.
+crates/app +14
+!budget +14

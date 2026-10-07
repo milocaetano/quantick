@@ -1,19 +1,31 @@
 //! The desktop adapter for headless layer policy. Reads and effects go straight
 //! to the existing feature owner; local visibility belongs to LayerState.
-use super::menus::LayerRow;
-use super::{ChartPane, PaneChrome};
+use super::{ChartPane, PaneChrome, PaneFootprint};
 use crate::config::FeedCapabilities;
+use crate::drawings::Drawings;
 use crate::orderflow_view::OrderflowView;
 use crate::orderflow_view::layers::{layer_facts, layer_switch, set_layer_switch};
+use crate::state::ChartState;
 use crate::style::ChartStyle;
 use crate::toolrail::Tool;
 use quantick_chart::tick_membership::TickMembership;
 use quantick_layers::{ChartLayer, LayerActions, LayerBlock};
 use quantick_layers::{LayerEffect, LayerFacts, LayerSource, LayerState, VisibilityWrite};
 
-impl ChartPane {
-    pub(crate) fn layer_facts(&self, capabilities: Option<FeedCapabilities>) -> LayerFacts {
-        let tape = self.orderflow.as_ref().map(OrderflowView::cached_config);
+/// The fields every layer answer reads, borrowed one by one so a menu can
+/// hold them beside its own state while the pane lends both out.
+#[derive(Clone, Copy)]
+pub(crate) struct PaneLayerRead<'a> {
+    pub(super) layers: &'a LayerState,
+    pub(super) orderflow: Option<&'a OrderflowView>,
+    pub(super) state: &'a ChartState,
+    pub(super) footprint: &'a PaneFootprint,
+    pub(super) drawings: &'a Drawings,
+}
+
+impl PaneLayerRead<'_> {
+    pub(crate) fn facts(&self, capabilities: Option<FeedCapabilities>) -> LayerFacts {
+        let tape = self.orderflow.map(OrderflowView::cached_config);
         LayerFacts {
             book_capture: capabilities.is_some_and(|value| value.book_capture),
             traded_volume: capabilities.is_some_and(|value| value.traded_volume),
@@ -23,24 +35,47 @@ impl ChartPane {
             ..tape.map_or_else(LayerFacts::default, layer_facts)
         }
     }
-    pub fn layer_switched_on(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
+    pub(crate) fn switched_on(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
         match layer.0.source {
             LayerSource::Local => self.layers.requested(layer),
             LayerSource::Orderflow(switch) => self
                 .orderflow
-                .as_ref()
                 .is_some_and(|owner| layer_switch(owner, switch)),
             LayerSource::Footprint => self.footprint.visible,
             LayerSource::Grid => style.canvas.grid_enabled,
             LayerSource::Drawings => !self.drawings.all_hidden(),
         }
     }
+    pub(crate) fn visible(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
+        LayerState::visible(layer, self.switched_on(layer, style), self.facts(None))
+    }
+    pub(crate) fn blocked(
+        &self,
+        layer: ChartLayer,
+        capabilities: FeedCapabilities,
+    ) -> Option<LayerBlock> {
+        LayerState::blocked(layer, self.facts(Some(capabilities)))
+    }
+}
+
+impl ChartPane {
+    pub(crate) fn layer_read(&self) -> PaneLayerRead<'_> {
+        PaneLayerRead {
+            layers: &self.layers,
+            orderflow: self.orderflow.as_ref(),
+            state: &self.state,
+            footprint: &self.footprint,
+            drawings: &self.drawings,
+        }
+    }
+    pub(crate) fn layer_facts(&self, capabilities: Option<FeedCapabilities>) -> LayerFacts {
+        self.layer_read().facts(capabilities)
+    }
+    pub fn layer_switched_on(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
+        self.layer_read().switched_on(layer, style)
+    }
     pub fn layer_visible(&self, layer: ChartLayer, style: &ChartStyle) -> bool {
-        LayerState::visible(
-            layer,
-            self.layer_switched_on(layer, style),
-            self.layer_facts(None),
-        )
+        self.layer_read().visible(layer, style)
     }
     /// Common operation for menus, toolbar commands and admitted control calls.
     pub fn set_layer_visible(
@@ -70,26 +105,12 @@ impl ChartPane {
             },
         }
     }
-    /// One layer's switch as a menu draws it: the answer to both questions a
-    /// checkbox asks, read once.
-    pub(crate) fn layer_row(
-        &self,
-        layer: ChartLayer,
-        capabilities: FeedCapabilities,
-        style: &ChartStyle,
-    ) -> LayerRow {
-        LayerRow {
-            layer,
-            blocked: self.layer_blocked(layer, capabilities),
-            visible: self.layer_visible(layer, style),
-        }
-    }
     pub fn layer_blocked(
         &self,
         layer: ChartLayer,
         capabilities: FeedCapabilities,
     ) -> Option<LayerBlock> {
-        LayerState::blocked(layer, self.layer_facts(Some(capabilities)))
+        self.layer_read().blocked(layer, capabilities)
     }
     pub fn layer_effective(
         &self,

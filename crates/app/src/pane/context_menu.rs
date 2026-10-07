@@ -94,20 +94,21 @@ impl PaneContextMenu {
         });
         self.places = press.places;
         self.chart_layers_rect = None;
-        press.drawing.map(PaneMenuIntent::SelectDrawing)
+        self.drawing.map(PaneMenuIntent::SelectDrawing)
     }
 
     /// The menu just closed. An in-flight rename commits here too:
     /// dismissing the menu with an outside click is the natural
     /// blur-to-commit gesture, and the TextEdit's own lost_focus never runs
     /// once its closure stops being drawn.
+    /// The buffer is emptied either way, so a drawing deleted under the
+    /// menu leaves no name behind for the next one.
     pub(super) fn close(&mut self, drawings: &Drawings) -> Option<PaneMenuIntent> {
-        let index = drawings.index_of(self.drawing.take()?)?;
+        let id = self.drawing.take()?;
+        let name = std::mem::take(&mut self.rename);
+        let index = drawings.index_of(id)?;
         let current = drawings.items()[index].name.clone().unwrap_or_default();
-        (self.rename.trim() != current).then(|| PaneMenuIntent::RenameDrawing {
-            index,
-            name: std::mem::take(&mut self.rename),
-        })
+        (name.trim() != current).then_some(PaneMenuIntent::RenameDrawing { id, name })
     }
 
     /// Where the chart-layer submenu button was painted, for the scripted
