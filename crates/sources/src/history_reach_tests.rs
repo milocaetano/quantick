@@ -564,6 +564,102 @@ fn an_unmarked_hole_inside_today_still_reads_as_a_close() {
     );
 }
 
+/// `trades` without the prints strictly between `from_minute` and
+/// `to_minute` of `day`, and the outage that marks the hole.
+fn holed(trades: Vec<Trade>, day: i64, from_minute: i64, to_minute: i64) -> (Vec<Trade>, Outage) {
+    let kept = trades
+        .into_iter()
+        .filter(|trade| {
+            let minute = (trade.timestamp_ms - day * DAY) / MINUTE;
+            !(from_minute < minute && minute < to_minute)
+        })
+        .collect();
+    let outage = Outage {
+        from_ms: day * DAY + from_minute * MINUTE,
+        to_ms: day * DAY + to_minute * MINUTE,
+    };
+    (kept, outage)
+}
+
+#[test]
+fn an_hours_target_counts_no_outage_time_as_trading_and_says_it_crossed_one() {
+    let today = session(20);
+    // Yesterday from 14:30, with a two-hour outage the feed marked at 15:00.
+    let (page, outage) = holed(session(19), 19, 15 * 60, 17 * 60);
+    let page: Vec<Trade> = page
+        .into_iter()
+        .filter(|trade| trade.timestamp_ms >= 19 * DAY + 14 * HOUR + 30 * MINUTE)
+        .collect();
+    let facts = TapeFacts {
+        copies: 1,
+        outages: vec![outage],
+    };
+    let mut campaign = match Campaign::start(
+        &today[..],
+        &facts,
+        HistoryReach::Hours(2),
+        bounds(),
+        CAMPAIGN_PAGE_PRINTS,
+    ) {
+        CampaignStart::Run(campaign) => campaign,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        campaign.advance(&page, true),
+        CampaignStep::Ask,
+        "18:00 back to 14:30 is ninety traded minutes once the outage is left out"
+    );
+    assert_eq!(campaign.progress().traded_ms, 90 * MINUTE);
+    let outcome = campaign.finish(CampaignEnd::Cancelled);
+    assert_eq!(outcome.outages_crossed, 1);
+    let sentence = outcome.sentence(|ms| format!("<{ms}>"));
+    assert!(
+        sentence.contains("feed outage"),
+        "an hours note says an outage was crossed too: {sentence}"
+    );
+}
+
+#[test]
+fn overlapping_marked_outages_explain_a_silence_once() {
+    // A four-hour hole inside today, of which the feed marked only the first
+    // two hours — twice, and once more overlapping. The two unexplained hours
+    // are longer than a close, so the hole still reads as one.
+    let (today, outage) = holed(session(20), 20, 11 * 60, 15 * 60);
+    let first_half = Outage {
+        from_ms: outage.from_ms,
+        to_ms: outage.from_ms + 2 * HOUR,
+    };
+    let overlapping = Outage {
+        from_ms: outage.from_ms + 30 * MINUTE,
+        to_ms: outage.from_ms + 90 * MINUTE,
+    };
+    let facts = TapeFacts {
+        copies: 1,
+        outages: vec![first_half, first_half, overlapping],
+    };
+    let mut campaign = match Campaign::start(
+        &today[..],
+        &facts,
+        HistoryReach::Sessions(1),
+        bounds(),
+        CAMPAIGN_PAGE_PRINTS,
+    ) {
+        CampaignStart::Run(campaign) => campaign,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        campaign.advance(&session(19)[500..], true),
+        CampaignStep::Stop(CampaignEnd::ReachMet)
+    );
+    let outcome = campaign.finish(CampaignEnd::ReachMet);
+    assert_eq!(
+        outcome.reached_open_ms,
+        Some(today[0].timestamp_ms),
+        "the unexplained half of the hole is a close, as with no outage marked"
+    );
+    assert_eq!(outcome.outages_crossed, 0);
+}
+
 #[test]
 fn the_page_budget_ends_a_run_that_keeps_making_progress() {
     let today = session(20);
