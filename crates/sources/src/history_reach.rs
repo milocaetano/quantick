@@ -517,8 +517,10 @@ impl ReachOutcome {
     /// The note, with times written by the caller's clock face.
     pub fn sentence(&self, time: impl Fn(i64) -> String) -> String {
         let mut sentence = self.verdict(time);
-        if self.outages_crossed > 0 && matches!(self.reach, HistoryReach::Sessions(_)) {
-            sentence.push_str("; a feed outage on the way was not counted as a close");
+        if self.outages_crossed > 0 {
+            sentence.push_str(
+                "; a feed outage on the way was crossed, counted neither as a close nor as trading",
+            );
         }
         sentence
     }
@@ -574,6 +576,26 @@ fn traded_words(ms: i64) -> String {
         (hours, 0) => format!("{hours} h"),
         (hours, minutes) => format!("{hours} h {minutes} m"),
     }
+}
+
+/// `outages` as disjoint stretches, oldest first: duplicates and overlaps,
+/// which a feed reporting one silence twice produces, are joined so a
+/// silence is never explained twice.
+fn merged(outages: &[Outage]) -> Vec<Outage> {
+    let mut sorted: Vec<Outage> = outages
+        .iter()
+        .copied()
+        .filter(|outage| outage.to_ms > outage.from_ms)
+        .collect();
+    sorted.sort_by_key(|outage| (outage.from_ms, outage.to_ms));
+    let mut joined: Vec<Outage> = Vec::with_capacity(sorted.len());
+    for outage in sorted {
+        match joined.last_mut() {
+            Some(last) if outage.from_ms <= last.to_ms => last.to_ms = last.to_ms.max(outage.to_ms),
+            _ => joined.push(outage),
+        }
+    }
+    joined
 }
 
 /// What a press finds before any request goes out.
@@ -643,7 +665,7 @@ impl Campaign {
             session_gap_ms: bounds.session_gap_ms,
             page_size: page_size.clamp(1, CAMPAIGN_PAGE_PRINTS),
             copies: facts.copies.max(1),
-            outages: facts.outages.clone(),
+            outages: merged(&facts.outages),
             outages_crossed: 0,
             oldest_ms: edge.timestamp_ms,
             closes: 0,
@@ -681,8 +703,9 @@ impl Campaign {
         MAX_HELD_PRINTS / self.copies
     }
 
-    /// How much of the silence between `older_ms` and `newer_ms` a marked
-    /// outage explains. Rate: **rare** — only for a silence longer than a
+    /// How much of the silence between `older_ms` and `newer_ms` the marked
+    /// outages explain; they are merged at the start, so none counts twice.
+    /// Rate: **rare** — only for a silence longer than a
     /// close, over a handful of remembered outages.
     fn explained_ms(&self, older_ms: i64, newer_ms: i64) -> i64 {
         self.outages
@@ -695,13 +718,18 @@ impl Campaign {
     /// whether the target is now met.
     fn take(&mut self, older_ms: i64) -> bool {
         let step = self.oldest_ms.saturating_sub(older_ms);
-        let lost = step > self.session_gap_ms
-            && step.saturating_sub(self.explained_ms(older_ms, self.oldest_ms))
-                <= self.session_gap_ms;
+        let explained = if step > self.session_gap_ms {
+            self.explained_ms(older_ms, self.oldest_ms)
+        } else {
+            0
+        };
+        let unexplained = step.saturating_sub(explained);
+        let lost = step > self.session_gap_ms && unexplained <= self.session_gap_ms;
         if lost {
-            // The market traded through it; nobody was listening.
+            // The market traded through it, but nobody was listening: only
+            // the quiet the outage does not explain counts as trading.
             self.outages_crossed = self.outages_crossed.saturating_add(1);
-            self.traded_ms = self.traded_ms.saturating_add(step);
+            self.traded_ms = self.traded_ms.saturating_add(unexplained);
         } else if step > self.session_gap_ms {
             self.closes = self.closes.saturating_add(1);
             if let HistoryReach::Sessions(days) = self.reach
