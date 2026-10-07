@@ -91,6 +91,12 @@ pub fn placement_ms(bar: &Bar) -> i64 {
 /// previous day. The clamp moves only a stamp that lay outside the bucket; the
 /// feed says once per block that its days are the server's (the
 /// `MT5_RATES_SERVER_DAY` event), so the re-cut is labelled, not silent.
+///
+/// A bar folded from daily candles is stamped on its UTC bucket — opening at
+/// its start and closing on its last millisecond, the span a candle covers —
+/// because a daily candle's own stamps are the server's midnights, not the
+/// moment anything traded: a B3 day would otherwise open at 03:00 and a month
+/// on its first trading day.
 #[must_use]
 pub fn fold(base: &[Bar], base_interval_ms: i64, interval_ms: i64) -> Vec<Bar> {
     if !is_foldable(base_interval_ms, interval_ms) || base.is_empty() {
@@ -131,7 +137,25 @@ pub fn fold(base: &[Bar], base_interval_ms: i64, interval_ms: i64) -> Vec<Bar> {
             }
         }
     }
+    if base_interval_ms >= DAY_MS {
+        for folded in &mut out {
+            folded.open_time = law.start(folded.open_time);
+            folded.close_time = law.end(folded.open_time) - 1;
+        }
+    }
     out
+}
+
+/// Whether the oldest of `base` candles opens after the `interval_ms` bucket
+/// it folds into: the start of the record cuts into that bucket, so the
+/// folded bar knowingly holds only part of it.
+#[must_use]
+pub fn starts_inside_bucket(base: &[Bar], base_interval_ms: i64, interval_ms: i64) -> bool {
+    let (Some(first), Some(law)) = (base.first(), TimeBucketLaw::of(interval_ms)) else {
+        return false;
+    };
+    let placed = placement_ms(first);
+    law.start(placed) < time_bucket_start(placed, base_interval_ms)
 }
 
 /// Merge `bar` into the bar it is being folded with — [`Bar::absorb`], the
@@ -490,8 +514,12 @@ mod tests {
             .collect();
         assert_eq!(
             days_in,
-            [3, 29, 3],
-            "the end of January, a leap February, March's start"
+            [31, 29, 31],
+            "each month stamped whole, a leap February among them"
+        );
+        assert!(
+            starts_inside_bucket(&base, DAY_MS, CALENDAR_MONTH_MS),
+            "and the record held only January's last three days"
         );
         assert_eq!(
             months[1].open_time,
@@ -558,6 +586,14 @@ mod tests {
             }
             let days = fold(&base, DAY_MS, DAY_MS);
             assert_eq!(days.len(), 3, "one bar per server day");
+            for (day, bar) in (6..9).zip(&days) {
+                let midnight = MON_29_JAN_2024 + day * DAY_MS;
+                assert_eq!(
+                    (bar.open_time, bar.close_time),
+                    (midnight, midnight + DAY_MS - 1),
+                    "{offset}: the UTC day, not the server's"
+                );
+            }
             assert_eq!(
                 days.iter()
                     .map(|bar| bucket_start(bar.open_time, DAY_MS))
@@ -568,6 +604,64 @@ mod tests {
                 "{offset}"
             );
         }
+    }
+
+    /// MetaTrader on a server three hours behind UTC: its days open at 03:00
+    /// UTC, and the month's first trading day is the 5th. The folded day,
+    /// week and month open on their UTC bucket and close on its last
+    /// millisecond, whatever the server's offset.
+    #[test]
+    fn bars_folded_from_server_days_are_stamped_on_their_utc_bucket() {
+        let three = 3 * 3_600_000;
+        let base: Vec<Bar> = (7..19).map(|day| daily(day, three)).collect();
+        let week = &fold(&base, DAY_MS, WEEK_MS)[0];
+        let monday = MON_29_JAN_2024 + WEEK_MS;
+        assert_eq!(
+            (week.open_time, week.close_time),
+            (monday, monday + WEEK_MS - 1)
+        );
+        let month = &fold(&base, DAY_MS, CALENDAR_MONTH_MS)[0];
+        let first_of_february = MON_29_JAN_2024 + 3 * DAY_MS;
+        assert_eq!(month.open_time, first_of_february, "not the 5th at 03:00");
+        assert_eq!(
+            month.close_time,
+            first_of_february + 29 * DAY_MS - 1,
+            "29 February's last millisecond"
+        );
+        let minutes: Vec<Bar> = (3..9).map(|minute| candle(minute, 0)).collect();
+        assert_eq!(
+            fold(&minutes, OHLCV_BASE_INTERVAL_MS, 5 * 60_000)[0].open_time,
+            3 * 60_000,
+            "minutes keep the first traded minute"
+        );
+    }
+
+    /// The record's start cuts into its first bucket: a five-year daily
+    /// answer opening on a Friday, a minute base opening at 07:45.
+    #[test]
+    fn a_record_that_starts_inside_its_first_bucket_is_named() {
+        let from_friday: Vec<Bar> = (4..20).map(|day| daily(day, 0)).collect();
+        assert!(starts_inside_bucket(&from_friday, DAY_MS, WEEK_MS));
+        assert!(!starts_inside_bucket(&from_friday, DAY_MS, DAY_MS));
+        let from_monday: Vec<Bar> = (0..20).map(|day| daily(day, 0)).collect();
+        assert!(!starts_inside_bucket(&from_monday, DAY_MS, WEEK_MS));
+        assert!(starts_inside_bucket(
+            &from_monday,
+            DAY_MS,
+            CALENDAR_MONTH_MS
+        ));
+        let from_07_45: Vec<Bar> = (465..500).map(|minute| candle(minute, 0)).collect();
+        assert!(starts_inside_bucket(
+            &from_07_45,
+            OHLCV_BASE_INTERVAL_MS,
+            DAY_MS
+        ));
+        assert!(!starts_inside_bucket(
+            &from_07_45,
+            OHLCV_BASE_INTERVAL_MS,
+            5 * 60_000
+        ));
+        assert!(!starts_inside_bucket(&[], DAY_MS, WEEK_MS));
     }
 
     /// Both trims place a candle by the same rule, so the unfolded base and
