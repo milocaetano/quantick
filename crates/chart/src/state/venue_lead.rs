@@ -19,6 +19,7 @@
 //! same bars out.
 
 use quantick_engine::Bar;
+use quantick_engine::bar_registry::BarConfiguration;
 use quantick_engine::time_bucket::time_bucket_start;
 
 use super::ChartState;
@@ -68,7 +69,7 @@ impl VenueLead {
     /// has closed. Cheap when there is no lead.
     pub(super) fn seat(
         &mut self,
-        interval_ms: Option<i64>,
+        spec: BarConfiguration,
         bars: &mut [Bar],
         partial: &mut Option<Bar>,
     ) {
@@ -80,12 +81,12 @@ impl VenueLead {
                 return;
             }
             self.judged = true;
-            if fits(interval_ms, lead, first) {
+            if fits(spec, lead, first) {
                 let merged = merged(lead, first);
                 self.seated_on = Some(std::mem::replace(first, merged));
             }
         } else if let Some(forming) = partial.as_mut()
-            && fits(interval_ms, lead, forming)
+            && fits(spec, lead, forming)
         {
             *forming = merged(lead, forming);
         }
@@ -95,7 +96,7 @@ impl VenueLead {
     /// builder's own forming bar.
     pub(super) fn merged_lead(
         &self,
-        interval_ms: Option<i64>,
+        spec: BarConfiguration,
         bars: &[Bar],
         forming: Option<&Bar>,
     ) -> Option<&Bar> {
@@ -104,7 +105,7 @@ impl VenueLead {
             return Some(lead);
         }
         let forming = forming.filter(|_| bars.is_empty())?;
-        fits(interval_ms, lead, forming).then_some(lead)
+        fits(spec, lead, forming).then_some(lead)
     }
 
     /// The first bar's open as the prints alone cut it.
@@ -133,8 +134,8 @@ impl ChartState {
     /// venue candles *and* prints.
     #[must_use]
     pub fn venue_lead(&self) -> Option<&Bar> {
-        let (interval, forming) = (self.spec.time_interval_ms(), self.builder.partial());
-        self.venue_lead.merged_lead(interval, &self.bars, forming)
+        let (spec, forming) = (self.spec, self.builder.partial());
+        self.venue_lead.merged_lead(spec, &self.bars, forming)
     }
 
     /// The first bar's open as its prints alone cut it: what a lead is cut
@@ -148,8 +149,8 @@ impl ChartState {
 
 /// Whether `lead` belongs in front of `first`, a bar as the prints cut it:
 /// a time chart's, the same bucket, and over before the first print.
-fn fits(interval_ms: Option<i64>, lead: &Bar, first: &Bar) -> bool {
-    interval_ms.is_some_and(|interval| {
+fn fits(spec: BarConfiguration, lead: &Bar, first: &Bar) -> bool {
+    spec.time_interval_ms().is_some_and(|interval| {
         lead.close_time < first.open_time
             && time_bucket_start(lead.open_time, interval)
                 == time_bucket_start(first.open_time, interval)

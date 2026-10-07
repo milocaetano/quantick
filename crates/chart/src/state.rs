@@ -412,9 +412,8 @@ impl ChartState {
 
     fn refresh_partial(&mut self) {
         self.partial = self.builder.partial().cloned();
-        let interval = self.spec.time_interval_ms();
         self.venue_lead
-            .seat(interval, &mut self.bars, &mut self.partial);
+            .seat(self.spec, &mut self.bars, &mut self.partial);
     }
 
     fn bump_timeline_revision(&mut self) {
