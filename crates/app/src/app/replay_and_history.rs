@@ -267,7 +267,7 @@ impl Harness {
         let Some(pages) = self.load_older_pages() else {
             return;
         };
-        let (tab_id, tab) = active_with_id(tabs);
+        let (_, tab) = active_with_id(tabs);
         if tab.flow_pane.slots() == 0 {
             // Nothing charted yet. Wait, but not forever.
             if self.spend_load_older_frame().gave_up {

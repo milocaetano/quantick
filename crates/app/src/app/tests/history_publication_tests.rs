@@ -114,14 +114,15 @@ fn benchmark_history_frame_work() {
 
 #[test]
 fn repeated_history_requests_are_coalesced_while_one_reply_is_outstanding() {
-    let (mut app, _events, mut commands, _book) = test_app();
+    let (mut app, events, mut commands, _book) = test_app();
     let config = app.tab_reads().config().clone();
     let tab_id = app.tabs.active_id();
-    app.active_tab_mut()
-        .loading
-        .set_active(LoadingTask::History, false);
+    events
+        .try_send(FeedEvent::Backfilled((1..=10).map(trade).collect()))
+        .unwrap();
+    app.active_tab_mut().drain_feed(tab_id);
     for _ in 0..10 {
-        app.active_tab_mut().request_older_history(tab_id, &config);
+        app.active_tab_mut().request_older_history(&config);
     }
     let mut requests = 0;
     while let Ok(command) = commands.try_recv() {
@@ -204,7 +205,12 @@ fn mixed_size_panes_share_admission_and_settle_the_history_reply_once() {
             flow_added, time_added,
             "the small pane waits for the large pane"
         );
-        if !tab.loading.is_active(LoadingTask::History) {
+        // The reply ends the request's wait at once; the panes publish
+        // together when the shared recut lands.
+        if !tab.loading.is_active(LoadingTask::History)
+            && !tab.flow_pane.history_pending()
+            && !tab.time_panes[0].history_pending()
+        {
             assert_eq!(flow_added, 100);
             break;
         }

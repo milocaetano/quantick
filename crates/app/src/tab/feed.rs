@@ -36,8 +36,9 @@ pub struct HistoryPolicy {
     pub frame: HistoryFrame,
 }
 
-/// What a tab's history button needs from the window each frame.
-#[derive(Clone, Copy, Debug, Default)]
+/// What a tab's history button needs from the window each frame. A tab
+/// counts as on screen until a frame says otherwise.
+#[derive(Clone, Copy, Debug)]
 pub struct HistoryFrame {
     /// What the main click loads on a tab that never pressed.
     pub default_reach: quantick_feed::history_reach::HistoryReach,
@@ -45,6 +46,16 @@ pub struct HistoryFrame {
     pub tz: crate::timezone::TzOffset,
     /// Whether the tab is on screen; a hidden tab's run stops paging.
     pub visible: bool,
+}
+
+impl Default for HistoryFrame {
+    fn default() -> Self {
+        Self {
+            default_reach: Default::default(),
+            tz: Default::default(),
+            visible: true,
+        }
+    }
 }
 
 /// The actual effect owners for one print; no app, transport or layout access.

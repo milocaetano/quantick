@@ -278,55 +278,51 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
 
 #[test]
 fn loader_tracks_only_accepted_history_requests() {
-    // Clicks during a pending load share its wait; only a settled reply
-    // admits another request and lets the indicator disappear.
+    // A press during the opening backfill waits for it; a press during a run
+    // asks nothing more; the run's last reply hides the loader.
     let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
         1,
         "backfill in flight at start"
     );
-
-    let tab_id = app.tabs.active_id();
     let config = app.config.clone();
-    app.active_tab_mut().request_older_history(tab_id, &config);
-    app.active_tab_mut().request_older_history(tab_id, &config);
-    assert_eq!(app.active_tab().loading.count(LoadingTask::History), 1);
-
-    evt_tx.try_send(FeedEvent::Backfilled(Vec::new())).unwrap();
-    let tab_id = app.tabs.active_id();
-    app.active_tab_mut().drain_feed(tab_id);
+    app.active_tab_mut().request_older_history(&config);
+    app.active_tab_mut().request_older_history(&config);
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
-        0,
-        "initial loading never queued an older request"
+        1,
+        "a press during the opening backfill is queued, not sent"
     );
 
-    app.active_tab_mut().request_older_history(tab_id, &config);
-    app.active_tab_mut().request_older_history(tab_id, &config);
-    assert_eq!(app.active_tab().loading.count(LoadingTask::History), 1);
     evt_tx
-        .try_send(FeedEvent::HistoryPrepended(Vec::new()))
+        .try_send(FeedEvent::Backfilled((1..=10).map(trade).collect()))
         .unwrap();
     let tab_id = app.tabs.active_id();
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
         0,
-        "one reply answers the only admitted load"
+        "the backfill landed and the queued press has not begun yet"
     );
-
-    app.active_tab_mut().request_older_history(tab_id, &config);
+    app.drain_tabs();
+    assert_eq!(
+        app.active_tab().loading.count(LoadingTask::History),
+        1,
+        "the queued press begins once the chart is in"
+    );
+    app.active_tab_mut().request_older_history(&config);
     assert_eq!(app.active_tab().loading.count(LoadingTask::History), 1);
-    evt_tx
-        .try_send(FeedEvent::HistoryPrepended(Vec::new()))
-        .unwrap();
-    let tab_id = app.tabs.active_id();
-    app.active_tab_mut().drain_feed(tab_id);
+    for _ in 0..quantick_feed::history_reach::MAX_IDLE_PAGES {
+        evt_tx
+            .try_send(FeedEvent::HistoryPrepended(Vec::new()))
+            .unwrap();
+        app.active_tab_mut().drain_feed(tab_id);
+    }
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
         0,
-        "last reply hides the loader"
+        "the run's last reply hides the loader"
     );
 }
 
@@ -336,16 +332,24 @@ fn rejected_request_does_not_arm_the_loader() {
     // so no reply will ever come - the count must not grow.
     let (mut app, evt_tx, cmd_rx, _book_tx) = test_app();
     let tab_id = app.tabs.active_id();
-    evt_tx.try_send(FeedEvent::Backfilled(Vec::new())).unwrap();
+    evt_tx
+        .try_send(FeedEvent::Backfilled((1..=10).map(trade).collect()))
+        .unwrap();
     app.active_tab_mut().drain_feed(tab_id);
     drop(cmd_rx);
     with_config(&mut app, |tab, config| {
-        tab.request_older_history(tab_id, config)
+        tab.request_older_history(config);
     });
     assert_eq!(
         app.active_tab().loading.count(LoadingTask::History),
         0,
         "the closed channel cannot create an unanswerable wait"
+    );
+    assert!(
+        app.active_tab()
+            .history_note()
+            .is_some_and(|note| note.contains("press again")),
+        "and the press says it could not ask"
     );
 }
 
@@ -354,10 +358,12 @@ fn a_source_reset_restarts_the_history_wait() {
     // The admitted older request is abandoned; the reset starts one refill.
     let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
     let tab_id = app.tabs.active_id();
-    evt_tx.try_send(FeedEvent::Backfilled(Vec::new())).unwrap();
+    evt_tx
+        .try_send(FeedEvent::Backfilled((1..=10).map(trade).collect()))
+        .unwrap();
     app.active_tab_mut().drain_feed(tab_id);
     with_config(&mut app, |tab, config| {
-        tab.request_older_history(tab_id, config)
+        tab.request_older_history(config);
     });
     assert_eq!(app.active_tab().loading.count(LoadingTask::History), 1);
     app.active_tab_mut()
@@ -1523,113 +1529,90 @@ fn a_replay_installs_its_downloaded_context_without_a_press() {
     );
 }
 
-/// A reach of one page is one request and no more, however the answer
-/// looks — the behaviour every release before this one had.
-#[test]
-fn a_reach_of_one_page_asks_once_and_stops() {
-    let ctx = egui::Context::default();
-    let (mut app, events, mut commands) = history_app(&ctx);
-    drain_load_older(&mut commands);
-
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
-    assert_eq!(
-        drain_load_older(&mut commands).len(),
-        1,
-        "one press, one request"
-    );
-    // Answer it with prints still deep inside the same session.
-    events
-        .try_send(FeedEvent::HistoryPrepended(
-            (-60..0).map(minute_trade_at).collect(),
-        ))
-        .unwrap();
-    app.drain_tabs();
-    assert!(
-        drain_load_older(&mut commands).is_empty(),
-        "and the answer asks for nothing further"
-    );
-    assert!(
-        !app.active_tab().history_reach_running(),
-        "a single page is never a run"
-    );
+/// Minutes from the fixture's minute 0 back to the last print of the session
+/// before it: a stretch wider than the session gap.
+fn previous_close_minute(before_minute: i64) -> i64 {
+    const MINUTE_MS: i64 = quantick_feed::OHLCV_BASE_INTERVAL_MS;
+    before_minute - (history_reach::SESSION_GAP_MS / MINUTE_MS) - 1
 }
 
-/// A press with the longer reach keeps asking, page after page, until the
-/// tape reaches past the market's last close and the lead beyond it.
+/// Yesterday pages, request after request, until a close behind yesterday
+/// proves its open — and the chart holds still the whole time.
 #[test]
-fn the_previous_session_reach_pages_until_the_lead_past_the_close_lands() {
+fn yesterday_pages_to_the_previous_open_and_the_chart_holds_still_while_it_does() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
-    app.drain_tabs();
+    let bars_before = app.active_tab().flow_pane.state.bars().len();
 
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
+        history_reach::HistoryReach::Sessions(1),
+    ));
     assert_eq!(drain_load_older(&mut commands).len(), 1, "the press");
     assert!(
         app.active_tab().history_reach_running(),
         "and the run is on"
     );
 
-    // A page still inside today's session: no break has been crossed.
-    events
-        .try_send(FeedEvent::HistoryPrepended(
-            (-120..0).map(minute_trade_at).collect(),
-        ))
-        .unwrap();
-    app.drain_tabs();
-    assert_eq!(
-        drain_load_older(&mut commands).len(),
-        1,
-        "so the run asks for another page by itself"
-    );
-
-    // The next page crosses the overnight break and lands the lead. The
-    // previous session's last print sits a minute further back than the
-    // gap threshold, so the stretch between the two sessions is wider than
-    // a quiet market ever is; in front of it, exactly the lead.
-    const MINUTE_MS: i64 = quantick_feed::OHLCV_BASE_INTERVAL_MS;
-    let close_minute = -120 - (history_reach::SESSION_GAP_MS / MINUTE_MS) - 1;
-    let lead_minutes = history_reach::PREVIOUS_SESSION_LEAD_MS / MINUTE_MS;
-    events
-        .try_send(FeedEvent::HistoryPrepended(
-            (close_minute - lead_minutes..=close_minute)
-                .map(minute_trade_at)
-                .collect(),
-        ))
-        .unwrap();
-    app.drain_tabs();
-    assert!(
-        drain_load_older(&mut commands).is_empty(),
-        "the previous session is on screen with its lead; the run is done"
-    );
+    // Today's earlier prints, then yesterday whole, then the close before it.
+    let yesterday_close = previous_close_minute(-120);
+    let yesterday_open = yesterday_close - 300;
+    let pages: [Vec<_>; 3] = [
+        (-120..0).map(minute_trade_at).collect(),
+        (yesterday_open..=yesterday_close)
+            .map(minute_trade_at)
+            .collect(),
+        (previous_close_minute(yesterday_open) - 30..=previous_close_minute(yesterday_open))
+            .map(minute_trade_at)
+            .collect(),
+    ];
+    for (index, page) in pages.into_iter().enumerate() {
+        events.try_send(FeedEvent::HistoryPrepended(page)).unwrap();
+        app.drain_tabs();
+        if index < 2 {
+            assert_eq!(
+                app.active_tab().flow_pane.state.bars().len(),
+                bars_before,
+                "page {index}: the visible bars do not move while the run pages"
+            );
+        }
+        let asked = drain_load_older(&mut commands).len();
+        assert_eq!(
+            asked,
+            usize::from(index < 2),
+            "page {index} asks for the next at once"
+        );
+    }
     assert!(
         !app.active_tab().history_reach_running(),
-        "and nothing is left waiting on a reply"
+        "the target was met"
+    );
+    let note = app
+        .active_tab()
+        .history_note()
+        .expect("the run says where it landed");
+    assert!(
+        note.starts_with("Loaded back to ") && note.ends_with("(1 session)"),
+        "{note}"
     );
 }
 
 /// A venue that answers empty without ever saying it has run out stops the
-/// run in a handful of requests, not sixty-four.
-///
-/// This is the case `can_page` cannot catch: only the MetaTrader bridge
-/// withdraws `history_paging`, while Binance's is a compile-time `true`
-/// that answers a rate-limited fetch with the same empty block it answers
-/// "nothing older" with. Without the idle count, one press here would be
-/// sixty-four back-to-back REST calls — how a 429 becomes an IP ban.
+/// run in a handful of requests, and says so.
 #[test]
-fn a_venue_answering_empty_without_saying_so_stops_the_run_early() {
+fn a_venue_answering_empty_without_saying_so_stops_the_run_early_and_says_so() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
-    app.drain_tabs();
 
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
+        history_reach::HistoryReach::Sessions(1),
+    ));
     let mut asked = drain_load_older(&mut commands).len();
-    assert_eq!(asked, 1, "the press");
-    // Answer every request with nothing, as a refusing venue does. The
-    // capability stays true throughout — that is the whole point.
+    assert!(
+        app.active_tab().history_note().is_none(),
+        "nothing to report yet"
+    );
     for _ in 0..history_reach::MAX_CAMPAIGN_PAGES {
         if !app.active_tab().history_reach_running() {
             break;
@@ -1640,36 +1623,28 @@ fn a_venue_answering_empty_without_saying_so_stops_the_run_early() {
         app.drain_tabs();
         asked += drain_load_older(&mut commands).len();
     }
-    assert!(
-        !app.active_tab().history_reach_running(),
-        "the run gave up rather than spending its whole budget"
-    );
+    assert!(!app.active_tab().history_reach_running(), "the run gave up");
     assert!(
         asked <= history_reach::MAX_IDLE_PAGES as usize,
-        "one press cost {asked} requests; the idle budget is \
-             {}",
-        history_reach::MAX_IDLE_PAGES
+        "one press cost {asked} requests"
     );
+    assert!(!app.active_tab().loading.is_active(LoadingTask::History));
+    let note = app.active_tab().history_note().expect("never silent");
     assert!(
-        !app.active_tab().loading.is_active(LoadingTask::History),
-        "and nothing is left waiting on a reply"
+        note.contains(history_reach::CampaignEnd::NothingComingBack.reason())
+            && note.ends_with("(0 of 1 sessions)"),
+        "{note}"
     );
 }
 
 /// The sentence has to reach the glass, not just the field.
-///
-/// Every other test here proves the tab *holds* the right words. This one
-/// proves a trader can read them, which is the entire complaint: the
-/// outcome existed in a log line and nowhere a person looks.
 #[test]
 fn the_settled_reach_paints_its_sentence_over_the_chart() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(200);
     run_frame(&mut app, &ctx);
     let quiet = painted_text(&run_frame(&mut app, &ctx));
-    let sentence = history_reach::CampaignEnd::NothingComingBack
-        .notice()
-        .expect("the ending's own sentence");
+    let sentence = "Stopped at Thu 10:14 \u{2014} cancelled (2 of 5 sessions)";
     assert!(
         !quiet.iter().any(|text| text == sentence),
         "a chart nobody pressed anything on says nothing; painted: {quiet:?}"
@@ -1692,152 +1667,157 @@ fn the_settled_reach_paints_its_sentence_over_the_chart() {
     );
 }
 
-/// The reported bug, as a test: a reach that lands nothing must not end in
-/// silence.
-///
-/// A run answered with empty page after empty page gives up after
-/// `MAX_IDLE_PAGES` — correctly — and before this change said so only in a
-/// log line. On screen the press was indistinguishable from a button that
-/// does nothing, which is how "previous session" shipped looking like a
-/// facade.
+/// A target already on the chart sends nothing and says where the chart is.
 #[test]
-fn a_run_that_reaches_nothing_says_so_where_the_trader_is_looking() {
+fn a_target_already_on_the_chart_sends_nothing_and_says_so() {
+    let ctx = egui::Context::default();
+    let mut tape: Vec<_> = (-400..-300).map(minute_trade_at).collect();
+    tape.extend((-200..-100).map(minute_trade_at));
+    tape.extend((0..100).map(minute_trade_at));
+    let (mut app, _events, mut commands) = app_backfilled_with(&ctx, tape);
+    drain_load_older(&mut commands);
+    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
+        history_reach::HistoryReach::Sessions(1),
+    ));
+    assert!(drain_load_older(&mut commands).is_empty(), "no request");
+    let note = app.active_tab().history_note().expect("the outcome");
+    assert!(note.starts_with("Already loaded back to "), "{note}");
+}
+
+/// A press while the opening session is still arriving waits for it rather
+/// than vanishing, and starts on its own when the fill ends.
+#[test]
+fn a_press_during_the_opening_fill_is_queued_and_starts_after() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
+    events
+        .try_send(FeedEvent::OpeningPrepended {
+            trades: (-30..0).map(minute_trade_at).collect(),
+            remaining: Some(2),
+        })
+        .unwrap();
     app.drain_tabs();
-
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
-    drain_load_older(&mut commands);
+    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
+        history_reach::HistoryReach::Hours(2),
+    ));
     assert!(
-        app.active_tab().history_note().is_none(),
-        "a run under way has nothing to report yet"
+        drain_load_older(&mut commands).is_empty(),
+        "held behind the fill"
     );
-    for _ in 0..history_reach::MAX_CAMPAIGN_PAGES {
-        if !app.active_tab().history_reach_running() {
-            break;
-        }
-        events
-            .try_send(FeedEvent::HistoryPrepended(Vec::new()))
-            .unwrap();
+    assert_eq!(
+        app.active_tab().history_status(),
+        quantick_feed::history_run::RunStatus::Queued(history_reach::HistoryReach::Hours(2))
+    );
+    events
+        .try_send(FeedEvent::OpeningPrepended {
+            trades: (-60..-30).map(minute_trade_at).collect(),
+            remaining: Some(0),
+        })
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !app.active_tab().history_reach_running() && std::time::Instant::now() < deadline {
         app.drain_tabs();
-        drain_load_older(&mut commands);
+        std::thread::yield_now();
     }
-    assert!(
-        !app.active_tab().history_reach_running(),
-        "the run gave up, as it should"
-    );
     assert_eq!(
-        app.active_tab().history_note(),
-        history_reach::CampaignEnd::NothingComingBack.notice(),
-        "and it says the reason the campaign actually stopped for"
+        drain_load_older(&mut commands).len(),
+        1,
+        "the queued press began"
     );
 }
 
-/// The other half of the same rule: a press that worked says nothing. The
-/// chart is a better answer than a sentence about the chart, and a message
-/// after every successful press is noise a trader learns to stop reading.
+/// Cancel stops paging at once, keeps what arrived, and says where it stopped.
 #[test]
-fn a_run_that_meets_its_reach_says_nothing() {
+fn cancel_stops_paging_keeps_what_arrived_and_says_where() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
-    app.drain_tabs();
-
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
-    drain_load_older(&mut commands);
-    // One page inside today's session, then one that crosses the close and
-    // lands the lead — the shape `the_previous_session_reach_pages_until…`
-    // proves in full.
-    events
-        .try_send(FeedEvent::HistoryPrepended(
-            (-120..0).map(minute_trade_at).collect(),
-        ))
-        .unwrap();
-    app.drain_tabs();
-    drain_load_older(&mut commands);
-
-    const MINUTE_MS: i64 = quantick_feed::OHLCV_BASE_INTERVAL_MS;
-    let close_minute = -120 - (history_reach::SESSION_GAP_MS / MINUTE_MS) - 1;
-    let lead_minutes = history_reach::PREVIOUS_SESSION_LEAD_MS / MINUTE_MS;
-    events
-        .try_send(FeedEvent::HistoryPrepended(
-            (close_minute - lead_minutes..=close_minute)
-                .map(minute_trade_at)
-                .collect(),
-        ))
-        .unwrap();
-    app.drain_tabs();
-
-    assert!(
-        !app.active_tab().history_reach_running(),
-        "the reach was met"
-    );
-    assert_eq!(
-        app.active_tab().history_note(),
-        None,
-        "and yesterday being on screen is the whole of the report"
-    );
-}
-
-/// The default reach is held to the same honesty. It runs no campaign, so
-/// nothing settles it — and one press answered with an empty block was as
-/// silent as a whole run of them.
-#[test]
-fn a_single_page_press_that_brings_nothing_back_says_so() {
-    let ctx = egui::Context::default();
-    let (mut app, events, mut commands) = history_app(&ctx);
-    drain_load_older(&mut commands);
-    assert_eq!(
-        app.active_tab().history_reach,
-        history_reach::HistoryReach::Page,
-        "the default reach, unchanged"
-    );
-
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+    let held = app.active_tab().flow_pane.state.trades().len();
+    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
+        history_reach::HistoryReach::Sessions(5),
+    ));
     assert_eq!(drain_load_older(&mut commands).len(), 1);
-    events
-        .try_send(FeedEvent::HistoryPrepended(Vec::new()))
-        .unwrap();
-    app.drain_tabs();
-
-    assert!(
-        app.active_tab().history_note().is_some(),
-        "an empty answer to a press is a fact the trader owns"
-    );
-}
-
-/// And a single page that *did* bring prints back stays quiet, for the
-/// same reason a met reach does.
-#[test]
-fn a_single_page_press_that_lands_prints_says_nothing() {
-    let ctx = egui::Context::default();
-    let (mut app, events, mut commands) = history_app(&ctx);
-    drain_load_older(&mut commands);
-
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
-    drain_load_older(&mut commands);
     events
         .try_send(FeedEvent::HistoryPrepended(
             (-60..0).map(minute_trade_at).collect(),
         ))
         .unwrap();
     app.drain_tabs();
-
     assert_eq!(
-        app.active_tab().history_note(),
-        None,
-        "sixty prints appeared on the chart; that is the acknowledgement"
+        drain_load_older(&mut commands).len(),
+        1,
+        "the next page is out"
+    );
+    app.apply_toolbar_action(crate::toolbar::ToolbarAction::CancelHistory);
+    assert!(!app.active_tab().history_reach_running());
+    let note = app.active_tab().history_note().expect("never silent");
+    assert!(
+        note.contains("cancelled") && note.ends_with("(0 of 5 sessions)"),
+        "{note}"
+    );
+    // The request already out still lands; nothing more is asked.
+    events
+        .try_send(FeedEvent::HistoryPrepended(
+            (-90..-60).map(minute_trade_at).collect(),
+        ))
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while app.active_tab().flow_pane.state.trades().len() != held + 90
+        && std::time::Instant::now() < deadline
+    {
+        app.drain_tabs();
+        std::thread::yield_now();
+    }
+    assert!(
+        drain_load_older(&mut commands).is_empty(),
+        "nothing more is asked"
+    );
+    assert_eq!(
+        app.active_tab().flow_pane.state.trades().len(),
+        held + 90,
+        "every page that arrived is kept"
+    );
+    assert!(!app.active_tab().loading.is_active(LoadingTask::History));
+}
+
+/// A tab off screen stops paging; brought back, it continues.
+#[test]
+fn a_hidden_tabs_run_pauses_and_resumes_when_shown() {
+    let ctx = egui::Context::default();
+    let (mut app, events, mut commands) = history_app(&ctx);
+    drain_load_older(&mut commands);
+    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
+        history_reach::HistoryReach::Sessions(1),
+    ));
+    drain_load_older(&mut commands);
+    let tab_id = app.tabs.active_id();
+    let config = app.config.clone();
+    let mut policy = app.history.policy(app.tz, false);
+    events
+        .try_send(FeedEvent::HistoryPrepended(
+            (-60..0).map(minute_trade_at).collect(),
+        ))
+        .unwrap();
+    app.active_tab_mut().drain_frame(tab_id, &config, policy);
+    assert!(
+        drain_load_older(&mut commands).is_empty(),
+        "a hidden tab asks nothing"
+    );
+    assert!(matches!(
+        app.active_tab().history_status(),
+        quantick_feed::history_run::RunStatus::Paused(_)
+    ));
+    policy.frame.visible = true;
+    app.active_tab_mut().drain_frame(tab_id, &config, policy);
+    assert_eq!(
+        drain_load_older(&mut commands).len(),
+        1,
+        "shown again, it continues"
     );
 }
 
 /// A venue that reports its record exhausted is not asked once more.
-///
-/// The feed withdraws `history_paging` on that report, and a run that read
-/// its own page count instead would spend the whole budget against a wall
-/// with the button already greyed out beside it.
 #[test]
 fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
     let ctx = egui::Context::default();
@@ -1872,14 +1852,12 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
         .unwrap();
     app.drain_tabs();
     run_frame(&mut app, &ctx);
-    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
-    app.drain_tabs();
     drain_load_older(&mut cmd_rx);
 
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
+        history_reach::HistoryReach::Sessions(1),
+    ));
     assert_eq!(drain_load_older(&mut cmd_rx).len(), 1);
-    // The terminal reached its own oldest tick and the feed withdrew the
-    // capability, then answered the outstanding request.
     caps_tx.send_modify(|caps| caps.history_paging = false);
     evt_tx
         .try_send(FeedEvent::HistoryPrepended(
@@ -1892,6 +1870,8 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
         "nothing is asked of a venue that has said it has no more"
     );
     assert!(!app.active_tab().history_reach_running());
+    let note = app.active_tab().history_note().expect("never silent");
+    assert!(note.contains("the venue has nothing older"), "{note}");
 }
 
 /// (i) The status bar names all three sources, in the order the chart puts
