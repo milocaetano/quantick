@@ -713,7 +713,7 @@ impl Tab {
     /// A pane dragged to nothing has to leave something behind. Blender's
     /// manual puts the rule plainly — a hidden region leaves a little arrow to
     /// click — and the vertical axis in this app already refuses zero for the
-    /// same reason (`indicators::COLLAPSED_PANE_HEIGHT_PX`). Eight pixels of a
+    /// same reason (`quantick_chart::indicator_views::COLLAPSED_PANE_HEIGHT_PX`). Eight pixels of a
     /// 1920 px canvas is four tenths of one percent: near enough to the "size
     /// zero" a trader asks for, and not so near that the chart is gone for
     /// good.

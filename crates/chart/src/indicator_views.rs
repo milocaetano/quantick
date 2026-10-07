@@ -17,8 +17,8 @@ mod pane_sizing;
 mod view;
 mod views;
 
-pub use pane_sizing::{COLLAPSED_PANE_HEIGHT_PX, MIN_PANE_HEIGHT_PX, PaneSizing};
-pub use view::{IndicatorView, MAX_PANES, PANE_HEIGHT_FRAC};
+pub use pane_sizing::{COLLAPSED_PANE_HEIGHT_PX, MIN_PANE_HEIGHT_PX, PANE_HEIGHT_FRAC, PaneSizing};
+pub use view::{IndicatorView, MAX_PANES};
 pub use views::IndicatorViews;
 
 #[cfg(test)]

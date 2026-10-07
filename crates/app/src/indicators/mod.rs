@@ -10,8 +10,8 @@ pub(crate) mod library;
 pub(crate) mod preset_file;
 pub(crate) mod state_file;
 
-// The leaves are private: the re-exports below are this module's address, so
-// naming `IndicatorView` costs this file and not the collection's event loop.
+// The facade re-addresses `quantick_chart::indicator_views` for app callers and
+// keeps the egui `panes` split local.
 mod panes;
 
 pub(crate) use panes::{PaneSlot, split_panes};

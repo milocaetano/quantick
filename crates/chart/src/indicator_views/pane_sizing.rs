@@ -3,7 +3,9 @@
 //! and the panes lives with the window; the heights it is shared in live
 //! here.
 
-use super::PANE_HEIGHT_FRAC;
+/// Fraction of the chart's height each indicator pane takes (plan §4.3:
+/// fixed fraction v1, draggable dividers later).
+pub const PANE_HEIGHT_FRAC: f32 = 0.20;
 
 /// Shortest a pane may be drawn and still be read.
 ///

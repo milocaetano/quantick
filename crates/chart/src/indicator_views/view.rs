@@ -14,10 +14,6 @@ use crate::price_view::PriceView;
 
 use super::PaneSizing;
 
-/// Fraction of the chart's height each indicator pane takes (plan §4.3:
-/// fixed fraction v1, draggable dividers later).
-pub const PANE_HEIGHT_FRAC: f32 = 0.20;
-
 /// At most this many panes; further pane indicators wait until one is
 /// removed (the honest alternative to shrinking panes into unreadability).
 pub const MAX_PANES: usize = 3;
