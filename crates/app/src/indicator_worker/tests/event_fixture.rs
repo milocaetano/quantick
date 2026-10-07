@@ -24,12 +24,3 @@ pub(crate) fn rebuilt(
         stale: None,
     }
 }
-
-/// An `Appended` row that asks for no candle paint.
-pub(crate) fn appended(slot: SlotId, row: Vec<f64>) -> IndicatorEvent {
-    IndicatorEvent::Appended {
-        slot,
-        row,
-        paint: None,
-    }
-}

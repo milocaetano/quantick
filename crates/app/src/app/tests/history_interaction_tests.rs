@@ -117,8 +117,10 @@ fn a_held_chart_drag_survives_repeated_history_publications() {
         (150_000, crate::pane::PaneSide::Time(0)),
         (50_000, crate::pane::PaneSide::Time(1)),
     ] {
+        // An hour of tape is met by the page below, so each run ends on it
+        // and publishes.
         with_config(&mut app, |tab, config| {
-            tab.request_older_history(tab_id, config)
+            tab.load_history(config, quantick_feed::history_reach::HistoryReach::Hours(1))
         });
         run_frame(&mut app, &ctx);
         run_frame(&mut app, &ctx);

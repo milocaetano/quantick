@@ -158,7 +158,7 @@
     },
     "history_reach": {
       "default": "",
-      "description": "How far one press of *load older* reaches, as the reach registry's own\ntoken (`page`, `previous-session`) — the same string the harness hook\ntakes, so what an operator sets is what it reads back.\n\nAdditive within v1 (contract §4): defaulted rather than required, so a\nclient holding this schema still validates a summary from an instance\nbuilt before the field existed.",
+      "description": "How far one press of *load older* reaches, in the v1 vocabulary this\nfield has always used: `span` (an hours target; its length is\n`history_reach_span_minutes`) or `previous-session` (yesterday). A\ntarget that vocabulary has no word for — three or five days back —\nreads as the empty string; `history_target` names every target.\n\nAdditive within v1 (contract §4): defaulted rather than required, so a\nclient holding this schema still validates a summary from an instance\nbuilt before the field existed.",
       "type": "string"
     },
     "history_reach_running": {
@@ -169,7 +169,12 @@
     "history_reach_span_minutes": {
       "$ref": "#/$defs/WireU64",
       "default": "0",
-      "description": "Minutes of *traded* time one press of the `span` reach pulls.\n\nBeside the reach because the two are one choice: an operator that\ncan read back `by time` but not how much time cannot tell what the\nnext press will do.\n\n`serde(default)` like every optional neighbour: v1 is frozen, and a\nsnapshot from a build that predates this field must still validate\nagainst the shipped schema. A new *required* key is a breaking change\nwearing an additive diff."
+      "description": "Minutes of *traded* time a press of the `span` reach pulls: the hours\ntarget's own length while `history_reach` reads `span`, otherwise what\na legacy `span` token in a saved workspace or hook would load.\n\nBeside the reach because the two are one choice: an operator that\ncan read back `by time` but not how much time cannot tell what the\nnext press will do.\n\n`serde(default)` like every optional neighbour: v1 is frozen, and a\nsnapshot from a build that predates this field must still validate\nagainst the shipped schema. A new *required* key is a breaking change\nwearing an additive diff."
+    },
+    "history_target": {
+      "default": "",
+      "description": "What the History button's main click loads, as the token\n`feed.history.load` takes: `hours:N` or `sessions:N`. Additive; empty\nfrom a build that predates it.",
+      "type": "string"
     },
     "layouts": {
       "default": [],

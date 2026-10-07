@@ -37,6 +37,7 @@ use crate::ui_state::WorkspaceExt;
 mod arrangement_baseline_tests;
 mod bar_registry_tests;
 mod bare_canvas;
+mod calendar_history_tests;
 mod chart_view_tests;
 mod control_launch_baselines;
 mod control_plane_tests;
@@ -47,6 +48,7 @@ mod feeds_sources_tests;
 mod history_interaction_tests;
 mod history_publication_tests;
 mod history_reach_completion_tests;
+mod history_run_edges_tests;
 mod indicator_operations_tests;
 mod indicators_tests;
 mod input_ui_tests;
@@ -1618,6 +1620,8 @@ fn app_backfilled_with(
                 deal_counter: false,
                 ohlcv_history: true,
                 ohlcv_generation: 0,
+                ohlcv_daily_generation: 0,
+                ohlcv_aggressor_split: false,
             }),
             latency: feed::unsplit_latency(),
             commands: cmd_tx,

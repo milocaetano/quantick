@@ -6,11 +6,12 @@
 
 use super::{ExclusionClass, Mapping, Source, UiBehaviour};
 
-/// Reading further back than the window holds, with no capability for it.
+/// The venue-candle reach and the two View switches, with no capability yet.
+/// Trade history loads through `feed.history.load` and `feed.history.cancel`.
 const PENDING_HISTORY: Mapping = Mapping::Excluded {
     class: ExclusionClass::PendingCapability,
-    reason: "no capability pages history; `chart.window.read` reads what is already loaded. \
-             Tracked in issue 401",
+    reason: "no capability fetches older venue candles or flips these View switches; trade \
+             history loads through feed.history.load. Tracked in issue 401",
 };
 
 /// The canvas.
@@ -155,21 +156,18 @@ pub(super) const HISTORY: &[UiBehaviour] = &[
         mapping: PENDING_HISTORY,
     },
     UiBehaviour {
-        id: "history.reach.set",
-        title: "Choose how far back the chart reaches, and the page size",
-        reach: "toolbar history caret menu, reachable by the `history` scripted-menu hook",
-        keys: &[(
-            Source::Authored,
-            "the reach chips and page size inside the toolbar caret menu, drawn per frame",
-        )],
-        mapping: PENDING_HISTORY,
+        id: "history.trades.cancel",
+        title: "Stop loading history and keep what arrived",
+        reach: "the loading History button, its menu's Cancel loading, or an Esc no draft, selection or armed tool wants",
+        keys: &[(Source::ToolbarAction, "CancelHistory")],
+        mapping: capability!("feed.history.cancel"),
     },
     UiBehaviour {
-        id: "history.trades.load_older",
-        title: "Fetch another page of older trades",
-        reach: "toolbar history caret",
-        keys: &[(Source::ToolbarAction, "LoadOlder")],
-        mapping: PENDING_HISTORY,
+        id: "history.trades.load",
+        title: "Load the chart back by hours of trading or to a previous session's open",
+        reach: "toolbar History button (repeats the last target) and its menu's targets",
+        keys: &[(Source::ToolbarAction, "LoadHistory")],
+        mapping: capability!("feed.history.load"),
     },
     UiBehaviour {
         id: "history.venue_lead_in.toggle",

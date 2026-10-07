@@ -15,6 +15,7 @@ pub mod deal_recording;
 pub mod evidence;
 pub mod feed;
 pub mod health;
+pub mod history;
 pub mod indicator_guide;
 pub mod interaction;
 pub mod layers;

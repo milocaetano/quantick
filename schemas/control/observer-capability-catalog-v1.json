@@ -6494,6 +6494,334 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "The loading History button's click (or Esc): stops the run where it stands and keeps every page that arrived; the chart is rebuilt once with them and the note says where it stopped and how far it got. A queued press is dropped. Cancelling when nothing runs changes nothing.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "feed.history.cancel",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Which tab's run to stop.",
+        "properties": {
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "HistoryCancelInput",
+        "type": "object"
+      },
+      "module": "feed",
+      "output_schema": {
+        "$defs": {
+          "HistoryLoadSnapshot": {
+            "description": "One tab's history run, as the History button draws it.",
+            "properties": {
+              "back_to_unix_ms": {
+                "description": "The oldest print held or fetched so far by the run.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "main_reach": {
+                "description": "What the tab's main click loads.",
+                "type": "string"
+              },
+              "pages": {
+                "description": "Requests the run has made.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "prints_pulled": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Prints the run has pulled."
+              },
+              "reach": {
+                "description": "The target being loaded or queued; absent while idle.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sessions_reached": {
+                "description": "Previous sessions whose open the run has proven on the chart.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "state": {
+                "description": "`idle`, `queued`, `loading`, or `paused` (the tab is off screen).",
+                "type": "string"
+              },
+              "traded_ms": {
+                "description": "Traded time the run has counted.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "milliseconds"
+              }
+            },
+            "required": [
+              "state",
+              "main_reach"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a cancel call stopped.",
+        "properties": {
+          "cancelled": {
+            "description": "`run` (stopped where it stood, what arrived kept), `queued` (a press\nthat had not begun) or `nothing`.",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/$defs/HistoryLoadSnapshot"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "cancelled",
+          "status"
+        ],
+        "title": "HistoryCancelResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stopping twice stops once; a stale caller can only end a run early, keeping what arrived.",
+      "title": "Stop loading a chart's history",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "The History button's press: `hours:N` loads N more hours of traded time before the oldest print (nights and weekends crossed, not counted); `sessions:N` loads back to the open of the Nth previous session, found from the tape's overnight gaps and counted from the live edge (24 h of tape per day on a market that never closes). Pages are fetched one at a time and the chart is rebuilt once when the run ends, so the visible bars hold still while it loads. A press while the session is still loading is queued; a press while a run pages starts nothing new. Budgets scale with the target and the run ends partial, with the reason, rather than claiming a target it did not reach. Progress and the outcome read in feed.status as tabs[].history_load and tabs[].history_reach_note.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "feed.history.load",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Which tab, and how far back.",
+        "properties": {
+          "reach": {
+            "description": "`hours:N` (1..=48) of traded time before the oldest loaded print, or\n`sessions:N` (1..=10) back to the Nth previous session's open, counted\nfrom the live edge. `sessions:1` is yesterday.",
+            "type": "string"
+          },
+          "tab_id": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The tab's id, as `feed.status` reports it. Omitted means the tab the\ntrader is looking at."
+          }
+        },
+        "required": [
+          "reach"
+        ],
+        "title": "HistoryLoadInput",
+        "type": "object"
+      },
+      "module": "feed",
+      "output_schema": {
+        "$defs": {
+          "HistoryLoadSnapshot": {
+            "description": "One tab's history run, as the History button draws it.",
+            "properties": {
+              "back_to_unix_ms": {
+                "description": "The oldest print held or fetched so far by the run.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "main_reach": {
+                "description": "What the tab's main click loads.",
+                "type": "string"
+              },
+              "pages": {
+                "description": "Requests the run has made.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "prints_pulled": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Prints the run has pulled."
+              },
+              "reach": {
+                "description": "The target being loaded or queued; absent while idle.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sessions_reached": {
+                "description": "Previous sessions whose open the run has proven on the chart.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "state": {
+                "description": "`idle`, `queued`, `loading`, or `paused` (the tab is off screen).",
+                "type": "string"
+              },
+              "traded_ms": {
+                "description": "Traded time the run has counted.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "milliseconds"
+              }
+            },
+            "required": [
+              "state",
+              "main_reach"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What a load call did.",
+        "properties": {
+          "press": {
+            "description": "`started`, `queued` (the session is still loading; it starts after),\n`already_running` (a run is paging; nothing new started), or\n`finished` (nothing to fetch: the note says why).",
+            "type": "string"
+          },
+          "reach": {
+            "description": "The target, normalised to its token.",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/$defs/HistoryLoadSnapshot",
+            "description": "The run as `feed.status` reads it right after the call."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "reach",
+          "press",
+          "status"
+        ],
+        "title": "HistoryLoadResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "A stale caller can only load more history than it meant, which costs memory and requests within the run's budgets and removes nothing; the result names the tab and target it acted on.",
+      "title": "Load a chart's history back to a target",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Respawns the transport and keeps everything the chart has built: bars, drawings, indicators, armed strategies and any open paper position. The window the new session replays is dropped rather than counted twice, and a silence long enough to leave a hole in the tape is marked on the chart. The same call the Reconnect button in the chart's offline corner makes.",
       "destructive": false,
       "dry_run_supported": false,
@@ -13863,6 +14191,17 @@
                 "default": "0",
                 "description": "How many feed sessions this tab has taken over since it opened. It\nadvances by one on every respawn — a reconnect, a reload, a market\nswitch, a replay opened or closed — and never otherwise.\n\nThe readback for `feed.reconnect` and `feed.reload`: `connection_state`\nsays whether the feed is healthy, not whether a call respawned it,\nand a reload normally lands on a connected feed. A client that lost\nthe answer compares this with its reading from before the call.\n`#[serde(default)]` for the same reason as `history_reach_running`:\nan optional field is an additive change to the v1 payload."
               },
+              "history_load": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/HistoryLoadSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "This tab's history run: idle, queued behind the opening fill, loading\ntoward its target with how far back it has got, or paused while the\ntab is off screen. Optional so a v1 payload recorded before it keeps\nparsing; the application always reports it."
+              },
               "history_reach_note": {
                 "description": "What the last *load older* press had to say, while it is still on\nscreen — the exact sentence the trader reads in the loading lane.\n\n`null` is the ordinary state: no press yet, a press that landed what it\npromised, or one whose remark has had its time. Here because the\noutcome of a reach is the whole point of making one, and an operator\ndriving the button through `QUANTICK_LOAD_OLDER` or `quantick_invoke`\nmust be able to learn it from the same words rather than by diffing\nbar counts.",
                 "type": [
@@ -13967,6 +14306,78 @@
               "provenance",
               "history_trade_count",
               "live_trade_count"
+            ],
+            "type": "object"
+          },
+          "HistoryLoadSnapshot": {
+            "description": "One tab's history run, as the History button draws it.",
+            "properties": {
+              "back_to_unix_ms": {
+                "description": "The oldest print held or fetched so far by the run.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "main_reach": {
+                "description": "What the tab's main click loads.",
+                "type": "string"
+              },
+              "pages": {
+                "description": "Requests the run has made.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "prints_pulled": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Prints the run has pulled."
+              },
+              "reach": {
+                "description": "The target being loaded or queued; absent while idle.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sessions_reached": {
+                "description": "Previous sessions whose open the run has proven on the chart.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "state": {
+                "description": "`idle`, `queued`, `loading`, or `paused` (the tab is off screen).",
+                "type": "string"
+              },
+              "traded_ms": {
+                "description": "Traded time the run has counted.",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "milliseconds"
+              }
+            },
+            "required": [
+              "state",
+              "main_reach"
             ],
             "type": "object"
           },
@@ -17707,7 +18118,7 @@
           },
           "history_reach": {
             "default": "",
-            "description": "How far one press of *load older* reaches, as the reach registry's own\ntoken (`page`, `previous-session`) — the same string the harness hook\ntakes, so what an operator sets is what it reads back.\n\nAdditive within v1 (contract §4): defaulted rather than required, so a\nclient holding this schema still validates a summary from an instance\nbuilt before the field existed.",
+            "description": "How far one press of *load older* reaches, in the v1 vocabulary this\nfield has always used: `span` (an hours target; its length is\n`history_reach_span_minutes`) or `previous-session` (yesterday). A\ntarget that vocabulary has no word for — three or five days back —\nreads as the empty string; `history_target` names every target.\n\nAdditive within v1 (contract §4): defaulted rather than required, so a\nclient holding this schema still validates a summary from an instance\nbuilt before the field existed.",
             "type": "string"
           },
           "history_reach_running": {
@@ -17718,7 +18129,12 @@
           "history_reach_span_minutes": {
             "$ref": "#/$defs/WireU64",
             "default": "0",
-            "description": "Minutes of *traded* time one press of the `span` reach pulls.\n\nBeside the reach because the two are one choice: an operator that\ncan read back `by time` but not how much time cannot tell what the\nnext press will do.\n\n`serde(default)` like every optional neighbour: v1 is frozen, and a\nsnapshot from a build that predates this field must still validate\nagainst the shipped schema. A new *required* key is a breaking change\nwearing an additive diff."
+            "description": "Minutes of *traded* time a press of the `span` reach pulls: the hours\ntarget's own length while `history_reach` reads `span`, otherwise what\na legacy `span` token in a saved workspace or hook would load.\n\nBeside the reach because the two are one choice: an operator that\ncan read back `by time` but not how much time cannot tell what the\nnext press will do.\n\n`serde(default)` like every optional neighbour: v1 is frozen, and a\nsnapshot from a build that predates this field must still validate\nagainst the shipped schema. A new *required* key is a breaking change\nwearing an additive diff."
+          },
+          "history_target": {
+            "default": "",
+            "description": "What the History button's main click loads, as the token\n`feed.history.load` takes: `hours:N` or `sessions:N`. Additive; empty\nfrom a build that predates it.",
+            "type": "string"
           },
           "layouts": {
             "default": [],

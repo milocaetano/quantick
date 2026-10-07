@@ -126,6 +126,12 @@ impl<'a> DrawingAccess<'a> {
             self.tabs[self.tabs.active_index()].drawing_side(),
         )
     }
+    /// Esc on a loading History button: cancel the active tab's run.
+    pub(super) fn cancel_history(&mut self) -> bool {
+        let active = self.tabs.active_index();
+        let cancelled = self.tabs.runtime_mut(active).cancel_history();
+        !matches!(cancelled, quantick_feed::history_run::Cancelled::Nothing)
+    }
     pub(super) fn cancel_paper(&mut self) -> bool {
         let active = self.tabs.active_index();
         self.tabs.runtime_mut(active).paper.cancel_interaction()

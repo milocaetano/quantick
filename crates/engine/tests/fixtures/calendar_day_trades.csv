@@ -1,0 +1,8 @@
+# Trades for the daily golden test (interval = 1d, days start 00:00 UTC).
+# Trade 1 is the last millisecond of 2024-02-28; trades 2,3 fall on the leap
+# day 2024-02-29; trade 4 opens 2024-03-01 and leaves a forming day.
+agg_id,timestamp_ms,price,quantity,side
+1,1709164799999,100.0,1.0,buy
+2,1709164800000,101.0,1.0,sell
+3,1709251140000,102.0,1.0,buy
+4,1709251200000,103.0,1.0,sell

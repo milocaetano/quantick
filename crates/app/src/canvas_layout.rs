@@ -163,7 +163,7 @@ pub const CANVAS_DIVIDER_PX: f32 = 4.0;
 /// Width of a collapsed pane, in pixels.
 ///
 /// **Never zero.** The vertical axis already settled this question — see
-/// `indicators::COLLAPSED_PANE_HEIGHT_PX`, "a pane that vanished would be an
+/// `quantick_chart::indicator_views::COLLAPSED_PANE_HEIGHT_PX`, "a pane that vanished would be an
 /// indicator the user added and the chart silently dropped" — and the answer
 /// is the same here: a pane with no width has no handle, and a pane with no
 /// handle cannot be brought back from the canvas it left.

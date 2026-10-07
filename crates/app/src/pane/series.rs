@@ -57,9 +57,10 @@ impl ChartPane {
     /// on its boundary.
     pub fn partial_bucket_slot(&self) -> Option<usize> {
         let interval = self.state.spec().time_interval_ms()?;
-        let first = self.state.bars().first().or_else(|| self.state.partial())?;
-        let opens_inside =
-            crate::resample::bucket_start(first.open_time, interval) != first.open_time;
+        // The first print, not the bar's open: a venue lead in front of it
+        // completes the candle, never the prints a ladder folds.
+        let first = self.state.first_print_open_ms()?;
+        let opens_inside = crate::resample::bucket_start(first, interval) != first;
         opens_inside.then(|| self.seam_slot())
     }
 
@@ -196,6 +197,25 @@ impl ChartPane {
     /// drawings keep their bars, the indicator columns keep their candles
     /// until the rebuild lands. Returns whether anything changed.
     pub fn install_history_prefix(&mut self, bars: Vec<quantick_engine::Bar>) -> bool {
+        self.install_venue_history(bars, None, false)
+    }
+
+    /// [`Self::install_history_prefix`], with the venue's seam `lead` merged
+    /// into the first engine bar (`ChartState::set_venue_lead`), and whether
+    /// it leaves nothing of that bar's bucket unaccounted for.
+    pub fn install_venue_history(
+        &mut self,
+        bars: Vec<quantick_engine::Bar>,
+        lead: Option<quantick_engine::Bar>,
+        covers_seam: bool,
+    ) -> bool {
+        if self.state.set_venue_lead(lead, covers_seam)
+            && !prefix_differs(&self.history_prefix, &bars)
+        {
+            self.bump_pagination_revision();
+            self.send_indicator_rebuild();
+            return true;
+        }
         // Any time-cutting pane may carry one (audit S1) — the flow pane
         // showing time bars included. On a pane with a tape the flow layers
         // simply have nothing to draw over the prefix: a venue candle has no
@@ -314,11 +334,10 @@ impl ChartPane {
     pub fn receive_history(
         &mut self,
         trades: std::sync::Arc<Vec<quantick_engine::Trade>>,
-        page: bool,
         defer: bool,
     ) -> bool {
         if defer {
-            self.history_worker.enqueue(trades, page);
+            self.history_worker.enqueue(trades);
             true
         } else {
             self.prepend_history(&trades);
@@ -337,8 +356,15 @@ impl ChartPane {
         self.history_worker.retry()
     }
 
-    pub fn take_history_page(&mut self) -> Option<usize> {
-        self.history_worker.take_page()
+    /// Hold this pane's rebuild while a history run pages; release to
+    /// rebuild once with everything it brought.
+    pub fn hold_history(&mut self, held: bool) {
+        self.history_worker.hold(held);
+    }
+
+    /// Pages this pane accepted and has not published yet.
+    pub fn unpublished_history(&self) -> Vec<std::sync::Arc<Vec<quantick_engine::Trade>>> {
+        self.history_worker.unpublished_pages()
     }
 
     /// Install a complete recut and catch up the live tail before moving anchors.
@@ -349,6 +375,12 @@ impl ChartPane {
     #[cfg(test)]
     pub(crate) fn hold_history_publication(&mut self, held: bool) {
         self.history_worker.held = held;
+    }
+
+    /// Make this pane's rebuild read as failed until a retry.
+    #[cfg(test)]
+    pub(crate) fn fail_history_publication(&mut self) {
+        self.history_worker.fail = true;
     }
 
     pub fn install_history(&mut self) -> bool {

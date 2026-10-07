@@ -266,7 +266,14 @@ impl ChartPane {
         // The bar before the first visible one seeds the comparison, so a day
         // that opens on the leftmost bar is still marked. The forming bar
         // counts: a day is marked the moment its first bar opens.
-        let days_on = self.layer_visible(ChartLayer::DaySeparator, chrome.style);
+        // Not on a chart cut at a day or longer: every bar opens a new day
+        // there, and the time labels already write the dates.
+        let days_on = self.layer_visible(ChartLayer::DaySeparator, chrome.style)
+            && self
+                .spec
+                .spec()
+                .time_interval_ms()
+                .is_none_or(|ms| ms < quantick_engine::time_bucket::DAY_MS);
         let series = self.series_read();
         let starts = if days_on {
             quantick_civil::day_starts(

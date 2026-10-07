@@ -239,8 +239,8 @@ impl VenueHistoryDemo {
 pub(crate) enum ScriptedMenu {
     /// The Workspace menu — the only door to save, export, open and locate.
     Workspace,
-    /// The toolbar's history caret — the reach chips, the span the `by time`
-    /// reach pulls, the page size and the candle reach.
+    /// The toolbar's history caret — the one-click targets and the candle
+    /// reach.
     History,
 }
 
@@ -906,21 +906,10 @@ fn parse_settings_hook(value: &str) -> Option<(usize, SettingsTab)> {
 /// which is the conclusion this branch exists to make impossible.
 fn parse_history_note(token: String) -> Option<Budgeted<CampaignEnd>> {
     match CampaignEnd::from_action(&token) {
-        Some(end) if end.notice().is_some() => Some(Budgeted {
+        Some(end) => Some(Budgeted {
             owed: end,
             frames: HISTORY_NOTE_HOOK_FRAMES,
         }),
-        Some(end) => {
-            tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "HISTORY_NOTE_HOOK_SILENT_ENDING",
-                ending = end.action(),
-                action = "no_note_raised",
-                "QUANTICK_HISTORY_NOTE named the one ending that says nothing"
-            );
-            None
-        }
         None => {
             tracing::warn!(
                 target: "quantick::app",

@@ -35,6 +35,7 @@ class FakeTerminal:
     """The subset of the MetaTrader5 API the candle path touches."""
 
     TIMEFRAME_M1 = 1
+    TIMEFRAME_D1 = 16408
 
     def __init__(self, available: int, newest_s: int, maxbars: int = 100_000) -> None:
         self.times = [newest_s - i * M1 for i in range(available)][::-1]
@@ -118,6 +119,7 @@ def load_bridge(terminal: FakeTerminal):
     """Import the bridge against `terminal`, fresh each time."""
     module = types.ModuleType("MetaTrader5")
     module.TIMEFRAME_M1 = FakeTerminal.TIMEFRAME_M1
+    module.TIMEFRAME_D1 = FakeTerminal.TIMEFRAME_D1
     module.copy_rates_from = terminal.copy_rates_from
     module.copy_ticks_range = terminal.copy_ticks_range
     module.copy_ticks_from = terminal.copy_ticks_from
@@ -171,12 +173,14 @@ class FakeArgs:
         self,
         rates_max_bars=200_000,
         rates_months=3,
+        rates_daily_years=0,
         backfill_minutes=720,
         backfill_max_ticks=1_000_000,
         opening_slice_ticks=50_000,
     ):
         self.rates_max_bars = rates_max_bars
         self.rates_months = rates_months
+        self.rates_daily_years = rates_daily_years
         self.backfill_minutes = backfill_minutes
         self.backfill_max_ticks = backfill_max_ticks
         self.opening_slice_ticks = opening_slice_ticks

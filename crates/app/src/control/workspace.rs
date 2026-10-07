@@ -10,6 +10,7 @@ use quantick_control::{
 };
 
 use crate::pane::PaneSide;
+use quantick_feed::history_reach::HistoryReach;
 
 use super::{
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
@@ -74,10 +75,14 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
         save_on_exit,
         performance_readings_visible,
         progressive_venue_history,
-        history_reach: history_reach.token().to_owned(),
-        history_reach_span_minutes: WireU64::new(
-            app.health_reads().history_reach_span_minutes().into(),
-        ),
+        // The frozen v1 field keeps its own vocabulary; the target itself
+        // reads in `history_target`.
+        history_reach: history_reach.legacy_token().unwrap_or_default().to_owned(),
+        history_target: history_reach.token(),
+        history_reach_span_minutes: WireU64::new(match history_reach {
+            HistoryReach::Hours(hours) => u64::from(hours) * 60,
+            HistoryReach::Sessions(_) => app.health_reads().history_reach_span_minutes().into(),
+        }),
         history_reach_running,
         venue_lead_in,
         replay_day_before: app.chrome_reads().replay_day_before(),

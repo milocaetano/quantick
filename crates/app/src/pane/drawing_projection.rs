@@ -131,6 +131,20 @@ impl<'a> PaneSeriesRead<'a> {
         let interval = self.spec.spec().time_interval_ms()?;
         let last = self.slots().checked_sub(1)?;
         let last_open = self.slot_open_time(last)?;
+        if let Some(law) = calendar_law(interval) {
+            // Whole buckets ahead by the calendar, then how far into its own
+            // bucket the instant sits — a month is as long as it is.
+            let buckets = law.index(time) - law.index(last_open);
+            if buckets < 1 {
+                return None;
+            }
+            let start = law.start(time);
+            let length = law.end(start) - start;
+            #[allow(clippy::cast_precision_loss)]
+            return Some(
+                last as f32 + buckets as f32 + (time - start) as f32 / length.max(1) as f32,
+            );
+        }
         let ahead = time.checked_sub(last_open)?;
         if ahead < interval {
             return None;
@@ -159,7 +173,9 @@ impl<'a> PaneSeriesRead<'a> {
         //
         // On a *time* chart that space has an exact clock: the bars are one
         // fixed interval apart, so the slot after the last one is the last
-        // one plus that interval. Nothing is inferred.
+        // one plus that interval. Nothing is inferred. A calendar interval —
+        // Monday weeks, months — steps by the engine's bucket law instead:
+        // the slot after February is 1 March, not February plus a mean month.
         //
         // On a tick or volume chart it does not: the next bar happens when
         // enough trades happen, and no elapsed time can be named for it. That
@@ -168,8 +184,11 @@ impl<'a> PaneSeriesRead<'a> {
         let interval = self.spec.spec().time_interval_ms()?;
         let last = slots.checked_sub(1)?;
         let ahead = i64::try_from(slot - last).ok()?;
-        self.slot_open_time(last)?
-            .checked_add(ahead.checked_mul(interval)?)
+        let last_open = self.slot_open_time(last)?;
+        if let Some(law) = calendar_law(interval) {
+            return Some(law.step(last_open, ahead));
+        }
+        last_open.checked_add(ahead.checked_mul(interval)?)
     }
 
     /// The candle behind a slot, the forming bar included — the one lookup
@@ -189,6 +208,12 @@ impl<'a> PaneSeriesRead<'a> {
             .filter_map(|slot| self.closed_bar(slot).cloned())
             .collect()
     }
+}
+
+/// The bucket law of a calendar interval — Monday weeks or months — whose
+/// empty future slots step by the calendar rather than by a fixed length.
+fn calendar_law(interval_ms: i64) -> Option<quantick_engine::time_bucket::TimeBucketLaw> {
+    quantick_engine::time_bucket::TimeBucketLaw::of(interval_ms).filter(|law| law.is_calendar())
 }
 
 pub(crate) struct DrawingProjection<'a> {
@@ -301,7 +326,7 @@ impl DrawingProjection<'_> {
             DrawingBand::AllBands => None,
             DrawingBand::Indicator(_) => {
                 let view = self.indicators.visible_panes().find(|view| {
-                    DrawingBand::Indicator(self.indicators.pane_key(view)) == band.key
+                    DrawingBand::Indicator(crate::bands::pane_key(view)) == band.key
                 })?;
                 bands::magnet_value_of(view, row, pointer_y, scale, MAGNET_REACH_PX)
             }
@@ -652,6 +677,7 @@ impl PaneSeriesRead<'_> {
         Some(crate::pointer_compass::PointerBar {
             slot,
             open_time_unix_ms: self.slot_open_time(slot)?,
+            interval_ms: self.spec.spec().time_interval_ms(),
         })
     }
 }

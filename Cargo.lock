@@ -2988,6 +2988,7 @@ version = "0.1.0"
 dependencies = [
  "quantick-chart-interaction",
  "quantick-engine",
+ "quantick-indicator-session",
  "quantick-indicators",
  "quantick-orderbook",
  "quantick-orderflow",

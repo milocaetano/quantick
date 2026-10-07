@@ -753,6 +753,8 @@ fn a_capability_that_rises_later_is_asked_again() {
         deal_counter: false,
         ohlcv_history: false,
         ohlcv_generation: 0,
+        ohlcv_daily_generation: 0,
+        ohlcv_aggressor_split: false,
     });
     let mut app = QuantickApp::new(
         test_config(),
@@ -836,6 +838,8 @@ fn a_new_candle_generation_is_asked_for_again_and_installed() {
         deal_counter: false,
         ohlcv_history: true,
         ohlcv_generation: 1,
+        ohlcv_daily_generation: 0,
+        ohlcv_aggressor_split: false,
     });
     let mut app = QuantickApp::new(
         test_config(),
@@ -5516,8 +5520,12 @@ fn observer_schemas(update: bool) {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 61);
+    assert_eq!(documents.len(), 65);
     for file_name in [
+        "feed-history-load-input-v1.schema.json",
+        "feed-history-load-result-v1.schema.json",
+        "feed-history-cancel-input-v1.schema.json",
+        "feed-history-cancel-result-v1.schema.json",
         "chart-price-axis-input-v1.schema.json",
         "chart-price-axis-result-v1.schema.json",
         "chart-tape-view-input-v1.schema.json",

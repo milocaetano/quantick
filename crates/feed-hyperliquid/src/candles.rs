@@ -33,6 +33,10 @@ use tracing::{debug, info, warn};
 /// The interval quantick asks for; longer ones are folded locally.
 pub const CANDLE_INTERVAL_1M: &str = "1m";
 
+/// The daily interval quantick asks for when a chart is cut at a day or
+/// longer. Hyperliquid opens a `1d` candle at 00:00 UTC.
+pub const CANDLE_INTERVAL_1D: &str = "1d";
+
 /// Milliseconds in the [`CANDLE_INTERVAL_1M`] bucket.
 pub const ONE_MINUTE_MS: i64 = 60_000;
 

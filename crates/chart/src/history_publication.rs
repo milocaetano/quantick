@@ -40,9 +40,11 @@ pub struct HistoryPublication<R: HistoryRunner> {
     runner: R,
     active: Option<Active>,
     queued: Vec<Arc<Vec<Trade>>>,
-    page_len: Option<usize>,
     failures: u8,
     failed: bool,
+    /// While set, pages queue and no recut starts: a history run in flight
+    /// keeps the visible bars still and publishes once, when it ends.
+    held: bool,
 }
 
 impl<R: HistoryRunner> HistoryPublication<R> {
@@ -50,22 +52,30 @@ impl<R: HistoryRunner> HistoryPublication<R> {
         !self.failed && (self.active.is_some() || !self.queued.is_empty())
     }
 
-    pub fn enqueue(&mut self, trades: Arc<Vec<Trade>>, page: bool) {
+    pub fn enqueue(&mut self, trades: Arc<Vec<Trade>>) {
         self.failed = false;
-        if page {
-            self.page_len = Some(self.page_len.unwrap_or(0) + trades.len());
-        }
         if !trades.is_empty() {
             self.queued.push(trades);
         }
     }
 
-    pub fn take_page(&mut self) -> Option<usize> {
-        if self.pending() {
-            None
-        } else {
-            self.page_len.take()
-        }
+    /// Hold or release publication. Releasing starts one recut of every page
+    /// queued while held.
+    pub fn hold(&mut self, held: bool) {
+        self.held = held;
+    }
+
+    /// Every page accepted and not yet on the display, in arrival order: the
+    /// pages a recut is working on, then the pages queued behind it. A pane
+    /// built from the displayed tape takes these too, so it publishes the
+    /// same tape its siblings will.
+    pub fn unpublished_pages(&self) -> Vec<Arc<Vec<Trade>>> {
+        self.active
+            .iter()
+            .flat_map(|active| active.pages.iter())
+            .chain(&self.queued)
+            .cloned()
+            .collect()
     }
 
     pub fn cancel(&mut self) {
@@ -76,7 +86,6 @@ impl<R: HistoryRunner> HistoryPublication<R> {
             }
         }
         self.queued.clear();
-        self.page_len = None;
         self.failures = 0;
         self.failed = false;
         // Each source gets its own result channel; late results cannot enter it.
@@ -84,7 +93,7 @@ impl<R: HistoryRunner> HistoryPublication<R> {
     }
 
     fn start(&mut self, displayed: &ChartState) {
-        if self.failed || self.active.is_some() || self.queued.is_empty() {
+        if self.failed || self.held || self.active.is_some() || self.queued.is_empty() {
             return;
         }
         let pages = std::mem::take(&mut self.queued);

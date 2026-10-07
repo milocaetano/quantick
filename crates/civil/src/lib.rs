@@ -295,6 +295,14 @@ pub fn fmt_offset_minute(timestamp_ms: i64, tz: TzOffset) -> String {
     format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
 }
 
+/// `Wed 09:00` in the display timezone — where a history run landed, short
+/// enough for a button and unambiguous within a week of tape.
+pub fn fmt_weekday_minute(timestamp_ms: i64, tz: TzOffset) -> String {
+    let (_, _, _, hour, minute, _) = civil_utc(timestamp_ms.saturating_add(tz.offset_ms()));
+    let weekday = CivilDate::from_ms(timestamp_ms, tz).weekday();
+    format!("{} {hour:02}:{minute:02}", weekday_abbr(weekday))
+}
+
 /// Millisecond clock in the display timezone, optionally qualified by its date.
 pub fn fmt_offset_millisecond(timestamp_ms: i64, tz: TzOffset, date: bool) -> String {
     let local = timestamp_ms.saturating_add(tz.offset_ms());

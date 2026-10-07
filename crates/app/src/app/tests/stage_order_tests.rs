@@ -135,12 +135,7 @@ fn the_capture_heartbeat_before_the_source_drain_leaves_a_reset_market_unrecorde
         assert!(app.active_tab().tape().enabled());
         events.try_send(FeedEvent::Reset).unwrap();
         let tab_id = app.tabs.active_id();
-        let policy = crate::tab::HistoryPolicy {
-            progressive: app.history.progressive_history,
-            reach: app.history.history_reach,
-            reach_span_minutes: app.history.history_reach_span_minutes,
-            venue_lead_in: app.history.venue_lead_in,
-        };
+        let policy = app.history.policy(app.tz, true);
         with_config(&mut app, |tab, config| {
             tab.drain_frame_test_order(tab_id, config, policy, order.iter().copied());
         });
@@ -158,16 +153,12 @@ fn the_capture_heartbeat_before_the_source_drain_leaves_a_reset_market_unrecorde
 
 #[test]
 fn the_note_hook_before_the_expiry_draws_a_frame_with_an_empty_lane() {
-    let ending = quantick_feed::history_reach::CampaignEnd::ALL
-        .into_iter()
-        .find(|end| end.notice().is_some())
-        .expect("an ending with words");
+    let ending = quantick_feed::history_reach::CampaignEnd::NothingComingBack;
     let note_after_frame = |order: &[FrameStage]| {
         let ctx = egui::Context::default();
         let (mut app, _commands) = app_with_history(12);
         run_frame(&mut app, &ctx);
-        app.active_tab_mut()
-            .raise_history_note(ending.notice().expect("chosen for its words"));
+        app.active_tab_mut().raise_history_note(ending.reason());
         app.chrome.harness.arm_history_note(ending, 8);
         // The frame on which the held note has outlived its linger.
         let past_linger = Instant::now() + crate::tab::HISTORY_NOTE_LINGER;
@@ -280,12 +271,7 @@ fn the_frame_and_tab_drain_plans_add_no_heap_work_to_a_dense_intake() {
             .try_send(FeedEvent::LiveBatch(dense_prints(8_001, 8_513)))
             .unwrap();
         let slots = app.active_tab().flow_pane.slots();
-        let policy = crate::tab::HistoryPolicy {
-            progressive: app.history.progressive_history,
-            reach: app.history.history_reach,
-            reach_span_minutes: app.history.history_reach_span_minutes,
-            venue_lead_in: app.history.venue_lead_in,
-        };
+        let policy = app.history.policy(app.tz, true);
         let before = crate::work_meter::tally();
         with_config(&mut app, |tab, config| {
             if planned {

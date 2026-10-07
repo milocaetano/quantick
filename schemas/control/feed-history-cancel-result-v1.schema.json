@@ -1,0 +1,101 @@
+{
+  "$defs": {
+    "HistoryLoadSnapshot": {
+      "description": "One tab's history run, as the History button draws it.",
+      "properties": {
+        "back_to_unix_ms": {
+          "description": "The oldest print held or fetched so far by the run.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "main_reach": {
+          "description": "What the tab's main click loads.",
+          "type": "string"
+        },
+        "pages": {
+          "description": "Requests the run has made.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "prints_pulled": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Prints the run has pulled."
+        },
+        "reach": {
+          "description": "The target being loaded or queued; absent while idle.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sessions_reached": {
+          "description": "Previous sessions whose open the run has proven on the chart.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "state": {
+          "description": "`idle`, `queued`, `loading`, or `paused` (the tab is off screen).",
+          "type": "string"
+        },
+        "traded_ms": {
+          "description": "Traded time the run has counted.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "milliseconds"
+        }
+      },
+      "required": [
+        "state",
+        "main_reach"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What a cancel call stopped.",
+  "properties": {
+    "cancelled": {
+      "description": "`run` (stopped where it stood, what arrived kept), `queued` (a press\nthat had not begun) or `nothing`.",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/HistoryLoadSnapshot"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "cancelled",
+    "status"
+  ],
+  "title": "HistoryCancelResult",
+  "type": "object"
+}

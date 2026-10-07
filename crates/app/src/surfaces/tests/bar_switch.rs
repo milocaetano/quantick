@@ -117,6 +117,26 @@ fn focusing_another_pane_closes_it_without_a_change() {
     assert!(!surface.is_open());
 }
 
+/// The hook opens on the first frame, before a restored workspace has put
+/// focus on the time pane. It follows the focus there instead of closing,
+/// and applies to the pane that holds it.
+#[test]
+fn the_hook_opened_switch_follows_focus_to_the_time_pane() {
+    let ctx = egui::Context::default();
+    let mut surface = BarSwitchSurface::default();
+    surface.open_following_focus(0, crate::pane::PaneSide::Flow, "15");
+    frame(&mut surface, &ctx, Vec::new());
+    let mut env = SurfaceEnv::quiet(Instant::now());
+    env.focused_side = crate::pane::PaneSide::Time(0);
+    frame_in(&mut surface, &ctx, Vec::new(), &env);
+    assert!(surface.is_open(), "still open over the time pane");
+    let response = frame_in(&mut surface, &ctx, vec![key(egui::Key::Enter)], &env);
+    assert_eq!(
+        response.bar_switch.map(|request| request.side),
+        Some(crate::pane::PaneSide::Time(0))
+    );
+}
+
 #[test]
 fn losing_the_keyboard_closes_it_and_leaves_enter_alone() {
     let ctx = egui::Context::default();
@@ -197,4 +217,39 @@ fn at_full_length_a_typed_letter_replaces_the_letter() {
     assert_eq!(query(&surface).as_deref(), Some("123456789R"));
     frame(&mut surface, &ctx, vec![egui::Event::Text("r".into())]);
     assert_eq!(query(&surface).as_deref(), Some("123456789r"));
+}
+
+/// Typed one key at a time into the digit-opened popup: `1`, then `m` lists
+/// one-minute bars, and `o` after it turns the same query into a month.
+/// `d` and `w` list the daily and weekly bars.
+#[test]
+fn a_typed_unit_lists_the_day_week_and_month_bars() {
+    let ctx = egui::Context::default();
+    let listed = |surface: &BarSwitchSurface| -> Vec<String> {
+        surface
+            .candidates()
+            .into_iter()
+            .map(BarConfiguration::to_config_string)
+            .collect()
+    };
+    let mut surface = BarSwitchSurface::default();
+    frame(&mut surface, &ctx, vec![egui::Event::Text("1".into())]);
+    assert!(surface.is_open());
+    frame(&mut surface, &ctx, Vec::new());
+    frame(&mut surface, &ctx, vec![egui::Event::Text("m".into())]);
+    assert_eq!(listed(&surface), ["time:1m"]);
+    frame(&mut surface, &ctx, vec![egui::Event::Text("o".into())]);
+    assert_eq!(listed(&surface), ["time:1mo"]);
+    let response = frame(&mut surface, &ctx, vec![key(egui::Key::Enter)]);
+    assert_eq!(
+        response
+            .bar_switch
+            .map(|request| request.config.to_config_string()),
+        Some("time:1mo".to_owned())
+    );
+    for (typed, spec) in [("2d", "time:2d"), ("1w", "time:1w")] {
+        let mut surface = BarSwitchSurface::default();
+        surface.open(0, crate::pane::PaneSide::Flow, typed);
+        assert_eq!(listed(&surface), [spec], "{typed}");
+    }
 }
