@@ -1,0 +1,10 @@
+# Trades for the calendar-month golden test (interval = 1mo, UTC).
+# Trade 2 is the last millisecond of January 2024 and trade 3 the first of
+# February; trade 4 is the last millisecond of 29 February 2024 (a leap year)
+# and trade 5 the first of March, which leaves March forming.
+agg_id,timestamp_ms,price,quantity,side
+1,1705312800000,100.0,1.0,buy
+2,1706745599999,101.0,2.0,sell
+3,1706745600000,102.0,1.0,buy
+4,1709251199999,99.0,3.0,sell
+5,1709251200000,103.0,1.0,buy

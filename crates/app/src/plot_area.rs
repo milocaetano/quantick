@@ -145,10 +145,158 @@ pub fn fmt_time_as(ms: i64, tz: TzOffset, format: crate::chart::TimeLabelFormat)
     format.write(secs / 3600, (secs % 3600) / 60, secs % 60)
 }
 
+/// The pointer's time tag for a bar opening at `open_ms`: the instant to the
+/// second below a day, and on a calendar chart the date of its UTC bucket,
+/// as the axis labels name it — `Wed 07 Oct 2026` for a day or a week,
+/// `Oct 2026` for a month or several. A clock time alone there would read
+/// the same `21:00:00` on every bar west of UTC.
+#[must_use]
+pub fn fmt_pointer_time(open_ms: i64, interval_ms: Option<i64>, tz: TzOffset) -> String {
+    let Some(interval) = interval_ms.filter(|interval| calendar_label_sample(*interval).is_some())
+    else {
+        return fmt_time_as(open_ms, tz, crate::chart::TimeLabelFormat::Full);
+    };
+    let day = quantick_civil::CivilDate::from_ms(
+        quantick_engine::time_bucket::time_bucket_start(open_ms, interval),
+        TzOffset::new(0),
+    );
+    if quantick_engine::time_bucket::calendar_months(interval).is_some() {
+        let (year, _, _) = day.ymd();
+        let short = day.short();
+        format!("{} {year:04}", short.get(3..).unwrap_or_default())
+    } else {
+        day.long()
+    }
+}
+
+/// The sample a calendar chart's time labels are measured by, or `None`
+/// below a day, where the clock time is the label.
+///
+/// A daily, weekly or monthly bar opens at 00:00 UTC, so a clock time says
+/// nothing about it: every label would read the same. The date does.
+#[must_use]
+pub fn calendar_label_sample(interval_ms: i64) -> Option<&'static str> {
+    if interval_ms < quantick_engine::time_bucket::DAY_MS {
+        return None;
+    }
+    Some(
+        match quantick_engine::time_bucket::calendar_months(interval_ms) {
+            Some(1) => "Mmm 0000",
+            Some(_) => "0000",
+            None => "00 Mmm",
+        },
+    )
+}
+
+/// The time label of a bar opening at `open_ms` on a calendar chart: the
+/// UTC bucket it was cut in — a day or week as `07 Oct`, written as its year
+/// where the year changes from the bar labelled before it (`previous_ms`), a
+/// month as `Oct 2026`, and several months as the year. In UTC rather than
+/// the display zone because the buckets are UTC days: the label names the
+/// bucket, and a zone west of UTC would otherwise name the day before it.
+/// `None` below a day.
+#[must_use]
+pub fn fmt_calendar_label(
+    open_ms: i64,
+    interval_ms: i64,
+    previous_ms: Option<i64>,
+) -> Option<String> {
+    calendar_label_sample(interval_ms)?;
+    let date = |ms: i64| {
+        quantick_civil::CivilDate::from_ms(
+            quantick_engine::time_bucket::time_bucket_start(ms, interval_ms),
+            TzOffset::new(0),
+        )
+    };
+    let day = date(open_ms);
+    let (year, _, _) = day.ymd();
+    // `07 Oct`: the day, then the month's abbreviation.
+    let short = day.short();
+    let month = short.get(3..).unwrap_or_default();
+    Some(
+        match quantick_engine::time_bucket::calendar_months(interval_ms) {
+            Some(1) => format!("{month} {year:04}"),
+            Some(_) => format!("{year:04}"),
+            None if previous_ms.is_some_and(|previous| date(previous).ymd().0 != year) => {
+                format!("{year:04}")
+            }
+            None => short,
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::timezone::TzOffset;
+
+    /// The pointer's tag on a day, week or month chart names the bucket's
+    /// date, not the display zone's clock at its UTC midnight.
+    #[test]
+    fn the_pointer_tag_names_the_date_on_a_calendar_chart() {
+        use quantick_engine::time_bucket::{CALENDAR_MONTH_MS, DAY_MS, WEEK_MS};
+        let oct_7 = 1_791_331_200_000;
+        let brt = TzOffset::new(-180);
+        assert_eq!(
+            fmt_pointer_time(oct_7, Some(DAY_MS), brt),
+            "Wed 07 Oct 2026"
+        );
+        assert_eq!(
+            fmt_pointer_time(oct_7, Some(WEEK_MS), brt),
+            "Mon 05 Oct 2026"
+        );
+        assert_eq!(
+            fmt_pointer_time(oct_7, Some(CALENDAR_MONTH_MS), brt),
+            "Oct 2026"
+        );
+        assert_eq!(
+            fmt_pointer_time(oct_7, Some(3 * CALENDAR_MONTH_MS), brt),
+            "Oct 2026"
+        );
+        assert_eq!(fmt_pointer_time(oct_7, Some(60_000), brt), "21:00:00");
+        assert_eq!(fmt_pointer_time(oct_7, None, brt), "21:00:00");
+    }
+
+    #[test]
+    fn a_calendar_chart_labels_its_bars_by_date() {
+        use quantick_engine::time_bucket::{CALENDAR_MONTH_MS, DAY_MS, WEEK_MS};
+        // 2025-12-29 (a Monday) and 2026-10-07 (a Wednesday), 00:00 UTC.
+        let dec_29 = 20_451 * DAY_MS;
+        let oct_7 = 20_733 * DAY_MS;
+        assert_eq!(
+            fmt_calendar_label(oct_7, 3_600_000, None),
+            None,
+            "1h keeps clock times"
+        );
+        assert_eq!(
+            fmt_calendar_label(oct_7, DAY_MS, None).as_deref(),
+            Some("07 Oct")
+        );
+        assert_eq!(
+            fmt_calendar_label(oct_7 + 5 * 3_600_000, DAY_MS, Some(oct_7 - DAY_MS)).as_deref(),
+            Some("07 Oct"),
+            "the bucket's date, whatever time the bar's first trade had"
+        );
+        assert_eq!(
+            fmt_calendar_label(dec_29 + 3 * DAY_MS, DAY_MS, Some(dec_29)).as_deref(),
+            Some("2026"),
+            "the year where it changes"
+        );
+        assert_eq!(
+            fmt_calendar_label(oct_7, WEEK_MS, None).as_deref(),
+            Some("05 Oct"),
+            "a week by its Monday"
+        );
+        assert_eq!(
+            fmt_calendar_label(oct_7, CALENDAR_MONTH_MS, None).as_deref(),
+            Some("Oct 2026")
+        );
+        assert_eq!(
+            fmt_calendar_label(oct_7, 3 * CALENDAR_MONTH_MS, None).as_deref(),
+            Some("2026")
+        );
+        assert_eq!(calendar_label_sample(DAY_MS), Some("00 Mmm"));
+    }
 
     #[test]
     fn the_live_strip_carves_between_chart_and_gutter_only_when_shown() {

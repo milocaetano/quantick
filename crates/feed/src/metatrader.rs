@@ -272,6 +272,7 @@ fn session_capabilities(
     book_levels: Option<u32>,
     has_block: bool,
     ohlcv_generation: u64,
+    ohlcv_daily_generation: u64,
     history_paging: bool,
     deal_counter: bool,
 ) -> FeedCapabilities {
@@ -292,6 +293,9 @@ fn session_capabilities(
         // Carried across the hello rather than reset: a reconnect does not
         // un-deliver the blocks that came before it.
         ohlcv_generation,
+        ohlcv_daily_generation,
+        // A MetaTrader candle has one volume and no side: half each.
+        ohlcv_aggressor_split: false,
     }
 }
 
@@ -588,6 +592,7 @@ impl Mt5Feed {
                     *book_levels,
                     self.candles.block().is_some(),
                     self.candles.generation(),
+                    self.candles.daily_generation(),
                     *history_paging,
                     *deal_counter,
                 ));
@@ -838,11 +843,33 @@ impl Mt5Feed {
             partial,
             "bridge pushed candle history; holding it for the next request"
         );
-        let generation = self.candles.store(OhlcvBlock {
+        // A D1 candle opens at the server's midnight, which is UTC midnight
+        // only on a UTC server. Said once per block rather than silently
+        // re-cut: the fold places each candle in the UTC day holding most of
+        // it, exact for a session inside one UTC day and the nearest day
+        // otherwise.
+        if interval_ms == super::OHLCV_DAILY_INTERVAL_MS
+            && let Some(first) = bars.first()
+            && first.open_time.rem_euclid(interval_ms) != 0
+        {
+            info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "MT5_RATES_SERVER_DAY",
+                symbol = %self.symbol,
+                day_opens_at_utc_ms = first.open_time.rem_euclid(interval_ms),
+                action = "place_by_midpoint",
+                "daily candles are cut at the server's midnight, not UTC's; each \
+                 is placed in the UTC day holding most of it"
+            );
+        }
+        self.candles.store(OhlcvBlock {
             interval_ms,
             bars,
             complete: !partial,
         });
+        let (generation, daily_generation) =
+            (self.candles.generation(), self.candles.daily_generation());
         // A block is in hand, and — the part the boolean cannot say — the
         // answer just changed. A replacement block on a reconnect moves the
         // counter even though the flag was already true, which is the only way
@@ -850,6 +877,7 @@ impl Mt5Feed {
         self.caps_tx.send_modify(|caps| {
             caps.ohlcv_history = true;
             caps.ohlcv_generation = generation;
+            caps.ohlcv_daily_generation = daily_generation;
         });
     }
 
@@ -876,7 +904,7 @@ impl Mt5Feed {
                 }
             }
             Some(cmd) => {
-                let candles = self.candles.block();
+                let candles = &self.candles;
                 if !answer_command(&self.symbol, cmd, &self.tx, &self.book_capture, candles).await {
                     return ControlFlow::Break(()); // UI gone
                 }
@@ -946,7 +974,7 @@ impl Mt5Feed {
                 (ListenerExit::Panicked, None)
             }
         };
-        let candles = self.candles.block();
+        let candles = &self.candles;
         match self.listener.exited(exit) {
             AfterExit::RetryBind { report } => {
                 // A port already taken is the ordinary failure once several
@@ -1021,7 +1049,7 @@ async fn serve_commands_for(
     tx: &mpsc::Sender<FeedEvent>,
     cmd_rx: &mut mpsc::Receiver<FeedCommand>,
     book_capture: &BookCaptureSwitch,
-    candles: Option<&OhlcvBlock>,
+    candles: &CandleShelf,
 ) -> bool {
     let deadline = tokio::time::Instant::now() + duration;
     loop {
@@ -1046,7 +1074,7 @@ async fn idle_serve_commands(
     tx: &mpsc::Sender<FeedEvent>,
     cmd_rx: &mut mpsc::Receiver<FeedCommand>,
     book_capture: &BookCaptureSwitch,
-    candles: Option<&OhlcvBlock>,
+    candles: &CandleShelf,
 ) {
     while let Some(cmd) = cmd_rx.recv().await {
         if !answer_command(symbol, cmd, tx, book_capture, candles).await {
@@ -1140,7 +1168,7 @@ async fn answer_command(
     cmd: FeedCommand,
     tx: &mpsc::Sender<FeedEvent>,
     book_capture: &BookCaptureSwitch,
-    candles: Option<&OhlcvBlock>,
+    candles: &CandleShelf,
 ) -> bool {
     match cmd {
         // Reached only from the paths with no listener behind them — a bind
@@ -1200,6 +1228,7 @@ async fn answer_command(
             true
         }
         FeedCommand::FetchOhlcv {
+            interval_ms: requested_interval_ms,
             span_ms,
             slice_ms,
             before_ms,
@@ -1213,7 +1242,11 @@ async fn answer_command(
             // round trips, and there are none here — the block is already in
             // memory, so cutting it into replies would only make the chart
             // rebuild itself several times over to arrive at the same frame.
-            let (interval_ms, bars, complete) = match candles {
+            // The block at the interval asked for, or the finest one held: a
+            // bridge that pushes no daily block still answers a daily chart in
+            // minutes, tagged as minutes, for the pane to fold.
+            let held = candles.block_for(requested_interval_ms);
+            let (interval_ms, bars, complete) = match held {
                 Some(block) => (block.interval_ms, block.bars.clone(), block.complete),
                 // Nothing held is not a short answer — it is no answer yet, and
                 // the generation is what will say when that changes.
@@ -1225,12 +1258,13 @@ async fn answer_command(
                 event_code = "MT5_OHLCV_ANSWERED",
                 symbol,
                 requested_span_ms = span_ms,
+                requested_interval_ms,
                 interval_ms,
                 bars = bars.len(),
                 // The empty answer has two very different causes, and the log
                 // has to separate them: a session that sends no candles at all,
                 // and one whose block simply has not arrived yet.
-                source = if candles.is_some() { "bridge_block" } else { "nothing_held" },
+                source = if held.is_some() { "bridge_block" } else { "nothing_held" },
                 complete,
                 requested_slice_ms = slice_ms.unwrap_or(0),
                 // A *load older* asks for candles before an instant. The
@@ -1816,7 +1850,7 @@ mod tests {
     fn a_session_reports_exactly_what_its_symbol_offers() {
         // An exchange contract on the Python bridge: prints trades, publishes
         // a book, sends candles, answers "load older".
-        let exchange = session_capabilities(TapeKind::Trades, Some(10), true, 0, true, false);
+        let exchange = session_capabilities(TapeKind::Trades, Some(10), true, 0, 0, true, false);
         assert!(exchange.traded_volume);
         assert!(exchange.book_capture);
         assert!(exchange.ohlcv_history);
@@ -1825,7 +1859,7 @@ mod tests {
         // A broker-quoted CFD behind the Expert Advisor: none of the four.
         // Every fact comes from the same hello, and none is inferable from the
         // provider being MetaTrader.
-        let cfd = session_capabilities(TapeKind::Quotes, None, false, 0, false, false);
+        let cfd = session_capabilities(TapeKind::Quotes, None, false, 0, 0, false, false);
         assert!(!cfd.traded_volume);
         assert!(!cfd.book_capture);
         assert!(!cfd.ohlcv_history);
@@ -1834,20 +1868,21 @@ mod tests {
         // A bridge that subscribed to a DOM with no levels in it has no book
         // either — "declared" is not "has".
         assert!(
-            !session_capabilities(TapeKind::Trades, Some(0), true, 0, true, false).book_capture
+            !session_capabilities(TapeKind::Trades, Some(0), true, 0, 0, true, false).book_capture
         );
 
         // The four are independent: a CFD the Python bridge serves still has
         // candles and still pages, because the terminal keeps rates and ticks
         // for quoted symbols too.
-        let quoted = session_capabilities(TapeKind::Quotes, None, true, 0, true, false);
+        let quoted = session_capabilities(TapeKind::Quotes, None, true, 0, 0, true, false);
         assert!(quoted.ohlcv_history);
         assert!(quoted.history_paging);
 
         // And paging follows the bridge, not the venue: the same exchange
         // contract behind a bridge too old to read its socket offers no button.
         assert!(
-            !session_capabilities(TapeKind::Trades, Some(10), true, 0, false, false).history_paging
+            !session_capabilities(TapeKind::Trades, Some(10), true, 0, 0, false, false)
+                .history_paging
         );
     }
 
@@ -2549,6 +2584,7 @@ mod tests {
         // Ask before anything exists, as a pane's first frame does.
         feed.commands
             .send(FeedCommand::FetchOhlcv {
+                interval_ms: crate::OHLCV_BASE_INTERVAL_MS,
                 span_ms: crate::TIME_HISTORY_SPAN_MS,
                 slice_ms: None,
                 before_ms: None,
@@ -2632,6 +2668,7 @@ mod tests {
         // no venue round trip here for slicing to shorten.
         feed.commands
             .send(FeedCommand::FetchOhlcv {
+                interval_ms: crate::OHLCV_BASE_INTERVAL_MS,
                 span_ms: crate::TIME_HISTORY_SPAN_MS,
                 slice_ms: Some(crate::OHLCV_SLICE_SPAN_MS),
                 before_ms: None,
@@ -2695,6 +2732,7 @@ mod tests {
 
         feed.commands
             .send(FeedCommand::FetchOhlcv {
+                interval_ms: crate::OHLCV_BASE_INTERVAL_MS,
                 span_ms: crate::TIME_HISTORY_SPAN_MS,
                 slice_ms: None,
                 before_ms: None,
@@ -2783,6 +2821,7 @@ mod tests {
         async fn ask(feed: &mut FeedHandle) -> Vec<quantick_engine::Bar> {
             feed.commands
                 .send(FeedCommand::FetchOhlcv {
+                    interval_ms: crate::OHLCV_BASE_INTERVAL_MS,
                     span_ms: crate::TIME_HISTORY_SPAN_MS,
                     slice_ms: None,
                     before_ms: None,

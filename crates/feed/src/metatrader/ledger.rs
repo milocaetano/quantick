@@ -13,7 +13,7 @@
 use quantick_engine::Trade;
 
 use super::OhlcvBlock;
-use crate::FeedContinuity;
+use crate::{FeedContinuity, OHLCV_BASE_INTERVAL_MS, OHLCV_DAILY_INTERVAL_MS};
 
 /// The earlier of two optional timestamps, treating `None` as "no opinion".
 ///
@@ -275,33 +275,75 @@ impl TapeLedger {
 /// and simply does. Holding it here is what lets this provider answer the same
 /// `FetchOhlcv` as the others: the request does not reach a venue, it reads
 /// what already arrived.
+///
+/// One block per interval: a bridge pushes its M1 block and, when it serves
+/// them, a D1 block beside it, and each replaces only its own predecessor.
 #[derive(Default)]
 pub(super) struct CandleShelf {
-    block: Option<OhlcvBlock>,
+    blocks: std::collections::BTreeMap<i64, OhlcvBlock>,
     /// How many times the candle answer has changed. The boolean capability
     /// is a latch — it rises with the first block and cannot fall — so an
     /// empty first block would otherwise be the last word: a consumer that
     /// cached that emptiness would never see another edge, and the full block
     /// from the next routine reconnect would be held forever behind a pane
-    /// that stopped asking. Every block moves this, including a replacement.
+    /// that stopped asking. Every block that changes the answer to a request
+    /// for minutes moves this, including a replacement.
     generation: u64,
+    /// The same counter for the answer to a request for days. Two counters,
+    /// not one: a daily block landing must not tell a chart folding minutes
+    /// that its base went stale.
+    daily_generation: u64,
 }
 
 impl CandleShelf {
+    /// The finest block held, if any — whether candles are on hand at all.
     pub(super) fn block(&self) -> Option<&OhlcvBlock> {
-        self.block.as_ref()
+        self.blocks.values().next()
     }
 
+    /// The block at `interval_ms`, or the finest one held when there is no
+    /// usable one at that interval. An empty block at the interval asked for
+    /// counts as none: a bridge whose terminal had no D1 history pushes an
+    /// empty daily block, and answering with it would hide the minutes the
+    /// chart can fold days from.
+    pub(super) fn block_for(&self, interval_ms: i64) -> Option<&OhlcvBlock> {
+        self.blocks
+            .get(&interval_ms)
+            .filter(|block| !block.bars.is_empty())
+            .or_else(|| self.block())
+    }
+
+    /// The generation of the answer to a request for minutes.
     pub(super) fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// Hold a new block, replacing any earlier one. Returns the generation the
-    /// capability must now publish.
-    pub(super) fn store(&mut self, block: OhlcvBlock) -> u64 {
-        self.block = Some(block);
-        self.generation = self.generation.saturating_add(1);
-        self.generation
+    /// The generation of the answer to a request for days.
+    pub(super) fn daily_generation(&self) -> u64 {
+        self.daily_generation
+    }
+
+    /// Hold a new block, replacing any earlier one at its interval, and move
+    /// the generation of every request whose answer it changed — only those.
+    /// A daily block landing leaves the minute answer as it was, so a chart
+    /// folding minutes keeps its base; minutes landing while no usable daily
+    /// block is held change the daily answer too, since they stand in for it.
+    pub(super) fn store(&mut self, block: OhlcvBlock) {
+        let answers = |shelf: &Self| {
+            [OHLCV_BASE_INTERVAL_MS, OHLCV_DAILY_INTERVAL_MS]
+                .map(|asked| shelf.block_for(asked).map(|held| held.interval_ms))
+        };
+        let before = answers(self);
+        let stored = block.interval_ms;
+        self.blocks.insert(stored, block);
+        let after = answers(self);
+        let changed = |index: usize| after[index] != before[index] || after[index] == Some(stored);
+        if changed(0) {
+            self.generation = self.generation.saturating_add(1);
+        }
+        if changed(1) {
+            self.daily_generation = self.daily_generation.saturating_add(1);
+        }
     }
 }
 
@@ -455,18 +497,100 @@ mod ledger_tests {
         );
     }
 
+    fn block(interval_ms: i64, bars: usize, complete: bool) -> OhlcvBlock {
+        let bar = quantick_engine::Bar {
+            open_time: 0,
+            close_time: interval_ms - 1,
+            open: Decimal::ONE,
+            high: Decimal::ONE,
+            low: Decimal::ONE,
+            close: Decimal::ONE,
+            buy_volume: Decimal::ONE,
+            sell_volume: Decimal::ZERO,
+            trade_count: 1,
+        };
+        OhlcvBlock {
+            interval_ms,
+            bars: vec![bar; bars],
+            complete,
+        }
+    }
+
     #[test]
     fn every_candle_block_moves_the_generation() {
         let mut shelf = CandleShelf::default();
         assert!(shelf.block().is_none());
         assert_eq!(shelf.generation(), 0);
-        let block = |complete| OhlcvBlock {
-            interval_ms: 60_000,
-            bars: Vec::new(),
-            complete,
-        };
-        assert_eq!(shelf.store(block(false)), 1);
-        assert_eq!(shelf.store(block(true)), 2);
+        shelf.store(block(60_000, 0, false));
+        assert_eq!(shelf.generation(), 1);
+        shelf.store(block(60_000, 0, true));
+        assert_eq!(shelf.generation(), 2);
         assert!(shelf.block().is_some_and(|held| held.complete));
+    }
+
+    #[test]
+    fn a_daily_block_sits_beside_the_minutes_and_answers_its_own_interval() {
+        let mut shelf = CandleShelf::default();
+        shelf.store(block(60_000, 3, true));
+        assert_eq!(
+            shelf.block_for(86_400_000).map(|held| held.interval_ms),
+            Some(60_000),
+            "no daily block yet: the minutes answer, tagged as minutes"
+        );
+        shelf.store(block(86_400_000, 2, true));
+        assert_eq!(
+            shelf.block_for(86_400_000).map(|held| held.interval_ms),
+            Some(86_400_000)
+        );
+        assert_eq!(
+            shelf.block_for(60_000).map(|held| held.interval_ms),
+            Some(60_000),
+            "the daily block replaced nothing"
+        );
+    }
+
+    /// A terminal with no D1 history pushes an empty daily block. Answering a
+    /// daily chart with it would hide the minutes it can fold days from.
+    #[test]
+    fn an_empty_daily_block_falls_back_to_the_minutes() {
+        let mut shelf = CandleShelf::default();
+        shelf.store(block(60_000, 3, true));
+        shelf.store(block(86_400_000, 0, true));
+        assert_eq!(
+            shelf
+                .block_for(86_400_000)
+                .map(|held| (held.interval_ms, held.bars.len())),
+            Some((60_000, 3))
+        );
+    }
+
+    /// Each request's answer has its own generation, moved only when that
+    /// answer changed: a daily block never tells a minute chart its base went
+    /// stale, and minutes standing in for days move both.
+    #[test]
+    fn a_block_moves_only_the_generations_whose_answer_it_changed() {
+        let mut shelf = CandleShelf::default();
+        shelf.store(block(60_000, 3, true));
+        assert_eq!((shelf.generation(), shelf.daily_generation()), (1, 1));
+        shelf.store(block(86_400_000, 2, true));
+        assert_eq!(
+            (shelf.generation(), shelf.daily_generation()),
+            (1, 2),
+            "the minute answer did not change"
+        );
+        shelf.store(block(60_000, 4, true));
+        assert_eq!(
+            (shelf.generation(), shelf.daily_generation()),
+            (2, 2),
+            "the daily answer is the daily block, which did not change"
+        );
+        shelf.store(block(86_400_000, 0, true));
+        assert_eq!(
+            (shelf.generation(), shelf.daily_generation()),
+            (2, 3),
+            "an empty daily block hands the daily answer back to the minutes"
+        );
+        shelf.store(block(86_400_000, 0, true));
+        assert_eq!((shelf.generation(), shelf.daily_generation()), (2, 3));
     }
 }

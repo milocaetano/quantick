@@ -1,0 +1,27 @@
+# feat/daily-weekly-monthly-bars: `Tab::follow_wanted_ohlcv_interval`
+# (tab/history.rs) discards the venue-candle base and every pane's prefix when
+# the panes move between a minute and a daily base, and both candle requests
+# read their interval, span and slice from quantick_feed::candle_base's
+# CandleAsk. It reads and writes the tab's panes, which only `app` holds; the
+# decisions it carries out are headless in quantick_feed::candle_base.
+crates/app +71
+!budget +71
+# feat/daily-weekly-monthly-bars: the review-fix round's tab wiring (+7) and
+# the D1 seam lead's (+96) — the tab installing each pane's lead beside its
+# prefix, the one seam-minutes request and the routing of its reply, the
+# refold when the first prints land, and the seam bar's provenance label. The
+# decisions are headless (quantick_feed::candles::seam_lead, candle_base,
+# quantick_chart::state::venue_lead); these lines carry them out on the tab's
+# panes and channel, which only `app` holds.
+crates/app +103
+!budget +103
+# feat/daily-weekly-monthly-bars, seam-lead honesty round (+46): the tab
+# routes a seam-minutes reply into the minute base and asks up to the first
+# trade, the control plane labels a seam bar or a first venue week partial,
+# the interval drag routes a typed month to the month setting, and the
+# pointer's tag writes a calendar chart's date. The decisions are headless
+# (quantick_feed::candle_base, candles::seam_lead, starts_inside_bucket,
+# quantick_chart's seam_bar_partial, quantick_control_schema's labels); these
+# lines carry them out on the tab, its panes and its widgets.
+crates/app +46
+!budget +46

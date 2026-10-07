@@ -88,4 +88,5 @@ a bound.
 | 562 | 2026-09-20 | fix/ship-gate-reads-advisories | main | 0 | 0 | — |
 | 606 | 2026-10-04 | feat/renko-bars | main | 15959 | 37 | `crates/app/src/pane/pointer_gestures.rs` (535) |
 | 619 | 2026-10-06 | fix/history-session-interaction | main | 3882 | 8 | `crates/app/src/replay_view.rs` (783) |
+| 630 | 2026-10-07 | feat/daily-weekly-monthly-bars | main | 25174 | 44 | `crates/app/src/tab/canvas.rs` (697) |
 | 629 | 2026-10-07 | feat/history-load-ux | main | 33170 | 36 | `crates/feed/src/metatrader.rs` (873) |

@@ -29,6 +29,7 @@ impl ChartState {
         state.footprints = FootprintSeries::for_chart(self.footprints.base_group(), &self.spec);
         state.timeline_revision = self.timeline_revision;
         state.series_revision = self.series_revision;
+        state.venue_lead = self.venue_lead.carried();
         HistoryRebuild { state, pages }
     }
 
@@ -101,9 +102,10 @@ pub(super) fn rebuild_until(state: &mut ChartState, mut cancelled: impl FnMut() 
     if state.backfill_done && boundary.is_none() {
         boundary = Some(bars.len());
     }
-    state.partial = builder.partial().cloned();
     state.builder = builder;
     state.bars = bars;
+    state.venue_lead.rebuilt();
+    state.refresh_partial();
     state.backfill_boundary = boundary;
     state.bump_series_revision();
     true

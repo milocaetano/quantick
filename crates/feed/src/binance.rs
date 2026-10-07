@@ -15,8 +15,8 @@ use tracing::{error, info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_binance::{
-    BINANCE_WS_BASE, Backoff, BinanceHttp, BinanceKlineHttp, KLINE_INTERVAL_1M, ONE_MINUTE_MS,
-    agg_trade_url, backfill, backfill_before,
+    BINANCE_WS_BASE, Backoff, BinanceHttp, BinanceKlineHttp, KLINE_INTERVAL_1D, KLINE_INTERVAL_1M,
+    ONE_MINUTE_MS, agg_trade_url, backfill, backfill_before,
     depth::{
         BinanceDepthHttp, DepthEvent, DepthSessionConfig, MAX_DEPTH_LIMIT, run_depth_with_reconnect,
     },
@@ -134,7 +134,9 @@ pub(crate) async fn feed_task(
 
     loop {
         let flow = tokio::select! {
-            Some((bars, slice)) = ohlcv_rx.recv() => feed.on_ohlcv_reply(bars, slice).await,
+            Some((interval_ms, bars, slice)) = ohlcv_rx.recv() => {
+                feed.on_ohlcv_reply(interval_ms, bars, slice).await
+            }
             maybe_trade = live_rx.recv() => match maybe_trade {
                 Some(trade) => feed.on_trade(trade).await,
                 None => ControlFlow::Break(()), // stream ended
@@ -160,7 +162,9 @@ pub(crate) async fn feed_task(
 }
 
 /// One reply from a candle fetch: the bars of one window and where it sits.
-type OhlcvReply = (Vec<quantick_engine::Bar>, crate::OhlcvSlice);
+/// One candle reply: the interval it was served at, its bars, its place in
+/// the run.
+type OhlcvReply = (i64, Vec<quantick_engine::Bar>, crate::OhlcvSlice);
 
 /// Send the opening history, returning the earliest agg_id to page back from,
 /// or `Break` when the UI is gone.
@@ -213,6 +217,7 @@ struct BinanceLoop {
 impl BinanceLoop {
     async fn on_ohlcv_reply(
         &mut self,
+        interval_ms: i64,
         bars: Vec<quantick_engine::Bar>,
         slice: crate::OhlcvSlice,
     ) -> ControlFlow<()> {
@@ -220,7 +225,7 @@ impl BinanceLoop {
             self.ohlcv_task = None;
         }
         let event = FeedEvent::OhlcvHistory {
-            interval_ms: ONE_MINUTE_MS,
+            interval_ms,
             bars,
             slice,
         };
@@ -270,10 +275,11 @@ impl BinanceLoop {
                 // `load_older` never returns silence either. `Refused` rather
                 // than a short answer: nothing was fetched because nobody
                 // looked, which is not a statement about the venue's record.
-                let refused = (Vec::new(), crate::OhlcvSlice::Refused);
+                let refused = (ONE_MINUTE_MS, Vec::new(), crate::OhlcvSlice::Refused);
                 send_or_break(&self.ohlcv_tx, refused).await?; // UI gone
             }
             CommandPlan::StartOhlcv {
+                interval_ms,
                 span_ms,
                 slice_ms,
                 before_ms,
@@ -281,6 +287,7 @@ impl BinanceLoop {
                 self.ohlcv_task = Some(spawn_ohlcv(
                     self.klines.clone(),
                     self.symbol.clone(),
+                    interval_ms,
                     span_ms,
                     slice_ms,
                     before_ms,
@@ -471,11 +478,19 @@ fn parse_book_depth(raw: Option<&str>) -> u16 {
 fn spawn_ohlcv(
     klines: BinanceKlineHttp,
     symbol: String,
+    interval_ms: i64,
     span_ms: i64,
     slice_ms: Option<i64>,
     before_ms: Option<i64>,
-    reply: mpsc::Sender<(Vec<quantick_engine::Bar>, crate::OhlcvSlice)>,
+    reply: mpsc::Sender<OhlcvReply>,
 ) -> JoinHandle<()> {
+    // Binance serves both bases natively: `1d` klines open at 00:00 UTC, the
+    // engine's own day.
+    let (kline_interval, interval_ms) = if interval_ms == crate::OHLCV_DAILY_INTERVAL_MS {
+        (KLINE_INTERVAL_1D, quantick_engine::time_bucket::DAY_MS)
+    } else {
+        (KLINE_INTERVAL_1M, ONE_MINUTE_MS)
+    };
     tokio::spawn(async move {
         // The right-hand edge of everything this request covers: the live edge
         // for the opening fetch, and the millisecond before the oldest candle
@@ -490,6 +505,7 @@ fn spawn_ohlcv(
             event_code = "BINANCE_OHLCV_PLAN",
             symbol,
             requested_span_ms = span_ms,
+            interval_ms,
             slice_ms = slice_ms.unwrap_or(0),
             windows = windows.len(),
             "candle history planned"
@@ -502,8 +518,8 @@ fn spawn_ohlcv(
             let history = fetch_history(
                 &klines,
                 &symbol,
-                KLINE_INTERVAL_1M,
-                ONE_MINUTE_MS,
+                kline_interval,
+                interval_ms,
                 window.from_ms,
                 window.to_ms,
             )
@@ -531,7 +547,11 @@ fn spawn_ohlcv(
             // A closed channel means the feed loop is gone, which is not this
             // task's problem to report: it is already being reported there.
             // Stop fetching, though — nothing is listening for the rest.
-            if reply.send((history.bars, slice)).await.is_err() {
+            if reply
+                .send((interval_ms, history.bars, slice))
+                .await
+                .is_err()
+            {
                 return;
             }
         }

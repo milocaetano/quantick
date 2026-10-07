@@ -202,6 +202,21 @@ mod tests {
     }
 
     #[test]
+    fn a_daily_candle_covers_the_servers_whole_day() {
+        // A D1 bar stamped 2024-02-05 00:00 on a B3 server (UTC-3) opened at
+        // 03:00 UTC and covers the 24 hours from there: the server's day,
+        // which the fold places in the UTC day holding most of it.
+        let day_ms = 86_400_000;
+        let server_midnight = 1_707_091_200_000;
+        let mut mapper = RateMapper::new(day_ms, -10_800);
+        let bar = mapper
+            .map(&row(server_midnight, "100", "110", "90", "105", "5000"))
+            .expect("a daily candle maps");
+        assert_eq!(bar.open_time, server_midnight + 10_800_000);
+        assert_eq!(bar.close_time, bar.open_time + day_ms - 1);
+    }
+
+    #[test]
     fn volume_is_exact_and_delta_is_identically_zero() {
         // The representation decision, pinned: the terminal reports no
         // aggressor split, so delta must read as "not measured" rather than as

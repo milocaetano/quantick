@@ -285,7 +285,18 @@ impl TimeStripPass<'_> {
                 .x
         };
         let format = crate::chart::time_label_format(history_strip.width(), width_of);
-        let label_width = width_of(format);
+        // A chart cut at a day or longer writes dates, not clock times.
+        let interval_ms = self.series.spec.spec().time_interval_ms();
+        let calendar = interval_ms.and_then(crate::plot_area::calendar_label_sample);
+        let label_width = calendar.map_or_else(
+            || width_of(format),
+            |sample| {
+                painter
+                    .layout_no_wrap(sample.to_owned(), font.clone(), theme::TEXT_MUTED)
+                    .size()
+                    .x
+            },
+        );
         // The pointer's chip is always written in full, whatever this strip
         // thinned its own labels down to, so the two extents are asked for
         // separately: a narrow strip pairs a 30 px label with a 54 px chip.
@@ -316,10 +327,20 @@ impl TimeStripPass<'_> {
                     x + label_width / 2.0,
                     self.reserved,
                 ) {
+                    let previous = index
+                        .checked_sub(stride)
+                        .and_then(|slot| self.series.slot_open_time(slot));
+                    let text = interval_ms
+                        .and_then(|interval| {
+                            crate::plot_area::fmt_calendar_label(bar.open_time, interval, previous)
+                        })
+                        .unwrap_or_else(|| {
+                            crate::plot_area::fmt_time_as(bar.open_time, self.tz, format)
+                        });
                     painter.text(
                         egui::pos2(x, y),
                         egui::Align2::CENTER_CENTER,
-                        crate::plot_area::fmt_time_as(bar.open_time, self.tz, format),
+                        text,
                         font.clone(),
                         theme::TEXT_MUTED,
                     );

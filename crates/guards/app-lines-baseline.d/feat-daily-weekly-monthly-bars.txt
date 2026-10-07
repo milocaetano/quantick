@@ -1,0 +1,32 @@
+# feat/daily-weekly-monthly-bars: the time header and the BARS row draw a
+# calendar month's name where a millisecond drag would clamp it
+# (time_header.rs, toolbar/bar_parameters.rs), and the tab follows the candle
+# base its panes want — discarding a minute base for a daily one and back
+# (tab/history.rs `follow_wanted_ohlcv_interval`, the CandleAsk wiring in both
+# requests). The base decisions themselves (which base, admit, ask) live in
+# quantick_feed::candle_base; what stays reads and writes the tab's panes.
+# Measured remainder only.
+crates/app +108
+!budget +108
+# feat/daily-weekly-monthly-bars, review-fix round (f7cf7736..0eec3d73): the
+# time axis writes dates on day, week and month charts, empty calendar slots
+# are timed by the engine's bucket law, the custom interval is written in the
+# chips' units, the bar-switch hook follows focus to the time pane, and the
+# tab reads the candle base off its panes before the first request. Measured
+# remainder: +145.
+# D1 seam lead (tab/history.rs, pane/series.rs, tab/feed.rs,
+# control/chart.rs): the tab hands each time pane its seam lead beside its
+# prefix, asks once for the minutes a daily base's lead lacks and parks the
+# reply, refolds when the first prints land after the venue's candles, and the
+# control plane labels the seam bar venue + prints. The lead itself, the
+# coverage rules and the ask decision live in quantick_feed (candles::seam_lead,
+# candle_base) and the merge in quantick_chart (state/venue_lead.rs); what
+# stays reads and writes the tab's panes and its command channel. +102.
+crates/app +247
+!budget +247
+# feat/daily-weekly-monthly-bars, seam-lead honesty round (+109): the same
+# wiring as the ui-free raise beside it (+46) and the widget half of the two
+# UI fixes — the interval drag's month routing and the pointer tag measured
+# and written as a date on calendar charts. Decisions headless as above.
+crates/app +109
+!budget +109
