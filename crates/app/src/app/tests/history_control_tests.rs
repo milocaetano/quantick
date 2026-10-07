@@ -188,3 +188,54 @@ fn a_mouse_press_and_a_control_press_leave_the_same_state() {
         assert_eq!(states[0].0, reach, "the main click's default follows");
     }
 }
+
+/// A press refused because a run is already loading changes nothing: not
+/// the main click's default, not the summary, not the saved workspace — by
+/// mouse or by `feed.history.load` alike.
+#[test]
+fn a_press_refused_while_a_run_loads_leaves_the_default_alone() {
+    use quantick_feed::history_reach::HistoryReach;
+    let ctx = egui::Context::default();
+    for by_control in [false, true] {
+        let (mut app, _commands) = app_with_history(4);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("history-refused");
+        grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut observer = connect(&directory, &options("observer", &[]));
+        let mut cockpit = connect(
+            &directory,
+            &options("cockpit", &["cockpit", "cockpit.layout"]),
+        );
+        app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
+            HistoryReach::Hours(2),
+        ));
+        assert!(app.active_tab().history_reach_running());
+
+        if by_control {
+            let (pressed, _) = unkeyed_call(
+                &mut app,
+                &mut cockpit,
+                "feed.history.load",
+                json!({ "reach": "sessions:5" }),
+            );
+            assert_eq!(success_result(&pressed)["press"], "already_running");
+        } else {
+            app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
+                HistoryReach::Sessions(5),
+            ));
+        }
+        assert_eq!(
+            app.history.history_reach,
+            HistoryReach::Hours(2),
+            "by control: {by_control}; the refused target is not the default"
+        );
+        assert_eq!(
+            app.active_tab().main_history_reach(),
+            HistoryReach::Hours(2)
+        );
+        assert_eq!(summary_reach(&mut app, &mut observer).2, "hours:2");
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).ok();
+    }
+}
