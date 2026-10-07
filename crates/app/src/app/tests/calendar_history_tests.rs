@@ -199,9 +199,28 @@ fn a_weekly_pane_asks_for_daily_candles_and_folds_them_into_monday_weeks() {
         daily_history(35),
     );
     app.drain_tabs();
-    let pane = app.active_tab().pane(PaneSide::Time(0));
+    let tab = app.active_tab();
+    let pane = tab.pane(PaneSide::Time(0));
     assert_eq!(pane.seam_slot(), 5, "five venue weeks before the seam week");
-    assert_eq!(app.active_tab().venue_candles_held(), 35);
+    assert_eq!(tab.venue_candles_held(), 35);
+    // The record's start cuts into the first week, which holds four of its
+    // days: it says so, and the whole weeks after it do not.
+    let completeness = |slot: usize| {
+        let bar = pane.closed_bar(slot).expect("a venue week");
+        crate::control::chart::bar_snapshot(
+            tab,
+            pane,
+            slot,
+            bar,
+            crate::control::chart::BarStateDto::Closed,
+            &app.config,
+        )
+        .provenance
+        .completeness
+    };
+    assert_eq!(completeness(0), "partial");
+    assert_eq!(completeness(1), "complete");
+    assert_eq!(pane.slot_open_time(0), Some(-38 * DAY_MS), "Monday 24 Nov");
 }
 
 /// Back to an intraday interval, the daily base cannot fold to it — but the
@@ -584,6 +603,18 @@ fn the_forming_day_week_and_month_hold_the_venue_part_before_the_first_trade() {
     assert_eq!(
         snapshot.provenance.trade_count,
         "venue_reported+derived_from_trades"
+    );
+    assert!(
+        snapshot
+            .provenance
+            .aggressor_side
+            .starts_with("venue_reported+"),
+        "a venue with its own split: {:?}",
+        snapshot.provenance
+    );
+    assert_eq!(
+        snapshot.provenance.completeness, "partial",
+        "06:14:00 to the first trade is in no candle"
     );
 }
 
