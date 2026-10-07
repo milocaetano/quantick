@@ -1,3 +1,2 @@
 # Written by `cargo run -p quantick-guards -- --tighten`: these shrank.
-crates/app -217
-!budget -217
+.claude/skills/ui-harness/ -1556

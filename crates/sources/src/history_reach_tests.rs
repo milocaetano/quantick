@@ -181,14 +181,6 @@ fn the_print_budget_scales_with_the_target() {
         HistoryReach::Hours(4).print_budget(),
         4 * PRINTS_PER_TRADED_HOUR_BUDGET
     );
-    assert!(
-        PRINTS_PER_SESSION_BUDGET >= MEASURED_DENSE_SESSION_PRINTS,
-        "a measured dense B3 session fits one session's budget"
-    );
-    assert!(
-        6 * MEASURED_DENSE_SESSION_PRINTS < MAX_HELD_PRINTS,
-        "five dense sessions plus today fit under the memory ceiling"
-    );
 }
 
 #[test]

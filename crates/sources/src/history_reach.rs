@@ -82,6 +82,11 @@ pub const HELD_TAPE_CEILING_BYTES: usize = 1_536 * 1024 * 1024;
 /// five dense B3 sessions and today with room.
 pub const MAX_HELD_PRINTS: usize = HELD_TAPE_CEILING_BYTES / BYTES_PER_HELD_PRINT;
 
+// A measured dense session fits one session's budget, and five of them plus
+// today fit under the ceiling: checked when the crate compiles.
+const _: () = assert!(PRINTS_PER_SESSION_BUDGET >= MEASURED_DENSE_SESSION_PRINTS);
+const _: () = assert!(6 * MEASURED_DENSE_SESSION_PRINTS < MAX_HELD_PRINTS);
+
 /// Requests beyond the print budget's own, for replies that cross dead time
 /// (a weekend, a holiday) and bring nothing.
 pub const PAGE_SLACK: u32 = 8;
