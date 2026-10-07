@@ -147,3 +147,23 @@ fn repeated_worker_failures_stop_and_a_retry_keeps_all_accepted_pages() {
         "retry does not fetch or drop accepted history"
     );
 }
+
+#[test]
+fn a_held_publication_keeps_every_page_and_recuts_once_on_release() {
+    let state = displayed();
+    let mut publication = HistoryPublication::<ManualRunner>::default();
+    publication.hold(true);
+    publication.enqueue(Arc::new((10..20).map(trade).collect()), true);
+    assert!(!publication.poll(&state), "nothing is published while held");
+    assert!(publication.runner.job.is_none(), "and no recut starts");
+    publication.enqueue(Arc::new((1..10).map(trade).collect()), true);
+    assert!(!publication.poll(&state));
+    assert!(publication.pending(), "the pages are kept, not dropped");
+    publication.hold(false);
+    assert!(!publication.poll(&state));
+    publication.runner.complete();
+    assert!(publication.poll(&state));
+    let candidate = publication.take_ready(&state).expect("one recut of both pages");
+    assert_eq!(candidate.trades().len(), 29);
+    assert!(publication.runner.job.is_none(), "exactly one recut ran");
+}

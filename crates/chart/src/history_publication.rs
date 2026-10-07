@@ -43,6 +43,9 @@ pub struct HistoryPublication<R: HistoryRunner> {
     page_len: Option<usize>,
     failures: u8,
     failed: bool,
+    /// While set, pages queue and no recut starts: a history run in flight
+    /// keeps the visible bars still and publishes once, when it ends.
+    held: bool,
 }
 
 impl<R: HistoryRunner> HistoryPublication<R> {
@@ -58,6 +61,17 @@ impl<R: HistoryRunner> HistoryPublication<R> {
         if !trades.is_empty() {
             self.queued.push(trades);
         }
+    }
+
+    /// Hold or release publication. Releasing starts one recut of every page
+    /// queued while held.
+    pub fn hold(&mut self, held: bool) {
+        self.held = held;
+    }
+
+    /// Whether publication is held.
+    pub fn held(&self) -> bool {
+        self.held
     }
 
     pub fn take_page(&mut self) -> Option<usize> {
@@ -84,7 +98,7 @@ impl<R: HistoryRunner> HistoryPublication<R> {
     }
 
     fn start(&mut self, displayed: &ChartState) {
-        if self.failed || self.active.is_some() || self.queued.is_empty() {
+        if self.failed || self.held || self.active.is_some() || self.queued.is_empty() {
             return;
         }
         let pages = std::mem::take(&mut self.queued);
