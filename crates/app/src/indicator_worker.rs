@@ -9,9 +9,9 @@ use quantick_engine::trade_tape::TradeTape;
 #[cfg(test)]
 use quantick_engine::{Trade, forming_run::FormingRun};
 #[cfg(test)]
-use quantick_indicator_session::fold_parked;
-#[cfg(test)]
 pub(crate) use quantick_indicator_session::LaneSample;
+#[cfg(test)]
+use quantick_indicator_session::fold_parked;
 pub(crate) use quantick_indicator_session::{
     IndicatorCommand, IndicatorEvent, IndicatorSource, MAX_LANE_RUNGS, SlotId,
 };
