@@ -403,7 +403,11 @@ fn the_interval_drag_reads_back_what_it_writes() {
     }
     assert_eq!(fmt_time_interval(86_400_000), "1d");
     assert_eq!(fmt_time_interval(604_800_000), "1w");
-    assert_eq!(parse_time_interval(" 250 "), Some(250), "a bare count is ms");
+    assert_eq!(
+        parse_time_interval(" 250 "),
+        Some(250),
+        "a bare count is ms"
+    );
     assert_eq!(parse_time_interval("5 apples"), None);
 }
 
