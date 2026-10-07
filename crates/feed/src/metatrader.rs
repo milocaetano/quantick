@@ -294,6 +294,8 @@ fn session_capabilities(
         // un-deliver the blocks that came before it.
         ohlcv_generation,
         ohlcv_daily_generation,
+        // A MetaTrader candle has one volume and no side: half each.
+        ohlcv_aggressor_split: false,
     }
 }
 

@@ -11,7 +11,9 @@
 
 use quantick_engine::Bar;
 
-use crate::candles::{SeamLead, is_foldable, merge_older_candles, seam_lead};
+use crate::candles::{
+    Minutes, MinutesAnswer, SeamLead, is_foldable, merge_older_candles, seam_lead,
+};
 use crate::config::FeedCapabilities;
 use crate::{
     OHLCV_BASE_INTERVAL_MS, OHLCV_DAILY_INTERVAL_MS, OHLCV_SLICE_SPAN_MS, OhlcvSlice,
@@ -38,20 +40,78 @@ pub struct CandleBaseInterval {
     seam_minutes: SeamMinutes,
 }
 
-/// The minutes a daily base needs for its seam lead (see
-/// [`crate::candles::seam_lead`]): the seam day's own candle overlaps the
-/// chart's trades, so the stretch of it before the first trade comes from
-/// minutes, asked for once beside the days and kept parked.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-enum SeamMinutes {
-    /// Not asked for this base.
-    #[default]
-    NotAsked,
-    /// The request is out; its reply goes to the parked slot.
-    Out,
-    /// Answered; asked again only once the minutes are gone.
-    Answered,
+/// How many answers one seam stretch is asked for: the first, and one more
+/// should it come back short or still not cover the stretch.
+pub const SEAM_MINUTES_ASKS: u8 = 2;
+
+/// The minutes a seam lead lacks (see [`crate::candles::seam_lead`]): under a
+/// daily base the seam day's own candle overlaps the chart's trades, so the
+/// stretch of it before the first trade comes from minutes, asked for beside
+/// the days and kept parked; under a minute base, the stretch a base fetched
+/// before the first trade does not reach. Asked for the stretch itself, up
+/// to the first trade, so a complete answer vouches for every minute of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SeamMinutes {
+    /// Whether a request is out, and whether its reply is still wanted.
+    out: Option<Reply>,
+    /// The stretch last asked for, and how many answers it has had.
+    asked: Option<(SeamStretch, u8)>,
+    /// What the minutes the seam reads can vouch for.
+    answer: MinutesAnswer,
 }
+
+/// The reply to a seam-minutes request that is out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reply {
+    /// Its candles go where the seam reads them.
+    Wanted,
+    /// Asked about minutes that are gone: discarded when it lands, and asked
+    /// again — never taken for the base.
+    Stale,
+}
+
+/// The stretch a seam-minutes request covers, both ends inclusive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SeamStretch {
+    from_ms: i64,
+    until_ms: i64,
+}
+
+impl Default for SeamMinutes {
+    fn default() -> Self {
+        Self {
+            out: None,
+            asked: None,
+            answer: MinutesAnswer::Candles,
+        }
+    }
+}
+
+impl SeamMinutes {
+    /// The minutes the seam reads are gone or replaced: a reply still out is
+    /// stale, and nothing learned about them stands.
+    fn question_changed(&mut self) {
+        *self = Self {
+            out: self.out.map(|_| Reply::Stale),
+            ..Self::default()
+        };
+    }
+}
+
+/// What became of a reply to the seam-minutes request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SeamMinutesTaken {
+    /// Parked beside the daily base, or nothing to keep.
+    Kept,
+    /// Minutes the held minute base lacks: the caller merges them in.
+    JoinBase(Vec<Bar>),
+    /// A reply about minutes that are gone, dropped.
+    Discarded,
+}
+
+/// The wish a seam's own minutes are parked under: none. They cover a day at
+/// most, so no pane wanting minutes gets them back as its base.
+const SEAM_ONLY_MS: i64 = 0;
 
 /// A settled base the panes stopped wanting.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,7 +141,7 @@ impl Default for CandleBaseInterval {
             wanted_ms: OHLCV_BASE_INTERVAL_MS,
             parked: None,
             seen_generations: (0, 0),
-            seam_minutes: SeamMinutes::NotAsked,
+            seam_minutes: SeamMinutes::default(),
         }
     }
 }
@@ -95,6 +155,8 @@ pub struct CandleAsk {
     pub span_ms: i64,
     /// How much of the span one reply should cover, if sliced at all.
     pub slice_ms: Option<i64>,
+    /// The newest millisecond asked for; `None` is the live edge.
+    pub before_ms: Option<i64>,
 }
 
 impl CandleBaseInterval {
@@ -157,7 +219,7 @@ impl CandleBaseInterval {
             });
         }
         // A new base, a new question: an answer still out is stale.
-        self.seam_minutes = SeamMinutes::NotAsked;
+        self.seam_minutes.question_changed();
         restored.map(|parked| {
             self.held_ms = parked.held_ms;
             RestoredBase {
@@ -170,7 +232,15 @@ impl CandleBaseInterval {
     /// Forget the parked base: it described another market.
     pub fn drop_parked(&mut self) {
         self.parked = None;
-        self.seam_minutes = SeamMinutes::NotAsked;
+        self.seam_minutes = SeamMinutes::default();
+    }
+
+    /// The channel any request went out on is gone, with its replies: a
+    /// seam-minutes request out will never be answered, so it may go out
+    /// again on the new one. What is held still stands.
+    pub fn channel_dropped(&mut self) {
+        self.seam_minutes.out = None;
+        self.seam_minutes.asked = None;
     }
 
     /// Take the provider's generations; whether the answer to the base
@@ -189,15 +259,20 @@ impl CandleBaseInterval {
                 seen.0 != now.0
             }
         };
-        if self
+        let parked_moved = self
             .parked
             .as_ref()
-            .is_some_and(|parked| moved(parked.wanted_ms))
-        {
+            .is_some_and(|parked| moved(parked.wanted_ms));
+        if parked_moved {
             self.parked = None;
-            self.seam_minutes = SeamMinutes::NotAsked;
         }
-        moved(self.wanted_ms)
+        let wanted_moved = moved(self.wanted_ms);
+        // The minutes a seam reads went with either; a reply still out about
+        // them is stale, and is never taken for the base.
+        if parked_moved || wanted_moved {
+            self.seam_minutes.question_changed();
+        }
+        wanted_moved
     }
 
     /// Make the next [`Self::observe`] see a change, whatever is published.
@@ -256,76 +331,133 @@ impl CandleBaseInterval {
 
     /// The seam lead of a pane cut at `interval_ms` whose first trade is
     /// `first_trade_ms`: from `held`, the base held, and — under a daily
-    /// base — the minutes parked beside it.
+    /// base — the minutes parked beside it, with what their answer vouches
+    /// for.
     #[must_use]
     pub fn seam_lead(&self, held: &[Bar], first_trade_ms: i64, interval_ms: i64) -> SeamLead {
+        let answer = self.seam_minutes.answer;
+        let minutes = |candles| Minutes { candles, answer };
         if self.held_ms >= OHLCV_DAILY_INTERVAL_MS {
             seam_lead(
                 Some(held),
-                self.parked_minutes(),
+                self.parked_minutes().map(minutes),
                 first_trade_ms,
                 interval_ms,
             )
         } else {
-            seam_lead(None, Some(held), first_trade_ms, interval_ms)
+            seam_lead(None, Some(minutes(held)), first_trade_ms, interval_ms)
         }
     }
 
-    /// The one request for the minutes a daily base's seam leads lack, when
-    /// a pane's lead lacks them: `seams` yields each time pane's first trade
-    /// and interval. Asked once per base, never while the minutes are parked
-    /// or a request for them is out; unsliced, at the minute base's own span,
-    /// so the answer is also the base a trip back to an intraday pane folds.
+    /// The one request for the minutes a seam lead lacks, when one does:
+    /// `seams` yields each time pane's first trade and interval. It covers
+    /// the stretch the leads lack up to the first trade, unsliced — a day at
+    /// most, not the minute base's week. One at a time, and at most
+    /// [`SEAM_MINUTES_ASKS`] answers for one stretch: a stretch still not
+    /// covered after that stays a named absence.
     #[must_use]
     pub fn seam_minutes_ask(
         &self,
         held: &[Bar],
         seams: impl IntoIterator<Item = (i64, i64)>,
     ) -> Option<CandleAsk> {
-        let on_days =
-            self.held_ms >= OHLCV_DAILY_INTERVAL_MS && self.wanted_ms >= OHLCV_DAILY_INTERVAL_MS;
-        if !on_days || self.seam_minutes != SeamMinutes::NotAsked || self.parked_minutes().is_some()
-        {
+        let on_days = self.held_ms >= OHLCV_DAILY_INTERVAL_MS;
+        if on_days && self.wanted_ms < OHLCV_DAILY_INTERVAL_MS || self.seam_minutes.out.is_some() {
             return None;
         }
-        seams
+        let stretch = seams
             .into_iter()
-            .any(|(first_trade_ms, interval_ms)| {
-                matches!(
-                    self.seam_lead(held, first_trade_ms, interval_ms),
-                    SeamLead::MinutesNotHeld { .. }
-                )
+            .filter_map(|(first_trade_ms, interval_ms)| {
+                let from_ms = self
+                    .seam_lead(held, first_trade_ms, interval_ms)
+                    .wants_minutes_from()?;
+                Some(SeamStretch {
+                    from_ms,
+                    until_ms: first_trade_ms,
+                })
             })
-            .then_some(CandleAsk {
-                interval_ms: OHLCV_BASE_INTERVAL_MS,
-                span_ms: ohlcv_span_for(OHLCV_BASE_INTERVAL_MS),
-                slice_ms: None,
-            })
+            .reduce(|one, other| SeamStretch {
+                from_ms: one.from_ms.min(other.from_ms),
+                until_ms: one.until_ms.max(other.until_ms),
+            })?;
+        let spent = matches!(
+            self.seam_minutes.asked,
+            Some((asked, answers)) if asked == stretch && answers >= SEAM_MINUTES_ASKS
+        );
+        (!spent).then_some(CandleAsk {
+            interval_ms: OHLCV_BASE_INTERVAL_MS,
+            span_ms: stretch.until_ms.saturating_sub(stretch.from_ms).max(1),
+            slice_ms: None,
+            before_ms: Some(stretch.until_ms),
+        })
     }
 
-    /// The seam-minutes request went out: its replies go to
+    /// The seam-minutes request `ask` went out: its replies go to
     /// [`Self::take_seam_minutes`].
-    pub fn seam_minutes_sent(&mut self) {
-        self.seam_minutes = SeamMinutes::Out;
+    pub fn seam_minutes_sent(&mut self, ask: &CandleAsk) {
+        let until_ms = ask.before_ms.unwrap_or(i64::MAX);
+        let stretch = SeamStretch {
+            from_ms: until_ms.saturating_sub(ask.span_ms),
+            until_ms,
+        };
+        let answers = match self.seam_minutes.asked {
+            Some((asked, answers)) if asked == stretch => answers,
+            _ => 0,
+        };
+        self.seam_minutes.asked = Some((stretch, answers));
+        self.seam_minutes.out = Some(Reply::Wanted);
     }
 
-    /// Whether the seam-minutes request is out.
+    /// Whether the seam-minutes request is out: its reply, stale or not, is
+    /// [`Self::take_seam_minutes`]'s, never the base's.
     #[must_use]
     pub fn seam_minutes_out(&self) -> bool {
-        self.seam_minutes == SeamMinutes::Out
+        self.seam_minutes.out.is_some()
     }
 
-    /// A reply to the seam-minutes request: its minutes join the parked
-    /// slot. A refusal was not served, so the request may go out again; a
-    /// reply at another interval, or with nothing in it, parks nothing.
-    pub fn take_seam_minutes(&mut self, interval_ms: i64, bars: Vec<Bar>, slice: OhlcvSlice) {
-        self.seam_minutes = match slice {
-            OhlcvSlice::Refused => SeamMinutes::NotAsked,
-            OhlcvSlice::More => SeamMinutes::Out,
-            OhlcvSlice::Last { .. } => SeamMinutes::Answered,
+    /// A reply to the seam-minutes request. Under a daily base its minutes
+    /// join the parked slot — an empty complete answer included, since it
+    /// says nothing traded; under a minute base they are handed back to join
+    /// the base. A complete answer vouches for the stretch asked, a short one
+    /// for nothing it lacks. A refusal was not served, so the request may go
+    /// out again; a stale reply is dropped.
+    pub fn take_seam_minutes(
+        &mut self,
+        interval_ms: i64,
+        bars: Vec<Bar>,
+        slice: OhlcvSlice,
+    ) -> SeamMinutesTaken {
+        let Some(reply) = self.seam_minutes.out else {
+            return SeamMinutesTaken::Discarded;
         };
-        if interval_ms != OHLCV_BASE_INTERVAL_MS || bars.is_empty() {
-            return;
+        if slice.is_last() {
+            self.seam_minutes.out = None;
+        }
+        if reply == Reply::Stale || slice == OhlcvSlice::Refused {
+            return SeamMinutesTaken::Discarded;
+        }
+        let served = interval_ms == OHLCV_BASE_INTERVAL_MS;
+        if let (OhlcvSlice::Last { complete }, Some((stretch, answers))) =
+            (slice, self.seam_minutes.asked.as_mut())
+        {
+            *answers = answers.saturating_add(1);
+            if served {
+                // A short answer joining minutes held vouches for nothing.
+                self.seam_minutes.answer = if complete {
+                    MinutesAnswer::Covers {
+                        from_ms: stretch.from_ms,
+                        until_ms: stretch.until_ms,
+                    }
+                } else {
+                    MinutesAnswer::Short
+                };
+            }
+        }
+        if !served {
+            return SeamMinutesTaken::Kept;
+        }
+        if self.held_ms < OHLCV_DAILY_INTERVAL_MS {
+            return SeamMinutesTaken::JoinBase(bars);
         }
         match &mut self.parked {
             Some(parked) if parked.held_ms == OHLCV_BASE_INTERVAL_MS => {
@@ -333,20 +465,19 @@ impl CandleBaseInterval {
             }
             _ => {
                 self.parked = Some(ParkedBase {
-                    wanted_ms: OHLCV_BASE_INTERVAL_MS,
+                    wanted_ms: SEAM_ONLY_MS,
                     held_ms: OHLCV_BASE_INTERVAL_MS,
                     bars,
                     older_exhausted: false,
                 });
             }
         }
+        SeamMinutesTaken::Kept
     }
 
     /// The seam-minutes reply was dropped as stale: ask again if needed.
     pub fn forget_seam_minutes(&mut self) {
-        if self.seam_minutes == SeamMinutes::Out {
-            self.seam_minutes = SeamMinutes::NotAsked;
-        }
+        self.seam_minutes.out = None;
     }
 
     /// The request for the base wanted. Progressive slicing paints a week of
@@ -359,6 +490,7 @@ impl CandleBaseInterval {
             span_ms: ohlcv_span_for(self.wanted_ms),
             slice_ms: (progressive && self.wanted_ms < OHLCV_DAILY_INTERVAL_MS)
                 .then_some(OHLCV_SLICE_SPAN_MS),
+            before_ms: None,
         }
     }
 }
@@ -542,18 +674,20 @@ mod candle_base_tests {
             ask,
             CandleAsk {
                 interval_ms: minute,
-                span_ms: crate::TIME_HISTORY_SPAN_MS,
+                span_ms: first_trade - 9 * DAY_MS,
                 slice_ms: None,
-            }
+                before_ms: Some(first_trade),
+            },
+            "the seam day up to the first trade, not a week"
         );
-        base.seam_minutes_sent();
+        base.seam_minutes_sent(&ask);
         assert!(base.seam_minutes_out());
         assert_eq!(base.seam_minutes_ask(&days, seams), None, "one at a time");
 
         // Refused: nobody looked, so it may go out again.
         base.take_seam_minutes(minute, Vec::new(), OhlcvSlice::Refused);
-        assert!(base.seam_minutes_ask(&days, seams).is_some());
-        base.seam_minutes_sent();
+        assert_eq!(base.seam_minutes_ask(&days, seams), Some(ask));
+        base.seam_minutes_sent(&ask);
         let minutes: Vec<Bar> = (0..(2 * 1_440))
             .map(|index| candle(8 * DAY_MS + index * minute))
             .collect();
@@ -576,13 +710,9 @@ mod candle_base_tests {
         let was = base.want(minute).unwrap();
         assert_eq!(
             base.swap_parked(was, Some(days), false),
-            Some(RestoredBase {
-                bars: minutes,
-                older_exhausted: false
-            }),
-            "the minutes are the intraday base"
+            None,
+            "a seam's day of minutes is no intraday base"
         );
-        assert_eq!(base.held_ms(), minute);
     }
 
     /// A stale reply is forgotten, so the request may go out again; an empty
@@ -599,21 +729,175 @@ mod candle_base_tests {
                 ..candle(index * DAY_MS)
             })
             .collect();
-        let seams = [(2 * DAY_MS + 60_000_000, DAY_MS)];
-        base.seam_minutes_sent();
+        let first_trade = 2 * DAY_MS + 60_000_000;
+        let seams = [(first_trade, DAY_MS)];
+        let ask = base.seam_minutes_ask(&days, seams).expect("asked");
+        base.seam_minutes_sent(&ask);
         base.forget_seam_minutes();
-        assert!(base.seam_minutes_ask(&days, seams).is_some());
-        base.seam_minutes_sent();
-        base.take_seam_minutes(
-            OHLCV_BASE_INTERVAL_MS,
-            Vec::new(),
-            OhlcvSlice::Last { complete: true },
+        assert_eq!(base.seam_minutes_ask(&days, seams), Some(ask));
+        base.seam_minutes_sent(&ask);
+        assert_eq!(
+            base.take_seam_minutes(
+                OHLCV_BASE_INTERVAL_MS,
+                Vec::new(),
+                OhlcvSlice::Last { complete: true },
+            ),
+            SeamMinutesTaken::Kept
+        );
+        assert_eq!(base.parked_minutes(), Some(&[][..]), "nothing traded");
+        assert_eq!(base.seam_minutes_ask(&days, seams), None);
+        assert_eq!(
+            base.seam_lead(&days, first_trade, DAY_MS),
+            SeamLead::Nothing,
+            "the trade opens its minute, and nothing before it is missing"
+        );
+        // An intraday pane on a minute base reaching the first trade: no ask.
+        let minutes: Vec<Bar> = (0..3 * 1_440)
+            .map(|index| candle(index * OHLCV_BASE_INTERVAL_MS))
+            .collect();
+        let held = CandleBaseInterval::default();
+        assert_eq!(held.seam_minutes_ask(&minutes, seams), None);
+    }
+
+    /// Ten whole days, the tenth the seam day, held as the daily base.
+    fn on_days() -> (CandleBaseInterval, Vec<Bar>) {
+        let mut base = CandleBaseInterval::default();
+        base.want(OHLCV_DAILY_INTERVAL_MS);
+        assert_eq!(base.admit(OHLCV_DAILY_INTERVAL_MS, true, true), Ok(()));
+        let days = (0..10)
+            .map(|index| Bar {
+                close_time: index * DAY_MS + DAY_MS - 1,
+                ..candle(index * DAY_MS)
+            })
+            .collect();
+        (base, days)
+    }
+
+    /// A reconnect dropped the channel a seam-minutes request was out on,
+    /// and the request stayed out — so the next days reply was taken for the
+    /// minutes and the lead was lost for the session.
+    #[test]
+    fn a_dropped_channel_lets_the_seam_minutes_go_out_again() {
+        let (mut base, days) = on_days();
+        let seams = [(9 * DAY_MS + 3_600_000, WEEK_MS)];
+        let ask = base.seam_minutes_ask(&days, seams).expect("asked");
+        base.seam_minutes_sent(&ask);
+        base.channel_dropped();
+        assert!(!base.seam_minutes_out(), "nothing will answer it");
+        assert_eq!(base.seam_minutes_ask(&days, seams), Some(ask));
+    }
+
+    /// The parked minutes' answer moved while a seam-minutes request was
+    /// out, and the request was forgotten — so its reply was taken for the
+    /// base. It stays out, stale, and is discarded.
+    #[test]
+    fn a_seam_reply_about_minutes_that_went_stale_is_discarded() {
+        let (mut base, days) = on_days();
+        let minute = OHLCV_BASE_INTERVAL_MS;
+        // Minutes parked by a trip from 5m, ending the day before the seam.
+        let parked: Vec<Bar> = (0..1_440)
+            .map(|index| candle(8 * DAY_MS + index * minute))
+            .collect();
+        base.parked = Some(ParkedBase {
+            wanted_ms: minute,
+            held_ms: minute,
+            bars: parked,
+            older_exhausted: false,
+        });
+        let first_trade = 9 * DAY_MS + 3_600_000;
+        let seams = [(first_trade, DAY_MS)];
+        let ask = base
+            .seam_minutes_ask(&days, seams)
+            .expect("uncovered: asked");
+        base.seam_minutes_sent(&ask);
+        let mut caps = FeedCapabilities::none();
+        caps.ohlcv_generation = 7;
+        assert!(!base.observe(&caps), "the days' answer did not move");
+        assert!(base.seam_minutes_out(), "its reply is still not the base's");
+        let reply: Vec<Bar> = (0..60)
+            .map(|index| candle(9 * DAY_MS + index * minute))
+            .collect();
+        assert_eq!(
+            base.take_seam_minutes(minute, reply, OhlcvSlice::Last { complete: true }),
+            SeamMinutesTaken::Discarded
         );
         assert_eq!(base.parked_minutes(), None);
-        assert_eq!(base.seam_minutes_ask(&days, seams), None);
-        // An intraday pane on a minute base has its minutes held: no ask.
-        let minutes = CandleBaseInterval::default();
-        assert_eq!(minutes.seam_minutes_ask(&days, seams), None);
+        assert_eq!(
+            base.held_ms(),
+            OHLCV_DAILY_INTERVAL_MS,
+            "the days stay the base"
+        );
+        assert_eq!(
+            base.seam_minutes_ask(&days, seams).map(|ask| ask.before_ms),
+            Some(Some(first_trade)),
+            "and the minutes are asked again"
+        );
+    }
+
+    /// An uncovered lead was a dead end. A minute base fetched before the
+    /// session opened asks for the stretch up to the first trade; a complete
+    /// answer with nothing in it vouches that nothing traded, and the
+    /// stretch is not asked again.
+    #[test]
+    fn an_uncovered_lead_asks_for_its_stretch_once() {
+        let minute = OHLCV_BASE_INTERVAL_MS;
+        let mut base = CandleBaseInterval::default();
+        let held: Vec<Bar> = (0..600).map(|index| candle(index * minute)).collect();
+        let first_trade = 12 * 3_600_000 + 2 * minute + 36_000;
+        let seams = [(first_trade, 5 * minute)];
+        assert!(matches!(
+            base.seam_lead(&held, first_trade, 5 * minute),
+            SeamLead::Uncovered { .. }
+        ));
+        let ask = base.seam_minutes_ask(&held, seams).expect("asked");
+        assert_eq!(ask.before_ms, Some(first_trade));
+        assert_eq!(ask.span_ms, first_trade - 12 * 3_600_000);
+        base.seam_minutes_sent(&ask);
+        assert_eq!(
+            base.take_seam_minutes(minute, Vec::new(), OhlcvSlice::Last { complete: true }),
+            SeamMinutesTaken::JoinBase(Vec::new())
+        );
+        assert_eq!(
+            base.seam_lead(&held, first_trade, 5 * minute),
+            SeamLead::Unrecorded {
+                from_ms: 12 * 3_600_000 + 2 * minute
+            }
+        );
+        assert_eq!(base.seam_minutes_ask(&held, seams), None);
+    }
+
+    /// A short answer was taken as a whole one. It vouches for nothing, the
+    /// stretch is asked once more, and after that the absence stays named
+    /// rather than asked for forever.
+    #[test]
+    fn a_short_seam_answer_is_retried_once_and_never_whole() {
+        let (mut base, days) = on_days();
+        let minute = OHLCV_BASE_INTERVAL_MS;
+        let first_trade = 9 * DAY_MS + 3_600_000;
+        let seams = [(first_trade, WEEK_MS)];
+        // The newer half of the stretch: the venue stopped answering.
+        let newer: Vec<Bar> = (30..60)
+            .map(|index| candle(9 * DAY_MS + index * minute))
+            .collect();
+        for _ in 0..SEAM_MINUTES_ASKS {
+            let ask = base.seam_minutes_ask(&days, seams).expect("asked");
+            base.seam_minutes_sent(&ask);
+            base.take_seam_minutes(minute, newer.clone(), OhlcvSlice::Last { complete: false });
+            assert!(matches!(
+                base.seam_lead(&days, first_trade, WEEK_MS),
+                SeamLead::Uncovered { .. }
+            ));
+        }
+        assert_eq!(base.seam_minutes_ask(&days, seams), None, "bounded");
+        // A short answer whose candles do reach is a lead, labelled partial.
+        let whole_hour: Vec<Bar> = (0..60)
+            .map(|index| candle(9 * DAY_MS + index * minute))
+            .collect();
+        base.parked.as_mut().unwrap().bars = whole_hour;
+        assert!(matches!(
+            base.seam_lead(&days, first_trade, WEEK_MS),
+            SeamLead::Lead { whole: false, .. }
+        ));
     }
 
     #[test]
@@ -625,6 +909,7 @@ mod candle_base_tests {
                 interval_ms: OHLCV_BASE_INTERVAL_MS,
                 span_ms: crate::TIME_HISTORY_SPAN_MS,
                 slice_ms: Some(OHLCV_SLICE_SPAN_MS),
+                before_ms: None,
             }
         );
         base.want(OHLCV_DAILY_INTERVAL_MS);
@@ -634,6 +919,7 @@ mod candle_base_tests {
                 interval_ms: OHLCV_DAILY_INTERVAL_MS,
                 span_ms: crate::DAILY_HISTORY_SPAN_MS,
                 slice_ms: None,
+                before_ms: None,
             }
         );
     }

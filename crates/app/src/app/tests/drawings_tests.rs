@@ -918,6 +918,7 @@ fn a_quote_driven_feed_says_so_where_the_side_note_goes() {
                 ohlcv_history: false,
                 ohlcv_generation: 0,
                 ohlcv_daily_generation: 0,
+                ohlcv_aggressor_split: false,
             }),
             latency: feed::unsplit_latency(),
             commands: cmd_tx,

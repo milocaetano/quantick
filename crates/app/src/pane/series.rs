@@ -197,17 +197,21 @@ impl ChartPane {
     /// drawings keep their bars, the indicator columns keep their candles
     /// until the rebuild lands. Returns whether anything changed.
     pub fn install_history_prefix(&mut self, bars: Vec<quantick_engine::Bar>) -> bool {
-        self.install_venue_history(bars, None)
+        self.install_venue_history(bars, None, false)
     }
 
     /// [`Self::install_history_prefix`], with the venue's seam `lead` merged
-    /// into the first engine bar (`ChartState::set_venue_lead`).
+    /// into the first engine bar (`ChartState::set_venue_lead`), and whether
+    /// it leaves nothing of that bar's bucket unaccounted for.
     pub fn install_venue_history(
         &mut self,
         bars: Vec<quantick_engine::Bar>,
         lead: Option<quantick_engine::Bar>,
+        covers_seam: bool,
     ) -> bool {
-        if self.state.set_venue_lead(lead) && !prefix_differs(&self.history_prefix, &bars) {
+        if self.state.set_venue_lead(lead, covers_seam)
+            && !prefix_differs(&self.history_prefix, &bars)
+        {
             self.bump_pagination_revision();
             self.send_indicator_rebuild();
             return true;

@@ -754,6 +754,7 @@ fn a_capability_that_rises_later_is_asked_again() {
         ohlcv_history: false,
         ohlcv_generation: 0,
         ohlcv_daily_generation: 0,
+        ohlcv_aggressor_split: false,
     });
     let mut app = QuantickApp::new(
         test_config(),
@@ -838,6 +839,7 @@ fn a_new_candle_generation_is_asked_for_again_and_installed() {
         ohlcv_history: true,
         ohlcv_generation: 1,
         ohlcv_daily_generation: 0,
+        ohlcv_aggressor_split: false,
     });
     let mut app = QuantickApp::new(
         test_config(),

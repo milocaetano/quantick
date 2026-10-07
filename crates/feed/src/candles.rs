@@ -31,7 +31,7 @@ use quantick_engine::time_bucket::{
 };
 
 mod seam_lead;
-pub use seam_lead::{SeamLead, seam_lead};
+pub use seam_lead::{Minutes, MinutesAnswer, SeamLead, seam_lead};
 
 /// Whether `interval_ms` can be folded to from `base_interval_ms` candles.
 ///

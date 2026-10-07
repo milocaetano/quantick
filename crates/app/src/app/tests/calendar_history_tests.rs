@@ -83,6 +83,7 @@ fn push_feed_app_restoring(
         ohlcv_history: true,
         ohlcv_generation: 1,
         ohlcv_daily_generation: 1,
+        ohlcv_aggressor_split: true,
     });
     let mut app = QuantickApp::new(
         test_config(),
@@ -489,8 +490,8 @@ fn the_forming_day_week_and_month_hold_the_venue_part_before_the_first_trade() {
     app.drain_tabs();
     assert_eq!(
         drain_ohlcv_bases(&mut commands),
-        vec![(minute, quantick_feed::TIME_HISTORY_SPAN_MS, None)],
-        "the seam day's minutes, asked once the days settled"
+        vec![(minute, FIRST_TRADE_MS - SEAM_DAY * DAY_MS, None)],
+        "the seam day's minutes up to the first trade, asked once the days settled"
     );
     let capabilities = app.active_tab().capabilities(&app.config);
     assert_eq!(
@@ -683,4 +684,181 @@ fn venue_candles_ahead_of_the_first_print_meet_it_at_the_seam() {
         pane.slot_open_time(seam - 1) < pane.slot_open_time(seam),
         "nothing overlaps the seam"
     );
+}
+
+/// The days to the seam, and the minutes of the session before the seam day
+/// only — what a terminal that pushed its block before the open holds.
+fn minutes_of_the_session_before() -> Vec<quantick_engine::Bar> {
+    venue_history_range(
+        (SEAM_DAY - 1) * 1_440 + 13 * 60,
+        (SEAM_DAY - 1) * 1_440 + 21 * 60,
+    )
+}
+
+/// A fresh feed for a reconnect: its event sender, its command receiver, and
+/// a spawn that hands it over once. The daily answer's generation moved, as
+/// a bridge re-sending its blocks moves it.
+fn reconnect(app: &mut QuantickApp) -> (mpsc::Sender<FeedEvent>, mpsc::Receiver<FeedCommand>) {
+    let (events, event_rx) = mpsc::channel(64);
+    let (_book, books) = mpsc::channel(64);
+    let (commands, command_rx) = mpsc::channel(16);
+    let mut handle = Some(FeedHandle {
+        events: event_rx,
+        book_events: books,
+        notices: feed::silent_notices(),
+        capabilities: feed::fixed_capabilities(FeedCapabilities {
+            ohlcv_daily_generation: 2,
+            ohlcv_aggressor_split: false,
+            ..app.active_tab().capabilities(&app.config)
+        }),
+        latency: feed::unsplit_latency(),
+        commands,
+        replay: None,
+    });
+    let mut spawn = |_, _: &str, _: &quantick_feed::config::MetaTraderSettings, _| {
+        handle.take().expect("spawned once")
+    };
+    let (tab, config) = app.active_with_config();
+    assert!(tab.reconnect_feed_with_spawn(config, &mut spawn));
+    (events, command_rx)
+}
+
+/// Blocker: a reconnect while the seam's minutes were out left them out
+/// forever. The days the new session re-sent were taken for the minutes, the
+/// days were fetched again, and the lead was lost for the session. Now the
+/// new session's days are the base, and the minutes are asked again.
+#[test]
+fn a_reconnect_with_the_seam_minutes_out_asks_for_them_again() {
+    let ctx = egui::Context::default();
+    let (mut app, events, mut commands, _caps) =
+        push_feed_app_restoring(&ctx, Some(WEEK_MS), seam_day_trades());
+    let minute = quantick_feed::OHLCV_BASE_INTERVAL_MS;
+    let day = quantick_feed::OHLCV_DAILY_INTERVAL_MS;
+    let intervals = |commands: &mut mpsc::Receiver<FeedCommand>| {
+        drain_ohlcv_bases(commands)
+            .iter()
+            .map(|asked| asked.0)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(intervals(&mut commands), vec![day]);
+    answer(&events, day, days_to_the_seam());
+    app.drain_tabs();
+    assert_eq!(intervals(&mut commands), vec![minute], "the seam's minutes");
+
+    let (events, mut commands) = reconnect(&mut app);
+    app.drain_tabs();
+    assert_eq!(intervals(&mut commands), vec![day], "the re-sent days");
+    answer(&events, day, days_to_the_seam());
+    app.drain_tabs();
+    assert_eq!(
+        app.active_tab().venue_candles_held(),
+        days_to_the_seam().len(),
+        "the days are the base, not the seam's minutes"
+    );
+    assert_eq!(intervals(&mut commands), vec![minute], "asked again");
+    answer(&events, minute, minutes_to_the_seam());
+    app.drain_tabs();
+    let pane = app.active_tab().pane(PaneSide::Time(0));
+    assert!(pane.state.venue_lead().is_some(), "the lead is back");
+    assert_eq!(
+        pane.state.partial().map(|bar| bar.open_time),
+        Some(4 * DAY_MS)
+    );
+}
+
+/// Blocker: B3 on MetaTrader, launched before the open. The minutes end on
+/// the previous session, so the week's lead was uncovered and the forming
+/// week lost Monday to Wednesday. The seam's minutes are asked for up to the
+/// first trade, and the terminal's complete answer — its block from before
+/// the open — says nothing traded since: the week holds its whole days,
+/// labelled partial for the seconds before the first trade.
+#[test]
+fn a_complete_answer_for_the_seam_stretch_closes_it_with_nothing_traded() {
+    let ctx = egui::Context::default();
+    let (mut app, events, mut commands, _caps) =
+        push_feed_app_restoring(&ctx, Some(WEEK_MS), seam_day_trades());
+    let minute = quantick_feed::OHLCV_BASE_INTERVAL_MS;
+    let day = quantick_feed::OHLCV_DAILY_INTERVAL_MS;
+    drain_ohlcv_bases(&mut commands);
+    answer(&events, day, days_to_the_seam());
+    app.drain_tabs();
+    drain_ohlcv_bases(&mut commands);
+    answer(&events, minute, minutes_of_the_session_before());
+    app.drain_tabs();
+    app.drain_tabs();
+    assert!(drain_ohlcv_bases(&mut commands).is_empty(), "not again");
+    assert_forming_week_holds_its_whole_days(&app);
+}
+
+/// The forming week is the days Monday to Wednesday, then the prints, and
+/// is labelled as missing the seconds before the first trade.
+fn assert_forming_week_holds_its_whole_days(app: &QuantickApp) {
+    let tab = app.active_tab();
+    let pane = tab.pane(PaneSide::Time(0));
+    assert!(pane.state.venue_lead().is_some());
+    let whole_days = days_to_the_seam()
+        .into_iter()
+        .filter(|bar| bar.open_time >= 4 * DAY_MS && bar.open_time < SEAM_DAY * DAY_MS)
+        .collect::<Vec<_>>();
+    let forming = pane.state.partial().expect("forming");
+    assert_eq!(forming, &venue_then_prints(&whole_days, WEEK_MS));
+    let snapshot = crate::control::chart::bar_snapshot(
+        tab,
+        pane,
+        pane.seam_slot(),
+        forming,
+        crate::control::chart::BarStateDto::InProgress,
+        &app.config,
+    );
+    assert_eq!(snapshot.provenance.completeness, "partial");
+}
+
+/// The same terminal, with the minutes parked from an intraday pane before
+/// the trip to 1w: read from the candles alone the stretch is uncovered — a
+/// dead end until now. It is asked for up to the first trade, once, and the
+/// complete answer closes it.
+#[test]
+fn an_uncovered_seam_asks_for_its_stretch_and_a_complete_answer_closes_it() {
+    let ctx = egui::Context::default();
+    let (mut app, events, mut commands, _caps) =
+        push_feed_app_restoring(&ctx, Some(5 * 60_000), seam_day_trades());
+    let minute = quantick_feed::OHLCV_BASE_INTERVAL_MS;
+    let day = quantick_feed::OHLCV_DAILY_INTERVAL_MS;
+    drain_ohlcv_bases(&mut commands);
+    answer(&events, minute, minutes_of_the_session_before());
+    app.drain_tabs();
+    // The 5m seam bar's own stretch, 06:10 to the first trade.
+    let bucket = (FIRST_MINUTE - 4) * minute;
+    assert_eq!(
+        drain_ohlcv_bases(&mut commands),
+        vec![(minute, FIRST_TRADE_MS - bucket, None)]
+    );
+    answer(&events, minute, Vec::new());
+    app.drain_tabs();
+    set_time_pane(&mut app, WEEK_MS);
+    app.drain_tabs();
+    assert_eq!(
+        drain_ohlcv_bases(&mut commands)
+            .iter()
+            .map(|asked| asked.0)
+            .collect::<Vec<_>>(),
+        vec![day]
+    );
+    answer(&events, day, days_to_the_seam());
+    app.drain_tabs();
+    app.drain_tabs();
+    assert_eq!(
+        drain_ohlcv_bases(&mut commands),
+        vec![(minute, FIRST_TRADE_MS - SEAM_DAY * DAY_MS, None)],
+        "the uncovered stretch is asked for"
+    );
+    assert_eq!(
+        app.active_tab().pane(PaneSide::Time(0)).state.venue_lead(),
+        None
+    );
+    answer(&events, minute, minutes_of_the_session_before());
+    app.drain_tabs();
+    app.drain_tabs();
+    assert!(drain_ohlcv_bases(&mut commands).is_empty(), "and not again");
+    assert_forming_week_holds_its_whole_days(&app);
 }

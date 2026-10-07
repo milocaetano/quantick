@@ -17,6 +17,11 @@
 //! lead replaces the old instead of piling onto it, and every rebuild starts
 //! from what the prints alone say. Deterministic: same prints and lead in,
 //! same bars out.
+//!
+//! Whether the lead reaches the first print is held beside it: a first bar
+//! that opened after its bucket did and has no lead vouching for the stretch
+//! between knowingly misses part of its bucket, and
+//! [`ChartState::seam_bar_partial`] says so for the label.
 
 use quantick_engine::Bar;
 use quantick_engine::bar_registry::BarConfiguration;
@@ -33,6 +38,9 @@ pub(super) struct VenueLead {
     seated_on: Option<Bar>,
     /// Whether the first closed bar was judged against the lead already.
     judged: bool,
+    /// Whether the lead and the prints together hold the first bar's whole
+    /// bucket up to its first print.
+    covers: bool,
 }
 
 impl VenueLead {
@@ -40,6 +48,7 @@ impl VenueLead {
     pub(super) fn carried(&self) -> Self {
         Self {
             bar: self.bar.clone(),
+            covers: self.covers,
             ..Self::default()
         }
     }
@@ -52,10 +61,11 @@ impl VenueLead {
 
     /// Hold `lead` instead, putting the first closed bar back as the prints
     /// cut it; whether the lead changed. The caller seats the new one.
-    pub(super) fn replace(&mut self, lead: Option<Bar>, bars: &mut [Bar]) -> bool {
+    pub(super) fn replace(&mut self, lead: Option<Bar>, covers: bool, bars: &mut [Bar]) -> bool {
         if self.bar == lead {
-            return false;
+            return std::mem::replace(&mut self.covers, covers) != covers;
         }
+        self.covers = covers;
         if let (Some(raw), Some(first)) = (self.seated_on.take(), bars.first_mut()) {
             *first = raw;
         }
@@ -120,9 +130,11 @@ impl VenueLead {
 
 impl ChartState {
     /// Merge `lead` into the first bar where it fits (see [`self`]); `None`
-    /// takes it away. Whether the lead changed.
-    pub fn set_venue_lead(&mut self, lead: Option<Bar>) -> bool {
-        let changed = self.venue_lead.replace(lead, &mut self.bars);
+    /// takes it away. `covers_seam` is whether the lead — or, with none, the
+    /// venue's record — leaves nothing of the first bar's bucket before its
+    /// first print unaccounted for. Whether either changed.
+    pub fn set_venue_lead(&mut self, lead: Option<Bar>, covers_seam: bool) -> bool {
+        let changed = self.venue_lead.replace(lead, covers_seam, &mut self.bars);
         if changed {
             self.refresh_partial();
             self.bump_series_revision();
@@ -136,6 +148,21 @@ impl ChartState {
     pub fn venue_lead(&self) -> Option<&Bar> {
         let (spec, forming) = (self.spec, self.builder.partial());
         self.venue_lead.merged_lead(spec, &self.bars, forming)
+    }
+
+    /// Whether the first bar knowingly misses part of its bucket: a time
+    /// chart's first print came after the bucket opened, and no lead that
+    /// reaches that print is merged in front of it. True on a chart with no
+    /// venue history at all, whose first bar is the prints' alone.
+    #[must_use]
+    pub fn seam_bar_partial(&self) -> bool {
+        let (Some(interval), Some(first)) =
+            (self.spec.time_interval_ms(), self.first_print_open_ms())
+        else {
+            return false;
+        };
+        let merged = self.venue_lead.bar.is_none() || self.venue_lead().is_some();
+        time_bucket_start(first, interval) < first && !(self.venue_lead.covers && merged)
     }
 
     /// The first bar's open as its prints alone cut it: what a lead is cut
@@ -212,7 +239,7 @@ mod venue_lead_tests {
     fn the_forming_first_bar_carries_the_lead_through_every_print() {
         let mut chart = chart();
         let raw = chart.partial().cloned().unwrap();
-        assert!(chart.set_venue_lead(Some(lead())));
+        assert!(chart.set_venue_lead(Some(lead()), true));
         let expected = merged(&lead(), &raw);
         assert_eq!(chart.partial(), Some(&expected));
         assert_eq!(chart.partial().unwrap().open_time, 9 * DAY_MS);
@@ -228,7 +255,7 @@ mod venue_lead_tests {
         assert_eq!(forming.close, Decimal::from(140));
         assert_eq!(forming.trade_count, 503, "nothing counted twice");
         assert!(
-            !chart.set_venue_lead(Some(lead())),
+            !chart.set_venue_lead(Some(lead()), true),
             "the same lead is no news"
         );
     }
@@ -238,7 +265,7 @@ mod venue_lead_tests {
     #[test]
     fn the_closed_first_bar_keeps_the_lead_and_a_rebuild_reapplies_it() {
         let mut chart = chart();
-        chart.set_venue_lead(Some(lead()));
+        chart.set_venue_lead(Some(lead()), true);
         chart.ingest_live(&print(10 * DAY_MS + HOUR, 102));
         assert_eq!(chart.bars().len(), 1);
         assert_eq!(chart.bars()[0].open_time, 9 * DAY_MS);
@@ -256,9 +283,9 @@ mod venue_lead_tests {
             trade_count: 10,
             ..lead()
         };
-        chart.set_venue_lead(Some(shorter));
+        chart.set_venue_lead(Some(shorter), true);
         assert_eq!(chart.bars()[0].trade_count, 12);
-        chart.set_venue_lead(None);
+        chart.set_venue_lead(None, true);
         assert_eq!(
             chart.bars()[0].open_time,
             FIRST_PRINT,
@@ -279,23 +306,60 @@ mod venue_lead_tests {
             close_time: 8 * DAY_MS + HOUR,
             ..lead()
         };
-        chart.set_venue_lead(Some(yesterday));
+        chart.set_venue_lead(Some(yesterday), true);
         assert_eq!(chart.partial().cloned(), raw);
         assert_eq!(chart.venue_lead(), None);
         let overlapping = Bar {
             close_time: FIRST_PRINT,
             ..lead()
         };
-        chart.set_venue_lead(Some(overlapping));
+        chart.set_venue_lead(Some(overlapping), true);
         assert_eq!(chart.partial().cloned(), raw);
 
         // Older prints move the first bar back a day: the lead cut for the
         // old one no longer fits, and the prints' own answer stands.
-        chart.set_venue_lead(Some(lead()));
+        chart.set_venue_lead(Some(lead()), true);
         chart.prepend_history(&[print(8 * DAY_MS + HOUR, 95)]);
         assert_eq!(chart.bars()[0].open_time, 8 * DAY_MS + HOUR);
         assert_eq!(chart.venue_lead(), None);
         assert_eq!(chart.partial().unwrap().open_time, FIRST_PRINT);
+    }
+
+    /// The forming day misses 00:00 to the first print until a lead reaching
+    /// that print is merged; one that stops short, or none, leaves it
+    /// partial, and so does a lead from another bucket that cannot be merged.
+    #[test]
+    fn the_seam_bar_is_partial_unless_a_merged_lead_reaches_its_first_print() {
+        let mut chart = chart();
+        assert!(
+            chart.seam_bar_partial(),
+            "the prints' own day opens at 06:14"
+        );
+        chart.set_venue_lead(Some(lead()), false);
+        assert!(chart.seam_bar_partial(), "a lead short of the first print");
+        assert!(chart.set_venue_lead(Some(lead()), true), "news: now whole");
+        assert!(!chart.seam_bar_partial());
+        let yesterday = Bar {
+            open_time: 8 * DAY_MS,
+            close_time: 8 * DAY_MS + HOUR,
+            ..lead()
+        };
+        chart.set_venue_lead(Some(yesterday), true);
+        assert!(chart.seam_bar_partial(), "a lead that is not merged");
+        chart.set_venue_lead(None, true);
+        assert!(
+            !chart.seam_bar_partial(),
+            "nothing missing, nothing to merge"
+        );
+        let mut on_the_hour = ChartState::new(BarSpec::Time(HOUR));
+        on_the_hour.ingest_backfill(&[print(9 * DAY_MS + 6 * HOUR, 100)]);
+        assert!(
+            !on_the_hour.seam_bar_partial(),
+            "a bucket opening on a print"
+        );
+        let mut ticks = ChartState::new(BarSpec::Tick(10));
+        ticks.ingest_backfill(&[print(FIRST_PRINT, 100)]);
+        assert!(!ticks.seam_bar_partial(), "no bucket at all");
     }
 
     /// A tick chart has no bucket to lead into; a new spec drops the lead.
@@ -303,12 +367,12 @@ mod venue_lead_tests {
     fn only_a_time_chart_takes_a_lead_and_a_new_spec_drops_it() {
         let mut ticks = ChartState::new(BarSpec::Tick(10));
         ticks.ingest_backfill(&[print(FIRST_PRINT, 100)]);
-        ticks.set_venue_lead(Some(lead()));
+        ticks.set_venue_lead(Some(lead()), true);
         assert_eq!(ticks.venue_lead(), None);
         assert_eq!(ticks.partial().unwrap().trade_count, 1);
 
         let mut chart = chart();
-        chart.set_venue_lead(Some(lead()));
+        chart.set_venue_lead(Some(lead()), true);
         chart.set_spec(BarSpec::Time(2 * DAY_MS));
         assert_eq!(chart.venue_lead(), None);
         assert_eq!(chart.partial().unwrap().open_time, FIRST_PRINT);

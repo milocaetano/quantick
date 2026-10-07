@@ -383,6 +383,7 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
             ohlcv_history: request.session.context.is_some(),
             ohlcv_generation: 0,
             ohlcv_daily_generation: 0,
+            ohlcv_aggressor_split: false,
         }),
         commands: cmd_tx,
         // A recording has no chain to attribute: its prints are as old as the

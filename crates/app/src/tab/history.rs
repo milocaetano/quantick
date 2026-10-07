@@ -143,11 +143,14 @@ impl Tab {
         } else {
             Some(self.ohlcv_interval.ask(self.progressive_history))
         };
-        let Some(quantick_feed::candle_base::CandleAsk {
-            interval_ms,
-            span_ms,
-            slice_ms,
-        }) = ask.filter(|_| self.capabilities(config).ohlcv_history)
+        let Some(
+            ask @ quantick_feed::candle_base::CandleAsk {
+                interval_ms,
+                span_ms,
+                slice_ms,
+                before_ms,
+            },
+        ) = ask.filter(|_| self.capabilities(config).ohlcv_history)
         else {
             return;
         };
@@ -155,15 +158,16 @@ impl Tab {
             interval_ms,
             span_ms,
             slice_ms,
-            // The opening request: back from the live edge. Reaching further
-            // than one span is `request_older_ohlcv_history`'s job.
-            before_ms: None,
+            // The opening request reaches back from the live edge; the seam's
+            // minutes, up to the first trade. Reaching further than one span
+            // is `request_older_ohlcv_history`'s job.
+            before_ms,
         };
         match self.commands.try_send(command) {
             Ok(()) => {
                 self.ohlcv_pending = true;
                 if seam_minutes {
-                    self.ohlcv_interval.seam_minutes_sent();
+                    self.ohlcv_interval.seam_minutes_sent(&ask);
                 } else {
                     self.ohlcv_reaching_back = None;
                     self.ohlcv_older_exhausted = false;
@@ -182,6 +186,7 @@ impl Tab {
                     interval_ms,
                     span_ms,
                     slice_ms = slice_ms.unwrap_or(0),
+                    before_ms = before_ms.unwrap_or(0),
                     action = if slice_ms.is_some() { "await_slices" } else { "await_single_reply" },
                     "asked the venue for candle history"
                 );
@@ -305,18 +310,31 @@ impl Tab {
             return;
         }
         if self.ohlcv_interval.seam_minutes_out() {
-            // The seam's minutes: parked beside the days, never the base,
-            // and never a verdict on *load older*.
+            // The seam's minutes: parked beside the days or joining the
+            // minute base, never a verdict on *load older*, and a reply about
+            // minutes gone stale never the base.
+            let received = bars.len();
+            let taken = self
+                .ohlcv_interval
+                .take_seam_minutes(interval_ms, bars, slice);
             tracing::info!(
                 target: "quantick::app",
                 event_code = "OHLCV_SEAM_MINUTES_RECEIVED",
                 tab = tab_id,
-                bars = bars.len(),
+                bars = received,
                 last,
-                "minutes for the seam lead arrived; parked beside the days"
+                action = match &taken {
+                    quantick_feed::candle_base::SeamMinutesTaken::Kept => "parked_beside_the_days",
+                    quantick_feed::candle_base::SeamMinutesTaken::JoinBase(_) => "joined_the_minute_base",
+                    quantick_feed::candle_base::SeamMinutesTaken::Discarded => "discarded_stale",
+                },
+                "minutes for the seam lead arrived"
             );
-            self.ohlcv_interval
-                .take_seam_minutes(interval_ms, bars, slice);
+            if let (quantick_feed::candle_base::SeamMinutesTaken::JoinBase(minutes), Some(base)) =
+                (taken, self.ohlcv_base.as_mut())
+            {
+                merge_older_candles(base, minutes);
+            }
             if last {
                 self.ohlcv_pending = false;
                 self.loading.end(LoadingTask::VenueHistory);
@@ -520,6 +538,15 @@ impl Tab {
         self.ohlcv_base.as_ref().map_or(0, Vec::len)
     }
 
+    /// Whether the venue's record starts inside the `interval_ms` bucket its
+    /// oldest candle folds into: that bar holds only part of its bucket.
+    #[must_use]
+    pub fn venue_record_starts_inside(&self, interval_ms: i64) -> bool {
+        self.ohlcv_base.as_ref().is_some_and(|base| {
+            crate::resample::starts_inside_bucket(base, self.ohlcv_interval.held_ms(), interval_ms)
+        })
+    }
+
     /// The oldest venue candle held, by bucket start.
     fn oldest_venue_candle_ms(&self) -> Option<i64> {
         self.ohlcv_base.as_ref()?.first().map(|bar| bar.open_time)
@@ -614,6 +641,7 @@ impl Tab {
             interval_ms,
             span_ms,
             slice_ms,
+            ..
         } = self.ohlcv_interval.ask(self.progressive_history);
         let command = FeedCommand::FetchOhlcv {
             interval_ms,
@@ -744,8 +772,9 @@ impl Tab {
                 continue;
             };
             let token = outcome.token();
+            let covers_seam = outcome.covers_seam();
             let had = pane.state.venue_lead().cloned();
-            changed |= pane.install_venue_history(prefix, outcome.into_bar());
+            changed |= pane.install_venue_history(prefix, outcome.into_bar(), covers_seam);
             let seated = pane.state.venue_lead();
             if had.as_ref() != seated || seated.is_none() && token != "nothing_before_first_trade" {
                 // The seam bar is venue + prints, or says why it is not.

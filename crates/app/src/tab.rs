@@ -754,8 +754,10 @@ impl Tab {
         // answer that never comes.
         self.ohlcv_pending = false;
         // The channel carrying any in-flight slices is dropped with the old
-        // handle, so nothing survives to be dropped as stale.
+        // handle, so nothing survives to be dropped as stale — the seam's
+        // minutes included, which the new session is asked for again.
         self.ohlcv_stale = false;
+        self.ohlcv_interval.channel_dropped();
         // The run belonged to the old session's tape; its reply is on a channel
         // about to be dropped, and whatever it had to say was about a record
         // this tab no longer shows.

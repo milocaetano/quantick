@@ -81,6 +81,7 @@ impl ProviderKind {
                 ohlcv_history: true,
                 ohlcv_generation: 0,
                 ohlcv_daily_generation: 0,
+                ohlcv_aggressor_split: true,
             },
             // `recentTrades` is a short recovery window, not a pageable
             // historical API. Trades and the visible 20-level book are factual;
@@ -98,6 +99,7 @@ impl ProviderKind {
                 ohlcv_history: true,
                 ohlcv_generation: 0,
                 ohlcv_daily_generation: 0,
+                ohlcv_aggressor_split: false,
             },
             // The bridge streams the terminal's Depth of Market. Whether a
             // given session really has one (symbol, account, EA version) is
@@ -119,6 +121,7 @@ impl ProviderKind {
                 ohlcv_history: false,
                 ohlcv_generation: 0,
                 ohlcv_daily_generation: 0,
+                ohlcv_aggressor_split: false,
             },
         }
     }
@@ -214,6 +217,11 @@ pub struct FeedCapabilities {
     /// moves when that answer changes — a daily block arrived, or, while
     /// none usable is held, the minutes standing in for it did.
     pub ohlcv_daily_generation: u64,
+    /// Its candles carry the venue's own aggressor split (Binance's taker-buy
+    /// volume). False where each side of a candle carries half its volume —
+    /// MetaTrader, Hyperliquid — or where the split is not known, so a bar
+    /// summarising candles says its buy, sell and delta were not measured.
+    pub ohlcv_aggressor_split: bool,
 }
 
 impl FeedCapabilities {
@@ -229,6 +237,7 @@ impl FeedCapabilities {
             ohlcv_history: false,
             ohlcv_generation: 0,
             ohlcv_daily_generation: 0,
+            ohlcv_aggressor_split: false,
         }
     }
 

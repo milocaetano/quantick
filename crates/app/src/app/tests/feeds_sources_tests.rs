@@ -1852,6 +1852,7 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
         ohlcv_history: false,
         ohlcv_generation: 0,
         ohlcv_daily_generation: 0,
+        ohlcv_aggressor_split: false,
     });
     let mut app = QuantickApp::new(
         test_config(),
