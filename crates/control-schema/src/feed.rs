@@ -74,6 +74,12 @@ pub struct FeedTabSnapshot {
     /// must be able to learn it from the same words rather than by diffing
     /// bar counts.
     pub history_reach_note: Option<String>,
+    /// This tab's history run: idle, queued behind the opening fill, loading
+    /// toward its target with how far back it has got, or paused while the
+    /// tab is off screen. Optional so a v1 payload recorded before it keeps
+    /// parsing; the application always reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_load: Option<super::history::HistoryLoadSnapshot>,
     pub live_trade_count: WireU64,
     #[schemars(extend("x-unit" = "unix_milliseconds"))]
     pub latest_trade_unix_ms: Option<i64>,

@@ -137,30 +137,9 @@ fn book_and_strip(app: &mut QuantickApp, env: &ScenarioInputs) {
 /// How far back a launch reaches, and how it gets there.
 #[cfg(any(feature = "scenario-harness", test))]
 fn history(app: &mut QuantickApp, env: &ScenarioInputs) {
-    // The switch itself, so both sides of it are reachable without a
-    // click. Set explicitly, it also overrides what the workspace saved:
-    // a validation run must be able to pin the state it is photographing.
-    // The same registry the menu lists from, so a hook can reach every
-    // reach the trader can — and an unknown token is refused out loud
-    // rather than silently leaving the default in place, which would look
-    // like a press that ignored the run it was told to make.
-    if let Some(token) = env.var("QUANTICK_HISTORY_REACH") {
-        match history_reach::HistoryReach::from_token(&token) {
-            Some(reach) => app.history.set_reach(reach),
-            None => tracing::warn!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "HISTORY_REACH_HOOK_UNKNOWN",
-                token = %token,
-                action = "keep_current_reach",
-                "QUANTICK_HISTORY_REACH names no reach this build has"
-            ),
-        }
-    }
     if let Some(raw) = env.var("QUANTICK_HISTORY_REACH_SPAN_MINUTES") {
-        // Beside `QUANTICK_HISTORY_REACH`, because the reach and how far it
-        // goes are one choice: a hook that could pick `by time` but not say
-        // how much time would leave the operator setting half of it.
+        // Read before `QUANTICK_HISTORY_REACH`: it is what that hook's legacy
+        // `span` token means, as it is in a saved workspace.
         match raw.trim().parse::<u32>() {
             Ok(minutes) => app.history.set_span_minutes(minutes),
             Err(_) => tracing::warn!(
@@ -170,6 +149,25 @@ fn history(app: &mut QuantickApp, env: &ScenarioInputs) {
                 value = %raw,
                 action = "keep_current_span",
                 "QUANTICK_HISTORY_REACH_SPAN_MINUTES is not a whole number of minutes"
+            ),
+        }
+    }
+    // What the main click loads, as `hours:N` or `sessions:N` (or a token the
+    // old reach menu saved). Set explicitly, it overrides the workspace: a
+    // validation run must be able to pin what it photographs. An unknown
+    // token is refused out loud with the grammar, never silently defaulted.
+    if let Some(token) = env.var("QUANTICK_HISTORY_REACH") {
+        let span = app.history.history_reach_span_minutes;
+        match history_reach::HistoryReach::from_legacy_span(&token, span) {
+            Some(reach) => app.history.history_reach = reach,
+            None => tracing::warn!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "HISTORY_REACH_HOOK_UNKNOWN",
+                token = %token,
+                error = %history_reach::HistoryReach::parse(&token).err().map_or_else(String::new, |error| error.to_string()),
+                action = "keep_current_reach",
+                "QUANTICK_HISTORY_REACH names no reach this build has"
             ),
         }
     }

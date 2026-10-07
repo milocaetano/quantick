@@ -158,9 +158,10 @@ fn the_bridge_and_the_app_measure_a_session_the_same_way() {
         Agreement {
             python: "SESSION_WALK_MAX_SPAN_MS",
             rust: "MAX_CAMPAIGN_SPAN_MS",
-            because: "on a market that never closes there is no gap to stop either side, so \
-                      both fall back to this span. Different values mean the opening block \
-                      and one press of load older disagree about how far back is enough.",
+            because: "on a market that never closes there is no gap to stop the bridge's \
+                      opening walk, and the chart's longest hours target is the same span. \
+                      Different values mean the opening block and the History menu disagree \
+                      about how far back two days is.",
         },
     ];
 

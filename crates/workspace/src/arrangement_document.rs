@@ -217,25 +217,16 @@ pub struct SavedChrome {
     /// no way to know why.
     #[serde(default = "yes")]
     pub progressive_history: bool,
-    /// How far one press of *load older* reaches, as
-    /// `quantick_feed::history_reach::HistoryReach::token` writes it.
-    ///
-    /// A token rather than a variant name, so a release may reword the menu
-    /// label without orphaning every saved workspace. Absent — or a token a
-    /// later release wrote and this one does not know — restores the default
-    /// reach, which is the single page the button has always fetched: the one
-    /// answer that is never a surprise.
+    /// What the History button's main click loads on a tab that has not
+    /// pressed, as `quantick_feed::history_reach::HistoryReach::token` writes
+    /// it (`hours:N`, `sessions:N`; the old `page`, `previous-session` and
+    /// `span` still read). Absent, or a token this release does not know,
+    /// restores the default: yesterday.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history_reach: Option<String>,
-    /// How far one press of the *by time* reach pulls, in minutes of traded
-    /// time.
-    ///
-    /// Saved beside the reach because the two are one choice: a workspace that
-    /// restored `by time` without its span put the menu and the press out of
-    /// step — the chip read what the trader picked while the span had silently
-    /// gone back to the config seed, and nothing on screen said so. Absent
-    /// means a file written before this existed, and restores the configured
-    /// default rather than a number nobody chose.
+    /// What a saved legacy `span` reach meant, in minutes of traded time; it
+    /// loads as the `hours:N` target covering it. Absent restores the
+    /// configured default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history_reach_span_minutes: Option<u32>,
     /// Whether a chart cut by trades carried the venue's candles in front of

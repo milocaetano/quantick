@@ -75,24 +75,18 @@ pub(super) struct HistorySettings {
     /// not a setting the user can fall back to.
     pub(super) progressive_history: bool,
 
-    /// How far one press of the chart's *load older* button reaches — one
-    /// page of trades, or back past the market's last close with a lead into
-    /// the session before it.
-    ///
-    /// A standing choice of the window rather than of a market: a trader who
-    /// wants to see yesterday wants it in the tab they open next too. Mirrored
-    /// onto every tab each frame, which is where the press is actually served.
+    /// What the History button's main click loads on a tab that has never
+    /// pressed: the last target pressed in this window, saved with the
+    /// workspace. A tab that has pressed repeats its own last target, and a
+    /// run belongs to its tab alone. Every press sets it through
+    /// [`super::control_host::TabsMut::press_history`], the one press the
+    /// toolbar and the control plane share; the `QUANTICK_HISTORY_REACH` hook
+    /// and an opened workspace set it directly.
     pub(super) history_reach: history_reach::HistoryReach,
 
-    /// Minutes of *traded* time one press of the `by time` reach pulls.
-    ///
-    /// On the window beside the reach it belongs to, and mirrored onto every
-    /// tab by `drain_tabs`, exactly as the reach itself is: the two are one
-    /// choice, and a tab opened after the trader set it must press the way
-    /// they said. Seeded from `[history] reach_span_minutes` and editable
-    /// afterwards, because it is the trader's own answer to "how much more
-    /// tape per press" and that differs between a contract printing a million
-    /// times a day and one printing a thousand.
+    /// Minutes of traded time a workspace saved with the old `by time` reach
+    /// meant, so its `span` token loads as the same `hours:N` target. Seeded
+    /// from `[history] reach_span_minutes`.
     pub(super) history_reach_span_minutes: u32,
 
     /// Whether a chart *not* cut by time may carry the venue's own candles in
@@ -161,11 +155,11 @@ impl QuantickApp {
         // Before the drain: a reading that arrives this frame lands on a
         // recorder built for the market it belongs to.
         super::deal_recording_wiring::ensure(self);
-        let config = &self.config;
-        let policy = self.history.policy();
+        let (config, active) = (&self.config, self.tabs.active_id());
         let mut trades = 0_u64;
         for (tab_id, tab) in self.tabs.iter_with_ids_mut() {
             let before = tab.live_trades;
+            let policy = self.history.policy(self.tz, tab_id == active);
             tab.drain_frame(tab_id, config, policy);
             trades += tab.live_trades - before;
         }
@@ -244,25 +238,8 @@ impl QuantickApp {
 }
 
 impl HistorySettings {
-    /// Choose how far one press of *load older* reaches.
-    ///
-    /// The named call behind the history menu's reach chips and the
-    /// `QUANTICK_HISTORY_REACH` hook — one path, so an operator without a
-    /// mouse sets what a click sets. Mirrored onto every tab by `drain_tabs`,
-    /// where a run in flight also reads it: withdrawing the longer reach is
-    /// how a trader calls that run off.
-    pub(super) fn set_reach(&mut self, reach: history_reach::HistoryReach) {
-        self.history_reach = reach;
-    }
-
-    /// How far back one press of the `by time` reach pulls, in minutes of
-    /// traded time.
-    ///
-    /// Clamped rather than refused: a span of zero is a press that asks for
-    /// nothing, and the operator that sent it meant *some* history. The
-    /// ceiling is the campaign's own span cap, past which no run can reach
-    /// anyway, so accepting a larger number would be promising a reach the
-    /// budgets forbid.
+    /// The minutes a legacy `span` token means, clamped to what an hours
+    /// target can reach.
     pub(super) fn set_span_minutes(&mut self, minutes: u32) {
         let ceiling = (history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000) as u32;
         self.history_reach_span_minutes = minutes.clamp(1, ceiling);
@@ -272,12 +249,20 @@ impl HistorySettings {
     /// on the window, the request is phrased by the tab: handed to every
     /// tab's drain each frame so every tab asks the way the trader last said,
     /// including one opened after the choice was made.
-    pub(super) fn policy(&self) -> crate::tab::HistoryPolicy {
+    /// Only the tab on screen (`visible`) keeps paging a history run.
+    pub(super) fn policy(
+        &self,
+        tz: crate::timezone::TzOffset,
+        visible: bool,
+    ) -> crate::tab::HistoryPolicy {
         crate::tab::HistoryPolicy {
             progressive: self.progressive_history,
-            reach: self.history_reach,
-            reach_span_minutes: self.history_reach_span_minutes,
             venue_lead_in: self.venue_lead_in,
+            frame: crate::tab::HistoryFrame {
+                default_reach: self.history_reach,
+                tz,
+                visible,
+            },
         }
     }
 }

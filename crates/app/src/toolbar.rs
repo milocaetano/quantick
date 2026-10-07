@@ -30,7 +30,8 @@ use quantick_engine::bar_selection::{BarInputAvailability, SelectionCommand};
 mod bar_parameters;
 use crate::theme;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
-use quantick_feed::history_reach;
+use quantick_feed::history_reach::HistoryReach;
+use quantick_feed::history_run::RunStatus;
 
 /// Height of the toolbar, in pixels (§5 zone 2).
 pub const TOOLBAR_HEIGHT: f32 = 44.0;
@@ -69,8 +70,8 @@ const W_TIME_PARAM: f32 = 365.0;
 /// label and drag. Underestimating this makes the collapse plan draw a row
 /// wider than it budgeted instead of folding it.
 const W_IMBALANCE_PARAM: f32 = 330.0;
-/// The `+ older ▾` split button.
-const W_HISTORY: f32 = 100.0;
+/// The `History: <target> ▾` split button.
+const W_HISTORY: f32 = 150.0;
 /// The LAYERS icon group (bubbles, heatmap, live strip, indicators).
 const W_LAYERS: f32 = 128.0;
 /// One 28 px icon button (LOOK, PANELS, or the overflow `⋯`).
@@ -254,20 +255,8 @@ pub struct ToolbarModel<'a> {
     /// deliver a click on the button's real rectangle. Guessing a pixel would
     /// photograph whatever happens to be there.
     pub history_menu_rect: &'a mut Option<egui::Rect>,
-    /// Trades pulled per "+ older" click.
-    pub history_step: &'a mut usize,
-    /// Minutes of traded time one "+ older" click pulls under the `by time`
-    /// reach. Written straight through like the page size beside it.
-    pub history_reach_span_minutes: &'a mut u32,
-    /// How far one "+ older" press reaches: one page, or the previous session
-    /// with a lead into it. Written straight through, as the page size is —
-    /// the reach is a stored choice, not an event.
-    pub history_reach: &'a mut history_reach::HistoryReach,
-    /// Whether a reach beyond one page is paging right now, so the button can
-    /// say it is working instead of looking idle while pages land.
-    pub history_reach_running: bool,
-    /// Trades backfilled so far, for the history menu readout.
-    pub history_trades: usize,
+    /// The History button: its target, this tab's run and the clock face.
+    pub history: HistoryButton,
     /// Venue candles held so far, for the history menu readout. Zero on a
     /// feed that serves none.
     pub history_candles: usize,
@@ -360,8 +349,10 @@ pub enum ToolbarAction {
     /// Carries the registry entry rather than a copy of its shape, so the
     /// toolbar never holds a second opinion about what a layout contains.
     SetLayout(&'static crate::canvas_layout::LayoutPreset),
-    /// Fetch and prepend one page of older trades.
-    LoadOlder,
+    /// Load back to a target: the main click's, or one the menu named.
+    LoadHistory(HistoryReach),
+    /// Stop the history run in flight and keep what arrived.
+    CancelHistory,
     /// What the REC control beside the symbol asked for.
     DealRecording(crate::deal_recording::DealRecordingAction),
     /// Fetch and prepend one more span of older venue candles.
@@ -612,29 +603,27 @@ fn param_summary(model: &ToolbarModel) -> String {
     model.spec.spec().parameter_summary()
 }
 
-/// HISTORY: the `+ older ▾` split button. The page size lives in the caret
-/// menu, and so does the candle reach.
+/// HISTORY: the `History` split button. The main click repeats this tab's
+/// last target (yesterday until it has pressed); the caret holds the one-click
+/// targets and the candle reach. While a run pages, the button names its
+/// target and how far back it has got, and a click (or Esc) cancels it.
 ///
 /// The button gates on `history_paging` — older *trades* — but the caret does
 /// not: a feed can serve candle history without paging its tape (Hyperliquid
 /// is exactly that), and gating the menu on the button's capability would
 /// leave the candle reach behind a control the trader cannot open.
 fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<ToolbarAction>) {
-    let paging = history_button_enabled(
-        model.capabilities.history_paging,
-        model.history_reach_running,
-    );
+    let paging = model.capabilities.history_paging;
     let menu = history_menu_reachable(model);
     let load = ui
-        .add_enabled(paging, egui::Button::new(format!("{} older", icons::PLUS)))
-        // The reach's own words, so the button says what this press will do
-        // rather than what the button generally does. A press that pages a
-        // whole session and one that fetches two thousand prints are different
-        // acts, and the trader chose which.
-        .on_hover_text(history_button_hover(model))
+        .add_enabled(
+            paging,
+            egui::Button::new(history_button_label(&model.history)),
+        )
+        .on_hover_text(history_button_hover(&model.history))
         .on_disabled_hover_text(history_disabled_hover(model));
     if load.clicked() {
-        actions.push(ToolbarAction::LoadOlder);
+        actions.push(history_button_action(&model.history));
     }
     let caret = ui.add_enabled_ui(menu, |ui| {
         ui.menu_button(icons::CARET_DOWN, |ui| {
@@ -646,52 +635,83 @@ fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<T
     *model.history_menu_rect = menu.then_some(caret.inner);
 }
 
-/// What one press of the load button promises right now: the reach's own
-/// sentence, or what it is already doing.
-///
-/// One owner, read by the bar's button and the overflow entry alike.
-fn history_button_hover(model: &ToolbarModel) -> String {
-    format!(
-        "fetch older trades and prepend them: {}",
-        model.history_reach.hover()
-    )
+/// What the History button shows and does this frame.
+#[derive(Debug, Clone, Copy)]
+pub struct HistoryButton {
+    /// What the main click loads.
+    pub main: HistoryReach,
+    /// Where this tab's run stands.
+    pub status: RunStatus,
+    /// The clock face times are written in.
+    pub tz: crate::timezone::TzOffset,
 }
 
-/// Whether the load button takes a press.
-///
-/// Two facts, one owner, read by the bar's button and the overflow entry
-/// alike. A run already has its one permitted request out and the reply is
-/// what sends the next, so a press during one does nothing — drawn as disabled
-/// rather than left live to swallow it, because a trader who presses again and
-/// gets silence reads the button as broken, and a run is exactly when they are
-/// most likely to press: the chart is visibly still filling.
-fn history_button_enabled(feed_can_page: bool, run_in_flight: bool) -> bool {
-    feed_can_page && !run_in_flight
+impl HistoryButton {
+    fn running(&self) -> bool {
+        !matches!(self.status, RunStatus::Idle)
+    }
 }
 
-/// Why the load button is not taking a press.
+/// The button's words: the target it loads, or the run it is making.
+fn history_button_label(button: &HistoryButton) -> String {
+    let at = |ms| quantick_civil::fmt_weekday_minute(ms, button.tz);
+    match button.status {
+        RunStatus::Idle => format!(
+            "{} History: {}",
+            icons::CLOCK_COUNTER_CLOCKWISE,
+            button.main.label()
+        ),
+        RunStatus::Queued(reach) => format!("Queued {}\u{2026} {}", reach.label(), icons::X),
+        RunStatus::Loading(progress) | RunStatus::Paused(progress) => format!(
+            "Loading {}\u{2026} back to {} {}",
+            progress.reach.label(),
+            at(progress.oldest_ms),
+            icons::X
+        ),
+    }
+}
+
+/// The main click repeats the target; while running it cancels.
+fn history_button_action(button: &HistoryButton) -> ToolbarAction {
+    if button.running() {
+        ToolbarAction::CancelHistory
+    } else {
+        ToolbarAction::LoadHistory(button.main)
+    }
+}
+
+/// What one press of the button does right now. One owner, read by the bar's
+/// button and the overflow entry alike.
+fn history_button_hover(button: &HistoryButton) -> String {
+    match button.status {
+        RunStatus::Idle => format!(
+            "History: load back {} \u{2014} {}. The menu beside it has the other targets.",
+            button.main.label(),
+            button.main.hover()
+        ),
+        RunStatus::Queued(_) => "waiting for the session to finish loading, then this \
+             target starts; click or Esc to cancel"
+            .to_owned(),
+        RunStatus::Loading(_) | RunStatus::Paused(_) => "the chart stays as it is while \
+             pages arrive and is rebuilt once at the end; click or Esc to cancel and keep \
+             what arrived"
+            .to_owned(),
+    }
+}
+
+/// Why the History button is not taking a press.
 ///
-/// One value rather than the pair of bools this grew into, for the reason
-/// [`crate::tab::OlderCandles`] states beside the candle entry: a bool is
-/// enough to grey a control out and not enough to say *why*, and a control
-/// offering two reasons while being off for a third tells the trader
-/// something untrue. One enum, so the reason shown is the reason — and a
-/// fourth reason is an arm here rather than a third flag at both call sites.
+/// One value rather than a pair of bools: a bool is enough to grey a control
+/// out and not enough to say *why*, and a control offering two reasons while
+/// being off for a third tells the trader something untrue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HistoryPagingOff {
-    /// A run already has its one permitted request out.
-    RunInFlight,
     /// This source has no venue to page prints from, but it does hold the
     /// past in the *other* record and the menu entry beside this button can
     /// fetch it. A market replay with a run-up on disk is exactly this.
     CandlesInstead,
     /// The same, except nothing on this chart is cut by time, so the candle
     /// entry cannot be pressed either until the lead-in is switched on.
-    ///
-    /// A separate reason and not a wording of the one above, because sending
-    /// the trader to a control that is *itself* greyed out is the dead end
-    /// this whole branch exists to stop producing. On the order-flow default
-    /// — a tick chart, no time pane — this is the reason a recording gives.
     LeadInNeeded,
     /// There are no older trades to be had, by any route.
     NothingToPage,
@@ -700,53 +720,26 @@ enum HistoryPagingOff {
 impl HistoryPagingOff {
     /// Which reason the button is off for, or `None` while it takes a press.
     ///
-    /// A run in flight outranks the rest: it is *why* the button is off, and
-    /// the candle record the source may also serve is not an answer to that.
-    ///
     /// `candles` is the candle entry's *own* state, not the raw capability, so
     /// this refusal can never send the trader to a control that is greyed out
-    /// for a reason of its own. That is the whole point of pointing at all.
-    fn of(
-        feed_can_page: bool,
-        candles: crate::tab::OlderCandles,
-        run_in_flight: bool,
-    ) -> Option<Self> {
+    /// for a reason of its own.
+    fn of(feed_can_page: bool, candles: crate::tab::OlderCandles) -> Option<Self> {
         use crate::tab::OlderCandles;
-        if history_button_enabled(feed_can_page, run_in_flight) {
+        if feed_can_page {
             return None;
         }
-        if run_in_flight {
-            return Some(Self::RunInFlight);
-        }
         Some(match candles {
-            // Pressable now, or pressable as soon as the reply it is waiting
-            // on lands. Either way the entry is the way forward.
             OlderCandles::Available | OlderCandles::Fetching | OlderCandles::NotArrivedYet => {
                 Self::CandlesInstead
             }
-            // The candles exist and this chart cannot show them yet. The
-            // lead-in is the switch that changes that, and it is one the
-            // trader has to find — so the refusal names it rather than the
-            // entry it would send them bouncing off.
             OlderCandles::NoChartCutByTime => Self::LeadInNeeded,
-            // No candle record, or one that reaches back no further than the
-            // chart already does. Neither is a way forward.
             OlderCandles::FeedServesNone | OlderCandles::RecordStartsHere => Self::NothingToPage,
         })
     }
 
     /// What the trader is told hovering the button in this state.
-    ///
-    /// [`Self::CandlesInstead`] exists because "no older trades" is true and
-    /// useless on a source whose past is a candle file one menu entry away. A
-    /// trader presses this button because they want yesterday on the chart,
-    /// and a refusal that stops at "no" sends them looking for a bug.
     const fn hover(self) -> &'static str {
         match self {
-            Self::RunInFlight => {
-                "paging — each answer asks for the next until the reach is \
-                 met; pick \"one page\" above to stop"
-            }
             Self::CandlesInstead => {
                 "no older trades to fetch here — this source's past is venue \
                  candles: open the menu beside this button and use \"+ older \
@@ -766,139 +759,51 @@ impl HistoryPagingOff {
 }
 
 /// The button's refusal, read off the model. One owner, called by the bar's
-/// button and by the overflow entry — written twice it would drift, and the
-/// drift would be two different refusals for one source depending on which
-/// control the trader happened to hover.
+/// button and by the overflow entry.
 fn history_disabled_hover(model: &ToolbarModel) -> &'static str {
-    HistoryPagingOff::of(
-        model.capabilities.history_paging,
-        model.older_candles,
-        model.history_reach_running,
-    )
-    .map_or("", HistoryPagingOff::hover)
-}
-
-/// A span of traded time in the words the box shows: whole hours, else hours
-/// and minutes.
-fn format_tape_span(minutes: i64) -> String {
-    if minutes % 60 == 0 {
-        format!("{} h", minutes / 60)
-    } else {
-        format!("{} h {:02} m", minutes / 60, minutes % 60)
-    }
-}
-
-/// Read a span back from what [`format_tape_span`] writes, in minutes.
-///
-/// Accepts what the box shows (`3 h`, `2 h 30 m`) and what a trader is likely
-/// to type instead (`3`, `2.5`, `90m`). A bare number is **hours**, because
-/// hours is the unit the box is displaying when the caret arrives — reading it
-/// as minutes is the exact confusion this parser exists to prevent.
-fn parse_tape_span(text: &str) -> Option<f64> {
-    let text = text.trim().to_ascii_lowercase();
-    if text.is_empty() {
-        return None;
-    }
-    let (hours_part, minutes_part) = match text.split_once('h') {
-        Some((hours, rest)) => (hours.trim(), rest.trim_end_matches('m').trim()),
-        None => match text.strip_suffix('m') {
-            // An explicit `m` is the one way to mean minutes.
-            Some(minutes) => return minutes.trim().parse::<f64>().ok(),
-            None => (text.as_str(), ""),
-        },
-    };
-    let hours: f64 = if hours_part.is_empty() {
-        0.0
-    } else {
-        hours_part.parse().ok()?
-    };
-    let minutes: f64 = if minutes_part.is_empty() {
-        0.0
-    } else {
-        minutes_part.parse().ok()?
-    };
-    Some(hours * 60.0 + minutes)
+    HistoryPagingOff::of(model.capabilities.history_paging, model.older_candles)
+        .map_or("", HistoryPagingOff::hover)
 }
 
 /// Whether the history menu has anything in it — trade paging, candle reach,
-/// or both.
-///
-/// One owner, called by the bar's caret and by the overflow entry. Written
-/// twice it would drift, and the drift would be a feed that offers the candle
-/// reach on the bar and hides it in the overflow — the exact split the caret's
-/// own comment says it exists to prevent.
+/// or both. One owner, called by the bar's caret and by the overflow entry.
 fn history_menu_reachable(model: &ToolbarModel) -> bool {
     model.capabilities.history_paging || model.capabilities.ohlcv_history
 }
 
-/// The history caret/overflow menu body: page size and the running total.
+/// The history caret/overflow menu body: the one-click targets, then the
+/// candle reach.
 fn draw_history_menu(
     ui: &mut egui::Ui,
     model: &mut ToolbarModel,
     actions: &mut Vec<ToolbarAction>,
 ) {
-    // The trade half of the menu, behind the trade capability. The caret now
-    // opens for a feed that serves candles without paging its tape, and an
-    // enabled page-size box on such a feed is a control that will never be
-    // read — the same honesty the disabled-reason enum below is about.
+    // The trade half, behind the trade capability: a feed that serves candles
+    // without paging its tape offers no target it could not serve.
     if model.capabilities.history_paging {
-        // The reach first: it decides whether one press is one request or a
-        // run of them, and the page size below is the size of each request
-        // either way.
-        ui.label("one press reaches");
-        for reach in history_reach::HistoryReach::ALL {
-            // While a run is in flight the reach is also the way out of it, and
-            // this is where the trader would look — it is the control that
-            // started the run. Said on the chip rather than only in the log.
-            let hover = if model.history_reach_running && !reach.runs_a_campaign() {
-                format!(
-                    "{} — picking this now also stops the run in flight",
-                    reach.hover()
-                )
-            } else {
-                reach.hover().to_owned()
-            };
-            ui.selectable_value(model.history_reach, reach, reach.label())
-                .on_hover_text(hover);
+        ui.label("Load back");
+        let running = model.history.running();
+        for reach in HistoryReach::PRESETS {
+            let entry = ui
+                .add_enabled(!running, egui::Button::new(reach.label()))
+                .on_hover_text(reach.hover())
+                .on_disabled_hover_text("a run is loading; cancel it first");
+            if entry.clicked() {
+                actions.push(ToolbarAction::LoadHistory(reach));
+                ui.close_menu();
+            }
         }
-        if *model.history_reach == history_reach::HistoryReach::Span {
-            // Shown only under the reach that reads it. A duration sitting
-            // beside a reach that ignores it is a control that looks broken:
-            // the trader sets it, presses, and nothing about the press changes.
-            ui.label("tape per press");
-            ui.add(
-                egui::DragValue::new(model.history_reach_span_minutes)
-                    .range(1.0..=(history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000) as f64)
-                    .speed(15.0)
-                    .custom_formatter(|minutes, _| format_tape_span(minutes as i64))
-                    // egui seeds keyboard editing from the formatter's own
-                    // output, so a box that renders "2 h" and parses only bare
-                    // numbers is a trap: the trader sees hours, types 4 meaning
-                    // four hours, and gets four minutes. The parser reads back
-                    // exactly what the formatter writes, and a bare number is
-                    // read as hours for the same reason — that is the unit on
-                    // screen.
-                    .custom_parser(parse_tape_span),
-            )
-            .on_hover_text(
-                "traded time, not clock time: a night or a weekend is crossed \
-                 to find these hours and adds nothing to them",
-            );
+        if running && ui.button(format!("{} Cancel loading", icons::X)).clicked() {
+            actions.push(ToolbarAction::CancelHistory);
+            ui.close_menu();
         }
-        ui.label("page size (trades per load)");
-        ui.add(
-            egui::DragValue::new(model.history_step)
-                .range(500.0..=50_000.0)
-                .speed(100.0),
-        );
-        ui.small(format!("{} trades backfilled so far", model.history_trades));
     }
-    // Candles are the other record, and the other reach. A chart opens on one
-    // week of them (`feed::TIME_HISTORY_SPAN_MS`) precisely so it opens fast;
-    // this is where the trader who wants the quarter asks for it, a week at a
-    // time. It lives in the menu rather than on the bar because it is a
-    // deliberate act on a time chart, not a per-minute one.
-    if model.capabilities.ohlcv_history {
+    // Candles are the other record, and the other reach: offered only where
+    // the feed serves candles but cannot page its trades (a recording's
+    // run-up, Hyperliquid), worded as candles so it is never mistaken for
+    // the targets above. A chart opens on one week of them
+    // (`feed::TIME_HISTORY_SPAN_MS`); this reaches back a week at a time.
+    if model.capabilities.ohlcv_history && !model.capabilities.history_paging {
         ui.separator();
         // The reach is named from the constant that owns it, never spelled out
         // beside it: the span was ninety days one release ago, and a sentence
@@ -1301,19 +1206,16 @@ fn draw_overflow(
         }
         if !plan.history_inline {
             ui.separator();
-            let paging = history_button_enabled(
-                model.capabilities.history_paging,
-                model.history_reach_running,
-            );
+            let paging = model.capabilities.history_paging;
             let load = ui
                 .add_enabled(
                     paging,
-                    egui::Button::new(format!("{} Load older", icons::PLUS)),
+                    egui::Button::new(history_button_label(&model.history)),
                 )
-                .on_hover_text(history_button_hover(model))
+                .on_hover_text(history_button_hover(&model.history))
                 .on_disabled_hover_text(history_disabled_hover(model));
             if load.clicked() {
-                actions.push(ToolbarAction::LoadOlder);
+                actions.push(history_button_action(&model.history));
                 ui.close_menu();
             }
             if history_menu_reachable(model) {
@@ -1360,34 +1262,6 @@ fn draw_overflow(
 #[cfg(test)]
 mod tests {
 
-    #[test]
-    fn the_span_box_reads_back_exactly_what_it_prints() {
-        // The trap this pair exists to close: egui seeds keyboard editing from
-        // the formatter, so a box showing "2 h" that parses only bare numbers
-        // turns a trader typing 4 (meaning four hours) into four minutes.
-        for minutes in [1_i64, 59, 60, 90, 120, 210, 2880] {
-            let shown = format_tape_span(minutes);
-            assert_eq!(
-                parse_tape_span(&shown).map(|value| value as i64),
-                Some(minutes),
-                "{minutes} minutes rendered as {shown:?} and did not survive the round trip"
-            );
-        }
-    }
-
-    #[test]
-    fn a_bare_number_in_the_span_box_is_hours() {
-        // Hours is the unit on screen when the caret arrives, so a bare number
-        // means hours. Minutes need saying.
-        assert_eq!(parse_tape_span("4"), Some(240.0));
-        assert_eq!(parse_tape_span("2.5"), Some(150.0));
-        assert_eq!(parse_tape_span("90m"), Some(90.0));
-        assert_eq!(parse_tape_span("2 h 30 m"), Some(150.0));
-        assert_eq!(parse_tape_span(""), None);
-        assert_eq!(parse_tape_span("later"), None);
-    }
-    /// Unblocked lamps from their on/off flags, in [`LayerToggle::ALL`]
-    /// order. A fixture that wants a blocked lamp builds the array itself.
     fn layer_states(on: [bool; LayerToggle::COUNT]) -> [LayerToggleState; LayerToggle::COUNT] {
         on.map(|on| LayerToggleState { on, blocked: None })
     }
@@ -1568,10 +1442,7 @@ mod tests {
         let mut selector = SpecSelector::default();
         selector.retain(BarSpec::Time(1_000));
         selector.set(*selector.retained(BarKind::Tick));
-        let mut history_step = 2_000_usize;
-        let mut span_minutes = 120_u32;
         let mut history_menu_rect = None;
-        let mut history_reach = history_reach::HistoryReach::default();
         for replaying in [false, true] {
             for _ in 0..2 {
                 let _ = ctx.run(egui::RawInput::default(), |ctx| {
@@ -1593,12 +1464,12 @@ mod tests {
                         deal_recording: None,
                         deal_recording_menu: false,
                         bars_menu: &mut false,
-                        history_step: &mut history_step,
-                        history_reach_span_minutes: &mut span_minutes,
                         history_menu_rect: &mut history_menu_rect,
-                        history_reach: &mut history_reach,
-                        history_reach_running: false,
-                        history_trades: 1_000,
+                        history: HistoryButton {
+                            main: HistoryReach::default(),
+                            status: RunStatus::Idle,
+                            tz: crate::timezone::TzOffset::default(),
+                        },
                         history_candles: 0,
                         older_candles: crate::tab::OlderCandles::NotArrivedYet,
                         capabilities: FeedCapabilities {
@@ -1656,10 +1527,7 @@ mod tests {
         let mut selector = SpecSelector::default();
         selector.retain(BarSpec::Time(60_000));
         selector.set(*selector.retained(BarKind::Time));
-        let mut history_step = 2_000_usize;
-        let mut span_minutes = 120_u32;
         let mut history_menu_rect = None;
-        let mut history_reach = history_reach::HistoryReach::default();
         // Wide enough that the §6 plan folds nothing — the point is the
         // inline chip row, not the overflow menu.
         let input = || egui::RawInput {
@@ -1687,12 +1555,12 @@ mod tests {
                     deal_recording: None,
                     deal_recording_menu: false,
                     bars_menu: &mut false,
-                    history_step: &mut history_step,
-                    history_reach_span_minutes: &mut span_minutes,
                     history_menu_rect: &mut history_menu_rect,
-                    history_reach: &mut history_reach,
-                    history_reach_running: false,
-                    history_trades: 1_000,
+                    history: HistoryButton {
+                        main: HistoryReach::default(),
+                        status: RunStatus::Idle,
+                        tz: crate::timezone::TzOffset::default(),
+                    },
                     history_candles: 0,
                     older_candles: crate::tab::OlderCandles::NotArrivedYet,
                     capabilities: FeedCapabilities {
@@ -1745,10 +1613,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut feed_id = "metatrader".to_owned();
         let mut symbol = "US500".to_owned();
-        let mut history_step = 2_000_usize;
-        let mut span_minutes = 120_u32;
         let mut history_menu_rect = None;
-        let mut history_reach = history_reach::HistoryReach::default();
         // Every kind, including the two the feed cannot back: selecting one is
         // still possible from config or a previous session, and the toolbar
         // must draw it rather than panic.
@@ -1772,12 +1637,12 @@ mod tests {
                         deal_recording: None,
                         deal_recording_menu: false,
                         bars_menu: &mut false,
-                        history_step: &mut history_step,
-                        history_reach_span_minutes: &mut span_minutes,
                         history_menu_rect: &mut history_menu_rect,
-                        history_reach: &mut history_reach,
-                        history_reach_running: false,
-                        history_trades: 200_000,
+                        history: HistoryButton {
+                            main: HistoryReach::default(),
+                            status: RunStatus::Idle,
+                            tz: crate::timezone::TzOffset::default(),
+                        },
                         history_candles: 0,
                         older_candles: crate::tab::OlderCandles::NotArrivedYet,
                         capabilities: FeedCapabilities {
@@ -1817,10 +1682,7 @@ mod tests {
         let mut selector = SpecSelector::default();
         selector.retain(BarSpec::Time(1_000));
         selector.set(*selector.retained(BarKind::Tick));
-        let mut history_step = 2_000_usize;
-        let mut span_minutes = 120_u32;
         let mut history_menu_rect = None;
-        let mut history_reach = history_reach::HistoryReach::default();
         let mut painted = String::new();
         // Wide enough that the §6 plan folds nothing — the point is the
         // inline button, not the overflow menu.
@@ -1848,12 +1710,12 @@ mod tests {
                     deal_recording: None,
                     deal_recording_menu: false,
                     bars_menu: &mut false,
-                    history_step: &mut history_step,
-                    history_reach_span_minutes: &mut span_minutes,
                     history_menu_rect: &mut history_menu_rect,
-                    history_reach: &mut history_reach,
-                    history_reach_running: false,
-                    history_trades: 1_000,
+                    history: HistoryButton {
+                        main: HistoryReach::default(),
+                        status: RunStatus::Idle,
+                        tz: crate::timezone::TzOffset::default(),
+                    },
                     history_candles: 0,
                     older_candles: crate::tab::OlderCandles::NotArrivedYet,
                     capabilities: FeedCapabilities {
@@ -1899,27 +1761,49 @@ mod tests {
         );
     }
 
-    /// The two facts the load button reads, and the reason it shows for each
-    /// way of being off.
+    /// The button names its target idle, names the run and its progress while
+    /// loading, and its click becomes the cancel.
     #[test]
-    fn the_load_button_goes_quiet_while_a_run_is_paging() {
-        assert!(
-            history_button_enabled(true, false),
-            "a feed that pages and no run in flight takes the press"
+    fn the_history_button_names_its_target_and_cancels_a_run() {
+        use quantick_feed::history_reach::ReachProgress;
+        let tz = crate::timezone::TzOffset::new(-180);
+        let idle = HistoryButton {
+            main: HistoryReach::Sessions(1),
+            status: RunStatus::Idle,
+            tz,
+        };
+        assert!(history_button_label(&idle).ends_with("Yesterday"));
+        assert_eq!(
+            history_button_action(&idle),
+            ToolbarAction::LoadHistory(HistoryReach::Sessions(1))
         );
+        // Thursday 2026-10-01 13:14 UTC is 10:14 at UTC-03:00.
+        let loading = HistoryButton {
+            status: RunStatus::Loading(ReachProgress {
+                reach: HistoryReach::Sessions(5),
+                oldest_ms: 1_790_860_440_000,
+                sessions_reached: 2,
+                traded_ms: 0,
+                prints_pulled: 0,
+                pages: 3,
+            }),
+            ..idle
+        };
+        let label = history_button_label(&loading);
         assert!(
-            !history_button_enabled(true, true),
-            "a press during a run does nothing, so the button must not invite one"
+            label.starts_with("Loading 5 days\u{2026} back to Thu 10:14"),
+            "{label}"
         );
-        assert!(
-            !history_button_enabled(false, false),
-            "and a feed that only streams forward never took one"
+        assert_eq!(
+            history_button_action(&loading),
+            ToolbarAction::CancelHistory
         );
-        assert!(
-            HistoryPagingOff::RunInFlight.hover().contains("one page"),
-            "the run's reason has to name the way out: {}",
-            HistoryPagingOff::RunInFlight.hover()
-        );
+        let queued = HistoryButton {
+            status: RunStatus::Queued(HistoryReach::Hours(2)),
+            ..idle
+        };
+        assert!(history_button_label(&queued).starts_with("Queued +2 h"));
+        assert_eq!(history_button_action(&queued), ToolbarAction::CancelHistory);
         assert!(
             HistoryPagingOff::NothingToPage
                 .hover()
@@ -1930,9 +1814,7 @@ mod tests {
 
     /// Which of the three reasons the button shows, from the facts it reads.
     ///
-    /// A run in flight outranks everything: it is why the button is off, and
-    /// the candle record the source could also serve is not the answer to
-    /// that. A source with no tape to page but a run-up on disk — a market
+    /// A source with no tape to page but a run-up on disk — a market
     /// replay is exactly this — points at the record it *can* serve, because
     /// "no older trades" alone is true and useless to a trader who pressed
     /// precisely because they want the past.
@@ -1940,22 +1822,17 @@ mod tests {
     fn the_refusal_names_the_reason_the_button_is_actually_off() {
         use crate::tab::OlderCandles;
         assert_eq!(
-            HistoryPagingOff::of(true, OlderCandles::FeedServesNone, false),
+            HistoryPagingOff::of(true, OlderCandles::FeedServesNone),
             None,
-            "a feed that pages, with no run out, takes the press"
+            "a feed that pages takes the press"
         );
         assert_eq!(
-            HistoryPagingOff::of(true, OlderCandles::Available, true),
-            Some(HistoryPagingOff::RunInFlight),
-            "a run in flight is the reason, whatever else the source holds"
-        );
-        assert_eq!(
-            HistoryPagingOff::of(false, OlderCandles::Available, false),
+            HistoryPagingOff::of(false, OlderCandles::Available),
             Some(HistoryPagingOff::CandlesInstead),
             "a recording's past is candles, and the refusal says so"
         );
         assert_eq!(
-            HistoryPagingOff::of(false, OlderCandles::FeedServesNone, false),
+            HistoryPagingOff::of(false, OlderCandles::FeedServesNone),
             Some(HistoryPagingOff::NothingToPage),
             "and a source with neither gets the plain refusal"
         );
@@ -1990,7 +1867,7 @@ mod tests {
             OlderCandles::FeedServesNone,
             OlderCandles::RecordStartsHere,
         ] {
-            let reason = HistoryPagingOff::of(false, candles, false).expect("the button is off");
+            let reason = HistoryPagingOff::of(false, candles).expect("the button is off");
             assert_ne!(
                 reason,
                 HistoryPagingOff::CandlesInstead,
@@ -2002,7 +1879,7 @@ mod tests {
             );
         }
         assert_eq!(
-            HistoryPagingOff::of(false, OlderCandles::NoChartCutByTime, false),
+            HistoryPagingOff::of(false, OlderCandles::NoChartCutByTime),
             Some(HistoryPagingOff::LeadInNeeded),
             "and a chart with no time pane is sent to the switch that fixes that"
         );

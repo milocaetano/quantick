@@ -9,7 +9,11 @@ pub enum EscapeLayer {
     InlineText,
     Draft,
     Selection,
+    /// An armed tool other than the pointer: Esc puts it down.
     Pointer,
+    /// A history run loading on the active tab: Esc cancels it and keeps
+    /// what arrived, only when no drawing or pointer layer wanted the key.
+    HistoryRun,
 }
 
 pub fn consume_escape(mut attempt: impl FnMut(EscapeLayer) -> bool) {
@@ -23,6 +27,7 @@ pub fn consume_escape(mut attempt: impl FnMut(EscapeLayer) -> bool) {
         Draft,
         Selection,
         Pointer,
+        HistoryRun,
     ] {
         if attempt(layer) {
             return;
@@ -59,8 +64,18 @@ mod tests {
                 EscapeLayer::InlineText,
                 EscapeLayer::Draft,
                 EscapeLayer::Selection,
-                EscapeLayer::Pointer
+                EscapeLayer::Pointer,
+                EscapeLayer::HistoryRun
             ]
         );
+    }
+    #[test]
+    fn an_armed_tool_takes_escape_before_a_history_run() {
+        let mut visited = Vec::new();
+        consume_escape(|layer| {
+            visited.push(layer);
+            layer == EscapeLayer::Pointer
+        });
+        assert!(!visited.contains(&EscapeLayer::HistoryRun));
     }
 }

@@ -1,6 +1,5 @@
 use super::bare_canvas::{app_with_history, app_with_history_and_launch};
 use super::*;
-use quantick_feed::history_reach;
 use quantick_feed::replay::test_support as replay_test_support;
 mod placement_characterization {
     use super::*;
@@ -5102,17 +5101,22 @@ fn an_inspector_edit_commits_on_the_pane_it_started_on() {
 /// own, and a fresh press clears whatever the last one left behind.
 #[test]
 fn a_history_note_leaves_on_its_own_and_a_new_press_clears_it() {
+    use quantick_feed::history_reach::HistoryReach;
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
 
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
-    drain_load_older(&mut commands);
-    events
-        .try_send(FeedEvent::HistoryPrepended(Vec::new()))
-        .unwrap();
-    app.drain_tabs();
-    assert!(app.active_tab().history_note().is_some());
+    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
+        HistoryReach::Hours(2),
+    ));
+    assert_eq!(drain_load_older(&mut commands).len(), 1);
+    app.apply_toolbar_action(crate::toolbar::ToolbarAction::CancelHistory);
+    assert!(
+        app.active_tab()
+            .history_note()
+            .is_some_and(|note| note.contains("cancelled")),
+        "a cancel says where it stopped"
+    );
 
     let past_its_welcome = std::time::Instant::now() + crate::tab::HISTORY_NOTE_LINGER;
     app.active_tab_mut().expire_history_note(past_its_welcome);
@@ -5124,12 +5128,14 @@ fn a_history_note_leaves_on_its_own_and_a_new_press_clears_it() {
 
     // A second press must not leave the previous sentence hanging over a
     // request whose outcome is not known yet.
+    app.active_tab_mut().raise_history_note("left over");
     events
         .try_send(FeedEvent::HistoryPrepended(Vec::new()))
         .unwrap();
     app.drain_tabs();
-    assert!(app.active_tab().history_note().is_some(), "the new one");
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
+        HistoryReach::Hours(2),
+    ));
     assert_eq!(
         app.active_tab().history_note(),
         None,
@@ -5137,34 +5143,29 @@ fn a_history_note_leaves_on_its_own_and_a_new_press_clears_it() {
     );
 }
 
-/// Putting the reach back to one page is the trader's way out of a run.
+/// The run belongs to its tab: changing the window's default target never
+/// touches a run in flight.
 #[test]
-fn withdrawing_the_reach_calls_off_a_run_in_flight() {
+fn a_run_in_flight_keeps_its_target_when_the_default_changes() {
+    use quantick_feed::history_reach::HistoryReach;
     let ctx = egui::Context::default();
-    let (mut app, events, mut commands) = history_app(&ctx);
+    let (mut app, _events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    app.history.history_reach = history_reach::HistoryReach::PreviousSession;
-    app.drain_tabs();
-
-    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadOlder);
+    app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
+        HistoryReach::Sessions(3),
+    ));
     assert_eq!(drain_load_older(&mut commands).len(), 1);
-    assert!(app.active_tab().history_reach_running());
-
-    // The trader changes their mind and picks "one page" again.
-    app.history.history_reach = history_reach::HistoryReach::Page;
+    app.history.history_reach = HistoryReach::Hours(2);
     app.drain_tabs();
-    events
-        .try_send(FeedEvent::HistoryPrepended(
-            (-60..0).map(minute_trade_at).collect(),
-        ))
-        .unwrap();
-    app.drain_tabs();
-    assert!(
-        drain_load_older(&mut commands).is_empty(),
-        "the page in flight is the last one"
+    assert!(matches!(
+        app.active_tab().history_status(),
+        quantick_feed::history_run::RunStatus::Loading(progress)
+            if progress.reach == HistoryReach::Sessions(3)
+    ));
+    assert_eq!(
+        app.active_tab().main_history_reach(),
+        HistoryReach::Sessions(3)
     );
-    assert!(!app.active_tab().history_reach_running());
-    assert!(!app.active_tab().loading.is_active(LoadingTask::History));
 }
 
 /// (d) Two dividers, two boundaries: the venue seam and the backfill mark

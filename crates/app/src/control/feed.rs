@@ -124,6 +124,10 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                     feed_generation: WireU64::new(tab.feed_generation()),
                     opening_slices_remaining: tab.opening_slices_remaining().map(WireU64::new),
                     history_reach_note: tab.history_note().map(str::to_owned),
+                    history_load: Some(super::history::snapshot(
+                        tab.history_status(),
+                        tab.main_history_reach(),
+                    )),
                     live_trade_count: WireU64::new(tab.live_trades),
                     latest_trade_unix_ms: tab.latest_trade_ms,
                     latest_arrival_latency_ms: tab.trade_arrival_ms(),

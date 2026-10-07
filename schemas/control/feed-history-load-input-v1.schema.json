@@ -1,0 +1,33 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Which tab, and how far back.",
+  "properties": {
+    "reach": {
+      "description": "`hours:N` (1..=48) of traded time before the oldest loaded print, or\n`sessions:N` (1..=10) back to the Nth previous session's open, counted\nfrom the live edge. `sessions:1` is yesterday.",
+      "type": "string"
+    },
+    "tab_id": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The tab's id, as `feed.status` reports it. Omitted means the tab the\ntrader is looking at."
+    }
+  },
+  "required": [
+    "reach"
+  ],
+  "title": "HistoryLoadInput",
+  "type": "object"
+}
