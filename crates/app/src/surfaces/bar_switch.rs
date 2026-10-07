@@ -76,6 +76,7 @@ impl BarSwitchSurface {
 
     /// [`Self::open`] for the harness hook: the popup follows the focused
     /// pane instead of closing when it moves.
+    #[cfg(any(feature = "scenario-harness", test))]
     pub fn open_following_focus(&mut self, tab: u64, side: PaneSide, query: &str) {
         self.open(tab, side, query);
         if let Some(open) = self.open.as_mut() {
