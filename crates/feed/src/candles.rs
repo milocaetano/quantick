@@ -30,6 +30,9 @@ use quantick_engine::time_bucket::{
     DAY_MS, TimeBucketLaw, WEEK_MS, calendar_months, time_bucket_start,
 };
 
+mod seam_lead;
+pub use seam_lead::{SeamLead, seam_lead};
+
 /// Whether `interval_ms` can be folded to from `base_interval_ms` candles.
 ///
 /// A whole number of base candles or nothing: 5m and 1h are exact unions of
