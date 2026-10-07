@@ -232,16 +232,19 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
 
     // With bars, it presses — through the button's own function, so the
     // loading indicator the trader sees is the one a hooked run drives.
-    let (mut app, mut cmd_rx) = app_with_history(200);
+    let ctx = egui::Context::default();
+    let (mut app, events, mut cmd_rx) = history_app(&ctx);
     while cmd_rx.try_recv().is_ok() {}
-    app.active_tab_mut().loading.end(LoadingTask::History);
+    // An hour of tape, which the reply below meets: each press is one run.
+    app.history.history_reach = history_reach::HistoryReach::Hours(1);
+    app.drain_tabs();
     app.chrome.harness.arm_load_older(2, 10);
     app.chrome
         .harness
         .apply_load_older(&mut app.tabs, &app.config);
     assert!(
         matches!(cmd_rx.try_recv(), Ok(FeedCommand::LoadOlder { .. })),
-        "the first page is asked for"
+        "the first press asks"
     );
     assert_eq!(
         app.chrome.harness.load_older_remaining(),
@@ -249,19 +252,35 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
         "one still owed"
     );
 
-    // One at a time: the feed serves one request per session, so firing
-    // the second before the first is answered would have it refused and
-    // answered empty.
+    // One run at a time: the feed serves one request per session, and a
+    // press while a run pages starts nothing.
     app.chrome
         .harness
         .apply_load_older(&mut app.tabs, &app.config);
     assert!(
         cmd_rx.try_recv().is_err(),
-        "a page is still in flight; the hook waits for it"
+        "a run is in flight; the hook waits for it"
     );
     assert_eq!(app.chrome.harness.load_older_remaining(), Some((1, 10)));
 
-    app.active_tab_mut().loading.end(LoadingTask::History);
+    events
+        .try_send(FeedEvent::HistoryPrepended(
+            (-61..0).map(minute_trade_at).collect(),
+        ))
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        app.drain_tabs();
+        let tab = app.active_tab();
+        if !tab.history_reach_running()
+            && !tab.loading.is_active(LoadingTask::History)
+            && !tab.loading.is_active(LoadingTask::HistoryRebuild)
+        {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the run settles");
+        std::thread::yield_now();
+    }
     app.chrome
         .harness
         .apply_load_older(&mut app.tabs, &app.config);
@@ -272,7 +291,7 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     assert_eq!(
         app.chrome.harness.load_older_remaining(),
         None,
-        "both pages asked for"
+        "both presses made"
     );
 }
 
@@ -1794,6 +1813,8 @@ fn a_hidden_tabs_run_pauses_and_resumes_when_shown() {
     let tab_id = app.tabs.active_id();
     let config = app.config.clone();
     let mut policy = app.history.policy(app.tz, false);
+    // The tab was hidden on an earlier frame; this one only says so.
+    app.active_tab_mut().drain_frame(tab_id, &config, policy);
     events
         .try_send(FeedEvent::HistoryPrepended(
             (-60..0).map(minute_trade_at).collect(),

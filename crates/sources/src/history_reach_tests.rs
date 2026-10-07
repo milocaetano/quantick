@@ -563,3 +563,41 @@ fn the_start_reads_a_chunked_tape_as_it_reads_a_slice() {
         assert_eq!(over_slice, over_tape, "{reach:?}");
     }
 }
+
+/// What a press costs the frame when the chart already holds five dense
+/// sessions and the target is further still: the start walks every held
+/// print once. Run with `--release --ignored` to read the number.
+#[test]
+#[ignore = "manual press-cost measurement"]
+fn the_press_walk_over_five_dense_sessions_costs_one_pass() {
+    use quantick_engine::trade_tape::TradeTape;
+    let per_session = MEASURED_DENSE_SESSION_PRINTS;
+    let tape: TradeTape = (0..5_i64)
+        .flat_map(|day| run(day * DAY + 9 * HOUR, 20, per_session))
+        .collect();
+    let started = std::time::Instant::now();
+    let start = Campaign::start(
+        &tape,
+        HistoryReach::Sessions(10),
+        bounds(),
+        CAMPAIGN_PAGE_PRINTS,
+    );
+    println!(
+        "press walk over {} held prints: {:.3} ms",
+        tape.len(),
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+    assert!(matches!(start, CampaignStart::Run(_)));
+    let slice: Vec<Trade> = tape.iter().cloned().collect();
+    let started = std::time::Instant::now();
+    let _ = Campaign::start(
+        &slice[..],
+        HistoryReach::Sessions(10),
+        bounds(),
+        CAMPAIGN_PAGE_PRINTS,
+    );
+    println!(
+        "over a slice: {:.3} ms",
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+}

@@ -69,8 +69,8 @@ const W_TIME_PARAM: f32 = 260.0;
 /// label and drag. Underestimating this makes the collapse plan draw a row
 /// wider than it budgeted instead of folding it.
 const W_IMBALANCE_PARAM: f32 = 330.0;
-/// The `+ older ▾` split button.
-const W_HISTORY: f32 = 100.0;
+/// The `History: <target> ▾` split button.
+const W_HISTORY: f32 = 150.0;
 /// The LAYERS icon group (bubbles, heatmap, live strip, indicators).
 const W_LAYERS: f32 = 128.0;
 /// One 28 px icon button (LOOK, PANELS, or the overflow `⋯`).
@@ -655,7 +655,11 @@ impl HistoryButton {
 fn history_button_label(button: &HistoryButton) -> String {
     let at = |ms| quantick_civil::fmt_weekday_minute(ms, button.tz);
     match button.status {
-        RunStatus::Idle => format!("{} {}", icons::CLOCK_COUNTER_CLOCKWISE, button.main.label()),
+        RunStatus::Idle => format!(
+            "{} History: {}",
+            icons::CLOCK_COUNTER_CLOCKWISE,
+            button.main.label()
+        ),
         RunStatus::Queued(reach) => format!("Queued {}\u{2026} {}", reach.label(), icons::X),
         RunStatus::Loading(progress) | RunStatus::Paused(progress) => format!(
             "Loading {}\u{2026} back to {} {}",
@@ -799,12 +803,12 @@ fn draw_history_menu(
             ui.close_menu();
         }
     }
-    // Candles are the other record, and the other reach. A chart opens on one
-    // week of them (`feed::TIME_HISTORY_SPAN_MS`) precisely so it opens fast;
-    // this is where the trader who wants the quarter asks for it, a week at a
-    // time. It lives in the menu rather than on the bar because it is a
-    // deliberate act on a time chart, not a per-minute one.
-    if model.capabilities.ohlcv_history {
+    // Candles are the other record, and the other reach: offered only where
+    // the feed serves candles but cannot page its trades (a recording's
+    // run-up, Hyperliquid), worded as candles so it is never mistaken for
+    // the targets above. A chart opens on one week of them
+    // (`feed::TIME_HISTORY_SPAN_MS`); this reaches back a week at a time.
+    if model.capabilities.ohlcv_history && !model.capabilities.history_paging {
         ui.separator();
         // The reach is named from the constant that owns it, never spelled out
         // beside it: the span was ninety days one release ago, and a sentence
