@@ -6,3 +6,12 @@
 # decisions it carries out are headless in quantick_feed::candle_base.
 crates/app +71
 !budget +71
+# feat/daily-weekly-monthly-bars: the review-fix round's tab wiring (+7) and
+# the D1 seam lead's (+96) — the tab installing each pane's lead beside its
+# prefix, the one seam-minutes request and the routing of its reply, the
+# refold when the first prints land, and the seam bar's provenance label. The
+# decisions are headless (quantick_feed::candles::seam_lead, candle_base,
+# quantick_chart::state::venue_lead); these lines carry them out on the tab's
+# panes and channel, which only `app` holds.
+crates/app +103
+!budget +103

@@ -228,6 +228,19 @@ impl BarSnapshot {
     }
 }
 
+impl BarSnapshot {
+    /// The seam bar holds the venue's candles of its bucket before the first
+    /// print as well as the prints: each provenance it summarises is named,
+    /// venue first, as they sit in time.
+    pub fn mark_venue_lead(&mut self) {
+        let provenance = &mut self.provenance;
+        provenance.source = format!("venue_ohlcv+{}", provenance.source);
+        provenance.price = format!("venue_candle+{}", provenance.price);
+        provenance.volume = format!("venue_reported+{}", provenance.volume);
+        provenance.trade_count = "venue_reported+derived_from_trades".to_owned();
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ChartWindowQuery {
     pub tab_id: WireU64,

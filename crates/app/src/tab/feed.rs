@@ -539,6 +539,9 @@ impl Tab {
     fn receive_available(&mut self, tab_id: u64, mut wall_clock_ms: impl FnMut() -> i64) -> bool {
         let mut live = false;
         let mut received_at_ms = None;
+        // Venue candles that landed before the first print were trimmed and
+        // led against nothing; the first prints are their seam.
+        let printless = self.flow_pane.state.trades().is_empty();
         loop {
             match self.events.try_recv() {
                 Ok(FeedEvent::Backfilled(trades)) => {
@@ -671,6 +674,9 @@ impl Tab {
                 }
                 Err(_) => break,
             }
+        }
+        if printless && !self.flow_pane.state.trades().is_empty() && self.ohlcv_base.is_some() {
+            self.refold_history_prefix();
         }
         live
     }

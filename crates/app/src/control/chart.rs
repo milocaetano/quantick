@@ -207,14 +207,18 @@ fn bar_snapshot_with(
     state: BarStateDto,
     context: &BarProvenanceContext,
 ) -> BarSnapshot {
-    BarSnapshot::from_bar(
+    let mut snapshot = BarSnapshot::from_bar(
         slot,
         bar,
         state,
         pane.seam_slot(),
         pane.state.backfill_boundary(),
         context,
-    )
+    );
+    if slot == pane.seam_slot() && pane.state.venue_lead().is_some() {
+        snapshot.mark_venue_lead();
+    }
+    snapshot
 }
 
 /// Read one append-only page of closed chart bars. A live append is allowed;

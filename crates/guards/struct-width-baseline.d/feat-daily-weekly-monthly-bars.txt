@@ -1,5 +1,0 @@
-# feat/daily-weekly-monthly-bars: `Tab::ohlcv_interval` holds the interval of
-# the venue candles held and of the ones the panes want, as one
-# quantick_feed::candle_base::CandleBaseInterval value rather than two fields.
-app::Tab +1
-!budget +1

@@ -57,7 +57,7 @@ fn push_feed_app(
     mpsc::Receiver<FeedCommand>,
     tokio::sync::watch::Sender<FeedCapabilities>,
 ) {
-    push_feed_app_restoring(ctx, None)
+    push_feed_app_restoring(ctx, None, (0..200).map(minute_trade).collect())
 }
 
 /// The same, with the time pane restored from a saved workspace at
@@ -65,6 +65,7 @@ fn push_feed_app(
 fn push_feed_app_restoring(
     ctx: &egui::Context,
     restored_ms: Option<i64>,
+    trades: Vec<quantick_engine::Trade>,
 ) -> (
     QuantickApp,
     mpsc::Sender<FeedEvent>,
@@ -98,7 +99,6 @@ fn push_feed_app_restoring(
             replay: None,
         },
     );
-    let trades: Vec<_> = (0..200).map(minute_trade).collect();
     evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
     app.drain_tabs();
     run_frame(&mut app, ctx);
@@ -129,8 +129,11 @@ fn push_feed_app_restoring(
 #[test]
 fn a_restored_monthly_pane_asks_for_days_first() {
     let ctx = egui::Context::default();
-    let (app, _events, mut commands, _caps) =
-        push_feed_app_restoring(&ctx, Some(quantick_engine::time_bucket::CALENDAR_MONTH_MS));
+    let (app, _events, mut commands, _caps) = push_feed_app_restoring(
+        &ctx,
+        Some(quantick_engine::time_bucket::CALENDAR_MONTH_MS),
+        (0..200).map(minute_trade).collect(),
+    );
     assert_eq!(
         app.active_tab().pane(PaneSide::Time(0)).state.spec(),
         &BarSpec::Time(quantick_engine::time_bucket::CALENDAR_MONTH_MS)
@@ -408,4 +411,276 @@ fn the_control_plane_sets_and_refuses_calendar_intervals() {
         )
         .expect_err("thirteen months is no chart");
     assert!(refused.message.contains("13mo"), "{}", refused.message);
+}
+
+/// The seam day: Thursday 1970-01-08, the fixture's first trade at 06:14:01.
+const SEAM_DAY: i64 = 7;
+const FIRST_MINUTE: i64 = SEAM_DAY * 1_440 + 374;
+const FIRST_TRADE_MS: i64 = FIRST_MINUTE * quantick_feed::OHLCV_BASE_INTERVAL_MS + 1_000;
+
+/// Two hundred prints a minute apart from 06:14:01 on the seam day.
+fn seam_day_trades() -> Vec<quantick_engine::Trade> {
+    (FIRST_MINUTE..FIRST_MINUTE + 200)
+        .map(minute_trade_at)
+        .collect()
+}
+
+/// The venue's daily candles from 40 days before the epoch to the seam day,
+/// the seam day's own — still forming at the venue — included.
+fn days_to_the_seam() -> Vec<quantick_engine::Bar> {
+    (-40..=SEAM_DAY)
+        .map(|day| quantick_engine::Bar {
+            open_time: day * DAY_MS,
+            close_time: day * DAY_MS + DAY_MS - 1,
+            ..venue_candle(0, day.rem_euclid(5))
+        })
+        .collect()
+}
+
+/// The venue's minutes from the day before the seam day to five minutes
+/// past the first trade — the ones the trade overlaps included.
+fn minutes_to_the_seam() -> Vec<quantick_engine::Bar> {
+    venue_history_range((SEAM_DAY - 1) * 1_440, FIRST_MINUTE + 5)
+}
+
+/// The summary of `parts`, oldest first, and then of the first bar the
+/// prints alone cut at `interval_ms` — what the seam bar must hold.
+fn venue_then_prints<'a>(
+    parts: impl IntoIterator<Item = &'a quantick_engine::Bar>,
+    interval_ms: i64,
+) -> quantick_engine::Bar {
+    let mut prints = crate::state::ChartState::new(BarSpec::Time(interval_ms));
+    prints.ingest_backfill(&seam_day_trades());
+    let raw = prints
+        .bars()
+        .first()
+        .or(prints.partial())
+        .cloned()
+        .expect("the prints cut a bar");
+    let mut parts = parts.into_iter();
+    let mut lead = parts.next().expect("a venue part").clone();
+    for part in parts {
+        lead.absorb(part);
+    }
+    lead.absorb(&raw);
+    lead
+}
+
+/// D1: a chart opened on 1d at 06:14 drew a day holding only the prints
+/// since launch. The forming day, week and month now open on the bucket's
+/// start and hold the venue's part before the first trade plus the prints'
+/// part, nothing counted twice. With only days held, the seam day's minutes
+/// are asked for once and parked beside them.
+#[test]
+fn the_forming_day_week_and_month_hold_the_venue_part_before_the_first_trade() {
+    let ctx = egui::Context::default();
+    let (mut app, events, mut commands, _caps) =
+        push_feed_app_restoring(&ctx, Some(DAY_MS), seam_day_trades());
+    let minute = quantick_feed::OHLCV_BASE_INTERVAL_MS;
+    let day = quantick_feed::OHLCV_DAILY_INTERVAL_MS;
+    assert_eq!(
+        drain_ohlcv_bases(&mut commands)
+            .iter()
+            .map(|asked| asked.0)
+            .collect::<Vec<_>>(),
+        vec![day]
+    );
+    answer(&events, day, days_to_the_seam());
+    app.drain_tabs();
+    assert_eq!(
+        drain_ohlcv_bases(&mut commands),
+        vec![(minute, quantick_feed::TIME_HISTORY_SPAN_MS, None)],
+        "the seam day's minutes, asked once the days settled"
+    );
+    let capabilities = app.active_tab().capabilities(&app.config);
+    assert_eq!(
+        app.active_tab().older_candles(capabilities),
+        crate::tab::OlderCandles::Fetching,
+        "a request is out, and load older says so"
+    );
+    {
+        let pane = app.active_tab().pane(PaneSide::Time(0));
+        assert_eq!(pane.state.venue_lead(), None, "no partial lead meanwhile");
+        assert_eq!(
+            pane.state.partial().map(|bar| bar.open_time),
+            Some(FIRST_TRADE_MS)
+        );
+    }
+    answer(&events, minute, minutes_to_the_seam());
+    app.drain_tabs();
+    app.drain_tabs();
+    assert!(drain_ohlcv_bases(&mut commands).is_empty(), "asked once");
+    assert_eq!(
+        app.active_tab().venue_candles_held(),
+        days_to_the_seam().len(),
+        "the days are still the base; the minutes are parked"
+    );
+    assert_eq!(
+        app.active_tab().older_candles(capabilities),
+        crate::tab::OlderCandles::Available
+    );
+
+    let minutes = minutes_to_the_seam();
+    let days = days_to_the_seam();
+    let seam_minutes: Vec<_> = minutes
+        .iter()
+        .filter(|bar| bar.open_time >= SEAM_DAY * DAY_MS && bar.close_time < FIRST_TRADE_MS)
+        .collect();
+    assert_eq!(
+        seam_minutes.len(),
+        374,
+        "00:00 to 06:13, not the minute the trade is in"
+    );
+    let month = quantick_engine::time_bucket::CALENDAR_MONTH_MS;
+    // Thursday 8 January: the week opens on Monday the 5th, the month on the 1st.
+    for (interval, first_day) in [(DAY_MS, SEAM_DAY), (WEEK_MS, 4), (month, 0)] {
+        set_time_pane(&mut app, interval);
+        app.drain_tabs();
+        assert!(drain_ohlcv_bases(&mut commands).is_empty(), "{interval}");
+        let whole_days = days
+            .iter()
+            .filter(|bar| bar.open_time >= first_day * DAY_MS && bar.open_time < SEAM_DAY * DAY_MS);
+        let expected = venue_then_prints(whole_days.chain(seam_minutes.iter().copied()), interval);
+        let pane = app.active_tab().pane(PaneSide::Time(0));
+        let forming = pane.state.partial().expect("the seam bar is forming");
+        assert_eq!(forming, &expected, "{interval}");
+        assert_eq!(
+            forming.open_time,
+            first_day * DAY_MS,
+            "{interval}: the bucket's start"
+        );
+        assert!(
+            pane.state.venue_lead().is_some(),
+            "{interval}: labelled venue + prints"
+        );
+        assert_eq!(
+            pane.state.first_print_open_ms(),
+            Some(FIRST_TRADE_MS),
+            "{interval}"
+        );
+        assert_eq!(
+            pane.slot_open_time(pane.seam_slot()),
+            Some(first_day * DAY_MS),
+            "{interval}: the slot opens where its bar does"
+        );
+    }
+    // The control plane names both sources of the seam bar, venue first.
+    let tab = app.active_tab();
+    let pane = tab.pane(PaneSide::Time(0));
+    let snapshot = crate::control::chart::bar_snapshot(
+        tab,
+        pane,
+        pane.seam_slot(),
+        pane.state.partial().expect("forming"),
+        crate::control::chart::BarStateDto::InProgress,
+        &app.config,
+    );
+    assert!(
+        snapshot.provenance.source.starts_with("venue_ohlcv+"),
+        "{:?}",
+        snapshot.provenance
+    );
+    assert_eq!(
+        snapshot.provenance.trade_count,
+        "venue_reported+derived_from_trades"
+    );
+}
+
+/// The same seam on an intraday pane: the 5m bar the first trade opened
+/// takes the venue's 06:10 to 06:13 minutes, not 06:14. A trip to 1d then
+/// reads the seam day from those minutes, parked, and asks for nothing more.
+#[test]
+fn an_intraday_seam_bar_takes_the_venue_minutes_before_the_first_trade() {
+    let ctx = egui::Context::default();
+    let (mut app, events, mut commands) = app_backfilled_with(&ctx, seam_day_trades());
+    let minute = quantick_feed::OHLCV_BASE_INTERVAL_MS;
+    drain_ohlcv_bases(&mut commands);
+    answer(&events, minute, minutes_to_the_seam());
+    app.drain_tabs();
+    let five = 5 * minute;
+    set_time_pane(&mut app, five);
+    app.drain_tabs();
+    let minutes = minutes_to_the_seam();
+    let lead: Vec<_> = minutes
+        .iter()
+        .filter(|bar| {
+            bar.open_time >= (FIRST_MINUTE - 4) * minute && bar.open_time < FIRST_MINUTE * minute
+        })
+        .collect();
+    assert_eq!(lead.len(), 4);
+    let pane = app.active_tab().pane(PaneSide::Time(0));
+    assert_eq!(pane.state.bars()[0], venue_then_prints(lead, five));
+    assert_eq!(pane.state.bars()[0].open_time, (FIRST_MINUTE - 4) * minute);
+    assert!(pane.state.venue_lead().is_some());
+    assert_eq!(
+        pane.state.bars()[1].trade_count,
+        5,
+        "the next bar is the prints' alone"
+    );
+    assert_eq!(
+        pane.partial_bucket_slot(),
+        Some(pane.seam_slot()),
+        "the ladder still misses 06:14:00 to the first trade"
+    );
+
+    set_time_pane(&mut app, DAY_MS);
+    app.drain_tabs();
+    assert_eq!(
+        drain_ohlcv_bases(&mut commands)
+            .iter()
+            .map(|asked| asked.0)
+            .collect::<Vec<_>>(),
+        vec![quantick_feed::OHLCV_DAILY_INTERVAL_MS]
+    );
+    answer(
+        &events,
+        quantick_feed::OHLCV_DAILY_INTERVAL_MS,
+        days_to_the_seam(),
+    );
+    app.drain_tabs();
+    app.drain_tabs();
+    assert!(
+        drain_ohlcv_bases(&mut commands).is_empty(),
+        "the parked minutes serve the seam day"
+    );
+    let pane = app.active_tab().pane(PaneSide::Time(0));
+    assert_eq!(
+        pane.state.partial().map(|bar| bar.open_time),
+        Some(SEAM_DAY * DAY_MS)
+    );
+    assert!(pane.state.venue_lead().is_some());
+}
+
+/// Venue candles that land before the first print are trimmed and led
+/// against the prints when they arrive, not left overlapping them.
+#[test]
+fn venue_candles_ahead_of_the_first_print_meet_it_at_the_seam() {
+    let ctx = egui::Context::default();
+    let (mut app, events, mut commands) = app_backfilled_with(&ctx, Vec::new());
+    let minute = quantick_feed::OHLCV_BASE_INTERVAL_MS;
+    let five = 5 * minute;
+    set_time_pane(&mut app, five);
+    drain_ohlcv_bases(&mut commands);
+    answer(&events, minute, minutes_to_the_seam());
+    app.drain_tabs();
+    assert_eq!(
+        app.active_tab().venue_candles_held(),
+        minutes_to_the_seam().len()
+    );
+    events
+        .try_send(FeedEvent::Backfilled(seam_day_trades()))
+        .unwrap();
+    app.drain_tabs();
+    let pane = app.active_tab().pane(PaneSide::Time(0));
+    let seam = pane.seam_slot();
+    assert_eq!(
+        pane.slot_open_time(seam),
+        Some((FIRST_MINUTE - 4) * minute),
+        "the bucket the first print opened, led in by the venue's minutes"
+    );
+    assert!(pane.state.venue_lead().is_some());
+    assert!(
+        pane.slot_open_time(seam - 1) < pane.slot_open_time(seam),
+        "nothing overlaps the seam"
+    );
 }
