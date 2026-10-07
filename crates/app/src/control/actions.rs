@@ -37,10 +37,10 @@ use serde_json::{Value, json};
 
 use crate::{app::ControlWindow, metrics};
 
-/// One action's handler over this application: it mutates the window and
-/// journals through its control access.
 pub(crate) use quantick_control_handlers::dock::ActionDock;
 
+/// One action's handler over this application: it mutates the window and
+/// journals through its control access.
 pub(crate) type ActionHandler = fn(
     &mut ControlWindow,
     &mut ControlAccess,
