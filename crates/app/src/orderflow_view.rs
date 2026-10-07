@@ -88,6 +88,8 @@ pub(crate) struct FlowCellHit {
     pub start_slot: usize,
     pub end_slot_exclusive: usize,
     pub live_lane: bool,
+    /// Where the tape is held when the cell is a held tape's book.
+    pub held_tape_end_ms: Option<i64>,
 }
 
 /// Stateful UI/controller facade for the optional heatmap.
@@ -343,7 +345,7 @@ impl OrderflowView {
         let style =
             OrderflowRenderStyle::from_config(&self.config, egui::Color32::TRANSPARENT.to_array());
         // Over a held tape the cursor reads the book painted there.
-        let held = self.held_heat(frame).filter(|_| in_lane);
+        let held = if in_lane { self.held_heat(frame) } else { None };
         let (projection, layout) = match &held {
             Some(heat) => (heat, layout.with_lane_only()),
             None => (&frame.projection, layout),
@@ -385,7 +387,8 @@ impl OrderflowView {
             quantity: cell.quantity,
             start_slot: frame.first_bar_index + first_bar_region,
             end_slot_exclusive: frame.first_bar_index + after_bar_region,
-            live_lane: touches_lane,
+            live_lane: touches_lane && held.is_none(),
+            held_tape_end_ms: held.as_ref().and(self.tape_end.past_ms()),
         })
     }
 

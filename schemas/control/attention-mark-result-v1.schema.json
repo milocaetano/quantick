@@ -249,7 +249,16 @@
         "generation": {
           "$ref": "#/$defs/WireU64"
         },
+        "held_tape_end_unix_ms": {
+          "description": "Where the tape is held when the cell is the recorded book beside a\ntape panned into the past; absent for every other cell. Optional on\nthe wire so v1 readers remain compatible with snapshots produced\nbefore a tape could be held.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "live_lane": {
+          "description": "The cell is today's book in the live lane; false on a held tape.",
           "type": "boolean"
         },
         "price_bucket": {
@@ -266,7 +275,7 @@
         },
         "start_slot": {
           "$ref": "#/$defs/WireU64",
-          "description": "The closed-bar slots under the cell. A cell that lies wholly in the\nlive lane has none: both bounds then equal the lane boundary, and\n`live_lane` says where it is."
+          "description": "The closed-bar slots under the cell. A cell that lies wholly in the\nlive lane or on a held tape has none: both bounds then equal the lane\nboundary, and `live_lane` or `held_tape_end_unix_ms` says where it is."
         }
       },
       "required": [
