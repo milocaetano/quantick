@@ -160,6 +160,47 @@ def test_a_total_failure_still_delivers_the_empty_pair():
     check("a total failure still brackets the absence", kinds == ["rates_start", "rates_end"], kinds)
 
 
+def test_the_daily_block_walks_d1_and_tags_its_interval():
+    """Years of D1 go out as their own block, after M1, in day-sized steps."""
+    term = FakeTerminal(0, NOW)
+    bridge = load_bridge(term)
+    day_s = 86_400
+    days = [NOW - day_s * k for k in range(4 * 366, -1, -1)]
+    asked = []
+
+    def d1(_symbol, timeframe, anchor, count):
+        asked.append((timeframe, int(anchor), int(count)))
+        upto = [t for t in days if t <= anchor][-count:]
+        return [
+            {
+                "time": t,
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.5,
+                "tick_volume": 7,
+                "real_volume": 3,
+            }
+            for t in upto
+        ]
+
+    sys.modules["MetaTrader5"].copy_rates_from = d1
+    session = session_for(bridge, term, rates_daily_years=5)
+    session.price = lambda v: f"{v:.2f}"
+    session.offset_s = 0
+    session.send_daily_rates()
+    starts = [m for m in session.sent if m["type"] == "rates_start"]
+    check("one block", len(starts) == 1, starts)
+    check("tagged as days", starts[0]["interval_ms"] == 86_400_000, starts[0])
+    check(
+        "asked the terminal for D1",
+        all(timeframe == FakeTerminal.TIMEFRAME_D1 for timeframe, _, _ in asked),
+        asked,
+    )
+    bars = sum(len(m["bars"]) for m in session.sent if m["type"] == "rate")
+    check("every day the terminal holds is sent", bars == len(days), bars)
+
+
 def test_the_walk_takes_the_newest_ticks_before_the_cursor():
     term = FakeTerminal(0, NOW)
     # One tick every 100 ms for ten minutes, ending at the cursor.

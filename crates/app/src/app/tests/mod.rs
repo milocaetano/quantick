@@ -37,6 +37,7 @@ use crate::ui_state::WorkspaceExt;
 mod arrangement_baseline_tests;
 mod bar_registry_tests;
 mod bare_canvas;
+mod calendar_history_tests;
 mod chart_view_tests;
 mod control_launch_baselines;
 mod control_plane_tests;
@@ -1618,6 +1619,8 @@ fn app_backfilled_with(
                 deal_counter: false,
                 ohlcv_history: true,
                 ohlcv_generation: 0,
+                ohlcv_daily_generation: 0,
+                ohlcv_aggressor_split: false,
             }),
             latency: feed::unsplit_latency(),
             commands: cmd_tx,

@@ -1,0 +1,16 @@
+# feat/daily-weekly-monthly-bars: ChartState carries the venue's history of
+# its first bar's bucket before the first print (the seam lead), merged into
+# that bar so a daily, weekly or monthly chart opened mid-bucket shows the
+# bucket's whole open and OHLCV. The merge rules live in the owner type
+# state/venue_lead.rs (`VenueLead`, outside the root); what the root gains is
+# the one field, its seat call on every partial refresh, the carry into a
+# history recut, and three accessors (set, read, first-print open).
+ChartState +37
+!budget +37
+# feat/daily-weekly-monthly-bars, seam-lead honesty round: the root's two
+# accessors carry whether the lead covers the seam (`set_venue_lead`'s
+# `covers_seam`) and read whether the first bar knowingly misses part of its
+# bucket (`seam_bar_partial`), so the control plane can label it partial.
+# The rule itself is `VenueLead::seam_partial`, outside the root.
+ChartState +9
+!budget +9

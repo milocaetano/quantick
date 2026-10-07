@@ -35,6 +35,9 @@ TAPE_PROBE_DAYS = 30
 
 # Milliseconds in the M1 bucket the candle block is sent in.
 M1_INTERVAL_MS = 60_000
+# The D1 block's candle size. A D1 bar opens at the *server's* midnight, which
+# quantick places in the UTC day holding most of it.
+D1_INTERVAL_MS = 86_400_000
 
 # Days charged per "month" of requested candle history. Calendar months vary and
 # nothing here needs them to be exact — this only decides how far back to ask.

@@ -16,7 +16,8 @@ use tracing::{info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_hyperliquid::{
-    Backoff, CANDLE_INTERVAL_1M, HYPERLIQUID_WS_URL, ONE_MINUTE_MS, TradeMapper,
+    Backoff, CANDLE_INTERVAL_1D, CANDLE_INTERVAL_1M, HYPERLIQUID_WS_URL, ONE_MINUTE_MS,
+    TradeMapper,
     depth::{DepthEvent, HYPERLIQUID_LEVELS_PER_SIDE, run_depth_with_reconnect},
     fetch_candle_history, run_trades_with_reconnect,
 };
@@ -111,7 +112,9 @@ async fn feed_task(
 
     loop {
         let flow = tokio::select! {
-            Some((bars, slice)) = ohlcv_rx.recv() => feed.on_ohlcv_reply(bars, slice).await,
+            Some((interval_ms, bars, slice)) = ohlcv_rx.recv() => {
+                feed.on_ohlcv_reply(interval_ms, bars, slice).await
+            }
             maybe_batch = live_rx.recv() => match maybe_batch {
                 Some(trades) => feed.on_batch(trades).await,
                 None => ControlFlow::Break(()),
@@ -138,7 +141,9 @@ async fn feed_task(
 }
 
 /// One reply from a candle fetch: the bars of one window and where it sits.
-type OhlcvReply = (Vec<quantick_engine::Bar>, crate::OhlcvSlice);
+/// One candle reply: the interval it was served at, its bars, its place in
+/// the run.
+type OhlcvReply = (i64, Vec<quantick_engine::Bar>, crate::OhlcvSlice);
 
 /// The streaming loop's driver: the side-task handles, whether the startup
 /// recovery batch is still owed, and the channels the plan's effects go out
@@ -160,6 +165,7 @@ struct HyperliquidLoop {
 impl HyperliquidLoop {
     async fn on_ohlcv_reply(
         &mut self,
+        interval_ms: i64,
         bars: Vec<quantick_engine::Bar>,
         slice: crate::OhlcvSlice,
     ) -> ControlFlow<()> {
@@ -169,7 +175,7 @@ impl HyperliquidLoop {
             self.ohlcv_task = None;
         }
         let event = FeedEvent::OhlcvHistory {
-            interval_ms: ONE_MINUTE_MS,
+            interval_ms,
             bars,
             slice,
         };
@@ -233,16 +239,18 @@ impl HyperliquidLoop {
                 // `load_older` never returns silence either. `Refused` rather
                 // than a short answer: nothing was fetched because nobody
                 // looked, which is not a statement about the venue's record.
-                let refused = (Vec::new(), crate::OhlcvSlice::Refused);
+                let refused = (ONE_MINUTE_MS, Vec::new(), crate::OhlcvSlice::Refused);
                 send_or_break(&self.ohlcv_tx, refused).await?; // UI gone
             }
             CommandPlan::StartOhlcv {
+                interval_ms,
                 span_ms,
                 slice_ms,
                 before_ms,
             } => {
                 self.ohlcv_task = Some(spawn_ohlcv(
                     self.symbol.clone(),
+                    interval_ms,
                     span_ms,
                     slice_ms,
                     before_ms,
@@ -363,11 +371,19 @@ fn start_book_capture(
 /// log, where it can carry the detail a chart cannot.
 fn spawn_ohlcv(
     symbol: String,
+    interval_ms: i64,
     span_ms: i64,
     slice_ms: Option<i64>,
     before_ms: Option<i64>,
-    reply: mpsc::Sender<(Vec<quantick_engine::Bar>, crate::OhlcvSlice)>,
+    reply: mpsc::Sender<OhlcvReply>,
 ) -> JoinHandle<()> {
+    // Both bases are native here, as on Binance: a `1d` candle opens at
+    // 00:00 UTC, the engine's own day.
+    let (candle_interval, interval_ms) = if interval_ms == crate::OHLCV_DAILY_INTERVAL_MS {
+        (CANDLE_INTERVAL_1D, quantick_engine::time_bucket::DAY_MS)
+    } else {
+        (CANDLE_INTERVAL_1M, ONE_MINUTE_MS)
+    };
     tokio::spawn(async move {
         let symbol = symbol.as_str();
         // See the Binance twin: the live edge, or the instant a *load older*
@@ -392,8 +408,8 @@ fn spawn_ohlcv(
             let bars = match fetch_candle_history(
                 HYPERLIQUID_WS_URL,
                 symbol,
-                CANDLE_INTERVAL_1M,
-                ONE_MINUTE_MS,
+                candle_interval,
+                interval_ms,
                 window.from_ms,
                 window.to_ms,
             )
@@ -446,7 +462,7 @@ fn spawn_ohlcv(
             // A closed channel means the feed loop is gone, which is not this
             // task's problem to report: it is already being reported there.
             // Stop fetching, though — nothing is listening for the rest.
-            if reply.send((bars, slice)).await.is_err() {
+            if reply.send((interval_ms, bars, slice)).await.is_err() {
                 return;
             }
         }

@@ -93,13 +93,13 @@ fn typed_text_keeps_its_digits_and_the_last_letter() {
 
 #[test]
 fn durations_outside_the_interval_range_are_left_out() {
-    // 30 hours passes a day.
-    let thirty = configs(30);
-    assert!(thirty.contains(&"time:30m".to_owned()));
-    assert!(!thirty.iter().any(|spec| spec == "time:30h"));
-    let big = configs(100_000);
+    // 700 hours passes four weeks, the longest fixed interval.
+    let seven_hundred = configs(700);
+    assert!(seven_hundred.contains(&"time:700m".to_owned()));
+    assert!(!seven_hundred.iter().any(|spec| spec == "time:700h"));
+    let big = configs(10_000_000);
     assert!(!big.iter().any(|spec| spec.starts_with("time:")));
-    assert!(big.contains(&"tick:100000".to_owned()));
+    assert!(big.contains(&"tick:10000000".to_owned()));
 }
 
 #[test]
@@ -116,5 +116,45 @@ fn every_candidate_round_trips_through_the_parser() {
                 config
             );
         }
+    }
+}
+
+#[test]
+fn a_unit_letter_lists_time_bars_in_that_unit() {
+    for (query, listed) in [
+        ("1d", "time:1d"),
+        ("2d", "time:2d"),
+        ("1w", "time:1w"),
+        ("1mo", "time:1mo"),
+        ("3MO", "time:3mo"),
+        ("5m", "time:5m"),
+        ("5M", "time:5m"),
+        ("30s", "time:30s"),
+        ("4h", "time:4h"),
+    ] {
+        assert_eq!(matches(query), [listed], "{query}");
+    }
+    let month = BUILTIN_BARS.quick_matches("1mo");
+    assert_eq!(month[0].quick_label(), "time(1mo)");
+}
+
+#[test]
+fn a_unit_past_the_interval_range_lists_nothing() {
+    for query in ["13mo", "5w", "29d", "0d"] {
+        assert!(matches(query).is_empty(), "{query}");
+    }
+}
+
+#[test]
+fn typed_text_keeps_a_month_suffix_whole() {
+    for (typed, kept) in [
+        ("1mo", "1mo"),
+        ("1MO", "1MO"),
+        ("1m", "1m"),
+        ("1d", "1d"),
+        ("1moR", "1R"),
+        ("1om", "1m"),
+    ] {
+        assert_eq!(quick_query_text(typed), kept, "{typed}");
     }
 }

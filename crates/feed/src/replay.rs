@@ -382,6 +382,8 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
             // wherever it draws them, so the trader reads what they got.
             ohlcv_history: request.session.context.is_some(),
             ohlcv_generation: 0,
+            ohlcv_daily_generation: 0,
+            ohlcv_aggressor_split: false,
         }),
         commands: cmd_tx,
         // A recording has no chain to attribute: its prints are as old as the
@@ -979,6 +981,7 @@ mod tests {
         handle
             .commands
             .blocking_send(FeedCommand::FetchOhlcv {
+                interval_ms: crate::OHLCV_BASE_INTERVAL_MS,
                 span_ms: crate::TIME_HISTORY_SPAN_MS,
                 before_ms: None,
                 slice_ms: None,
@@ -1039,6 +1042,7 @@ mod tests {
         handle
             .commands
             .blocking_send(FeedCommand::FetchOhlcv {
+                interval_ms: crate::OHLCV_BASE_INTERVAL_MS,
                 span_ms: crate::TIME_HISTORY_SPAN_MS,
                 slice_ms: None,
                 before_ms: None,
@@ -1097,6 +1101,7 @@ mod tests {
         handle
             .commands
             .blocking_send(FeedCommand::FetchOhlcv {
+                interval_ms: crate::OHLCV_BASE_INTERVAL_MS,
                 span_ms: crate::TIME_HISTORY_SPAN_MS,
                 before_ms: None,
                 slice_ms: None,
@@ -1175,6 +1180,7 @@ mod tests {
         handle
             .commands
             .blocking_send(FeedCommand::FetchOhlcv {
+                interval_ms: crate::OHLCV_BASE_INTERVAL_MS,
                 span_ms: 30 * 60_000,
                 slice_ms: None,
                 before_ms: None,
@@ -1567,6 +1573,7 @@ mod tests {
         handle
             .commands
             .blocking_send(FeedCommand::FetchOhlcv {
+                interval_ms: crate::OHLCV_BASE_INTERVAL_MS,
                 span_ms: crate::TIME_HISTORY_SPAN_MS,
                 slice_ms: None,
                 before_ms: None,

@@ -154,12 +154,19 @@ mod tests {
             assert_eq!(spec.to_config_string(), config, "{text}");
         }
 
-        for boundary in ["time:100ms", "time:24h"] {
+        for boundary in ["time:100ms", "time:1d", "time:4w", "time:12mo"] {
             let spec = parse_runnable(boundary).expect(boundary);
             assert_eq!(spec.to_config_string(), boundary, "{boundary}");
         }
 
-        for (text, ms) in [("time:99ms", 99), ("time:86400001ms", 86_400_001)] {
+        for (text, ms) in [
+            ("time:99ms", 99),
+            ("time:2419200001ms", 2_419_200_001),
+            (
+                "time:13mo",
+                13 * quantick_engine::time_bucket::CALENDAR_MONTH_MS,
+            ),
+        ] {
             assert_eq!(
                 parse_runnable(text),
                 Err(SpecError::Unparsable(BarSpecError::IntervalOutOfRange {

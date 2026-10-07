@@ -1,8 +1,9 @@
-"""Historical candles: paging M1 bars out of the terminal and onto the wire.
+"""Historical candles: paging M1 and D1 bars out of the terminal and onto the wire.
 
-The candle block is sent once per session, before the tape starts, so the cost
-that matters here is the terminal's own paging behaviour rather than the
-per-tick path.
+The candle blocks are sent once per session, before the tape starts, so the
+cost that matters here is the terminal's own paging behaviour rather than the
+per-tick path. The M1 block feeds intraday charts; the D1 block, years long,
+feeds daily, weekly and monthly ones.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 import time
 
 from quantick_bridge_core import (
+    D1_INTERVAL_MS,
     DAYS_PER_MONTH,
     M1_INTERVAL_MS,
     MAX_BARS_PER_RATE_LINE,
@@ -39,8 +41,13 @@ class RatesMixin:
         except (TypeError, IndexError, ValueError):
             return 0
 
-    def fetch_rates(self, from_s: int, now_s: int) -> tuple[list, int, bool]:
-        """Walk M1 history backwards in bounded pages.
+    def fetch_rates(
+        self, from_s: int, now_s: int, timeframe=None, step_s: int = 60
+    ) -> tuple[list, int, bool]:
+        """Walk `timeframe` history (M1 unless given) backwards in bounded pages.
+
+        `step_s` is one candle's length, so a page ends one candle before the
+        oldest one the previous page returned.
 
         `copy_rates_range` over the whole span cannot be used, and the reason is
         not obvious: the terminal validates a request's **potential** bar count
@@ -64,6 +71,8 @@ class RatesMixin:
         Merging through a dict keyed by bar time settles the overlap that a
         backwards walk produces at every seam, deterministically.
         """
+        if timeframe is None:
+            timeframe = mt5.TIMEFRAME_M1
         by_time: dict[int, object] = {}
         anchor = now_s
         pages = 0
@@ -71,7 +80,7 @@ class RatesMixin:
         # Narrowed in place if this terminal refuses the starting width.
         page_bars = RATES_PAGE_BARS
         while pages < RATES_MAX_PAGES:
-            chunk = mt5.copy_rates_from(self.symbol, mt5.TIMEFRAME_M1, anchor, page_bars)
+            chunk = mt5.copy_rates_from(self.symbol, timeframe, anchor, page_bars)
             pages += 1
             # A refusal about the request itself, not about the data: the page
             # is wider than this terminal's Max-bars setting allows. Halve and
@@ -90,9 +99,7 @@ class RatesMixin:
                     action="halve_and_retry",
                     hint="the terminal's Max bars in chart is below the page size",
                 )
-                chunk = mt5.copy_rates_from(
-                    self.symbol, mt5.TIMEFRAME_M1, anchor, page_bars
-                )
+                chunk = mt5.copy_rates_from(self.symbol, timeframe, anchor, page_bars)
             if chunk is None:
                 # A page that fails after others succeeded costs the oldest end
                 # of the window, not the block: what was already merged is real
@@ -119,9 +126,9 @@ class RatesMixin:
                 break  # the terminal has no history older than this
             if len(by_time) >= self.args.rates_max_bars:
                 break  # the cap decides the rest; the newest are kept below
-            # One minute before the oldest bar seen, so the next page ends where
+            # One candle before the oldest bar seen, so the next page ends where
             # this one began instead of repeating it wholesale.
-            anchor = oldest - 60
+            anchor = oldest - step_s
         else:
             log(
                 "BRIDGE_RATES_PAGE_BUDGET_SPENT",
@@ -160,26 +167,42 @@ class RatesMixin:
         """
         now_s = int(time.time() + self.offset_s)
         from_s = now_s - self.args.rates_months * DAYS_PER_MONTH * 86400
-        rates, pages, partial = self.fetch_rates(from_s, now_s)
+        self.send_rates_block(mt5.TIMEFRAME_M1, M1_INTERVAL_MS, from_s, now_s)
+
+    def send_daily_rates(self) -> None:
+        """Historical D1 candles, so a daily, weekly or monthly chart spans years.
+
+        A quarter of M1 holds thirteen weekly bars; the same terminal keeps
+        years of D1 in a few thousand rows. Sent after the M1 block as a second
+        block with its own interval, and held by the feed beside it.
+        """
+        now_s = int(time.time() + self.offset_s)
+        from_s = now_s - self.args.rates_daily_years * 366 * 86400
+        self.send_rates_block(mt5.TIMEFRAME_D1, D1_INTERVAL_MS, from_s, now_s)
+
+    def send_rates_block(self, timeframe, interval_ms: int, from_s: int, now_s: int) -> None:
+        """Fetch one timeframe's candles over `[from_s, now_s]` and send them as a block."""
+        rates, pages, partial = self.fetch_rates(
+            from_s, now_s, timeframe=timeframe, step_s=interval_ms // 1000
+        )
         if not rates:
             log(
                 "BRIDGE_RATES_FAILED",
                 symbol=self.symbol,
+                interval_ms=interval_ms,
                 pages=pages,
                 mt5_error=str(mt5.last_error()),
                 hint=(
                     "the terminal refused the request itself; raise Max bars in "
                     "chart (Tools > Options > Charts) or lower --rates-months"
                     if self.rates_error_code() == MT5_INVALID_PARAMS
-                    else "the terminal returned no M1 history for this symbol"
+                    else "the terminal returned no history for this symbol at this timeframe"
                 ),
             )
             # The hello already promised candles, so silence here would leave the
             # feed holding nothing while advertising nothing — indistinguishable
             # from a block still on its way. An empty pair delivers the absence.
-            self.send(
-                {"type": "rates_start", "interval_ms": M1_INTERVAL_MS, "count_hint": 0}
-            )
+            self.send({"type": "rates_start", "interval_ms": interval_ms, "count_hint": 0})
             self.send({"type": "rates_end"})
             return
 
@@ -207,7 +230,7 @@ class RatesMixin:
         self.send(
             {
                 "type": "rates_start",
-                "interval_ms": M1_INTERVAL_MS,
+                "interval_ms": interval_ms,
                 "count_hint": len(rates),
             }
         )
@@ -256,11 +279,11 @@ class RatesMixin:
         log(
             "BRIDGE_RATES_SENT",
             symbol=self.symbol,
-            interval_ms=M1_INTERVAL_MS,
+            interval_ms=interval_ms,
             bars=sent,
             pages=pages,
             partial=partial,
-            requested_span_days=self.args.rates_months * DAYS_PER_MONTH,
+            requested_span_days=(now_s - from_s) // 86400,
             covered_span_days=round((newest_s - oldest_s) / 86400.0, 1),
             oldest_ms=oldest_s * 1000,
             newest_ms=newest_s * 1000,

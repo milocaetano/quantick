@@ -185,6 +185,7 @@ fn provenance_context(tab: &Tab, config: &AppConfig) -> BarProvenanceContext {
         engine_price: provenance.price,
         engine_volume: provenance.volume,
         engine_side: provenance.aggressor_side,
+        venue_aggressor_split: tab.capabilities(config).ohlcv_aggressor_split,
     }
 }
 
@@ -197,24 +198,42 @@ pub(crate) fn bar_snapshot(
     config: &AppConfig,
 ) -> BarSnapshot {
     let provenance = provenance_context(tab, config);
-    bar_snapshot_with(pane, slot, bar, state, &provenance)
+    bar_snapshot_with(tab, pane, slot, bar, state, &provenance)
 }
 
 fn bar_snapshot_with(
+    tab: &Tab,
     pane: &ChartPane,
     slot: usize,
     bar: &Bar,
     state: BarStateDto,
     context: &BarProvenanceContext,
 ) -> BarSnapshot {
-    BarSnapshot::from_bar(
+    let mut snapshot = BarSnapshot::from_bar(
         slot,
         bar,
         state,
         pane.seam_slot(),
         pane.state.backfill_boundary(),
         context,
-    )
+    );
+    // A bar knowingly short of its bucket says so: the seam bar missing the
+    // stretch before its first print, the oldest venue bar the record's
+    // start cuts into.
+    if slot == pane.seam_slot() {
+        if let Some(lead) = pane.state.venue_lead() {
+            snapshot.mark_venue_lead(lead, context);
+        }
+        if pane.state.seam_bar_partial() {
+            snapshot.mark_partial();
+        }
+    } else if slot == 0
+        && (pane.state.spec().time_interval_ms())
+            .is_some_and(|interval| tab.venue_record_starts_inside(interval))
+    {
+        snapshot.mark_partial();
+    }
+    snapshot
 }
 
 /// Read one append-only page of closed chart bars. A live append is allowed;
@@ -268,14 +287,16 @@ pub(crate) fn chart_window_prevalidated<P: TabsPort + ?Sized>(
         .slots
         .clone()
         .filter_map(|slot| {
-            pane.closed_bar(slot)
-                .map(|bar| bar_snapshot_with(pane, slot, bar, BarStateDto::Closed, &provenance))
+            pane.closed_bar(slot).map(|bar| {
+                bar_snapshot_with(tab, pane, slot, bar, BarStateDto::Closed, &provenance)
+            })
         })
         .collect::<Vec<_>>();
     let bars = selection.complete(items)?;
     let partial_slot = pane.closed_slots();
     let in_progress_bar = pane.state.partial().map(|bar| {
         bar_snapshot_with(
+            tab,
             pane,
             partial_slot,
             bar,
