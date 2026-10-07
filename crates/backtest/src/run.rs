@@ -183,9 +183,14 @@ impl StrategyPort for SimVenue<'_> {
         events
     }
 
-    /// No position and no resting order (queued market actions are
-    /// impossible here — the print that runs a bar's close drained the
-    /// queue before the bar could close).
+    /// No position and no resting order — [`Account::is_flat`], exactly
+    /// what `ForceRegion` read before the shared runner.
+    ///
+    /// Not the chart's gate: a print that closes several bars can leave a
+    /// market entry queued for the next print, and the chart's paper
+    /// account also counts that in-flight order as not flat. The
+    /// divergence predates the runner and is preserved here on purpose,
+    /// so moving the seam changed no backtest; aligning it is a follow-up.
     fn is_flat(&self) -> bool {
         self.account().is_flat()
     }

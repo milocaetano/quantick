@@ -291,10 +291,7 @@ fn live_trade_resume_does_not_evaluate_a_new_force_bar() {
         .drawings
         .set_times(0, &[Some(trades[0].timestamp_ms), None]);
     assert!(
-        app.active_tab()
-            .flow_pane
-            .strategies
-            .region(&app.active_tab().flow_pane.drawings, drawing, 3)
+        crate::pane::strategies::drawing_region(&app.active_tab().flow_pane.drawings, drawing, 3)
             .unwrap()
             .1
     );
@@ -306,10 +303,7 @@ fn live_trade_resume_does_not_evaluate_a_new_force_bar() {
     app.active_tab_mut().drain_feed(tab_id);
     assert_eq!(app.active_tab().flow_pane.state.bars().len(), 4);
     assert!(
-        app.active_tab()
-            .flow_pane
-            .strategies
-            .region(&app.active_tab().flow_pane.drawings, drawing, 3)
+        crate::pane::strategies::drawing_region(&app.active_tab().flow_pane.drawings, drawing, 3)
             .unwrap()
             .1
     );

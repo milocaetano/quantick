@@ -61,7 +61,8 @@ pub struct PaneStrategies {
 /// tested holds fire.
 ///
 /// A free function rather than a method on [`PaneStrategies`], so the tab
-/// can resolve regions while it steps the pane's instances mutably.
+/// can resolve regions while it steps the pane's instances mutably — and
+/// the one name both the closed-bar and the forming-bar paths resolve by.
 #[must_use]
 pub fn drawing_region(
     drawings: &Drawings,
@@ -103,18 +104,6 @@ impl PaneStrategies {
     #[must_use]
     pub fn take_bars(&mut self) -> Vec<(quantick_engine::Bar, usize)> {
         std::mem::take(&mut self.pending)
-    }
-
-    /// The drawing `id` resolved into the kernel's terms for the bar that
-    /// closed at `slot` — see [`drawing_region`], which this answers.
-    #[must_use]
-    pub fn region(
-        &self,
-        drawings: &Drawings,
-        id: drawings::DrawingId,
-        slot: usize,
-    ) -> Option<(quantick_strategy::Region, bool)> {
-        drawing_region(drawings, id, slot)
     }
 
     /// Re-arm the instance riding `drawing`, re-warming its ruler when the

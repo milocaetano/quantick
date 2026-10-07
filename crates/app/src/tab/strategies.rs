@@ -106,7 +106,7 @@ pub(super) fn evaluate(
                 }
                 let drawing = pane.strategies.anchors.instances[index].drawing;
                 let (region, active) = quantick_strategy::runner::region_or_hold(
-                    pane.strategies.region(&pane.drawings, drawing, slot),
+                    crate::pane::strategies::drawing_region(&pane.drawings, drawing, slot),
                 );
                 sounds.extend(
                     pane.strategies.anchors.instances[index]

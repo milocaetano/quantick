@@ -341,8 +341,9 @@ impl Strategy for ForceRegion {
     ) {
         // The shared runner the chart steps its drawings through, with the
         // region fixed: the recorded session is the region's whole life, so
-        // the time window is always active. The flat gate is the port's, as
-        // the chart's is its paper account's.
+        // the time window is always active. The flat gate is the port's,
+        // which still ignores a queued market entry the chart's would count
+        // (see `SimVenue::is_flat` in `run.rs`).
         let region = self.region;
         // No alarm rides a backtest instance, so the runner never asks the
         // clock it is handed and no cue comes back.

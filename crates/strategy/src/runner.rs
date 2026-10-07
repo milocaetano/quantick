@@ -107,6 +107,24 @@ pub fn region_or_hold(resolved: Option<(Region, bool)>) -> (Region, bool) {
     resolved.unwrap_or((Region::new(Decimal::ZERO, Decimal::ZERO), false))
 }
 
+/// Apply `commands` through `port` in order, handing each one's events to
+/// `hear` — the issuer's one echo. Applying a command an instance answered
+/// with emits no events of its own (kernel contract), so the echo's own
+/// answer is never applied: one echo settles it.
+///
+/// The single place a command reaches the account and its events come
+/// back; every step below, and the backtest's reference strategies, go
+/// through it.
+pub fn apply_and_echo<P>(port: &mut P, commands: Vec<Command>, mut hear: impl FnMut(&[VenueEvent]))
+where
+    P: StrategyPort + ?Sized,
+{
+    for command in commands {
+        let echoed = port.apply(command);
+        hear(&echoed);
+    }
+}
+
 /// Hand the events the account produced consuming one print to every
 /// instance, applying each instance's answer through `port` and echoing
 /// its events back to that instance once. Step 2 of the module contract.
@@ -120,10 +138,9 @@ where
     }
     for instance in instances {
         let responses = instance.armed_mut().on_sim_events(events);
-        for command in responses {
-            let echoed = port.apply(command);
-            let _ = instance.armed_mut().on_sim_events(&echoed);
-        }
+        apply_and_echo(port, responses, |echoed| {
+            let _ = instance.armed_mut().on_sim_events(echoed);
+        });
     }
 }
 
@@ -162,10 +179,9 @@ where
         // closed bar is offered, qualifying or not: a preview that failed
         // to hold is reported here, and this bar's repeat budget resets.
         cues.extend(instance.alarm_on_closed_bar(now_ms));
-        for command in commands {
-            let echoed = port.apply(command);
-            let _ = instance.armed_mut().on_sim_events(&echoed);
-        }
+        apply_and_echo(port, commands, |echoed| {
+            let _ = instance.armed_mut().on_sim_events(echoed);
+        });
     }
     cues
 }
@@ -390,7 +406,8 @@ mod tests {
         assert_eq!(
             instances[1].state(),
             &ArmedState::Done,
-            "the second instance heard the same batch — its entry filled,              so the flat account the next bar saw completed its one shot"
+            "the second instance heard the same batch — its entry filled, \
+             so the flat account the next bar saw completed its one shot"
         );
     }
 

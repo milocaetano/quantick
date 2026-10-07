@@ -19,7 +19,7 @@
 use quantick_engine::Bar;
 use quantick_indicators::{Indicator, IndicatorHost, InstanceId, PlotId};
 use quantick_sim::{Command, Order, Position, VenueEvent};
-use quantick_strategy::runner::StrategyPort;
+use quantick_strategy::runner::{StrategyPort, apply_and_echo};
 use rust_decimal::Decimal;
 
 /// A trading rule the harness can run.
@@ -81,10 +81,10 @@ pub trait Strategy {
     /// step the live chart feeds its armed instances through, so it behaves
     /// identically under both consumers.
     fn on_print_events(&mut self, events: &[VenueEvent], port: &mut dyn SimPort) {
-        for command in self.on_events(events) {
-            let echoed = port.apply(command);
-            let _ = self.on_events(&echoed);
-        }
+        let commands = self.on_events(events);
+        apply_and_echo(port, commands, |echoed| {
+            let _ = self.on_events(echoed);
+        });
     }
 
     /// A bar just closed, with the simulator lent through `port`.
@@ -106,10 +106,9 @@ pub trait Strategy {
             signals,
             account: port.account(),
         });
-        for command in commands {
-            let echoed = port.apply(command);
-            let _ = self.on_events(&echoed);
-        }
+        apply_and_echo(port, commands, |echoed| {
+            let _ = self.on_events(echoed);
+        });
     }
 
     /// Called once after the last print of a session, before the next one.
