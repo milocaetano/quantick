@@ -1,5 +1,5 @@
 //! The History run at its edges: a pane opened while pages are held, a press
-//! while a reconnect's resume floor stands, Esc with a drawing tool armed,
+//! and a reply while a reconnect's resume floor stands, Esc with a drawing tool armed,
 //! and a press that retries a failed rebuild.
 use super::*;
 use crate::toolbar::ToolbarAction;
@@ -111,45 +111,62 @@ fn a_pane_opened_during_a_run_ends_with_the_whole_tape() {
     assert_eq!(time, flow, "the pane opened mid-run holds the same tape");
 }
 
-/// While a reconnect's resume floor stands, the next history-shaped event
-/// may be the session's recovery window: a press waits until the floor has
-/// been spent instead of sending a request whose reply the floor would eat.
+/// Where the run stands while it pages, or a failure naming what it is.
+fn loading_progress(app: &QuantickApp) -> quantick_feed::history_reach::ReachProgress {
+    match app.active_tab().history_status() {
+        RunStatus::Loading(progress) => progress,
+        other => panic!("the run is not loading: {other:?}"),
+    }
+}
+
+/// After a reconnect on a quiet market (after the close, a weekend) no print
+/// comes to spend the resume floor, so a press must not wait for one: it
+/// begins at once, and its reply is judged on what it brought.
 #[test]
-fn a_press_while_the_resume_floor_stands_waits_for_it() {
+fn a_press_after_a_reconnect_on_a_quiet_market_begins_at_once() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    let floor = live_edge_ms(&app);
-    app.active_tab_mut().resume_floor_ms = Some(floor);
+    app.active_tab_mut().resume_floor_ms = Some(live_edge_ms(&app));
 
-    app.apply_toolbar_action(ToolbarAction::LoadHistory(HistoryReach::Hours(2)));
-    assert!(
-        drain_load_older(&mut commands).is_empty(),
-        "nothing out yet"
-    );
-    assert_eq!(
-        app.active_tab().history_status(),
-        RunStatus::Queued(HistoryReach::Hours(2))
-    );
-
-    // The new session's first print spends the floor; the press begins.
-    events
-        .try_send(FeedEvent::Live(minute_trade_at(400)))
-        .unwrap();
-    app.drain_tabs();
-    assert_eq!(app.active_tab().resume_floor_ms, None);
+    let config = app.config.clone();
+    let press = app
+        .active_tab_mut()
+        .load_history(&config, HistoryReach::Hours(2));
+    assert_eq!(press, Press::Start, "nothing is left to wait for");
     assert_eq!(
         drain_load_older(&mut commands).len(),
         1,
         "the press went out"
     );
-    assert!(app.active_tab().history_reach_running());
+
+    events
+        .try_send(FeedEvent::HistoryPrepended(
+            (-30..0).map(minute_trade_at).collect(),
+        ))
+        .unwrap();
+    app.drain_tabs();
+    let progress = loading_progress(&app);
+    assert_eq!(
+        progress.prints_pulled, 30,
+        "the reply was judged on its prints"
+    );
+    assert_eq!(progress.oldest_ms, minute_trade_at(-30).timestamp_ms);
+    assert_eq!(
+        drain_load_older(&mut commands).len(),
+        1,
+        "and the run asked again"
+    );
+    assert!(
+        app.active_tab().resume_floor_ms.is_some(),
+        "an older page is not the session's recovery window"
+    );
 }
 
-/// A reply the resume floor consumes still answers the run's request: the
-/// run is never left waiting on a reply that already came.
+/// A reply landing while the resume floor stands is the run's, judged with
+/// the prints it carried — not swallowed by the floor, and not faked empty.
 #[test]
-fn a_reply_eaten_by_the_resume_floor_still_answers_the_run() {
+fn a_reply_during_the_resume_floor_is_judged_on_its_own_prints() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
@@ -163,15 +180,53 @@ fn a_reply_eaten_by_the_resume_floor_still_answers_the_run() {
         ))
         .unwrap();
     app.drain_tabs();
+    let progress = loading_progress(&app);
+    assert_eq!(progress.prints_pulled, 30);
+    assert_eq!(progress.oldest_ms, minute_trade_at(-30).timestamp_ms);
     assert_eq!(
         drain_load_older(&mut commands).len(),
         1,
-        "the run took it as an empty reply and asked again"
+        "the reply cleared the request and the run asked again"
     );
-    assert!(matches!(
-        app.active_tab().history_status(),
-        RunStatus::Loading(_)
-    ));
+}
+
+/// The new session's recovery window, landing while a request is out, goes
+/// through the floor and is not taken for the run's reply; the reply that
+/// follows is.
+#[test]
+fn the_recovery_window_is_not_taken_for_a_runs_reply() {
+    let ctx = egui::Context::default();
+    let (mut app, events, mut commands) = history_app(&ctx);
+    drain_load_older(&mut commands);
+    app.active_tab_mut().resume_floor_ms = Some(live_edge_ms(&app));
+    app.apply_toolbar_action(ToolbarAction::LoadHistory(HistoryReach::Hours(2)));
+    assert_eq!(drain_load_older(&mut commands).len(), 1);
+
+    events
+        .try_send(FeedEvent::HistoryPrepended(
+            (190..210).map(minute_trade_at).collect(),
+        ))
+        .unwrap();
+    app.drain_tabs();
+    assert_eq!(
+        app.active_tab().resume_floor_ms,
+        None,
+        "the floor was spent"
+    );
+    assert_eq!(loading_progress(&app).prints_pulled, 0, "not judged");
+    assert!(
+        drain_load_older(&mut commands).is_empty(),
+        "the request is still out"
+    );
+
+    events
+        .try_send(FeedEvent::HistoryPrepended(
+            (-30..0).map(minute_trade_at).collect(),
+        ))
+        .unwrap();
+    app.drain_tabs();
+    assert_eq!(loading_progress(&app).prints_pulled, 30);
+    assert_eq!(drain_load_older(&mut commands).len(), 1);
 }
 
 /// Esc with a drawing tool armed puts the tool down; only an Esc nothing
@@ -252,4 +307,65 @@ fn a_press_after_a_failed_rebuild_retries_and_queues_the_target() {
         320,
         "the retried rebuild kept the page"
     );
+}
+
+/// A target pressed while a recut was pending is queued behind it; when that
+/// recut fails, the target stays queued — on screen and on the control plane
+/// — and the press that retries the rebuild runs it.
+#[test]
+fn a_target_queued_behind_a_failed_recut_survives_for_the_retry() {
+    let ctx = egui::Context::default();
+    let (mut app, events, mut commands) = history_app(&ctx);
+    drain_load_older(&mut commands);
+    app.apply_toolbar_action(ToolbarAction::LoadHistory(HistoryReach::Sessions(1)));
+    assert_eq!(drain_load_older(&mut commands).len(), 1);
+    events
+        .try_send(FeedEvent::HistoryPrepended(
+            (-120..0).map(minute_trade_at).collect(),
+        ))
+        .unwrap();
+    app.drain_tabs();
+    assert_eq!(drain_load_older(&mut commands).len(), 1);
+    // Cancelled: the held pages are released into one recut.
+    app.active_tab_mut().cancel_history();
+
+    let config = app.config.clone();
+    let press = app
+        .active_tab_mut()
+        .load_history(&config, HistoryReach::Hours(4));
+    assert_eq!(press, Press::Queued);
+    app.active_tab_mut().flow_pane.fail_history_publication();
+    app.drain_tabs();
+    assert!(
+        app.active_tab()
+            .history_note()
+            .is_some_and(|note| note.contains("could not be built"))
+    );
+    assert_eq!(
+        app.active_tab().history_status(),
+        RunStatus::Queued(HistoryReach::Hours(4)),
+        "the failed recut did not drop the target"
+    );
+
+    // The reply still owed lands; a failed chart does not begin the target.
+    events
+        .try_send(FeedEvent::HistoryPrepended(Vec::new()))
+        .unwrap();
+    app.drain_tabs();
+    assert!(
+        drain_load_older(&mut commands).is_empty(),
+        "nothing on a failed chart"
+    );
+    assert_eq!(
+        app.active_tab().history_status(),
+        RunStatus::Queued(HistoryReach::Hours(4))
+    );
+
+    // The main click retries the rebuild and runs the queued target.
+    let press = app.active_tab_mut().request_older_history(&config);
+    assert_eq!(press, Press::Queued);
+    settle_rebuilds(&mut app);
+    app.drain_tabs();
+    assert_eq!(drain_load_older(&mut commands).len(), 1, "the target began");
+    assert_eq!(loading_progress(&app).reach, HistoryReach::Hours(4));
 }
