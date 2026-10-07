@@ -130,23 +130,21 @@ impl OrderflowView {
         .with_inverted(inverted);
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
         // The frame's book is today's: beside a past tape it stays with the
-        // candles, and the tape draws the book the history kept for its own
-        // stretch, placed on its clock like its prints.
+        // candles, and the tape draws the book kept for its own stretch.
         let right = chart_rect.right() - lane_width_px * f32::from(!self.tape_end.is_live());
         let depth = painter.with_clip_rect(chart_rect.with_max_x(right));
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_heatmap_background(&depth, &context);
-        if let Some(edge) = self.held_tape_edge(frame)
-            && let Some(past) = self.published.past_tape.as_deref()
-        {
+        let held = self.tape_edge(frame).filter(|_| !self.tape_end.is_live());
+        if let (Some(edge), Some(past)) = (held, &self.published.past_tape) {
             let heat = past
                 .heat
                 .placed(edge.now_ms, edge.window_ms, frame.slot_count);
-            let tape_only = OrderflowRenderStyle {
+            let style = OrderflowRenderStyle {
                 depth_layer: false,
                 ..style.clone()
             };
-            draw_heatmap_background(painter, &RenderContext::new(&heat, layout, &tape_only));
+            draw_heatmap_background(painter, &RenderContext::new(&heat, layout, &style));
         }
         draw_live_lane_marks(painter, &context);
         draw_liquidity_events(&depth, &context);
@@ -212,21 +210,11 @@ impl OrderflowView {
         crate::orderflow_render::draw_past_tape_edge(painter, &context, past);
     }
 
-    /// The native tape's clock this frame: the instant its right edge
-    /// stands for and the market time it shows. Prints and the past book
-    /// are both placed on it.
+    /// The native tape's clock: its prints and its past book are placed on it.
     fn tape_edge(&self, frame: &VisibleOrderflow) -> Option<LiveEdge> {
-        let mut edge = frame.live_edge.filter(|_| self.config.native_tape())?;
-        edge.now_ms = self
-            .tape_end
-            .end_ms(self.lane_now_ms().unwrap_or(edge.now_ms));
-        edge.window_ms = self.config.lane_window_ms(edge.reference_ms);
-        Some(edge)
-    }
-
-    /// [`tape_edge`](Self::tape_edge) while the tape is held in the past.
-    fn held_tape_edge(&self, frame: &VisibleOrderflow) -> Option<LiveEdge> {
-        self.tape_edge(frame).filter(|_| !self.tape_end.is_live())
+        let edge = frame.live_edge.filter(|_| self.config.native_tape())?;
+        let window_ms = self.config.lane_window_ms(edge.reference_ms);
+        Some(self.tape_end.edge(edge, self.lane_now_ms(), window_ms))
     }
 
     /// Where the tape's right edge is held.
