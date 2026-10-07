@@ -96,6 +96,19 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "stores",
         ],
     ),
+    // The handler families over headless ports: the window adapts its own
+    // state to each port and registers what this crate validates and answers.
+    (
+        "control-handlers",
+        &[
+            "chart",
+            "control",
+            "control-host",
+            "control-schema",
+            "engine",
+            "sources",
+        ],
+    ),
     ("mcp", &["control", "control-local"]),
     // The operability contract is a table and a comparison over it; the
     // interface walks its own registries and hands them in.

@@ -121,6 +121,7 @@ impl PreparedUiRead for ChartWindowInvocation {
             &self.input.query,
             &self.canonical_query,
             self.input.cursor.as_ref(),
+            crate::metrics::wall_clock_ms(),
         )
         .map(|page| Box::new(page) as UiReadExecution)
     }

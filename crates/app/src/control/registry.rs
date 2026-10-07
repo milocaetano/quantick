@@ -48,6 +48,11 @@ impl ProjectionRegistry {
         &self.0
     }
 
+    /// The generic registry, for a family that docks itself generically.
+    pub fn inner_mut(&mut self) -> &mut projection::ProjectionRegistry<ControlWindow> {
+        &mut self.0
+    }
+
     /// Dock one owner module and its semantic revision projection.
     pub fn register_module<K>(
         &mut self,

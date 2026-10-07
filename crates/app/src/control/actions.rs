@@ -63,6 +63,13 @@ impl ActionRegistry {
         Self(quantick_control_host::actions::ActionRegistry::new())
     }
 
+    /// The generic registry, for a family that docks itself generically.
+    pub fn inner_mut(
+        &mut self,
+    ) -> &mut quantick_control_host::actions::ActionRegistry<ControlWindow, ControlAccess> {
+        &mut self.0
+    }
+
     /// Dock one action whose input is already what it will do.
     pub fn register(
         &mut self,
@@ -129,14 +136,14 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
         generated_schema::<MarkCanonicalInput>(),
     )?;
     super::annotate::register(&mut registry)?;
-    super::notify::register(&mut registry)?;
+    quantick_control_handlers::notify::register(registry.inner_mut())?;
     super::layout::register(&mut registry)?;
     super::layers::register_action(&mut registry)?;
     super::price_axis::register(&mut registry)?;
     super::opening_scale::register(&mut registry)?;
     super::bubble_save::register(&mut registry)?;
-    super::recovery::register(&mut registry)?;
-    super::history::register(&mut registry)?;
+    quantick_control_handlers::recovery::register(registry.inner_mut())?;
+    quantick_control_handlers::history::register(registry.inner_mut())?;
     super::deal_recording::register(&mut registry)?;
     super::indicator_guide::register(&mut registry)?;
     super::script::register(&mut registry)?;

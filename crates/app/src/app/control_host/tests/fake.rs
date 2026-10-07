@@ -122,13 +122,6 @@ impl FakeWindow {
         }
     }
 
-    /// A window whose speaker refuses with `reason`.
-    pub(crate) fn with_refusing_speaker(reason: &'static str) -> Self {
-        let mut window = Self::new();
-        window.audio.alerts = Box::new(FakeSpeaker(Some(reason)));
-        window
-    }
-
     /// The fake assistant every handler test acts as.
     pub(crate) fn assistant() -> ActorContext {
         use quantick_control::id::{ConnectionId, PrincipalId, RequestId};

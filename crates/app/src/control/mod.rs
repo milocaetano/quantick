@@ -23,13 +23,12 @@ mod price_axis;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
 mod bubble_save;
-mod history;
 mod layers;
 mod layout;
 mod notify;
 mod opening_scale;
 mod orderflow;
-mod recovery;
+mod ports;
 pub(crate) use interaction::drawing_band_name;
 mod registry;
 pub(crate) mod retry_matrix;
@@ -119,7 +118,7 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     system::register(&mut registry)?;
     workspace::register(&mut registry)?;
     feed::register(&mut registry)?;
-    chart::register(&mut registry)?;
+    quantick_control_handlers::chart::register(registry.inner_mut())?;
     health::register(&mut registry)?;
     analysis::register(&mut registry)?;
     interaction::register(&mut registry)?;

@@ -1,63 +1,47 @@
-//! Chart summary and append-only paginated bar-window projections.
+//! The window's adapter onto the chart family's port: each pane read as
+//! `quantick_control_handlers::chart` asks for it. The projections, the
+//! window read and its refusals live there; what stays here is what only the
+//! window can say — where its last frame laid a pane out, which tab and side
+//! it sits on, and what its feed provides.
 
+pub(crate) use quantick_control_handlers::chart::chart_window_prevalidated;
+use quantick_control_handlers::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane};
 pub(crate) use quantick_control_schema::chart::*;
-
-use crate::app::TabsPort;
-use quantick_control::{
-    cursor::PageCursor,
-    error::ControlError,
-    id::{InstanceId, ModuleId, SnapshotScopeId},
-    registry::ModuleDescriptor,
-    wire::WireU64,
-};
 
 use quantick_engine::Bar;
 
 use crate::{
+    app::control_host::{ControlPort, TabReads},
     config::AppConfig,
     pane::{ChartPane, PaneSide},
+    state::ChartState,
     tab::Tab,
 };
 
-use super::{
-    registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
-    types::{DecimalRange, canonical_decimal, canonical_f32, wire_usize},
-};
+use super::types::{DecimalRange, canonical_f32, canonical_f64, wire_usize};
 
-pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), ProjectionRegistryError> {
-    let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
-    registry.register_module(
-        ModuleDescriptor {
-            id: module_id.clone(),
-            title: "Chart".to_owned(),
-            description: "Pane framing, bar construction, and visible market coverage.".to_owned(),
-        },
-        revision,
-    )?;
-    registry.register_scope(
-        SnapshotScopeId::new(SCOPE_ID).expect("static scope ID is valid"),
-        module_id,
-        SCHEMA_VERSION,
-        "Chart summary",
-        "Reports every pane's bar rule, revisions, viewport, price range, and coverage.",
-        &["observe", "observe.market", "observe.chart"],
-        project,
-    )
+impl ChartPort for dyn ControlPort {
+    fn chart_panes(&self) -> Vec<ChartPaneEntry<'_>> {
+        chart_panes(self.tab_reads())
+    }
+
+    fn chart_pane(&self, tab_id: u64, pane_id: u64) -> Result<ChartPaneEntry<'_>, MissingPane> {
+        let reads = self.tab_reads();
+        let tab = reads.tabs().by_id(tab_id).ok_or(MissingPane::Tab)?;
+        let (pane, side) = tab
+            .panes()
+            .find(|(pane, _)| pane.id == pane_id)
+            .ok_or(MissingPane::Pane)?;
+        Ok(entry(tab_id, tab, pane, side, false, false, reads.config()))
+    }
 }
 
-fn revision<P: TabsPort + ?Sized>(app: &P) -> ChartSnapshot {
-    snapshot(app)
-}
-
-fn project<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> ChartSnapshot {
-    snapshot(app)
-}
-
-fn snapshot<P: TabsPort + ?Sized>(app: &P) -> ChartSnapshot {
-    let active = app.tab_reads().active_tab_index();
-    let config = app.tab_reads().config();
+/// Every pane of every tab, with whether the trader sees it and drives it.
+fn chart_panes(reads: TabReads<'_>) -> Vec<ChartPaneEntry<'_>> {
+    let active = reads.active_tab_index();
+    let config = reads.config();
     let mut panes = Vec::new();
-    for (tab_index, tab) in app.tab_reads().tabs().iter().enumerate() {
+    for (tab_index, tab) in reads.tabs().iter().enumerate() {
         let focused = tab.focused_side();
         let shown = usize::from(!tab.context_collapsed) * tab.context_panes_shown();
         for (pane, side) in tab.panes() {
@@ -65,8 +49,8 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P) -> ChartSnapshot {
                 PaneSide::Flow => tab.layout.shows_flow(),
                 PaneSide::Time(slot) => tab.layout.shows_time() && slot < shown,
             };
-            panes.push(pane_snapshot(
-                app.tab_reads().tabs().id_at(tab_index),
+            panes.push(entry(
+                reads.tabs().id_at(tab_index),
                 tab,
                 pane,
                 side,
@@ -76,45 +60,76 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P) -> ChartSnapshot {
             ));
         }
     }
-    ChartSnapshot { panes }
+    panes
 }
 
-fn pane_snapshot(
+fn entry<'a>(
     tab_id: u64,
-    tab: &Tab,
-    pane: &ChartPane,
+    tab: &'a Tab,
+    pane: &'a ChartPane,
     side: PaneSide,
     visible: bool,
     focused: bool,
-    config: &AppConfig,
-) -> ChartPaneSnapshot {
-    let seam = pane.seam_slot();
-    let rule = pane.state.rule_diagnostics();
-    ChartPaneSnapshot {
-        tab_id: WireU64::new(tab_id),
-        pane_id: WireU64::new(pane.id),
+    config: &'a AppConfig,
+) -> ChartPaneEntry<'a> {
+    ChartPaneEntry {
+        tab_id,
         side: side.into(),
-        pane_index: wire_usize(side.index()),
-        feed_id: tab.feed_id.clone(),
-        symbol: tab.symbol.clone(),
+        pane_index: side.index(),
+        feed_id: &tab.feed_id,
+        symbol: &tab.symbol,
         visible,
         focused,
-        bar_spec: pane.state.spec().into(),
-        timeline_revision: WireU64::new(pane.state.timeline_revision()),
-        pagination_revision: WireU64::new(pane.pagination_revision()),
-        closed_bar_count: wire_usize(pane.closed_slots()),
-        uncounted_prints: Some(WireU64::new(rule.uncounted_trades)),
-        inferred_price_step: pane.state.inferred_price_step().map(canonical_decimal),
-        held_prints: Some(WireU64::new(rule.held_prints)),
-        off_grid_prints: Some(WireU64::new(rule.off_grid_prints)),
-        venue_history_bar_count: wire_usize(seam),
-        backfill_boundary_slot: pane
-            .state
-            .backfill_boundary()
-            .map(|boundary| wire_usize(seam + boundary)),
-        has_in_progress_bar: pane.state.partial().is_some(),
-        viewport: viewport_snapshot(pane),
-        coverage: coverage(tab, pane, config),
+        pane: Box::new(PaneRead { tab, pane, config }),
+    }
+}
+
+/// One pane with the tab and config its reads consult.
+struct PaneRead<'a> {
+    tab: &'a Tab,
+    pane: &'a ChartPane,
+    config: &'a AppConfig,
+}
+
+impl ChartPaneSource for PaneRead<'_> {
+    fn pane_id(&self) -> u64 {
+        self.pane.id
+    }
+    fn state(&self) -> &ChartState {
+        &self.pane.state
+    }
+    fn pagination_revision(&self) -> u64 {
+        self.pane.pagination_revision()
+    }
+    fn closed_slots(&self) -> usize {
+        self.pane.closed_slots()
+    }
+    fn seam_slot(&self) -> usize {
+        self.pane.seam_slot()
+    }
+    fn closed_bar(&self, slot: usize) -> Option<&Bar> {
+        self.pane.closed_bar(slot)
+    }
+    fn venue_prefix(&self) -> &[Bar] {
+        &self.pane.history_prefix
+    }
+    fn slot_open_time(&self, slot: usize) -> Option<i64> {
+        self.pane.slot_open_time(slot)
+    }
+    fn visible_slots(&self) -> Option<(usize, usize)> {
+        self.pane.frame.chart_area.map(|_| visible_slots(self.pane))
+    }
+    fn viewport(&self) -> ViewportSnapshot {
+        viewport_snapshot(self.pane)
+    }
+    fn history_paging(&self) -> bool {
+        self.tab.capabilities(self.config).history_paging
+    }
+    fn venue_record_starts_inside(&self, interval_ms: i64) -> bool {
+        self.tab.venue_record_starts_inside(interval_ms)
+    }
+    fn provenance(&self) -> BarProvenanceContext {
+        provenance_context(self.tab, self.config)
     }
 }
 
@@ -139,8 +154,8 @@ pub(crate) fn viewport_snapshot(pane: &ChartPane) -> ViewportSnapshot {
         price_axis_inverted: pane.price_view.is_inverted(),
         price_range: price_range.and_then(|(low, high)| {
             Some(DecimalRange {
-                low: super::types::canonical_f64(low, PRICE_DECIMAL_PLACES)?,
-                high: super::types::canonical_f64(high, PRICE_DECIMAL_PLACES)?,
+                low: canonical_f64(low, PRICE_DECIMAL_PLACES)?,
+                high: canonical_f64(high, PRICE_DECIMAL_PLACES)?,
             })
         }),
         chart_width_px: chart_width_px.and_then(|width| canonical_f32(width, PIXEL_DECIMAL_PLACES)),
@@ -161,22 +176,6 @@ fn visible_slots(pane: &ChartPane) -> (usize, usize) {
         .visible_range((right - chart.left()).max(0.0), total)
 }
 
-fn coverage(tab: &Tab, pane: &ChartPane, config: &AppConfig) -> ChartCoverage {
-    let oldest = pane.slot_open_time(0);
-    let newest = pane
-        .state
-        .partial()
-        .or_else(|| pane.state.bars().last())
-        .or_else(|| pane.history_prefix.last())
-        .map(|bar| bar.close_time);
-    ChartCoverage {
-        oldest_open_time_unix_ms: oldest,
-        newest_close_time_unix_ms: newest,
-        older_history_paging_supported: tab.capabilities(config).history_paging,
-        venue_prefix_present: !pane.history_prefix.is_empty(),
-    }
-}
-
 fn provenance_context(tab: &Tab, config: &AppConfig) -> BarProvenanceContext {
     // One vocabulary with the feed scope: the same tab must never be
     // described two ways.
@@ -189,6 +188,8 @@ fn provenance_context(tab: &Tab, config: &AppConfig) -> BarProvenanceContext {
     }
 }
 
+/// One bar of `pane` on the wire, as the window read and the pointer read
+/// both put it.
 pub(crate) fn bar_snapshot(
     tab: &Tab,
     pane: &ChartPane,
@@ -198,128 +199,23 @@ pub(crate) fn bar_snapshot(
     config: &AppConfig,
 ) -> BarSnapshot {
     let provenance = provenance_context(tab, config);
-    bar_snapshot_with(tab, pane, slot, bar, state, &provenance)
+    let read = PaneRead { tab, pane, config };
+    quantick_control_handlers::chart::bar_snapshot(&read, slot, bar, state, &provenance)
 }
 
-fn bar_snapshot_with(
-    tab: &Tab,
-    pane: &ChartPane,
-    slot: usize,
-    bar: &Bar,
-    state: BarStateDto,
-    context: &BarProvenanceContext,
-) -> BarSnapshot {
-    let mut snapshot = BarSnapshot::from_bar(
-        slot,
-        bar,
-        state,
-        pane.seam_slot(),
-        pane.state.backfill_boundary(),
-        context,
-    );
-    // A bar knowingly short of its bucket says so: the seam bar missing the
-    // stretch before its first print, the oldest venue bar the record's
-    // start cuts into.
-    if slot == pane.seam_slot() {
-        if let Some(lead) = pane.state.venue_lead() {
-            snapshot.mark_venue_lead(lead, context);
-        }
-        if pane.state.seam_bar_partial() {
-            snapshot.mark_partial();
-        }
-    } else if slot == 0
-        && (pane.state.spec().time_interval_ms())
-            .is_some_and(|interval| tab.venue_record_starts_inside(interval))
-    {
-        snapshot.mark_partial();
-    }
-    snapshot
-}
-
-/// Read one append-only page of closed chart bars. A live append is allowed;
-/// a prefix install, backfill, reset, or bar-spec rebuild advances the pane's
-/// pagination revision and returns `control.page_stale`.
+/// Read one append-only page of closed chart bars, stamped now.
 #[cfg(test)]
-pub(crate) fn chart_window<P: TabsPort + ?Sized>(
-    app: &P,
-    instance_id: &InstanceId,
+pub(crate) fn chart_window(
+    app: &crate::app::ControlWindow,
+    instance_id: &quantick_control::id::InstanceId,
     query: &ChartWindowQuery,
-    cursor: Option<&PageCursor>,
-) -> Result<ChartWindowPage, ControlError> {
-    let canonical_query = serde_json::to_value(query)
-        .map_err(|error| ControlError::invalid_request(format!("invalid chart query: {error}")))?;
-    chart_window_prevalidated(app, instance_id, query, &canonical_query, cursor)
-}
-
-/// Gateway path for a query parsed, schema-checked, and canonicalized away
-/// from the application thread.
-pub(crate) fn chart_window_prevalidated<P: TabsPort + ?Sized>(
-    app: &P,
-    instance_id: &InstanceId,
-    query: &ChartWindowQuery,
-    canonical_query: &serde_json::Value,
-    cursor: Option<&PageCursor>,
-) -> Result<ChartWindowPage, ControlError> {
-    query.validate_page_size()?;
-    let tab = app
-        .tab_reads()
-        .tabs()
-        .by_id(query.tab_id.get())
-        .ok_or_else(|| ControlError::invalid_request("chart window names an unknown tab"))?;
-    let Some((pane, side)) = tab.panes().find(|(pane, _)| pane.id == query.pane_id.get()) else {
-        return Err(ControlError::invalid_request(
-            "chart window names an unknown pane on the requested tab",
-        ));
-    };
-    let closed = pane.closed_slots();
-    let consistency_revision = WireU64::new(pane.pagination_revision());
-    let selection = ChartWindowSelection::resolve(
-        query,
-        instance_id,
-        canonical_query,
-        cursor,
-        consistency_revision,
-        closed,
-        pane.frame.chart_area.map(|_| visible_slots(pane)),
-    )?;
-    let provenance = provenance_context(tab, app.tab_reads().config());
-    let items = selection
-        .slots
-        .clone()
-        .filter_map(|slot| {
-            pane.closed_bar(slot).map(|bar| {
-                bar_snapshot_with(tab, pane, slot, bar, BarStateDto::Closed, &provenance)
-            })
-        })
-        .collect::<Vec<_>>();
-    let bars = selection.complete(items)?;
-    let partial_slot = pane.closed_slots();
-    let in_progress_bar = pane.state.partial().map(|bar| {
-        bar_snapshot_with(
-            tab,
-            pane,
-            partial_slot,
-            bar,
-            BarStateDto::InProgress,
-            &provenance,
-        )
-    });
-
-    Ok(ChartWindowPage {
-        captured_at_unix_ms: crate::metrics::wall_clock_ms(),
-        tab_id: query.tab_id,
-        pane_id: query.pane_id,
-        side: side.into(),
-        feed_id: tab.feed_id.clone(),
-        symbol: tab.symbol.clone(),
-        consistency_revision,
-        high_water_slot_exclusive: selection.high_water,
-        viewport: viewport_snapshot(pane),
-        bars,
-        in_progress_bar,
-        omitted_modules: OMITTED_WINDOW_MODULE_IDS
-            .into_iter()
-            .map(|id| ModuleId::new(id).expect("static omitted module ID is valid"))
-            .collect(),
-    })
+    cursor: Option<&quantick_control::cursor::PageCursor>,
+) -> Result<ChartWindowPage, quantick_control::error::ControlError> {
+    let canonical_query = serde_json::to_value(query).map_err(|error| {
+        quantick_control::error::ControlError::invalid_request(format!(
+            "invalid chart query: {error}"
+        ))
+    })?;
+    let now = crate::metrics::wall_clock_ms();
+    chart_window_prevalidated(app, instance_id, query, &canonical_query, cursor, now)
 }

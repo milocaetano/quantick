@@ -485,9 +485,20 @@ fn push_feed_status<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
     if !popup_open {
         return;
     }
-    for (control_id, recovery) in [
-        (FEED_RECONNECT_CONTROL_ID, Recovery::Reconnect),
-        (FEED_RELOAD_CONTROL_ID, Recovery::Reload),
+    // Each control names the capability a click invokes, beside the button,
+    // so an operator reading the screen can invoke exactly that.
+    use quantick_control_schema::recovery::{RECONNECT_CAPABILITY_ID, RELOAD_CAPABILITY_ID};
+    for (control_id, recovery, capability_id) in [
+        (
+            FEED_RECONNECT_CONTROL_ID,
+            Recovery::Reconnect,
+            RECONNECT_CAPABILITY_ID,
+        ),
+        (
+            FEED_RELOAD_CONTROL_ID,
+            Recovery::Reload,
+            RELOAD_CAPABILITY_ID,
+        ),
     ] {
         controls.push(SceneControlSnapshot {
             control_id: control_id.to_owned(),
@@ -501,7 +512,7 @@ fn push_feed_status<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
             availability: available(),
             bounds: None,
             bounds_availability: bounds_not_recorded(),
-            capability_id: Some(super::recovery::capability_id(recovery).to_owned()),
+            capability_id: Some(capability_id.to_owned()),
         });
     }
 }

@@ -12,7 +12,6 @@ crates/app/src/scratch.rs test scratch directories; the scratch guard requires e
 crates/app/src/app/layout_wiring/indicators/guide.rs app-owned indicator pane, layout and workspace wiring cannot live in a headless crate.
 crates/app/src/control/indicator_guide.rs the registered action mutates app-owned panes and journals through the app control host.
 crates/app/src/control/analysis.rs snapshots live app panes and indicator views, which no headless crate owns.
-crates/app/src/control/history.rs the registered actions press and cancel the app-owned tab's history run through the app control host; the target grammar, the run and its budgets live in `quantick-sources`.
 crates/app/src/candle_view.rs a facade of re-exports: it names no library because every leaf it addresses does.
 crates/app/src/drawings/defaults.rs the preset-host port: what a new mark opens with, stated in `DrawingStyle` and `DrawingTool`, the tool registry's own types.
 crates/app/src/drawings/object.rs `Drawing` and `NewDrawing`; every mark holds the `DrawingTool` that paints it, so they cannot leave the registry behind. Its value types live in `quantick-chart-interaction`'s `drawing_model`.

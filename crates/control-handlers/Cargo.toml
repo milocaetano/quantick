@@ -1,0 +1,25 @@
+[package]
+name = "quantick-control-handlers"
+description = "The Quantick control plane's handler families over headless ports: what a capability validates, refuses and answers, with the window supplying only the reads and acts its port names"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The chart model a chart pane's port hands over as it is: the bar state is
+# already headless, so the port names it rather than copying it.
+quantick-chart = { path = "../chart" }
+quantick-control = { path = "../control" }
+quantick-control-host = { path = "../control-host" }
+quantick-control-schema = { path = "../control-schema" }
+quantick-engine = { path = "../engine" }
+# The history reach and run vocabulary the History press speaks.
+quantick-sources = { path = "../sources" }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+rust_decimal = { workspace = true }
