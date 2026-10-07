@@ -10,5 +10,7 @@
 # the press queued behind it, a new pane's copy reaching the running ceiling,
 # and adopting a pressed target only when the press is taken.
 # The judging itself stays headless in quantick-sources.
-crates/app +31
-!budget +31
+# Merging main after #630 measured 22 more: both branches edited the same
+# tab and toolbar seams, and the two raises no longer add up line for line.
+crates/app +53
+!budget +53
