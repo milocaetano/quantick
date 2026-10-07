@@ -31,6 +31,37 @@ impl Action {
         Self::Channel,
     ];
 
+    /// This action's position in [`Action::ALL`]: its button's slot on the bar.
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// The stable id the scene and the control plane name this button by.
+    pub fn control_id(self) -> &'static str {
+        match self {
+            Self::Profile => "quick_range.fixed_range_profile",
+            Self::Retracement => "quick_range.fib_retracement",
+            Self::Projection => "quick_range.fib_projection",
+            Self::Rectangle => "quick_range.rectangle",
+            Self::TrendLine => "quick_range.trend_line",
+            Self::Horizontal => "quick_range.horizontal_levels",
+            Self::Channel => "quick_range.parallel_channel",
+        }
+    }
+
+    /// The button's hover text, and the label the scene reports for it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Profile => "Fixed-range volume profile",
+            Self::Retracement => "Fib retracement",
+            Self::Projection => "Fib projection",
+            Self::Rectangle => "Rectangle",
+            Self::TrendLine => "Trend line",
+            Self::Horizontal => "Horizontal lines at the range's high and low",
+            Self::Channel => "Parallel channel - click to set its width",
+        }
+    }
+
     /// The conversion leaves a pending placement for the trader's next click
     /// instead of a finished drawing.
     pub fn arms_placement(self) -> bool {

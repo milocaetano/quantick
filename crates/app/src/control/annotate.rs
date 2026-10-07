@@ -29,7 +29,10 @@ use super::{
     actions::ActionRegistry,
     gateway::ControlAccess,
     journal::{EventActor, NewEvent},
-    types::{PaneSideDto, actor_kind_name, canonical_f64, known_error, wire_usize},
+    types::{
+        PaneSideDto, acting_author, actor_kind_name, canonical_f64, chart_resolved_anchor,
+        known_error, wire_usize,
+    },
 };
 
 pub(crate) use quantick_control::annotation::*;
@@ -223,23 +226,9 @@ fn chart_result(
     let anchors = validated
         .iter()
         .map(|anchor| {
-            let price = canonical_f64(anchor.point.price, ANNOTATION_PRICE_DECIMALS)
-                .expect("validated finite price");
-            match anchor.slot {
-                Some(slot) => ChartResolvedAnchor::Market(ResolvedAnchor {
-                    slot: wire_usize(slot),
-                    time_unix_ms: anchor
-                        .point
-                        .time_ms
-                        .expect("a resolved market anchor has time"),
-                    price,
-                }),
-                None => ChartResolvedAnchor::Future {
-                    bar_position: canonical_bar_position(anchor.point.bar)
-                        .expect("validated finite bar position"),
-                    price,
-                },
-            }
+            let point = anchor.point;
+            chart_resolved_anchor(anchor.slot, point.time_ms, point.bar, point.price)
+                .expect("a validated anchor is finite and a market one has time")
         })
         .collect();
     ChartAnnotationResult {
@@ -249,10 +238,7 @@ fn chart_result(
         pane_side: pane_side.into(),
         tool_id: tool.id().to_owned(),
         anchors,
-        author: AnnotationAuthor {
-            actor_kind: actor_kind_name(actor.actor_kind).to_owned(),
-            client_name: actor.client_name.clone(),
-        },
+        author: acting_author(actor),
         label,
     }
 }
@@ -412,12 +398,7 @@ fn place<P: TabsPort + TabsMutPort + ?Sized>(
         pane_side: pane_side.into(),
         tool_id: tool.id().to_owned(),
         anchors: resolved,
-        // The result always says who acted, even when the object carries no
-        // author because the trader placed it themselves.
-        author: AnnotationAuthor {
-            actor_kind: actor_kind_name(actor.actor_kind).to_owned(),
-            client_name: actor.client_name.clone(),
-        },
+        author: acting_author(actor),
         label,
     };
     journal_annotation(access, actor, ANNOTATION_CREATED_EVENT_KIND, &result)?;

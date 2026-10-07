@@ -107,8 +107,6 @@ pub fn slot_at_position(bar: f32) -> Option<usize> {
     (slot >= 0.0).then_some(slot as usize)
 }
 
-/// Rare operation: at most three anchors. No drawing-store callback is accepted,
-/// so a failure at the last anchor cannot leave a partially installed drawing.
 /// One anchor per horizontal level of a two-anchor range, each at the
 /// earlier bar so the lines start where the range does.
 pub fn horizontal_level_anchors(
@@ -125,6 +123,8 @@ pub fn horizontal_level_anchors(
     })
 }
 
+/// Rare operation: at most three anchors. No drawing-store callback is accepted,
+/// so a failure at the last anchor cannot leave a partially installed drawing.
 pub fn resolve(
     series: &impl Series,
     input: &[InputAnchor],

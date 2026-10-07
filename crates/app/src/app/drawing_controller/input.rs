@@ -538,7 +538,7 @@ impl DrawingController {
         effects: &mut DrawingEffects,
         now: Instant,
     ) {
-        use crate::surfaces::drawing_chrome::QuickRangeActionUi as _;
+        use crate::{drawings, surfaces::drawing_chrome::QuickRangeActionUi as _};
         use quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome;
         let Some(request) = ask
             .place_quick_range
@@ -547,24 +547,15 @@ impl DrawingController {
             return;
         };
         let operation = *request.conversion.request();
-        let tool = crate::drawings::DrawingTool::by_id(operation.action.tool_id());
-        let seeded = tool.filter(|tool| {
-            let points = operation.anchors.map(|anchor| {
-                crate::drawings::ChartPoint::at_time(anchor.bar, anchor.price, anchor.time_ms)
-            });
-            let opening = crate::drawings::new_drawing_from_defaults(&self.presets, *tool);
-            host.seed_draft(
-                operation.context.owner.tab,
-                request.side,
-                *tool,
-                &points,
-                opening,
-            )
+        let (tab, side) = (operation.context.owner.tab, request.side);
+        let points = operation
+            .anchors
+            .map(|anchor| drawings::ChartPoint::at_time(anchor.bar, anchor.price, anchor.time_ms));
+        let seeded = drawings::DrawingTool::by_id(operation.action.tool_id()).filter(|tool| {
+            let opening = drawings::new_drawing_from_defaults(&self.presets, *tool);
+            host.seed_draft(tab, side, *tool, &points, opening)
         });
-        let outcome = match seeded {
-            Some(_) => PlacementOutcome::Placed,
-            None => PlacementOutcome::ActionRefused,
-        };
+        let outcome = PlacementOutcome::of(seeded.is_some());
         let readback = self
             .chrome
             .quick_range

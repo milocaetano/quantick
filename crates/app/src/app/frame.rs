@@ -655,13 +655,11 @@ impl QuantickApp {
                 crate::control::ActionOrigin::Human,
                 action.input,
             );
-            let explain = self
-                .drawings
-                .finish_registered_action(pending, if result.is_ok() {
-                    quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome::Placed
-                } else {
-                    quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome::ActionRefused
-                });
+            let outcome =
+                quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome::of(
+                    result.is_ok(),
+                );
+            let explain = self.drawings.finish_registered_action(pending, outcome);
             if let Err(error) = result {
                 tracing::warn!(target:"quantick::control",event_code="QUICK_RANGE_PROFILE_REFUSED",code=%error.code,error=%error.message,"the quick-range drawing could not be placed");
                 if explain {

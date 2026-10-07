@@ -1,5 +1,5 @@
-# feat/quick-range-shapes: the quick-range bar's four shape actions (control
-# ids, labels, tool ids) and the parallel channel's seeded draft; the
-# capability handlers bind to the pane's drawing store, which only `app` holds.
-crates/app +11
-!budget +11
+# feat/quick-range-shapes: the four shape capabilities place through the
+# pane's drawing store, which only `app` holds, and the channel seeds a draft
+# and arms its tool; names, levels and wire shapes live below `app`.
+crates/app +100
+!budget +100

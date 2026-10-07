@@ -403,3 +403,19 @@ fn only_the_channel_waits_for_the_traders_third_point() {
         );
     }
 }
+
+#[test]
+fn every_action_names_its_own_slot_control_and_label() {
+    for (slot, action) in Action::ALL.into_iter().enumerate() {
+        assert_eq!(action.index(), slot, "{action:?}");
+        assert!(
+            action.control_id().starts_with("quick_range."),
+            "{action:?}"
+        );
+        assert!(!action.label().is_empty(), "{action:?}");
+        for other in &Action::ALL[slot + 1..] {
+            assert_ne!(action.control_id(), other.control_id());
+            assert_ne!(action.label(), other.label());
+        }
+    }
+}

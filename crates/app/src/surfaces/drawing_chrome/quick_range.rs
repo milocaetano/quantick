@@ -12,6 +12,7 @@ use core::conversion_plan::{
 use eframe::egui;
 pub(crate) use quantick_chart_interaction::quick_range::Action;
 use quantick_chart_interaction::quick_range::{self as core, Command, Event, Phase};
+use quantick_control::annotation as ids;
 
 // Gated inside the file (`#![cfg]`), so the file itself says it is harness.
 mod launch;
@@ -21,13 +22,6 @@ pub(crate) use launch::HOOKS as QUICK_RANGE_HOOKS;
 pub(crate) use launch::QuickRangeLaunch;
 
 pub(crate) const BAR_ID: &str = "quick_range_context_bar";
-pub(crate) const ACTION_CONTROL_ID: &str = "quick_range.fixed_range_profile";
-pub(crate) const RETRACEMENT_CONTROL_ID: &str = "quick_range.fib_retracement";
-pub(crate) const PROJECTION_CONTROL_ID: &str = "quick_range.fib_projection";
-pub(crate) const RECTANGLE_CONTROL_ID: &str = "quick_range.rectangle";
-pub(crate) const TREND_LINE_CONTROL_ID: &str = "quick_range.trend_line";
-pub(crate) const HORIZONTAL_CONTROL_ID: &str = "quick_range.horizontal_levels";
-pub(crate) const CHANNEL_CONTROL_ID: &str = "quick_range.parallel_channel";
 pub(crate) const ACTION_COUNT: usize = Action::ALL.len();
 const STALE_REASON_WIDTH_PX: f32 = 180.0;
 
@@ -35,81 +29,43 @@ const STALE_REASON_WIDTH_PX: f32 = 180.0;
 #[path = "quick_range/tests/conversion.rs"]
 mod conversion_tests;
 
-/// The model owns operation identity; the adapter supplies registry/UI names.
+/// The model owns operation identity and its names; the adapter binds each
+/// action to its drawing tool and its registry capability.
 pub(crate) trait ActionUi {
-    fn index(self) -> usize;
-    fn control_id(self) -> &'static str;
     fn tool_id(self) -> &'static str;
     fn capability_id(self) -> &'static str;
     fn capability_version(self) -> u32;
-    fn label(self) -> &'static str;
 }
 impl ActionUi for Action {
-    fn index(self) -> usize {
-        match self {
-            Self::Profile => 0,
-            Self::Retracement => 1,
-            Self::Projection => 2,
-            Self::Rectangle => 3,
-            Self::TrendLine => 4,
-            Self::Horizontal => 5,
-            Self::Channel => 6,
-        }
-    }
-
-    fn control_id(self) -> &'static str {
-        match self {
-            Self::Profile => ACTION_CONTROL_ID,
-            Self::Retracement => RETRACEMENT_CONTROL_ID,
-            Self::Projection => PROJECTION_CONTROL_ID,
-            Self::Rectangle => RECTANGLE_CONTROL_ID,
-            Self::TrendLine => TREND_LINE_CONTROL_ID,
-            Self::Horizontal => HORIZONTAL_CONTROL_ID,
-            Self::Channel => CHANNEL_CONTROL_ID,
-        }
-    }
-
     fn tool_id(self) -> &'static str {
         match self {
             Self::Profile => crate::frvp::TOOL_ID,
             Self::Retracement => "fib-retracement",
             Self::Projection => "fib-extension",
-            Self::Rectangle => crate::control::ZONE_TOOL_ID,
-            Self::TrendLine => crate::control::TREND_LINE_TOOL_ID,
-            Self::Horizontal => crate::control::HORIZONTAL_LINE_TOOL_ID,
-            Self::Channel => crate::control::PARALLEL_CHANNEL_TOOL_ID,
+            Self::Rectangle => ids::ZONE_TOOL_ID,
+            Self::TrendLine => ids::TREND_LINE_TOOL_ID,
+            Self::Horizontal => ids::HORIZONTAL_LINE_TOOL_ID,
+            Self::Channel => ids::PARALLEL_CHANNEL_TOOL_ID,
         }
     }
 
     fn capability_id(self) -> &'static str {
         match self {
-            Self::Profile => crate::control::PROFILE_CAPABILITY_ID,
-            Self::Retracement => crate::control::FIB_RETRACEMENT_CAPABILITY_ID,
-            Self::Projection => crate::control::FIB_PROJECTION_CAPABILITY_ID,
-            Self::Rectangle => crate::control::ZONE_CAPABILITY_ID,
-            Self::TrendLine => crate::control::TREND_LINE_CAPABILITY_ID,
-            Self::Horizontal => crate::control::HORIZONTAL_LEVELS_CAPABILITY_ID,
-            Self::Channel => crate::control::PARALLEL_CHANNEL_CAPABILITY_ID,
+            Self::Profile => ids::PROFILE_CAPABILITY_ID,
+            Self::Retracement => ids::FIB_RETRACEMENT_CAPABILITY_ID,
+            Self::Projection => ids::FIB_PROJECTION_CAPABILITY_ID,
+            Self::Rectangle => ids::ZONE_CAPABILITY_ID,
+            Self::TrendLine => ids::TREND_LINE_CAPABILITY_ID,
+            Self::Horizontal => ids::HORIZONTAL_LEVELS_CAPABILITY_ID,
+            Self::Channel => ids::PARALLEL_CHANNEL_CAPABILITY_ID,
         }
     }
 
     fn capability_version(self) -> u32 {
         match self {
-            Self::Profile => crate::control::PROFILE_CAPABILITY_VERSION,
-            Self::Rectangle => crate::control::ZONE_CHART_CAPABILITY_VERSION,
-            _ => crate::control::FIB_CAPABILITY_VERSION,
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Profile => "Fixed-range volume profile",
-            Self::Retracement => "Fib retracement",
-            Self::Projection => "Fib projection",
-            Self::Rectangle => "Rectangle",
-            Self::TrendLine => "Trend line",
-            Self::Horizontal => "Horizontal lines at the range's high and low",
-            Self::Channel => "Parallel channel - click to set its width",
+            Self::Profile => ids::PROFILE_CAPABILITY_VERSION,
+            Self::Rectangle => ids::ZONE_CHART_CAPABILITY_VERSION,
+            _ => ids::FIB_CAPABILITY_VERSION,
         }
     }
 }
