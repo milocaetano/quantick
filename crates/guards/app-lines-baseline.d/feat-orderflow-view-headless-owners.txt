@@ -1,5 +1,6 @@
 # Written by `cargo run -p quantick-guards -- --tighten`: these shrank.
-# Review fixes then gave back 32 of the 371: the view's private owners
-# (`pane_tape`, `worker`, `look`) answer through thin delegates again.
-crates/app -339
-!budget -339
+# Review fixes gave back 32 of the 371 (the view's private owners
+# `pane_tape`, `worker`, `look` answer through thin delegates again), and
+# merging main after #628-#630 another 22, measured against that main.
+crates/app -317
+!budget -317
