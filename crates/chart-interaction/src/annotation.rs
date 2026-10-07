@@ -109,6 +109,22 @@ pub fn slot_at_position(bar: f32) -> Option<usize> {
 
 /// Rare operation: at most three anchors. No drawing-store callback is accepted,
 /// so a failure at the last anchor cannot leave a partially installed drawing.
+/// One anchor per horizontal level of a two-anchor range, each at the
+/// earlier bar so the lines start where the range does.
+pub fn horizontal_level_anchors(
+    anchors: [ResolvedAnchor; 2],
+) -> impl Iterator<Item = ResolvedAnchor> {
+    let left = anchors[usize::from(anchors[1].point.bar < anchors[0].point.bar)];
+    let levels = crate::quick_range::horizontal_levels(anchors.map(|anchor| anchor.point));
+    (0..levels.prices().len()).map(move |index| ResolvedAnchor {
+        point: Anchor {
+            price: levels.prices()[index],
+            ..left.point
+        },
+        ..left
+    })
+}
+
 pub fn resolve(
     series: &impl Series,
     input: &[InputAnchor],

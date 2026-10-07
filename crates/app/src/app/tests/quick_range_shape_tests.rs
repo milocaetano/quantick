@@ -201,3 +201,38 @@ fn horizontal_levels_capability_places_one_line_per_distinct_price() {
         );
     }
 }
+
+#[test]
+fn each_shape_capability_places_its_own_tool() {
+    for (capability, version, tool, count) in [
+        (crate::control::ZONE_CAPABILITY_ID, 2, "rectangle", 2),
+        (crate::control::TREND_LINE_CAPABILITY_ID, 1, "trend-line", 2),
+        (
+            crate::control::PARALLEL_CHANNEL_CAPABILITY_ID,
+            1,
+            "parallel-channel",
+            3,
+        ),
+    ] {
+        let ctx = egui::Context::default();
+        let (mut app, _commands) = app_with_history(8);
+        run_frame(&mut app, &ctx);
+        let mut anchors = vec![anchor_at_slot(&app, 1), anchor_at_slot(&app, 5)];
+        anchors.extend((count == 3).then(|| anchor_at_slot(&app, 3)));
+        for (anchor, bar) in anchors.iter_mut().zip(["1.5", "5.5", "3.5"]) {
+            anchor["bar_position"] = json!(bar);
+        }
+        let result = app
+            .control_action(
+                capability,
+                version,
+                crate::control::ActionOrigin::Human,
+                json!({ "anchors": anchors }),
+            )
+            .unwrap();
+        assert_eq!(result["tool_id"], tool, "{capability}");
+        let placed = app.active_tab().drawing_pane().drawings.items();
+        assert_eq!(placed.len(), 1);
+        assert_eq!(placed[0].points.len(), count);
+    }
+}

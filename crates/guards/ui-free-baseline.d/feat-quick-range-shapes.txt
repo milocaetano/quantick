@@ -1,0 +1,8 @@
+# feat/quick-range-shapes: four new annotate capabilities behind the quick-range
+# bar (zone v2 on chart anchors, trend line, parallel channel, horizontal
+# levels). Their handlers place through the pane's drawing store, which only
+# `app` holds (control/annotate.rs); descriptors moved to quantick-control and
+# the level geometry to chart-interaction. Also the DrawingEffects tool arm
+# that lets the channel's seeded draft take the trader's width click.
+crates/app +74
+!budget +74

@@ -280,6 +280,7 @@ impl DrawingController {
         let mut output = DrawingEffects::default();
         let effects = &mut output;
         let mut ask = ask;
+        self.apply_pending_placement(&mut ask, host, effects, now);
         self.apply_selection_edit(&mut ask, host, effects, now);
         self.apply_preferences_and_copy(&mut ask, host, effects, alerts, now);
         self.apply_clear(&mut ask, host, effects, now);
@@ -508,7 +509,9 @@ impl DrawingController {
         if ask.dismiss_quick_range {
             self.chrome.quick_range.dismiss();
         }
-        let request = ask.place_quick_range.take()?;
+        let request = ask
+            .place_quick_range
+            .take_if(|placement| !placement.conversion.request().action.arms_placement())?;
         let operation = request.conversion.request();
         let Some(input) = crate::control::quick_range_input(operation, request.side) else {
             self.chrome.quick_range.finish_conversion(
@@ -526,46 +529,46 @@ impl DrawingController {
         })
     }
     /// A conversion the trader finishes by hand: the range's leg becomes the
-    /// draft's first anchors and the returned tool is armed so the next click
-    /// places the rest through the tool's own placement. `Err(explain)` when
-    /// the draft could not start; `None` when no such conversion was asked.
-    pub(crate) fn begin_pending_placement(
+    /// draft's first anchors and the tool is armed so the next click places
+    /// the rest through the tool's own placement.
+    fn apply_pending_placement(
         &mut self,
         ask: &mut crate::surfaces::drawing_chrome::DrawingChromeAsk,
         host: &mut DrawingAccess<'_>,
-    ) -> Option<Result<crate::drawings::DrawingTool, bool>> {
+        effects: &mut DrawingEffects,
+        now: Instant,
+    ) {
         use crate::surfaces::drawing_chrome::QuickRangeActionUi as _;
         use quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome;
-        let request = ask
-            .place_quick_range
-            .take_if(|placement| placement.conversion.request().action.arms_placement())?;
+        let Some(request) = ask.place_quick_range.take() else {
+            return;
+        };
         let operation = *request.conversion.request();
         let tool = crate::drawings::DrawingTool::by_id(operation.action.tool_id());
-        let seeded = tool.is_some_and(|tool| {
+        let seeded = tool.filter(|tool| {
             let points = operation.anchors.map(|anchor| {
                 crate::drawings::ChartPoint::at_time(anchor.bar, anchor.price, anchor.time_ms)
             });
-            let opening = crate::drawings::new_drawing_from_defaults(&self.presets, tool);
+            let opening = crate::drawings::new_drawing_from_defaults(&self.presets, *tool);
             host.seed_draft(
                 operation.context.owner.tab,
                 request.side,
-                tool,
+                *tool,
                 &points,
                 opening,
             )
         });
-        let outcome = if seeded {
-            PlacementOutcome::Placed
-        } else {
-            PlacementOutcome::ActionRefused
+        let outcome = match seeded {
+            Some(_) => PlacementOutcome::Placed,
+            None => PlacementOutcome::ActionRefused,
         };
         let readback = self
             .chrome
             .quick_range
             .finish_conversion(request.conversion, outcome);
-        match tool {
-            Some(tool) if seeded => Some(Ok(tool)),
-            _ => Some(Err(readback.explain_refusal)),
+        effects.arm = seeded;
+        if readback.explain_refusal {
+            effects.note(super::QUICK_RANGE_REFUSED, now);
         }
     }
     pub(crate) fn finish_registered_action(

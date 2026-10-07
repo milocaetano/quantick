@@ -29,9 +29,13 @@ capability that cannot change application state.
 | `annotate.fib_retracement.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.fixed_range_profile.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.fixed_range_profile.create` | 2 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.horizontal_levels.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.label.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.parallel_channel.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.remove` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.trend_line.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.zone.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.zone.create` | 2 | `annotate` | no | `annotate`, `annotate.chart` |
 | `attention.mark.create` | 1 | `attention` | no | `annotate`, `annotate.attention` |
 | `chart.price_axis.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.tape_view.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
@@ -88,4 +92,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-63 capabilities registered.
+67 capabilities registered.

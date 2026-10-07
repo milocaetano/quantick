@@ -307,6 +307,31 @@ pub fn chart_descriptor(
     descriptor
 }
 
+/// The single-drawing shapes on chart anchors: zone (version 2), trend line,
+/// parallel channel, in that order.
+pub fn shape_descriptors() -> [CapabilityDescriptor; 3] {
+    [
+        chart_descriptor(
+            ZONE_CAPABILITY_ID,
+            ZONE_CHART_CAPABILITY_VERSION,
+            "Place a zone",
+            "Draws a rectangle on two chart coordinates, including projected space beyond the latest bar.",
+        ),
+        chart_descriptor(
+            TREND_LINE_CAPABILITY_ID,
+            CAPABILITY_VERSION,
+            "Place a trend line",
+            "Draws a trend line between two chart coordinates.",
+        ),
+        chart_descriptor(
+            PARALLEL_CHANNEL_CAPABILITY_ID,
+            CAPABILITY_VERSION,
+            "Place a parallel channel",
+            "Draws a channel whose base joins the first two chart coordinates and whose width reaches the third.",
+        ),
+    ]
+}
+
 /// Two chart anchors in, one horizontal line per distinct price out.
 pub fn horizontal_levels_descriptor() -> CapabilityDescriptor {
     let mut descriptor = chart_descriptor(

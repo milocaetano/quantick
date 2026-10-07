@@ -1356,6 +1356,8 @@ fn an_interrupted_annotation_is_resolved_by_its_readback() {
     let (mut reader, _) = connect_listed(&mut app, &ctx, &directory, &annotator);
     let anchors = two_anchors(&app);
     let fib_anchors = chart_anchors(&anchors);
+    let mut level = fib_anchors[1].clone();
+    level["price"] = fib_anchors[0]["price"].clone();
     let mine = json!(CLIENT_NAME);
 
     for (capability, payload) in [
@@ -1382,6 +1384,19 @@ fn an_interrupted_annotation_is_resolved_by_its_readback() {
         (
             "annotate.fib_projection.create",
             json!({ "anchors": [fib_anchors[0].clone(), fib_anchors[1].clone(), fib_anchors[1].clone()] }),
+        ),
+        (
+            "annotate.trend_line.create",
+            json!({ "anchors": fib_anchors.clone() }),
+        ),
+        (
+            "annotate.parallel_channel.create",
+            json!({ "anchors": [fib_anchors[0].clone(), fib_anchors[1].clone(), fib_anchors[0].clone()] }),
+        ),
+        (
+            // Level anchors: one line, so one more authored drawing.
+            "annotate.horizontal_levels.create",
+            json!({ "anchors": [fib_anchors[0].clone(), level.clone()] }),
         ),
     ] {
         for (lost, applied) in [(Lost::ByRevocation, false), (Lost::AfterQueueing, true)] {

@@ -95,30 +95,16 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
         ),
         create_fib_projection,
     )?;
-    for (id, version, title, description, handler) in [
-        (
-            ZONE_CAPABILITY_ID,
-            ZONE_CHART_CAPABILITY_VERSION,
-            "Place a zone",
-            "Draws a rectangle on two chart coordinates, including projected space beyond the latest bar.",
-            create_chart_zone as super::actions::ActionHandler,
-        ),
-        (
-            TREND_LINE_CAPABILITY_ID,
-            CAPABILITY_VERSION,
-            "Place a trend line",
-            "Draws a trend line between two chart coordinates.",
-            create_trend_line,
-        ),
-        (
-            PARALLEL_CHANNEL_CAPABILITY_ID,
-            CAPABILITY_VERSION,
-            "Place a parallel channel",
-            "Draws a channel whose base joins the first two chart coordinates and whose width reaches the third.",
-            create_parallel_channel,
-        ),
-    ] {
-        registry.register(chart_descriptor(id, version, title, description), handler)?;
+    // In `shape_descriptors` order: zone, trend line, parallel channel.
+    let shapes: [super::actions::ActionHandler; 3] = [
+        |app, access, actor, input| place_chart(app, access, actor, input, ZONE_TOOL_ID),
+        |app, access, actor, input| place_chart(app, access, actor, input, TREND_LINE_TOOL_ID),
+        |app, access, actor, input| {
+            place_chart(app, access, actor, input, PARALLEL_CHANNEL_TOOL_ID)
+        },
+    ];
+    for (descriptor, handler) in shape_descriptors().into_iter().zip(shapes) {
+        registry.register(descriptor, handler)?;
     }
     registry.register(horizontal_levels_descriptor(), create_horizontal_levels)?;
     registry.register(remove_descriptor(), remove_annotation)?;
@@ -188,33 +174,6 @@ fn create_fib_projection<P: TabsPort + TabsMutPort + ?Sized>(
     place_chart(app, access, actor, input, "fib-extension")
 }
 
-fn create_chart_zone<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    place_chart(app, access, actor, input, ZONE_TOOL_ID)
-}
-
-fn create_trend_line<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    place_chart(app, access, actor, input, TREND_LINE_TOOL_ID)
-}
-
-fn create_parallel_channel<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    access: &mut ControlAccess,
-    actor: &ActorContext,
-    input: &Value,
-) -> Result<Value, ControlError> {
-    place_chart(app, access, actor, input, PARALLEL_CHANNEL_TOOL_ID)
-}
-
 /// One horizontal line per distinct price of the two anchors, each anchored
 /// at the earlier bar. Every coordinate resolves before anything is placed.
 fn create_horizontal_levels<P: TabsPort + TabsMutPort + ?Sized>(
@@ -223,7 +182,7 @@ fn create_horizontal_levels<P: TabsPort + TabsMutPort + ?Sized>(
     actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    use quantick_chart_interaction::quick_range::horizontal_levels;
+    use quantick_chart_interaction::annotation::horizontal_level_anchors;
     let input: ChartAnnotationInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let tool = registered_tool(HORIZONTAL_LINE_TOOL_ID)?;
@@ -232,13 +191,9 @@ fn create_horizontal_levels<P: TabsPort + TabsMutPort + ?Sized>(
     let opening = [(); 2].map(|()| app.tab_reads().new_drawing(tool));
     let pane = control_pane_mut(app, tab_id, pane_side)?;
     let validated = series::resolve(pane, tab_id, &input, 2)?;
-    let left = validated[usize::from(validated[1].point.bar < validated[0].point.bar)];
-    let levels = horizontal_levels([validated[0].point, validated[1].point]);
-    let mut annotations = Vec::with_capacity(levels.prices().len());
-    for (&price, fresh) in levels.prices().iter().zip(opening) {
-        let mut anchor = left;
-        anchor.point.price = price;
-        let point = ChartPoint::at_time(anchor.point.bar, price, anchor.point.time_ms);
+    let mut annotations = Vec::with_capacity(opening.len());
+    for (anchor, fresh) in horizontal_level_anchors([validated[0], validated[1]]).zip(opening) {
+        let point = ChartPoint::at_time(anchor.point.bar, anchor.point.price, anchor.point.time_ms);
         let name = input.name.clone();
         let placed = install(pane, tool, vec![point], fresh, author.clone(), name, None)?;
         let target = (tab_id, pane.id, pane_side);
@@ -391,11 +346,7 @@ fn place<P: TabsPort + TabsMutPort + ?Sized>(
 ) -> Result<Value, ControlError> {
     let input: AnnotationInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let tool = drawings::DrawingTool::by_id(tool_id).ok_or_else(|| {
-        capability_unavailable(format!(
-            "the `{tool_id}` drawing tool is not registered in this build"
-        ))
-    })?;
+    let tool = registered_tool(tool_id)?;
     let required = tool.required_points();
     if input.anchors.len() != required {
         return Err(ControlError::invalid_request(format!(

@@ -25,6 +25,8 @@ impl DrawingController {
         }
     }
 }
+pub(crate) const QUICK_RANGE_REFUSED: &str =
+    "The drawing could not be placed; the temporary range is still available.";
 /// Notices preserve operation order: an ordinary note following an Undo is
 /// deferred by the toast owner. Seven chrome branches can announce in one
 /// response; keyboard handling can announce at most three. Inline capacity
@@ -33,6 +35,8 @@ impl DrawingController {
 pub(crate) struct DrawingEffects {
     notices: smallvec::SmallVec<[(String, Instant, bool); 8]>,
     pub(crate) inspector_moved: bool,
+    /// Arm this tool: a conversion left a draft for the trader to finish.
+    arm: Option<crate::drawings::DrawingTool>,
 }
 impl DrawingEffects {
     fn note(&mut self, text: impl Into<String>, now: Instant) {
@@ -44,7 +48,14 @@ impl DrawingEffects {
     fn push(&mut self, text: String, now: Instant, undo: bool) {
         self.notices.push((text, now, undo));
     }
-    pub(crate) fn apply_notice(self, toast: &mut crate::surfaces::toast::ToastSurface) {
+    pub(crate) fn apply(
+        self,
+        toast: &mut crate::surfaces::toast::ToastSurface,
+        tools: &mut crate::toolrail::ToolRail,
+    ) {
+        if let Some(tool) = self.arm {
+            tools.arm(crate::toolrail::Tool::Drawing(tool));
+        }
         for (message, now, undo) in self.notices {
             if undo {
                 toast.note_with_undo(message, now);
