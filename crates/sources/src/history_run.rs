@@ -11,7 +11,7 @@ use quantick_engine::trade_tape::TradeSeq;
 
 use crate::history_reach::{
     Campaign, CampaignEnd, CampaignStart, CampaignStep, HistoryReach, ReachBounds, ReachOutcome,
-    ReachProgress,
+    ReachProgress, TapeFacts,
 };
 
 /// What a press did.
@@ -128,16 +128,17 @@ impl HistoryRun {
         &mut self,
         reach: HistoryReach,
         held: &T,
+        facts: &TapeFacts,
         bounds: ReachBounds,
         page_size: usize,
     ) -> RunAction {
         self.queued = None;
         self.paused = false;
-        match Campaign::start(held, reach, bounds, page_size) {
+        match Campaign::start(held, facts, reach, bounds, page_size) {
             CampaignStart::Run(campaign) => self.send_next(campaign),
-            CampaignStart::AlreadyMet(outcome) | CampaignStart::NothingCharted(outcome) => {
-                RunAction::Finished(outcome)
-            }
+            CampaignStart::AlreadyMet(outcome)
+            | CampaignStart::NothingCharted(outcome)
+            | CampaignStart::AtCeiling(outcome) => RunAction::Finished(outcome),
         }
     }
 
@@ -199,8 +200,21 @@ impl HistoryRun {
             .map(|campaign| campaign.finish(CampaignEnd::RequestRefused))
     }
 
+    /// Whether a request is out and its reply has not landed. Every reply,
+    /// whoever's it was, must reach [`Self::on_reply`] to clear it.
+    #[must_use]
+    pub const fn awaiting_reply(&self) -> bool {
+        self.in_flight
+    }
+
     /// Stop now and keep what arrived. The request already out still lands
     /// on the chart; nothing more is asked.
+    ///
+    /// The request stays counted as out: every feed answers every request
+    /// (empty when it cannot serve it), and the MetaTrader feed answers a
+    /// second one sent beside it empty at once, so clearing it here would let
+    /// a new run take that refusal, and then the old page, as its own
+    /// replies. A press meanwhile is queued and begins when the reply lands.
     pub fn cancel(&mut self) -> Cancelled {
         self.paused = false;
         if let Some(campaign) = self.campaign.take() {

@@ -9,10 +9,11 @@ pub enum EscapeLayer {
     InlineText,
     Draft,
     Selection,
-    /// A history run loading on the active tab: Esc cancels it and keeps
-    /// what arrived, before the last layer re-arms the pointer.
-    HistoryRun,
+    /// An armed tool other than the pointer: Esc puts it down.
     Pointer,
+    /// A history run loading on the active tab: Esc cancels it and keeps
+    /// what arrived, only when no drawing or pointer layer wanted the key.
+    HistoryRun,
 }
 
 pub fn consume_escape(mut attempt: impl FnMut(EscapeLayer) -> bool) {
@@ -25,8 +26,8 @@ pub fn consume_escape(mut attempt: impl FnMut(EscapeLayer) -> bool) {
         InlineText,
         Draft,
         Selection,
-        HistoryRun,
         Pointer,
+        HistoryRun,
     ] {
         if attempt(layer) {
             return;

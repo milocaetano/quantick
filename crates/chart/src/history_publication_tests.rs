@@ -189,7 +189,9 @@ fn the_unpublished_pages_are_every_page_not_yet_on_the_display() {
             publication.runner.complete();
         }
     }
-    publication.take_ready(&state).expect("both pages published");
+    publication
+        .take_ready(&state)
+        .expect("both pages published");
     assert!(
         publication.unpublished_pages().is_empty(),
         "a published page is no longer owed to anyone"

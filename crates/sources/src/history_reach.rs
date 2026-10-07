@@ -24,6 +24,15 @@
 //! closed, and the print on its newer side is the next session's open. A
 //! market that never closes shows no such stretch, and there a day is
 //! [`DAY_OF_TAPE_MS`] of tape — which the note says out loud.
+//!
+//! A silence the feed itself marked as lost — a reconnect, a confirmed
+//! source gap — is an [`Outage`], not a close: the market traded through it
+//! and nobody was listening. The tab hands its marked outages in with
+//! [`TapeFacts`], and a silence they explain is crossed without counting a
+//! session, and said in the note. What stays out of reach, and is pinned by a
+//! test: a hole nobody marked (one older than this run of the app, or one in
+//! the venue's own record) still reads as a close, and an outage that spans a
+//! real close hides that close.
 
 use quantick_engine::Trade;
 use quantick_engine::trade_tape::TradeSeq;
@@ -75,15 +84,19 @@ pub const PRINTS_PER_TRADED_HOUR_BUDGET: usize = 500_000;
 /// about 90 of footprint ladders (`docs/quality/live-envelope.md`).
 pub const BYTES_PER_HELD_PRINT: usize = 146;
 
-/// The memory one pane's tape may grow to through history runs.
+/// The memory a tab's tapes may grow to through history runs, **every pane's
+/// copy together**: each pane holds its own copy of the tape, so a split with
+/// a time pane spends this twice as fast (see [`TapeFacts::copies`]).
 pub const HELD_TAPE_CEILING_BYTES: usize = 1_536 * 1024 * 1024;
 
-/// [`HELD_TAPE_CEILING_BYTES`] in prints: about eleven million, which holds
-/// five dense B3 sessions and today with room.
+/// [`HELD_TAPE_CEILING_BYTES`] in prints, across every copy: about eleven
+/// million, which holds five dense B3 sessions and today on a one-pane tab.
+/// A tab with two panes reaches about three dense days before it stops at
+/// [`CampaignEnd::MemoryCeiling`], and says so.
 pub const MAX_HELD_PRINTS: usize = HELD_TAPE_CEILING_BYTES / BYTES_PER_HELD_PRINT;
 
 // A measured dense session fits one session's budget, and five of them plus
-// today fit under the ceiling: checked when the crate compiles.
+// today fit under the ceiling on one pane: checked when the crate compiles.
 const _: () = assert!(PRINTS_PER_SESSION_BUDGET >= MEASURED_DENSE_SESSION_PRINTS);
 const _: () = assert!(6 * MEASURED_DENSE_SESSION_PRINTS < MAX_HELD_PRINTS);
 
@@ -126,6 +139,27 @@ impl Default for ReachBounds {
             session_gap_ms: SESSION_GAP_MS,
         }
     }
+}
+
+/// A stretch the feed itself marked as lost: no prints, and the market not
+/// closed. Bounds as the feed stamped them, in milliseconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Outage {
+    /// The last print or message before the silence.
+    pub from_ms: i64,
+    /// The first one after it.
+    pub to_ms: i64,
+}
+
+/// What the tab knows about its tape beyond the prints a target is judged on.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TapeFacts {
+    /// Panes each holding their own copy of the tape; the memory ceiling
+    /// counts every copy. Zero reads as one.
+    pub copies: usize,
+    /// Silences the feed marked as lost, which are crossed without counting
+    /// a session close.
+    pub outages: Vec<Outage>,
 }
 
 /// How far one press of *History* reaches.
@@ -225,6 +259,19 @@ impl HistoryReach {
         }
     }
 
+    /// The nearest token of the earlier reach menu, for the frozen v1
+    /// `workspace.summary` field that documents them: `span` for an hours
+    /// target (its minutes are the hours), `previous-session` for yesterday,
+    /// and `None` for a target that vocabulary has no word for.
+    #[must_use]
+    pub const fn legacy_token(self) -> Option<&'static str> {
+        match self {
+            Self::Hours(_) => Some("span"),
+            Self::Sessions(1) => Some("previous-session"),
+            Self::Sessions(_) => None,
+        }
+    }
+
     /// Read a target back: `hours:N`, `sessions:N`, or one of the tokens the
     /// earlier reach menu saved (`page`, `previous-session`, `span`).
     pub fn parse(text: &str) -> Result<Self, ReachParseError> {
@@ -317,7 +364,8 @@ pub enum CampaignEnd {
     PagesSpent,
     /// The run's print budget is spent. Pressing again continues.
     PrintsPulled,
-    /// The pane's tape reached [`MAX_HELD_PRINTS`].
+    /// The tab's tapes, every pane's copy together, reached
+    /// [`MAX_HELD_PRINTS`].
     MemoryCeiling,
     /// [`MAX_IDLE_PAGES`] replies in a row brought nothing new.
     NothingComingBack,
@@ -437,6 +485,9 @@ pub struct ReachOutcome {
     pub traded_ms: i64,
     /// Whether the tape showed no close, so a day meant 24 h of tape.
     pub gapless: bool,
+    /// Silences longer than a close that the feed had marked as outages,
+    /// crossed without counting a session.
+    pub outages_crossed: u32,
 }
 
 impl ReachOutcome {
@@ -452,6 +503,7 @@ impl ReachOutcome {
             sessions_reached: 0,
             traded_ms: 0,
             gapless: false,
+            outages_crossed: 0,
         }
     }
 
@@ -463,6 +515,14 @@ impl ReachOutcome {
 
     /// The note, with times written by the caller's clock face.
     pub fn sentence(&self, time: impl Fn(i64) -> String) -> String {
+        let mut sentence = self.verdict(time);
+        if self.outages_crossed > 0 && matches!(self.reach, HistoryReach::Sessions(_)) {
+            sentence.push_str("; a feed outage on the way was not counted as a close");
+        }
+        sentence
+    }
+
+    fn verdict(&self, time: impl Fn(i64) -> String) -> String {
         let Some(oldest) = self.oldest_ms else {
             return format!("Nothing loaded \u{2014} {}", self.end.reason());
         };
@@ -524,6 +584,8 @@ pub enum CampaignStart {
     AlreadyMet(ReachOutcome),
     /// The chart is empty; there is nothing to page back from.
     NothingCharted(ReachOutcome),
+    /// The tab's tapes are already at [`MAX_HELD_PRINTS`]; ask nothing.
+    AtCeiling(ReachOutcome),
 }
 
 /// A run of *load older* requests that ends on a target rather than a count.
@@ -535,6 +597,10 @@ pub struct Campaign {
     reach: HistoryReach,
     session_gap_ms: i64,
     page_size: usize,
+    /// Panes holding a copy of the tape, at least one.
+    copies: usize,
+    outages: Vec<Outage>,
+    outages_crossed: u32,
     /// The oldest print held or fetched; the next page continues from here.
     oldest_ms: i64,
     /// Session closes crossed behind the live edge.
@@ -558,18 +624,7 @@ impl Campaign {
     /// sessions it asks for.
     pub fn start<T: TradeSeq + ?Sized>(
         held: &T,
-        reach: HistoryReach,
-        bounds: ReachBounds,
-        page_size: usize,
-    ) -> CampaignStart {
-        Self::start_with_held(held, held.len(), reach, bounds, page_size)
-    }
-
-    /// [`Self::start`] with the held count the memory ceiling measures given
-    /// separately from the tape the target is judged on.
-    pub fn start_with_held<T: TradeSeq + ?Sized>(
-        held: &T,
-        held_count: usize,
+        facts: &TapeFacts,
         reach: HistoryReach,
         bounds: ReachBounds,
         page_size: usize,
@@ -586,11 +641,14 @@ impl Campaign {
             reach,
             session_gap_ms: bounds.session_gap_ms,
             page_size: page_size.clamp(1, CAMPAIGN_PAGE_PRINTS),
+            copies: facts.copies.max(1),
+            outages: facts.outages.clone(),
+            outages_crossed: 0,
             oldest_ms: edge.timestamp_ms,
             closes: 0,
             reached_open_ms: None,
             traded_ms: 0,
-            held_at_start: held_count,
+            held_at_start: held.len(),
             pulled: 0,
             pages: 0,
             idle_pages: 0,
@@ -610,14 +668,40 @@ impl Campaign {
         if campaign.met {
             return CampaignStart::AlreadyMet(campaign.finish(CampaignEnd::AlreadyThere));
         }
+        if campaign.held_at_start >= campaign.ceiling() {
+            return CampaignStart::AtCeiling(campaign.finish(CampaignEnd::MemoryCeiling));
+        }
         CampaignStart::Run(campaign)
+    }
+
+    /// Prints one copy of the tape may hold: the ceiling shared by every
+    /// pane's copy.
+    fn ceiling(&self) -> usize {
+        MAX_HELD_PRINTS / self.copies
+    }
+
+    /// How much of the silence between `older_ms` and `newer_ms` a marked
+    /// outage explains. Rate: **rare** — only for a silence longer than a
+    /// close, over a handful of remembered outages.
+    fn explained_ms(&self, older_ms: i64, newer_ms: i64) -> i64 {
+        self.outages
+            .iter()
+            .map(|outage| (outage.to_ms.min(newer_ms) - outage.from_ms.max(older_ms)).max(0))
+            .sum()
     }
 
     /// Count one print no newer than everything judged so far. Reports
     /// whether the target is now met.
     fn take(&mut self, older_ms: i64) -> bool {
         let step = self.oldest_ms.saturating_sub(older_ms);
-        if step > self.session_gap_ms {
+        let lost = step > self.session_gap_ms
+            && step.saturating_sub(self.explained_ms(older_ms, self.oldest_ms))
+                <= self.session_gap_ms;
+        if lost {
+            // The market traded through it; nobody was listening.
+            self.outages_crossed = self.outages_crossed.saturating_add(1);
+            self.traded_ms = self.traded_ms.saturating_add(step);
+        } else if step > self.session_gap_ms {
             self.closes = self.closes.saturating_add(1);
             if let HistoryReach::Sessions(days) = self.reach
                 && self.closes == days.saturating_add(1)
@@ -645,9 +729,11 @@ impl Campaign {
     pub fn next_request(&mut self) -> usize {
         self.pages = self.pages.saturating_add(1);
         let held = self.held_at_start.saturating_add(self.pulled);
+        // Never zero: a run at the ceiling stops in `advance`, and a press at
+        // it never starts.
         self.page_size
             .min(self.reach.print_budget().saturating_sub(self.pulled))
-            .min(MAX_HELD_PRINTS.saturating_sub(held))
+            .min(self.ceiling().saturating_sub(held))
             .max(1)
     }
 
@@ -683,7 +769,7 @@ impl Campaign {
                 return CampaignStep::Stop(CampaignEnd::NothingComingBack);
             }
         }
-        if self.held_at_start.saturating_add(self.pulled) >= MAX_HELD_PRINTS {
+        if self.held_at_start.saturating_add(self.pulled) >= self.ceiling() {
             return CampaignStep::Stop(CampaignEnd::MemoryCeiling);
         }
         if self.pulled >= self.reach.print_budget() {
@@ -727,6 +813,7 @@ impl Campaign {
             sessions_reached: self.sessions_reached(),
             traded_ms: self.traded_ms,
             gapless: self.closes == 0,
+            outages_crossed: self.outages_crossed,
         }
     }
 }

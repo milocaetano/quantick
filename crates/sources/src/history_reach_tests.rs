@@ -209,7 +209,13 @@ fn the_page_budget_covers_the_print_budget_and_is_capped() {
 fn a_target_already_on_the_chart_sends_no_request() {
     // Days 10..=12 held, live edge inside day 12: yesterday's open is there.
     let held = sessions(10, 12);
-    match Campaign::start(&held[..], &TapeFacts::default(), HistoryReach::Sessions(1), bounds(), 1_000) {
+    match Campaign::start(
+        &held[..],
+        &TapeFacts::default(),
+        HistoryReach::Sessions(1),
+        bounds(),
+        1_000,
+    ) {
         CampaignStart::AlreadyMet(outcome) => {
             assert_eq!(outcome.end, CampaignEnd::AlreadyThere);
             assert_eq!(outcome.oldest_ms, Some(held[0].timestamp_ms));
@@ -649,9 +655,13 @@ fn an_hours_run_reports_traded_time() {
 #[test]
 fn a_run_already_there_says_so() {
     let held = sessions(10, 12);
-    let CampaignStart::AlreadyMet(outcome) =
-        Campaign::start(&held[..], &TapeFacts::default(), HistoryReach::Sessions(1), bounds(), 1_000)
-    else {
+    let CampaignStart::AlreadyMet(outcome) = Campaign::start(
+        &held[..],
+        &TapeFacts::default(),
+        HistoryReach::Sessions(1),
+        bounds(),
+        1_000,
+    ) else {
         panic!("met");
     };
     assert_eq!(
