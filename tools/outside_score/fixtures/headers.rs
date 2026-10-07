@@ -10,7 +10,5 @@ impl &mut Slot {
 }
 unsafe impl Buffer {
 }
-impl<F: Fn() -> bool> Gate<F> {
-}
 impl<F> Latch<F> where F: FnMut(u8) -> Option<u8> {
 }

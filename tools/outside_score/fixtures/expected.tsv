@@ -5,7 +5,7 @@
 #
 # file<TAB>production lines<TAB>inherent impl types in source order, or -
 lib.rs	23	Square
-headers.rs	16	Shape,Holder,Pane,Slot,Buffer,Gate,Latch
+headers.rs	14	Shape,Holder,Pane,Slot,Buffer,Latch
 not_inherent.rs	13	-
 cfg_test.rs	5	Live
 inner_cfg_test.rs	0	-

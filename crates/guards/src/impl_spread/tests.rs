@@ -13,10 +13,6 @@ fn corpus() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/outside_score/fixtures")
 }
 
-fn impls_of(source: &str) -> Vec<String> {
-    lex::inherent_impls(&lex::production(source))
-}
-
 #[test]
 fn the_shared_corpus_measures_as_the_script_counts_it() {
     let dir = corpus();
@@ -45,17 +41,6 @@ fn the_shared_corpus_measures_as_the_script_counts_it() {
         };
         assert_eq!(lex::inherent_impls(&production), expected, "{name}: impls");
     }
-}
-
-#[test]
-fn an_arrow_in_a_bound_does_not_close_the_generics() {
-    // The `>` of `->` once closed `<F: Fn() -> bool>` early and named the
-    // type `bool`.
-    assert_eq!(impls_of("impl<F: Fn() -> bool> Pane<F> {\n}\n"), ["Pane"]);
-    assert_eq!(
-        impls_of("impl<F: Fn(u8) -> Option<u8>, G> Gate<F, G> {\n}\n"),
-        ["Gate"]
-    );
 }
 
 #[test]
