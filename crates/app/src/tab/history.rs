@@ -641,16 +641,18 @@ impl Tab {
     }
 
     /// The chart holds what it is going to hold: no opening fill arriving and
-    /// no rebuild pending, so a run judges what the trader sees.
+    /// no rebuild pending or failed, so a run judges what the trader sees. A
+    /// failed rebuild waits for the press that retries it.
     ///
-    /// A reconnect's resume floor counts as filling: the next history-shaped
-    /// event may be the new session's recovery window, which the floor
-    /// filters, so a request is not sent until it has been spent.
+    /// A reconnect's resume floor does not count: on a quiet market no print
+    /// comes to spend it, and the run's reply is told from the session's
+    /// recovery window where it lands (`Tab::answers_history_run`).
     fn history_idle(&self) -> bool {
         self.opening_slices_remaining.is_none()
-            && self.resume_floor_ms.is_none()
             && !self.loading.is_active(LoadingTask::History)
-            && !self.panes().any(|(pane, _)| pane.history_pending())
+            && !self
+                .panes()
+                .any(|(pane, _)| pane.history_pending() || pane.history_failed())
     }
 
     fn begin_history(&mut self, config: &AppConfig, reach: HistoryReach) {
@@ -757,9 +759,10 @@ impl Tab {
 
     /// A rebuild failed: end the run where it stood. Unlike a change of
     /// market, the request already out is still owed a reply, so it stays
-    /// counted until that reply lands.
+    /// counted until that reply lands; a press queued behind the rebuild
+    /// stays queued, and the press that retries the rebuild runs it.
     pub(super) fn stop_history_run_on_failure(&mut self) {
-        let _ = self.history_run.cancel();
+        self.history_run.stop_keeping_queued();
         self.hold_history_pages();
     }
 

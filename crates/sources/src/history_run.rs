@@ -226,6 +226,14 @@ impl HistoryRun {
             .map_or(Cancelled::Nothing, Cancelled::Queued)
     }
 
+    /// The chart could not be rebuilt: end the run where it stood, as
+    /// [`Self::cancel`] does, but keep a press queued behind the rebuild so
+    /// the retry runs it rather than dropping it unannounced.
+    pub fn stop_keeping_queued(&mut self) {
+        self.paused = false;
+        self.campaign = None;
+    }
+
     /// The market changed: the old feed's request died with its channel and
     /// the run belongs to a tape this tab no longer shows.
     pub fn reset(&mut self) {

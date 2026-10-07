@@ -250,3 +250,16 @@ fn a_reply_clears_the_request_out_even_after_a_cancel() {
     assert!(!run.awaiting_reply());
     assert_eq!(run.poll(true, true), Poll::Begin(YESTERDAY));
 }
+
+#[test]
+fn a_failed_rebuild_ends_the_run_but_keeps_the_press_queued_behind_it() {
+    let mut run = HistoryRun::default();
+    assert_eq!(run.press(YESTERDAY, false), Press::Queued);
+    run.stop_keeping_queued();
+    assert_eq!(run.status(), RunStatus::Queued(YESTERDAY));
+
+    let mut run = loading();
+    run.stop_keeping_queued();
+    assert!(!run.holds_pages(), "the run ended");
+    assert!(run.awaiting_reply(), "its request is still owed a reply");
+}

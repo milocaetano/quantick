@@ -592,17 +592,13 @@ impl Tab {
                     // this event rather than as backfill, so a resumed session
                     // is filtered here too. Prepending it would put a block the
                     // chart already holds in front of the bars it duplicates.
-                    if self.resume_floor_ms.is_some() {
-                        self.loading.end(LoadingTask::History);
-                        live |= self.ingest_resumed(&trades);
-                        // A press waits out the floor, so this is the
-                        // session's recovery window. Should a request be out
-                        // all the same, this event is its only reply: the run
-                        // hears it as empty — the floor kept nothing older —
-                        // rather than waiting on a reply that already came.
-                        if self.history_run.awaiting_reply() {
-                            self.judge_history_page(&[]);
+                    // The run's own reply is not that window: it takes the
+                    // ordinary path below, judged on what it brought.
+                    if self.resume_floor_ms.is_some() && !self.answers_history_run(&trades) {
+                        if !self.history_run.awaiting_reply() {
+                            self.loading.end(LoadingTask::History);
                         }
+                        live |= self.ingest_resumed(&trades);
                         continue;
                     }
                     self.history_trades += trades.len();
@@ -698,6 +694,22 @@ impl Tab {
             }
         }
         live
+    }
+
+    /// Whether a page landing while the resume floor stands is the history
+    /// run's reply rather than the new session's recovery window: a request
+    /// is out, and the page brings nothing newer than the oldest print
+    /// charted — a recovery window replays the live edge. An empty page is
+    /// taken as the reply, because a run left waiting on one waits forever.
+    fn answers_history_run(&self, page: &[quantick_engine::Trade]) -> bool {
+        self.history_run.awaiting_reply()
+            && page.last().is_none_or(|newest| {
+                self.flow_pane
+                    .state
+                    .trades()
+                    .first()
+                    .is_some_and(|oldest| newest.timestamp_ms <= oldest.timestamp_ms)
+            })
     }
 
     fn defer_history(&self, count: usize) -> bool {
