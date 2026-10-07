@@ -5,6 +5,7 @@ use serde_json::json;
 
 use super::*;
 use crate::test_support::{FakeAccess, FakeTab, FakeWindow};
+use quantick_control_host::actions::ActionRegistry;
 
 fn window() -> FakeWindow {
     let mut window = FakeWindow::new(vec![FakeTab::new(7, "BTCUSDT"), FakeTab::new(9, "WIN")]);
@@ -65,6 +66,12 @@ fn an_unknown_tab_is_refused_by_its_id() {
     let error = call(reconnect, &mut window, json!({ "tab_id": "42" })).expect_err("refused");
     assert_eq!(error.message, "no open tab has id 42");
     assert!(window.tabs.iter().all(|tab| tab.recoveries.is_empty()));
+}
+
+#[test]
+fn each_recovery_names_the_capability_registered_for_it() {
+    assert_eq!(capability_id(Recovery::Reconnect), RECONNECT_CAPABILITY_ID);
+    assert_eq!(capability_id(Recovery::Reload), RELOAD_CAPABILITY_ID);
 }
 
 #[test]

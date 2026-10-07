@@ -6365,6 +6365,63 @@ fn a_keyed_call_that_expired_before_the_application_saw_it_leaves_its_key_free()
     std::fs::remove_dir_all(directory).unwrap();
 }
 
+/// The window's attention adapter puts a toast on the toast lane and a popup
+/// in the popup, each attributed, and neither on the other's lane.
+#[test]
+fn the_window_routes_each_notification_to_its_own_lane() {
+    let (mut app, _commands) = app_with_history(4);
+    let mut access = crate::control::ControlAccess::new();
+    let actor = crate::app::control_host::tests::fake::FakeWindow::assistant();
+    let toast = serde_json::json!({ "message": "hello" });
+    crate::control::invoke_action(&mut app, &mut access, &actor, "notify.toast", toast)
+        .expect("a toast within budget is raised");
+    assert_eq!(
+        app.surfaces.toast.message(),
+        Some("hello — fake assistant (agent)")
+    );
+    assert!(app.surfaces.agent_popup.pending().is_none());
+
+    let popup = serde_json::json!({ "message": "look at the bid" });
+    crate::control::invoke_action(&mut app, &mut access, &actor, "notify.popup", popup)
+        .expect("a popup within budget is raised");
+    let shown = app
+        .surfaces
+        .agent_popup
+        .pending()
+        .expect("the popup is open");
+    assert_eq!(shown.message, "look at the bid");
+    assert_eq!(shown.author, "fake assistant (agent)");
+    assert_eq!(
+        app.surfaces.toast.message(),
+        Some("hello — fake assistant (agent)"),
+        "a popup posts nothing to the toast lane"
+    );
+}
+
+/// Through the window's attention adapter, every refused sound answers as
+/// not raised, with the platform's reason.
+#[test]
+fn every_refused_sound_is_reported_as_not_raised() {
+    struct Refusing;
+    impl crate::audio::AlertSink for Refusing {
+        fn play(&mut self, _cues: &[crate::audio::Cue]) -> Result<(), &'static str> {
+            Err("no audio output device")
+        }
+    }
+    let (mut app, _commands) = app_with_history(4);
+    app.audio.alerts = Box::new(Refusing);
+    let mut access = crate::control::ControlAccess::new();
+    let actor = crate::app::control_host::tests::fake::FakeWindow::assistant();
+    for call in 0..2 {
+        let input = serde_json::json!({ "message": "listen" });
+        let result =
+            crate::control::invoke_action(&mut app, &mut access, &actor, "notify.sound", input)
+                .expect("a refused sound is an answer, not an error");
+        assert_eq!(result["raised"], false, "call {call}");
+        assert_eq!(result["unavailable_reason"], "no audio output device");
+    }
+}
+
 /// An agent's `notify.sound` reports every refusal, not only the first of a
 /// run, and leaves the trader's alarm-failure state alone: that state decides
 /// whether the *alarm* toast shows, and an assistant's call is not an alarm.

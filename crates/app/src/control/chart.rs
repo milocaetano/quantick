@@ -1,17 +1,17 @@
-//! The window's adapter onto the chart family's port: each pane read as
-//! `quantick_control_handlers::chart` asks for it. The projections, the
-//! window read and its refusals live there; what stays here is what only the
+//! The window's adapter onto `quantick_control_handlers::chart`: only what the
 //! window can say — where its last frame laid a pane out, which tab and side
 //! it sits on, and what its feed provides.
 
 pub(crate) use quantick_control_handlers::chart::chart_window_prevalidated;
-use quantick_control_handlers::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane};
+use quantick_control_handlers::chart::{
+    ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming,
+};
 pub(crate) use quantick_control_schema::chart::*;
 
 use quantick_engine::Bar;
 
 use crate::{
-    app::control_host::{ControlPort, TabReads},
+    app::control_host::ControlPort,
     config::AppConfig,
     pane::{ChartPane, PaneSide},
     state::ChartState,
@@ -21,56 +21,56 @@ use crate::{
 use super::types::{DecimalRange, canonical_f32, canonical_f64, wire_usize};
 
 impl ChartPort for dyn ControlPort {
-    fn chart_panes(&self) -> Vec<ChartPaneEntry<'_>> {
-        chart_panes(self.tab_reads())
+    fn visit_chart_panes(&self, visit: &mut dyn FnMut(ChartPaneEntry<'_>, PaneFraming)) {
+        let reads = self.tab_reads();
+        let active = reads.active_tab_index();
+        let config = reads.config();
+        for (tab_index, tab) in reads.tabs().iter().enumerate() {
+            let tab_id = reads.tabs().id_at(tab_index);
+            let focused = tab.focused_side();
+            let shown = usize::from(!tab.context_collapsed) * tab.context_panes_shown();
+            for (pane, side) in tab.panes() {
+                let visible = match side {
+                    PaneSide::Flow => tab.layout.shows_flow(),
+                    PaneSide::Time(slot) => tab.layout.shows_time() && slot < shown,
+                };
+                let framing = PaneFraming {
+                    visible: tab_index == active && visible,
+                    focused: tab_index == active && focused == side,
+                };
+                let read = PaneRead { tab, pane, config };
+                visit(entry(tab_id, tab, side, &read), framing);
+            }
+        }
     }
 
-    fn chart_pane(&self, tab_id: u64, pane_id: u64) -> Result<ChartPaneEntry<'_>, MissingPane> {
+    fn visit_chart_pane(
+        &self,
+        tab_id: u64,
+        pane_id: u64,
+        visit: &mut dyn FnMut(ChartPaneEntry<'_>),
+    ) -> Result<(), MissingPane> {
         let reads = self.tab_reads();
         let tab = reads.tabs().by_id(tab_id).ok_or(MissingPane::Tab)?;
         let (pane, side) = tab
             .panes()
             .find(|(pane, _)| pane.id == pane_id)
             .ok_or(MissingPane::Pane)?;
-        Ok(entry(tab_id, tab, pane, side, false, false, reads.config()))
+        let read = PaneRead {
+            tab,
+            pane,
+            config: reads.config(),
+        };
+        visit(entry(tab_id, tab, side, &read));
+        Ok(())
     }
-}
-
-/// Every pane of every tab, with whether the trader sees it and drives it.
-fn chart_panes(reads: TabReads<'_>) -> Vec<ChartPaneEntry<'_>> {
-    let active = reads.active_tab_index();
-    let config = reads.config();
-    let mut panes = Vec::new();
-    for (tab_index, tab) in reads.tabs().iter().enumerate() {
-        let focused = tab.focused_side();
-        let shown = usize::from(!tab.context_collapsed) * tab.context_panes_shown();
-        for (pane, side) in tab.panes() {
-            let visible = match side {
-                PaneSide::Flow => tab.layout.shows_flow(),
-                PaneSide::Time(slot) => tab.layout.shows_time() && slot < shown,
-            };
-            panes.push(entry(
-                reads.tabs().id_at(tab_index),
-                tab,
-                pane,
-                side,
-                tab_index == active && visible,
-                tab_index == active && focused == side,
-                config,
-            ));
-        }
-    }
-    panes
 }
 
 fn entry<'a>(
     tab_id: u64,
     tab: &'a Tab,
-    pane: &'a ChartPane,
     side: PaneSide,
-    visible: bool,
-    focused: bool,
-    config: &'a AppConfig,
+    read: &'a PaneRead<'a>,
 ) -> ChartPaneEntry<'a> {
     ChartPaneEntry {
         tab_id,
@@ -78,9 +78,7 @@ fn entry<'a>(
         pane_index: side.index(),
         feed_id: &tab.feed_id,
         symbol: &tab.symbol,
-        visible,
-        focused,
-        pane: Box::new(PaneRead { tab, pane, config }),
+        pane: read,
     }
 }
 

@@ -16,6 +16,8 @@ quantick-control-schema = { path = "../control-schema" }
 quantick-engine = { path = "../engine" }
 # The history reach and run vocabulary the History press speaks.
 quantick-sources = { path = "../sources" }
+schemars = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [lints]

@@ -3030,6 +3030,8 @@ dependencies = [
  "quantick-engine",
  "quantick-sources",
  "rust_decimal",
+ "schemars",
+ "serde",
  "serde_json",
 ]
 

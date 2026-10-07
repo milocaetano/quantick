@@ -18,6 +18,7 @@
 //! handed the time, or asks its port to stamp it.
 
 pub mod chart;
+pub mod dock;
 pub mod history;
 pub mod notify;
 pub mod recovery;

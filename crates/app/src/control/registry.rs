@@ -25,6 +25,7 @@ use serde::Serialize;
 
 use crate::{app::ControlWindow, metrics};
 
+pub(crate) use quantick_control_handlers::dock::ProjectionDock;
 pub(crate) use quantick_control_host::projection::{
     CaptureContext, ProjectionRegistryError, SerializedSnapshotCapture, SnapshotCapture,
 };
@@ -46,49 +47,6 @@ impl ProjectionRegistry {
     /// over the host.
     pub fn inner(&self) -> &projection::ProjectionRegistry<ControlWindow> {
         &self.0
-    }
-
-    /// The generic registry, for a family that docks itself generically.
-    pub fn inner_mut(&mut self) -> &mut projection::ProjectionRegistry<ControlWindow> {
-        &mut self.0
-    }
-
-    /// Dock one owner module and its semantic revision projection.
-    pub fn register_module<K>(
-        &mut self,
-        descriptor: ModuleDescriptor,
-        revision: fn(&ControlWindow) -> K,
-    ) -> Result<(), ProjectionRegistryError>
-    where
-        K: Eq + Send + 'static,
-    {
-        self.0.register_module(descriptor, revision)
-    }
-
-    /// Dock one typed scope; see the generic registry's `register_scope`.
-    #[allow(clippy::too_many_arguments)]
-    pub fn register_scope<T>(
-        &mut self,
-        scope_id: SnapshotScopeId,
-        module_id: ModuleId,
-        schema_version: u32,
-        title: impl Into<String>,
-        description: impl Into<String>,
-        required_permission_ids: &[&str],
-        project: fn(&ControlWindow, CaptureContext) -> T,
-    ) -> Result<(), ProjectionRegistryError>
-    where
-        T: JsonSchema + Serialize + Send + 'static,
-    {
-        self.0.register_scope(
-            scope_id,
-            module_id,
-            schema_version,
-            title,
-            description,
-            required_permission_ids,
-            project,
-        )
     }
 
     /// Test-only here: production reads the scopes through [`Self::inner`].
@@ -115,6 +73,45 @@ impl ProjectionRegistry {
         requested_scopes: &[SnapshotScopeId],
     ) -> Result<SnapshotCapture, ControlError> {
         self.0.capture(app, instance_id, requested_scopes)
+    }
+}
+
+/// The one route every family docks by, here and in
+/// `quantick_control_handlers`.
+impl ProjectionDock<ControlWindow> for ProjectionRegistry {
+    fn register_module<K>(
+        &mut self,
+        descriptor: ModuleDescriptor,
+        revision: fn(&ControlWindow) -> K,
+    ) -> Result<(), ProjectionRegistryError>
+    where
+        K: Eq + Send + 'static,
+    {
+        self.0.register_module(descriptor, revision)
+    }
+
+    fn register_scope<T>(
+        &mut self,
+        scope_id: SnapshotScopeId,
+        module_id: ModuleId,
+        schema_version: u32,
+        title: &str,
+        description: &str,
+        required_permission_ids: &[&str],
+        project: fn(&ControlWindow, CaptureContext) -> T,
+    ) -> Result<(), ProjectionRegistryError>
+    where
+        T: JsonSchema + Serialize + Send + 'static,
+    {
+        self.0.register_scope(
+            scope_id,
+            module_id,
+            schema_version,
+            title,
+            description,
+            required_permission_ids,
+            project,
+        )
     }
 }
 

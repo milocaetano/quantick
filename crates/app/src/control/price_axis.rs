@@ -1,5 +1,6 @@
 //! Named price and tape framing over the same pane state as their gestures.
-use super::{actions::ActionRegistry, gateway::ControlAccess, layout};
+use super::actions::{ActionDock, ActionRegistry};
+use super::{gateway::ControlAccess, layout};
 use crate::app::{TabsMutPort, TabsPort};
 use crate::pane::ChartPane;
 use quantick_control::wire::{ActorContext, WireU64};

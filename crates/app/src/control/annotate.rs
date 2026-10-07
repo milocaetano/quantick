@@ -26,7 +26,7 @@ use crate::{
 };
 
 use super::{
-    actions::ActionRegistry,
+    actions::{ActionDock, ActionRegistry},
     gateway::ControlAccess,
     journal::{EventActor, NewEvent},
     types::{

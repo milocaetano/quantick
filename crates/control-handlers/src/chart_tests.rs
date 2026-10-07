@@ -57,10 +57,24 @@ fn the_summary_reports_every_pane_with_its_framing_and_coverage() {
     assert_eq!(flow.coverage.oldest_open_time_unix_ms, Some(1_000));
     assert_eq!(flow.coverage.newest_close_time_unix_ms, Some(5_000));
     assert!(!flow.coverage.venue_prefix_present);
+    assert!(flow.coverage.older_history_paging_supported);
     let empty = &summary.panes[1];
     assert_eq!(empty.side, PaneSideDto::Time);
     assert!(!empty.focused);
     assert_eq!(empty.coverage.oldest_open_time_unix_ms, None);
+}
+
+#[test]
+fn coverage_pages_older_history_only_when_the_panes_tab_can() {
+    let mut window = window();
+    window.tabs[0].history_paging = false;
+    let summary = snapshot(&window);
+    assert!(
+        summary
+            .panes
+            .iter()
+            .all(|pane| !pane.coverage.older_history_paging_supported)
+    );
 }
 
 #[test]

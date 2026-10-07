@@ -6,7 +6,6 @@ use quantick_control::{
     registry::RegistryError,
     wire::{ActorContext, WireU64},
 };
-use quantick_control_host::actions::ActionRegistry;
 use quantick_control_schema::history::{
     HistoryCancelInput, HistoryCancelResult, HistoryLoadInput, HistoryLoadResult,
     HistoryLoadSnapshot, cancel_descriptor, load_descriptor,
@@ -15,6 +14,7 @@ use quantick_sources::history_reach::{HistoryReach, MAX_REACH_HOURS, MAX_REACH_S
 use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use serde_json::{Value, json};
 
+use crate::dock::ActionDock;
 use crate::tabs::{TabDirectory, tab_closed, tab_index};
 
 /// One tab's history run as the window holds it after an act.
@@ -39,8 +39,9 @@ pub trait HistoryPort: TabDirectory {
 }
 
 /// Dock the press and its cancel.
-pub fn register<H, A>(registry: &mut ActionRegistry<H, A>) -> Result<(), RegistryError>
+pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
+    D: ActionDock<H, A>,
     H: HistoryPort + ?Sized,
 {
     registry.register(load_descriptor(), load)?;

@@ -5,6 +5,7 @@ use serde_json::json;
 
 use super::*;
 use crate::test_support::{FakeAccess, FakeWindow};
+use quantick_control_host::actions::ActionRegistry;
 
 #[test]
 fn a_toast_lands_on_the_fake_windows_lane_with_its_author() {

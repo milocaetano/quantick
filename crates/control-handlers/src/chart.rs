@@ -21,7 +21,7 @@ use quantick_control::{
     wire::WireU64,
 };
 use quantick_control_host::{
-    projection::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
+    projection::{CaptureContext, ProjectionRegistryError},
     wire::{PaneSideDto, canonical_decimal, wire_usize},
 };
 use quantick_control_schema::chart::{
@@ -30,6 +30,8 @@ use quantick_control_schema::chart::{
     OMITTED_WINDOW_MODULE_IDS, SCHEMA_VERSION, SCOPE_ID, ViewportSnapshot,
 };
 use quantick_engine::Bar;
+
+use crate::dock::ProjectionDock;
 
 /// One chart pane as the chart projections read it.
 pub trait ChartPaneSource {
@@ -63,19 +65,24 @@ pub trait ChartPaneSource {
     fn provenance(&self) -> BarProvenanceContext;
 }
 
-/// One pane with where it sits: its tab, its side, its market, and whether
-/// the trader can see it.
+/// One pane with where it sits: its tab, its side and its market.
 pub struct ChartPaneEntry<'a> {
     pub tab_id: u64,
     pub side: PaneSideDto,
     pub pane_index: usize,
     pub feed_id: &'a str,
     pub symbol: &'a str,
+    pub pane: &'a dyn ChartPaneSource,
+}
+
+/// Whether the trader sees a pane and drives it: what the summary reports,
+/// and the window read does not.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PaneFraming {
     /// On the tab on screen, and laid out by its canvas.
     pub visible: bool,
     /// On the tab on screen, and the pane the keyboard drives.
     pub focused: bool,
-    pub pane: Box<dyn ChartPaneSource + 'a>,
 }
 
 /// Which part of a window read's address named nothing.
@@ -85,17 +92,25 @@ pub enum MissingPane {
     Pane,
 }
 
-/// The window's chart panes.
+/// The window's chart panes, lent one at a time: a pane is read where it
+/// lives, never copied or boxed for the visit.
 pub trait ChartPort {
-    /// Every pane of every tab, tab by tab.
-    fn chart_panes(&self) -> Vec<ChartPaneEntry<'_>>;
-    /// The pane `pane_id` on the tab `tab_id`.
-    fn chart_pane(&self, tab_id: u64, pane_id: u64) -> Result<ChartPaneEntry<'_>, MissingPane>;
+    /// Visit every pane of every tab, tab by tab, with its framing.
+    fn visit_chart_panes(&self, visit: &mut dyn FnMut(ChartPaneEntry<'_>, PaneFraming));
+    /// Visit the pane `pane_id` on the tab `tab_id`, or say which part of
+    /// the address named nothing.
+    fn visit_chart_pane(
+        &self,
+        tab_id: u64,
+        pane_id: u64,
+        visit: &mut dyn FnMut(ChartPaneEntry<'_>),
+    ) -> Result<(), MissingPane>;
 }
 
 /// Dock the chart module and its summary scope.
-pub fn register<H>(registry: &mut ProjectionRegistry<H>) -> Result<(), ProjectionRegistryError>
+pub fn register<D, H>(registry: &mut D) -> Result<(), ProjectionRegistryError>
 where
+    D: ProjectionDock<H>,
     H: ChartPort + ?Sized + 'static,
 {
     let module_id = ModuleId::new(MODULE_ID).expect("static module ID is valid");
@@ -128,13 +143,13 @@ fn project<H: ChartPort + ?Sized>(app: &H, _context: CaptureContext) -> ChartSna
 
 /// Every pane's summary, tab by tab.
 pub fn snapshot<H: ChartPort + ?Sized>(app: &H) -> ChartSnapshot {
-    ChartSnapshot {
-        panes: app.chart_panes().iter().map(pane_snapshot).collect(),
-    }
+    let mut panes = Vec::new();
+    app.visit_chart_panes(&mut |entry, framing| panes.push(pane_snapshot(&entry, framing)));
+    ChartSnapshot { panes }
 }
 
-fn pane_snapshot(entry: &ChartPaneEntry<'_>) -> ChartPaneSnapshot {
-    let pane = &*entry.pane;
+fn pane_snapshot(entry: &ChartPaneEntry<'_>, framing: PaneFraming) -> ChartPaneSnapshot {
+    let pane = entry.pane;
     let state = pane.state();
     let seam = pane.seam_slot();
     let rule = state.rule_diagnostics();
@@ -145,8 +160,8 @@ fn pane_snapshot(entry: &ChartPaneEntry<'_>) -> ChartPaneSnapshot {
         pane_index: wire_usize(entry.pane_index),
         feed_id: entry.feed_id.to_owned(),
         symbol: entry.symbol.to_owned(),
-        visible: entry.visible,
-        focused: entry.focused,
+        visible: framing.visible,
+        focused: framing.focused,
         bar_spec: state.spec().into(),
         timeline_revision: WireU64::new(state.timeline_revision()),
         pagination_revision: WireU64::new(pane.pagination_revision()),
@@ -230,15 +245,37 @@ pub fn chart_window_prevalidated<H: ChartPort + ?Sized>(
     captured_at_unix_ms: i64,
 ) -> Result<ChartWindowPage, ControlError> {
     query.validate_page_size()?;
-    let entry = app
-        .chart_pane(query.tab_id.get(), query.pane_id.get())
-        .map_err(|missing| match missing {
-            MissingPane::Tab => ControlError::invalid_request("chart window names an unknown tab"),
-            MissingPane::Pane => ControlError::invalid_request(
-                "chart window names an unknown pane on the requested tab",
-            ),
-        })?;
-    let pane = &*entry.pane;
+    let mut page = None;
+    app.visit_chart_pane(query.tab_id.get(), query.pane_id.get(), &mut |entry| {
+        page = Some(window_page(
+            &entry,
+            instance_id,
+            query,
+            canonical_query,
+            cursor,
+            captured_at_unix_ms,
+        ));
+    })
+    .map_err(|missing| match missing {
+        MissingPane::Tab => ControlError::invalid_request("chart window names an unknown tab"),
+        MissingPane::Pane => unknown_pane(),
+    })?;
+    page.unwrap_or_else(|| Err(unknown_pane()))
+}
+
+fn unknown_pane() -> ControlError {
+    ControlError::invalid_request("chart window names an unknown pane on the requested tab")
+}
+
+fn window_page(
+    entry: &ChartPaneEntry<'_>,
+    instance_id: &InstanceId,
+    query: &ChartWindowQuery,
+    canonical_query: &serde_json::Value,
+    cursor: Option<&PageCursor>,
+    captured_at_unix_ms: i64,
+) -> Result<ChartWindowPage, ControlError> {
+    let pane = entry.pane;
     let closed = pane.closed_slots();
     let consistency_revision = WireU64::new(pane.pagination_revision());
     let selection = ChartWindowSelection::resolve(

@@ -26,7 +26,7 @@ use serde_json::json;
 use crate::metrics;
 
 use super::{
-    actions::ActionRegistry,
+    actions::{ActionDock, ActionRegistry},
     gateway::ControlAccess,
     journal::{EventActor, NewEvent},
 };

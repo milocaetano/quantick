@@ -11,6 +11,7 @@ use quantick_control::{
 
 use crate::feed::FeedNotice;
 
+use super::registry::ProjectionDock;
 use super::registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError};
 
 /// The wire word for a feed's connection state.

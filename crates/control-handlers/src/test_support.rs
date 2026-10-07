@@ -13,11 +13,11 @@ use quantick_control_host::{journal::NewEvent, wire::PaneSideDto};
 use quantick_control_schema::chart::{BarProvenanceContext, ViewportSnapshot};
 use quantick_control_schema::notify::AgentPopup;
 use quantick_engine::{Bar, BarSpec, Side, Trade};
-use quantick_sources::history_reach::HistoryReach;
+use quantick_sources::history_reach::{HistoryReach, ReachProgress};
 use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use rust_decimal::Decimal;
 
-use crate::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane};
+use crate::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming};
 use crate::history::{HistoryPort, HistoryRun};
 use crate::notify::{AttentionPort, NotifyAccess};
 use crate::recovery::{FeedRecoveryPort, RecoveredFeed};
@@ -52,43 +52,54 @@ impl FakePane {
     }
 }
 
-impl ChartPaneSource for FakePane {
+/// One fake pane read with the tab it sits on, as the window's adapter reads
+/// a pane with its tab.
+struct FakePaneRead<'a> {
+    tab: &'a FakeTab,
+    pane: &'a FakePane,
+}
+
+impl ChartPaneSource for FakePaneRead<'_> {
     fn pane_id(&self) -> u64 {
-        self.id
+        self.pane.id
     }
     fn state(&self) -> &ChartState {
-        &self.state
+        &self.pane.state
     }
     fn pagination_revision(&self) -> u64 {
-        self.pagination_revision
+        self.pane.pagination_revision
     }
     fn closed_slots(&self) -> usize {
-        self.prefix.len() + self.state.bars().len()
+        self.pane.prefix.len() + self.pane.state.bars().len()
     }
     fn seam_slot(&self) -> usize {
-        self.prefix.len()
+        self.pane.prefix.len()
     }
     fn closed_bar(&self, slot: usize) -> Option<&Bar> {
-        self.prefix
+        self.pane
+            .prefix
             .get(slot)
-            .or_else(|| self.state.bars().get(slot - self.prefix.len()))
+            .or_else(|| self.pane.state.bars().get(slot - self.pane.prefix.len()))
     }
     fn venue_prefix(&self) -> &[Bar] {
-        &self.prefix
+        &self.pane.prefix
     }
     fn slot_open_time(&self, slot: usize) -> Option<i64> {
-        match self.prefix.get(slot) {
+        match self.pane.prefix.get(slot) {
             Some(bar) => Some(bar.open_time),
-            None => self.state.slot_open_time(slot - self.prefix.len()),
+            None => self
+                .pane
+                .state
+                .slot_open_time(slot - self.pane.prefix.len()),
         }
     }
     fn visible_slots(&self) -> Option<(usize, usize)> {
-        self.visible_slots
+        self.pane.visible_slots
     }
     fn viewport(&self) -> ViewportSnapshot {
-        let (start, end) = self.visible_slots.unwrap_or((0, 0));
+        let (start, end) = self.pane.visible_slots.unwrap_or((0, 0));
         ViewportSnapshot {
-            geometry_available: self.visible_slots.is_some(),
+            geometry_available: self.pane.visible_slots.is_some(),
             visible_start_slot: WireU64::new(start as u64),
             visible_end_slot_exclusive: WireU64::new(end as u64),
             pixels_per_bar: CanonicalDecimal::new("8").expect("canonical"),
@@ -102,10 +113,10 @@ impl ChartPaneSource for FakePane {
         }
     }
     fn history_paging(&self) -> bool {
-        true
+        self.tab.history_paging
     }
     fn venue_record_starts_inside(&self, _interval_ms: i64) -> bool {
-        self.record_starts_inside
+        self.pane.record_starts_inside
     }
     fn provenance(&self) -> BarProvenanceContext {
         BarProvenanceContext {
@@ -128,6 +139,10 @@ pub(crate) struct FakeTab {
     /// Every recovery asked of the tab, `true` for a reconnect.
     pub recoveries: Vec<bool>,
     pub history_paging: bool,
+    /// The chart is still filling, so a press waits.
+    pub filling: bool,
+    /// A started run has nothing to page and ends within the press.
+    pub start_finishes: bool,
     pub history: RunStatus,
     pub main_reach: HistoryReach,
     pub panes: Vec<FakePane>,
@@ -142,6 +157,8 @@ impl FakeTab {
             respawns: true,
             recoveries: Vec::new(),
             history_paging: true,
+            filling: false,
+            start_finishes: false,
             history: RunStatus::Idle,
             main_reach: HistoryReach::Hours(1),
             panes: Vec::new(),
@@ -219,16 +236,28 @@ impl HistoryPort for FakeWindow {
     fn history_paging(&self, index: usize) -> Option<bool> {
         self.tabs.get(index).map(|tab| tab.history_paging)
     }
+    /// A press refused because a run is paging moves nothing, the main-click
+    /// default included, as `TabsMut::press_history` does.
     fn press_history(&mut self, index: usize, reach: HistoryReach) -> Option<(Press, HistoryRun)> {
         let tab = self.tabs.get_mut(index)?;
-        tab.main_reach = reach;
         let press = match tab.history {
-            RunStatus::Idle => {
+            RunStatus::Loading(_) | RunStatus::Paused(_) => {
+                return Some((Press::AlreadyRunning, tab.run()));
+            }
+            _ if tab.filling => {
                 tab.history = RunStatus::Queued(reach);
+                Press::Queued
+            }
+            _ => {
+                tab.history = if tab.start_finishes {
+                    RunStatus::Idle
+                } else {
+                    loading(reach)
+                };
                 Press::Start
             }
-            _ => Press::AlreadyRunning,
         };
+        tab.main_reach = reach;
         Some((press, tab.run()))
     }
     fn cancel_history(&mut self, index: usize) -> Option<(Cancelled, HistoryRun)> {
@@ -255,19 +284,25 @@ impl AttentionPort for FakeWindow {
 }
 
 impl ChartPort for FakeWindow {
-    fn chart_panes(&self) -> Vec<ChartPaneEntry<'_>> {
-        self.tabs
-            .iter()
-            .enumerate()
-            .flat_map(|(index, tab)| {
-                tab.panes
-                    .iter()
-                    .enumerate()
-                    .map(move |(slot, pane)| entry(tab, slot, pane, index == self.active))
-            })
-            .collect()
+    fn visit_chart_panes(&self, visit: &mut dyn FnMut(ChartPaneEntry<'_>, PaneFraming)) {
+        for (index, tab) in self.tabs.iter().enumerate() {
+            for (slot, pane) in tab.panes.iter().enumerate() {
+                let shown = index == self.active;
+                let framing = PaneFraming {
+                    visible: shown,
+                    focused: shown && slot == 0,
+                };
+                let read = FakePaneRead { tab, pane };
+                visit(entry(tab, slot, &read), framing);
+            }
+        }
     }
-    fn chart_pane(&self, tab_id: u64, pane_id: u64) -> Result<ChartPaneEntry<'_>, MissingPane> {
+    fn visit_chart_pane(
+        &self,
+        tab_id: u64,
+        pane_id: u64,
+        visit: &mut dyn FnMut(ChartPaneEntry<'_>),
+    ) -> Result<(), MissingPane> {
         let tab = self
             .tabs
             .iter()
@@ -279,11 +314,12 @@ impl ChartPort for FakeWindow {
             .enumerate()
             .find(|(_, pane)| pane.id == pane_id)
             .ok_or(MissingPane::Pane)?;
-        Ok(entry(tab, slot, pane, false))
+        visit(entry(tab, slot, &FakePaneRead { tab, pane }));
+        Ok(())
     }
 }
 
-fn entry<'a>(tab: &'a FakeTab, slot: usize, pane: &'a FakePane, shown: bool) -> ChartPaneEntry<'a> {
+fn entry<'a>(tab: &'a FakeTab, slot: usize, read: &'a FakePaneRead<'a>) -> ChartPaneEntry<'a> {
     let side = if slot == 0 {
         PaneSideDto::Flow
     } else {
@@ -295,54 +331,7 @@ fn entry<'a>(tab: &'a FakeTab, slot: usize, pane: &'a FakePane, shown: bool) -> 
         pane_index: slot,
         feed_id: &tab.feed_id,
         symbol: &tab.symbol,
-        visible: shown,
-        focused: shown && slot == 0,
-        pane: Box::new(FakePaneRef(pane)),
-    }
-}
-
-/// A borrowed pane, so an entry can lend the fake's own.
-struct FakePaneRef<'a>(&'a FakePane);
-
-impl ChartPaneSource for FakePaneRef<'_> {
-    fn pane_id(&self) -> u64 {
-        self.0.pane_id()
-    }
-    fn state(&self) -> &ChartState {
-        self.0.state()
-    }
-    fn pagination_revision(&self) -> u64 {
-        self.0.pagination_revision()
-    }
-    fn closed_slots(&self) -> usize {
-        self.0.closed_slots()
-    }
-    fn seam_slot(&self) -> usize {
-        self.0.seam_slot()
-    }
-    fn closed_bar(&self, slot: usize) -> Option<&Bar> {
-        self.0.closed_bar(slot)
-    }
-    fn venue_prefix(&self) -> &[Bar] {
-        self.0.venue_prefix()
-    }
-    fn slot_open_time(&self, slot: usize) -> Option<i64> {
-        self.0.slot_open_time(slot)
-    }
-    fn visible_slots(&self) -> Option<(usize, usize)> {
-        self.0.visible_slots()
-    }
-    fn viewport(&self) -> ViewportSnapshot {
-        self.0.viewport()
-    }
-    fn history_paging(&self) -> bool {
-        self.0.history_paging()
-    }
-    fn venue_record_starts_inside(&self, interval_ms: i64) -> bool {
-        self.0.venue_record_starts_inside(interval_ms)
-    }
-    fn provenance(&self) -> BarProvenanceContext {
-        self.0.provenance()
+        pane: read,
     }
 }
 
@@ -375,6 +364,18 @@ impl NotifyAccess for FakeAccess {
     fn record_event(&mut self, event: NewEvent) {
         self.events.push(event);
     }
+}
+
+/// A run paging toward `reach`, nothing pulled yet.
+pub(crate) fn loading(reach: HistoryReach) -> RunStatus {
+    RunStatus::Loading(ReachProgress {
+        reach,
+        oldest_ms: 0,
+        sessions_reached: 0,
+        traded_ms: 0,
+        prints_pulled: 0,
+        pages: 0,
+    })
 }
 
 /// A buy print at `price`, the `id`th second of the epoch.

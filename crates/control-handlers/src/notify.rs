@@ -25,7 +25,6 @@ use quantick_control::{
     wire::ActorContext,
 };
 use quantick_control_host::{
-    actions::ActionRegistry,
     admission::known_error,
     authority::{NOTIFY_MODULE_ID, NOTIFY_PERMISSION_ID, NOTIFY_SOUND_PERMISSION_ID},
     journal::{EventActor, NewEvent},
@@ -36,6 +35,8 @@ use quantick_control_schema::notify::{
     POPUP_CAPABILITY_ID, SOUND_CAPABILITY_ID, TOAST_CAPABILITY_ID, notify_descriptor,
 };
 use serde_json::{Value, json};
+
+use crate::dock::ActionDock;
 
 /// The three lanes the assistant answers on: its popup, the window's
 /// acknowledgement toast, and the attention sound.
@@ -59,8 +60,9 @@ pub trait NotifyAccess {
 }
 
 /// Dock the three notification capabilities.
-pub fn register<H, A>(registry: &mut ActionRegistry<H, A>) -> Result<(), RegistryError>
+pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
+    D: ActionDock<H, A>,
     H: AttentionPort + ?Sized,
     A: NotifyAccess,
 {

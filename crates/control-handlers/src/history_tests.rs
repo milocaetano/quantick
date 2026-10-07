@@ -4,7 +4,7 @@
 use serde_json::json;
 
 use super::*;
-use crate::test_support::{FakeAccess, FakeTab, FakeWindow};
+use crate::test_support::{FakeAccess, FakeTab, FakeWindow, loading};
 
 fn window() -> FakeWindow {
     FakeWindow::new(vec![FakeTab::new(3, "WIN")])
@@ -35,19 +35,41 @@ fn a_press_starts_the_run_and_moves_the_main_click_default() {
     assert_eq!(result["tab_id"], "3");
     assert_eq!(result["reach"], "sessions:2");
     assert_eq!(result["press"], "started");
-    assert_eq!(
-        result["status"]["state"],
-        RunStatus::Queued(HistoryReach::Sessions(2)).token()
-    );
+    assert_eq!(result["status"]["state"], "loading");
+    assert_eq!(result["status"]["reach"], "sessions:2");
     assert_eq!(result["status"]["main_reach"], "sessions:2");
 }
 
 #[test]
-fn a_press_on_a_running_tab_says_so() {
+fn a_start_whose_run_ended_within_the_press_says_finished() {
     let mut window = window();
-    window.tabs[0].history = RunStatus::Queued(HistoryReach::Hours(4));
+    window.tabs[0].start_finishes = true;
+    let result = call(load, &mut window, json!({ "reach": "hours:2" })).expect("pressed");
+    assert_eq!(result["press"], "finished");
+    assert_eq!(result["status"]["state"], "idle");
+    assert_eq!(result["status"]["main_reach"], "hours:2");
+}
+
+#[test]
+fn a_press_while_the_chart_fills_is_queued() {
+    let mut window = window();
+    window.tabs[0].filling = true;
+    let result = call(load, &mut window, json!({ "reach": "hours:3" })).expect("pressed");
+    assert_eq!(result["press"], "queued");
+    assert_eq!(result["status"]["state"], "queued");
+    assert_eq!(result["status"]["main_reach"], "hours:3");
+}
+
+#[test]
+fn a_press_on_a_running_tab_says_so_and_moves_nothing() {
+    let mut window = window();
+    window.tabs[0].history = loading(HistoryReach::Hours(4));
     let result = call(load, &mut window, json!({ "reach": "hours:1" })).expect("pressed");
     assert_eq!(result["press"], "already_running");
+    assert_eq!(result["status"]["reach"], "hours:4");
+    window.tabs[0].main_reach = HistoryReach::Hours(6);
+    let again = call(load, &mut window, json!({ "reach": "hours:1" })).expect("pressed");
+    assert_eq!(again["status"]["main_reach"], "hours:6");
 }
 
 #[test]

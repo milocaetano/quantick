@@ -21,12 +21,13 @@ use quantick_control::{
     schema::generated_schema,
     wire::{ActorContext, WireU64},
 };
-use quantick_control_host::actions::ActionRegistry;
 use quantick_control_schema::recovery::{
     RECONNECT_CAPABILITY_ID, RELOAD_CAPABILITY_ID, RecoveryInput, RecoveryResult, descriptor,
 };
+use quantick_sources::recovery::Recovery;
 use serde_json::Value;
 
+use crate::dock::ActionDock;
 use crate::tabs::{TabDirectory, tab_closed, tab_index};
 
 /// What the window did when asked to recover a tab's feed.
@@ -47,14 +48,29 @@ pub trait FeedRecoveryPort: TabDirectory {
     fn recover_feed(&mut self, index: usize, keep_timeline: bool) -> Option<RecoveredFeed>;
 }
 
+/// The capability a recovery control calls.
+///
+/// The scene names it beside the button, so an operator reading the screen
+/// can invoke exactly what a click invokes. One mapping, beside the
+/// registrations it names — a second copy would be a string that goes stale
+/// the day either ID changes.
+#[must_use]
+pub const fn capability_id(recovery: Recovery) -> &'static str {
+    match recovery {
+        Recovery::Reconnect => RECONNECT_CAPABILITY_ID,
+        Recovery::Reload => RELOAD_CAPABILITY_ID,
+    }
+}
+
 /// Dock both recovery capabilities.
-pub fn register<H, A>(registry: &mut ActionRegistry<H, A>) -> Result<(), RegistryError>
+pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
+    D: ActionDock<H, A>,
     H: FeedRecoveryPort + ?Sized,
 {
     registry.register(
         descriptor(
-            RECONNECT_CAPABILITY_ID,
+            capability_id(Recovery::Reconnect),
             "Reconnect a stalled feed",
             "Respawns the transport and keeps everything the chart has built: bars, drawings, indicators, armed strategies and any open paper position. The window the new session replays is dropped rather than counted twice, and a silence long enough to leave a hole in the tape is marked on the chart. The same call the Reconnect button in the chart's offline corner makes.",
             false,
@@ -64,7 +80,7 @@ where
     )?;
     registry.register(
         descriptor(
-            RELOAD_CAPABILITY_ID,
+            capability_id(Recovery::Reload),
             "Reload a chart from a new feed session",
             "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button in the chart's offline corner makes.",
             true,

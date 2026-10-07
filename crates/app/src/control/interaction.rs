@@ -21,7 +21,7 @@ use crate::{
 
 use super::{
     chart::{self, BarStateDto},
-    registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
+    registry::{CaptureContext, ProjectionDock, ProjectionRegistry, ProjectionRegistryError},
     scene,
     types::{
         SCREEN_DECIMAL_PLACES, available, canonical_decimal, canonical_f32, canonical_f64,

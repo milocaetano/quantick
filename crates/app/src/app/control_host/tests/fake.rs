@@ -114,7 +114,7 @@ impl FakeWindow {
             agent_popup: Default::default(),
             toast: Default::default(),
             audio: super::super::super::replay_and_history::AlertState {
-                alerts: Box::new(FakeSpeaker(None)),
+                alerts: Box::new(FakeSpeaker),
                 alert_failure: None,
             },
             attached: Vec::new(),
@@ -188,12 +188,12 @@ impl AlertsPort for FakeWindow {
     }
 }
 
-/// A speaker that refuses with a fixed reason, or plays when it has none.
-struct FakeSpeaker(Option<&'static str>);
+/// A speaker that always plays.
+struct FakeSpeaker;
 
 impl crate::audio::AlertSink for FakeSpeaker {
     fn play(&mut self, _cues: &[crate::audio::Cue]) -> Result<(), &'static str> {
-        self.0.map_or(Ok(()), Err)
+        Ok(())
     }
 }
 

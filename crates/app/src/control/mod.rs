@@ -101,6 +101,23 @@ pub(crate) fn registered_action_count() -> usize {
         .count()
 }
 
+/// Run the registered action `id` on `window`, as the gateway does once a
+/// call is admitted.
+#[cfg(test)]
+pub(crate) fn invoke_action(
+    window: &mut crate::app::ControlWindow,
+    access: &mut ControlAccess,
+    actor: &quantick_control::wire::ActorContext,
+    id: &str,
+    input: serde_json::Value,
+) -> Result<serde_json::Value, quantick_control::error::ControlError> {
+    let actions = actions::standard_actions().expect("built-in action registry must be valid");
+    let action = actions
+        .lookup(id, quantick_control_host::authority::CAPABILITY_VERSION)
+        .expect("the action is registered");
+    (action.handler)(window, access, actor, &input)
+}
+
 /// Every registered action as its id and version.
 #[cfg(test)]
 pub(crate) fn registered_action_versions() -> Vec<(String, u32)> {
@@ -118,7 +135,7 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     system::register(&mut registry)?;
     workspace::register(&mut registry)?;
     feed::register(&mut registry)?;
-    quantick_control_handlers::chart::register(registry.inner_mut())?;
+    quantick_control_handlers::chart::register(&mut registry)?;
     health::register(&mut registry)?;
     analysis::register(&mut registry)?;
     interaction::register(&mut registry)?;

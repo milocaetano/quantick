@@ -39,6 +39,8 @@ use crate::{app::ControlWindow, metrics};
 
 /// One action's handler over this application: it mutates the window and
 /// journals through its control access.
+pub(crate) use quantick_control_handlers::dock::ActionDock;
+
 pub(crate) type ActionHandler = fn(
     &mut ControlWindow,
     &mut ControlAccess,
@@ -61,22 +63,6 @@ pub(crate) struct ActionRegistry(
 impl ActionRegistry {
     pub fn new() -> Self {
         Self(quantick_control_host::actions::ActionRegistry::new())
-    }
-
-    /// The generic registry, for a family that docks itself generically.
-    pub fn inner_mut(
-        &mut self,
-    ) -> &mut quantick_control_host::actions::ActionRegistry<ControlWindow, ControlAccess> {
-        &mut self.0
-    }
-
-    /// Dock one action whose input is already what it will do.
-    pub fn register(
-        &mut self,
-        descriptor: CapabilityDescriptor,
-        handler: ActionHandler,
-    ) -> Result<(), RegistryError> {
-        self.0.register(descriptor, handler)
     }
 
     /// Dock one action that resolves live state before it acts; see the
@@ -112,6 +98,18 @@ impl ActionRegistry {
     }
 }
 
+/// The one route every family docks an action by, here and in
+/// `quantick_control_handlers`.
+impl ActionDock<ControlWindow, ControlAccess> for ActionRegistry {
+    fn register(
+        &mut self,
+        descriptor: CapabilityDescriptor,
+        handler: ActionHandler,
+    ) -> Result<(), RegistryError> {
+        self.0.register(descriptor, handler)
+    }
+}
+
 use super::{
     gateway::ControlAccess,
     interaction::{CursorSnapshot, cursor_snapshot},
@@ -136,14 +134,14 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
         generated_schema::<MarkCanonicalInput>(),
     )?;
     super::annotate::register(&mut registry)?;
-    quantick_control_handlers::notify::register(registry.inner_mut())?;
+    quantick_control_handlers::notify::register(&mut registry)?;
     super::layout::register(&mut registry)?;
     super::layers::register_action(&mut registry)?;
     super::price_axis::register(&mut registry)?;
     super::opening_scale::register(&mut registry)?;
     super::bubble_save::register(&mut registry)?;
-    quantick_control_handlers::recovery::register(registry.inner_mut())?;
-    quantick_control_handlers::history::register(registry.inner_mut())?;
+    quantick_control_handlers::recovery::register(&mut registry)?;
+    quantick_control_handlers::history::register(&mut registry)?;
     super::deal_recording::register(&mut registry)?;
     super::indicator_guide::register(&mut registry)?;
     super::script::register(&mut registry)?;

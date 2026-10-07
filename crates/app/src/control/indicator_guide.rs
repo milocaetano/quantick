@@ -24,7 +24,9 @@ use serde_json::Value;
 use crate::indicator_worker::SlotId;
 
 use super::{
-    actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
+    actions::{
+        ActionDock, ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID,
+    },
     contract::{COCKPIT_EFFECT_ID, COCKPIT_LAYOUT_PERMISSION_ID, COCKPIT_PERMISSION_ID},
     gateway::ControlAccess,
     journal::{EventActor, NewEvent},

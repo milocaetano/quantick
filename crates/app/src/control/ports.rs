@@ -1,11 +1,6 @@
 //! The window's adapter onto the tab-scoped and attention ports of
 //! `quantick_control_handlers`: each act is the one the window's own button
-//! makes — the offline corner's Reconnect and Reload, the toolbar's History
-//! press and cancel, the assistant's popup, toast and sound. The handlers
-//! decide what to parse, refuse and answer; this file only reaches the tab.
-//!
-//! Implemented on the window as the gateway holds it, so the application and
-//! a test's fake window both dock through these lines.
+//! makes, on the window as the gateway holds it.
 
 use quantick_control_handlers::{
     TabDirectory,
