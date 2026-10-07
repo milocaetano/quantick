@@ -243,8 +243,9 @@ fn horizontal_levels_journal_one_created_event_per_line() {
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
     let mut anchors = [anchor_at_slot(&app, 1), anchor_at_slot(&app, 5)];
-    for (anchor, price) in anchors.iter_mut().zip(["101", "99"]) {
+    for (anchor, (price, bar)) in anchors.iter_mut().zip([("101", "1.5"), ("99", "5.5")]) {
         anchor["price"] = json!(price);
+        anchor["bar_position"] = json!(bar);
     }
     let result = app
         .control_action(
@@ -288,14 +289,48 @@ fn horizontal_levels_journal_one_created_event_per_line() {
 }
 
 #[test]
-fn a_failed_later_line_takes_back_the_lines_already_placed() {
+fn one_horizontal_levels_call_is_one_undo_step() {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(8);
     run_frame(&mut app, &ctx);
+    let mut anchors = [anchor_at_slot(&app, 1), anchor_at_slot(&app, 5)];
+    for (anchor, (price, bar)) in anchors.iter_mut().zip([("101", "1.5"), ("99", "5.5")]) {
+        anchor["price"] = json!(price);
+        anchor["bar_position"] = json!(bar);
+    }
+    let depth = app.active_tab().drawing_pane().drawings.undo_depth();
+    app.control_action(
+        crate::control::HORIZONTAL_LEVELS_CAPABILITY_ID,
+        1,
+        crate::control::ActionOrigin::Human,
+        json!({ "anchors": anchors }),
+    )
+    .unwrap();
+    let drawings = &mut app.active_tab_mut().drawing_pane_mut().drawings;
+    let placed = drawings.items().to_vec();
+    assert_eq!(placed.len(), 2);
+    assert_eq!(drawings.undo_depth(), depth + 1, "one step for both lines");
+    assert!(drawings.undo());
+    assert!(drawings.items().is_empty(), "one undo removes both lines");
+    assert!(drawings.redo());
+    assert_eq!(drawings.items(), &placed[..], "one redo restores both");
+}
+
+/// Place one horizontal line by hand, as a click does.
+fn hand_line(app: &mut QuantickApp, price: f64) {
+    let tool = crate::drawings::DrawingTool::by_id("horizontal-line").unwrap();
+    let mut fresh = Some(app.tab_reads().new_drawing(tool));
+    let point = crate::drawings::ChartPoint::at_time(1.5, price, None);
+    let band = crate::drawings::DrawingBand::Price;
+    let drawings = &mut app.active_tab_mut().drawing_pane_mut().drawings;
+    assert!(drawings.place_with(tool, &band, point, |_| fresh.take().unwrap()));
+}
+
+/// A call that places its first line and fails on the second.
+fn fail_on_the_second_line(app: &mut QuantickApp) {
     let tool = crate::drawings::DrawingTool::by_id("horizontal-line").unwrap();
     let mut fresh = Some(app.tab_reads().new_drawing(tool));
     let pane = app.active_tab_mut().drawing_pane_mut();
-    let depth = pane.drawings.undo_depth();
     let refused = crate::control::install_all(pane, [true, false], |pane, places| {
         if !places {
             return Err(quantick_control::error::ControlError::invalid_request(
@@ -311,11 +346,48 @@ fn a_failed_later_line_takes_back_the_lines_already_placed() {
         Ok((pane.drawings.items().last().unwrap().id.0, String::new()))
     });
     assert!(refused.is_err());
-    let pane = app.active_tab().drawing_pane();
-    assert!(pane.drawings.items().is_empty(), "no orphan first line");
-    assert_eq!(
-        pane.drawings.undo_depth(),
-        depth,
-        "and no undo step that brings it back"
+}
+
+#[test]
+fn a_failed_later_line_leaves_items_undo_redo_and_selection_as_they_were() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(8);
+    run_frame(&mut app, &ctx);
+    hand_line(&mut app, 101.0);
+    hand_line(&mut app, 99.0);
+    let drawings = &mut app.active_tab_mut().drawing_pane_mut().drawings;
+    let both = drawings.items().to_vec();
+    assert!(drawings.undo(), "a redo step to keep");
+    drawings.select(Some(0));
+    let kept = drawings.items().to_vec();
+    let depth = drawings.undo_depth();
+    fail_on_the_second_line(&mut app);
+    let drawings = &mut app.active_tab_mut().drawing_pane_mut().drawings;
+    assert_eq!(drawings.items(), &kept[..], "no orphan first line");
+    assert_eq!(drawings.undo_depth(), depth, "no undo step brings it back");
+    assert_eq!(drawings.selected(), Some(0), "the selection stays");
+    assert!(drawings.redo(), "the redo step survives");
+    assert_eq!(drawings.items(), &both[..]);
+}
+
+#[test]
+fn a_failed_call_at_the_undo_limit_keeps_the_oldest_step() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(8);
+    run_frame(&mut app, &ctx);
+    hand_line(&mut app, 101.0);
+    let drawings = &mut app.active_tab_mut().drawing_pane_mut().drawings;
+    let mut locked = false;
+    while drawings.undo_depth() < crate::drawings::UNDO_HISTORY_LIMIT {
+        locked = !locked;
+        drawings.set_locked_at(0, locked);
+    }
+    fail_on_the_second_line(&mut app);
+    let drawings = &mut app.active_tab_mut().drawing_pane_mut().drawings;
+    assert_eq!(drawings.undo_depth(), crate::drawings::UNDO_HISTORY_LIMIT);
+    while drawings.undo() {}
+    assert!(
+        drawings.items().is_empty(),
+        "the oldest step still undoes the first hand line"
     );
 }

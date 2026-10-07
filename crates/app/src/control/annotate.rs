@@ -217,29 +217,24 @@ fn create_horizontal_levels<P: TabsPort + TabsMutPort + ?Sized>(
         .map_err(|error| ControlError::invalid_request(format!("annotation result: {error}")))
 }
 
-/// Install every placement or none: when one fails, the ones this call
-/// already placed are retracted, undo steps included, before the error is
-/// returned.
+/// Install every placement or none, as one undo step: when one fails, the
+/// call's placements are retracted and undo, redo and selection return to
+/// where the call began, before the error is returned.
 pub(crate) fn install_all<T>(
     pane: &mut ChartPane,
     placements: impl IntoIterator<Item = T>,
     mut install_one: impl FnMut(&mut ChartPane, T) -> Result<(u64, String), ControlError>,
 ) -> Result<Vec<(u64, String)>, ControlError> {
-    let mut placed = Vec::new();
-    for placement in placements {
-        match install_one(pane, placement) {
-            Ok(done) => placed.push(done),
-            Err(error) => {
-                let ids: Vec<_> = placed
-                    .iter()
-                    .map(|&(id, _)| drawings::DrawingId(id))
-                    .collect();
-                pane.drawings.retract_placements(&ids);
-                return Err(error);
-            }
-        }
+    let batch = pane.drawings.begin_placements();
+    let placed: Result<Vec<_>, _> = placements
+        .into_iter()
+        .map(|placement| install_one(pane, placement))
+        .collect();
+    match placed {
+        Ok(_) => pane.drawings.commit_placements(batch),
+        Err(_) => pane.drawings.retract_placements(batch),
     }
-    Ok(placed)
+    placed
 }
 
 fn registered_tool(tool_id: &str) -> Result<drawings::DrawingTool, ControlError> {

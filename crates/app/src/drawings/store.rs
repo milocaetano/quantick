@@ -17,6 +17,18 @@ pub struct UndoEntry {
     pub(super) all_hidden: bool,
 }
 
+/// One call placing several objects, open on a store: the state before the
+/// first placement and the history set aside while the call runs, so the
+/// call commits as one undo step or retracts to exactly where it began.
+#[derive(Debug)]
+#[must_use = "a batch is committed or retracted"]
+pub struct PlacementBatch {
+    pub(super) baseline: UndoEntry,
+    pub(super) undo: Vec<UndoEntry>,
+    pub(super) redo: Vec<UndoEntry>,
+    pub(super) selected: Option<usize>,
+}
+
 #[derive(Debug, Default)]
 pub struct Drawings {
     /// Bumped on every change to the collection — a placement, an edit, a
