@@ -9,27 +9,30 @@ use eframe::egui;
 use quantick_engine::{Bar, Trade};
 use quantick_orderbook::{BookSide, DepthEvent};
 use quantick_orderflow::engine::{BookLadder, BookPublished, CaptureStatus, OrderflowHealth};
+use quantick_orderflow::pane_tape::PaneTape;
 use quantick_orderflow::{HeatmapConfig, LaneWindow, reserved_span_ms};
-use quantick_stores::bubble_asset_store::RunHold;
+use quantick_stores::bubble_asset_store::AssetBinding;
+use quantick_stores::bubble_asset_store::SaveSwitch;
+use quantick_stores::bubble_assets::AssetBubbles;
+use quantick_stores::bubble_look::{BubbleLook, LoadedPresets};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
-use crate::bubble_presets::{self, BubblePresetFile, PresetSource};
+use crate::bubble_presets;
 use crate::orderflow_render::{OrderflowRenderStyle, ProjectedLayout};
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
-mod asset_bubbles;
-mod clock;
+#[cfg(test)]
+#[path = "orderflow_view/tests/asset_look_tests.rs"]
+mod asset_look_tests;
 mod constants;
 pub(crate) mod flow_execution;
 mod frame;
-mod layers;
+pub(crate) mod layers;
 #[cfg(test)]
 #[path = "orderflow_view/tests/native_split_tests.rs"]
 mod native_split_tests;
-mod opening_scale;
-mod pending;
 #[cfg(test)]
 #[path = "orderflow_view/tests/pending_tests.rs"]
 mod pending_tests;
@@ -98,6 +101,7 @@ pub struct OrderflowView {
     /// `price_grouping` (auto-base can rewrite it); the mirror adopts engine
     /// changes through [`Self::sync_published`].
     config: HeatmapConfig,
+    /// The book thread: commands in, publications out.
     worker: BookWorker,
     published: BookPublished,
     /// Engine bucket last adopted into the mirror, to detect auto-base moves.
@@ -108,23 +112,9 @@ pub struct OrderflowView {
     last_tape_price_grid: Option<(Decimal, Option<Decimal>)>,
     capture_grouping_draft: f64,
     pending_capture_grouping_previous: Option<Decimal>,
-    /// Named bubble looks, loaded from the versionable presets file.
-    presets: BubblePresetFile,
-    /// Where those presets came from, shown in the panel.
-    presets_source: PresetSource,
-    /// Name being typed for the next save.
-    preset_name_draft: String,
-    /// Last preset action (or failure), shown verbatim in the panel.
-    preset_status: Option<String>,
-    /// Name of the preset the look on screen started from; empty once the
-    /// panel's defaults replaced it. `presets.active` stays the file's own.
-    look_name: String,
-    /// The asset these settings belong to, bound by the tab.
-    asset: Option<quantick_stores::bubble_asset_store::AssetBinding>,
-    /// What launch hooks hold for this run, never filed: put back whenever
-    /// the view wears an asset's settings, so it reaches the asset a replay
-    /// autostart switches to. Empty outside a capture run.
-    held: RunHold,
+    /// The bubble look on screen: its presets, the asset it is kept for and
+    /// what launch hooks hold over it.
+    look: BubbleLook,
     /// Scripted tape starvation: prints stop reaching the tape this many
     /// milliseconds after the first one, while the book keeps arriving.
     /// `None` — always, outside a capture run — feeds the tape every print.
@@ -134,9 +124,9 @@ pub struct OrderflowView {
     first_print_ms: Option<i64>,
     /// The volume-dot rungs in use, held through an autoscale wobble.
     dot_rungs: quantick_orderflow::DotRungMemory,
-    tape_clock: quantick_orderflow::tape_clock::TapeClock,
-    pending_tape: quantick_orderflow::projection::PendingTape,
-    pending_frame: Option<std::sync::Arc<quantick_orderflow::engine::VisibleOrderflow>>,
+    /// The lane's market clock and the prints drawn before the worker
+    /// publishes them.
+    pane_tape: PaneTape,
     tape_dots: std::cell::RefCell<quantick_orderflow::projection::TapeDotMemory>,
     /// The tape's reconciliations too large for a frame, run beside it.
     tape_rebuilds: std::cell::RefCell<crate::orderflow_render::PaneTapeRebuilds>,
@@ -152,35 +142,7 @@ impl OrderflowView {
         let mut config = HeatmapConfig::default();
         // The presets file is the record of how the tape should look, so the
         // chart opens on its active preset instead of the compiled defaults.
-        let (presets, presets_source, load_error) = bubble_presets::load();
-        let mut preset_status = None;
-        if let Some(message) = load_error {
-            tracing::error!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "BUBBLE_PRESETS_UNREADABLE",
-                error = message.as_str(),
-                action = "using_built_in_presets",
-                "bubble presets file could not be read; built-in presets are in use"
-            );
-            preset_status = Some(format!("presets not loaded — {message}"));
-        }
-        let look_name = presets
-            .get(&presets.active)
-            .map_or_else(String::new, |active| {
-                active.apply_to(&mut config);
-                active.name.clone()
-            });
-        tracing::info!(
-            target: "quantick::app",
-            schema_version = 1_u8,
-            event_code = "BUBBLE_PRESETS_LOADED",
-            source = %presets_source,
-            stored = presets.presets.len(),
-            active = presets.active.as_str(),
-            "bubble presets resolved"
-        );
-        let preset_name_draft = presets.active.clone();
+        let look = BubbleLook::open(bubble_presets::load(), &mut config);
         let base_grouping = config.price_grouping;
         Self {
             flow_execution: Default::default(),
@@ -192,19 +154,11 @@ impl OrderflowView {
             last_tape_price_grid: None,
             capture_grouping_draft: base_grouping.to_f64().unwrap_or(0.01),
             pending_capture_grouping_previous: None,
-            presets,
-            presets_source,
-            preset_name_draft,
-            preset_status,
-            look_name,
-            asset: None,
-            held: RunHold::default(),
+            look,
             starve_tape_after_ms: None,
             first_print_ms: None,
             dot_rungs: Default::default(),
-            tape_clock: quantick_orderflow::tape_clock::TapeClock::default(),
-            pending_tape: Default::default(),
-            pending_frame: None,
+            pane_tape: PaneTape::default(),
             tape_dots: Default::default(),
             tape_rebuilds: Default::default(),
             tape_end: Default::default(),
@@ -249,14 +203,19 @@ impl OrderflowView {
             self.cached_health().floored_quantity,
             self.dot_scale(),
             &self.recorded_opening_bursts(),
-            self.asset_snapshot(),
+            self.look.asset().map(|binding| {
+                quantick_control_schema::orderflow::BubbleAssetSnapshot::of(
+                    binding,
+                    self.look.look_name(),
+                )
+            }),
         )
     }
 
     /// The rungs and scales of the last published volume-dots frame.
     pub(crate) fn dot_scale(&self) -> Option<&quantick_orderflow::DotScale> {
-        self.pending_frame
-            .as_ref()
+        self.pane_tape
+            .frame()
             .or(self.published.frame.as_ref())?
             .volume_dots
             .as_ref()
@@ -268,7 +227,7 @@ impl OrderflowView {
         if let (Some(_), Some(past)) = (self.tape_end.past_ms(), &self.published.past_tape) {
             return past.price_range();
         }
-        if self.immediate_tape() {
+        if self.config.immediate_tape() {
             let window_ms = self
                 .config
                 .lane_window_ms(quantick_orderflow::engine::PENDING_LANE_REFERENCE_MS);
@@ -278,7 +237,8 @@ impl OrderflowView {
                     .price_range(&self.tape_dots.borrow(), now, window_ms)
             });
             return self
-                .pending_tape
+                .pane_tape
+                .pending()
                 .price_range(
                     self.published
                         .frame
@@ -386,9 +346,11 @@ impl OrderflowView {
     fn sync_published(&mut self) {
         let mut publication = self.worker.publication();
         if let Some(receipt) = publication.tape_receipt
-            && receipt.epoch == self.pending_tape.epoch()
+            && receipt.epoch == self.pane_tape.pending().epoch()
         {
-            self.pending_tape.acknowledge(receipt.through_ordinal);
+            self.pane_tape
+                .pending_mut()
+                .acknowledge(receipt.through_ordinal);
         } else {
             publication.book.frame = None;
             publication.book.past_tape = None;
@@ -731,7 +693,7 @@ impl OrderflowView {
     /// or back to following the bars. A setting of the asset on screen, even
     /// when the wheel already shows that window.
     pub fn set_live_lane_window(&mut self, window: LaneWindow) {
-        self.note_asset_lane_set();
+        self.look.note_lane_set();
         self.navigate_live_lane_window(window);
     }
 
@@ -745,9 +707,12 @@ impl OrderflowView {
 
     /// Hold what a launch hook asks for this run ([`RunHold`]); never filed.
     #[cfg(any(feature = "scenario-harness", test))]
-    pub fn hold_for_run(&mut self, hold: impl FnOnce(&mut RunHold)) {
+    pub fn hold_for_run(
+        &mut self,
+        hold: impl FnOnce(&mut quantick_stores::bubble_asset_store::RunHold),
+    ) {
         let before = self.config.clone();
-        self.held.add(hold, &mut self.config);
+        self.look.hold_for_run(hold, &mut self.config);
         self.apply_config(before);
     }
 
@@ -777,7 +742,7 @@ impl OrderflowView {
     /// Name of the preset the panel currently wears.
     #[cfg(test)]
     pub(crate) fn active_preset_for_test(&self) -> &str {
-        &self.look_name
+        self.look.look_name()
     }
 
     /// Read-only view of the heatmap config, for app-level assertions.
@@ -815,7 +780,7 @@ impl OrderflowView {
     pub fn reset_for_symbol(&mut self, symbol: impl Into<String>) {
         self.reset_flow_executions();
         self.symbol = symbol.into();
-        self.tape_clock.reset();
+        self.pane_tape.reset_clock();
         self.config.enabled = false;
         self.pending_capture_grouping_previous = None;
         // The send-once cache is keyed on what was sent, so a new market printing on the same grid
@@ -823,7 +788,7 @@ impl OrderflowView {
         // re-offered.
         self.last_tape_price_grid = None;
         self.published = BookPublished::initial();
-        self.pending_tape.clear_opening_bursts();
+        self.pane_tape.pending_mut().clear_opening_bursts();
         // The starvation clock is per market, like the history it starves; carrying the old zero
         // across would open the new symbol on an already-dead tape.
         self.first_print_ms = None;
@@ -899,9 +864,21 @@ impl OrderflowView {
         if !self.config.any_layer_enabled() || self.starved_at(trade.timestamp_ms) {
             return;
         }
-        self.pending_tape.observe_opening_burst(trade.timestamp_ms);
-        if self.immediate_tape() {
-            self.record_pending_trade(trade);
+        self.pane_tape
+            .pending_mut()
+            .observe_opening_burst(trade.timestamp_ms);
+        if self.config.immediate_tape() {
+            // Same-frame tape facts; heavy book history stays on the worker.
+            let print = self.pane_tape.record(trade, &self.config);
+            if let Some(epoch) = print.opens {
+                self.worker
+                    .send(BookCommand::ApplyVisualConfig(self.config.clone()));
+                self.worker.send(BookCommand::TapeEpoch(epoch));
+            }
+            self.worker.send(BookCommand::TapeTrade {
+                ordinal: print.ordinal,
+                trade: trade.clone(),
+            });
         } else {
             self.worker.send(BookCommand::Trade(trade.clone()));
         }
@@ -995,13 +972,21 @@ impl OrderflowView {
 
     /// A setting changed: the asset on screen files it at the next frame.
     fn commit_config_changes(&mut self, before: HeatmapConfig) -> bool {
-        self.held.release(&before, &self.config);
-        if self.config != before
-            && let Some(asset) = &mut self.asset
-        {
-            asset.note_edit();
-        }
+        self.look.note_config_change(&before, &self.config);
         self.apply_config(before)
+    }
+
+    /// A setting changed from outside the panel — a layer switch, a control
+    /// call. A write goes through the one door every change takes; returns
+    /// whether `edit` changed anything.
+    pub(crate) fn edit_config(&mut self, edit: impl FnOnce(&mut HeatmapConfig)) -> bool {
+        let before = self.config.clone();
+        edit(&mut self.config);
+        if self.config == before {
+            return false;
+        }
+        self.commit_config_changes(before);
+        true
     }
 
     /// The same without a setting: a gesture, or an asset's settings worn.
@@ -1041,6 +1026,137 @@ impl OrderflowView {
         }
         restart_required
     }
+
+    /// The lane's market clock: only the independent tape advances between
+    /// market events. Ordinary lanes retain their existing event-anchored
+    /// clock, including BTC.
+    pub(crate) fn lane_now_ms(&self) -> Option<i64> {
+        self.pane_tape.lane_now_ms(self.config.native_tape())
+    }
+
+    /// Advance the lane's clock to the host's monotonic instant
+    /// ([`PaneTape::follow_live`]).
+    pub(crate) fn set_live_clock_at(&mut self, applied_ms: Option<i64>, monotonic_ms: u64) {
+        let native_tape = self.config.native_tape();
+        self.pane_tape
+            .follow_live(native_tape, applied_ms, monotonic_ms);
+    }
+
+    /// Place the lane's clock at the replay's position
+    /// ([`PaneTape::follow_replay`]).
+    pub(crate) fn set_replay_clock_at(
+        &mut self,
+        position_ms: i64,
+        applied_ms: Option<i64>,
+        next_unapplied_ms: Option<i64>,
+    ) {
+        let native_tape = self.config.native_tape();
+        self.pane_tape
+            .follow_replay(native_tape, position_ms, applied_ms, next_unapplied_ms);
+    }
+
+    /// Every opening burst the source recorded, the published ones folded.
+    pub(crate) fn recorded_opening_bursts(&self) -> Vec<i64> {
+        self.pane_tape
+            .opening_bursts(self.published.frame.as_deref())
+    }
+
+    /// The worker's progress, for the health summary.
+    pub(crate) fn worker_progress(&self) -> crate::worker_progress::ProgressSnapshot {
+        self.worker.progress()
+    }
+
+    pub fn reset_summary_counters(&mut self) {
+        self.worker.send(BookCommand::ResetSummaryCounters);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_worker_for_test(symbol: &str, worker: BookWorker) -> Self {
+        let mut view = Self::new(symbol);
+        view.worker = worker;
+        view
+    }
+
+    /// The stored presets, which an asset's declared look names.
+    pub(crate) fn bubble_presets(&self) -> &bubble_presets::BubblePresetFile {
+        self.look.presets()
+    }
+
+    /// The asset this view's settings belong to, once a tab has bound one.
+    pub(crate) fn asset(&self) -> Option<&AssetBinding> {
+        self.look.asset()
+    }
+
+    /// Switch "Save changes for this asset" ([`BubbleLook::set_save_changes`]).
+    pub(crate) fn set_save_asset_changes(&mut self, on: bool) -> Option<SaveSwitch> {
+        self.look.set_save_changes(on)
+    }
+
+    /// Start the same-frame tape over: its prints, their dots and its held
+    /// end go, and the worker hears the new epoch.
+    fn reset_pending_tape(&mut self) {
+        self.tape_dots.get_mut().clear();
+        self.tape_rebuilds.get_mut().discard();
+        self.past_dots.get_mut().clear();
+        self.set_tape_end(quantick_orderflow::tape_view::TapeEnd::Live);
+        let epoch = self.pane_tape.reset();
+        self.published.frame = None;
+        self.worker.send(BookCommand::TapeEpoch(epoch));
+    }
+
+    /// Apply the stored preset called `name`, reporting whether it exists
+    /// ([`BubbleLook::apply_preset`]).
+    pub(crate) fn apply_preset(&mut self, name: &str) -> bool {
+        self.look.apply_preset(name, &mut self.config)
+    }
+
+    /// Put `settings` on screen as the asset `binding` names. The flow
+    /// pane's candle aggression is the tab's to apply.
+    pub(crate) fn bind_asset(&mut self, binding: AssetBinding, settings: &AssetBubbles) {
+        self.look.bind(binding);
+        self.wear_asset(settings, false);
+    }
+
+    /// Take the presets another view reloaded, file what this one changed,
+    /// then wear what another view filed since ([`BubbleLook::sync`]).
+    /// Returns the candle aggression to put on the flow pane when it adopted.
+    pub(crate) fn sync_asset(&mut self, candle_aggression: bool) -> Option<bool> {
+        self.look.asset()?;
+        if self.look.take_reloaded_presets() {
+            self.follow_declared_look(false);
+        }
+        let flow_ignore_opening = self.flow_execution.ignore_opening();
+        let adopted = self
+            .look
+            .sync(&self.config, candle_aggression, flow_ignore_opening)?;
+        self.wear_asset(&adopted.settings, !adopted.lane_moved);
+        Some(adopted.settings.candle_aggression)
+    }
+
+    /// Take the presets file `loaded` again ([`BubbleLook::reload`]).
+    fn reload_presets_from(&mut self, loaded: LoadedPresets) {
+        if let Some(worn) = self.look.reload(loaded, &mut self.config) {
+            self.wear_asset(&worn.settings, worn.keep_navigation);
+        }
+    }
+
+    /// Wear the asset's declared look when nobody tuned it
+    /// ([`BubbleLook::follow_declared`]).
+    fn follow_declared_look(&mut self, reloaded_here: bool) {
+        if let Some(worn) = self.look.follow_declared(reloaded_here) {
+            self.wear_asset(&worn.settings, worn.keep_navigation);
+        }
+    }
+
+    /// Put `settings` on screen without counting it as an edit
+    /// ([`BubbleLook::wear`]), with the flow pane's opening rule.
+    fn wear_asset(&mut self, settings: &AssetBubbles, keep_navigation: bool) {
+        let before = self.config.clone();
+        self.look.wear(settings, keep_navigation, &mut self.config);
+        self.flow_execution
+            .set_ignore_opening(settings.flow_ignore_opening);
+        self.apply_config(before);
+    }
 }
 
 #[cfg(test)]
@@ -1052,7 +1168,7 @@ mod tests {
         MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_ZOOM,
     };
 
-    use crate::bubble_presets::BubblePreset;
+    use crate::bubble_presets::{BubblePreset, PresetSource, embedded};
     use crate::chart::PriceScale;
     use crate::live_strip;
 
@@ -1382,7 +1498,8 @@ mod tests {
         use quantick_orderflow::LiveLaneStyle;
         let mut view = OrderflowView::new("BTCUSDT");
         let before = view.config.clone();
-        view.presets.upsert(BubblePreset {
+        let mut presets = embedded();
+        presets.upsert(BubblePreset {
             name: "wide".to_owned(),
             cluster_ms: 100,
             dust_merge_ms: 3_000,
@@ -1411,6 +1528,10 @@ mod tests {
                 tape_only: false,
             },
         });
+        view.look = BubbleLook::open(
+            (presets, PresetSource::Embedded, None),
+            &mut HeatmapConfig::default(),
+        );
         assert!(view.apply_preset("wide"), "a stored name applies");
         assert_eq!(view.config.bubbles.max_radius, 42.0);
         assert_eq!(view.config.bubble_cluster_ms, 100);
@@ -1419,8 +1540,8 @@ mod tests {
         assert_eq!(view.config.live_lane.width_share, 0.5);
         assert_eq!(view.config.live_lane.window, LaneWindow::Auto { zoom: 2.0 });
         assert_eq!(view.config.live_lane.cluster_ms, Some(50));
-        assert_eq!(view.look_name, "wide");
-        assert_eq!(view.preset_name_draft, "wide");
+        assert_eq!(view.look.look_name(), "wide");
+        assert_eq!(view.look.name_draft(), "wide");
         // Untouched: the layer switch, retention, grouping, gamma, capture bucket.
         assert_eq!(view.config.show_aggressions, before.show_aggressions);
         assert_eq!(view.config.retention_ms, before.retention_ms);
@@ -1432,7 +1553,7 @@ mod tests {
         let after = view.config.clone();
         assert!(!view.apply_preset("nope"));
         assert_eq!(view.config, after);
-        assert_eq!(view.look_name, "wide");
+        assert_eq!(view.look.look_name(), "wide");
     }
 
     fn snapshot_event(generation: u64) -> DepthEvent {
@@ -2505,5 +2626,3 @@ mod tests {
         assert_eq!(view.health().status, "connecting");
     }
 }
-
-mod worker_diagnostics;

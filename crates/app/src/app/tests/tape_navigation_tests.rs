@@ -303,9 +303,11 @@ fn a_double_click_in_tape_only_returns_the_tape_to_live() {
     run_frame(&mut app, &ctx);
     let held = app.active_tab().tape().tape_end();
     assert!(!held.is_live(), "the drag held the tape in the past");
-    app.active_tab_mut()
-        .tape_mut()
-        .set_layer_switch(quantick_layers::OrderflowSwitch::TapeOnly, true);
+    crate::orderflow_view::layers::set_layer_switch(
+        app.active_tab_mut().tape_mut(),
+        quantick_layers::OrderflowSwitch::TapeOnly,
+        true,
+    );
     run_frame(&mut app, &ctx);
     assert!(app.active_tab().tape().cached_config().tape_only());
     assert_eq!(app.active_tab().tape().tape_end(), held);
@@ -485,9 +487,11 @@ fn the_tape_view_call_moves_the_tape_end_and_window_and_reads_them_back() {
 fn a_drag_in_tape_only_pans_the_price_axis_and_the_tapes_time() {
     let ctx = egui::Context::default();
     let (mut app, _, _) = split_app(&ctx);
-    app.active_tab_mut()
-        .tape_mut()
-        .set_layer_switch(quantick_layers::OrderflowSwitch::TapeOnly, true);
+    crate::orderflow_view::layers::set_layer_switch(
+        app.active_tab_mut().tape_mut(),
+        quantick_layers::OrderflowSwitch::TapeOnly,
+        true,
+    );
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(app.active_tab().tape().cached_config().tape_only());
@@ -594,9 +598,11 @@ fn a_vertical_drag_that_wobbles_sideways_keeps_the_tape_live() {
 fn a_vertical_drag_that_wobbles_sideways_keeps_the_tape_live_in_tape_only() {
     let ctx = egui::Context::default();
     let (mut app, _, _) = split_app(&ctx);
-    app.active_tab_mut()
-        .tape_mut()
-        .set_layer_switch(quantick_layers::OrderflowSwitch::TapeOnly, true);
+    crate::orderflow_view::layers::set_layer_switch(
+        app.active_tab_mut().tape_mut(),
+        quantick_layers::OrderflowSwitch::TapeOnly,
+        true,
+    );
     run_frame(&mut app, &ctx);
     run_frame(&mut app, &ctx);
     assert!(app.active_tab().tape().cached_config().tape_only());
@@ -640,9 +646,11 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     // set_tape_end; flushing the worker alone leaves it stale.
                     run_frame(&mut app, &ctx);
                     if tape_only {
-                        app.active_tab_mut()
-                            .tape_mut()
-                            .set_layer_switch(quantick_layers::OrderflowSwitch::TapeOnly, true);
+                        crate::orderflow_view::layers::set_layer_switch(
+                            app.active_tab_mut().tape_mut(),
+                            quantick_layers::OrderflowSwitch::TapeOnly,
+                            true,
+                        );
                         run_frame(&mut app, &ctx);
                         run_frame(&mut app, &ctx);
                     }

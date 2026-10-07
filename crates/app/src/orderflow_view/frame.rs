@@ -103,6 +103,16 @@ impl OrderflowView {
         frame
     }
 
+    /// The published frame, with the prints the worker has not published
+    /// yet overlaid ([`quantick_orderflow::pane_tape::PaneTape::complete_frame`]).
+    pub(super) fn complete_pending_frame(
+        &mut self,
+        request: &ProjectionRequest,
+    ) -> Option<Arc<VisibleOrderflow>> {
+        self.pane_tape
+            .complete_frame(&self.config, request, self.published.frame.as_ref())
+    }
+
     /// Draw resting liquidity, coverage gaps and factual liquidity changes
     /// behind the candle layer. `inverted` is the candles' own orientation,
     /// so the map turns over with the bars it sits behind.

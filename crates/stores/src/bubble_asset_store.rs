@@ -770,4 +770,4 @@ fn declared(
 mod bubble_asset_store_save_tests;
 #[cfg(test)]
 #[path = "bubble_asset_store_tests.rs"]
-mod bubble_asset_store_tests;
+pub(crate) mod bubble_asset_store_tests;

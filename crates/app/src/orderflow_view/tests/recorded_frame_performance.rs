@@ -358,7 +358,7 @@ fn recorded_113_second_tape_ui_stages_around_40000_prints() {
             chart.prices = chart.fit(&view);
             let _ = chart.project(&mut view);
             view.flush_for_test();
-            assert!(view.pending_tape.is_empty());
+            assert!(view.pane_tape.pending().is_empty());
             let published_native = view
                 .published
                 .frame
@@ -419,7 +419,7 @@ fn recorded_113_second_tape_ui_stages_around_40000_prints() {
                 frame
             });
             conserved(&combined, &trades[..target], chart.now_ms);
-            assert_eq!(view.pending_tape.len(), 20);
+            assert_eq!(view.pane_tape.pending().len(), 20);
             let expired = trades[..target]
                 .iter()
                 .filter(|trade| trade.timestamp_ms.div_euclid(100) * 100 < chart.now_ms - WINDOW_MS)

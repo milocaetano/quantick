@@ -196,7 +196,7 @@ fn dense_113_second_tape_same_frame_ui_stages() {
         let _ = project(&mut view, &bars, &partial, rect);
         initial.release();
         view.flush_for_test();
-        assert!(view.pending_tape.is_empty());
+        assert!(view.pane_tape.pending().is_empty());
         let published = view
             .published
             .frame
@@ -229,7 +229,7 @@ fn dense_113_second_tape_same_frame_ui_stages() {
         }
         held.reached();
         view.set_replay_clock_at(NOW_MS, Some(NOW_MS), None);
-        assert_eq!(view.pending_tape.len(), 20);
+        assert_eq!(view.pane_tape.pending().len(), 20);
         let request = ProjectionRequest {
             timeline_revision: 1,
             first_bar_index: 0,
@@ -308,7 +308,7 @@ fn dense_113_second_tape_same_frame_ui_stages() {
         });
         assert_conserved(&combined, &expected);
         assert_eq!(
-            view.pending_tape.len(),
+            view.pane_tape.pending().len(),
             20,
             "the held worker cannot acknowledge the suffix"
         );

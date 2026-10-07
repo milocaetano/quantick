@@ -9,11 +9,9 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
-use quantick_orderflow::{HeatmapConfig, LiveLaneStyle};
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::bubble_presets;
-use crate::bubble_presets::{BubblePreset, PresetSource};
 use crate::orderflow_render::{draw_preview, theme_bubble_rgb};
 
 use super::OrderflowView;
@@ -21,9 +19,6 @@ use super::frame::status_color;
 
 mod bubble_sections;
 mod l2_sections;
-#[cfg(test)]
-#[path = "settings/tests/preset_persistence_tests.rs"]
-mod preset_persistence_tests;
 #[cfg(test)]
 #[path = "settings/tests/tape_only_controls.rs"]
 mod tape_only_controls;
@@ -50,17 +45,17 @@ impl OrderflowView {
         let mut chosen = None;
         ui.horizontal(|ui| {
             ui.label("preset");
-            let selected = if self.look_name.is_empty() {
+            let selected = if self.look.look_name().is_empty() {
                 "— custom —"
             } else {
-                self.look_name.as_str()
+                self.look.look_name()
             };
             egui::ComboBox::from_id_salt("bubble_preset")
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
-                    for (index, preset) in self.presets.presets.iter().enumerate() {
+                    for (index, preset) in self.look.presets().presets.iter().enumerate() {
                         if ui
-                            .selectable_label(self.look_name == preset.name, &preset.name)
+                            .selectable_label(self.look.look_name() == preset.name, &preset.name)
                             .clicked()
                         {
                             chosen = Some(index);
@@ -72,12 +67,12 @@ impl OrderflowView {
                 .on_hover_text("reload the presets file from disk; an asset with settings of its own keeps them")
                 .clicked()
             {
-                self.reload_presets();
+                self.reload_presets_from(bubble_presets::load());
             }
         });
         ui.horizontal(|ui| {
             ui.add(
-                egui::TextEdit::singleline(&mut self.preset_name_draft)
+                egui::TextEdit::singleline(self.look.name_draft_mut())
                     .hint_text("preset name")
                     .desired_width(150.0),
             );
@@ -86,30 +81,29 @@ impl OrderflowView {
                 .on_hover_text("write the current bubble settings to the presets file as a preset any asset can pick")
                 .clicked()
             {
-                self.save_preset();
+                self.look.save_preset(&self.config, bubble_presets::save);
             }
-            let removable = !self.preset_name_draft.trim().is_empty()
-                && self.presets.get(self.preset_name_draft.trim()).is_some();
             if ui
-                .add_enabled(removable, egui::Button::new("delete"))
+                .add_enabled(self.look.draft_is_stored(), egui::Button::new("delete"))
                 .on_hover_text("remove this preset from the file")
                 .clicked()
             {
-                self.delete_preset_with(bubble_presets::save);
+                self.look.delete_preset(bubble_presets::save);
             }
         });
         if let Some(index) = chosen
             && let Some(name) = self
-                .presets
+                .look
+                .presets()
                 .presets
                 .get(index)
                 .map(|preset| preset.name.clone())
         {
             self.apply_preset(&name);
         }
-        ui.small(format!("presets · {}", self.presets_source));
+        ui.small(format!("presets · {}", self.look.source()));
         let mut save_switched = None;
-        if let Some(asset) = &self.asset {
+        if let Some(asset) = self.look.asset() {
             let mut save = asset.saves_changes();
             if ui
                 .checkbox(&mut save, "Save changes for this asset")
@@ -135,139 +129,10 @@ impl OrderflowView {
             ));
         }
         if let Some(on) = save_switched {
-            self.set_save_asset_changes(on);
+            self.look.set_save_changes(on);
         }
-        if let Some(status) = &self.preset_status {
-            ui.small(status.clone());
-        }
-    }
-
-    /// Apply the stored preset called `name`, reporting whether it exists.
-    ///
-    /// The choice is the asset's own: it is filed for the asset on screen.
-    /// An unknown name changes nothing and returns `false`; the caller
-    /// decides how loudly to say so.
-    pub(crate) fn apply_preset(&mut self, name: &str) -> bool {
-        let Some(preset) = self.presets.get(name).cloned() else {
-            return false;
-        };
-        preset.apply_to(&mut self.config);
-        self.look_name = preset.name.clone();
-        self.preset_name_draft = preset.name.clone();
-        self.preset_status = Some(format!("'{}' applied", preset.name));
-        self.note_asset_lane_set();
-        true
-    }
-
-    /// Refuse saving over or removing `name` when other assets open on it.
-    fn refused_preset_name(&mut self, name: &str) -> bool {
-        let asset = self.asset.as_ref();
-        let refusal = asset.and_then(|asset| asset.refuses_preset_name(name, &self.presets));
-        refusal
-            .map(|refusal| self.preset_status = Some(refusal))
-            .is_some()
-    }
-
-    fn save_preset(&mut self) {
-        self.save_preset_with(bubble_presets::save);
-    }
-
-    fn save_preset_with(
-        &mut self,
-        writer: impl FnOnce(&bubble_presets::BubblePresetFile) -> Result<std::path::PathBuf, String>,
-    ) {
-        let name = self.preset_name_draft.trim().to_owned();
-        if name.is_empty() {
-            self.preset_status = Some("name the preset before saving".to_owned());
-            return;
-        }
-        if self.refused_preset_name(&name) {
-            return;
-        }
-        self.presets
-            .upsert(BubblePreset::capture(&name, &self.config));
-        self.look_name = name.clone();
-        self.note_asset_change();
-        self.persist_presets(format!("'{name}' saved"), writer);
-    }
-
-    /// Remove the preset the name field holds from the presets file, unless
-    /// some asset opens on it.
-    fn delete_preset_with(
-        &mut self,
-        writer: impl FnOnce(&bubble_presets::BubblePresetFile) -> Result<std::path::PathBuf, String>,
-    ) {
-        let name = self.preset_name_draft.trim().to_owned();
-        if self.refused_preset_name(&name) {
-            return;
-        }
-        self.presets.remove(&name);
-        self.persist_presets(format!("preset '{name}' removed"), writer);
-    }
-
-    fn persist_presets(
-        &mut self,
-        success: String,
-        writer: impl FnOnce(&bubble_presets::BubblePresetFile) -> Result<std::path::PathBuf, String>,
-    ) {
-        // `active` stays the file's: the look an undeclared asset opens on,
-        // never the asset on screen's choice.
-        match writer(&self.presets) {
-            Ok(path) => {
-                self.presets_source = PresetSource::WorkingDir(path.clone());
-                self.preset_status = Some(format!("{success} → {}", path.display()));
-            }
-            Err(message) => {
-                tracing::error!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "BUBBLE_PRESETS_NOT_SAVED",
-                    error = message.as_str(),
-                    action = "keep_settings_in_memory_only",
-                    "bubble presets could not be written; the current look is in memory only"
-                );
-                self.preset_status = Some(format!("not saved — {message}"));
-            }
-        }
-    }
-
-    fn reload_presets(&mut self) {
-        self.reload_presets_from(bubble_presets::load());
-    }
-
-    fn reload_presets_from(
-        &mut self,
-        (presets, source, error): (
-            bubble_presets::BubblePresetFile,
-            PresetSource,
-            Option<String>,
-        ),
-    ) {
-        self.presets = presets;
-        self.presets_source = source;
-        self.follow_declared_look(true);
-        match error {
-            Some(message) => {
-                tracing::error!(
-                    target: "quantick::app",
-                    schema_version = 1_u8,
-                    event_code = "BUBBLE_PRESETS_UNREADABLE",
-                    error = message.as_str(),
-                    action = "using_built_in_presets",
-                    "bubble presets file could not be read; built-in presets are in use"
-                );
-                self.preset_status = Some(format!("presets not loaded — {message}"));
-            }
-            None if self.asset.is_some() => {}
-            None => {
-                let active = self.look_name.clone();
-                if active.is_empty() || self.presets.get(&active).is_none() {
-                    self.preset_status = Some("presets reloaded".to_owned());
-                } else {
-                    self.apply_preset(&active);
-                    self.preset_status = Some(format!("reloaded · '{active}' applied"));
-                }
-            }
+        if let Some(status) = self.look.status() {
+            ui.small(status.to_owned());
         }
     }
 
@@ -326,35 +191,15 @@ impl OrderflowView {
                 }
                 .show(ui);
                 if ui.button("reset L2 visuals").clicked() {
-                    self.reset_l2_visuals();
+                    self.config.reset_l2_visuals();
+                    self.capture_grouping_draft = self
+                        .config
+                        .price_grouping
+                        .to_f64()
+                        .unwrap_or(self.capture_grouping_draft);
                 }
             });
         self.commit_config_changes(before)
-    }
-
-    /// Restore the depth map's defaults, keeping the capture bucket and the
-    /// whole bubble layer as they are.
-    fn reset_l2_visuals(&mut self) {
-        let price_grouping = self.config.price_grouping;
-        self.capture_grouping_draft = price_grouping
-            .to_f64()
-            .unwrap_or(self.capture_grouping_draft);
-        self.config = HeatmapConfig {
-            enabled: self.config.enabled,
-            price_grouping,
-            // The bubble layer owns its own panel and its own reset,
-            // so its whole look (and the preset it came from) stays.
-            show_aggressions: self.config.show_aggressions,
-            bubble_cluster_ms: self.config.bubble_cluster_ms,
-            bubble_dust_merge_ms: self.config.bubble_dust_merge_ms,
-            bubble_candle_summary: self.config.bubble_candle_summary,
-            volume_dots: self.config.volume_dots,
-            bubble_region_rows: self.config.bubble_region_rows,
-            bubble_region_ms: self.config.bubble_region_ms,
-            bubbles: self.config.bubbles.clone(),
-            live_lane: self.config.live_lane.clone(),
-            ..HeatmapConfig::default()
-        };
     }
 
     /// The Bubbles dock tab's body: the aggression layer's settings.
@@ -421,7 +266,7 @@ impl OrderflowView {
         let lane_set = LiveLaneSection {
             inherited_cluster_ms: config.bubble_cluster_ms,
             volume_dots: config.volume_dots.enabled,
-            native_block: OrderflowView::native_tape_block(config),
+            native_block: super::layers::native_tape_block(config),
             lane: &mut config.live_lane,
         }
         .show(ui);
@@ -442,32 +287,15 @@ impl OrderflowView {
         .show(ui);
         ColoursSection { bubbles, theme_rgb }.show(ui);
         if lane_set {
-            self.note_asset_lane_set();
+            self.look.note_lane_set();
         }
     }
 
     /// Restore the bubble layer's defaults and drop the preset claim, since
     /// no stored preset is on screen any more.
     fn reset_bubble_visuals(&mut self) {
-        let defaults = HeatmapConfig::default();
-        self.config.bubble_cluster_ms = defaults.bubble_cluster_ms;
-        self.config.bubble_dust_merge_ms = defaults.bubble_dust_merge_ms;
-        self.config.bubble_candle_summary = defaults.bubble_candle_summary;
-        self.config.volume_dots = defaults.volume_dots;
-        self.config.bubble_region_rows = defaults.bubble_region_rows;
-        self.config.bubble_region_ms = defaults.bubble_region_ms;
-        self.config.bubbles = defaults.bubbles;
-        // The native tape and tape only are the pane's mode, not its look.
-        self.config.live_lane = LiveLaneStyle {
-            native_tape: self.config.live_lane.native_tape,
-            tape_only: self.config.live_lane.tape_only,
-            ..defaults.live_lane
-        };
-        // No stored preset is on screen any more, so the
-        // picker must not keep claiming one.
-        self.look_name.clear();
-        self.note_asset_lane_set();
-        self.preset_status = Some("bubble defaults restored for the asset on screen".to_owned());
+        self.config.reset_bubble_visuals();
+        self.look.defaults_restored();
     }
 }
 
@@ -476,7 +304,10 @@ impl OrderflowView {
 #[cfg(test)]
 impl OrderflowView {
     /// A panel control's change, through the door the panel's draw takes.
-    pub(crate) fn edit_config_for_test(&mut self, edit: impl FnOnce(&mut HeatmapConfig)) {
+    pub(crate) fn edit_config_for_test(
+        &mut self,
+        edit: impl FnOnce(&mut quantick_orderflow::HeatmapConfig),
+    ) {
         let before = self.config.clone();
         edit(&mut self.config);
         self.commit_config_changes(before);
@@ -484,7 +315,7 @@ impl OrderflowView {
 
     /// Type `name` into the preset name field.
     pub(crate) fn set_preset_name_draft_for_test(&mut self, name: &str) {
-        name.clone_into(&mut self.preset_name_draft);
+        name.clone_into(self.look.name_draft_mut());
     }
 
     /// "save", with the presets file written by `writer`.
@@ -492,7 +323,7 @@ impl OrderflowView {
         &mut self,
         writer: impl FnOnce(&bubble_presets::BubblePresetFile) -> Result<std::path::PathBuf, String>,
     ) {
-        self.save_preset_with(writer);
+        self.look.save_preset(&self.config, writer);
     }
 
     /// "delete", with the presets file written by `writer`.
@@ -500,7 +331,7 @@ impl OrderflowView {
         &mut self,
         writer: impl FnOnce(&bubble_presets::BubblePresetFile) -> Result<std::path::PathBuf, String>,
     ) {
-        self.delete_preset_with(writer);
+        self.look.delete_preset(writer);
     }
 
     /// The reload button, over the presets file read from `path`.

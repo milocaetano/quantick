@@ -2,6 +2,7 @@
 //! and offer the native switch next to tape only.
 
 use super::*;
+use quantick_orderflow::HeatmapConfig;
 
 const NATIVE_TAPE: &str = "Native tape (execution time and price)";
 

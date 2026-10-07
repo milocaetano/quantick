@@ -14,7 +14,7 @@ pub(super) fn shipped_config() -> AppConfig {
 
 /// Bind a view to `symbol`'s asset — the mini index on its B3 feed, any
 /// other symbol on Binance — over the shipped presets.
-pub(super) fn bind(store: &SharedAssetBubbles, symbol: &str) -> (AssetBinding, AssetBubbles) {
+pub(crate) fn bind(store: &SharedAssetBubbles, symbol: &str) -> (AssetBinding, AssetBubbles) {
     let presets = bubble_presets::embedded();
     bind_with(store, symbol, &presets)
 }

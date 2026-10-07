@@ -33,9 +33,9 @@ fn set<P: TabsPort + TabsMutPort + ?Sized>(
             }
             owner.set_ignore_flow_opening(input.ignore_opening_burst_in_scale)
         }
-        OpeningScaleTarget::Tape => {
-            owner.set_ignore_opening_burst_in_scale(input.ignore_opening_burst_in_scale)
-        }
+        OpeningScaleTarget::Tape => owner.edit_config(|config| {
+            config.volume_dots.ignore_opening_burst_in_scale = input.ignore_opening_burst_in_scale;
+        }),
     };
     serde_json::to_value(input.result(changed)).map_err(invalid)
 }
