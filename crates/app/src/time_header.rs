@@ -217,20 +217,48 @@ pub fn draw(
 /// The custom-interval drag, written in the units the chips and the quick
 /// switch use — `90s`, `1d`, `1w` — and read back from them or from a bare
 /// millisecond count, so a day reads `1d` rather than `86400000 ms`.
+///
+/// A typed `1mo` sets the month — the setting its chip sets — rather than
+/// being clamped to the drag's four weeks, which would silently make 28-day
+/// bars: the drag's own range reaches the longest calendar interval so the
+/// typed value arrives whole, and [`admit_interval`] keeps everything else
+/// inside `range`.
 pub(crate) fn interval_drag(
     interval_ms: &mut i64,
     range: std::ops::RangeInclusive<f64>,
     speed: f64,
 ) -> egui::DragValue<'_> {
+    use quantick_engine::time_bucket::{CALENDAR_MONTH_MS, MAX_CALENDAR_MONTHS};
     #[allow(clippy::cast_possible_truncation)]
-    egui::DragValue::new(interval_ms)
-        .range(range)
-        .speed(speed)
-        .custom_formatter(|value, _| quantick_engine::fmt_time_interval(value as i64))
-        .custom_parser(|text| {
-            #[allow(clippy::cast_precision_loss)]
-            quantick_engine::parse_time_interval(text).map(|ms| ms as f64)
-        })
+    let (min, max) = (*range.start() as i64, *range.end() as i64);
+    #[allow(clippy::cast_precision_loss)]
+    let reach = range
+        .end()
+        .max((MAX_CALENDAR_MONTHS * CALENDAR_MONTH_MS) as f64);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+    egui::DragValue::from_get_set(move |new| {
+        if let Some(new) = new {
+            *interval_ms = admit_interval(new as i64, min, max);
+        }
+        *interval_ms as f64
+    })
+    .range(*range.start()..=reach)
+    .speed(speed)
+    .custom_formatter(|value, _| quantick_engine::fmt_time_interval(value as i64))
+    .custom_parser(|text| {
+        #[allow(clippy::cast_precision_loss)]
+        quantick_engine::parse_time_interval(text).map(|ms| ms as f64)
+    })
+}
+
+/// What the interval drag sets from `ms`: a calendar month as itself, and
+/// any other value held inside `min..=max`.
+fn admit_interval(ms: i64, min: i64, max: i64) -> i64 {
+    if quantick_engine::time_bucket::calendar_months(ms).is_some() {
+        ms
+    } else {
+        ms.clamp(min, max)
+    }
 }
 
 #[cfg(test)]
@@ -310,6 +338,25 @@ mod tests {
                 "a chip reads as the spec it sets"
             );
         }
+    }
+
+    /// A typed `1mo` or `3mo` sets the month, never four weeks; a drag past
+    /// four weeks stops there, and below the shortest interval at it.
+    #[test]
+    fn a_typed_month_sets_the_month_and_never_four_weeks() {
+        let (min, max) = (
+            crate::state::MIN_TIME_INTERVAL_MS,
+            crate::state::MAX_TIME_INTERVAL_MS,
+        );
+        for typed in ["1mo", "3mo", "12mo"] {
+            let ms = quantick_engine::parse_time_interval(typed).expect("an interval");
+            assert_eq!(admit_interval(ms, min, max), ms, "{typed}");
+            assert_eq!(quantick_engine::fmt_time_interval(ms), typed);
+        }
+        assert_eq!(admit_interval(max + 1, min, max), max, "four weeks at most");
+        assert_eq!(admit_interval(0, min, max), min);
+        let week = quantick_engine::time_bucket::WEEK_MS;
+        assert_eq!(admit_interval(week, min, max), week);
     }
 
     /// The day, week and month charts are one click away, and choosing the
