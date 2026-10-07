@@ -191,69 +191,105 @@ pub fn seam_lead(
     first_trade_ms: i64,
     interval_ms: i64,
 ) -> SeamLead {
-    let Some(law) = TimeBucketLaw::of(interval_ms) else {
-        return SeamLead::Nothing;
+    let parts = match seam_parts(days, minutes, first_trade_ms, interval_ms) {
+        Ok(parts) => parts,
+        Err(absence) => return absence,
     };
-    let bucket = law.start(first_trade_ms);
     let mut lead: Option<Bar> = None;
-    let mut minutes_from = bucket;
-    if let Some(days) = days {
-        match days_before_the_seam_day(days, bucket, first_trade_ms) {
-            Ok((whole_days, from)) => {
-                for day in whole_days {
-                    absorb(&mut lead, day);
-                }
-                minutes_from = from;
-            }
-            Err(from_ms) => return SeamLead::DaysDoNotCover { from_ms },
-        }
+    for candle in parts.whole_days.iter().chain(parts.minutes) {
+        absorb(&mut lead, candle);
     }
-    let first_minute = time_bucket_start(first_trade_ms, OHLCV_BASE_INTERVAL_MS);
-    // What no candle can speak for: the first trade's own minute before it.
-    let unrecorded_from = first_minute.max(minutes_from);
-    let mut short = false;
-    if minutes_from < first_minute {
-        let Some(minutes) = minutes else {
-            return SeamLead::MinutesNotHeld {
-                from_ms: minutes_from,
-            };
-        };
-        if !minutes.speak_for(minutes_from, first_minute) {
-            return SeamLead::Uncovered {
-                from_ms: minutes_from,
-            };
-        }
-        short = minutes.answer == MinutesAnswer::Short;
-        let candles = minutes.candles;
-        let start = candles.partition_point(|minute| minute.open_time < minutes_from);
-        for minute in candles[start..]
-            .iter()
-            .take_while(|minute| minute.close_time < first_trade_ms)
-        {
-            absorb(&mut lead, minute);
-        }
-    }
-    let omitted = unrecorded_from < first_trade_ms;
+    let omitted = parts.unrecorded_from < first_trade_ms;
     match lead {
         Some(mut bar) => {
             // Stamped on the bucket's start, as every candle-sourced bar is,
             // and before the first trade: a server-day candle opening the
             // evening before is the bucket's all the same.
-            bar.open_time = bucket;
+            bar.open_time = parts.bucket;
             bar.close_time = bar
                 .close_time
                 .min(first_trade_ms.saturating_sub(1))
                 .max(bar.open_time);
             SeamLead::Lead {
                 bar,
-                whole: !omitted && !short,
+                whole: !omitted && !parts.short,
             }
         }
         None if omitted => SeamLead::Unrecorded {
-            from_ms: unrecorded_from,
+            from_ms: parts.unrecorded_from,
         },
         None => SeamLead::Nothing,
     }
+}
+
+/// Where the minutes a [`seam_lead`] lacks would have to start, when
+/// minutes could mend it — the same decision, without folding anything.
+#[must_use]
+pub fn seam_minutes_wanted(
+    days: Option<&[Bar]>,
+    minutes: Option<Minutes<'_>>,
+    first_trade_ms: i64,
+    interval_ms: i64,
+) -> Option<i64> {
+    seam_parts(days, minutes, first_trade_ms, interval_ms)
+        .err()?
+        .wants_minutes_from()
+}
+
+/// The candles a lead folds and what it knowingly leaves out, or the named
+/// absence that stands instead of a lead.
+struct SeamParts<'a> {
+    bucket: i64,
+    whole_days: &'a [Bar],
+    minutes: &'a [Bar],
+    /// Where the stretch no candle can speak for starts: the first trade's
+    /// own minute before it.
+    unrecorded_from: i64,
+    /// Whether the minutes came from an answer known to be short.
+    short: bool,
+}
+
+fn seam_parts<'a>(
+    days: Option<&'a [Bar]>,
+    minutes: Option<Minutes<'a>>,
+    first_trade_ms: i64,
+    interval_ms: i64,
+) -> Result<SeamParts<'a>, SeamLead> {
+    let Some(law) = TimeBucketLaw::of(interval_ms) else {
+        return Err(SeamLead::Nothing);
+    };
+    let bucket = law.start(first_trade_ms);
+    let (whole_days, minutes_from) = match days {
+        Some(days) => days_before_the_seam_day(days, bucket, first_trade_ms)
+            .map_err(|from_ms| SeamLead::DaysDoNotCover { from_ms })?,
+        None => (&[][..], bucket),
+    };
+    let first_minute = time_bucket_start(first_trade_ms, OHLCV_BASE_INTERVAL_MS);
+    let mut parts = SeamParts {
+        bucket,
+        whole_days,
+        minutes: &[],
+        unrecorded_from: first_minute.max(minutes_from),
+        short: false,
+    };
+    if minutes_from < first_minute {
+        let Some(minutes) = minutes else {
+            return Err(SeamLead::MinutesNotHeld {
+                from_ms: minutes_from,
+            });
+        };
+        if !minutes.speak_for(minutes_from, first_minute) {
+            return Err(SeamLead::Uncovered {
+                from_ms: minutes_from,
+            });
+        }
+        let candles = minutes.candles;
+        let start = candles.partition_point(|minute| minute.open_time < minutes_from);
+        let end = candles.partition_point(|minute| minute.close_time < first_trade_ms);
+        parts.minutes = &candles[start..end.max(start)];
+        parts.short = minutes.answer == MinutesAnswer::Short;
+    }
+    Ok(parts)
 }
 
 /// The whole days of the bucket before the seam day, and where the minutes
@@ -690,6 +726,26 @@ mod seam_lead_tests {
         let partial = seam_lead(None, Some(short), on_a_minute, 5 * MINUTE);
         assert!(matches!(partial, SeamLead::Lead { whole: false, .. }));
         assert!(!partial.covers_seam());
+    }
+
+    /// The ask reads the same decision the lead does, without the fold.
+    #[test]
+    fn the_minutes_wanted_are_the_lead_s_own_decision() {
+        let daily = days(WED_7_OCT_2026, 30, true);
+        let held = minutes(WED_7_OCT_2026 - DAY_MS, FIRST_TRADE + HOUR);
+        let late = minutes(WED_7_OCT_2026 + 6 * HOUR, FIRST_TRADE + HOUR);
+        for days in [None, Some(daily.as_slice())] {
+            for candles in [None, Some(held.as_slice()), Some(late.as_slice())] {
+                for interval in [5 * MINUTE, DAY_MS, WEEK_MS, CALENDAR_MONTH_MS] {
+                    let minutes = candles.map(Minutes::candles);
+                    assert_eq!(
+                        seam_minutes_wanted(days, minutes, FIRST_TRADE, interval),
+                        seam_lead(days, minutes, FIRST_TRADE, interval).wants_minutes_from(),
+                        "{interval}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

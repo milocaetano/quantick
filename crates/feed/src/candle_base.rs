@@ -13,6 +13,7 @@ use quantick_engine::Bar;
 
 use crate::candles::{
     Minutes, MinutesAnswer, SeamLead, is_foldable, merge_older_candles, seam_lead,
+    seam_minutes_wanted,
 };
 use crate::config::FeedCapabilities;
 use crate::{
@@ -347,17 +348,19 @@ impl CandleBaseInterval {
     /// for.
     #[must_use]
     pub fn seam_lead(&self, held: &[Bar], first_trade_ms: i64, interval_ms: i64) -> SeamLead {
+        let (days, minutes) = self.seam_inputs(held);
+        seam_lead(days, minutes, first_trade_ms, interval_ms)
+    }
+
+    /// The days and the minutes a seam lead reads: under a daily base the
+    /// base and the minutes parked beside it, under a minute base the base.
+    fn seam_inputs<'a>(&'a self, held: &'a [Bar]) -> (Option<&'a [Bar]>, Option<Minutes<'a>>) {
         let answer = self.seam_minutes.answer;
         let minutes = |candles| Minutes { candles, answer };
         if self.held_ms >= OHLCV_DAILY_INTERVAL_MS {
-            seam_lead(
-                Some(held),
-                self.parked_minutes().map(minutes),
-                first_trade_ms,
-                interval_ms,
-            )
+            (Some(held), self.parked_minutes().map(minutes))
         } else {
-            seam_lead(None, Some(minutes(held)), first_trade_ms, interval_ms)
+            (None, Some(minutes(held)))
         }
     }
 
@@ -380,9 +383,8 @@ impl CandleBaseInterval {
         let stretch = seams
             .into_iter()
             .filter_map(|(first_trade_ms, interval_ms)| {
-                let from_ms = self
-                    .seam_lead(held, first_trade_ms, interval_ms)
-                    .wants_minutes_from()?;
+                let (days, minutes) = self.seam_inputs(held);
+                let from_ms = seam_minutes_wanted(days, minutes, first_trade_ms, interval_ms)?;
                 Some(SeamStretch {
                     from_ms,
                     until_ms: first_trade_ms,
