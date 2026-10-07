@@ -4,7 +4,9 @@
 //! alter it; runtime-only borrows cannot change identity or order. No runtime,
 //! clock, worker or UI type is stored here.
 
+mod host;
 mod restore;
+pub use host::{Arrangement, ClosedTab, TabRuntime};
 pub use restore::{RestoreEffect, RestoreMode, RestoreStep};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
