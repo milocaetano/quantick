@@ -1,0 +1,9 @@
+# feat/pane-menu-components: the pane's context, layer and objects menus
+# become a view component (PaneContextMenu) that reads a PaneMenuView and
+# answers with typed PaneMenuIntents, applied by ChartPane in one place
+# (apply_menu_intent), so a click and a scripted caller share one operation
+# and ChartPane's impl spread drops from 10 files to 7. The intent enum, the
+# read-only view and the apply site are the added lines; all of it names
+# egui types or applies to the pane, so none of it can leave app.
+crates/app +265
+!budget +265

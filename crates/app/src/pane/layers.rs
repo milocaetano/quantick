@@ -1,5 +1,6 @@
 //! The desktop adapter for headless layer policy. Reads and effects go straight
 //! to the existing feature owner; local visibility belongs to LayerState.
+use super::menus::LayerRow;
 use super::{ChartPane, PaneChrome};
 use crate::config::FeedCapabilities;
 use crate::orderflow_view::OrderflowView;
@@ -67,6 +68,20 @@ impl ChartPane {
                 VisibilityWrite::Change => self.drawings.set_all_hidden(!effect.visible),
                 VisibilityWrite::Opening => self.drawings.open_all_hidden(!effect.visible),
             },
+        }
+    }
+    /// One layer's switch as a menu draws it: the answer to both questions a
+    /// checkbox asks, read once.
+    pub(crate) fn layer_row(
+        &self,
+        layer: ChartLayer,
+        capabilities: FeedCapabilities,
+        style: &ChartStyle,
+    ) -> LayerRow {
+        LayerRow {
+            layer,
+            blocked: self.layer_blocked(layer, capabilities),
+            visible: self.layer_visible(layer, style),
         }
     }
     pub fn layer_blocked(

@@ -313,7 +313,11 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
     // The candles keep their long inventory behind the chart-layers submenu.
     menu_frame(&mut app, false);
     assert_eq!(
-        app.active_tab().flow_pane.layer_menu_rects.len(),
+        app.active_tab()
+            .flow_pane
+            .context_menu
+            .layer_menu_rects
+            .len(),
         0,
         "a click on the candles does not spill layer switches into the primary menu"
     );
@@ -322,7 +326,12 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
     // top level, and the chart's behind the submenu button rather than
     // laid out beside them.
     menu_frame(&mut app, true);
-    let tape_menu = app.active_tab().flow_pane.layer_menu_rects.clone();
+    let tape_menu = app
+        .active_tab()
+        .flow_pane
+        .context_menu
+        .layer_menu_rects
+        .clone();
     assert_eq!(
         tape_menu.len(),
         tape_menu_entries(),
@@ -347,7 +356,13 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
     // And back: aiming at the candles removes the tape switches again, so the
     // two primary menus cannot leak into each other across frames.
     menu_frame(&mut app, false);
-    assert!(app.active_tab().flow_pane.layer_menu_rects.is_empty());
+    assert!(
+        app.active_tab()
+            .flow_pane
+            .context_menu
+            .layer_menu_rects
+            .is_empty()
+    );
     std::fs::remove_file(&path).ok();
 }
 

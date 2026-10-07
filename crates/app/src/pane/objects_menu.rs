@@ -3,19 +3,21 @@
 //! "clear objects…" that deletes them all behind the manager's count-bearing
 //! question, as one undoable step.
 //!
-//! Both hand their clicks to the drawing chrome as the manager's own asks,
-//! tagged with this pane: the controller applies them on the chart the
-//! right-click named (the toast, its Undo and the locked-object confirmation
-//! included), never on another one.
+//! Both answer with the manager's own asks as a [`PaneMenuIntent`]; the pane
+//! hands them to the drawing chrome tagged with itself, so the controller
+//! applies them on the chart the right-click named (the toast, its Undo and
+//! the locked-object confirmation included), never on another one.
 
 use eframe::egui;
 
 use crate::bands;
-use crate::surfaces::DrawingChromeSurface;
+use crate::drawings::Drawings;
+use crate::indicators::IndicatorViews;
 use crate::surfaces::drawing_chrome::object_row::{delete_all_question, object_row};
 use crate::surfaces::drawing_chrome::{DrawingChromeAsk, ManagerRow};
 
-use super::ChartPane;
+use super::PaneContextMenu;
+use super::menus::{PaneMenuIntent, PaneMenuView};
 
 /// Tallest the objects submenu grows before its list scrolls, so thirty
 /// objects never push the menu past the screen.
@@ -27,19 +29,20 @@ const OBJECTS_REACH_HINT: &str = "objects drawn on this chart, its all-charts ma
                                   (they leave every chart); a mark shared from another chart \
                                   is listed and cleared on that chart";
 
-impl ChartPane {
+impl PaneContextMenu {
     /// The two menu entries. Disabled, not absent, on an empty chart, so the
     /// menu keeps its shape and says why.
     pub(super) fn draw_objects_menu_entries(
         &mut self,
         ui: &mut egui::Ui,
-        chrome: &mut DrawingChromeSurface,
+        view: &PaneMenuView<'_>,
+        intents: &mut Vec<PaneMenuIntent>,
     ) {
-        let count = self.drawings.items().len();
+        let count = view.drawings.items().len();
         let enabled = count > 0;
         ui.add_enabled_ui(enabled, |ui| {
             ui.menu_button(format!("objects ({count})"), |ui| {
-                self.draw_object_rows(ui, chrome);
+                intents.extend(self.draw_object_rows(ui, view.drawings, view.indicators));
             })
             .response
             .on_hover_text(OBJECTS_REACH_HINT)
@@ -53,10 +56,10 @@ impl ChartPane {
                 .on_disabled_hover_text("nothing is drawn on this chart");
             #[cfg(test)]
             {
-                self.context_menu.clear_objects_rect = Some(clear.rect);
+                self.clear_objects_rect = Some(clear.rect);
             }
             if clear.clicked() {
-                self.context_menu.confirm_clear = true;
+                self.confirm_clear = true;
                 ui.close_menu();
             }
         });
@@ -67,26 +70,26 @@ impl ChartPane {
     pub(crate) fn draw_object_rows(
         &mut self,
         ui: &mut egui::Ui,
-        chrome: &mut DrawingChromeSurface,
-    ) {
+        drawings: &Drawings,
+        indicators: &IndicatorViews,
+    ) -> Option<PaneMenuIntent> {
         #[cfg(test)]
-        self.context_menu.object_rects.clear();
-        let selected = self.drawings.selected();
+        self.object_rects.clear();
+        let selected = drawings.selected();
         let mut ask = DrawingChromeAsk::default();
         egui::ScrollArea::vertical()
             .max_height(OBJECTS_MENU_MAX_HEIGHT_PX)
             .show(ui, |ui| {
-                for (index, drawing) in self.drawings.items().iter().enumerate().rev() {
+                for (index, drawing) in drawings.items().iter().enumerate().rev() {
                     let row = ManagerRow::of(
                         index,
                         drawing,
                         selected == Some(index),
-                        bands::label_for(&self.indicators, drawing),
+                        bands::label_for(indicators, drawing),
                     );
                     let rects = object_row(ui, &row, index, &mut ask);
                     #[cfg(test)]
-                    self.context_menu
-                        .object_rects
+                    self.object_rects
                         .extend(rects.into_iter().map(|(label, rect)| (index, label, rect)));
                     #[cfg(not(test))]
                     let _ = rects;
@@ -99,43 +102,39 @@ impl ChartPane {
             .or(ask.manager_bring_to_front)
             .or(ask.manager_delete)
             .is_some();
-        if clicked {
-            chrome.ask_from_menu(self.id, ask);
-        }
+        clicked.then(|| PaneMenuIntent::ObjectsAsk(Box::new(ask)))
     }
 
     /// The question "clear objects…" raised, over this chart until answered.
+    /// `count` is how many objects the chart holds; `pane` names the window.
     pub(crate) fn draw_clear_objects_confirm(
         &mut self,
         ctx: &egui::Context,
         chart: egui::Rect,
-        chrome: &mut DrawingChromeSurface,
-    ) {
-        if !self.context_menu.confirm_clear {
-            return;
+        count: usize,
+        pane: u64,
+    ) -> Option<PaneMenuIntent> {
+        if !self.confirm_clear {
+            return None;
         }
-        let count = self.drawings.items().len();
         let mut open = count > 0;
         let mut answer = None;
         egui::Window::new("Clear objects")
-            .id(egui::Id::new(("clear_objects_confirm", self.id)))
+            .id(egui::Id::new(("clear_objects_confirm", pane)))
             .collapsible(false)
             .resizable(false)
             .pivot(egui::Align2::CENTER_CENTER)
             .fixed_pos(chart.center())
             .open(&mut open)
             .show(ctx, |ui| answer = delete_all_question(ui, count));
-        if answer == Some(true) {
-            chrome.ask_from_menu(
-                self.id,
-                DrawingChromeAsk {
-                    delete_all: true,
-                    ..DrawingChromeAsk::default()
-                },
-            );
-        }
         if answer.is_some() || !open {
-            self.context_menu.confirm_clear = false;
+            self.confirm_clear = false;
         }
+        (answer == Some(true)).then(|| {
+            PaneMenuIntent::ObjectsAsk(Box::new(DrawingChromeAsk {
+                delete_all: true,
+                ..DrawingChromeAsk::default()
+            }))
+        })
     }
 }
