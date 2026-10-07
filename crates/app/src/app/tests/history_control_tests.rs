@@ -165,7 +165,10 @@ fn a_mouse_press_and_a_control_press_leave_the_same_state() {
                 app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(reach));
             }
             let summary = summary_reach(&mut app, &mut observer);
-            assert_eq!(summary.0, legacy, "{reach:?}: the v1 field keeps its tokens");
+            assert_eq!(
+                summary.0, legacy,
+                "{reach:?}: the v1 field keeps its tokens"
+            );
             // An hours target is what a v1 `span` of its minutes meant.
             let span_minutes = match reach {
                 HistoryReach::Hours(hours) => hours * 60,

@@ -78,7 +78,10 @@ pub(super) struct HistorySettings {
     /// What the History button's main click loads on a tab that has never
     /// pressed: the last target pressed in this window, saved with the
     /// workspace. A tab that has pressed repeats its own last target, and a
-    /// run belongs to its tab alone.
+    /// run belongs to its tab alone. Every press sets it through
+    /// [`super::control_host::TabsMut::press_history`], the one press the
+    /// toolbar and the control plane share; the `QUANTICK_HISTORY_REACH` hook
+    /// and an opened workspace set it directly.
     pub(super) history_reach: history_reach::HistoryReach,
 
     /// Minutes of traded time a workspace saved with the old `by time` reach
@@ -235,15 +238,6 @@ impl QuantickApp {
 }
 
 impl HistorySettings {
-    /// Choose what a tab that has never pressed loads on its main click.
-    ///
-    /// Set by every press of a target and by the `QUANTICK_HISTORY_REACH`
-    /// hook — one path, so an operator without a mouse sets what a click
-    /// sets. It never touches a run in flight: runs belong to their tabs.
-    pub(super) fn set_reach(&mut self, reach: history_reach::HistoryReach) {
-        self.history_reach = reach;
-    }
-
     /// The minutes a legacy `span` token means, clamped to what an hours
     /// target can reach.
     pub(super) fn set_span_minutes(&mut self, minutes: u32) {

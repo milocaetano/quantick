@@ -612,7 +612,7 @@ fn param_summary(model: &ToolbarModel) -> String {
 /// is exactly that), and gating the menu on the button's capability would
 /// leave the candle reach behind a control the trader cannot open.
 fn draw_history(ui: &mut egui::Ui, model: &mut ToolbarModel, actions: &mut Vec<ToolbarAction>) {
-    let paging = history_button_enabled(model.capabilities.history_paging);
+    let paging = model.capabilities.history_paging;
     let menu = history_menu_reachable(model);
     let load = ui
         .add_enabled(
@@ -698,12 +698,6 @@ fn history_button_hover(button: &HistoryButton) -> String {
     }
 }
 
-/// Whether the History button takes a press. While a run pages it does: the
-/// press cancels it.
-fn history_button_enabled(feed_can_page: bool) -> bool {
-    feed_can_page
-}
-
 /// Why the History button is not taking a press.
 ///
 /// One value rather than a pair of bools: a bool is enough to grey a control
@@ -730,7 +724,7 @@ impl HistoryPagingOff {
     /// for a reason of its own.
     fn of(feed_can_page: bool, candles: crate::tab::OlderCandles) -> Option<Self> {
         use crate::tab::OlderCandles;
-        if history_button_enabled(feed_can_page) {
+        if feed_can_page {
             return None;
         }
         Some(match candles {
@@ -1211,7 +1205,7 @@ fn draw_overflow(
         }
         if !plan.history_inline {
             ui.separator();
-            let paging = history_button_enabled(model.capabilities.history_paging);
+            let paging = model.capabilities.history_paging;
             let load = ui
                 .add_enabled(
                     paging,
@@ -1801,11 +1795,6 @@ mod tests {
         };
         assert!(history_button_label(&queued).starts_with("Queued +2 h"));
         assert_eq!(history_button_action(&queued), ToolbarAction::CancelHistory);
-        assert!(history_button_enabled(true));
-        assert!(
-            !history_button_enabled(false),
-            "a feed that only streams forward never took a press"
-        );
         assert!(
             HistoryPagingOff::NothingToPage
                 .hover()

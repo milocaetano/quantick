@@ -51,7 +51,6 @@ fn repeated_history_publications_preserve_fractional_pan_and_future_projection()
             pane.receive_history(
                 std::sync::Arc::new(prints(first, (first as i64..first as i64 + 200).collect())),
                 true,
-                true,
             );
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
             while !pane.prepare_history() {

@@ -1,5 +1,6 @@
 //! `feed.history.load` and `feed.history.cancel`: the History button's press
-//! and its cancel, through the same `Tab` calls a click makes.
+//! and its cancel, through the same calls a click makes
+//! ([`crate::app::control_host::TabsMut::press_history`] for the press).
 
 use crate::app::{TabsMutPort, TabsPort};
 use quantick_control::{
@@ -52,10 +53,8 @@ fn load<P: TabsPort + TabsMutPort + ?Sized>(
     })?;
     let index = tab_index(app, input.tab_id)?;
     let tab_id = app.tab_reads().tabs().id_at(index);
-    let (tab, config) = app
-        .tabs_mut()
-        .tab_with_config(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
+    let closed = || ControlError::invalid_request("the tab closed while the call ran");
+    let (tab, config) = app.tabs_mut().tab_with_config(index).ok_or_else(closed)?;
     if !tab.capabilities(config).history_paging {
         return Err(refused(
             "this tab's feed cannot page older trades".to_owned(),
@@ -63,7 +62,12 @@ fn load<P: TabsPort + TabsMutPort + ?Sized>(
             "read feed.status capabilities.history_paging; venue candles load with the History menu's + older candles",
         ));
     }
-    let press = match tab.load_history(config, reach) {
+    // The toolbar's own press, so the main-click default moves with it.
+    let (tab, press) = app
+        .tabs_mut()
+        .press_history(index, reach)
+        .ok_or_else(closed)?;
+    let press = match press {
         Press::Start if matches!(tab.history_status(), RunStatus::Idle) => "finished",
         Press::Start => "started",
         Press::Queued => "queued",

@@ -158,7 +158,7 @@ pub(super) const HISTORY: &[UiBehaviour] = &[
     UiBehaviour {
         id: "history.trades.cancel",
         title: "Stop loading history and keep what arrived",
-        reach: "the loading History button, its menu's Cancel loading, or Esc",
+        reach: "the loading History button, its menu's Cancel loading, or an Esc no draft, selection or armed tool wants",
         keys: &[(Source::ToolbarAction, "CancelHistory")],
         mapping: capability!("feed.history.cancel"),
     },

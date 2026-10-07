@@ -34,16 +34,25 @@ pub struct WorkspaceSnapshot {
     pub save_on_exit: bool,
     pub performance_readings_visible: bool,
     pub progressive_venue_history: bool,
-    /// How far one press of *load older* reaches, as the reach registry's own
-    /// token (`page`, `previous-session`) — the same string the harness hook
-    /// takes, so what an operator sets is what it reads back.
+    /// How far one press of *load older* reaches, in the v1 vocabulary this
+    /// field has always used: `span` (an hours target; its length is
+    /// `history_reach_span_minutes`) or `previous-session` (yesterday). A
+    /// target that vocabulary has no word for — three or five days back —
+    /// reads as the empty string; `history_target` names every target.
     ///
     /// Additive within v1 (contract §4): defaulted rather than required, so a
     /// client holding this schema still validates a summary from an instance
     /// built before the field existed.
     #[serde(default)]
     pub history_reach: String,
-    /// Minutes of *traded* time one press of the `span` reach pulls.
+    /// What the History button's main click loads, as the token
+    /// `feed.history.load` takes: `hours:N` or `sessions:N`. Additive; empty
+    /// from a build that predates it.
+    #[serde(default)]
+    pub history_target: String,
+    /// Minutes of *traded* time a press of the `span` reach pulls: the hours
+    /// target's own length while `history_reach` reads `span`, otherwise what
+    /// a legacy `span` token in a saved workspace or hook would load.
     ///
     /// Beside the reach because the two are one choice: an operator that
     /// can read back `by time` but not how much time cannot tell what the

@@ -159,7 +159,7 @@ fn history(app: &mut QuantickApp, env: &ScenarioInputs) {
     if let Some(token) = env.var("QUANTICK_HISTORY_REACH") {
         let span = app.history.history_reach_span_minutes;
         match history_reach::HistoryReach::from_legacy_span(&token, span) {
-            Some(reach) => app.history.set_reach(reach),
+            Some(reach) => app.history.history_reach = reach,
             None => tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,

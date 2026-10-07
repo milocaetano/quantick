@@ -12,6 +12,15 @@ fn previous_close_minute(before_minute: i64) -> i64 {
     before_minute - (SESSION_GAP_MS / quantick_feed::OHLCV_BASE_INTERVAL_MS) - 1
 }
 
+/// The newest print the chart holds: where a reconnect's floor would sit.
+fn live_edge_ms(app: &QuantickApp) -> i64 {
+    let trades = app.active_tab().flow_pane.state.trades();
+    trades
+        .get(trades.len() - 1)
+        .expect("a charted tape")
+        .timestamp_ms
+}
+
 /// Drain until no pane has a rebuild waiting.
 fn settle_rebuilds(app: &mut QuantickApp) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
@@ -94,7 +103,11 @@ fn a_pane_opened_during_a_run_ends_with_the_whole_tape() {
         .iter()
         .map(|trade| trade.timestamp_ms)
         .collect();
-    assert_eq!(flow.len(), 200 + 120 + 301 + 31, "the flow pane holds it all");
+    assert_eq!(
+        flow.len(),
+        200 + 120 + 301 + 31,
+        "the flow pane holds it all"
+    );
     assert_eq!(time, flow, "the pane opened mid-run holds the same tape");
 }
 
@@ -106,12 +119,14 @@ fn a_press_while_the_resume_floor_stands_waits_for_it() {
     let ctx = egui::Context::default();
     let (mut app, events, mut commands) = history_app(&ctx);
     drain_load_older(&mut commands);
-    let floor = app.active_tab().latest_trade_ms;
-    assert!(floor.is_some());
-    app.active_tab_mut().resume_floor_ms = floor;
+    let floor = live_edge_ms(&app);
+    app.active_tab_mut().resume_floor_ms = Some(floor);
 
     app.apply_toolbar_action(ToolbarAction::LoadHistory(HistoryReach::Hours(2)));
-    assert!(drain_load_older(&mut commands).is_empty(), "nothing out yet");
+    assert!(
+        drain_load_older(&mut commands).is_empty(),
+        "nothing out yet"
+    );
     assert_eq!(
         app.active_tab().history_status(),
         RunStatus::Queued(HistoryReach::Hours(2))
@@ -123,7 +138,11 @@ fn a_press_while_the_resume_floor_stands_waits_for_it() {
         .unwrap();
     app.drain_tabs();
     assert_eq!(app.active_tab().resume_floor_ms, None);
-    assert_eq!(drain_load_older(&mut commands).len(), 1, "the press went out");
+    assert_eq!(
+        drain_load_older(&mut commands).len(),
+        1,
+        "the press went out"
+    );
     assert!(app.active_tab().history_reach_running());
 }
 
@@ -136,7 +155,7 @@ fn a_reply_eaten_by_the_resume_floor_still_answers_the_run() {
     drain_load_older(&mut commands);
     app.apply_toolbar_action(ToolbarAction::LoadHistory(HistoryReach::Hours(2)));
     assert_eq!(drain_load_older(&mut commands).len(), 1);
-    app.active_tab_mut().resume_floor_ms = app.active_tab().latest_trade_ms;
+    app.active_tab_mut().resume_floor_ms = Some(live_edge_ms(&app));
 
     events
         .try_send(FeedEvent::HistoryPrepended(

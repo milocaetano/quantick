@@ -1,3 +1,9 @@
-# Written by `cargo run -p quantick-guards -- --tighten`: these shrank.
-crates/app -70
-!budget -70
+# The branch's net change to crates/app, measured. The History run first
+# shrank the app by 70 lines; the review fixes then added 75 where the tab and
+# window state live: the one press path the toolbar and `feed.history.load`
+# share (TabsMut::press_history), a pane opened mid-run taking the held pages,
+# the resume-floor and failed-rebuild run endings, the pane copies and feed
+# outages a run is told, and the frozen v1 reach token in workspace.summary.
+# The judging itself stays headless in quantick-sources.
+crates/app +5
+!budget +5

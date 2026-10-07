@@ -329,12 +329,37 @@ impl<'a> TabReads<'a> {
 pub(crate) struct TabsMut<'a> {
     tabs: &'a mut ArrangementHost,
     config: &'a AppConfig,
+    /// The window's main-click default, which every press sets.
+    default_reach: &'a mut history_reach::HistoryReach,
 }
 
 impl<'a> TabsMut<'a> {
     /// The view over the window's own roots, as [`TabReads::new`].
-    pub(crate) fn new(tabs: &'a mut ArrangementHost, config: &'a AppConfig) -> Self {
-        Self { tabs, config }
+    pub(crate) fn new(
+        tabs: &'a mut ArrangementHost,
+        config: &'a AppConfig,
+        default_reach: &'a mut history_reach::HistoryReach,
+    ) -> Self {
+        Self {
+            tabs,
+            config,
+            default_reach,
+        }
+    }
+
+    /// Press History on one tab: the one press the toolbar and
+    /// `feed.history.load` both make. The target becomes the window's
+    /// main-click default — what `workspace.summary` reads and the saved
+    /// workspace keeps — and the tab loads it.
+    pub(crate) fn press_history(
+        self,
+        index: usize,
+        reach: history_reach::HistoryReach,
+    ) -> Option<(&'a mut Tab, quantick_feed::history_run::Press)> {
+        let tab = self.tabs.get_mut(index)?;
+        *self.default_reach = reach;
+        let press = tab.load_history(self.config, reach);
+        Some((tab, press))
     }
 
     /// The mutable twin of [`TabReads::tab_at`].
@@ -620,7 +645,8 @@ impl TabsPort for QuantickApp {
 
 impl TabsMutPort for QuantickApp {
     fn tabs_mut(&mut self) -> TabsMut<'_> {
-        TabsMut::new(&mut self.tabs, &self.config)
+        let reach = &mut self.history.history_reach;
+        TabsMut::new(&mut self.tabs, &self.config, reach)
     }
 }
 

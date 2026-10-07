@@ -123,6 +123,13 @@ impl Tab {
             self.flow_pane.state.backfill_trade_count(),
             self.flow_pane.state.deal_samples(),
         );
+        // Seeded from what the flow pane shows, so it also takes every page
+        // the flow pane holds unpublished — a run's held pages, a recut in
+        // progress — and publishes the same tape its siblings will.
+        for page in self.flow_pane.unpublished_history() {
+            pane.receive_history(page, true);
+        }
+        pane.hold_history(self.history_reach_running());
         // The pane opens looking like the one it splits away from: a user who
         // switched the crosshair off is not asking for it back by opening a
         // second view of the same market. Orientation is part of that look —

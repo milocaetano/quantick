@@ -314,11 +314,10 @@ impl ChartPane {
     pub fn receive_history(
         &mut self,
         trades: std::sync::Arc<Vec<quantick_engine::Trade>>,
-        page: bool,
         defer: bool,
     ) -> bool {
         if defer {
-            self.history_worker.enqueue(trades, page);
+            self.history_worker.enqueue(trades);
             true
         } else {
             self.prepend_history(&trades);
@@ -343,6 +342,11 @@ impl ChartPane {
         self.history_worker.hold(held);
     }
 
+    /// Pages this pane accepted and has not published yet.
+    pub fn unpublished_history(&self) -> Vec<std::sync::Arc<Vec<quantick_engine::Trade>>> {
+        self.history_worker.unpublished_pages()
+    }
+
     /// Install a complete recut and catch up the live tail before moving anchors.
     pub fn prepare_history(&mut self) -> bool {
         self.history_worker.poll(&self.state)
@@ -351,6 +355,12 @@ impl ChartPane {
     #[cfg(test)]
     pub(crate) fn hold_history_publication(&mut self, held: bool) {
         self.history_worker.held = held;
+    }
+
+    /// Make this pane's rebuild read as failed until a retry.
+    #[cfg(test)]
+    pub(crate) fn fail_history_publication(&mut self) {
+        self.history_worker.fail = true;
     }
 
     pub fn install_history(&mut self) -> bool {

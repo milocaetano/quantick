@@ -13,7 +13,7 @@ use crate::pane::PaneSide;
 use crate::tab::CanvasLayout;
 use crate::toolbar::{self, ToolbarAction};
 
-use super::QuantickApp;
+use super::{QuantickApp, TabsMutPort};
 
 // A failed recut still owns older prints after venue paging is exhausted.
 // The history button retries those retained pages through its ordinary action.
@@ -244,9 +244,8 @@ impl QuantickApp {
     pub(super) fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
             ToolbarAction::LoadHistory(reach) => {
-                self.history.set_reach(reach);
-                let (tab, config) = self.active_with_config();
-                tab.load_history(config, reach);
+                let active = self.tabs.active_index();
+                self.tabs_mut().press_history(active, reach);
             }
             ToolbarAction::CancelHistory => _ = self.active_tab_mut().cancel_history(),
             ToolbarAction::DealRecording(action) => {

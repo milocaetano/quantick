@@ -595,6 +595,14 @@ impl Tab {
                     if self.resume_floor_ms.is_some() {
                         self.loading.end(LoadingTask::History);
                         live |= self.ingest_resumed(&trades);
+                        // A press waits out the floor, so this is the
+                        // session's recovery window. Should a request be out
+                        // all the same, this event is its only reply: the run
+                        // hears it as empty — the floor kept nothing older —
+                        // rather than waiting on a reply that already came.
+                        if self.history_run.awaiting_reply() {
+                            self.judge_history_page(&[]);
+                        }
                         continue;
                     }
                     self.history_trades += trades.len();
@@ -609,8 +617,7 @@ impl Tab {
                     // Each pane cuts the older trades into its own bars, so
                     // each shifts its own anchors by its own count.
                     for pane in self.panes_mut() {
-                        pending |=
-                            pane.receive_history(std::sync::Arc::clone(&trades), true, defer);
+                        pending |= pane.receive_history(std::sync::Arc::clone(&trades), defer);
                     }
                     // The first engine bar just moved backwards in time, and
                     // the prefix was trimmed against where it used to be. Any
@@ -644,8 +651,7 @@ impl Tab {
                     let defer = self.defer_history(trades.len());
                     let mut pending = false;
                     for pane in self.panes_mut() {
-                        pending |=
-                            pane.receive_history(std::sync::Arc::clone(&trades), false, defer);
+                        pending |= pane.receive_history(std::sync::Arc::clone(&trades), defer);
                     }
                     if !pending {
                         self.refold_history_prefix();
@@ -712,7 +718,7 @@ impl Tab {
             self.loading.set_active(LoadingTask::History, false);
             const FAILED: &str = "History could not be built. Press History to retry.";
             if self.history_note() != Some(FAILED) {
-                self.abandon_history_run();
+                self.stop_history_run_on_failure();
                 self.raise_history_note(FAILED);
             }
             return;

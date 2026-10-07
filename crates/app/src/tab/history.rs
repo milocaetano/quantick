@@ -17,7 +17,7 @@ use quantick_civil::fmt_weekday_minute;
 use quantick_feed::FeedCommand;
 pub use quantick_feed::candles::OlderCandles;
 use quantick_feed::candles::{merge_older_candles, trim_borrowed_to_seam, trim_to_seam};
-use quantick_feed::history_reach::{HistoryReach, ReachOutcome};
+use quantick_feed::history_reach::{HistoryReach, Outage, ReachOutcome, TapeFacts};
 use quantick_feed::history_run::{Cancelled, Poll, Press, RunAction, RunStatus};
 
 impl Tab {
@@ -599,16 +599,15 @@ impl Tab {
 
     /// Load back to `reach`: begin now, or queue behind the opening fill.
     /// The menu's actions, the main click and the control plane all land here.
+    ///
+    /// A failed rebuild is retried first, keeping every page it held; the
+    /// press then queues behind that rebuild like any other.
     pub fn load_history(&mut self, config: &AppConfig, reach: HistoryReach) -> Press {
-        let mut retried = false;
         for pane in self.panes_mut() {
-            retried |= pane.retry_history();
+            pane.retry_history();
         }
         // A new press owns its own outcome.
         self.history_note = None;
-        if retried {
-            return Press::Start;
-        }
         let press = self.history_run.press(reach, self.history_idle());
         tracing::info!(target: "quantick::app", event_code = "HISTORY_REACH_PRESSED", symbol = %self.symbol,
             reach = %reach.token(), press = ?press, "a history target was pressed");
@@ -643,8 +642,13 @@ impl Tab {
 
     /// The chart holds what it is going to hold: no opening fill arriving and
     /// no rebuild pending, so a run judges what the trader sees.
+    ///
+    /// A reconnect's resume floor counts as filling: the next history-shaped
+    /// event may be the new session's recovery window, which the floor
+    /// filters, so a request is not sent until it has been spent.
     fn history_idle(&self) -> bool {
         self.opening_slices_remaining.is_none()
+            && self.resume_floor_ms.is_none()
             && !self.loading.is_active(LoadingTask::History)
             && !self.panes().any(|(pane, _)| pane.history_pending())
     }
@@ -655,10 +659,27 @@ impl Tab {
             .map_or(self.history_step.max(1), |provider| {
                 provider.campaign_page_size(self.history_step)
             });
+        // Every pane holds its own copy of the tape, and a silence the feed
+        // marked as lost is not a session close.
+        let facts = TapeFacts {
+            copies: self.panes().count(),
+            outages: self
+                .feed_gaps
+                .iter()
+                .map(|gap| Outage {
+                    from_ms: gap.from_ms,
+                    to_ms: gap.to_ms,
+                })
+                .collect(),
+        };
         let held = self.flow_pane.state.trades();
-        let action = self
-            .history_run
-            .begin(reach, held, config.history.reach_bounds(), page_size);
+        let action = self.history_run.begin(
+            reach,
+            held,
+            &facts,
+            config.history.reach_bounds(),
+            page_size,
+        );
         self.apply_run_action(action);
     }
 
@@ -732,6 +753,14 @@ impl Tab {
     #[must_use]
     pub const fn opening_slices_remaining(&self) -> Option<u64> {
         self.opening_slices_remaining
+    }
+
+    /// A rebuild failed: end the run where it stood. Unlike a change of
+    /// market, the request already out is still owed a reply, so it stays
+    /// counted until that reply lands.
+    pub(super) fn stop_history_run_on_failure(&mut self) {
+        let _ = self.history_run.cancel();
+        self.hold_history_pages();
     }
 
     /// Drop the run this tab was making and the verdict it produced: both

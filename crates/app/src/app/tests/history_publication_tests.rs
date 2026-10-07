@@ -75,7 +75,7 @@ fn benchmark_history_frame_work() {
             let mut asynchronous = crate::pane::ChartPane::time(2, 60_000);
             asynchronous.ingest_backfill(&recent);
             let start = std::time::Instant::now();
-            asynchronous.receive_history(std::sync::Arc::new(older), true, true);
+            asynchronous.receive_history(std::sync::Arc::new(older), true);
             let frame = std::time::Instant::now();
             let mut ready = asynchronous.prepare_history();
             let mut peak = frame.elapsed().as_secs_f64() * 1000.0;
