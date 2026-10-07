@@ -187,6 +187,37 @@ mod tests {
         assert_eq!(folded.as_ref(), builder.partial());
     }
 
+    /// Absorbing a later bar is the summary of the run of both: the first
+    /// bar's open and stamp, the extremes, the later bar's close and stamp,
+    /// volumes and counts added — the same bar the builder cuts from the two
+    /// runs of trades taken as one.
+    #[test]
+    fn absorbing_a_later_bar_summarises_both_runs_as_one() {
+        let trades = [
+            trade(0, "36000.0", "1.0", Side::Buy),
+            trade(1, "36010.5", "0.25", Side::Sell),
+            trade(2, "35990.25", "2.5", Side::Buy),
+            trade(3, "36005.0", "0.75", Side::Sell),
+        ];
+        let fold = |run: &[Trade]| {
+            let mut bar = Bar::opened_by(&run[0]);
+            for t in &run[1..] {
+                bar.extend(t);
+            }
+            bar
+        };
+        let mut earlier = fold(&trades[..2]);
+        earlier.absorb(&fold(&trades[2..]));
+        assert_eq!(earlier, fold(&trades));
+
+        let mut saturated = fold(&trades[..1]);
+        saturated.buy_volume = Decimal::MAX;
+        saturated.trade_count = u64::MAX;
+        saturated.absorb(&fold(&trades[2..]));
+        assert_eq!(saturated.buy_volume, Decimal::MAX);
+        assert_eq!(saturated.trade_count, u64::MAX);
+    }
+
     /// Side totals saturate rather than panicking: the quantities come from an
     /// untrusted feed, and the same rule the builders' accumulators follow.
     #[test]
