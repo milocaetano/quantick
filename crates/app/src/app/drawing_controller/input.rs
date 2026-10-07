@@ -540,7 +540,10 @@ impl DrawingController {
     ) {
         use crate::surfaces::drawing_chrome::QuickRangeActionUi as _;
         use quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome;
-        let Some(request) = ask.place_quick_range.take() else {
+        let Some(request) = ask
+            .place_quick_range
+            .take_if(|placement| placement.conversion.request().action.arms_placement())
+        else {
             return;
         };
         let operation = *request.conversion.request();

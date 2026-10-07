@@ -1184,7 +1184,12 @@ fn every_reachable_forbidden_row_refuses_a_key_before_the_application() {
             "annotate.arrow.create"
             | "annotate.zone.create"
             | "annotate.fixed_range_profile.create" => json!({ "anchors": anchors }),
-            "annotate.fib_retracement.create" => json!({ "anchors": fib_anchors }),
+            "annotate.fib_retracement.create"
+            | "annotate.trend_line.create"
+            | "annotate.horizontal_levels.create" => json!({ "anchors": fib_anchors }),
+            "annotate.parallel_channel.create" => {
+                json!({ "anchors": [fib_anchors[0].clone(), fib_anchors[1].clone(), fib_anchors[0].clone()] })
+            }
             "annotate.remove" => json!({ "annotation_id": "1" }),
             "attention.mark.create" => json!({ "note": "keyed" }),
             "indicator.script.attach" => json!({ "name": "keyed", "source": script }),
