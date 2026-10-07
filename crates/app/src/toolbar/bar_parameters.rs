@@ -78,22 +78,17 @@ pub(super) fn draw(ui: &mut egui::Ui, selection: &mut BarSelection, inputs: BarI
                 )
                 .is_some() =>
             {
-                // A calendar month has no fixed length to drag: its name
-                // stands where the drag would, and the chips change it.
-                ui.label(
-                    egui::RichText::new(definition.parameter.format(value))
-                        .small()
-                        .color(theme::TEXT_MUTED),
-                )
+                // A calendar month has no fixed length to drag, and the chip
+                // already names it: nothing stands beside it.
+                ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover())
             }
             NumberKind::Duration => {
                 let mut interval = value.to_i64().expect("interval representation");
-                let response = ui.add(
-                    egui::DragValue::new(&mut interval)
-                        .range(editor.min..=editor.max)
-                        .speed(editor.step)
-                        .suffix(" ms"),
-                );
+                let response = ui.add(crate::time_header::interval_drag(
+                    &mut interval,
+                    editor.min..=editor.max,
+                    editor.step,
+                ));
                 if response.changed() {
                     value = Decimal::from(interval);
                 }

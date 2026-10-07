@@ -63,7 +63,7 @@ pub use profile_fold::ProfileFold;
 pub use renko::{MAX_BRICKS_PER_PRINT, RenkoBarBuilder, STEP_EVIDENCE_DISTANCES};
 pub use spec::{
     BarKind, BarSpec, BarSpecError, DECIMAL_PARAM_FLOOR, DEFAULT_TIME_INTERVAL_MS,
-    MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS, fmt_time_interval,
+    MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS, fmt_time_interval, parse_time_interval,
 };
 pub use threshold::{Measure, ThresholdBarBuilder};
 pub use tick::{TickBarBuilder, TickMeasure};

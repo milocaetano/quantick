@@ -390,6 +390,23 @@ fn only_the_deal_count_rule_needs_a_deal_counter() {
     }
 }
 
+/// The custom-interval drag writes and reads the same units the chips do: a
+/// day is `1d` on screen, never `86400000 ms`, and typing it back gives the
+/// same interval.
+#[test]
+fn the_interval_drag_reads_back_what_it_writes() {
+    use quantick_engine::parse_time_interval;
+    for ms in [1_500, 90_000, 300_000, 86_400_000, 172_800_000, 604_800_000] {
+        let text = fmt_time_interval(ms);
+        assert!(!text.contains(' '), "{text}");
+        assert_eq!(parse_time_interval(&text), Some(ms), "{text}");
+    }
+    assert_eq!(fmt_time_interval(86_400_000), "1d");
+    assert_eq!(fmt_time_interval(604_800_000), "1w");
+    assert_eq!(parse_time_interval(" 250 "), Some(250), "a bare count is ms");
+    assert_eq!(parse_time_interval("5 apples"), None);
+}
+
 /// One vocabulary for every surface that names a timeframe: the summary speaks
 /// the chips' own labels, falling back to finer units only where no coarser
 /// one writes the value back exactly.

@@ -155,31 +155,23 @@ pub fn draw(
                 changed = true;
             }
         }
-        let interval = if quantick_engine::time_bucket::calendar_months(*interval_ms).is_some() {
-            // A month is a calendar unit, not a duration: dragging its nominal
-            // millisecond size would walk into values no chart accepts.
-            content
-                .label(
-                    egui::RichText::new(quantick_engine::fmt_time_interval(*interval_ms))
-                        .small()
-                        .color(theme::TEXT_MUTED),
-                )
-                .on_hover_text("calendar months, in UTC; pick a chip to change")
-        } else {
-            content
-                .add(
-                    egui::DragValue::new(interval_ms)
-                        .range(
-                            crate::state::MIN_TIME_INTERVAL_MS as f64
-                                ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
-                        )
-                        .speed(crate::state::TIME_INTERVAL_DRAG_SPEED)
-                        .suffix(" ms"),
-                )
-                .on_hover_text("custom interval for this pane")
-        };
-        changed |= interval.changed();
-        interval.rect
+        // A month is a calendar unit, not a duration: dragging its nominal
+        // millisecond size would walk into values no chart accepts, and its
+        // chip already names it, so nothing stands beside it.
+        let interval = quantick_engine::time_bucket::calendar_months(*interval_ms)
+            .is_none()
+            .then(|| {
+                content
+                    .add(interval_drag(
+                        interval_ms,
+                        crate::state::MIN_TIME_INTERVAL_MS as f64
+                            ..=crate::state::MAX_TIME_INTERVAL_MS as f64,
+                        crate::state::TIME_INTERVAL_DRAG_SPEED,
+                    ))
+                    .on_hover_text("custom interval for this pane")
+            });
+        changed |= interval.as_ref().is_some_and(egui::Response::changed);
+        interval.map_or(egui::Rect::NOTHING, |interval| interval.rect)
     } else {
         egui::Rect::NOTHING
     };
@@ -220,6 +212,25 @@ pub fn draw(
         #[cfg(test)]
         name: name_rect,
     }
+}
+
+/// The custom-interval drag, written in the units the chips and the quick
+/// switch use — `90s`, `1d`, `1w` — and read back from them or from a bare
+/// millisecond count, so a day reads `1d` rather than `86400000 ms`.
+pub(crate) fn interval_drag(
+    interval_ms: &mut i64,
+    range: std::ops::RangeInclusive<f64>,
+    speed: f64,
+) -> egui::DragValue<'_> {
+    #[allow(clippy::cast_possible_truncation)]
+    egui::DragValue::new(interval_ms)
+        .range(range)
+        .speed(speed)
+        .custom_formatter(|value, _| quantick_engine::fmt_time_interval(value as i64))
+        .custom_parser(|text| {
+            #[allow(clippy::cast_precision_loss)]
+            quantick_engine::parse_time_interval(text).map(|ms| ms as f64)
+        })
 }
 
 #[cfg(test)]

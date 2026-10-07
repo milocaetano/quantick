@@ -11,7 +11,7 @@ use rust_decimal::Decimal;
 use crate::bar_registry::{BUILTIN_BARS, BarConfiguration, BarConfigurationError};
 pub use crate::bar_registry::{
     DECIMAL_PARAM_FLOOR, DEFAULT_TIME_INTERVAL_MS, MAX_TIME_INTERVAL_MS, MIN_TIME_INTERVAL_MS,
-    fmt_time_interval,
+    fmt_time_interval, parse_time_interval,
 };
 use crate::{BarBuilder, ImbalanceUnit};
 use rust_decimal::prelude::ToPrimitive;

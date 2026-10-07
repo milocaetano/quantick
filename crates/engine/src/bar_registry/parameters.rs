@@ -236,6 +236,13 @@ impl ParameterDescriptor {
     }
 }
 
+/// An interval written as [`fmt_time_interval`] writes it — `5m`, `1d`,
+/// `1mo` — or as a bare millisecond count; `None` for anything else.
+#[must_use]
+pub fn parse_time_interval(text: &str) -> Option<i64> {
+    parse_interval(text.trim()).ok()
+}
+
 fn parse_interval(text: &str) -> Result<i64, BarConfigurationError> {
     // A bare number is milliseconds; a suffix must be a unit, written in
     // lower case as `fmt_time_interval` writes it, or the text is no interval.
