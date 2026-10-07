@@ -44,7 +44,8 @@ impl BookEngine {
             .view
             .tape_end_ms
             .filter(|_| request.lane && self.config.native_tape())?;
-        let dots = dots.filter(|dots| dots.native_tape)?;
+        // The book beside a held tape is read with volume dots or without.
+        let dots = dots.filter(|dots| dots.native_tape);
         let reference_ms = typical_bar_ms(request);
         let window_ms = self.config.lane_window_ms(reference_ms).max(1);
         let latest_end = end_ms.min(self.history.latest_ms()?);
