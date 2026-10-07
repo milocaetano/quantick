@@ -7,7 +7,7 @@
 //!
 //! Crucially, the interval boundary is derived **only from trade timestamps**,
 //! never from a wall clock: a trade at time `t` falls in the bucket
-//! [`time_bucket_start`] names — `floor(t / interval) * interval` for a fixed
+//! [`crate::time_bucket::time_bucket_start`] names — `floor(t / interval) * interval` for a fixed
 //! interval, Monday 00:00 UTC for whole weeks and the calendar month for
 //! months (see [`crate::time_bucket`]). Reading the host clock would make the
 //! same fixture produce different bars on different runs — a determinism
@@ -28,7 +28,7 @@
 
 use rust_decimal::Decimal;
 
-use crate::time_bucket::{time_bucket_end, time_bucket_start};
+use crate::time_bucket::TimeBucketLaw;
 use crate::{Bar, BarBuilder, BarProgress, Trade};
 
 /// Builds time bars: one bar per `interval_ms` interval that contains trades.
@@ -40,7 +40,13 @@ use crate::{Bar, BarBuilder, BarProgress, Trade};
 #[derive(Debug, Clone)]
 pub struct TimeBarBuilder {
     interval_ms: i64,
+    /// The interval's shape, read once: a trade never re-derives it.
+    law: TimeBucketLaw,
     bucket_start: i64,
+    /// Where the forming bar's bucket ends, exclusive. A trade before it (and
+    /// not before `bucket_start`) joins the forming bar on one comparison;
+    /// only a trade past it asks the law where its bucket starts.
+    bucket_end: i64,
     current: Option<Bar>,
 }
 
@@ -57,9 +63,13 @@ impl TimeBarBuilder {
             interval_ms > 0,
             "time bar interval must be > 0 ms, got {interval_ms}"
         );
+        let law =
+            TimeBucketLaw::of(interval_ms).expect("a positive interval always has a bucket law");
         Self {
             interval_ms,
+            law,
             bucket_start: 0,
+            bucket_end: 0,
             current: None,
         }
     }
@@ -69,38 +79,25 @@ impl TimeBarBuilder {
     pub fn interval_ms(&self) -> i64 {
         self.interval_ms
     }
-
-    /// The start (epoch ms) of the interval a trade at `timestamp_ms` belongs
-    /// to — the engine's one bucket law, which floors for any timestamp.
-    fn bucket_of(&self, timestamp_ms: i64) -> i64 {
-        time_bucket_start(timestamp_ms, self.interval_ms)
-    }
 }
 
 impl BarBuilder for TimeBarBuilder {
     fn push(&mut self, trade: &Trade) -> Option<Bar> {
-        let bucket = self.bucket_of(trade.timestamp_ms);
-        match &mut self.current {
-            // First trade: open the first bar; nothing closes yet.
-            None => {
-                self.current = Some(Bar::opened_by(trade));
-                self.bucket_start = bucket;
-                None
-            }
-            // Same interval: fold the trade into the forming bar.
-            Some(bar) if bucket == self.bucket_start => {
-                bar.extend(trade);
-                None
-            }
-            // A later interval: close the current bar and open a fresh one for
-            // this trade. Any intervening empty intervals are simply skipped.
-            Some(_) => {
-                let closed = self.current.take();
-                self.current = Some(Bar::opened_by(trade));
-                self.bucket_start = bucket;
-                closed
-            }
+        let time = trade.timestamp_ms;
+        // Same interval: fold the trade into the forming bar. The hot path,
+        // and one comparison against the bucket already resolved.
+        if let Some(bar) = &mut self.current
+            && (self.bucket_start..self.bucket_end).contains(&time)
+        {
+            bar.extend(trade);
+            return None;
         }
+        // The first trade, or one in another interval: open a fresh bar for it
+        // and close the one forming, if any. Intervening empty intervals are
+        // simply skipped.
+        self.bucket_start = self.law.start(time);
+        self.bucket_end = self.law.end(self.bucket_start);
+        self.current.replace(Bar::opened_by(trade))
     }
 
     fn push_into(&mut self, trade: &Trade, closed: &mut Vec<Bar>) -> usize {
@@ -122,7 +119,7 @@ impl BarBuilder for TimeBarBuilder {
     /// the month's days rather than the nominal interval.
     fn progress(&self) -> Option<BarProgress> {
         let bar = self.current.as_ref()?;
-        let length = time_bucket_end(self.bucket_start, self.interval_ms) - self.bucket_start;
+        let length = self.bucket_end - self.bucket_start;
         let elapsed = bar
             .close_time
             .saturating_sub(self.bucket_start)
@@ -188,6 +185,35 @@ mod tests {
         assert_eq!(closed.open_time, 1500, "only the non-empty bucket closed");
         // The forming bar jumps straight to bucket 4000 — no empty bars between.
         assert_eq!(b.partial().unwrap().open_time, 4200);
+    }
+
+    /// The bucket resolved once and cached must cut exactly where the law
+    /// does for every trade: same trades in, same bars out, whichever shape.
+    #[test]
+    fn the_cached_bucket_cuts_where_the_law_does() {
+        use crate::time_bucket::{CALENDAR_MONTH_MS, DAY_MS, WEEK_MS, time_bucket_start};
+        let times: Vec<i64> = (0..400).map(|i| -5 * DAY_MS + i * 37 * 3_600_000).collect();
+        for interval in [
+            60_000,
+            DAY_MS,
+            WEEK_MS,
+            CALENDAR_MONTH_MS,
+            3 * CALENDAR_MONTH_MS,
+        ] {
+            let mut b = TimeBarBuilder::new(interval);
+            let closed: Vec<i64> = times
+                .iter()
+                .filter_map(|&ts| b.push(&trade(ts, "100.0", Side::Buy)))
+                .map(|bar| time_bucket_start(bar.open_time, interval))
+                .collect();
+            let mut expected: Vec<i64> = times
+                .iter()
+                .map(|&ts| time_bucket_start(ts, interval))
+                .collect();
+            expected.dedup();
+            expected.pop(); // the forming bar has not closed
+            assert_eq!(closed, expected, "{interval}");
+        }
     }
 
     /// The countdown follows the trades, not a wall clock — the same fixture
