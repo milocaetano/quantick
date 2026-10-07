@@ -320,15 +320,45 @@ fn a_secondary_drag_is_temporary_until_it_is_dismissed_or_converted() {
             "quick_range.fib_projection",
             crate::control::FIB_PROJECTION_CAPABILITY_ID,
         ),
+        (
+            "quick_range.rectangle",
+            crate::control::RECTANGLE_CAPABILITY_ID,
+        ),
+        (
+            "quick_range.trend_line",
+            crate::control::TREND_LINE_CAPABILITY_ID,
+        ),
+        (
+            "quick_range.horizontal_levels",
+            crate::control::HORIZONTAL_LEVELS_CAPABILITY_ID,
+        ),
     ] {
         let control = scene
             .controls
             .iter()
             .find(|control| control.control_id == control_id)
-            .expect("each Fibonacci action has a stable semantic control");
+            .expect("each action has a stable semantic control");
         assert_eq!(control.capability_id.as_deref(), Some(capability_id));
+        assert_eq!(
+            control.role,
+            quantick_control_schema::scene::SceneRoleDto::Action
+        );
         assert!(control.availability.available);
     }
+    let channel = scene
+        .controls
+        .iter()
+        .find(|control| control.control_id == "quick_range.parallel_channel")
+        .expect("the channel button has a stable semantic control");
+    assert_eq!(
+        channel.capability_id, None,
+        "pressing it only arms a placement; the trader's click finishes it"
+    );
+    assert_eq!(
+        channel.role,
+        quantick_control_schema::scene::SceneRoleDto::Tool
+    );
+    assert!(channel.availability.available);
     assert!(
         app.active_tab().flow_pane.drawings.items().is_empty(),
         "the ruler is transient, not a persistent drawing"

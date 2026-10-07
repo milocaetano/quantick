@@ -32,10 +32,10 @@ capability that cannot change application state.
 | `annotate.horizontal_levels.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.label.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.parallel_channel.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.rectangle.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.remove` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.trend_line.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.zone.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
-| `annotate.zone.create` | 2 | `annotate` | no | `annotate`, `annotate.chart` |
 | `attention.mark.create` | 1 | `attention` | no | `annotate`, `annotate.attention` |
 | `chart.price_axis.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.tape_view.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |

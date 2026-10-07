@@ -98,7 +98,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
         ),
         create_fib_projection,
     )?;
-    // In `shape_descriptors` order: zone, trend line, parallel channel.
+    // In `shape_descriptors` order: rectangle, trend line, parallel channel.
     let shapes: [super::actions::ActionHandler; 3] = [
         |app, access, actor, input| place_chart(app, access, actor, input, ZONE_TOOL_ID),
         |app, access, actor, input| place_chart(app, access, actor, input, TREND_LINE_TOOL_ID),
@@ -178,7 +178,9 @@ fn create_fib_projection<P: TabsPort + TabsMutPort + ?Sized>(
 }
 
 /// One horizontal line per distinct price of the two anchors, each anchored
-/// at the earlier bar. Every coordinate resolves before anything is placed.
+/// at the earlier bar. Every coordinate resolves before anything is placed,
+/// the lines go on all or none, and each line is journaled as its own
+/// created object, exactly as a single-shape create journals one.
 fn create_horizontal_levels<P: TabsPort + TabsMutPort + ?Sized>(
     app: &mut P,
     access: &mut ControlAccess,
@@ -194,18 +196,50 @@ fn create_horizontal_levels<P: TabsPort + TabsMutPort + ?Sized>(
     let opening = [(); 2].map(|()| app.tab_reads().new_drawing(tool));
     let pane = control_pane_mut(app, tab_id, pane_side)?;
     let validated = series::resolve(pane, tab_id, &input, 2)?;
-    let mut annotations = Vec::with_capacity(opening.len());
-    for (anchor, fresh) in horizontal_level_anchors([validated[0], validated[1]]).zip(opening) {
+    let levels: Vec<_> = horizontal_level_anchors([validated[0], validated[1]]).collect();
+    let placed = install_all(pane, levels.iter().zip(opening), |pane, (anchor, fresh)| {
         let point = ChartPoint::at_time(anchor.point.bar, anchor.point.price, anchor.point.time_ms);
         let name = input.name.clone();
-        let placed = install(pane, tool, vec![point], fresh, author.clone(), name, None)?;
-        let target = (tab_id, pane.id, pane_side);
-        annotations.push(chart_result(placed, target, tool, &[anchor], actor));
+        install(pane, tool, vec![point], fresh, author.clone(), name, None)
+    })?;
+    let target = (tab_id, pane.id, pane_side);
+    let annotations: Vec<_> = placed
+        .into_iter()
+        .zip(&levels)
+        .map(|(placed, anchor)| {
+            chart_result(placed, target, tool, std::slice::from_ref(anchor), actor)
+        })
+        .collect();
+    for annotation in &annotations {
+        journal_annotation(access, actor, ANNOTATION_CREATED_EVENT_KIND, annotation)?;
     }
-    let result = ChartAnnotationSetResult { annotations };
-    journal_annotation(access, actor, ANNOTATION_CREATED_EVENT_KIND, &result)?;
-    serde_json::to_value(result)
+    serde_json::to_value(ChartAnnotationSetResult { annotations })
         .map_err(|error| ControlError::invalid_request(format!("annotation result: {error}")))
+}
+
+/// Install every placement or none: when one fails, the ones this call
+/// already placed are retracted, undo steps included, before the error is
+/// returned.
+pub(crate) fn install_all<T>(
+    pane: &mut ChartPane,
+    placements: impl IntoIterator<Item = T>,
+    mut install_one: impl FnMut(&mut ChartPane, T) -> Result<(u64, String), ControlError>,
+) -> Result<Vec<(u64, String)>, ControlError> {
+    let mut placed = Vec::new();
+    for placement in placements {
+        match install_one(pane, placement) {
+            Ok(done) => placed.push(done),
+            Err(error) => {
+                let ids: Vec<_> = placed
+                    .iter()
+                    .map(|&(id, _)| drawings::DrawingId(id))
+                    .collect();
+                pane.drawings.retract_placements(&ids);
+                return Err(error);
+            }
+        }
+    }
+    Ok(placed)
 }
 
 fn registered_tool(tool_id: &str) -> Result<drawings::DrawingTool, ControlError> {

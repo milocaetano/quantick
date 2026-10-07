@@ -427,6 +427,14 @@ pub const READBACKS: &[Readback] = &[
         &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
     ),
     snapshot(
+        "annotate.rectangle.create",
+        Forbidden,
+        DRAWINGS_SCOPE_ID,
+        "tabs[].panes[].drawings[].author.client_name",
+        CREATED_BY_CALLER,
+        &[ANNOTATION_TEST, EVERY_FORBIDDEN_TEST],
+    ),
+    snapshot(
         "annotate.remove",
         Forbidden,
         DRAWINGS_SCOPE_ID,

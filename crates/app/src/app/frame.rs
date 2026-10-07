@@ -661,7 +661,7 @@ impl QuantickApp {
                 );
             let explain = self.drawings.finish_registered_action(pending, outcome);
             if let Err(error) = result {
-                tracing::warn!(target:"quantick::control",event_code="QUICK_RANGE_PROFILE_REFUSED",code=%error.code,error=%error.message,"the quick-range drawing could not be placed");
+                tracing::warn!(target:"quantick::control",event_code="QUICK_RANGE_ACTION_REFUSED",action=action.action_id,code=%error.code,error=%error.message,"the quick-range drawing could not be placed");
                 if explain {
                     self.surfaces
                         .toast

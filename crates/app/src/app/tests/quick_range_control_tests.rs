@@ -1,29 +1,71 @@
 //! Exact range operations remain behind the existing admitted control contract.
 
 use super::*;
+use crate::surfaces::drawing_chrome::QuickRangeActionUi as _;
+use quantick_chart_interaction::quick_range::Action;
 use quantick_control::error::codes;
 use serde_json::{Value, json};
 
-const ACTIONS: [(&str, u32, usize); 6] = [
-    (crate::control::PROFILE_CAPABILITY_ID, 2, 2),
-    (crate::control::FIB_RETRACEMENT_CAPABILITY_ID, 1, 2),
-    (crate::control::FIB_PROJECTION_CAPABILITY_ID, 1, 3),
-    (crate::control::ZONE_CAPABILITY_ID, 2, 2),
-    (crate::control::TREND_LINE_CAPABILITY_ID, 1, 2),
-    (crate::control::PARALLEL_CHANNEL_CAPABILITY_ID, 1, 3),
+/// Each quick-range action in one row with the single-drawing capability it
+/// reaches, that capability's version and its anchor count, so no action can
+/// drift from its row. `Horizontal` places a set of lines and has its own
+/// tests in `quick_range_shape_tests`.
+const ACTIONS: [(Action, &str, u32, usize); 6] = [
+    (Action::Profile, crate::control::PROFILE_CAPABILITY_ID, 2, 2),
+    (
+        Action::Retracement,
+        crate::control::FIB_RETRACEMENT_CAPABILITY_ID,
+        1,
+        2,
+    ),
+    (
+        Action::Projection,
+        crate::control::FIB_PROJECTION_CAPABILITY_ID,
+        1,
+        3,
+    ),
+    (
+        Action::Rectangle,
+        crate::control::RECTANGLE_CAPABILITY_ID,
+        1,
+        2,
+    ),
+    (
+        Action::TrendLine,
+        crate::control::TREND_LINE_CAPABILITY_ID,
+        1,
+        2,
+    ),
+    (
+        Action::Channel,
+        crate::control::PARALLEL_CHANNEL_CAPABILITY_ID,
+        1,
+        3,
+    ),
 ];
 
-/// The quick-range actions whose button calls one single-drawing capability.
-const WIRED: [quantick_chart_interaction::quick_range::Action; 5] = {
-    use quantick_chart_interaction::quick_range::Action;
-    [
-        Action::Profile,
-        Action::Retracement,
-        Action::Projection,
-        Action::Rectangle,
-        Action::TrendLine,
-    ]
-};
+#[test]
+fn every_row_names_the_capability_and_version_its_action_reaches() {
+    for (action, capability, version, _) in ACTIONS {
+        assert_eq!(action.capability_id(), capability, "{action:?}");
+        assert_eq!(action.capability_version(), version, "{action:?}");
+    }
+}
+
+/// A button calls the version a version-less caller of the same id would
+/// get: the newest one registered.
+#[test]
+fn every_action_reaches_the_newest_registered_version_of_its_capability() {
+    let registered = crate::control::registered_action_versions();
+    for action in Action::ALL {
+        let newest = registered
+            .iter()
+            .filter(|(id, _)| id == action.capability_id())
+            .map(|&(_, version)| version)
+            .max();
+        assert_eq!(newest, Some(action.capability_version()), "{action:?}");
+    }
+}
 
 fn exact_input(app: &QuantickApp, count: usize) -> Value {
     let pane = app.active_tab().drawing_pane();
@@ -47,7 +89,7 @@ fn exact_input(app: &QuantickApp, count: usize) -> Value {
 
 #[test]
 fn exact_range_validation_is_atomic_for_every_action() {
-    for (capability, version, count) in ACTIONS {
+    for (_, capability, version, count) in ACTIONS {
         let ctx = egui::Context::default();
         let (mut app, _commands) = app_with_history(8);
         run_frame(&mut app, &ctx);
@@ -103,7 +145,7 @@ fn exact_range_validation_is_atomic_for_every_action() {
 
 #[test]
 fn legacy_timestamp_mode_does_not_start_consuming_fallback_positions() {
-    for (capability, version, count) in ACTIONS {
+    for (_, capability, version, count) in ACTIONS {
         let ctx = egui::Context::default();
         let (mut app, _commands) = app_with_history(8);
         run_frame(&mut app, &ctx);
@@ -127,7 +169,7 @@ fn legacy_timestamp_mode_does_not_start_consuming_fallback_positions() {
 
 #[test]
 fn all_actions_resolve_fractional_market_and_first_future_slots_exactly() {
-    for (capability, version, count) in ACTIONS {
+    for (_, capability, version, count) in ACTIONS {
         let ctx = egui::Context::default();
         let (mut app, _commands) = app_with_history(8);
         run_frame(&mut app, &ctx);
@@ -171,7 +213,7 @@ fn all_actions_resolve_fractional_market_and_first_future_slots_exactly() {
 fn quick_range_wire_round_trip_preserves_near_boundary_coordinates_for_all_actions() {
     use quantick_chart_interaction::quick_range::{Anchor, Owner, PlaceRequest, RangeContext};
     for duplicate_times in [false, true] {
-        for (action, (capability, version, count)) in WIRED.into_iter().zip(ACTIONS) {
+        for (action, capability, version, count) in ACTIONS {
             let ctx = egui::Context::default();
             let (mut app, _commands) = app_with_history(8);
             if duplicate_times {
@@ -217,8 +259,14 @@ fn quick_range_wire_round_trip_preserves_near_boundary_coordinates_for_all_actio
             };
             assert!(request.anchors[0].time_ms.is_some());
             assert!(request.anchors[1].time_ms.is_none());
-            let input =
+            let mut input =
                 crate::control::quick_range_input(&request, crate::pane::PaneSide::Flow).unwrap();
+            if action.arms_placement() {
+                // The channel's button arms a placement; the trader's width
+                // click is the third anchor a client sends in one call.
+                let anchors = input["anchors"].as_array_mut().unwrap();
+                anchors.push(anchors[1].clone());
+            }
             let result = app
                 .control_action(
                     capability,
@@ -271,7 +319,7 @@ fn exact_range_remote_calls_preserve_grants_authorship_and_idempotency_policy() 
                 .unwrap()
                 .select(None)
                 .unwrap();
-        for (index, (capability, version, count)) in ACTIONS.into_iter().enumerate() {
+        for (index, (_, capability, version, count)) in ACTIONS.into_iter().enumerate() {
             let input = exact_input(&app, count);
             client
                 .send_with_request_id(

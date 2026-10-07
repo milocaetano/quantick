@@ -54,7 +54,7 @@ impl ActionUi for Action {
             Self::Profile => ids::PROFILE_CAPABILITY_ID,
             Self::Retracement => ids::FIB_RETRACEMENT_CAPABILITY_ID,
             Self::Projection => ids::FIB_PROJECTION_CAPABILITY_ID,
-            Self::Rectangle => ids::ZONE_CAPABILITY_ID,
+            Self::Rectangle => ids::RECTANGLE_CAPABILITY_ID,
             Self::TrendLine => ids::TREND_LINE_CAPABILITY_ID,
             Self::Horizontal => ids::HORIZONTAL_LEVELS_CAPABILITY_ID,
             Self::Channel => ids::PARALLEL_CHANNEL_CAPABILITY_ID,
@@ -64,8 +64,11 @@ impl ActionUi for Action {
     fn capability_version(self) -> u32 {
         match self {
             Self::Profile => ids::PROFILE_CAPABILITY_VERSION,
-            Self::Rectangle => ids::ZONE_CHART_CAPABILITY_VERSION,
-            _ => ids::FIB_CAPABILITY_VERSION,
+            Self::Retracement | Self::Projection => ids::FIB_CAPABILITY_VERSION,
+            Self::Rectangle => ids::RECTANGLE_CAPABILITY_VERSION,
+            Self::TrendLine => ids::TREND_LINE_CAPABILITY_VERSION,
+            Self::Horizontal => ids::HORIZONTAL_LEVELS_CAPABILITY_VERSION,
+            Self::Channel => ids::PARALLEL_CHANNEL_CAPABILITY_VERSION,
         }
     }
 }

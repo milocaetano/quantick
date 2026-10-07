@@ -81,6 +81,11 @@ impl HorizontalLevels {
     pub fn prices(&self) -> &[f64] {
         &self.prices[..self.len]
     }
+
+    /// The same prices, by value.
+    pub fn into_prices(self) -> impl Iterator<Item = f64> {
+        self.prices.into_iter().take(self.len)
+    }
 }
 
 pub fn horizontal_levels(anchors: [Anchor; 2]) -> HorizontalLevels {

@@ -32,11 +32,16 @@ pub const ANNOTATE_CHART_PERMISSION_ID: &str = "annotate.chart";
 pub const LABEL_CAPABILITY_ID: &str = "annotate.label.create";
 pub const ARROW_CAPABILITY_ID: &str = "annotate.arrow.create";
 pub const ZONE_CAPABILITY_ID: &str = "annotate.zone.create";
-/// Version 2 of the zone takes future-aware chart anchors.
-pub const ZONE_CHART_CAPABILITY_VERSION: u32 = 2;
+/// A rectangle on future-aware chart anchors. Its own id rather than a second
+/// zone version, so a version-less caller of the zone keeps the zone's shape.
+pub const RECTANGLE_CAPABILITY_ID: &str = "annotate.rectangle.create";
+pub const RECTANGLE_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
 pub const TREND_LINE_CAPABILITY_ID: &str = "annotate.trend_line.create";
+pub const TREND_LINE_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
 pub const HORIZONTAL_LEVELS_CAPABILITY_ID: &str = "annotate.horizontal_levels.create";
+pub const HORIZONTAL_LEVELS_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
 pub const PARALLEL_CHANNEL_CAPABILITY_ID: &str = "annotate.parallel_channel.create";
+pub const PARALLEL_CHANNEL_CAPABILITY_VERSION: u32 = CAPABILITY_VERSION;
 pub const PROFILE_CAPABILITY_ID: &str = "annotate.fixed_range_profile.create";
 pub const PROFILE_CAPABILITY_VERSION: u32 = 2;
 pub const FIB_RETRACEMENT_CAPABILITY_ID: &str = "annotate.fib_retracement.create";
@@ -307,25 +312,25 @@ pub fn chart_descriptor(
     descriptor
 }
 
-/// The single-drawing shapes on chart anchors: zone (version 2), trend line,
+/// The single-drawing shapes on chart anchors: rectangle, trend line,
 /// parallel channel, in that order.
 pub fn shape_descriptors() -> [CapabilityDescriptor; 3] {
     [
         chart_descriptor(
-            ZONE_CAPABILITY_ID,
-            ZONE_CHART_CAPABILITY_VERSION,
-            "Place a zone",
+            RECTANGLE_CAPABILITY_ID,
+            RECTANGLE_CAPABILITY_VERSION,
+            "Place a rectangle",
             "Draws a rectangle on two chart coordinates, including projected space beyond the latest bar.",
         ),
         chart_descriptor(
             TREND_LINE_CAPABILITY_ID,
-            CAPABILITY_VERSION,
+            TREND_LINE_CAPABILITY_VERSION,
             "Place a trend line",
             "Draws a trend line between two chart coordinates.",
         ),
         chart_descriptor(
             PARALLEL_CHANNEL_CAPABILITY_ID,
-            CAPABILITY_VERSION,
+            PARALLEL_CHANNEL_CAPABILITY_VERSION,
             "Place a parallel channel",
             "Draws a channel whose base joins the first two chart coordinates and whose width reaches the third.",
         ),
@@ -336,7 +341,7 @@ pub fn shape_descriptors() -> [CapabilityDescriptor; 3] {
 pub fn horizontal_levels_descriptor() -> CapabilityDescriptor {
     let mut descriptor = chart_descriptor(
         HORIZONTAL_LEVELS_CAPABILITY_ID,
-        CAPABILITY_VERSION,
+        HORIZONTAL_LEVELS_CAPABILITY_VERSION,
         "Place horizontal levels",
         "Draws a horizontal line at the top and at the bottom price of two chart coordinates; one line when both prices are equal.",
     );

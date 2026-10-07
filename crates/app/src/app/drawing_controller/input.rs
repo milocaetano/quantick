@@ -490,6 +490,8 @@ impl DrawingController {
 }
 
 pub(crate) struct RegisteredDrawingAction {
+    /// The quick-range button's control id, for the refusal log.
+    pub(crate) action_id: &'static str,
     pub(crate) capability: &'static str,
     pub(crate) version: u32,
     pub(crate) input: serde_json::Value,
@@ -522,6 +524,7 @@ impl DrawingController {
             return None;
         };
         Some(RegisteredDrawingAction {
+            action_id: operation.action.control_id(),
             capability: operation.action.capability_id(),
             version: operation.action.capability_version(),
             input,

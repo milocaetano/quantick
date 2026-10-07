@@ -1,5 +1,7 @@
 # feat/quick-range-shapes: the shape handlers (control/annotate.rs) and the
 # channel's draft seeding (drawing_controller) bind the pane's drawing store,
-# which only `app` holds; their geometry and wire shapes moved below.
-crates/app +48
-!budget +48
+# which only `app` holds; their geometry and wire shapes moved below. The
+# store's retraction of a part-placed call (drawings/collection.rs) and the
+# scene's tool role for the channel button bind the same app-only state.
+crates/app +80
+!budget +80

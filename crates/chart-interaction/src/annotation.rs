@@ -114,9 +114,9 @@ pub fn horizontal_level_anchors(
 ) -> impl Iterator<Item = ResolvedAnchor> {
     let left = anchors[usize::from(anchors[1].point.bar < anchors[0].point.bar)];
     let levels = crate::quick_range::horizontal_levels(anchors.map(|anchor| anchor.point));
-    (0..levels.prices().len()).map(move |index| ResolvedAnchor {
+    levels.into_prices().map(move |price| ResolvedAnchor {
         point: Anchor {
-            price: levels.prices()[index],
+            price,
             ..left.point
         },
         ..left

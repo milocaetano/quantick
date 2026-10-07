@@ -303,6 +303,27 @@ impl Drawings {
         true
     }
 
+    /// Take back the placements of one call that failed part-way, newest
+    /// first: each object goes, and while the newest undo step is the one
+    /// that placed it, that step goes too, so neither the chart nor Ctrl+Z
+    /// keeps half of the call.
+    pub fn retract_placements(&mut self, ids: &[DrawingId]) {
+        for &id in ids.iter().rev() {
+            let newest = self.items.split_last().filter(|(last, _)| last.id == id);
+            let placed_by_newest_step = newest.is_some_and(|(_, rest)| {
+                self.undo
+                    .last()
+                    .is_some_and(|entry| entry.items[..] == *rest)
+            });
+            if placed_by_newest_step {
+                let entry = self.undo.pop().expect("the newest step was checked above");
+                self.restore(entry);
+            } else {
+                self.remove_by_id(id);
+            }
+        }
+    }
+
     /// Remove every object an operator other than the trader placed, and
     /// report how many went. One gesture, one undo entry — the trader's way
     /// back from an assistant that drew too much.

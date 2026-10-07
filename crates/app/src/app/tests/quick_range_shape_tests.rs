@@ -205,7 +205,7 @@ fn horizontal_levels_capability_places_one_line_per_distinct_price() {
 #[test]
 fn each_shape_capability_places_its_own_tool() {
     for (capability, version, tool, count) in [
-        (crate::control::ZONE_CAPABILITY_ID, 2, "rectangle", 2),
+        (crate::control::RECTANGLE_CAPABILITY_ID, 1, "rectangle", 2),
         (crate::control::TREND_LINE_CAPABILITY_ID, 1, "trend-line", 2),
         (
             crate::control::PARALLEL_CHANNEL_CAPABILITY_ID,
@@ -235,4 +235,87 @@ fn each_shape_capability_places_its_own_tool() {
         assert_eq!(placed.len(), 1);
         assert_eq!(placed[0].points.len(), count);
     }
+}
+
+#[test]
+fn horizontal_levels_journal_one_created_event_per_line() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(8);
+    run_frame(&mut app, &ctx);
+    let mut anchors = [anchor_at_slot(&app, 1), anchor_at_slot(&app, 5)];
+    for (anchor, price) in anchors.iter_mut().zip(["101", "99"]) {
+        anchor["price"] = json!(price);
+    }
+    let result = app
+        .control_action(
+            crate::control::HORIZONTAL_LEVELS_CAPABILITY_ID,
+            1,
+            crate::control::ActionOrigin::Human,
+            json!({ "anchors": anchors }),
+        )
+        .unwrap();
+    let placed: Vec<_> = result["annotations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|annotation| annotation["annotation_id"].clone())
+        .collect();
+    assert_eq!(placed.len(), 2);
+    let journaled: Vec<_> = app
+        .control
+        .control_access
+        .as_ref()
+        .unwrap()
+        .journal()
+        .read(1, 64, 1 << 20)
+        .events
+        .iter()
+        .filter(|event| event.kind.as_str() == "annotate.object.created")
+        .map(|event| {
+            let annotation = &event.payload["annotation"];
+            assert_eq!(annotation["tool_id"], "horizontal-line");
+            assert!(
+                annotation.get("annotations").is_none(),
+                "one line, not a set"
+            );
+            annotation["annotation_id"].clone()
+        })
+        .collect();
+    assert_eq!(
+        journaled, placed,
+        "one standard event per line, in placement order"
+    );
+}
+
+#[test]
+fn a_failed_later_line_takes_back_the_lines_already_placed() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(8);
+    run_frame(&mut app, &ctx);
+    let tool = crate::drawings::DrawingTool::by_id("horizontal-line").unwrap();
+    let mut fresh = Some(app.tab_reads().new_drawing(tool));
+    let pane = app.active_tab_mut().drawing_pane_mut();
+    let depth = pane.drawings.undo_depth();
+    let refused = crate::control::install_all(pane, [true, false], |pane, places| {
+        if !places {
+            return Err(quantick_control::error::ControlError::invalid_request(
+                "the second line fails",
+            ));
+        }
+        let point = crate::drawings::ChartPoint::at_time(1.5, 100.0, None);
+        let band = crate::drawings::DrawingBand::Price;
+        assert!(
+            pane.drawings
+                .place_with(tool, &band, point, |_| fresh.take().unwrap())
+        );
+        Ok((pane.drawings.items().last().unwrap().id.0, String::new()))
+    });
+    assert!(refused.is_err());
+    let pane = app.active_tab().drawing_pane();
+    assert!(pane.drawings.items().is_empty(), "no orphan first line");
+    assert_eq!(
+        pane.drawings.undo_depth(),
+        depth,
+        "and no undo step that brings it back"
+    );
 }

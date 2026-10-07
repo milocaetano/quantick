@@ -44,12 +44,14 @@ mod types;
 mod workspace;
 
 pub(crate) use actions::{MARK_CAPABILITY_ID, MARK_CAPABILITY_VERSION};
+#[cfg(test)]
+pub(crate) use annotate::install_all;
 pub(crate) use annotate::quick_range_input;
 #[cfg(test)]
 pub(crate) use annotate::{
     FIB_CAPABILITY_VERSION, FIB_PROJECTION_CAPABILITY_ID, FIB_RETRACEMENT_CAPABILITY_ID,
     HORIZONTAL_LEVELS_CAPABILITY_ID, PARALLEL_CHANNEL_CAPABILITY_ID, PROFILE_CAPABILITY_ID,
-    PROFILE_CAPABILITY_VERSION, TREND_LINE_CAPABILITY_ID, ZONE_CAPABILITY_ID,
+    PROFILE_CAPABILITY_VERSION, RECTANGLE_CAPABILITY_ID, TREND_LINE_CAPABILITY_ID,
 };
 #[cfg(test)]
 pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID};
@@ -97,6 +99,16 @@ pub(crate) fn registered_action_count() -> usize {
         .expect("built-in action registry must be valid")
         .descriptors()
         .count()
+}
+
+/// Every registered action as its id and version.
+#[cfg(test)]
+pub(crate) fn registered_action_versions() -> Vec<(String, u32)> {
+    actions::standard_actions()
+        .expect("built-in action registry must be valid")
+        .descriptors()
+        .map(|descriptor| (descriptor.id.as_str().to_owned(), descriptor.version))
+        .collect()
 }
 
 /// Build the initial owner-module registry. Adding a later snapshot module is
