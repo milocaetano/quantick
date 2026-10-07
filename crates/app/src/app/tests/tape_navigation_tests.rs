@@ -985,21 +985,8 @@ fn the_cursor_reads_the_book_a_held_tape_paints() {
     let ctx = egui::Context::default();
     let mut app = recorded_book(&ctx);
     let (_, lane) = held_at(&mut app, &ctx, 35_000);
-    let pane = &app.active_tab().flow_pane;
-    let chart = pane.frame.chart_rect.expect("the canvas laid out");
-    let divider = pane.frame.lane_divider_x.expect("the divider");
-    let quantities: Vec<_> = (lane.top() as i32..lane.bottom() as i32)
-        .step_by(2)
-        .filter_map(|y| {
-            app.active_tab().tape().control_flow_cell_at(
-                chart,
-                &pane.viewport,
-                pane.slots(),
-                chart.right() - divider,
-                false,
-                egui::pos2(lane.center().x, y as f32),
-            )
-        })
+    let quantities: Vec<_> = lane_cells(&app, lane)
+        .into_iter()
         .map(|cell| (cell.side, cell.quantity))
         .collect();
     assert!(
@@ -1012,4 +999,49 @@ fn the_cursor_reads_the_book_a_held_tape_paints() {
             .any(|(_, quantity)| *quantity == Decimal::from(7)),
         "today's book is not: {quantities:?}"
     );
+}
+
+/// The cells under a cursor walked down the middle of `lane`, asked the way
+/// the control plane's pointer asks, with the geometry the frame painted.
+fn lane_cells(app: &QuantickApp, lane: egui::Rect) -> Vec<crate::orderflow_view::FlowCellHit> {
+    let pane = &app.active_tab().flow_pane;
+    let chart = pane.frame.chart_rect.expect("the canvas laid out");
+    let divider = pane.frame.lane_divider_x.expect("the divider");
+    (lane.top() as i32..lane.bottom() as i32)
+        .step_by(2)
+        .filter_map(|y| {
+            app.active_tab().tape().control_flow_cell_at(
+                chart,
+                &pane.viewport,
+                pane.slots(),
+                chart.right() - divider,
+                false,
+                egui::pos2(lane.center().x, y as f32),
+            )
+        })
+        .collect()
+}
+
+/// A band on a held tape is the past, never the live lane: the cursor's
+/// snapshot says it is not live and names the instant the tape is held at,
+/// so a reader cannot take the held book for today's.
+#[test]
+fn the_cursor_over_a_held_band_reports_the_held_instant_not_live() {
+    let ctx = egui::Context::default();
+    let mut app = recorded_book(&ctx);
+    let (_, lane) = held_at(&mut app, &ctx, 35_000);
+    let held = app.active_tab().tape().tape_end().past_ms();
+    assert!(held.is_some(), "held in the past");
+    let cells: Vec<_> = lane_cells(&app, lane)
+        .into_iter()
+        .map(crate::control::flow_cell_snapshot)
+        .collect();
+    assert!(!cells.is_empty(), "the held book is under the cursor");
+    for cell in &cells {
+        assert!(!cell.live_lane, "a held band is not live: {cell:?}");
+        assert_eq!(
+            cell.held_tape_end_unix_ms, held,
+            "the snapshot names the held instant: {cell:?}"
+        );
+    }
 }

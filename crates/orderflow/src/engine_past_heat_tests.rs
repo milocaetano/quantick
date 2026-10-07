@@ -91,9 +91,13 @@ fn engine(trades: &[Trade], retention_ms: i64) -> BookEngine {
 }
 
 fn session(trades: &[Trade], retention_ms: i64) -> (BookEngine, BookClock) {
+    session_with(trades, config(retention_ms))
+}
+
+fn session_with(trades: &[Trade], config: HeatmapConfig) -> (BookEngine, BookClock) {
     let mut engine = BookEngine::new("WINV26");
     engine.set_enabled(true, GENERATION);
-    engine.apply_visual_config(config(retention_ms));
+    engine.apply_visual_config(config);
     engine.handle_depth_event(DepthEvent::Snapshot {
         symbol: "WINV26".to_owned(),
         generation: GENERATION,
@@ -457,4 +461,37 @@ fn a_past_tape_before_the_retained_book_says_so() {
         "and no band is invented before it"
     );
     assert!(!heat.cells.is_empty(), "the retained half is drawn");
+}
+
+/// Trader 2026-10-07: the tape alone with volume dots off, held in the past,
+/// read "L2 loading" forever: the past was projected only for volume dots.
+/// The held book belongs to the tape, dots or not, and the tape still draws
+/// no past marks without them.
+#[test]
+fn a_held_tape_without_volume_dots_still_draws_its_book() {
+    let trades = tape();
+    let mut tape_only = config(crate::config::DEFAULT_RETENTION_MS);
+    tape_only.live_lane.tape_only = true;
+    tape_only.volume_dots.enabled = false;
+    assert!(tape_only.native_tape());
+    let (mut engine, _) = session_with(&trades, tape_only);
+    let end_ms = latest(&trades) - 4 * WINDOW_MS;
+    let (past, slots) = panned(&mut engine, &trades, end_ms);
+    assert!(
+        past.projection.aggressions.is_empty(),
+        "no volume dots, no past marks"
+    );
+    let heat = PlacedPastHeat::default().place(
+        Some(&past.heat),
+        (end_ms, past.window_ms, slots),
+        past.heat.effective_grouping,
+    );
+    assert!(
+        heat.gaps.iter().all(|gap| gap.reason != BOOK_PENDING),
+        "the book was read, not left pending: {:?}",
+        heat.gaps
+    );
+    for wall in [RestingSide::Bid, RestingSide::Ask] {
+        assert!(!side(&heat, wall).is_empty(), "the {wall:?} wall is drawn");
+    }
 }
