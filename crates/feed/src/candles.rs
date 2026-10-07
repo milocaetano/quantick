@@ -26,7 +26,9 @@
 //! without a feed and re-run without drift.
 
 use quantick_engine::Bar;
-use quantick_engine::time_bucket::{DAY_MS, WEEK_MS, calendar_months, time_bucket_start};
+use quantick_engine::time_bucket::{
+    DAY_MS, TimeBucketLaw, WEEK_MS, calendar_months, time_bucket_start,
+};
 
 /// Whether `interval_ms` can be folded to from `base_interval_ms` candles.
 ///
@@ -56,7 +58,8 @@ pub fn is_foldable(base_interval_ms: i64, interval_ms: i64) -> bool {
 /// moves. It matters for a daily candle cut at a server's own midnight
 /// (MetaTrader's D1 on a server three hours ahead of UTC opens at 21:00 the
 /// day before): the candle lands in the UTC day holding most of it rather
-/// than the one its first hours fall in.
+/// than the one its first hours fall in, and [`fold`] stamps it inside that
+/// day.
 #[must_use]
 pub fn placement_ms(bar: &Bar) -> i64 {
     let span = bar.close_time.saturating_sub(bar.open_time).max(0);
@@ -77,6 +80,14 @@ pub fn placement_ms(bar: &Bar) -> i64 {
 /// Buckets with nothing in them are skipped rather than emitted flat — the
 /// engine's empty-interval rule, kept across the fold: a gap is the honest
 /// record that nothing traded.
+///
+/// A folded bar's stamps stay inside the bucket it was placed in. A candle
+/// cut at a server's midnight reaches across the UTC boundary, and keeping its
+/// raw `open_time` would stamp a UTC day's bar on the evening before — where
+/// the crosshair and every slot lookup would put it beside an intraday pane's
+/// previous day. The clamp moves only a stamp that lay outside the bucket; the
+/// feed says once per block that its days are the server's (the
+/// `MT5_RATES_SERVER_DAY` event), so the re-cut is labelled, not silent.
 #[must_use]
 pub fn fold(base: &[Bar], base_interval_ms: i64, interval_ms: i64) -> Vec<Bar> {
     if !is_foldable(base_interval_ms, interval_ms) || base.is_empty() {
@@ -89,20 +100,31 @@ pub fn fold(base: &[Bar], base_interval_ms: i64, interval_ms: i64) -> Vec<Bar> {
                 .max(1)
             + 1,
     );
-    let mut open_bucket: Option<i64> = None;
+    let Some(law) = TimeBucketLaw::of(interval_ms) else {
+        return Vec::new();
+    };
+    let mut open_bucket: Option<(i64, i64)> = None;
     for bar in base {
-        let bucket = bucket_start(placement_ms(bar), interval_ms);
+        let bucket = law.start(placement_ms(bar));
         match (open_bucket, out.last_mut()) {
             // Same bucket as the bar before it: merge in.
-            (Some(current), Some(folded)) if current == bucket => merge_into(folded, bar),
+            (Some((current, end)), Some(folded)) if current == bucket => {
+                merge_into(folded, bar);
+                folded.close_time = folded.close_time.min(end - 1);
+            }
             // A new bucket starts a new bar, keeping the base candle's own
             // `open_time` rather than the window's start: the first minute
             // that traded is when this bar opened, and rounding it down to the
             // bucket would claim a price at a moment nothing printed. The
-            // bucket is what groups; the stamp stays the market's.
+            // bucket is what groups; the stamp stays the market's — clamped
+            // into the bucket only where the candle reached outside it.
             _ => {
-                open_bucket = Some(bucket);
-                out.push(bar.clone());
+                let end = law.end(bucket);
+                open_bucket = Some((bucket, end));
+                let mut opened = bar.clone();
+                opened.open_time = opened.open_time.clamp(bucket, end - 1);
+                opened.close_time = opened.close_time.clamp(opened.open_time, end - 1);
+                out.push(opened);
             }
         }
     }
@@ -189,9 +211,7 @@ pub fn trim_to_seam(
     let Some(seam) = seam_bucket_ms(first_engine_bar, partial, interval_ms) else {
         return folded;
     };
-    // By the bucket a folded bar was placed in, not its stamp: a server-day
-    // candle opening the evening before still covers the seam's own day.
-    folded.retain(|bar| bucket_start(placement_ms(bar), interval_ms) < seam);
+    folded.retain(|bar| before_seam(bar, seam, interval_ms));
     folded
 }
 
@@ -213,9 +233,17 @@ pub fn trim_borrowed_to_seam(
         return base.to_vec();
     };
     base.iter()
-        .filter(|bar| bar.open_time < seam)
+        .filter(|bar| before_seam(bar, seam, interval_ms))
         .cloned()
         .collect()
+}
+
+/// Whether a venue candle sits wholly before the seam bucket — the one test
+/// both trims apply. By the bucket the candle is placed in, not its stamp: a
+/// server-day candle opening the evening before still covers the seam's own
+/// day.
+fn before_seam(bar: &Bar, seam: i64, interval_ms: i64) -> bool {
+    bucket_start(placement_ms(bar), interval_ms) < seam
 }
 
 /// Where the venue's candles have to stop for the pane's own bars to begin, or
@@ -507,7 +535,70 @@ mod tests {
             DAY_MS,
         );
         assert_eq!(days.len(), 2);
-        assert_eq!(days[1].open_time, MON_29_JAN_2024 + 7 * DAY_MS - two_hours);
+        assert_eq!(
+            days[1].open_time,
+            MON_29_JAN_2024 + 7 * DAY_MS,
+            "stamped inside the UTC day it was placed in"
+        );
+    }
+
+    /// A server-day candle folds to a bar stamped inside the UTC bucket it was
+    /// placed in, east of UTC and west of it, so a slot lookup or the
+    /// crosshair finds it on the same day an intraday pane draws.
+    #[test]
+    fn a_folded_server_day_candle_is_stamped_inside_its_utc_bucket() {
+        let hours = 3_600_000;
+        for offset in [-3 * hours, 5 * hours] {
+            let base: Vec<Bar> = (6..9).map(|day| daily(day, offset)).collect();
+            for interval in [DAY_MS, WEEK_MS, CALENDAR_MONTH_MS] {
+                for bar in fold(&base, DAY_MS, interval) {
+                    let bucket = bucket_start(placement_ms(&bar), interval);
+                    let end = quantick_engine::time_bucket::time_bucket_end(bucket, interval);
+                    assert!(
+                        bucket <= bar.open_time && bar.open_time <= bar.close_time,
+                        "{offset} {interval}: {bar:?}"
+                    );
+                    assert!(bar.close_time < end, "{offset} {interval}: {bar:?}");
+                    assert_eq!(bucket_start(bar.open_time, interval), bucket);
+                }
+            }
+            let days = fold(&base, DAY_MS, DAY_MS);
+            assert_eq!(days.len(), 3, "one bar per server day");
+            assert_eq!(
+                days.iter()
+                    .map(|bar| bucket_start(bar.open_time, DAY_MS))
+                    .collect::<Vec<_>>(),
+                (6..9)
+                    .map(|day| MON_29_JAN_2024 + day * DAY_MS)
+                    .collect::<Vec<_>>(),
+                "{offset}"
+            );
+        }
+    }
+
+    /// Both trims place a candle by the same rule, so the unfolded base and
+    /// the folded one stop at the same seam.
+    #[test]
+    fn both_trims_cut_a_server_day_candle_at_the_same_seam() {
+        let base: Vec<Bar> = (6..9).map(|day| daily(day, -2 * 3_600_000)).collect();
+        let first_engine = Bar {
+            open_time: MON_29_JAN_2024 + 8 * DAY_MS + 3_600_000,
+            close_time: MON_29_JAN_2024 + 8 * DAY_MS + 3_600_000,
+            ..candle(0, 0)
+        };
+        let borrowed = trim_borrowed_to_seam(&base, Some(&first_engine), None, DAY_MS);
+        let owned = trim_to_seam(
+            fold(&base, DAY_MS, DAY_MS),
+            Some(&first_engine),
+            None,
+            DAY_MS,
+        );
+        assert_eq!(
+            borrowed.len(),
+            2,
+            "Tuesday's candle opens on Monday evening"
+        );
+        assert_eq!(fold(&borrowed, DAY_MS, DAY_MS), owned);
     }
 
     /// The seam rule: history folded from venue candles and bars the engine
