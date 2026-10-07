@@ -21,7 +21,9 @@ use crate::timeline::{BarTimeline, LiveEdge};
 const NO_DOT_RUNGS: (i64, i64) = (0, 0);
 
 fn rungs_of(dots: Option<&VolumeDots>) -> (i64, i64) {
-    dots.map_or(NO_DOT_RUNGS, |dots| (dots.tape_window_ms, dots.tape_level_ticks))
+    dots.map_or(NO_DOT_RUNGS, |dots| {
+        (dots.tape_window_ms, dots.tape_level_ticks)
+    })
 }
 
 /// Width of the grid past groups are frozen on: the window, rounded up to
