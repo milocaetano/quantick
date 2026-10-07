@@ -145,6 +145,30 @@ pub fn fmt_time_as(ms: i64, tz: TzOffset, format: crate::chart::TimeLabelFormat)
     format.write(secs / 3600, (secs % 3600) / 60, secs % 60)
 }
 
+/// The pointer's time tag for a bar opening at `open_ms`: the instant to the
+/// second below a day, and on a calendar chart the date of its UTC bucket,
+/// as the axis labels name it — `Wed 07 Oct 2026` for a day or a week,
+/// `Oct 2026` for a month or several. A clock time alone there would read
+/// the same `21:00:00` on every bar west of UTC.
+#[must_use]
+pub fn fmt_pointer_time(open_ms: i64, interval_ms: Option<i64>, tz: TzOffset) -> String {
+    let Some(interval) = interval_ms.filter(|interval| calendar_label_sample(*interval).is_some())
+    else {
+        return fmt_time_as(open_ms, tz, crate::chart::TimeLabelFormat::Full);
+    };
+    let day = quantick_civil::CivilDate::from_ms(
+        quantick_engine::time_bucket::time_bucket_start(open_ms, interval),
+        TzOffset::new(0),
+    );
+    if quantick_engine::time_bucket::calendar_months(interval).is_some() {
+        let (year, _, _) = day.ymd();
+        let short = day.short();
+        format!("{} {year:04}", short.get(3..).unwrap_or_default())
+    } else {
+        day.long()
+    }
+}
+
 /// The sample a calendar chart's time labels are measured by, or `None`
 /// below a day, where the clock time is the label.
 ///
@@ -205,6 +229,33 @@ pub fn fmt_calendar_label(
 mod tests {
     use super::*;
     use crate::timezone::TzOffset;
+
+    /// The pointer's tag on a day, week or month chart names the bucket's
+    /// date, not the display zone's clock at its UTC midnight.
+    #[test]
+    fn the_pointer_tag_names_the_date_on_a_calendar_chart() {
+        use quantick_engine::time_bucket::{CALENDAR_MONTH_MS, DAY_MS, WEEK_MS};
+        let oct_7 = 1_791_331_200_000;
+        let brt = TzOffset::new(-180);
+        assert_eq!(
+            fmt_pointer_time(oct_7, Some(DAY_MS), brt),
+            "Wed 07 Oct 2026"
+        );
+        assert_eq!(
+            fmt_pointer_time(oct_7, Some(WEEK_MS), brt),
+            "Mon 05 Oct 2026"
+        );
+        assert_eq!(
+            fmt_pointer_time(oct_7, Some(CALENDAR_MONTH_MS), brt),
+            "Oct 2026"
+        );
+        assert_eq!(
+            fmt_pointer_time(oct_7, Some(3 * CALENDAR_MONTH_MS), brt),
+            "Oct 2026"
+        );
+        assert_eq!(fmt_pointer_time(oct_7, Some(60_000), brt), "21:00:00");
+        assert_eq!(fmt_pointer_time(oct_7, None, brt), "21:00:00");
+    }
 
     #[test]
     fn a_calendar_chart_labels_its_bars_by_date() {

@@ -36,7 +36,7 @@
 use eframe::egui;
 use smallvec::SmallVec;
 
-use crate::chart::{self, PriceScale, TimeLabelFormat};
+use crate::chart::{self, PriceScale};
 use crate::theme;
 use crate::timezone::TzOffset;
 
@@ -127,12 +127,16 @@ pub(crate) fn time_tag(
     strip: egui::Rect,
     readout: &PointerReadout,
 ) -> Option<(f32, f32)> {
-    readout.bar?;
-    // Monospace, so one measurement of the format answers for every instant
-    // written in it — the rule the strip's own labels are measured by.
+    let bar = readout.bar?;
+    // Monospace, so the tag's own text measured in any zone answers for it:
+    // a clock time is the same width everywhere, and a date is not a clock.
     let width = painter
         .layout_no_wrap(
-            TimeLabelFormat::Full.sample().to_owned(),
+            crate::plot_area::fmt_pointer_time(
+                bar.open_time_unix_ms,
+                bar.interval_ms,
+                TzOffset::new(0),
+            ),
             egui::FontId::monospace(chart::TIME_LABEL_FONT_PX),
             theme::TEXT_PRIMARY,
         )
@@ -153,6 +157,9 @@ pub(crate) struct PointerBar {
     pub slot: usize,
     /// When that bar opened, in Unix milliseconds.
     pub open_time_unix_ms: i64,
+    /// The pane's time interval, when it cuts by time: a calendar one tags
+    /// the date rather than the clock.
+    pub interval_ms: Option<i64>,
 }
 
 /// What the axes have to say about the pointer's position.
@@ -293,8 +300,9 @@ pub(crate) fn paint_time_mark(
     // Always the full instant, whatever density the strip's own labels are
     // written at. The strip drops seconds when it runs out of room for six
     // labels; there is only ever one of these, and a trader who points at a
-    // bar to ask when it happened is asking to the second.
-    let text = crate::plot_area::fmt_time_as(bar.open_time_unix_ms, tz, TimeLabelFormat::Full);
+    // bar to ask when it happened is asking to the second — or, on a day,
+    // week or month chart, to the date.
+    let text = crate::plot_area::fmt_pointer_time(bar.open_time_unix_ms, bar.interval_ms, tz);
     let galley = painter.layout_no_wrap(
         text,
         egui::FontId::monospace(chart::TIME_LABEL_FONT_PX),
@@ -470,6 +478,7 @@ mod tests {
         let bar = PointerBar {
             slot: 7,
             open_time_unix_ms: 1_700_000_000_000,
+            interval_ms: None,
         };
         let hit = read(egui::pos2(120.0, 50.0), Some(bar)).expect("over the chart");
         assert_eq!(hit.bar, Some(bar));

@@ -1123,6 +1123,7 @@ fn the_compass_names_the_candle_under_the_pointer() {
                 Some(pointer_compass::PointerBar {
                     slot,
                     open_time_unix_ms: BAR_ZERO_MS + slot as i64 * 60_000,
+                    interval_ms: pane.state.spec().time_interval_ms(),
                 }),
                 "every pixel of candle {slot} reads candle {slot}'s own instant"
             );

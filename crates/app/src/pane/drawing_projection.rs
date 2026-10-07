@@ -677,6 +677,7 @@ impl PaneSeriesRead<'_> {
         Some(crate::pointer_compass::PointerBar {
             slot,
             open_time_unix_ms: self.slot_open_time(slot)?,
+            interval_ms: self.spec.spec().time_interval_ms(),
         })
     }
 }
