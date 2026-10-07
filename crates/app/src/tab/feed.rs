@@ -32,9 +32,19 @@ use quantick_stores::bubble_asset_store::{AssetBinding, SharedAssetBubbles};
 #[derive(Clone, Copy, Debug)]
 pub struct HistoryPolicy {
     pub progressive: bool,
-    pub reach: quantick_feed::history_reach::HistoryReach,
-    pub reach_span_minutes: u32,
     pub venue_lead_in: bool,
+    pub frame: HistoryFrame,
+}
+
+/// What a tab's history button needs from the window each frame.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HistoryFrame {
+    /// What the main click loads on a tab that never pressed.
+    pub default_reach: quantick_feed::history_reach::HistoryReach,
+    /// The clock face the note is written in.
+    pub tz: crate::timezone::TzOffset,
+    /// Whether the tab is on screen; a hidden tab's run stops paging.
+    pub visible: bool,
 }
 
 /// The actual effect owners for one print; no app, transport or layout access.
@@ -459,16 +469,17 @@ impl Tab {
                 // while it is running: one bool read and an early return.
                 TabDrainStage::BookCaptureHeartbeat => self.ensure_book_capture(config),
                 TabDrainStage::MirrorHistoryPolicy => {
-                    // The switch lives on the window, the request is phrased
-                    // by the tab: every tab asks the way the trader last said,
-                    // including one opened after the choice was made.
+                    // The switches live on the window; the reach does not: a
+                    // run and the last target pressed belong to this tab.
                     self.progressive_history = policy.progressive;
-                    self.history_reach = policy.reach;
-                    self.history_reach_span_minutes = policy.reach_span_minutes;
+                    self.history_frame = policy.frame;
                     // Through the setter, not the field: flipping the lead-in
                     // refolds the prefix. Idempotent, so the steady state
                     // costs one comparison.
                     self.set_venue_lead_in(policy.venue_lead_in);
+                    // A press queued behind the opening fill begins, and a run
+                    // paused while hidden resumes, once the tab can serve it.
+                    self.poll_history_run(config);
                 }
                 // MetaTrader narrows its capabilities when the bridge says
                 // hello, after the pane may already have asked and been told
@@ -512,7 +523,7 @@ impl Tab {
                 }
                 SourceDrainStage::ReceiveAvailable => {
                     live = self.receive_available(tab_id, &mut wall_clock_ms);
-                    self.poll_history_publication(tab_id);
+                    self.poll_history_publication();
                 }
                 SourceDrainStage::PublishLatestPartial => {
                     // Additional final publication; event handlers retain their own sends.
@@ -576,8 +587,13 @@ impl Tab {
                         continue;
                     }
                     self.history_trades += trades.len();
+                    self.loading.end(LoadingTask::History);
+                    // The run judges the raw page first, so its next request
+                    // is out while this one is still being rebuilt; while it
+                    // runs the panes hold every page and rebuild once.
+                    self.judge_history_page(&trades);
                     let trades = std::sync::Arc::new(trades);
-                    let defer = self.defer_history(trades.len());
+                    let defer = self.history_reach_running() || self.defer_history(trades.len());
                     let mut pending = false;
                     // Each pane cuts the older trades into its own bars, so
                     // each shifts its own anchors by its own count.
@@ -590,14 +606,6 @@ impl Tab {
                     // venue candle now covering a re-cut minute has to go.
                     if !pending {
                         self.refold_history_prefix();
-                    }
-                    // And the reach that asked for this page decides whether
-                    // to ask for another, and what to tell the trader if it
-                    // will not. After the prepend, so it judges the tape the
-                    // trader can actually see.
-                    if !pending {
-                        self.loading.end(LoadingTask::History);
-                        self.settle_history_page(tab_id, trades.len());
                     }
                 }
                 Ok(FeedEvent::OpeningPrepended { trades, remaining }) => {
@@ -683,7 +691,7 @@ impl Tab {
         })
     }
 
-    fn poll_history_publication(&mut self, tab_id: u64) {
+    fn poll_history_publication(&mut self) {
         let mut ready = true;
         for pane in self.panes_mut() {
             ready &= pane.prepare_history();
@@ -691,7 +699,7 @@ impl Tab {
         if self.panes().any(|(pane, _)| pane.history_failed()) {
             self.loading.set_active(LoadingTask::HistoryRebuild, false);
             self.loading.set_active(LoadingTask::History, false);
-            const FAILED: &str = "History could not be built. Load older to retry.";
+            const FAILED: &str = "History could not be built. Press History to retry.";
             if self.history_note() != Some(FAILED) {
                 self.abandon_history_run();
                 self.raise_history_note(FAILED);
@@ -706,20 +714,12 @@ impl Tab {
             }
             pending |= pane.history_pending();
         }
+        // Pages held for a run in flight are not a rebuild yet.
+        let rebuilding = pending && !self.history_reach_running();
         self.loading
-            .set_active(LoadingTask::HistoryRebuild, pending);
+            .set_active(LoadingTask::HistoryRebuild, rebuilding);
         if changed {
             self.refold_history_prefix();
-        }
-        if !pending {
-            let page_len = self.flow_pane.take_history_page();
-            for pane in &mut self.time_panes {
-                pane.take_history_page();
-            }
-            if let Some(page_len) = page_len {
-                self.loading.end(LoadingTask::History);
-                self.settle_history_page(tab_id, page_len);
-            }
         }
     }
 

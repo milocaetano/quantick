@@ -24,6 +24,8 @@ use crate::tab::Tab;
 use quantick_feed::FeedCommand;
 #[cfg(any(feature = "scenario-harness", test))]
 use quantick_feed::ReplayControl;
+#[cfg(any(feature = "scenario-harness", test))]
+use quantick_feed::history_reach::ReachOutcome;
 
 use super::arrangement_host::ArrangementHost;
 
@@ -287,7 +289,7 @@ impl Harness {
             // action owed until request_older_history can admit it.
             return;
         }
-        tab.request_older_history(tab_id, config);
+        tab.request_older_history(config);
         self.load_older_page_sent();
     }
 
@@ -338,12 +340,16 @@ impl Harness {
         {
             return;
         }
-        // Always `Some`: the hook only ever holds an ending the env read above
-        // kept, and it keeps only endings that have words.
-        let Some(notice) = end.notice() else {
-            return;
-        };
-        tab.raise_history_note(notice);
+        // The ending's real sentence, from the chart's real oldest print.
+        let oldest = tab
+            .flow_pane
+            .state
+            .trades()
+            .first()
+            .map(|trade| trade.timestamp_ms);
+        let outcome = ReachOutcome::ended(tab.main_history_reach(), end, oldest);
+        let tz = tab.history_frame.tz;
+        tab.raise_history_note(outcome.sentence(|ms| quantick_civil::fmt_weekday_minute(ms, tz)));
     }
 
     /// The `QUANTICK_LOAD_OLDER_CANDLES` hook: the history menu's "+ older

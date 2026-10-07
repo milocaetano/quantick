@@ -26,6 +26,7 @@ pub mod clock;
 pub use quantick_sources::config;
 pub mod continuity;
 pub use quantick_sources::history_reach;
+pub use quantick_sources::history_run;
 pub mod hooks;
 pub mod hyperliquid;
 pub mod metatrader;

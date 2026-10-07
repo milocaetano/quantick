@@ -36,7 +36,12 @@ fn loading() -> HistoryRun {
     assert_eq!(run.press(YESTERDAY, true), Press::Start);
     let today = session(20);
     assert_eq!(
-        run.begin(YESTERDAY, &today[..], ReachBounds::default(), CAMPAIGN_PAGE_PRINTS),
+        run.begin(
+            YESTERDAY,
+            &today[..],
+            ReachBounds::default(),
+            CAMPAIGN_PAGE_PRINTS
+        ),
         RunAction::Send(CAMPAIGN_PAGE_PRINTS)
     );
     run
@@ -51,7 +56,10 @@ fn the_main_click_repeats_this_tabs_last_action() {
         "a tab that never pressed repeats the window's default"
     );
     run.press(HistoryReach::Sessions(5), true);
-    assert_eq!(run.main_reach(HistoryReach::Hours(2)), HistoryReach::Sessions(5));
+    assert_eq!(
+        run.main_reach(HistoryReach::Hours(2)),
+        HistoryReach::Sessions(5)
+    );
 }
 
 #[test]
@@ -61,7 +69,11 @@ fn a_press_during_the_opening_fill_is_queued_not_dropped() {
     assert_eq!(run.status(), RunStatus::Queued(YESTERDAY));
     assert_eq!(run.poll(false, true), Poll::Nothing, "still filling");
     assert_eq!(run.poll(true, true), Poll::Begin(YESTERDAY));
-    assert_eq!(run.status(), RunStatus::Idle, "handed over, no longer queued");
+    assert_eq!(
+        run.status(),
+        RunStatus::Idle,
+        "handed over, no longer queued"
+    );
 }
 
 #[test]
@@ -75,7 +87,10 @@ fn the_latest_queued_press_wins() {
 #[test]
 fn a_press_while_loading_starts_nothing_new() {
     let mut run = loading();
-    assert_eq!(run.press(HistoryReach::Hours(2), true), Press::AlreadyRunning);
+    assert_eq!(
+        run.press(HistoryReach::Hours(2), true),
+        Press::AlreadyRunning
+    );
     assert!(matches!(run.status(), RunStatus::Loading(progress) if progress.reach == YESTERDAY));
 }
 
@@ -87,14 +102,20 @@ fn each_reply_on_a_visible_tab_asks_for_the_next_page_at_once() {
         run.on_reply(&yesterday[300..], true, true),
         RunAction::Send(CAMPAIGN_PAGE_PRINTS)
     );
-    assert!(run.holds_pages(), "the chart keeps the pages until the run ends");
+    assert!(
+        run.holds_pages(),
+        "the chart keeps the pages until the run ends"
+    );
 }
 
 #[test]
 fn a_hidden_tab_stops_paging_until_it_is_shown() {
     let mut run = loading();
     let yesterday = session(19);
-    assert_eq!(run.on_reply(&yesterday[300..], true, false), RunAction::Wait);
+    assert_eq!(
+        run.on_reply(&yesterday[300..], true, false),
+        RunAction::Wait
+    );
     assert!(matches!(run.status(), RunStatus::Paused(_)));
     assert_eq!(run.poll(true, false), Poll::Nothing, "still hidden");
     assert_eq!(run.poll(true, true), Poll::Send(CAMPAIGN_PAGE_PRINTS));
@@ -126,7 +147,11 @@ fn cancel_keeps_what_arrived_and_says_where_it_stopped() {
     assert_eq!(outcome.end, CampaignEnd::Cancelled);
     assert_eq!(outcome.oldest_ms, Some(session(19)[0].timestamp_ms));
     assert!(!run.holds_pages());
-    assert_eq!(run.cancel(), Cancelled::Nothing, "a second cancel is a no-op");
+    assert_eq!(
+        run.cancel(),
+        Cancelled::Nothing,
+        "a second cancel is a no-op"
+    );
 }
 
 #[test]

@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 50 |
+| Reachable by capability | 52 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
-| Excluded: `pending_capability` | 57 |
+| Excluded: `pending_capability` | 55 |
 | **Total** | **115** |
 
-82 of the 115 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 33 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+83 of the 115 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 32 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -91,11 +91,11 @@ The three exclusion classes are closed:
 | `layer.native_tape.toggle` | Draw the tape at execution time and price beside the candles | pane right-click layer menu; Bubbles settings, Native tape (execution time and price) | `layers.visibility.set` | — |
 | `orderflow.tape.opening_scale.set` | Choose whether the first recorded burst sets Tape or FLOW region size references | Bubbles settings for Tape; tick FLOW chart layers, Bubbles, Ignore first recorded burst in regional scale for the independent pane preference | `orderflow.tape.opening_scale.set` | — |
 | `orderflow.bubbles.save_changes.set` | Choose whether bubble changes are saved for the asset on screen | Bubbles settings, Save changes for this asset | `orderflow.bubbles.save_changes.set` | — |
-| `history.candles.load_older` | Fetch another span of older venue candles | toolbar history caret | — | `pending_capability` — no capability pages history; `chart.window.read` reads what is already loaded. Tracked in issue 401 |
-| `history.progressive.toggle` | Build venue history backwards a week at a time, or in one request | View menu | — | `pending_capability` — no capability pages history; `chart.window.read` reads what is already loaded. Tracked in issue 401 |
-| `history.reach.set` | Choose how far back the chart reaches, and the page size | toolbar history caret menu, reachable by the `history` scripted-menu hook | — | `pending_capability` — no capability pages history; `chart.window.read` reads what is already loaded. Tracked in issue 401 |
-| `history.trades.load_older` | Fetch another page of older trades | toolbar history caret | — | `pending_capability` — no capability pages history; `chart.window.read` reads what is already loaded. Tracked in issue 401 |
-| `history.venue_lead_in.toggle` | Put venue minute candles in front of bars cut by trades | View menu | — | `pending_capability` — no capability pages history; `chart.window.read` reads what is already loaded. Tracked in issue 401 |
+| `history.candles.load_older` | Fetch another span of older venue candles | toolbar history caret | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
+| `history.progressive.toggle` | Build venue history backwards a week at a time, or in one request | View menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
+| `history.trades.cancel` | Stop loading history and keep what arrived | the loading History button, its menu's Cancel loading, or Esc | `feed.history.cancel` | — |
+| `history.trades.load` | Load the chart back by hours of trading or to a previous session's open | toolbar History button (repeats the last target) and its menu's targets | `feed.history.load` | — |
+| `history.venue_lead_in.toggle` | Put venue minute candles in front of bars cut by trades | View menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
 | `appearance.dialog.toggle` | Open the appearance dialog — candles, canvas, grid | toolbar brush button, Tools menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `indicator.hidden.toggle` | Hide an indicator's drawing without removing it | the eye on the legend row, and the indicators menu | — | `pending_capability` — `indicator.script.attach` and `indicator.script.detach` add and remove; nothing hides. Tracked in issue 401 |
 | `indicator.legend.collapse` | Fold the focused chart's indicator legend to its count | the legend's own chevron, View menu, Ctrl+L | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
@@ -178,7 +178,7 @@ matrix fails the build.
 
 | Source | Claims |
 | --- | --- |
-| `toolbar_action` | 17 |
+| `toolbar_action` | 18 |
 | `strip_action` | 6 |
 | `tab_action` | 3 |
 | `dock_tab` | 5 |
@@ -191,7 +191,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 33 |
+| `authored` | 32 |
 
 ## Appendix: rows no registry stands behind
 
@@ -217,7 +217,6 @@ declares nothing here is a guard failure.
 | `layer.native_tape.toggle` | the per-pane order-flow menu and settings checkbox are not toolbar LayerToggle entries |
 | `orderflow.tape.opening_scale.set` | opening-scale preferences are checkboxes inside the volume-dot settings and the tick FLOW Bubbles layer menu |
 | `orderflow.bubbles.save_changes.set` | the per-asset save switch is a checkbox under the bubble preset picker |
-| `history.reach.set` | the reach chips and page size inside the toolbar caret menu, drawn per frame |
 | `indicator.mouse_vertical_line.toggle` | the indicator pane's Mouse vertical line checkbox |
 | `indicator.native.remove` | the legend row close, which the toolbar enum sees only as `RemoveIndicator` |
 | `trade.aim.bracket` | the ticket bracket fields and the aim on the chart |

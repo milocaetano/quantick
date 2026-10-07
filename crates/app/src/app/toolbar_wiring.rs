@@ -112,13 +112,12 @@ impl QuantickApp {
             .collect();
         let dock_visible = self.dock.visible();
         let show_style = self.surfaces.style_panel.is_open();
-        // Read before the tab is borrowed mutably. The reach is the window's
-        // standing choice, like the progressive-history switch — a trader who
-        // picked "previous session" once means it in the next tab too — so it
-        // is split off and written back the way the layout picker's flags are.
-        let history_reach_running = self.active_tab().history_reach_running();
-        let mut history_reach = self.history.history_reach;
-        let mut history_reach_span_minutes = self.history.history_reach_span_minutes;
+        // The History button names this tab's target and run.
+        let history = toolbar::HistoryButton {
+            main: self.active_tab().main_history_reach(),
+            status: self.active_tab().history_status(),
+            tz: self.tz,
+        };
         let mut history_menu_rect = self.chrome.history_menu_rect;
         // The SOURCE group writes straight into the active tab: a feed or
         // symbol change is that tab's market switch. The BARS group writes
@@ -165,12 +164,8 @@ impl QuantickApp {
             deal_recording,
             deal_recording_menu,
             bars_menu: &mut bars_menu,
-            history_step: &mut tab.history_step,
             history_menu_rect: &mut history_menu_rect,
-            history_reach_span_minutes: &mut history_reach_span_minutes,
-            history_reach: &mut history_reach,
-            history_reach_running,
-            history_trades: tab.history_trades,
+            history,
             history_candles: candles_held,
             older_candles,
             capabilities,
@@ -201,10 +196,6 @@ impl QuantickApp {
         if !bars_menu {
             self.chrome.harness.clear_bars_menu();
         }
-        self.history.set_reach(history_reach);
-        // Through the setter, so a value dragged past the campaign's own span
-        // cap is clamped in the one place that knows the cap.
-        self.history.set_span_minutes(history_reach_span_minutes);
         self.chrome.history_menu_rect = history_menu_rect;
         // A newly picked feed may not offer the current symbol. Never during
         // a replay: the recorded instrument belongs to no live feed's menu,
@@ -252,11 +243,12 @@ impl QuantickApp {
     /// rules are unchanged.
     pub(super) fn apply_toolbar_action(&mut self, action: ToolbarAction) {
         match action {
-            ToolbarAction::LoadOlder => {
-                let tab_id = self.tabs.active_id();
+            ToolbarAction::LoadHistory(reach) => {
+                self.history.set_reach(reach);
                 let (tab, config) = self.active_with_config();
-                tab.request_older_history(tab_id, config);
+                tab.load_history(config, reach);
             }
+            ToolbarAction::CancelHistory => _ = self.active_tab_mut().cancel_history(),
             ToolbarAction::DealRecording(action) => {
                 self.active_tab_mut().apply_deal_recording(action);
             }

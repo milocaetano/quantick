@@ -9,6 +9,9 @@ pub enum EscapeLayer {
     InlineText,
     Draft,
     Selection,
+    /// A history run loading on the active tab: Esc cancels it and keeps
+    /// what arrived, before the last layer re-arms the pointer.
+    HistoryRun,
     Pointer,
 }
 
@@ -22,6 +25,7 @@ pub fn consume_escape(mut attempt: impl FnMut(EscapeLayer) -> bool) {
         InlineText,
         Draft,
         Selection,
+        HistoryRun,
         Pointer,
     ] {
         if attempt(layer) {
@@ -59,6 +63,7 @@ mod tests {
                 EscapeLayer::InlineText,
                 EscapeLayer::Draft,
                 EscapeLayer::Selection,
+                EscapeLayer::HistoryRun,
                 EscapeLayer::Pointer
             ]
         );

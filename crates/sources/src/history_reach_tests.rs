@@ -48,7 +48,10 @@ fn bounds() -> ReachBounds {
 fn running(held: &[Trade], reach: HistoryReach) -> Campaign {
     match Campaign::start(held, reach, bounds(), CAMPAIGN_PAGE_PRINTS) {
         CampaignStart::Run(campaign) => campaign,
-        other => panic!("{reach:?} over {} prints did not run: {other:?}", held.len()),
+        other => panic!(
+            "{reach:?} over {} prints did not run: {other:?}",
+            held.len()
+        ),
     }
 }
 
@@ -80,15 +83,18 @@ fn the_main_click_defaults_to_yesterday() {
 
 #[test]
 fn every_target_round_trips_through_its_token() {
-    for reach in HistoryReach::PRESETS
-        .into_iter()
-        .chain([HistoryReach::Hours(MAX_REACH_HOURS), HistoryReach::Sessions(MAX_REACH_SESSIONS)])
-    {
+    for reach in HistoryReach::PRESETS.into_iter().chain([
+        HistoryReach::Hours(MAX_REACH_HOURS),
+        HistoryReach::Sessions(MAX_REACH_SESSIONS),
+    ]) {
         assert_eq!(HistoryReach::parse(&reach.token()), Ok(reach), "{reach:?}");
     }
     assert_eq!(HistoryReach::Hours(2).token(), "hours:2");
     assert_eq!(HistoryReach::Sessions(5).token(), "sessions:5");
-    assert_eq!(HistoryReach::parse(" sessions : 3 "), Ok(HistoryReach::Sessions(3)));
+    assert_eq!(
+        HistoryReach::parse(" sessions : 3 "),
+        Ok(HistoryReach::Sessions(3))
+    );
 }
 
 /// Saved workspaces and launch hooks written before the targets existed keep
@@ -279,7 +285,11 @@ fn five_days_crosses_a_weekend_and_still_counts_sessions() {
     let monday = session(21);
     let mut campaign = running(&monday, HistoryReach::Sessions(5));
     for day in [18, 17, 16, 15, 14] {
-        assert_eq!(campaign.advance(&session(day), true), CampaignStep::Ask, "day {day}");
+        assert_eq!(
+            campaign.advance(&session(day), true),
+            CampaignStep::Ask,
+            "day {day}"
+        );
     }
     assert_eq!(
         campaign.advance(&session(11)[400..], true),
@@ -328,7 +338,10 @@ fn hours_count_traded_time_before_the_oldest_print_and_cross_nights() {
         "the night adds nothing; one traded hour is not two"
     );
     assert_eq!(
-        campaign.advance(&yesterday[yesterday.len() - 122..yesterday.len() - 61], true),
+        campaign.advance(
+            &yesterday[yesterday.len() - 122..yesterday.len() - 61],
+            true
+        ),
         CampaignStep::Stop(CampaignEnd::ReachMet)
     );
     assert_eq!(campaign.progress().traded_ms, 2 * HOUR);
@@ -346,7 +359,10 @@ fn a_venue_that_has_run_out_ends_the_run_partial() {
     );
     let outcome = campaign.finish(CampaignEnd::Exhausted);
     assert!(!outcome.complete());
-    assert_eq!(outcome.sessions_reached, 0, "yesterday's open is not proven");
+    assert_eq!(
+        outcome.sessions_reached, 0,
+        "yesterday's open is not proven"
+    );
 }
 
 #[test]
@@ -397,7 +413,11 @@ fn the_print_budget_ends_a_run_partial_and_clips_the_last_request() {
     // One dense page of a print per millisecond, never an hour of tape.
     let page = run(today[0].timestamp_ms - budget as i64, 1, budget - 7);
     assert_eq!(campaign.advance(&page, true), CampaignStep::Ask);
-    assert_eq!(campaign.next_request(), 7, "the last request cannot overspend");
+    assert_eq!(
+        campaign.next_request(),
+        7,
+        "the last request cannot overspend"
+    );
     let page = run(page[0].timestamp_ms - 7, 1, 7);
     assert_eq!(
         campaign.advance(&page, true),
@@ -456,7 +476,11 @@ fn every_ending_has_a_token_and_a_reason() {
     let mut tokens: Vec<_> = CampaignEnd::ALL.iter().map(|end| end.action()).collect();
     tokens.sort_unstable();
     tokens.dedup();
-    assert_eq!(tokens.len(), CampaignEnd::ALL.len(), "two endings share a token");
+    assert_eq!(
+        tokens.len(),
+        CampaignEnd::ALL.len(),
+        "two endings share a token"
+    );
     assert_eq!(CampaignEnd::from_action("span_cap_covered"), None);
 }
 

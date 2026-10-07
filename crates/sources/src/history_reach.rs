@@ -435,6 +435,21 @@ pub struct ReachOutcome {
 }
 
 impl ReachOutcome {
+    /// An ending with nothing counted, from the chart's oldest print: what a
+    /// capture hook raises to photograph an ending's sentence.
+    #[must_use]
+    pub const fn ended(reach: HistoryReach, end: CampaignEnd, oldest_ms: Option<i64>) -> Self {
+        Self {
+            reach,
+            end,
+            oldest_ms,
+            reached_open_ms: None,
+            sessions_reached: 0,
+            traded_ms: 0,
+            gapless: false,
+        }
+    }
+
     /// Whether the target is on the chart.
     #[must_use]
     pub const fn complete(&self) -> bool {
@@ -556,15 +571,11 @@ impl Campaign {
     ) -> CampaignStart {
         let (Some(oldest), Some(edge)) = (held.first(), held.get(held.len().wrapping_sub(1)))
         else {
-            return CampaignStart::NothingCharted(ReachOutcome {
+            return CampaignStart::NothingCharted(ReachOutcome::ended(
                 reach,
-                end: CampaignEnd::NothingCharted,
-                oldest_ms: None,
-                reached_open_ms: None,
-                sessions_reached: 0,
-                traded_ms: 0,
-                gapless: false,
-            });
+                CampaignEnd::NothingCharted,
+                None,
+            ));
         };
         let mut campaign = Self {
             reach,

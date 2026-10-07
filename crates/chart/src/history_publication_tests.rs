@@ -163,7 +163,9 @@ fn a_held_publication_keeps_every_page_and_recuts_once_on_release() {
     assert!(!publication.poll(&state));
     publication.runner.complete();
     assert!(publication.poll(&state));
-    let candidate = publication.take_ready(&state).expect("one recut of both pages");
+    let candidate = publication
+        .take_ready(&state)
+        .expect("one recut of both pages");
     assert_eq!(candidate.trades().len(), 29);
     assert!(publication.runner.job.is_none(), "exactly one recut ran");
 }

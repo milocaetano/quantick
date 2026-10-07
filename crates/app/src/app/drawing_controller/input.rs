@@ -134,6 +134,7 @@ impl DrawingController {
                 }
                 selected
             }
+            EscapeLayer::HistoryRun => host.cancel_history(),
             EscapeLayer::Pointer => {
                 tools.arm(Tool::Pointer);
                 true

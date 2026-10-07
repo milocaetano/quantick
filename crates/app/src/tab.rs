@@ -32,7 +32,7 @@ use crate::metrics;
 use crate::pane::{ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneIndex, PaneSide, SharedPick};
 use crate::paper_trading::PaperTrading;
 use crate::state::BarConfiguration;
-use quantick_feed::history_reach::{self, Campaign, HistoryReach};
+use quantick_feed::history_run::HistoryRun;
 use quantick_feed::stall::{self};
 use quantick_feed::{
     FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedHandle, FeedLatency, FeedNotice,
@@ -50,7 +50,7 @@ mod strategies;
 mod tape_clock;
 
 pub use canvas::CanvasChrome;
-pub use feed::HistoryPolicy;
+pub use feed::{HistoryFrame, HistoryPolicy};
 pub use history::OlderCandles;
 
 /// Each UI capture epoch reserves room for reconnect generations. This keeps
@@ -222,12 +222,12 @@ pub const HISTORY_NOTE_LINGER: std::time::Duration = std::time::Duration::from_s
 /// the reach it promised. A press that landed what it promised raises nothing:
 /// the bars are the acknowledgement, and a sentence after every success is
 /// noise a trader learns to stop reading.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct HistoryNote {
-    /// Borrowed, never owned: every sentence is a fixed one belonging to
-    /// [`quantick_feed::history_reach`], so the outcome and the run that produced it
-    /// cannot drift into two different accounts of the same press.
-    text: &'static str,
+    /// Written by [`quantick_feed::history_reach::ReachOutcome::sentence`],
+    /// so the outcome and the run that produced it cannot drift into two
+    /// different accounts of the same press.
+    text: String,
     raised_at: std::time::Instant,
 }
 
@@ -342,17 +342,9 @@ pub struct Tab {
     // trades have been backfilled in total (for the readout).
     pub history_step: usize,
     pub history_trades: usize,
-    /// How far one press of "load older" reaches: one page, or back past the
-    /// market's last close with a lead into the session before it.
-    ///
-    /// A tab-level copy of the window's standing choice, pushed on change the
-    /// way `progressive_history` is — the reach is a habit, not a per-market
-    /// setting, and a trader who picked it once must not have to pick it again
-    /// in the next tab.
-    pub history_reach: HistoryReach,
-    /// Minutes of traded time one press of [`HistoryReach::Span`] pulls,
-    /// mirrored from the window so every tab presses the way the trader said.
-    pub history_reach_span_minutes: u32,
+    /// What the window tells this tab each frame about its history button:
+    /// the default target, the clock face and whether it is on screen.
+    pub history_frame: HistoryFrame,
     /// Slices of the opening session still to arrive, while one is filling in
     /// behind the chart. `None` when nothing is filling.
     ///
@@ -362,13 +354,11 @@ pub struct Tab {
     /// still arriving for the life of the tab — which is the one question this
     /// field exists to answer.
     opening_slices_remaining: Option<u64>,
-    /// The run of requests a reach beyond one page started, or `None` when
-    /// nothing is paging.
-    ///
-    /// One per tab, because the transports serve one request at a time: the
-    /// reply is what sends the next request, so this is a state machine and
-    /// never a loop. See [`quantick_feed::history_reach`].
-    campaign: Option<Campaign>,
+    /// This tab's history run: its last target, a press queued behind the
+    /// opening fill, and the campaign paging toward a target. Per tab: a run
+    /// on one market never changes another's. See
+    /// [`quantick_feed::history_run`].
+    history_run: HistoryRun,
     /// What the last *load older* press had to say, while it is still on
     /// screen. See [`HistoryNote`].
     history_note: Option<HistoryNote>,
@@ -633,12 +623,10 @@ impl Tab {
             replay: feed.replay,
             history_step: 2000,
             history_trades: 0,
-            history_reach: HistoryReach::default(),
+            // Overwritten by `drain_tabs` on the first frame from the window.
+            history_frame: HistoryFrame::default(),
             opening_slices_remaining: None,
-            // Overwritten by `drain_tabs` on the first frame from the
-            // window's own value; this is only what a tab holds before that.
-            history_reach_span_minutes: (history_reach::DEFAULT_REACH_SPAN_MS / 60_000) as u32,
-            campaign: None,
+            history_run: HistoryRun::default(),
             history_note: None,
             venue_lead_in: false,
             loading,

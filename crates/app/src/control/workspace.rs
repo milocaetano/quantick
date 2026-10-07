@@ -74,7 +74,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
         save_on_exit,
         performance_readings_visible,
         progressive_venue_history,
-        history_reach: history_reach.token().to_owned(),
+        history_reach: history_reach.token(),
         history_reach_span_minutes: WireU64::new(
             app.health_reads().history_reach_span_minutes().into(),
         ),

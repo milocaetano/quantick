@@ -337,8 +337,10 @@ impl ChartPane {
         self.history_worker.retry()
     }
 
-    pub fn take_history_page(&mut self) -> Option<usize> {
-        self.history_worker.take_page()
+    /// Hold this pane's rebuild while a history run pages; release to
+    /// rebuild once with everything it brought.
+    pub fn hold_history(&mut self, held: bool) {
+        self.history_worker.hold(held);
     }
 
     /// Install a complete recut and catch up the live tail before moving anchors.
