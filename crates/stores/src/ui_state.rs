@@ -1050,7 +1050,7 @@ mod tests {
     #[test]
     fn a_time_pane_interval_that_no_longer_parses_costs_the_pane_not_the_market() {
         let mut workspace = sample();
-        workspace.tabs[0].time_bars = Some("time:99h".to_owned());
+        workspace.tabs[0].time_bars = Some("time:999h".to_owned());
         let restored = restore(workspace, &catalogue(), clamp);
         assert_eq!(
             restored.tabs.len(),

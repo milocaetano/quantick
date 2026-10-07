@@ -2008,7 +2008,14 @@ mod tests {
     /// factory-default chart.
     #[test]
     fn an_invalid_default_bars_is_refused_at_load() {
-        for bad in ["time:0", "tick:0", "bananas:9", "time:25h", "50"] {
+        for bad in [
+            "time:0",
+            "tick:0",
+            "bananas:9",
+            "time:5w",
+            "time:13mo",
+            "50",
+        ] {
             let text = format!(
                 r#"
                 default_feed = "b"
