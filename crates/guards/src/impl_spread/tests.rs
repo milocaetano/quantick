@@ -313,6 +313,31 @@ fn check_file_agrees_with_check_at_over_and_under_the_ceiling() {
 }
 
 #[test]
+fn types_under_the_ceiling_say_nothing_while_one_is_over_it() {
+    // `big::Hub` is over; `Narrow`, `Lone` and `small::Hub` sit below the
+    // ceiling, and none of them is a fall: the ceiling is the widest spread's.
+    let root = tree(4, 3);
+    let src = root.join("crates/big/src");
+    for (name, source) in [
+        ("narrow_a.rs", "impl Narrow {\n}\nimpl Lone {\n}\n"),
+        ("narrow_b.rs", "impl Narrow {\n}\n"),
+    ] {
+        fs::write(src.join(name), source).expect("writable");
+    }
+    add_crate(&root, "small", 2, QUALIFYING_LINES + 1);
+    let found = check(&root);
+    let text = lines(&found);
+    assert_eq!(found.len(), 1, "{text}");
+    assert!(found[0].line.contains("big::Hub spans"), "{text}");
+    assert!(!text.contains("down to"), "{text}");
+    let at_edit = check_file(&root, "crates/big/src/narrow_b.rs");
+    assert_eq!(lines(&at_edit), text);
+    assert!(check_file(&root, "crates/small/src/lib.rs").is_empty());
+    assert_agree(&root, "big");
+    assert_agree(&root, "small");
+}
+
+#[test]
 fn check_file_reports_a_fall_from_a_file_holding_no_impl() {
     // `big` drops to the line: nothing qualifies, the ceiling fell to zero,
     // and the file that did it holds no impl.

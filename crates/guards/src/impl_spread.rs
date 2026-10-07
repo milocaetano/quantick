@@ -381,7 +381,9 @@ fn over(entry: &Entry, spread: &Spread) -> Option<Finding> {
 /// Every type over the ceiling that `keep` admits, or — when none is over —
 /// the ceiling against the widest spread, which asks for an entry or a
 /// tighten. The single place the spread verdict is taken, for both
-/// [`check`] and [`check_file`].
+/// [`check`] and [`check_file`]. The ceiling is the widest spread's alone, so
+/// a narrower type is never a fall of its own: while any type is over, the
+/// ones under it say nothing.
 fn spread_findings(
     recorded: &Baseline,
     spreads: &[Spread],
@@ -392,6 +394,7 @@ fn spread_findings(
     match entry {
         Some(entry) if widest > entry.ceiling => spreads
             .iter()
+            .take_while(|spread| spread.files.len() > entry.ceiling)
             .filter(|spread| keep(spread))
             .filter_map(|spread| over(entry, spread))
             .collect(),
