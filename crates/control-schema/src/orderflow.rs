@@ -392,6 +392,23 @@ const fn save_changes_default() -> bool {
     true
 }
 
+impl BubbleAssetSnapshot {
+    /// The asset `binding` keeps a pane's settings for, wearing the look
+    /// that started from `preset`.
+    #[must_use]
+    pub fn of(binding: &quantick_stores::bubble_asset_store::AssetBinding, preset: &str) -> Self {
+        let unsaved = binding.unsaved();
+        Self {
+            key: binding.key().to_owned(),
+            source: binding.source().as_str().to_owned(),
+            preset: preset.to_owned(),
+            save_changes: binding.saves_changes(),
+            saved: unsaved.is_none(),
+            save_error: unsaved,
+        }
+    }
+}
+
 impl BubblesStateSnapshot {
     pub fn from_config(
         config: &HeatmapConfig,

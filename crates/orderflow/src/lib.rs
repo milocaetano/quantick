@@ -13,6 +13,7 @@ pub mod engine;
 pub mod grouping;
 pub mod history;
 pub mod interaction;
+pub mod pane_tape;
 pub mod projection;
 pub mod scale;
 pub mod tape_clock;
@@ -84,6 +85,9 @@ mod tests {
         assert_eq!(feed_lag_ms(500, Some(600)), Some(-100));
     }
 }
+
+#[cfg(test)]
+mod pane_tape_tests;
 
 #[cfg(test)]
 mod tape_clock_tests;

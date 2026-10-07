@@ -563,6 +563,63 @@ impl HeatmapConfig {
                 || (self.live_lane.native_tape && self.volume_dots.enabled))
     }
 
+    /// Whether the pane draws a print on the frame it arrives, before the
+    /// worker publishes it: a native tape of volume dots.
+    #[must_use]
+    pub fn immediate_tape(&self) -> bool {
+        self.native_tape() && self.volume_dots.enabled
+    }
+
+    /// Leave the tape's opening burst out of its dot scale, or put it back:
+    /// the explicit display preference the panel and the control plane
+    /// share. Returns whether that changed anything.
+    pub fn set_ignore_opening_burst_in_scale(&mut self, enabled: bool) -> bool {
+        if self.volume_dots.ignore_opening_burst_in_scale == enabled {
+            return false;
+        }
+        self.volume_dots.ignore_opening_burst_in_scale = enabled;
+        true
+    }
+
+    /// Restore the depth map's defaults, keeping capture, its bucket and the
+    /// whole bubble layer as they are: the bubble layer owns its own panel
+    /// and its own reset, so its whole look (and the preset it came from)
+    /// stays.
+    pub fn reset_l2_visuals(&mut self) {
+        *self = Self {
+            enabled: self.enabled,
+            price_grouping: self.price_grouping,
+            show_aggressions: self.show_aggressions,
+            bubble_cluster_ms: self.bubble_cluster_ms,
+            bubble_dust_merge_ms: self.bubble_dust_merge_ms,
+            bubble_candle_summary: self.bubble_candle_summary,
+            volume_dots: self.volume_dots,
+            bubble_region_rows: self.bubble_region_rows,
+            bubble_region_ms: self.bubble_region_ms,
+            bubbles: self.bubbles.clone(),
+            live_lane: self.live_lane.clone(),
+            ..Self::default()
+        };
+    }
+
+    /// Restore the bubble layer's defaults. The native tape and tape only
+    /// are the pane's mode, not its look, and stay.
+    pub fn reset_bubble_visuals(&mut self) {
+        let defaults = Self::default();
+        self.bubble_cluster_ms = defaults.bubble_cluster_ms;
+        self.bubble_dust_merge_ms = defaults.bubble_dust_merge_ms;
+        self.bubble_candle_summary = defaults.bubble_candle_summary;
+        self.volume_dots = defaults.volume_dots;
+        self.bubble_region_rows = defaults.bubble_region_rows;
+        self.bubble_region_ms = defaults.bubble_region_ms;
+        self.bubbles = defaults.bubbles;
+        self.live_lane = LiveLaneStyle {
+            native_tape: self.live_lane.native_tape,
+            tape_only: self.live_lane.tape_only,
+            ..defaults.live_lane
+        };
+    }
+
     /// Whether any pane still draws the depth map.
     ///
     /// What decides that the projection has to keep building depth primitives:
@@ -1102,5 +1159,57 @@ mod tests {
                 target_rows: MAX_ADAPTIVE_ROWS
             }
         );
+    }
+
+    #[test]
+    fn the_opening_scale_preference_reports_only_a_real_change() {
+        let mut config = HeatmapConfig::default();
+        assert!(!config.set_ignore_opening_burst_in_scale(false));
+        assert!(config.set_ignore_opening_burst_in_scale(true));
+        assert!(config.volume_dots.ignore_opening_burst_in_scale);
+        assert!(!config.set_ignore_opening_burst_in_scale(true));
+    }
+
+    #[test]
+    fn only_a_native_tape_of_volume_dots_draws_prints_immediately() {
+        let mut config = HeatmapConfig::default();
+        config.live_lane.enabled = true;
+        config.live_lane.tape_only = true;
+        assert!(!config.immediate_tape(), "tape only without volume dots");
+        config.volume_dots.enabled = true;
+        assert!(config.immediate_tape());
+        config.live_lane.enabled = false;
+        assert!(!config.immediate_tape(), "no tape on the canvas");
+    }
+
+    #[test]
+    fn each_visual_reset_keeps_the_other_layer_and_the_panes_mode() {
+        let mut edited = HeatmapConfig::default();
+        edited.enabled = true;
+        edited.show_legend = !edited.show_legend;
+        edited.opacity = 0.3;
+        edited.bubble_cluster_ms += 100;
+        edited.volume_dots.enabled = true;
+        edited.live_lane.tape_only = true;
+        edited.live_lane.show_marks = !edited.live_lane.show_marks;
+
+        let mut l2 = edited.clone();
+        l2.reset_l2_visuals();
+        assert_eq!(l2.show_legend, HeatmapConfig::default().show_legend);
+        assert_eq!(l2.opacity, HeatmapConfig::default().opacity);
+        assert!(l2.enabled, "capture stays");
+        assert_eq!(l2.bubble_cluster_ms, edited.bubble_cluster_ms);
+        assert_eq!(l2.volume_dots, edited.volume_dots);
+        assert_eq!(l2.live_lane, edited.live_lane);
+
+        let mut bubbles = edited.clone();
+        bubbles.reset_bubble_visuals();
+        let defaults = HeatmapConfig::default();
+        assert_eq!(bubbles.bubble_cluster_ms, defaults.bubble_cluster_ms);
+        assert_eq!(bubbles.volume_dots, defaults.volume_dots);
+        assert_eq!(bubbles.live_lane.show_marks, defaults.live_lane.show_marks);
+        assert!(bubbles.live_lane.tape_only, "the pane's mode stays");
+        assert_eq!(bubbles.opacity, edited.opacity, "the depth map stays");
+        assert_eq!(bubbles.show_legend, edited.show_legend);
     }
 }
