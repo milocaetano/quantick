@@ -219,6 +219,8 @@ def functions(prod):
 
 
 def strip_leading_generics(header):
+    """The header after a leading `<...>`. The `>` of a `->` in a bound such
+    as `F: Fn() -> bool` closes nothing."""
     s = header.lstrip()
     if not s.startswith("<"):
         return header
@@ -226,7 +228,7 @@ def strip_leading_generics(header):
     for k, ch in enumerate(s):
         if ch == "<":
             depth += 1
-        elif ch == ">":
+        elif ch == ">" and s[k - 1:k] != "-":
             depth -= 1
             if depth == 0:
                 return s[k + 1:]
