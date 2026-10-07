@@ -57,6 +57,20 @@ fn push_feed_app(
     mpsc::Receiver<FeedCommand>,
     tokio::sync::watch::Sender<FeedCapabilities>,
 ) {
+    push_feed_app_restoring(ctx, None)
+}
+
+/// The same, with the time pane restored from a saved workspace at
+/// `restored_ms` rather than opened on the header default.
+fn push_feed_app_restoring(
+    ctx: &egui::Context,
+    restored_ms: Option<i64>,
+) -> (
+    QuantickApp,
+    mpsc::Sender<FeedEvent>,
+    mpsc::Receiver<FeedCommand>,
+    tokio::sync::watch::Sender<FeedCapabilities>,
+) {
     let (evt_tx, evt_rx) = mpsc::channel(64);
     let (_book_tx, book_rx) = mpsc::channel(64);
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
@@ -88,10 +102,46 @@ fn push_feed_app(
     evt_tx.try_send(FeedEvent::Backfilled(trades)).unwrap();
     app.drain_tabs();
     run_frame(&mut app, ctx);
-    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    match restored_ms {
+        Some(ms) => app.active_tab_mut().restore_canvas(
+            CanvasLayout::TimeAndFlow,
+            None,
+            crate::tab::CanvasCollapseRestore {
+                context: false,
+                flow: false,
+                heights: &[],
+                collapsed_slots: &[],
+            },
+            None,
+            &[ms],
+            crate::tab::LegendFold::default(),
+        ),
+        None => app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow),
+    }
     run_frame(&mut app, ctx);
     run_frame(&mut app, ctx);
     (app, evt_tx, cmd_rx, caps_tx)
+}
+
+/// A workspace saved on 1mo opens its time pane there, and the very first
+/// candle request asks for days — never a week of minutes thrown away a frame
+/// later.
+#[test]
+fn a_restored_monthly_pane_asks_for_days_first() {
+    let ctx = egui::Context::default();
+    let (app, _events, mut commands, _caps) =
+        push_feed_app_restoring(&ctx, Some(quantick_engine::time_bucket::CALENDAR_MONTH_MS));
+    assert_eq!(
+        app.active_tab().pane(PaneSide::Time(0)).state.spec(),
+        &BarSpec::Time(quantick_engine::time_bucket::CALENDAR_MONTH_MS)
+    );
+    assert_eq!(
+        drain_ohlcv_bases(&mut commands)
+            .iter()
+            .map(|asked| asked.0)
+            .collect::<Vec<_>>(),
+        vec![quantick_feed::OHLCV_DAILY_INTERVAL_MS]
+    );
 }
 
 fn answer(events: &mpsc::Sender<FeedEvent>, interval_ms: i64, bars: Vec<quantick_engine::Bar>) {

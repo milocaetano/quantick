@@ -127,6 +127,11 @@ impl Tab {
         // without context is simply never asked. Refusing here instead meant
         // a recording opened with no context at all and only picked it up if
         // the trader happened to press *load older*.
+        //
+        // The base is read off the panes first: a context pane just built on
+        // a restored 1mo asks for days from its first request, rather than a
+        // week of minutes it would discard a frame later.
+        self.follow_wanted_ohlcv_interval();
         if !self.any_pane_wants_venue_history()
             || self.ohlcv_pending
             || self.ohlcv_base.is_some()
