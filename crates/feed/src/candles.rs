@@ -131,23 +131,14 @@ pub fn fold(base: &[Bar], base_interval_ms: i64, interval_ms: i64) -> Vec<Bar> {
     out
 }
 
-/// Merge `bar` into the bar it is being folded with.
+/// Merge `bar` into the bar it is being folded with — [`Bar::absorb`], the
+/// engine's one summary of a run of bars. Exact arithmetic on the numbers
+/// already held: a folded bar states nothing the bars in it did not.
 ///
-/// The summary of a run of bars, and the only one: the run keeps the first
-/// bar's open and stamp, takes the extremes, ends on the last bar's close and
-/// stamp, and adds the volumes and trade counts up. Exact arithmetic on the
-/// numbers already held — a folded bar states nothing the bars in it did not.
-///
-/// `bar` must come after `folded` in time, which both callers guarantee by
+/// `bar` must come after `folded` in time, which every caller guarantees by
 /// walking an ascending series.
 pub fn merge_into(folded: &mut Bar, bar: &Bar) {
-    folded.high = folded.high.max(bar.high);
-    folded.low = folded.low.min(bar.low);
-    folded.close = bar.close;
-    folded.close_time = bar.close_time;
-    folded.buy_volume = folded.buy_volume.saturating_add(bar.buy_volume);
-    folded.sell_volume = folded.sell_volume.saturating_add(bar.sell_volume);
-    folded.trade_count = folded.trade_count.saturating_add(bar.trade_count);
+    folded.absorb(bar);
 }
 
 /// The start of the `interval_ms` window containing `time_ms` — the engine's

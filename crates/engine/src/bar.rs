@@ -86,6 +86,24 @@ impl Bar {
         self.trade_count += 1;
     }
 
+    /// Fold `later`, the bar that follows this one in time, into this one.
+    ///
+    /// The summary of a run of bars, and the only one: the first bar's open
+    /// and stamp stay, the extremes are taken, the later bar's close and
+    /// stamp end it, and volumes and trade counts add up — saturating, for
+    /// the reason [`extend`](Bar::extend) does. A folded venue candle and the
+    /// venue history put in front of a chart's first bar both summarise
+    /// through here, so the two cannot drift apart.
+    pub fn absorb(&mut self, later: &Self) {
+        self.high = self.high.max(later.high);
+        self.low = self.low.min(later.low);
+        self.close = later.close;
+        self.close_time = later.close_time;
+        self.buy_volume = self.buy_volume.saturating_add(later.buy_volume);
+        self.sell_volume = self.sell_volume.saturating_add(later.sell_volume);
+        self.trade_count = self.trade_count.saturating_add(later.trade_count);
+    }
+
     /// Total traded quantity: `buy_volume + sell_volume`.
     ///
     /// Saturates rather than panicking on the (physically impossible) overflow,
