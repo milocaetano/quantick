@@ -806,3 +806,110 @@ fn the_tape_view_window_moves_the_view_and_is_not_filed() {
     assert_eq!(asset_window(&app), filed, "the asset keeps its window");
     disable_test_gateway(&mut app, &ctx);
 }
+
+/// Mesh vertices painted inside `lane`: what the depth map leaves there.
+fn lane_mesh_vertices(output: &egui::FullOutput, lane: egui::Rect) -> usize {
+    fn walk(shape: &egui::Shape, lane: egui::Rect, count: &mut usize) {
+        match shape {
+            egui::Shape::Mesh(mesh) => {
+                *count += mesh
+                    .vertices
+                    .iter()
+                    .filter(|vertex| lane.contains(vertex.pos))
+                    .count();
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| walk(shape, lane, count)),
+            _ => {}
+        }
+    }
+    let mut count = 0;
+    for clipped in output
+        .shapes
+        .iter()
+        .filter(|clipped| clipped.clip_rect.intersects(lane))
+    {
+        walk(&clipped.shape, lane, &mut count);
+    }
+    count
+}
+
+/// Trader 2026-10-07, WIN with the map on the tape and off the candles:
+/// dragging the tape into the past took every heatmap band off it and left
+/// the bubbles alone. The history still held the book for that stretch.
+#[test]
+fn a_tape_panned_into_the_past_keeps_its_book() {
+    use quantick_layers::OrderflowSwitch;
+    use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
+
+    let ctx = egui::Context::default();
+    let (mut app, mut commands) = app_with_history(200);
+    native_split(&mut app);
+    let generation = take_capture_start(&mut commands);
+    let flow = app.active_tab_mut().tape_mut();
+    flow.set_layer_switch(OrderflowSwitch::Depth, false);
+    flow.set_layer_switch(OrderflowSwitch::TapeDepth, true);
+    flow.handle_depth_event(DepthEvent::Snapshot {
+        symbol: "TESTUSDT".to_owned(),
+        generation,
+        observed_at_ms: 21_000,
+        effective_at_ms: 21_000,
+        price_step: None,
+        snapshot: BookSnapshot::new(
+            10,
+            vec![BookLevel::new(Decimal::new(1005, 1), Decimal::from(50)).unwrap()],
+            vec![BookLevel::new(Decimal::new(1010, 1), Decimal::from(40)).unwrap()],
+            BookCoverage::Limited {
+                levels_per_side: 1_000,
+            },
+        ),
+    });
+    // The book's clock ticks every second between the prints.
+    let (mut update_id, mut book_ms) = (11, 22_000);
+    for agg_id in 201..=400 {
+        let print = trade(agg_id);
+        while book_ms <= print.timestamp_ms {
+            app.active_tab_mut()
+                .tape_mut()
+                .handle_depth_event(DepthEvent::Update {
+                    symbol: "TESTUSDT".to_owned(),
+                    generation,
+                    event_time_ms: book_ms,
+                    delta: BookDelta::new(update_id, update_id, Vec::new(), Vec::new()),
+                });
+            update_id += 1;
+            book_ms += 1_000;
+        }
+        app.active_tab_mut()
+            .ingest_live_trade_at(&print, 10_000 + agg_id as i64);
+    }
+    let flow = app.active_tab_mut().tape_mut();
+    flow.set_live_lane_window(quantick_orderflow::LaneWindow::Fixed { ms: 3_000 });
+    flow.flush_for_test();
+    run_frame(&mut app, &ctx);
+
+    let painted = |app: &mut QuantickApp, tape_depth: bool| {
+        let flow = app.active_tab_mut().tape_mut();
+        flow.set_layer_switch(OrderflowSwitch::TapeDepth, tape_depth);
+        flow.set_tape_end(TapeEnd::Past { end_ms: 35_000 });
+        for _ in 0..3 {
+            app.active_tab_mut().tape_mut().flush_for_test();
+            run_frame(app, &ctx);
+        }
+        assert!(
+            !app.active_tab().tape().tape_end().is_live(),
+            "held in the past"
+        );
+        let pane = &app.active_tab().flow_pane;
+        let chart = pane.frame.chart_rect.expect("the canvas laid out");
+        let divider = pane.frame.lane_divider_x.expect("the divider");
+        let lane = egui::Rect::from_min_max(egui::pos2(divider + 1.0, chart.top()), chart.max);
+        app.active_tab_mut().tape_mut().flush_for_test();
+        lane_mesh_vertices(&run_frame(app, &ctx), lane)
+    };
+    let without = painted(&mut app, false);
+    let with = painted(&mut app, true);
+    assert!(
+        with > without,
+        "the past tape draws the book it stood beside: {with} vertices with the map, {without} without"
+    );
+}
