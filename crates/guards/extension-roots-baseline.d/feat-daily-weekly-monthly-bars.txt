@@ -5,5 +5,5 @@
 # state/venue_lead.rs (`VenueLead`, outside the root); what the root gains is
 # the one field, its seat call on every partial refresh, the carry into a
 # history recut, and three accessors (set, read, first-print open).
-ChartState +38
-!budget +38
+ChartState +37
+!budget +37
