@@ -55,7 +55,7 @@ impl BookEngine {
                 window_ms,
                 dots,
                 retained,
-                (&self.history, prices, settled),
+                (&self.history, prices, settled.effective_grouping),
             )
         }) {
             return Some(Arc::new(reused));

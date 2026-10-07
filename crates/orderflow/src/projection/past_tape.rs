@@ -12,6 +12,7 @@ use super::{
     DotHorizon, HeatmapProjection, PriceWindow, SettledProjection, TapeFacts, TierCut,
     TierGrouping, VolumeDots, cluster_tier, lane_grouping, refine_tier, tier_primitives,
 };
+use crate::grouping::EffectiveGrouping;
 use crate::history::LiquidityHistory;
 use crate::timeline::{BarTimeline, LiveEdge};
 
@@ -67,7 +68,7 @@ impl PastTape {
     /// This stretch again for a window ending at `end_ms`, when nothing in it
     /// can change: the same blocks and rungs, every print that could join
     /// them delivered, none evicted. A held drag re-reads no history; its
-    /// book is re-read only when the price axis or the map's scale moved.
+    /// book is re-read only when its price axis or grouping moved.
     #[must_use]
     pub fn reused_at(
         &self,
@@ -75,7 +76,7 @@ impl PastTape {
         window_ms: i64,
         dots: &VolumeDots,
         retained_from_ms: Option<i64>,
-        book: (&LiquidityHistory, PriceWindow, &SettledProjection),
+        book: (&LiquidityHistory, PriceWindow, EffectiveGrouping),
     ) -> Option<Self> {
         let (block_ms, from_ms, until_ms) = past_span(end_ms, window_ms, dots.tape_window_ms);
         let rungs = (dots.tape_window_ms, dots.tape_level_ticks);
@@ -89,15 +90,15 @@ impl PastTape {
             );
         let frozen = self.settled_through_ms >= until_ms
             && retained_from_ms.is_none_or(|retained| retained <= from_ms);
-        let (history, prices, settled) = book;
+        let (history, prices, grouping) = book;
         (same && frozen).then(|| Self {
             end_ms,
             retained_from_ms,
-            heat: if self.heat.fits(prices, settled) {
+            heat: if self.heat.fits(prices, grouping) {
                 Arc::clone(&self.heat)
             } else {
                 Arc::new(project_past_heat(
-                    history, from_ms, until_ms, prices, settled,
+                    history, from_ms, until_ms, prices, grouping,
                 ))
             },
             ..self.clone()
@@ -232,7 +233,11 @@ pub fn project_past_tape(
         rungs: (dots.tape_window_ms, dots.tape_level_ticks),
         projection: Arc::new(projection),
         heat: Arc::new(project_past_heat(
-            history, from_ms, until_ms, prices, settled,
+            history,
+            from_ms,
+            until_ms,
+            prices,
+            settled.effective_grouping,
         )),
     })
 }

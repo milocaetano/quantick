@@ -14,10 +14,10 @@ use std::sync::Arc;
 use eframe::egui;
 use quantick_control_schema::tape_view::TapeViewSnapshot;
 use quantick_orderbook::BookLevel;
-use quantick_orderflow::LiveEdge;
 use quantick_orderflow::engine::{CaptureStatus, ProjectionRequest, VisibleOrderflow};
 use quantick_orderflow::projection::{PaneGeometry, normalized_area_size};
 use quantick_orderflow::tape_view::TapeEnd;
+use quantick_orderflow::{HeatmapProjection, LiveEdge};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
@@ -129,22 +129,18 @@ impl OrderflowView {
         )
         .with_inverted(inverted);
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
-        // The frame's book is today's: beside a past tape it stays with the
-        // candles, and the tape draws the book kept for its own stretch.
+        // The frame's book is today's: a held tape draws its own beside it.
         let right = chart_rect.right() - lane_width_px * f32::from(!self.tape_end.is_live());
         let depth = painter.with_clip_rect(chart_rect.with_max_x(right));
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_heatmap_background(&depth, &context);
-        let held = self.tape_edge(frame).filter(|_| !self.tape_end.is_live());
-        if let (Some(edge), Some(past)) = (held, &self.published.past_tape) {
-            let heat = past
-                .heat
-                .placed(edge.now_ms, edge.window_ms, frame.slot_count);
-            let style = OrderflowRenderStyle {
-                depth_layer: false,
-                ..style.clone()
-            };
-            draw_heatmap_background(painter, &RenderContext::new(&heat, layout, &style));
+        if let Some(heat) = self.held_heat(frame) {
+            let mut tape = style.clone();
+            tape.depth_layer = false;
+            draw_heatmap_background(
+                painter,
+                &RenderContext::new(&heat, layout.with_lane_only(), &tape),
+            );
         }
         draw_live_lane_marks(painter, &context);
         draw_liquidity_events(&depth, &context);
@@ -208,6 +204,15 @@ impl OrderflowView {
         };
         draw_aggression_bubbles(painter, &context);
         crate::orderflow_render::draw_past_tape_edge(painter, &context, past);
+    }
+
+    /// The book beside a tape held in the past, on the tape's clock.
+    pub(crate) fn held_heat(&self, frame: &VisibleOrderflow) -> Option<Arc<HeatmapProjection>> {
+        let edge = self.tape_edge(frame).filter(|_| !self.tape_end.is_live())?;
+        let past = self.published.past_tape.as_ref().map(|past| &past.heat);
+        let clock = (edge.now_ms, edge.window_ms, frame.slot_count);
+        let grouping = frame.projection.effective_grouping;
+        Some(self.past_heat.borrow_mut().place(past, clock, grouping))
     }
 
     /// The native tape's clock: its prints and its past book are placed on it.

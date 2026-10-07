@@ -1,7 +1,9 @@
 # fix/heatmap-hidden-on-pan: a tape held in the past paints the book the
-# history kept for its own blocks. These lines are the egui paint call in
-# OrderflowView::draw_background; reading, gridding, scaling and placing that
-# book live below app in quantick_orderflow::projection::PastHeat and
-# TapeEnd::edge, with their tests.
-crates/app +10
-!budget +10
+# history kept for its own blocks. These lines are the egui paint call and
+# the cached placement in OrderflowView, the cursor reading the same bands,
+# and the layout mapping a tape-only primitive from the divider. Reading,
+# gridding, scaling, placing, caching and labelling that book live below app
+# in quantick_orderflow::projection (PastHeat, PlacedPastHeat, heat_cells)
+# and TapeEnd::edge, with their tests.
+crates/app +35
+!budget +35

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive as _;
 
-use super::config::{DisplayGrouping, HeatmapConfig, IntensityMode};
+use super::config::{DisplayGrouping, HeatmapConfig};
 use super::grouping::{EffectiveGrouping, GroupedLiquidity, GroupingWindow, sweep_grouped_runs};
 use super::history::{LiquidityHistory, RestingSide};
 pub use super::interaction::LiquidityEvidence;
@@ -18,6 +18,7 @@ mod constants;
 mod dots;
 pub mod flow_tape;
 mod fold;
+mod heat_cells;
 mod model;
 mod past_heat;
 mod past_tape;
@@ -48,11 +49,11 @@ pub use dots::{
     dot_level_ticks, dot_radius_range, dot_window_ms, hold_rung, lane_bars, tape_price_range,
 };
 pub use model::{
-    AggressionPrimitive, BEFORE_CAPTURE, GapPrimitive, HeatmapCell, HeatmapProjection,
-    LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection, TapeFacts,
-    normalized_area_size, normalized_log_intensity,
+    AggressionPrimitive, BEFORE_CAPTURE, BOOK_PENDING, GapPrimitive, HeatmapCell,
+    HeatmapProjection, LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection,
+    TapeFacts, normalized_area_size, normalized_log_intensity,
 };
-pub use past_heat::{PastHeat, project_past_heat};
+pub use past_heat::{PastHeat, PlacedPastHeat, project_past_heat};
 pub use past_tape::{PastBars, PastTape, past_block_ms, past_span, project_past_tape};
 pub use pending::PendingTape;
 pub use tape::{TapeDotGeometry, merge_tape_dots, position_tape_at};
@@ -76,17 +77,9 @@ use fold::{FoldOrder, fold_to_budget, pane_budgets};
 use model::event_cap_key;
 use tiers::{TierClusters, TierCut, TierGrouping, cluster_tier, refine_tier, tier_primitives};
 
-#[derive(Debug)]
-struct DraftCell {
-    generation: u64,
-    side: RestingSide,
-    price_bucket: Decimal,
-    quantity: Decimal,
-    x0: f64,
-    x1: f64,
-    y0: f64,
-    y1: f64,
-}
+#[cfg(test)]
+use heat_cells::percentile_99;
+use heat_cells::{DraftCell, book_gaps, bucket_rows, finish_cells};
 
 /// One level's resting liquidity, summed over one bar and weighted by time.
 ///
@@ -233,19 +226,9 @@ pub fn project_settled(
     let mut summary: BTreeMap<(usize, Decimal, RestingSide), SlotHeat> = BTreeMap::new();
     let lane_view = timeline.lane_start_ms().is_some();
     for run in &grouped.runs {
-        let bucket_low = run.price_bucket;
-        let bucket_high = bucket_low + effective_grouping.bucket_width;
-        let clipped_low = bucket_low.max(prices.low);
-        let clipped_high = bucket_high.min(prices.high);
-        let Some(y0) = prices.y(clipped_high) else {
+        let Some((y0, y1)) = bucket_rows(run.price_bucket, effective_grouping, prices) else {
             continue;
         };
-        let Some(y1) = prices.y(clipped_low) else {
-            continue;
-        };
-        if y1 <= y0 {
-            continue;
-        }
         let draft = |x0: f64, x1: f64, quantity: Decimal| DraftCell {
             generation: run.generation,
             side: run.side,
@@ -316,50 +299,14 @@ pub fn project_settled(
         });
     }
 
-    let liquidity_reference = match config.intensity_mode {
-        IntensityMode::VisibleP99 => percentile_99(run_quantities.into_iter()),
-        IntensityMode::Fixed(maximum) => maximum,
-    };
+    let liquidity_reference = heat_cells::liquidity_reference(config, run_quantities.into_iter());
 
     // Hidden heat is gated after the reference: the drafts fed the P99 above,
     // and the depletion floors keyed to it must not move just because the map
     // behind them is switched off. Before the drop accounting, so the health
-    // counters never blame the cap for cells the user chose to hide.
-    if !config.show_liquidity {
-        drafts.clear();
-    }
-    let dropped_cells = drafts.len().saturating_sub(config.max_visible_cells);
-    if dropped_cells > 0 {
-        // Retain the strongest walls deterministically and surface the loss.
-        drafts.sort_by(|a, b| {
-            b.quantity
-                .cmp(&a.quantity)
-                .then_with(|| a.generation.cmp(&b.generation))
-                .then_with(|| a.price_bucket.cmp(&b.price_bucket))
-                .then_with(|| a.x0.total_cmp(&b.x0))
-        });
-        drafts.truncate(config.max_visible_cells);
-    }
-
-    let cells = drafts
-        .into_iter()
-        .map(|draft| {
-            let intensity =
-                normalized_log_intensity(draft.quantity, liquidity_reference, config.gamma);
-            HeatmapCell {
-                generation: draft.generation,
-                side: draft.side,
-                price_bucket: draft.price_bucket,
-                quantity: draft.quantity,
-                x0: draft.x0,
-                x1: draft.x1,
-                y0: draft.y0,
-                y1: draft.y1,
-                intensity,
-                alpha: intensity * config.opacity,
-            }
-        })
-        .collect();
+    // counters never blame the cap for cells the user chose to hide. The cap
+    // retains the strongest walls deterministically and surfaces the loss.
+    let (cells, dropped_cells) = finish_cells(drafts, liquidity_reference, config);
 
     // The chart draws the same flow in two views. The tape shows the last
     // stretch of market time print by print; a bar slot shows what its bar has
@@ -513,63 +460,16 @@ pub fn project_settled(
     // Coverage primitives describe the depth layer. With L2 capture off there
     // is no map whose absence needs explaining, so a bubbles-only frame emits
     // no gap marks at all.
-    let mut gaps: Vec<GapPrimitive> = if depth_enabled && config.show_gaps {
-        history
-            .coverage_gaps()
-            .filter_map(|gap| {
-                let gap_end = gap.end_ms.unwrap_or(time_end);
-                if gap_end <= time_start || gap.start_ms >= time_end {
-                    return None;
-                }
-                let x0 = timeline.locate_clamped(gap.start_ms.max(time_start))?;
-                let x1 = timeline.locate_clamped(gap_end.min(time_end))?;
-                (x1.normalized > x0.normalized).then(|| GapPrimitive {
-                    from_generation: gap.from_generation,
-                    to_generation: gap.to_generation,
-                    x0: x0.normalized,
-                    x1: x1.normalized,
-                    reason: gap.reason.clone(),
-                })
-            })
-            .collect()
+    // The gap switch covers the leading span before capture too: it is one
+    // legend entry, and half-hiding it would leave the legend describing marks
+    // the viewer cannot see.
+    let gaps = if depth_enabled && config.show_gaps {
+        book_gaps(history, time_start, time_end, |time_ms| {
+            timeline.locate_clamped(time_ms).map(|x| x.normalized)
+        })
     } else {
         Vec::new()
     };
-
-    // Historical trades can precede the first locally captured L2 snapshot.
-    // Make that absence an explicit primitive instead of a transparent region
-    // that could be mistaken for zero resting liquidity. The gap switch covers
-    // this leading span too: it is one legend entry, and half-hiding it would
-    // leave the legend describing marks the viewer cannot see.
-    if depth_enabled && config.show_gaps {
-        match history.coverage_segments().next() {
-            Some(first_coverage) if first_coverage.start_ms > time_start => {
-                let unavailable_end = first_coverage.start_ms.min(time_end);
-                if let (Some(x0), Some(x1)) = (
-                    timeline.locate_clamped(time_start),
-                    timeline.locate_clamped(unavailable_end),
-                ) && x1.normalized > x0.normalized
-                {
-                    gaps.push(GapPrimitive {
-                        from_generation: None,
-                        to_generation: Some(first_coverage.generation),
-                        x0: x0.normalized,
-                        x1: x1.normalized,
-                        reason: BEFORE_CAPTURE.to_owned(),
-                    });
-                }
-            }
-            None => gaps.push(GapPrimitive {
-                from_generation: None,
-                to_generation: None,
-                x0: 0.0,
-                x1: 1.0,
-                reason: "book_unavailable_before_capture".to_owned(),
-            }),
-            Some(_) => {}
-        }
-    }
-    gaps.sort_by(|a, b| a.x0.total_cmp(&b.x0).then_with(|| a.x1.total_cmp(&b.x1)));
 
     SettledProjection {
         enabled: true,
@@ -945,18 +845,6 @@ fn lane_grouping(config: &HeatmapConfig) -> EffectiveGrouping {
         chosen => chosen,
     };
     EffectiveGrouping::resolve(display, config.price_grouping, Decimal::ZERO)
-}
-
-fn percentile_99(values: impl Iterator<Item = Decimal>) -> Decimal {
-    let mut positive: Vec<Decimal> = values
-        .filter(|quantity| *quantity > Decimal::ZERO)
-        .collect();
-    if positive.is_empty() {
-        return Decimal::ZERO;
-    }
-    positive.sort_unstable();
-    let rank = (99 * positive.len()).div_ceil(100);
-    positive[rank.saturating_sub(1)]
 }
 
 #[cfg(test)]
