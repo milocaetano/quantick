@@ -155,6 +155,12 @@ pub fn layer_entry(row: LayerFact) -> Entry {
     .disabled(row.blocked.map(|block| block.explanation.into()))
     .trace(Trace::Layer(row.layer))
 }
+/// The price gutter's scale choice uses the same grammar as canvas menus.
+pub fn inverted_entry(inverted: bool) -> Entry {
+    Entry::new("Inverted chart", Kind::Check {
+        checked: inverted, choice: MenuIntent::SetPriceInverted(!inverted), shortcut: None,
+    }).hint("flip the chart upside down \u{2014} low prices at the top. Also reached by dragging the axis down until the bars flatten and turn over")
+}
 pub struct TapeFact {
     pub window: LaneWindow,
     pub reference_ms: Option<i64>,
@@ -324,6 +330,7 @@ fn tape_entries(facts: &Facts, tape: &TapeFact) -> Vec<Entry> {
                 weak: false,
             },
         )
+        .trace(Trace::Button("Tape window"))
     };
     let mut windows = vec![option(LaneWindow::default()), separator()];
     windows.extend(
@@ -340,15 +347,18 @@ fn tape_entries(facts: &Facts, tape: &TapeFact) -> Vec<Entry> {
                 tape.window.resolve_ms(reference)
             }),
     };
-    windows.push(Entry::new(
-        "custom",
-        Kind::Seconds {
-            value: ms as f64 / 1000.0,
-            minimum: MIN_LIVE_LANE_WINDOW_MS as f64 / 1000.0,
-            maximum: MAX_LIVE_LANE_WINDOW_MS as f64 / 1000.0,
-        },
-    ));
-    out.push(Entry::new(format!("tape window: {}", lane_window_label(tape.window, tape.reference_ms)), Kind::Submenu(windows))
+    windows.push(
+        Entry::new(
+            "custom",
+            Kind::Seconds {
+                value: ms as f64 / 1000.0,
+                minimum: MIN_LIVE_LANE_WINDOW_MS as f64 / 1000.0,
+                maximum: MAX_LIVE_LANE_WINDOW_MS as f64 / 1000.0,
+            },
+        )
+        .trace(Trace::Button("Custom duration")),
+    );
+    out.push(Entry::new(format!("tape window: {}", lane_window_label(tape.window, tape.reference_ms)), Kind::Submenu(windows)).trace(Trace::Button("Tape window menu"))
         .hint("how much market time the tape shows. Following the bars keeps roughly one bar's worth of flow in the band whatever the instrument; a fixed window shows that much time however fast the bars are closing, so prints stay readable through a burst"));
     out
 }
@@ -393,7 +403,7 @@ fn object_chips(object: &ObjectFact) -> Vec<ChipFact> {
             false,
         );
     }
-    // The band's chip follows visibility and precedes provenance, just as the manager row does.
+    // The band chip follows visibility and precedes market and series reach.
     if let Some(band) = &object.band {
         chips.insert(
             usize::from(object.author.is_some())
@@ -548,3 +558,7 @@ pub fn describe(model: &Model, facts: &Facts) -> Vec<Entry> {
     }
     out
 }
+
+#[cfg(test)]
+#[path = "pane_menu_tests.rs"]
+mod tests;

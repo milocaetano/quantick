@@ -266,8 +266,8 @@ impl LayoutAdapter<'_> {
         let (id, named) = (pane.id, pane.layout_id());
         let view = self.store.session_mut().register(id, named);
         if let Some(pane) = self.pane_mut_at(tab, side) {
-            pane.layout_view = view;
-            pane.opening_layout = None;
+            pane.layout.view = view;
+            pane.layout.opening = None;
         }
         Ok(id)
     }
@@ -287,7 +287,7 @@ impl LayoutAdapter<'_> {
         self.tabs
             .iter()
             .flat_map(|tab| tab.panes())
-            .filter(|(pane, _)| session.shows(&pane.layout_view, layout))
+            .filter(|(pane, _)| session.shows(&pane.layout.view, layout))
             .count()
     }
 
@@ -299,7 +299,7 @@ impl LayoutAdapter<'_> {
                 layout,
                 self.tabs.iter_with_ids().flat_map(|(tab_id, tab)| {
                     tab.panes()
-                        .map(move |(pane, side)| ((tab_id, side), &pane.layout_view))
+                        .map(move |(pane, side)| ((tab_id, side), &pane.layout.view))
                 }),
             )
             .collect()
@@ -314,7 +314,7 @@ impl LayoutAdapter<'_> {
             .map(|layout| layout.name.clone())
             .unwrap_or_default();
         if let Some(pane) = self.pane_mut_at(tab, side) {
-            pane.layout_label = name;
+            pane.layout.label = name;
         }
     }
 
@@ -649,7 +649,7 @@ impl LayoutAdapter<'_> {
         // The drawings travel with the pane; their key follows its address.
         if let Some(tab) = self.tabs.by_id_mut(tab_id) {
             for (pane, side) in tab.panes_with_sides_mut() {
-                if let Some(key) = pane.drawings_key.as_mut() {
+                if let Some(key) = pane.layout.drawings_key.as_mut() {
                     key.pane = side.index();
                 }
             }
@@ -774,7 +774,7 @@ impl LayoutAdapter<'_> {
         let Some(pane) = self.pane_mut_at(tab, side) else {
             return;
         };
-        let Some(key) = pane.drawings_key.take() else {
+        let Some(key) = pane.layout.drawings_key.take() else {
             // Never loaded: nothing of the layout's is on it. What a hook or
             // a test placed before seeding is dropped with the key.
             pane.drawings.take_all();
@@ -786,7 +786,7 @@ impl LayoutAdapter<'_> {
             .iter()
             .map(SavedDrawing::from_drawing)
             .collect();
-        pane.drawings_saved_revision = pane.drawings.revision();
+        pane.layout.saved_revision = pane.drawings.revision();
         self.store
             .session_mut()
             .store_drawings(layout, &key, items, |tool| {
@@ -837,8 +837,8 @@ impl LayoutAdapter<'_> {
             let slots = pane.slots();
             pane.reanchor_drawings(slots);
         }
-        pane.drawings_key = Some(key);
-        pane.drawings_saved_revision = pane.drawings.revision();
+        pane.layout.drawings_key = Some(key);
+        pane.layout.saved_revision = pane.drawings.revision();
     }
 
     /// A tab whose market moved out from under a pane: the drawings go to
@@ -853,6 +853,7 @@ impl LayoutAdapter<'_> {
                     .filter(move |(pane, _)| {
                         pane.layout_seeded()
                             && pane
+                                .layout
                                 .drawings_key
                                 .as_ref()
                                 .is_some_and(|key| key.feed != feed || key.symbol != symbol)
@@ -877,8 +878,7 @@ impl LayoutAdapter<'_> {
             .flat_map(|(tab_id, tab)| {
                 tab.panes()
                     .filter(|(pane, _)| {
-                        pane.drawings_key.is_some()
-                            && pane.drawings.revision() != pane.drawings_saved_revision
+                        pane.layout.drawings_dirty(pane.drawings.revision())
                             && !pane.drawings.in_gesture()
                     })
                     .map(move |(_, side)| (tab_id, side))
@@ -889,7 +889,7 @@ impl LayoutAdapter<'_> {
             let Some(pane) = self.pane_mut_at(tab, side) else {
                 continue;
             };
-            let Some(key) = pane.drawings_key.clone() else {
+            let Some(key) = pane.layout.drawings_key.clone() else {
                 continue;
             };
             let items: Vec<SavedDrawing> = pane
@@ -898,7 +898,7 @@ impl LayoutAdapter<'_> {
                 .iter()
                 .map(SavedDrawing::from_drawing)
                 .collect();
-            pane.drawings_saved_revision = pane.drawings.revision();
+            pane.layout.saved_revision = pane.drawings.revision();
             self.store
                 .session_mut()
                 .store_drawings(layout, &key, items, |tool| {
@@ -926,7 +926,7 @@ impl LayoutAdapter<'_> {
                     other
                         .panes()
                         .filter(|(pane, _)| {
-                            pane.drawings_key.as_ref() == Some(&key)
+                            pane.layout.drawings_key.as_ref() == Some(&key)
                                 && pane.layout_id() == Some(layout)
                                 && !pane.drawings.in_gesture()
                         })

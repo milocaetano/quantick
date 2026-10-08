@@ -1,11 +1,6 @@
 //! The pane's context menus: the entries a right-click offers, and the
 //! layer checkbox all three of them share.
 //!
-//! Grouped because they are one reader's concern — a trader asking "what can
-//! I switch here?" — and because they share [`PaneContextMenu::layer_checkbox`],
-//! the single place a layer's label, hover text and disabled reason are
-//! decided.
-//!
 //! The headless model owns capture, selection, rename and confirmation state.
 //! This adapter projects the pane's read-only facts into concrete menu descriptions;
 //! `menu_renderer` draws them and the pane executes their domain commands. The

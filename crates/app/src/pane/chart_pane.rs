@@ -58,24 +58,8 @@ pub struct ChartPane {
     /// The UI's copy of every indicator's plot columns (see
     /// [`crate::indicators`]).
     pub indicators: IndicatorViews,
-    /// Read-only handle to the layout session's authoritative membership.
-    pub(crate) layout_view: quantick_workspace::session::LayoutView,
-    /// A restored/opening request, consumed when the session seeds this pane.
-    /// The outer option distinguishes a requested default from no request.
-    pub(crate) opening_layout: Option<Option<crate::layouts::LayoutId>>,
-    /// The layout's name, for the pane to show beside its own controls: a copy the app refreshes on
-    /// a switch or rename, so the tab-drawn header, which has no book, never looks it up per frame.
-    /// Drawn today only by a *context* pane, in the strip that carries its timeframe chips
-    /// ([`crate::time_header`]); the copy lives on every pane so the flow pane's own readout is a
-    /// draw call and not a second bookkeeping path.
-    pub layout_label: String,
-    /// Which market and pane address the drawings on this pane belong to,
-    /// once the layout put them here. The app compares it with the tab's
-    /// market every frame and swaps the set when they part.
-    pub drawings_key: Option<crate::layouts::DrawingKey>,
-    /// The drawings revision last copied into the layout; a different
-    /// reading means the layout is behind this pane.
-    pub drawings_saved_revision: u64,
+    /// Headless pane binding; the workspace session owns authoritative membership.
+    pub(crate) layout: quantick_workspace::pane_layout::PaneLayout,
     /// Whether this pane's on-chart indicator legend is folded to its count puck. Per pane, not per
     /// window: a split is two readings of the same market, and the corner pressure that makes a
     /// trader fold the flow pane's legend (bubbles, book, the position HUD) is absent on the time
@@ -128,7 +112,7 @@ pub struct ChartPane {
     /// Non-empty on any pane cutting by a foldable time interval: the split's time pane, and the
     /// flow pane whenever its spec is `BarSpec::Time` (audit S1). A venue candle has no tape, so
     /// the flow layers draw nothing over it.
-    pub history_prefix: Vec<quantick_engine::Bar>,
+    pub history_prefix: quantick_chart::venue_history::VenueHistory,
 
     /// Where the position HUD anchors this frame: the chart rect and price scale, cached by the
     /// draw while the paper layer is painted on the pane that owns order entry. The HUD draws in
@@ -162,10 +146,17 @@ impl ChartPane {
     /// a new axis source (tape or candles) or entering or leaving tape only.
     pub(crate) fn sync_price_axis_mode(&mut self) {
         let modes = self.tape_modes();
-        if self.frame.price_axis_mode != modes {
+        use quantick_chart_interaction::pane::{Intent, update};
+        let effects = update(
+            &mut self.model,
+            Intent::PriceAxisMode {
+                tape_only: modes.0,
+                native_tape: modes.1,
+            },
+        );
+        if !effects.is_empty() {
             self.price_view.reset();
             self.frame.auto_range = None;
-            self.frame.price_axis_mode = modes;
         }
     }
 
@@ -259,14 +250,13 @@ impl ChartPane {
 
     /// Current membership, or the pending imported/opening choice before seeding.
     pub(crate) fn layout_id(&self) -> Option<crate::layouts::LayoutId> {
-        self.opening_layout
-            .unwrap_or_else(|| self.layout_view.layout())
+        self.layout.layout_id()
     }
     pub(crate) fn layout_seeded(&self) -> bool {
-        self.layout_view.seeded()
+        self.layout.seeded()
     }
     pub(crate) fn request_opening_layout(&mut self, id: Option<crate::layouts::LayoutId>) {
-        self.opening_layout = Some(id);
+        self.layout.request_opening(id);
     }
 
     /// The flow pane: quantick's own view of `symbol`, opening on bar `spec`,
@@ -303,11 +293,7 @@ impl ChartPane {
             orderflow,
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
-            layout_view: quantick_workspace::session::LayoutView::default(),
-            opening_layout: None,
-            layout_label: String::new(),
-            drawings_key: None,
-            drawings_saved_revision: 0,
+            layout: quantick_workspace::pane_layout::PaneLayout::default(),
             legend_collapsed: false,
             layers: quantick_layers::LayerState::new(render_registry::standard().layers()),
             layer_renderers: render_registry::standard(),
@@ -323,7 +309,7 @@ impl ChartPane {
             price_band_label: std::sync::Arc::from(bands::PRICE_BAND_LABEL),
             hover_pos: None,
             tape_switch: TapeSwitch::default(),
-            history_prefix: Vec::new(),
+            history_prefix: quantick_chart::venue_history::VenueHistory::default(),
             paper_hud_anchor: None,
             context_menu: PaneContextMenu::default(),
             strategies: PaneStrategies::default(),
@@ -897,6 +883,7 @@ impl ChartPane {
             PaneMenuIntent::SetLayerVisible { layer, visible } => {
                 self.set_layer_visible(layer, visible, chrome.layers);
             }
+            PaneMenuIntent::SetPriceInverted(inverted) => self.price_view.set_inverted(inverted),
             PaneMenuIntent::SetIgnoreFlowOpening(ignore) => {
                 if let Some(owner) = self.orderflow.as_mut() {
                     owner.set_ignore_flow_opening(ignore);

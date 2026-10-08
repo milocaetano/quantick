@@ -55,6 +55,9 @@ pub(super) fn render(
                         .inner;
                     if response.changed() {
                         out.push(choice.clone());
+                        if matches!(choice, MenuIntent::SetPriceInverted(_)) {
+                            ui.close_menu();
+                        }
                     }
                     Some(response)
                 }
@@ -140,56 +143,7 @@ pub(super) fn render(
                     }
                     None
                 }
-                Kind::Rename(drawing) => {
-                    let mut text = model.menu.rename.clone();
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut text)
-                            .hint_text(&entry.label)
-                            .desired_width(150.0),
-                    );
-                    out.extend(
-                        update(
-                            model,
-                            Intent::RenameDraft {
-                                text,
-                                blur: response.lost_focus(),
-                                drawing: Some(drawing.clone()),
-                            },
-                        )
-                        .into_iter()
-                        .filter_map(|effect| match effect {
-                            Effect::Menu(choice) => Some(choice),
-                            _ => None,
-                        }),
-                    );
-                    Some(response)
-                }
-                Kind::Seconds {
-                    value,
-                    minimum,
-                    maximum,
-                } => {
-                    let mut seconds = *value;
-                    ui.horizontal(|ui| {
-                        ui.label(&entry.label);
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut seconds)
-                                    .speed(1.0)
-                                    .range(*minimum..=*maximum)
-                                    .suffix(" s"),
-                            )
-                            .changed()
-                        {
-                            out.push(MenuIntent::SetLaneWindow(
-                                quantick_orderflow::LaneWindow::Fixed {
-                                    ms: (seconds * 1000.0).round() as i64,
-                                },
-                            ));
-                        }
-                    });
-                    None
-                }
+                Kind::Rename(_) | Kind::Seconds { .. } => edit_value(ui, model, entry, &mut out),
                 Kind::Trade(price) => {
                     if let Some(paper) = paper.as_deref_mut() {
                         paper.context_trade_actions(ui, *price);
@@ -212,6 +166,68 @@ pub(super) fn render(
     }
     out
 }
+fn edit_value(
+    ui: &mut egui::Ui,
+    model: &mut Model,
+    entry: &Entry,
+    out: &mut Vec<MenuIntent>,
+) -> Option<egui::Response> {
+    match &entry.kind {
+        Kind::Rename(drawing) => {
+            let mut text = model.menu.rename.clone();
+            let response = ui.add(
+                egui::TextEdit::singleline(&mut text)
+                    .hint_text(&entry.label)
+                    .desired_width(150.0),
+            );
+            out.extend(
+                update(
+                    model,
+                    Intent::RenameDraft {
+                        text,
+                        blur: response.lost_focus(),
+                        drawing: Some(drawing.clone()),
+                    },
+                )
+                .into_iter()
+                .filter_map(|effect| match effect {
+                    Effect::Menu(choice) => Some(choice),
+                    _ => None,
+                }),
+            );
+            Some(response)
+        }
+        Kind::Seconds {
+            value,
+            minimum,
+            maximum,
+        } => {
+            let mut seconds = *value;
+            let response = ui
+                .horizontal(|ui| {
+                    ui.label(&entry.label);
+                    let response = ui.add(
+                        egui::DragValue::new(&mut seconds)
+                            .speed(1.0)
+                            .range(*minimum..=*maximum)
+                            .suffix(" s"),
+                    );
+                    if response.changed() {
+                        out.push(MenuIntent::SetLaneWindow(
+                            quantick_orderflow::LaneWindow::Fixed {
+                                ms: (seconds * 1000.0).round() as i64,
+                            },
+                        ));
+                    }
+                    response
+                })
+                .inner;
+            Some(response)
+        }
+        _ => None,
+    }
+}
+
 fn trace(menu: &mut PaneContextMenu, trace: Trace, rect: egui::Rect) {
     if trace == Trace::ChartLayers {
         menu.chart_layers_rect = Some(rect);

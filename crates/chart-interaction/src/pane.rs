@@ -38,6 +38,7 @@ pub enum MenuIntent {
         layer: ChartLayer,
         visible: bool,
     },
+    SetPriceInverted(bool),
     SetIgnoreFlowOpening(bool),
     OpenFootprintSettings,
     SetLaneWindow(LaneWindow),
@@ -79,6 +80,7 @@ pub struct MenuState {
 
 #[derive(Debug, Default)]
 pub struct Model {
+    pub price_axis_mode: (bool, bool),
     pub strip_expanded: Option<u64>,
     pub pending_settings: Option<u64>,
     pub pending_indicator_guide: Option<(u64, bool)>,
@@ -106,6 +108,10 @@ pub struct ContextPress {
 
 #[derive(Debug, Clone)]
 pub enum Intent {
+    PriceAxisMode {
+        tape_only: bool,
+        native_tape: bool,
+    },
     Axis(super::pane_axis::AxisGesture),
     Indicator(super::pane_axis::IndicatorGesture),
     Pan {
@@ -221,6 +227,19 @@ fn rename(state: &MenuState, drawing: Option<DrawingFact>) -> Option<Effect> {
 pub fn update(model: &mut Model, intent: Intent) -> Vec<Effect> {
     let mut effects = Vec::new();
     match intent {
+        Intent::PriceAxisMode {
+            tape_only,
+            native_tape,
+        } => {
+            let modes = (tape_only, native_tape);
+            if model.price_axis_mode != modes {
+                model.price_axis_mode = modes;
+                effects.push(Effect::Scale {
+                    target: super::pane_axis::ScaleTarget::Price,
+                    action: super::pane_axis::ScaleAction::Reset,
+                });
+            }
+        }
         Intent::Axis(gesture) => effects.extend(super::pane_axis::axis(model, gesture)),
         Intent::Indicator(gesture) => effects.extend(super::pane_axis::indicator(model, gesture)),
         Intent::Pan {

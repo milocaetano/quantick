@@ -13,14 +13,7 @@ use crate::state::ChartState;
 use crate::viewport::Viewport;
 
 use super::ChartPane;
-use quantick_chart_interaction::pane_history::{PrefixChange, PrefixIdentity};
-fn prefix_identity(bars: &[quantick_engine::Bar]) -> PrefixIdentity {
-    PrefixIdentity {
-        count: bars.len(),
-        first: bars.first().map(|bar| bar.open_time),
-        last: bars.last().map(|bar| bar.open_time),
-    }
-}
+use quantick_chart_interaction::pane_history::PrefixChange;
 
 impl ChartPane {
     /// How many bar slots the chart draws: the venue prefix, the closed bars
@@ -159,10 +152,6 @@ impl ChartPane {
         self.publish_partial();
     }
 
-    /// Every closed bar the pane shows, prefix first — what an indicator is
-    /// computed over, so an average spans the venue history rather than
-    /// restarting at the first print this session saw.
-
     /// Put `bars` in front of the trade-derived series, or take the prefix
     /// away when they are empty.
     ///
@@ -184,11 +173,9 @@ impl ChartPane {
         covers_seam: bool,
     ) -> bool {
         let lead_changed = self.state.set_venue_lead(lead, covers_seam);
-        let change = self.model.history.prefix_change(
-            prefix_identity(&self.history_prefix),
-            prefix_identity(&bars),
-            lead_changed,
-        );
+        let change = self
+            .history_prefix
+            .install(bars, &mut self.model.history, lead_changed);
         let delta = match change {
             PrefixChange::Unchanged => return false,
             PrefixChange::LeadOnly => {
@@ -197,7 +184,6 @@ impl ChartPane {
             }
             PrefixChange::Replace { delta } => delta,
         };
-        self.history_prefix = bars;
         self.model.viewport.shift_right_edge(delta);
         self.drawings.shift_bars(delta);
         self.gestures.shift_bars(delta);

@@ -2452,7 +2452,7 @@ fn two_panes_show_two_layouts_side_by_side() {
         app.layout_state().pane_layout(opened, PaneSide::Flow),
         second
     );
-    assert_eq!(app.active_tab().flow_pane.layout_label, "levels");
+    assert_eq!(app.active_tab().flow_pane.layout.label, "levels");
 
     // Switching the time pane back brings layout 1's set to it alone.
     app.arrangement_adapter().cycle_tab(-1);
@@ -2696,7 +2696,7 @@ fn per_pane_layouts_are_recorded_and_restored() {
         "layout 1 is empty here"
     );
     assert_eq!(
-        again.active_tab().pane(PaneSide::Time(0)).layout_label,
+        again.active_tab().pane(PaneSide::Time(0)).layout.label,
         "levels"
     );
 }

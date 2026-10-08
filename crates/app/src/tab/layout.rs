@@ -111,7 +111,7 @@ impl Tab {
             .unwrap_or(self.time_pane_opening_interval_ms);
         let mut pane = ChartPane::time(ids.alloc(), interval_ms);
         pane.legend_collapsed = self.time_pane_opening_legend_collapsed;
-        pane.opening_layout = Some(
+        pane.layout.opening = Some(
             self.context_opening_layouts
                 .get(self.time_panes.len())
                 .copied()

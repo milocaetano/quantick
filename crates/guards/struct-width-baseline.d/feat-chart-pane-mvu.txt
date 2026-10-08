@@ -1,3 +1,3 @@
-# Move five parked pane interaction/history fields into the headless model.
-app::ChartPane -5
-!budget -5
+# Move pane interaction/history and workspace binding into headless owners.
+app::ChartPane -9
+!budget -9

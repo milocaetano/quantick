@@ -5009,6 +5009,7 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
     assert_eq!(
         app.active_tab()
             .pane(PaneSide::Time(1))
+            .layout
             .drawings_key
             .as_ref()
             .map(|key| key.pane),

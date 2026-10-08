@@ -458,3 +458,160 @@ fn strategy_intents_drive_the_instance_on_the_drawing() {
     apply(&mut pane, vec![PaneMenuIntent::StrategyRemove(id)]);
     assert!(strategy_state(&pane, id).is_none());
 }
+
+#[test]
+fn shared_model_selection_tracks_copy_reorder_remove_and_undo_by_identity() {
+    let (mut pane, original) = pane_with_rectangle();
+    apply(&mut pane, vec![PaneMenuIntent::SelectDrawing(original)]);
+    assert_eq!(pane.model.selection.get(), Some(original));
+    let copy = pane.drawings.duplicate_selected(2.0).expect("copy").copy;
+    assert_ne!(copy, original);
+    assert_eq!(pane.model.selection.get(), Some(copy));
+    pane.drawings.bring_to_front(0);
+    assert_eq!(pane.model.selection.get(), Some(copy));
+    assert_eq!(pane.drawings.selected_id(), Some(copy));
+    assert_eq!(pane.drawings.selected(), pane.drawings.index_of(copy));
+    assert!(pane.drawings.remove_by_id(copy));
+    assert_eq!(pane.model.selection.get(), None);
+    assert!(pane.drawings.undo());
+    assert!(pane.drawings.index_of(copy).is_some());
+    assert_eq!(
+        pane.model.selection.get(),
+        None,
+        "undo restores objects, not a discarded selection"
+    );
+    apply(&mut pane, vec![PaneMenuIntent::SelectDrawing(copy)]);
+    assert!(pane.drawings.undo()); // undo reorder: the surviving identity stays selected
+    assert_eq!(pane.model.selection.get(), Some(copy));
+    assert_eq!(pane.drawings.selected(), pane.drawings.index_of(copy));
+    assert!(pane.drawings.undo()); // undo duplicate: the selected identity leaves
+    assert_eq!(pane.model.selection.get(), None);
+    assert!(pane.drawings.index_of(original).is_some());
+    assert!(pane.drawings.redo());
+    assert_eq!(pane.model.selection.get(), None);
+}
+
+fn pointer_events(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
+    vec![
+        egui::Event::PointerMoved(pos),
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        },
+    ]
+}
+fn traced(pane: &ChartPane, label: &str) -> egui::Pos2 {
+    pane.context_menu
+        .menu_rects
+        .iter()
+        .find(|(name, _)| *name == label)
+        .unwrap_or_else(|| panic!("{label} is painted"))
+        .1
+        .center()
+}
+#[test]
+fn native_tape_menu_real_widgets_emit_layer_preset_and_custom_duration_intents() {
+    let ctx = egui::Context::default();
+    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".into());
+    pane.orderflow.as_mut().unwrap().edit_config(|config| {
+        config.live_lane.native_tape = true;
+        config.live_lane.show_aggressions = true;
+        config.volume_dots.enabled = true;
+    });
+    assert!(
+        pane.orderflow
+            .as_ref()
+            .unwrap()
+            .cached_config()
+            .native_tape()
+    );
+    let _ = quantick_chart_interaction::pane::update(
+        &mut pane.model,
+        quantick_chart_interaction::pane::Intent::OpenMenu(
+            quantick_chart_interaction::pane::ContextPress {
+                price: 123.0,
+                on_tape: true,
+                drawing: None,
+                places: vec![],
+            },
+        ),
+    );
+    pane.frame.lane_reference_ms = Some(20_000);
+    pane.orderflow
+        .as_mut()
+        .unwrap()
+        .set_live_lane_window(LaneWindow::Fixed { ms: 60_000 });
+    let _ = menu_frame(&mut pane, &ctx, vec![]);
+    let layer = ChartLayer::TapeChart;
+    let pos = pane
+        .context_menu
+        .layer_menu_rects
+        .iter()
+        .find(|(l, _)| *l == layer)
+        .expect("tape switch")
+        .1
+        .center();
+    let _ = menu_frame(&mut pane, &ctx, pointer_events(pos, true));
+    let intents = menu_frame(&mut pane, &ctx, pointer_events(pos, false));
+    assert!(intents.iter().any(
+        |i| matches!(i, PaneMenuIntent::SetLayerVisible { layer: l, visible: false } if *l == layer)
+    ));
+    // Keep the tape present while exercising its window controls.
+    let _ = click_entry(&mut pane, &ctx, "Tape window menu");
+    let _ = menu_frame(&mut pane, &ctx, vec![]);
+    let preset = traced(&pane, "Tape window"); // first option follows the bars
+    let _ = menu_frame(&mut pane, &ctx, pointer_events(preset, true));
+    let intents = menu_frame(&mut pane, &ctx, pointer_events(preset, false));
+    assert_eq!(
+        intents,
+        vec![PaneMenuIntent::SetLaneWindow(LaneWindow::default())]
+    );
+    apply(&mut pane, intents);
+    assert_eq!(
+        pane.orderflow.as_ref().unwrap().live_lane_window(),
+        LaneWindow::default()
+    );
+    let _ = click_entry(&mut pane, &ctx, "Tape window menu");
+    let _ = menu_frame(&mut pane, &ctx, vec![]);
+    let preset = pane
+        .context_menu
+        .menu_rects
+        .iter()
+        .filter(|(label, _)| *label == "Tape window")
+        .nth(1)
+        .expect("15 s preset")
+        .1
+        .center();
+    let _ = menu_frame(&mut pane, &ctx, pointer_events(preset, true));
+    let intents = menu_frame(&mut pane, &ctx, pointer_events(preset, false));
+    assert_eq!(
+        intents,
+        vec![PaneMenuIntent::SetLaneWindow(LaneWindow::Fixed {
+            ms: 15_000
+        })]
+    );
+    apply(&mut pane, intents);
+    let _ = click_entry(&mut pane, &ctx, "Tape window menu");
+    let _ = menu_frame(&mut pane, &ctx, vec![]);
+    let custom = traced(&pane, "Custom duration");
+    let _ = menu_frame(&mut pane, &ctx, pointer_events(custom, true));
+    let intents = menu_frame(
+        &mut pane,
+        &ctx,
+        vec![egui::Event::PointerMoved(custom + egui::vec2(7.0, 0.0))],
+    );
+    assert!(
+        matches!(intents.as_slice(), [PaneMenuIntent::SetLaneWindow(LaneWindow::Fixed { ms })] if *ms > 15_000)
+    );
+    apply(&mut pane, intents);
+    let _ = menu_frame(
+        &mut pane,
+        &ctx,
+        pointer_events(custom + egui::vec2(7.0, 0.0), false),
+    );
+    assert!(
+        matches!(pane.orderflow.as_ref().unwrap().live_lane_window(), LaneWindow::Fixed { ms } if ms > 15_000)
+    );
+}

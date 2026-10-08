@@ -380,19 +380,16 @@ pub(super) fn handle_axis_gestures(
     price_gutter.context_menu(|ui| {
         #[cfg(test)]
         pane.context_menu.layer_menu_rects.clear();
-        let mut inverted = pane.price_view.is_inverted();
-        if ui
-            .checkbox(&mut inverted, "Inverted chart")
-            .on_hover_text(
-                "flip the chart upside down — low prices at the top. \
-                     Also reached by dragging the axis down until the bars \
-                     flatten and turn over",
-            )
-            .clicked()
-        {
-            pane.price_view.set_inverted(inverted);
-            ui.close_menu();
-        }
+        let entry =
+            quantick_chart_interaction::pane_menu::inverted_entry(pane.price_view.is_inverted());
+        let intents = super::menu_renderer::render(
+            ui,
+            &mut pane.context_menu,
+            &mut pane.model,
+            &[entry],
+            None,
+        );
+        pane.apply_menu_intents(intents, chrome);
         ui.separator();
         pane.layer_menu_switch(ui, ChartLayer::PointerPrice, chrome);
     });

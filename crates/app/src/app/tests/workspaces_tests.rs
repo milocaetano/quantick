@@ -1134,7 +1134,7 @@ fn renaming_a_layout_renames_it_on_every_pane_that_shows_it() {
     );
     for side in [PaneSide::Flow, PaneSide::Time(0)] {
         assert_eq!(
-            app.active_tab().pane(side).layout_label,
+            app.active_tab().pane(side).layout.label,
             "opening",
             "the rename reached {side:?}"
         );
@@ -1153,11 +1153,11 @@ fn renaming_a_layout_renames_it_on_every_pane_that_shows_it() {
         Ok(true)
     );
     assert_eq!(
-        app.active_tab().pane(PaneSide::Time(0)).layout_label,
+        app.active_tab().pane(PaneSide::Time(0)).layout.label,
         "levels revisited"
     );
     assert_eq!(
-        app.active_tab().flow_pane.layout_label,
+        app.active_tab().flow_pane.layout.label,
         "opening",
         "the pane on the other layout kept its own name"
     );

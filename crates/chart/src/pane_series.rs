@@ -40,12 +40,13 @@ impl<'a> PaneSeriesRead<'a> {
         }
         let slots = self.slots();
         let (slot, _) =
-            quantick_chart_interaction::pane_history::HistoryState::edge_anchor(&viewport, slots);
+            quantick_chart_interaction::pane_history::HistoryState::edge_anchor(viewport, slots);
         self.slot_open_time(slot)
     }
+    /// Every closed bar shown, prefix first, so indicator rebuilds span venue history.
     pub fn closed_bars(&self) -> Vec<quantick_engine::Bar> {
         let mut bars = Vec::with_capacity(self.closed_slots());
-        bars.extend_from_slice(&self.history_prefix);
+        bars.extend_from_slice(self.history_prefix);
         bars.extend_from_slice(self.state.bars());
         bars
     }

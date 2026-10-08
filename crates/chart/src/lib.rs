@@ -30,6 +30,7 @@ pub mod price_view;
 pub mod state;
 pub mod style;
 pub mod tick_membership;
+pub mod venue_history;
 pub mod viewport;
 pub mod work_meter;
 
