@@ -123,6 +123,14 @@ stores members to the preceding root identity, preserving every other parsed
 manifest value. Its [ordinary-run evidence](https://github.com/milocaetano/quantick/actions/runs/35431426021)
 and the original calibration identity remain part of that amendment's history.
 
+The control-handlers member-only amendment (PR #637) binds root SHA256
+`f8d8375eda7dfcf8497b8a2cd5f84cad07ea5fecaaec01293931101440babf69`.
+Relative to the A2 owner-extraction identity above, only the
+`crates/control-handlers` member is added; all other parsed manifest values
+are equal. This is applicability, not recalibration: the 2026-10-06 ceilings,
+host, toolchain, jobs, protocol, top-three selection and representatives are
+unchanged, and the PR's own ordinary exact-final-head run must pass every one.
+
 ### Reviewed 2026-10-06 calibration
 
 The [reference series](https://github.com/milocaetano/quantick/actions/runs/37407876085)
