@@ -191,14 +191,18 @@ fn a_bar_spanning_midnight_writes_no_end_time() {
     let past_midnight = 1_790_651_100_000;
     let turn = DayTurn::new(7, date, Some((open, past_midnight)), opened, BRT);
     assert_eq!(turn.ended_ms, None);
-    assert_eq!(turn.opened_ms, opened);
+    // The new day's first prints are in that bar too, so the next bar's open
+    // is not when the day opened: the date is written alone.
+    assert_eq!(turn.opened_ms, None);
 }
 
 #[test]
-fn a_tick_bar_straddling_the_session_break_writes_no_end_time() {
+fn a_tick_bar_straddling_the_session_break_writes_the_date_alone() {
     // WIN tick:50, bar 49530: opens Tue 06 18:31:13 and closes Wed 07
     // 09:00:59 in São Paulo. The turn read `09:00 | Wed 7 09:00`; the end
-    // is the new day's time, so it is dropped.
+    // is the new day's time, so it is dropped, and the day's first trades
+    // (09:00:00-09:00:59) are in that bar, so the turn bar's 09:01 is not
+    // when the day opened either.
     let at = |date: CivilDate, seconds: i64| date.start_ms(BRT) + seconds * 1000;
     let (tue, wed) = (
         CivilDate::from_ymd(2026, 10, 6),
@@ -209,5 +213,27 @@ fn a_tick_bar_straddling_the_session_break_writes_no_end_time() {
     let opened = at(wed, 9 * 3600 + 60);
     let turn = DayTurn::new(49_531, wed, Some((open, close)), Some(opened), BRT);
     assert_eq!(turn.ended_ms, None);
-    assert_eq!(opened_suffix(opened, BRT), " 09:01");
+    assert_eq!(turn.opened_ms, None);
+}
+
+#[test]
+fn a_time_bar_crossing_local_midnight_writes_the_date_alone() {
+    // A 2h bucket from 23:00 Tue to 01:00 Wed in São Paulo, last print at
+    // 00:59: neither 00:59 nor the next bucket's 01:00 is when a day turned.
+    let at = |date: CivilDate, seconds: i64| date.start_ms(BRT) + seconds * 1000;
+    let (tue, wed) = (
+        CivilDate::from_ymd(2026, 10, 6),
+        CivilDate::from_ymd(2026, 10, 7),
+    );
+    let open = at(tue, 23 * 3600);
+    let close = at(wed, 59 * 60);
+    let opened = at(wed, 3600);
+    let turn = DayTurn::new(12, wed, Some((open, close)), Some(opened), BRT);
+    assert_eq!(turn.ended_ms, None);
+    assert_eq!(turn.opened_ms, None);
+    // The same bucket closing before midnight keeps both times.
+    let before_midnight = at(tue, 23 * 3600 + 59 * 60);
+    let turn = DayTurn::new(12, wed, Some((open, before_midnight)), Some(opened), BRT);
+    assert_eq!(turn.ended_ms, Some(before_midnight));
+    assert_eq!(turn.opened_ms, Some(opened));
 }
