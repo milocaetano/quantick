@@ -23,8 +23,9 @@ fn each_layer_switch_moves_exactly_one_owner() {
         // opt-in, like the market layers above it.
         (ChartLayer::BackfillDivider, false),
         (ChartLayer::SeamDivider, true),
-        // A dated rule at every midnight: opt-in, for the same reason.
-        (ChartLayer::DaySeparator, false),
+        // A near-invisible rule and the axis's end/start times at every
+        // day turn: on, so a chart spanning days says when each one ran.
+        (ChartLayer::DaySeparator, true),
         (ChartLayer::Crosshair, true),
         (ChartLayer::PaperTrading, true),
         (ChartLayer::Drawings, true),

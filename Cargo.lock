@@ -2987,6 +2987,7 @@ name = "quantick-chart"
 version = "0.1.0"
 dependencies = [
  "quantick-chart-interaction",
+ "quantick-civil",
  "quantick-engine",
  "quantick-indicator-session",
  "quantick-indicators",
