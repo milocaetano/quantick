@@ -265,28 +265,30 @@ impl ChartPane {
                 });
         }
         // Before the time labels, which stand aside for the dates it writes.
-        let series = self.series_read();
-        let mut day_pass = crate::pane::render_registry::DaySeparatorPass {
-            painter,
-            history: history_rect,
-            strip: areas.time_strip,
-            total,
-            candle_width: cw,
-            viewport: &self.viewport,
-            turns: turns.unwrap_or_default(),
-            tz: chrome.tz,
-            first_visible: (start < end)
-                .then(|| series.slot_open_time(start))
-                .flatten()
-                .map(|ms| quantick_civil::CivilDate::from_ms(ms, chrome.tz)),
-            claims: time_claims,
-            reserved: Vec::new(),
-        };
-        if turns.is_some() {
+        let mut reserved = Vec::new();
+        if let Some(turns) = turns {
+            let series = self.series_read();
+            let mut day_pass = crate::pane::render_registry::DaySeparatorPass {
+                painter,
+                history: history_rect,
+                strip: areas.time_strip,
+                total,
+                candle_width: cw,
+                viewport: &self.viewport,
+                turns,
+                tz: chrome.tz,
+                first_visible: (start < end)
+                    .then(|| series.slot_open_time(start))
+                    .flatten()
+                    .map(|ms| quantick_civil::CivilDate::from_ms(ms, chrome.tz)),
+                claims: time_claims,
+                reserved: Vec::new(),
+            };
             self.layer_renderers.day_separator(&mut day_pass);
+            reserved = day_pass.reserved;
         }
         crate::pane::render_registry::TimeStripPass {
-            reserved: &day_pass.reserved,
+            reserved: &reserved,
             painter,
             strip: areas.time_strip,
             start,

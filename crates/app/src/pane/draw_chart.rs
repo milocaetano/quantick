@@ -153,16 +153,19 @@ impl ChartPane {
             },
             style: chrome.style,
         });
-        // The day rule over the grid and under everything the chart reads.
+        // The day rule over the grid and under everything the chart reads:
+        // only with the separator on, and only where candles are painted.
         let day_turns = self.day_turns(&frame, chrome);
-        renderers.day_rule(&mut crate::pane::render_registry::DayRulePass {
-            painter: &painter.with_clip_rect(frame.history_rect),
-            history: frame.history_rect,
-            total: frame.total,
-            candle_width: frame.cw,
-            viewport: &self.viewport,
-            turns: day_turns.as_deref().unwrap_or_default(),
-        });
+        if let Some(turns) = day_turns.as_deref().filter(|_| !layout.tape_only) {
+            renderers.day_rule(&mut crate::pane::render_registry::DayRulePass {
+                painter: &painter.with_clip_rect(frame.history_rect),
+                history: frame.history_rect,
+                total: frame.total,
+                candle_width: frame.cw,
+                viewport: &self.viewport,
+                turns,
+            });
+        }
 
         let history = HistoryStage {
             renderers,
