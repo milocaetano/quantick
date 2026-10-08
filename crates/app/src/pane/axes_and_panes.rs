@@ -20,6 +20,11 @@ use quantick_chart_interaction::pane_axis::{
     AxisGesture, IndicatorGesture, ScaleAction, ScaleTarget, Sizing,
 };
 
+struct ScaleView<'a> {
+    view: &'a mut PriceView,
+    auto: Option<(f64, f64)>,
+}
+
 /// The divider along a pane's top edge, as a resize handle. The band it opens is the pane *below*
 /// it: drag up and that pane grows into the chart, drag down and it gives the room back. Double
 /// click hands the pane back to the automatic layout, the same escape the price axis and every
@@ -75,10 +80,10 @@ fn pane_pan_gesture(
     body: egui::Rect,
     model: &mut Model,
     slot: u64,
-    view: &mut PriceView,
-    auto: Option<(f64, f64)>,
+    scale: ScaleView<'_>,
     primary_free: bool,
 ) -> (PaneGesture, egui::Response) {
+    let ScaleView { view, auto } = scale;
     let response = ui.interact(body, id, egui::Sense::click_and_drag());
     if primary_free {
         if response.dragged() {
@@ -157,10 +162,10 @@ fn axis_zoom_gesture(
     band: egui::Rect,
     model: &mut Model,
     target: ScaleTarget,
-    view: &mut PriceView,
-    auto: Option<(f64, f64)>,
+    scale: ScaleView<'_>,
     flip_span: Option<f64>,
 ) -> egui::Response {
+    let ScaleView { view, auto } = scale;
     let response = ui.interact(band, id, egui::Sense::click_and_drag());
     if response.hovered() || response.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
@@ -369,8 +374,10 @@ pub(super) fn handle_axis_gestures(
         areas.price_gutter,
         &mut pane.model,
         ScaleTarget::Price,
-        &mut pane.price_view,
-        auto,
+        ScaleView {
+            view: &mut pane.price_view,
+            auto,
+        },
         auto.map(|(lo, hi)| pane.frame.flip_span.unwrap_or(hi - lo)),
     );
     // The axis's own menu: about the scale and what is written on it, not the canvas (the layer
@@ -423,8 +430,10 @@ pub(super) fn handle_indicator_pane_gestures(
             *gutter,
             &mut pane.model,
             ScaleTarget::Indicator(view.slot.0),
-            &mut view.scale,
-            view.last_auto,
+            ScaleView {
+                view: &mut view.scale,
+                auto: view.last_auto,
+            },
             None,
         );
         if !body.collapsed {
@@ -436,8 +445,10 @@ pub(super) fn handle_indicator_pane_gestures(
                 body.rect,
                 &mut pane.model,
                 view.slot.0,
-                &mut view.scale,
-                view.last_auto,
+                ScaleView {
+                    view: &mut view.scale,
+                    auto: view.last_auto,
+                },
                 primary_free,
             );
             pane_time_gesture.pan_x += gesture.pan_x;

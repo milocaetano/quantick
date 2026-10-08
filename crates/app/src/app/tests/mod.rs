@@ -1258,12 +1258,8 @@ fn painted_line_with_color(output: &egui::FullOutput, color: egui::Color32) -> b
 }
 
 fn time_zoom(app: &QuantickApp) -> f32 {
-    app.active_tab()
-        .time_pane()
-        .expect("time pane")
-        .model
-        .viewport
-        .px_per_bar()
+    let pane = app.active_tab().time_pane().expect("time pane");
+    pane.model.viewport.px_per_bar()
 }
 
 /// One app on `config`, opened on `feed_id`/symbol — the smallest harness
