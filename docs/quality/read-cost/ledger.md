@@ -92,3 +92,4 @@ a bound.
 | 629 | 2026-10-07 | feat/history-load-ux | main | 33170 | 36 | `crates/feed/src/metatrader.rs` (873) |
 | 631 | 2026-10-07 | feat/quick-range-shapes | main | 25996 | 20 | `crates/app/src/toolbar.rs` (905) |
 | 633 | 2026-10-07 | fix/heatmap-hidden-on-pan | main | 21076 | 16 | `crates/orderflow/src/history.rs` (776) |
+| 634 | 2026-10-08 | fix/implement-headless-default | main | 0 | 0 | — |

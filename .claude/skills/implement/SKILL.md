@@ -23,7 +23,7 @@ Search paths/symbols before reading files; stop when sufficient. Ask only blocki
 Repo: <root>; base: <SHA>; PR: <remote/target>.
 Rules: <absolute-path>/references/execute.md
 Do: <change and essential contract>.
-Touch: <paths/symbols>.
+Touch: <paths/symbols: headless crate outside `crates/app` for logic first; `crates/app` only for the field, calls and painting>.
 Done: <verifiable acceptance>.
 Check: <known checks or discovery location; performance if relevant>.
 Review: <requested low|medium|high; only when the request starts with small|medium|high>.
