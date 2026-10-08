@@ -91,3 +91,4 @@ a bound.
 | 630 | 2026-10-07 | feat/daily-weekly-monthly-bars | main | 25174 | 44 | `crates/app/src/tab/canvas.rs` (697) |
 | 629 | 2026-10-07 | feat/history-load-ux | main | 33170 | 36 | `crates/feed/src/metatrader.rs` (873) |
 | 631 | 2026-10-07 | feat/quick-range-shapes | main | 25996 | 20 | `crates/app/src/toolbar.rs` (905) |
+| 634 | 2026-10-08 | fix/implement-headless-default | main | 0 | 0 | — |
