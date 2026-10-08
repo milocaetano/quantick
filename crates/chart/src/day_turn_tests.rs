@@ -20,22 +20,26 @@ fn a_turn_reads_when_the_old_day_ended_and_the_new_one_opened() {
 }
 
 #[test]
-fn a_turns_widths_are_its_labels_in_monospace() {
+fn a_turns_widths_bound_its_labels_as_the_window_lays_them_out() {
     let turn = DayTurn {
         slot: 4,
         date: CivilDate::from_ymd(2026, 9, 29),
         ended_ms: Some(0),
         opened_ms: Some(0),
     };
+    // A 1.5 character is rounded up to 2 per character, plus 1 for the
+    // galley's edge: never narrower than the label once drawn.
     assert_eq!(
-        TurnWidths::of(&turn, 2.0),
+        TurnWidths::of(&turn, 1.5),
         TurnWidths {
-            ended: Some(10.0),
+            ended: Some(11.0),
             // `Tue 29 09:00`
-            dated_opened: Some(24.0),
-            dated: 12.0,
+            dated_opened: Some(25.0),
+            dated: 13.0,
         }
     );
+    // The pinned date on the same rule: `Mon 28 Sep`.
+    assert_eq!(label_width("Mon 28 Sep", 1.5), 21.0);
     let unknown = DayTurn {
         ended_ms: None,
         opened_ms: None,

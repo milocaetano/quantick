@@ -73,8 +73,9 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
         .layout_no_wrap(sample.to_owned(), font.clone(), egui::Color32::WHITE)
         .size()
         .x;
-    // Monospace: every label is its length in this wide.
-    let char_width = chip_width / sample.len() as f32;
+    // Monospace: one character of the sample; `day_turn` bounds each
+    // label's laid-out width from it.
+    let char_width = chip_width / sample.chars().count() as f32;
     let claimed = |centre: f32, width: f32| {
         pointer_compass::claimed(centre, width, chip_width, claims.iter().copied())
     };
@@ -87,7 +88,9 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
     let plan = day_turn::plan_strip(
         left,
         right,
-        pinned.as_ref().map(|text| text.len() as f32 * char_width),
+        pinned
+            .as_deref()
+            .map(|text| day_turn::label_width(text, char_width)),
         &widths,
         |start, width| !claimed(start + width / 2.0, width),
         |x| !claimed(x, 0.0),

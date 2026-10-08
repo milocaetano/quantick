@@ -5,9 +5,9 @@
 //! strip's left edge.
 //!
 //! Text and placement only: the window measures one monospace character and
-//! paints what [`plan_strip`] places. Every label is monospace ASCII, so its
-//! width is its length times that character, and no label is laid out that
-//! is not drawn.
+//! paints what [`plan_strip`] places. Every label is monospace ASCII, so
+//! [`label_width`] bounds its width from its length without laying it out,
+//! and no label is laid out that is not drawn.
 
 use quantick_civil::{CivilDate, TzOffset, weekday_abbr};
 
@@ -95,9 +95,20 @@ pub fn opened_suffix(ms: i64, tz: TzOffset) -> String {
     format!(" {}", time_label(ms, tz, TimeLabelFormat::Short))
 }
 
-/// The width of `text` in a monospace font whose characters are `char_width`.
-fn width_of(text: &str, char_width: f32) -> f32 {
-    text.chars().count() as f32 * char_width
+/// At least as wide as `chars` characters of a monospace font whose
+/// characters measure `char_width`, as the window lays them out: the painter
+/// rounds glyph positions and the galley's size, so each character is
+/// rounded up to a whole point and a point is added for the galley's edge.
+/// A label placed on this width never overruns its limit once drawn.
+fn chars_width(chars: usize, char_width: f32) -> f32 {
+    chars as f32 * char_width.ceil() + 1.0
+}
+
+/// [`chars_width`] of `text`: every label goes through this, the pinned date
+/// included, so they are measured on one rule.
+#[must_use]
+pub fn label_width(text: &str, char_width: f32) -> f32 {
+    chars_width(text.chars().count(), char_width)
 }
 
 /// How wide each label of one turn is; a time that is unknown is `None`.
@@ -112,15 +123,18 @@ pub struct TurnWidths {
 }
 
 impl TurnWidths {
-    /// The widths `turn`'s labels take in a monospace font.
+    /// The widths `turn`'s labels take at most in a monospace font.
     #[must_use]
     pub fn of(turn: &DayTurn, char_width: f32) -> Self {
-        let time = width_of(TimeLabelFormat::Short.sample(), char_width);
-        let dated = width_of(&day_text(turn.date), char_width);
+        let time = TimeLabelFormat::Short.sample().chars().count();
+        let dated = day_text(turn.date).chars().count();
         Self {
-            ended: turn.ended_ms.map(|_| time),
-            dated_opened: turn.opened_ms.map(|_| dated + char_width + time),
-            dated,
+            ended: turn.ended_ms.map(|_| chars_width(time, char_width)),
+            // The date, a space and the time, as one galley.
+            dated_opened: turn
+                .opened_ms
+                .map(|_| chars_width(dated + 1 + time, char_width)),
+            dated: chars_width(dated, char_width),
         }
     }
 }
