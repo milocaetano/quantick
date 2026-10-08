@@ -352,6 +352,51 @@ impl DrawingProjection<'_> {
         }
     }
 
+    /// The magnet on a body drag: the edge of `points` nearest the pointer —
+    /// an anchor's level, or a straight line's value at the pointer's bar —
+    /// onto the print under the pointer, and the whole object shifted by the
+    /// same amount so it keeps its shape. The snapped anchor takes the print
+    /// exactly; nothing in reach leaves `points` as they are.
+    pub(super) fn snap_body(
+        &self,
+        points: &mut [ChartPoint],
+        straight: bool,
+        band: &Band,
+        pointer: egui::Pos2,
+        (history_right, total): (f32, usize),
+    ) {
+        let Some(scale) = band.scale.as_ref() else {
+            return;
+        };
+        let bar = self.viewport.bar_at_x(pointer.x, history_right, total);
+        let line = match points {
+            [a, b] if straight && a.bar != b.bar => Some(
+                a.price + (b.price - a.price) * f64::from(bar - a.bar) / f64::from(b.bar - a.bar),
+            ),
+            _ => None,
+        };
+        let off = |price: f64| (scale.y(price) - pointer.y).abs();
+        let edge = points
+            .iter()
+            .enumerate()
+            .map(|(index, point)| (Some(index), point.price))
+            .chain(line.map(|price| (None, price)))
+            .min_by(|left, right| off(left.1).total_cmp(&off(right.1)));
+        let Some((snapped, price)) = edge else {
+            return;
+        };
+        let Some(print) = self.magnet_value(band, bar, scale.y(price), scale) else {
+            return;
+        };
+        for (index, point) in points.iter_mut().enumerate() {
+            point.price = if snapped == Some(index) {
+                print
+            } else {
+                point.price + (print - price)
+            };
+        }
+    }
+
     /// The unconditional candle magnet: the nearest of the bar's OHLC with
     /// no reach limit, the forming bar included — [`AnchorSnap::NearestOhlc`]'s
     /// value rule. Price band only; a band with no candles answers `None`

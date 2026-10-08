@@ -366,6 +366,16 @@ impl DrawingTool {
         self.0.id()
     }
 
+    /// Whether the object is the straight segment through its two anchors,
+    /// whose value at any bar the magnet can read off a body drag.
+    #[must_use]
+    pub fn is_straight_line(self) -> bool {
+        self.required_points() == 2
+            && self
+                .family()
+                .is_some_and(|family| family.id == super::line_core::LINES_FAMILY.id)
+    }
+
     /// Look up a registered tool by its stable id — how the saved favorites
     /// list and the env hooks name tools. `None` for an id no registered
     /// tool carries (a stale file survives a removed tool).

@@ -246,6 +246,7 @@ impl PaneGestures {
                 DrawingDrag::Blocked
             } else {
                 drawings.begin_gesture();
+                self.translate_from = Some((position, drawings.items()[index].points.clone()));
                 DrawingDrag::Translate
             };
         }
@@ -289,9 +290,11 @@ impl PaneGestures {
         if !frame.pointer.down {
             return;
         }
-        let Some(travel) = travel else {
+        // Under the drag threshold nothing moves; past it, both moves read
+        // the pointer's position rather than this frame's travel.
+        if travel.is_none() {
             return;
-        };
+        }
         match self.drag {
             DrawingDrag::Handle {
                 drawing_index,
@@ -303,7 +306,9 @@ impl PaneGestures {
                 (drawing_index, handle),
                 outcome,
             ),
-            DrawingDrag::Translate => translate_body(drawings, projection, frame.bands, travel),
+            DrawingDrag::Translate => {
+                translate_body(drawings, projection, &frame, self.translate_from.as_ref());
+            }
             DrawingDrag::Blocked => outcome.set_cursor(egui::CursorIcon::NotAllowed),
             DrawingDrag::None => {}
         }
@@ -313,6 +318,7 @@ impl PaneGestures {
         // One gesture, one undo entry — recorded only if it moved.
         drawings.commit_gesture();
         self.drag = DrawingDrag::None;
+        self.translate_from = None;
         // A press that ended in a drag rather than a click leaves its
         // answer unconsumed; it must not survive to decide the *next*
         // click, which may be somewhere else entirely. The click path
@@ -323,6 +329,7 @@ impl PaneGestures {
 
     fn yield_pointer(&mut self) {
         self.drag = DrawingDrag::None;
+        self.translate_from = None;
         self.press_pick = None;
         self.drag_pending_from = None;
         self.shared_drag = SharedDrag::None;
@@ -554,19 +561,29 @@ fn move_handle(
     }
 }
 
+/// Move the selected drawing by the pointer's whole travel since the grab
+/// and, with the magnet on, onto the print under the pointer.
 fn translate_body(
     drawings: &mut drawings::Drawings,
     projection: &DrawingProjection<'_>,
-    bands: &Bands,
-    travel: egui::Vec2,
+    frame: &LocalDragFrame<'_>,
+    grabbed: Option<&(egui::Pos2, Vec<drawings::ChartPoint>)>,
 ) {
+    let pointer = frame.pointer;
+    let Some(((grab, anchors), position)) = grabbed.zip(pointer.position) else {
+        return;
+    };
+    let Some(index) = drawings.selected() else {
+        return;
+    };
     let dragged = drawings
-        .selected()
-        .and_then(|index| drawings.items().get(index))
-        .and_then(|drawing| bands::band_of(bands, drawing));
-    if let Some(band) = dragged
+        .items()
+        .get(index)
+        .and_then(|drawing| Some((drawing.tool, bands::band_of(frame.bands, drawing)?)));
+    if let Some((tool, band)) = dragged
         && let Some(scale) = band.scale
     {
+        let travel = position - *grab;
         let (lo, hi) = scale.range();
         let delta_bar = travel.x / projection.viewport.px_per_bar();
         // Per *band* height: a pane is a fraction of the
@@ -577,7 +594,20 @@ fn translate_body(
         // not the price axis.
         let sign = if scale.is_inverted() { 1.0 } else { -1.0 };
         let delta_value = sign * f64::from(travel.y / band.rect.height()) * (hi - lo);
-        drawings.translate_selected(delta_bar, delta_value);
+        let mut moved: Vec<_> = anchors
+            .iter()
+            .map(|point| drawings::ChartPoint {
+                bar: point.bar + delta_bar,
+                price: point.price + delta_value,
+                ..*point
+            })
+            .collect();
+        if pointer.magnet {
+            let straight = tool.is_straight_line();
+            let (right, total) = (pointer.history_right, pointer.total);
+            projection.snap_body(&mut moved, straight, band, position, (right, total));
+        }
+        drawings.set_points(index, &moved);
         // Market time is what every other pane reads the
         // object through; a move that left it behind
         // would drag the mark here and leave its shared

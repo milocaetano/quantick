@@ -80,6 +80,10 @@ pub struct PaneGestures {
     pub drag_pending_from: Option<egui::Pos2>,
     /// The move or resize this gesture is, once it is one.
     pub drag: DrawingDrag,
+    /// Where a body drag grabbed and the anchors it grabbed: each frame
+    /// moves them by the whole travel since, so the magnet's correction on
+    /// one frame never accumulates into the next.
+    pub(super) translate_from: Option<(egui::Pos2, Vec<ChartPoint>)>,
     /// A gesture this pane is running on a mark the other pane holds, and the
     /// two pieces of pointer state it needs: where the press landed while the
     /// drag threshold is still unmet, and the market instant and price the
