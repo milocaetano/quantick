@@ -401,7 +401,9 @@ fn push_tool_rail<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
     // Listing the registry instead would name thirteen tools that live behind
     // a family flyout, the ones the band has scrolled out of sight, and two
     // more the narrow stages drop entirely.
-    for control in rail.painted_controls() {
+    let painted = rail.painted_controls();
+    let shown = !painted.is_empty();
+    for control in painted {
         controls.push(SceneControlSnapshot {
             control_id: rail_control_id(&control),
             label: control.label.to_owned(),
@@ -415,6 +417,24 @@ fn push_tool_rail<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
             bounds: None,
             bounds_availability: bounds_not_recorded(),
             capability_id: None,
+        });
+    }
+    // The magnet: on the rail's trailing cluster, or its More menu on the
+    // narrowest stage — reachable whenever the rail is.
+    if shown {
+        controls.push(SceneControlSnapshot {
+            control_id: format!("{TOOL_RAIL_OWNER_ID}.toggle.magnet"),
+            label: "Snap anchors to OHLC".to_owned(),
+            role: SceneRoleDto::Toggle,
+            owner: SceneOwnerSnapshot {
+                kind: SceneOwnerKindDto::ToolRail,
+                id: TOOL_RAIL_OWNER_ID.to_owned(),
+            },
+            selected: rail.magnet(),
+            availability: available(),
+            bounds: None,
+            bounds_availability: bounds_not_recorded(),
+            capability_id: Some(super::drawing_magnet::DRAWING_MAGNET_CAPABILITY_ID.to_owned()),
         });
     }
 }

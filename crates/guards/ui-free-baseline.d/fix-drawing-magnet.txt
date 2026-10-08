@@ -1,0 +1,5 @@
+# fix/drawing-magnet: `ToolRailPort`, the port `annotate.magnet.set` reaches
+# the drawing rail's magnet through; the window's answer is one delegation to
+# `ToolRail::set_magnet`. Control-plane ports live with the window in `app`.
+crates/app +5
+!budget +5

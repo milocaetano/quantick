@@ -274,12 +274,12 @@ impl ToolRail {
         self.magnet
     }
 
-    /// Arm the magnet without a click — the `QUANTICK_DRAWING_MAGNET` hook
-    /// and the tests both come through here, so neither can drift from what
-    /// the button does.
-    #[cfg(any(feature = "drawing-harness", test))]
-    pub(crate) fn set_magnet(&mut self, magnet: bool) {
-        self.magnet = magnet;
+    /// Set the magnet — the rail button, its More menu entry, the
+    /// `QUANTICK_DRAWING_MAGNET` hook and `drawing.magnet.set` all come
+    /// through here, so none can drift from the others. Answers whether it
+    /// moved.
+    pub(crate) fn set_magnet(&mut self, magnet: bool) -> bool {
+        std::mem::replace(&mut self.magnet, magnet) != magnet
     }
 
     /// Ask for a family flyout without a click — the

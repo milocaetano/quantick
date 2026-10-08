@@ -11,6 +11,7 @@ mod annotate;
 pub(crate) mod chart;
 mod contract;
 mod deal_recording;
+mod drawing_magnet;
 mod events;
 mod evidence;
 mod feed;

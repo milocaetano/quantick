@@ -1,0 +1,5 @@
+# fix/drawing-magnet: the window answers `ToolRailPort::set_drawing_magnet`
+# for `annotate.magnet.set` by delegating to `ToolRail::set_magnet`, the one
+# operation the rail button, its More menu entry and the launch hook share.
+QuantickApp +5
+!budget +5

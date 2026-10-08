@@ -939,7 +939,7 @@ impl ToolRail {
             self.magnet_rect = Some(response.rect);
         }
         if response.clicked() {
-            self.magnet = !self.magnet;
+            self.set_magnet(!self.magnet);
         }
     }
 
@@ -970,7 +970,7 @@ impl ToolRail {
                     .add(egui::Button::new("Snap anchors to OHLC").selected(self.magnet))
                     .clicked()
                 {
-                    self.magnet = !self.magnet;
+                    self.set_magnet(!self.magnet);
                     ui.close_menu();
                 }
                 let all_hidden = drawings.all_hidden();

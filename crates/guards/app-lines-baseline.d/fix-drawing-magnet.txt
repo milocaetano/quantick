@@ -8,3 +8,7 @@
 # anchor, which only `app` holds.
 crates/app +225
 !budget +225
+# The magnet as a control call: `annotate.magnet.set`, its port, its scene
+# toggle and the rail's one shared setter. Handlers and ports live in `app`.
+crates/app +135
+!budget +135

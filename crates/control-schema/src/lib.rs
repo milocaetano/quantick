@@ -12,6 +12,7 @@ pub mod attention;
 pub mod bubble_save;
 pub mod chart;
 pub mod deal_recording;
+pub mod drawing_magnet;
 pub mod evidence;
 pub mod feed;
 pub mod health;

@@ -701,6 +701,12 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Value::Null,
             Readback::Moves,
         ),
+        (
+            "annotate.magnet.set",
+            1,
+            json!({ "enabled": true }),
+            Readback::Moves,
+        ),
     ]
 }
 

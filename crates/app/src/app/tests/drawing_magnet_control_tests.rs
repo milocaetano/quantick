@@ -2,7 +2,7 @@
 //! scene reads it back, and both go through the rail's own state.
 use super::*;
 
-const CAPABILITY: &str = "drawing.magnet.set";
+const CAPABILITY: &str = "annotate.magnet.set";
 
 fn magnet_control(app: &QuantickApp) -> quantick_control_schema::scene::SceneControlSnapshot {
     crate::control::scene_snapshot(app)
@@ -22,10 +22,13 @@ fn the_magnet_is_set_by_a_named_call_and_read_back_in_the_scene() {
     assert_eq!(control.capability_id.as_deref(), Some(CAPABILITY));
 
     let directory = gateway_test_directory("drawing-magnet-control");
-    grant_annotate_for_test(&mut app, "all-reads,cockpit");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
     enable_test_gateway(&mut app, &ctx, &directory, 4);
     let mut observer = connect(&directory, &options("observer", &[]));
-    let mut client = connect(&directory, &options("cockpit", &["cockpit"]));
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
 
     let (denied, _) = unkeyed_call(
         &mut app,
