@@ -153,8 +153,7 @@ impl ChartPane {
             },
             style: chrome.style,
         });
-        // The day rule over the grid and under everything the chart reads:
-        // only with the separator on, and only where candles are painted.
+        // The day rule over the grid, under the candles; none in tape-only.
         let day_turns = self.day_turns(&frame, chrome);
         if let Some(turns) = day_turns.as_deref().filter(|_| !layout.tape_only) {
             renderers.day_rule(&mut crate::pane::render_registry::DayRulePass {

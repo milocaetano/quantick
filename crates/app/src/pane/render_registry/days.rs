@@ -35,14 +35,9 @@ pub(in crate::pane) struct DayRulePass<'a> {
 }
 fn day_rule(p: &mut DayRulePass<'_>) {
     let span = (p.history.left(), p.history.right());
+    let stroke = egui::Stroke::new(1.0_f32, theme::DAY_RULE);
     for (x, _) in day_turn::turn_xs(p.turns, p.viewport, span, p.total, p.candle_width) {
-        p.painter.line_segment(
-            [
-                egui::pos2(x, p.history.top()),
-                egui::pos2(x, p.history.bottom()),
-            ],
-            egui::Stroke::new(1.0_f32, theme::DAY_RULE),
-        );
+        p.painter.vline(x, p.history.y_range(), stroke);
     }
 }
 pub(in crate::pane) struct DaySeparatorPass<'a> {
@@ -73,8 +68,7 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
         .layout_no_wrap(sample.to_owned(), font.clone(), egui::Color32::WHITE)
         .size()
         .x;
-    // Monospace: one character of the sample; `day_turn` bounds each
-    // label's laid-out width from it.
+    // Monospace: one sample character; `day_turn` bounds labels from it.
     let char_width = chip_width / sample.chars().count() as f32;
     let claimed = |centre: f32, width: f32| {
         pointer_compass::claimed(centre, width, chip_width, claims.iter().copied())
@@ -125,11 +119,8 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
             continue;
         };
         if let (Some(at), Some(ms)) = (labels.ended_at, turn.ended_ms) {
-            draw(
-                &mut p.reserved,
-                at,
-                job(ended_text(ms, tz), theme::TEXT_MUTED),
-            );
+            let ended = ended_text(ms, tz);
+            draw(&mut p.reserved, at, job(ended, theme::TEXT_MUTED));
         }
         // The date as bright as a date alone, its start time as muted as
         // the clock labels beside it.
