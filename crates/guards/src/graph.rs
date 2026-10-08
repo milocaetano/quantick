@@ -68,6 +68,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
         "chart",
         &[
             "chart-interaction",
+            "civil",
             "engine",
             "indicator-session",
             "indicators",
@@ -148,7 +149,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // `workspace` for the one store-write gate every sidecar asks (DS7).
     ("paper", &["civil", "engine", "replay", "sim", "workspace"]),
     // Civil dates and the display offset: pure arithmetic, reached by the
-    // paper account below `app` and by the chart above it.
+    // paper account and the chart model below `app`, and by the window.
     ("civil", &[]),
     ("layers", &[]),
     ("workspace", &[]),

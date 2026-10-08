@@ -56,6 +56,20 @@ impl TapeEnd {
         }
     }
 
+    /// The tape's clock: `edge` ending at this end — the live edge being
+    /// `live_ms` when known — and showing `window_ms` of market time.
+    #[must_use]
+    pub fn edge(
+        self,
+        mut edge: crate::LiveEdge,
+        live_ms: Option<i64>,
+        window_ms: i64,
+    ) -> crate::LiveEdge {
+        edge.now_ms = self.end_ms(live_ms.unwrap_or(edge.now_ms));
+        edge.window_ms = window_ms;
+        edge
+    }
+
     /// `requested_ms` as an end: at or after the live edge it is live, and
     /// it never reaches back past [`RETAINED_EDGE_SHARE`] of the window
     /// before the first complete retained instant. History too short to hold

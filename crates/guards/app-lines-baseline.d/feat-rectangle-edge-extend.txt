@@ -1,0 +1,17 @@
+# feat/rectangle-edge-extend: a double click on a rectangle extends it toward
+# the side it lands on (left, right, or both from the centre) and the next
+# double click restores the prior extent; the side zones announce it on hover.
+# The rectangle owns the zone math, the restore point and the hint
+# (drawings/rectangle.rs, with `extend_left` beside `extend_right` in its
+# payload and preset); the gesture docks on a new generic `DrawingTool`
+# double-click port (drawings/tool.rs) that pane/pointer_gestures.rs and
+# pane/drawing_projection.rs route (with the strategy-bound refusal and the
+# outline-only interior a double click still reaches), and chart_pane.rs
+# paints the hint glyph. The zone math, port, routing and glyph speak egui
+# geometry or egui input. The restore state does not: `ExtendZone` and its
+# `sides`, `RectanglePayload::apply_double_click` over `extended_from` and
+# `double_click_glyph` are pure bool logic, about 50 lines kept beside the
+# payload they mutate, because that payload is the app's drawing model and
+# has no headless owner to move with. Measured remainder only.
+crates/app +418
+!budget +418

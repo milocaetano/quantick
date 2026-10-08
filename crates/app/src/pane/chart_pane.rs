@@ -617,14 +617,13 @@ impl ChartPane {
         );
         self.handle_context_menu(&chart, &areas, &bands, chrome);
         let drawing_area = price_band.rect;
-        let (primary_pressed, primary_down, primary_released, pointer_position, pointer_delta) = ui
-            .input(|input| {
+        let (primary_pressed, primary_down, primary_released, pointer_position) =
+            ui.input(|input| {
                 (
                     input.pointer.primary_pressed(),
                     input.pointer.primary_down(),
                     input.pointer.primary_released(),
                     input.pointer.latest_pos(),
-                    input.pointer.delta(),
                 )
             });
         // Floating chrome (inspector, manager, toast, flyouts) is opaque to the pointer: while it
@@ -661,6 +660,10 @@ impl ChartPane {
             viewport: &self.viewport,
             indicators: &self.indicators,
         };
+        // Any strategy instance bound to a drawing holds it, armed or not:
+        // its extent is that strategy's window.
+        let anchors = &self.strategies.anchors;
+        let held = |id| anchors.for_drawing(id).is_some();
         let outcome = self.gestures.handle_pointer_tool(
             &mut self.drawings,
             &projection,
@@ -671,15 +674,18 @@ impl ChartPane {
                 bands: &bands,
                 cached_bands: &self.frame.bands,
                 pointer: &pointer,
-                pointer_delta,
                 paper_gesture,
                 tool: chrome.toolrail.tool(),
                 shared_pick: chrome.shared_pick,
                 shared: chrome.shared,
+                held: &held,
             },
         );
         if let Some(cursor) = outcome.cursor {
             ui.ctx().set_cursor_icon(cursor);
+        }
+        if let Some(hint) = outcome.hint {
+            paint_double_click_hint(ui.ctx(), areas.chart, hint);
         }
         if outcome.begin_text_edit {
             *chrome.begin_text_edit = true;
@@ -714,4 +720,30 @@ impl ChartPane {
     pub fn paper_hud_anchor(&self) -> Option<(egui::Rect, PriceScale)> {
         self.paper_hud_anchor
     }
+}
+
+/// Size of the glyph that announces a drawing's double click.
+const DOUBLE_CLICK_HINT_FONT_PX: f32 = 14.0;
+
+/// Paint a drawing's double-click hint over the chart, clipped to it. On a
+/// foreground layer because the gesture pass runs apart from the drawing
+/// paint, and the hint must sit above the object it describes.
+fn paint_double_click_hint(
+    ctx: &egui::Context,
+    chart: egui::Rect,
+    hint: drawings::DoubleClickHint,
+) {
+    let painter = ctx
+        .layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("drawing-double-click-hint"),
+        ))
+        .with_clip_rect(chart);
+    painter.text(
+        hint.at,
+        egui::Align2::CENTER_CENTER,
+        hint.glyph,
+        egui::FontId::proportional(DOUBLE_CLICK_HINT_FONT_PX),
+        crate::theme::ACCENT,
+    );
 }

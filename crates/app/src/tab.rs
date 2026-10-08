@@ -29,7 +29,7 @@ use crate::config::{AppConfig, FeedCapabilities};
 use crate::deal_recording::DealRecorder;
 use crate::loading::{LoadingTask, LoadingTracker};
 use crate::metrics;
-use crate::pane::{ChartPane, DEFAULT_PANE_FRACTION, DrawingDrag, PaneIndex, PaneSide, SharedPick};
+use crate::pane::{ChartPane, DEFAULT_PANE_FRACTION, PaneIndex, PaneSide, SharedPick};
 use crate::paper_trading::PaperTrading;
 use crate::state::BarConfiguration;
 use quantick_feed::history_run::HistoryRun;
@@ -791,7 +791,7 @@ impl Tab {
             pane.gestures.hover = None;
             pane.gestures.press_position = None;
             pane.gestures.press_started_empty = false;
-            pane.gestures.drag = DrawingDrag::None;
+            pane.gestures.cancel_drag();
         }
     }
 

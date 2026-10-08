@@ -91,6 +91,8 @@ pub(crate) struct FlowCellHit {
     pub start_slot: usize,
     pub end_slot_exclusive: usize,
     pub live_lane: bool,
+    /// Where the tape is held when the cell is a held tape's book.
+    pub held_tape_end_ms: Option<i64>,
 }
 
 /// Stateful UI/controller facade for the optional heatmap.
@@ -133,6 +135,7 @@ pub struct OrderflowView {
     /// Where the tape's right edge is held, and the frozen past it draws.
     tape_end: quantick_orderflow::tape_view::TapeEnd,
     past_dots: std::cell::RefCell<quantick_orderflow::projection::PastTapeMemory>,
+    past_heat: std::cell::RefCell<quantick_orderflow::projection::PlacedPastHeat>,
 }
 
 impl OrderflowView {
@@ -163,6 +166,7 @@ impl OrderflowView {
             tape_rebuilds: Default::default(),
             tape_end: Default::default(),
             past_dots: Default::default(),
+            past_heat: Default::default(),
         }
     }
 
@@ -300,7 +304,13 @@ impl OrderflowView {
 
         let style =
             OrderflowRenderStyle::from_config(&self.config, egui::Color32::TRANSPARENT.to_array());
-        let cell = frame.projection.cells.iter().rev().find(|cell| {
+        // Over a held tape the cursor reads the book painted there.
+        let held = if in_lane { self.held_heat(frame) } else { None };
+        let (projection, layout) = match &held {
+            Some(heat) => (heat, layout.with_lane_only()),
+            None => (&frame.projection, layout),
+        };
+        let cell = projection.cells.iter().rev().find(|cell| {
             layout
                 .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)
                 .contains(position)
@@ -333,11 +343,12 @@ impl OrderflowView {
             generation: cell.generation,
             side: cell.side,
             price_bucket: cell.price_bucket,
-            price_span: frame.projection.effective_grouping.bucket_width,
+            price_span: projection.effective_grouping.bucket_width,
             quantity: cell.quantity,
             start_slot: frame.first_bar_index + first_bar_region,
             end_slot_exclusive: frame.first_bar_index + after_bar_region,
-            live_lane: touches_lane,
+            live_lane: touches_lane && held.is_none(),
+            held_tape_end_ms: held.as_ref().and(self.tape_end.past_ms()),
         })
     }
 
