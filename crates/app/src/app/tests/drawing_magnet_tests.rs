@@ -266,3 +266,147 @@ fn with_the_magnet_off_a_click_inside_a_candle_stays_free() {
     place_drawing(&mut app, &ctx, "horizontal-line", &[at]);
     assert!((last_points(&app)[0].price - (close + 0.4)).abs() < 0.05);
 }
+
+/// A press at `from`, the pointer carried through every one of `path`, and a
+/// release at the last — one frame per stop, the way a hand drags.
+fn drag_through(app: &mut QuantickApp, ctx: &egui::Context, from: egui::Pos2, path: &[egui::Pos2]) {
+    run_frame_with_events(
+        app,
+        ctx,
+        vec![egui::Event::PointerMoved(from), pointer_button(from, true)],
+    );
+    for stop in path {
+        run_frame_with_events(app, ctx, vec![egui::Event::PointerMoved(*stop)]);
+    }
+    let end = *path.last().expect("a drag goes somewhere");
+    run_frame_with_events(
+        app,
+        ctx,
+        vec![egui::Event::PointerMoved(end), pointer_button(end, false)],
+    );
+}
+
+/// Place `id` through `anchors` with the magnet off, so the object starts
+/// on free prices, then switch the magnet on for the move under test.
+fn place_free(app: &mut QuantickApp, ctx: &egui::Context, id: &str, anchors: &[egui::Pos2]) {
+    app.toolrail.set_magnet(false);
+    place_drawing(app, ctx, id, anchors);
+    app.toolrail.set_magnet(true);
+    run_frame(app, ctx);
+}
+
+/// A horizontal line grabbed by its body, far from its handle, and
+/// carried into a candle lands on that candle's nearest print exactly.
+#[test]
+fn a_horizontal_line_dragged_by_its_body_lands_on_a_print() {
+    let (mut app, _commands, ctx) = magnet_app();
+    let at = egui::pos2(bar_x(&app, 52.0), price_y(&app, PaneSide::Flow, 104.3));
+    place_free(&mut app, &ctx, "horizontal-line", &[at]);
+    let grab = egui::pos2(bar_x(&app, 35.0), at.y);
+    let [_, _, low_b, _] = ohlc(61);
+    let to = egui::pos2(
+        bar_x(&app, 61.0),
+        price_y(&app, PaneSide::Flow, low_b + 0.4),
+    );
+    drag_through(&mut app, &ctx, grab, &[to]);
+    assert_eq!(last_points(&app)[0].price, low_b);
+}
+
+/// A body drag is the grab's whole travel, not a sum of frames: once the
+/// magnet has held the line, carrying it away lets it go with the pointer
+/// and does not leave it stuck on the print or drifted off the hand.
+#[test]
+fn a_body_drag_lets_go_of_the_print_when_carried_away() {
+    let (mut app, _commands, ctx) = magnet_app();
+    let at = egui::pos2(bar_x(&app, 52.0), price_y(&app, PaneSide::Flow, 104.3));
+    place_free(&mut app, &ctx, "horizontal-line", &[at]);
+    let grab = egui::pos2(bar_x(&app, 35.0), at.y);
+    let [_, _, low_b, _] = ohlc(61);
+    let near = price_y(&app, PaneSide::Flow, low_b + 0.4);
+    let path: Vec<_> = (0..6)
+        .map(|step| egui::pos2(bar_x(&app, 61.0), near - 2.0 * step as f32))
+        .chain([egui::pos2(
+            bar_x(&app, 52.0),
+            price_y(&app, PaneSide::Flow, 104.8),
+        )])
+        .collect();
+    drag_through(&mut app, &ctx, grab, &path);
+    let price = last_points(&app)[0].price;
+    assert!(
+        (price - 104.8).abs() < 0.02,
+        "the line followed the hand: {price}"
+    );
+}
+
+/// Magnet off, a body drag moves the line by exactly the pointer's travel.
+#[test]
+fn with_the_magnet_off_a_body_drag_stays_free() {
+    let (mut app, _commands, ctx) = magnet_app();
+    let at = egui::pos2(bar_x(&app, 52.0), price_y(&app, PaneSide::Flow, 104.3));
+    place_free(&mut app, &ctx, "horizontal-line", &[at]);
+    app.toolrail.set_magnet(false);
+    let grab = egui::pos2(bar_x(&app, 35.0), at.y);
+    let [_, _, low_b, _] = ohlc(61);
+    let to = egui::pos2(
+        bar_x(&app, 61.0),
+        price_y(&app, PaneSide::Flow, low_b + 0.4),
+    );
+    drag_through(&mut app, &ctx, grab, &[to]);
+    let price = last_points(&app)[0].price;
+    assert!((price - (low_b + 0.4)).abs() < 0.02, "{price}");
+}
+
+/// A rectangle carried by its top edge puts that edge on the high of the
+/// candle under the pointer, exactly, and keeps its height.
+#[test]
+fn a_rectangle_dragged_by_its_body_puts_its_nearest_edge_on_a_print() {
+    let (mut app, _commands, ctx) = magnet_app();
+    let first = egui::pos2(bar_x(&app, 40.0), price_y(&app, PaneSide::Flow, 104.3));
+    let second = egui::pos2(bar_x(&app, 50.0), price_y(&app, PaneSide::Flow, 101.7));
+    place_free(&mut app, &ctx, "rectangle", &[first, second]);
+    let before = last_points(&app);
+    let grab = egui::pos2(bar_x(&app, 45.0), first.y);
+    let [_, high_c, _, _] = ohlc(80);
+    let to = egui::pos2(
+        bar_x(&app, 80.0),
+        price_y(&app, PaneSide::Flow, high_c) - 10.0,
+    );
+    drag_through(&mut app, &ctx, grab, &[to]);
+    let points = last_points(&app);
+    assert_eq!(points[0].price, high_c, "{points:?}");
+    let height = before[0].price - before[1].price;
+    assert!(
+        ((points[0].price - points[1].price) - height).abs() < 1e-9,
+        "{points:?}"
+    );
+}
+
+/// A trend line carried by its stroke passes through the print of the
+/// candle under the pointer, at the pointer's bar, and keeps its slope.
+#[test]
+fn a_trend_line_dragged_by_its_body_passes_through_a_print() {
+    let (mut app, _commands, ctx) = magnet_app();
+    let start = egui::pos2(bar_x(&app, 30.0), price_y(&app, PaneSide::Flow, 104.5));
+    let end = egui::pos2(bar_x(&app, 50.0), price_y(&app, PaneSide::Flow, 105.3));
+    place_free(&mut app, &ctx, "trend-line", &[start, end]);
+    let before = last_points(&app);
+    let grab = egui::pos2((start.x + end.x) / 2.0, (start.y + end.y) / 2.0);
+    let [_, high_c, _, _] = ohlc(70);
+    let to = egui::pos2(
+        bar_x(&app, 70.0),
+        price_y(&app, PaneSide::Flow, high_c) - 8.0,
+    );
+    drag_through(&mut app, &ctx, grab, &[to]);
+    let points = last_points(&app);
+    let pane = &app.active_tab().flow_pane;
+    let chart = pane.frame.chart_area.unwrap();
+    let pointer_bar = pane.viewport.bar_at_x(
+        to.x,
+        pane.frame.lane_divider_x.unwrap_or(chart.right()),
+        pane.slots(),
+    );
+    let through = trend_price_at(&points, pointer_bar);
+    assert!((through - high_c).abs() < 1e-6, "{through} {points:?}");
+    let slope = |p: &[ChartPoint]| (p[1].price - p[0].price) / f64::from(p[1].bar - p[0].bar);
+    assert!((slope(&points) - slope(&before)).abs() < 1e-6, "{points:?}");
+}
