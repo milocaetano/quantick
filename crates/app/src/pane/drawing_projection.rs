@@ -584,12 +584,18 @@ impl DrawingProjection<'_> {
             .double_click_hint(band.rect, &projected, pos, &ctxt)
     }
 
-    /// The drawing a double click at `pos` belongs to: the one the click
-    /// `picked` when it picked one, else the topmost visible object whose
-    /// tool would change there - an outline-only rectangle's interior takes
-    /// no part in the click's hit-test, but its double click still lands.
-    /// Locked objects, and those `held` names (an armed strategy's region),
-    /// never take one.
+    /// The drawing a double click at `pos` belongs to, with its payload as
+    /// the click leaves it: the one the press `picked` when it picked one,
+    /// else the topmost visible object whose tool would change there and
+    /// whose *drawn* anchors enclose `pos` - an outline-only rectangle's
+    /// interior takes no part in the click's hit-test, but its double click
+    /// still lands. The fallback reads the drawn extent, never the painted
+    /// one: a band run to the chart edges would otherwise swallow the
+    /// chart's own double click across its whole width. Locked objects, and
+    /// those `held` names (any strategy-bound region), never take one.
+    ///
+    /// The change is worked out on a copy, so the caller applies it whole
+    /// or not at all; hover asks the same question for its hint.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn double_click_target(
         &self,
@@ -600,56 +606,33 @@ impl DrawingProjection<'_> {
         history_right: f32,
         total: usize,
         held: &dyn Fn(drawings::DrawingId) -> bool,
-    ) -> Option<usize> {
+    ) -> Option<(usize, Box<dyn drawings::DrawingPayload>)> {
         let scale = band.scale.as_ref()?;
-        let takes = |index: usize| {
-            let Some(drawing) = drawings.items().get(index) else {
-                return false;
-            };
+        let trial = |index: usize, fallback: bool| {
+            let drawing = drawings.items().get(index)?;
             if drawing.locked
                 || held(drawing.id)
                 || !drawings.is_visible(index)
                 || !bands::drawing_in_band(drawing, band)
             {
-                return false;
+                return None;
             }
             let projected = self.projected_drawing_points(drawing, history_right, total, scale);
-            // A trial on a copy: the question is whether the tool would act.
-            let mut trial = drawing.payload.clone_box();
+            if fallback && !egui::Rect::from_points(&projected).contains(pos) {
+                return None;
+            }
+            let mut payload = drawing.payload.clone_box();
             drawing
                 .tool
-                .double_click(band.rect, &projected, pos, trial.as_mut())
+                .double_click(band.rect, &projected, pos, payload.as_mut())
+                .then_some((index, payload))
         };
         match picked {
-            Some(index) => takes(index).then_some(index),
+            Some(index) => trial(index, false),
             None => (0..drawings.items().len())
                 .rev()
-                .find(|&index| takes(index)),
+                .find_map(|index| trial(index, true)),
         }
-    }
-
-    /// Hand a double click at `pos` to the selected drawing's tool. Answers
-    /// whether its payload changed; the caller's open gesture records it.
-    pub(super) fn double_click_selected(
-        &self,
-        drawings: &mut drawings::Drawings,
-        pos: egui::Pos2,
-        band: &Band,
-        history_right: f32,
-        total: usize,
-    ) -> bool {
-        let Some(scale) = band.scale.as_ref() else {
-            return false;
-        };
-        let Some(drawing) = drawings.selected_mut() else {
-            return false;
-        };
-        if drawing.locked || !bands::drawing_in_band(drawing, band) {
-            return false;
-        }
-        let projected = self.projected_drawing_points(drawing, history_right, total, scale);
-        let tool = drawing.tool;
-        tool.double_click(band.rect, &projected, pos, drawing.payload.as_mut())
     }
 
     pub(super) fn drawing_handle_at(

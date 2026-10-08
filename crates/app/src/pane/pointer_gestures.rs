@@ -25,8 +25,9 @@ pub(super) struct PointerFrame<'a> {
     pub(super) tool: Tool,
     pub(super) shared_pick: Option<SharedPick>,
     pub(super) shared: SharedInteraction,
-    /// Whether an armed strategy rides this drawing: its extent is the
-    /// bot's window, so a double click must not move it.
+    /// Whether a strategy instance is bound to this drawing, armed or not:
+    /// its extent is that strategy's window, so a double click must not
+    /// move it.
     pub(super) held: &'a dyn Fn(drawings::DrawingId) -> bool,
 }
 
@@ -169,7 +170,7 @@ impl PaneGestures {
         projection: &DrawingProjection<'_>,
         pick: LocalPick<'_>,
         alt: bool,
-        // The double click's arming filter, present only on a double click.
+        // Which drawings a strategy holds, present only on a double click.
         double_clicked: Option<&dyn Fn(drawings::DrawingId) -> bool>,
     ) -> ReleaseAnswer {
         let LocalPick {
@@ -227,12 +228,15 @@ impl PaneGestures {
         }
         // Any other tool may own a double click on its body: the rectangle
         // extends toward the side it lands on. A press that grabbed a
-        // resize handle stays a resize, and a drawing an armed strategy
-        // rides keeps its extent, the bot's window.
+        // resize handle stays a resize, and a drawing a strategy is bound
+        // to keeps its extent, that strategy's window. The change arrives
+        // already worked out, so selecting and applying it cannot half
+        // happen: either the object changes and takes the click, or nothing
+        // moves and the chart reads it.
         if let Some(held) = double_clicked
             && !matches!(self.drag, DrawingDrag::Handle { .. })
             && let Some(band) = pointer_band
-            && let Some(index) = projection.double_click_target(
+            && let Some((index, payload)) = projection.double_click_target(
                 drawings,
                 selected,
                 position,
@@ -242,11 +246,11 @@ impl PaneGestures {
                 held,
             )
         {
-            drawings.select(Some(index));
+            // Baseline first, so the change is one undo step.
             drawings.begin_gesture();
-            if projection.double_click_selected(drawings, position, band, history_right, total) {
-                return ReleaseAnswer::DoubleClickTaken;
-            }
+            drawings.items_mut()[index].payload = payload;
+            drawings.select(Some(index));
+            return ReleaseAnswer::DoubleClickTaken;
         }
         ReleaseAnswer::Plain
     }
@@ -509,9 +513,11 @@ impl PaneGestures {
     }
 }
 
-/// The hover cursor, and the double-click hint the topmost object under the
-/// pointer offers there (a resize handle outranks the hint; a drawing an
-/// armed strategy rides offers none).
+/// The hover cursor, and the double-click hint the object a double click
+/// there would take offers (a resize handle outranks the hint; a drawing a
+/// strategy is bound to offers none). Off every object's hit-test, the hint
+/// asks the double click's own fallback, so an outline rectangle's drawn
+/// side zones announce themselves exactly where the double click acts.
 fn local_hover_cursor(
     drawings: &drawings::Drawings,
     projection: &DrawingProjection<'_>,
@@ -561,7 +567,20 @@ fn local_hover_cursor(
             .flatten();
         return (Some(egui::CursorIcon::Move), hint);
     }
-    (None, None)
+    // No object here takes a press; the cursor stays the chart's own.
+    let hint = projection
+        .double_click_target(drawings, None, position, band, history_right, total, held)
+        .and_then(|(index, _)| {
+            projection.drawing_double_click_hint(
+                drawings,
+                index,
+                position,
+                band,
+                history_right,
+                total,
+            )
+        });
+    (None, hint)
 }
 
 fn move_handle(
@@ -1097,11 +1116,11 @@ mod tests {
     }
 
     #[test]
-    fn a_double_click_leaves_an_armed_region_alone() {
+    fn a_double_click_leaves_a_strategy_bound_region_alone() {
         with_projection(|projection, bands| {
             let (mut store, rect) = local_rectangle(projection, bands);
-            let armed = store.items()[0].id;
-            let held: &dyn Fn(drawings::DrawingId) -> bool = &move |id| id == armed;
+            let bound = store.items()[0].id;
+            let held: &dyn Fn(drawings::DrawingId) -> bool = &move |id| id == bound;
             for position in [
                 rect.center(),
                 egui::pos2(rect.left() + 4.0, rect.center().y),
@@ -1172,6 +1191,133 @@ mod tests {
                 egui::Vec2::ZERO,
             );
             assert_eq!(drag.hint, None, "a drag in flight shows no glyph");
+        });
+    }
+
+    fn set_extent(store: &mut drawings::Drawings, left: bool, right: bool) {
+        let payload = store.items_mut()[0]
+            .payload
+            .as_any_mut()
+            .downcast_mut::<drawings::RectanglePayload>()
+            .unwrap();
+        (payload.extend_left, payload.extend_right) = (left, right);
+    }
+
+    fn missed_double_click(
+        store: &mut drawings::Drawings,
+        projection: &DrawingProjection<'_>,
+        band: &bands::Band,
+        position: egui::Pos2,
+    ) -> ReleaseAnswer {
+        let mut gestures = PaneGestures {
+            press_pick: Some(None),
+            ..Default::default()
+        };
+        let pick = LocalPick {
+            position,
+            band: Some(band),
+            history_right: 200.0,
+            total: 1,
+        };
+        gestures.select_released_press(store, projection, pick, false, Some(&|_| false))
+    }
+
+    /// A double click whose press missed every object reaches a rectangle
+    /// only inside its drawn extent: a band run to the chart edges leaves
+    /// the rest of the chart's double click to the chart.
+    #[test]
+    fn a_missed_double_click_reaches_only_the_drawn_rectangle() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            assert!(rect.left() - bands[0].rect.left() > 20.0, "{rect:?}");
+            // A gesture's extension, so any double click it took would restore.
+            assert_eq!(
+                missed_double_click(&mut store, projection, &bands[0], rect.center()),
+                ReleaseAnswer::DoubleClickTaken
+            );
+            assert_eq!(extent(&store), (true, true));
+            store.select(None);
+            let painted_only =
+                egui::pos2((bands[0].rect.left() + rect.left()) / 2.0, rect.center().y);
+            let off_band = egui::pos2(painted_only.x, rect.top() - 20.0);
+            for position in [painted_only, off_band] {
+                assert_eq!(
+                    missed_double_click(&mut store, projection, &bands[0], position),
+                    ReleaseAnswer::Plain,
+                    "the chart keeps the double click at {position:?}"
+                );
+                assert_eq!(extent(&store), (true, true), "at {position:?}");
+                assert_eq!(store.selected(), None, "at {position:?}");
+            }
+        });
+    }
+
+    /// A double click the rectangle refuses changes nothing at all: no
+    /// selection, no gesture, and the chart keeps the click.
+    #[test]
+    fn a_refused_double_click_selects_nothing() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            // Already run left by hand: the left zone has nothing to add.
+            set_extent(&mut store, true, false);
+            let left_zone = egui::pos2(rect.left() + 6.0, rect.center().y);
+            let undo_before = store.undo_depth();
+            assert_eq!(
+                missed_double_click(&mut store, projection, &bands[0], left_zone),
+                ReleaseAnswer::Plain
+            );
+            store.commit_gesture();
+            assert_eq!(store.selected(), None);
+            assert_eq!(store.undo_depth(), undo_before);
+            assert_eq!(extent(&store), (true, false));
+        });
+    }
+
+    /// Hover answers with the double click's own predicate: an outline
+    /// rectangle's drawn side zones show the glyph where the double click
+    /// acts, and the painted extension past them shows none.
+    #[test]
+    fn hover_hints_exactly_where_an_outline_rectangles_double_click_acts() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            store.items_mut()[0].style.fill_alpha = 0;
+            // Inside a side zone, past the border's click reach.
+            let left_zone = egui::pos2(rect.left() + 15.0, rect.center().y);
+            let right_zone = egui::pos2(rect.right() - 15.0, rect.center().y);
+            let painted_only =
+                egui::pos2((bands[0].rect.left() + rect.left()) / 2.0, rect.center().y);
+            let hover = |store: &mut drawings::Drawings, position: egui::Pos2| {
+                let mut pointer = pointer_at(position, bands);
+                pointer.down = false;
+                owner_frame(
+                    &mut PaneGestures::default(),
+                    store,
+                    projection,
+                    bands,
+                    &pointer,
+                    egui::Vec2::ZERO,
+                )
+            };
+            for position in [left_zone, right_zone] {
+                let outcome = hover(&mut store, position);
+                assert!(outcome.hint.is_some(), "a hint at {position:?}");
+                assert_eq!(outcome.cursor, None, "no object takes a press there");
+            }
+            // Extended by a gesture, the band paints past its drawn sides and
+            // every side zone offers the restore; neither predicate reaches
+            // the painted-only part. The acting position goes last.
+            assert_eq!(
+                missed_double_click(&mut store, projection, &bands[0], rect.center()),
+                ReleaseAnswer::DoubleClickTaken
+            );
+            store.select(None);
+            for (position, acts) in [(painted_only, false), (left_zone, true)] {
+                let hinted = hover(&mut store, position).hint.is_some();
+                let taken = missed_double_click(&mut store, projection, &bands[0], position)
+                    == ReleaseAnswer::DoubleClickTaken;
+                assert_eq!((hinted, taken), (acts, acts), "at {position:?}");
+            }
+            assert_eq!(extent(&store), (false, false), "the left zone restored");
         });
     }
 }

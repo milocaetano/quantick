@@ -661,6 +661,8 @@ impl ChartPane {
             viewport: &self.viewport,
             indicators: &self.indicators,
         };
+        // Any strategy instance bound to a drawing holds it, armed or not:
+        // its extent is that strategy's window.
         let anchors = &self.strategies.anchors;
         let held = |id| anchors.for_drawing(id).is_some();
         let outcome = self.gestures.handle_pointer_tool(

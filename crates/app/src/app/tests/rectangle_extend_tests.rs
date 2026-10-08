@@ -152,3 +152,36 @@ fn extend_left_makes_the_region_active_before_its_left_anchor() {
         .extend_left = true;
     assert!(active(&drawings), "extended left, it is active there");
 }
+
+/// A band run to the chart edges paints across the whole width, but a
+/// double click that misses its border and fill still belongs to the chart
+/// outside the drawn rectangle: the view snaps back to live, and the band
+/// keeps its extent. Well away from the band the chart's double click is
+/// untouched too.
+#[test]
+fn an_extended_outline_band_leaves_the_charts_double_click_to_the_chart() {
+    let mid_y = (TOP + BOTTOM) / 2.0;
+    for position in [
+        egui::pos2(LEFT - 150.0, mid_y),
+        egui::pos2(LEFT - 150.0, TOP - 100.0),
+    ] {
+        let (mut app, ctx, _commands) = drawn_rectangle_with_fill(0);
+        // A gesture's extension: any double click the band took would restore it.
+        double_click(&mut app, &ctx, egui::pos2((LEFT + RIGHT) / 2.0, mid_y));
+        assert_eq!(extent(&app), (true, true));
+        wait_out_the_click_sequence(&mut app, &ctx);
+        {
+            let pane = &mut app.active_tab_mut().flow_pane;
+            let slots = pane.slots();
+            pane.viewport.pan_pixels(120.0, slots);
+        }
+        run_frame(&mut app, &ctx);
+        assert!(!app.active_tab().flow_pane.viewport.follows_live());
+        double_click(&mut app, &ctx, position);
+        assert!(
+            app.active_tab().flow_pane.viewport.follows_live(),
+            "the chart's double click snapped to live at {position:?}"
+        );
+        assert_eq!(extent(&app), (true, true), "the band held at {position:?}");
+    }
+}
