@@ -5,5 +5,5 @@
 # history lands), honours the tool's own anchor snap, and with the magnet on
 # lands the edge nearest the pointer on the print under it. All of it lives
 # where the pane projects pointer to anchor, which only `app` holds.
-crates/app +193
-!budget +193
+crates/app +197
+!budget +197

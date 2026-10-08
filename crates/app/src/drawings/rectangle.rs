@@ -75,11 +75,7 @@ impl DrawingPayload for RectanglePayload {
 /// The rectangle's screen span: its two anchor corners, run to the chart's
 /// right edge when the payload extends it. Paint and hit-test share this so
 /// the clickable area is exactly the painted one.
-fn screen_rect(
-    points: &[egui::Pos2],
-    chart_rect: egui::Rect,
-    payload: &RectanglePayload,
-) -> egui::Rect {
+fn screen_rect(points: &[egui::Pos2], chart_rect: egui::Rect, payload: &RectanglePayload) -> egui::Rect {
     let mut rect = egui::Rect::from_two_pos(points[0], points[1]);
     if payload.extend_right {
         rect.max.x = rect.max.x.max(chart_rect.right());
@@ -114,7 +110,11 @@ fn rectangle_handles(points: &[egui::Pos2]) -> Option<Handles> {
 
 /// Move the two anchor components owned by one corner while the diagonally
 /// opposite corner stays fixed.
-fn resize_from_corner(points: &[egui::Pos2], handle: usize, to: egui::Pos2) -> Option<Handles> {
+fn resize_from_corner(
+    points: &[egui::Pos2],
+    handle: usize,
+    to: egui::Pos2,
+) -> Option<Handles> {
     let [first, second] = points else {
         return None;
     };
@@ -201,7 +201,11 @@ impl DrawingToolImpl for Rectangle {
         if points.len() == 2 {
             let rect = screen_rect(points, chart_rect, payload_of(ctxt));
             painter.rect_filled(rect, egui::Rounding::ZERO, drawing_fill(style));
-            painter.rect_stroke(rect, egui::Rounding::ZERO, drawing_stroke(style));
+            painter.rect_stroke(
+                rect,
+                egui::Rounding::ZERO,
+                drawing_stroke(style),
+            );
         }
     }
     fn hit_test(
@@ -332,13 +336,17 @@ mod tests {
         for handle in 0..4 {
             for target in [outward[handle], inward[handle]] {
                 let moved = TOOL
-                    .drag_handle(chart, &points, handle, target, &ctxt, Constrain::Free)
+                    .drag_handle(
+                        chart,
+                        &points,
+                        handle,
+                        target,
+                        &ctxt,
+                        Constrain::Free,
+                    )
                     .expect("the rectangle owns every corner drag");
                 let resized = egui::Rect::from_two_pos(moved[0], moved[1]);
-                assert!(
-                    resized.contains(target),
-                    "handle {handle} follows the pointer"
-                );
+                assert!(resized.contains(target), "handle {handle} follows the pointer");
                 assert!(
                     resized.contains(opposite[handle]),
                     "handle {handle} preserves its opposite corner"
