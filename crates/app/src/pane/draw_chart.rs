@@ -231,22 +231,6 @@ impl ChartPane {
         }
         let nothing_in_view = nothing_in_view(&frame);
         self.paint_canvas_chrome(&frame, axis_x, nothing_in_view, compass.as_ref(), chrome);
-        let inspect_pointer = self.hover_pos.filter(|position| {
-            !layout.tape_only
-                && chrome.toolrail.tool().drawing_tool().is_none()
-                && !chrome.paper.aiming()
-                && !painter.ctx().input(|input| input.pointer.any_down())
-                && painter
-                    .ctx()
-                    .layer_id_at(*position)
-                    .is_none_or(|layer| layer == painter.layer_id())
-        });
-        flow.inspection(
-            self.orderflow.as_ref(),
-            inspect_pointer,
-            chrome.tz,
-            chrome.side_inferred,
-        );
 
         // The levels' container, back on the pane for the next frame to
         // refill rather than reallocate.

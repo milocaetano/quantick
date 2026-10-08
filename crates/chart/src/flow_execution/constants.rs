@@ -13,15 +13,11 @@ pub(crate) const FLOW_RADIUS_LIMIT_PX: f32 = 12.0;
 /// determine which executions belong together.
 pub(crate) const FLOW_MERGE_SUPPORT_RADIUS_PX: f32 = 6.0;
 
-// Earned circles and pointer selection (`disc.rs`).
+// Earned circles (`disc.rs`).
 
 /// Uniform `[x, y]` translation of every FLOW circle, in logical pixels. One
 /// translation preserves the execution path and every inter-region distance.
 pub const FLOW_EXECUTION_OFFSET: [f32; 2] = [-18.0, -18.0];
-
-/// Least pointer hit radius, in logical pixels. Pointer tolerance may exceed a
-/// tiny circle; painted area never uses this floor.
-pub(crate) const FLOW_POINTER_RADIUS_PX: f32 = 6.0;
 
 // Peak placement (`presentation.rs`, `presentation/placement_index.rs`).
 
