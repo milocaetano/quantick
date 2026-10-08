@@ -19,7 +19,7 @@ use quantick_sim::Order;
 use crate::{paper_chrome::PositionSummary, tab::Tab};
 
 use super::{
-    registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
+    registry::{CaptureContext, ProjectionDock, ProjectionRegistry, ProjectionRegistryError},
     trace::ReplayTraceFile,
     types::{canonical_decimal, canonical_f32, unavailable, wire_usize},
 };

@@ -58,51 +58,7 @@ pub const RECONNECT_BUDGET_MS: i64 = 20_000;
 /// on a closed exchange it is still true.
 pub const SILENT_BUDGET_MS: i64 = 120_000;
 
-/// Which control gets the trader out of this particular stall.
-///
-/// The pair exists because the two acts have genuinely different costs, and the
-/// application picks between them rather than asking the trader to diagnose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Recovery {
-    /// Respawn the transport and keep the timeline: the bars, drawings,
-    /// indicators, armed strategies and any open paper position all survive.
-    /// Nothing on screen moves. For a connection that never landed or dropped.
-    Reconnect,
-    /// Throw the timeline away and rebuild it from zero. Refetches history,
-    /// flattens the paper position and disarms every strategy — so it is what
-    /// the trader is offered only when the cheap act cannot help. For a
-    /// transport that claims to be connected while nothing comes down it.
-    Reload,
-}
-
-impl Recovery {
-    /// Stable machine-readable name, shared by observers and recovery controls.
-    #[must_use]
-    pub const fn wire_name(self) -> &'static str {
-        match self {
-            Self::Reconnect => "reconnect",
-            Self::Reload => "reload",
-        }
-    }
-
-    /// The word on the button.
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Reconnect => "Reconnect",
-            Self::Reload => "Reload",
-        }
-    }
-
-    /// The other one.
-    #[must_use]
-    pub fn other(self) -> Self {
-        match self {
-            Self::Reconnect => Self::Reload,
-            Self::Reload => Self::Reconnect,
-        }
-    }
-}
+pub use quantick_sources::recovery::Recovery;
 
 /// A feed that has stopped making progress, in words a trader can act on.
 #[derive(Debug, Clone, PartialEq, Eq)]

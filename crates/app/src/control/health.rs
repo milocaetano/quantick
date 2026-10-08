@@ -16,7 +16,7 @@ use crate::{
 };
 
 use super::{
-    registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
+    registry::{CaptureContext, ProjectionDock, ProjectionRegistry, ProjectionRegistryError},
     types::wire_usize,
 };
 

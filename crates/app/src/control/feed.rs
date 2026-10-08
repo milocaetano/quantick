@@ -11,6 +11,7 @@ use quantick_control::{
 
 use crate::feed::FeedNotice;
 
+use super::registry::ProjectionDock;
 use super::registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError};
 
 /// The wire word for a feed's connection state.
@@ -124,7 +125,7 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                     feed_generation: WireU64::new(tab.feed_generation()),
                     opening_slices_remaining: tab.opening_slices_remaining().map(WireU64::new),
                     history_reach_note: tab.history_note().map(str::to_owned),
-                    history_load: Some(super::history::snapshot(
+                    history_load: Some(quantick_control_handlers::history::snapshot(
                         tab.history_status(),
                         tab.main_history_reach(),
                     )),

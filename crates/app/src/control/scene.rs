@@ -73,7 +73,7 @@ use crate::{
 };
 
 use super::{
-    registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
+    registry::{CaptureContext, ProjectionDock, ProjectionRegistry, ProjectionRegistryError},
     types::{
         AvailabilitySnapshot, SCREEN_DECIMAL_PLACES, available, canonical_f32, unavailable,
         visible_panes,
@@ -519,7 +519,9 @@ fn push_feed_status<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnaps
             availability: available(),
             bounds: None,
             bounds_availability: bounds_not_recorded(),
-            capability_id: Some(super::recovery::capability_id(recovery).to_owned()),
+            capability_id: Some(
+                quantick_control_handlers::recovery::capability_id(recovery).to_owned(),
+            ),
         });
     }
 }

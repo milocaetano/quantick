@@ -31,7 +31,7 @@ use serde_json::Value;
 use crate::{canvas_layout, tab::CanvasLayout};
 
 use super::{
-    actions::{ActionRegistry, CAPABILITY_VERSION},
+    actions::{ActionDock, ActionRegistry, CAPABILITY_VERSION},
     gateway::ControlAccess,
 };
 

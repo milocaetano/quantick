@@ -46,7 +46,7 @@ use crate::{
 
 use super::{
     interaction::drawing_band_name,
-    registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
+    registry::{CaptureContext, ProjectionDock, ProjectionRegistry, ProjectionRegistryError},
     types::wire_usize,
 };
 

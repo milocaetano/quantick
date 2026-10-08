@@ -31,11 +31,14 @@ use crate::deal_recording::DealRecordingError;
 use crate::deal_recording::{DealRecordingAction, RecState, RecordingView};
 
 use super::{
-    actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
+    actions::{
+        ActionDock, ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID,
+    },
     contract::{COCKPIT_EFFECT_ID, COCKPIT_PERMISSION_ID},
     gateway::ControlAccess,
-    recovery::{RECOVERY_MODULE_ID, tab_index},
 };
+use quantick_control_handlers::{TabDirectory, tab_index};
+use quantick_control_schema::recovery::RECOVERY_MODULE_ID;
 
 /// The view, on the wire.
 pub(crate) fn snapshot(view: &RecordingView) -> DealRecordingSnapshot {
@@ -118,7 +121,7 @@ pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryErro
     )
 }
 
-fn set<P: TabsPort + TabsMutPort + RecordingPort + ?Sized>(
+fn set<P: TabDirectory + TabsPort + TabsMutPort + RecordingPort + ?Sized>(
     app: &mut P,
     _access: &mut ControlAccess,
     _actor: &ActorContext,

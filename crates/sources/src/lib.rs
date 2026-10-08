@@ -3,7 +3,8 @@
 //! [`config`] is the feed-shaped half of the cockpit's configuration: which
 //! backend streams a feed, what it can report, how the MetaTrader listener is
 //! addressed. [`history_reach`] is how far one press of *load older* reaches,
-//! as a campaign told what the chart holds. Both are headless — no runtime,
+//! as a campaign told what the chart holds. [`recovery`] names the two ways
+//! an operator revives a stalled feed. All are headless — no runtime,
 //! no thread, no clock — so the config document in `quantick-stores` and the
 //! feed host in `quantick-feed` share them without the first linking the
 //! second's network stack.
@@ -11,3 +12,4 @@
 pub mod config;
 pub mod history_reach;
 pub mod history_run;
+pub mod recovery;

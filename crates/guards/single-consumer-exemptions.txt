@@ -27,5 +27,5 @@ paper consumed by `app` only in shipped code; `backtest` links it as a dev-depen
 trading consumed by `sim` only; the venue-neutral `TradingVenue` port a broker adapter docks against beside the simulator. Open: no second venue implements it yet.
 anchored-studies consumed by `app` only; resumable profile and anchored-average state moved out of `app` in #542 so the headless guard scans it. Open: `backtest` does not draw anchored studies yet.
 backpressure consumed by `app` only; the owner-to-worker admission discipline (park, fold, never drop) moved out of `app` in #542, told the time. Open: `feed` workers still use their own channels.
-control-schema consumed by `app` only; the wire shapes of every projection and action, so a client, a generator or a test reads them without the window (#542). Open: `mcp` still speaks through `control` and `control-local` alone.
+control-handlers consumed by `app` only; the control handler families over headless ports, moved out of `app` so the window keeps one adapter per family. Open: `mcp` or a test host could drive the same handlers over a fake window.
 operability consumed by `app` only; the behaviour-to-capability table and its drift check, pure data by design (#542). Open: a generator or `mcp` could read it without the window.

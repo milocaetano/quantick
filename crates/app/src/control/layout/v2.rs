@@ -42,7 +42,8 @@ use rust_decimal::{Decimal, prelude::ToPrimitive};
 
 use serde_json::Value;
 
-use super::super::{actions::ActionRegistry, gateway::ControlAccess};
+use super::super::actions::{ActionDock, ActionRegistry};
+use super::super::gateway::ControlAccess;
 
 // Decimal places `fraction` is written and accepted with: `workspace.summary`'s
 // own, so the answer and the readback are one number written one way.

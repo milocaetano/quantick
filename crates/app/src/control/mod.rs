@@ -24,13 +24,12 @@ mod price_axis;
 // Moved to `quantick-control-host`; named here so `super::journal` resolves.
 use quantick_control_host::journal;
 mod bubble_save;
-mod history;
 mod layers;
 mod layout;
 mod notify;
 mod opening_scale;
 mod orderflow;
-mod recovery;
+mod ports;
 pub(crate) use interaction::drawing_band_name;
 #[cfg(test)]
 pub(crate) use interaction::flow_cell_snapshot;
@@ -106,6 +105,23 @@ pub(crate) fn registered_action_count() -> usize {
         .count()
 }
 
+/// Run the registered action `id` on `window`, as the gateway does once a
+/// call is admitted.
+#[cfg(test)]
+pub(crate) fn invoke_action(
+    window: &mut crate::app::ControlWindow,
+    access: &mut ControlAccess,
+    actor: &quantick_control::wire::ActorContext,
+    id: &str,
+    input: serde_json::Value,
+) -> Result<serde_json::Value, quantick_control::error::ControlError> {
+    let actions = actions::standard_actions().expect("built-in action registry must be valid");
+    let action = actions
+        .lookup(id, quantick_control_host::authority::CAPABILITY_VERSION)
+        .expect("the action is registered");
+    (action.handler)(window, access, actor, &input)
+}
+
 /// Every registered action as its id and version.
 #[cfg(test)]
 pub(crate) fn registered_action_versions() -> Vec<(String, u32)> {
@@ -123,7 +139,7 @@ pub(crate) fn standard_registry() -> Result<ProjectionRegistry, ProjectionRegist
     system::register(&mut registry)?;
     workspace::register(&mut registry)?;
     feed::register(&mut registry)?;
-    chart::register(&mut registry)?;
+    quantick_control_handlers::chart::register(&mut registry)?;
     health::register(&mut registry)?;
     analysis::register(&mut registry)?;
     interaction::register(&mut registry)?;

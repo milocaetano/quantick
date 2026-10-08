@@ -13,7 +13,7 @@ use crate::pane::PaneSide;
 use quantick_feed::history_reach::HistoryReach;
 
 use super::{
-    registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
+    registry::{CaptureContext, ProjectionDock, ProjectionRegistry, ProjectionRegistryError},
     types::{canonical_f32, wire_usize},
 };
 

@@ -6,6 +6,7 @@ use quantick_control::{
     registry::ModuleDescriptor,
 };
 
+use super::registry::ProjectionDock;
 use super::registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError};
 
 use quantick_control_host::system::{BuildIdentity, MODULE_ID, SCHEMA_VERSION};

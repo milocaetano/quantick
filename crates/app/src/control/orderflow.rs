@@ -31,7 +31,7 @@ use quantick_control::{
 use crate::{orderflow_view::OrderflowView, pane::ChartPane, tab::Tab};
 
 use super::{
-    registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
+    registry::{CaptureContext, ProjectionDock, ProjectionRegistry, ProjectionRegistryError},
     types::{AvailabilitySnapshot, available, unavailable},
 };
 
