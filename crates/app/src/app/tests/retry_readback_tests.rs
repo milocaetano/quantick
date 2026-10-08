@@ -55,6 +55,8 @@ const CLIENT_NAME: &str = "quantick integration test";
 mod asset_bubbles_save_tests;
 #[path = "candle_aggression_tests.rs"]
 mod candle_aggression;
+#[path = "drawing_magnet_control_tests.rs"]
+mod drawing_magnet_control;
 #[path = "history_control_tests.rs"]
 mod history_control_tests;
 #[path = "layer_control_tests.rs"]
