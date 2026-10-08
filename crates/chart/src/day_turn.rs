@@ -33,9 +33,10 @@ pub struct DayTurn {
 impl DayTurn {
     /// The turn at `slot`, given the bar before it as `(open_ms, close_ms)`
     /// and the open of the bar that starts the new day. The bar before is
-    /// the old day's end only when it closed on the day it opened: a bar
-    /// spanning midnight closed in the new day, and that time would read as
-    /// when the old one ended, so no end time is known.
+    /// the old day's end only when it closed on the day it opened. A bar
+    /// spanning the day change holds both days' prints: its close is in the
+    /// new day, and the new day's first prints are in it rather than in the
+    /// bar at `slot`, so neither time is known and the date stands alone.
     #[must_use]
     pub fn new(
         slot: usize,
@@ -44,14 +45,21 @@ impl DayTurn {
         opened_ms: Option<i64>,
         tz: TzOffset,
     ) -> Self {
+        let spans_the_turn = before.is_some_and(|(open, close)| {
+            CivilDate::from_ms(open, tz) != CivilDate::from_ms(close, tz)
+        });
+        if spans_the_turn {
+            return Self {
+                slot,
+                date,
+                ended_ms: None,
+                opened_ms: None,
+            };
+        }
         Self {
             slot,
             date,
-            ended_ms: before
-                .filter(|&(open, close)| {
-                    CivilDate::from_ms(open, tz) == CivilDate::from_ms(close, tz)
-                })
-                .map(|(_, close)| close),
+            ended_ms: before.map(|(_, close)| close),
             opened_ms,
         }
     }
