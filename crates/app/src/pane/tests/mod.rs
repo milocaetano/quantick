@@ -828,7 +828,7 @@ fn a_recut_keeps_the_mark_on_its_own_instant() {
 
     // Two trades per bar: the same tape, half the bars.
     pane.spec.retain(crate::state::BarSpec::Tick(2));
-    let spec = pane.current_spec();
+    let spec = pane.spec.spec();
     pane.state.set_spec(spec);
     pane.reanchor_drawings(old_slots);
 

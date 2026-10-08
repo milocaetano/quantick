@@ -79,6 +79,10 @@ pub struct MenuState {
 
 #[derive(Debug, Default)]
 pub struct Model {
+    pub strip_expanded: Option<u64>,
+    pub pending_settings: Option<u64>,
+    pub pending_indicator_guide: Option<(u64, bool)>,
+    pub history: super::pane_history::HistoryState,
     pub viewport: Viewport,
     pub selection: Selection,
     pub menu: MenuState,
@@ -102,6 +106,8 @@ pub struct ContextPress {
 
 #[derive(Debug, Clone)]
 pub enum Intent {
+    Axis(super::pane_axis::AxisGesture),
+    Indicator(super::pane_axis::IndicatorGesture),
     Pan {
         delta: [f32; 2],
         total: usize,
@@ -122,6 +128,14 @@ pub enum Intent {
     CloseMenu {
         drawing: Option<DrawingFact>,
     },
+    RenameDraft {
+        text: String,
+        blur: bool,
+        drawing: Option<DrawingFact>,
+    },
+    RefreshMenu {
+        drawing: Option<DrawingFact>,
+    },
     RenameBlur {
         drawing: Option<DrawingFact>,
     },
@@ -139,6 +153,18 @@ pub enum Intent {
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
+    Scale {
+        target: super::pane_axis::ScaleTarget,
+        action: super::pane_axis::ScaleAction,
+    },
+    ResizeTape {
+        delta: f32,
+        width: f32,
+    },
+    IndicatorSizing {
+        slot: u64,
+        sizing: super::pane_axis::Sizing,
+    },
     PanPrice {
         delta_px: f64,
         height: f64,
@@ -195,6 +221,8 @@ fn rename(state: &MenuState, drawing: Option<DrawingFact>) -> Option<Effect> {
 pub fn update(model: &mut Model, intent: Intent) -> Vec<Effect> {
     let mut effects = Vec::new();
     match intent {
+        Intent::Axis(gesture) => effects.extend(super::pane_axis::axis(model, gesture)),
+        Intent::Indicator(gesture) => effects.extend(super::pane_axis::indicator(model, gesture)),
         Intent::Pan {
             delta,
             total,
@@ -232,7 +260,7 @@ pub fn update(model: &mut Model, intent: Intent) -> Vec<Effect> {
             if tape {
                 effects.push(Effect::TapeLive);
             } else if let Some(slot) = overlay {
-                effects.push(Effect::OpenIndicatorSettings(slot));
+                model.pending_settings = Some(slot);
             } else {
                 model.viewport.snap_to_live();
             }
@@ -255,6 +283,24 @@ pub fn update(model: &mut Model, intent: Intent) -> Vec<Effect> {
             effects.extend(rename(&model.menu, drawing));
             model.menu.drawing = None;
             model.menu.rename.clear();
+        }
+        Intent::RenameDraft {
+            text,
+            blur,
+            drawing,
+        } => {
+            model.menu.rename = text;
+            if blur {
+                effects.extend(rename(&model.menu, drawing));
+            }
+        }
+        Intent::RefreshMenu { drawing } => {
+            if model.menu.drawing.is_some()
+                && drawing.as_ref().map(|fact| fact.id) != model.menu.drawing
+            {
+                model.menu.drawing = None;
+                model.menu.rename.clear();
+            }
         }
         Intent::RenameBlur { drawing } => effects.extend(rename(&model.menu, drawing)),
         Intent::AskClear { count } => model.menu.confirm_clear = count > 0,

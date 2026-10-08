@@ -75,7 +75,7 @@ impl DrawingPass<'_> {
                 continue;
             }
             let points = self.projected_drawing_points(drawing, history_right, total, scale);
-            let selected = self.drawings.selected() == Some(index);
+            let selected = self.drawings.selected_id() == Some(drawing.id);
             // An object that crosses every band draws its stroke in each and
             // its readout and handles in the first: three copies of
             // "17 bars 4m 21s" stacked down the screen is not three facts.

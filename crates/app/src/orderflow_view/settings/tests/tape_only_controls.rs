@@ -198,7 +198,8 @@ fn the_tape_quantity_tooltip_does_not_claim_to_resize_the_independent_candle_ove
         let _ = paint(&mut view, &ctx, Vec::new());
     }
     let text = paint(&mut view, &ctx, Vec::new());
-    let hovered = ctx.model_snapshot(|state| state.hovered.iter().copied().collect::<Vec<_>>());
+    let hovered =
+        ctx.interaction_snapshot(|state| state.hovered.iter().copied().collect::<Vec<_>>());
     let responses: Vec<_> = hovered.iter().map(|id| ctx.read_response(*id)).collect();
     let tooltip = text
         .iter()

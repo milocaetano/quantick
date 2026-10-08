@@ -48,11 +48,6 @@ pub struct ChartPane {
     pub id: u64,
     pub state: ChartState,
     pub(super) history_worker: history_worker::HistoryWorker,
-    /// Identity of the closed-bar prefix used by append-only control-plane pagination. A live bar
-    /// closing appends past a page's high-water mark and leaves this unchanged; anything that can
-    /// rewrite, prepend, remove or re-cut a closed bar advances it, so a cursor rejects a mixed
-    /// view instead of silently continuing over changed data.
-    pagination_revision: u64,
     /// The tape, and everything read off it: the live lane, the heatmap, the bubbles, the live
     /// strip. `None` is what makes a time pane a time pane: §11 keeps the flow layers on the flow
     /// pane, and a pane that never draws them has no business running a book worker thread.
@@ -151,27 +146,29 @@ pub struct ChartPane {
     pub drawings: Drawings,
     /// A drawing gesture in flight — see [`PaneGestures`].
     pub gestures: PaneGestures,
-    /// A re-anchor owed to the drawings, holding the slot count of the series they were last
-    /// anchored to. A reset empties the pane and an empty series cannot say where an instant lands,
-    /// so the answer waits for the first frame with bars rather than clamping every mark onto a
-    /// series that is not there yet.
-    pub(super) pending_reanchor: Option<usize>,
-    /// The pane opened by a click on its own collapsed strip, carried to the frame that may hold
-    /// the second half of a double click. A collapsed strip changes shape the instant it is
-    /// clicked, so a two-click gesture cannot be read from one frame's geometry; this is the state
-    /// that spans them.
-    pub(super) strip_expanded: Option<SlotId>,
-    /// An indicator whose settings a gesture on this pane asked for, waiting for the app to open
-    /// the dialog. Parked rather than acted on: the dialog is the app's (one for the window) and
-    /// the gestures that ask for it run deep in this pane's input pass, holding borrows the app's
-    /// state cannot cross. Same shape as [`SpecSelector::pending`].
-    pub(super) pending_settings: Option<SlotId>,
-    /// A guide switch chosen in an indicator pane's context menu, parked
-    /// until the app can update its layout and mirrored panes.
-    pub(super) pending_indicator_guide: Option<(SlotId, bool)>,
 }
 
 impl ChartPane {
+    /// The tape's two modes, `(tape_only, native_tape)`: tape only hides the
+    /// candles, the native tape fits the shared price axis beside them or alone.
+    pub(crate) fn tape_modes(&self) -> (bool, bool) {
+        self.orderflow.as_ref().map_or((false, false), |view| {
+            let config = view.cached_config();
+            (config.tape_only(), config.native_tape())
+        })
+    }
+
+    /// Every mode-entry path starts at its own fit, including source presets:
+    /// a new axis source (tape or candles) or entering or leaving tape only.
+    pub(crate) fn sync_price_axis_mode(&mut self) {
+        let modes = self.tape_modes();
+        if self.frame.price_axis_mode != modes {
+            self.price_view.reset();
+            self.frame.auto_range = None;
+            self.frame.price_axis_mode = modes;
+        }
+    }
+
     pub(crate) fn series_read(&self) -> drawing_projection::PaneSeriesRead<'_> {
         drawing_projection::PaneSeriesRead {
             history_prefix: &self.history_prefix,
@@ -303,7 +300,6 @@ impl ChartPane {
             spec: selector,
             state: ChartState::new(spec),
             history_worker: Default::default(),
-            pagination_revision: 0,
             orderflow,
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
@@ -333,10 +329,6 @@ impl ChartPane {
             strategies: PaneStrategies::default(),
             drawings,
             gestures: PaneGestures::default(),
-            pending_reanchor: None,
-            strip_expanded: None,
-            pending_settings: None,
-            pending_indicator_guide: None,
         }
     }
 
@@ -389,11 +381,11 @@ impl ChartPane {
     /// chart-window reads. Live appends do not advance it; rewrites do.
     #[must_use]
     pub fn pagination_revision(&self) -> u64 {
-        self.pagination_revision
+        self.model.history.revision()
     }
 
     pub(super) fn bump_pagination_revision(&mut self) {
-        self.pagination_revision = self.pagination_revision.saturating_add(1);
+        self.model.history.changed();
     }
 
     #[cfg(test)]
@@ -446,11 +438,14 @@ impl ChartPane {
     /// The indicator a gesture on this pane asked to configure, if any, taken so a request is acted
     /// on exactly once.
     pub fn take_settings_request(&mut self) -> Option<SlotId> {
-        self.pending_settings.take()
+        self.model.pending_settings.take().map(SlotId)
     }
 
     pub(crate) fn take_indicator_guide_request(&mut self) -> Option<(SlotId, bool)> {
-        self.pending_indicator_guide.take()
+        self.model
+            .pending_indicator_guide
+            .take()
+            .map(|(slot, enabled)| (SlotId(slot), enabled))
     }
 
     #[cfg(any(feature = "scenario-harness", test))]
@@ -460,7 +455,7 @@ impl ChartPane {
 
     #[cfg(test)]
     pub(crate) fn request_indicator_guide(&mut self, slot: SlotId, enabled: bool) {
-        self.pending_indicator_guide = Some((slot, enabled));
+        self.model.pending_indicator_guide = Some((slot.0, enabled));
     }
 
     /// Stand in for the gesture that raises a settings request, so the app's
@@ -468,7 +463,7 @@ impl ChartPane {
     /// layout it would have to re-derive.
     #[cfg(test)]
     pub fn request_settings(&mut self, slot: SlotId) {
-        self.pending_settings = Some(slot);
+        self.model.pending_settings = Some(slot.0);
     }
 
     /// Handle mouse navigation, TradingView-style:
@@ -708,9 +703,9 @@ impl ChartPane {
             },
         );
 
-        self.handle_axis_gestures(ui, &areas, chrome);
+        axes_and_panes::handle_axis_gestures(self, ui, &areas, chrome);
 
-        self.handle_indicator_pane_gestures(ui, &areas, chrome, primary_free);
+        axes_and_panes::handle_indicator_pane_gestures(self, ui, &areas, chrome, primary_free);
     }
 
     /// The HUD anchor cached by the last draw, if the paper layer was

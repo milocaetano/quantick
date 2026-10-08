@@ -177,8 +177,22 @@ pub(super) fn navigate(pane: &mut ChartPane, intent: quantick_chart_interaction:
                     tape.set_tape_end(TapeEnd::Live);
                 }
             }
-            Effect::OpenIndicatorSettings(slot) => {
-                pane.pending_settings = Some(crate::indicator_worker::SlotId(slot))
+            Effect::OpenIndicatorSettings(slot) => pane.model.pending_settings = Some(slot),
+            Effect::Scale { target, action } => {
+                super::axes_and_panes::apply_scale(pane, target, action)
+            }
+            Effect::ResizeTape { delta, width } => {
+                if let Some(tape) = pane.orderflow.as_mut() {
+                    tape.resize_live_lane(delta, width);
+                }
+            }
+            Effect::IndicatorSizing { slot, sizing } => {
+                if let Some(view) = pane
+                    .indicators
+                    .view_mut(crate::indicator_worker::SlotId(slot))
+                {
+                    view.sizing = super::axes_and_panes::pane_sizing(sizing);
+                }
             }
             Effect::Menu(_) => unreachable!("navigation adapter receives only gesture intents"),
         }

@@ -36,3 +36,5 @@ pub mod work_meter;
 #[cfg(test)]
 #[global_allocator]
 static TEST_ALLOCATOR: work_meter::Counting = work_meter::Counting;
+
+pub mod pane_series;

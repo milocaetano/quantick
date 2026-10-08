@@ -24,3 +24,8 @@ pub mod tape_drag;
 
 pub mod pane;
 pub mod viewport;
+
+pub mod pane_axis;
+pub mod pane_history;
+
+pub mod pane_menu;

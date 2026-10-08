@@ -9,17 +9,20 @@
 
 use crate::indicator_worker::{IndicatorCommand, IndicatorSource, SlotId};
 use crate::price_view::PriceView;
-use crate::state::{BarConfiguration, ChartState};
+use crate::state::ChartState;
 use crate::viewport::Viewport;
 
-use super::{ChartPane, prefix_differs};
+use super::ChartPane;
+use quantick_chart_interaction::pane_history::{PrefixChange, PrefixIdentity};
+fn prefix_identity(bars: &[quantick_engine::Bar]) -> PrefixIdentity {
+    PrefixIdentity {
+        count: bars.len(),
+        first: bars.first().map(|bar| bar.open_time),
+        last: bars.last().map(|bar| bar.open_time),
+    }
+}
 
 impl ChartPane {
-    /// The bar spec implied by the current selector state.
-    pub fn current_spec(&self) -> BarConfiguration {
-        self.spec.spec()
-    }
-
     /// How many bar slots the chart draws: the venue prefix, the closed bars
     /// the engine cut from trades, and the forming one after them.
     pub fn slots(&self) -> usize {
@@ -56,12 +59,7 @@ impl ChartPane {
     /// no interval to fall short of), and for a first bar that opens exactly
     /// on its boundary.
     pub fn partial_bucket_slot(&self) -> Option<usize> {
-        let interval = self.state.spec().time_interval_ms()?;
-        // The first print, not the bar's open: a venue lead in front of it
-        // completes the candle, never the prints a ladder folds.
-        let first = self.state.first_print_open_ms()?;
-        let opens_inside = crate::resample::bucket_start(first, interval) != first;
-        opens_inside.then(|| self.seam_slot())
+        self.series_read().partial_bucket_slot()
     }
 
     /// The closed bar in `slot`, from whichever series owns it.
@@ -117,11 +115,7 @@ impl ChartPane {
     /// numbers, rather than re-deriving them thousands of times a second on
     /// the paint path.
     pub fn covering_slot_at_time(&self, ms: i64) -> Option<usize> {
-        let (oldest, newest) = self.covered_window()?;
-        if ms < oldest || ms > newest {
-            return None;
-        }
-        self.slot_at_time(ms)
+        self.series_read().covering_slot_at_time(ms)
     }
 
     /// The stretch of market time this pane's bars cover, both ends
@@ -132,28 +126,14 @@ impl ChartPane {
     /// which is what "the chart reaches back this far" means to someone
     /// reading the screen, candles or prints. `None` for a pane with no bars.
     pub(super) fn covered_window(&self) -> Option<(i64, i64)> {
-        let newest = self
-            .state
-            .partial()
-            .or_else(|| self.state.bars().last())
-            .or_else(|| self.history_prefix.last())
-            .map(|bar| bar.close_time)?;
-        Some((self.slot_open_time(0)?, newest))
+        self.series_read().covered_window()
     }
 
     /// The market time under the right edge of the candles' pane, or `None`
     /// while the view follows live (the right edge is the newest bar by
     /// definition, so there is nothing to remember) or when there are no bars.
     pub fn right_edge_time(&self) -> Option<i64> {
-        if self.model.viewport.follows_live() {
-            return None;
-        }
-        let slots = self.slots();
-        let edge = self.model.viewport.right_edge_bar(slots);
-        // Panning into the empty space past the newest bar puts the edge off
-        // the series; the newest bar is the market time it is closest to.
-        let slot = (edge.floor().max(0.0) as usize).min(slots.saturating_sub(1));
-        self.slot_open_time(slot)
+        self.series_read().right_edge_time(&self.model.viewport)
     }
 
     /// Reserve a slot and ask the worker to instantiate `source` behind it.
@@ -173,7 +153,7 @@ impl ChartPane {
         }
         self.lane.reset();
         self.indicator_worker.send(IndicatorCommand::Rebuild(
-            self.closed_bars(),
+            self.series_read().closed_bars(),
             self.state.partial().cloned(),
         ));
         self.publish_partial();
@@ -182,12 +162,6 @@ impl ChartPane {
     /// Every closed bar the pane shows, prefix first — what an indicator is
     /// computed over, so an average spans the venue history rather than
     /// restarting at the first print this session saw.
-    fn closed_bars(&self) -> Vec<quantick_engine::Bar> {
-        let mut bars = Vec::with_capacity(self.closed_slots());
-        bars.extend_from_slice(&self.history_prefix);
-        bars.extend_from_slice(self.state.bars());
-        bars
-    }
 
     /// Put `bars` in front of the trade-derived series, or take the prefix
     /// away when they are empty.
@@ -209,30 +183,21 @@ impl ChartPane {
         lead: Option<quantick_engine::Bar>,
         covers_seam: bool,
     ) -> bool {
-        if self.state.set_venue_lead(lead, covers_seam)
-            && !prefix_differs(&self.history_prefix, &bars)
-        {
-            self.bump_pagination_revision();
-            self.send_indicator_rebuild();
-            return true;
-        }
-        // Any time-cutting pane may carry one (audit S1) — the flow pane
-        // showing time bars included. On a pane with a tape the flow layers
-        // simply have nothing to draw over the prefix: a venue candle has no
-        // prints in it, and the projection maps only the engine's own bars
-        // (see `draw_chart`'s timeline).
-        if !prefix_differs(&self.history_prefix, &bars) {
-            return false;
-        }
-        let before = self.history_prefix.len();
+        let lead_changed = self.state.set_venue_lead(lead, covers_seam);
+        let change = self.model.history.prefix_change(
+            prefix_identity(&self.history_prefix),
+            prefix_identity(&bars),
+            lead_changed,
+        );
+        let delta = match change {
+            PrefixChange::Unchanged => return false,
+            PrefixChange::LeadOnly => {
+                self.send_indicator_rebuild();
+                return true;
+            }
+            PrefixChange::Replace { delta } => delta,
+        };
         self.history_prefix = bars;
-        self.bump_pagination_revision();
-        // The prefix moves under a chart the user is already reading, so
-        // everything anchored to a bar index moves with it — in either
-        // direction. It grows when history lands; it shrinks when a coarser
-        // fold makes fewer bars of the same span, or when older trades push
-        // the seam back and the overlapping buckets leave.
-        let delta = self.history_prefix.len() as isize - before as isize;
         self.model.viewport.shift_right_edge(delta);
         self.drawings.shift_bars(delta);
         self.gestures.shift_bars(delta);
@@ -282,8 +247,9 @@ impl ChartPane {
         }
         self.state.ingest_backfill(trades);
         self.lane.reset();
-        self.indicator_worker
-            .send(IndicatorCommand::Backfilled(self.closed_bars()));
+        self.indicator_worker.send(IndicatorCommand::Backfilled(
+            self.series_read().closed_bars(),
+        ));
         let partial = self.partial_command();
         self.indicator_worker.send(partial);
         self.publish_tape_price_step();
@@ -296,17 +262,11 @@ impl ChartPane {
             self.bump_pagination_revision();
         }
         let path_dependent = self.state.spec().definition().path_dependent;
-        let anchor = path_dependent.then(|| self.history_view_anchor());
+        let anchor =
+            path_dependent.then(|| self.series_read().history_view_anchor(&self.model.viewport));
         let added = self.state.prepend_history(trades);
         self.finish_history_prepend(added, anchor);
         added
-    }
-
-    fn history_view_anchor(&self) -> (Option<i64>, f32, usize) {
-        let slots = self.slots();
-        let edge = self.model.viewport.right_edge_bar(slots);
-        let reference = (edge.floor().max(0.0) as usize).min(slots.saturating_sub(1));
-        (self.right_edge_time(), edge - reference as f32, slots)
     }
 
     fn finish_history_prepend(&mut self, added: usize, anchor: Option<(Option<i64>, f32, usize)>) {
@@ -395,7 +355,7 @@ impl ChartPane {
             .spec()
             .definition()
             .path_dependent
-            .then(|| self.history_view_anchor());
+            .then(|| self.series_read().history_view_anchor(&self.model.viewport));
         let added = candidate
             .bars()
             .len()
@@ -455,17 +415,13 @@ impl ChartPane {
     /// empty series — the layout seeding a pane before its first print.
     /// Asking now would mark every anchor off a series that does not exist.
     pub fn defer_reanchor(&mut self) {
-        self.pending_reanchor.get_or_insert(0);
+        self.model.history.defer_reanchor(0);
     }
 
     pub fn settle_pending_reanchor(&mut self) {
-        let Some(old_slots) = self.pending_reanchor else {
+        let Some(old_slots) = self.model.history.settle_reanchor(self.slots()) else {
             return;
         };
-        if self.slots() == 0 {
-            return;
-        }
-        self.pending_reanchor = None;
         self.reanchor_drawings(old_slots);
     }
 
@@ -511,15 +467,15 @@ impl ChartPane {
         // A second reset before the first settled must not overwrite the
         // baseline with the empty series it is looking at now.
         let slots = self.slots();
-        self.pending_reanchor.get_or_insert(slots);
+        self.model.history.defer_reanchor(slots);
         // The prefix is bar-indexed against a series that no longer exists,
         // and its seam was trimmed against a first bar that is gone. A replay
         // never has one today; the invariant must not depend on that.
         self.history_prefix.clear();
         if keep_readings {
-            self.state.reset_series(self.current_spec());
+            self.state.reset_series(self.spec.spec());
         } else {
-            self.state = ChartState::new(self.current_spec());
+            self.state = ChartState::new(self.spec.spec());
         }
         self.lane.reset();
         self.publish_partial();
@@ -584,7 +540,7 @@ impl ChartPane {
         let live_from = bars_before.max(self.state.backfill_boundary().unwrap_or(0));
         if live_from > bars_before {
             self.lane.reset();
-            let mut history = self.closed_bars();
+            let mut history = self.series_read().closed_bars();
             history.truncate(self.history_prefix.len() + live_from);
             self.indicator_worker
                 .send(IndicatorCommand::Backfilled(history));

@@ -12,6 +12,12 @@ use super::{
 use super::DrawingAuthor;
 
 impl Drawings {
+    /// Stable identity, constant-time even when read once per painted object.
+    #[must_use]
+    pub fn selected_id(&self) -> Option<DrawingId> {
+        self.selection.get()
+    }
+
     /// Share the authoritative selection with the pane interaction owner.
     pub(crate) fn selection_handle(&self) -> quantick_chart_interaction::pane::Selection {
         self.selection.clone()
