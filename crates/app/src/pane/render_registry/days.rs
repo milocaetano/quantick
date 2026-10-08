@@ -133,6 +133,115 @@ mod days_tests {
     }
 
     #[test]
+    fn a_turn_reads_when_the_old_day_ended_and_the_new_one_opened() {
+        let brt = quantick_civil::TzOffset::new(-180);
+        // 2026-09-28 21:24 UTC is 18:24 in São Paulo; 2026-09-29 12:00 UTC is 09:00.
+        let ended = 1_790_630_640_000;
+        let opened = 1_790_683_200_000;
+        assert_eq!(clock(ended, brt), "18:24");
+        assert_eq!(
+            opened_text(CivilDate::from_ymd(2026, 9, 29), opened, brt),
+            "Tue 29 09:00"
+        );
+        assert_eq!(
+            opened_text(CivilDate::from_ymd(2026, 10, 1), opened, brt),
+            "Thu 01 Oct 09:00",
+            "the month still joins the date on the first"
+        );
+        assert_eq!(clock(-60_000, quantick_civil::TzOffset::new(0)), "23:59");
+    }
+
+    const WIDTHS: TurnWidths = TurnWidths {
+        ended: Some(30.0),
+        dated_opened: Some(70.0),
+        dated: 40.0,
+    };
+    const ANYWHERE: fn(f32, f32) -> bool = |_, _| true;
+
+    #[test]
+    fn with_room_the_end_time_sits_left_of_the_tick_and_the_rest_right() {
+        let placed = place_turn(200.0, WIDTHS, 0.0, 400.0, ANYWHERE).expect("room for all");
+        assert_eq!(
+            placed,
+            TurnPlacement {
+                ended_at: Some(200.0 - DAY_LABEL_GAP_PX - 30.0),
+                with_opened: true,
+            }
+        );
+    }
+
+    #[test]
+    fn short_of_space_the_end_time_goes_first_then_the_start_time_never_the_date() {
+        // The label before reaches close to the tick: no room on the left.
+        let placed = place_turn(200.0, WIDTHS, 180.0, 400.0, ANYWHERE).expect("date fits");
+        assert_eq!(
+            placed,
+            TurnPlacement {
+                ended_at: None,
+                with_opened: true,
+            }
+        );
+        // The next tick is close too: only the date is left.
+        let limit = 200.0 + DAY_LABEL_GAP_PX + 50.0;
+        let placed = place_turn(200.0, WIDTHS, 180.0, limit, ANYWHERE).expect("date fits");
+        assert_eq!(
+            placed,
+            TurnPlacement {
+                ended_at: None,
+                with_opened: false,
+            }
+        );
+        // Not even the date: nothing is written, the tick stands alone.
+        let limit = 200.0 + DAY_LABEL_GAP_PX + 20.0;
+        assert_eq!(place_turn(200.0, WIDTHS, 0.0, limit, ANYWHERE), None);
+    }
+
+    #[test]
+    fn the_end_time_is_dropped_before_the_start_time_even_when_both_would_fit_alone() {
+        // The right side holds only the date; the left has room for the end
+        // time, but the end time goes first, so it is not written alone.
+        let limit = 200.0 + DAY_LABEL_GAP_PX + 50.0;
+        let placed = place_turn(200.0, WIDTHS, 0.0, limit, ANYWHERE).expect("date fits");
+        assert_eq!(
+            placed,
+            TurnPlacement {
+                ended_at: None,
+                with_opened: false,
+            }
+        );
+    }
+
+    #[test]
+    fn the_pointer_chip_claims_a_time_like_a_date() {
+        // The chip sits over the end time's span only.
+        let free = |start: f32, _width: f32| start > 190.0;
+        let placed = place_turn(200.0, WIDTHS, 0.0, 400.0, free).expect("right side is free");
+        assert_eq!(
+            placed,
+            TurnPlacement {
+                ended_at: None,
+                with_opened: true,
+            }
+        );
+    }
+
+    #[test]
+    fn a_turn_without_a_known_end_writes_the_date_and_start() {
+        let widths = TurnWidths {
+            ended: None,
+            ..WIDTHS
+        };
+        let placed = place_turn(200.0, widths, 0.0, 400.0, ANYWHERE).expect("room");
+        assert_eq!(
+            placed,
+            TurnPlacement {
+                ended_at: None,
+                with_opened: true,
+            }
+        );
+    }
+
+    #[test]
     fn a_time_label_stands_aside_only_where_a_date_is_written() {
         let reserved = [(100.0, 140.0)];
         assert!(reserved_by(120.0, 150.0, &reserved), "overlapping");
