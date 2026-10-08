@@ -387,19 +387,9 @@ impl DrawingProjection<'_> {
             })
             .find_map(|(index, drawing)| {
                 let projected = self.projected_drawing_points(drawing, history_right, total, scale);
-                let ctxt = DrawContext {
-                    payload: drawing.payload.as_ref(),
-                    anchors: &drawing.points,
-                    scale,
-                    px_per_bar: self.viewport.px_per_bar(),
-                    unit: band.unit(),
-                    primary_band: true,
-                    style: drawing.style,
-                    // Locked selections paint no editable affordances.
-                    selected: drawings.selected() == Some(index) && !drawing.locked,
-                    halo: false,
-                    content_editing: false,
-                };
+                // Locked selections paint no editable affordances.
+                let selected = drawings.selected() == Some(index) && !drawing.locked;
+                let ctxt = self.draw_context(drawing, scale, band, selected);
                 drawing
                     .tool
                     .hit_test(band.rect, &projected, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
@@ -426,18 +416,8 @@ impl DrawingProjection<'_> {
             .filter(|&index| {
                 let drawing = &drawings.items()[index];
                 let projected = self.projected_drawing_points(drawing, history_right, total, scale);
-                let ctxt = DrawContext {
-                    payload: drawing.payload.as_ref(),
-                    anchors: &drawing.points,
-                    scale,
-                    px_per_bar: self.viewport.px_per_bar(),
-                    unit: band.unit(),
-                    primary_band: true,
-                    style: drawing.style,
-                    selected: drawings.selected() == Some(index) && !drawing.locked,
-                    halo: false,
-                    content_editing: false,
-                };
+                let selected = drawings.selected() == Some(index) && !drawing.locked;
+                let ctxt = self.draw_context(drawing, scale, band, selected);
                 drawing
                     .tool
                     .hit_test(band.rect, &projected, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
@@ -474,18 +454,8 @@ impl DrawingProjection<'_> {
             .get(drawing_index)
             .filter(|drawing| bands::drawing_in_band(drawing, band))?;
         let projected = self.projected_drawing_points(drawing, history_right, total, scale);
-        let ctxt = DrawContext {
-            payload: drawing.payload.as_ref(),
-            anchors: &drawing.points,
-            scale,
-            px_per_bar: self.viewport.px_per_bar(),
-            unit: band.unit(),
-            primary_band: true,
-            style: drawing.style,
-            selected: drawings.selected() == Some(drawing_index) && !drawing.locked,
-            halo: false,
-            content_editing: false,
-        };
+        let selected = drawings.selected() == Some(drawing_index) && !drawing.locked;
+        let ctxt = self.draw_context(drawing, scale, band, selected);
         drawing
             .tool
             .hit_handle(band.rect, &projected, pos, DRAWING_ANCHOR_RADIUS_PX, &ctxt)
@@ -531,18 +501,7 @@ impl DrawingProjection<'_> {
         let moved = band.scale.as_ref().and_then(|scale| {
             let drawing = drawings.items().get(drawing_index)?;
             let projected = self.projected_drawing_points(drawing, history_right, total, scale);
-            let ctxt = DrawContext {
-                payload: drawing.payload.as_ref(),
-                anchors: &drawing.points,
-                scale,
-                px_per_bar: self.viewport.px_per_bar(),
-                unit: band.unit(),
-                primary_band: true,
-                style: drawing.style,
-                selected: true,
-                halo: false,
-                content_editing: false,
-            };
+            let ctxt = self.draw_context(drawing, scale, band, true);
             let to = self.drawing_screen_point(target, history_right, total, scale);
             drawing
                 .tool
@@ -572,6 +531,30 @@ impl DrawingProjection<'_> {
         }
     }
 
+    /// The context a tool reads `drawing` through on `band`, for hit-tests
+    /// and gestures. `selected` is the caller's: the hit-tests pass a
+    /// selection that is not locked, a handle drag passes `true`.
+    fn draw_context<'a>(
+        &self,
+        drawing: &'a drawings::Drawing,
+        scale: &'a PriceScale,
+        band: &'a Band,
+        selected: bool,
+    ) -> DrawContext<'a> {
+        DrawContext {
+            payload: drawing.payload.as_ref(),
+            anchors: &drawing.points,
+            scale,
+            px_per_bar: self.viewport.px_per_bar(),
+            unit: band.unit(),
+            primary_band: true,
+            style: drawing.style,
+            selected,
+            halo: false,
+            content_editing: false,
+        }
+    }
+
     /// What a double click at `pos` would do to drawing `drawing_index`, as
     /// its tool announces it on hover. Same projection and context as the
     /// hit-test, so the hint sits exactly where the click lands.
@@ -590,21 +573,59 @@ impl DrawingProjection<'_> {
             .get(drawing_index)
             .filter(|drawing| !drawing.locked && bands::drawing_in_band(drawing, band))?;
         let projected = self.projected_drawing_points(drawing, history_right, total, scale);
-        let ctxt = DrawContext {
-            payload: drawing.payload.as_ref(),
-            anchors: &drawing.points,
+        let ctxt = self.draw_context(
+            drawing,
             scale,
-            px_per_bar: self.viewport.px_per_bar(),
-            unit: band.unit(),
-            primary_band: true,
-            style: drawing.style,
-            selected: drawings.selected() == Some(drawing_index),
-            halo: false,
-            content_editing: false,
-        };
+            band,
+            drawings.selected() == Some(drawing_index),
+        );
         drawing
             .tool
             .double_click_hint(band.rect, &projected, pos, &ctxt)
+    }
+
+    /// The drawing a double click at `pos` belongs to: the one the click
+    /// `picked` when it picked one, else the topmost visible object whose
+    /// tool would change there - an outline-only rectangle's interior takes
+    /// no part in the click's hit-test, but its double click still lands.
+    /// Locked objects, and those `held` names (an armed strategy's region),
+    /// never take one.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn double_click_target(
+        &self,
+        drawings: &drawings::Drawings,
+        picked: Option<usize>,
+        pos: egui::Pos2,
+        band: &Band,
+        history_right: f32,
+        total: usize,
+        held: &dyn Fn(drawings::DrawingId) -> bool,
+    ) -> Option<usize> {
+        let scale = band.scale.as_ref()?;
+        let takes = |index: usize| {
+            let Some(drawing) = drawings.items().get(index) else {
+                return false;
+            };
+            if drawing.locked
+                || held(drawing.id)
+                || !drawings.is_visible(index)
+                || !bands::drawing_in_band(drawing, band)
+            {
+                return false;
+            }
+            let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+            // A trial on a copy: the question is whether the tool would act.
+            let mut trial = drawing.payload.clone_box();
+            drawing
+                .tool
+                .double_click(band.rect, &projected, pos, trial.as_mut())
+        };
+        match picked {
+            Some(index) => takes(index).then_some(index),
+            None => (0..drawings.items().len())
+                .rev()
+                .find(|&index| takes(index)),
+        }
     }
 
     /// Hand a double click at `pos` to the selected drawing's tool. Answers

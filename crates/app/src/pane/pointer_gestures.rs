@@ -25,6 +25,9 @@ pub(super) struct PointerFrame<'a> {
     pub(super) tool: Tool,
     pub(super) shared_pick: Option<SharedPick>,
     pub(super) shared: SharedInteraction,
+    /// Whether an armed strategy rides this drawing: its extent is the
+    /// bot's window, so a double click must not move it.
+    pub(super) held: &'a dyn Fn(drawings::DrawingId) -> bool,
 }
 
 #[derive(Default)]
@@ -36,6 +39,16 @@ pub(super) struct PointerOutcome {
     /// The glyph announcing what a double click under the pointer would do.
     pub(super) hint: Option<drawings::DoubleClickHint>,
 }
+/// What releasing a press as a click did beyond selecting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReleaseAnswer {
+    Plain,
+    /// A note was double clicked: type in it.
+    TextEdit,
+    /// A tool took the double click; the chart must not also read it.
+    DoubleClickTaken,
+}
+
 impl PointerOutcome {
     fn set_cursor(&mut self, cursor: egui::CursorIcon) {
         self.cursor = Some(cursor);
@@ -85,22 +98,26 @@ impl PaneGestures {
             history_right: pointer.history_right,
             total: pointer.total,
         });
+        let mut double_click_taken = false;
         if let Some(pick) = pick {
-            let (cursor, hint) = local_hover_cursor(drawings, projection, pick);
+            let (cursor, hint) = local_hover_cursor(drawings, projection, pick, frame.held);
             if let Some(cursor) = cursor {
                 outcome.set_cursor(cursor);
             }
-            outcome.hint = hint;
+            // A drag in flight owns the pointer: no glyph rides along.
+            outcome.hint = hint.filter(|_| !self.drag.is_active());
             // Release-as-click precedes a new press. The press answer survives
             // inspector resize, including a captured miss (Some(None)).
             if pointer.released && self.drag_pending_from.is_some() {
-                outcome.begin_text_edit = self.select_released_press(
+                let answer = self.select_released_press(
                     drawings,
                     projection,
                     pick,
                     frame.ui.input(|input| input.modifiers.alt),
-                    frame.chart.double_clicked(),
+                    frame.chart.double_clicked().then_some(frame.held),
                 );
+                outcome.begin_text_edit = answer == ReleaseAnswer::TextEdit;
+                double_click_taken = answer == ReleaseAnswer::DoubleClickTaken;
             }
         }
         let started = pointer.pressed
@@ -138,7 +155,8 @@ impl PaneGestures {
             );
         }
         // Local release remains consumed even after its state is cleared.
-        outcome.consumed = self.drag.is_active() || self.shared_drag.is_active();
+        outcome.consumed =
+            double_click_taken || self.drag.is_active() || self.shared_drag.is_active();
         if pointer.released {
             self.finish_local_release(drawings);
         }
@@ -151,8 +169,9 @@ impl PaneGestures {
         projection: &DrawingProjection<'_>,
         pick: LocalPick<'_>,
         alt: bool,
-        double_clicked: bool,
-    ) -> bool {
+        // The double click's arming filter, present only on a double click.
+        double_clicked: Option<&dyn Fn(drawings::DrawingId) -> bool>,
+    ) -> ReleaseAnswer {
         let LocalPick {
             position,
             band: pointer_band,
@@ -196,7 +215,7 @@ impl PaneGestures {
         // that branch's `primary_free`. Without this, fixing a typo
         // meant hunting for a field in a panel that placing a note no
         // longer opens.
-        if double_clicked
+        if double_clicked.is_some()
             && let Some(index) = selected
             && drawings
                 .items()
@@ -204,20 +223,32 @@ impl PaneGestures {
                 .is_some_and(|drawing| drawing.tool.holds_text() && !drawing.locked)
         {
             self.content_editing = Some(index);
-            return true;
+            return ReleaseAnswer::TextEdit;
         }
         // Any other tool may own a double click on its body: the rectangle
         // extends toward the side it lands on. A press that grabbed a
-        // resize handle stays a resize.
-        if double_clicked
-            && selected.is_some()
+        // resize handle stays a resize, and a drawing an armed strategy
+        // rides keeps its extent, the bot's window.
+        if let Some(held) = double_clicked
             && !matches!(self.drag, DrawingDrag::Handle { .. })
             && let Some(band) = pointer_band
+            && let Some(index) = projection.double_click_target(
+                drawings,
+                selected,
+                position,
+                band,
+                history_right,
+                total,
+                held,
+            )
         {
+            drawings.select(Some(index));
             drawings.begin_gesture();
-            projection.double_click_selected(drawings, position, band, history_right, total);
+            if projection.double_click_selected(drawings, position, band, history_right, total) {
+                return ReleaseAnswer::DoubleClickTaken;
+            }
         }
-        false
+        ReleaseAnswer::Plain
     }
 
     fn begin_local_drag(
@@ -479,11 +510,13 @@ impl PaneGestures {
 }
 
 /// The hover cursor, and the double-click hint the topmost object under the
-/// pointer offers there (a resize handle outranks both).
+/// pointer offers there (a resize handle outranks the hint; a drawing an
+/// armed strategy rides offers none).
 fn local_hover_cursor(
     drawings: &drawings::Drawings,
     projection: &DrawingProjection<'_>,
     pick: LocalPick<'_>,
+    held: &dyn Fn(drawings::DrawingId) -> bool,
 ) -> (Option<egui::CursorIcon>, Option<drawings::DoubleClickHint>) {
     let LocalPick {
         position,
@@ -508,19 +541,25 @@ fn local_hover_cursor(
     } else if let Some(hovered) =
         projection.drawing_at(drawings, position, band, history_right, total)
     {
-        if drawings.items()[hovered].locked {
+        let drawing = &drawings.items()[hovered];
+        if drawing.locked {
             return (Some(egui::CursorIcon::NotAllowed), None);
         }
-        let hint = projection.drawing_double_click_hint(
-            drawings,
-            hovered,
-            position,
-            band,
-            history_right,
-            total,
-        );
-        let cursor = hint.map_or(egui::CursorIcon::Move, |hint| hint.cursor);
-        return (Some(cursor), hint);
+        // The cursor stays the move grip a press there is; the glyph alone
+        // says what a double click would do.
+        let hint = (!held(drawing.id))
+            .then(|| {
+                projection.drawing_double_click_hint(
+                    drawings,
+                    hovered,
+                    position,
+                    band,
+                    history_right,
+                    total,
+                )
+            })
+            .flatten();
+        return (Some(egui::CursorIcon::Move), hint);
     }
     (None, None)
 }
@@ -757,6 +796,7 @@ mod tests {
                         tool: Tool::Pointer,
                         shared_pick: None,
                         shared: SharedInteraction::default(),
+                        held: &|_| false,
                     },
                 ));
             });
@@ -811,11 +851,14 @@ mod tests {
                 press_pick: Some(None),
                 ..Default::default()
             };
-            assert!(!gestures.select_released_press(&mut store, projection, pick, false, false));
+            assert_eq!(
+                gestures.select_released_press(&mut store, projection, pick, false, None),
+                ReleaseAnswer::Plain
+            );
             assert_eq!(store.selected(), None);
             assert_eq!(gestures.press_pick, None);
             // An absent capture really does use the same release geometry.
-            gestures.select_released_press(&mut store, projection, pick, false, false);
+            gestures.select_released_press(&mut store, projection, pick, false, None);
             assert_eq!(store.selected(), Some(0));
         });
     }
@@ -990,5 +1033,145 @@ mod tests {
             assert_eq!(gestures.shared_drag_pending_from, None);
             assert_eq!(gestures.shared_pointer_mark, None);
         }
+    }
+
+    /// An outline-only rectangle wide enough for both side zones and a
+    /// centre, with its drawn screen rect.
+    fn local_rectangle(
+        projection: &DrawingProjection<'_>,
+        bands: &Bands,
+    ) -> (drawings::Drawings, egui::Rect) {
+        let mut store = drawings::Drawings::default();
+        let rectangle = drawings::DrawingTool::by_id("rectangle").unwrap();
+        assert!(!store.place(rectangle, drawings::ChartPoint::at(-20.0, 70.0)));
+        assert!(store.place(rectangle, drawings::ChartPoint::at(0.0, 30.0)));
+        store.select(None);
+        let scale = bands[0].scale.as_ref().unwrap();
+        let points = projection.projected_drawing_points(&store.items()[0], 200.0, 1, scale);
+        let rect = egui::Rect::from_two_pos(points[0], points[1]);
+        assert!(
+            rect.width() > 120.0 && bands[0].rect.contains_rect(rect),
+            "{rect:?}"
+        );
+        (store, rect)
+    }
+
+    fn extent(store: &drawings::Drawings) -> (bool, bool) {
+        let payload = store.items()[0]
+            .payload
+            .as_any()
+            .downcast_ref::<drawings::RectanglePayload>()
+            .unwrap();
+        (payload.extend_left, payload.extend_right)
+    }
+
+    #[test]
+    fn a_double_click_takes_an_outline_rectangles_interior_but_a_click_does_not() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            let pick = LocalPick {
+                position: rect.center(),
+                band: Some(&bands[0]),
+                history_right: 200.0,
+                total: 1,
+            };
+            // The press missed: an unfilled interior is not the object.
+            let mut gestures = PaneGestures {
+                press_pick: Some(None),
+                ..Default::default()
+            };
+            assert_eq!(
+                gestures.select_released_press(&mut store, projection, pick, false, None),
+                ReleaseAnswer::Plain
+            );
+            assert_eq!(store.selected(), None, "a single click still falls through");
+            gestures.press_pick = Some(None);
+            let free: &dyn Fn(drawings::DrawingId) -> bool = &|_| false;
+            assert_eq!(
+                gestures.select_released_press(&mut store, projection, pick, false, Some(free)),
+                ReleaseAnswer::DoubleClickTaken
+            );
+            assert_eq!(store.selected(), Some(0));
+            assert_eq!(extent(&store), (true, true));
+        });
+    }
+
+    #[test]
+    fn a_double_click_leaves_an_armed_region_alone() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            let armed = store.items()[0].id;
+            let held: &dyn Fn(drawings::DrawingId) -> bool = &move |id| id == armed;
+            for position in [
+                rect.center(),
+                egui::pos2(rect.left() + 4.0, rect.center().y),
+            ] {
+                let pick = LocalPick {
+                    position,
+                    band: Some(&bands[0]),
+                    history_right: 200.0,
+                    total: 1,
+                };
+                let mut gestures = PaneGestures {
+                    press_pick: Some(Some(0)),
+                    ..Default::default()
+                };
+                assert_eq!(
+                    gestures.select_released_press(&mut store, projection, pick, false, Some(held)),
+                    ReleaseAnswer::Plain
+                );
+                assert_eq!(
+                    extent(&store),
+                    (false, false),
+                    "the bot's window held at {position:?}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn the_side_hint_keeps_the_move_cursor_and_hides_during_a_drag() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            store.items_mut()[0].style.fill_alpha = 40;
+            let side = egui::pos2(rect.left() + 6.0, rect.center().y);
+            let mut gestures = PaneGestures::default();
+            let mut pointer = pointer_at(side, bands);
+            pointer.down = false;
+            let hover = owner_frame(
+                &mut gestures,
+                &mut store,
+                projection,
+                bands,
+                &pointer,
+                egui::Vec2::ZERO,
+            );
+            assert!(
+                hover.hint.is_some(),
+                "the side zone announces its double click"
+            );
+            assert_eq!(hover.cursor, Some(egui::CursorIcon::Move));
+            pointer.down = true;
+            pointer.pressed = true;
+            owner_frame(
+                &mut gestures,
+                &mut store,
+                projection,
+                bands,
+                &pointer,
+                egui::Vec2::ZERO,
+            );
+            assert!(gestures.drag.is_active());
+            pointer.pressed = false;
+            let drag = owner_frame(
+                &mut gestures,
+                &mut store,
+                projection,
+                bands,
+                &pointer,
+                egui::Vec2::ZERO,
+            );
+            assert_eq!(drag.hint, None, "a drag in flight shows no glyph");
+        });
     }
 }

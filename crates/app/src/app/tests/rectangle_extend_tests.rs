@@ -12,6 +12,12 @@ const BOTTOM: f32 = 400.0;
 /// A filled rectangle drawn by hand, with egui's click sequence quiet so
 /// the next two clicks read as a double, not a triple.
 fn drawn_rectangle() -> (QuantickApp, egui::Context, mpsc::Receiver<FeedCommand>) {
+    drawn_rectangle_with_fill(40)
+}
+
+fn drawn_rectangle_with_fill(
+    fill_alpha: u8,
+) -> (QuantickApp, egui::Context, mpsc::Receiver<FeedCommand>) {
     let (mut app, commands) = super::bare_canvas::app_with_history(200);
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
@@ -27,7 +33,7 @@ fn drawn_rectangle() -> (QuantickApp, egui::Context, mpsc::Receiver<FeedCommand>
         let drawings = &mut app.active_tab_mut().flow_pane.drawings;
         assert_eq!(drawings.items().len(), 1, "the drag placed one rectangle");
         // The interior takes part in the hit-test only while filled.
-        drawings.items_mut()[0].style.fill_alpha = 40;
+        drawings.items_mut()[0].style.fill_alpha = fill_alpha;
     }
     wait_out_the_click_sequence(&mut app, &ctx);
     (app, ctx, commands)
@@ -92,23 +98,32 @@ fn a_double_click_by_a_side_extends_that_way_and_the_next_one_restores() {
     }
 }
 
+/// A press in a side zone still moves the band, so the cursor says move
+/// there too; the glyph alone announces the double click.
 #[test]
-fn the_side_zones_announce_the_double_click_and_the_centre_does_not() {
+fn the_side_zones_keep_the_move_cursor() {
     let (mut app, ctx, _commands) = drawn_rectangle();
     let mid_y = (TOP + BOTTOM) / 2.0;
-    assert_eq!(
-        cursor_at(&mut app, &ctx, egui::pos2(LEFT + 6.0, mid_y)),
-        egui::CursorIcon::ResizeHorizontal
-    );
-    assert_eq!(
-        cursor_at(&mut app, &ctx, egui::pos2(RIGHT - 6.0, mid_y)),
-        egui::CursorIcon::ResizeHorizontal
-    );
-    assert_eq!(
-        cursor_at(&mut app, &ctx, egui::pos2((LEFT + RIGHT) / 2.0, mid_y)),
-        egui::CursorIcon::Move,
-        "the centre stays the move grip"
-    );
+    for x in [LEFT + 6.0, (LEFT + RIGHT) / 2.0, RIGHT - 6.0] {
+        assert_eq!(
+            cursor_at(&mut app, &ctx, egui::pos2(x, mid_y)),
+            egui::CursorIcon::Move,
+            "at x={x}"
+        );
+    }
+}
+
+/// The rectangle a trader draws by default has no fill, and only its
+/// border takes a click; its centre still takes the double click.
+#[test]
+fn an_unfilled_rectangle_takes_the_centre_double_click() {
+    let (mut app, ctx, _commands) = drawn_rectangle_with_fill(0);
+    let centre = egui::pos2((LEFT + RIGHT) / 2.0, (TOP + BOTTOM) / 2.0);
+    double_click(&mut app, &ctx, centre);
+    assert_eq!(extent(&app), (true, true));
+    wait_out_the_click_sequence(&mut app, &ctx);
+    double_click(&mut app, &ctx, centre);
+    assert_eq!(extent(&app), (false, false), "and the next one restores");
 }
 
 /// A band that visibly runs back to the chart's left edge is a region the

@@ -353,7 +353,7 @@ pub(super) trait DrawingToolImpl: Sync {
         None
     }
     /// What a double click at `position` on this object would do, while the
-    /// pointer rests there: the cursor and the glyph that announce it. `None`
+    /// pointer rests there: the glyph that announces it. `None`
     /// (the default) means a double click here is a plain click.
     ///
     /// The host asks only for the topmost object under the pointer, so the
@@ -383,12 +383,11 @@ pub(super) trait DrawingToolImpl: Sync {
     fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2);
 }
 
-/// A tool's answer to "what would a double click here do": the cursor the
-/// pointer takes and a small glyph painted at `at`, so the gesture is
-/// discoverable before it is made.
+/// A tool's answer to "what would a double click here do": a small glyph
+/// painted at `at`, so the gesture is discoverable before it is made. The
+/// cursor stays the object's own (a press there still moves it).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DoubleClickHint {
-    pub cursor: egui::CursorIcon,
     pub glyph: &'static str,
     pub at: egui::Pos2,
 }

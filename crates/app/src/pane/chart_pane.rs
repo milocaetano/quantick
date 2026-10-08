@@ -661,6 +661,8 @@ impl ChartPane {
             viewport: &self.viewport,
             indicators: &self.indicators,
         };
+        let anchors = &self.strategies.anchors;
+        let held = |id| anchors.for_drawing(id).is_some();
         let outcome = self.gestures.handle_pointer_tool(
             &mut self.drawings,
             &projection,
@@ -676,6 +678,7 @@ impl ChartPane {
                 tool: chrome.toolrail.tool(),
                 shared_pick: chrome.shared_pick,
                 shared: chrome.shared,
+                held: &held,
             },
         );
         if let Some(cursor) = outcome.cursor {
