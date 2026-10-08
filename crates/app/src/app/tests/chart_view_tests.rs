@@ -76,7 +76,11 @@ fn the_context_menu_hook_expands_chart_layers_without_a_mouse() {
     }
 
     assert_eq!(
-        app.active_tab().flow_pane.layer_menu_rects.len(),
+        app.active_tab()
+            .flow_pane
+            .context_menu
+            .layer_menu_rects
+            .len(),
         chart_menu_entries(),
         "the scripted run expanded the real submenu and painted every chart-layer switch"
     );

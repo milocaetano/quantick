@@ -1160,14 +1160,7 @@ mod tests {
             let mut gestures = PaneGestures::default();
             let mut pointer = pointer_at(side, bands);
             pointer.down = false;
-            let hover = owner_frame(
-                &mut gestures,
-                &mut store,
-                projection,
-                bands,
-                &pointer,
-                egui::Vec2::ZERO,
-            );
+            let hover = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
             assert!(
                 hover.hint.is_some(),
                 "the side zone announces its double click"
@@ -1175,24 +1168,10 @@ mod tests {
             assert_eq!(hover.cursor, Some(egui::CursorIcon::Move));
             pointer.down = true;
             pointer.pressed = true;
-            owner_frame(
-                &mut gestures,
-                &mut store,
-                projection,
-                bands,
-                &pointer,
-                egui::Vec2::ZERO,
-            );
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
             assert!(gestures.drag.is_active());
             pointer.pressed = false;
-            let drag = owner_frame(
-                &mut gestures,
-                &mut store,
-                projection,
-                bands,
-                &pointer,
-                egui::Vec2::ZERO,
-            );
+            let drag = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
             assert_eq!(drag.hint, None, "a drag in flight shows no glyph");
         });
     }
@@ -1298,7 +1277,6 @@ mod tests {
                     projection,
                     bands,
                     &pointer,
-                    egui::Vec2::ZERO,
                 )
             };
             for position in [left_zone, right_zone] {

@@ -2,10 +2,17 @@
 //! layer checkbox all three of them share.
 //!
 //! Grouped because they are one reader's concern — a trader asking "what can
-//! I switch here?" — and because they share [`ChartPane::layer_checkbox`], the
-//! single place a layer's label, hover text and disabled reason are decided.
-//! The menus below are the doors; the fields they read and write live in
-//! [`super::ChartPane`], which a child module sees without widening anything.
+//! I switch here?" — and because they share [`PaneContextMenu::layer_checkbox`],
+//! the single place a layer's label, hover text and disabled reason are
+//! decided.
+//!
+//! The menus are a view component: they own the menu's own state
+//! ([`PaneContextMenu`]), read the pane through a [`PaneMenuView`], and answer
+//! with [`PaneMenuIntent`]s. Nothing here writes the pane; the pane applies
+//! every intent in one place, `ChartPane::apply_menu_intent`, through the same
+//! operations a click always used. One host still writes its own state from
+//! inside the menu: the paper ticket's trade section
+//! ([`PaneMenuHosts::paper`]), which belongs to the tab, not the pane.
 //!
 //! No hook is declared or read here: `pane.rs` names every `QUANTICK_*` it
 //! mentions in a comment only, so the generated registry is unchanged by this
@@ -13,36 +20,162 @@
 
 use eframe::egui;
 
-use crate::drawings::{self, DrawingBand};
+use crate::config::FeedCapabilities;
+use crate::drawings::{ChartPoint, DrawingId, DrawingTool, Drawings};
+use crate::indicator_worker::SlotId;
+use crate::indicators::IndicatorViews;
+use crate::paper_trading::PaperTrading;
+use crate::style::ChartStyle;
+use crate::surfaces::drawing_chrome::DrawingChromeAsk;
 use crate::theme;
-use crate::toolrail::Tool;
 use quantick_layers::{ChartLayer, LayerBlock};
 use quantick_orderflow::{
     LANE_WINDOW_PRESETS_MS, LaneWindow, MAX_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_WINDOW_MS,
     lane_window_label, same_lane_window,
 };
 
-use super::{ChartPane, PaneChrome};
+use super::drawing_projection::PaneSeriesRead;
+use super::layers::PaneLayerRead;
+use super::{PaneContextMenu, PaneStrategies};
 
-impl ChartPane {
+/// One thing a pane menu asked the pane to do. The menus never write the
+/// pane; `ChartPane::apply_menu_intent` is where each of these happens.
+pub(crate) enum PaneMenuIntent {
+    /// A layer's checkbox changed.
+    SetLayerVisible { layer: ChartLayer, visible: bool },
+    /// FLOW's "exclude first daily region from scale" changed.
+    SetIgnoreFlowOpening(bool),
+    /// "configure footprint…": the footprint's own window.
+    OpenFootprintSettings,
+    /// The tape's market-time window was chosen.
+    SetLaneWindow(LaneWindow),
+    /// A registry tool's placing entry, at the point its press resolved.
+    Place {
+        tool: DrawingTool,
+        point: ChartPoint,
+    },
+    /// An indicator's hide/show checkbox.
+    ToggleIndicatorHidden(SlotId),
+    /// The right-click landed on this drawing: it is selected, like a press.
+    /// Every drawing intent names the drawing by id; one gone by the time
+    /// the pane applies it is a no-op.
+    SelectDrawing(DrawingId),
+    /// The drawing section's rename committed.
+    RenameDrawing { id: DrawingId, name: String },
+    /// Lock or unlock the drawing.
+    SetDrawingLocked { id: DrawingId, locked: bool },
+    /// Hide or show the drawing.
+    SetDrawingHidden { id: DrawingId, hidden: bool },
+    /// Delete the drawing, and the strategy armed on it.
+    DeleteDrawing(DrawingId),
+    /// "Add strategy…": ask for the strategy popup over this region.
+    StrategyAdd(DrawingId),
+    /// Call off the strategy riding this drawing.
+    StrategyDisarm(DrawingId),
+    /// Watch this region again with the same parameters.
+    StrategyRearm(DrawingId),
+    /// Detach the strategy from this drawing.
+    StrategyRemove(DrawingId),
+    /// An object-manager ask from the objects submenu or "clear objects…".
+    ObjectsAsk(Box<DrawingChromeAsk>),
+}
+
+/// One layer's switch as the pane answers for it this frame.
+#[derive(Clone, Copy)]
+pub(crate) struct LayerRow {
+    pub(crate) layer: ChartLayer,
+    pub(crate) blocked: Option<LayerBlock>,
+    pub(crate) visible: bool,
+}
+
+/// What the tape's section reads besides its layers: its lane window.
+pub(crate) struct TapeMenuView {
+    pub(crate) window: LaneWindow,
+    pub(crate) reference_ms: Option<i64>,
+}
+
+/// The pane, read-only, as the layer menu sees it.
+pub(crate) struct PaneMenuView<'a> {
+    pub(crate) drawings: &'a Drawings,
+    pub(crate) indicators: &'a IndicatorViews,
+    pub(crate) strategies: &'a PaneStrategies,
+    pub(crate) series: PaneSeriesRead<'a>,
+    /// Where the layer rows are read from — only when a section that shows
+    /// them is drawn, so a closed "chart layers" submenu costs nothing.
+    pub(crate) layers: PaneLayerRead<'a>,
+    pub(crate) capabilities: FeedCapabilities,
+    pub(crate) style: &'a ChartStyle,
+    /// FLOW's opening-scale preference, `Some` where the entry applies.
+    pub(crate) flow_opening: Option<bool>,
+    /// The tape's section, `Some` when the menu was opened on a tape.
+    pub(crate) tape: Option<TapeMenuView>,
+}
+
+/// The layer rows a menu draws, read where the pane's layer answers are.
+impl PaneLayerRead<'_> {
+    /// One side's layer switches as a menu draws them, in registry order:
+    /// the candles' (`on_tape == false`) or the tape's.
+    pub(crate) fn rows(
+        &self,
+        on_tape: bool,
+        capabilities: FeedCapabilities,
+        style: &ChartStyle,
+    ) -> Vec<LayerRow> {
+        self.layers
+            .registry()
+            .layers()
+            .iter()
+            .copied()
+            .filter(|layer| layer.on_tape() == on_tape)
+            .map(|layer| self.row(layer, capabilities, style))
+            .collect()
+    }
+    /// One layer's switch as a menu draws it: the answer to both questions a
+    /// checkbox asks, read once.
+    pub(crate) fn row(
+        &self,
+        layer: ChartLayer,
+        capabilities: FeedCapabilities,
+        style: &ChartStyle,
+    ) -> LayerRow {
+        LayerRow {
+            layer,
+            blocked: self.blocked(layer, capabilities),
+            visible: self.visible(layer, style),
+        }
+    }
+}
+
+impl PaneMenuView<'_> {
+    fn layer_rows(&self, on_tape: bool) -> Vec<LayerRow> {
+        self.layers.rows(on_tape, self.capabilities, self.style)
+    }
+}
+
+/// The host that still draws, and writes, its own entries in the menu.
+pub(crate) struct PaneMenuHosts<'a> {
+    pub(crate) paper: &'a mut PaperTrading,
+}
+
+impl PaneContextMenu {
     /// One layer's checkbox, wherever it is offered.
     ///
     /// Three menus show these — the candles' layer menu, the tape's, and each
     /// axis's own for the switch that belongs to it — and all three call this
     /// so a layer wears one label, one hover text and one disabled reason
-    /// whichever door a trader came through. It reads and writes the field
-    /// that owns the layer, never a copy.
+    /// whichever door a trader came through.
     ///
-    /// Returns why the layer could not be switched, for the caller that has a
-    /// sub-entry to gate on the same answer.
-    pub(super) fn layer_checkbox(
+    /// Returns the switch the trader asked for, if any.
+    pub(crate) fn layer_checkbox(
         &mut self,
         ui: &mut egui::Ui,
-        layer: ChartLayer,
-        chrome: &mut PaneChrome<'_>,
-    ) -> Option<LayerBlock> {
-        let blocked = self.layer_blocked(layer, chrome.capabilities);
-        let mut visible = self.layer_visible(layer, chrome.style);
+        row: LayerRow,
+    ) -> Option<PaneMenuIntent> {
+        let LayerRow {
+            layer,
+            blocked,
+            mut visible,
+        } = row;
         let response = ui
             .horizontal(|ui| {
                 let response = ui
@@ -61,51 +194,45 @@ impl ChartPane {
         self.layer_menu_rects.push((layer, response.rect));
         if let Some(reason) = blocked {
             response.on_disabled_hover_text(reason.explanation);
-        } else if response.changed() {
-            self.set_layer_visible(layer, visible, chrome.layers);
+            return None;
         }
-        blocked
+        response
+            .changed()
+            .then_some(PaneMenuIntent::SetLayerVisible { layer, visible })
     }
 
     /// The candles' layer checkboxes: the list the menu has always shown.
     ///
-    /// The tape's own entries are filtered out here and drawn by
+    /// The tape's own entries are filtered out by the view and drawn by
     /// [`Self::draw_tape_menu_section`] instead — one list, split by the pane
     /// each layer belongs to, so neither menu can offer a switch for the canvas
     /// beside it.
-    fn draw_chart_layer_entries(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
-        for layer in self
-            .layers
-            .registry()
-            .clone()
-            .layers()
-            .iter()
-            .copied()
-            .filter(|layer| !layer.on_tape())
-        {
-            let blocked = self.layer_checkbox(ui, layer, chrome);
+    fn draw_chart_layer_entries(
+        &mut self,
+        ui: &mut egui::Ui,
+        view: &PaneMenuView<'_>,
+        intents: &mut Vec<PaneMenuIntent>,
+    ) {
+        for row in view.layer_rows(false) {
+            intents.extend(self.layer_checkbox(ui, row));
+            let blocked = row.blocked;
             // The footprint's knobs live in a window of their own (the
             // Profitchart-style properties dialog, the boss's ask); the menu
             // offers the door. Available with the layer off too — configuring
             // before switching on is a legitimate order of operations.
-            if layer == ChartLayer::Bubbles
+            if row.layer == ChartLayer::Bubbles
                 && blocked.is_none()
-                && self.state.tick_membership().is_some()
-                && let Some(owner) = self
-                    .orderflow
-                    .as_mut()
-                    .filter(|owner| owner.flow_execution_active())
+                && let Some(mut ignore) = view.flow_opening
             {
                 ui.indent("candle_opening_scale", |ui| {
-                    let mut ignore = owner.ignore_flow_opening();
                     if ui.checkbox(&mut ignore, "Exclude first daily region from scale")
                         .on_hover_text("Exclude the opening quantity in the region containing each UTC date's first recorded trade from FLOW sizing. Only that region may exceed the ordinary maximum, with proportional area and its full volume shown. Other regions share the visible full-volume reference. The first recorded trade is not a proven auction. If no other volume is visible, use the full scale. This preference lasts for this pane and does not change Tape.")
                         .changed() {
-                        owner.set_ignore_flow_opening(ignore);
+                        intents.push(PaneMenuIntent::SetIgnoreFlowOpening(ignore));
                     }
                 });
             }
-            if layer == ChartLayer::Footprint && blocked.is_none() {
+            if row.layer == ChartLayer::Footprint && blocked.is_none() {
                 ui.indent("footprint_configure", |ui| {
                     if ui
                         .button("configure footprint…")
@@ -115,7 +242,7 @@ impl ChartPane {
                         )
                         .clicked()
                     {
-                        chrome.layers.open_footprint_settings = true;
+                        intents.push(PaneMenuIntent::OpenFootprintSettings);
                         ui.close_menu();
                     }
                 });
@@ -126,40 +253,32 @@ impl ChartPane {
     /// What the tape draws, and how much market time it shows.
     ///
     /// Reached by right-clicking the tape itself, which is the only place
-    /// these choices are about. Every entry writes the lane's own field, so
+    /// these choices are about. Every entry asks for the lane's own field, so
     /// the dock's copy of the same settings and this one can never disagree.
-    fn draw_tape_menu_section(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
-        if self.orderflow.is_none() {
-            return;
-        }
+    fn draw_tape_menu_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        view: &PaneMenuView<'_>,
+        tape: &TapeMenuView,
+        intents: &mut Vec<PaneMenuIntent>,
+    ) {
         ui.label(
             egui::RichText::new("tape")
                 .size(11.0)
                 .color(theme::TEXT_MUTED),
         );
 
-        // The same loop the candles' entries run, over the other half of the
-        // list. Nothing here is a second copy of the tape's state: each
-        // checkbox reads and writes the lane's own field through
-        // `layer_visible` / `set_layer_visible`, which is also what puts these
-        // three in the layer state file.
-        for layer in self
-            .layers
-            .registry()
-            .clone()
-            .layers()
-            .iter()
-            .copied()
-            .filter(|layer| layer.on_tape())
-        {
-            let _ = self.layer_checkbox(ui, layer, chrome);
+        // The same checkbox the candles' entries use, over the other half of
+        // the list. Nothing here is a second copy of the tape's state: each
+        // row is read through `layer_visible` and written through
+        // `set_layer_visible`, which is also what puts these three in the
+        // layer state file.
+        for row in view.layer_rows(true) {
+            intents.extend(self.layer_checkbox(ui, row));
         }
 
-        let reference_ms = self.frame.lane_reference_ms;
-        let Some(orderflow) = self.orderflow.as_mut() else {
-            return;
-        };
-        let current = orderflow.live_lane_window();
+        let reference_ms = tape.reference_ms;
+        let current = tape.window;
         let mut chosen = None;
         ui.menu_button(
             format!("tape window: {}", lane_window_label(current, reference_ms)),
@@ -221,25 +340,37 @@ impl ChartPane {
              time however fast the bars are closing, so prints stay readable through a burst",
         );
         if let Some(window) = chosen {
-            orderflow.set_live_lane_window(window);
+            intents.push(PaneMenuIntent::SetLaneWindow(window));
         }
     }
 
-    pub fn draw_layer_menu(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
+    /// The whole layer menu, top to bottom. Returns what the trader asked for
+    /// this frame, for the pane to apply.
+    pub(crate) fn draw_layer_menu(
+        &mut self,
+        ui: &mut egui::Ui,
+        view: &PaneMenuView<'_>,
+        hosts: PaneMenuHosts<'_>,
+    ) -> Vec<PaneMenuIntent> {
+        let mut intents = Vec::new();
         // The drawing under the click is the most specific thing the click
         // named, so its section rides above everything — including the
         // trade actions, which answer for a bare price, not an object.
         #[cfg(test)]
-        self.context_menu.menu_rects.clear();
-        if let Some(id) = self.context_menu.drawing {
-            match self.drawings.index_of(id) {
+        self.menu_rects.clear();
+        if let Some(id) = self.drawing {
+            match view.drawings.index_of(id) {
                 Some(index) => {
-                    self.draw_drawing_menu_section(ui, index);
+                    self.draw_drawing_menu_section(ui, view, index, &mut intents);
                     ui.separator();
                 }
                 // Deleted while the menu was open (undo, another surface):
-                // the section vanishes instead of acting on a ghost.
-                None => self.context_menu.drawing = None,
+                // the section vanishes instead of acting on a ghost, and
+                // takes its half-typed name with it.
+                None => {
+                    self.drawing = None;
+                    self.rename.clear();
+                }
             }
         }
         // Tools that place at the bar under the right-click (the anchored
@@ -247,33 +378,16 @@ impl ChartPane {
         // the click was already resolved per tool, snap rules included, so
         // the menu only offers what the capture could honestly anchor. This
         // frequent chart action leads the general sections below it.
-        if !self.context_menu.places.is_empty() {
-            let places = std::mem::take(&mut self.context_menu.places);
-            for &(tool, point) in &places {
+        if !self.places.is_empty() {
+            for &(tool, point) in &self.places {
                 let label = tool
                     .context_menu_label()
                     .expect("only declaring tools were captured");
                 if ui.button(label).on_hover_text(tool.hover_text()).clicked() {
-                    let completion = self.gestures.place_point(
-                        &mut self.drawings,
-                        tool,
-                        &DrawingBand::Price,
-                        point,
-                        super::placement_gestures::PlacementDefaults {
-                            presets: chrome.presets,
-                            repeat: chrome.toolrail.repeat(),
-                        },
-                    );
-                    if completion.arm_pointer {
-                        chrome.toolrail.arm(Tool::Pointer);
-                    }
-                    if completion.begin_text_edit {
-                        *chrome.begin_text_edit = true;
-                    }
+                    intents.push(PaneMenuIntent::Place { tool, point });
                     ui.close_menu();
                 }
             }
-            self.context_menu.places = places;
             ui.separator();
         }
         #[cfg(test)]
@@ -282,65 +396,68 @@ impl ChartPane {
         // It sits near the top so the right-opening menu also fits in a narrow
         // window instead of inheriting the trade section's vertical offset.
         let chart_layers = ui.menu_button("chart layers", |ui| {
-            self.draw_chart_layer_entries(ui, chrome);
+            self.draw_chart_layer_entries(ui, view, &mut intents);
         });
-        self.context_menu.chart_layers_rect = Some(chart_layers.response.rect);
-        chart_layers
-            .response
-            .on_hover_text(if self.context_menu.on_tape {
-                "what the candles beside the tape draw"
-            } else {
-                "what this chart draws"
-            });
-        self.draw_objects_menu_entries(ui, chrome.drawing_chrome);
+        self.chart_layers_rect = Some(chart_layers.response.rect);
+        chart_layers.response.on_hover_text(if self.on_tape {
+            "what the candles beside the tape draw"
+        } else {
+            "what this chart draws"
+        });
+        self.draw_objects_menu_entries(ui, view, &mut intents);
         ui.separator();
-        if let Some(price) = self.context_menu.price {
+        if let Some(price) = self.price {
             // Stable for the menu's whole life: re-reading the pointer while
             // it moves over a row would reflow the price-specific actions.
-            chrome.paper.context_trade_actions(ui, price);
+            hosts.paper.context_trade_actions(ui, price);
             ui.separator();
         }
         // The tape is a pane of its own and is configured as one: a right-click
         // on it answers for it, keeping the primary menu focused on actions.
-        if self.context_menu.on_tape {
-            self.draw_tape_menu_section(ui, chrome);
+        if self.on_tape {
+            if let Some(tape) = &view.tape {
+                self.draw_tape_menu_section(ui, view, tape, &mut intents);
+            }
             ui.separator();
         }
 
         // Borrowed straight from the view list — no per-frame copy of the
-        // labels — and the one mutation waits until the loop lets go.
-        let mut toggled = None;
-        if !self.indicators.all().is_empty() {
+        // labels.
+        if !view.indicators.all().is_empty() {
             ui.separator();
             ui.label(
                 egui::RichText::new("indicators")
                     .size(11.0)
                     .color(theme::TEXT_MUTED),
             );
-            for view in self.indicators.all() {
-                let mut visible = !view.hidden;
+            for indicator in view.indicators.all() {
+                let mut visible = !indicator.hidden;
                 if ui
-                    .checkbox(&mut visible, view.label())
+                    .checkbox(&mut visible, indicator.label())
                     .on_hover_text("hide/show without removing (no recompute)")
                     .changed()
                 {
-                    toggled = Some(view.slot);
+                    intents.push(PaneMenuIntent::ToggleIndicatorHidden(indicator.slot));
                 }
             }
         }
-        if let Some(slot) = toggled {
-            self.indicators.toggle_hidden(slot);
-            chrome.layers.indicators_changed = true;
-        }
+        intents
     }
 
     /// The per-drawing section of the layer menu: the object the
     /// right-click landed on, by name, with its own actions. This is the
     /// context-menu host `drawings/action_bar.rs` reserved a seat for.
-    fn draw_drawing_menu_section(&mut self, ui: &mut egui::Ui, index: usize) {
-        let label = self.drawings.items()[index].display_label(index);
+    fn draw_drawing_menu_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        view: &PaneMenuView<'_>,
+        index: usize,
+        intents: &mut Vec<PaneMenuIntent>,
+    ) {
+        let drawing = &view.drawings.items()[index];
+        let id = drawing.id;
         ui.label(
-            egui::RichText::new(label)
+            egui::RichText::new(drawing.display_label(index))
                 .size(11.0)
                 .color(theme::TEXT_MUTED),
         );
@@ -348,48 +465,51 @@ impl ChartPane {
         // undo step, not one per keystroke. Whitespace clears back to the
         // derived label; the store normalises it.
         let rename = ui.add(
-            egui::TextEdit::singleline(&mut self.context_menu.rename)
+            egui::TextEdit::singleline(&mut self.rename)
                 .hint_text("name this object")
                 .desired_width(150.0),
         );
         #[cfg(test)]
-        self.context_menu.menu_rects.push(("Rename", rename.rect));
-        if rename.lost_focus() {
-            let name = std::mem::take(&mut self.context_menu.rename);
-            self.drawings.rename_at(index, &name);
-            self.context_menu.rename = name;
+        self.menu_rects.push(("Rename", rename.rect));
+        // An unchanged blur records nothing: the same guard `close` applies.
+        let current = drawing.name.as_deref().unwrap_or_default();
+        if rename.lost_focus() && self.rename.trim() != current {
+            intents.push(PaneMenuIntent::RenameDrawing {
+                id,
+                name: self.rename.clone(),
+            });
         }
-        self.strategies.draw_menu_entries(
+        intents.extend(view.strategies.draw_menu_entries(
             ui,
-            &self.drawings,
+            view.drawings,
             index,
-            super::drawing_projection::PaneSeriesRead {
-                history_prefix: &self.history_prefix,
-                state: &self.state,
-                spec: &self.spec,
-            },
-            &mut self.context_menu,
-        );
-        let locked = self.drawings.items()[index].locked;
-        let hidden = self.drawings.items()[index].hidden;
+            view.series,
+            self,
+        ));
+        let locked = drawing.locked;
+        let hidden = drawing.hidden;
         let lock = ui
             .button(if locked { "Unlock" } else { "Lock" })
             .on_hover_text("a locked object rejects geometry edits and plain deletes");
         #[cfg(test)]
-        self.context_menu
-            .menu_rects
+        self.menu_rects
             .push((if locked { "Unlock" } else { "Lock" }, lock.rect));
         if lock.clicked() {
-            self.drawings.set_locked_at(index, !locked);
+            intents.push(PaneMenuIntent::SetDrawingLocked {
+                id,
+                locked: !locked,
+            });
             ui.close_menu();
         }
         let eye = ui.button(if hidden { "Show" } else { "Hide" });
         #[cfg(test)]
-        self.context_menu
-            .menu_rects
+        self.menu_rects
             .push((if hidden { "Show" } else { "Hide" }, eye.rect));
         if eye.clicked() {
-            self.drawings.set_hidden_at(index, !hidden);
+            intents.push(PaneMenuIntent::SetDrawingHidden {
+                id,
+                hidden: !hidden,
+            });
             ui.close_menu();
         }
         let delete = if locked {
@@ -398,21 +518,15 @@ impl ChartPane {
         } else {
             let delete = ui.button("Delete");
             if delete.clicked() {
-                let doomed = self.drawings.items()[index].id;
-                self.drawings.select(Some(index));
-                if self.drawings.delete_selected(false) == drawings::DeleteOutcome::Deleted {
-                    // The instance dies with its drawing, immediately — not
-                    // on the next closed bar, which a quiet tape may never
-                    // bring.
-                    self.strategies.remove_for_drawing(doomed);
-                }
-                self.context_menu.drawing = None;
+                intents.push(PaneMenuIntent::DeleteDrawing(id));
+                self.drawing = None;
+                self.rename.clear();
                 ui.close_menu();
             }
             delete
         };
         #[cfg(test)]
-        self.context_menu.menu_rects.push(("Delete", delete.rect));
+        self.menu_rects.push(("Delete", delete.rect));
         #[cfg(not(test))]
         let _ = delete;
     }

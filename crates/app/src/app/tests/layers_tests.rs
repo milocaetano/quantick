@@ -353,13 +353,18 @@ fn the_layer_menu_offers_every_layer_and_its_switches_work() {
 
     open_chart_layers(&ctx, &mut app);
     assert_eq!(
-        app.active_tab().flow_pane.layer_menu_rects.len(),
+        app.active_tab()
+            .flow_pane
+            .context_menu
+            .layer_menu_rects
+            .len(),
         chart_menu_entries(),
         "every layer needs a switch, or it cannot be turned off at all"
     );
     assert!(
         app.active_tab()
             .flow_pane
+            .context_menu
             .layer_menu_rects
             .iter()
             .all(|(layer, _)| !layer.on_tape()),
@@ -369,6 +374,7 @@ fn the_layer_menu_offers_every_layer_and_its_switches_work() {
     let crosshair = app
         .active_tab()
         .flow_pane
+        .context_menu
         .layer_menu_rects
         .iter()
         .find(|(layer, _)| *layer == ChartLayer::Crosshair)
@@ -439,7 +445,12 @@ fn the_layer_menu_offers_every_layer_and_its_switches_work() {
     let quote_ctx = egui::Context::default();
     open_chart_layers(&quote_ctx, &mut quote_only);
     assert_eq!(
-        quote_only.active_tab().flow_pane.layer_menu_rects.len(),
+        quote_only
+            .active_tab()
+            .flow_pane
+            .context_menu
+            .layer_menu_rects
+            .len(),
         chart_menu_entries(),
         "an unavailable layer is still listed, just not switchable"
     );

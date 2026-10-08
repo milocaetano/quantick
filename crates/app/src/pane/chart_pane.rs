@@ -18,6 +18,8 @@ use crate::state::{BarConfiguration, BarSpec, ChartState, SpecSelector};
 use crate::toolrail::Tool;
 use crate::viewport::Viewport;
 
+use super::context_menu::ContextPress;
+use super::menus::{PaneMenuHosts, PaneMenuIntent, PaneMenuView, TapeMenuView};
 use super::*;
 
 #[cfg(test)]
@@ -92,11 +94,6 @@ pub struct ChartPane {
     /// The candle footprint layer as this pane has it — see
     /// [`PaneFootprint`].
     pub footprint: PaneFootprint,
-
-    /// Where each layer's switch landed in the last menu frame, so a test can
-    /// click the real widget instead of calling the setter behind it.
-    #[cfg(test)]
-    pub layer_menu_rects: Vec<(ChartLayer, egui::Rect)>,
 
     /// The bar rule this pane is on, and the parameter every other kind is
     /// holding for the trader — see [`SpecSelector`].
@@ -318,8 +315,6 @@ impl ChartPane {
             // The backfill divider opens off: a full-height rule across the candles for a boundary
             // that matters once, when reading how far the live tape goes back. Nothing is hidden
             // about the data; the mark is one click away in the layer menu.
-            #[cfg(test)]
-            layer_menu_rects: Vec::new(),
             viewport: Viewport::new(),
             frame: PaneFrame::default(),
             price_axis_levels: Vec::new(),
@@ -719,6 +714,255 @@ impl ChartPane {
     #[must_use]
     pub fn paper_hud_anchor(&self) -> Option<(egui::Rect, PriceScale)> {
         self.paper_hud_anchor
+    }
+}
+
+/// The menus' door into the pane: the read-only view they draw from, and the
+/// one place every [`PaneMenuIntent`] they answer with is applied.
+impl ChartPane {
+    /// The menu component beside the read-only view it draws from, borrowed
+    /// apart so the menu can own its state while it reads the pane's.
+    pub(crate) fn menu_parts<'a>(
+        &'a mut self,
+        capabilities: FeedCapabilities,
+        style: &'a crate::style::ChartStyle,
+    ) -> (&'a mut PaneContextMenu, PaneMenuView<'a>) {
+        let tape = self
+            .orderflow
+            .as_ref()
+            .filter(|_| self.context_menu.on_tape)
+            .map(|orderflow| TapeMenuView {
+                window: orderflow.live_lane_window(),
+                reference_ms: self.frame.lane_reference_ms,
+            });
+        let flow_opening = self
+            .orderflow
+            .as_ref()
+            .filter(|owner| self.state.tick_membership().is_some() && owner.flow_execution_active())
+            .map(|owner| owner.ignore_flow_opening());
+        let view = PaneMenuView {
+            drawings: &self.drawings,
+            indicators: &self.indicators,
+            strategies: &self.strategies,
+            series: drawing_projection::PaneSeriesRead {
+                history_prefix: &self.history_prefix,
+                state: &self.state,
+                spec: &self.spec,
+            },
+            layers: layers::PaneLayerRead {
+                layers: &self.layers,
+                orderflow: self.orderflow.as_ref(),
+                state: &self.state,
+                footprint: &self.footprint,
+                drawings: &self.drawings,
+            },
+            capabilities,
+            style,
+            flow_opening,
+            tape,
+        };
+        (&mut self.context_menu, view)
+    }
+
+    /// Where the chart-layer submenu button was painted — see
+    /// [`PaneContextMenu::chart_layers_center`].
+    #[cfg(any(feature = "scenario-harness", test))]
+    pub(crate) fn chart_layers_menu_center(&self) -> Option<egui::Pos2> {
+        self.context_menu.chart_layers_center()
+    }
+
+    /// The layer menu, drawn and applied: what the right-click opens.
+    pub fn draw_layer_menu(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
+        let intents = {
+            let (menu, view) = self.menu_parts(chrome.capabilities, chrome.style);
+            let hosts = PaneMenuHosts {
+                paper: &mut *chrome.paper,
+            };
+            menu.draw_layer_menu(ui, &view, hosts)
+        };
+        self.apply_menu_intents(intents, chrome);
+    }
+
+    /// One layer's checkbox in an axis's own menu, applied like the layer
+    /// menu's.
+    pub(super) fn layer_menu_switch(
+        &mut self,
+        ui: &mut egui::Ui,
+        layer: ChartLayer,
+        chrome: &mut PaneChrome<'_>,
+    ) {
+        let row = self
+            .layer_read()
+            .row(layer, chrome.capabilities, chrome.style);
+        let intent = self.context_menu.layer_checkbox(ui, row);
+        self.apply_menu_intents(intent, chrome);
+    }
+
+    /// The secondary click on the canvas: what the press resolves (the price,
+    /// the tape flag, the drawing, the placing entries), the layer menu it
+    /// opens, and the rename an outside click commits when the menu closes.
+    ///
+    /// One arm of [`ChartPane::handle_navigation`], called once per frame.
+    pub(super) fn handle_context_menu(
+        &mut self,
+        chart: &egui::Response,
+        areas: &PlotAreas,
+        bands: &bands::Bands,
+        chrome: &mut PaneChrome<'_>,
+    ) {
+        // The price under a right-click, remembered before the menu eats
+        // the pointer: the trade section places orders at it.
+        if chart.secondary_clicked()
+            && let Some(position) = chart.interact_pointer_pos()
+            && let Some(press) = ContextPress::resolve(
+                position,
+                areas,
+                bands,
+                &self.drawing_projection(),
+                &self.drawings,
+                &self.frame,
+                self.slots(),
+            )
+        {
+            let select = self.context_menu.open_at(press, &self.drawings);
+            self.apply_menu_intents(select, chrome);
+        }
+        // Right-click: what is on this canvas, and what is not. Secondary
+        // button only, so it shares no gesture with the pan, the zoom or the
+        // drawing tools — a pan that ends anywhere never opens it.
+        chart.context_menu(|ui| self.draw_layer_menu(ui, chrome));
+        let count = self.drawings.items().len();
+        let clear =
+            self.context_menu
+                .draw_clear_objects_confirm(&chart.ctx, areas.chart, count, self.id);
+        self.apply_menu_intents(clear, chrome);
+        // While the menu is open the pointer is reading it, not the chart, so
+        // no crosshair chases it across the candles behind it.
+        if chart.context_menu_opened() {
+            self.hover_pos = None;
+        } else {
+            let commit = self.context_menu.close(&self.drawings);
+            self.apply_menu_intents(commit, chrome);
+        }
+    }
+
+    /// Apply a frame's menu intents in the order they were asked.
+    pub(crate) fn apply_menu_intents(
+        &mut self,
+        intents: impl IntoIterator<Item = PaneMenuIntent>,
+        chrome: &mut PaneChrome<'_>,
+    ) {
+        for intent in intents {
+            self.apply_menu_intent(intent, chrome);
+        }
+    }
+
+    /// The one place a menu's ask writes the pane. Each arm calls the same
+    /// pane operation the click called before menus answered with intents.
+    /// That is not a claim that each is a control-plane capability: several
+    /// (the anchored VWAP's place; select, rename, lock, hide and delete of a
+    /// drawing; the strategy seat's add, disarm, re-arm and remove — control
+    /// has only `trade.strategy.select`; an indicator's hide, the footprint
+    /// settings, clear objects) have no control capability today — a gap
+    /// that predates this apply site. Drawing and strategy intents name the
+    /// drawing by id and do nothing if it is gone.
+    pub(crate) fn apply_menu_intent(
+        &mut self,
+        intent: PaneMenuIntent,
+        chrome: &mut PaneChrome<'_>,
+    ) {
+        match intent {
+            PaneMenuIntent::SetLayerVisible { layer, visible } => {
+                self.set_layer_visible(layer, visible, chrome.layers);
+            }
+            PaneMenuIntent::SetIgnoreFlowOpening(ignore) => {
+                if let Some(owner) = self.orderflow.as_mut() {
+                    owner.set_ignore_flow_opening(ignore);
+                }
+            }
+            PaneMenuIntent::OpenFootprintSettings => chrome.layers.open_footprint_settings = true,
+            PaneMenuIntent::SetLaneWindow(window) => {
+                if let Some(orderflow) = self.orderflow.as_mut() {
+                    orderflow.set_live_lane_window(window);
+                }
+            }
+            PaneMenuIntent::Place { tool, point } => {
+                let completion = self.gestures.place_point(
+                    &mut self.drawings,
+                    tool,
+                    &drawings::DrawingBand::Price,
+                    point,
+                    placement_gestures::PlacementDefaults {
+                        presets: chrome.presets,
+                        repeat: chrome.toolrail.repeat(),
+                    },
+                );
+                if completion.arm_pointer {
+                    chrome.toolrail.arm(Tool::Pointer);
+                }
+                if completion.begin_text_edit {
+                    *chrome.begin_text_edit = true;
+                }
+            }
+            PaneMenuIntent::ToggleIndicatorHidden(slot) => {
+                self.indicators.toggle_hidden(slot);
+                chrome.layers.indicators_changed = true;
+            }
+            PaneMenuIntent::SelectDrawing(id) => {
+                if let Some(index) = self.drawings.index_of(id) {
+                    self.drawings.select(Some(index));
+                }
+            }
+            PaneMenuIntent::RenameDrawing { id, name } => {
+                if let Some(index) = self.drawings.index_of(id) {
+                    self.drawings.rename_at(index, &name);
+                }
+            }
+            PaneMenuIntent::SetDrawingLocked { id, locked } => {
+                if let Some(index) = self.drawings.index_of(id) {
+                    self.drawings.set_locked_at(index, locked);
+                }
+            }
+            PaneMenuIntent::SetDrawingHidden { id, hidden } => {
+                if let Some(index) = self.drawings.index_of(id) {
+                    self.drawings.set_hidden_at(index, hidden);
+                }
+            }
+            PaneMenuIntent::DeleteDrawing(id) => {
+                let Some(index) = self.drawings.index_of(id) else {
+                    return;
+                };
+                self.drawings.select(Some(index));
+                if self.drawings.delete_selected(false) == drawings::DeleteOutcome::Deleted {
+                    // The instance dies with its drawing, immediately — not
+                    // on the next closed bar, which a quiet tape may never
+                    // bring.
+                    self.strategies.remove_for_drawing(id);
+                }
+            }
+            PaneMenuIntent::StrategyAdd(id) => {
+                if self.drawings.index_of(id).is_some() {
+                    self.strategies.popup_request = Some(id);
+                }
+            }
+            // The drawing went without its strategy being swept yet: the
+            // seat that asked is gone, so nothing is done in its name.
+            PaneMenuIntent::StrategyDisarm(id)
+            | PaneMenuIntent::StrategyRearm(id)
+            | PaneMenuIntent::StrategyRemove(id)
+                if self.drawings.index_of(id).is_none() => {}
+            PaneMenuIntent::StrategyDisarm(id) => self.strategies.disarm(id),
+            PaneMenuIntent::StrategyRearm(id) => {
+                let series = drawing_projection::PaneSeriesRead {
+                    history_prefix: &self.history_prefix,
+                    state: &self.state,
+                    spec: &self.spec,
+                };
+                self.strategies.rearm(id, series);
+            }
+            PaneMenuIntent::StrategyRemove(id) => self.strategies.remove_for_drawing(id),
+            PaneMenuIntent::ObjectsAsk(ask) => chrome.drawing_chrome.ask_from_menu(self.id, *ask),
+        }
     }
 }
 

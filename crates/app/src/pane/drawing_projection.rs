@@ -16,6 +16,7 @@ use eframe::egui;
 use rust_decimal::prelude::ToPrimitive as _;
 use smallvec::SmallVec;
 
+#[derive(Clone, Copy)]
 pub(crate) struct PaneSeriesRead<'a> {
     pub(super) history_prefix: &'a [quantick_engine::Bar],
     pub(super) state: &'a ChartState,

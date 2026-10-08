@@ -853,8 +853,8 @@ fn recorded_book(ctx: &egui::Context) -> QuantickApp {
     native_split(&mut app);
     let generation = take_capture_start(&mut commands);
     let flow = app.active_tab_mut().tape_mut();
-    flow.set_layer_switch(OrderflowSwitch::Depth, false);
-    flow.set_layer_switch(OrderflowSwitch::TapeDepth, true);
+    crate::orderflow_view::layers::set_layer_switch(flow, OrderflowSwitch::Depth, false);
+    crate::orderflow_view::layers::set_layer_switch(flow, OrderflowSwitch::TapeDepth, true);
     flow.handle_depth_event(DepthEvent::Snapshot {
         symbol: "TESTUSDT".to_owned(),
         generation,
@@ -955,9 +955,11 @@ fn a_tape_panned_into_the_past_keeps_its_book() {
     let mut app = recorded_book(&ctx);
 
     let painted = |app: &mut QuantickApp, tape_depth: bool| {
-        app.active_tab_mut()
-            .tape_mut()
-            .set_layer_switch(OrderflowSwitch::TapeDepth, tape_depth);
+        crate::orderflow_view::layers::set_layer_switch(
+            app.active_tab_mut().tape_mut(),
+            OrderflowSwitch::TapeDepth,
+            tape_depth,
+        );
         let (output, lane) = held_at(app, &ctx, 35_000);
         lane_mesh_vertices(&output, lane)
     };

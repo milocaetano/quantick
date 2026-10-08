@@ -44,8 +44,12 @@ fn input(events: Vec<egui::Event>) -> egui::RawInput {
 fn rows_frame(app: &mut QuantickApp, ctx: &egui::Context, events: Vec<egui::Event>) {
     with_flow_pane(app, |pane, chrome| {
         let _ = ctx.run(input(events), |ctx| {
-            egui::CentralPanel::default()
-                .show(ctx, |ui| pane.draw_object_rows(ui, chrome.drawing_chrome));
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let ask = pane
+                    .context_menu
+                    .draw_object_rows(ui, &pane.drawings, &pane.indicators);
+                pane.apply_menu_intents(ask, chrome);
+            });
         });
     });
 }
@@ -80,7 +84,11 @@ fn confirm_frame(
 ) -> egui::FullOutput {
     with_flow_pane(app, |pane, chrome| {
         ctx.run(input(events), |ctx| {
-            pane.draw_clear_objects_confirm(ctx, SCREEN, chrome.drawing_chrome)
+            let count = pane.drawings.items().len();
+            let ask = pane
+                .context_menu
+                .draw_clear_objects_confirm(ctx, SCREEN, count, pane.id);
+            pane.apply_menu_intents(ask, chrome);
         })
     })
 }
