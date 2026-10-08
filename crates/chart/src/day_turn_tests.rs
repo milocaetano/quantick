@@ -193,3 +193,21 @@ fn a_bar_spanning_midnight_writes_no_end_time() {
     assert_eq!(turn.ended_ms, None);
     assert_eq!(turn.opened_ms, opened);
 }
+
+#[test]
+fn a_tick_bar_straddling_the_session_break_writes_no_end_time() {
+    // WIN tick:50, bar 49530: opens Tue 06 18:31:13 and closes Wed 07
+    // 09:00:59 in São Paulo. The turn read `09:00 | Wed 7 09:00`; the end
+    // is the new day's time, so it is dropped.
+    let at = |date: CivilDate, seconds: i64| date.start_ms(BRT) + seconds * 1000;
+    let (tue, wed) = (
+        CivilDate::from_ymd(2026, 10, 6),
+        CivilDate::from_ymd(2026, 10, 7),
+    );
+    let open = at(tue, 18 * 3600 + 31 * 60 + 13);
+    let close = at(wed, 9 * 3600 + 59);
+    let opened = at(wed, 9 * 3600 + 60);
+    let turn = DayTurn::new(49_531, wed, Some((open, close)), Some(opened), BRT);
+    assert_eq!(turn.ended_ms, None);
+    assert_eq!(opened_suffix(opened, BRT), " 09:01");
+}
