@@ -66,13 +66,6 @@ pub fn paint_placement_hint(
     );
 }
 
-/// The open / high / low / close of `candle` nearest to the pointer on
-/// screen, when one is within reach.
-///
-/// This is the difference between a line that *looks* drawn off the swing
-/// high and one that is (`docs/ux/drawing-tools-2026-08.md` §D6). Nothing in
-/// reach returns `None` and the free price is used — a magnet that always
-/// snaps is a magnet you cannot draw a diagonal with.
 /// Clamp a fractional bar coordinate onto the bars that exist:
 /// `0 ..= total - 1`. The candle magnet's time half — a snap that reads a
 /// candle must stand on one.
@@ -81,18 +74,33 @@ pub fn snap_bar_to_tape(bar: f32, total: usize) -> f32 {
     bar.clamp(0.0, total.saturating_sub(1) as f32)
 }
 
+/// The open / high / low / close of `candle` nearest to the pointer on
+/// screen, when the pointer is on the candle or within `reach_px` of it.
+///
+/// This is the difference between a line that *looks* drawn off the swing
+/// high and one that is (`docs/ux/drawing-tools-2026-08.md` §D6). Reach is
+/// measured to the candle's span, not to each print, or a pointer inside a
+/// tall body missed. Off the candle and out of reach returns `None` and the
+/// free price is used — a magnet that always snaps is a magnet you cannot
+/// draw a diagonal with.
 pub fn magnet_price_of(
     candle: &quantick_engine::Bar,
     pointer_y: f32,
     scale: &PriceScale,
     reach_px: f32,
 ) -> Option<f64> {
+    let (high, low) = (
+        scale.y(candle.high.to_f64()?),
+        scale.y(candle.low.to_f64()?),
+    );
+    if pointer_y < high.min(low) - reach_px || pointer_y > high.max(low) + reach_px {
+        return None;
+    }
     [candle.open, candle.high, candle.low, candle.close]
         .into_iter()
         .filter_map(|price| {
             let price = price.to_f64()?;
-            let distance = (scale.y(price) - pointer_y).abs();
-            (distance <= reach_px).then_some((distance, price))
+            Some(((scale.y(price) - pointer_y).abs(), price))
         })
         .min_by(|left, right| left.0.total_cmp(&right.0))
         .map(|(_, price)| price)

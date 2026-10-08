@@ -1,0 +1,6 @@
+# fix/drawing-magnet: the toolrail magnet measures its reach to the candle's
+# span instead of to each print, and a tool-owned handle drag restores the
+# exact target and untouched-anchor values it read back off the screen. Both
+# live where the pane projects pointer to anchor, which only `app` holds.
+crates/app +33
+!budget +33

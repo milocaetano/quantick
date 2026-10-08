@@ -216,6 +216,25 @@ fn calendar_law(interval_ms: i64) -> Option<quantick_engine::time_bucket::TimeBu
     quantick_engine::time_bucket::TimeBucketLaw::of(interval_ms).filter(|law| law.is_calendar())
 }
 
+/// `anchor`, read back off the screen at `screen`, with each coordinate a
+/// tool copied from a source restored to that source's exact value: a pixel
+/// read back into a price is ulps off it, which left a magnet-snapped corner
+/// a hair above its high and crept the untouched corner on every drag frame.
+fn exact_coordinates(
+    mut anchor: ChartPoint,
+    screen: egui::Pos2,
+    sources: &[(egui::Pos2, ChartPoint)],
+) -> ChartPoint {
+    if let Some((_, source)) = sources.iter().find(|(at, _)| at.x == screen.x) {
+        anchor.bar = source.bar;
+        anchor.time_ms = source.time_ms;
+    }
+    if let Some((_, source)) = sources.iter().find(|(at, _)| at.y == screen.y) {
+        anchor.price = source.price;
+    }
+    anchor
+}
+
 pub(crate) struct DrawingProjection<'a> {
     pub(super) series: PaneSeriesRead<'a>,
     pub(super) viewport: &'a Viewport,
@@ -544,11 +563,16 @@ impl DrawingProjection<'_> {
                 content_editing: false,
             };
             let to = self.drawing_screen_point(target, history_right, total, scale);
-            drawing
+            let moved = drawing
                 .tool
-                .drag_handle(band.rect, &projected, handle, to, &ctxt, constrain)
+                .drag_handle(band.rect, &projected, handle, to, &ctxt, constrain)?;
+            // The target (magnet included) first, then the anchors as they were.
+            let sources: SmallVec<[(egui::Pos2, ChartPoint); 5]> = std::iter::once((to, target))
+                .chain(projected.into_iter().zip(drawing.points.iter().copied()))
+                .collect();
+            Some((moved, sources))
         });
-        let Some(moved) = moved else {
+        let Some((moved, sources)) = moved else {
             drawings.move_anchor(drawing_index, handle, target);
             return;
         };
@@ -565,6 +589,7 @@ impl DrawingProjection<'_> {
                     drawings::AnchorSnap::Pointer,
                     band,
                 )
+                .map(|anchor| exact_coordinates(anchor, *point, &sources))
             })
             .collect();
         if let Some(anchors) = anchors {
