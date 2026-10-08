@@ -23,17 +23,15 @@ use super::ParkedHand;
 use super::{DrawingDrag, PaneIndex, SharedDrag};
 use crate::drawings::ChartPoint;
 
-/// Drawing placement and movement state. Anchors are chart coordinates; only
-/// the current hover and press position are transient pixels.
-///
-/// See the module docs for what a gesture owns and what it does not.
-/// A body drag's grab: the drawing, the press, and its anchors then. Each
-/// frame moves those anchors by the whole travel since, so the magnet's
-/// correction on one frame never accumulates into the next.
+/// A body drag in flight: the drawing it grabbed, where the pointer was last
+/// frame, and the anchors as the hand alone has moved them. Each frame adds
+/// only that frame's travel, read under that frame's axes, so a rescale or a
+/// pan under a still hand moves nothing; the magnet snaps a copy, so its
+/// correction never accumulates into `free`.
 pub(super) struct TranslateFrom {
     pub(super) index: usize,
-    pub(super) grab: egui::Pos2,
-    pub(super) anchors: Vec<ChartPoint>,
+    pub(super) last: egui::Pos2,
+    pub(super) free: Vec<ChartPoint>,
 }
 
 impl PaneGestures {
@@ -44,13 +42,23 @@ impl PaneGestures {
         for point in self
             .translate_from
             .iter_mut()
-            .flat_map(|from| &mut from.anchors)
+            .flat_map(|from| &mut from.free)
         {
             point.bar += delta as f32;
         }
     }
+
+    /// End any drawing drag in flight, its grab with it.
+    pub(crate) fn cancel_drag(&mut self) {
+        self.drag = DrawingDrag::None;
+        self.translate_from = None;
+    }
 }
 
+/// Drawing placement and movement state. Anchors are chart coordinates; only
+/// the current hover and press position are transient pixels.
+///
+/// See the module docs for what a gesture owns and what it does not.
 #[derive(Default)]
 pub struct PaneGestures {
     /// Where the next anchor would land, as the input pass resolved it.

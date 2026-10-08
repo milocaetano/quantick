@@ -70,6 +70,7 @@ pub use object::{
     Duplicated, NewDrawing, PaneKey,
 };
 pub use payload::{DrawingPayload, NoPayload};
+pub(crate) use placement::reanchor_points;
 pub(crate) use store::UNDO_HISTORY_LIMIT;
 use store::UndoEntry;
 pub use store::{Drawings, PlacementBatch};

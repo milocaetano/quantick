@@ -317,8 +317,6 @@ impl ChartPane {
             self.viewport
                 .reanchor_history(edge_time.and_then(|ms| self.slot_at_time(ms)), offset);
             self.reanchor_drawings(old_slots);
-            // The grabbed anchors no longer name these bars: hold the object.
-            self.gestures.translate_from = None;
         } else {
             // Older bars shift every index up by `added`; keep the view steady.
             self.viewport.shift_right_edge(added as isize);
@@ -444,6 +442,12 @@ impl ChartPane {
         let mut drawings = std::mem::take(&mut self.drawings);
         drawings.reanchor(old_slots, new_slots, |time| self.slot_of_time(time));
         self.drawings = drawings;
+        // A body drag in flight holds its own copy of the anchors: same map.
+        if let Some(mut from) = self.gestures.translate_from.take() {
+            let slot_of = |time| self.slot_of_time(time);
+            crate::drawings::reanchor_points(&mut from.free, (old_slots, new_slots), &slot_of);
+            self.gestures.translate_from = Some(from);
+        }
     }
 
     /// Ask for a re-anchor once there are bars, for drawings adopted onto an

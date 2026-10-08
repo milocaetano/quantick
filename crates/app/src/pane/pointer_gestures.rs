@@ -225,6 +225,7 @@ impl PaneGestures {
         self.press_pick =
             Some(projection.drawing_pick_at(drawings, position, band, history_right, total));
         self.drag_pending_from = Some(position);
+        self.translate_from = None;
         if let Some((drawing_index, handle)) =
             projection.drawing_handle_at(drawings, position, band, history_right, total)
         {
@@ -248,8 +249,8 @@ impl PaneGestures {
                 drawings.begin_gesture();
                 self.translate_from = Some(TranslateFrom {
                     index,
-                    grab: position,
-                    anchors: drawings.items()[index].points.clone(),
+                    last: position,
+                    free: drawings.items()[index].points.clone(),
                 });
                 DrawingDrag::Translate
             };
@@ -303,7 +304,7 @@ impl PaneGestures {
             DrawingDrag::Translate => {
                 // A selection that moved off the grabbed drawing, or anchors
                 // re-cut under it, ends the move: the object holds still.
-                let grabbed = (self.translate_from.as_ref())
+                let grabbed = (self.translate_from.as_mut())
                     .filter(|from| drawings.selected() == Some(from.index));
                 match grabbed {
                     Some(from) => translate_body(drawings, projection, &frame, from),
@@ -562,14 +563,14 @@ fn move_handle(
     }
 }
 
-/// Move the grabbed drawing by the pointer's whole travel since the grab,
-/// then let its anchors land the way placing them would: by the tool's own
-/// snap, or with the magnet on, onto the print under the pointer.
+/// Move the grabbed drawing by this frame's travel of the hand, then let its
+/// anchors land the way placing them would: by the tool's own snap, or with
+/// the magnet on, onto the print under the pointer.
 fn translate_body(
     drawings: &mut drawings::Drawings,
     projection: &DrawingProjection<'_>,
     frame: &LocalDragFrame<'_>,
-    from: &TranslateFrom,
+    from: &mut TranslateFrom,
 ) {
     let pointer = frame.pointer;
     let Some(position) = pointer.position else {
@@ -583,25 +584,20 @@ fn translate_body(
     if let Some((tool, band)) = dragged
         && let Some(scale) = band.scale
     {
-        let travel = position - from.grab;
-        let (lo, hi) = scale.range();
-        let delta_bar = travel.x / projection.viewport.px_per_bar();
-        // Per *band* height: a pane is a fraction of the
-        // chart's, and dividing by the candles' would move
-        // a CVD level by a fraction of the distance the
-        // pointer travelled. The sign follows the band's
-        // orientation — the object tracks the pointer,
-        // not the price axis.
-        let sign = if scale.is_inverted() { 1.0 } else { -1.0 };
-        let delta_value = sign * f64::from(travel.y / band.rect.height()) * (hi - lo);
-        let mut moved: Vec<_> = (from.anchors.iter())
-            .map(|point| drawings::ChartPoint {
-                bar: point.bar + delta_bar,
-                price: point.price + delta_value,
-                ..*point
-            })
-            .collect();
         let (right, total) = (pointer.history_right, pointer.total);
+        // Both ends read under this frame's axes — per band, so a CVD level
+        // follows the hand, and inverted or not, so the object tracks the
+        // pointer rather than the price axis.
+        let bar_at = |x| projection.viewport.bar_at_x(x, right, total);
+        let delta_bar = bar_at(position.x) - bar_at(from.last.x);
+        let delta_value = scale.price_at(position.y) - scale.price_at(from.last.y);
+        from.last = position;
+        for point in &mut from.free {
+            point.bar += delta_bar;
+            point.price += delta_value;
+            point.time_ms = projection.series.anchor_time(point.bar);
+        }
+        let mut moved = from.free.clone();
         match tool.anchor_snap() {
             drawings::AnchorSnap::Pointer if pointer.magnet => {
                 projection.snap_body(&mut moved, tool.body_snap(), band, position, (right, total));
