@@ -27,6 +27,30 @@ use crate::drawings::ChartPoint;
 /// the current hover and press position are transient pixels.
 ///
 /// See the module docs for what a gesture owns and what it does not.
+/// A body drag's grab: the drawing, the press, and its anchors then. Each
+/// frame moves those anchors by the whole travel since, so the magnet's
+/// correction on one frame never accumulates into the next.
+pub(super) struct TranslateFrom {
+    pub(super) index: usize,
+    pub(super) grab: egui::Pos2,
+    pub(super) anchors: Vec<ChartPoint>,
+}
+
+impl PaneGestures {
+    /// [`crate::drawings::Drawings::shift_bars`] for the one copy of anchors
+    /// the store does not hold: history landing under a body drag must not
+    /// make the object jump.
+    pub(super) fn shift_bars(&mut self, delta: isize) {
+        for point in self
+            .translate_from
+            .iter_mut()
+            .flat_map(|from| &mut from.anchors)
+        {
+            point.bar += delta as f32;
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct PaneGestures {
     /// Where the next anchor would land, as the input pass resolved it.
@@ -80,10 +104,8 @@ pub struct PaneGestures {
     pub drag_pending_from: Option<egui::Pos2>,
     /// The move or resize this gesture is, once it is one.
     pub drag: DrawingDrag,
-    /// Where a body drag grabbed and the anchors it grabbed: each frame
-    /// moves them by the whole travel since, so the magnet's correction on
-    /// one frame never accumulates into the next.
-    pub(super) translate_from: Option<(egui::Pos2, Vec<ChartPoint>)>,
+    /// What a body drag grabbed; see [`TranslateFrom`].
+    pub(super) translate_from: Option<TranslateFrom>,
     /// A gesture this pane is running on a mark the other pane holds, and the
     /// two pieces of pointer state it needs: where the press landed while the
     /// drag threshold is still unmet, and the market instant and price the

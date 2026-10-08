@@ -1,8 +1,9 @@
-# fix/drawing-magnet: the toolrail magnet measures its reach to the candle's
-# span instead of to each print, a tool-owned handle drag restores the exact
-# target and untouched-anchor values it read back off the screen, and a body
-# drag moves from its grab by the whole travel and lands the edge nearest the
-# pointer on the print under it. All of it lives where the pane projects
-# pointer to anchor, which only `app` holds.
-crates/app +122
-!budget +122
+# fix/drawing-magnet: the toolrail magnet measures its candle reach to the
+# candle's span instead of to each print, a tool-owned handle drag restores
+# the exact target and untouched-anchor values it read back off the screen,
+# and a body drag moves from its grab by the whole travel (rebased when
+# history lands), honours the tool's own anchor snap, and with the magnet on
+# lands the edge nearest the pointer on the print under it. All of it lives
+# where the pane projects pointer to anchor, which only `app` holds.
+crates/app +193
+!budget +193

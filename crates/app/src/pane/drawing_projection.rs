@@ -3,8 +3,8 @@
 //! The composed series borrows its prefix and engine state. Neither view owns
 //! a drawing store, a gesture, or the pane that supplies these disjoint fields.
 use super::{
-    DRAWING_ANCHOR_RADIUS_PX, DRAWING_SELECT_RADIUS_PX, MAGNET_REACH_PX, MAGNET_REACH_UNLIMITED_PX,
-    magnet_price_of, snap_bar_to_tape,
+    CANDLE_MAGNET_REACH_PX, DRAWING_ANCHOR_RADIUS_PX, DRAWING_SELECT_RADIUS_PX, MAGNET_REACH_PX,
+    MAGNET_REACH_UNLIMITED_PX, magnet_price_of, snap_bar_to_tape,
 };
 use crate::bands::{self, Band};
 use crate::chart::PriceScale;
@@ -220,6 +220,9 @@ fn calendar_law(interval_ms: i64) -> Option<quantick_engine::time_bucket::TimeBu
 /// tool copied from a source restored to that source's exact value: a pixel
 /// read back into a price is ulps off it, which left a magnet-snapped corner
 /// a hair above its high and crept the untouched corner on every drag frame.
+/// Matched by value because a tool answers positions only: an equal `f32`
+/// was copied from its source, or names the same pixel, which reads back
+/// to that source's value anyway.
 fn exact_coordinates(
     mut anchor: ChartPoint,
     screen: egui::Pos2,
@@ -339,7 +342,7 @@ impl DrawingProjection<'_> {
                 self.series.candle_at_slot(row)?,
                 pointer_y,
                 scale,
-                MAGNET_REACH_PX,
+                CANDLE_MAGNET_REACH_PX,
             ),
             // A time-only object has no value to snap.
             DrawingBand::AllBands => None,
@@ -360,17 +363,23 @@ impl DrawingProjection<'_> {
     pub(super) fn snap_body(
         &self,
         points: &mut [ChartPoint],
-        straight: bool,
+        body: drawings::BodySnap,
         band: &Band,
         pointer: egui::Pos2,
         (history_right, total): (f32, usize),
     ) {
-        let Some(scale) = band.scale.as_ref() else {
+        let (Some(scale), false) = (band.scale.as_ref(), body == drawings::BodySnap::Free) else {
             return;
         };
-        let bar = self.viewport.bar_at_x(pointer.x, history_right, total);
+        // The candle's own bar, so a line meets the print at the candle.
+        let Some(slot) = Viewport::slot_of(self.viewport.bar_at_x(pointer.x, history_right, total))
+        else {
+            return;
+        };
+        #[allow(clippy::cast_precision_loss)]
+        let bar = slot as f32;
         let line = match points {
-            [a, b] if straight && a.bar != b.bar => Some(
+            [a, b] if body == drawings::BodySnap::Line && a.bar != b.bar => Some(
                 a.price + (b.price - a.price) * f64::from(bar - a.bar) / f64::from(b.bar - a.bar),
             ),
             _ => None,
@@ -379,6 +388,7 @@ impl DrawingProjection<'_> {
         let edge = points
             .iter()
             .enumerate()
+            .filter(|_| body == drawings::BodySnap::Levels || line.is_none())
             .map(|(index, point)| (Some(index), point.price))
             .chain(line.map(|price| (None, price)))
             .min_by(|left, right| off(left.1).total_cmp(&off(right.1)));

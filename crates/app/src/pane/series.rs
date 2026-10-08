@@ -235,6 +235,7 @@ impl ChartPane {
         let delta = self.history_prefix.len() as isize - before as isize;
         self.viewport.shift_right_edge(delta);
         self.drawings.shift_bars(delta);
+        self.gestures.shift_bars(delta);
         // Indicator columns have no signed shift: on growth they are nudged so
         // the frames before the rebuild lands draw each value against its own
         // candle, and on a shrink the rebuild below re-cuts them wholesale a
@@ -316,10 +317,13 @@ impl ChartPane {
             self.viewport
                 .reanchor_history(edge_time.and_then(|ms| self.slot_at_time(ms)), offset);
             self.reanchor_drawings(old_slots);
+            // The grabbed anchors no longer name these bars: hold the object.
+            self.gestures.translate_from = None;
         } else {
             // Older bars shift every index up by `added`; keep the view steady.
             self.viewport.shift_right_edge(added as isize);
             self.drawings.shift_bars(added as isize);
+            self.gestures.shift_bars(added as isize);
         }
         // Indicator columns shift with them: the rebuild below is a round-trip
         // away, and until it lands every value would otherwise be drawn

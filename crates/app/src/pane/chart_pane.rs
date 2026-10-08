@@ -617,14 +617,13 @@ impl ChartPane {
         );
         self.handle_context_menu(&chart, &areas, &bands, chrome);
         let drawing_area = price_band.rect;
-        let (primary_pressed, primary_down, primary_released, pointer_position, pointer_delta) = ui
-            .input(|input| {
+        let (primary_pressed, primary_down, primary_released, pointer_position) =
+            ui.input(|input| {
                 (
                     input.pointer.primary_pressed(),
                     input.pointer.primary_down(),
                     input.pointer.primary_released(),
                     input.pointer.latest_pos(),
-                    input.pointer.delta(),
                 )
             });
         // Floating chrome (inspector, manager, toast, flyouts) is opaque to the pointer: while it
@@ -671,7 +670,6 @@ impl ChartPane {
                 bands: &bands,
                 cached_bands: &self.frame.bands,
                 pointer: &pointer,
-                pointer_delta,
                 paper_gesture,
                 tool: chrome.toolrail.tool(),
                 shared_pick: chrome.shared_pick,

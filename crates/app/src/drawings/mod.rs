@@ -62,7 +62,7 @@ pub use defaults::{
 };
 pub(super) use family::level_with;
 pub use family::{
-    AnchorSnap, Constrain, IconDots, IconLetter, IconStrokes, ToolFamily, ToolShortcut,
+    AnchorSnap, BodySnap, Constrain, IconDots, IconLetter, IconStrokes, ToolFamily, ToolShortcut,
 };
 pub(super) use geometry::{dashed_segment, distance_to_segment, off_line_by, unit_normal};
 pub use object::{

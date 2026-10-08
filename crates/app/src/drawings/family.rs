@@ -56,6 +56,16 @@ pub enum AnchorSnap {
     NearestOhlc,
 }
 
+/// How a body drag of an object meets the magnet: by the levels its anchors
+/// hold across the pointer's bar, by its straight line's value there, or not
+/// at all — an object with no value at the pointer's bar moves free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodySnap {
+    Free,
+    Levels,
+    Line,
+}
+
 /// A tool's arming shortcut, declared by the tool itself so the keyboard
 /// map never becomes a central match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
