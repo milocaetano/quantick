@@ -235,7 +235,11 @@ impl ArrangementAdapter<'_> {
                 self.active_tab_mut().flow_pane.footprint.visible = true;
             }
             if let Some(px) = self.harness.candle_width() {
-                self.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
+                self.active_tab_mut()
+                    .flow_pane
+                    .model
+                    .viewport
+                    .set_px_per_bar(px);
             }
         }
         // After the declared layout ran: that is what decides whether the

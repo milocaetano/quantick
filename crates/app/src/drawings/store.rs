@@ -38,7 +38,7 @@ pub struct Drawings {
     pub(super) revision: u64,
     pub(super) items: Vec<Drawing>,
     pub(super) draft: Option<Drawing>,
-    pub(super) selected: Option<usize>,
+    pub(super) selection: quantick_chart_interaction::pane::Selection,
     /// Source of [`DrawingId`](super::DrawingId)s: incremented on every allocation and never
     /// rewound — not by undo, not by delete — so an id can never be reborn
     /// as a different object.

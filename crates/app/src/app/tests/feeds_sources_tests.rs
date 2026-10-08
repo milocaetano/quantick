@@ -456,7 +456,7 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
     let on_the_sentence = egui::pos2(popup.center().x, popup.top() + 12.0);
     let held = app.active_tab().flow_pane.state.trades().len();
     let before = {
-        let viewport = &app.active_tab().flow_pane.viewport;
+        let viewport = &app.active_tab().flow_pane.model.viewport;
         (viewport.px_per_bar(), viewport.right_edge_bar(held))
     };
     click_chart(&mut app, &ctx, on_the_sentence);
@@ -466,7 +466,7 @@ fn a_click_on_the_popup_never_reaches_the_chart() {
         "a click on the popup is not a click somewhere else"
     );
     let after = {
-        let viewport = &app.active_tab().flow_pane.viewport;
+        let viewport = &app.active_tab().flow_pane.model.viewport;
         (viewport.px_per_bar(), viewport.right_edge_bar(held))
     };
     assert_eq!(
@@ -656,9 +656,10 @@ fn a_rebuild_keeps_the_view_on_the_market_time_it_was_showing() {
     let slots = app.active_tab().flow_pane.slots();
     app.active_tab_mut()
         .flow_pane
+        .model
         .viewport
         .pan_pixels(200.0 * 8.0, slots);
-    assert!(!app.active_tab().flow_pane.viewport.follows_live());
+    assert!(!app.active_tab().flow_pane.model.viewport.follows_live());
     let was_showing = app
         .active_tab()
         .flow_pane
@@ -678,6 +679,7 @@ fn a_rebuild_keeps_the_view_on_the_market_time_it_was_showing() {
     let (start, end) = app
         .active_tab()
         .flow_pane
+        .model
         .viewport
         .visible_range(800.0, slots);
     assert!(
@@ -689,8 +691,12 @@ fn a_rebuild_keeps_the_view_on_the_market_time_it_was_showing() {
         .flow_pane
         .right_edge_time()
         .expect("still on a bar");
-    let bar = &app.active_tab().flow_pane.state.bars()
-        [app.active_tab().flow_pane.viewport.right_edge_bar(slots) as usize];
+    let bar = &app.active_tab().flow_pane.state.bars()[app
+        .active_tab()
+        .flow_pane
+        .model
+        .viewport
+        .right_edge_bar(slots) as usize];
     assert!(
         bar.open_time <= was_showing && was_showing <= bar.close_time,
         "the edge bar ({}..{}) must span the time it was showing ({was_showing})",
@@ -714,6 +720,7 @@ fn a_finer_spec_follows_the_same_market_time_forward() {
     let slots = app.active_tab().flow_pane.slots();
     app.active_tab_mut()
         .flow_pane
+        .model
         .viewport
         .pan_pixels(5.0 * 8.0, slots); // back to bar 4 of 10
     let was_showing = app
@@ -732,6 +739,7 @@ fn a_finer_spec_follows_the_same_market_time_forward() {
     let edge = app
         .active_tab()
         .flow_pane
+        .model
         .viewport
         .right_edge_bar(app.active_tab().flow_pane.slots());
     assert_eq!(
@@ -1158,15 +1166,15 @@ fn progressive_slices_paint_as_they_arrive_and_the_wait_ends_on_the_last() {
     {
         let pane = app.active_tab_mut().pane_mut(PaneSide::Time(0));
         let total = pane.slots();
-        pane.viewport.pan_pixels(200.0, total);
+        pane.model.viewport.pan_pixels(200.0, total);
         assert!(
-            pane.viewport.right_edge_bar(total) < total.saturating_sub(1) as f32,
+            pane.model.viewport.right_edge_bar(total) < total.saturating_sub(1) as f32,
             "the pane must really be panned back or this proves nothing"
         );
     }
     let anchored_bar = {
         let pane = app.active_tab().pane(PaneSide::Time(0));
-        pane.viewport.right_edge_bar(pane.slots())
+        pane.model.viewport.right_edge_bar(pane.slots())
     };
 
     // Newest week first, then older ones behind it: what a provider
@@ -1205,9 +1213,9 @@ fn progressive_slices_paint_as_they_arrive_and_the_wait_ends_on_the_last() {
         let pane = app.active_tab().pane(PaneSide::Time(0));
         let expected = anchored_bar + *expected_seam as f32;
         assert!(
-            (pane.viewport.right_edge_bar(pane.slots()) - expected).abs() < 0.001,
+            (pane.model.viewport.right_edge_bar(pane.slots()) - expected).abs() < 0.001,
             "the viewport jumped: expected {expected}, got {}",
-            pane.viewport.right_edge_bar(pane.slots())
+            pane.model.viewport.right_edge_bar(pane.slots())
         );
     }
 
@@ -1440,12 +1448,14 @@ fn installing_the_prefix_keeps_the_view_where_it_was() {
     let slots = app.active_tab().pane(PaneSide::Time(0)).slots();
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(0))
+        .model
         .viewport
         .pan_pixels(40.0, slots);
     let edge_time = app.active_tab().pane(PaneSide::Time(0)).right_edge_time();
     let edge_bar = app
         .active_tab()
         .pane(PaneSide::Time(0))
+        .model
         .viewport
         .right_edge_bar(slots);
     assert!(edge_time.is_some(), "the view is off the live edge");
@@ -1461,7 +1471,7 @@ fn installing_the_prefix_keeps_the_view_where_it_was() {
 
     let pane = app.active_tab().pane(PaneSide::Time(0));
     assert_eq!(
-        pane.viewport.right_edge_bar(pane.slots()),
+        pane.model.viewport.right_edge_bar(pane.slots()),
         edge_bar + 120.0,
         "the right edge moved with the bars inserted in front of it"
     );

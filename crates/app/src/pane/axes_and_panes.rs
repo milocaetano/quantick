@@ -260,7 +260,8 @@ impl ChartPane {
         );
         if time.dragged() {
             // Drag right → wider candles (zoom in); left → narrower (zoom out).
-            self.viewport
+            self.model
+                .viewport
                 .zoom((time.drag_delta().x / LANE_ZOOM_DRAG_PX).exp());
         }
         if time.hovered() || time.dragged() {
@@ -271,7 +272,9 @@ impl ChartPane {
         if time.hovered() {
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if scroll.abs() > 0.0 {
-                self.viewport.zoom(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
+                self.model
+                    .viewport
+                    .zoom(2.0_f32.powf(scroll / SCROLL_ZOOM_PX));
             }
         }
         // The time axis's own menu, the price gutter's twin: what an axis
@@ -284,7 +287,7 @@ impl ChartPane {
         });
         // Jump-to-live (audit F6): panned into history, the way back is one click at the axis' live
         // end. Registered after the strip gesture so the click is the chip's, not a zoom-drag's.
-        if !self.viewport.follows_live() {
+        if !self.model.viewport.follows_live() {
             let chip = ui.interact(
                 live_chip_rect(history_strip),
                 self.interaction_id("jump_to_live"),
@@ -294,7 +297,7 @@ impl ChartPane {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
             }
             if chip.clicked() {
-                self.viewport.snap_to_live();
+                self.model.viewport.snap_to_live();
             }
         }
         // A lane strip exists only where a lane does, so this is flow-pane
@@ -475,12 +478,15 @@ impl ChartPane {
         // Time, once, whichever pane the pointer was over: the panes share the candles' x axis, so
         // a sideways drag or scroll there must move the same viewport the candles do.
         if total > 0 && pane_time_gesture.pan_x != 0.0 {
-            self.viewport.pan_pixels(pane_time_gesture.pan_x, total);
+            self.model
+                .viewport
+                .pan_pixels(pane_time_gesture.pan_x, total);
         }
         // One wheel, one meaning at a time: while the ruler is walking a
         // bracket out from an aim, the same travel must not also zoom.
         if pane_time_gesture.scroll_y.abs() > 0.0 && !chrome.paper.consumed_scroll() {
-            self.viewport
+            self.model
+                .viewport
                 .zoom(2.0_f32.powf(pane_time_gesture.scroll_y / SCROLL_ZOOM_PX));
         }
         // The dividers last of all: registered after every pane body so the grab band takes the

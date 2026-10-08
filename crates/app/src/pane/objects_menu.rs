@@ -18,6 +18,7 @@ use crate::surfaces::drawing_chrome::{DrawingChromeAsk, ManagerRow};
 
 use super::PaneContextMenu;
 use super::menus::{PaneMenuIntent, PaneMenuView};
+use quantick_chart_interaction::pane::{Effect, Intent, Model, ObjectAction, update};
 
 /// Tallest the objects submenu grows before its list scrolls, so thirty
 /// objects never push the menu past the screen.
@@ -36,6 +37,7 @@ impl PaneContextMenu {
         &mut self,
         ui: &mut egui::Ui,
         view: &PaneMenuView<'_>,
+        model: &mut Model,
         intents: &mut Vec<PaneMenuIntent>,
     ) {
         let count = view.drawings.items().len();
@@ -59,7 +61,7 @@ impl PaneContextMenu {
                 self.clear_objects_rect = Some(clear.rect);
             }
             if clear.clicked() {
-                self.confirm_clear = true;
+                let _ = update(model, Intent::AskClear { count });
                 ui.close_menu();
             }
         });
@@ -102,19 +104,35 @@ impl PaneContextMenu {
             .or(ask.manager_bring_to_front)
             .or(ask.manager_delete)
             .is_some();
-        clicked.then(|| PaneMenuIntent::ObjectsAsk(Box::new(ask)))
+        clicked.then(|| {
+            let action = if let Some(index) = ask.manager_select {
+                ObjectAction::Select(drawings.items()[index].id)
+            } else if let Some(index) = ask.manager_toggle_hidden {
+                ObjectAction::ToggleHidden(drawings.items()[index].id)
+            } else if let Some(index) = ask.manager_toggle_locked {
+                ObjectAction::ToggleLocked(drawings.items()[index].id)
+            } else if let Some(index) = ask.manager_bring_to_front {
+                ObjectAction::BringToFront(drawings.items()[index].id)
+            } else {
+                ObjectAction::Delete(
+                    drawings.items()[ask.manager_delete.expect("clicked row action")].id,
+                )
+            };
+            PaneMenuIntent::ObjectsAsk(action)
+        })
     }
 
     /// The question "clear objects…" raised, over this chart until answered.
     /// `count` is how many objects the chart holds; `pane` names the window.
     pub(crate) fn draw_clear_objects_confirm(
         &mut self,
+        model: &mut Model,
         ctx: &egui::Context,
         chart: egui::Rect,
         count: usize,
         pane: u64,
     ) -> Option<PaneMenuIntent> {
-        if !self.confirm_clear {
+        if !model.menu.confirm_clear {
             return None;
         }
         let mut open = count > 0;
@@ -128,13 +146,19 @@ impl PaneContextMenu {
             .open(&mut open)
             .show(ctx, |ui| answer = delete_all_question(ui, count));
         if answer.is_some() || !open {
-            self.confirm_clear = false;
+            return update(
+                model,
+                Intent::AnswerClear {
+                    count,
+                    answer: answer == Some(true),
+                },
+            )
+            .into_iter()
+            .find_map(|effect| match effect {
+                Effect::Menu(intent) => Some(intent),
+                _ => None,
+            });
         }
-        (answer == Some(true)).then(|| {
-            PaneMenuIntent::ObjectsAsk(Box::new(DrawingChromeAsk {
-                delete_all: true,
-                ..DrawingChromeAsk::default()
-            }))
-        })
+        None
     }
 }

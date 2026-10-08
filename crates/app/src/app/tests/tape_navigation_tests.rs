@@ -47,8 +47,8 @@ fn candles_view(app: &QuantickApp) -> (f32, f32) {
     let pane = &app.active_tab().flow_pane;
     let total = pane.state.bars().len() + usize::from(pane.state.partial().is_some());
     (
-        pane.viewport.px_per_bar(),
-        pane.viewport.right_edge_bar(total),
+        pane.model.viewport.px_per_bar(),
+        pane.model.viewport.right_edge_bar(total),
     )
 }
 
@@ -662,8 +662,8 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     let pane = &mut app.active_tab_mut().flow_pane;
                     assert!(pane.price_view.set_manual_range(manual.0, manual.1));
                     pane.price_view.set_inverted(inverted);
-                    pane.viewport.zoom(1.375);
-                    pane.viewport.pan_pixels(64.0, pane.slots());
+                    pane.model.viewport.zoom(1.375);
+                    pane.model.viewport.pan_pixels(64.0, pane.slots());
                     app.active_tab_mut()
                         .tape_mut()
                         .set_live_lane_window(quantick_orderflow::LaneWindow::Fixed { ms: 3_000 });
@@ -676,7 +676,7 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     let tape_before = app.active_tab().tape().tape_end();
                     let window = app.active_tab().tape().live_lane_window();
                     assert_eq!(
-                        app.active_tab().flow_pane.viewport.follows_live(),
+                        app.active_tab().flow_pane.model.viewport.follows_live(),
                         tape_only
                     );
                     assert!(!tape_before.is_live());
@@ -702,17 +702,17 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                         "the literal double click preserves exact price framing"
                     );
                     assert_eq!(pane.price_view.is_inverted(), inverted);
-                    assert_eq!(pane.viewport.px_per_bar(), candles_before.0);
+                    assert_eq!(pane.model.viewport.px_per_bar(), candles_before.0);
                     assert_eq!(app.active_tab().tape().live_lane_window(), window);
                     let expected_tape = if on_tape { TapeEnd::Live } else { tape_before };
                     assert_eq!(app.active_tab().tape().tape_end(), expected_tape);
                     if on_tape {
                         assert_eq!(candles_view(&app), candles_before);
-                        assert_eq!(pane.viewport.follows_live(), tape_only);
+                        assert_eq!(pane.model.viewport.follows_live(), tape_only);
                     } else {
-                        assert!(pane.viewport.follows_live());
+                        assert!(pane.model.viewport.follows_live());
                         assert_eq!(
-                            pane.viewport.right_edge_bar(pane.slots()),
+                            pane.model.viewport.right_edge_bar(pane.slots()),
                             pane.slots().saturating_sub(1) as f32
                         );
                     }
@@ -741,7 +741,7 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     );
                     assert_eq!(app.active_tab().tape().tape_end(), expected_tape);
                     assert_eq!(app.active_tab().tape().live_lane_window(), window);
-                    assert_eq!(pane.viewport.px_per_bar(), candles_before.0);
+                    assert_eq!(pane.model.viewport.px_per_bar(), candles_before.0);
                 }
             }
         }
@@ -759,23 +759,23 @@ fn an_ordinary_canvas_double_click_returns_to_live_at_the_existing_zoom_and_pric
         let manual = (98.25, 104.75);
         assert!(pane.price_view.set_manual_range(manual.0, manual.1));
         pane.price_view.set_inverted(inverted);
-        pane.viewport.set_px_per_bar(23.0);
-        pane.viewport.pan_pixels(120.0, pane.slots());
+        pane.model.viewport.set_px_per_bar(23.0);
+        pane.model.viewport.pan_pixels(120.0, pane.slots());
         run_frame(&mut app, &ctx);
         let pane = &app.active_tab().flow_pane;
         assert!(pane.frame.lane_divider_x.is_none());
-        assert!(!pane.viewport.follows_live());
+        assert!(!pane.model.viewport.follows_live());
         let at = pane.frame.chart_rect.unwrap().center();
         click_sized(&mut app, &ctx, TEST_WINDOW, at);
         click_sized(&mut app, &ctx, TEST_WINDOW, at);
         run_frame(&mut app, &ctx);
         let pane = &app.active_tab().flow_pane;
-        assert!(pane.viewport.follows_live());
+        assert!(pane.model.viewport.follows_live());
         assert_eq!(
-            pane.viewport.right_edge_bar(pane.slots()),
+            pane.model.viewport.right_edge_bar(pane.slots()),
             pane.slots().saturating_sub(1) as f32
         );
-        assert_eq!(pane.viewport.px_per_bar(), 23.0);
+        assert_eq!(pane.model.viewport.px_per_bar(), 23.0);
         assert_eq!(pane.price_view.manual_range(), Some(manual));
         assert_eq!(pane.price_view.is_inverted(), inverted);
     }
@@ -1022,7 +1022,7 @@ fn lane_cells(app: &QuantickApp, lane: egui::Rect) -> Vec<crate::orderflow_view:
         .filter_map(|y| {
             app.active_tab().tape().control_flow_cell_at(
                 chart,
-                &pane.viewport,
+                &pane.model.viewport,
                 pane.slots(),
                 chart.right() - divider,
                 false,

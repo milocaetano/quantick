@@ -85,9 +85,13 @@ fn confirm_frame(
     with_flow_pane(app, |pane, chrome| {
         ctx.run(input(events), |ctx| {
             let count = pane.drawings.items().len();
-            let ask = pane
-                .context_menu
-                .draw_clear_objects_confirm(ctx, SCREEN, count, pane.id);
+            let ask = pane.context_menu.draw_clear_objects_confirm(
+                &mut pane.model,
+                ctx,
+                SCREEN,
+                count,
+                pane.id,
+            );
             pane.apply_menu_intents(ask, chrome);
         })
     })
@@ -173,19 +177,19 @@ fn clear_objects_asks_first_and_one_ctrl_z_brings_everything_back() {
         .expect("clear objects is painted")
         .center();
     menu_frame(&mut app, &menu, click_at(clear));
-    assert!(app.active_tab().flow_pane.context_menu.confirm_clear);
+    assert!(app.active_tab().flow_pane.model.menu.confirm_clear);
     run_frame(&mut app, &ctx);
     assert_eq!(count(&app), 2, "the click only asks");
 
     answer_confirm(&mut app, &menu, "Keep");
     run_frame(&mut app, &ctx);
-    assert!(!app.active_tab().flow_pane.context_menu.confirm_clear);
+    assert!(!app.active_tab().flow_pane.model.menu.confirm_clear);
     assert_eq!(count(&app), 2, "Keep deletes nothing");
 
-    app.active_tab_mut().flow_pane.context_menu.confirm_clear = true;
+    app.active_tab_mut().flow_pane.model.menu.confirm_clear = true;
     answer_confirm(&mut app, &menu, "Delete all");
     run_frame(&mut app, &ctx);
-    assert!(!app.active_tab().flow_pane.context_menu.confirm_clear);
+    assert!(!app.active_tab().flow_pane.model.menu.confirm_clear);
     assert_eq!(count(&app), 0, "every object goes, locked too");
     assert_eq!(
         app.surfaces.toast.message(),
@@ -281,5 +285,5 @@ fn an_empty_chart_offers_a_disabled_clear() {
         .expect("clear objects is painted, disabled")
         .center();
     menu_frame(&mut app, &menu, click_at(clear));
-    assert!(!app.active_tab().flow_pane.context_menu.confirm_clear);
+    assert!(!app.active_tab().flow_pane.model.menu.confirm_clear);
 }

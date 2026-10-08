@@ -293,7 +293,7 @@ fn assert_complete_flow_fixture(app: &mut QuantickApp, observer: &mut LocalClien
 
 fn fit_flow_fixture(app: &mut QuantickApp) {
     let pane = &mut app.active_tab_mut().flow_pane;
-    pane.viewport.set_px_per_bar(1.0);
+    pane.model.viewport.set_px_per_bar(1.0);
     assert!(pane.price_view.set_manual_range(99.0, 103.0));
 }
 
@@ -479,7 +479,7 @@ fn assert_regional_circles(
     let total = pane.state.bars().len() + usize::from(pane.state.partial().is_some());
     let history = rect.with_max_x(right);
     let geometry = quantick_chart::flow_execution::FlowExecutionGeometry::new(
-        pane.viewport,
+        pane.model.viewport,
         total,
         0,
         (low, high),
@@ -501,7 +501,7 @@ fn assert_regional_circles(
     for region in &presentation.regions {
         let mark = &marks[region.dot_index];
         let radius = number(mark, "radius_px") as f32;
-        let x = pane.viewport.x_at_bar_position(
+        let x = pane.model.viewport.x_at_bar_position(
             number(mark, "candle_position") as f32 - 0.5,
             right,
             total,
@@ -654,7 +654,11 @@ fn the_bubbles_switch_publishes_regional_flow_independently_of_tape_visibility()
     set_layer(&mut app, &mut cockpit, "tape_chart", true);
     set_layer(&mut app, &mut cockpit, "native_tape", false);
     set_layer(&mut app, &mut cockpit, "tape_chart", false);
-    app.active_tab_mut().flow_pane.viewport.set_px_per_bar(8.0);
+    app.active_tab_mut()
+        .flow_pane
+        .model
+        .viewport
+        .set_px_per_bar(8.0);
     let ordinary_off = settled_frame(&mut app, &ctx);
     let right = app.active_tab().flow_pane.frame.chart_rect.unwrap().right();
     let ordinary_off = other_discs_left_of(&ordinary_off, right);

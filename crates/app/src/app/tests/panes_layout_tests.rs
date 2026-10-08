@@ -1065,7 +1065,7 @@ fn the_time_panes_own_x_axis_zooms_the_time_pane_and_only_it() {
     let strip = plot_split(plot, 0.0, &[]).time_strip;
 
     let before_time = time_zoom(&app);
-    let before_flow = app.active_tab().flow_pane.viewport.px_per_bar();
+    let before_flow = app.active_tab().flow_pane.model.viewport.px_per_bar();
     // Stretch first, squeeze back: both directions of the gesture are
     // proven from wherever the pane's zoom happens to open, with no
     // assumption about how far the squeeze side has left to travel.
@@ -1093,7 +1093,7 @@ fn the_time_panes_own_x_axis_zooms_the_time_pane_and_only_it() {
         time_zoom(&app)
     );
     assert!(
-        (app.active_tab().flow_pane.viewport.px_per_bar() - before_flow).abs() < f32::EPSILON,
+        (app.active_tab().flow_pane.model.viewport.px_per_bar() - before_flow).abs() < f32::EPSILON,
         "and the flow pane beside it never moved"
     );
 }
@@ -3464,10 +3464,16 @@ fn switching_tabs_preserves_everything_each_one_owns() {
     let slots = app.active_tab().flow_pane.slots();
     app.active_tab_mut()
         .flow_pane
+        .model
         .viewport
         .pan_pixels(120.0, slots);
     let first_bars = app.active_tab().flow_pane.state.bars().len();
-    let first_edge = app.active_tab().flow_pane.viewport.right_edge_bar(slots);
+    let first_edge = app
+        .active_tab()
+        .flow_pane
+        .model
+        .viewport
+        .right_edge_bar(slots);
     let first_drawings = app.active_tab().focused_pane().drawings.items().len();
     assert_eq!(first_drawings, 1, "the drawing landed on the focused pane");
 
@@ -3485,6 +3491,7 @@ fn switching_tabs_preserves_everything_each_one_owns() {
     assert_eq!(
         app.active_tab()
             .flow_pane
+            .model
             .viewport
             .right_edge_bar(app.active_tab().flow_pane.slots()),
         first_edge,

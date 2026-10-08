@@ -38,7 +38,7 @@ fn an_armed_tool_leaves_the_chart_navigable() {
     );
 
     // And the wheel over the candles still zooms time.
-    let width = app.active_tab().flow_pane.viewport.candle_width();
+    let width = app.active_tab().flow_pane.model.viewport.candle_width();
     let over_candles = app
         .active_tab()
         .flow_pane
@@ -59,7 +59,7 @@ fn an_armed_tool_leaves_the_chart_navigable() {
         ],
     );
     assert!(
-        app.active_tab().flow_pane.viewport.candle_width() > width,
+        app.active_tab().flow_pane.model.viewport.candle_width() > width,
         "the candles still zoom while a tool is armed"
     );
 }
@@ -2289,6 +2289,7 @@ fn pulling_older_trades_re_trims_the_venue_prefix() {
     let slots = app.active_tab().pane(PaneSide::Time(0)).slots();
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(0))
+        .model
         .viewport
         .pan_pixels(40.0, slots);
     let edge_before = app.active_tab().pane(PaneSide::Time(0)).right_edge_time();

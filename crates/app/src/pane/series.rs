@@ -145,11 +145,11 @@ impl ChartPane {
     /// while the view follows live (the right edge is the newest bar by
     /// definition, so there is nothing to remember) or when there are no bars.
     pub fn right_edge_time(&self) -> Option<i64> {
-        if self.viewport.follows_live() {
+        if self.model.viewport.follows_live() {
             return None;
         }
         let slots = self.slots();
-        let edge = self.viewport.right_edge_bar(slots);
+        let edge = self.model.viewport.right_edge_bar(slots);
         // Panning into the empty space past the newest bar puts the edge off
         // the series; the newest bar is the market time it is closest to.
         let slot = (edge.floor().max(0.0) as usize).min(slots.saturating_sub(1));
@@ -233,7 +233,7 @@ impl ChartPane {
         // fold makes fewer bars of the same span, or when older trades push
         // the seam back and the overlapping buckets leave.
         let delta = self.history_prefix.len() as isize - before as isize;
-        self.viewport.shift_right_edge(delta);
+        self.model.viewport.shift_right_edge(delta);
         self.drawings.shift_bars(delta);
         self.gestures.shift_bars(delta);
         // Indicator columns have no signed shift: on growth they are nudged so
@@ -304,7 +304,7 @@ impl ChartPane {
 
     fn history_view_anchor(&self) -> (Option<i64>, f32, usize) {
         let slots = self.slots();
-        let edge = self.viewport.right_edge_bar(slots);
+        let edge = self.model.viewport.right_edge_bar(slots);
         let reference = (edge.floor().max(0.0) as usize).min(slots.saturating_sub(1));
         (self.right_edge_time(), edge - reference as f32, slots)
     }
@@ -314,12 +314,13 @@ impl ChartPane {
             // A Renko series re-cut from an older first print can hold a
             // different number of bricks, so the view and the marks go back
             // to market time.
-            self.viewport
+            self.model
+                .viewport
                 .reanchor_history(edge_time.and_then(|ms| self.slot_at_time(ms)), offset);
             self.reanchor_drawings(old_slots);
         } else {
             // Older bars shift every index up by `added`; keep the view steady.
-            self.viewport.shift_right_edge(added as isize);
+            self.model.viewport.shift_right_edge(added as isize);
             self.drawings.shift_bars(added as isize);
             self.gestures.shift_bars(added as isize);
         }
@@ -481,7 +482,7 @@ impl ChartPane {
                 state: &self.state,
                 spec: &self.spec,
             },
-            viewport: &self.viewport,
+            viewport: &self.model.viewport,
             indicators: &self.indicators,
         };
         projection.retime_selected(&mut self.drawings);
@@ -523,7 +524,7 @@ impl ChartPane {
         self.lane.reset();
         self.publish_partial();
         self.bump_pagination_revision();
-        self.viewport = Viewport::new();
+        self.model.viewport = Viewport::new();
         // Framing dies with the series; orientation is the trader's standing
         // choice about the view, not about these bars — it survives the way
         // the drawings do.

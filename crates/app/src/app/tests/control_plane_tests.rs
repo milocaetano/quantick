@@ -534,9 +534,14 @@ fn the_scripted_pan_settles_on_the_projection_margin() {
     for _ in 0..3 {
         run_frame(&mut app, &ctx);
     }
-    let settled = app.active_tab().flow_pane.viewport.right_edge_bar(slots);
-    assert_eq!(app.active_tab().flow_pane.viewport.px_per_bar(), 40.0);
-    assert!(!app.active_tab().flow_pane.viewport.follows_live());
+    let settled = app
+        .active_tab()
+        .flow_pane
+        .model
+        .viewport
+        .right_edge_bar(slots);
+    assert_eq!(app.active_tab().flow_pane.model.viewport.px_per_bar(), 40.0);
+    assert!(!app.active_tab().flow_pane.model.viewport.follows_live());
     assert!(
         settled > newest + 1.0,
         "the chart is out in the empty canvas: {settled}"
@@ -547,7 +552,12 @@ fn the_scripted_pan_settles_on_the_projection_margin() {
     for _ in 0..3 {
         run_frame(&mut app, &ctx);
     }
-    let again = app.active_tab().flow_pane.viewport.right_edge_bar(slots);
+    let again = app
+        .active_tab()
+        .flow_pane
+        .model
+        .viewport
+        .right_edge_bar(slots);
     assert!((again - settled).abs() < 0.001, "{again} vs {settled}");
 }
 
@@ -4027,7 +4037,9 @@ fn observer_cursor_resolves_the_exact_bar_under_the_pointer() {
         let chart = pane.frame.chart_area.expect("the pane reported its rect");
         let right = pane.frame.lane_divider_x.unwrap_or_else(|| chart.right());
         egui::pos2(
-            pane.viewport.x_center(expected_slot, right, pane.slots()),
+            pane.model
+                .viewport
+                .x_center(expected_slot, right, pane.slots()),
             chart.center().y,
         )
     };

@@ -16,7 +16,6 @@ use crate::plot_area::{PlotAreas, plot_split};
 use crate::price_view::PriceView;
 use crate::state::{BarConfiguration, BarSpec, ChartState, SpecSelector};
 use crate::toolrail::Tool;
-use crate::viewport::Viewport;
 
 use super::context_menu::ContextPress;
 use super::menus::{PaneMenuHosts, PaneMenuIntent, PaneMenuView, TapeMenuView};
@@ -102,7 +101,7 @@ pub struct ChartPane {
     // Pan/zoom navigation over the bar series. It owns the history pane only:
     // the live lane is a band of screen to its right that answers to nothing
     // it does.
-    pub viewport: Viewport,
+    pub model: quantick_chart_interaction::pane::Model,
     /// What the last draw measured, for the passes that are not the draw — see
     /// [`PaneFrame`].
     pub frame: PaneFrame,
@@ -183,7 +182,7 @@ impl ChartPane {
     pub(crate) fn drawing_projection(&self) -> drawing_projection::DrawingProjection<'_> {
         drawing_projection::DrawingProjection {
             series: self.series_read(),
-            viewport: &self.viewport,
+            viewport: &self.model.viewport,
             indicators: &self.indicators,
         }
     }
@@ -211,7 +210,7 @@ impl ChartPane {
                     state: &self.state,
                     spec: &self.spec,
                 },
-                viewport: &self.viewport,
+                viewport: &self.model.viewport,
                 indicators: &self.indicators,
             },
             drawings: &mut self.drawings,
@@ -294,6 +293,11 @@ impl ChartPane {
         let spec = spec.into();
         let selector = SpecSelector::new(spec);
 
+        let drawings = Drawings::default();
+        let model = quantick_chart_interaction::pane::Model {
+            selection: drawings.selection_handle(),
+            ..Default::default()
+        };
         Self {
             id,
             spec: selector,
@@ -315,7 +319,7 @@ impl ChartPane {
             // The backfill divider opens off: a full-height rule across the candles for a boundary
             // that matters once, when reading how far the live tape goes back. Nothing is hidden
             // about the data; the mark is one click away in the layer menu.
-            viewport: Viewport::new(),
+            model,
             frame: PaneFrame::default(),
             price_axis_levels: Vec::new(),
             lane: LaneTransport::default(),
@@ -327,7 +331,7 @@ impl ChartPane {
             paper_hud_anchor: None,
             context_menu: PaneContextMenu::default(),
             strategies: PaneStrategies::default(),
-            drawings: Drawings::default(),
+            drawings,
             gestures: PaneGestures::default(),
             pending_reanchor: None,
             strip_expanded: None,
@@ -533,7 +537,7 @@ impl ChartPane {
                     state: &self.state,
                     spec: &self.spec,
                 },
-                viewport: &self.viewport,
+                viewport: &self.model.viewport,
                 indicators: &self.indicators,
             },
             placement_gestures::PlacementFrame {
@@ -652,7 +656,7 @@ impl ChartPane {
                 state: &self.state,
                 spec: &self.spec,
             },
-            viewport: &self.viewport,
+            viewport: &self.model.viewport,
             indicators: &self.indicators,
         };
         // Any strategy instance bound to a drawing holds it, armed or not:
@@ -726,11 +730,15 @@ impl ChartPane {
         &'a mut self,
         capabilities: FeedCapabilities,
         style: &'a crate::style::ChartStyle,
-    ) -> (&'a mut PaneContextMenu, PaneMenuView<'a>) {
+    ) -> (
+        &'a mut PaneContextMenu,
+        &'a mut quantick_chart_interaction::pane::Model,
+        PaneMenuView<'a>,
+    ) {
         let tape = self
             .orderflow
             .as_ref()
-            .filter(|_| self.context_menu.on_tape)
+            .filter(|_| self.model.menu.on_tape)
             .map(|orderflow| TapeMenuView {
                 window: orderflow.live_lane_window(),
                 reference_ms: self.frame.lane_reference_ms,
@@ -761,7 +769,7 @@ impl ChartPane {
             flow_opening,
             tape,
         };
-        (&mut self.context_menu, view)
+        (&mut self.context_menu, &mut self.model, view)
     }
 
     /// Where the chart-layer submenu button was painted — see
@@ -774,11 +782,11 @@ impl ChartPane {
     /// The layer menu, drawn and applied: what the right-click opens.
     pub fn draw_layer_menu(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
         let intents = {
-            let (menu, view) = self.menu_parts(chrome.capabilities, chrome.style);
+            let (menu, model, view) = self.menu_parts(chrome.capabilities, chrome.style);
             let hosts = PaneMenuHosts {
                 paper: &mut *chrome.paper,
             };
-            menu.draw_layer_menu(ui, &view, hosts)
+            menu.draw_layer_menu(ui, &view, model, hosts)
         };
         self.apply_menu_intents(intents, chrome);
     }
@@ -824,7 +832,9 @@ impl ChartPane {
                 self.slots(),
             )
         {
-            let select = self.context_menu.open_at(press, &self.drawings);
+            let select = self
+                .context_menu
+                .open_at(&mut self.model, press, &self.drawings);
             self.apply_menu_intents(select, chrome);
         }
         // Right-click: what is on this canvas, and what is not. Secondary
@@ -832,16 +842,20 @@ impl ChartPane {
         // drawing tools — a pan that ends anywhere never opens it.
         chart.context_menu(|ui| self.draw_layer_menu(ui, chrome));
         let count = self.drawings.items().len();
-        let clear =
-            self.context_menu
-                .draw_clear_objects_confirm(&chart.ctx, areas.chart, count, self.id);
+        let clear = self.context_menu.draw_clear_objects_confirm(
+            &mut self.model,
+            &chart.ctx,
+            areas.chart,
+            count,
+            self.id,
+        );
         self.apply_menu_intents(clear, chrome);
         // While the menu is open the pointer is reading it, not the chart, so
         // no crosshair chases it across the candles behind it.
         if chart.context_menu_opened() {
             self.hover_pos = None;
         } else {
-            let commit = self.context_menu.close(&self.drawings);
+            let commit = self.context_menu.close(&mut self.model, &self.drawings);
             self.apply_menu_intents(commit, chrome);
         }
     }
@@ -857,6 +871,23 @@ impl ChartPane {
         }
     }
 
+    pub(crate) fn apply_menu_intent(
+        &mut self,
+        choice: PaneMenuIntent,
+        chrome: &mut PaneChrome<'_>,
+    ) {
+        use quantick_chart_interaction::pane::{Effect, Intent, update};
+        let id = choice.drawing_id();
+        let drawing = id
+            .and_then(|id| self.drawings.index_of(id))
+            .map(|index| super::context_menu::drawing_fact(&self.drawings.items()[index]));
+        for effect in update(&mut self.model, Intent::Menu { choice, drawing }) {
+            if let Effect::Menu(intent) = effect {
+                self.execute_menu_effect(intent, chrome);
+            }
+        }
+    }
+
     /// The one place a menu's ask writes the pane. Each arm calls the same
     /// pane operation the click called before menus answered with intents.
     /// That is not a claim that each is a control-plane capability: several
@@ -866,11 +897,7 @@ impl ChartPane {
     /// settings, clear objects) have no control capability today — a gap
     /// that predates this apply site. Drawing and strategy intents name the
     /// drawing by id and do nothing if it is gone.
-    pub(crate) fn apply_menu_intent(
-        &mut self,
-        intent: PaneMenuIntent,
-        chrome: &mut PaneChrome<'_>,
-    ) {
+    fn execute_menu_effect(&mut self, intent: PaneMenuIntent, chrome: &mut PaneChrome<'_>) {
         match intent {
             PaneMenuIntent::SetLayerVisible { layer, visible } => {
                 self.set_layer_visible(layer, visible, chrome.layers);
@@ -887,6 +914,12 @@ impl ChartPane {
                 }
             }
             PaneMenuIntent::Place { tool, point } => {
+                let Some(tool) = drawings::DRAWING_TOOLS
+                    .into_iter()
+                    .find(|entry| entry.id() == tool)
+                else {
+                    return;
+                };
                 let completion = self.gestures.place_point(
                     &mut self.drawings,
                     tool,
@@ -905,7 +938,7 @@ impl ChartPane {
                 }
             }
             PaneMenuIntent::ToggleIndicatorHidden(slot) => {
-                self.indicators.toggle_hidden(slot);
+                self.indicators.toggle_hidden(SlotId(slot));
                 chrome.layers.indicators_changed = true;
             }
             PaneMenuIntent::SelectDrawing(id) => {
@@ -961,7 +994,25 @@ impl ChartPane {
                 self.strategies.rearm(id, series);
             }
             PaneMenuIntent::StrategyRemove(id) => self.strategies.remove_for_drawing(id),
-            PaneMenuIntent::ObjectsAsk(ask) => chrome.drawing_chrome.ask_from_menu(self.id, *ask),
+            PaneMenuIntent::ObjectsAsk(action) => {
+                use quantick_chart_interaction::pane::ObjectAction;
+                let mut ask = crate::surfaces::drawing_chrome::DrawingChromeAsk::default();
+                match action {
+                    ObjectAction::Select(id) => ask.manager_select = self.drawings.index_of(id),
+                    ObjectAction::ToggleHidden(id) => {
+                        ask.manager_toggle_hidden = self.drawings.index_of(id)
+                    }
+                    ObjectAction::ToggleLocked(id) => {
+                        ask.manager_toggle_locked = self.drawings.index_of(id)
+                    }
+                    ObjectAction::BringToFront(id) => {
+                        ask.manager_bring_to_front = self.drawings.index_of(id)
+                    }
+                    ObjectAction::Delete(id) => ask.manager_delete = self.drawings.index_of(id),
+                    ObjectAction::DeleteAll => ask.delete_all = true,
+                }
+                chrome.drawing_chrome.ask_from_menu(self.id, ask);
+            }
         }
     }
 }

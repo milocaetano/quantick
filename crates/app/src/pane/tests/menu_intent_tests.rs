@@ -26,11 +26,11 @@ fn menu_frame(
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let (menu, view) = pane.menu_parts(chrome.capabilities, chrome.style);
+                    let (menu, model, view) = pane.menu_parts(chrome.capabilities, chrome.style);
                     let hosts = PaneMenuHosts {
                         paper: &mut *chrome.paper,
                     };
-                    intents.extend(menu.draw_layer_menu(ui, &view, hosts));
+                    intents.extend(menu.draw_layer_menu(ui, &view, model, hosts));
                 });
             },
         );
@@ -206,20 +206,22 @@ fn intents_for_a_drawing_that_is_gone_do_nothing() {
 fn a_closing_menu_commits_the_rename_in_flight_and_only_a_changed_one() {
     let (mut pane, id) = pane_with_rectangle();
 
-    pane.context_menu.drawing = Some(id);
-    pane.context_menu.rename = String::new();
+    pane.model.menu.drawing = Some(id);
+    pane.model.menu.rename = String::new();
     assert!(
-        pane.context_menu.close(&pane.drawings).is_none(),
+        pane.context_menu
+            .close(&mut pane.model, &pane.drawings)
+            .is_empty(),
         "an untouched name asks for nothing"
     );
     assert!(
-        pane.context_menu.drawing.is_none(),
+        pane.model.menu.drawing.is_none(),
         "closing lets go of the drawing"
     );
 
-    pane.context_menu.drawing = Some(id);
-    pane.context_menu.rename = "vwap anchor".to_owned();
-    let commit = pane.context_menu.close(&pane.drawings);
+    pane.model.menu.drawing = Some(id);
+    pane.model.menu.rename = "vwap anchor".to_owned();
+    let commit = pane.context_menu.close(&mut pane.model, &pane.drawings);
     apply(&mut pane, commit.into_iter().collect());
     assert_eq!(
         pane.drawings.items()[0].name.as_deref(),
@@ -231,8 +233,8 @@ fn a_closing_menu_commits_the_rename_in_flight_and_only_a_changed_one() {
 fn the_menus_delete_lets_go_of_the_drawing_and_its_half_typed_name() {
     let ctx = egui::Context::default();
     let (mut pane, id) = pane_with_rectangle();
-    pane.context_menu.drawing = Some(id);
-    pane.context_menu.rename = "half typed".to_owned();
+    pane.model.menu.drawing = Some(id);
+    pane.model.menu.rename = "half typed".to_owned();
 
     let intents = click_entry(&mut pane, &ctx, "Delete");
     assert!(matches!(
@@ -241,22 +243,26 @@ fn the_menus_delete_lets_go_of_the_drawing_and_its_half_typed_name() {
     ));
     apply(&mut pane, intents);
     assert!(pane.drawings.items().is_empty());
-    assert_eq!(pane.context_menu.drawing, None);
-    assert!(pane.context_menu.rename.is_empty());
-    assert!(pane.context_menu.close(&pane.drawings).is_none());
+    assert_eq!(pane.model.menu.drawing, None);
+    assert!(pane.model.menu.rename.is_empty());
+    assert!(
+        pane.context_menu
+            .close(&mut pane.model, &pane.drawings)
+            .is_empty()
+    );
 }
 
 #[test]
 fn a_drawing_deleted_under_the_open_menu_drops_its_section_and_name() {
     let ctx = egui::Context::default();
     let (mut pane, id) = pane_with_rectangle();
-    pane.context_menu.drawing = Some(id);
-    pane.context_menu.rename = "half typed".to_owned();
+    pane.model.menu.drawing = Some(id);
+    pane.model.menu.rename = "half typed".to_owned();
     assert!(pane.drawings.remove_by_id(id));
 
     assert!(menu_frame(&mut pane, &ctx, Vec::new()).is_empty());
-    assert_eq!(pane.context_menu.drawing, None);
-    assert!(pane.context_menu.rename.is_empty());
+    assert_eq!(pane.model.menu.drawing, None);
+    assert!(pane.model.menu.rename.is_empty());
     assert!(
         pane.context_menu.menu_rects.is_empty(),
         "no section for a ghost"
@@ -267,7 +273,7 @@ fn a_drawing_deleted_under_the_open_menu_drops_its_section_and_name() {
 fn the_strategy_seat_answers_each_click_with_its_intent() {
     let ctx = egui::Context::default();
     let (mut pane, id) = pane_with_rectangle();
-    pane.context_menu.drawing = Some(id);
+    pane.model.menu.drawing = Some(id);
     arm_strategy(&mut pane, id);
 
     let disarm = click_entry(&mut pane, &ctx, "Disarm");
@@ -313,8 +319,8 @@ fn strategy_intents_leave_an_unswept_strategy_alone_once_its_drawing_is_gone() {
 fn an_unchanged_rename_blur_records_nothing() {
     let ctx = egui::Context::default();
     let (mut pane, id) = pane_with_rectangle();
-    pane.context_menu.drawing = Some(id);
-    pane.context_menu.rename = String::new();
+    pane.model.menu.drawing = Some(id);
+    pane.model.menu.rename = String::new();
     // Focus the field, then click away from it: the blur of an untouched
     // name asks for no rename, so no undo step is recorded.
     let _ = click_entry(&mut pane, &ctx, "Rename");
@@ -339,7 +345,7 @@ fn an_unchanged_rename_blur_records_nothing() {
 
     // The control: the same focus-and-blur with a changed name does rename,
     // so the silence above is the guard's, not a blur that never happened.
-    pane.context_menu.rename = "new name".to_owned();
+    pane.model.menu.rename = "new name".to_owned();
     let _ = click_entry(&mut pane, &ctx, "Rename");
     let blur = menu_frame(
         &mut pane,
@@ -396,7 +402,7 @@ fn a_place_arms_the_pointer_and_opens_the_caret_as_before() {
     with_chrome(Tool::Crosshair, |chrome| {
         pane.apply_menu_intent(
             PaneMenuIntent::Place {
-                tool: tool("text"),
+                tool: tool("text").id(),
                 point: ChartPoint::at(3.0, 100.0),
             },
             chrome,
@@ -415,10 +421,13 @@ fn chrome_intents_raise_the_hosts_flags() {
         pane.apply_menu_intent(PaneMenuIntent::OpenFootprintSettings, chrome);
         assert!(chrome.layers.open_footprint_settings);
 
-        pane.apply_menu_intent(PaneMenuIntent::ToggleIndicatorHidden(slot), chrome);
+        pane.apply_menu_intent(PaneMenuIntent::ToggleIndicatorHidden(slot.0), chrome);
         assert!(chrome.layers.indicators_changed);
 
-        pane.apply_menu_intent(PaneMenuIntent::ObjectsAsk(Box::default()), chrome);
+        pane.apply_menu_intent(
+            PaneMenuIntent::ObjectsAsk(quantick_chart_interaction::pane::ObjectAction::DeleteAll),
+            chrome,
+        );
         assert_eq!(
             chrome.drawing_chrome.menu_target(),
             Some(pane.id),

@@ -197,7 +197,7 @@ fn candle_aggression_keeps_same_millisecond_tick_ownership_and_current_partial()
     let chart = left.frame.chart_rect.unwrap();
     let range = left.price_view.resolve(left.frame.auto_range.unwrap());
     let scale = PriceScale::from_range(range.0, range.1, chart.top(), chart.bottom());
-    let x = left.viewport.x_center(6, chart.right(), left.slots());
+    let x = left.model.viewport.x_center(6, chart.right(), left.slots());
     assert!(
         circle_at(&output, egui::pos2(x, scale.y(143.2))),
         "this frame paints the forming candle's exact quantity-weighted price: (9*140 + 16*145)/25"
@@ -260,7 +260,7 @@ fn candle_aggression_paints_after_co_enabled_footprint_plates() {
     let ctx = egui::Context::default();
     let (mut app, _events, _commands) = context_fixture(&ctx);
     let left = &mut app.active_tab_mut().time_panes[0];
-    left.viewport.zoom(5.0);
+    left.model.viewport.zoom(5.0);
     left.set_footprint_override(Some(crate::footprint_config::FootprintConfig {
         style: crate::footprint_config::FootprintStyle::Split,
         show_numbers: false,

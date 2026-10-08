@@ -21,12 +21,10 @@
 use eframe::egui;
 
 use crate::config::FeedCapabilities;
-use crate::drawings::{ChartPoint, DrawingId, DrawingTool, Drawings};
-use crate::indicator_worker::SlotId;
+use crate::drawings::Drawings;
 use crate::indicators::IndicatorViews;
 use crate::paper_trading::PaperTrading;
 use crate::style::ChartStyle;
-use crate::surfaces::drawing_chrome::DrawingChromeAsk;
 use crate::theme;
 use quantick_layers::{ChartLayer, LayerBlock};
 use quantick_orderflow::{
@@ -38,47 +36,8 @@ use super::drawing_projection::PaneSeriesRead;
 use super::layers::PaneLayerRead;
 use super::{PaneContextMenu, PaneStrategies};
 
-/// One thing a pane menu asked the pane to do. The menus never write the
-/// pane; `ChartPane::apply_menu_intent` is where each of these happens.
-pub(crate) enum PaneMenuIntent {
-    /// A layer's checkbox changed.
-    SetLayerVisible { layer: ChartLayer, visible: bool },
-    /// FLOW's "exclude first daily region from scale" changed.
-    SetIgnoreFlowOpening(bool),
-    /// "configure footprint…": the footprint's own window.
-    OpenFootprintSettings,
-    /// The tape's market-time window was chosen.
-    SetLaneWindow(LaneWindow),
-    /// A registry tool's placing entry, at the point its press resolved.
-    Place {
-        tool: DrawingTool,
-        point: ChartPoint,
-    },
-    /// An indicator's hide/show checkbox.
-    ToggleIndicatorHidden(SlotId),
-    /// The right-click landed on this drawing: it is selected, like a press.
-    /// Every drawing intent names the drawing by id; one gone by the time
-    /// the pane applies it is a no-op.
-    SelectDrawing(DrawingId),
-    /// The drawing section's rename committed.
-    RenameDrawing { id: DrawingId, name: String },
-    /// Lock or unlock the drawing.
-    SetDrawingLocked { id: DrawingId, locked: bool },
-    /// Hide or show the drawing.
-    SetDrawingHidden { id: DrawingId, hidden: bool },
-    /// Delete the drawing, and the strategy armed on it.
-    DeleteDrawing(DrawingId),
-    /// "Add strategy…": ask for the strategy popup over this region.
-    StrategyAdd(DrawingId),
-    /// Call off the strategy riding this drawing.
-    StrategyDisarm(DrawingId),
-    /// Watch this region again with the same parameters.
-    StrategyRearm(DrawingId),
-    /// Detach the strategy from this drawing.
-    StrategyRemove(DrawingId),
-    /// An object-manager ask from the objects submenu or "clear objects…".
-    ObjectsAsk(Box<DrawingChromeAsk>),
-}
+pub(crate) use quantick_chart_interaction::pane::MenuIntent as PaneMenuIntent;
+use quantick_chart_interaction::pane::Model;
 
 /// One layer's switch as the pane answers for it this frame.
 #[derive(Clone, Copy)]
@@ -350,6 +309,7 @@ impl PaneContextMenu {
         &mut self,
         ui: &mut egui::Ui,
         view: &PaneMenuView<'_>,
+        model: &mut Model,
         hosts: PaneMenuHosts<'_>,
     ) -> Vec<PaneMenuIntent> {
         let mut intents = Vec::new();
@@ -358,18 +318,18 @@ impl PaneContextMenu {
         // trade actions, which answer for a bare price, not an object.
         #[cfg(test)]
         self.menu_rects.clear();
-        if let Some(id) = self.drawing {
+        if let Some(id) = model.menu.drawing {
             match view.drawings.index_of(id) {
                 Some(index) => {
-                    self.draw_drawing_menu_section(ui, view, index, &mut intents);
+                    self.draw_drawing_menu_section(ui, view, model, index, &mut intents);
                     ui.separator();
                 }
                 // Deleted while the menu was open (undo, another surface):
                 // the section vanishes instead of acting on a ghost, and
                 // takes its half-typed name with it.
                 None => {
-                    self.drawing = None;
-                    self.rename.clear();
+                    model.menu.drawing = None;
+                    model.menu.rename.clear();
                 }
             }
         }
@@ -378,13 +338,22 @@ impl PaneContextMenu {
         // the click was already resolved per tool, snap rules included, so
         // the menu only offers what the capture could honestly anchor. This
         // frequent chart action leads the general sections below it.
-        if !self.places.is_empty() {
-            for &(tool, point) in &self.places {
+        if !model.menu.places.is_empty() {
+            for &(tool_id, point) in &model.menu.places {
+                let Some(tool) = crate::drawings::DRAWING_TOOLS
+                    .into_iter()
+                    .find(|tool| tool.id() == tool_id)
+                else {
+                    continue;
+                };
                 let label = tool
                     .context_menu_label()
                     .expect("only declaring tools were captured");
                 if ui.button(label).on_hover_text(tool.hover_text()).clicked() {
-                    intents.push(PaneMenuIntent::Place { tool, point });
+                    intents.push(PaneMenuIntent::Place {
+                        tool: tool.id(),
+                        point,
+                    });
                     ui.close_menu();
                 }
             }
@@ -399,14 +368,14 @@ impl PaneContextMenu {
             self.draw_chart_layer_entries(ui, view, &mut intents);
         });
         self.chart_layers_rect = Some(chart_layers.response.rect);
-        chart_layers.response.on_hover_text(if self.on_tape {
+        chart_layers.response.on_hover_text(if model.menu.on_tape {
             "what the candles beside the tape draw"
         } else {
             "what this chart draws"
         });
-        self.draw_objects_menu_entries(ui, view, &mut intents);
+        self.draw_objects_menu_entries(ui, view, model, &mut intents);
         ui.separator();
-        if let Some(price) = self.price {
+        if let Some(price) = model.menu.price {
             // Stable for the menu's whole life: re-reading the pointer while
             // it moves over a row would reflow the price-specific actions.
             hosts.paper.context_trade_actions(ui, price);
@@ -414,7 +383,7 @@ impl PaneContextMenu {
         }
         // The tape is a pane of its own and is configured as one: a right-click
         // on it answers for it, keeping the primary menu focused on actions.
-        if self.on_tape {
+        if model.menu.on_tape {
             if let Some(tape) = &view.tape {
                 self.draw_tape_menu_section(ui, view, tape, &mut intents);
             }
@@ -437,7 +406,7 @@ impl PaneContextMenu {
                     .on_hover_text("hide/show without removing (no recompute)")
                     .changed()
                 {
-                    intents.push(PaneMenuIntent::ToggleIndicatorHidden(indicator.slot));
+                    intents.push(PaneMenuIntent::ToggleIndicatorHidden(indicator.slot.0));
                 }
             }
         }
@@ -451,6 +420,7 @@ impl PaneContextMenu {
         &mut self,
         ui: &mut egui::Ui,
         view: &PaneMenuView<'_>,
+        model: &mut Model,
         index: usize,
         intents: &mut Vec<PaneMenuIntent>,
     ) {
@@ -465,7 +435,7 @@ impl PaneContextMenu {
         // undo step, not one per keystroke. Whitespace clears back to the
         // derived label; the store normalises it.
         let rename = ui.add(
-            egui::TextEdit::singleline(&mut self.rename)
+            egui::TextEdit::singleline(&mut model.menu.rename)
                 .hint_text("name this object")
                 .desired_width(150.0),
         );
@@ -473,10 +443,10 @@ impl PaneContextMenu {
         self.menu_rects.push(("Rename", rename.rect));
         // An unchanged blur records nothing: the same guard `close` applies.
         let current = drawing.name.as_deref().unwrap_or_default();
-        if rename.lost_focus() && self.rename.trim() != current {
+        if rename.lost_focus() && model.menu.rename.trim() != current {
             intents.push(PaneMenuIntent::RenameDrawing {
                 id,
-                name: self.rename.clone(),
+                name: model.menu.rename.clone(),
             });
         }
         intents.extend(view.strategies.draw_menu_entries(
@@ -519,8 +489,8 @@ impl PaneContextMenu {
             let delete = ui.button("Delete");
             if delete.clicked() {
                 intents.push(PaneMenuIntent::DeleteDrawing(id));
-                self.drawing = None;
-                self.rename.clear();
+                model.menu.drawing = None;
+                model.menu.rename.clear();
                 ui.close_menu();
             }
             delete

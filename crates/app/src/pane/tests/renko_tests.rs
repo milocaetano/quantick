@@ -41,10 +41,11 @@ fn repeated_history_publications_preserve_fractional_pan_and_future_projection()
         pane.ingest_backfill(&prints(1000, (1000..1400).collect()));
         for first in [800, 600, 400] {
             let slots = pane.slots();
-            pane.viewport.snap_to_live();
-            pane.viewport
+            pane.model.viewport.snap_to_live();
+            pane.model
+                .viewport
                 .pan_pixels(if projection { -25.5 } else { 45.5 }, slots);
-            let before = pane.viewport.right_edge_bar(slots);
+            let before = pane.model.viewport.right_edge_bar(slots);
             let reference = (before.floor() as usize).min(slots - 1);
             let time = pane.slot_open_time(reference).unwrap();
             let offset = before - reference as f32;
@@ -59,12 +60,12 @@ fn repeated_history_publications_preserve_fractional_pan_and_future_projection()
             }
             assert!(pane.install_history());
             assert!(
-                !pane.viewport.follows_live(),
+                !pane.model.viewport.follows_live(),
                 "publication must not reacquire follow"
             );
             let expected = pane.slot_at_time(time).unwrap() as f32 + offset;
             assert!(
-                (pane.viewport.right_edge_bar(pane.slots()) - expected).abs() < 0.001,
+                (pane.model.viewport.right_edge_bar(pane.slots()) - expected).abs() < 0.001,
                 "fractional input survives every publication"
             );
         }
@@ -227,7 +228,7 @@ fn older_history_that_reshapes_bricks_keeps_marks_and_view_on_their_market_time(
     );
     // The view parked on that brick, off the live edge.
     let slots = pane.slots();
-    pane.viewport.pan_pixels(1.0e6, slots);
+    pane.model.viewport.pan_pixels(1.0e6, slots);
     assert_eq!(pane.right_edge_time(), Some(mark_time));
 
     let added = pane.prepend_history(&older);
@@ -247,7 +248,7 @@ fn older_history_that_reshapes_bricks_keeps_marks_and_view_on_their_market_time(
     #[allow(clippy::cast_precision_loss)]
     let holder_bar = holder as f32;
     assert_eq!(
-        pane.viewport.right_edge_bar(pane.slots()),
+        pane.model.viewport.right_edge_bar(pane.slots()),
         holder_bar,
         "and the view stay on their market time"
     );
@@ -283,15 +284,15 @@ fn older_history_shifts_a_tick_panes_view_and_marks_by_the_bars_it_added() {
         pane.drawings
             .place(line, ChartPoint::at_time(7.25, 101.0, Some(shared_ms)))
     );
-    let px = pane.viewport.px_per_bar();
-    pane.viewport.pan_pixels(px * 10.5, pane.slots());
-    let edge = pane.viewport.right_edge_bar(pane.slots());
+    let px = pane.model.viewport.px_per_bar();
+    pane.model.viewport.pan_pixels(px * 10.5, pane.slots());
+    let edge = pane.model.viewport.right_edge_bar(pane.slots());
     assert!((edge - 8.5).abs() < 1e-3, "parked half a bar off bar 8");
 
     let added = pane.prepend_history(&older);
     assert_eq!(added, 10);
     assert_eq!(
-        pane.viewport.right_edge_bar(pane.slots()),
+        pane.model.viewport.right_edge_bar(pane.slots()),
         edge + 10.0,
         "the view, its half bar kept"
     );

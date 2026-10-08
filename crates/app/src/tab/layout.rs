@@ -376,7 +376,7 @@ impl Tab {
             };
             let slot = anchor.and_then(|ms| pane.slot_at_time(ms));
             let slots = pane.slots();
-            pane.viewport.reanchor(slot, slots);
+            pane.model.viewport.reanchor(slot, slots);
             // The marks follow the view: same market time, this pane's
             // new bar space. Nothing is lost, so there is nothing to
             // announce.
