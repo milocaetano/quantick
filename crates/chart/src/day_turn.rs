@@ -32,19 +32,26 @@ pub struct DayTurn {
 
 impl DayTurn {
     /// The turn at `slot`, given the bar before it as `(open_ms, close_ms)`
-    /// and the open of the bar that starts the new day.
+    /// and the open of the bar that starts the new day. The bar before is
+    /// the old day's end only when it closed on the day it opened: a bar
+    /// spanning midnight closed in the new day, and that time would read as
+    /// when the old one ended, so no end time is known.
     #[must_use]
     pub fn new(
         slot: usize,
         date: CivilDate,
         before: Option<(i64, i64)>,
         opened_ms: Option<i64>,
-        _tz: TzOffset,
+        tz: TzOffset,
     ) -> Self {
         Self {
             slot,
             date,
-            ended_ms: before.map(|(_, close)| close),
+            ended_ms: before
+                .filter(|&(open, close)| {
+                    CivilDate::from_ms(open, tz) == CivilDate::from_ms(close, tz)
+                })
+                .map(|(_, close)| close),
             opened_ms,
         }
     }
@@ -202,6 +209,7 @@ pub fn plan_strip(
         })
     });
     let mut plans = Vec::with_capacity(ticks.len());
+    let mut tick_before = f32::NEG_INFINITY;
     for (index, &(x, widths)) in ticks.iter().enumerate() {
         if !tick_free(x) {
             plans.push(TickPlan {
@@ -210,7 +218,10 @@ pub fn plan_strip(
             });
             continue;
         }
-        let floor = (written_right + DAY_LABEL_GAP_PX).max(left);
+        // Clear of the last label and of the tick before, which a label
+        // crosses when the turn before it wrote nothing.
+        let floor = (written_right.max(tick_before) + DAY_LABEL_GAP_PX).max(left);
+        tick_before = x;
         let labels = place_turn(x, widths, floor, limit_before(index + 1), &free);
         if let Some(placed) = labels {
             let width = match (placed.with_opened, widths.dated_opened) {
