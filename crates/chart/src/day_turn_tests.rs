@@ -159,3 +159,37 @@ fn a_time_label_stands_aside_only_where_a_date_is_written() {
     assert!(!reserved_by(40.0, 90.0, &reserved), "clear before it");
     assert!(!reserved_by(120.0, 150.0, &[]), "no dates, no gaps");
 }
+
+#[test]
+fn an_end_time_never_crosses_the_tick_before_it() {
+    // The first turn's date does not fit before the second tick, so nothing
+    // is written right of it; the second turn's end time would still reach
+    // back across the first tick.
+    let ticks = [(100.0, WIDTHS), (120.0, WIDTHS)];
+    let plan = plan_strip(0.0, 600.0, None, &ticks, ANYWHERE, |_| true);
+    assert_eq!(plan.ticks[0].labels, None);
+    assert_eq!(
+        plan.ticks[1].labels,
+        Some(TurnPlacement {
+            ended_at: None,
+            with_opened: true,
+        })
+    );
+}
+
+#[test]
+fn a_bar_spanning_midnight_writes_no_end_time() {
+    let date = CivilDate::from_ymd(2026, 9, 29);
+    // 23:50 and 23:58 on the 28th in São Paulo: the old day's last close.
+    let open = 1_790_650_200_000;
+    let close = 1_790_650_680_000;
+    let opened = Some(1_790_683_200_000);
+    let turn = DayTurn::new(7, date, Some((open, close)), opened, BRT);
+    assert_eq!(turn.ended_ms, Some(close));
+    // Closed at 00:05 on the 29th: that is the new day, not when the old one
+    // ended, so no end time is written rather than a misleading one.
+    let past_midnight = 1_790_651_100_000;
+    let turn = DayTurn::new(7, date, Some((open, past_midnight)), opened, BRT);
+    assert_eq!(turn.ended_ms, None);
+    assert_eq!(turn.opened_ms, opened);
+}
