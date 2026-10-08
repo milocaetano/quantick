@@ -17,7 +17,7 @@ use quantick_guards::{GUARDS, remedies, workspace_root};
 /// instead of a green suite over a guard CI never runs — which is the failure
 /// the check exists to prevent, and which a hand-kept list of names invites by
 /// making "add the string" the obvious fix.
-const TESTED: [&str; 16] = [
+const TESTED: [&str; 17] = [
     "size",
     "language",
     "encoding",
@@ -34,6 +34,7 @@ const TESTED: [&str; 16] = [
     "app-lines",
     "struct-width",
     "single-consumer",
+    "impl-spread",
 ];
 
 /// Run one named guard and fail with everything it found.
@@ -154,6 +155,14 @@ fn no_struct_grows_past_its_recorded_field_count() {
 #[test]
 fn every_single_consumer_crate_is_signed_for() {
     assert_clean(TESTED[15]);
+}
+
+/// No type in a crate over 20,000 production lines spreads its inherent impls
+/// over more files than the signed ceiling, and a spread that fell has had
+/// the ceiling tightened.
+#[test]
+fn no_type_spreads_its_impls_past_the_recorded_ceiling() {
+    assert_clean(TESTED[16]);
 }
 
 // --- `--report`, the mode that measures rather than judges -------------------
