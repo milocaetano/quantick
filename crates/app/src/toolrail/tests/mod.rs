@@ -516,10 +516,39 @@ fn the_magnet_is_a_rail_toggle_that_starts_off() {
         .magnet_rect
         .expect("the magnet button rendered")
         .center();
+    // A click asks; the window answers through `annotate.magnet.set`, the
+    // operation that journals, so a hand and a script leave the same event.
     click_at(&mut rail, &mut drawings, &ctx, screen, button);
-    assert!(rail.magnet());
+    assert!(!rail.magnet(), "the rail asks rather than flipping itself");
+    assert_eq!(rail.take_magnet_request(), Some(true));
+    assert_eq!(rail.take_magnet_request(), None, "one click, one request");
+    rail.set_magnet(true);
     click_at(&mut rail, &mut drawings, &ctx, screen, button);
-    assert!(!rail.magnet(), "the same button turns it back off");
+    assert_eq!(
+        rail.take_magnet_request(),
+        Some(false),
+        "the same button asks to turn it back off"
+    );
+}
+
+/// The magnet is on screen only where the rail draws it: the trailing
+/// cluster of every stage but Minimal, where it folds into the closed More
+/// menu, and nowhere on a hidden rail.
+#[test]
+fn the_magnet_is_painted_only_where_the_rail_draws_it() {
+    let ctx = egui::Context::default();
+    let mut rail = ToolRail::new();
+    let mut drawings = Drawings::default();
+    assert!(!rail.magnet_painted(), "an undrawn rail paints nothing");
+    let wide = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));
+    rail_frame_with(&mut rail, &mut drawings, &ctx, wide, Vec::new());
+    assert!(rail.magnet_painted());
+    let minimal = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(250.0, 600.0));
+    rail_frame_with(&mut rail, &mut drawings, &ctx, minimal, Vec::new());
+    assert!(!rail.magnet_painted(), "Minimal folds it into More");
+    rail_frame_with(&mut rail, &mut drawings, &ctx, wide, Vec::new());
+    rail.set_visible(false);
+    assert!(!rail.magnet_painted(), "a hidden rail paints nothing");
 }
 
 /// The first family slot and its members — every favorites test walks
