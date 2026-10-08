@@ -153,6 +153,16 @@ impl ChartPane {
             },
             style: chrome.style,
         });
+        // The day rule over the grid and under everything the chart reads.
+        let day_turns = self.day_turns(&frame, chrome);
+        renderers.day_rule(&mut crate::pane::render_registry::DayRulePass {
+            painter: &painter.with_clip_rect(frame.history_rect),
+            history: frame.history_rect,
+            total: frame.total,
+            candle_width: frame.cw,
+            viewport: &self.viewport,
+            turns: day_turns.as_deref().unwrap_or_default(),
+        });
 
         let history = HistoryStage {
             renderers,
@@ -221,7 +231,8 @@ impl ChartPane {
         }
         self.frame.bands = carved;
         self.paper_hud_anchor = self.paint_paper(&frame, axis_x, chrome);
-        self.paint_axis_marks(&frame, axis_x, &levels, &time_claims, chrome);
+        let turns = day_turns.as_deref();
+        self.paint_axis_marks(&frame, axis_x, &levels, &time_claims, turns, chrome);
         let clock = layout
             .native_tape
             .then(|| layout.live_lane.map(|lane| (lane.end_ms, chrome.tz)))

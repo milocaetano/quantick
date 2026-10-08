@@ -25,7 +25,7 @@ A Cargo workspace under `crates/`. *Depends on* is one-way, enforced by
 | `guards` | — | The size, context, cycle and UI-free ratchets, the English and encoding scans. |
 | `control-schema` | control, control-host, stores, pine, layers, sim, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
 | `stores` | chart, sources, workspace, orderflow, indicators, engine | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle. |
-| `chart` | chart-interaction, orderflow, indicator-session, indicators, engine | ChartState/geometry/viewport/styles, indicator views. |
+| `chart` | chart-interaction, civil, orderflow, indicator-session, indicators, engine | ChartState/geometry/viewport/styles, indicator views. |
 | `indicator-session` | pine, indicators, engine | Source binding, batches, deltas. |
 | `anchored-studies` | indicators, engine | Resumable profile and anchored-average state; the caller schedules and paints. |
 | `pine` | indicators | "Quantick Pine", a Pine v5 subset; zero external dependencies. |

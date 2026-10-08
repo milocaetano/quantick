@@ -8,7 +8,7 @@ mod days;
 mod dividers;
 mod flow;
 mod indicators;
-pub(super) use days::{DaySeparatorPass, DayTurn};
+pub(super) use days::{DayRulePass, DaySeparatorPass};
 pub(super) use dividers::DividerPass;
 mod axes;
 use axes::LastPricePass;
@@ -68,6 +68,7 @@ pub(super) enum Contribution {
     Seam(for<'a> fn(&mut DividerPass<'a>)),
     Backfill(for<'a> fn(&mut DividerPass<'a>)),
     FeedGaps(for<'a> fn(&mut DividerPass<'a>)),
+    DayRule(for<'a> fn(&mut DayRulePass<'a>)),
     DaySeparator(for<'a> fn(&mut DaySeparatorPass<'a>)),
     Grid(for<'a, 'b> fn(&mut GridPass<'a, 'b>)),
     LastPrice(for<'a> fn(&mut LastPricePass<'a>)),
@@ -141,6 +142,7 @@ pass!(status, Status, StatusPass<'_>);
 pass!(seam, Seam, DividerPass<'_>);
 pass!(backfill, Backfill, DividerPass<'_>);
 pass!(feed_gaps, FeedGaps, DividerPass<'_>);
+pass!(day_rule, DayRule, DayRulePass<'_>);
 pass!(day_separator, DaySeparator, DaySeparatorPass<'_>);
 pass!(grid, Grid, GridPass<'_, '_>);
 pass!(last_price, LastPrice, LastPricePass<'_>);

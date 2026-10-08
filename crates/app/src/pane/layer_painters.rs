@@ -18,6 +18,7 @@ use crate::plot_area::split_time_strip;
 use crate::pointer_compass;
 use crate::theme;
 use crate::toolrail::Tool;
+use quantick_chart::day_turn::DayTurn;
 use quantick_layers::ChartLayer;
 
 use super::draw_frame::{AxisChips, DrawFrame};
@@ -178,6 +179,7 @@ impl ChartPane {
         axis_x: f32,
         levels: &[PriceAxisLevel],
         time_claims: &pointer_compass::AxisClaims,
+        turns: Option<&[DayTurn]>,
         chrome: &PaneChrome<'_>,
     ) {
         let &DrawFrame {
@@ -263,38 +265,7 @@ impl ChartPane {
                 });
         }
         // Before the time labels, which stand aside for the dates it writes.
-        // The bar before the first visible one seeds the comparison, so a day
-        // that opens on the leftmost bar is still marked. The forming bar
-        // counts: a day is marked the moment its first bar opens.
-        // Not on a chart cut at a day or longer: every bar opens a new day
-        // there, and the time labels already write the dates.
-        let days_on = self.layer_visible(ChartLayer::DaySeparator, chrome.style)
-            && self
-                .spec
-                .spec()
-                .time_interval_ms()
-                .is_none_or(|ms| ms < quantick_engine::time_bucket::DAY_MS);
         let series = self.series_read();
-        let turns: Vec<_> = if days_on {
-            quantick_civil::day_starts(
-                (start.saturating_sub(1)..end)
-                    .filter_map(|slot| Some((slot, series.slot_open_time(slot)?))),
-                chrome.tz,
-            )
-            .into_iter()
-            .map(|(slot, date)| crate::pane::render_registry::DayTurn {
-                slot,
-                date,
-                ended_ms: slot
-                    .checked_sub(1)
-                    .and_then(|before| series.closed_bar(before))
-                    .map(|bar| bar.close_time),
-                opened_ms: series.slot_open_time(slot),
-            })
-            .collect()
-        } else {
-            Vec::new()
-        };
         let mut day_pass = crate::pane::render_registry::DaySeparatorPass {
             painter,
             history: history_rect,
@@ -302,7 +273,7 @@ impl ChartPane {
             total,
             candle_width: cw,
             viewport: &self.viewport,
-            turns: &turns,
+            turns: turns.unwrap_or_default(),
             tz: chrome.tz,
             first_visible: (start < end)
                 .then(|| series.slot_open_time(start))
@@ -311,7 +282,7 @@ impl ChartPane {
             claims: time_claims,
             reserved: Vec::new(),
         };
-        if days_on {
+        if turns.is_some() {
             self.layer_renderers.day_separator(&mut day_pass);
         }
         crate::pane::render_registry::TimeStripPass {
@@ -329,6 +300,42 @@ impl ChartPane {
             series: self.series_read(),
         }
         .paint();
+    }
+
+    /// Where the display day turns in view, or `None` with the separator
+    /// off. The bar before the first visible one seeds the comparison, so a
+    /// day that opens on the leftmost bar is still marked. The forming bar
+    /// counts: a day is marked the moment its first bar opens. Not on a chart
+    /// cut at a day or longer: every bar opens a new day there, and the time
+    /// labels already write the dates.
+    pub(super) fn day_turns(
+        &self,
+        frame: &DrawFrame<'_>,
+        chrome: &PaneChrome<'_>,
+    ) -> Option<Vec<DayTurn>> {
+        let days_on = self.layer_visible(ChartLayer::DaySeparator, chrome.style)
+            && self
+                .spec
+                .spec()
+                .time_interval_ms()
+                .is_none_or(|ms| ms < quantick_engine::time_bucket::DAY_MS);
+        if !days_on {
+            return None;
+        }
+        let series = self.series_read();
+        let slots = frame.start.saturating_sub(1)..frame.end;
+        let starts = quantick_civil::day_starts(
+            slots.filter_map(|slot| Some((slot, series.slot_open_time(slot)?))),
+            chrome.tz,
+        );
+        let turns = starts.into_iter().map(|(slot, date)| {
+            let before = slot
+                .checked_sub(1)
+                .and_then(|before| series.closed_bar(before));
+            let before = before.map(|bar| (bar.open_time, bar.close_time));
+            DayTurn::new(slot, date, before, series.slot_open_time(slot), chrome.tz)
+        });
+        Some(turns.collect())
     }
 
     /// The last marks on the canvas: the jump-to-live chip, the empty-view
