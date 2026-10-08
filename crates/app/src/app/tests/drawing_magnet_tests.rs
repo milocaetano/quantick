@@ -8,6 +8,9 @@ use rust_decimal::prelude::ToPrimitive;
 /// Bars of `TRADES_PER_BAR` prints: open, high, low, close, in that order.
 const TRADES_PER_BAR: u64 = 4;
 const CLOSED_BARS: u64 = 120;
+/// The fixture's first trade id, leaving ids and time below it for older
+/// trades a test prepends.
+const FIRST_AGG_ID: u64 = 1_000;
 
 /// The four prints of bar `bar`: a candle spanning `low ..= high` with a
 /// body from `open` to `close`, stepped so neighbours differ.
@@ -46,10 +49,10 @@ fn app_with_candles() -> (QuantickApp, mpsc::Receiver<FeedCommand>) {
         // The forming bar stops after its low: three prints of four.
         let count = if bar == CLOSED_BARS { 3 } else { 4 };
         for price in &prints[..count] {
-            let agg_id = trades.len() as u64 + 1;
+            let agg_id = FIRST_AGG_ID + trades.len() as u64;
             trades.push(quantick_engine::Trade {
                 agg_id,
-                timestamp_ms: 1_000 + agg_id as i64 * 100,
+                timestamp_ms: 1_000_000 + agg_id as i64 * 100,
                 price: *price,
                 quantity: Decimal::ONE,
                 side: quantick_engine::Side::Buy,
@@ -392,21 +395,60 @@ fn a_trend_line_dragged_by_its_body_passes_through_a_print() {
     let before = last_points(&app);
     let grab = egui::pos2((start.x + end.x) / 2.0, (start.y + end.y) / 2.0);
     let [_, high_c, _, _] = ohlc(70);
+    // Off the bar's centre: the line must meet the print at the candle,
+    // not at the pointer's fraction of a bar beside it.
     let to = egui::pos2(
-        bar_x(&app, 70.0),
+        bar_x(&app, 70.3),
         price_y(&app, PaneSide::Flow, high_c) - 8.0,
     );
     drag_through(&mut app, &ctx, grab, &[to]);
     let points = last_points(&app);
-    let pane = &app.active_tab().flow_pane;
-    let chart = pane.frame.chart_area.unwrap();
-    let pointer_bar = pane.viewport.bar_at_x(
-        to.x,
-        pane.frame.lane_divider_x.unwrap_or(chart.right()),
-        pane.slots(),
-    );
-    let through = trend_price_at(&points, pointer_bar);
-    assert!((through - high_c).abs() < 1e-6, "{through} {points:?}");
+    let through = trend_price_at(&points, 70.0);
+    assert!((through - high_c).abs() < 1e-9, "{through} {points:?}");
     let slope = |p: &[ChartPoint]| (p[1].price - p[0].price) / f64::from(p[1].bar - p[0].bar);
     assert!((slope(&points) - slope(&before)).abs() < 1e-6, "{points:?}");
+}
+
+/// History landing under a body drag moves every index; the drag's own copy
+/// of the grabbed anchors must move with them, or the object jumps a bar.
+#[test]
+fn a_body_drag_survives_history_landing_underneath() {
+    let (mut app, _commands, ctx) = magnet_app();
+    app.toolrail.set_magnet(false);
+    let at = egui::pos2(bar_x(&app, 52.0), price_y(&app, PaneSide::Flow, 104.3));
+    place_drawing(&mut app, &ctx, "horizontal-line", &[at]);
+    let placed = last_points(&app)[0];
+    let grab = egui::pos2(bar_x(&app, 35.0), at.y);
+    let middle = grab + egui::vec2(30.0, 0.0);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(grab), pointer_button(grab, true)],
+    );
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(middle)]);
+    let older: Vec<_> = (1..=TRADES_PER_BAR)
+        .map(|agg_id| quantick_engine::Trade {
+            agg_id,
+            timestamp_ms: 1_000 + agg_id as i64 * 100,
+            price: Decimal::from(100),
+            quantity: Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        })
+        .collect();
+    let added = app.active_tab_mut().flow_pane.prepend_history(&older);
+    assert_eq!(added, 1);
+    let to = grab + egui::vec2(60.0, 0.0);
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(to)]);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(to), pointer_button(to, false)],
+    );
+    let px_per_bar = app.active_tab().flow_pane.viewport.px_per_bar();
+    let moved = last_points(&app)[0].bar - (placed.bar + added as f32);
+    assert!(
+        (moved - 60.0 / px_per_bar).abs() < 1e-3,
+        "moved {moved} bars, the hand moved {}",
+        60.0 / px_per_bar
+    );
 }
