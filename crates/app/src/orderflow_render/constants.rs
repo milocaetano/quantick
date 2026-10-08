@@ -109,31 +109,6 @@ pub(super) const FLOW_OPENING_LABEL_FONT_PX: f32 = 11.0;
 /// Drop-shadow offset behind the first-contour quantity label, in pixels.
 pub(super) const FLOW_OPENING_LABEL_SHADOW_OFFSET: egui::Vec2 = egui::vec2(1.0, 1.0);
 
-/// Where the inspection heading starts inside the card, in pixels.
-pub(super) const INSPECTION_TEXT_INSET: egui::Vec2 = egui::vec2(8.0, 4.0);
-/// Horizontal padding of the FLOW inspection card: the text inset on both sides, in pixels.
-pub(super) const INSPECTION_PADDING_X_PX: f32 = 2.0 * INSPECTION_TEXT_INSET.x;
-/// Gap between the bottom of the inspection heading and its detail rows, in pixels.
-pub(super) const INSPECTION_ROW_GAP_PX: f32 = 4.0;
-/// Detail rows' distance below the card top, beyond the heading's own height, in pixels.
-pub(super) const INSPECTION_DETAIL_TOP_PX: f32 = INSPECTION_TEXT_INSET.y + INSPECTION_ROW_GAP_PX;
-/// Space below the inspection detail rows, in pixels.
-pub(super) const INSPECTION_BOTTOM_PX: f32 = 6.0;
-/// Card height beyond its text: top inset, row gap and bottom space, in pixels.
-pub(super) const INSPECTION_PADDING_Y_PX: f32 = INSPECTION_DETAIL_TOP_PX + INSPECTION_BOTTOM_PX;
-/// Narrowest text column worth an inspection card; below it none is drawn, in pixels.
-pub(super) const INSPECTION_MIN_TEXT_WIDTH_PX: f32 = 80.0;
-/// Inspection card heading size, in points.
-pub(super) const INSPECTION_HEADING_FONT_PX: f32 = 11.0;
-/// Inspection card detail rows size, in points.
-pub(super) const INSPECTION_DETAIL_FONT_PX: f32 = 10.0;
-/// Gap between the pointer and a card placed above it, in pixels.
-pub(super) const INSPECTION_GAP_ABOVE_PX: f32 = 8.0;
-/// Offset of a card placed right of and below the pointer, in pixels.
-pub(super) const INSPECTION_POINTER_OFFSET_PX: f32 = 12.0;
-/// Inspection card corner radius, in pixels.
-pub(super) const INSPECTION_CORNER_RADIUS_PX: f32 = 4.0;
-
 /// Chart width below which the tape header legend hides, in pixels.
 pub(super) const LEGEND_TAPE_MIN_CHART_WIDTH_PX: f32 = 90.0;
 /// Chart width below which the chart legend hides, in pixels.
