@@ -275,12 +275,23 @@ impl ChartPane {
                 .time_interval_ms()
                 .is_none_or(|ms| ms < quantick_engine::time_bucket::DAY_MS);
         let series = self.series_read();
-        let starts = if days_on {
+        let turns: Vec<_> = if days_on {
             quantick_civil::day_starts(
                 (start.saturating_sub(1)..end)
                     .filter_map(|slot| Some((slot, series.slot_open_time(slot)?))),
                 chrome.tz,
             )
+            .into_iter()
+            .map(|(slot, date)| crate::pane::render_registry::DayTurn {
+                slot,
+                date,
+                ended_ms: slot
+                    .checked_sub(1)
+                    .and_then(|before| series.closed_bar(before))
+                    .map(|bar| bar.close_time),
+                opened_ms: series.slot_open_time(slot),
+            })
+            .collect()
         } else {
             Vec::new()
         };
@@ -291,7 +302,8 @@ impl ChartPane {
             total,
             candle_width: cw,
             viewport: &self.viewport,
-            starts: &starts,
+            turns: &turns,
+            tz: chrome.tz,
             first_visible: (start < end)
                 .then(|| series.slot_open_time(start))
                 .flatten()

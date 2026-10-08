@@ -8,7 +8,7 @@ mod days;
 mod dividers;
 mod flow;
 mod indicators;
-pub(super) use days::DaySeparatorPass;
+pub(super) use days::{DaySeparatorPass, DayTurn};
 pub(super) use dividers::DividerPass;
 mod axes;
 use axes::LastPricePass;

@@ -73,8 +73,9 @@ drawings = true
 # what they were, and the mark is one click away in the layer menu.
 backfill_divider = false
 
-# Off too: a dated tick on the time axis where the display day turns over. The
-# time labels carry a clock time only, so this is how a chart spanning midnight
-# tells one day from the next; a trader who reads one session at a time does
-# not need the axis busier.
-day_separator = false
+# On: where the display day turns over, a near-invisible rule across the
+# candles and a tick on the time axis with the old day's last bar time and the
+# new day's date and first bar time. The time labels carry a clock time only,
+# so this is how a chart spanning midnight tells one day from the next, and
+# when each session ended and started.
+day_separator = true

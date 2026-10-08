@@ -1,0 +1,7 @@
+# Issue #598: the day separator's faint rule across the candles and the end and
+# start times either side of its tick on the time strip. These lines are the
+# egui painter that owns the separator: the rule, the two time labels, their
+# coloured layout job, the drop order when space is short, and the per-turn
+# end/start times gathered beside the existing day starts.
+crates/app +147
+!budget +147
