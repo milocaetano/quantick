@@ -62,7 +62,7 @@ pub use defaults::{
 };
 pub(super) use family::level_with;
 pub use family::{
-    AnchorSnap, Constrain, IconDots, IconLetter, IconStrokes, ToolFamily, ToolShortcut,
+    AnchorSnap, BodySnap, Constrain, IconDots, IconLetter, IconStrokes, ToolFamily, ToolShortcut,
 };
 pub(super) use geometry::{dashed_segment, distance_to_segment, off_line_by, unit_normal};
 pub use object::{
@@ -70,6 +70,7 @@ pub use object::{
     Duplicated, NewDrawing, PaneKey,
 };
 pub use payload::{DrawingPayload, NoPayload};
+pub(crate) use placement::reanchor_points;
 pub(crate) use store::UNDO_HISTORY_LIMIT;
 use store::UndoEntry;
 pub use store::{Drawings, PlacementBatch};

@@ -2028,6 +2028,71 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Turns the drawing rail's magnet on or off: with it on, anchors placed, re-dragged or carried by a body drag land on the open, high, low or close of the candle under the pointer when the pointer is on or near that candle. The same switch the rail's magnet button and its More menu entry flip; scene.read lists it as `tool_rail.toggle.magnet`.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.magnet.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "description": "`true` snaps drawing anchors to the open / high / low / close of the\ncandle under the pointer; `false` leaves them where the pointer is.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "DrawingMagnetInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "description": "Whether the call moved it; `false` when it already stood there.",
+            "type": "boolean"
+          },
+          "enabled": {
+            "description": "The magnet as it stands after the call.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled",
+          "changed"
+        ],
+        "title": "DrawingMagnetResult",
+        "type": "object"
+      },
+      "persistence": "transient",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the state it wants rather than flipping it; repeating it is harmless and the result reads the magnet back.",
+      "title": "Set the drawing magnet",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Draws a channel whose base joins the first two chart coordinates and whose width reaches the third.",
       "destructive": false,
       "dry_run_supported": false,
@@ -14488,6 +14553,11 @@
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "magnet": {
+            "default": false,
+            "description": "The drawing rail's OHLC magnet (`annotate.magnet.set`), present\nwhether or not the rail is on screen. Always written; optional in\nthe schema only so v1 readers stay compatible.",
+            "type": "boolean"
+          },
           "tabs": {
             "items": {
               "$ref": "#/$defs/TabDrawingsSnapshot"

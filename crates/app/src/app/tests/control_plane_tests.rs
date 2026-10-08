@@ -5520,7 +5520,7 @@ fn observer_schemas(update: bool) {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 65);
+    assert_eq!(documents.len(), 67);
     for file_name in [
         "feed-history-load-input-v1.schema.json",
         "feed-history-load-result-v1.schema.json",

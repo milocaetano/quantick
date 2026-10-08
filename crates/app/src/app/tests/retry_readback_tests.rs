@@ -55,6 +55,8 @@ const CLIENT_NAME: &str = "quantick integration test";
 mod asset_bubbles_save_tests;
 #[path = "candle_aggression_tests.rs"]
 mod candle_aggression;
+#[path = "drawing_magnet_control_tests.rs"]
+mod drawing_magnet_control;
 #[path = "history_control_tests.rs"]
 mod history_control_tests;
 #[path = "layer_control_tests.rs"]
@@ -697,6 +699,12 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             "indicator.mouse_vertical_line.set",
             1,
             Value::Null,
+            Readback::Moves,
+        ),
+        (
+            "annotate.magnet.set",
+            1,
+            json!({ "enabled": true }),
             Readback::Moves,
         ),
     ]

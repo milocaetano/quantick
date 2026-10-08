@@ -11,6 +11,7 @@ mod annotate;
 pub(crate) mod chart;
 mod contract;
 mod deal_recording;
+mod drawing_magnet;
 mod events;
 mod evidence;
 mod feed;
@@ -56,6 +57,7 @@ pub(crate) use annotate::{
 };
 #[cfg(test)]
 pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID};
+pub(crate) use drawing_magnet::DRAWING_MAGNET_CAPABILITY_ID;
 #[cfg(test)]
 pub(crate) use evidence::{RawScreenshot, ScreenshotPixels};
 pub(crate) use indicator_guide::INDICATOR_GUIDE_CAPABILITY_ID;

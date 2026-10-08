@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "enabled": {
+      "description": "`true` snaps drawing anchors to the open / high / low / close of the\ncandle under the pointer; `false` leaves them where the pointer is.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "enabled"
+  ],
+  "title": "DrawingMagnetInput",
+  "type": "object"
+}

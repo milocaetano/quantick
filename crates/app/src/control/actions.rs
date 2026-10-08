@@ -138,6 +138,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     super::recovery::register(&mut registry)?;
     super::history::register(&mut registry)?;
     super::deal_recording::register(&mut registry)?;
+    super::drawing_magnet::register(&mut registry)?;
     super::indicator_guide::register(&mut registry)?;
     super::script::register(&mut registry)?;
     super::trade::register(&mut registry)?;

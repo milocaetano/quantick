@@ -11,8 +11,8 @@ use eframe::egui;
 use crate::theme;
 
 use super::{
-    AnchorSnap, AxisLevels, Constrain, DEFAULT_DRAWING_COLOR, DRAWING_TOOLS, DrawContext, Drawing,
-    DrawingBand, DrawingPayload, DrawingStyle, GlyphSize, Handles, IconDots, IconLetter,
+    AnchorSnap, AxisLevels, BodySnap, Constrain, DEFAULT_DRAWING_COLOR, DRAWING_TOOLS, DrawContext,
+    Drawing, DrawingBand, DrawingPayload, DrawingStyle, GlyphSize, Handles, IconDots, IconLetter,
     IconStrokes, NoPayload, PresetHost, SELECTED_ANCHOR_FILL, SELECTED_ANCHOR_RADIUS_PX,
     SELECTED_ANCHOR_RING_WIDTH_PX, SELECTION_HALO_COLOR, SELECTION_HALO_EXTRA_WIDTH_PX, ToolFamily,
     ToolShortcut,
@@ -98,6 +98,12 @@ pub(super) trait DrawingToolImpl: Sync {
     /// Where this tool's anchors land on the bar under the pointer.
     fn anchor_snap(&self) -> AnchorSnap {
         AnchorSnap::Pointer
+    }
+    /// Whether every anchor's price is a level spanning the pointer's bar,
+    /// so a body drag can land one on a print. Straight lines answer
+    /// through [`DrawingTool::body_snap`] instead.
+    fn levels_span_the_body(&self) -> bool {
+        false
     }
     /// The words this object holds, when its content is words rather than
     /// geometry. `None` for every tool but the note.
@@ -400,6 +406,19 @@ impl DrawingTool {
     #[must_use]
     pub fn id(self) -> &'static str {
         self.0.id()
+    }
+
+    /// How a body drag of this object meets the magnet — see [`BodySnap`].
+    #[must_use]
+    pub fn body_snap(self) -> BodySnap {
+        let lines = super::line_core::LINES_FAMILY.id;
+        if self.required_points() == 2 && self.family().is_some_and(|family| family.id == lines) {
+            BodySnap::Line
+        } else if self.0.levels_span_the_body() {
+            BodySnap::Levels
+        } else {
+            BodySnap::Free
+        }
     }
 
     /// Look up a registered tool by its stable id — how the saved favorites

@@ -1,6 +1,7 @@
 //! Pointer-tool and mirrored-mark updates belong to their retained gesture.
 //! Inputs borrow coordinates and the independent store; effects return to chrome.
 use super::drawing_projection::DrawingProjection;
+use super::gestures::TranslateFrom;
 use super::primary_button::pane_chrome_hit;
 use super::{
     DRAWING_DRAG_THRESHOLD_PX, DrawingDrag, PaneGestures, SharedDrag, SharedEdit,
@@ -20,7 +21,6 @@ pub(super) struct PointerFrame<'a> {
     // Shared marks use the prior paint's carve, not the new local input carve.
     pub(super) cached_bands: &'a Bands,
     pub(super) pointer: &'a SharedPointer,
-    pub(super) pointer_delta: egui::Vec2,
     pub(super) paper_gesture: bool,
     pub(super) tool: Tool,
     pub(super) shared_pick: Option<SharedPick>,
@@ -124,7 +124,7 @@ impl PaneGestures {
         let started = pointer.pressed
             && pick.is_some_and(|pick| self.begin_local_drag(drawings, projection, pick));
         // Keep threshold calculation unconditional and before initiation gating.
-        let travel = self.local_travel(pointer.position, frame.pointer_delta);
+        let past_threshold = self.past_drag_threshold(pointer.position);
         self.advance_local_drag(
             drawings,
             projection,
@@ -133,7 +133,7 @@ impl PaneGestures {
                 bands: frame.bands,
                 pointer,
             },
-            if started { None } else { travel },
+            !started && past_threshold,
             &mut outcome,
         );
         if !self.drag.is_active() {
@@ -275,6 +275,7 @@ impl PaneGestures {
         self.press_pick =
             Some(projection.drawing_pick_at(drawings, position, band, history_right, total));
         self.drag_pending_from = Some(position);
+        self.translate_from = None;
         if let Some((drawing_index, handle)) =
             projection.drawing_handle_at(drawings, position, band, history_right, total)
         {
@@ -296,6 +297,11 @@ impl PaneGestures {
                 DrawingDrag::Blocked
             } else {
                 drawings.begin_gesture();
+                self.translate_from = Some(TranslateFrom {
+                    index,
+                    last: position,
+                    free: drawings.items()[index].points.clone(),
+                });
                 DrawingDrag::Translate
             };
         }
@@ -306,42 +312,34 @@ impl PaneGestures {
         self.drag.is_active()
     }
 
-    fn local_travel(
-        &mut self,
-        pointer_position: Option<egui::Pos2>,
-        pointer_delta: egui::Vec2,
-    ) -> Option<egui::Vec2> {
+    /// Whether the pointer has travelled past the drag threshold in this
+    /// gesture; both moves then read the pointer's position, not a delta.
+    fn past_drag_threshold(&mut self, pointer_position: Option<egui::Pos2>) -> bool {
         match (self.drag_pending_from, pointer_position) {
             (Some(origin), Some(position)) => {
-                let travel = position - origin;
-                if travel.length() < DRAWING_DRAG_THRESHOLD_PX {
-                    None
-                } else {
+                let past = (position - origin).length() >= DRAWING_DRAG_THRESHOLD_PX;
+                if past {
                     self.drag_pending_from = None;
-                    Some(travel)
                 }
+                past
             }
-            // No pending origin: the threshold was already passed earlier
-            // in this gesture, so this frame's own delta drives it.
-            (None, _) => Some(pointer_delta),
-            (Some(_), None) => None,
+            // No pending origin: the threshold was passed earlier.
+            (None, _) => true,
+            (Some(_), None) => false,
         }
     }
 
     fn advance_local_drag(
-        &self,
+        &mut self,
         drawings: &mut drawings::Drawings,
         projection: &DrawingProjection<'_>,
         frame: LocalDragFrame<'_>,
-        travel: Option<egui::Vec2>,
+        past_threshold: bool,
         outcome: &mut PointerOutcome,
     ) {
-        if !frame.pointer.down {
+        if !frame.pointer.down || !past_threshold {
             return;
         }
-        let Some(travel) = travel else {
-            return;
-        };
         match self.drag {
             DrawingDrag::Handle {
                 drawing_index,
@@ -353,7 +351,16 @@ impl PaneGestures {
                 (drawing_index, handle),
                 outcome,
             ),
-            DrawingDrag::Translate => translate_body(drawings, projection, frame.bands, travel),
+            DrawingDrag::Translate => {
+                // A selection that moved off the grabbed drawing, or anchors
+                // re-cut under it, ends the move: the object holds still.
+                let grabbed = (self.translate_from.as_mut())
+                    .filter(|from| drawings.selected() == Some(from.index));
+                match grabbed {
+                    Some(from) => translate_body(drawings, projection, &frame, from),
+                    None => self.drag = DrawingDrag::Blocked,
+                }
+            }
             DrawingDrag::Blocked => outcome.set_cursor(egui::CursorIcon::NotAllowed),
             DrawingDrag::None => {}
         }
@@ -363,6 +370,7 @@ impl PaneGestures {
         // One gesture, one undo entry — recorded only if it moved.
         drawings.commit_gesture();
         self.drag = DrawingDrag::None;
+        self.translate_from = None;
         // A press that ended in a drag rather than a click leaves its
         // answer unconsumed; it must not survive to decide the *next*
         // click, which may be somewhere else entirely. The click path
@@ -373,6 +381,7 @@ impl PaneGestures {
 
     fn yield_pointer(&mut self) {
         self.drag = DrawingDrag::None;
+        self.translate_from = None;
         self.press_pick = None;
         self.drag_pending_from = None;
         self.shared_drag = SharedDrag::None;
@@ -640,30 +649,58 @@ fn move_handle(
     }
 }
 
+/// Move the grabbed drawing by this frame's travel of the hand, then let its
+/// anchors land the way placing them would: by the tool's own snap, or with
+/// the magnet on, onto the print under the pointer.
 fn translate_body(
     drawings: &mut drawings::Drawings,
     projection: &DrawingProjection<'_>,
-    bands: &Bands,
-    travel: egui::Vec2,
+    frame: &LocalDragFrame<'_>,
+    from: &mut TranslateFrom,
 ) {
+    let pointer = frame.pointer;
+    let Some(position) = pointer.position else {
+        return;
+    };
+    let index = from.index;
     let dragged = drawings
-        .selected()
-        .and_then(|index| drawings.items().get(index))
-        .and_then(|drawing| bands::band_of(bands, drawing));
-    if let Some(band) = dragged
+        .items()
+        .get(index)
+        .and_then(|drawing| Some((drawing.tool, bands::band_of(frame.bands, drawing)?)));
+    if let Some((tool, band)) = dragged
         && let Some(scale) = band.scale
     {
-        let (lo, hi) = scale.range();
-        let delta_bar = travel.x / projection.viewport.px_per_bar();
-        // Per *band* height: a pane is a fraction of the
-        // chart's, and dividing by the candles' would move
-        // a CVD level by a fraction of the distance the
-        // pointer travelled. The sign follows the band's
-        // orientation — the object tracks the pointer,
-        // not the price axis.
-        let sign = if scale.is_inverted() { 1.0 } else { -1.0 };
-        let delta_value = sign * f64::from(travel.y / band.rect.height()) * (hi - lo);
-        drawings.translate_selected(delta_bar, delta_value);
+        let (right, total) = (pointer.history_right, pointer.total);
+        // Both ends read under this frame's axes — per band, so a CVD level
+        // follows the hand, and inverted or not, so the object tracks the
+        // pointer rather than the price axis.
+        let bar_at = |x| projection.viewport.bar_at_x(x, right, total);
+        let delta_bar = bar_at(position.x) - bar_at(from.last.x);
+        let delta_value = scale.price_at(position.y) - scale.price_at(from.last.y);
+        from.last = position;
+        for point in &mut from.free {
+            point.bar += delta_bar;
+            point.price += delta_value;
+            point.time_ms = projection.series.anchor_time(point.bar);
+        }
+        let mut moved = from.free.clone();
+        match tool.anchor_snap() {
+            drawings::AnchorSnap::Pointer if pointer.magnet => {
+                projection.snap_body(&mut moved, tool.body_snap(), band, position, (right, total));
+            }
+            drawings::AnchorSnap::Pointer => {}
+            snap => {
+                for point in &mut moved {
+                    let at = projection.drawing_screen_point(*point, right, total, &scale);
+                    if let Some(snapped) =
+                        projection.drawing_point_at(at, right, total, false, snap, band)
+                    {
+                        *point = snapped;
+                    }
+                }
+            }
+        }
+        drawings.set_points(index, &moved);
         // Market time is what every other pane reads the
         // object through; a move that left it behind
         // would drag the mark here and leave its shared
@@ -781,7 +818,6 @@ mod tests {
         projection: &DrawingProjection<'_>,
         bands: &Bands,
         pointer: &SharedPointer,
-        delta: egui::Vec2,
     ) -> PointerOutcome {
         let ctx = egui::Context::default();
         let mut result = None;
@@ -810,7 +846,6 @@ mod tests {
                         bands,
                         cached_bands: bands,
                         pointer,
-                        pointer_delta: delta,
                         paper_gesture: false,
                         tool: Tool::Pointer,
                         shared_pick: None,
@@ -830,26 +865,15 @@ mod tests {
             drag_pending_from: Some(origin),
             ..Default::default()
         };
-        let delta = egui::vec2(1.0, 2.0);
-        assert_eq!(gestures.local_travel(None, delta), None);
-        assert_eq!(
-            gestures.local_travel(
-                Some(origin + egui::vec2(DRAWING_DRAG_THRESHOLD_PX - 0.5, 0.0)),
-                delta
-            ),
-            None
-        );
+        assert!(!gestures.past_drag_threshold(None));
+        assert!(!gestures.past_drag_threshold(Some(
+            origin + egui::vec2(DRAWING_DRAG_THRESHOLD_PX - 0.5, 0.0)
+        )));
         assert_eq!(gestures.drag_pending_from, Some(origin));
         let full = egui::vec2(DRAWING_DRAG_THRESHOLD_PX, 0.0);
-        assert_eq!(
-            gestures.local_travel(Some(origin + full), delta),
-            Some(full)
-        );
+        assert!(gestures.past_drag_threshold(Some(origin + full)));
         assert_eq!(gestures.drag_pending_from, None);
-        assert_eq!(
-            gestures.local_travel(Some(origin + full + delta), delta),
-            Some(delta)
-        );
+        assert!(gestures.past_drag_threshold(Some(origin)));
     }
 
     #[test]
@@ -890,38 +914,17 @@ mod tests {
             let mut gestures = PaneGestures::default();
             let mut pointer = pointer_at(egui::pos2(100.0, 100.0), bands);
             pointer.pressed = true;
-            let press = owner_frame(
-                &mut gestures,
-                &mut store,
-                projection,
-                bands,
-                &pointer,
-                egui::vec2(40.0, 30.0),
-            );
+            let press = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
             assert!(press.consumed);
             assert!(gestures.drag.is_active());
             assert_eq!(store.items()[0].points, original);
             pointer.pressed = false;
             pointer.position = Some(egui::pos2(110.0, 120.0));
-            owner_frame(
-                &mut gestures,
-                &mut store,
-                projection,
-                bands,
-                &pointer,
-                egui::vec2(1.0, 1.0),
-            );
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
             assert_ne!(store.items()[0].points, original);
             pointer.down = false;
             pointer.released = true;
-            let release = owner_frame(
-                &mut gestures,
-                &mut store,
-                projection,
-                bands,
-                &pointer,
-                egui::Vec2::ZERO,
-            );
+            let release = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
             assert!(release.consumed);
             assert_eq!(gestures.drag, DrawingDrag::None);
             assert_eq!(gestures.press_pick, None);

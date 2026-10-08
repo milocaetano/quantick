@@ -417,6 +417,24 @@ fn push_tool_rail<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
             capability_id: None,
         });
     }
+    // The magnet's own button, where the rail draws one; the snapshot's
+    // `analysis.drawings` reads its state whether or not it is on screen.
+    if rail.magnet_painted() {
+        controls.push(SceneControlSnapshot {
+            control_id: format!("{TOOL_RAIL_OWNER_ID}.toggle.magnet"),
+            label: "Snap anchors to OHLC".to_owned(),
+            role: SceneRoleDto::Toggle,
+            owner: SceneOwnerSnapshot {
+                kind: SceneOwnerKindDto::ToolRail,
+                id: TOOL_RAIL_OWNER_ID.to_owned(),
+            },
+            selected: rail.magnet(),
+            availability: available(),
+            bounds: None,
+            bounds_availability: bounds_not_recorded(),
+            capability_id: Some(super::drawing_magnet::DRAWING_MAGNET_CAPABILITY_ID.to_owned()),
+        });
+    }
 }
 
 /// The dock's tab strip, when the dock is on screen.

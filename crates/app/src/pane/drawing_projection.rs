@@ -3,8 +3,8 @@
 //! The composed series borrows its prefix and engine state. Neither view owns
 //! a drawing store, a gesture, or the pane that supplies these disjoint fields.
 use super::{
-    DRAWING_ANCHOR_RADIUS_PX, DRAWING_SELECT_RADIUS_PX, MAGNET_REACH_PX, MAGNET_REACH_UNLIMITED_PX,
-    magnet_price_of, snap_bar_to_tape,
+    CANDLE_MAGNET_REACH_PX, DRAWING_ANCHOR_RADIUS_PX, DRAWING_SELECT_RADIUS_PX, MAGNET_REACH_PX,
+    MAGNET_REACH_UNLIMITED_PX, magnet_price_of, snap_bar_to_tape,
 };
 use crate::bands::{self, Band};
 use crate::chart::PriceScale;
@@ -216,6 +216,28 @@ fn calendar_law(interval_ms: i64) -> Option<quantick_engine::time_bucket::TimeBu
     quantick_engine::time_bucket::TimeBucketLaw::of(interval_ms).filter(|law| law.is_calendar())
 }
 
+/// `anchor`, read back off the screen at `screen`, with each coordinate a
+/// tool copied from a source restored to that source's exact value: a pixel
+/// read back into a price is ulps off it, which left a magnet-snapped corner
+/// a hair above its high and crept the untouched corner on every drag frame.
+/// Matched by value because a tool answers positions only: an equal `f32`
+/// was copied from its source, or names the same pixel, which reads back
+/// to that source's value anyway.
+fn exact_coordinates(
+    mut anchor: ChartPoint,
+    screen: egui::Pos2,
+    sources: &[(egui::Pos2, ChartPoint)],
+) -> ChartPoint {
+    if let Some((_, source)) = sources.iter().find(|(at, _)| at.x == screen.x) {
+        anchor.bar = source.bar;
+        anchor.time_ms = source.time_ms;
+    }
+    if let Some((_, source)) = sources.iter().find(|(at, _)| at.y == screen.y) {
+        anchor.price = source.price;
+    }
+    anchor
+}
+
 pub(crate) struct DrawingProjection<'a> {
     pub(super) series: PaneSeriesRead<'a>,
     pub(super) viewport: &'a Viewport,
@@ -320,7 +342,7 @@ impl DrawingProjection<'_> {
                 self.series.candle_at_slot(row)?,
                 pointer_y,
                 scale,
-                MAGNET_REACH_PX,
+                CANDLE_MAGNET_REACH_PX,
             ),
             // A time-only object has no value to snap.
             DrawingBand::AllBands => None,
@@ -330,6 +352,58 @@ impl DrawingProjection<'_> {
                 })?;
                 bands::magnet_value_of(view, row, pointer_y, scale, MAGNET_REACH_PX)
             }
+        }
+    }
+
+    /// The magnet on a body drag: the edge of `points` nearest the pointer —
+    /// an anchor's level, or a straight line's value at the pointer's bar —
+    /// onto the print under the pointer, and the whole object shifted by the
+    /// same amount so it keeps its shape. The snapped anchor takes the print
+    /// exactly; nothing in reach leaves `points` as they are.
+    pub(super) fn snap_body(
+        &self,
+        points: &mut [ChartPoint],
+        body: drawings::BodySnap,
+        band: &Band,
+        pointer: egui::Pos2,
+        (history_right, total): (f32, usize),
+    ) {
+        let (Some(scale), false) = (band.scale.as_ref(), body == drawings::BodySnap::Free) else {
+            return;
+        };
+        // The candle's own bar, so a line meets the print at the candle.
+        let Some(slot) = Viewport::slot_of(self.viewport.bar_at_x(pointer.x, history_right, total))
+        else {
+            return;
+        };
+        #[allow(clippy::cast_precision_loss)]
+        let bar = slot as f32;
+        let line = match points {
+            [a, b] if body == drawings::BodySnap::Line && a.bar != b.bar => Some(
+                a.price + (b.price - a.price) * f64::from(bar - a.bar) / f64::from(b.bar - a.bar),
+            ),
+            _ => None,
+        };
+        let off = |price: f64| (scale.y(price) - pointer.y).abs();
+        let edge = points
+            .iter()
+            .enumerate()
+            .filter(|_| body == drawings::BodySnap::Levels || line.is_none())
+            .map(|(index, point)| (Some(index), point.price))
+            .chain(line.map(|price| (None, price)))
+            .min_by(|left, right| off(left.1).total_cmp(&off(right.1)));
+        let Some((snapped, price)) = edge else {
+            return;
+        };
+        let Some(print) = self.magnet_value(band, bar, scale.y(price), scale) else {
+            return;
+        };
+        for (index, point) in points.iter_mut().enumerate() {
+            point.price = if snapped == Some(index) {
+                print
+            } else {
+                point.price + (print - price)
+            };
         }
     }
 
@@ -503,11 +577,16 @@ impl DrawingProjection<'_> {
             let projected = self.projected_drawing_points(drawing, history_right, total, scale);
             let ctxt = self.draw_context(drawing, scale, band, true);
             let to = self.drawing_screen_point(target, history_right, total, scale);
-            drawing
+            let moved = drawing
                 .tool
-                .drag_handle(band.rect, &projected, handle, to, &ctxt, constrain)
+                .drag_handle(band.rect, &projected, handle, to, &ctxt, constrain)?;
+            // The target (magnet included) first, then the anchors as they were.
+            let sources: SmallVec<[(egui::Pos2, ChartPoint); 5]> = std::iter::once((to, target))
+                .chain(projected.into_iter().zip(drawing.points.iter().copied()))
+                .collect();
+            Some((moved, sources))
         });
-        let Some(moved) = moved else {
+        let Some((moved, sources)) = moved else {
             drawings.move_anchor(drawing_index, handle, target);
             return;
         };
@@ -524,6 +603,7 @@ impl DrawingProjection<'_> {
                     drawings::AnchorSnap::Pointer,
                     band,
                 )
+                .map(|anchor| exact_coordinates(anchor, *point, &sources))
             })
             .collect();
         if let Some(anchors) = anchors {
