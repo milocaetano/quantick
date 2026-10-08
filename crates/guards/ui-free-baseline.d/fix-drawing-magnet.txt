@@ -3,3 +3,6 @@
 # `ToolRail::set_magnet`. Control-plane ports live with the window in `app`.
 crates/app +5
 !budget +5
+# `analysis.drawings` reads the magnet beside the drawings it snaps.
+crates/app +1
+!budget +1

@@ -538,6 +538,8 @@ fn the_magnet_is_a_rail_toggle_that_starts_off() {
 fn the_magnet_is_painted_only_where_the_rail_draws_it() {
     let ctx = egui::Context::default();
     let mut rail = ToolRail::new();
+    // Docked along the top, the screen's width is the rail's extent.
+    rail.set_dock(ToolboxDock::Top);
     let mut drawings = Drawings::default();
     assert!(!rail.magnet_painted(), "an undrawn rail paints nothing");
     let wide = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 600.0));

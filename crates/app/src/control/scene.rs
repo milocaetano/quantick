@@ -401,9 +401,7 @@ fn push_tool_rail<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
     // Listing the registry instead would name thirteen tools that live behind
     // a family flyout, the ones the band has scrolled out of sight, and two
     // more the narrow stages drop entirely.
-    let painted = rail.painted_controls();
-    let shown = !painted.is_empty();
-    for control in painted {
+    for control in rail.painted_controls() {
         controls.push(SceneControlSnapshot {
             control_id: rail_control_id(&control),
             label: control.label.to_owned(),
@@ -419,9 +417,9 @@ fn push_tool_rail<P: ChromePort + ?Sized>(controls: &mut Vec<SceneControlSnapsho
             capability_id: None,
         });
     }
-    // The magnet: on the rail's trailing cluster, or its More menu on the
-    // narrowest stage — reachable whenever the rail is.
-    if shown {
+    // The magnet's own button, where the rail draws one; the snapshot's
+    // `analysis.drawings` reads its state whether or not it is on screen.
+    if rail.magnet_painted() {
         controls.push(SceneControlSnapshot {
             control_id: format!("{TOOL_RAIL_OWNER_ID}.toggle.magnet"),
             label: "Snap anchors to OHLC".to_owned(),

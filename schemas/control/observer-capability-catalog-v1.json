@@ -14553,6 +14553,11 @@
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "magnet": {
+            "default": false,
+            "description": "The drawing rail's OHLC magnet (`annotate.magnet.set`), present\nwhether or not the rail is on screen. Always written; optional in\nthe schema only so v1 readers stay compatible.",
+            "type": "boolean"
+          },
           "tabs": {
             "items": {
               "$ref": "#/$defs/TabDrawingsSnapshot"

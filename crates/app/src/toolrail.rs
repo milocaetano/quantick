@@ -492,6 +492,15 @@ fn minimal_length() -> f32 {
         + TOOLRAIL_ICON.hit
 }
 
+/// The magnet's state, and the flip a hand asked for this frame — which the
+/// window applies through `annotate.magnet.set`, so it journals like a
+/// script's.
+#[derive(Debug, Default)]
+struct MagnetSwitch {
+    on: bool,
+    asked: Option<bool>,
+}
+
 /// The full trailing cluster: separator, magnet, repeat, hide-all, lock-all,
 /// separator, Objects.
 fn trailing_length() -> f32 {
@@ -542,7 +551,7 @@ pub struct ToolRail {
     /// The magnet: anchors snap to the nearest OHLC of the bar under the
     /// pointer. Off by default — a magnet nobody asked for moves marks the
     /// trader placed deliberately.
-    magnet: bool,
+    magnet: MagnetSwitch,
     /// Last-armed member of each tool family, keyed by family id.
     last_family_member: BTreeMap<&'static str, DrawingTool>,
     /// Starred tools, in the order the trader starred them — the pinned
@@ -621,7 +630,7 @@ impl Default for ToolRail {
             last_band: None,
             dock: ToolboxDock::Left,
             repeat: false,
-            magnet: false,
+            magnet: MagnetSwitch::default(),
             last_family_member: BTreeMap::new(),
             favorites: Vec::new(),
             favorites_changed: false,
@@ -930,7 +939,7 @@ impl ToolRail {
     /// it reads off the rail without a menu.
     fn draw_magnet_button(&mut self, ui: &mut egui::Ui) {
         let response = IconButton::new(icons::MAGNET, TOOLRAIL_ICON)
-            .active(self.magnet)
+            .active(self.magnet.on)
             .active_marker(self.dock.marker_edge())
             .hover_text("Snap anchors to the bar's open / high / low / close")
             .show(ui);
@@ -939,7 +948,7 @@ impl ToolRail {
             self.magnet_rect = Some(response.rect);
         }
         if response.clicked() {
-            self.set_magnet(!self.magnet);
+            self.magnet.asked = Some(!self.magnet.on);
         }
     }
 
@@ -967,10 +976,10 @@ impl ToolRail {
                     ui.close_menu();
                 }
                 if ui
-                    .add(egui::Button::new("Snap anchors to OHLC").selected(self.magnet))
+                    .add(egui::Button::new("Snap anchors to OHLC").selected(self.magnet.on))
                     .clicked()
                 {
-                    self.set_magnet(!self.magnet);
+                    self.magnet.asked = Some(!self.magnet.on);
                     ui.close_menu();
                 }
                 let all_hidden = drawings.all_hidden();
