@@ -56,11 +56,18 @@ pub struct FlowCellSnapshot {
     pub price_span: CanonicalDecimal,
     pub quantity: CanonicalDecimal,
     /// The closed-bar slots under the cell. A cell that lies wholly in the
-    /// live lane has none: both bounds then equal the lane boundary, and
-    /// `live_lane` says where it is.
+    /// live lane or on a held tape has none: both bounds then equal the lane
+    /// boundary, and `live_lane` or `held_tape_end_unix_ms` says where it is.
     pub start_slot: WireU64,
     pub end_slot_exclusive: WireU64,
+    /// The cell is today's book in the live lane; false on a held tape.
     pub live_lane: bool,
+    /// Where the tape is held when the cell is the recorded book beside a
+    /// tape panned into the past; absent for every other cell. Optional on
+    /// the wire so v1 readers remain compatible with snapshots produced
+    /// before a tape could be held.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_tape_end_unix_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

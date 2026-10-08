@@ -32,6 +32,8 @@ mod opening_scale;
 mod orderflow;
 mod recovery;
 pub(crate) use interaction::drawing_band_name;
+#[cfg(test)]
+pub(crate) use interaction::flow_cell_snapshot;
 mod registry;
 pub(crate) mod retry_matrix;
 mod scene;

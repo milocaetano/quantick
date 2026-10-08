@@ -290,7 +290,7 @@ fn drawing_hit_snapshot(
     }
 }
 
-fn flow_cell_snapshot(cell: FlowCellHit) -> FlowCellSnapshot {
+pub(crate) fn flow_cell_snapshot(cell: FlowCellHit) -> FlowCellSnapshot {
     FlowCellSnapshot {
         generation: WireU64::new(cell.generation),
         side: cell.side.to_string(),
@@ -300,6 +300,7 @@ fn flow_cell_snapshot(cell: FlowCellHit) -> FlowCellSnapshot {
         start_slot: wire_usize(cell.start_slot),
         end_slot_exclusive: wire_usize(cell.end_slot_exclusive),
         live_lane: cell.live_lane,
+        held_tape_end_unix_ms: cell.held_tape_end_ms,
     }
 }
 

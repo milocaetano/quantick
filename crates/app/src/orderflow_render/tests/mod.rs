@@ -1691,3 +1691,79 @@ fn a_reduction_leaves_the_canvas_with_the_book_that_explains_it() {
         "both kinds off and something still paints"
     );
 }
+
+/// The book beside a held tape is placed on the tape alone, its edge clamped
+/// to the lane's opening. That opening is the divider, however far the
+/// candles are panned, and it is on the tape: a band clamped there starts at
+/// the divider and a gap clamped there is drawn and labelled. Through the
+/// live mapping the same opening goes through the candles' viewport, and the
+/// label was lost.
+#[test]
+fn a_held_book_clamped_to_the_lane_opening_is_drawn_from_the_divider() {
+    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 400.0));
+    let mut panned = Viewport::new();
+    panned.pan_pixels(240.0, 60);
+    let opening = 4.0 / 5.0;
+    let mut projection = HeatmapProjection::empty(
+        true,
+        quantick_orderflow::EffectiveGrouping::resolve(
+            quantick_orderflow::DisplayGrouping::Native,
+            Decimal::ONE,
+            Decimal::from(100),
+        ),
+    );
+    let gap = |x0: f64, x1: f64, reason: &str| quantick_orderflow::GapPrimitive {
+        from_generation: None,
+        to_generation: None,
+        x0,
+        x1,
+        reason: reason.to_owned(),
+    };
+    projection.gaps = std::sync::Arc::new(vec![
+        gap(opening, 0.95, quantick_orderflow::BEFORE_CAPTURE),
+        gap(0.95, 1.0, quantick_orderflow::BOOK_PENDING),
+    ]);
+    let style = OrderflowRenderStyle {
+        depth_layer: false,
+        lane_depth_layer: true,
+        ..OrderflowRenderStyle::default()
+    };
+    let fill = palette_for_theme(style.theme).gap_fill;
+    let gap_rects = |output: &egui::FullOutput| {
+        output
+            .shapes
+            .iter()
+            .filter(
+                |clipped| matches!(&clipped.shape, egui::Shape::Rect(shape) if shape.fill == fill),
+            )
+            .count()
+    };
+    let draw = |layout: ProjectedLayout<'_>| {
+        egui::Context::default().run(egui::RawInput::default(), |ctx| {
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            draw_heatmap_background(&painter, &RenderContext::new(&projection, layout, &style));
+        })
+    };
+    for viewport in [&Viewport::new(), &panned] {
+        let layout = ProjectedLayout::new(rect, viewport, 60, 0, 5, 300.0).with_lane_only();
+        let divider = layout.lane_left_x().expect("a lane");
+        assert!((layout.x(opening) - divider).abs() < 0.01);
+        let band = layout.band(opening, 0.9, 0.4, 0.6, 1.0);
+        assert!(
+            (band.left() - divider).abs() < 0.01 && band.right() > band.left(),
+            "the band starts at the divider: {band:?}"
+        );
+        let output = draw(layout);
+        let shapes = format!("{:?}", output.shapes);
+        assert!(
+            shapes.contains("L2 unavailable before capture"),
+            "the leading gap is labelled"
+        );
+        assert_eq!(gap_rects(&output), 1, "the pending stretch is filled");
+    }
+    let live = ProjectedLayout::new(rect, &panned, 60, 0, 5, 300.0);
+    assert!(
+        !live.in_lane(opening),
+        "the live frame's own mapping is unchanged"
+    );
+}

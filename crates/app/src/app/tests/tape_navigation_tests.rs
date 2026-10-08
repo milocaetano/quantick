@@ -814,3 +814,242 @@ fn the_tape_view_window_moves_the_view_and_is_not_filed() {
     assert_eq!(asset_window(&app), filed, "the asset keeps its window");
     disable_test_gateway(&mut app, &ctx);
 }
+
+/// Mesh vertices painted inside `lane`: what the depth map leaves there.
+fn lane_mesh_vertices(output: &egui::FullOutput, lane: egui::Rect) -> usize {
+    fn walk(shape: &egui::Shape, lane: egui::Rect, count: &mut usize) {
+        match shape {
+            egui::Shape::Mesh(mesh) => {
+                *count += mesh
+                    .vertices
+                    .iter()
+                    .filter(|vertex| lane.contains(vertex.pos))
+                    .count();
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| walk(shape, lane, count)),
+            _ => {}
+        }
+    }
+    let mut count = 0;
+    for clipped in output
+        .shapes
+        .iter()
+        .filter(|clipped| clipped.clip_rect.intersects(lane))
+    {
+        walk(&clipped.shape, lane, &mut count);
+    }
+    count
+}
+
+/// The trader's WIN layout on a recorded book: the map off on the candles
+/// and on on the tape, a bid wall of 50 at 100.5 and an ask wall at 101.0
+/// from 21 s, the book's clock ticking every second between the prints, and
+/// the bid cut to 7 at 39 s.
+fn recorded_book(ctx: &egui::Context) -> QuantickApp {
+    use quantick_layers::OrderflowSwitch;
+    use quantick_orderbook::{BookCoverage, BookDelta, BookLevel, BookSnapshot};
+
+    let (mut app, mut commands) = app_with_history(200);
+    native_split(&mut app);
+    let generation = take_capture_start(&mut commands);
+    let flow = app.active_tab_mut().tape_mut();
+    flow.set_layer_switch(OrderflowSwitch::Depth, false);
+    flow.set_layer_switch(OrderflowSwitch::TapeDepth, true);
+    flow.handle_depth_event(DepthEvent::Snapshot {
+        symbol: "TESTUSDT".to_owned(),
+        generation,
+        observed_at_ms: 21_000,
+        effective_at_ms: 21_000,
+        price_step: None,
+        snapshot: BookSnapshot::new(
+            10,
+            vec![BookLevel::new(Decimal::new(1005, 1), Decimal::from(50)).unwrap()],
+            vec![BookLevel::new(Decimal::new(1010, 1), Decimal::from(40)).unwrap()],
+            BookCoverage::Limited {
+                levels_per_side: 1_000,
+            },
+        ),
+    });
+    let (mut update_id, mut book_ms) = (11, 22_000);
+    for agg_id in 201..=400 {
+        let print = trade(agg_id);
+        while book_ms <= print.timestamp_ms {
+            let bids = if book_ms == 39_000 {
+                vec![BookLevel::new(Decimal::new(1005, 1), Decimal::from(7)).unwrap()]
+            } else {
+                Vec::new()
+            };
+            app.active_tab_mut()
+                .tape_mut()
+                .handle_depth_event(DepthEvent::Update {
+                    symbol: "TESTUSDT".to_owned(),
+                    generation,
+                    event_time_ms: book_ms,
+                    delta: BookDelta::new(update_id, update_id, bids, Vec::new()),
+                });
+            update_id += 1;
+            book_ms += 1_000;
+        }
+        app.active_tab_mut()
+            .ingest_live_trade_at(&print, 10_000 + agg_id as i64);
+    }
+    let flow = app.active_tab_mut().tape_mut();
+    flow.set_live_lane_window(quantick_orderflow::LaneWindow::Fixed { ms: 3_000 });
+    flow.flush_for_test();
+    run_frame(&mut app, ctx);
+    app
+}
+
+/// Hold the tape at `end_ms` until the engine has published it, and return
+/// the next frame with the tape's pane.
+fn held_at(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+    end_ms: i64,
+) -> (egui::FullOutput, egui::Rect) {
+    app.active_tab_mut()
+        .tape_mut()
+        .set_tape_end(TapeEnd::Past { end_ms });
+    for _ in 0..3 {
+        app.active_tab_mut().tape_mut().flush_for_test();
+        run_frame(app, ctx);
+    }
+    assert!(
+        !app.active_tab().tape().tape_end().is_live(),
+        "held in the past"
+    );
+    app.active_tab_mut().tape_mut().flush_for_test();
+    let output = run_frame(app, ctx);
+    (output, lane_rect(app))
+}
+
+fn lane_rect(app: &QuantickApp) -> egui::Rect {
+    let pane = &app.active_tab().flow_pane;
+    let chart = pane.frame.chart_rect.expect("the canvas laid out");
+    let divider = pane.frame.lane_divider_x.expect("the divider");
+    egui::Rect::from_min_max(egui::pos2(divider + 1.0, chart.top()), chart.max)
+}
+
+/// Text painted inside `lane`.
+fn lane_texts(output: &egui::FullOutput, lane: egui::Rect) -> Vec<String> {
+    output
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if lane.contains(text.pos) => {
+                Some(text.galley.text().to_owned())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Trader 2026-10-07, WIN with the map on the tape and off the candles:
+/// dragging the tape into the past took every heatmap band off it and left
+/// the bubbles alone. The history still held the book for that stretch.
+#[test]
+fn a_tape_panned_into_the_past_keeps_its_book() {
+    use quantick_layers::OrderflowSwitch;
+
+    let ctx = egui::Context::default();
+    let mut app = recorded_book(&ctx);
+
+    let painted = |app: &mut QuantickApp, tape_depth: bool| {
+        app.active_tab_mut()
+            .tape_mut()
+            .set_layer_switch(OrderflowSwitch::TapeDepth, tape_depth);
+        let (output, lane) = held_at(app, &ctx, 35_000);
+        lane_mesh_vertices(&output, lane)
+    };
+    let without = painted(&mut app, false);
+    let with = painted(&mut app, true);
+    assert!(
+        with > without,
+        "the past tape draws the book it stood beside: {with} vertices with the map, {without} without"
+    );
+}
+
+/// A held tape whose window opens before the first captured book says so
+/// from the lane's opening, where the clamp puts the gap's edge.
+#[test]
+fn a_held_tape_before_the_captured_book_labels_it() {
+    let ctx = egui::Context::default();
+    let mut app = recorded_book(&ctx);
+    let (output, lane) = held_at(&mut app, &ctx, 22_500);
+    let texts = lane_texts(&output, lane);
+    assert!(
+        texts
+            .iter()
+            .any(|text| text == "L2 unavailable before capture"),
+        "the stretch before capture is labelled on the tape: {texts:?}"
+    );
+}
+
+/// The cursor over a held tape reads the bands painted there: the wall of 50
+/// the past stood beside, never today's 7 underneath. Asked the way the
+/// control plane's pointer asks, with the geometry the frame painted.
+#[test]
+fn the_cursor_reads_the_book_a_held_tape_paints() {
+    let ctx = egui::Context::default();
+    let mut app = recorded_book(&ctx);
+    let (_, lane) = held_at(&mut app, &ctx, 35_000);
+    let quantities: Vec<_> = lane_cells(&app, lane)
+        .into_iter()
+        .map(|cell| (cell.side, cell.quantity))
+        .collect();
+    assert!(
+        quantities.contains(&(quantick_orderbook::BookSide::Bid, Decimal::from(50))),
+        "the held wall is under the cursor: {quantities:?}"
+    );
+    assert!(
+        !quantities
+            .iter()
+            .any(|(_, quantity)| *quantity == Decimal::from(7)),
+        "today's book is not: {quantities:?}"
+    );
+}
+
+/// The cells under a cursor walked down the middle of `lane`, asked the way
+/// the control plane's pointer asks, with the geometry the frame painted.
+fn lane_cells(app: &QuantickApp, lane: egui::Rect) -> Vec<crate::orderflow_view::FlowCellHit> {
+    let pane = &app.active_tab().flow_pane;
+    let chart = pane.frame.chart_rect.expect("the canvas laid out");
+    let divider = pane.frame.lane_divider_x.expect("the divider");
+    (lane.top() as i32..lane.bottom() as i32)
+        .step_by(2)
+        .filter_map(|y| {
+            app.active_tab().tape().control_flow_cell_at(
+                chart,
+                &pane.viewport,
+                pane.slots(),
+                chart.right() - divider,
+                false,
+                egui::pos2(lane.center().x, y as f32),
+            )
+        })
+        .collect()
+}
+
+/// A band on a held tape is the past, never the live lane: the cursor's
+/// snapshot says it is not live and names the instant the tape is held at,
+/// so a reader cannot take the held book for today's.
+#[test]
+fn the_cursor_over_a_held_band_reports_the_held_instant_not_live() {
+    let ctx = egui::Context::default();
+    let mut app = recorded_book(&ctx);
+    let (_, lane) = held_at(&mut app, &ctx, 35_000);
+    let held = app.active_tab().tape().tape_end().past_ms();
+    assert!(held.is_some(), "held in the past");
+    let cells: Vec<_> = lane_cells(&app, lane)
+        .into_iter()
+        .map(crate::control::flow_cell_snapshot)
+        .collect();
+    assert!(!cells.is_empty(), "the held book is under the cursor");
+    for cell in &cells {
+        assert!(!cell.live_lane, "a held band is not live: {cell:?}");
+        assert_eq!(
+            cell.held_tape_end_unix_ms, held,
+            "the snapshot names the held instant: {cell:?}"
+        );
+    }
+}
