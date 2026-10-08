@@ -452,3 +452,45 @@ fn a_body_drag_survives_history_landing_underneath() {
         60.0 / px_per_bar
     );
 }
+
+/// The price axis rescaling under a body drag — a live print far outside
+/// the range — must not move the object while the hand holds still.
+#[test]
+fn a_body_drag_holds_still_while_the_axis_rescales() {
+    let (mut app, _commands, ctx) = magnet_app();
+    app.toolrail.set_magnet(false);
+    let at = egui::pos2(bar_x(&app, 52.0), price_y(&app, PaneSide::Flow, 104.3));
+    place_drawing(&mut app, &ctx, "horizontal-line", &[at]);
+    let grab = egui::pos2(bar_x(&app, 35.0), at.y);
+    let held = grab + egui::vec2(20.0, -30.0);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(grab), pointer_button(grab, true)],
+    );
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(held)]);
+    let before = last_points(&app)[0].price;
+    let y_before = price_y(&app, PaneSide::Flow, 104.0);
+    app.active_tab_mut()
+        .flow_pane
+        .ingest_live_trade(&quantick_engine::Trade {
+            agg_id: 1_000_000,
+            timestamp_ms: 9_000_000,
+            price: Decimal::from(130),
+            quantity: Decimal::ONE,
+            side: quantick_engine::Side::Buy,
+        });
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(held)]);
+    run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(held)]);
+    assert_ne!(
+        price_y(&app, PaneSide::Flow, 104.0),
+        y_before,
+        "the print rescaled the axis"
+    );
+    assert_eq!(last_points(&app)[0].price, before);
+    run_frame_with_events(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(held), pointer_button(held, false)],
+    );
+}
