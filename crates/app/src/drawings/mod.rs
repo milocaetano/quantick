@@ -49,10 +49,10 @@ mod style;
 #[cfg(test)]
 use eframe::egui;
 
+use tool::DrawingToolImpl;
 /// The handle every caller outside this module holds a tool by; the port it
 /// implements stays inside the subsystem.
-pub use tool::DrawingTool;
-use tool::DrawingToolImpl;
+pub use tool::{DoubleClickHint, DrawingTool};
 
 pub use context::{AxisLevels, DrawContext, Handles, ValueUnit};
 #[cfg(test)]

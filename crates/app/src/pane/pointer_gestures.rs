@@ -33,6 +33,8 @@ pub(super) struct PointerOutcome {
     pub(super) cursor: Option<egui::CursorIcon>,
     pub(super) begin_text_edit: bool,
     pub(super) shared: SharedInteraction,
+    /// The glyph announcing what a double click under the pointer would do.
+    pub(super) hint: Option<drawings::DoubleClickHint>,
 }
 impl PointerOutcome {
     fn set_cursor(&mut self, cursor: egui::CursorIcon) {
@@ -84,9 +86,11 @@ impl PaneGestures {
             total: pointer.total,
         });
         if let Some(pick) = pick {
-            if let Some(cursor) = local_hover_cursor(drawings, projection, pick) {
+            let (cursor, hint) = local_hover_cursor(drawings, projection, pick);
+            if let Some(cursor) = cursor {
                 outcome.set_cursor(cursor);
             }
+            outcome.hint = hint;
             // Release-as-click precedes a new press. The press answer survives
             // inspector resize, including a captured miss (Some(None)).
             if pointer.released && self.drag_pending_from.is_some() {
@@ -201,6 +205,17 @@ impl PaneGestures {
         {
             self.content_editing = Some(index);
             return true;
+        }
+        // Any other tool may own a double click on its body: the rectangle
+        // extends toward the side it lands on. A press that grabbed a
+        // resize handle stays a resize.
+        if double_clicked
+            && selected.is_some()
+            && !matches!(self.drag, DrawingDrag::Handle { .. })
+            && let Some(band) = pointer_band
+        {
+            drawings.begin_gesture();
+            projection.double_click_selected(drawings, position, band, history_right, total);
         }
         false
     }
@@ -463,38 +478,51 @@ impl PaneGestures {
     }
 }
 
+/// The hover cursor, and the double-click hint the topmost object under the
+/// pointer offers there (a resize handle outranks both).
 fn local_hover_cursor(
     drawings: &drawings::Drawings,
     projection: &DrawingProjection<'_>,
     pick: LocalPick<'_>,
-) -> Option<egui::CursorIcon> {
+) -> (Option<egui::CursorIcon>, Option<drawings::DoubleClickHint>) {
     let LocalPick {
         position,
         band,
         history_right,
         total,
     } = pick;
-    let band = band?;
+    let Some(band) = band else {
+        return (None, None);
+    };
     if let Some(selected) = drawings.selected()
         && projection
             .drawing_handle_in(drawings, selected, position, band, history_right, total)
             .is_some()
     {
-        return Some(if drawings.items()[selected].locked {
+        let cursor = if drawings.items()[selected].locked {
             egui::CursorIcon::NotAllowed
         } else {
             egui::CursorIcon::ResizeNwSe
-        });
+        };
+        return (Some(cursor), None);
     } else if let Some(hovered) =
         projection.drawing_at(drawings, position, band, history_right, total)
     {
-        return Some(if drawings.items()[hovered].locked {
-            egui::CursorIcon::NotAllowed
-        } else {
-            egui::CursorIcon::Move
-        });
+        if drawings.items()[hovered].locked {
+            return (Some(egui::CursorIcon::NotAllowed), None);
+        }
+        let hint = projection.drawing_double_click_hint(
+            drawings,
+            hovered,
+            position,
+            band,
+            history_right,
+            total,
+        );
+        let cursor = hint.map_or(egui::CursorIcon::Move, |hint| hint.cursor);
+        return (Some(cursor), hint);
     }
-    None
+    (None, None)
 }
 
 fn move_handle(

@@ -572,6 +572,65 @@ impl DrawingProjection<'_> {
         }
     }
 
+    /// What a double click at `pos` would do to drawing `drawing_index`, as
+    /// its tool announces it on hover. Same projection and context as the
+    /// hit-test, so the hint sits exactly where the click lands.
+    pub(super) fn drawing_double_click_hint(
+        &self,
+        drawings: &drawings::Drawings,
+        drawing_index: usize,
+        pos: egui::Pos2,
+        band: &Band,
+        history_right: f32,
+        total: usize,
+    ) -> Option<drawings::DoubleClickHint> {
+        let scale = band.scale.as_ref()?;
+        let drawing = drawings
+            .items()
+            .get(drawing_index)
+            .filter(|drawing| !drawing.locked && bands::drawing_in_band(drawing, band))?;
+        let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+        let ctxt = DrawContext {
+            payload: drawing.payload.as_ref(),
+            anchors: &drawing.points,
+            scale,
+            px_per_bar: self.viewport.px_per_bar(),
+            unit: band.unit(),
+            primary_band: true,
+            style: drawing.style,
+            selected: drawings.selected() == Some(drawing_index),
+            halo: false,
+            content_editing: false,
+        };
+        drawing
+            .tool
+            .double_click_hint(band.rect, &projected, pos, &ctxt)
+    }
+
+    /// Hand a double click at `pos` to the selected drawing's tool. Answers
+    /// whether its payload changed; the caller's open gesture records it.
+    pub(super) fn double_click_selected(
+        &self,
+        drawings: &mut drawings::Drawings,
+        pos: egui::Pos2,
+        band: &Band,
+        history_right: f32,
+        total: usize,
+    ) -> bool {
+        let Some(scale) = band.scale.as_ref() else {
+            return false;
+        };
+        let Some(drawing) = drawings.selected_mut() else {
+            return false;
+        };
+        if drawing.locked || !bands::drawing_in_band(drawing, band) {
+            return false;
+        }
+        let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+        let tool = drawing.tool;
+        tool.double_click(band.rect, &projected, pos, drawing.payload.as_mut())
+    }
+
     pub(super) fn drawing_handle_at(
         &self,
         drawings: &drawings::Drawings,
