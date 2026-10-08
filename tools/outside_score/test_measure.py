@@ -17,52 +17,19 @@ SPEC = importlib.util.spec_from_file_location("measure", os.path.join(HERE, "mea
 measure = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(measure)
 
+FIXTURES = os.path.join(HERE, "fixtures")
+
+
+def fixture(name):
+    with open(os.path.join(FIXTURES, name), encoding="utf-8") as f:
+        return f.read()
+
+
 # 1 fn line + 3 body lines + 1 closing brace = a 5-line function. Its body
 # holds a brace, a fn keyword and a hook name inside literals, which must not
 # change its length, and a lifetime and char literals the lexer must not
-# mistake for each other.
-LIB = r'''//! A crate. The word fn in a comment is not a function. {
-use std::fmt;
-
-pub(crate) fn tricky<'a>(s: &'a str) -> usize {
-    let raw = r#"fn fake() { "quoted" }"#; let c = '{'; let q = '\'';
-    let b = b'}'; let text = "unbalanced { brace and fn inside";
-    s.len() + raw.len() + text.len() + (c as usize) + (q as usize) + (b as usize)
-}
-
-/* block /* nested { */ comment } */
-pub(super) fn short() -> u8 {
-    let v: Option<u8> = None;
-    v.unwrap()
-}
-
-pub trait Shape {
-    fn area(&self) -> f64;
-}
-
-pub struct Square;
-
-impl Square {
-    pub fn side(&self) -> f64 { 1.0 }
-}
-
-impl fmt::Display for Square {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "sq") }
-}
-
-pub fn evens() -> impl Iterator<Item = u8> {
-    (0..4).filter(|n| n % 2 == 0)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn a_test_is_not_production() {
-        let _ = "QUANTICK_TEST_ONLY";
-        panic!("never counted");
-    }
-}
-'''
+# mistake for each other. Shared with the impl-spread guard's tests.
+LIB = fixture("lib.rs")
 
 # A second file of the UI crate that names the toolkit, and a second inherent
 # impl of Square in another file: the spread is two files.
@@ -253,6 +220,18 @@ class MeasureTest(unittest.TestCase):
                 sys.stderr = stderr
             self.assertEqual(code, 2, argv)
             self.assertIn("Usage:", text)
+
+    def test_the_shared_corpus_measures_as_expected(self):
+        # fixtures/expected.tsv is also read by the impl-spread guard's port
+        # (crates/guards/src/impl_spread/tests.rs): one table, two readers.
+        with open(os.path.join(FIXTURES, "expected.tsv"), encoding="utf-8") as f:
+            table = [line.split("\t") for line in f.read().splitlines() if line and not line.startswith("#")]
+        self.assertTrue(table)
+        for name, lines, impls in table:
+            code, _ = measure.mask(fixture(name))
+            prod = measure.blank_spans(code, measure.test_spans(code))
+            self.assertEqual(measure.code_lines(prod), int(lines), name)
+            self.assertEqual(measure.inherent_impls(prod), [] if impls == "-" else impls.split(","), name)
 
     def test_output_is_deterministic(self):
         self.assertEqual(self.out, measure.render(self.tmp.name, "app", top=20))

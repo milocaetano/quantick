@@ -41,6 +41,9 @@ impl DrawingToolImpl for HorizontalLine {
             shift: false,
         })
     }
+    fn levels_span_the_body(&self) -> bool {
+        true
+    }
     fn family(&self) -> Option<ToolFamily> {
         Some(LINES_FAMILY)
     }

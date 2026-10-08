@@ -7,7 +7,8 @@ use std::fs;
 use std::process::Command;
 
 use quantick_guards::{
-    GUARDS, app_lines, extension_boundary as boundary, single_consumer, struct_width, ui_free,
+    GUARDS, app_lines, extension_boundary as boundary, impl_spread, single_consumer, struct_width,
+    ui_free,
 };
 use scratch_dir::ScratchDir;
 
@@ -86,6 +87,13 @@ crates/app {ceiling}
     .unwrap();
     fs::write(
         root.join(struct_width::BASELINE_FILE),
+        "!budget 0
+",
+    )
+    .unwrap();
+    // No crate in the fixture reaches the impl-spread size, so no ceiling.
+    fs::write(
+        root.join(impl_spread::BASELINE_FILE),
         "!budget 0
 ",
     )

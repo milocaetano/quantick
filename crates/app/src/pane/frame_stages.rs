@@ -216,35 +216,6 @@ impl<'a> FlowFrame<'a> {
         )
     }
 
-    pub(super) fn inspection(
-        &self,
-        owner: Option<&OrderflowView>,
-        pointer: Option<egui::Pos2>,
-        tz: crate::timezone::TzOffset,
-        side_inferred: bool,
-    ) {
-        let Some(owner) = owner.filter(|owner| owner.flow_execution_active()) else {
-            return;
-        };
-        let Some((frame, drawing)) = &self.regional else {
-            return;
-        };
-        let Some(pointer) = pointer else { return };
-        let _ = crate::orderflow_render::draw_flow_inspection(
-            crate::orderflow_render::FlowInspection {
-                painter: self.painter,
-                history: self.rect.with_max_x(self.rect.right() - self.lane_width),
-                pointer: Some(pointer),
-                frame,
-                presentation: &drawing.plan,
-                progress: owner.flow_execution_progress(),
-                prefix_len: self.prefix_len,
-                tz,
-                side_inferred,
-            },
-        );
-    }
-
     /// Quiet context sits below footprint; one cached plan serves both paint passes.
     pub(super) fn regional_context(
         &mut self,

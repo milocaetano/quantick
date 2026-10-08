@@ -1,0 +1,10 @@
+# fix/heatmap-hidden-on-pan: a tape held in the past paints the book the
+# history kept for its own blocks. These lines are the egui paint call and
+# the cached placement in OrderflowView, the cursor reading the same bands,
+# and the layout mapping a tape-only primitive from the divider. Reading,
+# gridding, scaling, placing, caching and labelling that book live below app
+# in quantick_orderflow::projection (PastHeat, PlacedPastHeat, heat_cells)
+# and TapeEnd::edge, with their tests. +4: the cursor names a held cell as
+# held, not live, and maps the held instant onto the flow cell snapshot.
+crates/app +39
+!budget +39

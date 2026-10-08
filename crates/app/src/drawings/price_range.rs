@@ -27,6 +27,9 @@ impl DrawingToolImpl for PriceRange {
     fn required_points(&self) -> usize {
         2
     }
+    fn levels_span_the_body(&self) -> bool {
+        true
+    }
     fn family(&self) -> Option<ToolFamily> {
         Some(MEASURE_FAMILY)
     }

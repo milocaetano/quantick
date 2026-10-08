@@ -2653,5 +2653,9 @@ mod native_tape_tests;
 mod past_tape_tests;
 
 #[cfg(test)]
+#[path = "engine_past_heat_tests.rs"]
+mod past_heat_tests;
+
+#[cfg(test)]
 #[path = "engine_tape_seal_tests.rs"]
 mod tape_seal_tests;

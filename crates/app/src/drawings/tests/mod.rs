@@ -2163,3 +2163,34 @@ fn the_background_pass_reaches_a_tool_that_wants_it_and_no_other() {
     Contextual::mark_under();
     assert_eq!(UNDER.with(Cell::get), 1);
 }
+
+/// A rectangle a double click extended carries a restore point; saving it
+/// as the tool's default hands new rectangles its extent, never that point.
+#[test]
+fn a_saved_rectangle_default_carries_no_restore_point() {
+    let mut host = MemoryPresetHost::default();
+    let rectangle = tool("rectangle");
+    let mut drawings = Drawings::default();
+    assert!(!drawings.place(rectangle, ChartPoint::at(1.0, 100.0)));
+    assert!(drawings.place(rectangle, ChartPoint::at(9.0, 200.0)));
+    {
+        let payload = drawings
+            .selected_mut()
+            .expect("placement selects")
+            .payload
+            .as_any_mut()
+            .downcast_mut::<RectanglePayload>()
+            .expect("rectangle payload");
+        payload.extend_left = true;
+        payload.extended_from = Some((false, false));
+    }
+    save_tool_default(&mut host, &drawings.items()[0].clone());
+    let fresh = new_drawing_from_defaults(&host, rectangle);
+    let fresh = fresh
+        .payload
+        .as_any()
+        .downcast_ref::<RectanglePayload>()
+        .expect("rectangle payload");
+    assert!(fresh.extend_left);
+    assert_eq!(fresh.extended_from, None);
+}

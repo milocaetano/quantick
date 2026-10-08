@@ -525,6 +525,15 @@ impl TimeLabelFormat {
     }
 }
 
+/// An instant written in a chosen [`TimeLabelFormat`] in the display
+/// timezone `tz`: what the time axis and the day separator both call.
+#[must_use]
+pub fn time_label(ms: i64, tz: quantick_civil::TzOffset, format: TimeLabelFormat) -> String {
+    let local = ms.saturating_add(tz.offset_ms());
+    let secs = local.div_euclid(1000).rem_euclid(86_400);
+    format.write(secs / 3600, (secs % 3600) / 60, secs % 60)
+}
+
 /// Bar slots to advance between two time labels so that neighbours can never
 /// touch, given how wide one candle and one label are on screen.
 ///

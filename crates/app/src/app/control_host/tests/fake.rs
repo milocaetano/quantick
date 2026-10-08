@@ -22,7 +22,7 @@ use crate::toolrail::ToolRail;
 use super::super::super::arrangement_host::ArrangementHost;
 use super::super::{
     Alerts, AlertsPort, ChromeDrawn, ChromePort, ChromeReads, HealthPort, HealthReads,
-    RecordingPort, ScriptSlot, ScriptsPort, TabReads, TabsMut, TabsMutPort, TabsPort,
+    RecordingPort, ScriptSlot, ScriptsPort, TabReads, TabsMut, TabsMutPort, TabsPort, ToolRailPort,
 };
 
 /// The feed and symbol the fake's one tab shows.
@@ -217,6 +217,12 @@ impl ScriptsPort for FakeWindow {
 
     fn detach_operator_script(&mut self, slot: u64) -> Result<bool, ()> {
         Ok((slot as usize) < self.attached.len())
+    }
+}
+
+impl ToolRailPort for FakeWindow {
+    fn set_drawing_magnet(&mut self, _enabled: bool) -> bool {
+        false
     }
 }
 

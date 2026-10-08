@@ -207,6 +207,10 @@ pub struct LiquidityEventPrimitive {
 /// to the generic label without a single test noticing.
 pub const BEFORE_CAPTURE: &str = "book_unavailable_before_capture";
 
+/// Reason for the stretch of a held tape whose book has not been read yet: a
+/// drag outran the published blocks. Unknown, never an empty book.
+pub const BOOK_PENDING: &str = "book_pending_for_held_tape";
+
 /// A visible interval that must not be filled or connected.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GapPrimitive {

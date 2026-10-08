@@ -25,7 +25,7 @@ const FLOW_OFFSET: egui::Vec2 = egui::vec2(
     quantick_chart::flow_execution::FLOW_EXECUTION_OFFSET[1],
 );
 
-/// One factual gross-area disc shared by paint and passive inspection.
+/// One factual gross-area disc, as paint places it.
 #[cfg(test)]
 pub(super) fn flow_disc(dot: &FlowTapeDot, center: egui::Pos2) -> Option<FlowDisc> {
     FlowDisc::new(dot, center.into())

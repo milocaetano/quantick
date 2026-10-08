@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 59 |
+| Reachable by capability | 60 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
 | Excluded: `pending_capability` | 52 |
-| **Total** | **119** |
+| **Total** | **120** |
 
-83 of the 119 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 36 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+83 of the 120 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 37 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -122,6 +122,7 @@ The three exclusion classes are closed:
 | `feed.deal_recording.set` | Record the venue's deal counter, stop, load a recorded day, or show the pane as trades bars | the REC control beside the symbol and its popover; the Tools menu's `Record deals by default` checkbox | `feed.deal_recording.set`, `layout.pane.set_bar_spec` | — |
 | `toolrail.dock.set` | Park the drawing rail on the left, top or bottom edge | View menu, Drawing toolbar, and dragging the rail grip | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `toolrail.visible.toggle` | Show or hide the drawing rail | View menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `toolrail.magnet.toggle` | Snap drawing anchors to the candle's open, high, low or close | tool rail magnet button; the rail's More menu on its narrowest stage | `annotate.magnet.set` | — |
 | `tool.crosshair` | Arm the crosshair | tool rail | — | `pending_capability` — arming a tool changes what the next click does, and no capability arms one. Tracked in issue 401 |
 | `tool.pointer` | Arm the pointer — pan, zoom, select and move | tool rail, Escape | — | `pending_capability` — arming a tool changes what the next click does, and no capability arms one. Tracked in issue 401 |
 | `tool.anchored-vwap` | Arm the anchored VWAP | tool rail, family flyout, canvas right-click | — | `pending_capability` — no `annotate.*` capability places this shape; only text, arrow, rectangle, fixed-range profile, the two Fibonacci tools, trend line, horizontal line and parallel channel have one. Tracked in issue 401 |
@@ -195,7 +196,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 36 |
+| `authored` | 37 |
 
 ## Appendix: rows no registry stands behind
 
@@ -230,6 +231,7 @@ declares nothing here is a guard failure.
 | `trade.ticket.ruler.set` | the ruler wheel on the chart aim |
 | `trade.ticket.strategy.select` | the Trading panel strategy selector |
 | `toolrail.visible.toggle` | a View menu entry whose label the source computes, so no literal to claim |
+| `toolrail.magnet.toggle` | the rail's magnet button and its More menu entry are widgets, not registry entries |
 | `drawing.remove` | the object context bar, the canvas right-click menu and the object manager rows, resolved per click |
 | `drawing.duplicate` | the Duplicate button, Ctrl+D and the native copy and paste events are read per frame by `app/drawing_input.rs` and the context bar, not entries in a hotkey registry |
 | `drawing.quick_range_profile` | a secondary-button drag read per frame by `pane/quick_range.rs`, and the action bar `surfaces/drawing_chrome/quick_range.rs` lays out over it; neither is an entry in a registry the drift guard walks |

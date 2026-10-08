@@ -1,0 +1,7 @@
+# Issue #598: the day separator's faint rule under the candles and the end and
+# start times either side of its tick on the time strip. The text, widths and
+# placement live in `quantick_chart::day_turn`; these lines are the egui
+# painter: the rule's own contribution, the two-colour label jobs, and the
+# per-turn end/start times gathered beside the existing day starts.
+crates/app +50
+!budget +50

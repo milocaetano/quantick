@@ -11,8 +11,8 @@ use eframe::egui;
 use crate::theme;
 
 use super::{
-    AnchorSnap, AxisLevels, Constrain, DEFAULT_DRAWING_COLOR, DRAWING_TOOLS, DrawContext, Drawing,
-    DrawingBand, DrawingPayload, DrawingStyle, GlyphSize, Handles, IconDots, IconLetter,
+    AnchorSnap, AxisLevels, BodySnap, Constrain, DEFAULT_DRAWING_COLOR, DRAWING_TOOLS, DrawContext,
+    Drawing, DrawingBand, DrawingPayload, DrawingStyle, GlyphSize, Handles, IconDots, IconLetter,
     IconStrokes, NoPayload, PresetHost, SELECTED_ANCHOR_FILL, SELECTED_ANCHOR_RADIUS_PX,
     SELECTED_ANCHOR_RING_WIDTH_PX, SELECTION_HALO_COLOR, SELECTION_HALO_EXTRA_WIDTH_PX, ToolFamily,
     ToolShortcut,
@@ -98,6 +98,12 @@ pub(super) trait DrawingToolImpl: Sync {
     /// Where this tool's anchors land on the bar under the pointer.
     fn anchor_snap(&self) -> AnchorSnap {
         AnchorSnap::Pointer
+    }
+    /// Whether every anchor's price is a level spanning the pointer's bar,
+    /// so a body drag can land one on a print. Straight lines answer
+    /// through [`DrawingTool::body_snap`] instead.
+    fn levels_span_the_body(&self) -> bool {
+        false
     }
     /// The words this object holds, when its content is words rather than
     /// geometry. `None` for every tool but the note.
@@ -352,8 +358,44 @@ pub(super) trait DrawingToolImpl: Sync {
     ) -> Option<Handles> {
         None
     }
+    /// What a double click at `position` on this object would do, while the
+    /// pointer rests there: the glyph that announces it. `None`
+    /// (the default) means a double click here is a plain click.
+    ///
+    /// The host asks only for the topmost object under the pointer, so the
+    /// tool answers for its own geometry and nothing else.
+    fn double_click_hint(
+        &self,
+        _chart_rect: egui::Rect,
+        _points: &[egui::Pos2],
+        _position: egui::Pos2,
+        _ctxt: &DrawContext<'_>,
+    ) -> Option<DoubleClickHint> {
+        None
+    }
+    /// Apply a double click at `position` to the object's payload. Answers
+    /// whether anything changed; the host folds the change into the open
+    /// gesture, so it is one undo step.
+    fn double_click(
+        &self,
+        _chart_rect: egui::Rect,
+        _points: &[egui::Pos2],
+        _position: egui::Pos2,
+        _payload: &mut dyn DrawingPayload,
+    ) -> bool {
+        false
+    }
     #[cfg(test)]
     fn test_geometry(&self) -> (Vec<egui::Pos2>, egui::Pos2);
+}
+
+/// A tool's answer to "what would a double click here do": a small glyph
+/// painted at `at`, so the gesture is discoverable before it is made. The
+/// cursor stays the object's own (a press there still moves it).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DoubleClickHint {
+    pub glyph: &'static str,
+    pub at: egui::Pos2,
 }
 
 /// A cheap, copyable reference to one registered implementation.
@@ -364,6 +406,19 @@ impl DrawingTool {
     #[must_use]
     pub fn id(self) -> &'static str {
         self.0.id()
+    }
+
+    /// How a body drag of this object meets the magnet — see [`BodySnap`].
+    #[must_use]
+    pub fn body_snap(self) -> BodySnap {
+        let lines = super::line_core::LINES_FAMILY.id;
+        if self.required_points() == 2 && self.family().is_some_and(|family| family.id == lines) {
+            BodySnap::Line
+        } else if self.0.levels_span_the_body() {
+            BodySnap::Levels
+        } else {
+            BodySnap::Free
+        }
     }
 
     /// Look up a registered tool by its stable id — how the saved favorites
@@ -712,6 +767,27 @@ impl DrawingTool {
             || self
                 .0
                 .hit_test(chart_rect, points, position, radius_px, ctxt)
+    }
+
+    #[must_use]
+    pub fn double_click_hint(
+        self,
+        chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        position: egui::Pos2,
+        ctxt: &DrawContext<'_>,
+    ) -> Option<DoubleClickHint> {
+        self.0.double_click_hint(chart_rect, points, position, ctxt)
+    }
+
+    pub fn double_click(
+        self,
+        chart_rect: egui::Rect,
+        points: &[egui::Pos2],
+        position: egui::Pos2,
+        payload: &mut dyn DrawingPayload,
+    ) -> bool {
+        self.0.double_click(chart_rect, points, position, payload)
     }
 
     #[cfg(test)]

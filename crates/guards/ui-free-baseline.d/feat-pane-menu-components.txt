@@ -3,5 +3,5 @@
 # rows lazily beside its own &mut state while ChartPane lends both out.
 # It reads ChartPane's LayerState, OrderflowView, ChartState, PaneFootprint
 # and Drawings, which only app holds.
-crates/app +14
-!budget +14
+crates/app +36
+!budget +36

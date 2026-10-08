@@ -9,7 +9,9 @@
 //! comments ([`encoding`]), the generated indexes still say what the code
 //! says ([`generated`]), instruction links resolve ([`instruction_links`]),
 //! the UI crate may not grow in absolute lines ([`app_lines`]), no struct may
-//! gain a field past its recorded count ([`struct_width`]), a crate with one
+//! gain a field past its recorded count ([`struct_width`]), no type in a large
+//! crate may spread its inherent impls over more files than the signed
+//! ceiling ([`impl_spread`]), a crate with one
 //! consumer must be signed for ([`single_consumer`]),
 //! a test's temporary directory is minted by its
 //! crate's scratch module rather than spelled by hand ([`scratch`]), the
@@ -60,6 +62,7 @@ pub mod extension_boundary;
 pub mod generated;
 pub mod graph;
 pub mod headless;
+pub mod impl_spread;
 pub mod instruction_links;
 pub mod language;
 pub mod ratchet;
@@ -242,6 +245,16 @@ pub const GUARDS: &[Guard] = &[
             tighten: struct_width::tighten,
             policy: &struct_width::POLICY,
             measured: struct_width::measured,
+        }),
+    },
+    Guard {
+        name: "impl-spread",
+        check: impl_spread::check,
+        check_file: impl_spread::check_file,
+        ratchet: Some(Ratchet {
+            tighten: impl_spread::tighten,
+            policy: &impl_spread::POLICY,
+            measured: impl_spread::measured,
         }),
     },
     Guard {

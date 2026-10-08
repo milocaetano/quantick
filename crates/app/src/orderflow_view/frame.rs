@@ -17,6 +17,7 @@ use quantick_orderbook::BookLevel;
 use quantick_orderflow::engine::{CaptureStatus, ProjectionRequest, VisibleOrderflow};
 use quantick_orderflow::projection::{PaneGeometry, normalized_area_size};
 use quantick_orderflow::tape_view::TapeEnd;
+use quantick_orderflow::{HeatmapProjection, LiveEdge};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
@@ -138,11 +139,19 @@ impl OrderflowView {
         )
         .with_inverted(inverted);
         let style = OrderflowRenderStyle::from_config(&self.config, canvas_background.to_array());
-        // The book beside a past tape is today's: it stays with the candles.
+        // The frame's book is today's: a held tape draws its own beside it.
         let right = chart_rect.right() - lane_width_px * f32::from(!self.tape_end.is_live());
         let depth = painter.with_clip_rect(chart_rect.with_max_x(right));
         let context = RenderContext::new(&frame.projection, layout, &style);
         draw_heatmap_background(&depth, &context);
+        if let Some(heat) = self.held_heat(frame) {
+            let mut tape = style.clone();
+            tape.depth_layer = false;
+            draw_heatmap_background(
+                painter,
+                &RenderContext::new(&heat, layout.with_lane_only(), &tape),
+            );
+        }
         draw_live_lane_marks(painter, &context);
         draw_liquidity_events(&depth, &context);
     }
@@ -199,22 +208,28 @@ impl OrderflowView {
                     .then_some((&self.tape_rebuilds, &frame.projection)),
             )
             .with_past_tape(past.map(|past| (&self.past_dots, past)));
-        let context = match (
-            self.config.native_tape(),
-            frame.live_edge,
-            frame.volume_dots.as_ref(),
-        ) {
-            (true, Some(mut edge), Some(dots)) => {
-                edge.now_ms = self
-                    .tape_end
-                    .end_ms(self.lane_now_ms().unwrap_or(edge.now_ms));
-                edge.window_ms = self.config.lane_window_ms(edge.reference_ms);
-                context.with_tape_time(edge, dots.tape_window_ms)
-            }
+        let context = match (self.tape_edge(frame), frame.volume_dots.as_ref()) {
+            (Some(edge), Some(dots)) => context.with_tape_time(edge, dots.tape_window_ms),
             _ => context,
         };
         draw_aggression_bubbles(painter, &context);
         crate::orderflow_render::draw_past_tape_edge(painter, &context, past);
+    }
+
+    /// The book beside a tape held in the past, on the tape's clock.
+    pub(crate) fn held_heat(&self, frame: &VisibleOrderflow) -> Option<Arc<HeatmapProjection>> {
+        let edge = self.tape_edge(frame).filter(|_| !self.tape_end.is_live())?;
+        let past = self.published.past_tape.as_ref().map(|past| &past.heat);
+        let clock = (edge.now_ms, edge.window_ms, frame.slot_count);
+        let grouping = frame.projection.effective_grouping;
+        Some(self.past_heat.borrow_mut().place(past, clock, grouping))
+    }
+
+    /// The native tape's clock: its prints and its past book are placed on it.
+    fn tape_edge(&self, frame: &VisibleOrderflow) -> Option<LiveEdge> {
+        let edge = frame.live_edge.filter(|_| self.config.native_tape())?;
+        let window_ms = self.config.lane_window_ms(edge.reference_ms);
+        Some(self.tape_end.edge(edge, self.lane_now_ms(), window_ms))
     }
 
     /// Where the tape's right edge is held.

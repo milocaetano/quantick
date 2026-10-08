@@ -28,7 +28,7 @@ pub(crate) mod control_host;
 pub(crate) use control_host::control_quick_range;
 pub(crate) use control_host::{
     AlertsPort, ChromePort, ControlWindow, GatewayPort, HealthPort, LayersPort, LayoutPort,
-    PaperPort, RecordingPort, ScriptsPort, TabsMutPort, TabsPort,
+    PaperPort, RecordingPort, ScriptsPort, TabsMutPort, TabsPort, ToolRailPort,
 };
 pub(crate) mod deal_recording_wiring;
 mod demo_hooks;

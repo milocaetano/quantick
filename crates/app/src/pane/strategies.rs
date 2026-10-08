@@ -88,14 +88,19 @@ pub fn drawing_region(
     // further notice, and its region does too — otherwise the bot
     // silently expires at the drawn end while the band visibly keeps
     // going (the replay trap this option exists to close).
-    let extend_right = drawing
+    // Left works the same way: a band visibly running back to the chart's
+    // left edge is active there too.
+    let (extend_left, extend_right) = drawing
         .payload
         .as_any()
         .downcast_ref::<drawings::RectanglePayload>()
-        .is_some_and(|payload| payload.extend_right);
+        .map_or((false, false), |payload| {
+            (payload.extend_left, payload.extend_right)
+        });
     #[allow(clippy::cast_precision_loss)]
     let slot = slot as f32;
-    let active = slot >= a.bar.min(b.bar) && (extend_right || slot <= a.bar.max(b.bar));
+    let active =
+        (extend_left || slot >= a.bar.min(b.bar)) && (extend_right || slot <= a.bar.max(b.bar));
     Some((region, active))
 }
 

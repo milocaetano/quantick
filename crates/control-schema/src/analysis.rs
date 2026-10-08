@@ -182,6 +182,11 @@ pub struct IndicatorFailureSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct DrawingsSnapshot {
+    /// The drawing rail's OHLC magnet (`annotate.magnet.set`), present
+    /// whether or not the rail is on screen. Always written; optional in
+    /// the schema only so v1 readers stay compatible.
+    #[serde(default)]
+    pub magnet: bool,
     pub tabs: Vec<TabDrawingsSnapshot>,
 }
 

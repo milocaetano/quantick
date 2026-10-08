@@ -8,5 +8,5 @@
 # name app-only types: ChartPane, Drawings, PaneStrategies, the paper
 # ticket and the pane chrome. The UI-free share is signed separately in
 # ui-free-baseline.d.
-crates/app +408
-!budget +408
+crates/app +219
+!budget +219
