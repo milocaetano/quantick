@@ -142,5 +142,46 @@ def test_zero_only_depth_notifies_then_probes_quietly_and_recovers():
         assert session.book_subscribed, "no resubscription is needed for recovery"
 
 
+
+def test_unchanged_depth_is_confirmed_ten_times_a_second():
+    """A short tape needs the book clock to move while the DOM stands still.
+
+    Measured on WINV26: the DOM changes about three times a second, so a
+    bridge that resends an unchanged image only every five seconds leaves the
+    book clock up to a second behind the prints. Each confirmation is a fresh
+    read of the terminal, so it is an observation, not a guess.
+    """
+    term = FakeTerminal(0, NOW)
+    bridge = load_bridge(term)
+    clock = [100.0]
+    session = session_at(bridge, term, NOW)
+    patch_bridge("time", types.SimpleNamespace(time=lambda: float(NOW), monotonic=lambda: clock[0]))
+    session.book_subscribed = True
+    session.last_book_body = None
+    session.last_book_ms = 0.0
+    session.book_seq = session.book_sent = session.book_skipped = 0
+    session.args.book_min_interval_ms = 20
+    module = sys.modules["MetaTrader5"]
+    module.BOOK_TYPE_BUY = 2
+    module.BOOK_TYPE_SELL = 1
+    rows = [
+        types.SimpleNamespace(type=2, price=100, volume_dbl=3, volume=3),
+        types.SimpleNamespace(type=1, price=105, volume_dbl=4, volume=4),
+    ]
+    module.market_book_get = lambda _symbol: rows
+    module.symbol_info_tick = lambda _symbol: None
+
+    sent_at = []
+    for milliseconds in range(0, 1000, 5):
+        clock[0] = 100.0 + milliseconds / 1000
+        before = session.book_sent
+        session.pump_book()
+        if session.book_sent > before:
+            sent_at.append(milliseconds)
+    check("the first image and nine confirmations in one second", len(sent_at) == 10, sent_at)
+    gaps = [later - earlier for earlier, later in zip(sent_at, sent_at[1:])]
+    check("never more than one confirmation per 100 ms", all(gap >= 100 for gap in gaps), gaps)
+
+
 if __name__ == "__main__":
     raise SystemExit(run_tests(globals()))

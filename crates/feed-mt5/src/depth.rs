@@ -435,17 +435,73 @@ mod tests {
     }
 
     #[test]
-    fn a_republished_identical_image_publishes_nothing() {
+    fn an_identical_image_soon_after_the_last_event_publishes_nothing() {
         let mut mapper = mapper();
         let picture = image(1, 1_000, &[("177795", "3")], &[("177800", "5")]);
         assert!(mapper.map(&picture).is_some());
         assert!(
             mapper
-                .map(&image(2, 1_100, &[("177795", "3")], &[("177800", "5")]))
+                .map(&image(2, 1_050, &[("177795", "3")], &[("177800", "5")]))
                 .is_none()
         );
         assert_eq!(mapper.stats.unchanged, 1);
         assert_eq!(mapper.stats.deltas, 0);
+    }
+
+    /// The bridge re-reads an unchanged DOM and sends it again: that is an
+    /// observation that the book still stood at that instant. It is published
+    /// as an empty delta so the book clock reaches it — without it, a book
+    /// that changes three times a second stops short of every newer print.
+    #[test]
+    fn an_identical_image_confirms_the_book_at_its_own_instant() {
+        let mut mapper = mapper();
+        let mut book = quantick_orderbook::OrderBook::new();
+        let mut apply = |event: Option<DepthEvent>| match event {
+            Some(DepthEvent::Snapshot { snapshot, .. }) => {
+                book.install_snapshot(snapshot).unwrap();
+                None
+            }
+            Some(DepthEvent::Update {
+                event_time_ms,
+                delta,
+                ..
+            }) => {
+                let outcome = book.apply_delta(&delta).unwrap();
+                Some((event_time_ms, delta, outcome))
+            }
+            other => panic!("unexpected event {other:?}"),
+        };
+
+        apply(mapper.map(&image(1, 1_000, &[("177795", "3")], &[("177800", "5")])));
+        let (confirmed_ms, confirmation, outcome) = apply(mapper.map(&image(
+            2,
+            1_100,
+            &[("177795", "3")],
+            &[("177800", "5")],
+        )))
+        .expect("an identical image a confirmation interval later is published");
+        assert_eq!(confirmed_ms, 1_100 + 10_800_000);
+        assert!(confirmation.bids().is_empty() && confirmation.asks().is_empty());
+        assert_eq!(
+            outcome,
+            quantick_orderbook::ApplyOutcome::Applied {
+                first_update_id: 2,
+                final_update_id: 2,
+                changed_levels: 0,
+            },
+            "a confirmation is a real, sequenced event that changes no level"
+        );
+
+        // The next real change continues the sequence: no gap, no stale id.
+        let (_, delta, _) = apply(mapper.map(&image(
+            3,
+            1_120,
+            &[("177795", "4")],
+            &[("177800", "5")],
+        )))
+        .expect("a changed image publishes a delta");
+        assert_eq!(delta.first_update_id(), 3);
+        assert_eq!(mapper.stats.deltas, 1);
     }
 
     #[test]
