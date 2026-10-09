@@ -1321,9 +1321,11 @@ fn projection_uses_live_end_of_partial_timeline() {
         &timeline,
         PriceWindow::new(dec("98"), dec("103")).unwrap(),
     );
-    // Two bar slots and the lane: three regions, the lane's 200 ms on the
-    // last of them, so the confirmation at 750 sits at (2 + 150/200) / 3.
-    let book_x = (2.0 + 150.0 / 200.0) / 3.0;
+    // Two bar slots and the lane: three regions, the lane's floor of
+    // `MIN_LANE_SPAN_MS` ending at 800 on the last of them, so the
+    // confirmation at 750 sits 50 ms short of the edge.
+    let window = crate::constants::MIN_LANE_SPAN_MS as f64;
+    let book_x = (2.0 + (window - 50.0) / window) / 3.0;
     let observed: Vec<_> = projection
         .cells
         .iter()

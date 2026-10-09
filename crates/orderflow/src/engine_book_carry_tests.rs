@@ -28,6 +28,12 @@ fn config() -> HeatmapConfig {
             window: crate::LaneWindow::Fixed { ms: WINDOW_MS },
             ..Default::default()
         },
+        // The native tape is a tape of volume dots: only it runs on the
+        // supplied clock.
+        volume_dots: crate::config::VolumeDotStyle {
+            enabled: true,
+            ..Default::default()
+        },
         ..Default::default()
     }
 }
@@ -89,7 +95,13 @@ fn request(now_ms: i64) -> ProjectionRequest {
         lane_reference_ms: Some(6_000),
         lane_now_ms: Some(now_ms),
         price_range: (90.0, 115.0),
-        dot_zoom: None,
+        dot_zoom: Some(DotZoom {
+            native_tape: true,
+            tape_window_ms: 100,
+            tape_level_ticks: 1,
+            candle_level_ticks: 1,
+            lane_bars: vec![(PRINT_MS, now_ms)],
+        }),
     }
 }
 
@@ -241,7 +253,7 @@ fn the_carried_stretch_is_labelled_and_dimmer() {
 #[test]
 fn a_book_that_stopped_confirming_is_not_carried() {
     let mut engine = engine();
-    let stop_ms = 2_000;
+    let stop_ms = 1_999;
     let frames = run(&mut engine, 2_000, 80, 0, |book_ms| book_ms <= stop_ms);
     let last = frames.last().unwrap();
     assert_eq!(last.book_ms, Some(stop_ms));
