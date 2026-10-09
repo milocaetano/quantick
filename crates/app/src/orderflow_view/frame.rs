@@ -394,41 +394,16 @@ impl OrderflowView {
         painter.galley(pos, galley, color);
     }
 
-    /// The live strip's rows: the forming bar's aggression per price.
-    /// `bar_open_ms` is the forming bar's open (`None` hides the histogram);
-    /// `forming` is that bar's footprint.
-    ///
-    /// Beside a native tape the candles key no mark of their own — their
-    /// dots are drawn from the bars' footprints — and the tape holds only
-    /// its own window, so the forming candle is read from the footprint its
-    /// dot is drawn from. Otherwise the frame's marks hold it.
+    /// The live strip's rows: see [`live_strip::forming_rows`].
     pub(crate) fn live_strip_rows(
         &self,
         bar_open_ms: Option<i64>,
         forming: Option<&BarFootprint>,
     ) -> Vec<live_strip::HistogramRow> {
-        if self.config.native_tape() {
-            let grouping = self
-                .published
-                .frame
-                .as_deref()
-                .map_or(self.published.base_price_grouping, |frame| {
-                    frame.projection.effective_grouping.bucket_width
-                });
-            return match (forming, bar_open_ms) {
-                (Some(ladder), Some(_)) => live_strip::footprint_rows(ladder, grouping),
-                _ => Vec::new(),
-            };
-        }
-        match (self.published.frame.as_deref(), bar_open_ms) {
-            (Some(frame), Some(open_ms)) => live_strip::aggression_rows(
-                &frame.projection.aggressions,
-                open_ms,
-                frame.projection.candles_hold_every_print(),
-                frame.projection.effective_grouping.bucket_width,
-            ),
-            _ => Vec::new(),
-        }
+        let frame = self.published.frame.as_deref().map(|f| &*f.projection);
+        let footprint = forming.filter(|_| self.config.native_tape());
+        let grouping = self.published.base_price_grouping;
+        live_strip::forming_rows(frame, grouping, bar_open_ms, footprint)
     }
 
     /// Draw the live strip: the forming bar's aggression histogram, buys

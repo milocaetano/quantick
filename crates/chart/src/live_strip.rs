@@ -19,7 +19,7 @@
 use rust_decimal::Decimal;
 
 use quantick_engine::BarFootprint;
-use quantick_orderflow::projection::AggressionPrimitive;
+use quantick_orderflow::projection::{AggressionPrimitive, HeatmapProjection};
 
 pub use crate::constants::{
     HISTOGRAM_ALPHA, HISTOGRAM_MAX_HALF_FRAC, LIVE_STRIP_WIDTH_PX, STRIP_BORDER_ALPHA,
@@ -112,6 +112,38 @@ pub fn aggression_rows(
             sell,
         })
         .collect()
+}
+
+/// The live strip's rows: the forming bar's aggression per price.
+/// `bar_open_ms` is the forming bar's open (`None` hides the histogram);
+/// `grouping` the row height when no frame is published.
+///
+/// `footprint` is the forming candle's ladder when the candles key no mark
+/// of their own — beside a native tape their dots are drawn from the bars'
+/// footprints and the tape holds only its own window — and the rows are read
+/// from it, the ladder that candle's dot is drawn from. Otherwise the
+/// frame's marks hold the forming bar.
+#[must_use]
+pub fn forming_rows(
+    frame: Option<&HeatmapProjection>,
+    grouping: Decimal,
+    bar_open_ms: Option<i64>,
+    footprint: Option<&BarFootprint>,
+) -> Vec<HistogramRow> {
+    let Some(open_ms) = bar_open_ms else {
+        return Vec::new();
+    };
+    let grouping = frame.map_or(grouping, |frame| frame.effective_grouping.bucket_width);
+    match (footprint, frame) {
+        (Some(ladder), _) => footprint_rows(ladder, grouping),
+        (None, Some(frame)) => aggression_rows(
+            &frame.aggressions,
+            open_ms,
+            frame.candles_hold_every_print(),
+            grouping,
+        ),
+        (None, None) => Vec::new(),
+    }
 }
 
 /// The forming bar's histogram from its footprint, for a pane whose candles
