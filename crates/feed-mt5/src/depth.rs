@@ -483,7 +483,7 @@ mod tests {
         assert!(mapper.map(&picture).is_some());
         assert!(
             mapper
-                .map(&image(2, 1_020, &[("177795", "3")], &[("177800", "5")]))
+                .map(&image(2, 1_010, &[("177795", "3")], &[("177800", "5")]))
                 .is_none()
         );
         assert_eq!(mapper.stats.unchanged, 1);
@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(mapper.stats.unchanged, 0);
     }
 
-    /// The Python bridge resends an unchanged DOM every 100 ms of its own
+    /// The Python bridge resends an unchanged DOM every 50 ms of its own
     /// monotonic clock but stamps each image with the terminal's time, so
     /// the spacing the mapper sees jitters around the cadence. Every
     /// confirmation must still reach the book, and the ledger must balance.
@@ -559,7 +559,7 @@ mod tests {
         book.install_snapshot(snapshot).unwrap();
 
         let mut book_ms = None;
-        for (seq, spacing) in (2..).zip([99, 101, 100, 99, 101, 100, 99, 101, 100]) {
+        for (seq, spacing) in (2..).zip([49, 51, 50, 48, 52, 50, 49, 51, 50]) {
             stamp += spacing;
             match mapper.map(&image(seq, stamp, &bids, &asks)) {
                 Some(DepthEvent::Update {

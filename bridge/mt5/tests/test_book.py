@@ -74,8 +74,8 @@ def test_missing_book_retries_quietly_and_recovers_without_resubscribing():
         assert clock[0] * 1000 - session.last_book_ms <= 6000, "valid DOM freshness remains below the stale deadline"
     gaps = [later - earlier for earlier, later in zip(sent_at, sent_at[1:])]
     check("unchanged valid DOM is confirmed throughout", len(gaps) > 0, sent_at)
-    check("confirmations are at least a confirm interval apart", all(gap >= 100 for gap in gaps), gaps)
-    check("no confirmation is later than one read past the interval", all(gap <= 100 + read_step_ms for gap in gaps), gaps)
+    check("confirmations are at least a confirm interval apart", all(gap >= 50 for gap in gaps), gaps)
+    check("no confirmation is later than one read past the interval", all(gap <= 50 + read_step_ms for gap in gaps), gaps)
     check("refresh timestamps keep the existing source observation policy", all(msg["time_ms"] == NOW * 1000 for msg in session.sent if msg["type"] == "book"), session.sent)
     previously_sent = session.book_sent
     rows.clear()
@@ -151,13 +151,68 @@ def test_zero_only_depth_notifies_then_probes_quietly_and_recovers():
 
 
 
-def test_unchanged_depth_is_confirmed_ten_times_a_second():
+def _confirming_session(wall_s):
+    """A subscribed session over a standing two-row DOM, its clocks in `wall_s`.
+
+    `wall_s[0]` drives both `time.time` and `time.monotonic`, so the local
+    server clock and the confirm cadence advance together, as they do live.
+    """
+    term = FakeTerminal(0, NOW)
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, NOW)
+    patch_bridge("time", types.SimpleNamespace(time=lambda: wall_s[0], monotonic=lambda: wall_s[0]))
+    session.book_subscribed = True
+    session.last_book_body = None
+    session.last_book_ms = 0.0
+    session.book_seq = session.book_sent = session.book_skipped = 0
+    session.args.book_min_interval_ms = 20
+    module = sys.modules["MetaTrader5"]
+    module.BOOK_TYPE_BUY = 2
+    module.BOOK_TYPE_SELL = 1
+    rows = [
+        types.SimpleNamespace(type=2, price=100, volume_dbl=3, volume=3),
+        types.SimpleNamespace(type=1, price=105, volume_dbl=4, volume=4),
+    ]
+    module.market_book_get = lambda _symbol: rows
+    return session, module
+
+
+def test_confirmations_advance_with_the_clock_when_the_terminal_leads_it():
+    """A book stamp moves at every confirmation, even between prints.
+
+    Measured on WINV26: the terminal's tick times ran ~0.8 s ahead of this
+    host's clock plus the snapped UTC offset. Stamping `max(last tick, local
+    now)` then froze every confirmation at the newest print's time until the
+    next print, so the mapper saw equal stamps, dropped them, and the book
+    clock stood still between prints. The lead the ticks reveal is learned
+    and carried forward instead.
+    """
+    wall_s = [float(NOW)]
+    session, module = _confirming_session(wall_s)
+    lead_ms = 800
+    module.symbol_info_tick = lambda _symbol: types.SimpleNamespace(time_msc=NOW * 1000 + lead_ms)
+
+    for milliseconds in range(0, 1000, 5):
+        wall_s[0] = NOW + milliseconds / 1000
+        session.pump_book()
+    stamps = [msg["time_ms"] for msg in session.sent if msg["type"] == "book"]
+    check("every confirmation has a newer stamp", all(b > a for a, b in zip(stamps, stamps[1:])), stamps)
+    check(
+        "the stamp is the local clock carried by the lead the ticks revealed",
+        stamps[-1] == NOW * 1000 + lead_ms + 950,
+        stamps,
+    )
+    check("no stamp is older than the newest tick", all(stamp >= NOW * 1000 + lead_ms for stamp in stamps), stamps)
+
+
+def test_unchanged_depth_is_confirmed_twenty_times_a_second():
     """A short tape needs the book clock to move while the DOM stands still.
 
     Measured on WINV26: the DOM changes about three times a second, so a
     bridge that resends an unchanged image only every five seconds leaves the
-    book clock up to a second behind the prints. Each confirmation is a fresh
-    read of the terminal, so it is an observation, not a guess.
+    book clock up to a second behind the prints, and one every 100 ms still
+    left the heat a median ~90 ms short of a 200 ms tape. Each confirmation
+    is a fresh read of the terminal, so it is an observation, not a guess.
     """
     term = FakeTerminal(0, NOW)
     bridge = load_bridge(term)
@@ -186,9 +241,9 @@ def test_unchanged_depth_is_confirmed_ten_times_a_second():
         session.pump_book()
         if session.book_sent > before:
             sent_at.append(milliseconds)
-    check("the first image and nine confirmations in one second", len(sent_at) == 10, sent_at)
+    check("the first image and nineteen confirmations in one second", len(sent_at) == 20, sent_at)
     gaps = [later - earlier for earlier, later in zip(sent_at, sent_at[1:])]
-    check("never more than one confirmation per 100 ms", all(gap >= 100 for gap in gaps), gaps)
+    check("never more than one confirmation per 50 ms", all(gap >= 50 for gap in gaps), gaps)
 
 
 if __name__ == "__main__":
