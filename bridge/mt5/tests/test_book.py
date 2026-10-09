@@ -154,13 +154,17 @@ def test_zero_only_depth_notifies_then_probes_quietly_and_recovers():
 def _confirming_session(wall_s):
     """A subscribed session over a standing two-row DOM, its clocks in `wall_s`.
 
-    `wall_s[0]` drives both `time.time` and `time.monotonic`, so the local
-    server clock and the confirm cadence advance together, as they do live.
+    `wall_s[0]` drives `time.time`, `time.monotonic` and `time.perf_counter`,
+    so the local server clock and the confirm cadence advance together, as
+    they do live.
     """
     term = FakeTerminal(0, NOW)
     bridge = load_bridge(term)
     session = session_at(bridge, term, NOW)
-    patch_bridge("time", types.SimpleNamespace(time=lambda: wall_s[0], monotonic=lambda: wall_s[0]))
+    patch_bridge(
+        "time",
+        types.SimpleNamespace(time=lambda: wall_s[0], monotonic=lambda: wall_s[0], perf_counter=lambda: wall_s[0]),
+    )
     session.book_subscribed = True
     session.last_book_body = None
     session.last_book_ms = 0.0
@@ -203,6 +207,38 @@ def test_confirmations_advance_with_the_clock_when_the_terminal_leads_it():
         stamps,
     )
     check("no stamp is older than the newest tick", all(stamp >= NOW * 1000 + lead_ms for stamp in stamps), stamps)
+
+
+def test_the_confirm_cadence_does_not_inherit_a_coarse_clock():
+    """Windows' `time.monotonic` is GetTickCount64, which moves in 15.625 ms steps.
+
+    Measured live: a 50 ms cadence read off it confirmed every 62.5 ms, and
+    the 100 ms one every 109 ms, because the first step at or past the
+    interval is four (seven) ticks away. The cadence needs a clock finer than
+    the interval it keeps.
+    """
+    wall_s = [float(NOW)]
+    session, module = _confirming_session(wall_s)
+    tick_s = 0.015625
+    patch_bridge(
+        "time",
+        types.SimpleNamespace(
+            time=lambda: wall_s[0],
+            monotonic=lambda: (wall_s[0] // tick_s) * tick_s,
+            perf_counter=lambda: wall_s[0],
+        ),
+    )
+    module.symbol_info_tick = lambda _symbol: None
+
+    sent_at = []
+    for milliseconds in range(0, 1000, 5):
+        wall_s[0] = NOW + milliseconds / 1000
+        before = session.book_sent
+        session.pump_book()
+        if session.book_sent > before:
+            sent_at.append(milliseconds)
+    gaps = [later - earlier for earlier, later in zip(sent_at, sent_at[1:])]
+    check("a confirmation is due one read after the interval, not one coarse tick", all(gap <= 55 for gap in gaps), gaps)
 
 
 def test_unchanged_depth_is_confirmed_twenty_times_a_second():
