@@ -466,6 +466,72 @@ fn the_memory_ceiling_counts_every_panes_copy_of_the_tape() {
     );
 }
 
+/// A five-session run on a tab whose ceiling leaves ten prints of room.
+fn running_near_the_ceiling(held: &[Trade]) -> Campaign {
+    match Campaign::start(
+        held,
+        &copies_leaving(held.len() + 10),
+        HistoryReach::Sessions(5),
+        bounds(),
+        CAMPAIGN_PAGE_PRINTS,
+    ) {
+        CampaignStart::Run(campaign) => campaign,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_last_page_the_feed_trimmed_still_ends_the_run_at_the_ceiling() {
+    // Measured on WINV26, 2026-10-08: the bridge sent the room the ceiling
+    // left and the feed kept one print fewer (a lone oldest print has no
+    // side context). Counting only what it kept, the run stopped one print
+    // short, asked for single prints until three came back empty, and told
+    // the trader "nothing older came back; give it a moment".
+    let today = session(20);
+    let mut campaign = running_near_the_ceiling(&today);
+    let room = campaign.next_request();
+    let kept = run(
+        today[0].timestamp_ms - (room as i64 - 1) * MINUTE,
+        MINUTE,
+        room - 1,
+    );
+    assert_eq!(
+        campaign.advance(&kept, true),
+        CampaignStep::Stop(CampaignEnd::MemoryCeiling),
+        "the request the ceiling clamped is the last one, whatever the feed kept of it"
+    );
+}
+
+#[test]
+fn a_press_one_print_under_the_ceiling_ends_at_the_ceiling_not_idle() {
+    // The chart such a run leaves behind: every later press found one print
+    // of room, asked for it, and got the same "give it a moment".
+    let facts = copies_leaving(session(20).len() + 10);
+    let per_copy = MAX_HELD_PRINTS / facts.copies;
+    let held = run(20 * DAY + 9 * HOUR, MINUTE, per_copy - 1);
+    let mut campaign = match Campaign::start(
+        &held[..],
+        &facts,
+        HistoryReach::Sessions(5),
+        bounds(),
+        CAMPAIGN_PAGE_PRINTS,
+    ) {
+        CampaignStart::Run(campaign) => campaign,
+        CampaignStart::AtCeiling(outcome) => {
+            assert_eq!(outcome.end, CampaignEnd::MemoryCeiling);
+            return;
+        }
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(campaign.next_request(), 1);
+    let step = campaign.advance(&[], true);
+    assert_eq!(
+        step,
+        CampaignStep::Stop(CampaignEnd::MemoryCeiling),
+        "the ceiling, not an empty venue, is why nothing more is asked"
+    );
+}
+
 #[test]
 fn a_pane_opened_mid_run_lowers_the_ceiling_for_the_pages_still_to_come() {
     let today = session(20);
