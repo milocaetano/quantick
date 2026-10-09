@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use eframe::egui;
 use quantick_control_schema::tape_view::TapeViewSnapshot;
+use quantick_engine::BarFootprint;
 use quantick_orderbook::BookLevel;
 use quantick_orderflow::engine::{CaptureStatus, ProjectionRequest, VisibleOrderflow};
 use quantick_orderflow::projection::{PaneGeometry, normalized_area_size};
@@ -393,6 +394,26 @@ impl OrderflowView {
         painter.galley(pos, galley, color);
     }
 
+    /// The live strip's rows: the forming bar's aggression per price, from
+    /// the published frame's marks. `bar_open_ms` is the forming bar's open
+    /// (`None` hides the histogram); `forming` is that bar's footprint.
+    pub(crate) fn live_strip_rows(
+        &self,
+        bar_open_ms: Option<i64>,
+        forming: Option<&BarFootprint>,
+    ) -> Vec<live_strip::HistogramRow> {
+        let _ = forming;
+        match (self.published.frame.as_deref(), bar_open_ms) {
+            (Some(frame), Some(open_ms)) => live_strip::aggression_rows(
+                &frame.projection.aggressions,
+                open_ms,
+                frame.projection.candles_hold_every_print(),
+                frame.projection.effective_grouping.bucket_width,
+            ),
+            _ => Vec::new(),
+        }
+    }
+
     /// Draw the live strip: the forming bar's aggression histogram, buys
     /// growing rightward from the centre and sells leftward, on the bubbles'
     /// square-root area rule normalized by the bar itself — it resets on bar
@@ -409,6 +430,7 @@ impl OrderflowView {
         scale: &PriceScale,
         canvas_background: egui::Color32,
         bar_open_ms: Option<i64>,
+        forming: Option<&BarFootprint>,
     ) {
         self.sync_published();
         painter.rect_filled(strip, egui::Rounding::ZERO, canvas_background);
@@ -429,15 +451,7 @@ impl OrderflowView {
         // The forming bar's mirrored aggression histogram, from the same
         // projection clusters the bubbles draw — one engine, one aggregation
         // path. Empty whenever those layers publish nothing.
-        let histogram = match (frame.as_deref(), bar_open_ms) {
-            (Some(frame), Some(open_ms)) => live_strip::aggression_rows(
-                &frame.projection.aggressions,
-                open_ms,
-                frame.projection.candles_hold_every_print(),
-                frame.projection.effective_grouping.bucket_width,
-            ),
-            _ => Vec::new(),
-        };
+        let histogram = self.live_strip_rows(bar_open_ms, forming);
         if !histogram.is_empty() {
             let bucket_width = frame
                 .as_deref()

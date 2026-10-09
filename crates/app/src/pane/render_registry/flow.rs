@@ -57,6 +57,7 @@ pub(in crate::pane) struct StripPass<'a> {
     pub scale: &'a PriceScale,
     pub background: egui::Color32,
     pub partial_time: Option<i64>,
+    pub forming: Option<&'a quantick_engine::BarFootprint>,
 }
 pub(in crate::pane) struct StatusPass<'a> {
     pub owner: &'a OrderflowView,
@@ -108,6 +109,12 @@ fn legend(p: &mut LegendPass<'_>) {
     );
 }
 fn strip(p: &mut StripPass<'_>) {
-    p.owner
-        .draw_live_strip(p.painter, p.rect, p.scale, p.background, p.partial_time);
+    p.owner.draw_live_strip(
+        p.painter,
+        p.rect,
+        p.scale,
+        p.background,
+        p.partial_time,
+        p.forming,
+    );
 }

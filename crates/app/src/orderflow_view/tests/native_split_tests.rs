@@ -312,3 +312,55 @@ fn with_the_tape_off_the_native_switch_leaves_the_tick_chart_as_it_was() {
         "the candles with the native switch set against the candles without it",
     );
 }
+
+/// Beside a native tape the candles key no mark of their own: their volume
+/// dots are drawn from the bars' footprints. The live strip still owes the
+/// forming candle's whole aggression, so it reads that footprint — every
+/// contract the candle traded, on its side, and nothing from the closed ones.
+#[test]
+fn the_live_strip_shows_the_forming_candle_beside_a_native_tape() {
+    let mut view = win_view(false);
+    view.set_projection_demand(true);
+    let mut ladder = quantick_engine::FootprintBuilder::new(
+        view.config.price_grouping,
+        quantick_engine::DEFAULT_LEVEL_CAP,
+    );
+    let mut closed = Vec::new();
+    let mut forming: Option<Bar> = None;
+    for index in 0..14_u32 {
+        let trade = Trade {
+            agg_id: u64::from(index) + 1,
+            timestamp_ms: 1_000 + i64::from(index) * 870,
+            price: Decimal::from(100 + i64::from(index % 5) * 2 - 4),
+            quantity: Decimal::from(1 + index % 4),
+            side: if index % 3 == 0 {
+                Side::Sell
+            } else {
+                Side::Buy
+            },
+        };
+        view.record_trade(&trade);
+        match forming.as_mut() {
+            Some(bar) if bar.trade_count < 5 => bar.extend(&trade),
+            _ => {
+                closed.extend(forming.take());
+                let _ = ladder.close();
+                forming = Some(Bar::opened_by(&trade));
+            }
+        }
+        ladder.push(&trade);
+    }
+    let forming = forming.expect("a forming candle");
+    view.set_replay_clock_at(13_000, Some(forming.close_time), None);
+    let _ = frame(&mut view, &closed, Some(&forming), 40.0);
+
+    let rows = view.live_strip_rows(Some(forming.open_time), ladder.partial());
+    assert!(!rows.is_empty(), "the strip draws the forming candle");
+    let buy: Decimal = rows.iter().map(|row| row.buy).sum();
+    let sell: Decimal = rows.iter().map(|row| row.sell).sum();
+    assert_eq!(
+        (buy, sell),
+        (forming.buy_volume, forming.sell_volume),
+        "every contract of the forming candle, on its side: {rows:?}"
+    );
+}
