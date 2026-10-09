@@ -2761,3 +2761,7 @@ mod past_heat_tests;
 #[cfg(test)]
 #[path = "engine_tape_seal_tests.rs"]
 mod tape_seal_tests;
+
+#[cfg(test)]
+#[path = "engine_book_carry_tests.rs"]
+mod book_carry_tests;
