@@ -947,13 +947,25 @@ impl BookEngine {
                 delta,
                 ..
             } => {
+                // An empty delta confirms an unchanged book. With no book to
+                // confirm (before a snapshot, after a gap) it is no evidence
+                // of anything: drop it without a warning, a gap or a status.
+                let confirmation = delta.bids().is_empty() && delta.asks().is_empty();
+                if confirmation && !self.history.is_synchronized() {
+                    return;
+                }
                 match self.history.apply_delta(event_time_ms, &delta) {
                     Ok(_) => {
                         self.latest_arrival_latency_ms =
                             crate::feed_lag_ms(received_at_ms, Some(event_time_ms));
-                        self.depth_updates = self.depth_updates.saturating_add(1);
-                        self.depth_updates_since_summary =
-                            self.depth_updates_since_summary.saturating_add(1);
+                        if !confirmation {
+                            self.depth_updates = self.depth_updates.saturating_add(1);
+                            self.depth_updates_since_summary =
+                                self.depth_updates_since_summary.saturating_add(1);
+                        }
+                        // Settled heat ends open runs at the book clock, so a
+                        // confirmation marks it dirty too; the cache coalesces
+                        // that to one rebuild per projection interval.
                         self.mark_settled_dirty();
                     }
                     Err(error) => {
@@ -2556,7 +2568,12 @@ mod tests {
             symbol: "BTCUSDT".to_owned(),
             generation: 10,
             event_time_ms: 1_050,
-            delta: BookDelta::new(11, 11, Vec::new(), Vec::new()),
+            delta: BookDelta::new(
+                11,
+                11,
+                vec![BookLevel::new(Decimal::from(99), Decimal::from(7)).unwrap()],
+                Vec::new(),
+            ),
         });
         assert_eq!(engine.depth_updates, updates_before + 1);
         assert_eq!(

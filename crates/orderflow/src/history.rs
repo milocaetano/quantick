@@ -394,6 +394,12 @@ impl LiquidityHistory {
         self.counters
     }
 
+    /// Whether a generation is open: a snapshot installed and no gap since.
+    #[must_use]
+    pub fn is_synchronized(&self) -> bool {
+        self.generation.is_some()
+    }
+
     /// Most recent accepted book timestamp.
     #[must_use]
     pub fn latest_book_ms(&self) -> Option<i64> {
@@ -709,11 +715,18 @@ impl LiquidityHistory {
 
         self.latest_book_ms = Some(timestamp_ms);
         self.first_stream_ms.get_or_insert(timestamp_ms);
-        if matches!(outcome, ApplyOutcome::Stale { .. }) {
-            self.counters.deltas_stale += 1;
-        } else {
-            self.reconcile_current_book(timestamp_ms, generation);
-            self.counters.deltas_applied += 1;
+        match outcome {
+            ApplyOutcome::Stale { .. } => self.counters.deltas_stale += 1,
+            // A confirmation changes no level: the clock above is all that
+            // moves, and open runs end at it, so the whole book is not
+            // re-aggregated for nothing.
+            ApplyOutcome::Applied {
+                changed_levels: 0, ..
+            } => self.counters.deltas_applied += 1,
+            ApplyOutcome::Applied { .. } => {
+                self.reconcile_current_book(timestamp_ms, generation);
+                self.counters.deltas_applied += 1;
+            }
         }
         self.prune(timestamp_ms);
         Ok(outcome)

@@ -48,10 +48,14 @@ const ASSUMED_BOOK_LEVELS: usize = 32;
 /// Shortest spacing, in book event time, between two published confirmations
 /// of an unchanged image.
 ///
-/// The bridge confirms an unchanged DOM at this cadence (`BOOK_CONFIRM_INTERVAL_MS`
-/// in both bridges); bounding it here too keeps an image that differs only in
-/// rows the differ drops from flooding the book stream.
-const BOOK_CONFIRM_INTERVAL_MS: i64 = 100;
+/// The bridges resend an unchanged DOM every 100 ms of their own monotonic
+/// clock (`BOOK_CONFIRM_INTERVAL_MS`), but stamp each image with the
+/// terminal's time, so the spacing seen here jitters around 100 ms (99, 101,
+/// ...). A floor equal to the cadence would drop every confirmation that lands
+/// a millisecond early. Half the cadence passes all of them and still bounds
+/// an image that differs only in rows the differ drops to 20 confirmations a
+/// second instead of one per terminal event.
+const MIN_CONFIRM_SPACING_MS: i64 = 50;
 
 /// The honest ledger of everything the book mapper did with one session's
 /// images. All fields public on purpose: they are data, not behaviour.
@@ -63,7 +67,8 @@ pub struct BookStats {
     pub snapshots: u64,
     /// Images that produced an absolute delta.
     pub deltas: u64,
-    /// Images identical to the previous one; nothing was published.
+    /// Images identical to the previous one, too soon after the last
+    /// published event to confirm it; nothing was published.
     pub unchanged: u64,
     /// Images identical to the previous one, published as an empty delta
     /// that confirms the book at the image's instant.
@@ -81,10 +86,12 @@ pub struct BookStats {
 }
 
 impl BookStats {
-    /// Total images that changed the published book.
+    /// Total images published to the book stream: snapshots, deltas and
+    /// confirmations. With [`skipped`](Self::skipped) it accounts for every
+    /// image: `images == published() + skipped()`.
     #[must_use]
     pub fn published(&self) -> u64 {
-        self.snapshots + self.deltas
+        self.snapshots + self.deltas + self.confirmed
     }
 
     /// Total images that published nothing.
@@ -292,7 +299,7 @@ impl BookMapper {
                 // instant, so the resting book is drawn to where it was seen
                 // and no further.
                 let due = self.last_published_ms.is_none_or(|last| {
-                    event_time_ms.saturating_sub(last) >= BOOK_CONFIRM_INTERVAL_MS
+                    event_time_ms.saturating_sub(last) >= MIN_CONFIRM_SPACING_MS
                 });
                 let Some(delta) = due.then(|| self.differ.confirm()).flatten() else {
                     self.stats.unchanged += 1;
@@ -476,7 +483,7 @@ mod tests {
         assert!(mapper.map(&picture).is_some());
         assert!(
             mapper
-                .map(&image(2, 1_050, &[("177795", "3")], &[("177800", "5")]))
+                .map(&image(2, 1_020, &[("177795", "3")], &[("177800", "5")]))
                 .is_none()
         );
         assert_eq!(mapper.stats.unchanged, 1);
