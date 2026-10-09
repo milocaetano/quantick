@@ -1481,7 +1481,9 @@ fn an_unchanged_book_reaches_the_newest_print_on_a_short_tape() {
     // Two and a half seconds of prints over an unchanged book: more than
     // the whole window, which is what emptied the short tape.
     let projected = frame_at(3_000);
-    let edge = projected.live_now_x.expect("the lane ends at the live edge");
+    let edge = projected
+        .live_now_x
+        .expect("the lane ends at the live edge");
     assert!(
         projected
             .cells
@@ -1493,6 +1495,15 @@ fn an_unchanged_book_reaches_the_newest_print_on_a_short_tape() {
             .iter()
             .map(|cell| (cell.x0, cell.x1))
             .collect::<Vec<_>>()
+    );
+
+    // Past the carry bound the map stops vouching for it: a book unchanged
+    // that long while prints arrive is a depth stream to doubt.
+    let doubted = frame_at(500 + crate::history::UNCHANGED_BOOK_CARRY_MS + 1_000);
+    let edge = doubted.live_now_x.expect("the lane ends at the live edge");
+    assert!(
+        doubted.cells.iter().all(|cell| cell.x1 < edge - 1e-9),
+        "a book unchanged past the carry bound is not drawn to the edge"
     );
 }
 

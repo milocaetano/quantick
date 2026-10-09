@@ -14,6 +14,15 @@ mod openings;
 mod tape_range;
 pub use openings::{RecordedOpeningAnchors, RecordedOpenings};
 
+/// Longest the resting book is carried past its last change toward newer
+/// prints, in milliseconds (see [`LiquidityHistory::open_run_end_ms`]).
+///
+/// Five seconds is the slowest cadence at which the MetaTrader bridges confirm
+/// an unchanged book (`BOOK_REFRESH_INTERVAL_MS`). A live order book that has
+/// not changed for longer than that, while prints keep arriving, is a depth
+/// stream to doubt rather than a wall to draw, so the map stops vouching.
+pub const UNCHANGED_BOOK_CARRY_MS: i64 = 5_000;
+
 /// Resting side represented by a liquidity run.
 pub type RestingSide = BookSide;
 /// Aggressor side represented by an execution.
@@ -411,6 +420,24 @@ impl LiquidityHistory {
         self.latest_print_ms
     }
 
+    /// The newest instant the resting book is drawn to.
+    ///
+    /// A depth source sends a change, not a heartbeat: a MetaTrader bridge
+    /// sends an image only when the book differs from the last one, so between
+    /// changes the book clock stands still while prints keep moving the lane's
+    /// edge. The book did not stop at its last change — it is still resting
+    /// there — so it is drawn out to the newest print, at most
+    /// [`UNCHANGED_BOOK_CARRY_MS`] past that change. A depth stream that goes
+    /// quiet for real is the feed's to report, as a gap that closes every run.
+    #[must_use]
+    pub fn open_run_end_ms(&self) -> Option<i64> {
+        let book = self.latest_book_ms?;
+        let carried = self.latest_print_ms.map_or(book, |print_ms| {
+            print_ms.min(book.saturating_add(UNCHANGED_BOOK_CARRY_MS))
+        });
+        Some(book.max(carried))
+    }
+
     /// The newest instant any recorded stream has reached — book or tape.
     ///
     /// What the live edge is measured from. Reading it off the book alone was
@@ -550,7 +577,7 @@ impl LiquidityHistory {
                 high = middle;
             }
         }
-        let latest_ms = self.latest_book_ms.unwrap_or(end_ms);
+        let latest_ms = self.open_run_end_ms().unwrap_or(end_ms);
         let valid_window = end_ms > effective_start;
         self.archived
             .iter()

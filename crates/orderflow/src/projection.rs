@@ -179,7 +179,7 @@ pub fn project_settled(
     let retained_start = history
         .retention_start_ms()
         .map_or(time_start, |start| start.max(time_start));
-    let open_run_end_ms = history.latest_book_ms().unwrap_or(time_end);
+    let open_run_end_ms = history.open_run_end_ms().unwrap_or(time_end);
     let coverage: Vec<_> = if depth_enabled {
         history.coverage_segments().cloned().collect()
     } else {
