@@ -244,7 +244,7 @@ pub fn project_past_heat(
         GroupingWindow {
             start_ms,
             end_ms: until_ms,
-            open_run_end_ms: history.open_run_end_ms().unwrap_or(until_ms),
+            open_run_end_ms: history.latest_book_ms().unwrap_or(until_ms),
             price_low: prices.low,
             price_high: prices.high,
         },
