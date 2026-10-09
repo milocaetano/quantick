@@ -2117,8 +2117,8 @@ mod tests {
         }
     }
 
-    /// A feed that re-reads an unchanged book sends an empty delta ten times
-    /// a second. It moves the book clock and nothing else: no update is
+    /// A feed that re-reads an unchanged book sends an empty delta twenty
+    /// times a second. It moves the book clock and nothing else: no update is
     /// counted and no run is touched. The settled heat ends its open runs at
     /// that clock, so it is marked dirty (the cache coalesces the rebuilds),
     /// never dropped.

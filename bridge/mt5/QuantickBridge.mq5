@@ -90,7 +90,7 @@ input int    InpPumpIntervalMs   = 25;          // Safety-net pump interval (OnT
 #define BOOK_REFRESH_INTERVAL_MS 5000
 // Re-read and resend unchanged valid depth at this cadence: each resend is a
 // fresh observation that moves quantick's book clock between DOM changes.
-#define BOOK_CONFIRM_INTERVAL_MS 100
+#define BOOK_CONFIRM_INTERVAL_MS 50
 
 int      g_socket           = INVALID_HANDLE;
 ulong    g_seq              = 0; // per-session tick sequence, from 1
@@ -119,6 +119,7 @@ ulong    g_book_skipped     = 0;     // images identical to the previous one
 long     g_book_last_ms     = 0;     // throttle cursor (local ms)
 long     g_book_retry_at_ms = 0;     // unavailable DOM probe deadline
 string   g_book_last_body   = "";    // last image's levels, for change detection
+long     g_book_clock_lead  = 0;     // how far SYMBOL_TIME_MSC runs ahead of NowServerMs
 
 //+------------------------------------------------------------------+
 //| Structured Experts-tab logging (AI-first: parseable, coded).      |
@@ -295,9 +296,13 @@ long NowServerMs()
 //| Stamp for a book image, in server ms.                             |
 //|                                                                   |
 //| SYMBOL_TIME_MSC is the last quote's instant at millisecond        |
-//| resolution; in a quiet book it stops moving, so the coarse server |
-//| clock stands in and the book timeline never stalls behind the     |
-//| trade timeline.                                                   |
+//| resolution; between quotes it stops moving, so the millisecond    |
+//| server clock stands in. That clock can trail the quotes (the      |
+//| Python bridge measured ~0.8 s on WINV26), and taking the larger   |
+//| of the two then froze every image at the last quote's time. The   |
+//| lead a quote reveals is a lower bound on the true one, so the     |
+//| largest seen is carried forward: the stamp keeps moving between   |
+//| quotes and never falls behind one.                                |
 //|                                                                   |
 //| Deliberately *not* used to measure how far the pump trails. That  |
 //| floor is a wall clock: it advances whether or not a newer tick    |
@@ -310,8 +315,10 @@ long NowServerMs()
 long BookStampMs()
   {
    long newest = (long)SymbolInfoInteger(_Symbol, SYMBOL_TIME_MSC);
-   long coarse = (long)TimeTradeServer() * 1000;
-   return((coarse > newest) ? coarse : newest);
+   long now    = NowServerMs();
+   if(newest - now > g_book_clock_lead)
+      g_book_clock_lead = newest - now;
+   return(now + g_book_clock_lead);
   }
 
 //+------------------------------------------------------------------+
@@ -574,6 +581,7 @@ bool StartSession()
    g_book_last_body   = "";
    g_book_retry_at_ms = 0;
    g_book_last_ms     = 0;
+   g_book_clock_lead  = 0;
 
    string basis = SymbolInfoString(_Symbol, SYMBOL_BASIS);
    if(basis == "")

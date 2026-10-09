@@ -244,6 +244,10 @@ class Session(TransportMixin, TicksMixin, HistoryMixin, RatesMixin):
         self.sent_at_cursor = 0
         self.last_book_body: str | None = None
         self.last_book_ms = 0.0
+        # How far the terminal's clock runs ahead of this host's, learned from
+        # its ticks. Never negative: a host ahead of the terminal stamps with
+        # its own clock, as it always did. See `book_stamp_ms`.
+        self.clock_lead_ms = 0
         self.last_heartbeat = 0.0
         # Partial line from quantick, kept across polls: the back-channel is
         # NDJSON like the outbound side, and a request can arrive split across
@@ -335,10 +339,12 @@ def run_session(args: argparse.Namespace, offset_s: int) -> None:
         session.start(offset_s)
         tick_interval = args.tick_poll_ms / 1000.0
         book_interval = args.book_poll_ms / 1000.0
-        next_tick = next_book = time.monotonic()
+        # `perf_counter`, not `monotonic`: on Windows the latter moves in
+        # 15.6 ms steps, which quietly turned the 5 ms book poll into 15.6 ms.
+        next_tick = next_book = time.perf_counter()
         try:
             while True:
-                now = time.monotonic()
+                now = time.perf_counter()
                 if now >= next_tick:
                     session.pump_ticks()
                     next_tick = now + tick_interval
@@ -361,7 +367,7 @@ def run_session(args: argparse.Namespace, offset_s: int) -> None:
                 session.flush()
                 # Sleep to the nearest due deadline instead of spinning: the
                 # terminal reads cost microseconds, the waiting is the loop.
-                idle = min(next_tick, next_book) - time.monotonic()
+                idle = min(next_tick, next_book) - time.perf_counter()
                 # Pending opening slices and older-history windows are ready
                 # work; the next pass still runs live pumps when they are due.
                 if idle > 0 and not session.pending_opening and session.pending_history_request is None:

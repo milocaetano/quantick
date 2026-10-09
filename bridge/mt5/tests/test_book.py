@@ -23,9 +23,9 @@ def test_missing_book_retries_quietly_and_recovers_without_resubscribing():
     term = FakeTerminal(0, NOW)
     bridge = load_bridge(term)
     clock = [100.0]
-    patch_bridge("time", types.SimpleNamespace(time=lambda: float(NOW), monotonic=lambda: clock[0]))
+    patch_bridge("time", types.SimpleNamespace(time=lambda: float(NOW), monotonic=lambda: clock[0], perf_counter=lambda: clock[0]))
     session = session_at(bridge, term, NOW)
-    patch_bridge("time", types.SimpleNamespace(time=lambda: float(NOW), monotonic=lambda: clock[0]))
+    patch_bridge("time", types.SimpleNamespace(time=lambda: float(NOW), monotonic=lambda: clock[0], perf_counter=lambda: clock[0]))
     session.book_subscribed = True
     session.last_book_body = None
     session.last_book_ms = 0.0
@@ -95,7 +95,7 @@ def test_zero_only_depth_notifies_then_probes_quietly_and_recovers():
         bridge = load_bridge(term)
         clock = [100.0]
         session = session_at(bridge, term, NOW)
-        patch_bridge("time", types.SimpleNamespace(time=lambda: float(NOW), monotonic=lambda: clock[0]))
+        patch_bridge("time", types.SimpleNamespace(time=lambda: float(NOW), monotonic=lambda: clock[0], perf_counter=lambda: clock[0]))
         session.book_subscribed = True
         session.last_book_body = None
         session.last_book_ms = 0.0
@@ -254,7 +254,7 @@ def test_unchanged_depth_is_confirmed_twenty_times_a_second():
     bridge = load_bridge(term)
     clock = [100.0]
     session = session_at(bridge, term, NOW)
-    patch_bridge("time", types.SimpleNamespace(time=lambda: float(NOW), monotonic=lambda: clock[0]))
+    patch_bridge("time", types.SimpleNamespace(time=lambda: float(NOW), monotonic=lambda: clock[0], perf_counter=lambda: clock[0]))
     session.book_subscribed = True
     session.last_book_body = None
     session.last_book_ms = 0.0

@@ -25,8 +25,9 @@ BOOK_UNAVAILABLE_RETRY_MS = 5_000
 # An unchanged, usable DOM is re-read and resent at this cadence. Each resend
 # is a fresh observation that the book still stands, and it is what moves the
 # app's book clock between changes: B3's DOM changes about three times a
-# second, so a slower confirmation leaves the depth map short of a 200 ms tape.
-BOOK_CONFIRM_INTERVAL_MS = 100
+# second, and at 100 ms the depth map still stopped a median ~90 ms short of a
+# 200 ms tape. An image is ~400 bytes, so this costs ~8 KB/s on loopback.
+BOOK_CONFIRM_INTERVAL_MS = 50
 
 
 class TicksMixin:
@@ -36,7 +37,7 @@ class TicksMixin:
     `args`, `symbol`, `tape`, `deal_counter`, `seq`, `cursor_msc`, `sent_at_cursor`,
     `ticks_sent`, `offset_s`, `last_heartbeat`, `pump_round_limits`,
     `book_subscribed`, `book_sent`, `book_seq`, `book_skipped`,
-    `last_book_body`, `last_book_ms`, lazy `book_retry_at_ms`. Behaviour from siblings: `send`,
+    `last_book_body`, `last_book_ms`, `clock_lead_ms`, lazy `book_retry_at_ms`. Behaviour from siblings: `send`,
     `flush`, `price`, `server_now_ms` (`TransportMixin`).
     """
 
@@ -231,7 +232,9 @@ class TicksMixin:
         """Send changed DOM promptly and confirm unchanged available depth quietly."""
         if not self.book_subscribed:
             return
-        now = time.monotonic() * 1000.0
+        # `perf_counter`, not `monotonic`: on Windows the latter is
+        # GetTickCount64, whose 15.6 ms steps stretched a 50 ms cadence to 62.5.
+        now = time.perf_counter() * 1000.0
         if now < getattr(self, "book_retry_at_ms", 0.0):
             return
         if now - self.last_book_ms < self.args.book_min_interval_ms:
@@ -278,11 +281,7 @@ class TicksMixin:
         self.last_book_ms = now
 
         self.book_seq += 1
-        tick = mt5.symbol_info_tick(self.symbol)
-        stamp = max(
-            int(tick.time_msc) if tick is not None else 0,
-            self.server_now_ms(),
-        )
+        stamp = self.book_stamp_ms()
         self.send(
             {
                 "type": "book",
@@ -293,6 +292,23 @@ class TicksMixin:
             }
         )
         self.book_sent += 1
+
+    def book_stamp_ms(self) -> int:
+        """The terminal's clock now, as best this bridge can tell.
+
+        The UTC offset is snapped to a quarter hour, so this host's clock can
+        sit a fraction of a second behind the terminal's; on WINV26 its ticks
+        ran ~0.8 s ahead. Stamping `max(last tick, local now)` then froze each
+        image at the newest print's time until the next one, and confirmations
+        stopped moving the book clock. The lead a tick reveals is a lower bound
+        on the true one, so the largest seen is kept and carried forward: the
+        stamp advances with this host's clock and never falls behind a print.
+        """
+        now = self.server_now_ms()
+        tick = mt5.symbol_info_tick(self.symbol)
+        if tick is not None:
+            self.clock_lead_ms = max(self.clock_lead_ms, int(tick.time_msc) - now)
+        return now + self.clock_lead_ms
 
     def maybe_heartbeat(self) -> None:
         now = time.monotonic()

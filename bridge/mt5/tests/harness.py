@@ -214,6 +214,7 @@ def session_for(bridge, terminal, **args):
     session.last_heartbeat = 0.0
     session.cursor_msc = 0
     session.sent_at_cursor = 0
+    session.clock_lead_ms = 0
     session.maybe_heartbeat = lambda: None
     return session
 
@@ -225,14 +226,15 @@ def session_at(bridge, terminal, now_s: int, **args):
     `time.time()` while the code under test takes another leaves the two in
     different seconds whenever the first read lands late enough in one, and
     the failure surfaces as an off-by-one assertion inside the bridge — which
-    is the wrong place to go looking for a flaky helper. `monotonic` is passed
-    through: the heartbeat and the load-older walk measure elapsed time with
-    it, and freezing that would be a different lie.
+    is the wrong place to go looking for a flaky helper. `monotonic` and
+    `perf_counter` are passed through: the heartbeat, the load-older walk and
+    the book cadence measure elapsed time with them, and freezing those would
+    be a different lie.
     """
     session = session_for(bridge, terminal, **args)
     patch_bridge(
         "time",
-        types.SimpleNamespace(time=lambda: float(now_s), monotonic=time.monotonic),
+        types.SimpleNamespace(time=lambda: float(now_s), monotonic=time.monotonic, perf_counter=time.perf_counter),
     )
     session.offset_s = 0
     return session

@@ -48,14 +48,14 @@ const ASSUMED_BOOK_LEVELS: usize = 32;
 /// Shortest spacing, in book event time, between two published confirmations
 /// of an unchanged image.
 ///
-/// The bridges resend an unchanged DOM every 100 ms of their own monotonic
+/// The bridges resend an unchanged DOM every 50 ms of their own monotonic
 /// clock (`BOOK_CONFIRM_INTERVAL_MS`), but stamp each image with the
-/// terminal's time, so the spacing seen here jitters around 100 ms (99, 101,
+/// terminal's time, so the spacing seen here jitters around 50 ms (48, 52,
 /// ...). A floor equal to the cadence would drop every confirmation that lands
-/// a millisecond early. Half the cadence passes all of them and still bounds
-/// an image that differs only in rows the differ drops to 20 confirmations a
-/// second instead of one per terminal event.
-const MIN_CONFIRM_SPACING_MS: i64 = 50;
+/// a millisecond early. Well under the cadence passes all of them and still
+/// bounds an image that differs only in rows the differ drops to 50
+/// confirmations a second instead of one per terminal event.
+const MIN_CONFIRM_SPACING_MS: i64 = 20;
 
 /// The honest ledger of everything the book mapper did with one session's
 /// images. All fields public on purpose: they are data, not behaviour.
