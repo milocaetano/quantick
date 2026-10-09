@@ -1444,6 +1444,58 @@ fn the_newest_bubble_trails_the_edge_by_the_distance_between_the_clocks() {
     );
 }
 
+/// The mirror case: prints running ahead of a book that has not changed.
+///
+/// A MetaTrader bridge sends a depth image only when the book changed, so
+/// between two changes the book clock stands still while every print moves
+/// the lane's edge. Measured on a live WINV26 feed with a 1 s tape: the edge
+/// ran 212 ms past the newest book event at the median and 549 ms at worst,
+/// so on a 200 ms tape the depth map was off the lane more often than on it.
+/// The resting book is still the book until it changes, so the map follows
+/// the newest print out to the edge instead of stopping at the last change.
+#[test]
+fn an_unchanged_book_reaches_the_newest_print_on_a_short_tape() {
+    let closed = [bar(0, 1_000)];
+    let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+    let frame_at = |print_ms: i64| {
+        let mut history = LiquidityHistory::new(config());
+        history.install_snapshot(500, 1, snapshot(10)).unwrap();
+        history.record_aggression(&Trade {
+            agg_id: 1,
+            timestamp_ms: print_ms,
+            price: dec("101"),
+            quantity: dec("1"),
+            side: Side::Buy,
+        });
+        // A one-second tape ending at the newest print.
+        let edge = crate::LiveEdge {
+            now_ms: print_ms,
+            window_ms: 1_000,
+            reference_ms: 1_000,
+            on_newest_bar: false,
+        };
+        let timeline = BarTimeline::from_bars(0, &closed, None, Some(edge));
+        project(&history, &timeline, prices)
+    };
+
+    // Two and a half seconds of prints over an unchanged book: more than
+    // the whole window, which is what emptied the short tape.
+    let projected = frame_at(3_000);
+    let edge = projected.live_now_x.expect("the lane ends at the live edge");
+    assert!(
+        projected
+            .cells
+            .iter()
+            .any(|cell| (cell.x1 - edge).abs() < 1e-9),
+        "the unchanged book is drawn out to the newest print: {:?}",
+        projected
+            .cells
+            .iter()
+            .map(|cell| (cell.x0, cell.x1))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Zooming changes what is on screen, never what a quantity means: the
 /// same print maps to the same normalized size through every price window,
 /// in every reference mode — the automatic ones included. Only a change in
