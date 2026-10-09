@@ -282,5 +282,137 @@ def test_unchanged_depth_is_confirmed_twenty_times_a_second():
     check("never more than one confirmation per 50 ms", all(gap >= 50 for gap in gaps), gaps)
 
 
+def _stamp_run(host_s, print_at, duration_ms):
+    """Pump a standing DOM every 5 ms for `duration_ms` and read each stamp.
+
+    `host_s(t)` is this host's wall clock at `t` ms of real time; the confirm
+    cadence runs on real time, so a step in the wall clock does not move it.
+    `print_at(t)` is the `time_msc` of the terminal's newest print at `t`, or
+    `None` before the first. Returns `(t, stamp, bound)` per image, where
+    `bound` is the furthest any print received so far plus the real time
+    since it arrived could reach: the latest moment a print has vouched for.
+    """
+    real_s = [0.0]
+    term = FakeTerminal(0, NOW)
+    bridge = load_bridge(term)
+    session = session_at(bridge, term, NOW)
+    patch_bridge(
+        "time",
+        types.SimpleNamespace(
+            time=lambda: host_s(real_s[0] * 1000),
+            monotonic=lambda: 500.0 + real_s[0],
+            perf_counter=lambda: 500.0 + real_s[0],
+        ),
+    )
+    session.offset_s = 0
+    session.book_subscribed = True
+    session.last_book_body = None
+    session.last_book_ms = 0.0
+    session.book_seq = session.book_sent = session.book_skipped = 0
+    session.args.book_min_interval_ms = 20
+    module = sys.modules["MetaTrader5"]
+    module.BOOK_TYPE_BUY = 2
+    module.BOOK_TYPE_SELL = 1
+    rows = [
+        types.SimpleNamespace(type=2, price=100, volume_dbl=3, volume=3),
+        types.SimpleNamespace(type=1, price=105, volume_dbl=4, volume=4),
+    ]
+    module.market_book_get = lambda _symbol: rows
+    shown = [None]
+    module.symbol_info_tick = lambda _symbol: (
+        None if shown[0] is None else types.SimpleNamespace(time_msc=shown[0])
+    )
+    arrived = []  # (time_msc, real ms it first showed)
+    out = []
+    for t in range(0, duration_ms, 5):
+        real_s[0] = t / 1000
+        newest = print_at(t)
+        if newest is not None and newest != shown[0]:
+            arrived.append((newest, t))
+        shown[0] = newest
+        before = session.book_sent
+        session.pump_book()
+        if session.book_sent > before:
+            bound = max((msc + t - at for msc, at in arrived), default=None)
+            out.append((t, session.sent[-1]["time_ms"], bound))
+    return out
+
+
+def _ahead(run):
+    return [(t, stamp, bound) for t, stamp, bound in run if bound is not None and stamp > bound]
+
+
+def test_a_print_from_the_future_does_not_leave_a_lasting_lead():
+    """One print with a bad `time_msc` must not move every later stamp ahead.
+
+    The learned lead never fell: a print 5 s in the future kept every later
+    book image 5 s ahead of the tape, claiming depth at moments no print had
+    reached. Its stamps may hold at that print's time, never above it plus the
+    real time since, and once real prints pass it they lead again.
+    """
+    base = NOW * 1000
+
+    def print_at(t):
+        if t < 1000:
+            return base + 5000  # one bad print, five seconds early
+        return base + (t // 100) * 100  # then the honest tape, every 100 ms
+
+    run = _stamp_run(lambda t: NOW + t / 1000, print_at, 10_000)
+    check("no stamp is ahead of a print plus the real time since it", not _ahead(run), _ahead(run)[:5])
+    late = [(t, stamp) for t, stamp, _ in run if t >= 8000]
+    check(
+        "after the real tape passes the bad print, stamps follow the real tape",
+        all(stamp <= base + t for t, stamp in late) and all(stamp >= base + t - 100 for t, stamp in late),
+        late[:5],
+    )
+
+
+def test_a_host_clock_that_catches_up_leaves_no_stamp_ahead_of_the_prints():
+    """An NTP step forward on this host must not push book stamps past the tape.
+
+    The host starts 800 ms behind the terminal, then steps to the terminal's
+    time at 2 s. A lead learned before the step, carried after it, would put
+    every image 800 ms ahead of the newest print.
+    """
+    base = NOW * 1000
+
+    def host_s(t):
+        return NOW + (t - 800) / 1000 if t < 2000 else NOW + t / 1000
+
+    run = _stamp_run(host_s, lambda t: base + (t // 300) * 300, 5000)
+    check("no stamp is ahead of a print plus the real time since it", not _ahead(run), _ahead(run)[:5])
+
+
+def test_stamps_advance_between_prints_at_the_confirm_cadence():
+    """Confirmations between two prints each carry a newer stamp, 50 ms on."""
+    base = NOW * 1000
+    run = _stamp_run(lambda t: NOW + t / 1000, lambda t: base if t < 1000 else base + 1000, 2000)
+    stamps = [stamp for _, stamp, _ in run]
+    gaps = [b - a for a, b in zip(stamps, stamps[1:])]
+    check("twenty images a second", len(run) == 40, len(run))
+    check("each confirmation stamp is at least 50 ms newer", all(gap >= 50 for gap in gaps), gaps)
+    check("no stamp is ahead of a print plus the real time since it", not _ahead(run), _ahead(run)[:5])
+
+
+def test_stamps_never_go_backwards():
+    """A print corrected backwards, or a host clock stepped back, never rewinds the book.
+
+    Before the first print the stamp is the host clock, as it always was.
+    """
+    base = NOW * 1000
+
+    def print_at(t):
+        if t < 300:
+            return None
+        if t < 1000:
+            return base + 600
+        return base + 200  # the terminal corrects its newest print backwards
+
+    run = _stamp_run(lambda t: NOW + t / 1000 if t < 1500 else NOW + (t - 1000) / 1000, print_at, 3000)
+    stamps = [stamp for _, stamp, _ in run]
+    check("before any print the stamp is the host clock", run[0][1] == base, run[:2])
+    check("stamps never decrease", all(b >= a for a, b in zip(stamps, stamps[1:])), stamps)
+
+
 if __name__ == "__main__":
     raise SystemExit(run_tests(globals()))
