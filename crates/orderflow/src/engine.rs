@@ -2096,6 +2096,91 @@ mod tests {
         );
     }
 
+    fn confirmation(update_id: u64, event_time_ms: i64) -> DepthEvent {
+        DepthEvent::Update {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 10,
+            event_time_ms,
+            delta: BookDelta::new(update_id, update_id, Vec::new(), Vec::new()),
+        }
+    }
+
+    /// A feed that re-reads an unchanged book sends an empty delta ten times
+    /// a second. It moves the book clock and nothing else: no update is
+    /// counted and no run is touched. The settled heat ends its open runs at
+    /// that clock, so it is marked dirty (the cache coalesces the rebuilds),
+    /// never dropped.
+    #[test]
+    fn a_confirmation_only_moves_the_book_clock() {
+        let mut engine = BookEngine::new("BTCUSDT");
+        engine.set_enabled(true, 10);
+        engine.handle_depth_event(snapshot_event(10));
+        let revision = engine.settled_revision;
+        let counters = engine.history.counters();
+
+        engine.handle_depth_event(confirmation(11, 1_200));
+
+        assert_eq!(engine.history.latest_book_ms(), Some(1_200));
+        assert_eq!(
+            engine.depth_updates, 0,
+            "a confirmation is not a book update"
+        );
+        assert_eq!(
+            engine.settled_revision,
+            revision + 1,
+            "open runs end at the book clock, so the settled heat follows it"
+        );
+        assert_eq!(
+            engine.history.counters().runs_created,
+            counters.runs_created
+        );
+        assert_eq!(engine.history.counters().runs_closed, counters.runs_closed);
+        assert!(!matches!(engine.status, CaptureStatus::Error));
+
+        // The confirmation took its sequence id: the next change applies.
+        engine.handle_depth_event(DepthEvent::Update {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 10,
+            event_time_ms: 1_300,
+            delta: BookDelta::new(
+                12,
+                12,
+                vec![BookLevel::new(Decimal::from(99), Decimal::from(7)).unwrap()],
+                Vec::new(),
+            ),
+        });
+        assert_eq!(engine.depth_updates, 1);
+        assert_eq!(engine.history.latest_book_ms(), Some(1_300));
+        assert!(!matches!(engine.status, CaptureStatus::Error));
+    }
+
+    /// Before a snapshot, or after a gap, there is no book to confirm. A
+    /// confirmation then is not evidence of anything going wrong: it is
+    /// dropped without a warning, a gap or an error status.
+    #[test]
+    fn a_confirmation_without_a_synchronized_book_is_dropped_silently() {
+        let mut engine = BookEngine::new("BTCUSDT");
+        engine.set_enabled(true, 10);
+        engine.handle_depth_event(confirmation(11, 1_200));
+        assert!(!matches!(engine.status, CaptureStatus::Error));
+        assert_eq!(engine.history.latest_book_ms(), None);
+
+        engine.handle_depth_event(snapshot_event(10));
+        engine.mark_gap_at_latest("test_gap");
+        let status = format!("{:?}", engine.status);
+        let gaps = engine.history.counters().gaps;
+        let revision = engine.settled_revision;
+
+        for (update_id, event_time_ms) in [(11, 1_100), (12, 1_200), (13, 1_300)] {
+            engine.handle_depth_event(confirmation(update_id, event_time_ms));
+        }
+
+        assert_eq!(format!("{:?}", engine.status), status);
+        assert_eq!(engine.history.counters().gaps, gaps);
+        assert_eq!(engine.settled_revision, revision);
+        assert_eq!(engine.history.latest_book_ms(), Some(999));
+    }
+
     /// Volume dots run on the frame the engine publishes, and only when both
     /// the trader opted in and the view handed over the rungs its zoom chose:
     /// off, or with no zoom, the frame is exactly the plain one. The engine is

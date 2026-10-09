@@ -63,11 +63,19 @@ def test_missing_book_retries_quietly_and_recovers_without_resubscribing():
     check("available depth returns to the normal fast cadence", session.book_sent == 2, session.sent)
     check("the existing subscription survives backoff", session.book_subscribed, session.book_subscribed)
     previous_rows = list(rows)
-    for seconds in range(1, 36):
-        clock[0] = 105.05 + seconds
+    read_step_ms = 50
+    sent_at = [105_050]
+    for milliseconds in range(105_050 + read_step_ms, 140_050 + 1, read_step_ms):
+        clock[0] = milliseconds / 1000
+        before = session.book_sent
         session.pump_book()
+        if session.book_sent > before:
+            sent_at.append(milliseconds)
         assert clock[0] * 1000 - session.last_book_ms <= 6000, "valid DOM freshness remains below the stale deadline"
-    check("unchanged valid DOM is confirmed at every read a confirm interval apart", session.book_sent == 37, session.book_sent)
+    gaps = [later - earlier for earlier, later in zip(sent_at, sent_at[1:])]
+    check("unchanged valid DOM is confirmed throughout", len(gaps) > 0, sent_at)
+    check("confirmations are at least a confirm interval apart", all(gap >= 100 for gap in gaps), gaps)
+    check("no confirmation is later than one read past the interval", all(gap <= 100 + read_step_ms for gap in gaps), gaps)
     check("refresh timestamps keep the existing source observation policy", all(msg["time_ms"] == NOW * 1000 for msg in session.sent if msg["type"] == "book"), session.sent)
     previously_sent = session.book_sent
     rows.clear()

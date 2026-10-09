@@ -533,6 +533,61 @@ mod tests {
         assert_eq!(mapper.stats.unchanged, 0);
     }
 
+    /// The Python bridge resends an unchanged DOM every 100 ms of its own
+    /// monotonic clock but stamps each image with the terminal's time, so
+    /// the spacing the mapper sees jitters around the cadence. Every
+    /// confirmation must still reach the book, and the ledger must balance.
+    #[test]
+    fn every_confirmation_at_the_bridge_cadence_is_published_despite_jitter() {
+        let mut mapper = mapper();
+        let mut book = quantick_orderbook::OrderBook::new();
+        let bids = [("177795", "3")];
+        let asks = [("177800", "5")];
+        let mut stamp = 1_000;
+        let Some(DepthEvent::Snapshot { snapshot, .. }) =
+            mapper.map(&image(1, stamp, &bids, &asks))
+        else {
+            panic!("the first image is a snapshot");
+        };
+        book.install_snapshot(snapshot).unwrap();
+
+        let mut book_ms = None;
+        for (seq, spacing) in (2..).zip([99, 101, 100, 99, 101, 100, 99, 101, 100]) {
+            stamp += spacing;
+            match mapper.map(&image(seq, stamp, &bids, &asks)) {
+                Some(DepthEvent::Update {
+                    event_time_ms,
+                    delta,
+                    ..
+                }) => {
+                    assert!(delta.bids().is_empty() && delta.asks().is_empty());
+                    book.apply_delta(&delta)
+                        .expect("a confirmation stays in sequence");
+                    book_ms = Some(event_time_ms);
+                }
+                other => panic!("the confirmation at {stamp} was not published: {other:?}"),
+            }
+        }
+
+        assert_eq!(
+            book_ms,
+            Some(stamp - OFFSET_S * 1000),
+            "the book reaches the newest stamp"
+        );
+        assert_eq!(mapper.stats.confirmed, 9);
+        assert_eq!(mapper.stats.unchanged, 0);
+        assert_eq!(
+            mapper.stats.published(),
+            10,
+            "a snapshot and nine confirmations"
+        );
+        assert_eq!(
+            mapper.stats.images,
+            mapper.stats.published() + mapper.stats.skipped(),
+            "every image is published or skipped"
+        );
+    }
+
     #[test]
     fn a_changed_image_publishes_only_the_levels_that_moved() {
         let mut mapper = mapper();
