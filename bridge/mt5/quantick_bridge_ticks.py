@@ -22,7 +22,11 @@ from quantick_bridge_core import (
 
 # An unavailable DOM needs only a quiet probe, independent of the live tape.
 BOOK_UNAVAILABLE_RETRY_MS = 5_000
-BOOK_REFRESH_INTERVAL_MS = 5_000
+# An unchanged, usable DOM is re-read and resent at this cadence. Each resend
+# is a fresh observation that the book still stands, and it is what moves the
+# app's book clock between changes: B3's DOM changes about three times a
+# second, so a slower confirmation leaves the depth map short of a 200 ms tape.
+BOOK_CONFIRM_INTERVAL_MS = 100
 
 
 class TicksMixin:
@@ -267,7 +271,7 @@ class TicksMixin:
             self.book_retry_at_ms = now + BOOK_UNAVAILABLE_RETRY_MS
 
         body = json.dumps({"bids": bids, "asks": asks}, separators=(",", ":"))
-        if body == self.last_book_body and now - self.last_book_ms < BOOK_REFRESH_INTERVAL_MS:
+        if body == self.last_book_body and now - self.last_book_ms < BOOK_CONFIRM_INTERVAL_MS:
             self.book_skipped += 1
             return
         self.last_book_body = body

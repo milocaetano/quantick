@@ -403,10 +403,9 @@ impl LiquidityHistory {
     /// Most recent accepted print timestamp.
     ///
     /// Kept beside [`latest_book_ms`](Self::latest_book_ms) rather than folded
-    /// into [`latest_ms`](Self::latest_ms) so a test — and a future caller that
-    /// needs to tell the two streams apart — can ask which clock moved.
+    /// into [`latest_ms`](Self::latest_ms) so a caller can tell which of the
+    /// two clocks moved.
     #[must_use]
-    #[allow(dead_code)]
     pub fn latest_print_ms(&self) -> Option<i64> {
         self.latest_print_ms
     }

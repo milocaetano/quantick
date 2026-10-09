@@ -45,6 +45,14 @@ use crate::protocol::{Book, WireLevel};
 /// typically expose a few tens of levels.
 const ASSUMED_BOOK_LEVELS: usize = 32;
 
+/// Shortest spacing, in book event time, between two published confirmations
+/// of an unchanged image.
+///
+/// The bridge confirms an unchanged DOM at this cadence (`BOOK_CONFIRM_INTERVAL_MS`
+/// in both bridges); bounding it here too keeps an image that differs only in
+/// rows the differ drops from flooding the book stream.
+const BOOK_CONFIRM_INTERVAL_MS: i64 = 100;
+
 /// The honest ledger of everything the book mapper did with one session's
 /// images. All fields public on purpose: they are data, not behaviour.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -57,6 +65,9 @@ pub struct BookStats {
     pub deltas: u64,
     /// Images identical to the previous one; nothing was published.
     pub unchanged: u64,
+    /// Images identical to the previous one, published as an empty delta
+    /// that confirms the book at the image's instant.
+    pub confirmed: u64,
     /// Images rejected as crossed or locked (auction, stale terminal state).
     pub crossed: u64,
     /// Images rejected because a level was unparseable or negative.
@@ -96,6 +107,7 @@ impl BookStats {
             deltas = self.deltas,
             skipped = self.skipped(),
             unchanged = self.unchanged,
+            confirmed = self.confirmed,
             crossed = self.crossed,
             malformed = self.malformed,
             empty = self.empty,
@@ -121,6 +133,8 @@ pub struct BookMapper {
     offset_ms: i64,
     differ: SnapshotDiffer,
     last_utc_ms: Option<i64>,
+    /// Event time of the newest published snapshot, delta or confirmation.
+    last_published_ms: Option<i64>,
     bids: Vec<BookLevel>,
     asks: Vec<BookLevel>,
     /// The honest ledger of everything mapped, skipped and why.
@@ -156,6 +170,7 @@ impl BookMapper {
             offset_ms: server_utc_offset_s.saturating_mul(1000),
             differ: SnapshotDiffer::new(BookCoverage::Limited { levels_per_side }),
             last_utc_ms: None,
+            last_published_ms: None,
             bids: Vec::new(),
             asks: Vec::new(),
             stats: BookStats::default(),
@@ -200,6 +215,7 @@ impl BookMapper {
         self.generation = generation;
         self.differ.reset();
         self.last_utc_ms = None;
+        self.last_published_ms = None;
     }
 
     /// Map one DOM image. Returns the event to publish, if any.
@@ -235,6 +251,7 @@ impl BookMapper {
         match self.differ.observe(&self.bids, &self.asks) {
             ImageOutcome::Snapshot(snapshot) => {
                 self.stats.snapshots += 1;
+                self.last_published_ms = Some(event_time_ms);
                 info!(
                     target: "quantick::feed",
                     schema_version = 1_u8,
@@ -261,6 +278,7 @@ impl BookMapper {
             }
             ImageOutcome::Delta(delta) => {
                 self.stats.deltas += 1;
+                self.last_published_ms = Some(event_time_ms);
                 Some(DepthEvent::Update {
                     symbol: self.symbol.clone(),
                     generation: self.generation,
@@ -269,8 +287,25 @@ impl BookMapper {
                 })
             }
             ImageOutcome::Unchanged => {
-                self.stats.unchanged += 1;
-                None
+                // A fresh read of a book that has not changed is still an
+                // observation: published, it moves the book clock to this
+                // instant, so the resting book is drawn to where it was seen
+                // and no further.
+                let due = self.last_published_ms.is_none_or(|last| {
+                    event_time_ms.saturating_sub(last) >= BOOK_CONFIRM_INTERVAL_MS
+                });
+                let Some(delta) = due.then(|| self.differ.confirm()).flatten() else {
+                    self.stats.unchanged += 1;
+                    return None;
+                };
+                self.stats.confirmed += 1;
+                self.last_published_ms = Some(event_time_ms);
+                Some(DepthEvent::Update {
+                    symbol: self.symbol.clone(),
+                    generation: self.generation,
+                    event_time_ms,
+                    delta,
+                })
             }
             ImageOutcome::Crossed { best_bid, best_ask } => {
                 self.stats.crossed += 1;
@@ -473,13 +508,9 @@ mod tests {
         };
 
         apply(mapper.map(&image(1, 1_000, &[("177795", "3")], &[("177800", "5")])));
-        let (confirmed_ms, confirmation, outcome) = apply(mapper.map(&image(
-            2,
-            1_100,
-            &[("177795", "3")],
-            &[("177800", "5")],
-        )))
-        .expect("an identical image a confirmation interval later is published");
+        let (confirmed_ms, confirmation, outcome) =
+            apply(mapper.map(&image(2, 1_100, &[("177795", "3")], &[("177800", "5")])))
+                .expect("an identical image a confirmation interval later is published");
         assert_eq!(confirmed_ms, 1_100 + 10_800_000);
         assert!(confirmation.bids().is_empty() && confirmation.asks().is_empty());
         assert_eq!(
@@ -493,15 +524,13 @@ mod tests {
         );
 
         // The next real change continues the sequence: no gap, no stale id.
-        let (_, delta, _) = apply(mapper.map(&image(
-            3,
-            1_120,
-            &[("177795", "4")],
-            &[("177800", "5")],
-        )))
-        .expect("a changed image publishes a delta");
+        let (_, delta, _) =
+            apply(mapper.map(&image(3, 1_120, &[("177795", "4")], &[("177800", "5")])))
+                .expect("a changed image publishes a delta");
         assert_eq!(delta.first_update_id(), 3);
         assert_eq!(mapper.stats.deltas, 1);
+        assert_eq!(mapper.stats.confirmed, 1);
+        assert_eq!(mapper.stats.unchanged, 0);
     }
 
     #[test]

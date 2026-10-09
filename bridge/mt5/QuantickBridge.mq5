@@ -86,8 +86,11 @@ input int    InpPumpIntervalMs   = 25;          // Safety-net pump interval (OnT
 // enough that a mistyped 0 cannot spin the terminal's timer thread.
 #define PUMP_INTERVAL_MIN_MS 5
 #define PUMP_INTERVAL_MAX_MS 1000
-// Confirm unchanged valid depth, and probe unavailable depth, without busy retries.
+// Probe unavailable depth without busy retries.
 #define BOOK_REFRESH_INTERVAL_MS 5000
+// Re-read and resend unchanged valid depth at this cadence: each resend is a
+// fresh observation that moves quantick's book clock between DOM changes.
+#define BOOK_CONFIRM_INTERVAL_MS 100
 
 int      g_socket           = INVALID_HANDLE;
 ulong    g_seq              = 0; // per-session tick sequence, from 1
@@ -451,10 +454,10 @@ bool SendBook()
    if(!has_liquidity)
       g_book_retry_at_ms = now_ms + BOOK_REFRESH_INTERVAL_MS;
    string body = StringFormat("\"bids\":[%s],\"asks\":[%s]", bids, asks);
-   if(body == g_book_last_body && now_ms - g_book_last_ms < BOOK_REFRESH_INTERVAL_MS)
+   if(body == g_book_last_body && now_ms - g_book_last_ms < BOOK_CONFIRM_INTERVAL_MS)
      {
       g_book_skipped++;
-      return(true); // unchanged depth is confirmed only at the refresh cadence
+      return(true); // unchanged depth is confirmed only at the confirm cadence
      }
    g_book_last_body = body;
    g_book_last_ms   = now_ms;
@@ -994,7 +997,7 @@ void OnTimer()
       return;
      }
    Pump();
-   if((long)(GetMicrosecondCount() / 1000) - g_book_last_ms >= BOOK_REFRESH_INTERVAL_MS && !SendBook())
+   if((long)(GetMicrosecondCount() / 1000) - g_book_last_ms >= BOOK_CONFIRM_INTERVAL_MS && !SendBook())
      {
       Disconnect("book refresh failed");
       return;

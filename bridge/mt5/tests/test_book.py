@@ -67,7 +67,7 @@ def test_missing_book_retries_quietly_and_recovers_without_resubscribing():
         clock[0] = 105.05 + seconds
         session.pump_book()
         assert clock[0] * 1000 - session.last_book_ms <= 6000, "valid DOM freshness remains below the stale deadline"
-    check("unchanged valid DOM stays confirmed across the stale deadline", 8 <= session.book_sent <= 9, session.sent)
+    check("unchanged valid DOM is confirmed at every read a confirm interval apart", session.book_sent == 37, session.book_sent)
     check("refresh timestamps keep the existing source observation policy", all(msg["time_ms"] == NOW * 1000 for msg in session.sent if msg["type"] == "book"), session.sent)
     previously_sent = session.book_sent
     rows.clear()

@@ -123,6 +123,25 @@ impl SnapshotDiffer {
         self.initialized = false;
     }
 
+    /// An empty delta confirming the current image, with the next update id.
+    ///
+    /// For a source that re-reads an unchanged book and says so: the
+    /// confirmation is an observation that the book still stood at that
+    /// instant, so a consumer can advance its book clock without changing a
+    /// level. `None` before the first image of a generation.
+    pub fn confirm(&mut self) -> Option<BookDelta> {
+        if !self.initialized {
+            return None;
+        }
+        self.last_update_id = self.last_update_id.saturating_add(1);
+        Some(BookDelta::new(
+            self.last_update_id,
+            self.last_update_id,
+            Vec::new(),
+            Vec::new(),
+        ))
+    }
+
     /// Observe one complete image of the book.
     ///
     /// Levels may arrive in any order and may repeat a price (quantities are
@@ -317,6 +336,23 @@ mod tests {
             ImageOutcome::Unchanged
         );
         assert_eq!(differ.last_update_id(), 1);
+    }
+
+    #[test]
+    fn a_confirmation_is_an_empty_delta_with_the_next_id() {
+        let mut differ = differ();
+        assert_eq!(differ.confirm(), None, "nothing to confirm before an image");
+        differ.observe(&image(&[("100", "3")]), &image(&[("101", "4")]));
+        assert_eq!(
+            differ.confirm(),
+            Some(BookDelta::new(2, 2, Vec::new(), Vec::new()))
+        );
+        let ImageOutcome::Delta(delta) =
+            differ.observe(&image(&[("100", "5")]), &image(&[("101", "4")]))
+        else {
+            panic!("a changed image is a delta");
+        };
+        assert_eq!(delta.first_update_id(), 3, "the sequence continues");
     }
 
     #[test]

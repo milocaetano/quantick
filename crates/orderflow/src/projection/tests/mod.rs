@@ -1444,7 +1444,7 @@ fn the_newest_bubble_trails_the_edge_by_the_distance_between_the_clocks() {
     );
 }
 
-//// The mirror case: prints running ahead of a book that has not changed.
+/// The mirror case: prints running ahead of a book that has not changed.
 ///
 /// A MetaTrader DOM changes a few times a second, so between two changes the
 /// book clock moves only when the feed confirms the unchanged image — an empty
@@ -1501,7 +1501,7 @@ fn a_confirmed_unchanged_book_reaches_the_edge_on_a_short_tape() {
     );
 }
 
-// Zooming changes what is on screen, never what a quantity means: the
+/// Zooming changes what is on screen, never what a quantity means: the
 /// same print maps to the same normalized size through every price window,
 /// in every reference mode — the automatic ones included. Only a change in
 /// the cluster's own quantity may change its bubble.
