@@ -244,10 +244,11 @@ class Session(TransportMixin, TicksMixin, HistoryMixin, RatesMixin):
         self.sent_at_cursor = 0
         self.last_book_body: str | None = None
         self.last_book_ms = 0.0
-        # How far the terminal's clock runs ahead of this host's, learned from
-        # its ticks. Never negative: a host ahead of the terminal stamps with
-        # its own clock, as it always did. See `book_stamp_ms`.
-        self.clock_lead_ms = 0
+        # The newest print `book_stamp_ms` has seen, when it first saw it
+        # (`perf_counter` ms), and the last stamp it handed out.
+        self.book_print_msc: int | None = None
+        self.book_print_seen_ms = 0.0
+        self.last_book_stamp_ms = 0
         self.last_heartbeat = 0.0
         # Partial line from quantick, kept across polls: the back-channel is
         # NDJSON like the outbound side, and a request can arrive split across

@@ -214,7 +214,9 @@ def session_for(bridge, terminal, **args):
     session.last_heartbeat = 0.0
     session.cursor_msc = 0
     session.sent_at_cursor = 0
-    session.clock_lead_ms = 0
+    session.book_print_msc = None
+    session.book_print_seen_ms = 0.0
+    session.last_book_stamp_ms = 0
     session.maybe_heartbeat = lambda: None
     return session
 

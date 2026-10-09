@@ -188,8 +188,8 @@ def test_confirmations_advance_with_the_clock_when_the_terminal_leads_it():
     host's clock plus the snapped UTC offset. Stamping `max(last tick, local
     now)` then froze every confirmation at the newest print's time until the
     next print, so the mapper saw equal stamps, dropped them, and the book
-    clock stood still between prints. The lead the ticks reveal is learned
-    and carried forward instead.
+    clock stood still between prints. The newest print is carried forward by
+    the real time since it was seen instead.
     """
     wall_s = [float(NOW)]
     session, module = _confirming_session(wall_s)
@@ -202,7 +202,7 @@ def test_confirmations_advance_with_the_clock_when_the_terminal_leads_it():
     stamps = [msg["time_ms"] for msg in session.sent if msg["type"] == "book"]
     check("every confirmation has a newer stamp", all(b > a for a, b in zip(stamps, stamps[1:])), stamps)
     check(
-        "the stamp is the local clock carried by the lead the ticks revealed",
+        "the stamp is the newest print carried by the real time since it",
         stamps[-1] == NOW * 1000 + lead_ms + 950,
         stamps,
     )

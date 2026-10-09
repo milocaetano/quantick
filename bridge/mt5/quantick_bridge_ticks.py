@@ -37,7 +37,8 @@ class TicksMixin:
     `args`, `symbol`, `tape`, `deal_counter`, `seq`, `cursor_msc`, `sent_at_cursor`,
     `ticks_sent`, `offset_s`, `last_heartbeat`, `pump_round_limits`,
     `book_subscribed`, `book_sent`, `book_seq`, `book_skipped`,
-    `last_book_body`, `last_book_ms`, `clock_lead_ms`, lazy `book_retry_at_ms`. Behaviour from siblings: `send`,
+    `last_book_body`, `last_book_ms`, `book_print_msc`, `book_print_seen_ms`,
+    `last_book_stamp_ms`, lazy `book_retry_at_ms`. Behaviour from siblings: `send`,
     `flush`, `price`, `server_now_ms` (`TransportMixin`).
     """
 
@@ -294,21 +295,31 @@ class TicksMixin:
         self.book_sent += 1
 
     def book_stamp_ms(self) -> int:
-        """The terminal's clock now, as best this bridge can tell.
+        """The latest instant the tape vouches for: the newest print, carried
+        forward by the real time since this bridge first saw it.
 
         The UTC offset is snapped to a quarter hour, so this host's clock can
-        sit a fraction of a second behind the terminal's; on WINV26 its ticks
-        ran ~0.8 s ahead. Stamping `max(last tick, local now)` then froze each
-        image at the newest print's time until the next one, and confirmations
-        stopped moving the book clock. The lead a tick reveals is a lower bound
-        on the true one, so the largest seen is kept and carried forward: the
-        stamp advances with this host's clock and never falls behind a print.
+        sit a fraction of a second off the terminal's; on WINV26 its ticks ran
+        ~0.8 s ahead. Stamping `max(last tick, local now)` froze each image at
+        the newest print's time until the next one, and confirmations stopped
+        moving the book clock. Carrying a learned lead instead never let it
+        fall, so one bad `time_msc` or a host clock step left every later image
+        ahead of every print. Elapsed time on `perf_counter` moves the stamp
+        between prints and cannot outrun them; the max with the previous stamp
+        keeps it from rewinding when the terminal corrects a print backwards.
+        Before the first print the host clock is all there is.
         """
-        now = self.server_now_ms()
+        now = time.perf_counter() * 1000.0
         tick = mt5.symbol_info_tick(self.symbol)
-        if tick is not None:
-            self.clock_lead_ms = max(self.clock_lead_ms, int(tick.time_msc) - now)
-        return now + self.clock_lead_ms
+        if tick is not None and int(tick.time_msc) != self.book_print_msc:
+            self.book_print_msc = int(tick.time_msc)
+            self.book_print_seen_ms = now
+        if self.book_print_msc is None:
+            stamp = self.server_now_ms()
+        else:
+            stamp = self.book_print_msc + int(now - self.book_print_seen_ms)
+        self.last_book_stamp_ms = max(self.last_book_stamp_ms, stamp)
+        return self.last_book_stamp_ms
 
     def maybe_heartbeat(self) -> None:
         now = time.monotonic()

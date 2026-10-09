@@ -119,7 +119,9 @@ ulong    g_book_skipped     = 0;     // images identical to the previous one
 long     g_book_last_ms     = 0;     // throttle cursor (local ms)
 long     g_book_retry_at_ms = 0;     // unavailable DOM probe deadline
 string   g_book_last_body   = "";    // last image's levels, for change detection
-long     g_book_clock_lead  = 0;     // how far SYMBOL_TIME_MSC runs ahead of NowServerMs
+long     g_book_print_msc   = 0;     // newest SYMBOL_TIME_MSC seen by BookStampMs (0 = none yet)
+ulong    g_book_print_us    = 0;     // GetMicrosecondCount when that print was first seen
+long     g_book_last_stamp  = 0;     // last book stamp sent; stamps never rewind
 
 //+------------------------------------------------------------------+
 //| Structured Experts-tab logging (AI-first: parseable, coded).      |
@@ -296,13 +298,15 @@ long NowServerMs()
 //| Stamp for a book image, in server ms.                             |
 //|                                                                   |
 //| SYMBOL_TIME_MSC is the last quote's instant at millisecond        |
-//| resolution; between quotes it stops moving, so the millisecond    |
-//| server clock stands in. That clock can trail the quotes (the      |
-//| Python bridge measured ~0.8 s on WINV26), and taking the larger   |
-//| of the two then froze every image at the last quote's time. The   |
-//| lead a quote reveals is a lower bound on the true one, so the     |
-//| largest seen is carried forward: the stamp keeps moving between   |
-//| quotes and never falls behind one.                                |
+//| resolution; between quotes it stops moving, so the stamp is that  |
+//| quote carried forward by the real time since this EA first saw    |
+//| it. The server clock trailed the quotes (~0.8 s on WINV26), so    |
+//| taking the larger of the two froze every image at the last        |
+//| quote's time; carrying a learned lead never let it fall, so one   |
+//| bad quote time or a clock step left every later image ahead of    |
+//| every print. The max with the last stamp keeps it from rewinding  |
+//| when a quote is corrected backwards. Before the first quote the   |
+//| millisecond server clock is all there is.                         |
 //|                                                                   |
 //| Deliberately *not* used to measure how far the pump trails. That  |
 //| floor is a wall clock: it advances whether or not a newer tick    |
@@ -314,11 +318,19 @@ long NowServerMs()
 //+------------------------------------------------------------------+
 long BookStampMs()
   {
-   long newest = (long)SymbolInfoInteger(_Symbol, SYMBOL_TIME_MSC);
-   long now    = NowServerMs();
-   if(newest - now > g_book_clock_lead)
-      g_book_clock_lead = newest - now;
-   return(now + g_book_clock_lead);
+   ulong now_us = GetMicrosecondCount();
+   long  newest = (long)SymbolInfoInteger(_Symbol, SYMBOL_TIME_MSC);
+   if(newest > 0 && newest != g_book_print_msc)
+     {
+      g_book_print_msc = newest;
+      g_book_print_us  = now_us;
+     }
+   long stamp = (g_book_print_msc > 0)
+                ? g_book_print_msc + (long)((now_us - g_book_print_us) / 1000)
+                : NowServerMs();
+   if(stamp > g_book_last_stamp)
+      g_book_last_stamp = stamp;
+   return(g_book_last_stamp);
   }
 
 //+------------------------------------------------------------------+
@@ -581,7 +593,9 @@ bool StartSession()
    g_book_last_body   = "";
    g_book_retry_at_ms = 0;
    g_book_last_ms     = 0;
-   g_book_clock_lead  = 0;
+   g_book_print_msc   = 0;
+   g_book_print_us    = 0;
+   g_book_last_stamp  = 0;
 
    string basis = SymbolInfoString(_Symbol, SYMBOL_BASIS);
    if(basis == "")
