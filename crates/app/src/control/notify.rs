@@ -83,3 +83,28 @@ impl NotifyAccess for ControlAccess {
         self.journal_mut().record(event, metrics::wall_clock_ms());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The budget's arithmetic, pinned on a clock the test owns: two at
+    /// once, then one every ten seconds, and the wait it reports between.
+    #[test]
+    fn the_notification_budget_refills_one_every_ten_seconds() {
+        let started = Instant::now();
+        let mut limiter = NotificationLimiter {
+            available_token_nanos: u128::from(CONTROL_NOTIFICATION_BURST)
+                * NotificationLimiter::ONE_TOKEN_NANOS,
+            last_refill: started,
+        };
+        assert!(limiter.allow(started));
+        assert!(limiter.allow(started));
+        assert!(!limiter.allow(started));
+        assert_eq!(limiter.retry_after(), Duration::from_secs(10));
+        assert!(!limiter.allow(started + Duration::from_secs(5)));
+        assert_eq!(limiter.retry_after(), Duration::from_secs(5));
+        assert!(limiter.allow(started + Duration::from_secs(10)));
+        assert_eq!(limiter.retry_after(), Duration::from_secs(10));
+    }
+}

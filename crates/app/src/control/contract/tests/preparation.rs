@@ -137,7 +137,19 @@ fn complete_contract_and_admission_signatures() {
             .unwrap(),
         ),
     ];
+    let mut pinned = corpus.describe.clone();
+    pinned["application_commit"] = json!("<commit>");
+    assert_pinned(
+        "describe",
+        &serde_json::to_vec_pretty(&pinned).unwrap(),
+        PINNED_DESCRIBE,
+    );
     for (name, bytes) in outputs {
+        match name {
+            "admission-outcomes.json" => assert_pinned(name, &bytes, PINNED_ADMISSION),
+            "permissions.json" => assert_pinned(name, &bytes, PINNED_PERMISSIONS),
+            _ => {}
+        }
         eprintln!("A1C_SIGNATURE {name} bytes={}", bytes.len());
         if let Some(directory) = std::env::var_os("A1C_SIGNATURE_DIR") {
             let directory = std::path::PathBuf::from(directory);
@@ -154,4 +166,19 @@ fn complete_contract_and_admission_signatures() {
             );
         }
     }
+}
+
+/// `describe`, the admission outcomes and the permissions, pinned by length
+/// and FNV-1a so a refactor of how capabilities dock cannot move one byte.
+/// A deliberate contract change rewrites these numbers; dump the files with
+/// `A1C_SIGNATURE_DIR` to see what moved.
+const PINNED_DESCRIBE: (usize, u64) = (654_250, 0x4e57_638c_b23c_da47);
+const PINNED_ADMISSION: (usize, u64) = (41_859, 0x44f4_9b27_2761_14d2);
+const PINNED_PERMISSIONS: (usize, u64) = (8_006, 0x47b8_04e7_2ad3_59c7);
+
+fn assert_pinned(name: &str, bytes: &[u8], (length, hash): (usize, u64)) {
+    let fnv = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    assert_eq!((bytes.len(), fnv), (length, hash), "{name} bytes changed");
 }
