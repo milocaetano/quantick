@@ -19,6 +19,7 @@ mod dots;
 pub mod flow_tape;
 mod fold;
 mod heat_cells;
+mod lane_heat;
 mod model;
 mod past_heat;
 mod past_tape;
@@ -48,6 +49,7 @@ pub use dots::{
     DotRungMemory, DotScale, DotSizing, DotZoom, PaneGeometry, VolumeDots, candle_dot_px,
     dot_level_ticks, dot_radius_range, dot_window_ms, hold_rung, lane_bars, tape_price_range,
 };
+pub use lane_heat::{BOOK_CARRY_MAX_MS, BookCarry, CARRIED_BOOK_ALPHA, book_carry};
 pub use model::{
     AggressionPrimitive, BEFORE_CAPTURE, BOOK_PENDING, GapPrimitive, HeatmapCell,
     HeatmapProjection, LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection,
@@ -238,6 +240,7 @@ pub fn project_settled(
             x1,
             y0,
             y1,
+            carried: false,
         };
 
         let mut drawn = false;
@@ -265,12 +268,15 @@ pub fn project_settled(
                 entry.generation = entry.generation.max(run.generation);
                 drawn = true;
             }
+            // The run's bands on the tape are the live half's: they are read
+            // on every frame's own clock (`lane_heat`), never from a cut this
+            // half may hold for a whole projection interval. The run still
+            // counts toward the scale both panes are coloured on.
             if let (Some(x0), Some(x1)) = (
                 timeline.locate_in_lane_clamped(run.start_ms),
                 timeline.locate_in_lane_clamped(run.end_ms),
             ) && x1.normalized > x0.normalized
             {
-                drafts.push(draft(x0.normalized, x1.normalized, run.quantity));
                 drawn = true;
             }
         } else if let (Some(x0), Some(x1)) = (
@@ -296,6 +302,7 @@ pub fn project_settled(
             x1,
             y0: heat.y0,
             y1: heat.y1,
+            carried: false,
         });
     }
 
@@ -537,6 +544,13 @@ pub fn project_live_after(
     let live_now_x = timeline
         .live_now_position()
         .map(|position| position.normalized);
+    let (cells, dropped_cells) = lane_heat::project_lane_heat(
+        history,
+        timeline,
+        prices,
+        settled.effective_grouping,
+        settled.liquidity_reference,
+    );
     // No boundary means no bar is represented at all, so there is no live half
     // to draw — and no reason to walk the retained tape looking for one.
     //
@@ -546,6 +560,8 @@ pub fn project_live_after(
     let Some(live_from_ms) = settled.live_from_ms else {
         return LiveMarks {
             live_now_x,
+            cells,
+            dropped_cells,
             ..LiveMarks::default()
         };
     };
@@ -691,6 +707,8 @@ pub fn project_live_after(
         folded_aggressions,
         floored_quantity,
         live_now_x,
+        cells,
+        dropped_cells,
     }
 }
 

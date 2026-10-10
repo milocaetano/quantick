@@ -324,7 +324,12 @@ impl<'a> FlowFrame<'a> {
     /// chart layers never bleed into it. The histogram follows `partial`
     /// (not its visible filter): the strip reports the bar forming now even
     /// while the user pans through history.
-    pub(super) fn strip(&self, owner: Option<&mut OrderflowView>, frame: &DrawFrame<'_>) {
+    pub(super) fn strip(
+        &self,
+        owner: Option<&mut OrderflowView>,
+        frame: &DrawFrame<'_>,
+        forming: Option<&quantick_engine::BarFootprint>,
+    ) {
         if let Some(owner) = owner
             && let Some(strip) = frame.areas.live_strip
         {
@@ -335,6 +340,7 @@ impl<'a> FlowFrame<'a> {
                 scale: &frame.scale,
                 background: self.background,
                 partial_time: frame.partial.map(|bar| bar.open_time),
+                forming,
             });
         }
     }

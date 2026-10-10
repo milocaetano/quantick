@@ -68,6 +68,11 @@ pub struct FlowCellSnapshot {
     /// before a tape could be held.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held_tape_end_unix_ms: Option<i64>,
+    /// The live book carried past its last confirmation to the lane's live
+    /// edge: the book as last confirmed, not depth observed there. Omitted
+    /// when false, so v1 readers remain compatible.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub carried: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

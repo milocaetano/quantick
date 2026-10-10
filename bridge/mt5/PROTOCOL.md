@@ -202,17 +202,22 @@ snapshot-plus-delta form the rest of quantick speaks
 - `seq` — bridge-assigned, monotonic from 1 per session, **independent of tick
   `seq`**. Only for detecting images lost in transport; a gap makes the feed
   open a new capture generation rather than diff across an unobserved moment.
-- `time_ms` — server time (see hello), taken as
-  `max(SYMBOL_TIME_MSC, TimeTradeServer()×1000)` so the book timeline keeps
-  moving when quotes go quiet.
+- `time_ms` — server time (see hello): the bridge's millisecond server clock
+  plus the largest lead the newest quote's `SYMBOL_TIME_MSC` has shown over
+  it. The book timeline keeps moving when quotes go quiet, and never falls
+  behind a quote when the host clock trails the terminal's.
 - `bids`/`asks` — `["price","quantity"]` pairs, exact decimal strings, in
   whatever order the terminal returned them (the feed sorts and sums
   duplicates). Prices carry `digits` decimals.
 - Limit levels only. `BOOK_TYPE_*_MARKET` rows are orders waiting to cross,
   not resting liquidity, and the bridge excludes them.
 - Changed images are sent at most every `InpBookMinIntervalMs` (default 20 ms).
-  Both bridges also read and resend unchanged available DOM every five seconds
-  to confirm availability; the feed deduplicates these confirmations.
+  Both bridges also read and resend unchanged available DOM every 50 ms. Each
+  resend is a fresh observation that the book still stands: the feed publishes
+  it as an empty delta at the image's `time_ms`, at most one per 20 ms of book
+  time, so the book clock reaches it without a level changing. An older bridge
+  resends every five seconds and is still understood; its book clock just
+  moves only on changes in between.
 
 One empty side is legitimate (auction, halted book). An image with no resting
 liquidity on either side does not establish a live book. MT5 depth capture
