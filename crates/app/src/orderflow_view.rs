@@ -1850,6 +1850,7 @@ mod tests {
                         &scale,
                         egui::Color32::BLACK,
                         Some(0),
+                        None,
                     );
                 });
             })

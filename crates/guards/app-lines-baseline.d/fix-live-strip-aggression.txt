@@ -1,0 +1,6 @@
+# The live strip reads the forming candle's footprint beside a native tape:
+# the pane hands that ladder through the strip pass (StripPass field,
+# FlowFrame::strip argument, draw_chart call). The row selection itself
+# lives in quantick-chart (live_strip::forming_rows).
+crates/app +17
+!budget +17

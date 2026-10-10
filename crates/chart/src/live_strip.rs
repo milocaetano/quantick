@@ -18,7 +18,8 @@
 
 use rust_decimal::Decimal;
 
-use quantick_orderflow::projection::AggressionPrimitive;
+use quantick_engine::BarFootprint;
+use quantick_orderflow::projection::{AggressionPrimitive, HeatmapProjection};
 
 pub use crate::constants::{
     HISTOGRAM_ALPHA, HISTOGRAM_MAX_HALF_FRAC, LIVE_STRIP_WIDTH_PX, STRIP_BORDER_ALPHA,
@@ -107,6 +108,71 @@ pub fn aggression_rows(
         .map(|(price_bucket, (buy, sell, price_span))| HistogramRow {
             price_bucket,
             price_span,
+            buy,
+            sell,
+        })
+        .collect()
+}
+
+/// The live strip's rows: the forming bar's aggression per price.
+/// `bar_open_ms` is the forming bar's open (`None` hides the histogram);
+/// `grouping` the row height when no frame is published.
+///
+/// `footprint` is the forming candle's ladder when the candles key no mark
+/// of their own — beside a native tape their dots are drawn from the bars'
+/// footprints and the tape holds only its own window — and the rows are read
+/// from it, the ladder that candle's dot is drawn from. Otherwise the
+/// frame's marks hold the forming bar.
+#[must_use]
+pub fn forming_rows(
+    frame: Option<&HeatmapProjection>,
+    grouping: Decimal,
+    bar_open_ms: Option<i64>,
+    footprint: Option<&BarFootprint>,
+) -> Vec<HistogramRow> {
+    let Some(open_ms) = bar_open_ms else {
+        return Vec::new();
+    };
+    let grouping = frame.map_or(grouping, |frame| frame.effective_grouping.bucket_width);
+    match (footprint, frame) {
+        (Some(ladder), _) => footprint_rows(ladder, grouping),
+        (None, Some(frame)) => aggression_rows(
+            &frame.aggressions,
+            open_ms,
+            frame.candles_hold_every_print(),
+            grouping,
+        ),
+        (None, None) => Vec::new(),
+    }
+}
+
+/// The forming bar's histogram from its footprint, for a pane whose candles
+/// key no aggression mark of their own (beside a native tape, where the
+/// candle dots are drawn from the footprint). Each ladder level is snapped
+/// to `grouping` like a mark; a level wider than a row covers its whole
+/// width. Ascending bucket order, deterministic.
+#[must_use]
+pub fn footprint_rows(ladder: &BarFootprint, grouping: Decimal) -> Vec<HistogramRow> {
+    let width = if grouping > Decimal::ZERO {
+        grouping
+    } else {
+        Decimal::ONE
+    };
+    let span = ladder.group().max(width);
+    let mut buckets: std::collections::BTreeMap<Decimal, (Decimal, Decimal)> =
+        std::collections::BTreeMap::new();
+    for (bucket, level) in ladder.levels() {
+        let row = (ladder.bucket_price(*bucket) / width).floor() * width;
+        let entry = buckets.entry(row).or_insert((Decimal::ZERO, Decimal::ZERO));
+        entry.0 += level.buy;
+        entry.1 += level.sell;
+    }
+    buckets
+        .into_iter()
+        .filter(|(_, (buy, sell))| *buy > Decimal::ZERO || *sell > Decimal::ZERO)
+        .map(|(price_bucket, (buy, sell))| HistogramRow {
+            price_bucket,
+            price_span: span,
             buy,
             sell,
         })
@@ -274,5 +340,37 @@ mod tests {
         assert_eq!(rows[0].price_bucket, dec("100"));
         assert_eq!(rows[0].price_span, dec("5"), "the whole level");
         assert_eq!(rows[0].buy, dec("4"));
+    }
+
+    /// A footprint's levels become rows on the frame's grouping: two
+    /// one-tick levels inside one row sum, each side apart.
+    #[test]
+    fn a_footprint_is_summed_into_the_frames_rows() {
+        let mut ladder = quantick_engine::FootprintBuilder::new(Decimal::ONE, 100);
+        for (agg_id, price, quantity, side) in [
+            (1, "100", "2", Side::Buy),
+            (2, "101", "3", Side::Sell),
+            (3, "102", "1", Side::Buy),
+        ] {
+            ladder.push(&quantick_engine::Trade {
+                agg_id,
+                timestamp_ms: 1_000,
+                price: dec(price),
+                quantity: dec(quantity),
+                side,
+            });
+        }
+        let rows = footprint_rows(ladder.partial().expect("a ladder"), dec("2"));
+        let read: Vec<_> = rows
+            .iter()
+            .map(|row| (row.price_bucket, row.price_span, row.buy, row.sell))
+            .collect();
+        assert_eq!(
+            read,
+            vec![
+                (dec("100"), dec("2"), dec("2"), dec("3")),
+                (dec("102"), dec("2"), dec("1"), Decimal::ZERO),
+            ]
+        );
     }
 }
