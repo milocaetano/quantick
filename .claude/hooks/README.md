@@ -587,7 +587,10 @@ code-review skill ran, required before **any** PR, draft included, and again at
 ready and merge. No arch, AI or delivery marker, durable report, thread count or
 full-CI check is asked for; a merge to `main` stays the user's alone. The trade
 is deliberate: the tier exists to make a goal cheap in tokens, and what protects
-`main` past the review is CI on the PR and the user's own merge.
+`main` past the review is CI on the PR and the user's own merge. Into an
+`origin/feature/*` base whose parent issue carries `<!-- quantick-feature:v1 -->`,
+the same marker suffices for ready and merge, beside full CI at the exact head
+and the persisted grant; `campaign/*` keeps the mission reviews.
 
 ## Tests
 

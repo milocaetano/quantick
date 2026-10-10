@@ -67,5 +67,12 @@ case "$operation" in
             [ -z "$(printf '%s\n' "$context_checks" | grep -v -e '^pass$' -e '^skipping$')" ] || fail 'Campaign PR checks are not all passing.'
         fi
         ;;
-    *) fail 'Usage: campaign_context.sh base|key|check-pr WORKTREE [PR ready|merge]' ;;
+    feature)
+        # A /feature child: its base is a feature/* branch whose parent issue
+        # carries the feature marker. Only then does the implement tier suffice.
+        case "$context_base" in origin/feature/?*) ;; *) fail 'Not a feature integration base.' ;; esac
+        context_body=$(cd "$context_dir" && gh issue view "$context_parent" --json body --jq .body) || fail 'Cannot read the feature parent issue.'
+        case "$context_body" in *'<!-- quantick-feature:v1 -->'*) ;; *) fail 'The parent issue is not a feature parent.' ;; esac
+        ;;
+    *) fail 'Usage: campaign_context.sh base|key|feature|check-pr WORKTREE [PR ready|merge]' ;;
 esac

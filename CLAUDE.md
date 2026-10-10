@@ -36,7 +36,7 @@ Rule authority. Rationale: `docs/agentic-development.md`; map: `AGENTS.md`; gate
 ## Workflow
 
 - Engine code is test-first: fixture trades plus expected bars, then implement until green.
-- Task branches `feat/` `fix/` `docs/`; integration branches `campaign/` `feature/`. Conventional commits, imperative.
+- Task branches `feat/` `fix/` `docs/`; integration branches `campaign/` `feature/`. Conventional commits, imperative, English.
 - **One goal, one worktree** — cut from updated `main` (campaign children: the base in [the integration contract](docs/campaign/integration.md)) under `../quantick-worktrees/`, never in the main checkout or a shared writer's tree, and arm the guards:
 
   ```sh

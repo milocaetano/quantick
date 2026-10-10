@@ -84,8 +84,10 @@ Parallel workers save wall-clock time, not tokens; the child count drives cost.
     Anything missing counts as a failed check. Then merge it, one child at a
     time, from its worktree:
     `cd <worktree> && gh pr merge <PR> --merge --match-head-commit <SHA>`.
-    The hooks require the mission-base record, the grant and the review
-    markers of [the integration contract](../../../docs/campaign/integration.md).
+    The hooks require the mission-base record, the grant, green CI and the
+    worker's `code-review-ok` at that head: a feature child merges at the
+    implement tier, not with the mission reviews of
+    [the integration contract](../../../docs/campaign/integration.md).
     Read back the merge, mark the row `merged` and close the child issue.
 11. A failed criterion or check earns one repair dispatch per child, across
     resumes. Brief it with only the failed `C<n>`, the evidence and the HEAD;
