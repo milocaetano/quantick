@@ -48,18 +48,18 @@ const CASES: &[(&str, Env)] = &[
 
 #[test]
 fn six_hook_consumer_baseline() {
-    for &(case, env) in CASES {
-        six_hook_case(case, env);
-    }
-}
-
-fn six_hook_case(case: &str, env: Env) {
-    eprintln!("toolrail launch case {case}");
     let (seed, _, _, _) = test_app();
     let mut workspace = seed.workspace_state().capture_workspace();
     workspace.tabs.clear();
     workspace.favorite_tools = vec!["measure".into()];
     workspace.chrome.as_mut().unwrap().rail_dock = ui_state::SavedRailDock::Bottom;
+    for &(case, env) in CASES {
+        six_hook_case(case, env, workspace.clone());
+    }
+}
+
+fn six_hook_case(case: &str, env: Env, workspace: ui_state::Workspace) {
+    eprintln!("toolrail launch case {case}");
     let (mut app, _, _, _) = test_app_with_workspace_and_launch(
         workspace,
         AppLaunch {

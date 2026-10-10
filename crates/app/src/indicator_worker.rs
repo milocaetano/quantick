@@ -553,7 +553,8 @@ mod tests {
             .filter(|t| t.timestamp_ms >= partial.open_time)
             .collect();
 
-        let worker = IndicatorWorker::spawn();
+        let (worker, run_worker) =
+            IndicatorWorker::prepared_for_test(crate::worker_progress::monotonic());
         let mut views = IndicatorViews::new();
         let slot = views.allocate_slot("test.indicator");
         worker.send(IndicatorCommand::Add {
@@ -569,10 +570,20 @@ mod tests {
             run: run.clone(),
             rungs: 8,
         });
-        worker.flush();
+        // Keep the lane update and barrier in one batch: a later Flush-only
+        // batch publishes an empty Lane in the existing event protocol.
+        let (ack_tx, ack_rx) = channel();
+        worker.send(WorkerCommand::Flush(ack_tx));
+        let thread = std::thread::spawn(run_worker);
+        worker
+            .await_reply(&ack_rx)
+            .expect("the lane batch finishes publication");
         for event in worker.drain_events() {
             views.apply(event);
         }
+
+        drop(worker);
+        thread.join().expect("the indicator worker closes normally");
 
         let view = &views.all()[0];
         assert!(
