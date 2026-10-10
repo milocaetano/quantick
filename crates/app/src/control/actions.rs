@@ -264,7 +264,7 @@ fn create_mark<P: ?Sized>(
         "note": input.note,
         "actor": event_actor,
     });
-    let sequence = access.record_event(NewEvent::by(
+    let sequence = access.append_event(NewEvent::by(
         ATTENTION_MODULE_ID,
         MARK_EVENT_KIND,
         actor,

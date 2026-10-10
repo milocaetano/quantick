@@ -584,7 +584,7 @@ impl ControlAccess {
     }
 
     /// Journal one event at the moment it is recorded, by the window's clock.
-    pub(crate) fn record_event(&mut self, event: NewEvent) -> WireU64 {
+    pub(crate) fn append_event(&mut self, event: NewEvent) -> WireU64 {
         self.journal.record(event, metrics::wall_clock_ms())
     }
 

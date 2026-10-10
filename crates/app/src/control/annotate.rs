@@ -559,7 +559,7 @@ fn journal_annotation<T: Serialize>(
     let payload = serde_json::to_value(payload)
         .map_err(|error| ControlError::invalid_request(format!("annotation event: {error}")))?;
     let payload = json!({ "annotation": payload });
-    access.record_event(NewEvent::by(ANNOTATE_MODULE_ID, kind, actor, payload));
+    access.append_event(NewEvent::by(ANNOTATE_MODULE_ID, kind, actor, payload));
     Ok(())
 }
 

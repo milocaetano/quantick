@@ -49,7 +49,7 @@ pub(crate) fn journal_script<T: Serialize>(
     let payload = serde_json::to_value(payload)
         .map_err(|error| ControlError::invalid_request(format!("script event: {error}")))?;
     let payload = json!({ "script": payload });
-    access.record_event(NewEvent::by(SCRIPT_MODULE_ID, kind, actor, payload));
+    access.append_event(NewEvent::by(SCRIPT_MODULE_ID, kind, actor, payload));
     Ok(())
 }
 

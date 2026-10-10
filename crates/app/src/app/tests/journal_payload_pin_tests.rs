@@ -127,12 +127,26 @@ fn a_spent_notification_budget_refuses_in_its_pinned_words() {
             .err()
         })
         .expect("the budget runs out");
-    let text = serde_json::to_string(&refusal)
-        .unwrap()
-        .replace("about 10 second", "about N second")
-        .replace("about 9 second", "about N second");
+    let text = normalize_wait(&serde_json::to_string(&refusal).unwrap());
     eprintln!("PINNED_REFUSAL {text}");
     assert_eq!(text, PINNED_REFUSAL, "the refusal changed");
+}
+
+/// Replaces the seconds after "about " with `N`, so a slow host cannot move it.
+fn normalize_wait(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("about ") {
+        let (head, tail) = rest.split_at(at + "about ".len());
+        out.push_str(head);
+        let digits = tail.chars().take_while(char::is_ascii_digit).count();
+        if digits > 0 {
+            out.push('N');
+        }
+        rest = &tail[digits..];
+    }
+    out.push_str(rest);
+    out
 }
 
 const PINNED_REFUSAL: &str = r#"{"code":"control.backpressure","message":"this client's notification budget is spent","retryable":true,"next_steps":["Notifications are limited to 6 per minute with a burst of 2; retry in about N second(s)."]}"#;

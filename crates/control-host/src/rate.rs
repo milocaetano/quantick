@@ -43,6 +43,11 @@ impl TokenBucket {
 
     /// A full bucket as of `now`.
     pub fn new(burst: u32, rate: u32, period_seconds: u32, now: Instant) -> Self {
+        assert!(rate > 0, "a token bucket needs a refill rate above zero");
+        assert!(
+            period_seconds > 0,
+            "a token bucket needs a refill period above zero"
+        );
         Self {
             available_token_nanos: u128::from(burst) * Self::ONE_TOKEN_NANOS,
             last_refill: now,
@@ -57,8 +62,7 @@ impl TokenBucket {
         let elapsed = now.saturating_duration_since(self.last_refill);
         self.last_refill = now;
         let capacity = u128::from(self.burst) * Self::ONE_TOKEN_NANOS;
-        let refill =
-            elapsed.as_nanos().saturating_mul(u128::from(self.rate)) / self.period_seconds.max(1);
+        let refill = elapsed.as_nanos().saturating_mul(u128::from(self.rate)) / self.period_seconds;
         self.available_token_nanos = self
             .available_token_nanos
             .saturating_add(refill)
@@ -76,8 +80,7 @@ impl TokenBucket {
             return Duration::ZERO;
         }
         let missing = Self::ONE_TOKEN_NANOS - self.available_token_nanos;
-        let nanos =
-            missing.saturating_mul(self.period_seconds.max(1)) / u128::from(self.rate).max(1);
+        let nanos = missing.saturating_mul(self.period_seconds) / u128::from(self.rate);
         Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
     }
 }
@@ -85,6 +88,18 @@ impl TokenBucket {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "refill rate")]
+    fn a_zero_rate_is_refused() {
+        TokenBucket::new(1, 0, 1, Instant::now());
+    }
+
+    #[test]
+    #[should_panic(expected = "refill period")]
+    fn a_zero_period_is_refused() {
+        TokenBucket::new(1, 1, 0, Instant::now());
+    }
 
     #[test]
     fn the_request_rate_has_a_bounded_burst_and_refills() {

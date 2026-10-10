@@ -124,7 +124,7 @@ fn journal(
         "order_id": result.order_id,
         "simulated": true,
     });
-    access.record_event(NewEvent::by(TRADE_MODULE_ID, kind, actor, payload));
+    access.append_event(NewEvent::by(TRADE_MODULE_ID, kind, actor, payload));
 }
 
 fn place_order<P: TabsPort + TabsMutPort + ?Sized>(

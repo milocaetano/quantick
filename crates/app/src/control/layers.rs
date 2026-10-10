@@ -160,6 +160,6 @@ fn set_visibility<P: TabsPort + ChromePort + LayersPort + ?Sized>(
     // Every admitted application, including a no-op, has a bounded readback.
     // The idempotency host replays keyed answers without reaching this point.
     let payload = serde_json::json!({ "connection_id": actor.connection_id, "request_id": actor.request_id, "result": result });
-    access.record_event(NewEvent::by(MODULE_ID, EVENT_KIND, actor, payload));
+    access.append_event(NewEvent::by(MODULE_ID, EVENT_KIND, actor, payload));
     Ok(result)
 }

@@ -22,6 +22,6 @@ impl NotifyAccess for ControlAccess {
 
     /// Journaled at the moment it is recorded, by the window's clock.
     fn record_event(&mut self, event: NewEvent) {
-        ControlAccess::record_event(self, event);
+        ControlAccess::append_event(self, event);
     }
 }

@@ -81,7 +81,7 @@ fn set<P: ToolRailPort + ?Sized>(
         changed: app.set_drawing_magnet(input.enabled),
     };
     let payload = serde_json::json!({ "drawing_magnet": result });
-    access.record_event(NewEvent::by(
+    access.append_event(NewEvent::by(
         ANNOTATE_MODULE_ID,
         DRAWING_MAGNET_EVENT_KIND,
         actor,

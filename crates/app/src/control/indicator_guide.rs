@@ -98,7 +98,7 @@ fn set<P: LayoutPort + ?Sized>(
         enabled: input.enabled,
     };
     let payload = serde_json::json!({ "indicator_guide": result });
-    access.record_event(NewEvent::by(
+    access.append_event(NewEvent::by(
         SCRIPT_MODULE_ID,
         INDICATOR_GUIDE_EVENT_KIND,
         actor,
