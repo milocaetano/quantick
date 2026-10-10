@@ -62,8 +62,8 @@ Parallel workers save wall-clock time, not tokens; the child count drives cost.
    A `coordinator` stamp under 24h old with recent PR activity means another
    coordinator is live: stop. If it is older, ask the user before taking over.
    With `grant: none`, ask the user for a grant comment on the parent and only
-   plan. Otherwise create `feature/<slug>` from `origin/main` if absent, under
-   [the integration contract](../../../docs/campaign/integration.md).
+   plan. Otherwise create `feature/<slug>` from `origin/main` if absent:
+   `git push origin origin/main:refs/heads/feature/<slug>`.
 8. Dispatch the next unblocked child; at most two run at once, as a host CPU
    cap, never to save tokens. A dependency clears once it is `merged`.
 9. Before launch, write the claim: `running`, branch `<prefix>/<issue>-<slug>`,
@@ -84,10 +84,8 @@ Parallel workers save wall-clock time, not tokens; the child count drives cost.
     Anything missing counts as a failed check. Then merge it, one child at a
     time, from its worktree:
     `cd <worktree> && gh pr merge <PR> --merge --match-head-commit <SHA>`.
-    The hooks require the mission-base record, the grant, green CI and the
-    worker's `code-review-ok` at that head: a feature child merges at the
-    implement tier, not with the mission reviews of
-    [the integration contract](../../../docs/campaign/integration.md).
+    The hooks require the worker's base record, the grant, green CI and its
+    `code-review-ok` at that head; no mission review.
     Read back the merge, mark the row `merged` and close the child issue.
 11. A failed criterion or check earns one repair dispatch per child, across
     resumes. Brief it with only the failed `C<n>`, the evidence and the HEAD;

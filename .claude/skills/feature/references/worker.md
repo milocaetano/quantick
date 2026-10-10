@@ -9,8 +9,8 @@ The issue body is your implement plan. Do not invoke `implement` and never run
 [execute.md](../../implement/references/execute.md), with these limits:
 
 - Cut the branch and worktree named in the parent's claim from
-  `origin/feature/<slug>`, and write its `mission-base` record as
-  [the integration contract](../../../../docs/campaign/integration.md) says.
+  `origin/feature/<slug>`. In the worktree, record the base for the hooks:
+  `printf '%s origin/feature/<slug> <parent URL> <grant URL>\n' "$(git branch --show-current)" > "$(git rev-parse --absolute-git-dir)/mission-base"`.
   Open the PR with `--base feature/<slug>`; this overrides execute.md's
   main-only target. Never merge.
 - `Design:` is binding. Add no public type or trait outside `Touch`. A needed
