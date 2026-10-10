@@ -1,6 +1,6 @@
 {
-  "calibration_sha": "9ffb13ec954ab5fd338c199ed142184b7123334d",
-  "calibration_utc": "2026-10-06T03:12:53.222399+00:00",
+  "calibration_sha": "f7a90fd6b1258de4f65c56b43bd3d58aab1578c4",
+  "calibration_utc": "2026-10-10T04:02:53.394611+00:00",
   "crates": [
     {
       "crate": "app",
@@ -15,17 +15,17 @@
       "max_seconds": 42.802
     },
     {
-      "crate": "control-schema",
-      "package": "quantick-control-schema",
-      "source": "crates/control-schema/src/evidence.rs",
-      "max_seconds": 3.384
+      "crate": "guards",
+      "package": "quantick-guards",
+      "source": "crates/guards/src/generated.rs",
+      "max_seconds": 7.795
     }
   ],
   "host_class": "Linux/x86_64/4/Linux/X64/ubuntu24",
   "jobs": 2,
   "profile_hash": "f8d8375eda7dfcf8497b8a2cd5f84cad07ea5fecaaec01293931101440babf69",
   "protocol_hash": "3ff0be486d89b90ae413e2a0c305194589260608957cb7f953572030f59f42ad",
-  "rationale": "Independently reviewed full recalibration for the actual top-three selection and expanded package-test workloads already present at clean base 9ffb13ec954ab5fd338c199ed142184b7123334d. Reference: https://github.com/milocaetano/quantick/actions/runs/37407876085. Each fixed ceiling is ceil(1.25 * max(all five retained baseline samples) * 1000) / 1000; the proportional operational margin has no additive allowance. The historical first calibration and its member-only identity amendments remain documented in tools/edit_loop/README.md. Host, toolchain, build jobs, profiles, frozen selection and measurement protocol are unchanged. Raw failures and the complete baseline series remain external evidence. A separate ordinary exact-final-head run must pass every fixed ceiling; no automatic future refresh is authorized.",
+  "rationale": "Scoped third-owner calibration from independently reviewed clean main f7a90fd6b1258de4f65c56b43bd3d58aab1578c4; reference https://github.com/milocaetano/quantick/actions/runs/38022635665. Only the actual third-ranked guards representative replaces control-schema; guards uses ceil(1.25 * max(all five retained reference samples) * 1000) / 1000, with no additive allowance. App 68.839 and orderflow 42.802 remain the reviewed 2026-10-06 limits from 9ffb13ec954ab5fd338c199ed142184b7123334d. The complete restored reference passed all package tests but exceeded the retained app limit; it is not passing enforcement evidence. Historical calibration remains in tools/edit_loop/README.md. Host, toolchain, jobs, profiles, frozen selection, representatives and protocol are unchanged apart from the explicitly calibrated third owner. A separate ordinary exact-final-head run must pass every fixed limit and retain all five samples; no automatic refresh is authorized.",
   "schema": 1,
   "status": "calibrated",
   "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8"

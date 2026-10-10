@@ -13,6 +13,7 @@
 use std::cmp::Reverse;
 use std::sync::Arc;
 
+use quantick_orderbook::BookSide;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
@@ -20,6 +21,24 @@ use crate::config::HeatmapConfig;
 use crate::grouping::EffectiveGrouping;
 use crate::history::{AggressorSide, RestingSide};
 use crate::interaction::{LiquidityEvent, LiquidityEvidence};
+
+/// A displayed resting-liquidity cell resolved under the pointer.
+/// Consumers can map this renderer-independent value into their own wire DTO.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlowCellHit {
+    pub generation: u64,
+    pub side: BookSide,
+    pub price_bucket: Decimal,
+    pub price_span: Decimal,
+    pub quantity: Decimal,
+    pub start_slot: usize,
+    pub end_slot_exclusive: usize,
+    pub live_lane: bool,
+    /// Where the tape is held when the cell is a held tape's book.
+    pub held_tape_end_ms: Option<i64>,
+    /// The live book carried past its last confirmation, not observed there.
+    pub carried: bool,
+}
 
 /// Exact visible price interval. `high` maps to y=0 and `low` to y=1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
