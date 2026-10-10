@@ -19,6 +19,18 @@
           "description": "Candle width at which one summary number per row starts, in both zoom\ndirections, measured at a detail scale of 1.",
           "x-unit": "pixels"
         },
+        "detail_scale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The detail scale both widths are stretched by: a level starts at its\n`*_from_px` times this, in candle pixels on screen."
+        },
         "detailed_from_px": {
           "anyOf": [
             {

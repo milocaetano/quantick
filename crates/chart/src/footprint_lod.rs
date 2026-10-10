@@ -34,19 +34,23 @@ pub enum DetailLevel {
     Detailed,
 }
 
-/// The detail level and the row multiple last answered, per pane — the
-/// sticky state the dead band is measured from.
+/// What the row height last allowed and the row multiple last answered, per
+/// pane — the sticky state the row-side dead band is measured from. Candle
+/// width keeps no memory: it is answered strictly every frame.
 #[derive(Debug, Default)]
 pub struct LevelMemory {
-    level: Option<DetailLevel>,
+    row_level: Option<DetailLevel>,
     k: Option<i64>,
 }
 
 impl LevelMemory {
-    /// Resolve zoom detail. Candle width is answered strictly, so a level
-    /// enters and leaves at the same width (`compact_min`, `detailed_min`);
-    /// row height carries a two-sided dead band against auto-fit jitter
+    /// Resolve zoom detail: the minimum of what the candle width allows,
+    /// answered strictly so a level enters and leaves at the same width
+    /// (`compact_min`, `detailed_min`), and what the row height allows, held
+    /// through a two-sided dead band against auto-fit jitter
     /// (`LEVEL_HYSTERESIS`, Marks/Profile the narrower `PROFILE_HYSTERESIS`).
+    /// The band never touches width in either direction, so rows sitting
+    /// inside it cannot make the way in differ from the way out.
     /// `profile_row_px` configures Profile's row floor; the first frame takes
     /// the strict answer.
     pub fn resolve(
@@ -57,18 +61,18 @@ impl LevelMemory {
         compact_min: f32,
         detailed_min: f32,
     ) -> DetailLevel {
-        let at_zoom = |factor| {
+        let by_row = |factor: f32| {
             level_for(
-                candle_width,
+                f32::INFINITY,
                 base_row_px * factor,
                 profile_row_px,
                 compact_min,
                 detailed_min,
             )
         };
-        let strict = at_zoom(1.0);
+        let strict = by_row(1.0);
         let hysteresis = if matches!(
-            (self.level, strict),
+            (self.row_level, strict),
             (Some(DetailLevel::Profile), DetailLevel::Marks)
                 | (Some(DetailLevel::Marks), DetailLevel::Profile)
         ) {
@@ -76,22 +80,35 @@ impl LevelMemory {
         } else {
             LEVEL_HYSTERESIS
         };
-        let level = match self.level {
+        let row_level = match self.row_level {
             // Only one level of jitter is sticky. Larger gaps can come from
             // stale auto-fit spans and must snap to the strict answer.
             Some(current) if (strict as i8 - current as i8).abs() > 1 => strict,
             Some(current) if strict < current => {
-                let relaxed = at_zoom(hysteresis);
-                if relaxed < current { strict } else { current }
+                if by_row(hysteresis) < current {
+                    strict
+                } else {
+                    current
+                }
             }
             Some(current) if strict > current => {
-                let confirmed = at_zoom(1.0 / hysteresis);
-                if confirmed >= strict { strict } else { current }
+                if by_row(1.0 / hysteresis) >= strict {
+                    strict
+                } else {
+                    current
+                }
             }
             _ => strict,
         };
-        self.level = Some(level);
-        level
+        self.row_level = Some(row_level);
+        let by_width = level_for(
+            candle_width,
+            f32::INFINITY,
+            profile_row_px,
+            compact_min,
+            detailed_min,
+        );
+        by_width.min(row_level)
     }
 
     /// The display multiple, with the same dead band the level has: the
@@ -165,14 +182,32 @@ pub fn level_for(
 
 /// Where a style's Detailed starts, in the floors' units: the trader's ladder
 /// entry width (`detailed_from_px`) carried to the style by its typographic
-/// floor's ratio to the ladder's, so one setting moves every style. A width
-/// past the deepest zoom `detail_scale` allows is answered at that zoom
-/// instead — never under the style's own `typographic` floor — so a style the
-/// registry offers stays drawable.
+/// floor's ratio to the ladder's, so one setting moves every style. Never
+/// under the style's own `typographic` floor, so a setting cannot promise a
+/// level whose text does not fit; and a width past the deepest zoom
+/// `detail_scale` allows is answered at that zoom instead (still no lower
+/// than the floor), so a style the registry offers stays drawable.
 #[must_use]
 pub fn detailed_entry_width(typographic: f32, detailed_from_px: f32, detail_scale: f32) -> f32 {
-    let deepest = crate::viewport::MAX_CANDLE_WIDTH / detail_scale.max(1e-3);
-    (typographic * detailed_from_px / DETAILED_MIN_WIDTH).min(deepest.max(typographic))
+    let configured = (typographic * detailed_from_px / DETAILED_MIN_WIDTH).max(typographic);
+    configured.min(deepest_width(detail_scale).max(typographic))
+}
+
+/// Where Compact starts, in the floors' units: the trader's
+/// `compact_from_px`, never past the ladder's Detailed entry (`detailed_from_px`)
+/// — the summary numbers come before the full ladder, not after it — and
+/// never past the deepest zoom `detail_scale` allows, so the legend's "numbers
+/// at N× this zoom" always names a zoom the wheel can reach.
+#[must_use]
+pub fn compact_entry_width(compact_from_px: f32, detailed_from_px: f32, detail_scale: f32) -> f32 {
+    compact_from_px
+        .min(detailed_from_px)
+        .min(deepest_width(detail_scale))
+}
+
+/// The widest candle the zoom can reach, in the floors' units.
+fn deepest_width(detail_scale: f32) -> f32 {
+    crate::viewport::MAX_CANDLE_WIDTH / detail_scale.max(1e-3)
 }
 
 /// The smallest snap multiple whose rows reach `min_row_px`, or `None` when
@@ -208,6 +243,41 @@ mod tests {
         assert_eq!(entering.first(), Some(&DetailLevel::Off));
         assert_eq!(entering.last(), Some(&DetailLevel::Detailed));
         assert_eq!(entering, leaving, "widths: {widths:?}");
+    }
+
+    #[test]
+    fn rows_inside_the_dead_band_do_not_make_width_asymmetric() {
+        // Rows that settled inside the band below Detailed's row floor keep
+        // the row side at Detailed; zooming out past the width threshold
+        // drops the level, and zooming back in must restore it on the same
+        // width — the band must not be re-asked of the width step.
+        let coarsest = *GROUP_SNAP.last().unwrap() as f32;
+        let row = |share: f32| DETAILED_MIN_ROW / coarsest * share;
+        let detailed = DETAILED_FROM_PX;
+        let mut memory = LevelMemory::default();
+        let mut at = |width: f32, share: f32| {
+            memory.resolve(width, row(share), 4.0, COMPACT_FROM_PX, detailed)
+        };
+        assert_eq!(at(detailed * 1.2, 1.5), DetailLevel::Detailed);
+        assert_eq!(at(detailed * 1.2, 0.95), DetailLevel::Detailed);
+        assert_eq!(at(detailed * 0.99, 0.95), DetailLevel::Compact);
+        assert_eq!(at(detailed * 1.01, 0.95), DetailLevel::Detailed);
+        assert_eq!(at(detailed * 0.99, 0.95), DetailLevel::Compact);
+    }
+
+    #[test]
+    fn entry_widths_stay_ordered_reachable_and_above_the_floor() {
+        // A detailed setting under the ladder's floor is answered at the floor.
+        let floor = DETAILED_MIN_WIDTH * 2.0;
+        let low = detailed_entry_width(floor, DETAILED_MIN_WIDTH * 0.5, 1.0);
+        assert!((low - floor).abs() < 1e-3, "{low}");
+        // A compact setting past the detailed one is answered at the detailed.
+        let compact = compact_entry_width(120.0, 90.0, 1.0);
+        assert!((compact - 90.0).abs() < 1e-3, "{compact}");
+        // And never past the deepest zoom the scale allows.
+        let deepest = crate::viewport::MAX_CANDLE_WIDTH / 2.0;
+        let compact = compact_entry_width(160.0, 240.0, 2.0);
+        assert!((compact - deepest).abs() < 1e-3, "{compact}");
     }
 
     #[test]

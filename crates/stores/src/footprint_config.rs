@@ -403,6 +403,31 @@ impl Default for FootprintConfig {
     }
 }
 
+impl FootprintConfig {
+    /// Where Compact starts, in the floors' units (candle width over
+    /// `detail_scale`): `compact_from_px`, ordered under Detailed and capped
+    /// at the deepest zoom. The level and the legend's hint both read it.
+    #[must_use]
+    pub fn compact_entry_width(&self) -> f32 {
+        quantick_chart::footprint_lod::compact_entry_width(
+            self.compact_from_px,
+            self.detailed_from_px,
+            self.detail_scale,
+        )
+    }
+
+    /// The candle width, in pixels on screen, by which a fading candle body
+    /// is gone: the ladder's configured Detailed entry, stretched by
+    /// `detail_scale` like the level itself, so the body finishes fading
+    /// where the numbers arrive.
+    #[must_use]
+    pub fn body_fade_end_px(&self) -> f32 {
+        use quantick_chart::footprint_lod::{DETAILED_MIN_WIDTH, detailed_entry_width};
+        let scale = self.detail_scale.max(1e-3);
+        detailed_entry_width(DETAILED_MIN_WIDTH, self.detailed_from_px, scale) * scale
+    }
+}
+
 /// The bounds [`FootprintConfig::profile_row_px`] is clamped to, shared by
 /// the file guard and the settings window's slider.
 pub const PROFILE_ROW_PX_RANGE: std::ops::RangeInclusive<f32> = 2.0..=10.0;
@@ -423,9 +448,12 @@ pub const DETAIL_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.8..=2.0;
 /// come.
 pub const COMPACT_FROM_PX_RANGE: std::ops::RangeInclusive<f32> = 24.0..=160.0;
 
-/// The bounds [`FootprintConfig::detailed_from_px`] is clamped to, on the
-/// same reasoning around the ladder's two-number floor (68 px).
-pub const DETAILED_FROM_PX_RANGE: std::ops::RangeInclusive<f32> = 48.0..=240.0;
+/// The bounds [`FootprintConfig::detailed_from_px`] is clamped to. The low
+/// end is the ladder's two-number floor (~68 px): unlike the summary number,
+/// the full ladder is never offered at a width its text does not fit, so
+/// every style's entry stays at or above its own floor.
+pub const DETAILED_FROM_PX_RANGE: std::ops::RangeInclusive<f32> =
+    quantick_chart::footprint_lod::DETAILED_MIN_WIDTH..=240.0;
 
 /// The file's shape, and the canonical serde form of a config: the
 /// hand-written preset, each saved named preset and the settings file all
@@ -608,6 +636,13 @@ pub fn load_preset(path: &Path) -> FootprintConfig {
 /// stack) rather than letting them through to draw nonsense.
 pub fn resolve(file: FootprintFile) -> FootprintConfig {
     let defaults = FootprintConfig::default();
+    // Summary numbers come before the full ladder: a hand-edit that puts
+    // Compact past Detailed is answered at Detailed's width.
+    let detailed_from_px = clamped_px(file.detailed_from_px, &DETAILED_FROM_PX_RANGE)
+        .unwrap_or(defaults.detailed_from_px);
+    let compact_from_px = clamped_px(file.compact_from_px, &COMPACT_FROM_PX_RANGE)
+        .unwrap_or(defaults.compact_from_px)
+        .min(detailed_from_px);
     FootprintConfig {
         // An unknown style token (a file from a newer build) keeps the
         // default rather than failing the whole config.
@@ -641,10 +676,8 @@ pub fn resolve(file: FootprintFile) -> FootprintConfig {
             })
             .filter(|scale| scale.is_finite())
             .unwrap_or(defaults.detail_scale),
-        compact_from_px: clamped_px(file.compact_from_px, &COMPACT_FROM_PX_RANGE)
-            .unwrap_or(defaults.compact_from_px),
-        detailed_from_px: clamped_px(file.detailed_from_px, &DETAILED_FROM_PX_RANGE)
-            .unwrap_or(defaults.detailed_from_px),
+        compact_from_px,
+        detailed_from_px,
         show_poc: file.show_poc.unwrap_or(defaults.show_poc),
         extreme_ratio_badge: file
             .extreme_ratio_badge
@@ -681,7 +714,7 @@ mod tests {
     #[test]
     fn level_entry_widths_default_to_the_old_zoom_in_points_and_clamp() {
         let defaults = FootprintConfig::default();
-        let old_entry = |floor: f32| floor * 1.15;
+        let old_entry = |floor: f32| floor * quantick_chart::footprint_lod::LEVEL_ENTRY_MARGIN;
         assert_eq!(
             defaults.compact_from_px,
             old_entry(quantick_chart::footprint_lod::COMPACT_MIN_WIDTH)
@@ -697,6 +730,11 @@ mod tests {
         let config = resolve(toml::from_str("compact_from_px = 50.0").unwrap());
         assert_eq!(config.compact_from_px, 50.0);
         assert_eq!(config.detailed_from_px, defaults.detailed_from_px);
+        // Compact never starts past Detailed.
+        let config =
+            resolve(toml::from_str("compact_from_px = 120.0\ndetailed_from_px = 90.0").unwrap());
+        assert_eq!(config.compact_from_px, 90.0);
+        assert_eq!(config.detailed_from_px, 90.0);
     }
 
     /// A scratch settings file per test thread, as the window's own

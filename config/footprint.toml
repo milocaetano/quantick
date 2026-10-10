@@ -58,7 +58,7 @@
 
 # The candle width where the ladder's full detail starts, both directions;
 # styles with more columns keep their ratio to it (default ~78.3, clamped
-# 48–240).
+# ~68–240, never under a style's own floor; summary numbers never start past it).
 #detailed_from_px = 78.3
 
 # The per-bar POC line (default true).

@@ -357,6 +357,7 @@ fn assert_footprint_layering(
         true,
         crate::footprint_config::CandleTreatment::Fade,
         app.active_tab().flow_pane.viewport.candle_width(),
+        quantick_chart::footprint_lod::DETAILED_FROM_PX,
         app.style.candles,
     );
     let dressed = dressed.unwrap_or(app.style.candles);

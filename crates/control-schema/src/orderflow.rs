@@ -248,6 +248,10 @@ pub struct FootprintSetupSnapshot {
     #[serde(default)]
     #[schemars(extend("x-unit" = "pixels"))]
     pub detailed_from_px: Option<CanonicalDecimal>,
+    /// The detail scale both widths are stretched by: a level starts at its
+    /// `*_from_px` times this, in candle pixels on screen.
+    #[serde(default)]
+    pub detail_scale: Option<CanonicalDecimal>,
 }
 
 impl From<&FootprintConfig> for FootprintSetupSnapshot {
@@ -262,6 +266,7 @@ impl From<&FootprintConfig> for FootprintSetupSnapshot {
             show_delta_totals: config.show_delta_totals,
             compact_from_px: canonical_f32(config.compact_from_px, 2),
             detailed_from_px: canonical_f32(config.detailed_from_px, 2),
+            detail_scale: canonical_f32(config.detail_scale, 2),
         }
     }
 }
