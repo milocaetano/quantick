@@ -18,7 +18,7 @@ if [ -e "$context_file" ]; then
     [ "$(wc -l < "$context_file" | tr -d ' ')" = 1 ] || fail 'Invalid campaign context record.'
     read -r recorded_branch context_base context_parent context_grant extra < "$context_file"
     [ "$recorded_branch" = "$context_branch" ] && [ -z "$extra" ] || fail 'Campaign context belongs to another branch or is malformed.'
-    case "$context_base" in origin/campaign/?*) ;; *) fail 'Campaign base must be an explicit origin/campaign branch.' ;; esac
+    case "$context_base" in origin/campaign/?*|origin/feature/?*) ;; *) fail 'Campaign base must be an explicit origin/campaign or origin/feature branch.' ;; esac
     git check-ref-format "refs/remotes/$context_base" >/dev/null || fail 'Invalid campaign base ref.'
     printf '%s\n' "$context_parent" | grep -Eq '^https://github.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[0-9]+$' || fail 'Campaign parent must be an issue URL.'
     if [ "$context_grant" != none ]; then

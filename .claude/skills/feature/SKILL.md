@@ -8,6 +8,7 @@ disable-model-invocation: true
 `run`, `resume` or `status`, it is a subcommand: `plan <outcome>` only files
 issues, `run|resume|status <parent-URL>` reuses them, and `status` is read-only.
 The user's `/feature` or `run` command authorizes execution; `plan` never does.
+Merging into `feature/<slug>` also needs the user's grant comment (step 7).
 Ask once when the outcome or parent is ambiguous.
 
 Parallel workers save wall-clock time, not tokens; the child count drives cost.
@@ -43,14 +44,16 @@ Parallel workers save wall-clock time, not tokens; the child count drives cost.
    ```text
    <!-- quantick-feature:v1 -->
    Design: ...
+   branch: `feature/<slug>`  grant: <user's merge-grant comment URL | none>
    coordinator: <session> @ <UTC ISO time>
    Issue | Depends | State | PR / branch | Retry, next
    #N    | #M      | todo  | -           | 0, -
    <!-- end quantick-feature:v1 -->
    ```
 
-   States: `todo`, `running`, `ready`, `blocked`. `done` is derived: the child
-   PR says `Closes #N`, so a merge to `main` closes it.
+   States: `todo`, `running`, `ready`, `merged`, `blocked`. `merged` means on
+   `feature/<slug>`; the coordinator closes the child issue after readback,
+   since `Closes #N` fires only on `main`.
 
 ## Run
 
@@ -58,15 +61,17 @@ Parallel workers save wall-clock time, not tokens; the child count drives cost.
    `gh pr list --state all --search "<child refs>" --json number,headRefOid,state,statusCheckRollup`.
    A `coordinator` stamp under 24h old with recent PR activity means another
    coordinator is live: stop. If it is older, ask the user before taking over.
+   With `grant: none`, ask the user for a grant comment on the parent and only
+   plan. Otherwise create `feature/<slug>` from `origin/main` if absent, under
+   [the integration contract](../../../docs/campaign/integration.md).
 8. Dispatch the next unblocked child; at most two run at once, as a host CPU
-   cap, never to save tokens. A dependency clears when it is on `main`, or when
-   it is `ready`: then the dependent branches from that PR head, still targets
-   `main`, says `includes #M` and rebases after the merge.
+   cap, never to save tokens. A dependency clears once it is `merged`.
 9. Before launch, write the claim: `running`, branch `<prefix>/<issue>-<slug>`,
    worktree `../quantick-worktrees/<prefix>-<issue>-<slug>`. Spawn with
    `model: opus` (Codex: its strongest configured model) and pass only the issue
-   URL, repository, pinned main SHA, the `Design:` block and the absolute path
-   of [worker.md](references/worker.md). No conversation.
+   URL, repository, `feature/<slug>`, the parent and grant URLs, the `Design:`
+   block and the absolute path of [worker.md](references/worker.md). No
+   conversation.
 10. Accept `READY` mechanically, with no review in this context. Run
     `gh pr view <PR> --json state,headRefOid,statusCheckRollup` and
     `gh pr diff <PR> --name-only`, and check that:
@@ -76,7 +81,12 @@ Parallel workers save wall-clock time, not tokens; the child count drives cost.
     - every `C<n>` test named in the issue appears in the diff;
     - the changed files stay inside `Touch` (the skeleton's hubs belong to #0).
 
-    Anything missing counts as a failed check.
+    Anything missing counts as a failed check. Then merge it, one child at a
+    time, from its worktree:
+    `cd <worktree> && gh pr merge <PR> --merge --match-head-commit <SHA>`.
+    The hooks require the mission-base record, the grant and the review
+    markers of [the integration contract](../../../docs/campaign/integration.md).
+    Read back the merge, mark the row `merged` and close the child issue.
 11. A failed criterion or check earns one repair dispatch per child, across
     resumes. Brief it with only the failed `C<n>`, the evidence and the HEAD;
     the worker reruns that check and CI, with a `low` delta review only when
@@ -84,20 +94,20 @@ Parallel workers save wall-clock time, not tokens; the child count drives cost.
     decision skips the repair. Either way, after that the row is `blocked`, and
     one comment on the child issue gives the reason and next action. Continue
     independent work. Never waive acceptance.
-12. Do not refresh `ready` PRs when `main` moves. Rebase one only when GitHub
-    reports a conflict or the user names it next to merge; that rebase spends
-    the child's retry.
+12. Do not sync `feature/<slug>` with `main` mid-run. A sibling merge moves
+    the base: rebase the next child onto it before its merge.
 
 ## Verdict
 
-When every child is `ready` or `done` and a `combined` criterion exists, merge
-the ready heads onto the pinned main SHA in a scratch worktree and spawn one
-fresh judge (`model: opus`). It gets the `C<n>` list and the merged SHA, runs
-the combined tests and returns PASS or FAIL per criterion, with the gap. A FAIL
-earns one repair worker briefed with the failing `C<n>`, the output and the
-merged SHA; then the parent is `blocked`. With no `combined` criterion, the
-child checks are the verdict.
+When every child is `merged` and a `combined` criterion exists, spawn one
+fresh judge (`model: opus`) on the tip of `feature/<slug>`. It gets the `C<n>`
+list and that SHA, runs the combined tests and returns PASS or FAIL per
+criterion, with the gap. A FAIL earns one repair child; then the parent is
+`blocked`. With no `combined` criterion, the child checks are the verdict.
 
-When nothing can advance, write the table and return ready PRs (merge order),
-blockers and `/feature resume <URL>`. Do not poll for merges. Close the parent
-when every child is closed. Keep only the table and receipts in context.
+On PASS, open one draft PR `feature/<slug>` -> `main` with `--label full-ci`
+and the body line `Campaign-parent: <parent URL>`, carrying the full diff and
+the verdict. The user reviews and merges it; do not poll. Close the parent
+after that merge. When nothing can advance, write the table and return
+blockers and `/feature resume <URL>`. Keep only the table and receipts in
+context.

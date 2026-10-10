@@ -1533,6 +1533,20 @@ printf '<!-- quantick-campaign:v1 -->\nExact branch: `campaign/demo`.\n' > "$roo
 rm -f "$root/completion/published-report"
 run_completion "a consolidated campaign PR with its verified charter completes" ship pass
 kind_report "the consolidated report" "Consolidated campaign: charter $parent names \`campaign/demo\`"
+# A /feature integration branch consolidates the same way, under its own marker.
+git -C "$root/mainco" worktree add -q -b feature/demo "$root/feat" "$main_first" >/dev/null 2>&1
+echo feature > "$root/feat/src/a.txt"
+kind_commit "$root/feat" 'integrated feature change'
+git -C "$root/mainco" update-ref refs/remotes/origin/feature/demo "$(git -C "$root/feat" rev-parse HEAD)"
+completion_wt=$root/feat
+kind_pr "$root/feat" main
+printf '<!-- quantick-feature:v1 -->\nbranch: `feature/demo`\n' > "$root/completion/issue-body"
+rm -f "$root/completion/published-report"
+run_completion "a consolidated feature PR with its verified parent completes" ship pass
+kind_report "the consolidated feature report" "Consolidated campaign: charter $parent names \`feature/demo\`"
+completion_wt=$root/camp
+kind_pr "$root/camp" main
+printf '<!-- quantick-campaign:v1 -->\nExact branch: `campaign/demo`.\n' > "$root/completion/issue-body"
 set_threads 3
 run_completion "a consolidated campaign PR still needs zero AI-review threads" \
     ship fail '3 unresolved AI-review threads'

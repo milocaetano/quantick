@@ -1,15 +1,18 @@
 # One feature worker
 
-You get an issue URL, repository, pinned main SHA, the parent's `Design:` block
-and this file. Read only that issue, not siblings or the feature conversation.
+You get an issue URL, repository, `feature/<slug>`, the parent and grant URLs,
+the parent's `Design:` block and this file. Read only that issue, not siblings
+or the feature conversation.
 
 The issue body is your implement plan. Do not invoke `implement` and never run
 `/goal`. Execute the plan directly under
 [execute.md](../../implement/references/execute.md), with these limits:
 
-- Cut the branch and worktree named in the parent's claim, from the pinned SHA,
-  or from the dependency's PR head when the issue says `includes #M`. Target
-  `main`; never stack on another branch.
+- Cut the branch and worktree named in the parent's claim from
+  `origin/feature/<slug>`, and write its `mission-base` record as
+  [the integration contract](../../../../docs/campaign/integration.md) says.
+  Open the PR with `--base feature/<slug>`; this overrides execute.md's
+  main-only target. Never merge.
 - `Design:` is binding. Add no public type or trait outside `Touch`. A needed
   deviation returns `BLOCKED`, never a local redesign.
 - Every `C<n>` named test lands in the diff. The PR body says `Closes #<issue>`.

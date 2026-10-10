@@ -323,9 +323,10 @@ passing, full CI green at the exact head, current durable reports, and an
 empty literal thread list. It first
 requires one concise mission-summary block for mission and synchronization
 PRs. The PR kind comes from facts the PR identity then verifies, never a caller
-flag. A consolidated `campaign/*` PR into main has no single goal: its body
-names `Campaign-parent: <issue URL>` in the same repository, whose charter
-must carry `<!-- quantick-campaign:v1 -->` and the branch as a whole ref name. Every
+flag. A consolidated `campaign/*` or `feature/*` PR into main has no single
+goal: its body names `Campaign-parent: <issue URL>` in the same repository,
+whose charter must carry `<!-- quantick-campaign:v1 -->` (or
+`<!-- quantick-feature:v1 -->`) and the branch as a whole ref name. Every
 other check applies to all three. It then writes report URLs and the review key into the
 PR body, reads the canonical `What done means` block, publishes each clause with its
 evidence, reads that report back, and only then prints
