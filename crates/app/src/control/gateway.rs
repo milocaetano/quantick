@@ -17,10 +17,10 @@ use quantick_control::{
     error::{ControlError, codes},
     id::{ConnectionId, InstanceId, PermissionId, PrincipalId, ProcessNonce, ProfileId},
     limits::{
-        CONTROL_CLIENT_BURST, CONTROL_CLIENT_RATE_PER_SECOND, CONTROL_HANDSHAKE_TIMEOUT_MS,
-        CONTROL_MAX_CONNECTIONS, CONTROL_MAX_IN_FLIGHT_PER_CONNECTION,
-        CONTROL_REQUEST_QUEUE_CAPACITY, CONTROL_REQUEST_TIMEOUT_MS, CONTROL_RUNTIME_ID_BYTES,
-        CONTROL_UI_BUDGET_US, CONTROL_UI_MAX_REQUESTS_PER_FRAME,
+        CONTROL_HANDSHAKE_TIMEOUT_MS, CONTROL_MAX_CONNECTIONS,
+        CONTROL_MAX_IN_FLIGHT_PER_CONNECTION, CONTROL_REQUEST_QUEUE_CAPACITY,
+        CONTROL_REQUEST_TIMEOUT_MS, CONTROL_RUNTIME_ID_BYTES, CONTROL_UI_BUDGET_US,
+        CONTROL_UI_MAX_REQUESTS_PER_FRAME,
     },
     wire::{ActorContext, ActorKind, RequestEnvelope},
 };
@@ -39,7 +39,6 @@ use super::{
     evidence,
     evidence::{EvidenceStore, RawScreenshot, SessionIdentity},
     journal::{EventJournal, JournalSignal},
-    notify::NotificationLimiter,
     registry::ProjectionRegistry,
     types::known_error,
 };
@@ -48,6 +47,7 @@ mod encode_refusal;
 // Moved to `quantick-control-host`; named here so `super::idempotency` resolves.
 use quantick_control_host::dispatch::DispatchState;
 use quantick_control_host::idempotency;
+use quantick_control_host::rate::TokenBucket;
 mod local_action;
 mod panel;
 mod screenshot;
@@ -345,38 +345,6 @@ struct TrackedSocket {
     connection_id: Option<ConnectionId>,
 }
 
-struct ClientRateLimiter {
-    available_token_nanos: u128,
-    last_refill: Instant,
-}
-
-impl ClientRateLimiter {
-    const ONE_TOKEN_NANOS: u128 = 1_000_000_000;
-
-    fn new() -> Self {
-        Self {
-            available_token_nanos: u128::from(CONTROL_CLIENT_BURST) * Self::ONE_TOKEN_NANOS,
-            last_refill: Instant::now(),
-        }
-    }
-
-    fn allow(&mut self, now: Instant) -> bool {
-        let elapsed_nanos = now.duration_since(self.last_refill).as_nanos();
-        self.last_refill = now;
-        let capacity = u128::from(CONTROL_CLIENT_BURST) * Self::ONE_TOKEN_NANOS;
-        let refill = elapsed_nanos.saturating_mul(u128::from(CONTROL_CLIENT_RATE_PER_SECOND));
-        self.available_token_nanos = self
-            .available_token_nanos
-            .saturating_add(refill)
-            .min(capacity);
-        if self.available_token_nanos < Self::ONE_TOKEN_NANOS {
-            return false;
-        }
-        self.available_token_nanos -= Self::ONE_TOKEN_NANOS;
-        true
-    }
-}
-
 /// Every ceiling [`ControlAccess::configured_profile`] can hand a connection,
 /// whatever the trader ticks.
 ///
@@ -502,7 +470,7 @@ pub(crate) struct ControlAccess {
     next_ui_request: u64,
     /// One notification budget per connected client, dropped when the client
     /// disconnects so a long session cannot accumulate them.
-    notification_limits: BTreeMap<ConnectionId, NotificationLimiter>,
+    notification_limits: BTreeMap<ConnectionId, TokenBucket>,
     /// Set for the duration of one replayed action: who the recorded run
     /// attributed it to.
     replayed_author: Option<RecordedActor>,
@@ -604,11 +572,12 @@ impl ControlAccess {
         &mut self,
         actor: &ActorContext,
     ) -> Result<(), std::time::Duration> {
+        let now = Instant::now();
         let limiter = self
             .notification_limits
             .entry(actor.connection_id.clone())
-            .or_insert_with(NotificationLimiter::new);
-        if limiter.allow(Instant::now()) {
+            .or_insert_with(|| TokenBucket::notifications(now));
+        if limiter.allow(now) {
             return Ok(());
         }
         Err(limiter.retry_after())

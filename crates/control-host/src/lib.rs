@@ -26,6 +26,7 @@ pub mod inventory;
 pub mod journal;
 pub mod launch;
 pub mod projection;
+pub mod rate;
 pub mod refusal;
 #[cfg(test)]
 mod scratch;

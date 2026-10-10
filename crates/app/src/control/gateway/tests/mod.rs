@@ -179,21 +179,6 @@ mod gateway_tests {
     }
 
     #[test]
-    fn client_rate_limiter_has_a_bounded_burst_and_refills() {
-        let started = Instant::now();
-        let mut limiter = ClientRateLimiter {
-            available_token_nanos: u128::from(CONTROL_CLIENT_BURST)
-                * ClientRateLimiter::ONE_TOKEN_NANOS,
-            last_refill: started,
-        };
-        for _ in 0..CONTROL_CLIENT_BURST {
-            assert!(limiter.allow(started));
-        }
-        assert!(!limiter.allow(started));
-        assert!(limiter.allow(started + Duration::from_secs(1)));
-    }
-
-    #[test]
     fn gateway_options_cannot_exceed_reviewed_hard_limits() {
         assert!(GatewayOptions::default().validate().is_ok());
 
