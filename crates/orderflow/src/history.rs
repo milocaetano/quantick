@@ -394,6 +394,12 @@ impl LiquidityHistory {
         self.counters
     }
 
+    /// Whether a generation is open: a snapshot installed and no gap since.
+    #[must_use]
+    pub fn is_synchronized(&self) -> bool {
+        self.generation.is_some()
+    }
+
     /// Most recent accepted book timestamp.
     #[must_use]
     pub fn latest_book_ms(&self) -> Option<i64> {
@@ -403,10 +409,9 @@ impl LiquidityHistory {
     /// Most recent accepted print timestamp.
     ///
     /// Kept beside [`latest_book_ms`](Self::latest_book_ms) rather than folded
-    /// into [`latest_ms`](Self::latest_ms) so a test — and a future caller that
-    /// needs to tell the two streams apart — can ask which clock moved.
+    /// into [`latest_ms`](Self::latest_ms) so a caller can tell which of the
+    /// two clocks moved.
     #[must_use]
-    #[allow(dead_code)]
     pub fn latest_print_ms(&self) -> Option<i64> {
         self.latest_print_ms
     }
@@ -710,11 +715,18 @@ impl LiquidityHistory {
 
         self.latest_book_ms = Some(timestamp_ms);
         self.first_stream_ms.get_or_insert(timestamp_ms);
-        if matches!(outcome, ApplyOutcome::Stale { .. }) {
-            self.counters.deltas_stale += 1;
-        } else {
-            self.reconcile_current_book(timestamp_ms, generation);
-            self.counters.deltas_applied += 1;
+        match outcome {
+            ApplyOutcome::Stale { .. } => self.counters.deltas_stale += 1,
+            // A confirmation changes no level: the clock above is all that
+            // moves, and open runs end at it, so the whole book is not
+            // re-aggregated for nothing.
+            ApplyOutcome::Applied {
+                changed_levels: 0, ..
+            } => self.counters.deltas_applied += 1,
+            ApplyOutcome::Applied { .. } => {
+                self.reconcile_current_book(timestamp_ms, generation);
+                self.counters.deltas_applied += 1;
+            }
         }
         self.prune(timestamp_ms);
         Ok(outcome)

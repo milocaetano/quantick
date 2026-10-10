@@ -301,6 +301,7 @@ pub(crate) fn flow_cell_snapshot(cell: FlowCellHit) -> FlowCellSnapshot {
         end_slot_exclusive: wire_usize(cell.end_slot_exclusive),
         live_lane: cell.live_lane,
         held_tape_end_unix_ms: cell.held_tape_end_ms,
+        carried: cell.carried,
     }
 }
 
