@@ -327,14 +327,15 @@ impl DetailSection<'_> {
             )
             .changed();
         let mut entry = |px: &mut f32, range, text, hover| {
-            let slider = egui::Slider::new(px, range).text(text).step_by(1.0);
+            let slider = egui::Slider::new(px, range).text(text).fixed_decimals(1);
             // Rounded only when dragged: the default sits between whole pixels.
-            let slider = slider.clamping(egui::SliderClamping::Edits);
+            let slider = slider.step_by(1.0).clamping(egui::SliderClamping::Edits);
             ui.add(slider).on_hover_text(hover).changed()
         };
+        let mut effective_compact = self.config.effective_compact_from_px();
         let compact_range = self.config.compact_from_px_range();
         let compact = entry(
-            &mut self.config.compact_from_px,
+            &mut effective_compact,
             compact_range,
             "summary numbers from px",
             "candle width where one delta number per row starts: zooming in it \
@@ -348,7 +349,9 @@ impl DetailSection<'_> {
             "candle width where the full sell x buy ladder starts, in both zoom \
              directions; styles with more columns keep their ratio to it",
         );
-        self.config.order_entry_widths();
+        if compact {
+            self.config.compact_from_px = effective_compact;
+        }
         scale | compact | detailed
     }
 }

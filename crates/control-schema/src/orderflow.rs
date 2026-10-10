@@ -240,8 +240,8 @@ pub struct FootprintSetupSnapshot {
     pub show_delta_totals: bool,
     /// The configured candle width at which one summary number per row
     /// starts, in both zoom directions, measured at a detail scale of 1.
-    /// Never above `detailed_from_px`: the settings store and slider keep it
-    /// there, so this is the value the chart uses.
+    /// Never above `detailed_from_px`: the effective entry the chart uses,
+    /// ordered under Detailed while the stored setting keeps its own value.
     #[serde(default)]
     #[schemars(extend("x-unit" = "pixels"))]
     pub compact_from_px: Option<CanonicalDecimal>,
@@ -268,7 +268,7 @@ impl From<&FootprintConfig> for FootprintSetupSnapshot {
             show_point_of_control: config.show_poc,
             show_numbers: config.show_numbers,
             show_delta_totals: config.show_delta_totals,
-            compact_from_px: canonical_f32(config.compact_from_px, 2),
+            compact_from_px: canonical_f32(config.effective_compact_from_px(), 2),
             detailed_from_px: canonical_f32(config.detailed_from_px, 2),
             detail_scale: canonical_f32(config.detail_scale, 2),
         }

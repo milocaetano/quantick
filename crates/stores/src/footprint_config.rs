@@ -405,12 +405,12 @@ impl Default for FootprintConfig {
 
 impl FootprintConfig {
     /// Where Compact starts, in the floors' units (candle width over
-    /// `detail_scale`): `compact_from_px`, ordered under Detailed and capped
-    /// at the deepest zoom. The level and the legend's hint both read it.
+    /// `detail_scale`): [`Self::effective_compact_from_px`], capped at the
+    /// deepest zoom. The level and the legend's hint both read it.
     #[must_use]
     pub fn compact_entry_width(&self) -> f32 {
         quantick_chart::footprint_lod::compact_entry_width(
-            self.compact_from_px,
+            self.effective_compact_from_px(),
             self.detailed_from_px,
             self.detail_scale,
         )
@@ -426,12 +426,16 @@ impl FootprintConfig {
         start..=end.max(start)
     }
 
-    /// Pull `compact_from_px` into [`Self::compact_from_px_range`], so the
-    /// stored value is the one the chart uses. A loaded file and a lowered
-    /// Detailed slider both go through here.
-    pub fn order_entry_widths(&mut self) {
+    /// The Compact entry the chart uses: `compact_from_px` as the trader set
+    /// it, ordered under `detailed_from_px` - the summary numbers come before
+    /// the full ladder. The one ordering source: the chart, the settings
+    /// slider and the snapshot all read this, while the store and the saved
+    /// file keep the trader's own value, so a Detailed edit passing below it
+    /// on the way (typing "100" goes through "1") never loses it.
+    #[must_use]
+    pub fn effective_compact_from_px(&self) -> f32 {
         let range = self.compact_from_px_range();
-        self.compact_from_px = self.compact_from_px.clamp(*range.start(), *range.end());
+        self.compact_from_px.clamp(*range.start(), *range.end())
     }
 
     /// The candle width, in pixels on screen, by which a fading candle body
@@ -659,7 +663,7 @@ pub fn resolve(file: FootprintFile) -> FootprintConfig {
         .unwrap_or(defaults.detailed_from_px);
     let compact_from_px = clamped_px(file.compact_from_px, &COMPACT_FROM_PX_RANGE)
         .unwrap_or(defaults.compact_from_px);
-    let mut config = FootprintConfig {
+    let config = FootprintConfig {
         // An unknown style token (a file from a newer build) keeps the
         // default rather than failing the whole config.
         style: file
@@ -710,9 +714,8 @@ pub fn resolve(file: FootprintFile) -> FootprintConfig {
             .unwrap_or(defaults.cluster_show_total),
         cluster_bevel: file.cluster_bevel.unwrap_or(defaults.cluster_bevel),
     };
-    // Summary numbers come before the full ladder: a hand-edit that puts
-    // Compact past Detailed is answered at Detailed's width.
-    config.order_entry_widths();
+    // A hand-edit that puts Compact past Detailed keeps its value; the
+    // chart answers it at Detailed's width (`effective_compact_from_px`).
     config
 }
 
@@ -753,13 +756,16 @@ mod tests {
         // Compact never starts past Detailed.
         let config =
             resolve(toml::from_str("compact_from_px = 120.0\ndetailed_from_px = 90.0").unwrap());
-        assert_eq!(config.compact_from_px, 90.0);
+        assert_eq!(config.compact_from_px, 120.0);
+        assert_eq!(config.effective_compact_from_px(), 90.0);
         assert_eq!(config.detailed_from_px, 90.0);
     }
 
-    /// The settings slider, the chart and the saved file read one Compact
-    /// entry: the slider's range stops at Detailed, lowering Detailed pulls
-    /// Compact down with it, and what is stored is what the chart uses.
+    /// The settings slider, the chart and the snapshot read one Compact
+    /// entry: the slider's range stops at Detailed, a Detailed below Compact
+    /// orders the entry the chart uses under it, and the stored value - what
+    /// the saved file keeps - is the trader's own, so raising Detailed again
+    /// restores it.
     #[test]
     fn compact_entry_stays_under_detailed_in_the_slider_and_the_store() {
         let mut config = FootprintConfig {
@@ -769,20 +775,46 @@ mod tests {
         };
         assert_eq!(*config.compact_from_px_range().end(), 150.0);
         config.detailed_from_px = 80.0;
-        config.order_entry_widths();
-        assert_eq!(config.compact_from_px, 80.0);
+        assert_eq!(config.effective_compact_from_px(), 80.0);
         assert_eq!(*config.compact_from_px_range().end(), 80.0);
-        assert_eq!(config.compact_entry_width(), config.compact_from_px);
+        assert_eq!(config.compact_entry_width(), 80.0);
         let reloaded = resolve(to_file(&config));
-        assert_eq!(reloaded.compact_from_px, config.compact_from_px);
-        // Raising Detailed again leaves Compact where the trader put it.
+        assert_eq!(reloaded.compact_from_px, 100.0);
+        assert_eq!(reloaded.effective_compact_from_px(), 80.0);
         config.detailed_from_px = 200.0;
-        config.order_entry_widths();
-        assert_eq!(config.compact_from_px, 80.0);
+        assert_eq!(config.effective_compact_from_px(), 100.0);
         assert_eq!(
             *config.compact_from_px_range().end(),
             *COMPACT_FROM_PX_RANGE.end()
         );
+    }
+
+    /// Typing "100" into Detailed's value box applies "1" and "10" first,
+    /// both clamped under Compact; dragging Detailed below Compact and back
+    /// does the same. Neither transient value loses Compact - not in the
+    /// store, not in a file saved mid-edit.
+    #[test]
+    fn a_transient_detailed_value_never_loses_compact() {
+        let mut config = FootprintConfig {
+            compact_from_px: 90.0,
+            detailed_from_px: 120.0,
+            ..FootprintConfig::default()
+        };
+        let detailed_start = *DETAILED_FROM_PX_RANGE.start();
+        for typed in [1.0_f32, 10.0, 100.0] {
+            config.detailed_from_px = typed.clamp(detailed_start, *DETAILED_FROM_PX_RANGE.end());
+            assert_eq!(resolve(to_file(&config)).compact_from_px, 90.0);
+        }
+        assert_eq!(config.detailed_from_px, 100.0);
+        assert_eq!(config.compact_from_px, 90.0);
+        assert_eq!(config.effective_compact_from_px(), 90.0);
+        // Dragged below Compact: the chart's entry follows Detailed down...
+        config.detailed_from_px = detailed_start;
+        assert_eq!(config.effective_compact_from_px(), detailed_start);
+        // ...and comes back with it.
+        config.detailed_from_px = 120.0;
+        assert_eq!(config.compact_from_px, 90.0);
+        assert_eq!(config.effective_compact_from_px(), 90.0);
     }
 
     /// The Detailed slider starts on a whole pixel, so dragging it in
