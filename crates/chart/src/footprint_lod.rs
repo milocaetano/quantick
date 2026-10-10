@@ -170,6 +170,27 @@ pub fn display_multiple(base_row_px: f32, min_row_px: f32) -> Option<i64> {
 mod tests {
     use super::*;
 
+    /// One wheel notch: 50 px of scroll at the chart's `SCROLL_ZOOM_PX` of
+    /// 300 zooms by 2^(50/300).
+    const WHEEL_STEP: f32 = 1.122_462;
+
+    #[test]
+    fn a_level_is_left_at_the_same_width_it_was_entered() {
+        // Zoom in notch by notch from Off to past Detailed, then back out by
+        // the same notches: every width must show the same level both ways,
+        // or the trader feels the dead band as a wheel that does not reverse.
+        let widths: Vec<f32> = (0..30).map(|i| 4.0 * WHEEL_STEP.powi(i)).collect();
+        let detailed = 72.0;
+        let mut memory = LevelMemory::default();
+        let mut zoom = |width: f32| memory.resolve(width, 12.0, 4.0, detailed);
+        let entering: Vec<DetailLevel> = widths.iter().map(|w| zoom(*w)).collect();
+        let mut leaving: Vec<DetailLevel> = widths.iter().rev().map(|w| zoom(*w)).collect();
+        leaving.reverse();
+        assert_eq!(entering.first(), Some(&DetailLevel::Off));
+        assert_eq!(entering.last(), Some(&DetailLevel::Detailed));
+        assert_eq!(entering, leaving, "widths: {widths:?}");
+    }
+
     #[test]
     fn display_multiple_snaps_to_round_row_groups() {
         assert_eq!(display_multiple(12.0, 11.0), Some(1));
