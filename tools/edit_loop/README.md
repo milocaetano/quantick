@@ -105,8 +105,24 @@ interval or cross-run noise bound.
 
 ### Seven-minute protocol calibration (2026-10-10)
 
-The first run of this protocol is calibration evidence; its limits land here
-together with the calibrated `budgets.json`.
+The [first run](https://github.com/milocaetano/quantick/actions/runs/38088480381)
+measured `7365855014d75ee61c9a81007b7f2b8a5cc44a34` (PR #658; crates identical
+to main `2c7b0761`) from an empty cache, starting at
+`2026-10-10T21:40:26.583688+00:00`. Every warm-up, control, touched build and
+test run completed, recompiled where touched and restored source metadata; the
+run failed at the old budget's identity check (`uncalibrated jobs drift`), as
+an uncalibrated run should.
+
+| Package | Representative source | Touched builds (s) | Test run (s) | Ceiling (s) |
+| --- | --- | --- | ---: | ---: |
+| quantick-app | `crates/app/src/control/gateway/server.rs` | 6.87–7.40 | 44.09 | 64.363 |
+| quantick-orderflow | `crates/orderflow/src/engine.rs` | 1.46–1.76 | 29.20 | 38.703 |
+| quantick-guards | `crates/guards/src/generated.rs` | 0.60–1.55 | 4.11 | 7.075 |
+
+The cold run took 10.9 minutes, 6.2 of them the app's warm-up from an empty
+target; the old protocol's last run took 26.2. A warm run skips most of that
+warm-up. Completion requires a separate run at the final committed head, with
+all five loops of every selected package below its ceiling.
 
 ### Previous protocol (until 2026-10-10)
 
