@@ -73,7 +73,7 @@ use crate::{
 };
 
 use super::{
-    registry::{CaptureContext, ProjectionDock, ProjectionRegistry, ProjectionRegistryError},
+    registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
     types::{
         AvailabilitySnapshot, SCREEN_DECIMAL_PLACES, available, canonical_f32, unavailable,
         visible_panes,

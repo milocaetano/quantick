@@ -5415,10 +5415,7 @@ fn a_bundle_carries_the_events_around_the_capture_not_the_oldest_it_holds() {
             .as_mut()
             .expect("control access is installed");
         for index in 0..(limit * 8) {
-            access.journal_mut().record(
-                crate::control::journal_test_event(index),
-                i64::try_from(index).unwrap(),
-            );
+            access.append_event(crate::control::journal_test_event(index));
         }
     }
     let newest = app

@@ -19,7 +19,6 @@ use std::time::Duration;
 
 use quantick_control::{
     error::{ControlError, codes},
-    id::{EventKind, ModuleId},
     limits::{CONTROL_NOTIFICATION_BURST, CONTROL_NOTIFICATION_RATE_PER_MINUTE},
     registry::RegistryError,
     wire::ActorContext,
@@ -27,7 +26,7 @@ use quantick_control::{
 use quantick_control_host::{
     admission::known_error,
     authority::{NOTIFY_MODULE_ID, NOTIFY_PERMISSION_ID, NOTIFY_SOUND_PERMISSION_ID},
-    journal::{EventActor, NewEvent},
+    journal::NewEvent,
     wire::actor_kind_name,
 };
 use quantick_control_schema::notify::{
@@ -177,20 +176,17 @@ fn raise<H: AttentionPort + ?Sized, A: NotifyAccess>(
         NotifyChannel::Sound => app.sound_alert(),
     };
 
-    let event_actor = EventActor {
-        kind: actor.actor_kind,
-        client_name: actor.client_name.clone(),
-    };
-    access.record_event(NewEvent {
-        module_id: ModuleId::new(NOTIFY_MODULE_ID).expect("static module ID is valid"),
-        kind: EventKind::new(NOTIFICATION_EVENT_KIND).expect("static event kind is valid"),
-        actor: Some(event_actor),
-        payload: json!({
-            "channel": channel.id(),
-            "message": input.message,
-            "delivered": unavailable_reason.is_none(),
-        }),
+    let payload = json!({
+        "channel": channel.id(),
+        "message": input.message,
+        "delivered": unavailable_reason.is_none(),
     });
+    access.record_event(NewEvent::by(
+        NOTIFY_MODULE_ID,
+        NOTIFICATION_EVENT_KIND,
+        actor,
+        payload,
+    ));
 
     serde_json::to_value(NotifyResult {
         channel: channel.id().to_owned(),

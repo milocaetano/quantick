@@ -42,7 +42,7 @@ use rust_decimal::{Decimal, prelude::ToPrimitive};
 
 use serde_json::Value;
 
-use super::super::actions::{ActionDock, ActionRegistry};
+use super::super::actions::ActionRegistry;
 use super::super::gateway::ControlAccess;
 
 // Decimal places `fraction` is written and accepted with: `workspace.summary`'s

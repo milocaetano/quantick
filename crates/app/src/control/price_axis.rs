@@ -1,5 +1,5 @@
 //! Named price and tape framing over the same pane state as their gestures.
-use super::actions::{ActionDock, ActionRegistry};
+use super::actions::ActionRegistry;
 use super::{gateway::ControlAccess, layout};
 use crate::app::{TabsMutPort, TabsPort};
 use crate::pane::ChartPane;
