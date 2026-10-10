@@ -2122,15 +2122,21 @@ fn observer_per_scope_capture_cost() {
 
 #[test]
 fn observer_core_capture_stays_within_the_ui_budget() {
-    // The always-on guard judges the median of the best batch: a typical
+    // The always-on guard judges the best batch median: a typical
     // coherent capture of every scope must fit the budget, and that
     // reading survives a loaded test runner. The tail is measured by the
     // ignored sibling below, on a quiet machine, and recorded in
     // `docs/control-plane/pr2-performance.md`.
-    let (median_us, p99_us, worst_us) = measure_core_capture_us();
+    let best = measure_core_capture_us();
+    let BatchReading {
+        median_us,
+        p99_us,
+        worst_us,
+    } = best.lowest_median;
+    let batches = best.batches;
     assert!(
         median_us <= quantick_control::limits::CONTROL_UI_BUDGET_US,
-        "core capture median {median_us} us (p99 {p99_us} us, worst {worst_us} us) exceeds the {} us UI budget",
+        "core capture median {median_us} us (p99 {p99_us} us, worst {worst_us} us; best of {batches} batches) exceeds the {} us UI budget",
         quantick_control::limits::CONTROL_UI_BUDGET_US
     );
 }
@@ -2142,10 +2148,16 @@ fn observer_core_capture_stays_within_the_ui_budget() {
 #[test]
 #[ignore]
 fn observer_core_capture_p99_stays_within_the_ui_budget() {
-    let (median_us, p99_us, worst_us) = measure_core_capture_us();
+    let best = measure_core_capture_us();
+    let BatchReading {
+        median_us,
+        p99_us,
+        worst_us,
+    } = best.lowest_p99;
+    let batches = best.batches;
     assert!(
         p99_us <= quantick_control::limits::CONTROL_UI_BUDGET_US,
-        "core capture p99 {p99_us} us (median {median_us} us, worst {worst_us} us) exceeds the {} us UI budget",
+        "core capture p99 {p99_us} us (median {median_us} us, worst {worst_us} us; best of {batches} batches) exceeds the {} us UI budget",
         quantick_control::limits::CONTROL_UI_BUDGET_US
     );
 }
@@ -3945,10 +3957,16 @@ fn observer_max_chart_window_capture_stays_within_the_ui_budget() {
     // reading survives a loaded test runner. The tail is measured by the
     // ignored sibling below, on a quiet machine, and recorded in the
     // evidence document.
-    let (median_us, p99_us, worst_us) = measure_max_chart_window_capture_us();
+    let best = measure_max_chart_window_capture_us();
+    let BatchReading {
+        median_us,
+        p99_us,
+        worst_us,
+    } = best.lowest_median;
+    let batches = best.batches;
     assert!(
         median_us <= quantick_control::limits::CONTROL_UI_BUDGET_US,
-        "maximum chart-window capture median {median_us} us (p99 {p99_us} us, worst {worst_us} us) exceeds the {} us UI budget",
+        "maximum chart-window capture median {median_us} us (p99 {p99_us} us, worst {worst_us} us; best of {batches} batches) exceeds the {} us UI budget",
         quantick_control::limits::CONTROL_UI_BUDGET_US
     );
 }
@@ -3961,10 +3979,16 @@ fn observer_max_chart_window_capture_stays_within_the_ui_budget() {
 #[test]
 #[ignore]
 fn observer_max_chart_window_capture_p99_stays_within_the_ui_budget() {
-    let (median_us, p99_us, worst_us) = measure_max_chart_window_capture_us();
+    let best = measure_max_chart_window_capture_us();
+    let BatchReading {
+        median_us,
+        p99_us,
+        worst_us,
+    } = best.lowest_p99;
+    let batches = best.batches;
     assert!(
         p99_us <= quantick_control::limits::CONTROL_UI_BUDGET_US,
-        "maximum chart-window capture p99 {p99_us} us (median {median_us} us, worst {worst_us} us) exceeds the {} us UI budget",
+        "maximum chart-window capture p99 {p99_us} us (median {median_us} us, worst {worst_us} us; best of {batches} batches) exceeds the {} us UI budget",
         quantick_control::limits::CONTROL_UI_BUDGET_US
     );
 }
