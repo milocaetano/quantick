@@ -150,17 +150,7 @@ pub(crate) fn time_tag(
     Some((centre, width))
 }
 
-/// The bar under the pointer, and the instant it opened.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PointerBar {
-    /// The slot, in the pane's composed slot space (venue prefix included).
-    pub slot: usize,
-    /// When that bar opened, in Unix milliseconds.
-    pub open_time_unix_ms: i64,
-    /// The pane's time interval, when it cuts by time: a calendar one tags
-    /// the date rather than the clock.
-    pub interval_ms: Option<i64>,
-}
+pub(crate) use quantick_chart::pane_series::PointerBar;
 
 /// What the axes have to say about the pointer's position.
 ///

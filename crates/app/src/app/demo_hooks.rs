@@ -461,7 +461,9 @@ pub(super) fn apply_drawing_demo(app: &mut QuantickApp) {
     plan.project_times(|slot| pane.slot_open_time(slot));
     let center = plan.apply_main(&mut pane.drawings);
     if let (Some(center), Some(chart)) = (center, pane.frame.chart_area) {
-        pane.viewport.center_on_bar(center, chart.width(), slots);
+        pane.model
+            .viewport
+            .center_on_bar(center, chart.width(), slots);
     }
     plan.apply_bands(&mut pane.drawings);
     app.drawings.chrome.carry_across_selection();

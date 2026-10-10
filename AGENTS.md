@@ -47,7 +47,7 @@ leaves; `guards` has no edges either way.
 | `control` | — | Control-plane contracts and the published `fake` host/client ports. |
 | `civil` | — | Civil dates and the display offset the journal, report and axis share. |
 | `workspace` | — | Layout documents and pane membership transitions. |
-| `chart-interaction` | — | Quick-range owner, scoped commands/events/effects, exact anchors. |
+| `chart-interaction` | layers, orderflow | Pane state, menus, quick ranges, anchors. |
 | `layers` | — | Layer catalog, visibility, availability, inheritance, persistence policy. |
 | `backpressure` | — | Owner-to-worker admission (park, fold, never drop), progress; told the time. |
 | `operability` | — | Each UI behaviour and the capability reaching it, or its exclusion. |

@@ -1,0 +1,3 @@
+# Move pane interaction/history and workspace binding into headless owners.
+app::ChartPane -9
+!budget -9

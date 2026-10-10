@@ -10,11 +10,3 @@ pub(crate) fn binding(layer: ChartLayer) -> Option<egui::KeyboardShortcut> {
     };
     Some(egui::KeyboardShortcut::new(egui::Modifiers::CTRL, key))
 }
-
-pub(crate) fn label(layer: ChartLayer) -> Option<&'static str> {
-    match layer {
-        ChartLayer::Bubbles => Some("Ctrl+B"),
-        ChartLayer::Footprint => Some("Ctrl+F"),
-        _ => None,
-    }
-}

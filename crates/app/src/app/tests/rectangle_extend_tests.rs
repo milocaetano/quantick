@@ -173,13 +173,13 @@ fn an_extended_outline_band_leaves_the_charts_double_click_to_the_chart() {
         {
             let pane = &mut app.active_tab_mut().flow_pane;
             let slots = pane.slots();
-            pane.viewport.pan_pixels(120.0, slots);
+            pane.model.viewport.pan_pixels(120.0, slots);
         }
         run_frame(&mut app, &ctx);
-        assert!(!app.active_tab().flow_pane.viewport.follows_live());
+        assert!(!app.active_tab().flow_pane.model.viewport.follows_live());
         double_click(&mut app, &ctx, position);
         assert!(
-            app.active_tab().flow_pane.viewport.follows_live(),
+            app.active_tab().flow_pane.model.viewport.follows_live(),
             "the chart's double click snapped to live at {position:?}"
         );
         assert_eq!(extent(&app), (true, true), "the band held at {position:?}");

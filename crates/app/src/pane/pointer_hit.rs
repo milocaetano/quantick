@@ -148,7 +148,7 @@ impl PaneHitTest<'_> {
                 label: format!("{} {}", drawing.tool.name(), index + 1),
                 user_label_present: drawing.name.is_some(),
                 handle_index,
-                selected: self.drawings.selected() == Some(index),
+                selected: self.drawings.selected_id() == Some(drawing.id),
                 locked: drawing.locked,
             })
         });

@@ -21,3 +21,11 @@ pub mod stage_registry;
 pub mod tab_drain_plan;
 
 pub mod tape_drag;
+
+pub mod pane;
+pub mod viewport;
+
+pub mod pane_axis;
+pub mod pane_history;
+
+pub mod pane_menu;

@@ -151,26 +151,6 @@ pub fn draw_live_chip(painter: &egui::Painter, rect: egui::Rect) {
     );
 }
 
-/// Whether a freshly folded prefix differs from the one already installed.
-///
-/// Length and the two end open-times, not a full comparison: the fold is
-/// deterministic over the same base, so two runs agreeing on how many bars
-/// they produced and which windows the first and last cover agree on
-/// everything between. The full compare was ~129k `Decimal`s on every frame
-/// of a settled interval drag.
-pub fn prefix_differs(current: &[quantick_engine::Bar], next: &[quantick_engine::Bar]) -> bool {
-    if current.len() != next.len() {
-        return true;
-    }
-    let ends = |bars: &[quantick_engine::Bar]| {
-        (
-            bars.first().map(|bar| bar.open_time),
-            bars.last().map(|bar| bar.open_time),
-        )
-    };
-    ends(current) != ends(next)
-}
-
 /// Convert an explicit unmultiplied RGBA style colour to egui.
 pub fn color32([r, g, b, a]: [u8; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(r, g, b, a)

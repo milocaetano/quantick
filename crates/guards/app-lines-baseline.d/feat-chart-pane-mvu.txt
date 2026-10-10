@@ -1,0 +1,3 @@
+# Headless pane menus, axis decisions and composed-series readers leave the UI crate.
+crates/app -301
+!budget -301

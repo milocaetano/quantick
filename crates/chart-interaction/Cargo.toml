@@ -6,6 +6,10 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[dependencies]
+quantick-layers = { path = "../layers" }
+quantick-orderflow = { path = "../orderflow" }
+
 [features]
 # The time-less anchor constructor a dependent crate's tests place marks with.
 test-support = []

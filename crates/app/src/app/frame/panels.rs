@@ -121,7 +121,7 @@ pub(super) fn center_flow_pane_on_trade(tab: &mut Tab, opened: i64, closed: i64)
             if let Some(area) = pane.frame.chart_area {
                 let slots = pane.slots();
                 let mid = (entry + exit) as f32 / 2.0;
-                pane.viewport.center_on_bar(mid, area.width(), slots);
+                pane.model.viewport.center_on_bar(mid, area.width(), slots);
             }
         }
         None => {

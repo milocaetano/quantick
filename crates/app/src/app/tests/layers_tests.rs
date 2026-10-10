@@ -890,12 +890,14 @@ fn hidden_drawing_neither_paints_nor_hit_tests() {
     let viewport_before = app
         .active_tab()
         .flow_pane
+        .model
         .viewport
         .right_edge_bar(app.active_tab().flow_pane.slots());
     drag_chart(&mut app, &ctx, stroke_position, egui::pos2(640.0, 260.0));
     assert_ne!(
         app.active_tab()
             .flow_pane
+            .model
             .viewport
             .right_edge_bar(app.active_tab().flow_pane.slots()),
         viewport_before,

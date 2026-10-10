@@ -69,7 +69,7 @@ impl Drawings {
             let before = self.snapshot();
             self.items
                 .push(self.draft.take().expect("draft has points"));
-            self.selected = Some(self.items.len() - 1);
+            self.select(Some(self.items.len() - 1));
             // Drawing while hide-all is engaged releases it (audit M8): the
             // act of placing a new object is the strongest possible request
             // to see drawings, and a mark that vanishes on the click that
@@ -102,7 +102,7 @@ impl Drawings {
         }
         let before = self.snapshot();
         self.items.push(draft);
-        self.selected = Some(self.items.len() - 1);
+        self.select(Some(self.items.len() - 1));
         // Same rule as a clicked placement: drawing releases hide-all, and
         // it does so inside the one undo entry the gesture records.
         self.all_hidden = false;
@@ -129,7 +129,7 @@ impl Drawings {
     /// how a copied band silently loses its bot.
     #[must_use]
     pub fn duplicate_selected(&mut self, offset_bars: f32) -> Option<Duplicated> {
-        let index = self.selected.filter(|&index| index < self.items.len())?;
+        let index = self.selected().filter(|&index| index < self.items.len())?;
         let source = self.items[index].id;
         let drawing = self.items[index].clone();
         let copy = self.paste(&drawing, offset_bars);

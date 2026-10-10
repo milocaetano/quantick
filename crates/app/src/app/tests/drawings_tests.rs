@@ -1,3 +1,5 @@
+mod pane_model_tests;
+
 use super::bare_canvas::{app_with_history, app_with_history_and_launch};
 use super::*;
 use quantick_feed::replay::test_support as replay_test_support;
@@ -14,7 +16,7 @@ mod placement_characterization {
         let slot = pane.slots() - 30;
         let right = pane.frame.lane_divider_x.unwrap_or(chart.right());
         let target = egui::pos2(
-            pane.viewport.x_center(slot, right, pane.slots()),
+            pane.model.viewport.x_center(slot, right, pane.slots()),
             chart.center().y,
         );
         assert!(chart.contains(target));
@@ -285,12 +287,14 @@ fn a_secondary_drag_is_temporary_until_it_is_dismissed_or_converted() {
     let pane = &app.active_tab().flow_pane;
     let history_right = pane.frame.lane_divider_x.unwrap_or(chart.right());
     let start = egui::pos2(
-        pane.viewport
+        pane.model
+            .viewport
             .x_at_bar_position(80.5, history_right, pane.slots()),
         chart.center().y + 55.0,
     );
     let end = egui::pos2(
-        pane.viewport
+        pane.model
+            .viewport
             .x_at_bar_position(160.5, history_right, pane.slots()),
         chart.center().y - 55.0,
     );
@@ -639,6 +643,7 @@ fn a_future_space_range_still_creates_a_volume_profile() {
     let total = app.active_tab().flow_pane.slots();
     app.active_tab_mut()
         .flow_pane
+        .model
         .viewport
         .pan_pixels(-160.0, total);
     run_frame(&mut app, &ctx);
@@ -646,12 +651,14 @@ fn a_future_space_range_still_creates_a_volume_profile() {
     let chart = pane.frame.chart_area.expect("the chart was laid out");
     let history_right = pane.frame.lane_divider_x.unwrap_or(chart.right());
     let start = egui::pos2(
-        pane.viewport
+        pane.model
+            .viewport
             .x_at_bar_position(160.5, history_right, pane.slots()),
         chart.center().y + 55.0,
     );
     let end = egui::pos2(
-        pane.viewport
+        pane.model
+            .viewport
             .x_at_bar_position(204.5, history_right, pane.slots()),
         chart.center().y - 55.0,
     );
@@ -689,7 +696,8 @@ pub(super) fn quick_range_ends(app: &QuantickApp) -> (egui::Rect, egui::Pos2, eg
         .expect("the first frame laid out the chart");
     let history_right = pane.frame.lane_divider_x.unwrap_or(chart.right());
     let x_at = |bar: f32| {
-        pane.viewport
+        pane.model
+            .viewport
             .x_at_bar_position(bar, history_right, pane.slots())
     };
     (
@@ -1140,7 +1148,7 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
         let id = pane.drawings.items()[0].id;
         // The press half of the gesture, staged: the click resolved the
         // object and seeded the rename buffer, like the canvas path does.
-        pane.context_menu.drawing = Some(id);
+        pane.model.menu.drawing = Some(id);
     }
 
     let menu_frame = |app: &mut QuantickApp, events: Vec<egui::Event>| {
@@ -1226,7 +1234,7 @@ fn the_drawing_section_of_the_menu_acts_on_the_clicked_object() {
         "unlocked, the menu's delete removes the object"
     );
     assert_eq!(
-        app.active_tab().flow_pane.context_menu.drawing,
+        app.active_tab().flow_pane.model.menu.drawing,
         None,
         "the section lets go of the object it deleted"
     );
@@ -2755,7 +2763,7 @@ fn a_drag_on_a_mirrored_mark_does_not_also_pan_the_chart_under_it() {
         .active_tab()
         .time_pane()
         .expect("the split built a time pane");
-    let before = time_pane.viewport.right_edge_bar(time_pane.slots());
+    let before = time_pane.model.viewport.right_edge_bar(time_pane.slots());
 
     drag_chart(
         &mut app,
@@ -2769,7 +2777,7 @@ fn a_drag_on_a_mirrored_mark_does_not_also_pan_the_chart_under_it() {
         .time_pane()
         .expect("the split built a time pane");
     assert_eq!(
-        time_pane.viewport.right_edge_bar(time_pane.slots()),
+        time_pane.model.viewport.right_edge_bar(time_pane.slots()),
         before,
         "the gesture belongs to the mark, so the chart behind it holds still"
     );
@@ -2836,50 +2844,6 @@ fn every_toolbox_drawing_can_be_plotted_on_the_chart() {
 }
 
 #[test]
-fn a_drawing_can_be_selected_from_its_stroke_and_moved_without_panning() {
-    let (mut app, _commands) = app_with_history(200);
-    let ctx = egui::Context::default();
-    run_frame(&mut app, &ctx);
-    app.toolrail
-        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
-    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
-
-    let before = app.active_tab().flow_pane.drawings.items()[0].points[0];
-    let viewport_before = app
-        .active_tab()
-        .flow_pane
-        .viewport
-        .right_edge_bar(app.active_tab().flow_pane.slots());
-    // Clear of the inspector: the panel is opaque to presses by
-    // contract, so a proof about dragging must not start under it.
-    let start = canvas_point_clear_of_inspector(&mut app, &ctx, 300.0);
-    drag_chart(&mut app, &ctx, start, start + egui::vec2(40.0, 40.0));
-    let after = app.active_tab().flow_pane.drawings.items()[0].points[0];
-
-    assert!(
-        after.bar > before.bar,
-        "dragging right moves the anchor right"
-    );
-    assert!(
-        after.price < before.price,
-        "dragging down moves the anchor to a lower price"
-    );
-    assert_eq!(
-        app.active_tab()
-            .flow_pane
-            .viewport
-            .right_edge_bar(app.active_tab().flow_pane.slots()),
-        viewport_before,
-        "moving a drawing must not pan the market underneath it"
-    );
-    assert_eq!(
-        app.active_tab().flow_pane.gestures.drag,
-        DrawingDrag::None,
-        "release ends the move gesture"
-    );
-}
-
-#[test]
 fn a_local_drag_of_a_shared_mark_carries_time_and_commits_one_undo() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
@@ -2897,7 +2861,7 @@ fn a_local_drag_of_a_shared_mark_carries_time_and_commits_one_undo() {
     let pane = &app.active_tab().flow_pane;
     let before = pane.drawings.items()[0].points[0];
     let undo_before = pane.drawings.undo_depth();
-    let viewport_before = pane.viewport.right_edge_bar(pane.slots());
+    let viewport_before = pane.model.viewport.right_edge_bar(pane.slots());
 
     drag_chart(&mut app, &ctx, start, start + egui::vec2(40.0, 40.0));
 
@@ -2916,7 +2880,10 @@ fn a_local_drag_of_a_shared_mark_carries_time_and_commits_one_undo() {
         Some(slot_of(after.bar))
     );
     assert_eq!(pane.drawings.undo_depth(), undo_before + 1);
-    assert_eq!(pane.viewport.right_edge_bar(pane.slots()), viewport_before);
+    assert_eq!(
+        pane.model.viewport.right_edge_bar(pane.slots()),
+        viewport_before
+    );
     assert_eq!(pane.gestures.drag, DrawingDrag::None);
 }
 
@@ -3630,7 +3597,7 @@ fn a_mark_on_the_forming_bar_still_grabs_its_extreme() {
     // Aim at the forming slot: the newest one, at the right edge of the
     // history area.
     let chart = pane.frame.chart_area.expect("chart laid out");
-    let width = pane.viewport.candle_width();
+    let width = pane.model.viewport.candle_width();
     let right = pane.frame.lane_divider_x.unwrap_or(chart.right());
     let x = right - width * 0.5;
 
@@ -4297,6 +4264,7 @@ fn rectangle_anchor_resizes_while_the_settings_window_stays_non_modal() {
     let viewport_before = app
         .active_tab()
         .flow_pane
+        .model
         .viewport
         .right_edge_bar(app.active_tab().flow_pane.slots());
 
@@ -4320,6 +4288,7 @@ fn rectangle_anchor_resizes_while_the_settings_window_stays_non_modal() {
     assert_eq!(
         app.active_tab()
             .flow_pane
+            .model
             .viewport
             .right_edge_bar(app.active_tab().flow_pane.slots()),
         viewport_before,
@@ -4351,6 +4320,7 @@ fn locked_drawing_rejects_geometry_and_keyboard_delete() {
     let viewport_before = app
         .active_tab()
         .flow_pane
+        .model
         .viewport
         .right_edge_bar(app.active_tab().flow_pane.slots());
     drag_chart(
@@ -4367,6 +4337,7 @@ fn locked_drawing_rejects_geometry_and_keyboard_delete() {
     assert_eq!(
         app.active_tab()
             .flow_pane
+            .model
             .viewport
             .right_edge_bar(app.active_tab().flow_pane.slots()),
         viewport_before,
@@ -4994,6 +4965,7 @@ fn moving_a_context_chart_moves_its_drawings_and_slots_with_it() {
     assert_eq!(
         app.active_tab()
             .pane(PaneSide::Time(1))
+            .layout
             .drawings_key
             .as_ref()
             .map(|key| key.pane),
@@ -5255,6 +5227,7 @@ fn the_seam_and_the_backfill_divider_mark_different_slots() {
         .width();
     app.active_tab_mut()
         .pane_mut(PaneSide::Time(0))
+        .model
         .viewport
         .center_on_bar(seam as f32, width, slots);
     let texts = painted_text(&run_frame(&mut app, &ctx));

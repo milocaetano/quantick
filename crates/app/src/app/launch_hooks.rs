@@ -310,7 +310,11 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
     // of candle width, and a validation run cannot drag a scroll wheel.
     // Same clamp as the gesture (see Viewport::set_px_per_bar).
     if let Some(px) = app.chrome.harness.candle_width() {
-        app.active_tab_mut().flow_pane.viewport.set_px_per_bar(px);
+        app.active_tab_mut()
+            .flow_pane
+            .model
+            .viewport
+            .set_px_per_bar(px);
     }
     // The bubble budget, scriptable. The fold is the one bubble state a
     // capture cannot otherwise reach: it needs a tape dense enough to

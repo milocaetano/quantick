@@ -96,7 +96,7 @@ impl ChartPane {
             renderers,
             &frame,
             layout.lane_width_px(),
-            &self.viewport,
+            &self.model.viewport,
             self.price_view.is_inverted(),
         );
         let demand = self.projection_demand();
@@ -161,7 +161,7 @@ impl ChartPane {
                 history: frame.history_rect,
                 total: frame.total,
                 candle_width: frame.cw,
-                viewport: &self.viewport,
+                viewport: &self.model.viewport,
                 turns,
             });
         }
@@ -170,7 +170,7 @@ impl ChartPane {
             renderers,
             frame: &frame,
             clip: painter.with_clip_rect(layout.history_rect),
-            viewport: &self.viewport,
+            viewport: &self.model.viewport,
             dress: CandleDress::resolve(&self.footprint, chrome, start.footprint_paints, frame.cw),
         };
         let mut carved = std::mem::take(&mut self.frame.bands);
@@ -367,7 +367,7 @@ impl ChartPane {
         let (tape_only, native_tape) = self.tape_modes();
         if tape_only {
             // No candles to have panned away from: the pane is the live tape.
-            self.viewport.snap_to_live();
+            self.model.viewport.snap_to_live();
         }
         let live_lane = self.lay_out_lane(chart_rect, tape_only);
         if total == 0 {
@@ -388,8 +388,13 @@ impl ChartPane {
         // is the one place that sees all of it, so it is the one place the
         // rule holds — pushed fully left, the newest bar stops at the left
         // edge and the rest of the window is empty canvas to project into.
-        self.viewport.clamp_to_window(history_rect.width(), total);
-        let (start, end) = self.viewport.visible_range(history_rect.width(), total);
+        self.model
+            .viewport
+            .clamp_to_window(history_rect.width(), total);
+        let (start, end) = self
+            .model
+            .viewport
+            .visible_range(history_rect.width(), total);
         Some(FrameLayout {
             areas,
             chart_rect,
@@ -399,7 +404,7 @@ impl ChartPane {
             closed_total,
             start,
             end,
-            cw: self.viewport.candle_width(),
+            cw: self.model.viewport.candle_width(),
             indicator_guide_x,
             tape_only,
             native_tape,
@@ -558,7 +563,7 @@ impl ChartPane {
                 band,
                 band_index: index,
                 drawings: &self.drawings,
-                viewport: &self.viewport,
+                viewport: &self.model.viewport,
                 history_right: frame.right,
                 total: frame.total,
                 pass,

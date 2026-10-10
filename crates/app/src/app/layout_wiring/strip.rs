@@ -31,9 +31,9 @@ impl LayoutAdapter<'_> {
         for tab in self.tabs.iter_mut() {
             for pane in tab.panes_mut() {
                 pane.drawings.take_all();
-                pane.drawings_key = None;
+                pane.layout.drawings_key = None;
                 pane.request_opening_layout(pane.layout_id());
-                pane.layout_view = quantick_workspace::session::LayoutView::default();
+                pane.layout.view = quantick_workspace::session::LayoutView::default();
             }
         }
         let legacy = crate::indicators::state_file::default_path();

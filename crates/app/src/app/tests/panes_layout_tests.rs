@@ -1,3 +1,5 @@
+mod pane_model_tests;
+
 use super::*;
 use quantick_feed::history_reach;
 
@@ -1065,7 +1067,7 @@ fn the_time_panes_own_x_axis_zooms_the_time_pane_and_only_it() {
     let strip = plot_split(plot, 0.0, &[]).time_strip;
 
     let before_time = time_zoom(&app);
-    let before_flow = app.active_tab().flow_pane.viewport.px_per_bar();
+    let before_flow = app.active_tab().flow_pane.model.viewport.px_per_bar();
     // Stretch first, squeeze back: both directions of the gesture are
     // proven from wherever the pane's zoom happens to open, with no
     // assumption about how far the squeeze side has left to travel.
@@ -1093,7 +1095,7 @@ fn the_time_panes_own_x_axis_zooms_the_time_pane_and_only_it() {
         time_zoom(&app)
     );
     assert!(
-        (app.active_tab().flow_pane.viewport.px_per_bar() - before_flow).abs() < f32::EPSILON,
+        (app.active_tab().flow_pane.model.viewport.px_per_bar() - before_flow).abs() < f32::EPSILON,
         "and the flow pane beside it never moved"
     );
 }
@@ -2452,7 +2454,7 @@ fn two_panes_show_two_layouts_side_by_side() {
         app.layout_state().pane_layout(opened, PaneSide::Flow),
         second
     );
-    assert_eq!(app.active_tab().flow_pane.layout_label, "levels");
+    assert_eq!(app.active_tab().flow_pane.layout.label, "levels");
 
     // Switching the time pane back brings layout 1's set to it alone.
     app.arrangement_adapter().cycle_tab(-1);
@@ -2696,7 +2698,7 @@ fn per_pane_layouts_are_recorded_and_restored() {
         "layout 1 is empty here"
     );
     assert_eq!(
-        again.active_tab().pane(PaneSide::Time(0)).layout_label,
+        again.active_tab().pane(PaneSide::Time(0)).layout.label,
         "levels"
     );
 }
@@ -3433,69 +3435,6 @@ fn the_plus_opens_a_picker_and_its_choice_becomes_the_active_tab() {
     assert!(
         texts.iter().any(|text| text.contains("ETHUSDT")),
         "the strip names the market it opened; painted: {texts:?}"
-    );
-}
-
-/// (b) A tab is a whole workspace: switching away and back finds its bars,
-/// its viewport, its focus and its drawings exactly as they were.
-#[test]
-fn switching_tabs_preserves_everything_each_one_owns() {
-    let ctx = egui::Context::default();
-    let (mut app, _cmd_rx) = app_with_history(200);
-
-    // Give tab 0 a distinctive state: a drawing, a panned viewport, and
-    // the split open with the time pane focused.
-    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
-    run_frame(&mut app, &ctx);
-    run_frame(&mut app, &ctx);
-    // Clicking the time pane focuses it and lands the mark there — the
-    // real gesture, not a poked field.
-    app.toolrail
-        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
-    let point = app
-        .active_tab()
-        .pane(PaneSide::Time(0))
-        .frame
-        .chart_area
-        .expect("the time pane was laid out")
-        .center();
-    click_chart(&mut app, &ctx, point);
-    assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
-    let slots = app.active_tab().flow_pane.slots();
-    app.active_tab_mut()
-        .flow_pane
-        .viewport
-        .pan_pixels(120.0, slots);
-    let first_bars = app.active_tab().flow_pane.state.bars().len();
-    let first_edge = app.active_tab().flow_pane.viewport.right_edge_bar(slots);
-    let first_drawings = app.active_tab().focused_pane().drawings.items().len();
-    assert_eq!(first_drawings, 1, "the drawing landed on the focused pane");
-
-    let _ends = open_second_tab(&mut app, &ctx, "ETHUSDT");
-    assert_eq!(
-        app.active_tab().layout,
-        CanvasLayout::Single,
-        "a new tab opens on the default layout, not the previous tab's"
-    );
-    assert!(app.active_tab().flow_pane.drawings.items().is_empty());
-
-    app.apply_tab_action(TabAction::Activate(0));
-    run_frame(&mut app, &ctx);
-    assert_eq!(app.active_tab().flow_pane.state.bars().len(), first_bars);
-    assert_eq!(
-        app.active_tab()
-            .flow_pane
-            .viewport
-            .right_edge_bar(app.active_tab().flow_pane.slots()),
-        first_edge,
-        "the viewport came back where it was left"
-    );
-    assert_eq!(app.active_tab().layout, CanvasLayout::TimeAndFlow);
-    assert_eq!(app.active_tab().focused_side(), PaneSide::Time(0));
-    assert_eq!(
-        app.active_tab().focused_pane().drawings.items().len(),
-        first_drawings,
-        "and its marks with it"
     );
 }
 

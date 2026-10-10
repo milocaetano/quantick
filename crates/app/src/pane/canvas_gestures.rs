@@ -54,18 +54,12 @@ impl ChartPane {
         });
         // Over the tape the sideways part of a drag is its time, and only a
         // drag that set off sideways may move it.
+        let moves_time = self
+            .model
+            .tape_drag
+            .moves_time(pressed_at, [travel.x, travel.y]);
         let side = |delta: egui::Vec2, tape: bool| {
-            let moves_time = !tape
-                || ui.ctx().data_mut(|data| {
-                    let key = chart.id.with("drag-moves-tape-time");
-                    let mut state = data
-                        .get_temp::<quantick_chart_interaction::tape_drag::TapeDrag>(key)
-                        .unwrap_or_default();
-                    let moves = state.moves_time(pressed_at, [travel.x, travel.y]);
-                    data.insert_temp(key, state);
-                    moves
-                });
-            if moves_time {
+            if !tape || moves_time {
                 delta
             } else {
                 egui::vec2(0.0, delta.y)
@@ -101,24 +95,28 @@ impl ChartPane {
         // back to the live edge. Each keeps the chosen zoom and price scale.
         if chart.double_clicked() && primary_free {
             let at = chart.interact_pointer_pos();
-            match at.and_then(|position| self.hit_test().overlay_plot_at(position)) {
-                _ if at.is_some_and(over_tape) => {
-                    if let Some(tape) = self.orderflow.as_mut() {
-                        tape.set_tape_end(TapeEnd::Live);
-                    }
-                }
-                Some(slot) => self.pending_settings = Some(slot),
-                None => self.viewport.snap_to_live(),
-            }
+            let overlay = at
+                .and_then(|position| self.hit_test().overlay_plot_at(position))
+                .map(|slot| slot.0);
+            navigate(
+                self,
+                quantick_chart_interaction::pane::Intent::ReturnToLive {
+                    tape: at.is_some_and(over_tape),
+                    overlay,
+                },
+            );
         }
         if chart.hovered() && !scroll_taken && scroll.abs() > 0.0 {
             // Scroll up (positive) zooms in.
             let factor = 2.0_f32.powf(scroll / SCROLL_ZOOM_PX);
             let tape = tape_only || chart.hover_pos().is_some_and(over_tape);
-            match self.orderflow.as_mut().filter(|_| tape) {
-                Some(orderflow) => orderflow.zoom_live_lane(factor),
-                None => self.viewport.zoom(factor),
-            }
+            navigate(
+                self,
+                quantick_chart_interaction::pane::Intent::Zoom {
+                    factor,
+                    tape: tape && self.orderflow.is_some(),
+                },
+            );
         }
     }
 
@@ -127,20 +125,76 @@ impl ChartPane {
     /// reveals older prints.
     fn pan_canvas(&mut self, delta: egui::Vec2, total: usize, tape: bool) {
         let height = self.frame.chart_height;
-        if !tape {
-            self.viewport.pan_pixels(delta.x, total);
-        } else if let (Some(chart), Some(divider), Some(orderflow)) = (
-            self.frame.chart_area,
-            self.frame.lane_divider_x,
-            self.orderflow.as_mut(),
-        ) {
-            let bubbles = &orderflow.cached_config().bubbles;
-            let span = TapeHorizontalGeometry::resolve(chart.right() - divider, height, bubbles);
-            orderflow.pan_tape(delta.x, span.span_px);
-        }
-        if let Some(auto) = self.frame.auto_range {
-            self.price_view
-                .pan_pixels(f64::from(delta.y), f64::from(height), auto);
+        let span_px = self
+            .frame
+            .chart_area
+            .zip(self.frame.lane_divider_x)
+            .zip(self.orderflow.as_ref())
+            .map(|((chart, divider), orderflow)| {
+                TapeHorizontalGeometry::resolve(
+                    chart.right() - divider,
+                    height,
+                    &orderflow.cached_config().bubbles,
+                )
+                .span_px
+            });
+        navigate(
+            self,
+            quantick_chart_interaction::pane::Intent::Pan {
+                delta: [delta.x, delta.y],
+                total,
+                tape,
+                span_px,
+                height,
+                auto: self.frame.auto_range,
+            },
+        );
+    }
+}
+
+/// Execute the navigation effects on the established feature owners.
+pub(super) fn navigate(pane: &mut ChartPane, intent: quantick_chart_interaction::pane::Intent) {
+    use quantick_chart_interaction::pane::{Effect, update};
+    for effect in update(&mut pane.model, intent) {
+        match effect {
+            Effect::PanPrice {
+                delta_px,
+                height,
+                auto,
+            } => pane.price_view.pan_pixels(delta_px, height, auto),
+            Effect::PanTape { delta_px, span_px } => {
+                if let Some(tape) = pane.orderflow.as_mut() {
+                    tape.pan_tape(delta_px, span_px);
+                }
+            }
+            Effect::ZoomTape(factor) => {
+                if let Some(tape) = pane.orderflow.as_mut() {
+                    tape.zoom_live_lane(factor);
+                }
+            }
+            Effect::TapeLive => {
+                if let Some(tape) = pane.orderflow.as_mut() {
+                    tape.set_tape_end(TapeEnd::Live);
+                }
+            }
+            Effect::OpenIndicatorSettings(slot) => pane.model.pending_settings = Some(slot),
+            Effect::Scale { target, action } => {
+                super::axes_and_panes::apply_scale(pane, target, action)
+            }
+            Effect::ResizeTape { delta, width } => {
+                if let Some(tape) = pane.orderflow.as_mut() {
+                    tape.resize_live_lane(delta, width);
+                }
+            }
+            Effect::IndicatorSizing { slot, sizing } => {
+                if let Some(view) = pane
+                    .indicators
+                    .view_mut(crate::indicator_worker::SlotId(slot))
+                {
+                    view.sizing = super::axes_and_panes::pane_sizing(sizing);
+                }
+            }
+            Effect::Menu(_) => unreachable!("navigation adapter receives only gesture intents"),
         }
     }
 }

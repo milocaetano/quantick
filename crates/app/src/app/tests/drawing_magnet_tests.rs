@@ -74,7 +74,8 @@ fn bar_x(app: &QuantickApp, bar: f32) -> f32 {
     let pane = &app.active_tab().flow_pane;
     let chart = pane.frame.chart_area.expect("the pane reported its rect");
     let history_right = pane.frame.lane_divider_x.unwrap_or(chart.right());
-    pane.viewport
+    pane.model
+        .viewport
         .x_at_bar_position(bar, history_right, pane.slots())
 }
 
@@ -444,7 +445,7 @@ fn a_body_drag_survives_history_landing_underneath() {
         &ctx,
         vec![egui::Event::PointerMoved(to), pointer_button(to, false)],
     );
-    let px_per_bar = app.active_tab().flow_pane.viewport.px_per_bar();
+    let px_per_bar = app.active_tab().flow_pane.model.viewport.px_per_bar();
     let moved = last_points(&app)[0].bar - (placed.bar + added as f32);
     assert!(
         (moved - 60.0 / px_per_bar).abs() < 1e-3,

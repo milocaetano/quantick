@@ -189,7 +189,7 @@ fn arrangement_stale_close_does_not_flatten_journal_remove_or_drop() {
     ends.events.try_send(FeedEvent::Live(trade(4))).unwrap();
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     assert!(app.tabs[1].paper.status_cell().is_some());
-    let membership = app.tabs[1].flow_pane.layout_view.clone();
+    let membership = app.tabs[1].flow_pane.layout.view.clone();
     let layout = membership.layout();
     let plan = app.tabs.plan_close(1).unwrap();
     app.tabs.select(0);

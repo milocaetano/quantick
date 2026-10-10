@@ -69,9 +69,6 @@ pub struct PaneFrame {
     /// of before the chart turns over — the visible bars' fit, never
     /// narrower than [`Self::auto_range`]'s.
     pub(super) flip_span: Option<f64>,
-    /// The modes the remembered price framing belongs to, as
-    /// [`ChartPane::tape_modes`](super::ChartPane::tape_modes) reads them.
-    pub(super) price_axis_mode: (bool, bool),
     /// Last frame's chart height. See [`Self::auto_range`].
     pub chart_height: f32,
     /// Last frame's chart top. See [`Self::auto_range`].
@@ -108,7 +105,6 @@ impl Default for PaneFrame {
             lane_reference_ms: None,
             auto_range: None,
             flip_span: None,
-            price_axis_mode: (false, false),
             chart_height: 1.0,
             chart_top: 0.0,
             chart_area: None,

@@ -129,7 +129,7 @@ impl QuantickApp {
             // simulated P&L: the cell speaks for the market on screen, never
             // for a background tab's position.
             sim_pnl: self.active_tab().paper.status_cell(),
-            follows_live: pane.viewport.follows_live(),
+            follows_live: pane.model.viewport.follows_live(),
             price_auto: pane.price_view.is_auto(),
             live_trades: self.active_tab().live_trades,
             fps: self.health.frames.fps(),

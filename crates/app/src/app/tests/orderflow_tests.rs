@@ -297,7 +297,7 @@ fn a_right_click_on_the_tape_configures_the_tape_without_losing_the_chart() {
 
     let menu_frame = |app: &mut QuantickApp, on_tape: bool| {
         with_flow_pane(app, |pane, chrome| {
-            pane.context_menu.aim_at_tape(on_tape);
+            pane.context_menu.aim_at_tape(&mut pane.model, on_tape);
             let _ = ctx.run(
                 egui::RawInput {
                     screen_rect: Some(screen),
@@ -506,7 +506,11 @@ fn the_canvas_wheel_reverses_the_footprint_on_the_first_outward_step() {
     let (mut app, _cmd_rx) = app_with_history(4_000);
     let ctx = egui::Context::default();
     app.active_tab_mut().flow_pane.footprint.visible = true;
-    app.active_tab_mut().flow_pane.viewport.set_px_per_bar(7.94);
+    app.active_tab_mut()
+        .flow_pane
+        .model
+        .viewport
+        .set_px_per_bar(7.94);
     run_frame(&mut app, &ctx);
 
     let wheel = |delta| {

@@ -76,7 +76,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "orderflow",
         ],
     ),
-    ("chart-interaction", &[]),
+    ("chart-interaction", &["layers", "orderflow"]),
     ("control", &[]),
     ("control-local", &["control"]),
     ("control-host", &["control", "engine"]),

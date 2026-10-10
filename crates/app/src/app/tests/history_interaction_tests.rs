@@ -33,7 +33,7 @@ fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {
         assert!(app.active_tab().pane(side).history_pending());
         let chart = app.active_tab().pane(side).frame.chart_rect.unwrap();
         let at = chart.min + chart.size() * egui::vec2(0.4, 0.4);
-        let old_zoom = app.active_tab().pane(side).viewport.px_per_bar();
+        let old_zoom = app.active_tab().pane(side).model.viewport.px_per_bar();
         run_frame_with_events(
             &mut app,
             &ctx,
@@ -46,7 +46,7 @@ fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {
                 },
             ],
         );
-        let zoom = app.active_tab().pane(side).viewport.px_per_bar();
+        let zoom = app.active_tab().pane(side).model.viewport.px_per_bar();
         assert_ne!(zoom, old_zoom);
         let gutter = app.active_tab().pane(side).frame.price_gutter.unwrap();
         drag_chart(
@@ -82,7 +82,7 @@ fn input_and_an_unfinished_drawing_survive_publication_on_every_pane() {
         }
         let pane = app.active_tab().pane(side);
         assert_eq!(pane.state.trades()[0].agg_id, first);
-        assert_eq!(pane.viewport.px_per_bar(), zoom);
+        assert_eq!(pane.model.viewport.px_per_bar(), zoom);
         assert_eq!(pane.price_view.resolve((0.0, 0.0)), price);
         let published = pane
             .drawings
@@ -138,10 +138,10 @@ fn a_held_chart_drag_survives_repeated_history_publications() {
         run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerMoved(held)]);
         let pane = app.active_tab().pane(side);
         assert!(
-            !pane.viewport.follows_live(),
+            !pane.model.viewport.follows_live(),
             "the pending request must accept the drag"
         );
-        let distance = pane.slots() as f32 - pane.viewport.right_edge_bar(pane.slots());
+        let distance = pane.slots() as f32 - pane.model.viewport.right_edge_bar(pane.slots());
         events
             .try_send(FeedEvent::HistoryPrepended(
                 (first..first + 100_000).map(trade).collect(),
@@ -159,7 +159,8 @@ fn a_held_chart_drag_survives_repeated_history_publications() {
         let pane = app.active_tab().pane(side);
         assert_eq!(pane.state.trades()[0].agg_id, first);
         assert!(
-            (pane.slots() as f32 - pane.viewport.right_edge_bar(pane.slots()) - distance).abs()
+            (pane.slots() as f32 - pane.model.viewport.right_edge_bar(pane.slots()) - distance)
+                .abs()
                 < 0.001,
             "publication preserves the held gesture's current view"
         );
@@ -168,7 +169,7 @@ fn a_held_chart_drag_survives_repeated_history_publications() {
         run_frame_with_events(&mut app, &ctx, vec![pointer_button(end, false)]);
         let pane = app.active_tab().pane(side);
         assert!(
-            pane.slots() as f32 - pane.viewport.right_edge_bar(pane.slots()) > distance,
+            pane.slots() as f32 - pane.model.viewport.right_edge_bar(pane.slots()) > distance,
             "the same gesture still moves after publication"
         );
     }
@@ -190,7 +191,7 @@ fn history_wait_keeps_chart_drag_zoom_price_and_drawing_input_available() {
             right_edge(&app) < before,
             "history must leave drag input available at {start:?}"
         );
-        let before = app.active_tab().flow_pane.viewport.px_per_bar();
+        let before = app.active_tab().flow_pane.model.viewport.px_per_bar();
         run_frame_with_events(
             &mut app,
             &ctx,
@@ -204,7 +205,7 @@ fn history_wait_keeps_chart_drag_zoom_price_and_drawing_input_available() {
             ],
         );
         assert_ne!(
-            app.active_tab().flow_pane.viewport.px_per_bar(),
+            app.active_tab().flow_pane.model.viewport.px_per_bar(),
             before,
             "history must leave zoom input available"
         );

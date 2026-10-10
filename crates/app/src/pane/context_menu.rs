@@ -25,26 +25,6 @@ use super::menus::PaneMenuIntent;
 /// The last right-click, as the press resolved it. See the module docs.
 #[derive(Default)]
 pub struct PaneContextMenu {
-    /// Whether the right-click that opened the menu landed on the tape rather
-    /// than on the candles. The two panes are configured apart, so the menu has
-    /// to know which one was asked.
-    pub(super) on_tape: bool,
-    /// Price under the right-click that opened the layer menu — the trade
-    /// section's anchor. Refreshed by every secondary click on the canvas.
-    pub(super) price: Option<f64>,
-    /// The placing entries of the last right-click: each registry tool that
-    /// declares a `context_menu_label`, with the chart point *its own*
-    /// `anchor_snap` resolved for that click — so the menu never re-derives
-    /// a projection and a new tool's snap rule needs no edit here.
-    pub(super) places: Vec<(drawings::DrawingTool, ChartPoint)>,
-    /// The drawing under the last right-click, resolved at press time like
-    /// the price and the tape flag. Held as an id, not an index: the menu
-    /// stays open across frames, and an index can go stale under it.
-    /// `pub(crate)` so the menu tests can stage the click's outcome.
-    pub(crate) drawing: Option<drawings::DrawingId>,
-    /// Rename buffer for the layer menu's drawing section, seeded from the
-    /// clicked object's current name on the press that opened the menu.
-    pub(super) rename: String,
     /// Test-only trace of the drawing section's widgets, the
     /// `layer_menu_rects` idiom: label → rect, rebuilt per menu frame.
     ///
@@ -55,8 +35,6 @@ pub struct PaneContextMenu {
     /// The chart-layer submenu's latest painted rectangle. A launch hook uses
     /// the same button geometry to expand it for visual validation.
     pub(crate) chart_layers_rect: Option<egui::Rect>,
-    /// "clear objects…" was clicked: the confirmation shows until answered.
-    pub(crate) confirm_clear: bool,
     /// Test-only trace of the objects submenu's row buttons: index, label, rect.
     #[cfg(test)]
     pub object_rects: Vec<(usize, &'static str, egui::Rect)>,
@@ -72,8 +50,12 @@ pub struct PaneContextMenu {
 impl PaneContextMenu {
     /// Aim the next menu at one pane or the other, as a right-click would.
     #[cfg(test)]
-    pub(crate) fn aim_at_tape(&mut self, on_tape: bool) {
-        self.on_tape = on_tape;
+    pub(crate) fn aim_at_tape(
+        &mut self,
+        model: &mut quantick_chart_interaction::pane::Model,
+        on_tape: bool,
+    ) {
+        model.menu.on_tape = on_tape;
     }
 
     /// Open on a resolved press: hold its answers for the menu's whole life,
@@ -82,19 +64,34 @@ impl PaneContextMenu {
     /// press does, so the menu and the context bar agree on the object.
     pub(super) fn open_at(
         &mut self,
+        model: &mut quantick_chart_interaction::pane::Model,
         press: ContextPress,
         drawings: &Drawings,
-    ) -> Option<PaneMenuIntent> {
-        self.price = Some(press.price);
-        self.on_tape = press.on_tape;
-        self.drawing = press.drawing.map(|index| {
-            let drawing = &drawings.items()[index];
-            self.rename = drawing.name.clone().unwrap_or_default();
-            drawing.id
-        });
-        self.places = press.places;
+    ) -> Vec<PaneMenuIntent> {
+        use quantick_chart_interaction::pane::{ContextPress as Press, Effect, Intent, update};
         self.chart_layers_rect = None;
-        self.drawing.map(PaneMenuIntent::SelectDrawing)
+        update(
+            model,
+            Intent::OpenMenu(Press {
+                price: press.price,
+                on_tape: press.on_tape,
+                drawing: press
+                    .drawing
+                    .and_then(|index| drawings.items().get(index))
+                    .map(drawing_fact),
+                places: press
+                    .places
+                    .into_iter()
+                    .map(|(tool, point)| (tool.id(), point))
+                    .collect(),
+            }),
+        )
+        .into_iter()
+        .filter_map(|effect| match effect {
+            Effect::Menu(intent) => Some(intent),
+            _ => None,
+        })
+        .collect()
     }
 
     /// The menu just closed. An in-flight rename commits here too:
@@ -103,12 +100,24 @@ impl PaneContextMenu {
     /// once its closure stops being drawn.
     /// The buffer is emptied either way, so a drawing deleted under the
     /// menu leaves no name behind for the next one.
-    pub(super) fn close(&mut self, drawings: &Drawings) -> Option<PaneMenuIntent> {
-        let name = std::mem::take(&mut self.rename);
-        let id = self.drawing.take()?;
-        let index = drawings.index_of(id)?;
-        let current = drawings.items()[index].name.clone().unwrap_or_default();
-        (name.trim() != current).then_some(PaneMenuIntent::RenameDrawing { id, name })
+    pub(super) fn close(
+        &mut self,
+        model: &mut quantick_chart_interaction::pane::Model,
+        drawings: &Drawings,
+    ) -> Vec<PaneMenuIntent> {
+        use quantick_chart_interaction::pane::{Effect, Intent, update};
+        let drawing = model
+            .menu
+            .drawing
+            .and_then(|id| drawings.index_of(id))
+            .map(|index| drawing_fact(&drawings.items()[index]));
+        update(model, Intent::CloseMenu { drawing })
+            .into_iter()
+            .filter_map(|effect| match effect {
+                Effect::Menu(intent) => Some(intent),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Where the chart-layer submenu button was painted, for the scripted
@@ -180,5 +189,16 @@ impl ContextPress {
             drawing,
             places,
         })
+    }
+}
+
+/// The adapter supplies current identity/name/lock facts; it owns no admission policy.
+pub(super) fn drawing_fact(
+    drawing: &drawings::Drawing,
+) -> quantick_chart_interaction::pane::DrawingFact {
+    quantick_chart_interaction::pane::DrawingFact {
+        id: drawing.id,
+        name: drawing.name.clone().unwrap_or_default(),
+        locked: drawing.locked,
     }
 }

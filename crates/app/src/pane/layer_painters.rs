@@ -59,7 +59,7 @@ impl ChartPane {
             let bar = if price_on || time_on {
                 self.hover_pos.and_then(|pointer| {
                     self.series_read()
-                        .pointer_bar(&self.viewport, pointer.x, right, total)
+                        .pointer_bar(&self.model.viewport, pointer.x, right, total)
                 })
             } else {
                 None
@@ -165,7 +165,7 @@ impl ChartPane {
                             .filter(|(oldest, newest)| ms >= *oldest && ms <= *newest)
                             .and_then(|_| self.slot_at_time(ms))
                     },
-                    x: &|slot| self.viewport.x_center(slot, right, total),
+                    x: &|slot| self.model.viewport.x_center(slot, right, total),
                 });
         }
     }
@@ -226,7 +226,7 @@ impl ChartPane {
                     pane: history_rect,
                     total,
                     candle_width: cw,
-                    viewport: &self.viewport,
+                    viewport: &self.model.viewport,
                     seam: self.seam_slot(),
                     boundary: self.state.backfill_boundary(),
                     bars: self.state.bars(),
@@ -240,7 +240,7 @@ impl ChartPane {
                     pane: history_rect,
                     total,
                     candle_width: cw,
-                    viewport: &self.viewport,
+                    viewport: &self.model.viewport,
                     seam: self.seam_slot(),
                     boundary: self.state.backfill_boundary(),
                     bars: self.state.bars(),
@@ -257,7 +257,7 @@ impl ChartPane {
                     pane: history_rect,
                     total,
                     candle_width: cw,
-                    viewport: &self.viewport,
+                    viewport: &self.model.viewport,
                     seam: self.seam_slot(),
                     boundary: self.state.backfill_boundary(),
                     bars: self.state.bars(),
@@ -274,7 +274,7 @@ impl ChartPane {
                 strip: areas.time_strip,
                 total,
                 candle_width: cw,
-                viewport: &self.viewport,
+                viewport: &self.model.viewport,
                 turns,
                 tz: chrome.tz,
                 first_visible: (start < end)
@@ -298,7 +298,7 @@ impl ChartPane {
             style: chrome.style,
             tz: chrome.tz,
             divider_x: self.frame.lane_divider_x,
-            viewport: &self.viewport,
+            viewport: &self.model.viewport,
             series: self.series_read(),
         }
         .paint();
@@ -361,7 +361,7 @@ impl ChartPane {
         } = frame;
         // The way back from history (audit F6), painted over the strip's
         // labels on the same geometry the input path registered.
-        if !self.viewport.follows_live() {
+        if !self.model.viewport.follows_live() {
             let (history_strip, _) = split_time_strip(areas.time_strip, self.frame.lane_divider_x);
             draw_live_chip(painter, live_chip_rect(history_strip));
         }

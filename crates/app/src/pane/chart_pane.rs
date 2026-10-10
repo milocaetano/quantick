@@ -16,7 +16,6 @@ use crate::plot_area::{PlotAreas, plot_split};
 use crate::price_view::PriceView;
 use crate::state::{BarConfiguration, BarSpec, ChartState, SpecSelector};
 use crate::toolrail::Tool;
-use crate::viewport::Viewport;
 
 use super::context_menu::ContextPress;
 use super::menus::{PaneMenuHosts, PaneMenuIntent, PaneMenuView, TapeMenuView};
@@ -49,11 +48,6 @@ pub struct ChartPane {
     pub id: u64,
     pub state: ChartState,
     pub(super) history_worker: history_worker::HistoryWorker,
-    /// Identity of the closed-bar prefix used by append-only control-plane pagination. A live bar
-    /// closing appends past a page's high-water mark and leaves this unchanged; anything that can
-    /// rewrite, prepend, remove or re-cut a closed bar advances it, so a cursor rejects a mixed
-    /// view instead of silently continuing over changed data.
-    pagination_revision: u64,
     /// The tape, and everything read off it: the live lane, the heatmap, the bubbles, the live
     /// strip. `None` is what makes a time pane a time pane: §11 keeps the flow layers on the flow
     /// pane, and a pane that never draws them has no business running a book worker thread.
@@ -64,24 +58,8 @@ pub struct ChartPane {
     /// The UI's copy of every indicator's plot columns (see
     /// [`crate::indicators`]).
     pub indicators: IndicatorViews,
-    /// Read-only handle to the layout session's authoritative membership.
-    pub(crate) layout_view: quantick_workspace::session::LayoutView,
-    /// A restored/opening request, consumed when the session seeds this pane.
-    /// The outer option distinguishes a requested default from no request.
-    pub(crate) opening_layout: Option<Option<crate::layouts::LayoutId>>,
-    /// The layout's name, for the pane to show beside its own controls: a copy the app refreshes on
-    /// a switch or rename, so the tab-drawn header, which has no book, never looks it up per frame.
-    /// Drawn today only by a *context* pane, in the strip that carries its timeframe chips
-    /// ([`crate::time_header`]); the copy lives on every pane so the flow pane's own readout is a
-    /// draw call and not a second bookkeeping path.
-    pub layout_label: String,
-    /// Which market and pane address the drawings on this pane belong to,
-    /// once the layout put them here. The app compares it with the tab's
-    /// market every frame and swaps the set when they part.
-    pub drawings_key: Option<crate::layouts::DrawingKey>,
-    /// The drawings revision last copied into the layout; a different
-    /// reading means the layout is behind this pane.
-    pub drawings_saved_revision: u64,
+    /// Headless pane binding; the workspace session owns authoritative membership.
+    pub(crate) layout: quantick_workspace::pane_layout::PaneLayout,
     /// Whether this pane's on-chart indicator legend is folded to its count puck. Per pane, not per
     /// window: a split is two readings of the same market, and the corner pressure that makes a
     /// trader fold the flow pane's legend (bubbles, book, the position HUD) is absent on the time
@@ -102,7 +80,7 @@ pub struct ChartPane {
     // Pan/zoom navigation over the bar series. It owns the history pane only:
     // the live lane is a band of screen to its right that answers to nothing
     // it does.
-    pub viewport: Viewport,
+    pub model: quantick_chart_interaction::pane::Model,
     /// What the last draw measured, for the passes that are not the draw — see
     /// [`PaneFrame`].
     pub frame: PaneFrame,
@@ -134,7 +112,7 @@ pub struct ChartPane {
     /// Non-empty on any pane cutting by a foldable time interval: the split's time pane, and the
     /// flow pane whenever its spec is `BarSpec::Time` (audit S1). A venue candle has no tape, so
     /// the flow layers draw nothing over it.
-    pub history_prefix: Vec<quantick_engine::Bar>,
+    pub history_prefix: quantick_chart::venue_history::VenueHistory,
 
     /// Where the position HUD anchors this frame: the chart rect and price scale, cached by the
     /// draw while the paper layer is painted on the pane that owns order entry. The HUD draws in
@@ -152,27 +130,36 @@ pub struct ChartPane {
     pub drawings: Drawings,
     /// A drawing gesture in flight — see [`PaneGestures`].
     pub gestures: PaneGestures,
-    /// A re-anchor owed to the drawings, holding the slot count of the series they were last
-    /// anchored to. A reset empties the pane and an empty series cannot say where an instant lands,
-    /// so the answer waits for the first frame with bars rather than clamping every mark onto a
-    /// series that is not there yet.
-    pub(super) pending_reanchor: Option<usize>,
-    /// The pane opened by a click on its own collapsed strip, carried to the frame that may hold
-    /// the second half of a double click. A collapsed strip changes shape the instant it is
-    /// clicked, so a two-click gesture cannot be read from one frame's geometry; this is the state
-    /// that spans them.
-    pub(super) strip_expanded: Option<SlotId>,
-    /// An indicator whose settings a gesture on this pane asked for, waiting for the app to open
-    /// the dialog. Parked rather than acted on: the dialog is the app's (one for the window) and
-    /// the gestures that ask for it run deep in this pane's input pass, holding borrows the app's
-    /// state cannot cross. Same shape as [`SpecSelector::pending`].
-    pub(super) pending_settings: Option<SlotId>,
-    /// A guide switch chosen in an indicator pane's context menu, parked
-    /// until the app can update its layout and mirrored panes.
-    pub(super) pending_indicator_guide: Option<(SlotId, bool)>,
 }
 
 impl ChartPane {
+    /// The tape's two modes, `(tape_only, native_tape)`: tape only hides the
+    /// candles, the native tape fits the shared price axis beside them or alone.
+    pub(crate) fn tape_modes(&self) -> (bool, bool) {
+        self.orderflow.as_ref().map_or((false, false), |view| {
+            let config = view.cached_config();
+            (config.tape_only(), config.native_tape())
+        })
+    }
+
+    /// Every mode-entry path starts at its own fit, including source presets:
+    /// a new axis source (tape or candles) or entering or leaving tape only.
+    pub(crate) fn sync_price_axis_mode(&mut self) {
+        let modes = self.tape_modes();
+        use quantick_chart_interaction::pane::{Intent, update};
+        let effects = update(
+            &mut self.model,
+            Intent::PriceAxisMode {
+                tape_only: modes.0,
+                native_tape: modes.1,
+            },
+        );
+        if !effects.is_empty() {
+            self.price_view.reset();
+            self.frame.auto_range = None;
+        }
+    }
+
     pub(crate) fn series_read(&self) -> drawing_projection::PaneSeriesRead<'_> {
         drawing_projection::PaneSeriesRead {
             history_prefix: &self.history_prefix,
@@ -183,7 +170,7 @@ impl ChartPane {
     pub(crate) fn drawing_projection(&self) -> drawing_projection::DrawingProjection<'_> {
         drawing_projection::DrawingProjection {
             series: self.series_read(),
-            viewport: &self.viewport,
+            viewport: &self.model.viewport,
             indicators: &self.indicators,
         }
     }
@@ -211,7 +198,7 @@ impl ChartPane {
                     state: &self.state,
                     spec: &self.spec,
                 },
-                viewport: &self.viewport,
+                viewport: &self.model.viewport,
                 indicators: &self.indicators,
             },
             drawings: &mut self.drawings,
@@ -263,14 +250,13 @@ impl ChartPane {
 
     /// Current membership, or the pending imported/opening choice before seeding.
     pub(crate) fn layout_id(&self) -> Option<crate::layouts::LayoutId> {
-        self.opening_layout
-            .unwrap_or_else(|| self.layout_view.layout())
+        self.layout.layout_id()
     }
     pub(crate) fn layout_seeded(&self) -> bool {
-        self.layout_view.seeded()
+        self.layout.seeded()
     }
     pub(crate) fn request_opening_layout(&mut self, id: Option<crate::layouts::LayoutId>) {
-        self.opening_layout = Some(id);
+        self.layout.request_opening(id);
     }
 
     /// The flow pane: quantick's own view of `symbol`, opening on bar `spec`,
@@ -294,20 +280,20 @@ impl ChartPane {
         let spec = spec.into();
         let selector = SpecSelector::new(spec);
 
+        let drawings = Drawings::default();
+        let model = quantick_chart_interaction::pane::Model {
+            selection: drawings.selection_handle(),
+            ..Default::default()
+        };
         Self {
             id,
             spec: selector,
             state: ChartState::new(spec),
             history_worker: Default::default(),
-            pagination_revision: 0,
             orderflow,
             indicator_worker: IndicatorWorker::spawn(),
             indicators: IndicatorViews::new(),
-            layout_view: quantick_workspace::session::LayoutView::default(),
-            opening_layout: None,
-            layout_label: String::new(),
-            drawings_key: None,
-            drawings_saved_revision: 0,
+            layout: quantick_workspace::pane_layout::PaneLayout::default(),
             legend_collapsed: false,
             layers: quantick_layers::LayerState::new(render_registry::standard().layers()),
             layer_renderers: render_registry::standard(),
@@ -315,7 +301,7 @@ impl ChartPane {
             // The backfill divider opens off: a full-height rule across the candles for a boundary
             // that matters once, when reading how far the live tape goes back. Nothing is hidden
             // about the data; the mark is one click away in the layer menu.
-            viewport: Viewport::new(),
+            model,
             frame: PaneFrame::default(),
             price_axis_levels: Vec::new(),
             lane: LaneTransport::default(),
@@ -323,16 +309,12 @@ impl ChartPane {
             price_band_label: std::sync::Arc::from(bands::PRICE_BAND_LABEL),
             hover_pos: None,
             tape_switch: TapeSwitch::default(),
-            history_prefix: Vec::new(),
+            history_prefix: quantick_chart::venue_history::VenueHistory::default(),
             paper_hud_anchor: None,
             context_menu: PaneContextMenu::default(),
             strategies: PaneStrategies::default(),
-            drawings: Drawings::default(),
+            drawings,
             gestures: PaneGestures::default(),
-            pending_reanchor: None,
-            strip_expanded: None,
-            pending_settings: None,
-            pending_indicator_guide: None,
         }
     }
 
@@ -385,11 +367,11 @@ impl ChartPane {
     /// chart-window reads. Live appends do not advance it; rewrites do.
     #[must_use]
     pub fn pagination_revision(&self) -> u64 {
-        self.pagination_revision
+        self.model.history.revision()
     }
 
     pub(super) fn bump_pagination_revision(&mut self) {
-        self.pagination_revision = self.pagination_revision.saturating_add(1);
+        self.model.history.changed();
     }
 
     #[cfg(test)]
@@ -442,11 +424,14 @@ impl ChartPane {
     /// The indicator a gesture on this pane asked to configure, if any, taken so a request is acted
     /// on exactly once.
     pub fn take_settings_request(&mut self) -> Option<SlotId> {
-        self.pending_settings.take()
+        self.model.pending_settings.take().map(SlotId)
     }
 
     pub(crate) fn take_indicator_guide_request(&mut self) -> Option<(SlotId, bool)> {
-        self.pending_indicator_guide.take()
+        self.model
+            .pending_indicator_guide
+            .take()
+            .map(|(slot, enabled)| (SlotId(slot), enabled))
     }
 
     #[cfg(any(feature = "scenario-harness", test))]
@@ -456,7 +441,7 @@ impl ChartPane {
 
     #[cfg(test)]
     pub(crate) fn request_indicator_guide(&mut self, slot: SlotId, enabled: bool) {
-        self.pending_indicator_guide = Some((slot, enabled));
+        self.model.pending_indicator_guide = Some((slot.0, enabled));
     }
 
     /// Stand in for the gesture that raises a settings request, so the app's
@@ -464,7 +449,7 @@ impl ChartPane {
     /// layout it would have to re-derive.
     #[cfg(test)]
     pub fn request_settings(&mut self, slot: SlotId) {
-        self.pending_settings = Some(slot);
+        self.model.pending_settings = Some(slot.0);
     }
 
     /// Handle mouse navigation, TradingView-style:
@@ -533,7 +518,7 @@ impl ChartPane {
                     state: &self.state,
                     spec: &self.spec,
                 },
-                viewport: &self.viewport,
+                viewport: &self.model.viewport,
                 indicators: &self.indicators,
             },
             placement_gestures::PlacementFrame {
@@ -652,7 +637,7 @@ impl ChartPane {
                 state: &self.state,
                 spec: &self.spec,
             },
-            viewport: &self.viewport,
+            viewport: &self.model.viewport,
             indicators: &self.indicators,
         };
         // Any strategy instance bound to a drawing holds it, armed or not:
@@ -704,9 +689,9 @@ impl ChartPane {
             },
         );
 
-        self.handle_axis_gestures(ui, &areas, chrome);
+        axes_and_panes::handle_axis_gestures(self, ui, &areas, chrome);
 
-        self.handle_indicator_pane_gestures(ui, &areas, chrome, primary_free);
+        axes_and_panes::handle_indicator_pane_gestures(self, ui, &areas, chrome, primary_free);
     }
 
     /// The HUD anchor cached by the last draw, if the paper layer was
@@ -726,11 +711,15 @@ impl ChartPane {
         &'a mut self,
         capabilities: FeedCapabilities,
         style: &'a crate::style::ChartStyle,
-    ) -> (&'a mut PaneContextMenu, PaneMenuView<'a>) {
+    ) -> (
+        &'a mut PaneContextMenu,
+        &'a mut quantick_chart_interaction::pane::Model,
+        PaneMenuView<'a>,
+    ) {
         let tape = self
             .orderflow
             .as_ref()
-            .filter(|_| self.context_menu.on_tape)
+            .filter(|_| self.model.menu.on_tape)
             .map(|orderflow| TapeMenuView {
                 window: orderflow.live_lane_window(),
                 reference_ms: self.frame.lane_reference_ms,
@@ -761,7 +750,7 @@ impl ChartPane {
             flow_opening,
             tape,
         };
-        (&mut self.context_menu, view)
+        (&mut self.context_menu, &mut self.model, view)
     }
 
     /// Where the chart-layer submenu button was painted — see
@@ -774,11 +763,11 @@ impl ChartPane {
     /// The layer menu, drawn and applied: what the right-click opens.
     pub fn draw_layer_menu(&mut self, ui: &mut egui::Ui, chrome: &mut PaneChrome<'_>) {
         let intents = {
-            let (menu, view) = self.menu_parts(chrome.capabilities, chrome.style);
+            let (menu, model, view) = self.menu_parts(chrome.capabilities, chrome.style);
             let hosts = PaneMenuHosts {
                 paper: &mut *chrome.paper,
             };
-            menu.draw_layer_menu(ui, &view, hosts)
+            menu.draw_layer_menu(ui, &view, model, hosts)
         };
         self.apply_menu_intents(intents, chrome);
     }
@@ -824,7 +813,9 @@ impl ChartPane {
                 self.slots(),
             )
         {
-            let select = self.context_menu.open_at(press, &self.drawings);
+            let select = self
+                .context_menu
+                .open_at(&mut self.model, press, &self.drawings);
             self.apply_menu_intents(select, chrome);
         }
         // Right-click: what is on this canvas, and what is not. Secondary
@@ -832,16 +823,20 @@ impl ChartPane {
         // drawing tools — a pan that ends anywhere never opens it.
         chart.context_menu(|ui| self.draw_layer_menu(ui, chrome));
         let count = self.drawings.items().len();
-        let clear =
-            self.context_menu
-                .draw_clear_objects_confirm(&chart.ctx, areas.chart, count, self.id);
+        let clear = self.context_menu.draw_clear_objects_confirm(
+            &mut self.model,
+            &chart.ctx,
+            areas.chart,
+            count,
+            self.id,
+        );
         self.apply_menu_intents(clear, chrome);
         // While the menu is open the pointer is reading it, not the chart, so
         // no crosshair chases it across the candles behind it.
         if chart.context_menu_opened() {
             self.hover_pos = None;
         } else {
-            let commit = self.context_menu.close(&self.drawings);
+            let commit = self.context_menu.close(&mut self.model, &self.drawings);
             self.apply_menu_intents(commit, chrome);
         }
     }
@@ -857,6 +852,23 @@ impl ChartPane {
         }
     }
 
+    pub(crate) fn apply_menu_intent(
+        &mut self,
+        choice: PaneMenuIntent,
+        chrome: &mut PaneChrome<'_>,
+    ) {
+        use quantick_chart_interaction::pane::{Effect, Intent, update};
+        let id = choice.drawing_id();
+        let drawing = id
+            .and_then(|id| self.drawings.index_of(id))
+            .map(|index| super::context_menu::drawing_fact(&self.drawings.items()[index]));
+        for effect in update(&mut self.model, Intent::Menu { choice, drawing }) {
+            if let Effect::Menu(intent) = effect {
+                self.execute_menu_effect(intent, chrome);
+            }
+        }
+    }
+
     /// The one place a menu's ask writes the pane. Each arm calls the same
     /// pane operation the click called before menus answered with intents.
     /// That is not a claim that each is a control-plane capability: several
@@ -866,15 +878,12 @@ impl ChartPane {
     /// settings, clear objects) have no control capability today — a gap
     /// that predates this apply site. Drawing and strategy intents name the
     /// drawing by id and do nothing if it is gone.
-    pub(crate) fn apply_menu_intent(
-        &mut self,
-        intent: PaneMenuIntent,
-        chrome: &mut PaneChrome<'_>,
-    ) {
+    fn execute_menu_effect(&mut self, intent: PaneMenuIntent, chrome: &mut PaneChrome<'_>) {
         match intent {
             PaneMenuIntent::SetLayerVisible { layer, visible } => {
                 self.set_layer_visible(layer, visible, chrome.layers);
             }
+            PaneMenuIntent::SetPriceInverted(inverted) => self.price_view.set_inverted(inverted),
             PaneMenuIntent::SetIgnoreFlowOpening(ignore) => {
                 if let Some(owner) = self.orderflow.as_mut() {
                     owner.set_ignore_flow_opening(ignore);
@@ -887,6 +896,12 @@ impl ChartPane {
                 }
             }
             PaneMenuIntent::Place { tool, point } => {
+                let Some(tool) = drawings::DRAWING_TOOLS
+                    .into_iter()
+                    .find(|entry| entry.id() == tool)
+                else {
+                    return;
+                };
                 let completion = self.gestures.place_point(
                     &mut self.drawings,
                     tool,
@@ -905,7 +920,7 @@ impl ChartPane {
                 }
             }
             PaneMenuIntent::ToggleIndicatorHidden(slot) => {
-                self.indicators.toggle_hidden(slot);
+                self.indicators.toggle_hidden(SlotId(slot));
                 chrome.layers.indicators_changed = true;
             }
             PaneMenuIntent::SelectDrawing(id) => {
@@ -961,7 +976,25 @@ impl ChartPane {
                 self.strategies.rearm(id, series);
             }
             PaneMenuIntent::StrategyRemove(id) => self.strategies.remove_for_drawing(id),
-            PaneMenuIntent::ObjectsAsk(ask) => chrome.drawing_chrome.ask_from_menu(self.id, *ask),
+            PaneMenuIntent::ObjectsAsk(action) => {
+                use quantick_chart_interaction::pane::ObjectAction;
+                let mut ask = crate::surfaces::drawing_chrome::DrawingChromeAsk::default();
+                match action {
+                    ObjectAction::Select(id) => ask.manager_select = self.drawings.index_of(id),
+                    ObjectAction::ToggleHidden(id) => {
+                        ask.manager_toggle_hidden = self.drawings.index_of(id)
+                    }
+                    ObjectAction::ToggleLocked(id) => {
+                        ask.manager_toggle_locked = self.drawings.index_of(id)
+                    }
+                    ObjectAction::BringToFront(id) => {
+                        ask.manager_bring_to_front = self.drawings.index_of(id)
+                    }
+                    ObjectAction::Delete(id) => ask.manager_delete = self.drawings.index_of(id),
+                    ObjectAction::DeleteAll => ask.delete_all = true,
+                }
+                chrome.drawing_chrome.ask_from_menu(self.id, ask);
+            }
         }
     }
 }

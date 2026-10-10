@@ -169,7 +169,7 @@ fn the_tape_switch_and_key_share_the_header_without_covering_the_live_edge() {
     config.live_lane.show_aggressions = true;
     config.live_lane.show_depth = false;
     let style = OrderflowRenderStyle::from_config(&config, egui::Color32::BLACK.to_array());
-    let layout = ProjectedLayout::new(header, &pane.viewport, 2, 0, 2, header.width());
+    let layout = ProjectedLayout::new(header, &pane.model.viewport, 2, 0, 2, header.width());
     for tape_only in [false, true] {
         let ctx = egui::Context::default();
         let mut key = None;

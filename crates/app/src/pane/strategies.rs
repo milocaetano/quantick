@@ -23,13 +23,12 @@
 
 use eframe::egui;
 
-use crate::drawings::{self, Drawing, DrawingBand, Drawings};
+use crate::drawings::{self, Drawing, Drawings};
 use crate::state::dec_from_f64;
 use crate::theme;
 
 use super::drawing_projection::PaneSeriesRead;
-use super::menus::PaneMenuIntent;
-use super::{PaneContextMenu, region_pause};
+use super::region_pause;
 
 /// The armed strategies and the work they park for the tab. See the module
 /// docs.
@@ -191,107 +190,6 @@ impl PaneStrategies {
             let cleanup = instance.armed.disarm(quantick_strategy::DisarmReason::User);
             self.cleanup.extend(cleanup);
         }
-    }
-
-    /// The strategy seat of the per-drawing menu: arm a bot on this region,
-    /// or manage the one riding it. Price-band rectangles only — the one
-    /// shape whose two anchors honestly bound a price region today.
-    ///
-    /// Reads only: a click answers with the intent the pane applies.
-    /// `menu` is the context menu the entries are drawn into; under test it
-    /// records where each button landed so a test can click the real widget.
-    pub(super) fn draw_menu_entries(
-        &self,
-        ui: &mut egui::Ui,
-        drawings: &Drawings,
-        index: usize,
-        series: PaneSeriesRead<'_>,
-        menu: &mut PaneContextMenu,
-    ) -> Option<PaneMenuIntent> {
-        #[cfg(not(test))]
-        let _ = &menu;
-        let drawing = &drawings.items()[index];
-        if drawing.tool.id() != drawings::RECTANGLE_TOOL_ID || drawing.band != DrawingBand::Price {
-            return None;
-        }
-        let id = drawing.id;
-        let mut intent = None;
-        let Some(instance) = self.anchors.for_drawing(id) else {
-            let add = ui.button("Add strategy…").on_hover_text(
-                "arm a strategy on this region: it fires on the trigger bar, in paper trading",
-            );
-            #[cfg(test)]
-            menu.menu_rects.push(("Add strategy", add.rect));
-            if add.clicked() {
-                intent = Some(PaneMenuIntent::StrategyAdd(id));
-                ui.close_menu();
-            }
-            return intent;
-        };
-        // One line of truth about the bot on this drawing, then its verbs.
-        ui.label(
-            egui::RichText::new(instance.armed.status_line())
-                .size(11.0)
-                .color(theme::TEXT_MUTED),
-        );
-        let state = instance.armed.state().clone();
-        use quantick_strategy::ArmedState;
-        match state {
-            // One Disarm arm for every state that can be called off — a
-            // resting retest limit included (it can wait for hours). Only
-            // the hover varies; the cleanup plumbing must never fork.
-            ArmedState::Armed | ArmedState::InPosition | ArmedState::Fired { retest: true, .. } => {
-                let hover = if matches!(state, ArmedState::Fired { .. }) {
-                    "cancel the resting retest limit and stop watching"
-                } else {
-                    "stop watching; an open operation keeps its position and bracket — yours to manage"
-                };
-                let disarm = ui.button("Disarm").on_hover_text(hover);
-                #[cfg(test)]
-                menu.menu_rects.push(("Disarm", disarm.rect));
-                if disarm.clicked() {
-                    intent = Some(PaneMenuIntent::StrategyDisarm(id));
-                    ui.close_menu();
-                }
-            }
-            ArmedState::Done | ArmedState::Disarmed { .. } => {
-                // A drawing with no footing on this market/series cannot be
-                // honestly re-armed — and neither can a region whose drawn
-                // span already ended: the instance would show "armed" while
-                // the region test refuses it forever, the silent halt the
-                // named disarms exist to prevent.
-                let footed = region_pause(drawing, drawings.all_hidden()).is_none();
-                let span_alive = region_can_fire(drawing, series.closed_slots());
-                let rearm = ui
-                    .add_enabled(footed && span_alive, egui::Button::new("Re-arm"))
-                    .on_hover_text("watch this region again with the same parameters")
-                    .on_disabled_hover_text(if footed {
-                        "the region ends before the next bar — stretch it right, or turn on \
-                         \"extend right\" in its Region settings"
-                    } else {
-                        "this drawing belongs to another market or lost its series — redraw the \
-                         region here first"
-                    });
-                #[cfg(test)]
-                menu.menu_rects.push(("Re-arm", rearm.rect));
-                if rearm.clicked() {
-                    intent = Some(PaneMenuIntent::StrategyRearm(id));
-                    ui.close_menu();
-                }
-            }
-            // A market entry lives for exactly one print; nothing to offer.
-            ArmedState::Fired { retest: false, .. } => {}
-        }
-        let remove = ui.button("Remove strategy").on_hover_text(
-            "detach the bot from this drawing; an open operation keeps its position and bracket",
-        );
-        #[cfg(test)]
-        menu.menu_rects.push(("Remove strategy", remove.rect));
-        if remove.clicked() {
-            intent = Some(PaneMenuIntent::StrategyRemove(id));
-            ui.close_menu();
-        }
-        intent
     }
 }
 

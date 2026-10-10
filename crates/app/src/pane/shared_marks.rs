@@ -209,7 +209,7 @@ impl PaneHitTest<'_> {
                 primary_band: true,
                 style: drawing.style,
                 // The mirror also hides locked selection handles.
-                selected: source.selected() == Some(index) && !drawing.locked,
+                selected: source.selected_id() == Some(drawing.id) && !drawing.locked,
                 halo: false,
                 content_editing: false,
             };
@@ -316,7 +316,7 @@ impl PaneHitTest<'_> {
                 // move it from this pane (`Self::interact_shared`), and a
                 // selection that painted only on the other chart would leave
                 // the gesture with no visible subject.
-                let selected = source.drawings.selected() == Some(index);
+                let selected = source.drawings.selected_id() == Some(drawing.id);
                 let ctxt = DrawContext {
                     payload: drawing.payload.as_ref(),
                     anchors: &anchors,
