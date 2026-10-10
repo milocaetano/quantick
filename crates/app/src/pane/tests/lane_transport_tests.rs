@@ -236,10 +236,14 @@ fn the_chunked_tape_sends_the_worker_what_the_slice_sent() {
             let want = oracle.command(state.partial().cloned(), &contiguous);
             match lane.command(state.partial().cloned(), state.trades()) {
                 crate::indicator_worker::IndicatorCommand::PartialUpdated { run, .. } => {
-                    assert_eq!(
-                        format!("{run:?}"),
-                        format!("{want:?}"),
-                        "{spec:?}, frame {frame}"
+                    assert!(
+                        run.len() == want.len()
+                            && run.iter().zip(&want).all(|(actual, expected)| {
+                                actual == expected
+                                    && actual.price.serialize() == expected.price.serialize()
+                                    && actual.quantity.serialize() == expected.quantity.serialize()
+                            }),
+                        "{spec:?}, frame {frame}: {run:?} != {want:?}"
                     );
                     let start = contiguous.len() - run.len();
                     if !run.is_empty()
