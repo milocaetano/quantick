@@ -2,9 +2,10 @@
 """Measure owned, warm-dependency incremental Cargo edit loops; never assign a score.
 
 run requires four disjoint paths: clean source checkout, NEW detached worktree,
-NEW target root, NEW evidence directory. No path is deleted or cleaned. Budget
-checking follows measurement even for an initially uncalibrated budget, so the
-first calibration attempt is honestly red with useful raw artifacts.
+target root (new, or a directory restored from the workflow cache), NEW evidence
+directory. No path is deleted or cleaned. Budget checking follows measurement
+even for an initially uncalibrated budget, so the first calibration attempt is
+honestly red with useful raw artifacts.
 """
 
 import argparse
@@ -30,10 +31,10 @@ def version(command, repo):
                                    timeout=300).strip()
 
 
-def sample(crate, stage, repo, env, output, touched, process, observe):
+def sample(crate, stage, repo, env, output, touched, tests, process, observe):
     directory = output / stage
     directory.mkdir()
-    command = ["cargo", "test", "-p", crate["package"]]
+    command = sampling.command(crate["package"], tests)
     before = observe()
     if before:
         inputs.write_json(directory / "contention.json", {"before": before})
@@ -45,35 +46,42 @@ def sample(crate, stage, repo, env, output, touched, process, observe):
     if after:
         raise sampling.ProcessStillRunning("compiler/cache ownership after the sample is uncertain")
     try:
-        recompiled = sampling.validate_sample(result, crate["package"], touched)
+        recompiled = sampling.validate_sample(result, crate["package"], touched, tests)
     except ValueError as error:
         inputs.write_json(directory / "validation.json", {"status": "failed", "error": str(error)})
         raise
     return {key: value for key, value in result.items() if not key.endswith("_text")} | {
         "directory": directory.relative_to(output.parent).as_posix(),
-        "recompiled": recompiled, "tests_passed": True}
+        "recompiled": recompiled} | ({"tests_passed": True} if tests else {})
 
 
 def series(crate, repo, sha, target, output, process=sampling.run_process, sleep=time.sleep,
            observe=inputs.compiler_processes):
     output.mkdir()
-    target.mkdir()
+    target.mkdir(parents=True, exist_ok=True)
     env, normalized = inputs.command_environment(repo, target, inputs.JOBS)
     row = dict(crate, normalized_environment=normalized, target=str(target),
-               cache="new target; declared exact-command warm-up then incremental samples", samples=[])
+               cache="shared target, restored from the workflow cache when present; exact-command "
+                     "build warm-up, touched incremental builds, then one complete test run",
+               samples=[])
     try:
         with sampling.SourceTouch(repo, repo / crate["source"], sha, output) as source:
-            row["warmup"] = sample(crate, "warmup", repo, env, output, False, process, observe)
-            row["control"] = sample(crate, "control", repo, env, output, False, process, observe)
+            row["warmup"] = sample(crate, "warmup", repo, env, output, False, False, process, observe)
+            row["control"] = sample(crate, "control", repo, env, output, False, False, process, observe)
             for number in range(inputs.SAMPLES):
                 # Separation is outside timed Cargo wall time and is retained in the protocol.
                 sleep(sampling.TOUCH_SEPARATION_NS / 1_000_000_000)
                 touched_ns = source.touch()
-                measured = sample(crate, f"touch-{number + 1}", repo, env, output, True, process, observe)
+                measured = sample(crate, f"touch-{number + 1}", repo, env, output, True, False,
+                                  process, observe)
                 measured["touched_mtime_ns"] = touched_ns
                 row["samples"].append(measured)
                 inputs.write_json(output / "series.json", row)
-        row["summary"] = sampling.summary(row["samples"])
+            # The test binary is already built, so this times the run alone. The
+            # suite is the same for every touch; running it once instead of five
+            # times is most of what keeps the workflow inside seven minutes.
+            row["tests"] = sample(crate, "tests", repo, env, output, False, True, process, observe)
+        row["summary"] = sampling.summary(row["samples"], row["tests"]["elapsed_seconds"])
         row["restored"] = True
     except (Exception, KeyboardInterrupt) as error:
         row["error"] = f"{type(error).__name__}: {error}"
@@ -86,7 +94,7 @@ def series(crate, repo, sha, target, output, process=sampling.run_process, sleep
 def guard_crosscheck(repo, target, output):
     directory = output / "guard-crosscheck"
     directory.mkdir()
-    env, _ = inputs.command_environment(repo, target / "guard-crosscheck", inputs.JOBS)
+    env, _ = inputs.command_environment(repo, target, inputs.JOBS)
     result = sampling.run_process(["cargo", "run", "-p", "quantick-guards", "--", "--report"],
                                   repo, env, directory, PROCESS_TIMEOUT_SECONDS)
     if (result["exit_code"] != 0 or result["timed_out"]
@@ -105,12 +113,14 @@ def guard_crosscheck(repo, target, output):
 def run(args):
     repo, worktree, target, output = (Path(getattr(args, name)).absolute()
                                       for name in ("repo", "worktree", "target", "output"))
-    inputs.new_paths(repo, worktree, target, output)
+    target_restored = inputs.new_paths(repo, worktree, target, output)
     output.mkdir(parents=True)
     report = {"schema": 1, "status": "failed", "source_sha": args.sha, "crates": [],
               "measured_utc": datetime.now(timezone.utc).isoformat(), "restored": False,
-              "protocol": "mtime-only; exact package test warm-up/control/five touched samples",
-              "jobs": inputs.JOBS, "worktree": str(worktree), "target_root": str(target)}
+              "protocol": "mtime-only; package test-build warm-up/control, five touched builds, "
+                          "one complete package test run",
+              "jobs": inputs.JOBS, "debug_info": inputs.DEBUG_INFO, "worktree": str(worktree),
+              "target_root": str(target), "target_restored": target_restored}
     try:
         inputs.clean_head(repo, args.sha)
         inputs.regular_path(repo, repo / "Cargo.toml")
@@ -124,7 +134,7 @@ def run(args):
         report["budget_sha256"] = inputs.digest(budget_bytes)
         inputs.git(repo, "worktree", "add", "--detach", str(worktree), args.sha)
         inputs.clean_head(worktree, args.sha)
-        target.mkdir(parents=True)
+        target.mkdir(parents=True, exist_ok=True)
         report["source_tree"] = inputs.git(worktree, "rev-parse", "HEAD^{tree}").decode().strip()
         report["input_hashes"] = inputs.input_hashes(worktree)
         report["protocol_hash"] = inputs.protocol_hash(report["input_hashes"])
@@ -145,7 +155,7 @@ def run(args):
                 raise ValueError("guard physical-line cross-check cannot support the frozen selection")
         inputs.write_json(output / "report.json", report)
         for crate in report["ranking"][:3]:
-            row = series(crate, worktree, args.sha, target / crate["crate"], output / crate["crate"])
+            row = series(crate, worktree, args.sha, target, output / crate["crate"])
             report["crates"].append(row)
             inputs.write_json(output / "report.json", report)
         inputs.clean_head(worktree, args.sha)
