@@ -34,12 +34,7 @@ pub(crate) use quantick_control_schema::trade::*;
 #[cfg(test)]
 pub(crate) use quantick_control_host::authority::CAPABILITY_VERSION;
 
-use quantick_control::{
-    error::ControlError,
-    id::{EventKind, ModuleId},
-    registry::RegistryError,
-    wire::ActorContext,
-};
+use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 
 use quantick_engine::Side;
 
@@ -49,13 +44,9 @@ use rust_decimal::Decimal;
 
 use serde_json::{Value, json};
 
-use crate::{metrics, paper_trading::PaperTrading};
+use crate::paper_trading::PaperTrading;
 
-use super::{
-    actions::{ActionDock, ActionRegistry},
-    gateway::ControlAccess,
-    journal::{EventActor, NewEvent},
-};
+use super::{actions::ActionRegistry, gateway::ControlAccess, journal::NewEvent};
 
 pub(crate) use quantick_control_host::authority::{TRADE_MODULE_ID, TRADE_PERMISSION_ID};
 
@@ -126,25 +117,14 @@ fn journal(
     result: &TradeResult,
     asked: Value,
 ) {
-    let event_actor = EventActor {
-        kind: actor.actor_kind,
-        client_name: actor.client_name.clone(),
-    };
-    access.journal_mut().record(
-        NewEvent {
-            module_id: ModuleId::new(TRADE_MODULE_ID).expect("static module ID is valid"),
-            kind: EventKind::new(kind).expect("static event kind is valid"),
-            actor: Some(event_actor),
-            payload: json!({
-                "asked": asked,
-                "accepted": result.accepted,
-                "rejected_because": result.rejected_because,
-                "order_id": result.order_id,
-                "simulated": true,
-            }),
-        },
-        metrics::wall_clock_ms(),
-    );
+    let payload = json!({
+        "asked": asked,
+        "accepted": result.accepted,
+        "rejected_because": result.rejected_because,
+        "order_id": result.order_id,
+        "simulated": true,
+    });
+    access.append_event(NewEvent::by(TRADE_MODULE_ID, kind, actor, payload));
 }
 
 fn place_order<P: TabsPort + TabsMutPort + ?Sized>(

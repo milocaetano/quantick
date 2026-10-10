@@ -1,7 +1,7 @@
 //! The one route a family docks by: a registry that accepts an action, or a
-//! module and its scopes. The application's registries implement these
-//! through their own methods, and so do the generic registries in
-//! `quantick-control-host` a test docks a family into.
+//! module and its scopes. The application's registries are type aliases of the
+//! generic registries in `quantick-control-host`, which a test also docks a
+//! family into.
 
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},

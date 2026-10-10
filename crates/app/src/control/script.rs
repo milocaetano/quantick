@@ -12,24 +12,13 @@
 
 pub(crate) use quantick_control_schema::script::*;
 
-use quantick_control::{
-    error::ControlError,
-    id::{EventKind, ModuleId},
-    registry::RegistryError,
-    wire::ActorContext,
-};
+use quantick_control::{error::ControlError, registry::RegistryError, wire::ActorContext};
 
 use serde::Serialize;
 
 use serde_json::json;
 
-use crate::metrics;
-
-use super::{
-    actions::{ActionDock, ActionRegistry},
-    gateway::ControlAccess,
-    journal::{EventActor, NewEvent},
-};
+use super::{actions::ActionRegistry, gateway::ControlAccess, journal::NewEvent};
 
 pub(crate) use super::types::known_error;
 
@@ -57,21 +46,10 @@ pub(crate) fn journal_script<T: Serialize>(
     kind: &str,
     payload: &T,
 ) -> Result<(), ControlError> {
-    let event_actor = EventActor {
-        kind: actor.actor_kind,
-        client_name: actor.client_name.clone(),
-    };
     let payload = serde_json::to_value(payload)
         .map_err(|error| ControlError::invalid_request(format!("script event: {error}")))?;
-    access.journal_mut().record(
-        NewEvent {
-            module_id: ModuleId::new(SCRIPT_MODULE_ID).expect("static module ID is valid"),
-            kind: EventKind::new(kind).expect("static event kind is valid"),
-            actor: Some(event_actor),
-            payload: json!({ "script": payload }),
-        },
-        metrics::wall_clock_ms(),
-    );
+    let payload = json!({ "script": payload });
+    access.append_event(NewEvent::by(SCRIPT_MODULE_ID, kind, actor, payload));
     Ok(())
 }
 
