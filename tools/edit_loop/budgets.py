@@ -4,10 +4,19 @@ import math
 
 import inputs
 
-# Operational calibration headroom: 25% of the slowest retained sample plus
-# five seconds for runner scheduling noise, rounded upward to a whole second.
+# Operational calibration headroom: 25% above the slowest retained loop,
+# rounded upward to the millisecond, with no additive allowance. It is an
+# explicit policy, not a measured confidence interval.
 HEADROOM_FACTOR = 1.25
-HEADROOM_SECONDS = 5
+
+
+def valid_process(record, tests):
+    value = record.get("elapsed_seconds")
+    return (type(value) in (int, float) and math.isfinite(value) and value >= 0
+            and type(record.get("exit_code")) is int and record["exit_code"] == 0
+            and record.get("timed_out") is False and record.get("interrupted") is None
+            and record.get("tree_quiescent") is True and record.get("orphaned_descendants") is False
+            and (record.get("tests_passed") is True if tests else record.get("recompiled") is True))
 
 
 def valid_report(report):
@@ -22,14 +31,15 @@ def valid_report(report):
         samples = row.get("samples", [])
         if len(samples) != inputs.SAMPLES:
             raise ValueError("all five touched samples are required")
-        for sample in samples:
-            value = sample.get("elapsed_seconds")
-            if (type(value) not in (int, float) or not math.isfinite(value) or value < 0
-                    or type(sample.get("exit_code")) is not int or sample["exit_code"] != 0
-                    or sample.get("timed_out") is not False or sample.get("interrupted") is not None
-                    or sample.get("tree_quiescent") is not True or sample.get("orphaned_descendants") is not False
-                    or sample.get("recompiled") is not True or sample.get("tests_passed") is not True):
-                raise ValueError("invalid touched-sample evidence")
+        if not all(valid_process(sample, tests=False) for sample in samples):
+            raise ValueError("invalid touched-sample evidence")
+        if not valid_process(row.get("tests", {}), tests=True):
+            raise ValueError("invalid package test-run evidence")
+
+
+def loop_seconds(row):
+    """Each touched build plus the package's one test run: the loop a developer waits on."""
+    return [sample["elapsed_seconds"] + row["tests"]["elapsed_seconds"] for sample in row["samples"]]
 
 
 def propose(report):
@@ -39,10 +49,9 @@ def propose(report):
             "toolchain": report["toolchain"], "jobs": report["jobs"],
             "profile_hash": report["profile_hash"],
             "protocol_hash": report["protocol_hash"],
-            "rationale": "ceil(1.25 * max(all five baseline samples) + 5 seconds)",
+            "rationale": "ceil(1.25 * max(touched build + package test run) * 1000) / 1000",
             "crates": [{"crate": row["crate"], "package": row["package"], "source": row["source"],
-                        "max_seconds": math.ceil(HEADROOM_FACTOR * max(
-                            sample["elapsed_seconds"] for sample in row["samples"]) + HEADROOM_SECONDS)}
+                        "max_seconds": math.ceil(HEADROOM_FACTOR * max(loop_seconds(row)) * 1000) / 1000}
                        for row in report["crates"]]}
 
 
@@ -61,5 +70,5 @@ def check(report, budget):
         maximum = limit.get("max_seconds")
         if type(maximum) not in (int, float) or not math.isfinite(maximum) or maximum <= 0:
             raise ValueError("invalid fixed budget")
-        if any(sample["elapsed_seconds"] > maximum for sample in row["samples"]):
+        if any(value > maximum for value in loop_seconds(row)):
             raise ValueError(f"edit-loop budget exceeded: {row['package']}")
