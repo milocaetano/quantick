@@ -5,7 +5,7 @@ use quantick_control::{error::ControlError, registry::RegistryError, wire::Actor
 use quantick_control_schema::bubble_save::{SaveChangesInput, descriptor};
 use serde_json::Value;
 
-use super::actions::{ActionDock, ActionRegistry};
+use super::actions::ActionRegistry;
 use super::gateway::ControlAccess;
 use super::price_axis::{invalid, pane};
 

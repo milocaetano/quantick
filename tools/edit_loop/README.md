@@ -167,6 +167,32 @@ and [completed over-budget series](https://github.com/milocaetano/quantick/actio
 as diagnostic evidence. Completion requires a separate ordinary run at the
 final committed head against this fixed contract.
 
+### Scoped 2026-10-10 third-owner calibration
+
+The [clean-main reference](https://github.com/milocaetano/quantick/actions/runs/38022635665)
+measured `f7a90fd6b1258de4f65c56b43bd3d58aab1578c4` starting at
+`2026-10-10T04:02:53.394611+00:00`. The frozen ranking now selects guards
+third, with `crates/guards/src/generated.rs` as its representative, instead
+of control-schema. Every warm-up, control and five-sample package series
+completed with successful tests, recompilation and restored source metadata.
+
+The scoped amendment replaces only the third owner's mapping and ceiling:
+`quantick-guards`, `crates/guards/src/generated.rs`, **7.795 seconds**, using
+`ceil(1.25 * max(all five reference samples) * 1000) / 1000` without an
+additive allowance. App **68.839** and orderflow **42.802** seconds retain
+the 2026-10-06 calibration above; the new calibration SHA/timestamp identify
+the third-owner amendment, not fresh app/orderflow limits. Host class,
+toolchain, jobs, root profiles, selection rules and protocol remain unchanged.
+The previous third-owner calibration remains recorded above.
+
+The reference failed the retained app ceiling: its slowest sample was
+69.198797696 seconds, and two of five app samples exceeded 68.839 seconds.
+This failure remains diagnostic evidence; the complete reference is not a
+passing budget check. No sample is discarded and no app limit is raised.
+Completion still requires a separate ordinary run at the final committed
+head with all five samples of every selected package below its fixed ceiling.
+Raw measurements and review records remain outside Git.
+
 Do not replace these reviewed limits with automatic proposal output,
 recalibrate from each checked run, discard slow samples, relax a limit to
 hide a failure, or substitute smaller crates. The same workflow must pass

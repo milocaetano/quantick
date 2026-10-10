@@ -51,7 +51,7 @@ pub use dots::{
 };
 pub use lane_heat::{BOOK_CARRY_MAX_MS, BookCarry, CARRIED_BOOK_ALPHA, book_carry};
 pub use model::{
-    AggressionPrimitive, BEFORE_CAPTURE, BOOK_PENDING, GapPrimitive, HeatmapCell,
+    AggressionPrimitive, BEFORE_CAPTURE, BOOK_PENDING, FlowCellHit, GapPrimitive, HeatmapCell,
     HeatmapProjection, LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection,
     TapeFacts, normalized_area_size, normalized_log_intensity,
 };
