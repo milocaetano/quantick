@@ -1,6 +1,7 @@
 //! The footprint layer's level of detail: which [`DetailLevel`] a zoom
 //! supports and which display multiple of the capture grid its rows take,
-//! both held through boundary jitter by a two-sided dead band.
+//! the row side held through auto-fit jitter by a two-sided dead band, the
+//! width side strict so a level enters and leaves at the same zoom.
 //!
 //! The effective level is the *minimum* of what the candle width and the
 //! price-row height allow; a thin base row is first answered by coarsening
@@ -9,9 +10,10 @@
 //! window asks, then paints.
 
 pub use crate::constants::{
-    COMPACT_MIN_ROW, COMPACT_MIN_WIDTH, DETAILED_MIN_ROW, GLYPH_EM, GROUP_SNAP, LADDER_MIN_FONT_PX,
-    MARKS_MIN_WIDTH, PROFILE_MIN_WIDTH, QUANTITY_GLYPHS, QUANTITY_PADDING_PX, QUANTITY_PX,
-    TYPICAL_BODY_FRAC,
+    AXIS_CLEARANCE_PX, COMPACT_FROM_PX, COMPACT_MIN_ROW, COMPACT_MIN_WIDTH, DETAILED_FROM_PX,
+    DETAILED_MIN_ROW, DETAILED_MIN_WIDTH, GLYPH_EM, GROUP_SNAP, LADDER_MIN_FONT_PX,
+    LEVEL_ENTRY_MARGIN, MARKS_MIN_WIDTH, PROFILE_MIN_WIDTH, QUANTITY_GLYPHS, QUANTITY_PADDING_PX,
+    QUANTITY_PX, TYPICAL_BODY_FRAC,
 };
 use crate::constants::{LEVEL_HYSTERESIS, PROFILE_HYSTERESIS};
 
@@ -41,9 +43,10 @@ pub struct LevelMemory {
 }
 
 impl LevelMemory {
-    /// Resolve zoom detail with a two-sided dead band against auto-fit jitter
-    /// (`LEVEL_HYSTERESIS`). Marks/Profile uses the narrower band
-    /// (`PROFILE_HYSTERESIS`) to reverse on one wheel step.
+    /// Resolve zoom detail. Candle width is answered strictly, so a level
+    /// enters and leaves at the same width (`compact_min`, `detailed_min`);
+    /// row height carries a two-sided dead band against auto-fit jitter
+    /// (`LEVEL_HYSTERESIS`, Marks/Profile the narrower `PROFILE_HYSTERESIS`).
     /// `profile_row_px` configures Profile's row floor; the first frame takes
     /// the strict answer.
     pub fn resolve(
@@ -51,13 +54,15 @@ impl LevelMemory {
         candle_width: f32,
         base_row_px: f32,
         profile_row_px: f32,
+        compact_min: f32,
         detailed_min: f32,
     ) -> DetailLevel {
         let at_zoom = |factor| {
             level_for(
-                candle_width * factor,
+                candle_width,
                 base_row_px * factor,
                 profile_row_px,
+                compact_min,
                 detailed_min,
             )
         };
@@ -134,18 +139,20 @@ impl LevelMemory {
 /// What `candle_width` and the *achievable* row height allow. A thin base row
 /// is not a refusal — the display grouping can merge up to [`GROUP_SNAP`]'s
 /// largest multiple — so each level asks whether some multiple reaches its
-/// row floor.
+/// row floor. `compact_min` and `detailed_min` are the candle widths the two
+/// text levels start at.
 #[must_use]
 pub fn level_for(
     candle_width: f32,
     base_row_px: f32,
     profile_row_px: f32,
+    compact_min: f32,
     detailed_min: f32,
 ) -> DetailLevel {
     let row_reachable = |min_row: f32| display_multiple(base_row_px, min_row).is_some();
     if candle_width >= detailed_min && row_reachable(DETAILED_MIN_ROW) {
         DetailLevel::Detailed
-    } else if candle_width >= COMPACT_MIN_WIDTH && row_reachable(COMPACT_MIN_ROW) {
+    } else if candle_width >= compact_min && row_reachable(COMPACT_MIN_ROW) {
         DetailLevel::Compact
     } else if candle_width >= PROFILE_MIN_WIDTH && row_reachable(profile_row_px) {
         DetailLevel::Profile
@@ -154,6 +161,18 @@ pub fn level_for(
     } else {
         DetailLevel::Off
     }
+}
+
+/// Where a style's Detailed starts, in the floors' units: the trader's ladder
+/// entry width (`detailed_from_px`) carried to the style by its typographic
+/// floor's ratio to the ladder's, so one setting moves every style. A width
+/// past the deepest zoom `detail_scale` allows is answered at that zoom
+/// instead — never under the style's own `typographic` floor — so a style the
+/// registry offers stays drawable.
+#[must_use]
+pub fn detailed_entry_width(typographic: f32, detailed_from_px: f32, detail_scale: f32) -> f32 {
+    let deepest = crate::viewport::MAX_CANDLE_WIDTH / detail_scale.max(1e-3);
+    (typographic * detailed_from_px / DETAILED_MIN_WIDTH).min(deepest.max(typographic))
 }
 
 /// The smallest snap multiple whose rows reach `min_row_px`, or `None` when
@@ -180,9 +199,9 @@ mod tests {
         // the same notches: every width must show the same level both ways,
         // or the trader feels the dead band as a wheel that does not reverse.
         let widths: Vec<f32> = (0..30).map(|i| 4.0 * WHEEL_STEP.powi(i)).collect();
-        let detailed = 72.0;
+        let detailed = DETAILED_FROM_PX;
         let mut memory = LevelMemory::default();
-        let mut zoom = |width: f32| memory.resolve(width, 12.0, 4.0, detailed);
+        let mut zoom = |width: f32| memory.resolve(width, 12.0, 4.0, COMPACT_FROM_PX, detailed);
         let entering: Vec<DetailLevel> = widths.iter().map(|w| zoom(*w)).collect();
         let mut leaving: Vec<DetailLevel> = widths.iter().rev().map(|w| zoom(*w)).collect();
         leaving.reverse();

@@ -19,7 +19,8 @@ use eframe::egui;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::footprint_config::{
-    DETAIL_SCALE_RANGE, FootprintConfig, FootprintStyle, PROFILE_ROW_PX_RANGE,
+    COMPACT_FROM_PX_RANGE, DETAIL_SCALE_RANGE, DETAILED_FROM_PX_RANGE, FootprintConfig,
+    FootprintStyle, PROFILE_ROW_PX_RANGE,
 };
 use crate::footprint_presets::{MAX_NAME_LEN, PresetStore};
 use crate::theme;
@@ -311,19 +312,42 @@ struct DetailSection<'a> {
 impl DetailSection<'_> {
     fn show(self, ui: &mut egui::Ui) -> bool {
         section_heading(ui, "Detail");
-        ui.add(
-            egui::Slider::new(&mut self.config.detail_scale, DETAIL_SCALE_RANGE)
-                .text("zoom needed for detail")
-                .step_by(0.05),
-        )
-        .on_hover_text(
-            "how much candle width each level waits for. 1.0 is where the \
-             numbers exactly fit their candle; lower brings marks, profile \
-             and numbers in at narrower candles, at the cost of the digits \
-             crowding their neighbour. The legend says how much further to \
-             zoom whenever numbers are not showing yet",
-        )
-        .changed()
+        let scale = ui
+            .add(
+                egui::Slider::new(&mut self.config.detail_scale, DETAIL_SCALE_RANGE)
+                    .text("zoom needed for detail")
+                    .step_by(0.05),
+            )
+            .on_hover_text(
+                "how much candle width each level waits for. 1.0 is where the \
+                 numbers exactly fit their candle; lower brings marks, profile \
+                 and numbers in at narrower candles, at the cost of the digits \
+                 crowding their neighbour. The legend says how much further to \
+                 zoom whenever numbers are not showing yet",
+            )
+            .changed();
+        let mut entry = |px: &mut f32, range, text, hover| {
+            let slider = egui::Slider::new(px, range).text(text).step_by(1.0);
+            // Rounded only when dragged: the default sits between whole pixels.
+            let slider = slider.clamping(egui::SliderClamping::Edits);
+            ui.add(slider).on_hover_text(hover).changed()
+        };
+        let compact = entry(
+            &mut self.config.compact_from_px,
+            COMPACT_FROM_PX_RANGE,
+            "summary numbers from px",
+            "candle width where one delta number per row starts: zooming in it \
+             appears there and zooming out it leaves at the same width \
+             (measured at zoom needed 1.0)",
+        );
+        let detailed = entry(
+            &mut self.config.detailed_from_px,
+            DETAILED_FROM_PX_RANGE,
+            "full ladder from px",
+            "candle width where the full sell x buy ladder starts, in both zoom \
+             directions; styles with more columns keep their ratio to it",
+        );
+        scale | compact | detailed
     }
 }
 

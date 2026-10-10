@@ -68,17 +68,23 @@ engine::footprint          app (ChartState)             app (render)
 
 Effective level = min(candle-width level, row-height level). Before dropping
 a level, the renderer first tries a larger display grouping (merging rows
-preserves more information than deleting text). The two-sided dead band is 15%
-for most level transitions and 2% between Marks and Profile. Numbers never fade
-(a half-transparent number is illegible and present at the same time — trader
-veto). Widths below are approximate for the ladder style at `detail_scale = 1`;
-row floors use the default configuration.
+preserves more information than deleting text). Candle width is answered
+strictly: a level enters and leaves at the same width, so the wheel reverses
+on the notch it advanced on. Only the row-height side keeps a two-sided dead
+band (15%, 2% between Marks and Profile), because the price auto-fit breathes
+with every print. The two text levels start at the trader's
+`compact_from_px` / `detailed_from_px` (defaults 15% past the typographic
+floors — where zooming in used to confirm them); wider styles keep their
+ratio to the ladder's. Numbers never fade (a half-transparent number is
+illegible and present at the same time — trader veto). Widths below are
+approximate for the ladder style at `detail_scale = 1` and the default entry
+widths; row floors use the default configuration.
 
 | Level | Candle width | Row height | Draws |
 | --- | --- | --- | --- |
-| Detailed | ≥ 68 px | ≥ 12 px | bid × ask numbers per row, imbalance highlight, POC, ratio badge at extremes |
-| Compact | 33–68 px | ≥ 11 px | one abbreviated delta number per row, imbalance highlight, POC |
-| Profile | 12–33 px | ≥ 4 px | textless histogram, POC emphasized, stacked-zone ticks on the edge |
+| Detailed | ≥ 78 px | ≥ 12 px | bid × ask numbers per row, imbalance highlight, POC, ratio badge at extremes |
+| Compact | 38–78 px | ≥ 11 px | one abbreviated delta number per row, imbalance highlight, POC |
+| Profile | 12–38 px | ≥ 4 px | textless histogram, POC emphasized, stacked-zone ticks on the edge |
 | Marks | 6–12 px | any | POC dot + stacked-imbalance zone marks only |
 | Off | < 6 px | — | layer hidden; legend says "footprint: zoom in for detail" |
 

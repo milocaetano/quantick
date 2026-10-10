@@ -37,12 +37,14 @@ use bar::cluster_column_px_from;
 use bar::{BarPaint, draw_bar, draw_poc_dot, draw_zone_mark};
 use heat::{HeatScale, heat_scale};
 use quantick_chart::footprint_lod::{
-    COMPACT_MIN_ROW, COMPACT_MIN_WIDTH, DETAILED_MIN_ROW, DetailLevel, GLYPH_EM, GROUP_SNAP,
+    AXIS_CLEARANCE_PX, COMPACT_MIN_ROW, DETAILED_MIN_ROW, DetailLevel, GLYPH_EM, GROUP_SNAP,
     LADDER_MIN_FONT_PX, LevelMemory, PROFILE_MIN_WIDTH, QUANTITY_GLYPHS, QUANTITY_PADDING_PX,
-    QUANTITY_PX, TYPICAL_BODY_FRAC,
+    QUANTITY_PX, TYPICAL_BODY_FRAC, detailed_entry_width,
 };
 #[cfg(test)]
-use quantick_chart::footprint_lod::{MARKS_MIN_WIDTH, level_for};
+use quantick_chart::footprint_lod::{
+    COMPACT_FROM_PX, COMPACT_MIN_WIDTH, DETAILED_MIN_WIDTH, MARKS_MIN_WIDTH, level_for,
+};
 use quantick_chart::footprint_projection::{
     ADAPTIVE_FLOOR_BARS, ZoneMark, adaptive_min_qty, bar_delta, coalesce_zones, fmt_delta, fmt_qty,
     poc_of, regroup, zones_of,
@@ -59,7 +61,7 @@ mod heat;
 /// bought, so at the floor exactly the digits reached past the body they were
 /// drawn in. Naming it is what keeps the two in step: the draw call and the
 /// floor now read the same constant, and the test models it.
-const CENTER_GUTTER_PX: f32 = 2.0;
+const CENTER_GUTTER_PX: f32 = AXIS_CLEARANCE_PX;
 
 /// Quantities the sell|buy ladder writes across a row. Fixed, unlike the
 /// cluster's, which the trader can switch between two and three.
@@ -83,11 +85,14 @@ fn ladder_detailed_min_width() -> f32 {
 /// candle lane, its box padding and its gutters before a digit is drawn, and
 /// with those unbudgeted its columns overlap at exactly the width the floor
 /// declares legible.
+///
+/// Moved by the trader's `detailed_from_px` ([`detailed_entry_width`]).
 fn detailed_min_width(
     style: FootprintStyle,
     config: &crate::footprint_config::FootprintConfig,
 ) -> f32 {
-    detailed_min_width_for(style, style.detailed_quantity_columns(config))
+    let typographic = detailed_min_width_for(style, style.detailed_quantity_columns(config));
+    detailed_entry_width(typographic, config.detailed_from_px, config.detail_scale)
 }
 
 /// The same, for a column count already known. Split out because the ladder's
@@ -408,6 +413,7 @@ impl LayerPlan {
             scaled_width,
             base_row_px,
             frame.config.profile_row_px,
+            frame.config.compact_from_px,
             detailed_min_width(requested, frame.config),
         );
         // A style that cannot pay for itself at this zoom hands over to the one it
@@ -783,7 +789,8 @@ impl Legend {
         // numbers" with no number is why this layer read as slow to arrive: a
         // trader could not tell a nudge from a different chart entirely.
         if level < DetailLevel::Compact && frame.candle_width > 0.0 {
-            let further = COMPACT_MIN_WIDTH * frame.config.detail_scale / frame.candle_width;
+            let further =
+                frame.config.compact_from_px * frame.config.detail_scale / frame.candle_width;
             if further > 1.05 {
                 text.push_str(&format!(" · numbers at {further:.1}× this zoom"));
             }
@@ -871,21 +878,32 @@ mod tests {
     /// drifts under the other.
     #[test]
     fn every_style_is_reachable_at_some_zoom_and_every_detail_scale() {
-        use crate::footprint_config::{DETAIL_SCALE_RANGE, FootprintConfig, FootprintStyle};
+        use crate::footprint_config::{
+            DETAIL_SCALE_RANGE, DETAILED_FROM_PX_RANGE, FootprintConfig, FootprintStyle,
+        };
         // The zoom the trader can actually reach is the ceiling divided by the
         // detail scale, and the scale goes to the top of its own range. A
         // style whose floor is above that is a style the registry offers and
         // the chart can never draw — the legend would say `cluster → bidask`
         // for ever, and the slider that caused it is in another window.
-        let reachable = crate::viewport::MAX_CANDLE_WIDTH / DETAIL_SCALE_RANGE.end();
+        let deepest = FootprintConfig {
+            detailed_from_px: *DETAILED_FROM_PX_RANGE.end(),
+            ..FootprintConfig::default()
+        };
         for style in FootprintStyle::ALL {
-            for config in [
+            for base in [
                 FootprintConfig::default(),
                 FootprintConfig {
                     cluster_show_total: false,
                     ..FootprintConfig::default()
                 },
+                deepest.clone(),
             ] {
+                let config = FootprintConfig {
+                    detail_scale: *DETAIL_SCALE_RANGE.end(),
+                    ..base
+                };
+                let reachable = crate::viewport::MAX_CANDLE_WIDTH / config.detail_scale;
                 let floor = detailed_min_width(style, &config);
                 assert!(
                     reachable >= floor,
@@ -927,27 +945,57 @@ mod tests {
     fn levels_need_both_width_and_a_reachable_row_height() {
         // Wide candle, healthy rows: full detail.
         assert_eq!(
-            level_for(100.0, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+            level_for(
+                100.0,
+                12.0,
+                PROFILE_MIN_ROW,
+                COMPACT_MIN_WIDTH,
+                ladder_detailed_min_width()
+            ),
             DetailLevel::Detailed
         );
         // Wide candle, hairline base rows: grouping x100 still reaches 12px.
         assert_eq!(
-            level_for(100.0, 0.2, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+            level_for(
+                100.0,
+                0.2,
+                PROFILE_MIN_ROW,
+                COMPACT_MIN_WIDTH,
+                ladder_detailed_min_width()
+            ),
             DetailLevel::Detailed
         );
         // Wide candle, sub-hairline rows: the extended snap ladder rescues
         // detail far deeper than 100× (an index future on the 0.01 fallback
         // grid), so only truly hopeless rows drop to profile, then marks.
         assert_eq!(
-            level_for(100.0, 0.05, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+            level_for(
+                100.0,
+                0.05,
+                PROFILE_MIN_ROW,
+                COMPACT_MIN_WIDTH,
+                ladder_detailed_min_width()
+            ),
             DetailLevel::Detailed
         );
         assert_eq!(
-            level_for(100.0, 0.0006, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+            level_for(
+                100.0,
+                0.0006,
+                PROFILE_MIN_ROW,
+                COMPACT_MIN_WIDTH,
+                ladder_detailed_min_width()
+            ),
             DetailLevel::Profile
         );
         assert_eq!(
-            level_for(100.0, 0.0003, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+            level_for(
+                100.0,
+                0.0003,
+                PROFILE_MIN_ROW,
+                COMPACT_MIN_WIDTH,
+                ladder_detailed_min_width()
+            ),
             DetailLevel::Marks
         );
         // Width floors gate exactly — stated against the floors themselves, so
@@ -963,7 +1011,13 @@ mod tests {
             (MARKS_MIN_WIDTH - 1.0, DetailLevel::Off),
         ] {
             assert_eq!(
-                level_for(width, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+                level_for(
+                    width,
+                    12.0,
+                    PROFILE_MIN_ROW,
+                    COMPACT_MIN_WIDTH,
+                    ladder_detailed_min_width()
+                ),
                 expected,
                 "at {width} px per candle"
             );
@@ -1451,11 +1505,18 @@ mod tests {
         let tight = *crate::footprint_config::DETAIL_SCALE_RANGE.start();
         assert!(tight < 1.0);
         for width in [6.0_f32, 10.0, 20.0, 35.0, 63.0, 120.0] {
-            let plain = level_for(width, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width());
+            let plain = level_for(
+                width,
+                12.0,
+                PROFILE_MIN_ROW,
+                COMPACT_MIN_WIDTH,
+                ladder_detailed_min_width(),
+            );
             let scaled = level_for(
                 width / tight,
                 12.0,
                 PROFILE_MIN_ROW,
+                COMPACT_MIN_WIDTH,
                 ladder_detailed_min_width(),
             );
             assert!(scaled >= plain, "at {width} px");
@@ -1476,70 +1537,52 @@ mod tests {
     }
 
     #[test]
-    fn lod_changes_only_past_the_dead_band_in_both_directions() {
-        // Written as multiples of the floor rather than as pixels, so the dead
-        // band is tested wherever the floor is tuned to.
+    fn width_changes_the_level_at_the_floor_in_both_directions() {
+        // Written as multiples of the floor rather than as pixels, so the
+        // symmetry is tested wherever the floor is tuned to.
         let floor = ladder_detailed_min_width();
         let mut lod = FootprintLod::default();
-        // The first frame takes the strict answer.
-        assert_eq!(
+        let mut at = |width: f32| {
+            lod.levels
+                .resolve(width, 12.0, PROFILE_MIN_ROW, COMPACT_MIN_WIDTH, floor)
+        };
+        // Width carries no dead band: the level a width shows does not
+        // depend on the direction it was reached from.
+        for (width, expected) in [
+            (floor * 1.2, DetailLevel::Detailed),
+            (floor * 1.01, DetailLevel::Detailed),
+            (floor * 0.99, DetailLevel::Compact),
+            (floor * 1.01, DetailLevel::Detailed),
+            (COMPACT_MIN_WIDTH * 0.99, DetailLevel::Profile),
+            (COMPACT_MIN_WIDTH * 1.01, DetailLevel::Compact),
+        ] {
+            assert_eq!(at(width), expected, "width {width}");
+        }
+    }
+
+    /// The row side keeps its dead band: the auto-fit breathing a few
+    /// percent across a row floor with every print must not blink the level.
+    #[test]
+    fn row_jitter_inside_the_dead_band_holds_the_level() {
+        let mut lod = FootprintLod::default();
+        // Base rows so thin that only the coarsest snap reaches a text row.
+        let coarsest = *GROUP_SNAP.last().unwrap() as f32;
+        let row = |share: f32| DETAILED_MIN_ROW / coarsest * share;
+        let mut at = |share: f32| {
             lod.levels.resolve(
-                floor * 1.2,
-                12.0,
+                100.0,
+                row(share),
                 PROFILE_MIN_ROW,
-                ladder_detailed_min_width()
-            ),
-            DetailLevel::Detailed
-        );
-        // Just under the floor: inside the 15% band, the level holds.
-        assert_eq!(
-            lod.levels.resolve(
-                floor * 0.95,
-                12.0,
-                PROFILE_MIN_ROW,
-                ladder_detailed_min_width()
-            ),
-            DetailLevel::Detailed
-        );
-        // 15% past the floor: the downgrade happens.
-        assert_eq!(
-            lod.levels.resolve(
-                floor * 0.83,
-                12.0,
-                PROFILE_MIN_ROW,
-                ladder_detailed_min_width()
-            ),
-            DetailLevel::Compact
-        );
-        // Upgrades need the same clearance: over the floor but not 15% over,
-        // so the level holds — an instant upgrade against a banded downgrade
-        // is a blinker at the boundary.
-        assert_eq!(
-            lod.levels.resolve(
-                floor * 1.1,
-                12.0,
-                PROFILE_MIN_ROW,
-                ladder_detailed_min_width()
-            ),
-            DetailLevel::Compact
-        );
-        assert_eq!(
-            lod.levels.resolve(
-                floor * 1.2,
-                12.0,
-                PROFILE_MIN_ROW,
-                ladder_detailed_min_width()
-            ),
-            DetailLevel::Detailed
-        );
-        // The blinker scenario itself: oscillating across the floor by a
-        // hair must not change the level once settled.
-        for width in [floor * 1.02, floor * 0.98, floor * 1.02, floor * 0.98] {
+                COMPACT_MIN_WIDTH,
+                ladder_detailed_min_width(),
+            )
+        };
+        assert_eq!(at(1.02), DetailLevel::Detailed);
+        for share in [0.98, 1.02, 0.95, 1.01, 0.97] {
             assert_eq!(
-                lod.levels
-                    .resolve(width, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+                at(share),
                 DetailLevel::Detailed,
-                "width {width} blinked"
+                "row share {share} blinked"
             );
         }
     }
@@ -1552,6 +1595,15 @@ mod tests {
         let opening_width = COMPACT_MIN_WIDTH / 4.2;
         let wheel_factor = (4.2_f32 / 2.9).powf(0.25);
         let mut lod = FootprintLod::default();
+        let mut at = |width: f32| {
+            lod.levels.resolve(
+                width,
+                12.0,
+                PROFILE_MIN_ROW,
+                COMPACT_MIN_WIDTH,
+                ladder_detailed_min_width(),
+            )
+        };
         for step in 0..=5 {
             let width = opening_width * wheel_factor.powi(step);
             let expected = if step == 5 {
@@ -1560,52 +1612,66 @@ mod tests {
                 DetailLevel::Marks
             };
             assert_eq!(
-                lod.levels
-                    .resolve(width, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+                at(width),
                 expected,
                 "inward wheel step {step} at {width:.1} px"
             );
         }
-        let previous_width = opening_width * wheel_factor.powi(4);
         assert_eq!(
-            lod.levels.resolve(
-                previous_width,
-                12.0,
-                PROFILE_MIN_ROW,
-                ladder_detailed_min_width()
-            ),
+            at(opening_width * wheel_factor.powi(4)),
             DetailLevel::Marks,
             "the first outward step must restore Marks"
         );
+        // Strict on both sides of the floor, whichever way it is crossed.
+        assert_eq!(at(PROFILE_MIN_WIDTH * 1.01), DetailLevel::Profile);
+        assert_eq!(at(PROFILE_MIN_WIDTH * 0.99), DetailLevel::Marks);
+        assert_eq!(at(PROFILE_MIN_WIDTH * 1.01), DetailLevel::Profile);
+    }
+
+    /// The trader's two entry widths move the levels, and the defaults are
+    /// the old zoom-in points: 15% past each typographic floor.
+    #[test]
+    fn the_configured_entry_widths_gate_both_directions() {
+        assert_eq!(ladder_detailed_min_width(), DETAILED_MIN_WIDTH);
+        let defaults = crate::footprint_config::FootprintConfig::default();
+        assert_eq!(defaults.compact_from_px, COMPACT_FROM_PX);
         assert_eq!(
+            detailed_min_width(FootprintStyle::Ladder, &defaults),
+            ladder_detailed_min_width() * 1.15
+        );
+        let config = crate::footprint_config::FootprintConfig {
+            compact_from_px: 50.0,
+            detailed_from_px: 120.0,
+            ..defaults
+        };
+        assert_eq!(detailed_min_width(FootprintStyle::Ladder, &config), 120.0);
+        // A wider style keeps its ratio to the ladder.
+        let ratio = |config| {
+            detailed_min_width(FootprintStyle::Cluster, config)
+                / detailed_min_width(FootprintStyle::Ladder, config)
+        };
+        assert!((ratio(&config) - ratio(&defaults)).abs() < 1e-4);
+        let mut lod = FootprintLod::default();
+        let detailed = detailed_min_width(FootprintStyle::Ladder, &config);
+        let mut at = |width: f32| {
             lod.levels.resolve(
-                PROFILE_MIN_WIDTH * 1.01,
+                width,
                 12.0,
                 PROFILE_MIN_ROW,
-                ladder_detailed_min_width()
-            ),
-            DetailLevel::Marks,
-            "a 1% nudge must not re-enter Profile"
-        );
-        assert_eq!(
-            lod.levels.resolve(
-                PROFILE_MIN_WIDTH * 1.03,
-                12.0,
-                PROFILE_MIN_ROW,
-                ladder_detailed_min_width()
-            ),
-            DetailLevel::Profile
-        );
-        assert_eq!(
-            lod.levels.resolve(
-                PROFILE_MIN_WIDTH * 0.99,
-                12.0,
-                PROFILE_MIN_ROW,
-                ladder_detailed_min_width()
-            ),
-            DetailLevel::Profile,
-            "a 1% retreat must not blink the profile"
-        );
+                config.compact_from_px,
+                detailed,
+            )
+        };
+        for (width, expected) in [
+            (49.0, DetailLevel::Profile),
+            (50.0, DetailLevel::Compact),
+            (119.0, DetailLevel::Compact),
+            (120.0, DetailLevel::Detailed),
+            (119.0, DetailLevel::Compact),
+            (49.0, DetailLevel::Profile),
+        ] {
+            assert_eq!(at(width), expected, "width {width}");
+        }
     }
 
     /// The dead band defends one step of jitter, never a wedged state: a
@@ -1616,14 +1682,24 @@ mod tests {
         let mut lod = FootprintLod::default();
         // Locked at Marks by a startup-era span (rows unreachable)...
         assert_eq!(
-            lod.levels
-                .resolve(100.0, 0.0001, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+            lod.levels.resolve(
+                100.0,
+                0.0001,
+                PROFILE_MIN_ROW,
+                COMPACT_MIN_WIDTH,
+                ladder_detailed_min_width()
+            ),
             DetailLevel::Marks
         );
         // ...then the real span arrives: two steps away, no band, snap.
         assert_eq!(
-            lod.levels
-                .resolve(100.0, 12.0, PROFILE_MIN_ROW, ladder_detailed_min_width()),
+            lod.levels.resolve(
+                100.0,
+                12.0,
+                PROFILE_MIN_ROW,
+                COMPACT_MIN_WIDTH,
+                ladder_detailed_min_width()
+            ),
             DetailLevel::Detailed
         );
 

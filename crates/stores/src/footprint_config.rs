@@ -344,6 +344,16 @@ pub struct FootprintConfig {
     /// still fits the digits it draws, and past the high end a trader may as
     /// well switch the layer off.
     pub detail_scale: f32,
+    /// The candle width, in pixels, at which Compact (one summary number per
+    /// row) starts — zooming in it appears there, zooming out it leaves
+    /// there. Measured at a `detail_scale` of 1; the scale stretches it like
+    /// every other floor. Clamped to [`COMPACT_FROM_PX_RANGE`].
+    pub compact_from_px: f32,
+    /// The candle width, in pixels, at which the ladder's Detailed starts, in
+    /// both zoom directions. Styles that write more columns keep their
+    /// typographic ratio to it, so one slider moves them all. Clamped to
+    /// [`DETAILED_FROM_PX_RANGE`].
+    pub detailed_from_px: f32,
     /// The POC line per bar.
     pub show_poc: bool,
     /// The aggression ratio badges at a bar's extremes (Detailed level only).
@@ -380,6 +390,8 @@ impl Default for FootprintConfig {
             stacked_count: 3,
             profile_row_px: 4.0,
             detail_scale: 1.0,
+            compact_from_px: quantick_chart::footprint_lod::COMPACT_FROM_PX,
+            detailed_from_px: quantick_chart::footprint_lod::DETAILED_FROM_PX,
             show_poc: true,
             extreme_ratio_badge: true,
             badge_min_ratio: Decimal::TWO,
@@ -405,6 +417,16 @@ pub const PROFILE_ROW_PX_RANGE: std::ops::RangeInclusive<f32> = 2.0..=10.0;
 /// nothing but zoom.
 pub const DETAIL_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.8..=2.0;
 
+/// The bounds [`FootprintConfig::compact_from_px`] is clamped to. The low end
+/// sits under the one-number floor (33 px), for a trader who accepts digits
+/// touching the next candle; past the high end numbers effectively never
+/// come.
+pub const COMPACT_FROM_PX_RANGE: std::ops::RangeInclusive<f32> = 24.0..=160.0;
+
+/// The bounds [`FootprintConfig::detailed_from_px`] is clamped to, on the
+/// same reasoning around the ladder's two-number floor (68 px).
+pub const DETAILED_FROM_PX_RANGE: std::ops::RangeInclusive<f32> = 48.0..=240.0;
+
 /// The file's shape, and the canonical serde form of a config: the
 /// hand-written preset, each saved named preset and the settings file all
 /// speak it. Every field optional — an absent knob keeps its default, so a
@@ -424,6 +446,10 @@ pub struct FootprintFile {
     pub profile_row_px: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail_scale: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compact_from_px: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detailed_from_px: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub show_poc: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -451,6 +477,8 @@ pub fn to_file(config: &FootprintConfig) -> FootprintFile {
         stacked_count: Some(config.stacked_count),
         profile_row_px: Some(f64::from(config.profile_row_px)),
         detail_scale: Some(f64::from(config.detail_scale)),
+        compact_from_px: Some(f64::from(config.compact_from_px)),
+        detailed_from_px: Some(f64::from(config.detailed_from_px)),
         show_poc: Some(config.show_poc),
         extreme_ratio_badge: Some(config.extreme_ratio_badge),
         badge_min_ratio: config.badge_min_ratio.to_f64(),
@@ -613,6 +641,10 @@ pub fn resolve(file: FootprintFile) -> FootprintConfig {
             })
             .filter(|scale| scale.is_finite())
             .unwrap_or(defaults.detail_scale),
+        compact_from_px: clamped_px(file.compact_from_px, &COMPACT_FROM_PX_RANGE)
+            .unwrap_or(defaults.compact_from_px),
+        detailed_from_px: clamped_px(file.detailed_from_px, &DETAILED_FROM_PX_RANGE)
+            .unwrap_or(defaults.detailed_from_px),
         show_poc: file.show_poc.unwrap_or(defaults.show_poc),
         extreme_ratio_badge: file
             .extreme_ratio_badge
@@ -631,10 +663,41 @@ pub fn resolve(file: FootprintFile) -> FootprintConfig {
     }
 }
 
+/// A pixel width from the file, clamped to `range`; `None` when absent or
+/// not a number, so the default stands.
+fn clamped_px(value: Option<f64>, range: &std::ops::RangeInclusive<f32>) -> Option<f32> {
+    value
+        .map(|px| (px as f32).clamp(*range.start(), *range.end()))
+        .filter(|px| px.is_finite())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// The two level-entry widths default to where zooming in used to gain
+    /// each level, and a hand-edit outside their bounds is clamped back.
+    #[test]
+    fn level_entry_widths_default_to_the_old_zoom_in_points_and_clamp() {
+        let defaults = FootprintConfig::default();
+        let old_entry = |floor: f32| floor * 1.15;
+        assert_eq!(
+            defaults.compact_from_px,
+            old_entry(quantick_chart::footprint_lod::COMPACT_MIN_WIDTH)
+        );
+        assert_eq!(
+            defaults.detailed_from_px,
+            old_entry(quantick_chart::footprint_lod::DETAILED_MIN_WIDTH)
+        );
+        let config =
+            resolve(toml::from_str("compact_from_px = 1.0\ndetailed_from_px = 9000.0").unwrap());
+        assert_eq!(config.compact_from_px, *COMPACT_FROM_PX_RANGE.start());
+        assert_eq!(config.detailed_from_px, *DETAILED_FROM_PX_RANGE.end());
+        let config = resolve(toml::from_str("compact_from_px = 50.0").unwrap());
+        assert_eq!(config.compact_from_px, 50.0);
+        assert_eq!(config.detailed_from_px, defaults.detailed_from_px);
+    }
 
     /// A scratch settings file per test thread, as the window's own
     /// `cfg!(test)` path used to give.
@@ -715,6 +778,8 @@ mod tests {
             stacked_count: 4,
             profile_row_px: 2.5,
             detail_scale: 1.4,
+            compact_from_px: 30.0,
+            detailed_from_px: 90.0,
             show_poc: false,
             extreme_ratio_badge: false,
             badge_min_ratio: Decimal::from(3),

@@ -238,6 +238,16 @@ pub struct FootprintSetupSnapshot {
     pub show_point_of_control: bool,
     pub show_numbers: bool,
     pub show_delta_totals: bool,
+    /// Candle width at which one summary number per row starts, in both zoom
+    /// directions, measured at a detail scale of 1.
+    #[serde(default)]
+    #[schemars(extend("x-unit" = "pixels"))]
+    pub compact_from_px: Option<CanonicalDecimal>,
+    /// Candle width at which the ladder's full detail starts, in both zoom
+    /// directions; styles with more columns keep their ratio to it.
+    #[serde(default)]
+    #[schemars(extend("x-unit" = "pixels"))]
+    pub detailed_from_px: Option<CanonicalDecimal>,
 }
 
 impl From<&FootprintConfig> for FootprintSetupSnapshot {
@@ -250,6 +260,8 @@ impl From<&FootprintConfig> for FootprintSetupSnapshot {
             show_point_of_control: config.show_poc,
             show_numbers: config.show_numbers,
             show_delta_totals: config.show_delta_totals,
+            compact_from_px: canonical_f32(config.compact_from_px, 2),
+            detailed_from_px: canonical_f32(config.detailed_from_px, 2),
         }
     }
 }
