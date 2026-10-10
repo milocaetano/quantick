@@ -84,13 +84,13 @@ status=$(git -C "$worktree" status --porcelain=v1 --untracked-files=all) || fail
 skill="$worktree/.claude/skills/mission/SKILL.md"
 # Three PR kinds, told apart only by facts verified against the PR below (the
 # branch is its head, the base its base), never by a flag the caller sets: a
-# consolidated campaign PR (campaign/* into main), a main synchronization (into
-# a campaign base, named sync/* or carrying main commits that base lacks), and
-# every other PR, a mission.
+# consolidated campaign PR (campaign/* or feature/* into main), a main
+# synchronization (into such a base, named sync/* or carrying main commits that
+# base lacks), and every other PR, a mission.
 kind=mission
 case "$base:$branch" in
-    origin/main:campaign/?*) kind=campaign ;;
-    origin/campaign/?*:*)
+    origin/main:campaign/?*|origin/main:feature/?*) kind=campaign ;;
+    origin/campaign/?*:*|origin/feature/?*:*)
         case "$branch" in sync/?*) kind=sync ;; esac
         main_fork=$(git -C "$worktree" merge-base origin/main HEAD 2>/dev/null) &&
             ! git -C "$worktree" merge-base --is-ancestor "$main_fork" "$base" && kind=sync
@@ -127,7 +127,7 @@ if [ "$kind" = campaign ]; then
         fail 'A consolidated campaign PR names its charter once in its body: Campaign-parent: <issue URL in this repository>.'
     charter=$(cd "$worktree" && gh issue view "$parent" --json body --jq .body) ||
         fail 'GitHub could not read the campaign parent charter.'
-    case "$charter" in *'<!-- quantick-campaign:v1 -->'*) ;; *) fail 'Campaign-parent is not a campaign charter.' ;; esac
+    case "$charter" in *'<!-- quantick-campaign:v1 -->'*|*'<!-- quantick-feature:v1 -->'*) ;; *) fail 'Campaign-parent is not a campaign charter.' ;; esac
     # The branch must appear as a whole ref token, in backticks or plain text:
     # split on characters a ref cannot hold and drop a sentence's final dot,
     # so campaign/x-2 never stands for campaign/x.

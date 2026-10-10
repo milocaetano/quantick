@@ -816,6 +816,15 @@ pr_gate() {
         pass_pr_gate "$dir"
     fi
 
+    feature_implement=0
+    if [ "$(declared_tier "$dir")" = "$IMPLEMENT_TIER" ]; then
+        case "$(review_base "$dir" 2>/dev/null)" in
+            origin/feature/?*)
+                sh "$(dirname "$0")/campaign_context.sh" feature "$dir" >/dev/null 2>&1 &&
+                    feature_implement=1 ;;
+        esac
+    fi
+
     if [ "$gate_action" = create ]; then
         gate_statement=$(gh_statement "$command" "gh pr create")
         if draft_flag "$gate_statement"; then
@@ -836,102 +845,115 @@ pr_gate() {
     fi
     [ -n "$key" ] || exit 0
 
-    # Checked in the order the reviews run. arch-review first: a delivery
-    # review of a branch the shape review is about to change is wasted work,
-    # and naming the earlier gap first is the shorter path back to green.
-    #
-    # Required at every tier, `small` included. A tier buys a shorter review,
-    # never no review: the bug pass is the last thing a branch should be able
-    # to buy its way out of, and a small diff is not the same as a safe one.
-    require_marker "$dir" "$key" "$ARCH_MARKER_NAME" \
-        "no branch ships un-reviewed" \
-        "Run the arch-review skill over \`git diff $gate_base...HEAD\` and resolve every Blocker and Should-fix (or note the deferral in the PR body)"
+    # A /feature child owes its integration merge what an implement branch
+    # owes main: the code-review at this exact head, full CI and, below, the
+    # persisted grant. Only where the base is origin/feature/* and its parent
+    # carries the feature marker; campaign/* keeps the mission reviews.
+    if [ "$feature_implement" -eq 1 ]; then
+        require_marker "$dir" "$key" "$IMPLEMENT_MARKER" \
+            "a feature child integrates only after code-review" \
+            "Run the code-review skill over \`git diff $gate_base...HEAD\` and fix its valid findings"
+        [ "$gate_action" = create ] && pass_pr_gate "$dir"
+        gate_pr=$(pr_number "$(gh_statement "$command" "gh pr $gate_action")")
+        [ -n "$gate_pr" ] || deny '"Name the feature child PR number explicitly."'
+    else
+        # Checked in the order the reviews run. arch-review first: a delivery
+        # review of a branch the shape review is about to change is wasted work,
+        # and naming the earlier gap first is the shorter path back to green.
+        #
+        # Required at every tier, `small` included. A tier buys a shorter review,
+        # never no review: the bug pass is the last thing a branch should be able
+        # to buy its way out of, and a small diff is not the same as a safe one.
+        require_marker "$dir" "$key" "$ARCH_MARKER_NAME" \
+            "no branch ships un-reviewed" \
+            "Run the arch-review skill over \`git diff $gate_base...HEAD\` and resolve every Blocker and Should-fix (or note the deferral in the PR body)"
 
-    delivery_how="Run the delivery-review skill: it grades every ask in the branch's goal file and every acceptance criterion, and passes only when none is MISSING, PARTIAL or UNPROVEN"
+        delivery_how="Run the delivery-review skill: it grades every ask in the branch's goal file and every acceptance criterion, and passes only when none is MISSING, PARTIAL or UNPROVEN"
 
-    # A branch that declared no tier takes the path it has always taken and is
-    # told exactly what it was told before. That is deliberate, and it is the
-    # property the whole exemption rests on: the denial an agent meets when it
-    # has merely forgotten the review must never double as an advertisement for
-    # the way around it. Only a branch that already asked for the cheap path
-    # hears anything at all about the bound on it.
-    small_exempt=0
-    if [ "$(declared_tier "$dir")" = "small" ]; then
-        small_size=$(changed_lines "$dir")
+        # A branch that declared no tier takes the path it has always taken and is
+        # told exactly what it was told before. That is deliberate, and it is the
+        # property the whole exemption rests on: the denial an agent meets when it
+        # has merely forgotten the review must never double as an advertisement for
+        # the way around it. Only a branch that already asked for the cheap path
+        # hears anything at all about the bound on it.
+        small_exempt=0
+        if [ "$(declared_tier "$dir")" = "small" ]; then
+            small_size=$(changed_lines "$dir")
 
-        if [ -n "$small_size" ] && [ "$small_size" -le "$SMALL_TIER_MAX_CHANGED_LINES" ]; then
-            small_exempt=1
+            if [ -n "$small_size" ] && [ "$small_size" -le "$SMALL_TIER_MAX_CHANGED_LINES" ]; then
+                small_exempt=1
+            fi
+
+            if [ -z "$small_size" ]; then
+                delivery_how="This branch declares the \`small\` tier, whose exemption from this review is granted only where its size against $gate_base can be measured, and here it cannot — which is about the measurement, not the size of the work. $delivery_how"
+            else
+                delivery_how="This branch declares the \`small\` tier, whose exemption from this review stops at $SMALL_TIER_MAX_CHANGED_LINES changed lines against $gate_base; it carries $small_size, so the work has outgrown the word. Raise the tier in the goal file — a tier goes up, never down. $delivery_how"
+            fi
         fi
 
-        if [ -z "$small_size" ]; then
-            delivery_how="This branch declares the \`small\` tier, whose exemption from this review is granted only where its size against $gate_base can be measured, and here it cannot — which is about the measurement, not the size of the work. $delivery_how"
-        else
-            delivery_how="This branch declares the \`small\` tier, whose exemption from this review stops at $SMALL_TIER_MAX_CHANGED_LINES changed lines against $gate_base; it carries $small_size, so the work has outgrown the word. Raise the tier in the goal file — a tier goes up, never down. $delivery_how"
+        if [ "$small_exempt" -eq 0 ]; then
+          require_marker "$dir" "$key" "$DELIVERY_MARKER_NAME" \
+            "no branch ships ungraded against what was asked for" \
+            "$delivery_how"
         fi
-    fi
 
-    if [ "$small_exempt" -eq 0 ]; then
-      require_marker "$dir" "$key" "$DELIVERY_MARKER_NAME" \
-        "no branch ships ungraded against what was asked for" \
-        "$delivery_how"
-    fi
+        # Both reviews are recorded. What is left is the branch's open findings,
+        # and only the two commands that actually ship work are held on them: a PR
+        # may be created, draft or not, while findings are still open — the PR is
+        # where they live.
+        [ "$gate_action" = create ] && pass_pr_gate "$dir"
 
-    # Both reviews are recorded. What is left is the branch's open findings,
-    # and only the two commands that actually ship work are held on them: a PR
-    # may be created, draft or not, while findings are still open — the PR is
-    # where they live.
-    [ "$gate_action" = create ] && pass_pr_gate "$dir"
+        # Every tier owes a completed AI review, even when there were no findings.
+        # Keep this separate from the unchanged unresolved-thread gate below.
+        gate_branch=$(git -C "$dir" symbolic-ref --quiet --short HEAD 2>/dev/null) ||
+            deny '"ai-review-complete requires a named task branch; detached review evidence cannot be inherited."'
+        require_marker "$dir" "$key" "$AI_MARKER_NAME" \
+            "AI review must complete for the current task branch and change" \
+            "Run the ai-review skill against the PR; publish its report and findings and verify the reviewed worktree, branch, HEAD, status, base and key stayed stable" \
+            "$gate_branch"
 
-    # Every tier owes a completed AI review, even when there were no findings.
-    # Keep this separate from the unchanged unresolved-thread gate below.
-    gate_branch=$(git -C "$dir" symbolic-ref --quiet --short HEAD 2>/dev/null) ||
-        deny '"ai-review-complete requires a named task branch; detached review evidence cannot be inherited."'
-    require_marker "$dir" "$key" "$AI_MARKER_NAME" \
-        "AI review must complete for the current task branch and change" \
-        "Run the ai-review skill against the PR; publish its report and findings and verify the reviewed worktree, branch, HEAD, status, base and key stayed stable" \
-        "$gate_branch"
-
-    gate_pr=$(pr_number "$(gh_statement "$command" "gh pr $gate_action")")
-    if [ -z "$gate_pr" ]; then
-        ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. This \`gh pr $gate_action\` names no PR number, so the open threads could not be counted — the gate is not saying there are none. Re-run it naming the PR, or read the PR's unresolved threads yourself before continuing.\""
-    fi
-
-    # Private marker files are projections, not proof that their skills ran.
-    # Each must be paired with the durable report its review skill published
-    # on this PR for the same branch, head, base tip and review key. This
-    # catches a hand-written marker while keeping the fast local staleness
-    # checks first.
-    reports_script="$(dirname "$0")/review_report.sh"
-    [ -f "$reports_script" ] ||
-        ask '"Durable review reports cannot be verified because review_report.sh is not beside the gate; a local marker alone is not completion evidence."'
-    report_kinds="arch-review ai-review"
-    [ "$small_exempt" -eq 1 ] || report_kinds="arch-review delivery-review ai-review"
-    for report_kind in $report_kinds; do
-        report_url=$(sh "$reports_script" verify "$report_kind" "$gate_pr" "$dir" 2>/dev/null)
-        report_status=$?
-        if [ "$report_status" -eq 2 ]; then
-            ask "\"The durable \`$report_kind\` report for PR #$gate_pr could not be read from GitHub; unknown report state is not valid review evidence.\""
+        gate_pr=$(pr_number "$(gh_statement "$command" "gh pr $gate_action")")
+        if [ -z "$gate_pr" ]; then
+            ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. This \`gh pr $gate_action\` names no PR number, so the open threads could not be counted — the gate is not saying there are none. Re-run it naming the PR, or read the PR's unresolved threads yourself before continuing.\""
         fi
-        if [ "$report_status" -ne 0 ] || [ -z "$report_url" ]; then
-            deny "\"The local \`$report_kind\` marker has no matching durable PR report for the current branch, head, base tip and review key. Run the review skill; its report publisher records the projection after publication succeeds.\""
+
+        # Private marker files are projections, not proof that their skills ran.
+        # Each must be paired with the durable report its review skill published
+        # on this PR for the same branch, head, base tip and review key. This
+        # catches a hand-written marker while keeping the fast local staleness
+        # checks first.
+        reports_script="$(dirname "$0")/review_report.sh"
+        [ -f "$reports_script" ] ||
+            ask '"Durable review reports cannot be verified because review_report.sh is not beside the gate; a local marker alone is not completion evidence."'
+        report_kinds="arch-review ai-review"
+        [ "$small_exempt" -eq 1 ] || report_kinds="arch-review delivery-review ai-review"
+        for report_kind in $report_kinds; do
+            report_url=$(sh "$reports_script" verify "$report_kind" "$gate_pr" "$dir" 2>/dev/null)
+            report_status=$?
+            if [ "$report_status" -eq 2 ]; then
+                ask "\"The durable \`$report_kind\` report for PR #$gate_pr could not be read from GitHub; unknown report state is not valid review evidence.\""
+            fi
+            if [ "$report_status" -ne 0 ] || [ -z "$report_url" ]; then
+                deny "\"The local \`$report_kind\` marker has no matching durable PR report for the current branch, head, base tip and review key. Run the review skill; its report publisher records the projection after publication succeeds.\""
+            fi
+        done
+
+        gate_open=$(open_ai_review_threads "$(dirname "$0")" "$gate_pr" "$dir")
+        gate_status=$?
+        if [ "$gate_status" -eq 3 ]; then
+            # The hook runs from the main checkout, always: `$0` is the path
+            # `.claude/settings.json` registered. So a branch that adds or fixes
+            # the counting script is judged by whatever `main` holds, and before
+            # that script has merged there is nothing beside this one to ask.
+            ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. \`ai_review_threads.sh\` is not beside the hook in $(dirname "$0") — this hook runs from the main checkout, so a branch that has not merged the script yet cannot be counted from here. This is not a count of zero. Read the PR's unresolved threads before continuing.\""
         fi
-    done
+        if [ -z "$gate_open" ]; then
+            ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. The open threads on PR #$gate_pr could not be counted — \`gh\` missing, unauthenticated, unreachable, or more threads on the PR than one page holds — so this is not a clean count, it is no count at all. Read the PR's unresolved threads before continuing.\""
+        fi
 
-    gate_open=$(open_ai_review_threads "$(dirname "$0")" "$gate_pr" "$dir")
-    gate_status=$?
-    if [ "$gate_status" -eq 3 ]; then
-        # The hook runs from the main checkout, always: `$0` is the path
-        # `.claude/settings.json` registered. So a branch that adds or fixes
-        # the counting script is judged by whatever `main` holds, and before
-        # that script has merged there is nothing beside this one to ask.
-        ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. \`ai_review_threads.sh\` is not beside the hook in $(dirname "$0") — this hook runs from the main checkout, so a branch that has not merged the script yet cannot be counted from here. This is not a count of zero. Read the PR's unresolved threads before continuing.\""
-    fi
-    if [ -z "$gate_open" ]; then
-        ask "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. The open threads on PR #$gate_pr could not be counted — \`gh\` missing, unauthenticated, unreachable, or more threads on the PR than one page holds — so this is not a clean count, it is no count at all. Read the PR's unresolved threads before continuing.\""
-    fi
-
-    if [ "$gate_open" -gt 0 ]; then
-        deny "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. PR #$gate_pr has $gate_open. Phase two closes them one at a time, from fresh context and allowed to redesign; each closes by the fix, or by an acceptance the trader records on the thread. List them:\n\n  sh .claude/hooks/ai_review_threads.sh list $gate_pr\""
+        if [ "$gate_open" -gt 0 ]; then
+            deny "\"CLAUDE.md: nothing merges with an \`ai-review\` thread open. PR #$gate_pr has $gate_open. Phase two closes them one at a time, from fresh context and allowed to redesign; each closes by the fix, or by an acceptance the trader records on the thread. List them:\n\n  sh .claude/hooks/ai_review_threads.sh list $gate_pr\""
+        fi
     fi
 
     # Draft pushes run only the fast job, so readiness is where full CI is

@@ -50,6 +50,7 @@ cat > "$fixture/bin/gh" <<'STUB'
 case "$1 $2" in
     'pr view') cat "$(dirname "$0")/identity" ;;
     'pr checks') cat "$(dirname "$0")/checks" ;;
+    'issue view') cat "$(dirname "$0")/issue" ;;
     *) exit 1 ;;
 esac
 STUB
@@ -201,4 +202,33 @@ for client in Bash exec_command; do
     context https://github.com/owner/repo/issues/1#issuecomment-2
     stamp
 done
+# A /feature integration branch is the same contract under feature/.
+rm -f "$git_dir/mission-tier"
+git -C "$fixture/repo" update-ref refs/remotes/origin/feature/test "$base"
+printf 'feat/child origin/feature/test https://github.com/owner/repo/issues/1 https://github.com/owner/repo/issues/1#issuecomment-2\n' > "$git_dir/mission-base"
+identity feature/test "$head" "$base"
+allow 'a feature branch is an integration base' test "$(sh "$helper" base "$fixture/repo")" = origin/feature/test
+allow 'authorized feature merge with green CI' sh "$helper" check-pr "$fixture/repo" 42 merge
+# An implement worker records only code-review-ok; with a feature parent that
+# is what a feature child owes, beside green CI and the grant.
+rm "$git_dir/arch-review-ok" "$git_dir/delivery-review-ok" "$git_dir/ai-review-complete"
+printf 'feat/child implement\n' > "$git_dir/mission-tier"
+sh "$helper" key "$fixture/repo" > "$git_dir/code-review-ok"
+printf '<!-- quantick-feature:v1 -->\nbranch: `feature/test`\n' > "$fixture/bin/issue"
+allow 'implement evidence merges into a feature branch' \
+    gate Bash "gh pr merge 42 --merge --match-head-commit $head" allow
+printf '<!-- quantick-campaign:v1 -->\n' > "$fixture/bin/issue"
+allow 'a feature base without a feature parent keeps the mission reviews' \
+    gate Bash "gh pr merge 42 --merge --match-head-commit $head" deny arch-review-ok
+printf '<!-- quantick-feature:v1 -->\n' > "$fixture/bin/issue"
+context https://github.com/owner/repo/issues/1#issuecomment-2
+identity campaign/test "$head" "$base"
+sh "$helper" key "$fixture/repo" > "$git_dir/code-review-ok"
+allow 'implement evidence still cannot merge into a campaign branch' \
+    gate Bash "gh pr merge 42 --merge --match-head-commit $head" deny arch-review-ok
+printf 'feat/child origin/feature/test https://github.com/owner/repo/issues/1 https://github.com/owner/repo/issues/1#issuecomment-2\n' > "$git_dir/mission-base"
+identity feature/test "$head" "$base"
+rm "$git_dir/mission-tier"
+stamp
+allow 'feature merge with the mission reviews' gate Bash "gh pr merge 42 --merge --match-head-commit $head" allow
 printf '%s campaign context tests passed\n' "$passed"
