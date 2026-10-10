@@ -109,6 +109,14 @@ pub const PAGE_SLACK: u32 = 8;
 /// small pages is not asked thousands of times for one press.
 pub const MAX_CAMPAIGN_PAGES: u32 = 512;
 
+/// The smallest request that can bring a print back. A page's oldest print
+/// has nothing older to infer its side from, and the MetaTrader feed drops
+/// it, so a one-print request always comes back empty. Room under the ceiling
+/// for less than this is the ceiling: on 2026-10-08 a five-day WINV26 run
+/// stopped one print under it, asked for single prints until three came back
+/// empty, and said the venue had nothing older.
+const MIN_USEFUL_REQUEST: usize = 2;
+
 /// Replies in a row that may bring nothing new before a campaign gives up.
 ///
 /// An empty page is not by itself the end of the record — a bridge crossing a
@@ -691,7 +699,7 @@ impl Campaign {
         if campaign.met {
             return CampaignStart::AlreadyMet(campaign.finish(CampaignEnd::AlreadyThere));
         }
-        if campaign.held_at_start >= campaign.ceiling() {
+        if campaign.at_ceiling() {
             return CampaignStart::AtCeiling(campaign.finish(CampaignEnd::MemoryCeiling));
         }
         CampaignStart::Run(campaign)
@@ -714,6 +722,15 @@ impl Campaign {
     /// pane's copy.
     fn ceiling(&self) -> usize {
         MAX_HELD_PRINTS / self.copies
+    }
+
+    /// Whether the room left under the ceiling is too small for a request to
+    /// bring anything back ([`MIN_USEFUL_REQUEST`]).
+    fn at_ceiling(&self) -> bool {
+        self.held_at_start
+            .saturating_add(self.pulled)
+            .saturating_add(MIN_USEFUL_REQUEST)
+            > self.ceiling()
     }
 
     /// How much of the silence between `older_ms` and `newer_ms` the marked
@@ -803,6 +820,11 @@ impl Campaign {
         if !can_page {
             return CampaignStep::Stop(CampaignEnd::Exhausted);
         }
+        // Before the idle count: a reply that leaves no useful room is the
+        // ceiling's doing, however little the feed kept of it.
+        if self.at_ceiling() {
+            return CampaignStep::Stop(CampaignEnd::MemoryCeiling);
+        }
         if self.oldest_ms < before {
             self.idle_pages = 0;
         } else {
@@ -810,9 +832,6 @@ impl Campaign {
             if self.idle_pages >= MAX_IDLE_PAGES {
                 return CampaignStep::Stop(CampaignEnd::NothingComingBack);
             }
-        }
-        if self.held_at_start.saturating_add(self.pulled) >= self.ceiling() {
-            return CampaignStep::Stop(CampaignEnd::MemoryCeiling);
         }
         if self.pulled >= self.reach.print_budget() {
             return CampaignStep::Stop(CampaignEnd::PrintsPulled);
