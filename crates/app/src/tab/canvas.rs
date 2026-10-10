@@ -325,7 +325,7 @@ impl Tab {
             header,
             &mut interval_ms,
             self.time_panes[slot].id,
-            &self.time_panes[slot].layout_label,
+            &self.time_panes[slot].layout.label,
             active_bar.as_deref(),
         );
         #[cfg(test)]

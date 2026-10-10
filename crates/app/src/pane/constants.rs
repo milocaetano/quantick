@@ -3,24 +3,10 @@
 
 use eframe::egui;
 
-/// Pixels of drag on the lane's own time strip that double or halve its window; matches the
-/// candles' `exp(dx / 120)` time-axis zoom so both panes answer a drag at the same rate.
-pub(super) const LANE_ZOOM_DRAG_PX: f32 = 120.0;
-
 /// Half-height of the grab band over a pane's top edge, in pixels. The rule stays a hairline (a
 /// thick bar reads as a wall in the data); the handle around it makes it catchable and the resize
 /// cursor announces it, the same bargain the live lane's divider and the canvas split strike.
 pub(super) const PANE_DIVIDER_HANDLE_PX: f32 = 4.0;
-
-/// Pixels of drag on a vertical axis that change its span by a factor of `e`. One number for the
-/// price gutter and every indicator pane's gutter, so the axes stretch at the same rate wherever
-/// the dragged numbers live.
-pub(super) const AXIS_ZOOM_DRAG_PX: f32 = 150.0;
-
-/// The same, for a scroll over an axis rather than a drag. One wheel notch
-/// reports far more units than a pointer travels in a frame, so each unit has
-/// to count for less — a larger divisor, not a smaller one.
-pub(super) const AXIS_ZOOM_SCROLL_PX: f32 = 200.0;
 
 /// How often the forming bar's footprint ladder is re-snapshotted for
 /// drawing, in seconds. ~10 Hz: the eye reads the pattern, not the ticking

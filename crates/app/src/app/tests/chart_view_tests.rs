@@ -376,17 +376,18 @@ fn nothing_the_corner_does_throws_a_chart_away() {
 #[test]
 fn a_rebuild_leaves_a_live_view_at_the_live_edge() {
     let (mut app, _cmd_rx) = app_with_history(400);
-    assert!(app.active_tab().flow_pane.viewport.follows_live());
+    assert!(app.active_tab().flow_pane.model.viewport.follows_live());
     app.active_tab_mut()
         .flow_pane
         .spec
         .retain(crate::state::BarSpec::Tick(40));
     app.active_tab_mut().apply_spec_changes();
     app.active_tab_mut().apply_spec_changes();
-    assert!(app.active_tab().flow_pane.viewport.follows_live());
+    assert!(app.active_tab().flow_pane.model.viewport.follows_live());
     assert_eq!(
         app.active_tab()
             .flow_pane
+            .model
             .viewport
             .right_edge_bar(app.active_tab().flow_pane.slots()),
         9.0
@@ -553,6 +554,7 @@ fn a_rebuilt_chart_still_paints_itself() {
     let slots = app.active_tab().flow_pane.slots();
     app.active_tab_mut()
         .flow_pane
+        .model
         .viewport
         .pan_pixels(200.0 * 8.0, slots);
 
@@ -609,6 +611,7 @@ fn squeezing_shows_more_bars_and_never_merges_any() {
         let mut sample = |px_per_bar| {
             app.active_tab_mut()
                 .flow_pane
+                .model
                 .viewport
                 .set_px_per_bar(px_per_bar);
             let output = run_frame(&mut app, &ctx);
@@ -618,7 +621,7 @@ fn squeezing_shows_more_bars_and_never_merges_any() {
                 pane.frame.lane_divider_x,
             );
             let slots = pane.slots();
-            let (start, end) = pane.viewport.visible_range(area.width(), slots);
+            let (start, end) = pane.model.viewport.visible_range(area.width(), slots);
             let rects = painted_rects(&output);
             let bodies: Vec<_> = rects
                 .iter()
@@ -640,7 +643,7 @@ fn squeezing_shows_more_bars_and_never_merges_any() {
                 "each candle body has exactly one matching outline"
             );
             for (body, slot) in bodies.iter().zip(start..end) {
-                let expected_x = pane.viewport.x_center(slot, area.right(), slots);
+                let expected_x = pane.model.viewport.x_center(slot, area.right(), slots);
                 assert!(
                     (body.center().x - expected_x).abs() < 0.01,
                     "bar {slot} owns its candle at {px_per_bar} px"
@@ -650,7 +653,7 @@ fn squeezing_shows_more_bars_and_never_merges_any() {
         };
         let (_, shallow_bars) = sample(2.0);
         let (deep, deep_bars) = sample(crate::viewport::MIN_PX_PER_BAR);
-        let viewport = app.active_tab().flow_pane.viewport;
+        let viewport = app.active_tab().flow_pane.model.viewport;
         // The visible range includes a spare bar at the edge at both zooms.
         assert!(
             deep_bars + 4 >= 2 * shallow_bars,
@@ -681,10 +684,11 @@ fn pushing_the_chart_left_clears_a_window_and_keeps_the_series_on_screen() {
     let ctx = egui::Context::default();
     run_frame(&mut app, &ctx);
 
-    app.active_tab_mut().flow_pane.viewport.zoom(8.0); // 64 px candles: only a dozen fit
+    app.active_tab_mut().flow_pane.model.viewport.zoom(8.0); // 64 px candles: only a dozen fit
     let slots = app.active_tab().flow_pane.slots();
     app.active_tab_mut()
         .flow_pane
+        .model
         .viewport
         .pan_pixels(-10_000.0, slots); // as far into the empty future as it goes
     let texts = painted_text(&run_frame(&mut app, &ctx));
@@ -696,7 +700,7 @@ fn pushing_the_chart_left_clears_a_window_and_keeps_the_series_on_screen() {
         has_price_axis(&texts),
         "and keeps the axis, so the chart never reads as hung: {texts:?}"
     );
-    let viewport = app.active_tab().flow_pane.viewport;
+    let viewport = app.active_tab().flow_pane.model.viewport;
     let newest = (slots - 1) as f32;
     assert!(
         viewport.right_edge_bar(slots) > newest + 1.0,

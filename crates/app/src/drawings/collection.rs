@@ -12,6 +12,17 @@ use super::{
 use super::DrawingAuthor;
 
 impl Drawings {
+    /// Stable identity, constant-time even when read once per painted object.
+    #[must_use]
+    pub fn selected_id(&self) -> Option<DrawingId> {
+        self.selection.get()
+    }
+
+    /// Share the authoritative selection with the pane interaction owner.
+    pub(crate) fn selection_handle(&self) -> quantick_chart_interaction::pane::Selection {
+        self.selection.clone()
+    }
+
     /// How many times the collection has changed. See [`Self::revision`]'s
     /// field: equal readings mean nothing to write.
     #[must_use]
@@ -29,7 +40,7 @@ impl Drawings {
     pub fn take_all(&mut self) -> Vec<Drawing> {
         self.revision += 1;
         self.draft = None;
-        self.selected = None;
+        self.selection.set(None);
         self.undo.clear();
         self.redo.clear();
         self.gesture_baseline = None;
@@ -119,16 +130,20 @@ impl Drawings {
 
     #[must_use]
     pub fn selected(&self) -> Option<usize> {
-        self.selected
+        self.selection.get().and_then(|id| self.index_of(id))
     }
 
     pub fn select(&mut self, selected: Option<usize>) {
-        self.selected = selected.filter(|&index| index < self.items.len());
+        self.selection.set(
+            selected
+                .and_then(|index| self.items.get(index))
+                .map(|drawing| drawing.id),
+        );
     }
 
     #[must_use]
     pub fn selected_mut(&mut self) -> Option<&mut Drawing> {
-        self.selected.and_then(|index| self.items.get_mut(index))
+        self.selected().and_then(|index| self.items.get_mut(index))
     }
 
     #[must_use]
@@ -220,7 +235,11 @@ impl Drawings {
         self.items = entry.items;
         self.all_hidden = entry.all_hidden;
         self.draft = None;
-        self.selected = self.selected.filter(|&index| index < self.items.len());
+        self.selection.set(
+            self.selection
+                .get()
+                .filter(|id| self.index_of(*id).is_some()),
+        );
     }
 
     pub fn undo(&mut self) -> bool {
@@ -252,7 +271,7 @@ impl Drawings {
         }
         let before = self.snapshot();
         self.items.clear();
-        self.selected = None;
+        self.selection.set(None);
         self.record(before);
         count
     }
@@ -260,7 +279,7 @@ impl Drawings {
     /// One delete command for every trigger (button, manager, keyboard).
     /// A locked object is never deleted without `force`.
     pub fn delete_selected(&mut self, force: bool) -> DeleteOutcome {
-        let Some(index) = self.selected.filter(|&index| index < self.items.len()) else {
+        let Some(index) = self.selected().filter(|&index| index < self.items.len()) else {
             return DeleteOutcome::NothingSelected;
         };
         if self.items[index].locked && !force {
@@ -268,19 +287,19 @@ impl Drawings {
         }
         let before = self.snapshot();
         self.items.remove(index);
-        self.selected = None;
+        self.selection.set(None);
         self.record(before);
         DeleteOutcome::Deleted
     }
 
     pub fn set_selected_locked(&mut self, locked: bool) {
-        if let Some(index) = self.selected {
+        if let Some(index) = self.selected() {
             self.set_locked_at(index, locked);
         }
     }
 
     pub fn set_selected_hidden(&mut self, hidden: bool) {
-        if let Some(index) = self.selected {
+        if let Some(index) = self.selected() {
             self.set_hidden_at(index, hidden);
         }
     }
@@ -296,11 +315,8 @@ impl Drawings {
         };
         let before = self.snapshot();
         self.items.remove(index);
-        self.selected = match self.selected {
-            Some(selected) if selected == index => None,
-            Some(selected) if selected > index => Some(selected - 1),
-            other => other,
-        };
+        self.selection
+            .set(self.selection.get().filter(|held| *held != id));
         self.record(before);
         true
     }
@@ -313,7 +329,7 @@ impl Drawings {
             baseline: self.snapshot(),
             undo: std::mem::take(&mut self.undo),
             redo: std::mem::take(&mut self.redo),
-            selected: self.selected,
+            selected: self.selected(),
         }
     }
 
@@ -331,7 +347,7 @@ impl Drawings {
         self.undo = batch.undo;
         self.redo = batch.redo;
         self.restore(batch.baseline);
-        self.selected = batch.selected;
+        self.select(batch.selected);
     }
 
     /// Remove every object an operator other than the trader placed, and
@@ -343,13 +359,12 @@ impl Drawings {
         }
         let before = self.snapshot();
         let previous = self.items.len();
-        let selected_id = self
-            .selected
-            .and_then(|index| self.items.get(index))
-            .map(|drawing| drawing.id);
         self.items.retain(|drawing| drawing.author.is_none());
-        self.selected =
-            selected_id.and_then(|id| self.items.iter().position(|drawing| drawing.id == id));
+        self.selection.set(
+            self.selection
+                .get()
+                .filter(|id| self.index_of(*id).is_some()),
+        );
         self.record(before);
         previous - self.items.len()
     }
@@ -401,16 +416,7 @@ impl Drawings {
         let before = self.snapshot();
         let drawing = self.items.remove(index);
         self.items.push(drawing);
-        // Selection follows the object, not the slot it used to occupy.
-        self.selected = self.selected.map(|selected| {
-            if selected == index {
-                self.items.len() - 1
-            } else if selected > index {
-                selected - 1
-            } else {
-                selected
-            }
-        });
+        // The headless selection holds the stable object id across reorders.
         self.record(before);
     }
 

@@ -215,7 +215,7 @@ fn pane_body(app: &QuantickApp, index: usize) -> egui::Rect {
 /// panned along time.
 fn right_edge(app: &QuantickApp) -> f32 {
     let pane = &app.active_tab().flow_pane;
-    pane.viewport.right_edge_bar(pane.slots())
+    pane.model.viewport.right_edge_bar(pane.slots())
 }
 
 /// The pane band as the last drawn frame carved it.
@@ -1258,11 +1258,8 @@ fn painted_line_with_color(output: &egui::FullOutput, color: egui::Color32) -> b
 }
 
 fn time_zoom(app: &QuantickApp) -> f32 {
-    app.active_tab()
-        .time_pane()
-        .expect("time pane")
-        .viewport
-        .px_per_bar()
+    let pane = app.active_tab().time_pane().expect("time pane");
+    pane.model.viewport.px_per_bar()
 }
 
 /// One app on `config`, opened on `feed_id`/symbol — the smallest harness
@@ -2421,7 +2418,7 @@ fn hover_bar(app: &mut QuantickApp, ctx: &egui::Context, slot: usize) {
         let chart = pane.frame.chart_area.expect("the pane reported its rect");
         let right = pane.frame.lane_divider_x.unwrap_or_else(|| chart.right());
         egui::pos2(
-            pane.viewport.x_center(slot, right, pane.slots()),
+            pane.model.viewport.x_center(slot, right, pane.slots()),
             chart.center().y,
         )
     };

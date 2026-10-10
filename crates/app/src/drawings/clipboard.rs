@@ -29,7 +29,7 @@ impl Drawings {
         copy.locked = false;
         let id = copy.id;
         self.items.push(copy);
-        self.selected = Some(self.items.len() - 1);
+        self.select(Some(self.items.len() - 1));
         self.record(before);
         id
     }

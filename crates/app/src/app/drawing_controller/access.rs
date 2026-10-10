@@ -263,7 +263,7 @@ impl DrawingAccess<'_> {
             let points = &pane.drawings.items()[index].points;
             if !points.is_empty() {
                 let mid = points.iter().map(|point| point.bar).sum::<f32>() / points.len() as f32;
-                pane.viewport.center_on_bar(mid, chart.width(), slots);
+                pane.model.viewport.center_on_bar(mid, chart.width(), slots);
             }
         }
     }

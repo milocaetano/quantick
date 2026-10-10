@@ -1,3 +1,5 @@
+mod pane_model_tests;
+
 // The `pane.rs` unit tests, moved out of the file so a session opening
 // `pane.rs` to change one gesture no longer reads 2,700 lines of tests it
 // did not ask for. They stay a child module of `crate::pane` rather than
@@ -828,7 +830,7 @@ fn a_recut_keeps_the_mark_on_its_own_instant() {
 
     // Two trades per bar: the same tape, half the bars.
     pane.spec.retain(crate::state::BarSpec::Tick(2));
-    let spec = pane.current_spec();
+    let spec = pane.spec.spec();
     pane.state.set_spec(spec);
     pane.reanchor_drawings(old_slots);
 
@@ -1110,9 +1112,9 @@ const BAR_ZERO_MS: i64 = 1_700_000_000_000;
 fn the_compass_names_the_candle_under_the_pointer() {
     let pane = pane_with_timed_bars(200);
     let (right, total) = (TEST_PLOT.right(), pane.slots());
-    let width = pane.viewport.candle_width();
+    let width = pane.model.viewport.candle_width();
     for slot in [120_usize, 199] {
-        let centre = pane.viewport.x_center(slot, right, total);
+        let centre = pane.model.viewport.x_center(slot, right, total);
         for x in [
             centre - width / 2.0 + 0.01,
             centre,
@@ -1120,7 +1122,7 @@ fn the_compass_names_the_candle_under_the_pointer() {
         ] {
             assert_eq!(
                 pane.series_read()
-                    .pointer_bar(&pane.viewport, x, right, total),
+                    .pointer_bar(&pane.model.viewport, x, right, total),
                 Some(pointer_compass::PointerBar {
                     slot,
                     open_time_unix_ms: BAR_ZERO_MS + slot as i64 * 60_000,
@@ -1141,14 +1143,14 @@ fn the_compass_names_no_time_where_there_is_no_bar() {
     let (right, total) = (TEST_PLOT.right(), pane.slots());
     assert_eq!(
         pane.series_read()
-            .pointer_bar(&pane.viewport, right + 60.0, right, total),
+            .pointer_bar(&pane.model.viewport, right + 60.0, right, total),
         None,
         "the projection margin is future the tape has not written"
     );
-    let oldest = pane.viewport.x_center(0, right, total);
+    let oldest = pane.model.viewport.x_center(0, right, total);
     assert_eq!(
         pane.series_read()
-            .pointer_bar(&pane.viewport, oldest - 60.0, right, total),
+            .pointer_bar(&pane.model.viewport, oldest - 60.0, right, total),
         None,
         "and before the first bar there is nothing either"
     );
@@ -1157,57 +1159,16 @@ fn the_compass_names_no_time_where_there_is_no_bar() {
     let divider = right - 150.0;
     assert_eq!(
         pane.series_read()
-            .pointer_bar(&pane.viewport, right - 40.0, divider, total),
+            .pointer_bar(&pane.model.viewport, right - 40.0, divider, total),
         None
     );
     let empty = pane_with_timed_bars(0);
     assert_eq!(
         empty
             .series_read()
-            .pointer_bar(&empty.viewport, 500.0, right, 0),
+            .pointer_bar(&empty.model.viewport, 500.0, right, 0),
         None,
         "and a chart with no bars at all names none"
-    );
-}
-
-/// Two surfaces that must agree: the tag a trader reads off the axis and
-/// the slot a control client reads out of the cursor scope are one answer,
-/// because they come through one owner. Written as a test rather than
-/// trusted from the diff — the two are computed in different files.
-#[test]
-fn the_axis_tag_and_the_control_cursor_name_one_bar() {
-    let mut pane = pane_with_timed_bars(200);
-    let ctx = egui::Context::default();
-    let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
-    let areas = test_areas(&pane, TEST_PLOT);
-    pane.frame.bands = crate::bands::BandGeometry {
-        auto_range: pane.frame.auto_range,
-        price_view: &pane.price_view,
-        lane_divider_x: pane.frame.lane_divider_x,
-        indicators: &pane.indicators,
-        price_label: &pane.price_band_label,
-    }
-    .bands(&areas);
-    let right = pane.frame.lane_divider_x.unwrap_or(areas.chart.right());
-    let total = pane.slots();
-    // Deliberately in the left half of a candle, the half that used to
-    // answer with its neighbour.
-    let slot = 140_usize;
-    let x = pane.viewport.x_center(slot, right, total) - pane.viewport.candle_width() / 2.0 + 0.5;
-    pane.hover_pos = Some(egui::pos2(x, areas.chart.center().y));
-    let compass = pane
-        .series_read()
-        .pointer_bar(&pane.viewport, x, right, total)
-        .expect("the pointer is on a candle");
-    let cursor = pane
-        .hit_test()
-        .control_pointer_hit()
-        .expect("and the control plane can see the same pointer");
-    assert_eq!(compass.slot, slot);
-    assert_eq!(
-        cursor.slot,
-        Some(compass.slot),
-        "the axis and the cursor scope may not name two different bars"
     );
 }
 
@@ -1350,7 +1311,7 @@ fn the_armed_crosshair_keeps_the_price_tag_to_itself() {
             let bar = if price_on || time_on {
                 pane.hover_pos.and_then(|pointer| {
                     pane.series_read().pointer_bar(
-                        &pane.viewport,
+                        &pane.model.viewport,
                         pointer.x,
                         areas.chart.right(),
                         pane.slots(),
@@ -1922,9 +1883,9 @@ fn a_double_click_on_an_overlays_line_asks_for_that_overlay() {
         .hit_test()
         .last_projection()
         .expect("a drawn projection");
-    let (start, _) = pane.viewport.visible_range(chart.width(), total);
+    let (start, _) = pane.model.viewport.visible_range(chart.width(), total);
     let on_the_line = egui::pos2(
-        pane.viewport.x_center(start + 1, right, total),
+        pane.model.viewport.x_center(start + 1, right, total),
         scale.y(50.0),
     );
 
@@ -1957,8 +1918,11 @@ fn a_double_click_on_an_overlays_line_picks_that_overlay_and_nothing_else() {
         .hit_test()
         .last_projection()
         .expect("a drawn projection");
-    let (start, _) = pane.viewport.visible_range(chart.width(), total);
-    let on_the_line = egui::pos2(pane.viewport.x_center(start, right, total), scale.y(50.0));
+    let (start, _) = pane.model.viewport.visible_range(chart.width(), total);
+    let on_the_line = egui::pos2(
+        pane.model.viewport.x_center(start, right, total),
+        scale.y(50.0),
+    );
 
     assert_eq!(
         pane.hit_test().overlay_plot_at(on_the_line),
@@ -1998,10 +1962,10 @@ fn the_pick_honours_hidden_indicators_and_nan_gaps() {
         .hit_test()
         .last_projection()
         .expect("a drawn projection");
-    let (start, _) = pane.viewport.visible_range(chart.width(), total);
+    let (start, _) = pane.model.viewport.visible_range(chart.width(), total);
     // Midway across the NaN cell: the renderer draws no segment here.
-    let gap_x = (pane.viewport.x_center(start, right, total)
-        + pane.viewport.x_center(start + 1, right, total))
+    let gap_x = (pane.model.viewport.x_center(start, right, total)
+        + pane.model.viewport.x_center(start + 1, right, total))
         / 2.0;
     assert_eq!(
         pane.hit_test()
@@ -2010,8 +1974,8 @@ fn the_pick_honours_hidden_indicators_and_nan_gaps() {
         "a gap in the data is a gap in what can be picked"
     );
 
-    let joined_x = (pane.viewport.x_center(start + 2, right, total)
-        + pane.viewport.x_center(start + 3, right, total))
+    let joined_x = (pane.model.viewport.x_center(start + 2, right, total)
+        + pane.model.viewport.x_center(start + 3, right, total))
         / 2.0;
     let on_the_line = egui::pos2(joined_x, scale.y(50.0));
     assert_eq!(pane.hit_test().overlay_plot_at(on_the_line), Some(slot));
@@ -2645,9 +2609,9 @@ fn dragging_the_time_strip_zooms_the_pane_it_belongs_to() {
     ] {
         let start = test_areas(&pane, TEST_PLOT).time_strip.center();
 
-        let before = pane.viewport.px_per_bar();
+        let before = pane.model.viewport.px_per_bar();
         drag_across(&mut pane, &ctx, TEST_PLOT, start, -120.0);
-        let squeezed = pane.viewport.px_per_bar();
+        let squeezed = pane.model.viewport.px_per_bar();
         assert!(
             squeezed < before,
             "{label}: dragging left squeezes ({squeezed} vs {before})"
@@ -2655,7 +2619,7 @@ fn dragging_the_time_strip_zooms_the_pane_it_belongs_to() {
 
         drag_across(&mut pane, &ctx, TEST_PLOT, start, 120.0);
         assert!(
-            pane.viewport.px_per_bar() > squeezed,
+            pane.model.viewport.px_per_bar() > squeezed,
             "{label}: dragging right stretches again"
         );
     }
@@ -3026,7 +2990,7 @@ fn g6_badge_output(pane: &ChartPane, band: &bands::Band, pass: DrawPass) -> egui
             band,
             band_index: 0,
             drawings: &pane.drawings,
-            viewport: &pane.viewport,
+            viewport: &pane.model.viewport,
             history_right: 400.0,
             total: 100,
             pass,
@@ -3097,7 +3061,7 @@ fn g6_characterization_all_bands_has_one_clipped_badge() {
                 band,
                 band_index: index,
                 drawings: &pane.drawings,
-                viewport: &pane.viewport,
+                viewport: &pane.model.viewport,
                 history_right: 400.0,
                 total: 100,
                 pass: DrawPass::OverCandles,

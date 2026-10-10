@@ -5,6 +5,7 @@ pub mod bundle;
 pub mod indicator_document;
 pub mod layout_commit;
 pub mod layout_document;
+pub mod pane_layout;
 pub mod session;
 pub mod workspace_commit;
 pub mod workspace_document;

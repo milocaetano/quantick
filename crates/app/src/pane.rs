@@ -59,6 +59,7 @@ mod render_registry;
 pub(crate) fn registered_layers() -> quantick_layers::LayerRegistry {
     render_registry::standard().layers()
 }
+mod menu_renderer;
 mod menus;
 mod objects_menu;
 mod pointer_hit;
@@ -119,7 +120,7 @@ use painting::{
     LANE_AXIS_FONT_PX, LANE_AXIS_GAP_PX, LANE_HANDLE_HALF_WIDTH_PX, LAST_PRICE_CHIP_TEXT,
     LAST_PRICE_DASH_PX, LAST_PRICE_GAP_PX, LAST_PRICE_LINE_ALPHA, SCROLL_ZOOM_PX, SEAM_DASH_PX,
     SEAM_GAP_PX, SEAM_LABEL_INSET_PX, SEAM_LABEL_PT, draw_dashed_vertical, draw_live_chip,
-    lane_rungs, live_chip_rect, prefix_differs,
+    lane_rungs, live_chip_rect,
 };
 pub use painting::{background_color, grid_color};
 use price_axis::PriceAxisClaims;

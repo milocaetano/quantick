@@ -59,7 +59,9 @@ fn target(app: &QuantickApp, bar: f32, price: f64) -> egui::Pos2 {
         pane.frame.chart_top + pane.frame.chart_height,
     );
     egui::pos2(
-        pane.viewport.x_at_bar_position(bar, right, pane.slots()),
+        pane.model
+            .viewport
+            .x_at_bar_position(bar, right, pane.slots()),
         scale.y(price),
     )
 }
@@ -80,7 +82,7 @@ fn profile_handle(app: &QuantickApp, index: usize) -> egui::Pos2 {
         payload: drawing.payload.as_ref(),
         anchors: &drawing.points,
         scale: &scale,
-        px_per_bar: pane.viewport.px_per_bar(),
+        px_per_bar: pane.model.viewport.px_per_bar(),
         unit: crate::drawings::ValueUnit::Price,
         primary_band: true,
         style: drawing.style,

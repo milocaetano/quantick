@@ -26,11 +26,11 @@ fn menu_frame(
             },
             |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    let (menu, view) = pane.menu_parts(chrome.capabilities, chrome.style);
+                    let (menu, model, view) = pane.menu_parts(chrome.capabilities, chrome.style);
                     let hosts = PaneMenuHosts {
                         paper: &mut *chrome.paper,
                     };
-                    intents.extend(menu.draw_layer_menu(ui, &view, hosts));
+                    intents.extend(menu.draw_layer_menu(ui, &view, model, hosts));
                 });
             },
         );
@@ -206,20 +206,22 @@ fn intents_for_a_drawing_that_is_gone_do_nothing() {
 fn a_closing_menu_commits_the_rename_in_flight_and_only_a_changed_one() {
     let (mut pane, id) = pane_with_rectangle();
 
-    pane.context_menu.drawing = Some(id);
-    pane.context_menu.rename = String::new();
+    pane.model.menu.drawing = Some(id);
+    pane.model.menu.rename = String::new();
     assert!(
-        pane.context_menu.close(&pane.drawings).is_none(),
+        pane.context_menu
+            .close(&mut pane.model, &pane.drawings)
+            .is_empty(),
         "an untouched name asks for nothing"
     );
     assert!(
-        pane.context_menu.drawing.is_none(),
+        pane.model.menu.drawing.is_none(),
         "closing lets go of the drawing"
     );
 
-    pane.context_menu.drawing = Some(id);
-    pane.context_menu.rename = "vwap anchor".to_owned();
-    let commit = pane.context_menu.close(&pane.drawings);
+    pane.model.menu.drawing = Some(id);
+    pane.model.menu.rename = "vwap anchor".to_owned();
+    let commit = pane.context_menu.close(&mut pane.model, &pane.drawings);
     apply(&mut pane, commit.into_iter().collect());
     assert_eq!(
         pane.drawings.items()[0].name.as_deref(),
@@ -231,8 +233,8 @@ fn a_closing_menu_commits_the_rename_in_flight_and_only_a_changed_one() {
 fn the_menus_delete_lets_go_of_the_drawing_and_its_half_typed_name() {
     let ctx = egui::Context::default();
     let (mut pane, id) = pane_with_rectangle();
-    pane.context_menu.drawing = Some(id);
-    pane.context_menu.rename = "half typed".to_owned();
+    pane.model.menu.drawing = Some(id);
+    pane.model.menu.rename = "half typed".to_owned();
 
     let intents = click_entry(&mut pane, &ctx, "Delete");
     assert!(matches!(
@@ -241,22 +243,26 @@ fn the_menus_delete_lets_go_of_the_drawing_and_its_half_typed_name() {
     ));
     apply(&mut pane, intents);
     assert!(pane.drawings.items().is_empty());
-    assert_eq!(pane.context_menu.drawing, None);
-    assert!(pane.context_menu.rename.is_empty());
-    assert!(pane.context_menu.close(&pane.drawings).is_none());
+    assert_eq!(pane.model.menu.drawing, None);
+    assert!(pane.model.menu.rename.is_empty());
+    assert!(
+        pane.context_menu
+            .close(&mut pane.model, &pane.drawings)
+            .is_empty()
+    );
 }
 
 #[test]
 fn a_drawing_deleted_under_the_open_menu_drops_its_section_and_name() {
     let ctx = egui::Context::default();
     let (mut pane, id) = pane_with_rectangle();
-    pane.context_menu.drawing = Some(id);
-    pane.context_menu.rename = "half typed".to_owned();
+    pane.model.menu.drawing = Some(id);
+    pane.model.menu.rename = "half typed".to_owned();
     assert!(pane.drawings.remove_by_id(id));
 
     assert!(menu_frame(&mut pane, &ctx, Vec::new()).is_empty());
-    assert_eq!(pane.context_menu.drawing, None);
-    assert!(pane.context_menu.rename.is_empty());
+    assert_eq!(pane.model.menu.drawing, None);
+    assert!(pane.model.menu.rename.is_empty());
     assert!(
         pane.context_menu.menu_rects.is_empty(),
         "no section for a ghost"
@@ -267,7 +273,7 @@ fn a_drawing_deleted_under_the_open_menu_drops_its_section_and_name() {
 fn the_strategy_seat_answers_each_click_with_its_intent() {
     let ctx = egui::Context::default();
     let (mut pane, id) = pane_with_rectangle();
-    pane.context_menu.drawing = Some(id);
+    pane.model.menu.drawing = Some(id);
     arm_strategy(&mut pane, id);
 
     let disarm = click_entry(&mut pane, &ctx, "Disarm");
@@ -313,8 +319,8 @@ fn strategy_intents_leave_an_unswept_strategy_alone_once_its_drawing_is_gone() {
 fn an_unchanged_rename_blur_records_nothing() {
     let ctx = egui::Context::default();
     let (mut pane, id) = pane_with_rectangle();
-    pane.context_menu.drawing = Some(id);
-    pane.context_menu.rename = String::new();
+    pane.model.menu.drawing = Some(id);
+    pane.model.menu.rename = String::new();
     // Focus the field, then click away from it: the blur of an untouched
     // name asks for no rename, so no undo step is recorded.
     let _ = click_entry(&mut pane, &ctx, "Rename");
@@ -339,7 +345,7 @@ fn an_unchanged_rename_blur_records_nothing() {
 
     // The control: the same focus-and-blur with a changed name does rename,
     // so the silence above is the guard's, not a blur that never happened.
-    pane.context_menu.rename = "new name".to_owned();
+    pane.model.menu.rename = "new name".to_owned();
     let _ = click_entry(&mut pane, &ctx, "Rename");
     let blur = menu_frame(
         &mut pane,
@@ -396,7 +402,7 @@ fn a_place_arms_the_pointer_and_opens_the_caret_as_before() {
     with_chrome(Tool::Crosshair, |chrome| {
         pane.apply_menu_intent(
             PaneMenuIntent::Place {
-                tool: tool("text"),
+                tool: tool("text").id(),
                 point: ChartPoint::at(3.0, 100.0),
             },
             chrome,
@@ -415,10 +421,13 @@ fn chrome_intents_raise_the_hosts_flags() {
         pane.apply_menu_intent(PaneMenuIntent::OpenFootprintSettings, chrome);
         assert!(chrome.layers.open_footprint_settings);
 
-        pane.apply_menu_intent(PaneMenuIntent::ToggleIndicatorHidden(slot), chrome);
+        pane.apply_menu_intent(PaneMenuIntent::ToggleIndicatorHidden(slot.0), chrome);
         assert!(chrome.layers.indicators_changed);
 
-        pane.apply_menu_intent(PaneMenuIntent::ObjectsAsk(Box::default()), chrome);
+        pane.apply_menu_intent(
+            PaneMenuIntent::ObjectsAsk(quantick_chart_interaction::pane::ObjectAction::DeleteAll),
+            chrome,
+        );
         assert_eq!(
             chrome.drawing_chrome.menu_target(),
             Some(pane.id),
@@ -448,4 +457,161 @@ fn strategy_intents_drive_the_instance_on_the_drawing() {
 
     apply(&mut pane, vec![PaneMenuIntent::StrategyRemove(id)]);
     assert!(strategy_state(&pane, id).is_none());
+}
+
+#[test]
+fn shared_model_selection_tracks_copy_reorder_remove_and_undo_by_identity() {
+    let (mut pane, original) = pane_with_rectangle();
+    apply(&mut pane, vec![PaneMenuIntent::SelectDrawing(original)]);
+    assert_eq!(pane.model.selection.get(), Some(original));
+    let copy = pane.drawings.duplicate_selected(2.0).expect("copy").copy;
+    assert_ne!(copy, original);
+    assert_eq!(pane.model.selection.get(), Some(copy));
+    pane.drawings.bring_to_front(0);
+    assert_eq!(pane.model.selection.get(), Some(copy));
+    assert_eq!(pane.drawings.selected_id(), Some(copy));
+    assert_eq!(pane.drawings.selected(), pane.drawings.index_of(copy));
+    assert!(pane.drawings.remove_by_id(copy));
+    assert_eq!(pane.model.selection.get(), None);
+    assert!(pane.drawings.undo());
+    assert!(pane.drawings.index_of(copy).is_some());
+    assert_eq!(
+        pane.model.selection.get(),
+        None,
+        "undo restores objects, not a discarded selection"
+    );
+    apply(&mut pane, vec![PaneMenuIntent::SelectDrawing(copy)]);
+    assert!(pane.drawings.undo()); // undo reorder: the surviving identity stays selected
+    assert_eq!(pane.model.selection.get(), Some(copy));
+    assert_eq!(pane.drawings.selected(), pane.drawings.index_of(copy));
+    assert!(pane.drawings.undo()); // undo duplicate: the selected identity leaves
+    assert_eq!(pane.model.selection.get(), None);
+    assert!(pane.drawings.index_of(original).is_some());
+    assert!(pane.drawings.redo());
+    assert_eq!(pane.model.selection.get(), None);
+}
+
+fn pointer_events(pos: egui::Pos2, pressed: bool) -> Vec<egui::Event> {
+    vec![
+        egui::Event::PointerMoved(pos),
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        },
+    ]
+}
+fn traced(pane: &ChartPane, label: &str) -> egui::Pos2 {
+    pane.context_menu
+        .menu_rects
+        .iter()
+        .find(|(name, _)| *name == label)
+        .unwrap_or_else(|| panic!("{label} is painted"))
+        .1
+        .center()
+}
+#[test]
+fn native_tape_menu_real_widgets_emit_layer_preset_and_custom_duration_intents() {
+    let ctx = egui::Context::default();
+    let mut pane = ChartPane::flow(1, BarSpec::Tick(50), "TESTUSDT".into());
+    pane.orderflow.as_mut().unwrap().edit_config(|config| {
+        config.live_lane.native_tape = true;
+        config.live_lane.show_aggressions = true;
+        config.volume_dots.enabled = true;
+    });
+    assert!(
+        pane.orderflow
+            .as_ref()
+            .unwrap()
+            .cached_config()
+            .native_tape()
+    );
+    let _ = quantick_chart_interaction::pane::update(
+        &mut pane.model,
+        quantick_chart_interaction::pane::Intent::OpenMenu(
+            quantick_chart_interaction::pane::ContextPress {
+                price: 123.0,
+                on_tape: true,
+                drawing: None,
+                places: vec![],
+            },
+        ),
+    );
+    pane.frame.lane_reference_ms = Some(20_000);
+    pane.orderflow
+        .as_mut()
+        .unwrap()
+        .set_live_lane_window(LaneWindow::Fixed { ms: 60_000 });
+    let _ = menu_frame(&mut pane, &ctx, vec![]);
+    let layer = ChartLayer::TapeChart;
+    let pos = pane
+        .context_menu
+        .layer_menu_rects
+        .iter()
+        .find(|(l, _)| *l == layer)
+        .expect("tape switch")
+        .1
+        .center();
+    let _ = menu_frame(&mut pane, &ctx, pointer_events(pos, true));
+    let intents = menu_frame(&mut pane, &ctx, pointer_events(pos, false));
+    assert!(intents.iter().any(
+        |i| matches!(i, PaneMenuIntent::SetLayerVisible { layer: l, visible: false } if *l == layer)
+    ));
+    // Keep the tape present while exercising its window controls.
+    let _ = click_entry(&mut pane, &ctx, "Tape window menu");
+    let _ = menu_frame(&mut pane, &ctx, vec![]);
+    let preset = traced(&pane, "Tape window"); // first option follows the bars
+    let _ = menu_frame(&mut pane, &ctx, pointer_events(preset, true));
+    let intents = menu_frame(&mut pane, &ctx, pointer_events(preset, false));
+    assert_eq!(
+        intents,
+        vec![PaneMenuIntent::SetLaneWindow(LaneWindow::default())]
+    );
+    apply(&mut pane, intents);
+    assert_eq!(
+        pane.orderflow.as_ref().unwrap().live_lane_window(),
+        LaneWindow::default()
+    );
+    let _ = click_entry(&mut pane, &ctx, "Tape window menu");
+    let _ = menu_frame(&mut pane, &ctx, vec![]);
+    let preset = pane
+        .context_menu
+        .menu_rects
+        .iter()
+        .filter(|(label, _)| *label == "Tape window")
+        .nth(1)
+        .expect("15 s preset")
+        .1
+        .center();
+    let _ = menu_frame(&mut pane, &ctx, pointer_events(preset, true));
+    let intents = menu_frame(&mut pane, &ctx, pointer_events(preset, false));
+    assert_eq!(
+        intents,
+        vec![PaneMenuIntent::SetLaneWindow(LaneWindow::Fixed {
+            ms: 15_000
+        })]
+    );
+    apply(&mut pane, intents);
+    let _ = click_entry(&mut pane, &ctx, "Tape window menu");
+    let _ = menu_frame(&mut pane, &ctx, vec![]);
+    let custom = traced(&pane, "Custom duration");
+    let _ = menu_frame(&mut pane, &ctx, pointer_events(custom, true));
+    let intents = menu_frame(
+        &mut pane,
+        &ctx,
+        vec![egui::Event::PointerMoved(custom + egui::vec2(7.0, 0.0))],
+    );
+    assert!(
+        matches!(intents.as_slice(), [PaneMenuIntent::SetLaneWindow(LaneWindow::Fixed { ms })] if *ms > 15_000)
+    );
+    apply(&mut pane, intents);
+    let _ = menu_frame(
+        &mut pane,
+        &ctx,
+        pointer_events(custom + egui::vec2(7.0, 0.0), false),
+    );
+    assert!(
+        matches!(pane.orderflow.as_ref().unwrap().live_lane_window(), LaneWindow::Fixed { ms } if ms > 15_000)
+    );
 }

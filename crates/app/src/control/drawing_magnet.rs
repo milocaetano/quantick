@@ -3,6 +3,7 @@
 pub(crate) use quantick_control_schema::drawing_magnet::*;
 
 use crate::app::ToolRailPort;
+use quantick_control_handlers::dock::ActionDock;
 use std::collections::BTreeSet;
 
 use quantick_control::{

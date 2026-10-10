@@ -3000,6 +3000,10 @@ dependencies = [
 [[package]]
 name = "quantick-chart-interaction"
 version = "0.1.0"
+dependencies = [
+ "quantick-layers",
+ "quantick-orderflow",
+]
 
 [[package]]
 name = "quantick-civil"

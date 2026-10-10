@@ -95,12 +95,17 @@ fn dragging_the_candles_pans_them_and_the_shared_axis_but_never_the_tapes_time()
     let window = app.active_tab().tape().live_lane_window();
     let start = egui::pos2((chart.left() + divider) / 2.0, chart.center().y);
     let end = start + egui::vec2(180.0, 90.0);
-    let edge = app.active_tab().flow_pane.viewport.right_edge_bar(total);
+    let edge = app
+        .active_tab()
+        .flow_pane
+        .model
+        .viewport
+        .right_edge_bar(total);
     drag_sized(&mut app, &ctx, TEST_WINDOW, start, end);
     run_frame(&mut app, &ctx);
     let pane = &app.active_tab().flow_pane;
     assert!(
-        pane.viewport.right_edge_bar(total) < edge,
+        pane.model.viewport.right_edge_bar(total) < edge,
         "the candles moved back through history"
     );
     assert!(

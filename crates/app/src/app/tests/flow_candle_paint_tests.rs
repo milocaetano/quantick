@@ -59,7 +59,7 @@ fn flow_keeps_configured_fills_indicator_alpha_and_one_foreground_candle_pass() 
     app.style.candles.forming_opacity = 0.5;
     settled_frame(&mut app, &ctx);
     let pane = &mut app.active_tab_mut().flow_pane;
-    pane.viewport.set_px_per_bar(45.0);
+    pane.model.viewport.set_px_per_bar(45.0);
     assert!(pane.price_view.set_manual_range(99.0, 103.0));
     assert_eq!(pane.state.bars().len(), 4);
     assert!(pane.state.partial().is_some());
@@ -356,7 +356,7 @@ fn assert_footprint_layering(
     let (_, dressed) = crate::footprint_render::candle_dressing(
         true,
         crate::footprint_config::CandleTreatment::Fade,
-        app.active_tab().flow_pane.viewport.candle_width(),
+        app.active_tab().flow_pane.model.viewport.candle_width(),
         app.style.candles,
     );
     let dressed = dressed.unwrap_or(app.style.candles);
