@@ -22,7 +22,7 @@ use quantick_control::{
         CONTROL_REQUEST_TIMEOUT_MS, CONTROL_RUNTIME_ID_BYTES, CONTROL_UI_BUDGET_US,
         CONTROL_UI_MAX_REQUESTS_PER_FRAME,
     },
-    wire::{ActorContext, ActorKind, RequestEnvelope},
+    wire::{ActorContext, ActorKind, RequestEnvelope, WireU64},
 };
 
 use crate::{app::ControlWindow, metrics};
@@ -38,7 +38,7 @@ use super::{
     },
     evidence,
     evidence::{EvidenceStore, RawScreenshot, SessionIdentity},
-    journal::{EventJournal, JournalSignal},
+    journal::{EventJournal, JournalSignal, NewEvent},
     registry::ProjectionRegistry,
     types::known_error,
 };
@@ -583,8 +583,9 @@ impl ControlAccess {
         Err(limiter.retry_after())
     }
 
-    pub fn journal_mut(&mut self) -> &mut EventJournal {
-        &mut self.journal
+    /// Journal one event at the moment it is recorded, by the window's clock.
+    pub(crate) fn record_event(&mut self, event: NewEvent) -> WireU64 {
+        self.journal.record(event, metrics::wall_clock_ms())
     }
 
     /// One request on the application thread: the authority checks the

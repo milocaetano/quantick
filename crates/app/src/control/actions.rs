@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 
 use quantick_control::{
     error::ControlError,
-    id::{CapabilityId, CostClassId, EventKind, ModuleId, RiskFlagId},
+    id::{CapabilityId, CostClassId, ModuleId, RiskFlagId},
     limits::CONTROL_REASON_MAX_BYTES,
     registry::{
         Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use serde_json::{Value, json};
 
-use crate::{app::ControlWindow, metrics};
+use crate::app::ControlWindow;
 
 /// One action's handler over this application: it mutates the window and
 /// journals through its control access.
@@ -257,26 +257,19 @@ fn create_mark<P: ?Sized>(
         input.target_source
     }
     .as_str();
-    let event_actor = EventActor {
-        kind: actor.actor_kind,
-        client_name: actor.client_name.clone(),
-    };
-    let recorded_at_unix_ms = metrics::wall_clock_ms();
+    let event_actor = EventActor::from(actor);
     let payload = json!({
         "target": target,
         "target_source": target_source,
         "note": input.note,
         "actor": event_actor,
     });
-    let sequence = access.journal_mut().record(
-        NewEvent {
-            module_id: ModuleId::new(ATTENTION_MODULE_ID).expect("static module ID is valid"),
-            kind: EventKind::new(MARK_EVENT_KIND).expect("static event kind is valid"),
-            actor: Some(event_actor.clone()),
-            payload,
-        },
-        recorded_at_unix_ms,
-    );
+    let sequence = access.record_event(NewEvent::by(
+        ATTENTION_MODULE_ID,
+        MARK_EVENT_KIND,
+        actor,
+        payload,
+    ));
     let result = MarkResult {
         sequence,
         target,

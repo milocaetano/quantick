@@ -13,8 +13,6 @@ use std::time::Duration;
 use quantick_control::wire::ActorContext;
 use quantick_control_handlers::notify::NotifyAccess;
 
-use crate::metrics;
-
 use super::{gateway::ControlAccess, journal::NewEvent};
 
 impl NotifyAccess for ControlAccess {
@@ -24,6 +22,6 @@ impl NotifyAccess for ControlAccess {
 
     /// Journaled at the moment it is recorded, by the window's clock.
     fn record_event(&mut self, event: NewEvent) {
-        self.journal_mut().record(event, metrics::wall_clock_ms());
+        ControlAccess::record_event(self, event);
     }
 }

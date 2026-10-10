@@ -12,7 +12,6 @@
 use crate::app::{TabsMutPort, TabsPort};
 use quantick_control::{
     error::{ControlError, codes},
-    id::{EventKind, ModuleId},
     registry::RegistryError,
     wire::{ActorContext, ActorKind, WireU64},
 };
@@ -21,14 +20,13 @@ use serde_json::{Value, json};
 
 use crate::{
     drawings::{self, ChartPoint, DrawingAuthor, DrawingBand},
-    metrics,
     pane::ChartPane,
 };
 
 use super::{
     actions::ActionRegistry,
     gateway::ControlAccess,
-    journal::{EventActor, NewEvent},
+    journal::NewEvent,
     types::{
         PaneSideDto, acting_author, actor_kind_name, canonical_f64, chart_resolved_anchor,
         known_error, wire_usize,
@@ -558,21 +556,10 @@ fn journal_annotation<T: Serialize>(
     kind: &str,
     payload: &T,
 ) -> Result<(), ControlError> {
-    let event_actor = EventActor {
-        kind: actor.actor_kind,
-        client_name: actor.client_name.clone(),
-    };
     let payload = serde_json::to_value(payload)
         .map_err(|error| ControlError::invalid_request(format!("annotation event: {error}")))?;
-    access.journal_mut().record(
-        NewEvent {
-            module_id: ModuleId::new(ANNOTATE_MODULE_ID).expect("static module ID is valid"),
-            kind: EventKind::new(kind).expect("static event kind is valid"),
-            actor: Some(event_actor),
-            payload: json!({ "annotation": payload }),
-        },
-        metrics::wall_clock_ms(),
-    );
+    let payload = json!({ "annotation": payload });
+    access.record_event(NewEvent::by(ANNOTATE_MODULE_ID, kind, actor, payload));
     Ok(())
 }
 

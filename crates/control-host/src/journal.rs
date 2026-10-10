@@ -30,7 +30,7 @@ use quantick_control::{
     limits::{
         CONTROL_EVENT_JOURNAL_CAPACITY, CONTROL_EVENT_JOURNAL_MAX_BYTES, CONTROL_EVENT_MAX_BYTES,
     },
-    wire::{ActorKind, WireU64},
+    wire::{ActorContext, ActorKind, WireU64},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -45,6 +45,15 @@ const OVERSIZED_PAYLOAD_MARKER: &str = "payload_exceeds_event_limit";
 pub struct EventActor {
     pub kind: ActorKind,
     pub client_name: String,
+}
+
+impl From<&ActorContext> for EventActor {
+    fn from(actor: &ActorContext) -> Self {
+        Self {
+            kind: actor.actor_kind,
+            client_name: actor.client_name.clone(),
+        }
+    }
 }
 
 /// One semantic event as a client reads it.
@@ -69,6 +78,18 @@ pub struct NewEvent {
     pub kind: EventKind,
     pub actor: Option<EventActor>,
     pub payload: Value,
+}
+
+impl NewEvent {
+    /// One event `actor` caused: a `kind` in `module_id`, both static names.
+    pub fn by(module_id: &str, kind: &str, actor: &ActorContext, payload: Value) -> Self {
+        Self {
+            module_id: ModuleId::new(module_id).expect("static module ID is valid"),
+            kind: EventKind::new(kind).expect("static event kind is valid"),
+            actor: Some(actor.into()),
+            payload,
+        }
+    }
 }
 
 /// The journal's position as gateway workers may read it without a lock.

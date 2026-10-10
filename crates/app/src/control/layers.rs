@@ -5,7 +5,7 @@ pub(crate) use quantick_control_schema::layers::*;
 use super::{
     actions::ActionRegistry,
     gateway::ControlAccess,
-    journal::{EventActor, NewEvent},
+    journal::NewEvent,
     layout::{self, TabTarget},
     registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
 };
@@ -15,7 +15,7 @@ use crate::pane::ChartPane;
 
 use quantick_control::{
     error::{ControlError, codes},
-    id::{ErrorCode, EventKind, ModuleId, SnapshotScopeId},
+    id::{ErrorCode, ModuleId, SnapshotScopeId},
     registry::{ModuleDescriptor, RegistryError},
     schema::generated_schema,
     wire::{ActorContext, WireU64},
@@ -159,17 +159,7 @@ fn set_visibility<P: TabsPort + ChromePort + LayersPort + ?Sized>(
     .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     // Every admitted application, including a no-op, has a bounded readback.
     // The idempotency host replays keyed answers without reaching this point.
-    access.journal_mut().record(
-        NewEvent {
-            module_id: ModuleId::new(MODULE_ID).expect("static module ID"),
-            kind: EventKind::new(EVENT_KIND).expect("static event kind"),
-            actor: Some(EventActor {
-                kind: actor.actor_kind,
-                client_name: actor.client_name.clone(),
-            }),
-            payload: serde_json::json!({ "connection_id": actor.connection_id, "request_id": actor.request_id, "result": result }),
-        },
-        crate::metrics::wall_clock_ms(),
-    );
+    let payload = serde_json::json!({ "connection_id": actor.connection_id, "request_id": actor.request_id, "result": result });
+    access.record_event(NewEvent::by(MODULE_ID, EVENT_KIND, actor, payload));
     Ok(result)
 }

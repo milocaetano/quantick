@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 use quantick_control::{
     error::ControlError,
     id::{
-        CapabilityId, ConfirmationClassId, CostClassId, EffectId, EventKind, ModuleId,
-        PermissionId, RiskFlagId,
+        CapabilityId, ConfirmationClassId, CostClassId, EffectId, ModuleId, PermissionId,
+        RiskFlagId,
     },
     registry::{
         Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
@@ -27,7 +27,7 @@ use super::{
     actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
     contract::{COCKPIT_EFFECT_ID, COCKPIT_LAYOUT_PERMISSION_ID, COCKPIT_PERMISSION_ID},
     gateway::ControlAccess,
-    journal::{EventActor, NewEvent},
+    journal::NewEvent,
     script::SCRIPT_MODULE_ID,
 };
 
@@ -97,17 +97,12 @@ fn set<P: LayoutPort + ?Sized>(
         slot_id: input.slot_id,
         enabled: input.enabled,
     };
-    access.journal_mut().record(
-        NewEvent {
-            module_id: ModuleId::new(SCRIPT_MODULE_ID).expect("static module ID is valid"),
-            kind: EventKind::new(INDICATOR_GUIDE_EVENT_KIND).expect("static event kind is valid"),
-            actor: Some(EventActor {
-                kind: actor.actor_kind,
-                client_name: actor.client_name.clone(),
-            }),
-            payload: serde_json::json!({ "indicator_guide": result }),
-        },
-        crate::metrics::wall_clock_ms(),
-    );
+    let payload = serde_json::json!({ "indicator_guide": result });
+    access.record_event(NewEvent::by(
+        SCRIPT_MODULE_ID,
+        INDICATOR_GUIDE_EVENT_KIND,
+        actor,
+        payload,
+    ));
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
