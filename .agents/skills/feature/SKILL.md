@@ -1,6 +1,6 @@
 ---
 name: feature
-description: Coordinate complex features through GitHub issues and parallel implement workers with minimal context.
+description: Split a large feature into a few implement-sized child issues, run fresh workers on them and judge the combined result.
 ---
 
 Follow the [canonical workflow](../../../.claude/skills/feature/SKILL.md) with
