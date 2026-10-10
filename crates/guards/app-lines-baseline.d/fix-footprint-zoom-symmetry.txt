@@ -1,0 +1,17 @@
+# fix/footprint-zoom-symmetry: the footprint panel's Detail section gains two
+# sliders (where summary numbers start, where the full ladder starts), and
+# the layer passes the two configured widths into the level resolution. The
+# decision itself (strict width, per-style entry width) lives in
+# quantick-chart (footprint_lod) and the persisted values in quantick-stores.
+# Two more: the Compact slider's range stops at Detailed and lowering
+# Detailed pulls Compact down (the ordering itself lives in quantick-stores).
+# Three more: the Compact slider edits a copy of the effective entry and
+# writes the store only when the trader moves it, so a transient Detailed
+# value never overwrites it (the ordering is quantick-stores'
+# effective_compact_from_px).
+crates/app +34
+!budget +34
+# Carried, not authored here: #650 (8fdf75a3) merged 4 unsigned app lines
+# and left main over its ceiling; signed so this branch's CI can go green.
+crates/app +4
+!budget +4

@@ -344,6 +344,16 @@ pub struct FootprintConfig {
     /// still fits the digits it draws, and past the high end a trader may as
     /// well switch the layer off.
     pub detail_scale: f32,
+    /// The candle width, in pixels, at which Compact (one summary number per
+    /// row) starts — zooming in it appears there, zooming out it leaves
+    /// there. Measured at a `detail_scale` of 1; the scale stretches it like
+    /// every other floor. Clamped to [`COMPACT_FROM_PX_RANGE`].
+    pub compact_from_px: f32,
+    /// The candle width, in pixels, at which the ladder's Detailed starts, in
+    /// both zoom directions. Styles that write more columns keep their
+    /// typographic ratio to it, so one slider moves them all. Clamped to
+    /// [`DETAILED_FROM_PX_RANGE`].
+    pub detailed_from_px: f32,
     /// The POC line per bar.
     pub show_poc: bool,
     /// The aggression ratio badges at a bar's extremes (Detailed level only).
@@ -380,6 +390,8 @@ impl Default for FootprintConfig {
             stacked_count: 3,
             profile_row_px: 4.0,
             detail_scale: 1.0,
+            compact_from_px: quantick_chart::footprint_lod::COMPACT_FROM_PX,
+            detailed_from_px: quantick_chart::footprint_lod::DETAILED_FROM_PX,
             show_poc: true,
             extreme_ratio_badge: true,
             badge_min_ratio: Decimal::TWO,
@@ -388,6 +400,53 @@ impl Default for FootprintConfig {
             cluster_show_total: true,
             cluster_bevel: true,
         }
+    }
+}
+
+impl FootprintConfig {
+    /// Where Compact starts, in the floors' units (candle width over
+    /// `detail_scale`): [`Self::effective_compact_from_px`], capped at the
+    /// deepest zoom. The level and the legend's hint both read it.
+    #[must_use]
+    pub fn compact_entry_width(&self) -> f32 {
+        quantick_chart::footprint_lod::compact_entry_width(
+            self.effective_compact_from_px(),
+            self.detailed_from_px,
+            self.detail_scale,
+        )
+    }
+
+    /// The bounds `compact_from_px` may take: [`COMPACT_FROM_PX_RANGE`] cut at
+    /// `detailed_from_px`, because the summary numbers come before the full
+    /// ladder. The settings slider offers exactly this range.
+    #[must_use]
+    pub fn compact_from_px_range(&self) -> std::ops::RangeInclusive<f32> {
+        let start = *COMPACT_FROM_PX_RANGE.start();
+        let end = COMPACT_FROM_PX_RANGE.end().min(self.detailed_from_px);
+        start..=end.max(start)
+    }
+
+    /// The Compact entry the chart uses: `compact_from_px` as the trader set
+    /// it, ordered under `detailed_from_px` - the summary numbers come before
+    /// the full ladder. The one ordering source: the chart, the settings
+    /// slider and the snapshot all read this, while the store and the saved
+    /// file keep the trader's own value, so a Detailed edit passing below it
+    /// on the way (typing "100" goes through "1") never loses it.
+    #[must_use]
+    pub fn effective_compact_from_px(&self) -> f32 {
+        let range = self.compact_from_px_range();
+        self.compact_from_px.clamp(*range.start(), *range.end())
+    }
+
+    /// The candle width, in pixels on screen, by which a fading candle body
+    /// is gone: the ladder's configured Detailed entry, stretched by
+    /// `detail_scale` like the level itself, so the body finishes fading
+    /// where the numbers arrive.
+    #[must_use]
+    pub fn body_fade_end_px(&self) -> f32 {
+        use quantick_chart::footprint_lod::{DETAILED_MIN_WIDTH, detailed_entry_width};
+        let scale = self.detail_scale.max(1e-3);
+        detailed_entry_width(DETAILED_MIN_WIDTH, self.detailed_from_px, scale) * scale
     }
 }
 
@@ -404,6 +463,20 @@ pub const PROFILE_ROW_PX_RANGE: std::ops::RangeInclusive<f32> = 2.0..=10.0;
 /// than a smear. The ceiling is generous: waiting longer for detail costs
 /// nothing but zoom.
 pub const DETAIL_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.8..=2.0;
+
+/// The bounds [`FootprintConfig::compact_from_px`] is clamped to. The low end
+/// sits under the one-number floor (33 px), for a trader who accepts digits
+/// touching the next candle; past the high end numbers effectively never
+/// come.
+pub const COMPACT_FROM_PX_RANGE: std::ops::RangeInclusive<f32> = 24.0..=160.0;
+
+/// The bounds [`FootprintConfig::detailed_from_px`] is clamped to. The low
+/// end is the ladder's two-number floor (~68 px) rounded up to a whole pixel,
+/// so the slider's one-pixel steps land on whole pixels: unlike the summary
+/// number, the full ladder is never offered at a width its text does not fit,
+/// so every style's entry stays at or above its own floor.
+pub const DETAILED_FROM_PX_RANGE: std::ops::RangeInclusive<f32> =
+    quantick_chart::footprint_lod::DETAILED_MIN_WIDTH.ceil()..=240.0;
 
 /// The file's shape, and the canonical serde form of a config: the
 /// hand-written preset, each saved named preset and the settings file all
@@ -424,6 +497,10 @@ pub struct FootprintFile {
     pub profile_row_px: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail_scale: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compact_from_px: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detailed_from_px: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub show_poc: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -451,6 +528,8 @@ pub fn to_file(config: &FootprintConfig) -> FootprintFile {
         stacked_count: Some(config.stacked_count),
         profile_row_px: Some(f64::from(config.profile_row_px)),
         detail_scale: Some(f64::from(config.detail_scale)),
+        compact_from_px: Some(f64::from(config.compact_from_px)),
+        detailed_from_px: Some(f64::from(config.detailed_from_px)),
         show_poc: Some(config.show_poc),
         extreme_ratio_badge: Some(config.extreme_ratio_badge),
         badge_min_ratio: config.badge_min_ratio.to_f64(),
@@ -580,7 +659,11 @@ pub fn load_preset(path: &Path) -> FootprintConfig {
 /// stack) rather than letting them through to draw nonsense.
 pub fn resolve(file: FootprintFile) -> FootprintConfig {
     let defaults = FootprintConfig::default();
-    FootprintConfig {
+    let detailed_from_px = clamped_px(file.detailed_from_px, &DETAILED_FROM_PX_RANGE)
+        .unwrap_or(defaults.detailed_from_px);
+    let compact_from_px = clamped_px(file.compact_from_px, &COMPACT_FROM_PX_RANGE)
+        .unwrap_or(defaults.compact_from_px);
+    let config = FootprintConfig {
         // An unknown style token (a file from a newer build) keeps the
         // default rather than failing the whole config.
         style: file
@@ -613,6 +696,8 @@ pub fn resolve(file: FootprintFile) -> FootprintConfig {
             })
             .filter(|scale| scale.is_finite())
             .unwrap_or(defaults.detail_scale),
+        compact_from_px,
+        detailed_from_px,
         show_poc: file.show_poc.unwrap_or(defaults.show_poc),
         extreme_ratio_badge: file
             .extreme_ratio_badge
@@ -628,13 +713,118 @@ pub fn resolve(file: FootprintFile) -> FootprintConfig {
             .cluster_show_total
             .unwrap_or(defaults.cluster_show_total),
         cluster_bevel: file.cluster_bevel.unwrap_or(defaults.cluster_bevel),
-    }
+    };
+    // A hand-edit that puts Compact past Detailed keeps its value; the
+    // chart answers it at Detailed's width (`effective_compact_from_px`).
+    config
+}
+
+/// A pixel width from the file, clamped to `range`; `None` when absent or
+/// not a number, so the default stands.
+fn clamped_px(value: Option<f64>, range: &std::ops::RangeInclusive<f32>) -> Option<f32> {
+    value
+        .map(|px| (px as f32).clamp(*range.start(), *range.end()))
+        .filter(|px| px.is_finite())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// The two level-entry widths default to where zooming in used to gain
+    /// each level, and a hand-edit outside their bounds is clamped back.
+    #[test]
+    fn level_entry_widths_default_to_the_old_zoom_in_points_and_clamp() {
+        let defaults = FootprintConfig::default();
+        let old_entry = |floor: f32| floor * quantick_chart::footprint_lod::LEVEL_ENTRY_MARGIN;
+        assert_eq!(
+            defaults.compact_from_px,
+            old_entry(quantick_chart::footprint_lod::COMPACT_MIN_WIDTH)
+        );
+        assert_eq!(
+            defaults.detailed_from_px,
+            old_entry(quantick_chart::footprint_lod::DETAILED_MIN_WIDTH)
+        );
+        let config =
+            resolve(toml::from_str("compact_from_px = 1.0\ndetailed_from_px = 9000.0").unwrap());
+        assert_eq!(config.compact_from_px, *COMPACT_FROM_PX_RANGE.start());
+        assert_eq!(config.detailed_from_px, *DETAILED_FROM_PX_RANGE.end());
+        let config = resolve(toml::from_str("compact_from_px = 50.0").unwrap());
+        assert_eq!(config.compact_from_px, 50.0);
+        assert_eq!(config.detailed_from_px, defaults.detailed_from_px);
+        // Compact never starts past Detailed.
+        let config =
+            resolve(toml::from_str("compact_from_px = 120.0\ndetailed_from_px = 90.0").unwrap());
+        assert_eq!(config.compact_from_px, 120.0);
+        assert_eq!(config.effective_compact_from_px(), 90.0);
+        assert_eq!(config.detailed_from_px, 90.0);
+    }
+
+    /// The settings slider, the chart and the snapshot read one Compact
+    /// entry: the slider's range stops at Detailed, a Detailed below Compact
+    /// orders the entry the chart uses under it, and the stored value - what
+    /// the saved file keeps - is the trader's own, so raising Detailed again
+    /// restores it.
+    #[test]
+    fn compact_entry_stays_under_detailed_in_the_slider_and_the_store() {
+        let mut config = FootprintConfig {
+            compact_from_px: 100.0,
+            detailed_from_px: 150.0,
+            ..FootprintConfig::default()
+        };
+        assert_eq!(*config.compact_from_px_range().end(), 150.0);
+        config.detailed_from_px = 80.0;
+        assert_eq!(config.effective_compact_from_px(), 80.0);
+        assert_eq!(*config.compact_from_px_range().end(), 80.0);
+        assert_eq!(config.compact_entry_width(), 80.0);
+        let reloaded = resolve(to_file(&config));
+        assert_eq!(reloaded.compact_from_px, 100.0);
+        assert_eq!(reloaded.effective_compact_from_px(), 80.0);
+        config.detailed_from_px = 200.0;
+        assert_eq!(config.effective_compact_from_px(), 100.0);
+        assert_eq!(
+            *config.compact_from_px_range().end(),
+            *COMPACT_FROM_PX_RANGE.end()
+        );
+    }
+
+    /// Typing "100" into Detailed's value box applies "1" and "10" first,
+    /// both clamped under Compact; dragging Detailed below Compact and back
+    /// does the same. Neither transient value loses Compact - not in the
+    /// store, not in a file saved mid-edit.
+    #[test]
+    fn a_transient_detailed_value_never_loses_compact() {
+        let mut config = FootprintConfig {
+            compact_from_px: 90.0,
+            detailed_from_px: 120.0,
+            ..FootprintConfig::default()
+        };
+        let detailed_start = *DETAILED_FROM_PX_RANGE.start();
+        for typed in [1.0_f32, 10.0, 100.0] {
+            config.detailed_from_px = typed.clamp(detailed_start, *DETAILED_FROM_PX_RANGE.end());
+            assert_eq!(resolve(to_file(&config)).compact_from_px, 90.0);
+        }
+        assert_eq!(config.detailed_from_px, 100.0);
+        assert_eq!(config.compact_from_px, 90.0);
+        assert_eq!(config.effective_compact_from_px(), 90.0);
+        // Dragged below Compact: the chart's entry follows Detailed down...
+        config.detailed_from_px = detailed_start;
+        assert_eq!(config.effective_compact_from_px(), detailed_start);
+        // ...and comes back with it.
+        config.detailed_from_px = 120.0;
+        assert_eq!(config.compact_from_px, 90.0);
+        assert_eq!(config.effective_compact_from_px(), 90.0);
+    }
+
+    /// The Detailed slider starts on a whole pixel, so dragging it in
+    /// one-pixel steps never yields fractional widths like 69.06.
+    #[test]
+    fn detailed_slider_range_starts_on_a_whole_pixel() {
+        let start = *DETAILED_FROM_PX_RANGE.start();
+        assert_eq!(start.fract(), 0.0);
+        assert!(start >= quantick_chart::footprint_lod::DETAILED_MIN_WIDTH);
+    }
 
     /// A scratch settings file per test thread, as the window's own
     /// `cfg!(test)` path used to give.
@@ -715,6 +905,8 @@ mod tests {
             stacked_count: 4,
             profile_row_px: 2.5,
             detail_scale: 1.4,
+            compact_from_px: 30.0,
+            detailed_from_px: 90.0,
             show_poc: false,
             extreme_ratio_badge: false,
             badge_min_ratio: Decimal::from(3),
