@@ -43,6 +43,16 @@ pub(super) const TOOL_RAIL: &[UiBehaviour] = &[
         mapping: PENDING_SURFACE,
     },
     UiBehaviour {
+        id: "toolrail.magnet.toggle",
+        title: "Snap drawing anchors to the candle's open, high, low or close",
+        reach: "tool rail magnet button; the rail's More menu on its narrowest stage",
+        keys: &[(
+            Source::Authored,
+            "the rail's magnet button and its More menu entry are widgets, not registry entries",
+        )],
+        mapping: capability!("annotate.magnet.set"),
+    },
+    UiBehaviour {
         id: "tool.crosshair",
         title: "Arm the crosshair",
         reach: "tool rail",

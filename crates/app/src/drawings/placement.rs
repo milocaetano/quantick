@@ -168,25 +168,10 @@ impl Drawings {
         new_slots: usize,
         slot_of: impl Fn(i64) -> Option<f32>,
     ) {
-        #[allow(clippy::cast_precision_loss)]
-        let past_end = new_slots as f32 - old_slots as f32;
         let reanchor_all = |items: &mut [Drawing]| {
             for drawing in items {
-                let mut off_series = false;
-                for point in &mut drawing.points {
-                    let Some(time) = point.time_ms else {
-                        point.bar += past_end;
-                        continue;
-                    };
-                    match slot_of(time) {
-                        Some(slot) => point.bar = slot,
-                        None => {
-                            off_series = true;
-                            point.bar = 0.0;
-                        }
-                    }
-                }
-                drawing.off_series = off_series;
+                drawing.off_series =
+                    reanchor_points(&mut drawing.points, (old_slots, new_slots), &slot_of);
             }
         };
         reanchor_all(&mut self.items);
@@ -332,4 +317,32 @@ impl Drawings {
         drawing.points.extend_from_slice(points);
         true
     }
+}
+
+/// Anchors re-expressed against a re-cut series of `new_slots` that held
+/// `old_slots`: each onto its instant's slot, or with no instant by however
+/// many slots the series grew. `true` when an instant is off the new series
+/// (that anchor parks on slot 0).
+pub(crate) fn reanchor_points(
+    points: &mut [ChartPoint],
+    (old_slots, new_slots): (usize, usize),
+    slot_of: &impl Fn(i64) -> Option<f32>,
+) -> bool {
+    #[allow(clippy::cast_precision_loss)]
+    let past_end = new_slots as f32 - old_slots as f32;
+    let mut off_series = false;
+    for point in points {
+        let Some(time) = point.time_ms else {
+            point.bar += past_end;
+            continue;
+        };
+        match slot_of(time) {
+            Some(slot) => point.bar = slot,
+            None => {
+                off_series = true;
+                point.bar = 0.0;
+            }
+        }
+    }
+    off_series
 }

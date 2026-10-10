@@ -1299,6 +1299,13 @@ fn primitive_caps_report_what_they_dropped_and_what_they_folded() {
     assert_eq!(fold.trade_count, 2);
 }
 
+/// The book is drawn to the lane's live edge: observed up to its last
+/// confirmation, carried — labelled and dimmer — from there to the edge.
+///
+/// Pinned to the old contract until 2026-10-09, when the heat stopped at the
+/// last confirmation and left the stretch after it empty on a short tape. The
+/// trader chose Bookmap's reading: the last confirmed book is the book until
+/// the next one says otherwise, drawn so it never passes for observed depth.
 #[test]
 fn projection_uses_live_end_of_partial_timeline() {
     let mut history = LiquidityHistory::new(config());
@@ -1314,12 +1321,38 @@ fn projection_uses_live_end_of_partial_timeline() {
         &timeline,
         PriceWindow::new(dec("98"), dec("103")).unwrap(),
     );
+    // Two bar slots and the lane: three regions, the lane's floor of
+    // `MIN_LANE_SPAN_MS` ending at 800 on the last of them, so the
+    // confirmation at 750 sits 50 ms short of the edge.
+    let window = crate::constants::MIN_LANE_SPAN_MS as f64;
+    let book_x = (2.0 + (window - 50.0) / window) / 3.0;
+    let observed: Vec<_> = projection
+        .cells
+        .iter()
+        .filter(|cell| !cell.carried && cell.x0 >= 2.0 / 3.0)
+        .collect();
+    let carried: Vec<_> = projection
+        .cells
+        .iter()
+        .filter(|cell| cell.carried)
+        .collect();
+    assert!(!observed.is_empty(), "the lane draws the observed book");
     assert!(
-        projection
-            .cells
-            .iter()
-            .any(|cell| cell.x1 > 0.9 && cell.x1 < 1.0)
+        observed.iter().all(|cell| (cell.x1 - book_x).abs() < 1e-9),
+        "observed depth ends at its last confirmation"
     );
+    assert_eq!(carried.len(), observed.len(), "every open level is carried");
+    for cell in carried {
+        assert!((cell.x0 - book_x).abs() < 1e-9 && (cell.x1 - 1.0).abs() < 1e-9);
+        let twin = observed
+            .iter()
+            .find(|twin| twin.side == cell.side && twin.price_bucket == cell.price_bucket)
+            .expect("a carried band continues an observed one");
+        assert!(
+            cell.alpha < twin.alpha,
+            "carried reads dimmer than observed"
+        );
+    }
 }
 
 /// Bubbles only: no book, so nothing but the tape decides what is drawn.
@@ -1441,6 +1474,63 @@ fn the_newest_bubble_trails_the_edge_by_the_distance_between_the_clocks() {
     assert!(
         !starved.cells.is_empty(),
         "the book is drawn out to its own clock"
+    );
+}
+
+/// The mirror case: prints running ahead of a book that has not changed.
+///
+/// A MetaTrader DOM changes a few times a second, so between two changes the
+/// book clock moves only when the feed confirms the unchanged image — an empty
+/// delta at the confirmation's instant. Measured on a live WINV26 feed with a
+/// 1 s tape: without those confirmations the edge ran 212 ms past the newest
+/// book event at the median and 549 ms at worst. A confirmed book is drawn
+/// out to its confirmation; an unconfirmed one stops where it was last seen.
+#[test]
+fn a_confirmed_unchanged_book_reaches_the_edge_on_a_short_tape() {
+    let closed = [bar(0, 1_000)];
+    let prices = PriceWindow::new(dec("98"), dec("103")).unwrap();
+    let frame_at = |print_ms: i64, confirmed_at: Option<i64>| {
+        let mut history = LiquidityHistory::new(config());
+        history.install_snapshot(500, 1, snapshot(10)).unwrap();
+        if let Some(confirmed_ms) = confirmed_at {
+            history
+                .apply_delta(confirmed_ms, &BookDelta::new(11, 11, vec![], vec![]))
+                .unwrap();
+        }
+        history.record_aggression(&Trade {
+            agg_id: 1,
+            timestamp_ms: print_ms,
+            price: dec("101"),
+            quantity: dec("1"),
+            side: Side::Buy,
+        });
+        // A one-second tape ending at the newest print.
+        let edge = crate::LiveEdge {
+            now_ms: print_ms,
+            window_ms: 1_000,
+            reference_ms: 1_000,
+            on_newest_bar: false,
+        };
+        let timeline = BarTimeline::from_bars(0, &closed, None, Some(edge));
+        project(&history, &timeline, prices)
+    };
+    let reaches_edge = |projected: &HeatmapProjection| {
+        let edge = projected
+            .live_now_x
+            .expect("the lane ends at the live edge");
+        projected
+            .cells
+            .iter()
+            .any(|cell| (cell.x1 - edge).abs() < 1e-9)
+    };
+
+    assert!(
+        reaches_edge(&frame_at(3_000, Some(3_000))),
+        "a book confirmed at the newest print is drawn to the edge"
+    );
+    assert!(
+        !reaches_edge(&frame_at(3_000, None)),
+        "an unconfirmed book is not carried past its last observation"
     );
 }
 

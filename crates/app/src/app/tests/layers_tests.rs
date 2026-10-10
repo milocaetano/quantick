@@ -23,8 +23,9 @@ fn each_layer_switch_moves_exactly_one_owner() {
         // opt-in, like the market layers above it.
         (ChartLayer::BackfillDivider, false),
         (ChartLayer::SeamDivider, true),
-        // A dated rule at every midnight: opt-in, for the same reason.
-        (ChartLayer::DaySeparator, false),
+        // A near-invisible rule and the axis's end/start times at every
+        // day turn: on, so a chart spanning days says when each one ran.
+        (ChartLayer::DaySeparator, true),
         (ChartLayer::Crosshair, true),
         (ChartLayer::PaperTrading, true),
         (ChartLayer::Drawings, true),
@@ -352,13 +353,18 @@ fn the_layer_menu_offers_every_layer_and_its_switches_work() {
 
     open_chart_layers(&ctx, &mut app);
     assert_eq!(
-        app.active_tab().flow_pane.layer_menu_rects.len(),
+        app.active_tab()
+            .flow_pane
+            .context_menu
+            .layer_menu_rects
+            .len(),
         chart_menu_entries(),
         "every layer needs a switch, or it cannot be turned off at all"
     );
     assert!(
         app.active_tab()
             .flow_pane
+            .context_menu
             .layer_menu_rects
             .iter()
             .all(|(layer, _)| !layer.on_tape()),
@@ -368,6 +374,7 @@ fn the_layer_menu_offers_every_layer_and_its_switches_work() {
     let crosshair = app
         .active_tab()
         .flow_pane
+        .context_menu
         .layer_menu_rects
         .iter()
         .find(|(layer, _)| *layer == ChartLayer::Crosshair)
@@ -438,7 +445,12 @@ fn the_layer_menu_offers_every_layer_and_its_switches_work() {
     let quote_ctx = egui::Context::default();
     open_chart_layers(&quote_ctx, &mut quote_only);
     assert_eq!(
-        quote_only.active_tab().flow_pane.layer_menu_rects.len(),
+        quote_only
+            .active_tab()
+            .flow_pane
+            .context_menu
+            .layer_menu_rects
+            .len(),
         chart_menu_entries(),
         "an unavailable layer is still listed, just not switchable"
     );

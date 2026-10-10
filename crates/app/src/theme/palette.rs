@@ -65,6 +65,11 @@ pub const AMBER: Color32 = Color32::from_rgb(0xF0, 0xB9, 0x0B);
 /// promise it makes while making the promise harder to read.
 pub const SEAM_LINE: Color32 = Color32::from_rgba_premultiplied(0x3C, 0x3C, 0x3C, 0x3C);
 
+/// `day/rule` — the full-height rule where the display day turns: white at
+/// an alpha low enough to be found when looked for and never to compete with
+/// a candle or the flow, a step quieter than [`SEAM_LINE`].
+pub const DAY_RULE: Color32 = Color32::from_rgba_premultiplied(0x1E, 0x1E, 0x1E, 0x1E);
+
 /// `seam/label` — the "venue" caption beside [`SEAM_LINE`], at the same
 /// weight as the line it names so the pair reads as one quiet mark rather
 /// than a faint rule under a legible word.

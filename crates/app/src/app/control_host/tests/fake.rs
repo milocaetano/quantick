@@ -22,7 +22,7 @@ use crate::toolrail::ToolRail;
 use super::super::super::arrangement_host::ArrangementHost;
 use super::super::{
     Alerts, AlertsPort, ChromeDrawn, ChromePort, ChromeReads, HealthPort, HealthReads,
-    RecordingPort, ScriptSlot, ScriptsPort, TabReads, TabsMut, TabsMutPort, TabsPort,
+    RecordingPort, ScriptSlot, ScriptsPort, TabReads, TabsMut, TabsMutPort, TabsPort, ToolRailPort,
 };
 
 /// The feed and symbol the fake's one tab shows.
@@ -114,19 +114,12 @@ impl FakeWindow {
             agent_popup: Default::default(),
             toast: Default::default(),
             audio: super::super::super::replay_and_history::AlertState {
-                alerts: Box::new(FakeSpeaker(None)),
+                alerts: Box::new(FakeSpeaker),
                 alert_failure: None,
             },
             attached: Vec::new(),
             record_deals: None,
         }
-    }
-
-    /// A window whose speaker refuses with `reason`.
-    pub(crate) fn with_refusing_speaker(reason: &'static str) -> Self {
-        let mut window = Self::new();
-        window.audio.alerts = Box::new(FakeSpeaker(Some(reason)));
-        window
     }
 
     /// The fake assistant every handler test acts as.
@@ -195,12 +188,12 @@ impl AlertsPort for FakeWindow {
     }
 }
 
-/// A speaker that refuses with a fixed reason, or plays when it has none.
-struct FakeSpeaker(Option<&'static str>);
+/// A speaker that always plays.
+struct FakeSpeaker;
 
 impl crate::audio::AlertSink for FakeSpeaker {
     fn play(&mut self, _cues: &[crate::audio::Cue]) -> Result<(), &'static str> {
-        self.0.map_or(Ok(()), Err)
+        Ok(())
     }
 }
 
@@ -217,6 +210,12 @@ impl ScriptsPort for FakeWindow {
 
     fn detach_operator_script(&mut self, slot: u64) -> Result<bool, ()> {
         Ok((slot as usize) < self.attached.len())
+    }
+}
+
+impl ToolRailPort for FakeWindow {
+    fn set_drawing_magnet(&mut self, _enabled: bool) -> bool {
+        false
     }
 }
 

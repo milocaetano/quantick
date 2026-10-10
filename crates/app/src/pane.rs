@@ -108,12 +108,12 @@ use chart_pane::DrawPass;
 pub use chrome::PaneChrome;
 #[cfg(any(feature = "drawing-harness", test))]
 pub use drag::ParkedHand;
-pub use drag::{DRAWING_ANCHOR_RADIUS_PX, DrawingDrag};
 use drag::{
-    DRAWING_DRAG_COMPLETES_PX, DRAWING_DRAG_THRESHOLD_PX, DRAWING_SELECT_RADIUS_PX,
-    FREEHAND_MAX_POINTS, FREEHAND_MIN_STEP_PX, MAGNET_REACH_PX, MAGNET_REACH_UNLIMITED_PX,
-    region_pause,
+    CANDLE_MAGNET_REACH_PX, DRAWING_DRAG_COMPLETES_PX, DRAWING_DRAG_THRESHOLD_PX,
+    DRAWING_SELECT_RADIUS_PX, FREEHAND_MAX_POINTS, FREEHAND_MIN_STEP_PX, MAGNET_REACH_PX,
+    MAGNET_REACH_UNLIMITED_PX, region_pause,
 };
+pub use drag::{DRAWING_ANCHOR_RADIUS_PX, DrawingDrag};
 use hint::{magnet_price_of, paint_placement_hint, snap_bar_to_tape};
 use painting::{
     LANE_AXIS_FONT_PX, LANE_AXIS_GAP_PX, LANE_HANDLE_HALF_WIDTH_PX, LAST_PRICE_CHIP_TEXT,

@@ -3,9 +3,11 @@ use quantick_feed::replay::test_support as replay_support;
 use quantick_layers::OrderflowSwitch;
 
 fn enable_tape_only(app: &mut QuantickApp) {
-    app.active_tab_mut()
-        .tape_mut()
-        .set_layer_switch(OrderflowSwitch::TapeOnly, true);
+    crate::orderflow_view::layers::set_layer_switch(
+        app.active_tab_mut().tape_mut(),
+        OrderflowSwitch::TapeOnly,
+        true,
+    );
 }
 
 #[test]

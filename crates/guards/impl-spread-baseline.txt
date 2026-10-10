@@ -1,0 +1,18 @@
+# A raise is never an edit here: it is a new file in crates/guards/impl-spread-baseline.d/ named
+# for the branch, holding signed deltas (`impl-spread +N`, `!budget +N`) and a
+# comment saying why. The guard adds them to these numbers, and `--tighten`
+# writes its cuts there too. One file per branch is what keeps two open
+# branches from conflicting on the same line.
+#
+# The impl-spread ratchet's one ceiling (`crates/guards/src/impl_spread.rs`):
+# the most distinct production files that one type's inherent `impl` blocks
+# may span, in any crate over 20,000 production lines, counted as
+# `tools/outside_score/measure.py` counts `crate.<name>.impl_spread`. Every
+# type over it fails. The slack is zero, so a spread that fell fails too until
+# `cargo run -p quantick-guards -- --tighten` writes the new ceiling.
+#
+# Recorded at main 70f75ca1 when the guard landed: `app` was the only crate
+# over 20,000 lines (65,339), and `app::ChartPane` the widest type, at 10
+# files.
+!budget 10
+impl-spread 10

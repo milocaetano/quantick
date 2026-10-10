@@ -32,7 +32,7 @@ pub struct FlowRegionVisual {
     pub unresolved_overlap: bool,
 }
 
-/// One backend-independent plan for drawing and pointer selection.
+/// One backend-independent plan for drawing.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FlowPresentation {
     pub regions: Vec<FlowRegionVisual>,
@@ -100,23 +100,6 @@ impl FlowPresentation {
                 .then_with(|| a.dot_index.cmp(&b.dot_index))
         });
         Self { regions }
-    }
-
-    /// Exact foreground circles win, then the nearest tiny-circle tolerance.
-    pub fn hit(&self, history: FlowBounds, pointer: [f32; 2]) -> Option<usize> {
-        let mut nearest: Option<(f32, usize)> = None;
-        for region in self.regions.iter().rev() {
-            let Some(distance) = region.disc.hit_distance(history, pointer) else {
-                continue;
-            };
-            if distance <= region.disc.radius.powi(2) {
-                return Some(region.dot_index);
-            }
-            if nearest.is_none_or(|(held, _)| distance < held) {
-                nearest = Some((distance, region.dot_index));
-            }
-        }
-        nearest.map(|(_, index)| index)
     }
 }
 

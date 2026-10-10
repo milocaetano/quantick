@@ -25,6 +25,7 @@ use super::painting::{LIVE_CHIP_MARGIN_PX, LIVE_CHIP_VPAD_PX, LIVE_CHIP_WIDTH_PX
 use super::*;
 
 mod calendar_slot_tests;
+mod menu_intent_tests;
 mod native_split_tests;
 mod tape_only_tests;
 
@@ -1674,14 +1675,16 @@ fn each_axis_offers_the_half_of_the_compass_it_wears() {
 
     right_click_menu(&mut pane, &ctx, areas.price_gutter.center());
     assert!(
-        pane.layer_menu_rects
+        pane.context_menu
+            .layer_menu_rects
             .iter()
             .any(|(layer, _)| *layer == ChartLayer::PointerPrice),
         "the price axis offers the price half: {:?}",
-        pane.layer_menu_rects
+        pane.context_menu.layer_menu_rects
     );
     assert!(
-        pane.layer_menu_rects
+        pane.context_menu
+            .layer_menu_rects
             .iter()
             .all(|(layer, _)| *layer != ChartLayer::PointerTime),
         "and not the other axis's half"
@@ -1690,14 +1693,16 @@ fn each_axis_offers_the_half_of_the_compass_it_wears() {
     let strip = split_time_strip(areas.time_strip, pane.frame.lane_divider_x).0;
     right_click_menu(&mut pane, &ctx, strip.center());
     assert!(
-        pane.layer_menu_rects
+        pane.context_menu
+            .layer_menu_rects
             .iter()
             .any(|(layer, _)| *layer == ChartLayer::PointerTime),
         "the time axis offers the time half: {:?}",
-        pane.layer_menu_rects
+        pane.context_menu.layer_menu_rects
     );
     assert!(
-        pane.layer_menu_rects
+        pane.context_menu
+            .layer_menu_rects
             .iter()
             .all(|(layer, _)| *layer != ChartLayer::PointerPrice),
         "and not the other axis's half"
@@ -1720,6 +1725,7 @@ fn the_axis_menu_entry_switches_the_layer_it_names() {
 
     right_click_menu(&mut pane, &ctx, areas.price_gutter.center());
     let checkbox = pane
+        .context_menu
         .layer_menu_rects
         .iter()
         .find(|(layer, _)| *layer == ChartLayer::PointerPrice)

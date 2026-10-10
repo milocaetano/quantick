@@ -163,7 +163,7 @@ fn with_saving_off_a_win_edit_stays_on_its_tab_until_the_tab_shows_win_again() {
     let mut app = two_win_tabs();
     let tape = app.active_tab_mut().tape_mut();
     assert_eq!(tape.set_save_asset_changes(false), Some(SaveSwitch::Off));
-    assert!(tape.set_ignore_opening_burst_in_scale(true));
+    assert!(tape.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = true));
     maintain(&mut app);
     maintain(&mut app);
     assert!(opening_excluded(&app), "the edit is on screen");
@@ -196,7 +196,7 @@ fn with_saving_off_a_win_edit_stays_on_its_tab_until_the_tab_shows_win_again() {
     assert!(
         app.active_tab_mut()
             .tape_mut()
-            .set_ignore_opening_burst_in_scale(true)
+            .edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = true)
     );
     maintain(&mut app);
     let reread = AssetBubblesStore::load(crate::bubble_presets::assets_path()).shared();
@@ -212,7 +212,7 @@ fn switching_saving_on_again_saves_what_the_tab_shows_and_the_other_tab_wears_it
     let mut app = two_win_tabs();
     let tape = app.active_tab_mut().tape_mut();
     tape.set_save_asset_changes(false);
-    assert!(tape.set_ignore_opening_burst_in_scale(true));
+    assert!(tape.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = true));
     maintain(&mut app);
     app.tabs.select(1);
     let other = app.active_tab_mut().tape_mut();
@@ -273,7 +273,7 @@ fn switching_saving_on_says_whether_the_screen_was_stored_or_gave_way() {
     // An edit there, then saving on: the other tab's filing is newer.
     app.tabs.select(0);
     let tape = app.active_tab_mut().tape_mut();
-    assert!(tape.set_ignore_opening_burst_in_scale(true));
+    assert!(tape.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = true));
     let on = save_switch(&mut app, true);
     assert_eq!(on["changed"], true);
     assert_eq!(on["screen"], "replaced_by_stored");

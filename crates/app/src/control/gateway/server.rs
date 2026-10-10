@@ -40,6 +40,7 @@ use quantick_control::wire::{
     ModuleRevision, RequestEnvelope, ResponseEnvelope, ResponseOutcome, WireU64,
 };
 use quantick_control_host::dispatch::{failure_response, try_reserve_in_flight};
+use quantick_control_host::rate::TokenBucket;
 use quantick_control_local::discovery::publish_descriptor;
 #[cfg(test)]
 use quantick_control_local::discovery::publish_descriptor_in;
@@ -61,11 +62,10 @@ use super::super::types::known_error;
 // it hands across.
 use super::idempotency::{self, IdempotencyStore, IdempotencyTicket};
 use super::{
-    ACCEPT_POLL_MS, ClientRateLimiter, ConnectedClient, ConnectionStatus, DrainObservation,
-    GATEWAY_COMMAND_CAPACITY, GATEWAY_CRITICAL_STATUS_SLOTS_PER_CONNECTION,
-    GATEWAY_STATUS_CAPACITY, GatewayCommand, GatewayOptions, GatewayPublicInfo, GatewayRuntime,
-    GatewayStart, LifecycleEvent, ProcessIdentity, RemoteActor, TrackedSocket, UiRequest,
-    WAITER_POLL_MS,
+    ACCEPT_POLL_MS, ConnectedClient, ConnectionStatus, DrainObservation, GATEWAY_COMMAND_CAPACITY,
+    GATEWAY_CRITICAL_STATUS_SLOTS_PER_CONNECTION, GATEWAY_STATUS_CAPACITY, GatewayCommand,
+    GatewayOptions, GatewayPublicInfo, GatewayRuntime, GatewayStart, LifecycleEvent,
+    ProcessIdentity, RemoteActor, TrackedSocket, UiRequest, WAITER_POLL_MS,
 };
 
 mod answer;
@@ -789,7 +789,7 @@ fn connection_session(
         "authenticated local control client connected"
     );
 
-    let mut rate_limiter = ClientRateLimiter::new();
+    let mut rate_limiter = TokenBucket::client_requests(Instant::now());
     loop {
         let request = match codec.read_request(stream) {
             Ok(request) => request,

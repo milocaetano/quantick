@@ -1,93 +1,112 @@
-//! Where the display day turns over, written on the time strip only: a tick
-//! across the strip at the boundary and the date the new day opens, plus the
-//! date of the leftmost bar pinned to the strip's left edge. The time labels
-//! carry a clock time only, so without it a chart spanning midnight reads as
-//! one day. Nothing is drawn over the candles.
+//! Where the display day turns over. Under the candles, a near-invisible
+//! full-height rule. On the time strip, a tick at the boundary with the time
+//! the old day's last bar closed left of it, and the date the new day opens
+//! with its first bar's open time right of it (`18:24 | Tue 29 09:00`), plus
+//! the date of the leftmost bar pinned to the strip's left edge. The time
+//! labels carry a clock time only, so without it a chart spanning midnight
+//! reads as one day, and nothing says when each session ran.
+//!
+//! The text and where it goes are `quantick_chart::day_turn`'s; this module
+//! paints them.
 use super::{Contribution, Package};
 use crate::{pointer_compass, theme, viewport::Viewport};
+pub(super) use day_turn::reserved_by;
 use eframe::egui;
-use quantick_civil::{CivilDate, weekday_abbr};
-/// Space between the tick and the date it opens, and between two dates.
-const DAY_LABEL_GAP_PX: f32 = 3.0;
+use quantick_chart::day_turn::{
+    self, DAY_LABEL_GAP_PX, DayTurn, TurnWidths, day_text, ended_text, opened_suffix, pinned_text,
+};
+use quantick_civil::{CivilDate, TzOffset};
 pub(super) const PACKAGE: Package = Package {
     layers: &[quantick_layers::ChartLayer::DaySeparator],
-    contributions: &[Contribution::DaySeparator(day_separator)],
+    contributions: &[
+        Contribution::DayRule(day_rule),
+        Contribution::DaySeparator(day_separator),
+    ],
 };
+/// The rule across the candles, painted under them with the grid.
+pub(in crate::pane) struct DayRulePass<'a> {
+    /// Clipped to the candles' extent: the rule spans its height.
+    pub painter: &'a egui::Painter,
+    pub history: egui::Rect,
+    pub total: usize,
+    pub candle_width: f32,
+    pub viewport: &'a Viewport,
+    pub turns: &'a [DayTurn],
+}
+fn day_rule(p: &mut DayRulePass<'_>) {
+    let span = (p.history.left(), p.history.right());
+    let stroke = egui::Stroke::new(1.0_f32, theme::DAY_RULE);
+    for (x, _) in day_turn::turn_xs(p.turns, p.viewport, span, p.total, p.candle_width) {
+        p.painter.vline(x, p.history.y_range(), stroke);
+    }
+}
 pub(in crate::pane) struct DaySeparatorPass<'a> {
     pub painter: &'a egui::Painter,
-    /// The candles' horizontal extent; the strip's own height.
+    /// The candles' horizontal extent.
     pub history: egui::Rect,
     pub strip: egui::Rect,
     pub total: usize,
     pub candle_width: f32,
     pub viewport: &'a Viewport,
-    /// Slots whose bar opens a new display day, from `quantick_civil::day_starts`.
-    pub starts: &'a [(usize, CivilDate)],
+    pub turns: &'a [DayTurn],
+    /// The display timezone the times are written in.
+    pub tz: TzOffset,
     /// The date of the leftmost visible bar, pinned to the strip's left edge.
     pub first_visible: Option<CivilDate>,
-    /// The pointer's chip outranks a date: it is where the trader is looking.
+    /// The pointer's chip outranks a label: it is where the trader is looking.
     pub claims: &'a pointer_compass::AxisClaims,
-    /// Written here: the spans the dates took, which the time labels avoid.
+    /// Written here: the spans the labels took, which the time labels avoid.
     pub reserved: Vec<(f32, f32)>,
 }
 fn day_separator(p: &mut DaySeparatorPass<'_>) {
     let font = egui::FontId::monospace(crate::chart::TIME_LABEL_FONT_PX);
+    let (painter, claims, tz) = (p.painter, p.claims, p.tz);
     let (left, right) = (p.history.left(), p.history.right());
     let y = p.strip.center().y;
-    let chip_width = p
-        .painter
-        .layout_no_wrap(
-            crate::chart::TimeLabelFormat::Full.sample().to_owned(),
-            font.clone(),
-            theme::TEXT_MUTED,
-        )
+    let sample = crate::chart::TimeLabelFormat::Full.sample();
+    let chip_width = painter
+        .layout_no_wrap(sample.to_owned(), font.clone(), egui::Color32::WHITE)
         .size()
         .x;
-    let mut written_right = f32::NEG_INFINITY;
-    // `limit` is where the next tick stands, or the strip's end: a date is
-    // never crossed by the tick after it.
-    let mut write = |p: &mut DaySeparatorPass<'_>, start: f32, limit: f32, text: String, color| {
-        let galley = p.painter.layout_no_wrap(text, font.clone(), color);
-        let width = galley.size().x;
-        let fits = start >= written_right + DAY_LABEL_GAP_PX && start + width <= limit;
-        let centre = start + width / 2.0;
-        if !fits || pointer_compass::claimed(centre, width, chip_width, p.claims.iter().copied()) {
-            return;
-        }
-        p.painter
-            .galley(egui::pos2(start, y - galley.size().y / 2.0), galley, color);
-        p.reserved.push((start, start + width));
-        written_right = start + width;
+    // Monospace: one sample character; `day_turn` bounds labels from it.
+    let char_width = chip_width / sample.chars().count() as f32;
+    let claimed = |centre: f32, width: f32| {
+        pointer_compass::claimed(centre, width, chip_width, claims.iter().copied())
     };
-    // Pinned first, so a boundary date close to the left edge wins by
-    // pushing it out rather than being pushed itself.
-    let ticks: Vec<(f32, CivilDate)> = p
-        .starts
+    let ticks = day_turn::turn_xs(p.turns, p.viewport, (left, right), p.total, p.candle_width);
+    let widths: Vec<_> = ticks
         .iter()
-        .map(|&(slot, date)| {
-            // The left edge of the first bar of the day: between the two
-            // days' bars rather than on either.
-            let x = p.viewport.x_center(slot, right, p.total) - p.candle_width / 2.0;
-            (x, date)
-        })
-        .filter(|&(x, _)| x >= left && x <= right)
+        .map(|&(x, turn)| (x, TurnWidths::of(turn, char_width)))
         .collect();
-    let limit_before = |index: usize| {
-        ticks
-            .get(index)
-            .map_or(right, |&(x, _)| x - DAY_LABEL_GAP_PX)
+    let pinned = p.first_visible.map(pinned_text);
+    let plan = day_turn::plan_strip(
+        left,
+        right,
+        pinned
+            .as_deref()
+            .map(|text| day_turn::label_width(text, char_width)),
+        &widths,
+        |start, width| !claimed(start + width / 2.0, width),
+        |x| !claimed(x, 0.0),
+    );
+    let format = |color| egui::TextFormat::simple(font.clone(), color);
+    let job = |text: String, color| egui::text::LayoutJob::single_section(text, format(color));
+    // Lays out and writes one label at `start`, and reserves its span.
+    let draw = |reserved: &mut Vec<(f32, f32)>, start: f32, job| {
+        let galley = painter.layout_job(job);
+        reserved.push((start, start + galley.size().x));
+        let at = egui::pos2(start, y - galley.size().y / 2.0);
+        painter.galley(at, galley, theme::TEXT_MUTED);
     };
-    if let Some(date) = p.first_visible {
-        let text = format!("{} {}", weekday_abbr(date.weekday()), date.short());
-        let limit = limit_before(0);
-        write(p, left + DAY_LABEL_GAP_PX, limit, text, theme::TEXT_MUTED);
+    if let (Some(at), Some(text)) = (plan.pinned_at, pinned) {
+        draw(&mut p.reserved, at, job(text, theme::TEXT_MUTED));
     }
-    for (index, &(x, date)) in ticks.iter().enumerate() {
-        // Under the pointer's chip the chip wins, tick and date alike.
-        if pointer_compass::claimed(x, 0.0, chip_width, p.claims.iter().copied()) {
+    for (&(x, turn), tick) in ticks.iter().zip(&plan.ticks) {
+        // Under the pointer's chip the chip wins, tick and labels alike.
+        if !tick.drawn {
             continue;
         }
-        p.painter.line_segment(
+        painter.line_segment(
             [
                 egui::pos2(x, p.strip.top()),
                 egui::pos2(x, p.strip.bottom()),
@@ -96,49 +115,19 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
         );
         // No time label is written across the tick either.
         p.reserved.push((x, x));
-        let limit = limit_before(index + 1);
-        write(
-            p,
-            x + DAY_LABEL_GAP_PX,
-            limit,
-            day_text(date),
-            theme::TEXT_PRIMARY,
-        );
-    }
-}
-/// `Tue 29`; the month joins it on the first of the month, where the month
-/// is what changed.
-fn day_text(date: CivilDate) -> String {
-    let (_, _, day) = date.ymd();
-    if day == 1 {
-        format!("{} {}", weekday_abbr(date.weekday()), date.short())
-    } else {
-        format!("{} {day}", weekday_abbr(date.weekday()))
-    }
-}
-/// Whether a time label spanning `from..to` would touch a date's span.
-pub(super) fn reserved_by(from: f32, to: f32, reserved: &[(f32, f32)]) -> bool {
-    reserved
-        .iter()
-        .any(|&(start, end)| from < end + DAY_LABEL_GAP_PX && to > start - DAY_LABEL_GAP_PX)
-}
-#[cfg(test)]
-mod days_tests {
-    use super::*;
-
-    #[test]
-    fn a_day_reads_weekday_and_date_and_names_the_month_when_it_turns() {
-        assert_eq!(day_text(CivilDate::from_ymd(2026, 9, 29)), "Tue 29");
-        assert_eq!(day_text(CivilDate::from_ymd(2026, 10, 1)), "Thu 01 Oct");
-    }
-
-    #[test]
-    fn a_time_label_stands_aside_only_where_a_date_is_written() {
-        let reserved = [(100.0, 140.0)];
-        assert!(reserved_by(120.0, 150.0, &reserved), "overlapping");
-        assert!(reserved_by(141.0, 170.0, &reserved), "inside the gap");
-        assert!(!reserved_by(150.0, 190.0, &reserved), "clear of it");
-        assert!(!reserved_by(40.0, 90.0, &reserved), "clear before it");
-        assert!(!reserved_by(120.0, 150.0, &[]), "no dates, no gaps");
+        let Some(labels) = tick.labels else {
+            continue;
+        };
+        if let (Some(at), Some(ms)) = (labels.ended_at, turn.ended_ms) {
+            let ended = ended_text(ms, tz);
+            draw(&mut p.reserved, at, job(ended, theme::TEXT_MUTED));
+        }
+        // The date as bright as a date alone, its start time as muted as
+        // the clock labels beside it.
+        let mut dated = job(day_text(turn.date), theme::TEXT_PRIMARY);
+        if let (true, Some(ms)) = (labels.with_opened, turn.opened_ms) {
+            dated.append(&opened_suffix(ms, tz), 0.0, format(theme::TEXT_MUTED));
+        }
+        draw(&mut p.reserved, x + DAY_LABEL_GAP_PX, dated);
     }
 }

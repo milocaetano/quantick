@@ -11,7 +11,7 @@ use crate::orderflow_render::constants::{
 };
 use eframe::egui;
 use quantick_orderflow::config::theme::{heat_fill_parts, quantize_heat};
-use quantick_orderflow::{BEFORE_CAPTURE, LiquidityEvidence};
+use quantick_orderflow::{BEFORE_CAPTURE, BOOK_PENDING, LiquidityEvidence};
 
 use super::bubbles::{bubble_radius, side_offset_y};
 use super::layout::{EventBand, RenderContext};
@@ -561,6 +561,7 @@ pub(super) fn gap_marks(rect: egui::Rect, chart_rect: egui::Rect, leading: bool)
 fn gap_label(reason: &str) -> &'static str {
     match reason {
         BEFORE_CAPTURE => "L2 unavailable before capture",
+        BOOK_PENDING => "L2 loading for this stretch",
         "capture_disabled" => "L2 capture disabled",
         "sequence_gap" => "L2 sequence gap · resynchronizing",
         _ => "L2 continuity unavailable",

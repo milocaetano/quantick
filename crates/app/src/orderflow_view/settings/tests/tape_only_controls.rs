@@ -1,6 +1,7 @@
 //! The settings surface must describe the projection currently being painted.
 
 use super::*;
+use quantick_orderflow::HeatmapConfig;
 use quantick_orderflow::{BubbleSizeReference, LaneWindow};
 
 type PaintedText = Vec<(String, egui::Rect)>;

@@ -140,9 +140,7 @@ pub fn fmt_time(ms: i64, tz: TzOffset) -> String {
 /// The same instant written in a chosen [`TimeLabelFormat`] — what the time
 /// axis calls when the strip is too narrow for the full form.
 pub fn fmt_time_as(ms: i64, tz: TzOffset, format: crate::chart::TimeLabelFormat) -> String {
-    let local = ms.saturating_add(tz.offset_ms());
-    let secs = local.div_euclid(1000).rem_euclid(86_400);
-    format.write(secs / 3600, (secs % 3600) / 60, secs % 60)
+    crate::chart::time_label(ms, tz, format)
 }
 
 /// The pointer's time tag for a bar opening at `open_ms`: the instant to the

@@ -235,6 +235,7 @@ impl ChartPane {
         let delta = self.history_prefix.len() as isize - before as isize;
         self.viewport.shift_right_edge(delta);
         self.drawings.shift_bars(delta);
+        self.gestures.shift_bars(delta);
         // Indicator columns have no signed shift: on growth they are nudged so
         // the frames before the rebuild lands draw each value against its own
         // candle, and on a shrink the rebuild below re-cuts them wholesale a
@@ -320,6 +321,7 @@ impl ChartPane {
             // Older bars shift every index up by `added`; keep the view steady.
             self.viewport.shift_right_edge(added as isize);
             self.drawings.shift_bars(added as isize);
+            self.gestures.shift_bars(added as isize);
         }
         // Indicator columns shift with them: the rebuild below is a round-trip
         // away, and until it lands every value would otherwise be drawn
@@ -440,6 +442,12 @@ impl ChartPane {
         let mut drawings = std::mem::take(&mut self.drawings);
         drawings.reanchor(old_slots, new_slots, |time| self.slot_of_time(time));
         self.drawings = drawings;
+        // A body drag in flight holds its own copy of the anchors: same map.
+        if let Some(mut from) = self.gestures.translate_from.take() {
+            let slot_of = |time| self.slot_of_time(time);
+            crate::drawings::reanchor_points(&mut from.free, (old_slots, new_slots), &slot_of);
+            self.gestures.translate_from = Some(from);
+        }
     }
 
     /// Ask for a re-anchor once there are bars, for drawings adopted onto an

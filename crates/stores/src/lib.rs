@@ -19,6 +19,7 @@
 
 pub mod bubble_asset_store;
 pub mod bubble_assets;
+pub mod bubble_look;
 pub mod bubble_presets;
 pub mod bundle;
 pub mod config;

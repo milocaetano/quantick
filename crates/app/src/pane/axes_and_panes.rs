@@ -279,8 +279,8 @@ impl ChartPane {
         // the compass gave it something to say.
         time.context_menu(|ui| {
             #[cfg(test)]
-            self.layer_menu_rects.clear();
-            let _ = self.layer_checkbox(ui, ChartLayer::PointerTime, chrome);
+            self.context_menu.layer_menu_rects.clear();
+            self.layer_menu_switch(ui, ChartLayer::PointerTime, chrome);
         });
         // Jump-to-live (audit F6): panned into history, the way back is one click at the axis' live
         // end. Registered after the strip gesture so the click is the chip's, not a zoom-drag's.
@@ -336,7 +336,7 @@ impl ChartPane {
         // switches appears.
         price_gutter.context_menu(|ui| {
             #[cfg(test)]
-            self.layer_menu_rects.clear();
+            self.context_menu.layer_menu_rects.clear();
             let mut inverted = self.price_view.is_inverted();
             if ui
                 .checkbox(&mut inverted, "Inverted chart")
@@ -351,7 +351,7 @@ impl ChartPane {
                 ui.close_menu();
             }
             ui.separator();
-            let _ = self.layer_checkbox(ui, ChartLayer::PointerPrice, chrome);
+            self.layer_menu_switch(ui, ChartLayer::PointerPrice, chrome);
         });
     }
 

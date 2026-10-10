@@ -7,12 +7,24 @@ use std::sync::Arc;
 use quantick_engine::Bar;
 
 use super::model::price_span;
+use super::past_heat::{PastHeat, project_past_heat};
 use super::{
     DotHorizon, HeatmapProjection, PriceWindow, SettledProjection, TapeFacts, TierCut,
     TierGrouping, VolumeDots, cluster_tier, lane_grouping, refine_tier, tier_primitives,
 };
+use crate::grouping::EffectiveGrouping;
 use crate::history::LiquidityHistory;
 use crate::timeline::{BarTimeline, LiveEdge};
+
+/// The rungs of a held tape drawn without volume dots: it folds no prints,
+/// and its blocks are the window itself.
+const NO_DOT_RUNGS: (i64, i64) = (0, 0);
+
+fn rungs_of(dots: Option<&VolumeDots>) -> (i64, i64) {
+    dots.map_or(NO_DOT_RUNGS, |dots| {
+        (dots.tape_window_ms, dots.tape_level_ticks)
+    })
+}
 
 /// Width of the grid past groups are frozen on: the window, rounded up to
 /// whole native windows so no native window straddles two blocks.
@@ -54,26 +66,32 @@ pub struct PastTape {
     pub settled_through_ms: i64,
     /// First instant the retained tape is complete from.
     pub retained_from_ms: Option<i64>,
-    /// The dot rungs the facts were folded on: tape window and level ticks.
+    /// The dot rungs the facts were folded on: tape window and level ticks;
+    /// `(0, 0)` for a tape drawn without volume dots.
     pub rungs: (i64, i64),
-    /// The native facts (`live` marks) and their exact tape facts.
+    /// The native facts (`live` marks) and their exact tape facts; no marks
+    /// for a tape drawn without volume dots, whose book is still read.
     pub projection: Arc<HeatmapProjection>,
+    /// The book the history kept over the same blocks.
+    pub heat: Arc<PastHeat>,
 }
 
 impl PastTape {
     /// This stretch again for a window ending at `end_ms`, when nothing in it
     /// can change: the same blocks and rungs, every print that could join
-    /// them delivered, none evicted. A held drag re-reads no history.
+    /// them delivered, none evicted. A held drag re-reads no history; its
+    /// book is re-read only when its price axis or grouping moved.
     #[must_use]
     pub fn reused_at(
         &self,
         end_ms: i64,
         window_ms: i64,
-        dots: &VolumeDots,
+        dots: Option<&VolumeDots>,
         retained_from_ms: Option<i64>,
+        book: (&LiquidityHistory, PriceWindow, EffectiveGrouping),
     ) -> Option<Self> {
-        let (block_ms, from_ms, until_ms) = past_span(end_ms, window_ms, dots.tape_window_ms);
-        let rungs = (dots.tape_window_ms, dots.tape_level_ticks);
+        let rungs = rungs_of(dots);
+        let (block_ms, from_ms, until_ms) = past_span(end_ms, window_ms, rungs.0);
         let same = (block_ms, from_ms, until_ms, window_ms, rungs)
             == (
                 self.block_ms,
@@ -84,9 +102,17 @@ impl PastTape {
             );
         let frozen = self.settled_through_ms >= until_ms
             && retained_from_ms.is_none_or(|retained| retained <= from_ms);
+        let (history, prices, grouping) = book;
         (same && frozen).then(|| Self {
             end_ms,
             retained_from_ms,
+            heat: if self.heat.fits(prices, grouping) {
+                Arc::clone(&self.heat)
+            } else {
+                Arc::new(project_past_heat(
+                    history, from_ms, until_ms, prices, grouping,
+                ))
+            },
             ..self.clone()
         })
     }
@@ -116,8 +142,10 @@ pub struct PastBars<'a> {
 }
 
 /// Project the native tape for a window ending at `end_ms`, through the same
-/// clustering, folding and flooring the live tape runs. Only prints: depth
-/// reductions are matched on the live tape alone.
+/// clustering, folding and flooring the live tape runs, beside the book the
+/// history kept over the same blocks. Depth reductions are matched on the
+/// live tape alone. Without volume dots the tape folds no prints, so only
+/// its book is read.
 #[must_use]
 #[allow(clippy::too_many_arguments)]
 pub fn project_past_tape(
@@ -128,12 +156,53 @@ pub fn project_past_tape(
     reference_ms: i64,
     prices: PriceWindow,
     settled: &SettledProjection,
-    dots: &VolumeDots,
+    dots: Option<&VolumeDots>,
 ) -> Option<PastTape> {
     let latest = history.latest_ms()?;
     let end_ms = end_ms.min(latest);
     let window_ms = window_ms.max(1);
-    let (block_ms, from_ms, until_ms) = past_span(end_ms, window_ms, dots.tape_window_ms);
+    let rungs = rungs_of(dots);
+    let (block_ms, from_ms, until_ms) = past_span(end_ms, window_ms, rungs.0);
+    let projection = match dots {
+        Some(dots) => past_marks(
+            history,
+            &bars,
+            (from_ms, until_ms, window_ms, reference_ms),
+            prices,
+            settled,
+            dots,
+        ),
+        None => HeatmapProjection::empty(true, settled.effective_grouping),
+    };
+    Some(PastTape {
+        end_ms,
+        window_ms,
+        block_ms,
+        from_ms,
+        until_ms,
+        settled_through_ms: latest.saturating_sub(window_ms),
+        retained_from_ms: history.tape_retained_from_ms(),
+        rungs,
+        projection: Arc::new(projection),
+        heat: Arc::new(project_past_heat(
+            history,
+            from_ms,
+            until_ms,
+            prices,
+            settled.effective_grouping,
+        )),
+    })
+}
+
+/// The native marks of the blocks `from_ms..until_ms`, folded on `dots`.
+fn past_marks(
+    history: &LiquidityHistory,
+    bars: &PastBars<'_>,
+    (from_ms, until_ms, window_ms, reference_ms): (i64, i64, i64, i64),
+    prices: PriceWindow,
+    settled: &SettledProjection,
+    dots: &VolumeDots,
+) -> HeatmapProjection {
     let edge = LiveEdge {
         now_ms: until_ms,
         window_ms: until_ms - from_ms,
@@ -207,15 +276,5 @@ pub fn project_past_tape(
     projection.floored_quantity = floored_quantity;
     projection.aggression_reference = settled.aggression_reference;
     projection.summary_reference = settled.summary_reference;
-    Some(PastTape {
-        end_ms,
-        window_ms,
-        block_ms,
-        from_ms,
-        until_ms,
-        settled_through_ms: latest.saturating_sub(window_ms),
-        retained_from_ms: history.tape_retained_from_ms(),
-        rungs: (dots.tape_window_ms, dots.tape_level_ticks),
-        projection: Arc::new(projection),
-    })
+    projection
 }

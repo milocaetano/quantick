@@ -1,4 +1,4 @@
-//! One factual FLOW-to-chart transform, shared by paint, inspection and cache keys.
+//! One factual FLOW-to-chart transform, shared by paint and cache keys.
 use crate::viewport::Viewport;
 use quantick_orderflow::projection::{PriceWindow, flow_tape::FlowTapeDot};
 use rust_decimal::prelude::ToPrimitive as _;

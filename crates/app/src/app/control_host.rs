@@ -59,6 +59,7 @@ pub(crate) trait ControlPort:
     + LayersPort
     + ScriptsPort
     + RecordingPort
+    + ToolRailPort
     + GatewayPort
 {
 }
@@ -74,6 +75,7 @@ impl<T> ControlPort for T where
         + LayersPort
         + ScriptsPort
         + RecordingPort
+        + ToolRailPort
         + GatewayPort
         + ?Sized
 {
@@ -138,6 +140,12 @@ pub(crate) type ScriptSlot = (u64, crate::pane::PaneSide, crate::indicator_worke
 pub(crate) trait RecordingPort {
     /// Save the default and apply it to undecided recorders.
     fn set_deal_recording_default(&mut self, enabled: bool);
+}
+
+/// The drawing rail's switches an operator sets.
+pub(crate) trait ToolRailPort {
+    /// Set the OHLC magnet; answers whether it moved.
+    fn set_drawing_magnet(&mut self, enabled: bool) -> bool;
 }
 
 /// The gateway's own seat on the window, and the doors every in-window
@@ -768,6 +776,12 @@ impl ScriptsPort for QuantickApp {
 impl RecordingPort for QuantickApp {
     fn set_deal_recording_default(&mut self, enabled: bool) {
         super::deal_recording_wiring::set_default(self, enabled);
+    }
+}
+
+impl ToolRailPort for QuantickApp {
+    fn set_drawing_magnet(&mut self, enabled: bool) -> bool {
+        self.toolrail.set_magnet(enabled)
     }
 }
 

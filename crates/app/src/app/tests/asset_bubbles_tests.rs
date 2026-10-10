@@ -36,7 +36,7 @@ pub(super) fn select_market(app: &mut QuantickApp, feed: &str, symbol: &str) {
 fn edit_win(app: &mut QuantickApp) -> BubblePreset {
     let tape = app.active_tab_mut().tape_mut();
     tape.set_live_lane_window(LaneWindow::Fixed { ms: 7_000 });
-    assert!(tape.set_ignore_opening_burst_in_scale(true));
+    assert!(tape.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = true));
     look(app)
 }
 
@@ -248,7 +248,7 @@ fn an_edit_in_one_win_tab_reaches_the_other_and_survives_its_next_edit() {
     assert!(
         app.active_tab_mut()
             .tape_mut()
-            .set_ignore_opening_burst_in_scale(true)
+            .edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = true)
     );
     // One frame files the edit, the next one dresses the other tab with it.
     maintain(&mut app);
@@ -288,7 +288,7 @@ fn an_imported_cockpit_dresses_the_open_tabs_with_its_asset_settings() {
     let mut app = app_on(shipped_config(), "metatrader-b3", "WINV26");
     let edit = |app: &mut QuantickApp, on: bool| {
         let tape = app.active_tab_mut().tape_mut();
-        assert!(tape.set_ignore_opening_burst_in_scale(on));
+        assert!(tape.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = on));
         maintain(app);
     };
     edit(&mut app, true);
@@ -334,7 +334,7 @@ fn an_unfiled_edit_is_filed_even_when_another_tab_filed_first() {
     assert!(
         app.active_tab_mut()
             .tape_mut()
-            .set_ignore_opening_burst_in_scale(true)
+            .edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = true)
     );
     app.tabs.select(1);
     assert!(
@@ -441,7 +441,7 @@ fn the_bubbles_autostart_hook_holds_through_a_switch_and_files_nothing() {
     maintain(&mut app);
     assert_eq!(stored(), Some(off.clone()), "and filed nowhere");
     let tape = app.active_tab_mut().tape_mut();
-    assert!(tape.set_ignore_opening_burst_in_scale(true));
+    assert!(tape.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = true));
     maintain(&mut app);
     let filed = stored().expect("WIN's settings");
     assert!(
@@ -465,11 +465,11 @@ fn the_bubbles_autostart_hook_holds_through_a_switch_and_files_nothing() {
 fn an_export_files_pending_edits_and_says_when_the_disk_refused_them() {
     let mut app = app_on(shipped_config(), "metatrader-b3", "WINV26");
     let tape = app.active_tab_mut().tape_mut();
-    assert!(tape.set_ignore_opening_burst_in_scale(true));
+    assert!(tape.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = true));
     let file = crate::scratch::ScratchFile::new("asset-export", "workspace.qws.toml");
     app.workspace_bundle_adapter().export_workspace_to(&file);
     let tape = app.active_tab_mut().tape_mut();
-    assert!(tape.set_ignore_opening_burst_in_scale(false));
+    assert!(tape.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = false));
     maintain(&mut app);
     app.workspace_bundle_adapter().import_workspace_from(&file);
     assert!(

@@ -15,6 +15,7 @@
 //! `app` are held with: a counting allocator, installed by each test binary.
 
 mod constants;
+pub mod day_turn;
 pub mod flow_execution;
 pub mod footprint_lod;
 pub mod footprint_projection;

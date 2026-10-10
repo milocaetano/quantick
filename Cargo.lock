@@ -2921,6 +2921,7 @@ dependencies = [
  "quantick-chart-interaction",
  "quantick-civil",
  "quantick-control",
+ "quantick-control-handlers",
  "quantick-control-host",
  "quantick-control-local",
  "quantick-control-schema",
@@ -2987,6 +2988,7 @@ name = "quantick-chart"
 version = "0.1.0"
 dependencies = [
  "quantick-chart-interaction",
+ "quantick-civil",
  "quantick-engine",
  "quantick-indicator-session",
  "quantick-indicators",
@@ -3016,6 +3018,22 @@ dependencies = [
  "sha2",
  "subtle",
  "zeroize",
+]
+
+[[package]]
+name = "quantick-control-handlers"
+version = "0.1.0"
+dependencies = [
+ "quantick-chart",
+ "quantick-control",
+ "quantick-control-host",
+ "quantick-control-schema",
+ "quantick-engine",
+ "quantick-sources",
+ "rust_decimal",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -216,35 +216,6 @@ impl<'a> FlowFrame<'a> {
         )
     }
 
-    pub(super) fn inspection(
-        &self,
-        owner: Option<&OrderflowView>,
-        pointer: Option<egui::Pos2>,
-        tz: crate::timezone::TzOffset,
-        side_inferred: bool,
-    ) {
-        let Some(owner) = owner.filter(|owner| owner.flow_execution_active()) else {
-            return;
-        };
-        let Some((frame, drawing)) = &self.regional else {
-            return;
-        };
-        let Some(pointer) = pointer else { return };
-        let _ = crate::orderflow_render::draw_flow_inspection(
-            crate::orderflow_render::FlowInspection {
-                painter: self.painter,
-                history: self.rect.with_max_x(self.rect.right() - self.lane_width),
-                pointer: Some(pointer),
-                frame,
-                presentation: &drawing.plan,
-                progress: owner.flow_execution_progress(),
-                prefix_len: self.prefix_len,
-                tz,
-                side_inferred,
-            },
-        );
-    }
-
     /// Quiet context sits below footprint; one cached plan serves both paint passes.
     pub(super) fn regional_context(
         &mut self,
@@ -353,7 +324,12 @@ impl<'a> FlowFrame<'a> {
     /// chart layers never bleed into it. The histogram follows `partial`
     /// (not its visible filter): the strip reports the bar forming now even
     /// while the user pans through history.
-    pub(super) fn strip(&self, owner: Option<&mut OrderflowView>, frame: &DrawFrame<'_>) {
+    pub(super) fn strip(
+        &self,
+        owner: Option<&mut OrderflowView>,
+        frame: &DrawFrame<'_>,
+        forming: Option<&quantick_engine::BarFootprint>,
+    ) {
         if let Some(owner) = owner
             && let Some(strip) = frame.areas.live_strip
         {
@@ -364,6 +340,7 @@ impl<'a> FlowFrame<'a> {
                 scale: &frame.scale,
                 background: self.background,
                 partial_time: frame.partial.map(|bar| bar.open_time),
+                forming,
             });
         }
     }

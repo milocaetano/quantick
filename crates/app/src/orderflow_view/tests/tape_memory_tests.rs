@@ -171,6 +171,15 @@ fn freeze_past(view: &OrderflowView, shown: &VisibleOrderflow) -> usize {
         retained_from_ms: Some(from_ms),
         rungs: (100, 1),
         projection: Arc::clone(&shown.projection),
+        heat: Arc::new(quantick_orderflow::projection::PastHeat {
+            from_ms,
+            until_ms: from_ms + block_ms,
+            prices: PriceWindow::new(Decimal::ZERO, Decimal::ONE).unwrap(),
+            liquidity_reference: Decimal::ZERO,
+            effective_grouping: shown.projection.effective_grouping,
+            cells: Vec::new(),
+            gaps: Vec::new(),
+        }),
     };
     let scale = shown.volume_dots.as_ref().unwrap();
     let sizing = view.dot_rungs.sizing(scale, 400.0).unwrap();

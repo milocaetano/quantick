@@ -89,7 +89,7 @@ fn recorded_opening_metadata_survives_mode_changes_but_resets_with_the_source() 
     view.commit_config_changes(before);
     view.record_trade(&print(1, 2_017, 110, 25, Side::Sell));
     let enabled_later = view.recorded_opening_bursts();
-    view.set_ignore_opening_burst_in_scale(true);
+    view.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = true);
     view.stage_capture_grouping_for_test(Decimal::from(5));
     let regrouped = view.recorded_opening_bursts();
     let shown = frame(&mut view, &[print(1, 2_017, 110, 25, Side::Sell)]).unwrap();
@@ -280,7 +280,7 @@ fn pending_print_storage_obeys_the_existing_retention_capacity() {
         view.record_trade(trade);
     }
     let shown = frame(&mut view, &prints);
-    let pending_count = view.pending_tape.len();
+    let pending_count = view.pane_tape.pending().len();
     hold.release();
     assert_eq!(
         pending_count, 2,
@@ -334,7 +334,7 @@ fn pending_storage_retires_the_existing_time_retention_prefix() {
         view.record_trade(trade);
     }
     let shown = frame(&mut view, &prints);
-    let pending_count = view.pending_tape.len();
+    let pending_count = view.pane_tape.pending().len();
     hold.release();
     assert_eq!(pending_count, 1);
     let marks = tape(&shown.unwrap());
@@ -375,7 +375,7 @@ fn metatrader_reconnect_ids_cannot_acknowledge_an_unpublished_new_print() {
         immediate, settled,
         "the receipt is an owner ordinal, never a venue ID"
     );
-    assert!(view.pending_tape.is_empty());
+    assert!(view.pane_tape.pending().is_empty());
 }
 
 #[test]
@@ -463,7 +463,7 @@ fn an_acknowledged_subfloor_prefix_counts_when_pending_volume_crosses_the_floor(
         "the prefix alone is below the floor"
     );
     assert!(
-        view.pending_tape.is_empty(),
+        view.pane_tape.pending().is_empty(),
         "the worker acknowledged the prefix"
     );
 
@@ -536,7 +536,7 @@ fn a_book_covered_pending_suffix_keeps_the_same_native_dot_on_handoff() {
         Some(7),
         "the fixture has live book coverage"
     );
-    assert!(view.pending_tape.is_empty());
+    assert!(view.pane_tape.pending().is_empty());
 
     let held = gate.hold(Phase::Applying);
     let next = print(2, 1_017, 100, 3, Side::Sell);
@@ -658,7 +658,7 @@ fn a_subfloor_price_extreme_keeps_the_same_fit_after_worker_acknowledgement() {
     held.release();
     view.flush_for_test();
     let settled = tape(&frame(&mut view, &prints).unwrap());
-    assert!(view.pending_tape.is_empty());
+    assert!(view.pane_tape.pending().is_empty());
     assert_eq!(immediate, settled);
     assert_eq!(
         settled.len(),
@@ -699,7 +699,7 @@ fn worker_byte_eviction_cannot_resurrect_a_partial_window_in_the_pending_frame()
         prefix.is_empty(),
         "the canonical projector excludes the partly evicted native window"
     );
-    assert!(view.pending_tape.is_empty());
+    assert!(view.pane_tape.pending().is_empty());
 
     let held = gate.hold(Phase::Applying);
     let next = print(33, 1_090, 180, 3, Side::Sell);

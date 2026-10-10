@@ -1,0 +1,4 @@
+# Written by `cargo run -p quantick-guards -- --tighten`: these shrank.
+# ChartPane drops from 10 files to 7; the widest app type is now Tab at 9.
+impl-spread -1
+!budget -1

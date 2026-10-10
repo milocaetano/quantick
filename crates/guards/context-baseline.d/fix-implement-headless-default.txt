@@ -1,0 +1,3 @@
+# +114: the headless-first build rule and the [ui-free +N] PR title rule,
+# keeping the token-saving and stale-head rules the first trim had cut.
+.claude/skills/implement/ +114

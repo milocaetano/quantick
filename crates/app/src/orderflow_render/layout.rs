@@ -48,6 +48,8 @@ pub(crate) struct ProjectedLayout<'a> {
     /// here, at the same boundary where the candles' own scale flips, so the
     /// map, the bubbles and the bars they sit on turn over together.
     pub(crate) inverted: bool,
+    /// Every position is on the tape, its opening too: a held tape's book.
+    pub(crate) lane_only: bool,
 }
 
 impl<'a> ProjectedLayout<'a> {
@@ -72,6 +74,7 @@ impl<'a> ProjectedLayout<'a> {
                 0.0
             },
             inverted: false,
+            lane_only: false,
         }
     }
 
@@ -79,6 +82,13 @@ impl<'a> ProjectedLayout<'a> {
     #[must_use]
     pub(crate) fn with_inverted(mut self, inverted: bool) -> Self {
         self.inverted = inverted;
+        self
+    }
+
+    /// For primitives on the tape alone: its opening maps to the divider.
+    #[must_use]
+    pub(crate) fn with_lane_only(mut self) -> Self {
+        self.lane_only = true;
         self
     }
 
@@ -93,8 +103,8 @@ impl<'a> ProjectedLayout<'a> {
         let region_pos = normalized * regions;
         let boundary = regions - 1.0;
         match self.lane_left_x() {
-            Some(divider) if regions >= 1.0 && region_pos > boundary => {
-                divider + (region_pos - boundary) * self.lane_width_px
+            Some(divider) if regions >= 1.0 && (self.lane_only || region_pos > boundary) => {
+                divider + (region_pos - boundary).max(0.0) * self.lane_width_px
             }
             _ => self.x_at_ext(region_pos),
         }
@@ -144,9 +154,10 @@ impl<'a> ProjectedLayout<'a> {
     /// candles. `false` for every position when the frame has no lane.
     #[must_use]
     pub(super) fn in_lane(self, normalized: f64) -> bool {
+        let regions = self.slot_count as f64;
         self.lane_left_x().is_some()
             && self.slot_count >= 1
-            && finite_unit_f64(normalized) > (self.slot_count as f64 - 1.0) / self.slot_count as f64
+            && (self.lane_only || finite_unit_f64(normalized) > (regions - 1.0) / regions)
     }
 
     /// The pane a normalized position belongs to.

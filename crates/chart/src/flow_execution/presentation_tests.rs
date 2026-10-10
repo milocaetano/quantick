@@ -99,44 +99,6 @@ fn priority_preserves_every_member_quantity_center_and_true_area() {
 }
 
 #[test]
-fn hit_selection_uses_actual_role_order_before_quantity_or_source_position() {
-    // A presentation may later displace a peak while retaining its source disc.
-    // Hit testing follows the displayed circle and roles, not the source order.
-    let context = FlowDisc {
-        center: [116.0, 100.0],
-        radius: 8.5,
-    };
-    let peak = FlowDisc {
-        center: [127.0, 100.0],
-        radius: 4.0,
-    };
-    let presentation = FlowPresentation {
-        regions: vec![
-            FlowRegionVisual {
-                dot_index: 1,
-                source_disc: context,
-                disc: context,
-                role: FlowRegionRole::Context,
-                unresolved_overlap: false,
-            },
-            FlowRegionVisual {
-                dot_index: 2,
-                source_disc: FlowDisc {
-                    center: [160.0, 100.0],
-                    ..peak
-                },
-                disc: peak,
-                role: FlowRegionRole::Peak,
-                unresolved_overlap: false,
-            },
-        ],
-    };
-    assert_eq!(presentation.hit(HISTORY, [124.0, 100.0]), Some(2));
-    assert_eq!(presentation.hit(HISTORY, [115.0, 100.0]), Some(1));
-    assert_eq!(presentation.hit(HISTORY, [160.0, 100.0]), None);
-}
-
-#[test]
 fn comparable_large_regions_are_not_suppressed_by_their_larger_neighbor() {
     let frame = frame(&[12780, 8771, 7209, 6617, 6455, 200]);
     let presentation = plan(&frame, &[[100.0, 100.0]; 6]);
@@ -154,7 +116,6 @@ fn comparable_large_regions_are_not_suppressed_by_their_larger_neighbor() {
             .collect::<Vec<_>>(),
         [4, 3, 2, 1, 0]
     );
-    assert_eq!(presentation.hit(HISTORY, [100.0, 100.0]), Some(0));
 }
 
 #[test]
@@ -177,12 +138,10 @@ fn oversized_opening_neither_blocks_peaks_nor_changes_its_earned_disc() {
         ]
     );
     assert_eq!(presentation.regions[0].disc.radius, 120.0);
-    assert_eq!(presentation.hit(HISTORY, [100.0, 100.0]), Some(1));
-    assert_eq!(presentation.hit(HISTORY, [180.0, 100.0]), Some(0));
 }
 
 #[test]
-fn camera_spacing_keeps_small_volume_dim_without_losing_its_path_area_or_inspection() {
+fn camera_spacing_keeps_small_volume_dim_without_losing_its_path_or_area() {
     let frame = frame(&[4500, 600, 90, 1]);
     let before = frame.clone();
     let offsets = [[12.0, 10.0], [0.0, 0.0], [2.0, 3.0], [7.0, 6.0]];
@@ -214,11 +173,6 @@ fn camera_spacing_keeps_small_volume_dim_without_losing_its_path_area_or_inspect
             members.sort_unstable();
             assert_eq!(members, [0, 1, 2, 3]);
             assert_eq!(totals, [4590.into(), 601.into()]);
-            if x_scale >= 8.0 && y_scale >= 8.0 {
-                let [x, y] = centers[3];
-                assert_eq!(presentation.hit(HISTORY, [x + 3.0, y]), Some(3));
-                assert_eq!(presentation.hit(HISTORY, [x + 7.0, y]), None);
-            }
         }
     }
     assert_eq!(frame, before);
@@ -298,7 +252,7 @@ fn peak_selection_is_deterministic_and_translation_invariant() {
 }
 
 #[test]
-fn invalid_or_clipped_geometry_never_becomes_a_peak_or_hit_target() {
+fn invalid_or_clipped_geometry_never_becomes_a_peak() {
     let empty = frame(&[]);
     let mut frame = frame(&[1; 7]);
     frame.dots[1].radius = 0.0;
@@ -313,8 +267,6 @@ fn invalid_or_clipped_geometry_never_becomes_a_peak_or_hit_target() {
     });
     assert_eq!(presentation.regions.len(), 1);
     assert_eq!(presentation.regions[0].disc.center, [-5.0, 100.0]);
-    assert_eq!(presentation.hit(HISTORY, [1.0, 100.0]), Some(0));
-    assert_eq!(presentation.hit(HISTORY, [-1.0, 100.0]), None);
     for bounds in [
         [[0.0, 0.0], [0.0, 100.0]],
         [[100.0, 0.0], [0.0, 100.0]],
@@ -427,7 +379,7 @@ fn absent_reference_falls_back_to_the_visible_ordinary_maximum() {
 }
 
 #[test]
-fn displacement_keeps_source_truth_area_and_hit_testing_within_the_bound() {
+fn displacement_keeps_source_truth_and_area_within_the_bound() {
     let frame = frame(&[400, 200, 1]);
     let centers = [[100.0, 100.0]; 3];
     let presentation = plan(&frame, &centers);
@@ -454,8 +406,6 @@ fn displacement_keeps_source_truth_area_and_hit_testing_within_the_bound() {
     );
     assert!(dx.hypot(dy) > 20.0 && dx.hypot(dy) <= 24.0001);
     assert!(!moved.unresolved_overlap);
-    assert_eq!(presentation.hit(HISTORY, moved.disc.center), Some(1));
-    assert_eq!(presentation.hit(HISTORY, moved.source_disc.center), Some(0));
     assert_eq!(context.disc, context.source_disc);
     assert_eq!(context.role, FlowRegionRole::Context);
     assert!(
@@ -484,7 +434,6 @@ fn no_free_position_keeps_the_strong_source_circle_and_reports_the_overlap() {
     );
     assert!(!presentation.regions[0].unresolved_overlap);
     assert!(presentation.regions[1].unresolved_overlap);
-    assert_eq!(presentation.hit(HISTORY, [100.0, 100.0]), Some(1));
 }
 
 #[test]

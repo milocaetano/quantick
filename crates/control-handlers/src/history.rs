@@ -1,8 +1,6 @@
 //! `feed.history.load` and `feed.history.cancel`: the History button's press
-//! and its cancel, through the same calls a click makes
-//! ([`crate::app::control_host::TabsMut::press_history`] for the press).
+//! and its cancel, through the same calls a click makes ([`HistoryPort`]).
 
-use crate::app::{TabsMutPort, TabsPort};
 use quantick_control::{
     error::ControlError,
     registry::RegistryError,
@@ -12,14 +10,40 @@ use quantick_control_schema::history::{
     HistoryCancelInput, HistoryCancelResult, HistoryLoadInput, HistoryLoadResult,
     HistoryLoadSnapshot, cancel_descriptor, load_descriptor,
 };
-use quantick_feed::history_reach::{HistoryReach, MAX_REACH_HOURS, MAX_REACH_SESSIONS};
-use quantick_feed::history_run::{Cancelled, Press, RunStatus};
+use quantick_sources::history_reach::{HistoryReach, MAX_REACH_HOURS, MAX_REACH_SESSIONS};
+use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use serde_json::{Value, json};
 
-use super::recovery::tab_index;
-use super::{actions::ActionRegistry, gateway::ControlAccess};
+use crate::dock::ActionDock;
+use crate::tabs::{TabDirectory, tab_closed, tab_index};
 
-pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
+/// One tab's history run as the window holds it after an act.
+#[derive(Clone, Copy, Debug)]
+pub struct HistoryRun {
+    /// The run's state: idle, queued, loading or paused.
+    pub status: RunStatus,
+    /// The reach the toolbar's main click asks for.
+    pub main_reach: HistoryReach,
+}
+
+/// The History button's own acts on one tab.
+pub trait HistoryPort: TabDirectory {
+    /// Whether the feed of the tab at `index` can page older trades; `None`
+    /// when that tab is gone.
+    fn history_paging(&self, index: usize) -> Option<bool>;
+    /// The toolbar's own press for `reach`, so the main-click default moves
+    /// with it; `None` when the tab is gone.
+    fn press_history(&mut self, index: usize, reach: HistoryReach) -> Option<(Press, HistoryRun)>;
+    /// Cancel the tab's run or its queued press; `None` when the tab is gone.
+    fn cancel_history(&mut self, index: usize) -> Option<(Cancelled, HistoryRun)>;
+}
+
+/// Dock the press and its cancel.
+pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
+where
+    D: ActionDock<H, A>,
+    H: HistoryPort + ?Sized,
+{
     registry.register(load_descriptor(), load)?;
     registry.register(cancel_descriptor(), cancel)
 }
@@ -36,9 +60,9 @@ fn refused(message: String, sent: &str, next_step: &str) -> ControlError {
     error
 }
 
-fn load<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
+fn load<H: HistoryPort + ?Sized, A>(
+    app: &mut H,
+    _access: &mut A,
     _actor: &ActorContext,
     value: &Value,
 ) -> Result<Value, ControlError> {
@@ -52,23 +76,17 @@ fn load<P: TabsPort + TabsMutPort + ?Sized>(
         )
     })?;
     let index = tab_index(app, input.tab_id)?;
-    let tab_id = app.tab_reads().tabs().id_at(index);
-    let closed = || ControlError::invalid_request("the tab closed while the call ran");
-    let (tab, config) = app.tabs_mut().tab_with_config(index).ok_or_else(closed)?;
-    if !tab.capabilities(config).history_paging {
+    let tab_id = app.tab_id_at(index);
+    if !app.history_paging(index).ok_or_else(tab_closed)? {
         return Err(refused(
             "this tab's feed cannot page older trades".to_owned(),
             &input.reach,
             "read feed.status capabilities.history_paging; venue candles load with the History menu's + older candles",
         ));
     }
-    // The toolbar's own press, so the main-click default moves with it.
-    let (tab, press) = app
-        .tabs_mut()
-        .press_history(index, reach)
-        .ok_or_else(closed)?;
+    let (press, run) = app.press_history(index, reach).ok_or_else(tab_closed)?;
     let press = match press {
-        Press::Start if matches!(tab.history_status(), RunStatus::Idle) => "finished",
+        Press::Start if matches!(run.status, RunStatus::Idle) => "finished",
         Press::Start => "started",
         Press::Queued => "queued",
         Press::AlreadyRunning => "already_running",
@@ -77,26 +95,23 @@ fn load<P: TabsPort + TabsMutPort + ?Sized>(
         tab_id: WireU64::new(tab_id),
         reach: reach.token(),
         press: press.to_owned(),
-        status: snapshot(tab.history_status(), tab.main_history_reach()),
+        status: snapshot(run.status, run.main_reach),
     };
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 
-fn cancel<P: TabsPort + TabsMutPort + ?Sized>(
-    app: &mut P,
-    _access: &mut ControlAccess,
+fn cancel<H: HistoryPort + ?Sized, A>(
+    app: &mut H,
+    _access: &mut A,
     _actor: &ActorContext,
     value: &Value,
 ) -> Result<Value, ControlError> {
     let input: HistoryCancelInput = serde_json::from_value(value.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.tab_id)?;
-    let tab_id = app.tab_reads().tabs().id_at(index);
-    let (tab, _) = app
-        .tabs_mut()
-        .tab_with_config(index)
-        .ok_or_else(|| ControlError::invalid_request("the tab closed while the call ran"))?;
-    let cancelled = match tab.cancel_history() {
+    let tab_id = app.tab_id_at(index);
+    let (cancelled, run) = app.cancel_history(index).ok_or_else(tab_closed)?;
+    let cancelled = match cancelled {
         Cancelled::Run(_) => "run",
         Cancelled::Queued(_) => "queued",
         Cancelled::Nothing => "nothing",
@@ -104,13 +119,14 @@ fn cancel<P: TabsPort + TabsMutPort + ?Sized>(
     let result = HistoryCancelResult {
         tab_id: WireU64::new(tab_id),
         cancelled: cancelled.to_owned(),
-        status: snapshot(tab.history_status(), tab.main_history_reach()),
+        status: snapshot(run.status, run.main_reach),
     };
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
 
 /// One tab's run as the control plane reads it, in `feed.status` too.
-pub(crate) fn snapshot(status: RunStatus, main: HistoryReach) -> HistoryLoadSnapshot {
+#[must_use]
+pub fn snapshot(status: RunStatus, main: HistoryReach) -> HistoryLoadSnapshot {
     let (reach, progress) = match status {
         RunStatus::Idle => (None, None),
         RunStatus::Queued(reach) => (Some(reach), None),
@@ -133,3 +149,7 @@ pub(crate) fn snapshot(status: RunStatus, main: HistoryReach) -> HistoryLoadSnap
         pages: progress.map(|progress| progress.pages),
     }
 }
+
+#[cfg(test)]
+#[path = "history_tests.rs"]
+mod history_tests;

@@ -164,21 +164,12 @@ fn footprint_isolation_is_opaque_without_adding_to_the_earned_sector_geometry() 
 }
 
 #[test]
-fn circle_edge_visibility_and_hit_testing_share_exact_geometry() {
+fn circle_edge_visibility_uses_exact_geometry() {
     let (frame, _) = painted_region(4593, 4594);
     let history = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(100.0, 100.0));
-    for (x, pointer_x) in [(-10.0, 1.0), (110.0, 99.0)] {
+    for x in [-10.0, 110.0] {
         let disc = flow_disc(&frame.dots[0], egui::pos2(x, 50.0) - FLOW_OFFSET).unwrap();
         assert!(disc.visible([history.min.into(), history.max.into()]));
-        assert!(
-            disc.hit_distance([history.min.into(), history.max.into()], [pointer_x, 50.0])
-                .is_some()
-        );
-        assert!(
-            disc.hit_distance([history.min.into(), history.max.into()], disc.center)
-                .is_none(),
-            "outside pointer cannot inspect the clip"
-        );
     }
     for center in [
         egui::pos2(-13.0, 50.0),
@@ -189,13 +180,6 @@ fn circle_edge_visibility_and_hit_testing_share_exact_geometry() {
         assert!(
             !disc.visible([history.min.into(), history.max.into()]),
             "a bounding-box corner is not a circle intersection"
-        );
-        assert!(
-            disc.hit_distance(
-                [history.min.into(), history.max.into()],
-                history.clamp(center).into()
-            )
-            .is_none()
         );
     }
 }
@@ -245,7 +229,7 @@ fn oversized_opening_keeps_earned_area_with_faint_sectors_and_no_opaque_backing(
 }
 
 #[test]
-fn common_offset_preserves_vectors_radii_and_inspects_the_painted_position() {
+fn common_offset_preserves_vectors_and_radii() {
     let (frame, _) = painted_region(90, 0);
     let a = egui::pos2(30.0, 40.0);
     let b = egui::pos2(60.0, 75.0);
@@ -258,14 +242,6 @@ fn common_offset_preserves_vectors_radii_and_inspects_the_painted_position() {
     );
     assert_eq!(da.radius, frame.dots[0].radius);
     let history = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(100.0, 100.0));
-    assert_eq!(
-        da.hit_distance([history.min.into(), history.max.into()], da.center),
-        Some(0.0)
-    );
-    assert!(
-        da.hit_distance([history.min.into(), history.max.into()], a.into())
-            .is_none()
-    );
     let paint = |frame: &FlowTapeFrame| {
         let ctx = egui::Context::default();
         ctx.run(egui::RawInput::default(), |ctx| {

@@ -12,6 +12,7 @@ use super::{
     annotate::{AnnotationInput, AnnotationResult, RemoveInput, RemoveResult},
     chart::{ChartSnapshot, ChartWindowPage, ChartWindowQuery},
     contract::{ChartWindowInput, DescribeResult, EmptyInput, ObserverContract, SnapshotReadInput},
+    drawing_magnet::{DrawingMagnetInput, DrawingMagnetResult},
     events::{EventsReadInput, EventsWaitInput},
     evidence::{
         EvidenceCaptureInput, EvidenceChunkPage, EvidenceDocument, EvidenceManifest,
@@ -122,6 +123,8 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<DetachResult>("indicator-script-detach-result-v1.schema.json"),
         document::<IndicatorGuideInput>("indicator-mouse-vertical-line-input-v1.schema.json"),
         document::<IndicatorGuideResult>("indicator-mouse-vertical-line-result-v1.schema.json"),
+        document::<DrawingMagnetInput>("annotate-magnet-input-v1.schema.json"),
+        document::<DrawingMagnetResult>("annotate-magnet-result-v1.schema.json"),
         // The shape a failed compile puts in `error.context.details`, so a
         // client can generate a reader for its own diagnostics.
         document::<ScriptDiagnostic>("indicator-script-diagnostic-v1.schema.json"),

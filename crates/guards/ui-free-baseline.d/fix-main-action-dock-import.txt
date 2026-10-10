@@ -1,0 +1,6 @@
+# Unbreak main after the #636/#637 merge pair. Each branch measured its own
+# UI-free count against a main without the other, so main at 1e44c5dd sits 19
+# lines over the ceiling (and fails to compile). This branch adds the two-line
+# ActionDock import drawing_magnet.rs needs and signs the combined remainder.
+crates/app +21
+!budget +21

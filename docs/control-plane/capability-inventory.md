@@ -31,6 +31,7 @@ capability that cannot change application state.
 | `annotate.fixed_range_profile.create` | 2 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.horizontal_levels.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.label.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
+| `annotate.magnet.set` | 1 | `annotate` | no | `cockpit` |
 | `annotate.parallel_channel.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.rectangle.create` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
 | `annotate.remove` | 1 | `annotate` | no | `annotate`, `annotate.chart` |
@@ -94,4 +95,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-69 capabilities registered.
+70 capabilities registered.

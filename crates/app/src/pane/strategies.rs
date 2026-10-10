@@ -28,6 +28,7 @@ use crate::state::dec_from_f64;
 use crate::theme;
 
 use super::drawing_projection::PaneSeriesRead;
+use super::menus::PaneMenuIntent;
 use super::{PaneContextMenu, region_pause};
 
 /// The armed strategies and the work they park for the tab. See the module
@@ -87,14 +88,19 @@ pub fn drawing_region(
     // further notice, and its region does too — otherwise the bot
     // silently expires at the drawn end while the band visibly keeps
     // going (the replay trap this option exists to close).
-    let extend_right = drawing
+    // Left works the same way: a band visibly running back to the chart's
+    // left edge is active there too.
+    let (extend_left, extend_right) = drawing
         .payload
         .as_any()
         .downcast_ref::<drawings::RectanglePayload>()
-        .is_some_and(|payload| payload.extend_right);
+        .map_or((false, false), |payload| {
+            (payload.extend_left, payload.extend_right)
+        });
     #[allow(clippy::cast_precision_loss)]
     let slot = slot as f32;
-    let active = slot >= a.bar.min(b.bar) && (extend_right || slot <= a.bar.max(b.bar));
+    let active =
+        (extend_left || slot >= a.bar.min(b.bar)) && (extend_right || slot <= a.bar.max(b.bar));
     Some((region, active))
 }
 
@@ -178,27 +184,38 @@ impl PaneStrategies {
         self.cleanup.extend(cleanup);
     }
 
+    /// Call off the strategy riding `drawing`, as the user, and queue the
+    /// sweep of whatever it left resting. Nothing to call off is a no-op.
+    pub(crate) fn disarm(&mut self, drawing: drawings::DrawingId) {
+        if let Some(instance) = self.anchors.for_drawing_mut(drawing) {
+            let cleanup = instance.armed.disarm(quantick_strategy::DisarmReason::User);
+            self.cleanup.extend(cleanup);
+        }
+    }
+
     /// The strategy seat of the per-drawing menu: arm a bot on this region,
     /// or manage the one riding it. Price-band rectangles only — the one
     /// shape whose two anchors honestly bound a price region today.
     ///
+    /// Reads only: a click answers with the intent the pane applies.
     /// `menu` is the context menu the entries are drawn into; under test it
     /// records where each button landed so a test can click the real widget.
     pub(super) fn draw_menu_entries(
-        &mut self,
+        &self,
         ui: &mut egui::Ui,
         drawings: &Drawings,
         index: usize,
         series: PaneSeriesRead<'_>,
         menu: &mut PaneContextMenu,
-    ) {
+    ) -> Option<PaneMenuIntent> {
         #[cfg(not(test))]
         let _ = &menu;
         let drawing = &drawings.items()[index];
         if drawing.tool.id() != drawings::RECTANGLE_TOOL_ID || drawing.band != DrawingBand::Price {
-            return;
+            return None;
         }
         let id = drawing.id;
+        let mut intent = None;
         let Some(instance) = self.anchors.for_drawing(id) else {
             let add = ui.button("Add strategy…").on_hover_text(
                 "arm a strategy on this region: it fires on the trigger bar, in paper trading",
@@ -206,10 +223,10 @@ impl PaneStrategies {
             #[cfg(test)]
             menu.menu_rects.push(("Add strategy", add.rect));
             if add.clicked() {
-                self.popup_request = Some(id);
+                intent = Some(PaneMenuIntent::StrategyAdd(id));
                 ui.close_menu();
             }
-            return;
+            return intent;
         };
         // One line of truth about the bot on this drawing, then its verbs.
         ui.label(
@@ -218,7 +235,7 @@ impl PaneStrategies {
                 .color(theme::TEXT_MUTED),
         );
         let state = instance.armed.state().clone();
-        use quantick_strategy::{ArmedState, DisarmReason};
+        use quantick_strategy::ArmedState;
         match state {
             // One Disarm arm for every state that can be called off — a
             // resting retest limit included (it can wait for hours). Only
@@ -232,11 +249,8 @@ impl PaneStrategies {
                 let disarm = ui.button("Disarm").on_hover_text(hover);
                 #[cfg(test)]
                 menu.menu_rects.push(("Disarm", disarm.rect));
-                if disarm.clicked()
-                    && let Some(instance) = self.anchors.for_drawing_mut(id)
-                {
-                    let cleanup = instance.armed.disarm(DisarmReason::User);
-                    self.cleanup.extend(cleanup);
+                if disarm.clicked() {
+                    intent = Some(PaneMenuIntent::StrategyDisarm(id));
                     ui.close_menu();
                 }
             }
@@ -261,7 +275,7 @@ impl PaneStrategies {
                 #[cfg(test)]
                 menu.menu_rects.push(("Re-arm", rearm.rect));
                 if rearm.clicked() {
-                    self.rearm(id, series);
+                    intent = Some(PaneMenuIntent::StrategyRearm(id));
                     ui.close_menu();
                 }
             }
@@ -274,9 +288,10 @@ impl PaneStrategies {
         #[cfg(test)]
         menu.menu_rects.push(("Remove strategy", remove.rect));
         if remove.clicked() {
-            self.remove_for_drawing(id);
+            intent = Some(PaneMenuIntent::StrategyRemove(id));
             ui.close_menu();
         }
+        intent
     }
 }
 

@@ -1,0 +1,18 @@
+# fix/drawing-magnet: the toolrail magnet measures its candle reach to the
+# candle's span instead of to each print, a tool-owned handle drag restores
+# the exact target and untouched-anchor values it read back off the screen,
+# and a body drag moves by each frame's travel under that frame's axes (its
+# free anchors rebased when history shifts or re-cuts), honours the tool's
+# own anchor snap, and with the magnet on lands the edge nearest the pointer
+# on the print under it. All of it lives where the pane projects pointer to
+# anchor, which only `app` holds.
+crates/app +225
+!budget +225
+# The magnet as a control call: `annotate.magnet.set`, its port, its scene
+# toggle and the rail's one shared setter. Handlers and ports live in `app`.
+crates/app +135
+!budget +135
+# Review round: the rail reports where it paints the magnet, a hand's flip
+# goes through the journaling call, and `analysis.drawings` reads the state.
+crates/app +45
+!budget +45

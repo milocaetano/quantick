@@ -271,15 +271,36 @@ impl ToolRail {
     /// Whether placed anchors snap to the bar's open / high / low / close.
     #[must_use]
     pub fn magnet(&self) -> bool {
-        self.magnet
+        self.magnet.on
     }
 
-    /// Arm the magnet without a click — the `QUANTICK_DRAWING_MAGNET` hook
-    /// and the tests both come through here, so neither can drift from what
-    /// the button does.
-    #[cfg(any(feature = "drawing-harness", test))]
-    pub(crate) fn set_magnet(&mut self, magnet: bool) {
-        self.magnet = magnet;
+    /// Set the magnet — `annotate.magnet.set` (which the rail button and
+    /// its More menu entry go through) and the `QUANTICK_DRAWING_MAGNET` hook
+    /// all come through here, so none can drift from the others. Answers
+    /// whether it moved.
+    pub(crate) fn set_magnet(&mut self, magnet: bool) -> bool {
+        std::mem::replace(&mut self.magnet.on, magnet) != magnet
+    }
+
+    /// The flip a hand asked for this frame, once.
+    pub fn take_magnet_request(&mut self) -> Option<bool> {
+        self.magnet.asked.take()
+    }
+
+    /// Whether the magnet's own button is on screen: the trailing cluster of
+    /// every stage but Minimal, which folds it into the closed More menu.
+    #[must_use]
+    pub(crate) fn magnet_painted(&self) -> bool {
+        self.visible
+            && self
+                .last_stage
+                .is_some_and(|stage| stage != RailStage::Minimal)
+    }
+
+    /// Where the magnet button was drawn, for tests that click it.
+    #[cfg(test)]
+    pub(crate) fn magnet_button_rect(&self) -> Option<egui::Rect> {
+        self.magnet_rect
     }
 
     /// Ask for a family flyout without a click — the

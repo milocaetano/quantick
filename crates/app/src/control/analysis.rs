@@ -30,7 +30,7 @@
 
 pub(crate) use quantick_control_schema::analysis::*;
 
-use crate::app::TabsPort;
+use crate::app::{ChromePort, TabsPort};
 use quantick_control::{
     id::{ModuleId, SnapshotScopeId},
     limits::{CONTROL_SNAPSHOT_MAX_DRAWINGS_PER_PANE, CONTROL_SNAPSHOT_MAX_INDICATORS_PER_PANE},
@@ -99,8 +99,10 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// Everything either scope publishes and the readings do not carry belongs
 /// here. A field on the wire that no key covers is a client polling a
 /// revision that never moves while the answer underneath it changed.
-fn revision<P: TabsPort + ?Sized>(app: &P) -> Vec<AnalysisRevisionKey> {
-    app.tab_reads()
+fn revision<P: TabsPort + ChromePort + ?Sized>(app: &P) -> (bool, Vec<AnalysisRevisionKey>) {
+    let magnet = app.chrome_reads().tool_rail().magnet();
+    let tabs = app
+        .tab_reads()
         .tabs()
         .iter_with_ids()
         .map(|(tab_id, tab)| AnalysisRevisionKey {
@@ -148,7 +150,8 @@ fn revision<P: TabsPort + ?Sized>(app: &P) -> Vec<AnalysisRevisionKey> {
                 })
                 .collect(),
         })
-        .collect()
+        .collect();
+    (magnet, tabs)
 }
 
 /// The revision key's rows. Their only contract is [`Eq`]: they are never
@@ -196,7 +199,10 @@ fn project_indicators<P: TabsPort + ?Sized>(
     indicators_snapshot(app)
 }
 
-fn project_drawings<P: TabsPort + ?Sized>(app: &P, _context: CaptureContext) -> DrawingsSnapshot {
+fn project_drawings<P: TabsPort + ChromePort + ?Sized>(
+    app: &P,
+    _context: CaptureContext,
+) -> DrawingsSnapshot {
     drawings_snapshot(app)
 }
 
@@ -283,8 +289,9 @@ fn failure_snapshot(view: &IndicatorView, script: bool) -> Option<IndicatorFailu
     })
 }
 
-fn drawings_snapshot<P: TabsPort + ?Sized>(app: &P) -> DrawingsSnapshot {
+fn drawings_snapshot<P: TabsPort + ChromePort + ?Sized>(app: &P) -> DrawingsSnapshot {
     DrawingsSnapshot {
+        magnet: app.chrome_reads().tool_rail().magnet(),
         tabs: app
             .tab_reads()
             .tabs()

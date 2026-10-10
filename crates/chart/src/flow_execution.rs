@@ -15,7 +15,7 @@ use constants::{FLOW_MERGE_SUPPORT_RADIUS_PX, FLOW_RADIUS_LIMIT_PX};
 mod geometry;
 pub use geometry::FlowExecutionGeometry;
 mod disc;
-pub use disc::{FlowBounds, FlowDisc, hit_flow_region};
+pub use disc::{FlowBounds, FlowDisc};
 mod presentation;
 pub use presentation::{FlowPresentation, FlowRegionRole, FlowRegionVisual};
 

@@ -1,0 +1,11 @@
+# The production view of each fixture beside this file, counted by hand.
+# Both definitions read this table: test_measure.py checks measure.py against
+# it and crates/guards/src/impl_spread/tests.rs checks the impl-spread guard's
+# port, so a change to either definition breaks a test until both agree.
+#
+# file<TAB>production lines<TAB>inherent impl types in source order, or -
+lib.rs	23	Square
+headers.rs	14	Shape,Holder,Pane,Slot,Buffer,Latch
+not_inherent.rs	13	-
+cfg_test.rs	5	Live
+inner_cfg_test.rs	0	-

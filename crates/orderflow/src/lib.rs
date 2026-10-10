@@ -13,6 +13,7 @@ pub mod engine;
 pub mod grouping;
 pub mod history;
 pub mod interaction;
+pub mod pane_tape;
 pub mod projection;
 pub mod scale;
 pub mod tape_clock;
@@ -51,11 +52,11 @@ pub use interaction::{
 };
 #[allow(unused_imports)]
 pub use projection::{
-    AggressionPrimitive, BEFORE_CAPTURE, DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_CELL_PX,
-    DOT_WINDOW_LADDER_MS, DotRungMemory, DotScale, DotSizing, DotZoom, GapPrimitive, HeatmapCell,
-    HeatmapProjection, LiquidityEventPrimitive, LiquidityEvidence, LiveMarks, PaneGeometry,
-    PriceWindow, SettledProjection, VolumeDots, dot_level_ticks, dot_window_ms, lane_bars,
-    project_live, project_settled,
+    AggressionPrimitive, BEFORE_CAPTURE, BOOK_PENDING, DOT_LEVEL_LADDER_TICKS, DOT_WINDOW_CELL_PX,
+    DOT_WINDOW_LADDER_MS, DotRungMemory, DotScale, DotSizing, DotZoom, FlowCellHit, GapPrimitive,
+    HeatmapCell, HeatmapProjection, LiquidityEventPrimitive, LiquidityEvidence, LiveMarks,
+    PaneGeometry, PriceWindow, SettledProjection, VolumeDots, dot_level_ticks, dot_window_ms,
+    lane_bars, project_live, project_settled,
 };
 #[allow(unused_imports)]
 pub use scale::SessionScale;
@@ -84,6 +85,9 @@ mod tests {
         assert_eq!(feed_lag_ms(500, Some(600)), Some(-100));
     }
 }
+
+#[cfg(test)]
+mod pane_tape_tests;
 
 #[cfg(test)]
 mod tape_clock_tests;

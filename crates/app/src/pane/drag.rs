@@ -14,16 +14,21 @@ pub const DRAWING_SELECT_RADIUS_PX: f32 = 10.0;
 /// Hit radius for a selected drawing's editable anchor.
 pub const DRAWING_ANCHOR_RADIUS_PX: f32 = 12.0;
 
-/// Minimum pointer travel that turns one press/release into drag placement.
-/// How near the pointer must be to a bar's open / high / low / close for
-/// the magnet to take the anchor. Generous enough to catch the swing you
-/// aimed at, tight enough to still draw a free diagonal between bars.
+/// How near the pointer must be to one of an indicator band's own values
+/// for the magnet to take the anchor there.
 pub const MAGNET_REACH_PX: f32 = 12.0;
+
+/// How far past a candle's high or low (inside it always counts) the magnet
+/// still takes the anchor onto its nearest open / high / low / close: enough
+/// to catch a swing from a hand's wobble away, little enough to still draw a
+/// free diagonal through empty price.
+pub const CANDLE_MAGNET_REACH_PX: f32 = 24.0;
 
 /// The candle magnet has no reach: [`drawings::AnchorSnap::NearestOhlc`]
 /// never lets go, however far the pointer floats from the candle.
 pub const MAGNET_REACH_UNLIMITED_PX: f32 = f32::INFINITY;
 
+/// Minimum pointer travel that turns one press/release into drag placement.
 pub const DRAWING_DRAG_THRESHOLD_PX: f32 = 4.0;
 
 /// How far a press must travel before its release counts as "the trader

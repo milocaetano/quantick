@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "changed": {
+      "description": "Whether the call moved it; `false` when it already stood there.",
+      "type": "boolean"
+    },
+    "enabled": {
+      "description": "The magnet as it stands after the call.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "enabled",
+    "changed"
+  ],
+  "title": "DrawingMagnetResult",
+  "type": "object"
+}
