@@ -19,8 +19,8 @@ use eframe::egui;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::footprint_config::{
-    COMPACT_FROM_PX_RANGE, DETAIL_SCALE_RANGE, DETAILED_FROM_PX_RANGE, FootprintConfig,
-    FootprintStyle, PROFILE_ROW_PX_RANGE,
+    DETAIL_SCALE_RANGE, DETAILED_FROM_PX_RANGE, FootprintConfig, FootprintStyle,
+    PROFILE_ROW_PX_RANGE,
 };
 use crate::footprint_presets::{MAX_NAME_LEN, PresetStore};
 use crate::theme;
@@ -332,9 +332,10 @@ impl DetailSection<'_> {
             let slider = slider.clamping(egui::SliderClamping::Edits);
             ui.add(slider).on_hover_text(hover).changed()
         };
+        let compact_range = self.config.compact_from_px_range();
         let compact = entry(
             &mut self.config.compact_from_px,
-            COMPACT_FROM_PX_RANGE,
+            compact_range,
             "summary numbers from px",
             "candle width where one delta number per row starts: zooming in it \
              appears there and zooming out it leaves at the same width \
@@ -347,6 +348,7 @@ impl DetailSection<'_> {
             "candle width where the full sell x buy ladder starts, in both zoom \
              directions; styles with more columns keep their ratio to it",
         );
+        self.config.order_entry_widths();
         scale | compact | detailed
     }
 }

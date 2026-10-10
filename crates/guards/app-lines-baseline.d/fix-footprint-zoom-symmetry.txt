@@ -3,8 +3,10 @@
 # the layer passes the two configured widths into the level resolution. The
 # decision itself (strict width, per-style entry width) lives in
 # quantick-chart (footprint_lod) and the persisted values in quantick-stores.
-crates/app +29
-!budget +29
+# Two more: the Compact slider's range stops at Detailed and lowering
+# Detailed pulls Compact down (the ordering itself lives in quantick-stores).
+crates/app +31
+!budget +31
 # Carried, not authored here: #650 (8fdf75a3) merged 4 unsigned app lines
 # and left main over its ceiling; signed so this branch's CI can go green.
 crates/app +4

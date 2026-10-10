@@ -238,8 +238,10 @@ pub struct FootprintSetupSnapshot {
     pub show_point_of_control: bool,
     pub show_numbers: bool,
     pub show_delta_totals: bool,
-    /// Candle width at which one summary number per row starts, in both zoom
-    /// directions, measured at a detail scale of 1.
+    /// The configured candle width at which one summary number per row
+    /// starts, in both zoom directions, measured at a detail scale of 1.
+    /// Never above `detailed_from_px`: the settings store and slider keep it
+    /// there, so this is the value the chart uses.
     #[serde(default)]
     #[schemars(extend("x-unit" = "pixels"))]
     pub compact_from_px: Option<CanonicalDecimal>,
@@ -248,8 +250,10 @@ pub struct FootprintSetupSnapshot {
     #[serde(default)]
     #[schemars(extend("x-unit" = "pixels"))]
     pub detailed_from_px: Option<CanonicalDecimal>,
-    /// The detail scale both widths are stretched by: a level starts at its
-    /// `*_from_px` times this, in candle pixels on screen.
+    /// The detail scale both widths are stretched by: a level starts near its
+    /// `*_from_px` times this, in candle pixels on screen. The product is
+    /// capped at the deepest zoom, and a style's own text floor can raise
+    /// it, so it is a configured entry, not a measured one.
     #[serde(default)]
     pub detail_scale: Option<CanonicalDecimal>,
 }

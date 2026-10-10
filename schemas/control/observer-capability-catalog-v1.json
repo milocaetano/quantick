@@ -17707,7 +17707,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Candle width at which one summary number per row starts, in both zoom\ndirections, measured at a detail scale of 1.",
+                "description": "The configured candle width at which one summary number per row\nstarts, in both zoom directions, measured at a detail scale of 1.\nNever above `detailed_from_px`: the settings store and slider keep it\nthere, so this is the value the chart uses.",
                 "x-unit": "pixels"
               },
               "detail_scale": {
@@ -17720,7 +17720,7 @@
                   }
                 ],
                 "default": null,
-                "description": "The detail scale both widths are stretched by: a level starts at its\n`*_from_px` times this, in candle pixels on screen."
+                "description": "The detail scale both widths are stretched by: a level starts near its\n`*_from_px` times this, in candle pixels on screen. The product is\ncapped at the deepest zoom, and a style's own text floor can raise\nit, so it is a configured entry, not a measured one."
               },
               "detailed_from_px": {
                 "anyOf": [
