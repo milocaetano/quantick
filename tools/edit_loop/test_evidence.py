@@ -66,7 +66,9 @@ class EvidenceTests(Fixture):
                 report["crates"].append(measure.series(
                     row, self.repo, sha, self.root / (row["crate"] + "-target"),
                     self.output / row["crate"], process=fake, sleep=clock_tick, observe=lambda: []))
-        self.assertEqual(len(calls), 3 * (2 + inputs.SAMPLES))
+        # Warm-up, control, the touched builds and one test run per crate.
+        self.assertEqual(len(calls), 3 * (3 + inputs.SAMPLES))
+        self.assertEqual(sum(command == sampling.command(command[-1], True) for command in calls), 3)
         evidence.publish(self.output, report)
         return report
 
@@ -84,10 +86,12 @@ class EvidenceTests(Fixture):
 
     def test_claims_cannot_replace_compile_or_restore_proof(self):
         original = self.complete()
-        for mutation in ("claim", "restore", "rank", "time", "command"):
+        for mutation in ("claim", "tests", "restore", "rank", "time", "command"):
             report = json.loads(json.dumps(original))
             if mutation == "claim":
                 report["crates"][0]["samples"][0]["elapsed_seconds"] = 0
+            elif mutation == "tests":
+                report["crates"][0]["tests"]["elapsed_seconds"] = 0
             elif mutation == "restore":
                 report["crates"][0]["restored"] = False
             elif mutation == "rank":
@@ -293,6 +297,15 @@ class WorkflowTests(Fixture):
             self.assertIn(required, source)
         self.assertEqual(source.count("measure.py run"), 1)
         self.assertNotIn("continue-on-error", source)
+
+    def test_warm_target_is_restored_before_and_saved_after_the_measurement(self):
+        source = (inputs.ROOT / ".github/workflows/edit-loop.yml").read_text(encoding="utf-8")
+        positions = [source.index(step) for step in (
+            "actions/cache/restore@v4", "measure.py run", "actions/cache/save@v4")]
+        self.assertEqual(positions, sorted(positions))
+        # A pull request reads the main branch's target and saves only to seed an empty cache.
+        self.assertIn("github.event_name != 'pull_request'", source)
+        self.assertIn("timeout-minutes: 30", source)
 
 
 class ConfigurationTests(Fixture):

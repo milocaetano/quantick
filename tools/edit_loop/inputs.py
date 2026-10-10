@@ -18,7 +18,12 @@ LEXER = importlib.util.module_from_spec(LEXER_SPEC)
 LEXER_SPEC.loader.exec_module(LEXER)
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
 SAMPLES = 5
-JOBS = 2
+# Every logical CPU of the declared four-CPU host class.
+JOBS = 4
+# The debug-info level ci.yml builds with: file and line for a backtrace, no
+# variable or type tables. It keeps the cached target small enough to restore
+# and save inside the workflow's seven-minute budget.
+DEBUG_INFO = "line-tables-only"
 
 
 def digest(data):
@@ -63,6 +68,7 @@ def regular_path(repo, path):
 
 
 def new_paths(repo, worktree, target, output):
+    """Return whether the target root already exists: a restored cache, never a link."""
     paths = [Path(p).absolute() for p in (repo, worktree, target, output)]
     if any(".." in path.parts for path in paths):
         raise ValueError("experiment paths must not contain unresolved parent components")
@@ -70,12 +76,16 @@ def new_paths(repo, worktree, target, output):
         for right in paths[i + 1:]:
             if left.is_relative_to(right) or right.is_relative_to(left):
                 raise ValueError("source, worktree, targets and evidence must be disjoint")
+    restored = paths[2].exists() or paths[2].is_symlink()
+    if restored and (is_link(paths[2]) or not paths[2].is_dir()):
+        raise ValueError("a restored target root must be a plain directory")
     for path in paths[1:]:
-        if path.exists() or path.is_symlink():
+        if path != paths[2] and (path.exists() or path.is_symlink()):
             raise ValueError(f"owned experiment path must not already exist: {path}")
         for parent in path.parents:
             if parent.exists() and is_link(parent):
                 raise ValueError("experiment ancestor is a symlink/junction")
+    return restored
 
 
 def ranked_crates(repo):
@@ -110,6 +120,7 @@ def command_environment(repo, target, jobs, inherited=None):
             raise ValueError(f"undeclared application/harness override: {name}")
     changes = ["QUANTICK_BUBBLES"] if "QUANTICK_BUBBLES" in env else []
     env.update(CARGO_TERM_COLOR="never", CARGO_TARGET_DIR=str(target), CARGO_BUILD_JOBS=str(jobs),
+               CARGO_PROFILE_DEV_DEBUG=DEBUG_INFO,
                QUANTICK_BUBBLES=str(repo / "crates/app/config/bubbles.toml"))
     return env, changes
 
@@ -148,7 +159,8 @@ def cargo_configuration(repo, inherited=None):
                 raise ValueError(f"undeclared Cargo configuration: {path}")
             records.append({"path": str(path), "sha256": digest(data),
                             "normalized_keys": ["build.jobs"] if config.get("build") else []})
-    return {"cargo_home": str(cargo_home), "registry_cache": "shared Cargo home; new compile targets",
+    return {"cargo_home": str(cargo_home),
+            "registry_cache": "shared Cargo home; one compile target, restored from cache when present",
             "configs": records}
 
 

@@ -42,19 +42,19 @@ def fresh(report, now=None):
         raise ValueError("measurement is stale or future-dated")
 
 
-def validate_process(output, recorded, package, touched):
+def validate_process(output, recorded, package, touched, tests=False):
     directory = Path(recorded["directory"])
     if directory.is_absolute() or ".." in directory.parts:
         raise ValueError("raw process directory escapes evidence")
     raw = read_json(output / directory / "process.json")
     if any(recorded.get(key) != value for key, value in raw.items()):
         raise ValueError("reported timing differs from raw process metadata")
-    if raw["command"] != ["cargo", "test", "-p", package] or raw.get("interrupted"):
-        raise ValueError("sample did not run the exact complete package test command")
+    if raw["command"] != sampling.command(package, tests) or raw.get("interrupted"):
+        raise ValueError("sample did not run the exact package test-build or test command")
     raw["stdout_text"] = (output / directory / "stdout.log").read_text(encoding="utf-8", errors="replace")
     raw["stderr_text"] = (output / directory / "stderr.log").read_text(encoding="utf-8", errors="replace")
-    compiled = sampling.validate_sample(raw, package, touched)
-    if recorded.get("recompiled") != compiled or recorded.get("tests_passed") is not True:
+    compiled = sampling.validate_sample(raw, package, touched, tests)
+    if recorded.get("recompiled") != compiled or recorded.get("tests_passed") is not (True if tests else None):
         raise ValueError("reported compilation/test claims disagree with raw output")
     contention = read_json(output / directory / "contention.json")
     if contention["before"] or contention["after"]:
@@ -112,6 +112,7 @@ def load(report_path, repo, now=None):
                 raise ValueError("touch timestamps do not strictly advance")
             prior = sample["touched_mtime_ns"]
             validate_process(output, sample, row["package"], True)
-        if row["summary"] != sampling.summary(row["samples"]):
+        validate_process(output, row["tests"], row["package"], False, tests=True)
+        if row["summary"] != sampling.summary(row["samples"], row["tests"]["elapsed_seconds"]):
             raise ValueError("summary does not retain all measured samples")
     return report

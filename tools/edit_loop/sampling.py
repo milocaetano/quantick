@@ -92,7 +92,12 @@ class SourceTouch:
         self.save()
 
 
-def validate_sample(sample, package, touched):
+def command(package, tests):
+    """The package's test build alone, or its complete test run."""
+    return ["cargo", "test", *(() if tests else ("--no-run",)), "-p", package]
+
+
+def validate_sample(sample, package, touched, tests=True):
     elapsed = sample["elapsed_seconds"]
     if type(elapsed) not in (int, float) or not math.isfinite(elapsed) or elapsed < 0:
         raise ValueError("invalid elapsed time")
@@ -101,7 +106,7 @@ def validate_sample(sample, package, touched):
     if (type(sample.get("exit_code")) is not int or sample["exit_code"] != 0
             or sample.get("timed_out") is not False or sample.get("interrupted") is not None):
         raise ValueError("Cargo failed or timed out; raw evidence retained")
-    if not re.search(r"test result: ok\. [1-9][0-9]* passed; 0 failed;", sample["stdout_text"]):
+    if tests and not re.search(r"test result: ok\. [1-9][0-9]* passed; 0 failed;", sample["stdout_text"]):
         raise ValueError("successful executed tests are missing")
     compiled = bool(re.search(r"(?m)^\s*Compiling " + re.escape(package) + r" v\S+", sample["stderr_text"]))
     if touched and not compiled:
@@ -109,7 +114,11 @@ def validate_sample(sample, package, touched):
     return compiled
 
 
-def summary(samples):
+def summary(samples, tests_seconds=None):
     values = [sample["elapsed_seconds"] for sample in samples]
-    return {"count": len(values), "median_seconds": statistics.median(values),
-            "min_seconds": min(values), "max_seconds": max(values)}
+    result = {"count": len(values), "median_seconds": statistics.median(values),
+              "min_seconds": min(values), "max_seconds": max(values)}
+    if tests_seconds is not None:
+        # The loop a developer waits on: the slowest touched build plus the test run.
+        result |= {"tests_seconds": tests_seconds, "loop_max_seconds": max(values) + tests_seconds}
+    return result

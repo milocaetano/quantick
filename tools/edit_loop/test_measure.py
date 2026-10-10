@@ -99,11 +99,27 @@ class SelectionTests(Fixture):
         with self.assertRaises(ValueError):
             inputs.new_paths(self.repo, self.root / "bench", self.root / "bench/t", self.root / "out")
 
+    def test_only_the_target_root_may_be_a_restored_cache_directory(self):
+        bench, target, out = self.root / "bench", self.root / "target", self.root / "out"
+        self.assertFalse(inputs.new_paths(self.repo, bench, target, out))
+        target.mkdir()
+        self.assertTrue(inputs.new_paths(self.repo, bench, target, out))
+        for existing in (bench, out):
+            existing.mkdir()
+            with self.subTest(existing=existing.name), self.assertRaisesRegex(ValueError, "already exist"):
+                inputs.new_paths(self.repo, bench, target, out)
+            existing.rmdir()
+        target.rmdir()
+        target.write_text("not a directory", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "plain directory"):
+            inputs.new_paths(self.repo, bench, target, out)
+
     def test_environment_normalizes_only_declared_fixture_and_rejects_build_overrides(self):
         env, changes = inputs.command_environment(self.repo, self.root / "target", 2,
                                                   {"PATH": "bin", "QUANTICK_BUBBLES": "personal"})
         self.assertEqual(env["QUANTICK_BUBBLES"], str(self.repo / "crates/app/config/bubbles.toml"))
         self.assertEqual(env["CARGO_BUILD_JOBS"], "2")
+        self.assertEqual(env["CARGO_PROFILE_DEV_DEBUG"], "line-tables-only")
         self.assertIn("QUANTICK_BUBBLES", changes)
         for overrides in ({"RUSTFLAGS": "-O"}, {"CARGO_INCREMENTAL": "0"},
                           {"QUANTICK_UPDATE_SCHEMAS": "1"}, {"RUSTC_WRAPPER": "sccache"}):
@@ -176,10 +192,27 @@ class ObservationTests(unittest.TestCase):
                 sampling.validate_sample(good | changed, "quantick-a", touched=True)
         sampling.validate_sample(good | {"stderr_text": "Finished"}, "quantick-a", touched=False)
 
+    def test_a_touched_build_needs_recompilation_but_no_test_run(self):
+        build = {"exit_code": 0, "elapsed_seconds": 3.0, "timed_out": False,
+                 "tree_quiescent": True, "orphaned_descendants": False, "stdout_text": "",
+                 "stderr_text": "   Compiling quantick-a v0.1.0 (fixture)\n"}
+        self.assertTrue(sampling.validate_sample(build, "quantick-a", touched=True, tests=False))
+        with self.assertRaisesRegex(ValueError, "recompilation"):
+            sampling.validate_sample(build | {"stderr_text": "Finished"}, "quantick-a",
+                                     touched=True, tests=False)
+        with self.assertRaisesRegex(ValueError, "executed tests"):
+            sampling.validate_sample(build, "quantick-a", touched=False, tests=True)
+        self.assertEqual(sampling.command("quantick-a", False),
+                         ["cargo", "test", "--no-run", "-p", "quantick-a"])
+        self.assertEqual(sampling.command("quantick-a", True), ["cargo", "test", "-p", "quantick-a"])
+
     def test_all_samples_are_retained_in_summary_not_best_selected(self):
         samples = [{"elapsed_seconds": value} for value in (9, 2, 8, 3, 7)]
         self.assertEqual(sampling.summary(samples), {"count": 5, "median_seconds": 7,
                                                     "min_seconds": 2, "max_seconds": 9})
+        self.assertEqual(sampling.summary(samples, 40), {"count": 5, "median_seconds": 7,
+                                                         "min_seconds": 2, "max_seconds": 9,
+                                                         "tests_seconds": 40, "loop_max_seconds": 49})
 
 class BudgetTests(unittest.TestCase):
     def test_budget_uses_fixed_baseline_and_rejects_drift_or_overrun(self):
@@ -188,19 +221,32 @@ class BudgetTests(unittest.TestCase):
                   "toolchain": "pinned", "jobs": 2, "profile_hash": "profile",
                   "protocol_hash": "protocol",
                   "restored": True, "crates": []}
+        process = {"exit_code": 0, "timed_out": False, "tree_quiescent": True,
+                   "orphaned_descendants": False}
         for name in ("a", "b", "c"):
             report["crates"].append({"crate": name, "package": "quantick-" + name,
                                       "source": f"crates/{name}/src/lib.rs",
-                                      "samples": [{"elapsed_seconds": v, "recompiled": True,
-                                                   "tests_passed": True, "exit_code": 0,
-                                                   "timed_out": False, "tree_quiescent": True,
-                                                   "orphaned_descendants": False} for v in (1, 2, 3, 4, 5)]})
+                                      "samples": [process | {"elapsed_seconds": v, "recompiled": True}
+                                                  for v in (1, 2, 3, 4, 5)],
+                                      "tests": process | {"elapsed_seconds": 35, "recompiled": False,
+                                                          "tests_passed": True}})
         baseline = budgets.propose(report)
+        # The ceiling covers the slowest touched build plus the one test run.
+        self.assertEqual(baseline["crates"][0]["max_seconds"], 50)
         budgets.check(report, baseline)
-        changed = json.loads(json.dumps(report))
-        changed["crates"][0]["samples"][4]["elapsed_seconds"] = 10000
-        with self.assertRaisesRegex(ValueError, "budget"):
-            budgets.check(changed, baseline)
+        for stage in ("samples", "tests"):
+            changed = json.loads(json.dumps(report))
+            if stage == "samples":
+                changed["crates"][0]["samples"][4]["elapsed_seconds"] = 10000
+            else:
+                changed["crates"][0]["tests"]["elapsed_seconds"] = 10000
+            with self.subTest(stage=stage), self.assertRaisesRegex(ValueError, "budget"):
+                budgets.check(changed, baseline)
+        for broken in ({"tests_passed": None}, {"exit_code": 101}):
+            changed = json.loads(json.dumps(report))
+            changed["crates"][0]["tests"] |= broken
+            with self.subTest(broken=broken), self.assertRaisesRegex(ValueError, "test-run"):
+                budgets.check(changed, baseline)
         for field, value in (("host_class", "different"), ("toolchain", "different"),
                              ("status", "failed")):
             with self.subTest(field=field), self.assertRaises(ValueError):
