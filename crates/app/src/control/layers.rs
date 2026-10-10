@@ -3,11 +3,11 @@
 pub(crate) use quantick_control_schema::layers::*;
 
 use super::{
-    actions::{ActionDock, ActionRegistry},
+    actions::ActionRegistry,
     gateway::ControlAccess,
     journal::{EventActor, NewEvent},
     layout::{self, TabTarget},
-    registry::{CaptureContext, ProjectionDock, ProjectionRegistry, ProjectionRegistryError},
+    registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
 };
 
 use crate::app::{ChromePort, LayersPort, TabsPort};

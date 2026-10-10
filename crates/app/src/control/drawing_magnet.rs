@@ -23,9 +23,7 @@ use quantick_control::annotation::ANNOTATE_MODULE_ID;
 use serde_json::Value;
 
 use super::{
-    actions::{
-        ActionDock, ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID,
-    },
+    actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
     contract::{COCKPIT_EFFECT_ID, COCKPIT_PERMISSION_ID},
     gateway::ControlAccess,
     journal::{EventActor, NewEvent},

@@ -52,7 +52,7 @@ use serde_json::{Value, json};
 use crate::{metrics, paper_trading::PaperTrading};
 
 use super::{
-    actions::{ActionDock, ActionRegistry},
+    actions::ActionRegistry,
     gateway::ControlAccess,
     journal::{EventActor, NewEvent},
 };

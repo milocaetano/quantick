@@ -13,7 +13,7 @@
 use crate::app::TabsPort;
 pub(crate) use quantick_control_schema::attention::*;
 
-use std::{collections::BTreeSet, sync::Arc};
+use std::collections::BTreeSet;
 
 use quantick_control::{
     error::ControlError,
@@ -27,8 +27,6 @@ use quantick_control::{
     wire::{ActorContext, ActorKind, WireU64},
 };
 
-use quantick_control_host::contract::ExternalSchemas;
-
 use schemars::JsonSchema;
 
 use serde::{Deserialize, Serialize};
@@ -36,8 +34,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{app::ControlWindow, metrics};
-
-pub(crate) use quantick_control_handlers::dock::ActionDock;
 
 /// One action's handler over this application: it mutates the window and
 /// journals through its control access.
@@ -47,68 +43,12 @@ pub(crate) type ActionHandler = fn(
     &ActorContext,
     &Value,
 ) -> Result<Value, ControlError>;
-/// The resolver that turns what a caller wrote into what will be done.
-pub(crate) type ActionResolver =
-    fn(&ControlWindow, &ActorContext, Value) -> Result<Value, ControlError>;
 
-/// The registry over this application — the headless registry in
-/// `quantick_control_host::actions` with the window as its host. A newtype
-/// rather than an alias, as the projection registry is: the extension
-/// boundary refuses a root type alias, and every forwarding method here
-/// is one line.
-pub(crate) struct ActionRegistry(
-    quantick_control_host::actions::ActionRegistry<ControlWindow, ControlAccess>,
-);
-
-impl ActionRegistry {
-    pub fn new() -> Self {
-        Self(quantick_control_host::actions::ActionRegistry::new())
-    }
-
-    /// Dock one action that resolves live state before it acts; see the
-    /// host registry for what each schema bounds.
-    pub fn register_resolved(
-        &mut self,
-        descriptor: CapabilityDescriptor,
-        handler: ActionHandler,
-        resolve: ActionResolver,
-        canonical_schema: Value,
-    ) -> Result<(), RegistryError> {
-        self.0
-            .register_resolved(descriptor, handler, resolve, canonical_schema)
-    }
-
-    pub fn descriptors(&self) -> impl Iterator<Item = &CapabilityDescriptor> {
-        self.0.descriptors()
-    }
-
-    pub fn schemas(&self, id: &CapabilityId, version: u32) -> Option<ExternalSchemas<'_>> {
-        self.0.schemas(id, version)
-    }
-
-    /// One registered action, owned: the handler needs the access, so the
-    /// registry cannot stay borrowed across the call.
-    pub fn lookup(
-        &self,
-        capability_id: &str,
-        version: u32,
-    ) -> Option<Arc<quantick_control_host::actions::RegisteredAction<ControlWindow, ControlAccess>>>
-    {
-        self.0.lookup(capability_id, version)
-    }
-}
-
-/// The one route every family docks an action by, here and in
-/// `quantick_control_handlers`.
-impl ActionDock<ControlWindow, ControlAccess> for ActionRegistry {
-    fn register(
-        &mut self,
-        descriptor: CapabilityDescriptor,
-        handler: ActionHandler,
-    ) -> Result<(), RegistryError> {
-        self.0.register(descriptor, handler)
-    }
-}
+/// The registry over this application: the headless registry in
+/// `quantick_control_host::actions` with the window as its host. Families
+/// dock through `quantick_control_handlers::dock::ActionDock`, which the host registry implements.
+pub(crate) type ActionRegistry =
+    quantick_control_host::actions::ActionRegistry<ControlWindow, ControlAccess>;
 
 use super::{
     gateway::ControlAccess,
