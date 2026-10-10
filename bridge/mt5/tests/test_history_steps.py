@@ -150,7 +150,7 @@ class HistorySteps(unittest.TestCase):
         session, bridge, terminal = self.session, self.bridge, self.terminal
         clock = [100.0]
         patch_bridge("time", types.SimpleNamespace(time=lambda: 10_000 + clock[0],
-                     monotonic=lambda: clock[0], sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds)))
+                     monotonic=lambda: clock[0], perf_counter=lambda: clock[0], sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds)))
         session.args.host, session.args.port = "127.0.0.1", 19619
         session.args.symbol = session.symbol
         session.args.tick_poll_ms = session.args.book_poll_ms = 10

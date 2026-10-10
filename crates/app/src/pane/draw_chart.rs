@@ -222,7 +222,11 @@ impl ChartPane {
                 )
             }),
         );
-        flow.strip(self.orderflow.as_mut(), &frame);
+        flow.strip(
+            self.orderflow.as_mut(),
+            &frame,
+            self.state.partial_footprint(),
+        );
 
         if layout.tape_only {
             carved.clear();

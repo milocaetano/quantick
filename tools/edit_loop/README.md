@@ -11,10 +11,12 @@ used as a fallback.
 ## Protocol
 
 Use Python 3.11 or newer. Run from a clean checkout containing the committed tool. The source checkout,
-new detached benchmark worktree, new target root and new evidence directory
-must be disjoint. All three new paths must not exist; nothing is cleaned or
-deleted. The exact 40-character source commit is **H**. A later candidate or
-fixed-budget commit is **E**, not a newly measured runtime.
+new detached benchmark worktree, target root and new evidence directory
+must be disjoint. The worktree and evidence directory must not exist; the
+target root may, as a plain directory the workflow restored from its cache
+(see [Warm target](#warm-target)). The tool cleans or deletes nothing. The exact
+40-character source commit is **H**. A later candidate or fixed-budget commit
+is **E**, not a newly measured runtime.
 
 ```powershell
 python tools/edit_loop/measure.py run --repo . --sha FULL_COMMIT_SHA `
@@ -27,23 +29,32 @@ python tools/edit_loop/measure.py run --repo . --sha FULL_COMMIT_SHA `
 Use a host leased for this experiment, not a trader's active build target.
 The workflow uses the same command on a GitHub-hosted `ubuntu-24.04` runner
 with explicit desktop GUI build dependencies. Full ordered Windows verification
-remains in the separate CI workflow. Each
-selected crate gets a new compile target, one exact-command warm-up, one
-no-touch control, then **five** mtime-only touches followed by the full
-`cargo test -p PACKAGE`. Every sample must prove that package recompiled and
-tests actually ran successfully. All five durations remain visible; the
-summary reports their median, minimum and maximum, not the best selected run.
-These are end-to-end Cargo process wall times including package tests, not
-Cargo's compile-summary time and not cold-build costs. The two-second pause
-before each touch and compiler-contention observations are outside that time.
+remains in the separate CI workflow. The three
+selected crates share one compile target. Each gets one exact-command warm-up
+`cargo test --no-run -p PACKAGE`, one no-touch control of the same build, then
+**five** mtime-only touches each followed by that build, and finally one
+complete `cargo test -p PACKAGE`. Every touched build must prove the package
+recompiled, and the test run must prove tests ran and passed. A sample's
+**loop** is its touched build plus the test run: what a developer waits on
+between saving the file and reading the result. The suite is the same for
+every touch, so it runs once instead of five times. All five builds remain
+visible; the summary reports their median, minimum and maximum, the test run
+and the slowest loop, not the best selected run. These are Cargo process wall
+times, not Cargo's compile-summary time and not cold-build costs. The
+two-second pause before each touch and compiler-contention observations are
+outside that time.
 
-The pinned toolchain and committed test/dev profiles are unchanged. Parallel
-build jobs are explicitly two. The Cargo registry/download cache remains
-shared and is labelled; the crate compile targets start empty. Global or
+The pinned toolchain and committed profiles are used with one declared
+override: debug info is `line-tables-only`, as in `ci.yml`, which keeps the
+cached target small enough to restore and save within the workflow's
+seven-minute budget. Absolute times therefore sit below a full-debug-info
+local loop; budgets compare runs of this protocol with each other. Parallel
+build jobs are explicitly four, every logical CPU of the declared host class.
+The Cargo registry/download cache is shared and labelled. Global or
 ancestor Cargo configuration may contain `build.jobs`, which the explicit
 environment overrides; any other configuration is rejected until its effect
-has reviewed support. Compiler/profile/cache environment overrides are also
-rejected. `QUANTICK_BUBBLES` is normalized only for these processes to the
+has reviewed support. Inherited compiler/profile/cache environment overrides
+are also rejected. `QUANTICK_BUBBLES` is normalized only for these processes to the
 tracked fixture; other `QUANTICK_*` overrides are refused. No trader config,
 credential, token or complete environment dump enters the report.
 
@@ -53,10 +64,27 @@ invocation; observed contention fails the series. These boundary snapshots
 are **not** proof of exclusive physical hardware or absence of transient
 background work. Hosted VM variability is part of the declared host class.
 
-The canonical guard report is captured separately in an untimed setup target.
-Its production physical-line counts include lines the frozen lexer excludes,
-such as comments and blanks. They are a cross-check, not an interchangeable
-ranking or a second score. The selected crates must exist in those counts.
+The canonical guard report is captured in an untimed setup step that shares
+the compile target. Its production physical-line counts include lines the
+frozen lexer excludes, such as comments and blanks. They are a cross-check,
+not an interchangeable ranking or a second score. The selected crates must
+exist in those counts.
+
+### Warm target
+
+Building the app's dependency graph from empty targets, once per crate, was
+fifteen of the old protocol's twenty-six minutes. The workflow now restores
+the target (dependencies, workspace artifacts and incremental state) and the
+Cargo registry from the newest cache a main run saved, so the warm-up
+recompiles only what changed since. The worktree and target paths are fixed,
+because Cargo's fingerprints and the incremental state name them. A new
+worktree makes every workspace source newer than the restored outputs, so
+every workspace crate the run builds is recompiled; before saving, the
+workflow drops workspace artifacts still older than the run, which belong to
+an earlier dependency graph. Main saves on every run. A pull request saves only
+when nothing at all was restored, so a branch that changes the workflow still
+gets a warm second run. A missing cache costs one cold build, about twelve
+minutes, and changes no sample: the warm-up is never timed.
 
 ## Fixed budgets and failure evidence
 
@@ -69,13 +97,40 @@ inspect it against the source commit available in Git:
 python tools/edit_loop/measure.py propose C:/bench/run-001-evidence/report.json --repo .
 ```
 
-The automatic proposal does not modify budgets. Its historical provisional
-rule remains `ceil(1.25 * max(all five baseline samples) + 5 seconds)` per
-selected crate. That executable proposal is unchanged, but its additive
-allowance was not approved for the first fixed calibration: five seconds
-would tolerate disproportionate regressions in subsecond package tests.
+The automatic proposal does not modify budgets. Per selected crate it applies
+`ceil(1.25 * max(all five loops) * 1000) / 1000`: 25% above the slowest
+retained loop, rounded upward to the millisecond, with no additive allowance.
+The margin is an explicit operational policy, not a measured confidence
+interval or cross-run noise bound.
 
-### Historical calibration and identity amendments
+### Seven-minute protocol calibration (2026-10-10)
+
+The [first run](https://github.com/milocaetano/quantick/actions/runs/38088480381)
+measured `7365855014d75ee61c9a81007b7f2b8a5cc44a34` (PR #658; crates identical
+to main `2c7b0761`) from an empty cache, starting at
+`2026-10-10T21:40:26.583688+00:00`. Every warm-up, control, touched build and
+test run completed, recompiled where touched and restored source metadata; the
+run failed at the old budget's identity check (`uncalibrated jobs drift`), as
+an uncalibrated run should.
+
+| Package | Representative source | Touched builds (s) | Test run (s) | Ceiling (s) |
+| --- | --- | --- | ---: | ---: |
+| quantick-app | `crates/app/src/control/gateway/server.rs` | 6.87–7.40 | 44.09 | 64.363 |
+| quantick-orderflow | `crates/orderflow/src/engine.rs` | 1.46–1.76 | 29.20 | 38.703 |
+| quantick-guards | `crates/guards/src/generated.rs` | 0.60–1.55 | 4.11 | 7.075 |
+
+The cold run took 10.9 minutes, 6.2 of them the app's warm-up from an empty
+target; the old protocol's last run took 26.2. A warm run skips most of that
+warm-up. Completion requires a separate run at the final committed head, with
+all five loops of every selected package below its ceiling.
+
+### Previous protocol (until 2026-10-10)
+
+Each crate had its own empty target, two build jobs and full debug info, and
+every touched sample ran the complete package test: about twenty-six minutes a
+run. Its limits do not apply to the protocol above; the record follows.
+
+#### Historical calibration and identity amendments
 
 The first Linux calibration used the following proportional limits:
 `ceil(1.25 * max(all five baseline samples) * 1000) / 1000`, with no additive
@@ -131,7 +186,7 @@ are equal. This is applicability, not recalibration: the 2026-10-06 ceilings,
 host, toolchain, jobs, protocol, top-three selection and representatives are
 unchanged, and the PR's own ordinary exact-final-head run must pass every one.
 
-### Reviewed 2026-10-06 calibration
+#### Reviewed 2026-10-06 calibration
 
 The [reference series](https://github.com/milocaetano/quantick/actions/runs/37407876085)
 measured clean `9ffb13ec954ab5fd338c199ed142184b7123334d` starting at
@@ -166,6 +221,34 @@ earlier PR attempts retain their [warm-up test failure](https://github.com/miloc
 and [completed over-budget series](https://github.com/milocaetano/quantick/actions/runs/37403827866/job/112080474236)
 as diagnostic evidence. Completion requires a separate ordinary run at the
 final committed head against this fixed contract.
+
+#### Scoped 2026-10-10 third-owner calibration
+
+The [clean-main reference](https://github.com/milocaetano/quantick/actions/runs/38022635665)
+measured `f7a90fd6b1258de4f65c56b43bd3d58aab1578c4` starting at
+`2026-10-10T04:02:53.394611+00:00`. The frozen ranking now selects guards
+third, with `crates/guards/src/generated.rs` as its representative, instead
+of control-schema. Every warm-up, control and five-sample package series
+completed with successful tests, recompilation and restored source metadata.
+
+The scoped amendment replaces only the third owner's mapping and ceiling:
+`quantick-guards`, `crates/guards/src/generated.rs`, **7.795 seconds**, using
+`ceil(1.25 * max(all five reference samples) * 1000) / 1000` without an
+additive allowance. App **68.839** and orderflow **42.802** seconds retain
+the 2026-10-06 calibration above; the new calibration SHA/timestamp identify
+the third-owner amendment, not fresh app/orderflow limits. Host class,
+toolchain, jobs, root profiles, selection rules and protocol remain unchanged.
+The previous third-owner calibration remains recorded above.
+
+The reference failed the retained app ceiling: its slowest sample was
+69.198797696 seconds, and two of five app samples exceeded 68.839 seconds.
+This failure remains diagnostic evidence; the complete reference is not a
+passing budget check. No sample is discarded and no app limit is raised.
+Completion still requires a separate ordinary run at the final committed
+head with all five samples of every selected package below its fixed ceiling.
+Raw measurements and review records remain outside Git.
+
+### Rules for every calibration
 
 Do not replace these reviewed limits with automatic proposal output,
 recalibrate from each checked run, discard slow samples, relax a limit to

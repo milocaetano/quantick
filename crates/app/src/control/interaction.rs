@@ -21,7 +21,7 @@ use crate::{
 
 use super::{
     chart::{self, BarStateDto},
-    registry::{CaptureContext, ProjectionDock, ProjectionRegistry, ProjectionRegistryError},
+    registry::{CaptureContext, ProjectionRegistry, ProjectionRegistryError},
     scene,
     types::{
         SCREEN_DECIMAL_PLACES, available, canonical_decimal, canonical_f32, canonical_f64,
@@ -301,6 +301,7 @@ pub(crate) fn flow_cell_snapshot(cell: FlowCellHit) -> FlowCellSnapshot {
         end_slot_exclusive: wire_usize(cell.end_slot_exclusive),
         live_lane: cell.live_lane,
         held_tape_end_unix_ms: cell.held_tape_end_ms,
+        carried: cell.carried,
     }
 }
 

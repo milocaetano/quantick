@@ -7,113 +7,22 @@
 //! ([`SystemClock`]).
 
 use std::{
-    sync::{Arc, OnceLock},
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 
-use quantick_control::{
-    error::ControlError,
-    id::{InstanceId, ModuleId, SnapshotScopeId},
-    registry::ModuleDescriptor,
-};
-use quantick_control_host::{
-    clock::HostClock,
-    projection::{self, ProjectionPerformance},
-};
-use schemars::JsonSchema;
-use serde::Serialize;
+use quantick_control_host::{clock::HostClock, projection};
 
 use crate::{app::ControlWindow, metrics};
 
-pub(crate) use quantick_control_handlers::dock::ProjectionDock;
 pub(crate) use quantick_control_host::projection::{
     CaptureContext, ProjectionRegistryError, SerializedSnapshotCapture, SnapshotCapture,
 };
 
-/// The projection registry over the running application.
-///
-/// A newtype that forwards, rather than a type alias, so the registry keeps
-/// one named type the rest of the control plane can hold. Every method is
-/// the generic registry's own, specialised to the window's port.
-pub(crate) struct ProjectionRegistry(projection::ProjectionRegistry<ControlWindow>);
-
-impl ProjectionRegistry {
-    /// An empty registry that stamps and times its captures by `clock`.
-    pub fn new(clock: Arc<dyn HostClock>) -> Self {
-        Self(projection::ProjectionRegistry::new(clock))
-    }
-
-    /// The generic registry this one specialises, for code that is generic
-    /// over the host.
-    pub fn inner(&self) -> &projection::ProjectionRegistry<ControlWindow> {
-        &self.0
-    }
-
-    /// Test-only here: production reads the scopes through [`Self::inner`].
-    #[cfg(test)]
-    pub fn descriptors(
-        &self,
-    ) -> impl Iterator<Item = &projection::ProjectionDescriptor<ControlWindow>> {
-        self.0.descriptors()
-    }
-
-    pub fn module_descriptors(&self) -> impl Iterator<Item = &ModuleDescriptor> {
-        self.0.module_descriptors()
-    }
-
-    pub fn performance(&self) -> ProjectionPerformance {
-        self.0.performance()
-    }
-
-    /// Capture exactly the requested scopes in one bounded, immutable pass.
-    pub fn capture(
-        &mut self,
-        app: &ControlWindow,
-        instance_id: &InstanceId,
-        requested_scopes: &[SnapshotScopeId],
-    ) -> Result<SnapshotCapture, ControlError> {
-        self.0.capture(app, instance_id, requested_scopes)
-    }
-}
-
-/// The one route every family docks by, here and in
-/// `quantick_control_handlers`.
-impl ProjectionDock<ControlWindow> for ProjectionRegistry {
-    fn register_module<K>(
-        &mut self,
-        descriptor: ModuleDescriptor,
-        revision: fn(&ControlWindow) -> K,
-    ) -> Result<(), ProjectionRegistryError>
-    where
-        K: Eq + Send + 'static,
-    {
-        self.0.register_module(descriptor, revision)
-    }
-
-    fn register_scope<T>(
-        &mut self,
-        scope_id: SnapshotScopeId,
-        module_id: ModuleId,
-        schema_version: u32,
-        title: &str,
-        description: &str,
-        required_permission_ids: &[&str],
-        project: fn(&ControlWindow, CaptureContext) -> T,
-    ) -> Result<(), ProjectionRegistryError>
-    where
-        T: JsonSchema + Serialize + Send + 'static,
-    {
-        self.0.register_scope(
-            scope_id,
-            module_id,
-            schema_version,
-            title,
-            description,
-            required_permission_ids,
-            project,
-        )
-    }
-}
+/// The projection registry over the running application: the generic
+/// registry with the window's port as its host. Families dock through
+/// `quantick_control_handlers::dock::ProjectionDock`, which it implements.
+pub(crate) type ProjectionRegistry = projection::ProjectionRegistry<ControlWindow>;
 
 /// The clock a capture is stamped and timed by: the process wall clock, and a
 /// monotonic clock measured from its first reading.

@@ -86,8 +86,11 @@ input int    InpPumpIntervalMs   = 25;          // Safety-net pump interval (OnT
 // enough that a mistyped 0 cannot spin the terminal's timer thread.
 #define PUMP_INTERVAL_MIN_MS 5
 #define PUMP_INTERVAL_MAX_MS 1000
-// Confirm unchanged valid depth, and probe unavailable depth, without busy retries.
+// Probe unavailable depth without busy retries.
 #define BOOK_REFRESH_INTERVAL_MS 5000
+// Re-read and resend unchanged valid depth at this cadence: each resend is a
+// fresh observation that moves quantick's book clock between DOM changes.
+#define BOOK_CONFIRM_INTERVAL_MS 50
 
 int      g_socket           = INVALID_HANDLE;
 ulong    g_seq              = 0; // per-session tick sequence, from 1
@@ -116,6 +119,9 @@ ulong    g_book_skipped     = 0;     // images identical to the previous one
 long     g_book_last_ms     = 0;     // throttle cursor (local ms)
 long     g_book_retry_at_ms = 0;     // unavailable DOM probe deadline
 string   g_book_last_body   = "";    // last image's levels, for change detection
+long     g_book_print_msc   = 0;     // newest SYMBOL_TIME_MSC seen by BookStampMs (0 = none yet)
+ulong    g_book_print_us    = 0;     // GetMicrosecondCount when that print was first seen
+long     g_book_last_stamp  = 0;     // last book stamp sent; stamps never rewind
 
 //+------------------------------------------------------------------+
 //| Structured Experts-tab logging (AI-first: parseable, coded).      |
@@ -292,9 +298,15 @@ long NowServerMs()
 //| Stamp for a book image, in server ms.                             |
 //|                                                                   |
 //| SYMBOL_TIME_MSC is the last quote's instant at millisecond        |
-//| resolution; in a quiet book it stops moving, so the coarse server |
-//| clock stands in and the book timeline never stalls behind the     |
-//| trade timeline.                                                   |
+//| resolution; between quotes it stops moving, so the stamp is that  |
+//| quote carried forward by the real time since this EA first saw    |
+//| it. The server clock trailed the quotes (~0.8 s on WINV26), so    |
+//| taking the larger of the two froze every image at the last        |
+//| quote's time; carrying a learned lead never let it fall, so one   |
+//| bad quote time or a clock step left every later image ahead of    |
+//| every print. The max with the last stamp keeps it from rewinding  |
+//| when a quote is corrected backwards. Before the first quote the   |
+//| millisecond server clock is all there is.                         |
 //|                                                                   |
 //| Deliberately *not* used to measure how far the pump trails. That  |
 //| floor is a wall clock: it advances whether or not a newer tick    |
@@ -306,9 +318,19 @@ long NowServerMs()
 //+------------------------------------------------------------------+
 long BookStampMs()
   {
-   long newest = (long)SymbolInfoInteger(_Symbol, SYMBOL_TIME_MSC);
-   long coarse = (long)TimeTradeServer() * 1000;
-   return((coarse > newest) ? coarse : newest);
+   ulong now_us = GetMicrosecondCount();
+   long  newest = (long)SymbolInfoInteger(_Symbol, SYMBOL_TIME_MSC);
+   if(newest > 0 && newest != g_book_print_msc)
+     {
+      g_book_print_msc = newest;
+      g_book_print_us  = now_us;
+     }
+   long stamp = (g_book_print_msc > 0)
+                ? g_book_print_msc + (long)((now_us - g_book_print_us) / 1000)
+                : NowServerMs();
+   if(stamp > g_book_last_stamp)
+      g_book_last_stamp = stamp;
+   return(g_book_last_stamp);
   }
 
 //+------------------------------------------------------------------+
@@ -451,10 +473,10 @@ bool SendBook()
    if(!has_liquidity)
       g_book_retry_at_ms = now_ms + BOOK_REFRESH_INTERVAL_MS;
    string body = StringFormat("\"bids\":[%s],\"asks\":[%s]", bids, asks);
-   if(body == g_book_last_body && now_ms - g_book_last_ms < BOOK_REFRESH_INTERVAL_MS)
+   if(body == g_book_last_body && now_ms - g_book_last_ms < BOOK_CONFIRM_INTERVAL_MS)
      {
       g_book_skipped++;
-      return(true); // unchanged depth is confirmed only at the refresh cadence
+      return(true); // unchanged depth is confirmed only at the confirm cadence
      }
    g_book_last_body = body;
    g_book_last_ms   = now_ms;
@@ -571,6 +593,9 @@ bool StartSession()
    g_book_last_body   = "";
    g_book_retry_at_ms = 0;
    g_book_last_ms     = 0;
+   g_book_print_msc   = 0;
+   g_book_print_us    = 0;
+   g_book_last_stamp  = 0;
 
    string basis = SymbolInfoString(_Symbol, SYMBOL_BASIS);
    if(basis == "")
@@ -994,7 +1019,7 @@ void OnTimer()
       return;
      }
    Pump();
-   if((long)(GetMicrosecondCount() / 1000) - g_book_last_ms >= BOOK_REFRESH_INTERVAL_MS && !SendBook())
+   if((long)(GetMicrosecondCount() / 1000) - g_book_last_ms >= BOOK_CONFIRM_INTERVAL_MS && !SendBook())
      {
       Disconnect("book refresh failed");
       return;

@@ -4,6 +4,18 @@ on:
   schedule:
     - cron: '23 5 * * 1'
   workflow_dispatch:
+  # A merge that changes what the measurement reads measures main again and
+  # saves the warm target that pull requests restore.
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/edit-loop.yml'
+      - 'tools/edit_loop/**'
+      - 'tools/outside_score/measure.py'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'crates/**/Cargo.toml'
   pull_request:
     paths:
       - '.github/workflows/edit-loop.yml'
@@ -25,7 +37,9 @@ concurrency:
 jobs:
   edit-loop:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    # A warm run takes about five minutes and a cold one about twelve; past
+    # thirty it is a hang, not a measurement.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,6 +58,26 @@ jobs:
           cargo --version
           cargo clippy --version
           cargo fmt --version
+      # The run used to build the app's dependency graph from an empty target
+      # for each crate, three times over: fifteen of its twenty-six minutes.
+      # The target is kept instead — dependencies, workspace artifacts and the
+      # incremental state together — so the warm-up recompiles only what changed
+      # since the run that saved it. The path is fixed: Cargo's fingerprints and
+      # the incremental state name it, and so does the benchmark worktree's.
+      - name: Restore the warm target
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ${{ runner.temp }}/edit-loop-targets
+          key: edit-loop-v2-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-${{ github.sha }}
+          restore-keys: edit-loop-v2-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}-
+      - name: Mark the measurement start
+        id: start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
       - name: Measure and enforce fixed edit-loop budgets
         shell: bash
         env:
@@ -61,3 +95,63 @@ jobs:
           name: edit-loop-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/edit-loop-evidence
           if-no-files-found: error
+      # Main saves its target on every run. A pull request restores main's and
+      # saves only when there was nothing at all to restore, so a branch that
+      # changes this workflow still reaches a warm second run.
+      #
+      # The benchmark worktree is new in every run, so its sources are newer
+      # than any restored output and Cargo recompiles every workspace crate it
+      # builds. A workspace artifact still older than the run therefore belongs
+      # to an earlier dependency graph; left in place, each manifest change would
+      # add another copy of the app's test binary and incremental state.
+      - name: Drop workspace artifacts this run did not rebuild
+        id: prune
+        if: >-
+          steps.restore.outputs.cache-hit != 'true' && !cancelled() &&
+          (github.event_name != 'pull_request' || steps.restore.outputs.cache-matched-key == '')
+        shell: bash
+        env:
+          SINCE: ${{ steps.start.outputs.epoch }}
+        run: |
+          python - "$RUNNER_TEMP/edit-loop-targets/debug" <<'EOF'
+          import os
+          from pathlib import Path
+          import shutil
+          import sys
+
+          since = float(os.environ["SINCE"])
+          root = Path(sys.argv[1])
+
+
+          def newest(path):
+              stamp = path.lstat().st_mtime
+              if path.is_dir() and not path.is_symlink():
+                  for child in path.iterdir():
+                      stamp = max(stamp, newest(child))
+              return stamp
+
+
+          dropped = 0
+          for folder in (root, root / "deps", root / "build", root / "incremental", root / ".fingerprint"):
+              for entry in sorted(folder.iterdir()) if folder.is_dir() else []:
+                  if entry.name.startswith(("quantick", "libquantick")) and newest(entry) < since:
+                      if entry.is_dir() and not entry.is_symlink():
+                          shutil.rmtree(entry)
+                      else:
+                          entry.unlink()
+                      dropped += 1
+          print(f"dropped {dropped} workspace artifacts older than this run")
+          EOF
+          du -sh "$RUNNER_TEMP/edit-loop-targets" ~/.cargo/registry || true
+      - name: Save the warm target
+        # `!cancelled()` keeps the save after an over-budget or failing run:
+        # what it compiled is still valid for the next one.
+        if: steps.prune.outcome == 'success' && !cancelled()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ${{ runner.temp }}/edit-loop-targets
+          key: ${{ steps.restore.outputs.cache-primary-key }}

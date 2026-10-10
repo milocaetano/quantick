@@ -20,6 +20,8 @@ pub(super) struct DraftCell {
     pub(super) x1: f64,
     pub(super) y0: f64,
     pub(super) y1: f64,
+    /// Past the last confirmation, carried to the live edge.
+    pub(super) carried: bool,
 }
 
 /// The `(y0, y1)` rows of the bucket at `price_bucket`, clipped to `prices`;
@@ -96,7 +98,14 @@ pub(super) fn finish_cells(
                 y0: draft.y0,
                 y1: draft.y1,
                 intensity,
-                alpha: intensity * config.opacity,
+                alpha: intensity
+                    * config.opacity
+                    * if draft.carried {
+                        super::CARRIED_BOOK_ALPHA
+                    } else {
+                        1.0
+                    },
+                carried: draft.carried,
             }
         })
         .collect();

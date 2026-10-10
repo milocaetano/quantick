@@ -36,7 +36,7 @@ Rule authority. Rationale: `docs/agentic-development.md`; map: `AGENTS.md`; gate
 ## Workflow
 
 - Engine code is test-first: fixture trades plus expected bars, then implement until green.
-- Task branches `feat/` `fix/` `docs/`; integration branches `campaign/`. Conventional commits, imperative, English.
+- Task branches `feat/` `fix/` `docs/`; integration branches `campaign/` `feature/`. Conventional commits, imperative, English.
 - **One goal, one worktree** — cut from updated `main` (campaign children: the base in [the integration contract](docs/campaign/integration.md)) under `../quantick-worktrees/`, never in the main checkout or a shared writer's tree, and arm the guards:
 
   ```sh
@@ -47,5 +47,5 @@ Rule authority. Rationale: `docs/agentic-development.md`; map: `AGENTS.md`; gate
 
   After the merge, from the main checkout: `git worktree remove ../quantick-worktrees/<prefix>-<slug>` then `git branch -d <prefix>/<slug>`.
 - **Process belongs to the skill that runs it** — verification, tiers, reviews and the PR flow live in `mission`, `ship` and `implement`; [`CONTRIBUTING.md`](CONTRIBUTING.md) holds the checks and `.claude/hooks/README.md` what the hooks enforce.
-- **Only the user merges to `main`.** Agents merge only into an explicitly authorized campaign branch under the integration contract — no auto-merge, merge queue, direct integration push or protection bypass. Hand off a ready PR.
+- **Only the user merges to `main`.** Agents merge only into an explicitly authorized integration branch under its contract — no auto-merge, merge queue, direct integration push or protection bypass. Hand off a ready PR.
 - **Name the subagent model at the call** — retrieval `haiku`, checklist application `sonnet`, open judgement (bugs, docking, design) the default strong model.

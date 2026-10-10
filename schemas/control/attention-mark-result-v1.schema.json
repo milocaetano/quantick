@@ -243,6 +243,10 @@
     },
     "FlowCellSnapshot": {
       "properties": {
+        "carried": {
+          "description": "The live book carried past its last confirmation to the lane's live\nedge: the book as last confirmed, not depth observed there. Omitted\nwhen false, so v1 readers remain compatible.",
+          "type": "boolean"
+        },
         "end_slot_exclusive": {
           "$ref": "#/$defs/WireU64"
         },

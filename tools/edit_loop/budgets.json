@@ -1,31 +1,31 @@
 {
-  "calibration_sha": "9ffb13ec954ab5fd338c199ed142184b7123334d",
-  "calibration_utc": "2026-10-06T03:12:53.222399+00:00",
+  "calibration_sha": "7365855014d75ee61c9a81007b7f2b8a5cc44a34",
+  "calibration_utc": "2026-10-10T21:40:26.583688+00:00",
   "crates": [
     {
       "crate": "app",
+      "max_seconds": 64.363,
       "package": "quantick-app",
-      "source": "crates/app/src/control/gateway/server.rs",
-      "max_seconds": 68.839
+      "source": "crates/app/src/control/gateway/server.rs"
     },
     {
       "crate": "orderflow",
+      "max_seconds": 38.703,
       "package": "quantick-orderflow",
-      "source": "crates/orderflow/src/engine.rs",
-      "max_seconds": 42.802
+      "source": "crates/orderflow/src/engine.rs"
     },
     {
-      "crate": "control-schema",
-      "package": "quantick-control-schema",
-      "source": "crates/control-schema/src/evidence.rs",
-      "max_seconds": 3.384
+      "crate": "guards",
+      "max_seconds": 7.075,
+      "package": "quantick-guards",
+      "source": "crates/guards/src/generated.rs"
     }
   ],
   "host_class": "Linux/x86_64/4/Linux/X64/ubuntu24",
-  "jobs": 2,
+  "jobs": 4,
   "profile_hash": "f8d8375eda7dfcf8497b8a2cd5f84cad07ea5fecaaec01293931101440babf69",
-  "protocol_hash": "3ff0be486d89b90ae413e2a0c305194589260608957cb7f953572030f59f42ad",
-  "rationale": "Independently reviewed full recalibration for the actual top-three selection and expanded package-test workloads already present at clean base 9ffb13ec954ab5fd338c199ed142184b7123334d. Reference: https://github.com/milocaetano/quantick/actions/runs/37407876085. Each fixed ceiling is ceil(1.25 * max(all five retained baseline samples) * 1000) / 1000; the proportional operational margin has no additive allowance. The historical first calibration and its member-only identity amendments remain documented in tools/edit_loop/README.md. Host, toolchain, build jobs, profiles, frozen selection and measurement protocol are unchanged. Raw failures and the complete baseline series remain external evidence. A separate ordinary exact-final-head run must pass every fixed ceiling; no automatic future refresh is authorized.",
+  "protocol_hash": "d5bafb0bc44dc58250eb9274e4414d7169ed30c197ec2601833ac90c48e69501",
+  "rationale": "Seven-minute protocol calibration from the first run of PR #658, https://github.com/milocaetano/quantick/actions/runs/38088480381 (cold target; crates identical to main 2c7b0761). Each ceiling is ceil(1.25 * max(touched build + package test run) * 1000) / 1000, with no additive allowance. Previous-protocol limits are recorded in tools/edit_loop/README.md.",
   "schema": 1,
   "status": "calibrated",
   "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8"

@@ -241,15 +241,20 @@ impl CandleDress {
         // a style below its own zoom floor hands over, and the candle must be
         // laid out for whichever one paints. Asking the requested style put a
         // sidebar lane under a style that draws full width.
-        let requested_style = footprint.config.as_ref().unwrap_or(chrome.footprint).style;
-        let footprint_style = footprint.lod.effective_style(requested_style);
+        let config = footprint.config.as_ref().unwrap_or(chrome.footprint);
+        let footprint_style = footprint.lod.effective_style(config.style);
         let treatment = footprint_style.candle_treatment();
         // The lane a sidebar candle keeps at the left of its slot, and the
         // style the layer leaves the candle in. Both from one function, whose
         // whole point is that they answer to `paints` and never to the
         // accumulation switch — see `footprint_render::candle_dressing`.
-        let (candle_lane, faded) =
-            crate::footprint_render::candle_dressing(paints, treatment, cw, chrome.style.candles);
+        let (candle_lane, faded) = crate::footprint_render::candle_dressing(
+            paints,
+            treatment,
+            cw,
+            config.body_fade_end_px(),
+            chrome.style.candles,
+        );
         // The half-width the footprint's content actually spans. The lane is
         // cut out of *this*, so the candle placed beside it has to be measured
         // from the same edge — measuring from the candle's own body width put

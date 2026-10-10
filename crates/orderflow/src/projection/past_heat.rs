@@ -264,6 +264,7 @@ pub fn project_past_heat(
                 x1,
                 y0,
                 y1,
+                carried: false,
             })
         })
         .collect();

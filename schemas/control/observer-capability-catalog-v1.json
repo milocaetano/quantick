@@ -3595,6 +3595,10 @@
           },
           "FlowCellSnapshot": {
             "properties": {
+              "carried": {
+                "description": "The live book carried past its last confirmation to the lane's live\nedge: the book as last confirmed, not depth observed there. Omitted\nwhen false, so v1 readers remain compatible.",
+                "type": "boolean"
+              },
               "end_slot_exclusive": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -4045,6 +4049,10 @@
           },
           "FlowCellSnapshot": {
             "properties": {
+              "carried": {
+                "description": "The live book carried past its last confirmation to the lane's live\nedge: the book as last confirmed, not depth observed there. Omitted\nwhen false, so v1 readers remain compatible.",
+                "type": "boolean"
+              },
               "end_slot_exclusive": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -16528,6 +16536,10 @@
           },
           "FlowCellSnapshot": {
             "properties": {
+              "carried": {
+                "description": "The live book carried past its last confirmation to the lane's live\nedge: the book as last confirmed, not depth observed there. Omitted\nwhen false, so v1 readers remain compatible.",
+                "type": "boolean"
+              },
               "end_slot_exclusive": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -17685,6 +17697,44 @@
           },
           "FootprintSetupSnapshot": {
             "properties": {
+              "compact_from_px": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The configured candle width at which one summary number per row\nstarts, in both zoom directions, measured at a detail scale of 1.\nNever above `detailed_from_px`: the effective entry the chart uses,\nordered under Detailed while the stored setting keeps its own value.",
+                "x-unit": "pixels"
+              },
+              "detail_scale": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The detail scale both widths are stretched by: a level starts near its\n`*_from_px` times this, in candle pixels on screen. The product is\ncapped at the deepest zoom, and a style's own text floor can raise\nit, so it is a configured entry, not a measured one."
+              },
+              "detailed_from_px": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Candle width at which the ladder's full detail starts, in both zoom\ndirections; styles with more columns keep their ratio to it.",
+                "x-unit": "pixels"
+              },
               "imbalance_minimum_quantity": {
                 "anyOf": [
                   {

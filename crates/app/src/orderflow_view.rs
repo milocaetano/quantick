@@ -7,7 +7,8 @@
 
 use eframe::egui;
 use quantick_engine::{Bar, Trade};
-use quantick_orderbook::{BookSide, DepthEvent};
+use quantick_orderbook::DepthEvent;
+pub(crate) use quantick_orderflow::FlowCellHit;
 use quantick_orderflow::engine::{BookLadder, BookPublished, CaptureStatus, OrderflowHealth};
 use quantick_orderflow::pane_tape::PaneTape;
 use quantick_orderflow::{HeatmapConfig, LaneWindow, reserved_span_ms};
@@ -76,23 +77,6 @@ pub struct LiveLane {
     pub width_px: f32,
     /// Exchange timestamp at the band's right edge: the live edge.
     pub end_ms: i64,
-}
-
-/// A displayed resting-liquidity cell resolved under the pointer. Application-internal: the control
-/// module maps it into its own wire DTO, so no renderer or `egui` type crosses the control
-/// boundary.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct FlowCellHit {
-    pub generation: u64,
-    pub side: BookSide,
-    pub price_bucket: Decimal,
-    pub price_span: Decimal,
-    pub quantity: Decimal,
-    pub start_slot: usize,
-    pub end_slot_exclusive: usize,
-    pub live_lane: bool,
-    /// Where the tape is held when the cell is a held tape's book.
-    pub held_tape_end_ms: Option<i64>,
 }
 
 /// Stateful UI/controller facade for the optional heatmap.
@@ -349,6 +333,7 @@ impl OrderflowView {
             end_slot_exclusive: frame.first_bar_index + after_bar_region,
             live_lane: touches_lane && held.is_none(),
             held_tape_end_ms: held.as_ref().and(self.tape_end.past_ms()),
+            carried: cell.carried,
         })
     }
 
@@ -1700,7 +1685,16 @@ mod tests {
         );
 
         let frame = view.published.frame.as_deref().expect("published frame");
-        let cell = frame.projection.cells.last().expect("one displayed cell");
+        // The candles' band: the lane is zero pixels wide here, so its bands
+        // (appended after the candles' by the live half) are never painted.
+        let lane_x = (frame.slot_count as f64 - 1.0) / frame.slot_count as f64;
+        let cell = frame
+            .projection
+            .cells
+            .iter()
+            .rev()
+            .find(|cell| cell.x0 < lane_x)
+            .expect("one displayed cell");
         let chart = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1_000.0, 600.0));
         let viewport = Viewport::new();
         let layout = ProjectedLayout::new(
@@ -1850,6 +1844,7 @@ mod tests {
                         &scale,
                         egui::Color32::BLACK,
                         Some(0),
+                        None,
                     );
                 });
             })

@@ -266,8 +266,7 @@ impl ObserverContract {
         for descriptor in projections.module_descriptors() {
             registry.register_module(descriptor.clone())?;
         }
-        let mut contract: CapabilityContract<PrepareHandler> =
-            registry.build(projections.inner())?;
+        let mut contract: CapabilityContract<PrepareHandler> = registry.build(projections)?;
         for (descriptor, handler) in reads::bindings() {
             contract.register_read(descriptor, handler)?;
         }

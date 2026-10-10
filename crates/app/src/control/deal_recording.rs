@@ -31,9 +31,7 @@ use crate::deal_recording::DealRecordingError;
 use crate::deal_recording::{DealRecordingAction, RecState, RecordingView};
 
 use super::{
-    actions::{
-        ActionDock, ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID,
-    },
+    actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
     contract::{COCKPIT_EFFECT_ID, COCKPIT_PERMISSION_ID},
     gateway::ControlAccess,
 };

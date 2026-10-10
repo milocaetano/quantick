@@ -229,22 +229,48 @@ pub const DETAILED_MIN_ROW: f32 = 12.0;
 /// Compact's row-height floor, in pixels.
 pub const COMPACT_MIN_ROW: f32 = 11.0;
 
-/// The two-sided dead band around every footprint floor, as a ratio: a change
-/// in either direction must clear the floor with 15% to spare. A coarser
-/// answer waits until the zoom is 15% past failing the current floor; a finer
-/// one is adopted only once it clears its own floor by 15%. It holds the
-/// detail level ([`LevelMemory::resolve`], scaling candle width and row
-/// height) and the row multiple ([`LevelMemory::resolve_multiple`], scaling
-/// the row floor), across one step only — a further jump is taken at once.
-/// So a trackpad hovering on a boundary, or the auto-fit breathing with every
-/// print, cannot blink the chart between modes mid-gesture.
+/// The clearance an in-candle style keeps either side of the body's axis.
+pub const AXIS_CLEARANCE_PX: f32 = 2.0;
+
+/// The ladder's Detailed floor: one quantity per half of the body, each with
+/// its share of the padding and the clearance kept either side of the axis.
+/// The app derives every style's floor from the same terms and pins this one
+/// to its ladder answer in a test.
+pub const DETAILED_MIN_WIDTH: f32 =
+    2.0 * (QUANTITY_PX + QUANTITY_PADDING_PX / 2.0 + AXIS_CLEARANCE_PX) / TYPICAL_BODY_FRAC;
+
+/// How far past its typographic floor a text level used to be confirmed on
+/// the way in, back when width carried a 15% dead band. The default entry
+/// widths keep it, so a default chart still gains its numbers on the same
+/// wheel notch it always did — and now loses them on that notch too.
+pub const LEVEL_ENTRY_MARGIN: f32 = 1.15;
+
+/// The default candle width at which Compact (one number per row) starts, in
+/// both zoom directions. The footprint config's `compact_from_px` moves it.
+pub const COMPACT_FROM_PX: f32 = COMPACT_MIN_WIDTH * LEVEL_ENTRY_MARGIN;
+
+/// The default candle width at which the ladder's Detailed starts, in both
+/// zoom directions; other styles keep their typographic ratio to it. The
+/// footprint config's `detailed_from_px` moves it.
+pub const DETAILED_FROM_PX: f32 = DETAILED_MIN_WIDTH * LEVEL_ENTRY_MARGIN;
+
+/// The two-sided dead band on the *row height* side of every footprint floor,
+/// as a ratio: a coarser answer waits until the rows are 15% past failing the
+/// current floor; a finer one is adopted only once they clear their own floor
+/// by 15%. It holds the detail level ([`LevelMemory::resolve`], scaling the
+/// row height only) and the row multiple ([`LevelMemory::resolve_multiple`],
+/// scaling the row floor), across one step only — a further jump is taken at
+/// once. Row height breathes with the price auto-fit on every print, so this
+/// is where jitter comes from. Candle width carries no band: it moves only
+/// when the trader zooms, and a band there is felt as a wheel that changes
+/// level two notches later on the way out than on the way in.
 ///
 /// [`LevelMemory::resolve`]: crate::footprint_lod::LevelMemory::resolve
 /// [`LevelMemory::resolve_multiple`]: crate::footprint_lod::LevelMemory::resolve_multiple
 pub(crate) const LEVEL_HYSTERESIS: f32 = 1.15;
 
-/// The narrower dead band between Marks and Profile: one wheel step must
-/// reverse that transition, yet a 1% nudge must not blink it.
+/// The narrower row-height dead band between Marks and Profile: one wheel
+/// step must reverse that transition, yet a 1% breath must not blink it.
 pub(crate) const PROFILE_HYSTERESIS: f32 = 1.02;
 
 /// Display-grouping multiples, smallest first. Integer multiples of the

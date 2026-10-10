@@ -13,6 +13,7 @@
 use std::cmp::Reverse;
 use std::sync::Arc;
 
+use quantick_orderbook::BookSide;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
@@ -20,6 +21,24 @@ use crate::config::HeatmapConfig;
 use crate::grouping::EffectiveGrouping;
 use crate::history::{AggressorSide, RestingSide};
 use crate::interaction::{LiquidityEvent, LiquidityEvidence};
+
+/// A displayed resting-liquidity cell resolved under the pointer.
+/// Consumers can map this renderer-independent value into their own wire DTO.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FlowCellHit {
+    pub generation: u64,
+    pub side: BookSide,
+    pub price_bucket: Decimal,
+    pub price_span: Decimal,
+    pub quantity: Decimal,
+    pub start_slot: usize,
+    pub end_slot_exclusive: usize,
+    pub live_lane: bool,
+    /// Where the tape is held when the cell is a held tape's book.
+    pub held_tape_end_ms: Option<i64>,
+    /// The live book carried past its last confirmation, not observed there.
+    pub carried: bool,
+}
 
 /// Exact visible price interval. `high` maps to y=0 and `low` to y=1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +106,12 @@ pub struct HeatmapCell {
     pub intensity: f32,
     /// Final alpha after applying configured opacity.
     pub alpha: f32,
+    /// The live book carried past its last confirmation to the lane's live
+    /// edge ([`BookCarry`](super::BookCarry)): the book as last confirmed, not
+    /// depth observed over this stretch. Drawn dimmer
+    /// ([`CARRIED_BOOK_ALPHA`](super::CARRIED_BOOK_ALPHA)) so it never passes
+    /// for observed depth.
+    pub carried: bool,
 }
 
 /// One aggressive execution ready for circles, footprint cells or tooltips.
@@ -431,6 +456,11 @@ pub struct LiveMarks {
     pub floored_quantity: Decimal,
     /// Normalized x the live edge has reached inside the lane.
     pub live_now_x: Option<f64>,
+    /// The book on the tape, read on this frame's clock and carried to its
+    /// live edge (`lane_heat`).
+    pub cells: Vec<HeatmapCell>,
+    /// Tape bands the visible-cell cap left out.
+    pub dropped_cells: usize,
 }
 
 impl SettledProjection {
@@ -513,7 +543,13 @@ impl SettledProjection {
             enabled: self.enabled,
             summarized: self.summarized,
             floored_quantity: self.floored_quantity + live.floored_quantity,
-            cells: Arc::clone(&self.cells),
+            // The candles' bands, then the tape's: they never overlap, and a
+            // frame with no book on the tape shares the settled bands as-is.
+            cells: if live.cells.is_empty() {
+                Arc::clone(&self.cells)
+            } else {
+                Arc::new(self.cells.iter().cloned().chain(live.cells).collect())
+            },
             aggressions,
             tape_facts: live.tape_facts,
             volume_dots: self.volume_dots,
@@ -524,7 +560,7 @@ impl SettledProjection {
             liquidity_reference: self.liquidity_reference,
             aggression_reference: self.aggression_reference,
             summary_reference: self.summary_reference,
-            dropped_cells: self.dropped_cells,
+            dropped_cells: self.dropped_cells + live.dropped_cells,
             folded_aggressions,
             dropped_liquidity_events,
         }
