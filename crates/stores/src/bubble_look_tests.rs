@@ -200,13 +200,17 @@ fn a_launch_hold_is_released_by_the_traders_own_switch() {
 fn the_lane_window_setting_is_the_hold_then_the_asset_then_the_default() {
     use quantick_orderflow::LaneWindow;
     let mut screen = Screen::open(embedded());
-    assert_eq!(screen.look.lane_window_setting(), LaneWindow::default());
+    assert_eq!(
+        screen.look.lane_window_setting(),
+        screen.config.live_lane.window,
+        "the window the active preset opened on"
+    );
 
     let (binding, _) = bind(&AssetBubblesStore::default().shared(), "WINV26");
     screen.look.bind(binding);
     // Set on purpose, as the window menu does, and filed at the next sync.
     screen.config.live_lane.window = LaneWindow::Fixed { ms: 6_000 };
-    screen.look.note_lane_set();
+    screen.look.note_lane_set(&screen.config);
     screen.look.sync(&screen.config, false, false);
     // Then the wheel: navigation, never filed.
     screen.config.live_lane.window = LaneWindow::Fixed { ms: 40_000 };
@@ -224,5 +228,74 @@ fn the_lane_window_setting_is_the_hold_then_the_asset_then_the_default() {
     assert_eq!(
         screen.look.lane_window_setting(),
         LaneWindow::Fixed { ms: 2_000 }
+    );
+}
+
+/// Review round 2, B1: an unbound view resets to the window its active
+/// preset opened on, and to a window set on purpose since.
+#[test]
+fn an_unbound_view_resets_to_its_presets_window_then_to_one_set_on_purpose() {
+    use quantick_orderflow::LaneWindow;
+    let mut document = embedded();
+    let active = document.active.clone();
+    let preset = document
+        .presets
+        .iter_mut()
+        .find(|preset| preset.name == active)
+        .expect("the active preset is stored");
+    preset.live_lane.window = LaneWindow::Fixed { ms: 9_000 };
+    let mut screen = Screen::open(document);
+    assert_eq!(
+        screen.config.live_lane.window,
+        LaneWindow::Fixed { ms: 9_000 }
+    );
+    screen.config.live_lane.window = LaneWindow::Fixed { ms: 30_000 };
+    assert_eq!(
+        screen.look.lane_window_setting(),
+        LaneWindow::Fixed { ms: 9_000 },
+        "the wheel is not a setting"
+    );
+    screen.config.live_lane.window = LaneWindow::Fixed { ms: 3_000 };
+    screen.look.note_lane_set(&screen.config);
+    screen.config.live_lane.window = LaneWindow::Fixed { ms: 30_000 };
+    assert_eq!(
+        screen.look.lane_window_setting(),
+        LaneWindow::Fixed { ms: 3_000 }
+    );
+}
+
+/// Review round 2, B2: a window set and reset before the next sync resets to
+/// the window just set, which is what the sync then files for the asset.
+#[test]
+fn a_reset_before_the_sync_sees_the_window_just_set() {
+    use quantick_orderflow::LaneWindow;
+    let mut screen = Screen::open(embedded());
+    let (binding, _) = bind(&AssetBubblesStore::default().shared(), "WINV26");
+    screen.look.bind(binding);
+    screen.config.live_lane.window = LaneWindow::Fixed { ms: 6_000 };
+    screen.look.note_lane_set(&screen.config);
+    // The reset in the same frame: navigation back onto the setting.
+    screen.config.live_lane.window = screen.look.lane_window_setting();
+    assert_eq!(
+        screen.config.live_lane.window,
+        LaneWindow::Fixed { ms: 6_000 }
+    );
+    screen.look.sync(&screen.config, false, false);
+    screen.config.live_lane.window = LaneWindow::Fixed { ms: 40_000 };
+    assert_eq!(
+        screen.look.lane_window_setting(),
+        LaneWindow::Fixed { ms: 6_000 },
+        "the trader's choice was filed, not lost"
+    );
+    assert_eq!(
+        screen
+            .look
+            .asset()
+            .expect("bound")
+            .on_screen()
+            .look
+            .live_lane
+            .window,
+        LaneWindow::Fixed { ms: 6_000 }
     );
 }
