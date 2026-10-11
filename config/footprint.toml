@@ -70,9 +70,8 @@
 # How wide a candle must be before each detail level appears, as a multiple
 # of the widths above (default 1.0, clamped 0.8-6.0). Lower = numbers on
 # narrower candles, crowded; higher = waits for wider candles, roomier text.
-# A level that would wait past the deepest zoom arrives there instead, so
-# above about 3 the numbers wait for the deepest zoom and the two widths
-# above stop mattering.
+# High values can push the full ladder to the deepest zoom; summary
+# numbers still follow compact_from_px.
 #detail_scale = 1.0
 
 # The per-bar POC line (default true).

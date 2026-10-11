@@ -225,11 +225,12 @@ pub fn level_for(
 /// floor's ratio to the ladder's, so one setting moves every style, never
 /// under the style's own `typographic` floor. A width past the deepest zoom
 /// `detail_scale` allows is answered at that zoom instead, so a style the
-/// registry offers stays drawable; in on-screen pixels that is the zoom
-/// ceiling itself, which every style's floor fits under
-/// (`every_style_is_reachable_at_some_zoom_and_every_detail_scale`). So
-/// past a scale of about 3 every style waits for the deepest zoom and the
-/// entry widths stop mattering.
+/// registry offers stays drawable. On screen that is the zoom ceiling, which
+/// every style's uncapped text floor fits under (pinned by
+/// `every_style_is_reachable_at_some_zoom_and_every_detail_scale`), so the
+/// cap never draws text that does not fit. High scales can push the full
+/// ladder there; Compact's entry is capped the same way but rarely reaches
+/// it.
 #[must_use]
 pub fn detailed_entry_width(typographic: f32, detailed_from_px: f32, detail_scale: f32) -> f32 {
     let configured = (typographic * detailed_from_px / DETAILED_MIN_WIDTH).max(typographic);

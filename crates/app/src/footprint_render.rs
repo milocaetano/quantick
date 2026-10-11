@@ -884,43 +884,31 @@ mod tests {
         Decimal::from_str(s).unwrap()
     }
 
-    /// The zoom ceiling must reach the Detailed budget, or the most detailed
-    /// level exists only in the code — the reason MAX_CANDLE_WIDTH rose.
-    /// A cross-constant guard on purpose: it fires when either constant
-    /// drifts under the other.
+    /// The zoom ceiling must reach every style's uncapped text floor, or the
+    /// entry cap at the deepest zoom would draw digits that do not fit — the
+    /// reason MAX_CANDLE_WIDTH rose. A cross-constant guard on purpose: it
+    /// fires when either drifts under the other.
     #[test]
     fn every_style_is_reachable_at_some_zoom_and_every_detail_scale() {
-        use crate::footprint_config::{
-            DETAIL_SCALE_RANGE, DETAILED_FROM_PX_RANGE, FootprintConfig, FootprintStyle,
-        };
-        // The zoom the trader can actually reach is the ceiling divided by the
-        // detail scale, and the scale goes to the top of its own range. A
-        // style whose floor is above that is a style the registry offers and
-        // the chart can never draw — the legend would say `cluster → bidask`
-        // for ever, and the slider that caused it is in another window.
-        let deepest = FootprintConfig {
-            detailed_from_px: *DETAILED_FROM_PX_RANGE.end(),
-            ..FootprintConfig::default()
-        };
+        use crate::footprint_config::{FootprintConfig, FootprintStyle};
+        // Past the deepest zoom a detail scale allows, the entry is answered
+        // at that zoom (`detailed_entry_width`), which on screen is the
+        // ceiling itself. That is only honest while the text the style writes
+        // fits there — measured uncapped, every column count it can take.
         for style in FootprintStyle::ALL {
-            for base in [
-                FootprintConfig::default(),
-                FootprintConfig {
-                    cluster_show_total: false,
-                    ..FootprintConfig::default()
-                },
-                deepest.clone(),
-            ] {
+            for cluster_show_total in [true, false] {
                 let config = FootprintConfig {
-                    detail_scale: *DETAIL_SCALE_RANGE.end(),
-                    ..base
+                    cluster_show_total,
+                    ..FootprintConfig::default()
                 };
-                let reachable = crate::viewport::MAX_CANDLE_WIDTH / config.detail_scale;
-                let floor = detailed_min_width(style, &config);
+                let columns = style.detailed_quantity_columns(&config);
+                let floor = detailed_min_width_for(style, columns);
                 assert!(
-                    reachable >= floor,
-                    "{}: floor {floor:.1} px is past the {reachable:.1} px the zoom can reach",
-                    style.id()
+                    floor <= crate::viewport::MAX_CANDLE_WIDTH,
+                    "{} ({columns} columns): text floor {floor:.1} px is past the {:.1} px \
+                     zoom ceiling",
+                    style.id(),
+                    crate::viewport::MAX_CANDLE_WIDTH
                 );
             }
         }

@@ -350,7 +350,8 @@ pub struct FootprintConfig {
     /// arrive at narrower candles and the numbers sit tighter; above 1 they
     /// wait for more room. Clamped to [`DETAIL_SCALE_RANGE`]: the low end
     /// still fits the digits it draws, and no level ever waits past the
-    /// deepest zoom - above about 3 the numbers simply wait for it.
+    /// deepest zoom - high values can push the full ladder there, while the
+    /// summary numbers still follow `compact_from_px`.
     pub detail_scale: f32,
     /// The candle width, in pixels, at which Compact (one summary number per
     /// row) starts — zooming in it appears there, zooming out it leaves
@@ -483,9 +484,10 @@ pub const NUMBER_ROW_PX_RANGE: std::ops::RangeInclusive<f32> = 9.0..=16.0;
 /// crowd their neighbour — and 0.8 is as far as that stays a chart rather
 /// than a smear. The ceiling is generous: waiting longer for detail costs
 /// nothing but zoom, and a level that would wait past the deepest zoom
-/// arrives there instead (`footprint_lod::detailed_entry_width`). Past about
-/// 3 every style's numbers wait for the deepest zoom, so the entry widths
-/// stop mattering there - the trader asked for the reach anyway.
+/// arrives there instead (`footprint_lod::detailed_entry_width`). High
+/// values can push the full ladder to the deepest zoom (about 3.3 at the
+/// default `detailed_from_px`); the summary numbers still follow
+/// `compact_from_px`.
 pub const DETAIL_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.8..=6.0;
 
 /// The bounds [`FootprintConfig::compact_from_px`] is clamped to. The low end

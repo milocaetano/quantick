@@ -338,11 +338,11 @@ impl DetailSection<'_> {
             )
             .on_hover_text(
                 "how wide a candle must be before each detail level appears. \
-                 1.0 = the numbers just fit; lower shows them on narrower \
-                 candles but crowded, higher waits for wider candles with \
-                 roomier text. Above about 3 the numbers wait for the deepest \
-                 zoom and the px widths below stop mattering. The legend says \
-                 how much wider to zoom whenever numbers are not showing yet",
+                 1.0 = numbers just fit; lower = narrower candles, crowded; \
+                 higher = wider candles, roomier. High values can push the full \
+                 ladder to the deepest zoom; summary numbers still follow \
+                 \"summary numbers from px\". The legend says how much wider to \
+                 zoom whenever numbers are not showing yet",
             )
             .changed();
         let mut entry = |px: &mut f32, range, text, hover| {

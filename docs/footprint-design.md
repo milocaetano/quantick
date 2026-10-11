@@ -83,8 +83,8 @@ the two gates by axis: *Price rows by height* holds `profile_row_px` ("min
 band height") and `number_row_px` ("min number row height", Detailed's floor,
 Compact a pixel under it, 9-16 px); *Detail by candle width* holds
 `detail_scale` ("candle width for numbers", 0.8-6) and the two entry widths;
-above a scale of about 3 every style's numbers wait for the deepest zoom and
-the entry widths stop mattering. Merged rows put `single rows at N× height`
+high scales can push the full ladder to the deepest zoom, while the summary
+numbers still follow `compact_from_px`. Merged rows put `single rows at N× height`
 in the legend - the stretch that clears the row dead band, omitted past 10×
 or when even the coarsest grouping is too thin - beside the width hint
 `numbers at N× this width`.
