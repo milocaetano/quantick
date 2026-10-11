@@ -7,6 +7,7 @@
 //! tools mount in the inspector. Only the geometry and the price formula
 //! differ between the two kinds.
 
+use crate::drawings::StyleColor32;
 use std::any::Any;
 use std::cell::{Ref, RefCell};
 

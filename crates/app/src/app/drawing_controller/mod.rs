@@ -19,9 +19,7 @@ impl DrawingController {
     pub(crate) fn new() -> Self {
         Self {
             chrome: DrawingChromeSurface::default(),
-            presets: drawings::presets::PresetStore::load_from(
-                drawings::presets::PresetStore::default_path(),
-            ),
+            presets: drawings::presets::PresetStore::load_from(drawings::presets::default_path()),
         }
     }
 }

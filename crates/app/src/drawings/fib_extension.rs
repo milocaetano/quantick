@@ -1,3 +1,4 @@
+use crate::drawings::StyleColor32;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 

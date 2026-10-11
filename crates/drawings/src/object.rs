@@ -8,10 +8,10 @@ pub use quantick_chart_interaction::drawing_model::{
     PaneKey,
 };
 
-use super::{DrawingPayload, DrawingStyle, DrawingTool};
+use crate::{DrawingPayload, DrawingStyle, ToolCatalog};
 
 #[derive(Debug, Clone)]
-pub struct Drawing {
+pub struct Drawing<T> {
     /// See [`DrawingId`]: identity, where the index is only position.
     pub id: DrawingId,
     /// Set when something other than the trader's hand placed this object.
@@ -23,7 +23,7 @@ pub struct Drawing {
     /// falls back to the derived `"<tool> <n>"` label everywhere a label is
     /// shown; empty strings are normalised to `None` on edit.
     pub name: Option<String>,
-    pub tool: DrawingTool,
+    pub tool: T,
     pub points: Vec<ChartPoint>,
     /// The value axis the anchors were placed against.
     pub band: DrawingBand,
@@ -61,7 +61,7 @@ pub struct Drawing {
     pub payload: Box<dyn DrawingPayload>,
 }
 
-impl Drawing {
+impl<T: ToolCatalog> Drawing<T> {
     /// The label every list and menu shows: the trader's name when one was
     /// given, the tool name plus the 1-based position otherwise.
     #[must_use]
@@ -71,7 +71,9 @@ impl Drawing {
             None => format!("{} {}", self.tool.name(), index + 1),
         }
     }
+}
 
+impl<T> Drawing<T> {
     /// Whether this object *can* be shared: every anchor has to name a market
     /// instant, because that is the only coordinate two panes agree on. An
     /// anchor dropped past the newest bar has none, and no time is invented
@@ -88,7 +90,7 @@ impl Drawing {
     }
 }
 
-impl PartialEq for Drawing {
+impl<T: PartialEq> PartialEq for Drawing<T> {
     fn eq(&self, other: &Self) -> bool {
         // `id` stays out: identity is not content, and an undo snapshot
         // holding the same objects under the same ids must compare equal to

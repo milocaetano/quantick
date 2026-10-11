@@ -22,3 +22,4 @@ crates/orderflow/src/engine.rs Instant::now a stopwatch around the projection bu
 crates/stores/src/scratch.rs SystemTime::now test-only helper; the same copy again, for the cockpit stores' file round-trip tests.
 crates/control-host/src/scratch.rs SystemTime::now test-only helper; the same copy again, for the control trace's sidecar-file tests.
 crates/strategy/src/scratch.rs SystemTime::now test-only helper; the same copy again, for the preset bank's file round-trip tests.
+crates/drawings/src/scratch.rs SystemTime::now test-only helper; the same copy again, for the drawing-preset file's round-trip tests.

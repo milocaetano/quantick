@@ -17,6 +17,7 @@
 //! - a pane that cannot name its bar width (`px_per_bar <= 0`) draws only
 //!   the anchor, never a guessed series.
 
+use crate::drawings::StyleColor32;
 use quantick_anchored_studies::{AnchoredAverage as AvwapCache, AverageOutput, AvwapBand};
 #[cfg(test)]
 use quantick_anchored_studies::AvwapCacheKey;

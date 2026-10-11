@@ -812,3 +812,26 @@ impl fmt::Debug for DrawingTool {
             .finish()
     }
 }
+
+/// The mark model asks the registry handle for what placing and naming a mark
+/// takes; each answer is the inherent one above.
+impl quantick_drawings::ToolCatalog for DrawingTool {
+    fn id(self) -> &'static str {
+        Self::id(self)
+    }
+    fn name(self) -> &'static str {
+        Self::name(self)
+    }
+    fn required_points(self) -> usize {
+        Self::required_points(self)
+    }
+    fn default_payload(self) -> Box<dyn DrawingPayload> {
+        Self::default_payload(self)
+    }
+    fn default_style(self) -> DrawingStyle {
+        Self::default_style(self)
+    }
+    fn band_for(self, band: &DrawingBand) -> DrawingBand {
+        Self::band_for(self, band)
+    }
+}

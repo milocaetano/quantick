@@ -7,6 +7,7 @@ mod pane_model_tests;
 // so the move costs no widened visibility in production code, and the one
 // `use super::*` below is the same line the module had inline.
 
+use crate::drawings::StyleColor32;
 use eframe::egui;
 use rust_decimal::Decimal;
 

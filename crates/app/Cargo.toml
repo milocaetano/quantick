@@ -126,6 +126,8 @@ quantick-indicators = { path = "../indicators", features = ["fake-native"] }
 quantick-feed = { path = "../feed", features = ["harness"] }
 # The time-less `ChartPoint::at` the drawing tests place anchors with.
 quantick-chart-interaction = { path = "../chart-interaction", features = ["test-support"] }
+# The placement shorthands and the inert preset host the drawing tests use.
+quantick-drawings = { path = "../drawings", features = ["test-support"] }
 # The per-thread store-write refusal the saves-off tests hold (DS7).
 quantick-workspace = { path = "../workspace", features = ["test-support"] }
 

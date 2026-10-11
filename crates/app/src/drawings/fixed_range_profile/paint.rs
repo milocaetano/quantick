@@ -1,6 +1,7 @@
 //! Painting the profile: one per-frame [`ProfileFrame`] measured once, then
 //! the passes that read it — edges, histogram, silhouette, levels, labels.
 
+use crate::drawings::StyleColor32;
 use eframe::egui;
 use quantick_anchored_studies::{FrvpEmpty, LevelPrices, ProfileOutput};
 use quantick_engine::{ValueArea, VolumeProfile};

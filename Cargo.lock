@@ -3095,6 +3095,11 @@ dependencies = [
  "quantick-chart-interaction",
  "quantick-engine",
  "quantick-indicators",
+ "quantick-workspace",
+ "serde",
+ "smallvec",
+ "toml 0.8.20",
+ "tracing",
 ]
 
 [[package]]

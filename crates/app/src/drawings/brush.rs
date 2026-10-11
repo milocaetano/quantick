@@ -11,6 +11,7 @@
 //! pixels would look better and would start pointing at the wrong bars.
 //! Deforming is acceptable; lying is not.
 
+use crate::drawings::StyleColor32;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 

@@ -4,14 +4,14 @@
 //! Placement and the geometry edits that follow it live in
 //! [`super::placement`]; this module owns the book they write into.
 
-use super::{
+use crate::{
     DeleteOutcome, Drawing, DrawingId, Drawings, PlacementBatch, UNDO_HISTORY_LIMIT, UndoEntry,
 };
 // Named only by the test-side authorship setter below.
-#[cfg(test)]
-use super::DrawingAuthor;
+#[cfg(any(test, feature = "test-support"))]
+use crate::DrawingAuthor;
 
-impl Drawings {
+impl<T: Clone + PartialEq> Drawings<T> {
     /// Stable identity, constant-time even when read once per painted object.
     #[must_use]
     pub fn selected_id(&self) -> Option<DrawingId> {
@@ -19,7 +19,7 @@ impl Drawings {
     }
 
     /// Share the authoritative selection with the pane interaction owner.
-    pub(crate) fn selection_handle(&self) -> quantick_chart_interaction::pane::Selection {
+    pub fn selection_handle(&self) -> quantick_chart_interaction::pane::Selection {
         self.selection.clone()
     }
 
@@ -37,7 +37,7 @@ impl Drawings {
     /// longer on this chart, and an undo that brought back a mark from
     /// another market would be the very confusion the scoping exists to
     /// prevent. Ids are not rewound.
-    pub fn take_all(&mut self) -> Vec<Drawing> {
+    pub fn take_all(&mut self) -> Vec<Drawing<T>> {
         self.revision += 1;
         self.draft = None;
         self.selection.set(None);
@@ -57,7 +57,7 @@ impl Drawings {
     ///
     /// Anchors keep the bar offsets they came with; the pane re-anchors them
     /// against its own series right after, exactly as after a re-cut.
-    pub fn adopt(&mut self, items: impl IntoIterator<Item = Drawing>) {
+    pub fn adopt(&mut self, items: impl IntoIterator<Item = Drawing<T>>) {
         self.revision += 1;
         for mut drawing in items {
             let wanted = drawing.id.0;
@@ -72,7 +72,7 @@ impl Drawings {
     }
 
     #[must_use]
-    pub fn items(&self) -> &[Drawing] {
+    pub fn items(&self) -> &[Drawing<T>] {
         &self.items
     }
 
@@ -83,7 +83,7 @@ impl Drawings {
     /// (`Self::record` compares them). The cache exclusion in
     /// `FrvpPayload::eq` is the other half of this contract.
     #[must_use]
-    pub(crate) fn items_mut(&mut self) -> &mut [Drawing] {
+    pub fn items_mut(&mut self) -> &mut [Drawing<T>] {
         &mut self.items
     }
 
@@ -91,7 +91,7 @@ impl Drawings {
     /// [`Self::items_mut`] — the profile refresh folds it so the histogram
     /// is live while the range is still being placed.
     #[must_use]
-    pub(crate) fn draft_mut(&mut self) -> Option<&mut Drawing> {
+    pub fn draft_mut(&mut self) -> Option<&mut Drawing<T>> {
         self.draft.as_mut()
     }
 
@@ -102,7 +102,7 @@ impl Drawings {
         self.items.iter().filter(|item| item.shared()).count()
     }
 
-    pub(super) fn alloc_id(&mut self) -> DrawingId {
+    pub(crate) fn alloc_id(&mut self) -> DrawingId {
         self.next_id += 1;
         DrawingId(self.next_id)
     }
@@ -142,12 +142,12 @@ impl Drawings {
     }
 
     #[must_use]
-    pub fn selected_mut(&mut self) -> Option<&mut Drawing> {
+    pub fn selected_mut(&mut self) -> Option<&mut Drawing<T>> {
         self.selected().and_then(|index| self.items.get_mut(index))
     }
 
     #[must_use]
-    pub fn draft(&self) -> Option<&Drawing> {
+    pub fn draft(&self) -> Option<&Drawing<T>> {
         self.draft.as_ref()
     }
 
@@ -167,7 +167,7 @@ impl Drawings {
         !self.all_hidden && self.items.get(index).is_some_and(|item| !item.hidden)
     }
 
-    pub(super) fn snapshot(&self) -> UndoEntry {
+    pub(crate) fn snapshot(&self) -> UndoEntry<T> {
         UndoEntry {
             items: self.items.clone(),
             all_hidden: self.all_hidden,
@@ -175,7 +175,7 @@ impl Drawings {
     }
 
     /// Push `before` as one undo step if the store actually changed since.
-    pub(super) fn record(&mut self, before: UndoEntry) {
+    pub(crate) fn record(&mut self, before: UndoEntry<T>) {
         if before == self.snapshot() {
             return;
         }
@@ -216,7 +216,7 @@ impl Drawings {
 
     /// Record an already-applied edit to one object, given its pre-edit
     /// state. Used by the inspector to coalesce slider/color gestures.
-    pub fn record_edit_of(&mut self, index: usize, before_drawing: Drawing) {
+    pub fn record_edit_of(&mut self, index: usize, before_drawing: Drawing<T>) {
         let mut before = self.snapshot();
         let Some(slot) = before.items.get_mut(index) else {
             return;
@@ -225,12 +225,12 @@ impl Drawings {
         self.record(before);
     }
 
-    #[cfg(test)]
-    pub(crate) fn undo_depth(&self) -> usize {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn undo_depth(&self) -> usize {
         self.undo.len()
     }
 
-    pub(super) fn restore(&mut self, entry: UndoEntry) {
+    pub(crate) fn restore(&mut self, entry: UndoEntry<T>) {
         self.revision += 1;
         self.items = entry.items;
         self.all_hidden = entry.all_hidden;
@@ -324,7 +324,7 @@ impl Drawings {
     /// Open a call that places several objects. The history is set aside,
     /// so the steps each placement records cannot clear redo or push the
     /// oldest step past [`UNDO_HISTORY_LIMIT`].
-    pub fn begin_placements(&mut self) -> PlacementBatch {
+    pub fn begin_placements(&mut self) -> PlacementBatch<T> {
         PlacementBatch {
             baseline: self.snapshot(),
             undo: std::mem::take(&mut self.undo),
@@ -335,7 +335,7 @@ impl Drawings {
 
     /// The call succeeded: its placements fold into one undo step from the
     /// state before the first one, so one Ctrl+Z takes them all back.
-    pub fn commit_placements(&mut self, batch: PlacementBatch) {
+    pub fn commit_placements(&mut self, batch: PlacementBatch<T>) {
         self.undo = batch.undo;
         self.redo = batch.redo;
         self.record(batch.baseline);
@@ -343,7 +343,7 @@ impl Drawings {
 
     /// The call failed part-way: objects, undo, redo and selection return
     /// to exactly where the call began, so nothing keeps half of it.
-    pub fn retract_placements(&mut self, batch: PlacementBatch) {
+    pub fn retract_placements(&mut self, batch: PlacementBatch<T>) {
         self.undo = batch.undo;
         self.redo = batch.redo;
         self.restore(batch.baseline);
@@ -384,7 +384,7 @@ impl Drawings {
     /// The annotate tier stamps authorship as it places, so this exists for
     /// the tests that need an object to *be* an assistant's without standing
     /// up a gateway to produce one.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_author_at(&mut self, index: usize, author: Option<DrawingAuthor>) {
         if let Some(drawing) = self.items.get_mut(index) {
             drawing.author = author;

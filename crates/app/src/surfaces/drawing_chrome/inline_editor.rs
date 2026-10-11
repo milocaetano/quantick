@@ -6,6 +6,7 @@
 //! context bar a selection raises carries the rest — colour, type size, lock,
 //! delete — so what was missing was never a panel, only a caret.
 
+use crate::drawings::StyleColor32;
 use eframe::egui;
 
 use super::{DrawingChromeAsk, DrawingChromeSurface, DrawingEdit, DrawingEnv};

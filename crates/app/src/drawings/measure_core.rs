@@ -10,6 +10,7 @@
 //! panel whose whole job is to be exact. Points and percent are computable
 //! from the anchors alone, and they are what is shown.
 
+use crate::drawings::StyleColor32;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 
