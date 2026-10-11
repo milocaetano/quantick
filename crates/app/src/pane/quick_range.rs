@@ -10,11 +10,12 @@
 use eframe::egui;
 
 use crate::bands::Band;
-use crate::drawings::{self, DrawContext};
+use crate::drawings::{self, DrawContext, MarkScene, px, px_rect};
 use crate::surfaces::drawing_chrome::QuickRangeOwner;
 use crate::toolrail::Tool;
 
 use super::drawing_projection::DrawingProjection;
+use super::render_registry::{TextFonts, paint_scene};
 use super::{DRAWING_DRAG_THRESHOLD_PX, PaneChrome};
 
 /// Enough history for the demo's two anchors to span a real, visible range.
@@ -176,8 +177,9 @@ impl QuickRangeView<'_> {
                 let scale = band.scale.as_ref()?;
                 let tool = drawings::DrawingTool::by_id("measure")?;
                 let points = quick.anchors.map(|anchor| {
-                    self.projection
-                        .drawing_screen_point(anchor, history_right, total, scale)
+                    px(self
+                        .projection
+                        .drawing_screen_point(anchor, history_right, total, scale))
                 });
                 let ctxt = DrawContext {
                     payload: quick.payload,
@@ -190,18 +192,24 @@ impl QuickRangeView<'_> {
                     selected: false,
                     halo: false,
                     content_editing: false,
+                    text: &TextFonts(painter.ctx()),
                 };
+                let mut scene = MarkScene::default();
                 tool.paint(
-                    &painter.with_clip_rect(band.rect),
-                    band.rect,
+                    &mut scene,
+                    px_rect(band.rect),
                     quick.style,
                     &points,
                     &ctxt,
                     false,
                 );
-                let mut bounds = egui::Rect::from_min_max(points[0], points[0]);
+                paint_scene(&painter.with_clip_rect(band.rect), &scene);
+                let mut bounds = quantick_drawings::PxRect::from_min_max(points[0], points[0]);
                 bounds.extend_with(points[1]);
-                Some((band.rect, tool.painted_bounds(bounds, band.rect)))
+                Some((
+                    band.rect,
+                    drawings::egui_rect(tool.painted_bounds(bounds, px_rect(band.rect))),
+                ))
             })
             .or_else(|| {
                 chrome

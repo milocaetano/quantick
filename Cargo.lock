@@ -3096,6 +3096,7 @@ dependencies = [
  "quantick-engine",
  "quantick-indicators",
  "quantick-workspace",
+ "rust_decimal",
  "serde",
  "smallvec",
  "toml 0.8.20",

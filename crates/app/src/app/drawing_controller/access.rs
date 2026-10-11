@@ -233,15 +233,19 @@ impl DrawingAccess<'_> {
     }
     // Each destructive operation keeps its original owner even if it clears
     // the selection. The next independent command resolves its owner afresh.
-    pub(super) fn undo_drawings(&mut self) {
+    /// Fold one edit into the target pane's marks. Whatever rode a mark
+    /// that undo or redo took away is let go here, with the pane's strategies
+    /// in hand; the other effects are the caller's to carry out.
+    pub(super) fn update(
+        &mut self,
+        intent: quantick_drawings::DrawingIntent,
+    ) -> Vec<quantick_drawings::DrawingEffect> {
         let pane = self.pane_mut();
-        pane.drawings.undo();
-        pane.strategies.sweep_orphans(&pane.drawings);
-    }
-    pub(super) fn redo_drawings(&mut self) {
-        let pane = self.pane_mut();
-        pane.drawings.redo();
-        pane.strategies.sweep_orphans(&pane.drawings);
+        let effects = quantick_drawings::update(&mut pane.drawings, intent);
+        if effects.contains(&quantick_drawings::DrawingEffect::HistoryReplaced) {
+            pane.strategies.sweep_orphans(&pane.drawings);
+        }
+        effects
     }
     pub(super) fn delete_all_drawings(&mut self) -> usize {
         let pane = self.pane_mut();

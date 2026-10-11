@@ -94,7 +94,9 @@ const ALLOWED: &[&str] = &[
     // longer without the debt growing.
     "crates/app/src/app/tests/drawings_tests.rs",
     "crates/app/src/app/tests/input_ui_tests.rs",
-    "crates/app/src/drawings/fib.rs",
+    // The Fib quotation moved with the tool out of `app` (#662); the same
+    // one line, at the tool's new address.
+    "crates/drawings/src/tools/fib.rs",
 ];
 
 /// Split an identifier or sentence into comparable words: on anything that is

@@ -1667,7 +1667,7 @@ fn clicking_a_drawing_keeps_it_selected_after_the_release() {
 ///   its targets back over the measured leg is backwards on its face.
 #[test]
 fn each_fib_kind_opens_with_the_span_its_own_question_asks_for() {
-    use crate::drawings::fib::{Extend, FibPayload};
+    use quantick_drawings::{FibExtend as Extend, FibPayload};
     for (tool, expected) in [
         ("fib-retracement", Extend::Anchors),
         ("fib-extension", Extend::Forward),
@@ -1730,7 +1730,7 @@ fn a_draft_says_what_the_next_click_will_do() {
 /// corridor of no width, which is a straight line, and the click that
 /// looked like it confirmed the shape committed one — a three-anchor
 /// object that is a line. The tool now refuses to be born degenerate
-/// (`DrawingToolImpl::pending_anchor`), and the preview and the commit
+/// (`MarkTool::pending_anchor`), and the preview and the commit
 /// come through the same door, so what is clicked is what is created.
 #[test]
 fn a_dragged_channel_is_born_a_corridor_and_not_a_line() {

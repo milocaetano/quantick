@@ -13,10 +13,14 @@ quantick-chart-interaction = { path = "../chart-interaction" }
 quantick-engine = { path = "../engine" }
 quantick-indicators = { path = "../indicators" }
 quantick-workspace = { path = "../workspace" }
+rust_decimal.workspace = true
 serde = { workspace = true, features = ["derive"] }
 smallvec.workspace = true
 toml.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+quantick-chart-interaction = { path = "../chart-interaction", features = ["test-support"] }
 
 [features]
 # The shorthands and the inert preset host a dependent crate's tests build on.

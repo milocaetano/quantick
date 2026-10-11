@@ -59,3 +59,39 @@ impl Default for DrawingStyle {
 
 /// Shared honesty fade for marks whose location this series does not prove.
 pub const CLAMPED_OPACITY: f32 = 0.45;
+
+/// Handles read as hollow rings, not solid discs: the core is the chart's own
+/// backdrop, so the handle marks the anchor without adding a bright blob over
+/// the candles (`docs/ux/drawing-tools-2026-08.md` §D2).
+pub const SELECTED_ANCHOR_FILL: PremultipliedRgba = crate::palette::CANVAS;
+
+/// Selection never repaints the object white: it keeps the configured colour
+/// and paints this soft halo underneath instead, plus ring anchor handles.
+/// Premultiplied ~11% white — enough to find the object under the pointer,
+/// not enough to double its visual weight.
+pub const SELECTION_HALO_COLOR: PremultipliedRgba =
+    crate::color::rgba_premultiplied(28, 28, 28, 28);
+
+#[must_use]
+pub fn drawing_stroke(style: DrawingStyle) -> crate::Stroke {
+    crate::Stroke::new(style.width_px, style.color)
+}
+
+#[must_use]
+pub fn drawing_fill(style: DrawingStyle) -> PremultipliedRgba {
+    use crate::RgbaExt as _;
+    let color = style.color;
+    crate::color::rgba_unmultiplied(color.r(), color.g(), color.b(), style.fill_alpha)
+}
+
+/// The colour a mark paints in: its own, faded when the chart under it does
+/// not back it (off this series, or drawn on another market).
+#[must_use]
+pub fn painted_color<T>(drawing: &crate::Drawing<T>) -> PremultipliedRgba {
+    use crate::RgbaExt as _;
+    if drawing.off_series || drawing.foreign_market {
+        drawing.style.color.gamma_multiply(CLAMPED_OPACITY)
+    } else {
+        drawing.style.color
+    }
+}

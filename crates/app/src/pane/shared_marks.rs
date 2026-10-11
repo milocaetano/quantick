@@ -20,10 +20,14 @@ use eframe::egui;
 use smallvec::SmallVec;
 
 use crate::bands;
-use crate::drawings::{ChartPoint, DrawContext, Drawing, DrawingBand, DrawingStyle, Drawings};
+use crate::drawings::{
+    ChartPoint, DrawContext, Drawing, DrawingBand, DrawingStyle, Drawings, MarkScene, px, px_rect,
+};
+use quantick_drawings::{Px, UNMEASURED};
 
 use super::drawing_projection::DrawingProjection;
 use super::pointer_hit::PaneHitTest;
+use super::render_registry::{TextFonts, paint_scene};
 use super::{DRAWING_ANCHOR_RADIUS_PX, DRAWING_SELECT_RADIUS_PX};
 
 /// What a pane resolved on *another* pane's shared marks this frame.
@@ -194,11 +198,12 @@ impl PaneHitTest<'_> {
             let Some((anchors, _)) = self.projection.reproject(drawing) else {
                 continue;
             };
-            let points: SmallVec<[egui::Pos2; 4]> = anchors
+            let points: SmallVec<[Px; 4]> = anchors
                 .iter()
                 .map(|anchor| {
-                    self.projection
-                        .drawing_screen_point(*anchor, history_right, total, &scale)
+                    px(self
+                        .projection
+                        .drawing_screen_point(*anchor, history_right, total, &scale))
                 })
                 .collect();
             let ctxt = DrawContext {
@@ -213,6 +218,8 @@ impl PaneHitTest<'_> {
                 selected: source.selected_id() == Some(drawing.id) && !drawing.locked,
                 halo: false,
                 content_editing: false,
+                // A hit test sets no label.
+                text: &UNMEASURED,
             };
             // Handle drags cross the pane boundary as "move anchor N", so a
             // tool whose handles are not its anchors — a channel's rail
@@ -222,18 +229,22 @@ impl PaneHitTest<'_> {
             // invisible grab point on the mirror would be worse than an
             // absent one: the ring the trader sees is the ring they get.
             if let Some(anchor) = drawing.tool.hit_shared_handle(
-                band.rect,
+                px_rect(band.rect),
                 &points,
-                pos,
+                px(pos),
                 DRAWING_ANCHOR_RADIUS_PX,
                 &ctxt,
             ) {
                 return Some((index, Some(anchor)));
             }
             if body.is_none()
-                && drawing
-                    .tool
-                    .hit_test(band.rect, &points, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
+                && drawing.tool.hit_test(
+                    px_rect(band.rect),
+                    &points,
+                    px(pos),
+                    DRAWING_SELECT_RADIUS_PX,
+                    &ctxt,
+                )
             {
                 body = Some((index, None));
             }
@@ -306,11 +317,15 @@ impl PaneHitTest<'_> {
                 let clipped = painter.with_clip_rect(band.rect);
                 // Stack-allocated: this is a per-frame path, and every shipped
                 // tool has at most three anchors, so the heap is never touched.
-                let points: SmallVec<[egui::Pos2; 4]> = anchors
+                let points: SmallVec<[Px; 4]> = anchors
                     .iter()
                     .map(|anchor| {
-                        self.projection
-                            .drawing_screen_point(*anchor, history_right, total, &scale)
+                        px(self.projection.drawing_screen_point(
+                            *anchor,
+                            history_right,
+                            total,
+                            &scale,
+                        ))
                     })
                     .collect();
                 // A mark selected here shows it here. The trader can take and
@@ -331,6 +346,7 @@ impl PaneHitTest<'_> {
                     // The object lives on `source`, so that is the pane that
                     // knows whether its words are in an editor right now.
                     content_editing: source.content_editing == Some(index),
+                    text: &TextFonts(painter.ctx()),
                 };
                 // Both halves, so a shared object is the same object on both
                 // charts. A tool whose body lives in the background pass —
@@ -344,19 +360,21 @@ impl PaneHitTest<'_> {
                 // time on the far pane's geometry. A shared mark is a
                 // reference to something living on another chart, and reading
                 // as one is the honest outcome.
+                let mut scene = MarkScene::default();
                 drawing
                     .tool
-                    .paint_under(&clipped, band.rect, style, &points, &ctxt);
+                    .paint_under(&mut scene, px_rect(band.rect), style, &points, &ctxt);
                 // Locked geometry shows no handles on either chart: they would
                 // advertise a drag that is refused.
                 drawing.tool.paint(
-                    &clipped,
-                    band.rect,
+                    &mut scene,
+                    px_rect(band.rect),
                     style,
                     &points,
                     &ctxt,
                     selected && !drawing.locked,
                 );
+                paint_scene(&clipped, &scene);
             }
         }
     }

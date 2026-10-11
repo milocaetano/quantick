@@ -357,7 +357,13 @@ impl PlacementRead<'_, '_> {
                     total,
                     scale,
                 );
-                let shaped = tool.pending_anchor(&placed, position, self.constrain);
+                let placed_px: smallvec::SmallVec<[quantick_drawings::Px; 4]> =
+                    placed.iter().copied().map(drawings::px).collect();
+                let shaped = drawings::pos(tool.pending_anchor(
+                    &placed_px,
+                    drawings::px(position),
+                    self.constrain,
+                ));
                 // A levelled far end copies the near price; a screen trip lands ulps off.
                 let level = match (self.constrain, placed.as_slice(), draft.points.first()) {
                     (drawings::Constrain::Level, [start], Some(near)) if shaped.y == start.y => {
