@@ -695,6 +695,10 @@ fn double_click_then_vertical_pan_works_on_both_sides_and_orientations() {
                     click_sized(&mut app, &ctx, TEST_WINDOW, at);
                     click_sized(&mut app, &ctx, TEST_WINDOW, at);
                     run_frame(&mut app, &ctx);
+                    // Over the candles the same double click opens the chart
+                    // settings; shut them so the drag below reaches the chart.
+                    app.surfaces.chart_settings.close();
+                    run_frame(&mut app, &ctx);
                     let pane = &app.active_tab().flow_pane;
                     assert_eq!(
                         pane.price_view.manual_range(),
