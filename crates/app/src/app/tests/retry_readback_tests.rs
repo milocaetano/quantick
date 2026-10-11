@@ -605,6 +605,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("chart.price_axis.set", 1, Value::Null, Readback::Moves),
         ("chart.settings.set", 1, Value::Null, Readback::Moves),
         ("chart.tape_view.set", 1, Value::Null, Readback::Moves),
+        ("chart.time_axis.reset", 1, Value::Null, Readback::Moves),
         (
             "orderflow.tape.opening_scale.set",
             1,
@@ -815,6 +816,16 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     "tab_id": app.tabs.active_id().to_string(),
                     "pane_id": app.active_tab().flow_pane.id.to_string(),
                     "window": { "kind": "fixed", "ms": 7_000 },
+                })
+            }
+            "chart.time_axis.reset" => {
+                // A zoomed candle axis, so the reset has somewhere to go.
+                let pane = &mut app.active_tab_mut().flow_pane;
+                pane.model.viewport.zoom(3.0);
+                json!({
+                    "tab_id": app.tabs.active_id().to_string(),
+                    "pane_id": app.active_tab().flow_pane.id.to_string(),
+                    "axis": "candles",
                 })
             }
             "chart.settings.set" => json!({ "action": "open", "tab": "candles" }),
