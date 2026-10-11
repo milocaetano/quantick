@@ -16,6 +16,7 @@ pub(super) use axes::{
     AxisMarksPass, CrosshairPass, GridPass, LaneTimeAxisPass, PointerPass, TimeStripPass,
 };
 mod drawings;
+pub(in crate::pane) use drawings::{TextFonts, paint_scene};
 #[cfg(test)]
 mod drawings_scene_golden_tests;
 mod paper;

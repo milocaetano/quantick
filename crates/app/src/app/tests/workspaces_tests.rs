@@ -439,7 +439,7 @@ fn parking_the_popup_never_recreates_a_workspace_that_was_reset() {
 #[test]
 fn a_default_preset_shapes_new_fibs_and_leaves_existing_ones_alone() {
     use crate::drawings::DrawingPayload as _;
-    use crate::drawings::fib::FibPayload;
+    use quantick_drawings::FibPayload;
 
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
@@ -465,8 +465,8 @@ fn a_default_preset_shapes_new_fibs_and_leaves_existing_ones_alone() {
     // Save a compact custom preset and make it the default for new fibs.
     let presets = crate::scratch::ScratchFile::new("default-preset-test", "presets.toml");
     let mut store = drawings::presets::PresetStore::load_from(presets.path().to_path_buf());
-    let mut compact = FibPayload::new(drawings::fib::FibKind::Retracement);
-    compact.apply_preset(&drawings::fib::RETRACEMENT_PRESETS[1]);
+    let mut compact = FibPayload::new(quantick_drawings::FibKind::Retracement);
+    compact.apply_preset(&quantick_drawings::RETRACEMENT_PRESETS[1]);
     let exported = compact.export_preset().expect("fib exports presets");
     assert!(store.save_custom_preset("fib-retracement", "mine", exported, false));
     store.set_default_preset("fib-retracement", Some("mine".into()));

@@ -2,7 +2,8 @@
 //!
 //! For every registered tool, painted plain and selected, plus a profile and
 //! an anchored VWAP with real cached rows, this records the exact egui shape
-//! list a chart band receives. The list lives in
+//! list a chart band receives: the tool's [`MarkScene`] through
+//! [`super::paint_scene`], the window's one drawings renderer. The list lives in
 //! `drawings_scene_golden.txt` beside this file and was written from the
 //! tools as they painted *before* the move to `quantick_drawings`; the test
 //! is what proves the move changed no pixel. Never edit the golden to make it
@@ -24,11 +25,13 @@ use quantick_anchored_studies::{
 use quantick_engine::{BarSpec, Side, Trade, bar_registry::BarConfiguration};
 use rust_decimal::Decimal;
 
+use super::{TextFonts, paint_scene};
 use crate::chart::PriceScale;
 use crate::drawings::{
     AvwapPayload, ChartPoint, DRAWING_TOOLS, DrawContext, DrawingPayload, DrawingStyle,
-    DrawingTool, FrvpPayload, ValueUnit,
+    DrawingTool, FrvpPayload, MarkScene, ValueUnit, px, px_rect,
 };
+use quantick_drawings::Px;
 
 const GOLDEN_FILE: &str = "src/pane/render_registry/drawings_scene_golden.txt";
 
@@ -224,7 +227,9 @@ fn paint(fixture: &Fixture, selected: bool) -> Vec<egui::epaint::ClippedShape> {
         selected,
         halo: false,
         content_editing: false,
+        text: &quantick_drawings::UNMEASURED,
     };
+    let points: Vec<Px> = fixture.points.iter().copied().map(px).collect();
     let ctx = egui::Context::default();
     let input = egui::RawInput {
         screen_rect: Some(CHART),
@@ -237,12 +242,19 @@ fn paint(fixture: &Fixture, selected: bool) -> Vec<egui::epaint::ClippedShape> {
                 egui::Id::new("drawings-scene-golden"),
             ))
             .with_clip_rect(CHART);
+        let fonts = TextFonts(ctx);
+        let ctxt = DrawContext {
+            text: &fonts,
+            ..ctxt
+        };
+        let mut scene = MarkScene::default();
         fixture
             .tool
-            .paint_under(&painter, CHART, style, &fixture.points, &ctxt);
+            .paint_under(&mut scene, px_rect(CHART), style, &points, &ctxt);
         fixture
             .tool
-            .paint(&painter, CHART, style, &fixture.points, &ctxt, selected);
+            .paint(&mut scene, px_rect(CHART), style, &points, &ctxt, selected);
+        paint_scene(&painter, &scene);
     })
     .shapes
 }

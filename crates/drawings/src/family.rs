@@ -112,3 +112,12 @@ pub struct IconLetter {
     /// Font size as a fraction of the glyph box's height.
     pub height: f32,
 }
+
+/// A tool's arming shortcut, declared by the tool itself so the keyboard
+/// map never becomes a central match. `key` is the letter on the key; the
+/// window maps it to its own key code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ToolShortcut {
+    pub key: char,
+    pub shift: bool,
+}

@@ -153,32 +153,26 @@ impl DrawingController {
             // During placement the delete keys belong to the draft workflow:
             // Backspace steps back one anchor.
             if keys.backspace {
-                host.drawings_mut().remove_last_draft_anchor();
+                host.update(DrawingIntent::StepBackDraft);
             }
         } else if keys.delete || keys.backspace {
             self.request_delete_selected(host, effects, now);
         }
+        // Undoing a rectangle's placement takes its drawing away from any
+        // armed instance without passing through the removal funnel; the
+        // sweep `update` runs keeps a resting bot order from outliving its
+        // badge (redo, and delete-all, share the risk).
         if keys.undo {
-            host.undo_drawings();
-            // Undoing a rectangle's placement takes its drawing away from
-            // any armed instance without passing through the removal
-            // funnel; the sweep keeps a resting bot order from outliving
-            // its badge (redo below, and delete-all, share the risk).
+            host.update(DrawingIntent::Undo);
         }
         if keys.redo {
-            host.redo_drawings();
+            host.update(DrawingIntent::Redo);
         }
-        if keys.lock
-            && let Some(index) = host.drawings().selected()
-        {
-            let locked = host.drawings().items()[index].locked;
-            host.drawings_mut().set_selected_locked(!locked);
+        if keys.lock {
+            host.update(DrawingIntent::ToggleLockSelected);
         }
-        if keys.hide
-            && let Some(index) = host.drawings().selected()
-        {
-            let hidden = host.drawings().items()[index].hidden;
-            host.drawings_mut().set_selected_hidden(!hidden);
+        if keys.hide {
+            host.update(DrawingIntent::ToggleHideSelected);
         }
     }
     fn apply_clipboard_keys(
@@ -227,7 +221,8 @@ impl DrawingController {
     }
 }
 
-use crate::drawings::{self, DeleteOutcome};
+use crate::drawings;
+use quantick_drawings::{DrawingEffect, DrawingIntent};
 pub(crate) const DUPLICATE_OFFSET_BARS: f32 = 2.0;
 impl DrawingController {
     pub(crate) fn request_delete_selected(
@@ -236,40 +231,22 @@ impl DrawingController {
         effects: &mut DrawingEffects,
         now: Instant,
     ) {
-        // Read the name before the object is gone. "Drawing deleted" makes
-        // the undo useless on a crowded chart: the trader has to know *what*
-        // they lost to know whether they want it back — and the context bar
-        // deletes on a bare glyph, so the toast is what pays for that.
-        let doomed = host.drawings().selected().and_then(|index| {
-            let drawing = host.drawings().items().get(index)?;
-            // The trader's own name when one was given; the tool name
-            // otherwise — a positional index would be noise on an object
-            // that no longer has a position.
-            let label = drawing
-                .name
-                .clone()
-                .unwrap_or_else(|| drawing.tool.name().to_owned());
-            Some((drawing.id, label))
-        });
-        match host.drawings_mut().delete_selected(false) {
-            DeleteOutcome::Deleted => {
-                self.chrome.set_delete_confirm(false);
-                // The instance dies with its drawing, immediately — not on
-                // the next closed bar, which a quiet tape may never bring.
-                if let Some((id, _)) = &doomed {
-                    host.remove_strategy(*id);
+        // The toast names what went — the trader's own name, else the tool's
+        // — because the context bar deletes on a bare glyph and an undo is
+        // useless to a trader who cannot tell what it would bring back.
+        for effect in host.update(DrawingIntent::DeleteSelected { force: false }) {
+            match effect {
+                DrawingEffect::Deleted { id, label } => {
+                    self.chrome.set_delete_confirm(false);
+                    // The instance dies with its drawing, immediately — not
+                    // on the next closed bar, which a quiet tape may never
+                    // bring.
+                    host.remove_strategy(id);
+                    effects.note_with_undo(format!("{label} deleted."), now);
                 }
-                let name = doomed.map(|(_, label)| label);
-                let message = name.map_or_else(
-                    || "Drawing deleted.".to_owned(),
-                    |name| format!("{name} deleted."),
-                );
-                effects.note_with_undo(message, now);
+                DrawingEffect::ConfirmDelete => self.chrome.set_delete_confirm(true),
+                DrawingEffect::HistoryReplaced => {}
             }
-            DeleteOutcome::NeedsConfirmation => {
-                self.chrome.set_delete_confirm(true);
-            }
-            DeleteOutcome::NothingSelected => {}
         }
     }
     pub(crate) fn apply_drawing_chrome(
@@ -330,18 +307,11 @@ impl DrawingController {
             self.chrome.set_delete_confirm(false);
         }
         if ask.force_delete {
-            let doomed = {
-                let store = host.drawings();
-                store
-                    .selected()
-                    .and_then(|index| store.items().get(index))
-                    .map(|drawing| drawing.id)
-            };
-            if host.drawings_mut().delete_selected(true) == DeleteOutcome::Deleted {
-                if let Some(id) = doomed {
+            for effect in host.update(DrawingIntent::DeleteSelected { force: true }) {
+                if let DrawingEffect::Deleted { id, .. } = effect {
                     host.remove_strategy(id);
+                    effects.note_with_undo("Drawing deleted.", now);
                 }
-                effects.note_with_undo("Drawing deleted.", now);
             }
         }
     }

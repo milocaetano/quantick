@@ -8,10 +8,11 @@ use super::{
 };
 use crate::bands::{self, Band};
 use crate::chart::PriceScale;
-use crate::drawings::{self, ChartPoint, DrawContext, DrawingBand};
+use crate::drawings::{self, ChartPoint, DrawContext, DrawingBand, pos, px, px_rect};
 use crate::indicators::IndicatorViews;
 use crate::viewport::Viewport;
 use eframe::egui;
+use quantick_drawings::{Px, UNMEASURED};
 use rust_decimal::prelude::ToPrimitive as _;
 use smallvec::SmallVec;
 
@@ -241,6 +242,21 @@ impl DrawingProjection<'_> {
             .collect()
     }
 
+    /// [`Self::projected_drawing_points`] in the tools' own screen type.
+    fn projected_px(
+        &self,
+        drawing: &drawings::Drawing,
+        history_right: f32,
+        total: usize,
+        scale: &PriceScale,
+    ) -> SmallVec<[Px; 4]> {
+        drawing
+            .points
+            .iter()
+            .map(|point| px(self.drawing_screen_point(*point, history_right, total, scale)))
+            .collect()
+    }
+
     /// The topmost object of `band` under the pointer. Objects of the other
     /// bands are not candidates at all — see [`bands::drawing_in_band`].
     pub(super) fn drawing_at(
@@ -261,13 +277,19 @@ impl DrawingProjection<'_> {
                 drawings.is_visible(*index) && bands::drawing_in_band(drawing, band)
             })
             .find_map(|(index, drawing)| {
-                let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+                let projected = self.projected_px(drawing, history_right, total, scale);
                 // Locked selections paint no editable affordances.
                 let selected = drawings.selected_id() == Some(drawing.id) && !drawing.locked;
                 let ctxt = self.draw_context(drawing, scale, band, selected);
                 drawing
                     .tool
-                    .hit_test(band.rect, &projected, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
+                    .hit_test(
+                        px_rect(band.rect),
+                        &projected,
+                        px(pos),
+                        DRAWING_SELECT_RADIUS_PX,
+                        &ctxt,
+                    )
                     .then_some(index)
             })
     }
@@ -290,12 +312,16 @@ impl DrawingProjection<'_> {
             .filter(|&index| bands::drawing_in_band(&drawings.items()[index], band))
             .filter(|&index| {
                 let drawing = &drawings.items()[index];
-                let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+                let projected = self.projected_px(drawing, history_right, total, scale);
                 let selected = drawings.selected_id() == Some(drawing.id) && !drawing.locked;
                 let ctxt = self.draw_context(drawing, scale, band, selected);
-                drawing
-                    .tool
-                    .hit_test(band.rect, &projected, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
+                drawing.tool.hit_test(
+                    px_rect(band.rect),
+                    &projected,
+                    px(pos),
+                    DRAWING_SELECT_RADIUS_PX,
+                    &ctxt,
+                )
             })
             .collect();
         match drawings
@@ -328,12 +354,16 @@ impl DrawingProjection<'_> {
             .items()
             .get(drawing_index)
             .filter(|drawing| bands::drawing_in_band(drawing, band))?;
-        let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+        let projected = self.projected_px(drawing, history_right, total, scale);
         let selected = drawings.selected_id() == Some(drawing.id) && !drawing.locked;
         let ctxt = self.draw_context(drawing, scale, band, selected);
-        drawing
-            .tool
-            .hit_handle(band.rect, &projected, pos, DRAWING_ANCHOR_RADIUS_PX, &ctxt)
+        drawing.tool.hit_handle(
+            px_rect(band.rect),
+            &projected,
+            px(pos),
+            DRAWING_ANCHOR_RADIUS_PX,
+            &ctxt,
+        )
     }
 
     /// What a pointer at `pos` is on: a drawing's handle first, then its
@@ -378,9 +408,20 @@ impl DrawingProjection<'_> {
             let projected = self.projected_drawing_points(drawing, history_right, total, scale);
             let ctxt = self.draw_context(drawing, scale, band, true);
             let to = self.drawing_screen_point(target, history_right, total, scale);
-            let moved = drawing
+            let projected_px: SmallVec<[Px; 4]> = projected.iter().copied().map(px).collect();
+            let moved: SmallVec<[egui::Pos2; 6]> = drawing
                 .tool
-                .drag_handle(band.rect, &projected, handle, to, &ctxt, constrain)?;
+                .drag_handle(
+                    px_rect(band.rect),
+                    &projected_px,
+                    handle,
+                    px(to),
+                    &ctxt,
+                    constrain,
+                )?
+                .into_iter()
+                .map(pos)
+                .collect();
             // The target (magnet included) first, then the anchors as they were.
             let sources: SmallVec<[(egui::Pos2, ChartPoint); 5]> = std::iter::once((to, target))
                 .chain(projected.into_iter().zip(drawing.points.iter().copied()))
@@ -433,6 +474,8 @@ impl DrawingProjection<'_> {
             selected,
             halo: false,
             content_editing: false,
+            // Hit-tests and gestures paint nothing, so set no label.
+            text: &UNMEASURED,
         }
     }
 
@@ -453,7 +496,7 @@ impl DrawingProjection<'_> {
             .items()
             .get(drawing_index)
             .filter(|drawing| !drawing.locked && bands::drawing_in_band(drawing, band))?;
-        let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+        let projected = self.projected_px(drawing, history_right, total, scale);
         let ctxt = self.draw_context(
             drawing,
             scale,
@@ -462,7 +505,7 @@ impl DrawingProjection<'_> {
         );
         drawing
             .tool
-            .double_click_hint(band.rect, &projected, pos, &ctxt)
+            .double_click_hint(px_rect(band.rect), &projected, px(pos), &ctxt)
     }
 
     /// The drawing a double click at `pos` belongs to, with its payload as
@@ -503,9 +546,10 @@ impl DrawingProjection<'_> {
                 return None;
             }
             let mut payload = drawing.payload.clone_box();
+            let projected: SmallVec<[Px; 4]> = projected.into_iter().map(px).collect();
             drawing
                 .tool
-                .double_click(band.rect, &projected, pos, payload.as_mut())
+                .double_click(px_rect(band.rect), &projected, px(pos), payload.as_mut())
                 .then_some((index, payload))
         };
         match picked {
@@ -593,8 +637,8 @@ impl DrawingProjection<'_> {
             if !drawings.is_visible(index) || matches!(drawing.band, DrawingBand::Indicator(_)) {
                 continue;
             }
-            let points = self.projected_drawing_points(drawing, history_right, total, scale);
-            for y in drawing.tool.axis_levels(chart_rect, &points) {
+            let points = self.projected_px(drawing, history_right, total, scale);
+            for y in drawing.tool.axis_levels(px_rect(chart_rect), &points) {
                 out.push(super::PriceAxisLevel {
                     id: drawing.id,
                     y,

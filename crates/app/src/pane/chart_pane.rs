@@ -34,7 +34,7 @@ impl ChartPane {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrawPass {
     /// Before the candles: the object's own body, for the few tools that are
-    /// context rather than annotation. See [`DrawingToolImpl::paint_under`].
+    /// context rather than annotation. See [`quantick_drawings::MarkTool::paint_under`].
     UnderCandles,
     /// After the candles: everything else, plus halo, handles and badges.
     OverCandles,
@@ -1017,7 +1017,7 @@ fn paint_double_click_hint(
         ))
         .with_clip_rect(chart);
     painter.text(
-        hint.at,
+        crate::drawings::pos(hint.at),
         egui::Align2::CENTER_CENTER,
         hint.glyph,
         egui::FontId::proportional(DOUBLE_CLICK_HINT_FONT_PX),

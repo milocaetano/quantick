@@ -150,7 +150,11 @@ impl DrawingController {
         // popup that keeps clear of an object reads this rectangle, so asking
         // the anchors alone is what let a panel land in the middle of a
         // profile while believing it had walked around it.
-        let bbox = drawing.tool.painted_bounds(bbox, band.rect);
+        let bbox = drawings::egui_rect(
+            drawing
+                .tool
+                .painted_bounds(drawings::px_rect(bbox), drawings::px_rect(band.rect)),
+        );
         Some(bbox.expand(DRAWING_ANCHOR_RADIUS_PX))
     }
     pub(crate) fn draw_pinned_inspector(
