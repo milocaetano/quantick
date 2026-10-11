@@ -15,3 +15,8 @@ crates/app +401
 # clears once the trader moves on. The store rules stay headless.
 crates/app +73
 !budget +73
+# Review round 2: a double click opens the Candles settings only on the
+# history side of the lane divider, checked in `on_bare_candles` itself
+# rather than trusted to the price band's carve.
+crates/app +5
+!budget +5

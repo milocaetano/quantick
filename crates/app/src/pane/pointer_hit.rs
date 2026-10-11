@@ -179,13 +179,18 @@ impl PaneHitTest<'_> {
     }
 
     /// Whether `pos` is on the candles themselves: the price band of the
-    /// chart, clear of every drawing — where a double click opens the chart
-    /// settings. A drawing, an indicator pane, an axis or the legend each
-    /// keep their own meaning for the gesture. Runs on a double click only.
+    /// chart, on the history side of the lane divider, clear of every
+    /// drawing — where a double click opens the chart settings. A drawing,
+    /// an indicator pane, a right lane (tape, book or heatmap), an axis or
+    /// the legend each keep their own meaning for the gesture. Runs on a
+    /// double click only.
     pub(super) fn on_bare_candles(&self, pos: egui::Pos2) -> bool {
         let Some(chart) = self.frame.chart_area.filter(|chart| chart.contains(pos)) else {
             return false;
         };
+        if !bands::drawing_area(chart, self.frame.lane_divider_x).contains(pos) {
+            return false;
+        }
         let Some(band) = bands::band_at(&self.frame.bands, pos) else {
             return false;
         };
