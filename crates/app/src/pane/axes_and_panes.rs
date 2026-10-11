@@ -294,6 +294,7 @@ pub(super) fn handle_axis_gestures(
     super::canvas_gestures::navigate(
         pane,
         Intent::Axis(AxisGesture::Time {
+            reset: time.double_clicked(),
             drag: if time.dragged() {
                 time.drag_delta().x
             } else {
@@ -350,6 +351,7 @@ pub(super) fn handle_axis_gestures(
         super::canvas_gestures::navigate(
             pane,
             Intent::Axis(AxisGesture::Time {
+                reset: lane_time.double_clicked(),
                 drag: if lane_time.dragged() {
                     lane_time.drag_delta().x
                 } else {

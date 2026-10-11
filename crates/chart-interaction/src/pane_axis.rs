@@ -1,5 +1,6 @@
 //! Axis and indicator gestures, resolved from caller-supplied hit facts.
 use crate::pane::{Effect, Model};
+use crate::viewport::DEFAULT_PX_PER_BAR;
 
 pub const AXIS_ZOOM_DRAG_PX: f32 = 150.0;
 pub const AXIS_ZOOM_SCROLL_PX: f32 = 200.0;
@@ -26,7 +27,10 @@ pub enum ScaleAction {
 }
 #[derive(Debug, Clone, Copy)]
 pub enum AxisGesture {
+    /// A time strip: drag or scroll zooms its axis, `reset` (a double-click)
+    /// puts that axis back on its default spacing, as the price axis does.
     Time {
+        reset: bool,
         drag: f32,
         scroll: f32,
         scroll_gain: f32,
@@ -89,11 +93,19 @@ pub(crate) fn axis(model: &mut Model, gesture: AxisGesture) -> Vec<Effect> {
     let mut out = Vec::new();
     match gesture {
         AxisGesture::Time {
+            reset,
             drag,
             scroll,
             scroll_gain,
             tape,
         } => {
+            if reset {
+                if tape {
+                    out.push(Effect::ResetTapeZoom);
+                } else {
+                    model.viewport.set_px_per_bar(DEFAULT_PX_PER_BAR);
+                }
+            }
             for factor in [
                 (drag != 0.0).then(|| (drag / TIME_ZOOM_DRAG_PX).exp()),
                 (scroll != 0.0).then(|| 2.0_f32.powf(scroll / scroll_gain)),
