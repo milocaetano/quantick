@@ -334,3 +334,61 @@ fn the_time_axis_reset_call_matches_the_strip_double_click_and_reads_it_back() {
     assert_eq!(error_code(&unknown), Some(codes::INVALID_REQUEST));
     disable_test_gateway(&mut app, &ctx);
 }
+
+/// Review round 2, B3: the tape reset call and the tape strip's double-click
+/// accept and refuse the same panes, because both ask `has_time_axis`.
+#[test]
+fn the_tape_reset_call_and_the_tape_strip_accept_the_same_panes() {
+    const RESET: &str = "chart.time_axis.reset";
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(40);
+    app.active_tab_mut().set_layout(CanvasLayout::TimeAndFlow);
+    enable_tape(&mut app);
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+    }
+    let directory = gateway_test_directory("time-axis-eligibility");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let tab_id = app.tabs.active_id().to_string();
+    let panes: Vec<(u64, Option<egui::Rect>, bool)> = app
+        .active_tab()
+        .panes()
+        .map(|(pane, _)| {
+            let strip = pane.frame.lane_time_strip;
+            (pane.id, strip, pane.orderflow.is_some() && strip.is_some())
+        })
+        .collect();
+    assert!(panes.iter().any(|(.., tape)| *tape), "the flow pane's tape");
+    assert!(
+        panes.iter().any(|(.., tape)| !*tape),
+        "a context pane without"
+    );
+    for (pane_id, strip, tape) in panes {
+        let payload = json!({"tab_id": tab_id, "pane_id": pane_id.to_string(), "axis": "tape"});
+        let (response, _) = unkeyed_call(&mut app, &mut client, RESET, payload);
+        if tape {
+            success_result(&response);
+        } else {
+            assert_eq!(error_code(&response), Some(codes::INVALID_REQUEST));
+        }
+        let Some(strip) = strip else { continue };
+        // The strip's own double-click on the same pane resets it too.
+        let setting = app.active_tab().tape().live_lane_window();
+        app.active_tab_mut()
+            .flow_pane
+            .orderflow
+            .as_mut()
+            .unwrap()
+            .zoom_live_lane(2.0);
+        assert_ne!(app.active_tab().tape().live_lane_window(), setting);
+        click_chart(&mut app, &ctx, strip.center());
+        click_chart(&mut app, &ctx, strip.center());
+        assert_eq!(app.active_tab().tape().live_lane_window(), setting);
+    }
+    disable_test_gateway(&mut app, &ctx);
+}

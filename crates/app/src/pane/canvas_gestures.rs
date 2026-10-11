@@ -181,11 +181,6 @@ pub(super) fn navigate(pane: &mut ChartPane, intent: quantick_chart_interaction:
                     tape.zoom_live_lane(factor);
                 }
             }
-            Effect::ResetTapeZoom => {
-                if let Some(tape) = pane.orderflow.as_mut() {
-                    tape.reset_live_lane_window();
-                }
-            }
             Effect::TapeLive => {
                 if let Some(tape) = pane.orderflow.as_mut() {
                     tape.set_tape_end(TapeEnd::Live);

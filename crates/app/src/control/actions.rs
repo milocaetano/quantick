@@ -78,6 +78,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     super::layout::register(&mut registry)?;
     super::layers::register_action(&mut registry)?;
     super::price_axis::register(&mut registry)?;
+    super::time_axis::register(&mut registry)?;
     super::opening_scale::register(&mut registry)?;
     super::bubble_save::register(&mut registry)?;
     quantick_control_handlers::recovery::register(&mut registry)?;

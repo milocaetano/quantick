@@ -272,10 +272,12 @@ fn time_strip(
     } else {
         0.0
     };
+    if strip.double_clicked() {
+        pane.reset_time_axis(tape);
+    }
     super::canvas_gestures::navigate(
         pane,
         Intent::Axis(AxisGesture::Time {
-            reset: strip.double_clicked(),
             drag,
             scroll,
             scroll_gain: SCROLL_ZOOM_PX,
@@ -286,18 +288,25 @@ fn time_strip(
 }
 
 impl ChartPane {
-    /// A time axis back where it opened — the strip's double-click, by name.
-    pub(crate) fn reset_time_axis(&mut self, tape: bool) {
-        super::canvas_gestures::navigate(
-            self,
-            Intent::Axis(AxisGesture::Time {
-                reset: true,
-                drag: 0.0,
-                scroll: 0.0,
-                scroll_gain: SCROLL_ZOOM_PX,
-                tape,
-            }),
-        );
+    /// Whether the pane has the time axis `tape` names: the candles' always,
+    /// the tape's only where its strip is laid out past the lane divider.
+    /// The one rule the strip's double-click and `chart.time_axis.reset` share.
+    pub(crate) fn has_time_axis(&self, tape: bool) -> bool {
+        !tape || (self.orderflow.is_some() && self.frame.lane_time_strip.is_some())
+    }
+
+    /// A time axis back where it opened: the candles' spacing, or the tape's
+    /// window onto its setting. The strip's double-click and the named call
+    /// both land here; `false`, and nothing moves, on a pane without that axis.
+    pub(crate) fn reset_time_axis(&mut self, tape: bool) -> bool {
+        if !self.has_time_axis(tape) {
+            return false;
+        }
+        match self.orderflow.as_mut().filter(|_| tape) {
+            Some(orderflow) => orderflow.reset_live_lane_window(),
+            None => self.model.viewport.reset_zoom(),
+        }
+        true
     }
 }
 

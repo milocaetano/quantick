@@ -26,10 +26,7 @@ pub enum ScaleAction {
 }
 #[derive(Debug, Clone, Copy)]
 pub enum AxisGesture {
-    /// A time strip: drag or scroll zooms its axis, `reset` (a double-click)
-    /// puts that axis back on the spacing it opened on, as the price axis does.
     Time {
-        reset: bool,
         drag: f32,
         scroll: f32,
         scroll_gain: f32,
@@ -114,19 +111,11 @@ pub(crate) fn axis(model: &mut Model, gesture: AxisGesture) -> Vec<Effect> {
     let mut out = Vec::new();
     match gesture {
         AxisGesture::Time {
-            reset,
             drag,
             scroll,
             scroll_gain,
             tape,
         } => {
-            if reset {
-                if tape {
-                    out.push(Effect::ResetTapeZoom);
-                } else {
-                    model.viewport.reset_zoom();
-                }
-            }
             for factor in [
                 (drag != 0.0).then(|| (drag / TIME_ZOOM_DRAG_PX).exp()),
                 (scroll != 0.0).then(|| 2.0_f32.powf(scroll / scroll_gain)),
@@ -411,39 +400,6 @@ mod tests {
                 action: ScaleAction::Reset
             }]
         );
-    }
-    #[test]
-    fn a_time_strip_double_click_resets_its_own_axis_spacing_only() {
-        let mut model = Model::default();
-        // A launch hook opened the pane at 12 px: that, not the compiled
-        // default, is the spacing a reset returns to.
-        model.viewport.open_at_px_per_bar(12.0);
-        model.viewport.zoom(3.0);
-        model.viewport.pan_pixels(40.0, 100);
-        let time = |reset, tape| {
-            Intent::Axis(AxisGesture::Time {
-                reset,
-                drag: 0.0,
-                scroll: 0.0,
-                scroll_gain: 120.0,
-                tape,
-            })
-        };
-        assert!(update(&mut model, time(true, false)).is_empty());
-        assert_eq!(model.viewport.px_per_bar(), 12.0);
-        assert!(!model.viewport.follows_live(), "a reset is not a jump");
-
-        model.viewport.zoom(3.0);
-        assert_eq!(
-            update(&mut model, time(true, true)),
-            [Effect::ResetTapeZoom]
-        );
-        assert_eq!(
-            model.viewport.px_per_bar(),
-            36.0,
-            "the tape strip resets the tape, never the candles"
-        );
-        assert!(update(&mut model, time(false, true)).is_empty());
     }
     #[test]
     fn a_time_strip_shows_one_cursor_resize_on_hover_crosshair_while_held() {
