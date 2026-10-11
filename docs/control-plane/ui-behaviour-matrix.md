@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 61 |
+| Reachable by capability | 64 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
-| Excluded: `pending_capability` | 52 |
-| **Total** | **121** |
+| Excluded: `pending_capability` | 50 |
+| **Total** | **122** |
 
-83 of the 121 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 38 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+83 of the 122 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 39 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -82,7 +82,7 @@ The three exclusion classes are closed:
 | `dock.toggle` | Show or hide the panels dock | toolbar sidebar button, View menu, Ctrl+Shift+B | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `layer.toolbar.set` | Set a chart layer from its toolbar control | toolbar LAYERS group | `layers.visibility.set` | — |
 | `layer.bubbles.toggle` | Switch the aggression bubbles on or off | toolbar LAYERS group, pane right-click layer menu, Ctrl+B | `layers.visibility.set` | — |
-| `layer.footprint.settings.open` | Open the footprint's settings window | right-click the toolbar's footprint button | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `layer.footprint.settings.open` | Open the footprint's settings window | right-click the toolbar's footprint button | `chart.settings.set` | — |
 | `layer.candle_aggression.toggle` | Show discreet aggression dots over tick candles | pane right-click layer menu, off until switched on | `layers.visibility.set` | — |
 | `layer.footprint.toggle` | Switch the candle footprint on or off | toolbar LAYERS group, pane right-click layer menu, Ctrl+F | `layers.visibility.set` | — |
 | `layer.heatmap.toggle` | Switch the L2 depth map on or off | toolbar LAYERS group, pane right-click layer menu | `layers.visibility.set` | — |
@@ -96,7 +96,8 @@ The three exclusion classes are closed:
 | `history.trades.cancel` | Stop loading history and keep what arrived | the loading History button, its menu's Cancel loading, or an Esc no draft, selection or armed tool wants | `feed.history.cancel` | — |
 | `history.trades.load` | Load the chart back by hours of trading or to a previous session's open | toolbar History button (repeats the last target) and its menu's targets | `feed.history.load` | — |
 | `history.venue_lead_in.toggle` | Put venue minute candles in front of bars cut by trades | View menu | — | `pending_capability` — no capability fetches older venue candles or flips these View switches; trade history loads through feed.history.load. Tracked in issue 401 |
-| `appearance.dialog.toggle` | Open the appearance dialog — candles, canvas, grid | toolbar brush button, Tools menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
+| `appearance.dialog.toggle` | Open the chart settings on the Candles tab — candles, canvas, grid | toolbar brush button, Tools menu, a double click on the bare candles | `chart.settings.set` | — |
+| `appearance.candle_presets` | Apply, save, delete or reset a candle preset | the chart settings window's Candles tab | `chart.settings.set` | — |
 | `indicator.hidden.toggle` | Hide an indicator's drawing without removing it | the eye on the legend row, and the indicators menu | — | `pending_capability` — `indicator.script.attach` and `indicator.script.detach` add and remove; nothing hides. Tracked in issue 401 |
 | `indicator.legend.collapse` | Fold the focused chart's indicator legend to its count | the legend's own chevron, View menu, Ctrl+L | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `indicator.mouse_vertical_line.toggle` | Mirror price hover into one non-price indicator pane | right-click menu on an indicator pane | `indicator.mouse_vertical_line.set` | — |
@@ -197,7 +198,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 38 |
+| `authored` | 39 |
 
 ## Appendix: rows no registry stands behind
 
@@ -223,6 +224,7 @@ declares nothing here is a guard failure.
 | `layer.native_tape.toggle` | the per-pane order-flow menu and settings checkbox are not toolbar LayerToggle entries |
 | `orderflow.tape.opening_scale.set` | opening-scale preferences are checkboxes inside the volume-dot settings and the tick FLOW Bubbles layer menu |
 | `orderflow.bubbles.save_changes.set` | the per-asset save switch is a checkbox under the bubble preset picker |
+| `appearance.candle_presets` | the Candles tab's preset row, save field and Reset are widgets, not registry entries |
 | `indicator.mouse_vertical_line.toggle` | the indicator pane's Mouse vertical line checkbox |
 | `indicator.native.remove` | the legend row close, which the toolbar enum sees only as `RemoveIndicator` |
 | `trade.aim.bracket` | the ticket bracket fields and the aim on the chart |

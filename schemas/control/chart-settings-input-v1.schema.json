@@ -1,0 +1,124 @@
+{
+  "$defs": {
+    "ChartSettingsTab": {
+      "description": "A tab of the chart settings window.",
+      "oneOf": [
+        {
+          "const": "candles",
+          "description": "Candle and canvas appearance, with its presets.",
+          "type": "string"
+        },
+        {
+          "const": "footprint",
+          "description": "The focused chart's footprint knobs, with their presets.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One thing to do with the window or its candle presets.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "description": "Put the window on screen at `tab`. Opening starts a sitting: the\nappearance at that moment is what `reset_candles` returns to.",
+      "properties": {
+        "action": {
+          "const": "open",
+          "type": "string"
+        },
+        "tab": {
+          "$ref": "#/$defs/ChartSettingsTab"
+        }
+      },
+      "required": [
+        "action",
+        "tab"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Take the window off screen and end the sitting.",
+      "properties": {
+        "action": {
+          "const": "close",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Apply a built-in candle preset (by label or snake_case value) or a\nsaved one (by name). A built-in changes the candles and keeps the\ncanvas; a saved one brings back candles and canvas.",
+      "properties": {
+        "action": {
+          "const": "apply_candle_preset",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "name"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Save the chart's current look under `name`, replacing a saved look of\nthat name. Built-in names are refused.",
+      "properties": {
+        "action": {
+          "const": "save_candle_preset",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "name"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Forget a saved look. Built-ins cannot be deleted.",
+      "properties": {
+        "action": {
+          "const": "delete_candle_preset",
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "name"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Restore the appearance the window opened on. Refused while the window\nis closed: there is no sitting to return to.",
+      "properties": {
+        "action": {
+          "const": "reset_candles",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "ChartSettingsInput"
+}

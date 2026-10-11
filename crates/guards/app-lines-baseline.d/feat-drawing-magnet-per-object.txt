@@ -8,5 +8,7 @@
 # out of the QuantickApp root, which shrank by 5), and the object's hand flip
 # applied with the context bar's edit and journalled by the trader's hand
 # without entering the control trace.
-crates/app +135
-!budget +135
+crates/app +188
+# Merge with origin/main: main grew the same ceiling meanwhile, so the combined
+# total clears it by 53 lines.
+!budget +188

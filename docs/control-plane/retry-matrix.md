@@ -112,10 +112,10 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 27 |
+| deduplicated per connection | 28 |
 | key refused; not retryable, read back | 17 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **51** |
+| **Total** | **52** |
 
 ## Capabilities
 
@@ -136,6 +136,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `annotate.zone.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].author.client_name` | a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `attention.mark.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `attention.mark.created` | `payload.note` | an event after the pre-call cursor carries the call's own `note`; send a note unique to the call, since an unnoted mark (the trader's shortcut included) matches any other | `an_interrupted_attention_mark_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `chart.price_axis.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `chart.summary` | `panes[].viewport` | The target pane reports manual framing with the requested price_range, or automatic fitting after reset. | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_moving_the_left_pane` |
+| `chart.settings.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `chart.settings.changed` | `payload.chart_settings` | an event after the pre-call cursor carries the window and presets the call left | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `chart.tape_view.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `chart.summary` | `panes[].viewport.tape` | The target pane's tape reports the requested end (or live) and window. | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_tape_view_call_moves_the_tape_end_and_window_and_reads_them_back` |
 | `feed.deal_recording.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].deal_recording.state` | the tab's recorder reads the state asked for: `recording` or `stale` after `enabled: true`, `off` after `enabled: false`, and `record_by_default` the standing choice asked for; a tab whose feed carries no counter and has no recorded day lists no `deal_recording` at all, and the call changed nothing there | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `feed.history.cancel` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].history_load.state` | the tab's run reads `idle`: nothing pages and nothing is queued | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `a_history_load_runs_reads_back_and_cancels_through_the_control_plane` |
@@ -173,4 +174,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `trade.ruler.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].ruler_ticks` | the ruler stands at the distance the call answered with | `a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once`, `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.strategy.select` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].armed_strategy` | the ticket is armed with the strategy asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 
-51 mutable capabilities registered, 51 with a readback.
+52 mutable capabilities registered, 52 with a readback.

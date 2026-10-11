@@ -68,6 +68,12 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<quantick_control_schema::price_axis::PriceAxisResult>(
             "chart-price-axis-result-v1.schema.json",
         ),
+        document::<quantick_control_schema::chart_settings::ChartSettingsInput>(
+            "chart-settings-input-v1.schema.json",
+        ),
+        document::<quantick_control_schema::chart_settings::ChartSettingsResult>(
+            "chart-settings-result-v1.schema.json",
+        ),
         document::<TapeViewInput>("chart-tape-view-input-v1.schema.json"),
         document::<TapeViewResult>("chart-tape-view-result-v1.schema.json"),
         document::<quantick_control_schema::opening_scale::OpeningScaleInput>(

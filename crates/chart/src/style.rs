@@ -246,6 +246,20 @@ impl CandlePreset {
     }
 }
 
+impl CandlePreset {
+    /// The built-in preset a trader or an operator named, by its label
+    /// (`Order flow`) or its log value (`order_flow`), ignoring case — the
+    /// one reading a click, a saved name and a control call share.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        let name = name.trim();
+        Self::ALL.into_iter().find(|preset| {
+            preset.label().eq_ignore_ascii_case(name)
+                || preset.log_value().eq_ignore_ascii_case(name)
+        })
+    }
+}
+
 /// User-editable candle appearance.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CandleStyle {
@@ -516,6 +530,40 @@ impl Default for ChartStyle {
     }
 }
 
+/// One sitting of the appearance window: the style it opened on, which its
+/// Reset puts back. Empty while the window is closed, so a Reset can never
+/// reach back to an appearance from an earlier sitting.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct StyleEdit {
+    opened_on: Option<ChartStyle>,
+}
+
+impl StyleEdit {
+    /// Remember `current` as the sitting's starting point, unless a sitting
+    /// is already under way: the first look is the one Reset returns to.
+    pub fn begin(&mut self, current: ChartStyle) {
+        self.opened_on.get_or_insert(current);
+    }
+
+    /// The window closed: forget the starting point.
+    pub fn end(&mut self) {
+        self.opened_on = None;
+    }
+
+    /// The style the sitting opened on, while one is under way.
+    #[must_use]
+    pub fn opened_on(&self) -> Option<ChartStyle> {
+        self.opened_on
+    }
+
+    /// What Reset applies: the starting point, when there is one and the
+    /// chart has moved away from it. `None` means nothing to undo.
+    #[must_use]
+    pub fn reset(&self, current: &ChartStyle) -> Option<ChartStyle> {
+        self.opened_on.filter(|opened| opened != current)
+    }
+}
+
 /// Clamp a floating-point value while giving NaN a deterministic fallback.
 ///
 /// Positive and negative infinity naturally clamp to the corresponding bound.
@@ -539,6 +587,36 @@ fn rgba(rgb: [u8; 3], opacity: f32) -> [u8; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reset_returns_to_the_style_the_window_opened_on() {
+        let opened = ChartStyle::default();
+        let mut edit = StyleEdit::default();
+        assert_eq!(edit.reset(&opened), None, "no sitting, nothing to reset");
+        edit.begin(opened);
+        let mut moved = opened;
+        moved.candles = CandlePreset::Classic.style();
+        moved.canvas.grid_enabled = false;
+        // A later begin in the same sitting does not move the starting point.
+        edit.begin(moved);
+        assert_eq!(edit.reset(&moved), Some(opened));
+        assert_eq!(edit.reset(&opened), None, "already there");
+        edit.end();
+        assert_eq!(edit.reset(&moved), None, "a closed window forgets");
+    }
+
+    #[test]
+    fn a_built_in_preset_is_found_by_label_or_log_value() {
+        for preset in CandlePreset::ALL {
+            assert_eq!(CandlePreset::from_name(preset.label()), Some(preset));
+            assert_eq!(CandlePreset::from_name(preset.log_value()), Some(preset));
+        }
+        assert_eq!(
+            CandlePreset::from_name(" GLASS "),
+            Some(CandlePreset::Glass)
+        );
+        assert_eq!(CandlePreset::from_name("mine"), None);
+    }
 
     #[test]
     fn a_premultiplied_colour_carries_its_bytes_untouched() {

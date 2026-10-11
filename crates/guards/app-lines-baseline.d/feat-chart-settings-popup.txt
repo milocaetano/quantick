@@ -1,0 +1,22 @@
+# Raised by 401 lines for the tabbed chart settings window
+# (`feat/chart-settings-popup`): the candle appearance and footprint windows
+# merge into one surface with a `SettingsTab` per tab (two old surfaces
+# deleted), the Candles tab gains Reset and saved presets (decisions headless
+# in `quantick_chart::style::StyleEdit` and `quantick_stores::candle_presets`),
+# the pane's double click on the bare candles opens it, and
+# `chart.settings.set` reaches the same window through `LayerWiring`.
+crates/app +401
+!budget +401
+# Review round: a failed preset write is reported as a structured
+# `control.capability_unavailable` instead of `changed: true`, a named style
+# change leaves the appearance log line a click leaves, every door starts the
+# Reset sitting through `LayerWiring::open_settings`, the saved chips gain a
+# "Saved" label and a context menu with an explicit Delete, and the warning
+# clears once the trader moves on. The store rules stay headless.
+crates/app +73
+!budget +73
+# Review round 2: a double click opens the Candles settings only on the
+# history side of the lane divider, checked in `on_bare_candles` itself
+# rather than trusted to the price band's carve.
+crates/app +5
+!budget +5
