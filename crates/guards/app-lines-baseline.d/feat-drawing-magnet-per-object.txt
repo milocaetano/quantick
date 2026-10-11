@@ -1,0 +1,7 @@
+# feat/drawing-magnet-per-object: each drawing's own OHLC magnet. Both magnet
+# call descriptors moved to control-schema (-84); what stays is app-only
+# state: the `Drawing` field and its file form, the context bar's magnet slot
+# (egui), the gestures that read it on a local and a mirrored drag, and the
+# `annotate.drawing_magnet.set` handler that finds the drawing in its pane.
+crates/app +79
+!budget +79

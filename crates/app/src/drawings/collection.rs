@@ -402,7 +402,11 @@ impl Drawings {
     /// Turn one object's own magnet on or off as one undo step; answers
     /// whether it moved.
     pub fn set_magnet_at(&mut self, index: usize, magnet: bool) -> bool {
-        if self.items.get(index).is_none_or(|drawing| drawing.magnet == magnet) {
+        if self
+            .items
+            .get(index)
+            .is_none_or(|drawing| drawing.magnet == magnet)
+        {
             return false;
         }
         let before = self.snapshot();

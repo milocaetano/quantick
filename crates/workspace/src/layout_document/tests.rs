@@ -138,7 +138,10 @@ fn a_drawings_own_magnet_round_trips_and_old_documents_default_off() {
         "points = [{ price = 100.0, bar = 3.0 }]\n",
     );
     let saved: SavedDrawing = toml::from_str(old).expect("an old drawing parses");
-    assert!(!saved.magnet, "an old document's drawing opens with no magnet");
+    assert!(
+        !saved.magnet,
+        "an old document's drawing opens with no magnet"
+    );
     let resaved = toml::to_string(&saved).unwrap();
     assert!(
         !resaved.contains("magnet"),

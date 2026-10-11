@@ -172,14 +172,17 @@ struct PaneAnalysisRevisionKey {
     /// `Eq`; the rendering is exact for every variant and neither value ever
     /// reaches the wire.
     indicators: Vec<IndicatorAnalysisRevisionKey>,
-    /// `(id, locked, magnet, hidden, named, authored, foreign market, off
-    /// series)` — never the name itself.
-    drawings: Vec<(u64, bool, bool, bool, bool, bool, bool, bool)>,
+    /// One [`DrawingRevisionKey`] per drawing.
+    drawings: Vec<DrawingRevisionKey>,
     /// The toolrail's "Hide all", which the scope publishes per pane.
     layer_hidden: bool,
     /// Which row the selection sits on, which the scope publishes too.
     selected_drawing: Option<usize>,
 }
+
+/// `(id, locked, magnet, hidden, named, authored, foreign market, off
+/// series)` — never the name itself.
+type DrawingRevisionKey = (u64, bool, bool, bool, bool, bool, bool, bool);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct IndicatorAnalysisRevisionKey {

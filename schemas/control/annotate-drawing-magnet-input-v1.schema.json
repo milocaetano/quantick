@@ -1,0 +1,27 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One drawing's own magnet, which snaps that object's drags whether or not\nthe rail's magnet is on.",
+  "properties": {
+    "drawing_id": {
+      "$ref": "#/$defs/WireU64",
+      "description": "The drawing, by the `drawing_id` `analysis.drawings` lists."
+    },
+    "enabled": {
+      "description": "`true` snaps this drawing's dragged anchors to the open / high / low /\nclose of the candle under the pointer; `false` leaves it to the rail.",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "drawing_id",
+    "enabled"
+  ],
+  "title": "ObjectMagnetInput",
+  "type": "object"
+}

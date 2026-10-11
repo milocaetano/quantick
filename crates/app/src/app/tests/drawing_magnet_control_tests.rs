@@ -236,7 +236,10 @@ fn a_drawings_own_magnet_is_set_by_a_named_call_and_read_back() {
     );
     assert_eq!(success_result(&on), answer(true, true));
     assert!(own(&app));
-    assert!(!app.toolrail.magnet(), "the rail's magnet is another switch");
+    assert!(
+        !app.toolrail.magnet(),
+        "the rail's magnet is another switch"
+    );
     assert_eq!(read(&mut app, &mut client), json!(true));
 
     let (again, _) = unkeyed_call(

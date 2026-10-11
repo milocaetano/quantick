@@ -52,6 +52,11 @@
         "locked": {
           "type": "boolean"
         },
+        "magnet": {
+          "default": false,
+          "description": "This object's own OHLC magnet (`annotate.drawing_magnet.set`), which\nsnaps its drags whatever the rail's `magnet` above says. Optional in\nthe schema only so v1 readers stay compatible.",
+          "type": "boolean"
+        },
         "off_series": {
           "description": "This pane's series does not reach the market instant an anchor was\nplaced at — the mark survived a re-cut, a rewind or a symbol switch,\nbut no longer sits on the data it was drawn against.",
           "type": "boolean"

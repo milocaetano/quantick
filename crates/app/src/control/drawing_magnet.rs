@@ -5,69 +5,20 @@ pub(crate) use quantick_control_schema::drawing_magnet::*;
 
 use crate::app::{TabsMutPort, TabsPort, ToolRailPort};
 use crate::drawings::DrawingId;
-use std::collections::BTreeSet;
 
 use quantick_control::{
     error::ControlError,
-    id::{
-        CapabilityId, ConfirmationClassId, CostClassId, EffectId, ModuleId, PermissionId,
-        RiskFlagId,
-    },
-    registry::{
-        Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
-        RegistryError, RevisionPolicy,
-    },
-    schema::generated_schema,
+    registry::RegistryError,
     wire::{ActorContext, WireU64},
 };
 
 use quantick_control::annotation::ANNOTATE_MODULE_ID;
 use serde_json::Value;
 
-use super::{
-    actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
-    contract::{COCKPIT_EFFECT_ID, COCKPIT_PERMISSION_ID},
-    gateway::ControlAccess,
-    journal::NewEvent,
-};
+use super::{actions::ActionRegistry, gateway::ControlAccess, journal::NewEvent};
 
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    registry.register(
-        CapabilityDescriptor {
-            id: CapabilityId::new(DRAWING_MAGNET_CAPABILITY_ID).expect("static capability ID is valid"),
-            version: CAPABILITY_VERSION,
-            title: "Set the drawing magnet".to_owned(),
-            description: "Turns the drawing rail's magnet on or off: with it on, anchors placed, re-dragged or carried by a body drag land on the open, high, low or close of the candle under the pointer when the pointer is on or near that candle. The same switch the rail's magnet button and its More menu entry flip; scene.read lists it as `tool_rail.toggle.magnet`.".to_owned(),
-            module: ModuleId::new(ANNOTATE_MODULE_ID).expect("static module ID is valid"),
-            input_schema: generated_schema::<DrawingMagnetInput>(),
-            output_schema: generated_schema::<DrawingMagnetResult>(),
-            examples: Vec::new(),
-            effect: EffectId::new(COCKPIT_EFFECT_ID).expect("static effect ID is valid"),
-            risk_flags: BTreeSet::<RiskFlagId>::new(),
-            read_only: false,
-            idempotency: IdempotencyPolicy::Optional,
-            revision_policy: RevisionPolicy::OptionalForAdditive,
-            stale_input_safety: Some("The call names the state it wants rather than flipping it; repeating it is harmless and the result reads the magnet back.".to_owned()),
-            dry_run_supported: false,
-            persistence: EffectPersistence::Transient,
-            reversible: true,
-            destructive: false,
-            risk_reducing: false,
-            required_permissions: BTreeSet::from([
-                PermissionId::new(COCKPIT_PERMISSION_ID).expect("static permission ID is valid"),
-            ]),
-            preconditions: Vec::new(),
-            confirmation_class: ConfirmationClassId::new(NO_CONFIRMATION_ID).expect("static confirmation class is valid"),
-            availability: Availability::available(),
-            expected_cost: ExpectedCost {
-                class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
-                max_items: None,
-                max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
-            },
-            pagination: None,
-        },
-        set,
-    )
+    registry.register(rail_descriptor(), set)
 }
 
 fn set<P: ToolRailPort + ?Sized>(
@@ -95,42 +46,7 @@ fn set<P: ToolRailPort + ?Sized>(
 /// Dock `annotate.drawing_magnet.set`: one drawing's own magnet, the switch
 /// its context bar flips.
 pub(crate) fn register_object(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    registry.register(
-        CapabilityDescriptor {
-            id: CapabilityId::new(OBJECT_MAGNET_CAPABILITY_ID).expect("static capability ID is valid"),
-            version: CAPABILITY_VERSION,
-            title: "Set one drawing's own magnet".to_owned(),
-            description: "Turns one drawing's own OHLC magnet on or off, by the `drawing_id` analysis.drawings lists: with it on, that drawing's re-dragged or body-dragged anchors land on the open, high, low or close of the candle under the pointer even while the rail's magnet (`annotate.magnet.set`) is off. The same switch as the magnet slot on the drawing's context bar; it is saved with the workspace, and analysis.drawings reads it back as the drawing's `magnet`.".to_owned(),
-            module: ModuleId::new(ANNOTATE_MODULE_ID).expect("static module ID is valid"),
-            input_schema: generated_schema::<ObjectMagnetInput>(),
-            output_schema: generated_schema::<ObjectMagnetResult>(),
-            examples: Vec::new(),
-            effect: EffectId::new(COCKPIT_EFFECT_ID).expect("static effect ID is valid"),
-            risk_flags: BTreeSet::<RiskFlagId>::new(),
-            read_only: false,
-            idempotency: IdempotencyPolicy::Optional,
-            revision_policy: RevisionPolicy::OptionalForAdditive,
-            stale_input_safety: Some("The call names the state it wants rather than flipping it; repeating it is harmless and the result reads the drawing's magnet back.".to_owned()),
-            dry_run_supported: false,
-            persistence: EffectPersistence::Durable,
-            reversible: true,
-            destructive: false,
-            risk_reducing: false,
-            required_permissions: BTreeSet::from([
-                PermissionId::new(COCKPIT_PERMISSION_ID).expect("static permission ID is valid"),
-            ]),
-            preconditions: Vec::new(),
-            confirmation_class: ConfirmationClassId::new(NO_CONFIRMATION_ID).expect("static confirmation class is valid"),
-            availability: Availability::available(),
-            expected_cost: ExpectedCost {
-                class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
-                max_items: None,
-                max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
-            },
-            pagination: None,
-        },
-        set_object,
-    )
+    registry.register(object_descriptor(), set_object)
 }
 
 fn set_object<P: TabsPort + TabsMutPort + ?Sized>(

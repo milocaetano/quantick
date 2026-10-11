@@ -261,6 +261,101 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Turns one drawing's own OHLC magnet on or off, by the `drawing_id` analysis.drawings lists: with it on, that drawing's re-dragged or body-dragged anchors land on the open, high, low or close of the candle under the pointer even while the rail's magnet (`annotate.magnet.set`) is off. The same switch as the magnet slot on the drawing's context bar; it is saved with the workspace, and analysis.drawings reads it back as the drawing's `magnet`.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "annotate.drawing_magnet.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "One drawing's own magnet, which snaps that object's drags whether or not\nthe rail's magnet is on.",
+        "properties": {
+          "drawing_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The drawing, by the `drawing_id` `analysis.drawings` lists."
+          },
+          "enabled": {
+            "description": "`true` snaps this drawing's dragged anchors to the open / high / low /\nclose of the candle under the pointer; `false` leaves it to the rail.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "drawing_id",
+          "enabled"
+        ],
+        "title": "ObjectMagnetInput",
+        "type": "object"
+      },
+      "module": "annotate",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "description": "Whether the call moved it; `false` when it already stood there.",
+            "type": "boolean"
+          },
+          "drawing_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "enabled": {
+            "description": "The drawing's own magnet as it stands after the call.",
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "drawing_id",
+          "tab_id",
+          "pane_id",
+          "enabled",
+          "changed"
+        ],
+        "title": "ObjectMagnetResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call names the state it wants rather than flipping it; repeating it is harmless and the result reads the drawing's magnet back.",
+      "title": "Set one drawing's own magnet",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Projects one measured move from a third chart coordinate.",
       "destructive": false,
       "dry_run_supported": false,
@@ -14468,6 +14563,11 @@
                 "type": "boolean"
               },
               "locked": {
+                "type": "boolean"
+              },
+              "magnet": {
+                "default": false,
+                "description": "This object's own OHLC magnet (`annotate.drawing_magnet.set`), which\nsnaps its drags whatever the rail's `magnet` above says. Optional in\nthe schema only so v1 readers stay compatible.",
                 "type": "boolean"
               },
               "off_series": {

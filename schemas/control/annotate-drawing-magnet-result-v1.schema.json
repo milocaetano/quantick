@@ -1,0 +1,37 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "changed": {
+      "description": "Whether the call moved it; `false` when it already stood there.",
+      "type": "boolean"
+    },
+    "drawing_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "enabled": {
+      "description": "The drawing's own magnet as it stands after the call.",
+      "type": "boolean"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "drawing_id",
+    "tab_id",
+    "pane_id",
+    "enabled",
+    "changed"
+  ],
+  "title": "ObjectMagnetResult",
+  "type": "object"
+}
