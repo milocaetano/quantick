@@ -86,6 +86,9 @@ impl DrawingReadAccess<'_> {
         self.pane()
             .drawing_projection()
             .projected_drawing_points(drawing, right, total, scale)
+            .into_iter()
+            .map(drawings::pos)
+            .collect()
     }
     pub(super) fn chrome_facts(&self) -> ChromeFacts {
         let pane = self.pane();

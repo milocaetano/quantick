@@ -193,6 +193,16 @@ impl PxRect {
         }
     }
 
+    /// The smallest rectangle holding every point, as `emath::Rect::from_points`.
+    #[must_use]
+    pub fn from_points(points: &[Px]) -> Self {
+        let mut rect = Self::NOTHING;
+        for &p in points {
+            rect.extend_with(p);
+        }
+        rect
+    }
+
     /// Grow to include `p`.
     pub fn extend_with(&mut self, p: Px) {
         self.min = Px::new(self.min.x.min(p.x), self.min.y.min(p.y));

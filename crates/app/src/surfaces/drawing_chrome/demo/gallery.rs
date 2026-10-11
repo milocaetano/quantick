@@ -179,7 +179,7 @@ impl DrawingDraft {
         DraftPlan {
             anchors,
             hand: ParkedHand {
-                position,
+                position: drawings::px(position),
                 constrain: if self.constrain {
                     drawings::Constrain::Level
                 } else {

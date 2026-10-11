@@ -1,44 +1,47 @@
 //! Pointer-tool and mirrored-mark updates belong to their retained gesture.
 //! Inputs borrow coordinates and the independent store; effects return to chrome.
-use super::drawing_projection::DrawingProjection;
-use super::gestures::TranslateFrom;
-use super::primary_button::pane_chrome_hit;
+use super::band::{self, Band};
+use super::projection::DrawingProjection;
 use super::{
-    DRAWING_DRAG_THRESHOLD_PX, DrawingDrag, PaneGestures, SharedDrag, SharedEdit,
-    SharedInteraction, SharedPick, SharedPointer,
+    DRAWING_DRAG_THRESHOLD_PX, DrawingDrag, GestureCursor, Marks, PaneGestures, SharedDrag,
+    SharedInteraction, SharedPick, SharedPointer, TranslateFrom,
 };
-use crate::bands::{self, Bands};
-use crate::drawings;
-use crate::plot_area::PlotAreas;
-use crate::toolrail::Tool;
-use eframe::egui;
+use crate::{AnchorSnap, Constrain, DoubleClickHint, DrawingId, Px};
 
-pub(super) struct PointerFrame<'a> {
-    pub(super) ui: &'a egui::Ui,
-    pub(super) chart: &'a egui::Response,
-    pub(super) areas: &'a PlotAreas,
-    pub(super) bands: &'a Bands,
+/// One frame of the pointer under the Pointer tool, as the window read it.
+pub struct PointerFrame<'a> {
+    pub bands: &'a [Band],
     // Shared marks use the prior paint's carve, not the new local input carve.
-    pub(super) cached_bands: &'a Bands,
-    pub(super) pointer: &'a SharedPointer,
-    pub(super) paper_gesture: bool,
-    pub(super) tool: Tool,
-    pub(super) shared_pick: Option<SharedPick>,
-    pub(super) shared: SharedInteraction,
+    pub cached_bands: &'a [Band],
+    pub pointer: &'a SharedPointer,
+    /// Whether the pointer is on the pane's own chrome — an indicator pane's
+    /// chevron, header or divider — which no drawing gesture may take.
+    pub on_pane_chrome: bool,
+    /// Alt held: a click walks down the z-order.
+    pub alt: bool,
+    /// Shift held: a handle drag keeps its level.
+    pub shift: bool,
+    /// The chart reported a double click this frame.
+    pub double_clicked: bool,
+    pub paper_gesture: bool,
+    /// Whether the armed tool is the Pointer; any other tool yields.
+    pub pointer_tool: bool,
+    pub shared_pick: Option<SharedPick>,
+    pub shared: SharedInteraction,
     /// Whether a strategy instance is bound to this drawing, armed or not:
     /// its extent is that strategy's window, so a double click must not
     /// move it.
-    pub(super) held: &'a dyn Fn(drawings::DrawingId) -> bool,
+    pub held: &'a dyn Fn(DrawingId) -> bool,
 }
 
 #[derive(Default)]
-pub(super) struct PointerOutcome {
-    pub(super) consumed: bool,
-    pub(super) cursor: Option<egui::CursorIcon>,
-    pub(super) begin_text_edit: bool,
-    pub(super) shared: SharedInteraction,
+pub struct PointerOutcome {
+    pub consumed: bool,
+    pub cursor: Option<GestureCursor>,
+    pub begin_text_edit: bool,
+    pub shared: SharedInteraction,
     /// The glyph announcing what a double click under the pointer would do.
-    pub(super) hint: Option<drawings::DoubleClickHint>,
+    pub hint: Option<DoubleClickHint>,
 }
 /// What releasing a press as a click did beyond selecting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,29 +54,29 @@ enum ReleaseAnswer {
 }
 
 impl PointerOutcome {
-    fn set_cursor(&mut self, cursor: egui::CursorIcon) {
+    pub(super) fn set_cursor(&mut self, cursor: GestureCursor) {
         self.cursor = Some(cursor);
     }
 }
 
 #[derive(Clone, Copy)]
 struct LocalPick<'a> {
-    position: egui::Pos2,
-    band: Option<&'a bands::Band>,
+    position: Px,
+    band: Option<&'a Band>,
     history_right: f32,
     total: usize,
 }
 
 struct LocalDragFrame<'a> {
-    ui: &'a egui::Ui,
-    bands: &'a Bands,
+    shift: bool,
+    bands: &'a [Band],
     pointer: &'a SharedPointer,
 }
 
 impl PaneGestures {
-    pub(super) fn handle_pointer_tool(
+    pub fn handle_pointer_tool(
         &mut self,
-        drawings: &mut drawings::Drawings,
+        drawings: &mut Marks,
         projection: &DrawingProjection<'_>,
         frame: PointerFrame<'_>,
     ) -> PointerOutcome {
@@ -81,7 +84,7 @@ impl PaneGestures {
             shared: frame.shared,
             ..Default::default()
         };
-        if frame.paper_gesture || frame.tool != Tool::Pointer {
+        if frame.paper_gesture || !frame.pointer_tool {
             self.yield_pointer();
             return outcome;
         }
@@ -90,8 +93,8 @@ impl PaneGestures {
         let pointer_band = pointer
             .position
             .filter(|_| !pointer.over_chrome)
-            .filter(|position| !pane_chrome_hit(frame.areas, *position))
-            .and_then(|position| bands::band_at(frame.bands, position))
+            .filter(|_| !frame.on_pane_chrome)
+            .and_then(|position| band::band_at(frame.bands, position))
             .filter(|band| band.drawable());
         let pick = pointer.position.map(|position| LocalPick {
             position,
@@ -114,8 +117,8 @@ impl PaneGestures {
                     drawings,
                     projection,
                     pick,
-                    frame.ui.input(|input| input.modifiers.alt),
-                    frame.chart.double_clicked().then_some(frame.held),
+                    frame.alt,
+                    frame.double_clicked.then_some(frame.held),
                 );
                 outcome.begin_text_edit = answer == ReleaseAnswer::TextEdit;
                 double_click_taken = answer == ReleaseAnswer::DoubleClickTaken;
@@ -129,7 +132,7 @@ impl PaneGestures {
             drawings,
             projection,
             LocalDragFrame {
-                ui: frame.ui,
+                shift: frame.shift,
                 bands: frame.bands,
                 pointer,
             },
@@ -166,12 +169,12 @@ impl PaneGestures {
 
     fn select_released_press(
         &mut self,
-        drawings: &mut drawings::Drawings,
+        drawings: &mut Marks,
         projection: &DrawingProjection<'_>,
         pick: LocalPick<'_>,
         alt: bool,
         // Which drawings a strategy holds, present only on a double click.
-        double_clicked: Option<&dyn Fn(drawings::DrawingId) -> bool>,
+        double_clicked: Option<&dyn Fn(DrawingId) -> bool>,
     ) -> ReleaseAnswer {
         let LocalPick {
             position,
@@ -257,7 +260,7 @@ impl PaneGestures {
 
     fn begin_local_drag(
         &mut self,
-        drawings: &mut drawings::Drawings,
+        drawings: &mut Marks,
         projection: &DrawingProjection<'_>,
         pick: LocalPick<'_>,
     ) -> bool {
@@ -306,15 +309,15 @@ impl PaneGestures {
             };
         }
         // A press that hits no geometry is not ours to interpret: it
-        // belongs to whatever egui routed it to (inspector, manager,
-        // chart pan). Deselection happens through the egui-routed
+        // belongs to whatever the window routed it to (inspector, manager,
+        // chart pan). Deselection happens through the window-routed
         // click above, which already respects floating windows.
         self.drag.is_active()
     }
 
     /// Whether the pointer has travelled past the drag threshold in this
     /// gesture; both moves then read the pointer's position, not a delta.
-    fn past_drag_threshold(&mut self, pointer_position: Option<egui::Pos2>) -> bool {
+    fn past_drag_threshold(&mut self, pointer_position: Option<Px>) -> bool {
         match (self.drag_pending_from, pointer_position) {
             (Some(origin), Some(position)) => {
                 let past = (position - origin).length() >= DRAWING_DRAG_THRESHOLD_PX;
@@ -331,7 +334,7 @@ impl PaneGestures {
 
     fn advance_local_drag(
         &mut self,
-        drawings: &mut drawings::Drawings,
+        drawings: &mut Marks,
         projection: &DrawingProjection<'_>,
         frame: LocalDragFrame<'_>,
         past_threshold: bool,
@@ -361,12 +364,12 @@ impl PaneGestures {
                     None => self.drag = DrawingDrag::Blocked,
                 }
             }
-            DrawingDrag::Blocked => outcome.set_cursor(egui::CursorIcon::NotAllowed),
+            DrawingDrag::Blocked => outcome.set_cursor(GestureCursor::NotAllowed),
             DrawingDrag::None => {}
         }
     }
 
-    fn finish_local_release(&mut self, drawings: &mut drawings::Drawings) {
+    fn finish_local_release(&mut self, drawings: &mut Marks) {
         // One gesture, one undo entry — recorded only if it moved.
         drawings.commit_gesture();
         self.drag = DrawingDrag::None;
@@ -388,138 +391,6 @@ impl PaneGestures {
         self.shared_drag_pending_from = None;
         self.shared_pointer_mark = None;
     }
-
-    fn interact_shared(
-        &mut self,
-        projection: &DrawingProjection<'_>,
-        cached_bands: &Bands,
-        shared_pick: Option<SharedPick>,
-        outcome: &mut PointerOutcome,
-        pointer: SharedPointer,
-    ) {
-        if self.begin_shared_drag(projection, cached_bands, shared_pick, outcome, &pointer) {
-            return;
-        }
-        if !self.shared_drag.is_active() {
-            if let Some(cursor) = shared_hover_cursor(&pointer, shared_pick) {
-                outcome.set_cursor(cursor);
-            }
-            return;
-        }
-        // Shared cleanup intentionally precedes the combined consumed answer.
-        if pointer.released {
-            self.finish_shared_release(outcome);
-            return;
-        }
-        if !pointer.down || !self.shared_threshold_crossed(pointer.position) {
-            return;
-        }
-        // Held gestures clamp into the prior paint's carve; no future tick
-        // instant is invented when the pointer has no market-time anchor.
-        let Some(position) = pointer.position.map(|position| {
-            egui::pos2(
-                position.x.clamp(pointer.area.left(), pointer.area.right()),
-                position.y.clamp(pointer.area.top(), pointer.area.bottom()),
-            )
-        }) else {
-            return;
-        };
-        let Some((time_ms, price)) = shared_mark_at(projection, cached_bands, &pointer, position)
-        else {
-            return;
-        };
-        self.advance_shared_drag(time_ms, price, outcome);
-    }
-
-    fn begin_shared_drag(
-        &mut self,
-        projection: &DrawingProjection<'_>,
-        cached_bands: &Bands,
-        shared_pick: Option<SharedPick>,
-        outcome: &mut PointerOutcome,
-        pointer: &SharedPointer,
-    ) -> bool {
-        if pointer.pressed
-            && !pointer.over_chrome
-            && let Some((position, pick)) = pointer
-                .position
-                .filter(|position| pointer.area.contains(*position))
-                .zip(shared_pick)
-        {
-            // Selecting is not moving (§D9): the press takes the object
-            // whether or not the drag that may follow is allowed.
-            outcome.shared.owner = Some(pick.owner);
-            outcome.shared.edit = Some(SharedEdit::Select(pick.index));
-            self.shared_drag_owner = Some(pick.owner);
-            self.shared_drag_pending_from = Some(position);
-            self.shared_pointer_mark = shared_mark_at(projection, cached_bands, pointer, position);
-            self.shared_drag = if pick.locked {
-                SharedDrag::Blocked
-            } else {
-                outcome.shared.begin_gesture = true;
-                match pick.anchor {
-                    Some(anchor) => SharedDrag::Anchor {
-                        index: pick.index,
-                        anchor,
-                    },
-                    None => SharedDrag::Body { index: pick.index },
-                }
-            };
-            return true;
-        }
-        false
-    }
-
-    fn finish_shared_release(&mut self, outcome: &mut PointerOutcome) {
-        outcome.shared.owner = self.shared_drag_owner;
-        outcome.shared.commit_gesture = true;
-        self.shared_drag = SharedDrag::None;
-        self.shared_drag_owner = None;
-        self.shared_drag_pending_from = None;
-        self.shared_pointer_mark = None;
-    }
-
-    fn shared_threshold_crossed(&mut self, position: Option<egui::Pos2>) -> bool {
-        if let Some(origin) = self.shared_drag_pending_from {
-            let travelled = position
-                .is_some_and(|position| (position - origin).length() >= DRAWING_DRAG_THRESHOLD_PX);
-            if !travelled {
-                return false;
-            }
-            self.shared_drag_pending_from = None;
-        }
-        true
-    }
-
-    fn advance_shared_drag(&mut self, time_ms: i64, price: f64, outcome: &mut PointerOutcome) {
-        // Every edit this gesture emits belongs to the pane the gesture took
-        // hold of, whatever the pointer is over now.
-        outcome.shared.owner = self.shared_drag_owner;
-        match self.shared_drag {
-            SharedDrag::Anchor { index, anchor } => {
-                outcome.shared.edit = Some(SharedEdit::MoveAnchor {
-                    index,
-                    anchor,
-                    time_ms,
-                    price,
-                });
-                outcome.set_cursor(egui::CursorIcon::ResizeNwSe);
-            }
-            SharedDrag::Body { index } => {
-                if let Some((last_time, last_price)) = self.shared_pointer_mark {
-                    outcome.shared.edit = Some(SharedEdit::Translate {
-                        index,
-                        delta_ms: time_ms - last_time,
-                        delta_price: price - last_price,
-                    });
-                }
-                outcome.set_cursor(egui::CursorIcon::Move);
-            }
-            SharedDrag::Blocked => outcome.set_cursor(egui::CursorIcon::NotAllowed),
-            SharedDrag::None => {}
-        }
-        self.shared_pointer_mark = Some((time_ms, price));
-    }
 }
 
 /// The hover cursor, and the double-click hint the object a double click
@@ -528,11 +399,11 @@ impl PaneGestures {
 /// asks the double click's own fallback, so an outline rectangle's drawn
 /// side zones announce themselves exactly where the double click acts.
 fn local_hover_cursor(
-    drawings: &drawings::Drawings,
+    drawings: &Marks,
     projection: &DrawingProjection<'_>,
     pick: LocalPick<'_>,
-    held: &dyn Fn(drawings::DrawingId) -> bool,
-) -> (Option<egui::CursorIcon>, Option<drawings::DoubleClickHint>) {
+    held: &dyn Fn(DrawingId) -> bool,
+) -> (Option<GestureCursor>, Option<DoubleClickHint>) {
     let LocalPick {
         position,
         band,
@@ -548,9 +419,9 @@ fn local_hover_cursor(
             .is_some()
     {
         let cursor = if drawings.items()[selected].locked {
-            egui::CursorIcon::NotAllowed
+            GestureCursor::NotAllowed
         } else {
-            egui::CursorIcon::ResizeNwSe
+            GestureCursor::Resize
         };
         return (Some(cursor), None);
     } else if let Some(hovered) =
@@ -558,7 +429,7 @@ fn local_hover_cursor(
     {
         let drawing = &drawings.items()[hovered];
         if drawing.locked {
-            return (Some(egui::CursorIcon::NotAllowed), None);
+            return (Some(GestureCursor::NotAllowed), None);
         }
         // The cursor stays the move grip a press there is; the glyph alone
         // says what a double click would do.
@@ -574,7 +445,7 @@ fn local_hover_cursor(
                 )
             })
             .flatten();
-        return (Some(egui::CursorIcon::Move), hint);
+        return (Some(GestureCursor::Move), hint);
     }
     // No object here takes a press; the cursor stays the chart's own.
     let hint = projection
@@ -593,7 +464,7 @@ fn local_hover_cursor(
 }
 
 fn move_handle(
-    drawings: &mut drawings::Drawings,
+    drawings: &mut Marks,
     projection: &DrawingProjection<'_>,
     frame: &LocalDragFrame<'_>,
     (drawing_index, handle): (usize, usize),
@@ -611,19 +482,17 @@ fn move_handle(
     let dragged = drawings
         .items()
         .get(drawing_index)
-        .and_then(|drawing| bands::band_of(bands, drawing));
+        .and_then(|drawing| band::band_of(bands, drawing));
     // Moving a mark keeps it glued to a bar's extreme:
     // the rule that placed it is the rule that holds it.
     let handle_snap = drawings
         .items()
         .get(drawing_index)
-        .map_or(drawings::AnchorSnap::Pointer, |drawing| {
-            drawing.tool.anchor_snap()
-        });
+        .map_or(AnchorSnap::Pointer, |drawing| drawing.tool.anchor_snap());
     if let Some(band) = dragged
         && let Some(position) = pointer_position
     {
-        let position = egui::pos2(
+        let position = Px::new(
             position.x.clamp(band.rect.left(), history_right),
             position.y.clamp(band.rect.top(), band.rect.bottom()),
         );
@@ -638,14 +507,14 @@ fn move_handle(
                 band,
                 history_right,
                 total,
-                if frame.ui.input(|input| input.modifiers.shift) {
-                    drawings::Constrain::Level
+                if frame.shift {
+                    Constrain::Level
                 } else {
-                    drawings::Constrain::Free
+                    Constrain::Free
                 },
             );
         }
-        outcome.set_cursor(egui::CursorIcon::ResizeNwSe);
+        outcome.set_cursor(GestureCursor::Resize);
     }
 }
 
@@ -653,7 +522,7 @@ fn move_handle(
 /// anchors land the way placing them would: by the tool's own snap, or with
 /// the magnet on, onto the print under the pointer.
 fn translate_body(
-    drawings: &mut drawings::Drawings,
+    drawings: &mut Marks,
     projection: &DrawingProjection<'_>,
     frame: &LocalDragFrame<'_>,
     from: &mut TranslateFrom,
@@ -666,7 +535,7 @@ fn translate_body(
     let dragged = drawings
         .items()
         .get(index)
-        .and_then(|drawing| Some((drawing.tool, bands::band_of(frame.bands, drawing)?)));
+        .and_then(|drawing| Some((drawing.tool, band::band_of(frame.bands, drawing)?)));
     if let Some((tool, band)) = dragged
         && let Some(scale) = band.scale
     {
@@ -685,10 +554,10 @@ fn translate_body(
         }
         let mut moved = from.free.clone();
         match tool.anchor_snap() {
-            drawings::AnchorSnap::Pointer if pointer.magnet => {
+            AnchorSnap::Pointer if pointer.magnet => {
                 projection.snap_body(&mut moved, tool.body_snap(), band, position, (right, total));
             }
-            drawings::AnchorSnap::Pointer => {}
+            AnchorSnap::Pointer => {}
             snap => {
                 for point in &mut moved {
                     let at = projection.drawing_screen_point(*point, right, total, &scale);
@@ -709,51 +578,15 @@ fn translate_body(
     }
 }
 
-fn shared_mark_at(
-    projection: &DrawingProjection<'_>,
-    cached_bands: &Bands,
-    pointer: &SharedPointer,
-    position: egui::Pos2,
-) -> Option<(i64, f64)> {
-    let band = bands::band_at(cached_bands, position)?;
-    projection
-        .drawing_point_at(
-            position,
-            pointer.history_right,
-            pointer.total,
-            pointer.magnet,
-            drawings::AnchorSnap::Pointer,
-            band,
-        )
-        .and_then(|point| Some((point.time_ms?, point.price)))
-}
-
-fn shared_hover_cursor(
-    pointer: &SharedPointer,
-    shared_pick: Option<SharedPick>,
-) -> Option<egui::CursorIcon> {
-    // Hover feedback, so a mirrored mark does not feel deader than the
-    // object it is: the same three cursors its own pane shows.
-    if !pointer.over_chrome
-        && pointer
-            .position
-            .is_some_and(|position| pointer.area.contains(position))
-        && let Some(pick) = shared_pick
-    {
-        return Some(match (pick.locked, pick.anchor) {
-            (true, _) => egui::CursorIcon::NotAllowed,
-            (false, Some(_)) => egui::CursorIcon::ResizeNwSe,
-            (false, None) => egui::CursorIcon::Move,
-        });
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::{Bands, PaneSeriesRead, SharedEdit};
     use super::*;
-    use crate::pane::drawing_projection::PaneSeriesRead;
-    use crate::state::{BarSpec, ChartState, SpecSelector};
+    use crate::PxRect;
+    use crate::chart::PriceScale;
+    use quantick_chart::indicator_views::IndicatorViews;
+    use quantick_chart::state::{BarSpec, ChartState, SpecSelector};
+    use quantick_chart_interaction::viewport::Viewport;
 
     fn with_projection(test: impl FnOnce(&DrawingProjection<'_>, &Bands)) {
         let spec = SpecSelector::new(BarSpec::Tick(10));
@@ -767,8 +600,8 @@ mod tests {
                 side: quantick_engine::Side::Buy,
             });
         }
-        let viewport = crate::viewport::Viewport::new();
-        let indicators = crate::indicators::IndicatorViews::new();
+        let viewport = Viewport::new();
+        let indicators = IndicatorViews::new();
         let projection = DrawingProjection {
             series: PaneSeriesRead {
                 history_prefix: &[],
@@ -778,17 +611,17 @@ mod tests {
             viewport: &viewport,
             indicators: &indicators,
         };
-        let bands = smallvec::smallvec![bands::Band {
-            key: drawings::DrawingBand::Price,
-            rect: egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(400.0, 200.0)),
-            scale: Some(crate::chart::PriceScale::from_range(0.0, 100.0, 0.0, 200.0)),
+        let bands = smallvec::smallvec![Band {
+            key: crate::DrawingBand::Price,
+            rect: PxRect::from_min_max(Px::default(), crate::pos2(400.0, 200.0)),
+            scale: Some(PriceScale::from_range(0.0, 100.0, 0.0, 200.0)),
             label: "price".into(),
             refusal: None,
         }];
         test(&projection, &bands);
     }
 
-    fn pointer_at(position: egui::Pos2, bands: &Bands) -> SharedPointer {
+    fn pointer_at(position: Px, bands: &Bands) -> SharedPointer {
         SharedPointer {
             position: Some(position),
             area: bands[0].rect,
@@ -802,11 +635,11 @@ mod tests {
         }
     }
 
-    fn local_line() -> drawings::Drawings {
-        let mut store = drawings::Drawings::default();
+    fn local_line() -> Marks {
+        let mut store = Marks::default();
         assert!(store.place(
-            drawings::DrawingTool::by_id("horizontal-line").unwrap(),
-            drawings::ChartPoint::at_time(0.0, 50.0, Some(1000))
+            crate::DrawingTool::by_id("horizontal-line").unwrap(),
+            crate::ChartPoint::at_time(0.0, 50.0, Some(1000))
         ));
         store.select(None);
         store
@@ -814,63 +647,44 @@ mod tests {
 
     fn owner_frame(
         gestures: &mut PaneGestures,
-        drawings: &mut drawings::Drawings,
+        drawings: &mut Marks,
         projection: &DrawingProjection<'_>,
         bands: &Bands,
         pointer: &SharedPointer,
     ) -> PointerOutcome {
-        let ctx = egui::Context::default();
-        let mut result = None;
-        let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                let response = ui.interact(
-                    bands[0].rect,
-                    egui::Id::new("owner-test"),
-                    egui::Sense::click_and_drag(),
-                );
-                let areas = PlotAreas {
-                    chart: bands[0].rect,
-                    indicator_panes: Vec::new(),
-                    pane_gutters: Vec::new(),
-                    live_strip: None,
-                    price_gutter: egui::Rect::NOTHING,
-                    time_strip: egui::Rect::NOTHING,
-                };
-                result = Some(gestures.handle_pointer_tool(
-                    drawings,
-                    projection,
-                    PointerFrame {
-                        ui,
-                        chart: &response,
-                        areas: &areas,
-                        bands,
-                        cached_bands: bands,
-                        pointer,
-                        paper_gesture: false,
-                        tool: Tool::Pointer,
-                        shared_pick: None,
-                        shared: SharedInteraction::default(),
-                        held: &|_| false,
-                    },
-                ));
-            });
-        });
-        result.unwrap()
+        gestures.handle_pointer_tool(
+            drawings,
+            projection,
+            PointerFrame {
+                bands,
+                cached_bands: bands,
+                pointer,
+                on_pane_chrome: false,
+                alt: false,
+                shift: false,
+                double_clicked: false,
+                paper_gesture: false,
+                pointer_tool: true,
+                shared_pick: None,
+                shared: SharedInteraction::default(),
+                held: &|_| false,
+            },
+        )
     }
 
     #[test]
     fn local_threshold_returns_full_first_travel_then_frame_delta() {
-        let origin = egui::pos2(10.0, 20.0);
+        let origin = crate::pos2(10.0, 20.0);
         let mut gestures = PaneGestures {
             drag_pending_from: Some(origin),
             ..Default::default()
         };
         assert!(!gestures.past_drag_threshold(None));
         assert!(!gestures.past_drag_threshold(Some(
-            origin + egui::vec2(DRAWING_DRAG_THRESHOLD_PX - 0.5, 0.0)
+            origin + crate::vec2(DRAWING_DRAG_THRESHOLD_PX - 0.5, 0.0)
         )));
         assert_eq!(gestures.drag_pending_from, Some(origin));
-        let full = egui::vec2(DRAWING_DRAG_THRESHOLD_PX, 0.0);
+        let full = crate::vec2(DRAWING_DRAG_THRESHOLD_PX, 0.0);
         assert!(gestures.past_drag_threshold(Some(origin + full)));
         assert_eq!(gestures.drag_pending_from, None);
         assert!(gestures.past_drag_threshold(Some(origin)));
@@ -881,7 +695,7 @@ mod tests {
         with_projection(|projection, bands| {
             let mut store = local_line();
             let pick = LocalPick {
-                position: egui::pos2(100.0, 100.0),
+                position: crate::pos2(100.0, 100.0),
                 band: Some(&bands[0]),
                 history_right: 200.0,
                 total: 1,
@@ -912,14 +726,14 @@ mod tests {
             let mut store = local_line();
             let original = store.items()[0].points.clone();
             let mut gestures = PaneGestures::default();
-            let mut pointer = pointer_at(egui::pos2(100.0, 100.0), bands);
+            let mut pointer = pointer_at(crate::pos2(100.0, 100.0), bands);
             pointer.pressed = true;
             let press = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
             assert!(press.consumed);
             assert!(gestures.drag.is_active());
             assert_eq!(store.items()[0].points, original);
             pointer.pressed = false;
-            pointer.position = Some(egui::pos2(110.0, 120.0));
+            pointer.position = Some(crate::pos2(110.0, 120.0));
             owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
             assert_ne!(store.items()[0].points, original);
             pointer.down = false;
@@ -935,7 +749,7 @@ mod tests {
     #[test]
     fn shared_threshold_and_missing_tick_instant_emit_no_fabricated_edit() {
         with_projection(|projection, bands| {
-            let origin = egui::pos2(projection.viewport.x_at_bar_position(0.0, 200.0, 1), 100.0);
+            let origin = crate::pos2(projection.viewport.x_at_bar_position(0.0, 200.0, 1), 100.0);
             let mut pointer = pointer_at(origin, bands);
             let mut gestures = PaneGestures {
                 shared_drag: SharedDrag::Body { index: 3 },
@@ -954,17 +768,10 @@ mod tests {
             );
             assert_eq!(under.shared, SharedInteraction::default());
             assert_eq!(gestures.shared_drag_pending_from, Some(origin));
-            let future = egui::pos2(projection.viewport.x_at_bar_position(3.0, 200.0, 1), 120.0);
+            let future = crate::pos2(projection.viewport.x_at_bar_position(3.0, 200.0, 1), 120.0);
             assert!(bands[0].rect.contains(future));
             let point = projection
-                .drawing_point_at(
-                    future,
-                    200.0,
-                    1,
-                    false,
-                    drawings::AnchorSnap::Pointer,
-                    &bands[0],
-                )
+                .drawing_point_at(future, 200.0, 1, false, AnchorSnap::Pointer, &bands[0])
                 .unwrap();
             assert_eq!(
                 point.time_ms, None,
@@ -984,8 +791,8 @@ mod tests {
     fn shared_release_keeps_the_press_owner_even_when_the_pick_changes() {
         let spec = SpecSelector::new(BarSpec::Tick(10));
         let state = ChartState::new(BarSpec::Tick(10));
-        let viewport = crate::viewport::Viewport::new();
-        let indicators = crate::indicators::IndicatorViews::new();
+        let viewport = Viewport::new();
+        let indicators = IndicatorViews::new();
         let projection = DrawingProjection {
             series: PaneSeriesRead {
                 history_prefix: &[],
@@ -995,7 +802,7 @@ mod tests {
             viewport: &viewport,
             indicators: &indicators,
         };
-        let area = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(20.0, 20.0));
+        let area = PxRect::from_min_max(Px::default(), crate::pos2(20.0, 20.0));
         let pointer = |pressed, released, over_chrome| SharedPointer {
             position: Some(area.center()),
             area,
@@ -1059,18 +866,15 @@ mod tests {
 
     /// An outline-only rectangle wide enough for both side zones and a
     /// centre, with its drawn screen rect.
-    fn local_rectangle(
-        projection: &DrawingProjection<'_>,
-        bands: &Bands,
-    ) -> (drawings::Drawings, egui::Rect) {
-        let mut store = drawings::Drawings::default();
-        let rectangle = drawings::DrawingTool::by_id("rectangle").unwrap();
-        assert!(!store.place(rectangle, drawings::ChartPoint::at(-20.0, 70.0)));
-        assert!(store.place(rectangle, drawings::ChartPoint::at(0.0, 30.0)));
+    fn local_rectangle(projection: &DrawingProjection<'_>, bands: &Bands) -> (Marks, PxRect) {
+        let mut store = Marks::default();
+        let rectangle = crate::DrawingTool::by_id("rectangle").unwrap();
+        assert!(!store.place(rectangle, crate::ChartPoint::at(-20.0, 70.0)));
+        assert!(store.place(rectangle, crate::ChartPoint::at(0.0, 30.0)));
         store.select(None);
         let scale = bands[0].scale.as_ref().unwrap();
         let points = projection.projected_drawing_points(&store.items()[0], 200.0, 1, scale);
-        let rect = egui::Rect::from_two_pos(points[0], points[1]);
+        let rect = PxRect::from_two_pos(points[0], points[1]);
         assert!(
             rect.width() > 120.0 && bands[0].rect.contains_rect(rect),
             "{rect:?}"
@@ -1078,11 +882,11 @@ mod tests {
         (store, rect)
     }
 
-    fn extent(store: &drawings::Drawings) -> (bool, bool) {
+    fn extent(store: &Marks) -> (bool, bool) {
         let payload = store.items()[0]
             .payload
             .as_any()
-            .downcast_ref::<drawings::RectanglePayload>()
+            .downcast_ref::<crate::RectanglePayload>()
             .unwrap();
         (payload.extend_left, payload.extend_right)
     }
@@ -1108,7 +912,7 @@ mod tests {
             );
             assert_eq!(store.selected(), None, "a single click still falls through");
             gestures.press_pick = Some(None);
-            let free: &dyn Fn(drawings::DrawingId) -> bool = &|_| false;
+            let free: &dyn Fn(DrawingId) -> bool = &|_| false;
             assert_eq!(
                 gestures.select_released_press(&mut store, projection, pick, false, Some(free)),
                 ReleaseAnswer::DoubleClickTaken
@@ -1123,10 +927,10 @@ mod tests {
         with_projection(|projection, bands| {
             let (mut store, rect) = local_rectangle(projection, bands);
             let bound = store.items()[0].id;
-            let held: &dyn Fn(drawings::DrawingId) -> bool = &move |id| id == bound;
+            let held: &dyn Fn(DrawingId) -> bool = &move |id| id == bound;
             for position in [
                 rect.center(),
-                egui::pos2(rect.left() + 4.0, rect.center().y),
+                crate::pos2(rect.left() + 4.0, rect.center().y),
             ] {
                 let pick = LocalPick {
                     position,
@@ -1156,7 +960,7 @@ mod tests {
         with_projection(|projection, bands| {
             let (mut store, rect) = local_rectangle(projection, bands);
             store.items_mut()[0].style.fill_alpha = 40;
-            let side = egui::pos2(rect.left() + 6.0, rect.center().y);
+            let side = crate::pos2(rect.left() + 6.0, rect.center().y);
             let mut gestures = PaneGestures::default();
             let mut pointer = pointer_at(side, bands);
             pointer.down = false;
@@ -1165,7 +969,7 @@ mod tests {
                 hover.hint.is_some(),
                 "the side zone announces its double click"
             );
-            assert_eq!(hover.cursor, Some(egui::CursorIcon::Move));
+            assert_eq!(hover.cursor, Some(GestureCursor::Move));
             pointer.down = true;
             pointer.pressed = true;
             owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
@@ -1176,20 +980,20 @@ mod tests {
         });
     }
 
-    fn set_extent(store: &mut drawings::Drawings, left: bool, right: bool) {
+    fn set_extent(store: &mut Marks, left: bool, right: bool) {
         let payload = store.items_mut()[0]
             .payload
             .as_any_mut()
-            .downcast_mut::<drawings::RectanglePayload>()
+            .downcast_mut::<crate::RectanglePayload>()
             .unwrap();
         (payload.extend_left, payload.extend_right) = (left, right);
     }
 
     fn missed_double_click(
-        store: &mut drawings::Drawings,
+        store: &mut Marks,
         projection: &DrawingProjection<'_>,
-        band: &bands::Band,
-        position: egui::Pos2,
+        band: &Band,
+        position: Px,
     ) -> ReleaseAnswer {
         let mut gestures = PaneGestures {
             press_pick: Some(None),
@@ -1220,8 +1024,8 @@ mod tests {
             assert_eq!(extent(&store), (true, true));
             store.select(None);
             let painted_only =
-                egui::pos2((bands[0].rect.left() + rect.left()) / 2.0, rect.center().y);
-            let off_band = egui::pos2(painted_only.x, rect.top() - 20.0);
+                crate::pos2((bands[0].rect.left() + rect.left()) / 2.0, rect.center().y);
+            let off_band = crate::pos2(painted_only.x, rect.top() - 20.0);
             for position in [painted_only, off_band] {
                 assert_eq!(
                     missed_double_click(&mut store, projection, &bands[0], position),
@@ -1242,7 +1046,7 @@ mod tests {
             let (mut store, rect) = local_rectangle(projection, bands);
             // Already run left by hand: the left zone has nothing to add.
             set_extent(&mut store, true, false);
-            let left_zone = egui::pos2(rect.left() + 6.0, rect.center().y);
+            let left_zone = crate::pos2(rect.left() + 6.0, rect.center().y);
             let undo_before = store.undo_depth();
             assert_eq!(
                 missed_double_click(&mut store, projection, &bands[0], left_zone),
@@ -1264,11 +1068,11 @@ mod tests {
             let (mut store, rect) = local_rectangle(projection, bands);
             store.items_mut()[0].style.fill_alpha = 0;
             // Inside a side zone, past the border's click reach.
-            let left_zone = egui::pos2(rect.left() + 15.0, rect.center().y);
-            let right_zone = egui::pos2(rect.right() - 15.0, rect.center().y);
+            let left_zone = crate::pos2(rect.left() + 15.0, rect.center().y);
+            let right_zone = crate::pos2(rect.right() - 15.0, rect.center().y);
             let painted_only =
-                egui::pos2((bands[0].rect.left() + rect.left()) / 2.0, rect.center().y);
-            let hover = |store: &mut drawings::Drawings, position: egui::Pos2| {
+                crate::pos2((bands[0].rect.left() + rect.left()) / 2.0, rect.center().y);
+            let hover = |store: &mut Marks, position: Px| {
                 let mut pointer = pointer_at(position, bands);
                 pointer.down = false;
                 owner_frame(

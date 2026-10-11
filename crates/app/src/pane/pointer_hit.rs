@@ -15,13 +15,15 @@ use eframe::egui;
 
 use crate::bands;
 use crate::chart::PriceScale;
-use crate::drawings::{self, DrawingBand, Drawings};
+use crate::drawings::{self, Drawing, DrawingBand, Drawings, egui_rect, px};
 use crate::indicator_worker::SlotId;
 use crate::orderflow_view::OrderflowView;
 use crate::price_view::PriceView;
 
-use super::drawing_projection::DrawingProjection;
+use super::SharedSource;
 use super::frame::PaneFrame;
+use super::render_registry::{TextFonts, paint_scene};
+use quantick_drawings::gesture::DrawingProjection;
 
 /// How near an overlay's plotted line a double click has to land to be read as
 /// a click on *that line* rather than on the chart behind it.
@@ -75,6 +77,44 @@ pub(crate) struct PaneHitTest<'a> {
 }
 
 impl PaneHitTest<'_> {
+    /// What a pointer at `pos` grabs among `source`'s shared marks, on the
+    /// projection the last frame cached — see
+    /// `quantick_drawings::gesture::DrawingProjection::shared_pick_in`.
+    pub(crate) fn shared_pick(
+        &self,
+        source: &Drawings,
+        pos: egui::Pos2,
+    ) -> Option<(usize, Option<usize>)> {
+        if !source.items().iter().any(Drawing::shared) {
+            return None;
+        }
+        let (_, history_right, total, _) = self.last_projection()?;
+        // Only the band the pointer is in: a mirrored CVD level and a
+        // mirrored price level can be one pixel apart on screen and mean
+        // unrelated things, exactly as they can on the pane that owns them.
+        let band = bands::band_at(&self.frame.bands, px(pos))?;
+        self.projection
+            .shared_pick_in(source, px(pos), band, (history_right, total))
+    }
+
+    /// Paint the shared drawings that live on `source`, re-expressed on this
+    /// pane (`docs/ux/drawing-tools-2026-08.md` §D7), each clipped to its band.
+    pub(crate) fn paint_shared_from(&self, painter: &egui::Painter, source: SharedSource<'_>) {
+        if !source.drawings.items().iter().any(Drawing::shared) {
+            return;
+        }
+        let Some((_, history_right, total, _)) = self.last_projection() else {
+            return;
+        };
+        self.projection.shared_scenes(
+            source,
+            &self.frame.bands,
+            (history_right, total),
+            &TextFonts(painter.ctx()),
+            &mut |rect, scene| paint_scene(&painter.with_clip_rect(egui_rect(rect)), scene),
+        );
+    }
+
     /// This pane's own projection, rebuilt from the geometry the last
     /// draw cached. `None` before the pane has drawn once, or while it has
     /// no price range to project against.
@@ -108,7 +148,7 @@ impl PaneHitTest<'_> {
         if !chart.contains(position) {
             return None;
         }
-        let band = bands::band_at(&self.frame.bands, position)?;
+        let band = bands::band_at(&self.frame.bands, px(position))?;
         let history_right = self.frame.lane_divider_x.unwrap_or_else(|| chart.right());
         let total = self.projection.series.slots();
 
@@ -133,11 +173,11 @@ impl PaneHitTest<'_> {
 
         let drawing_pick = self
             .projection
-            .drawing_handle_at(self.drawings, position, band, history_right, total)
+            .drawing_handle_at(self.drawings, px(position), band, history_right, total)
             .map(|(index, handle)| (index, Some(handle)))
             .or_else(|| {
                 self.projection
-                    .drawing_at(self.drawings, position, band, history_right, total)
+                    .drawing_at(self.drawings, px(position), band, history_right, total)
                     .map(|index| (index, None))
             });
         let drawing = drawing_pick.and_then(|(index, handle_index)| {

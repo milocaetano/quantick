@@ -9,8 +9,8 @@ use crate::{
     bands::{self, Band},
     chart::PriceScale,
     drawings::{
-        ChartPoint, DrawContext, DrawingBand, DrawingStyle, Drawings, MarkScene, pos, px_rect,
-        to_color32,
+        ChartPoint, DrawContext, DrawingBand, DrawingStyle, Drawings, MarkScene, egui_rect, pos,
+        px_rect, to_color32,
     },
     viewport::Viewport,
 };
@@ -199,7 +199,7 @@ impl DrawingPass<'_> {
         let Some(scale) = band.scale.as_ref() else {
             return;
         };
-        let chart_rect = band.rect;
+        let chart_rect = egui_rect(band.rect);
         let clipped = painter.with_clip_rect(chart_rect);
         let fonts = TextFonts(painter.ctx());
         // One buffer for every object of the pass, cleared between them.
@@ -280,7 +280,7 @@ impl DrawingPass<'_> {
         let Some(scale) = band.scale.as_ref() else {
             return;
         };
-        let chart_rect = band.rect;
+        let chart_rect = egui_rect(band.rect);
         let clipped = painter.with_clip_rect(chart_rect);
         let fonts = TextFonts(painter.ctx());
         // With hide-all engaged the finished object would be invisible, so
@@ -357,7 +357,7 @@ impl DrawingPass<'_> {
         &mut self,
         registry: &super::RenderRegistry,
         anchors: &crate::strategy_anchors::StrategyAnchors,
-        projection: &super::super::drawing_projection::DrawingProjection<'_>,
+        projection: &quantick_drawings::gesture::DrawingProjection<'_>,
         closed_slots: usize,
     ) {
         let DrawingPass {
@@ -377,7 +377,7 @@ impl DrawingPass<'_> {
         let Some(scale) = band.scale.as_ref() else {
             return;
         };
-        let clipped = painter.with_clip_rect(band.rect);
+        let clipped = painter.with_clip_rect(egui_rect(band.rect));
         // Badges paint outside the visibility gate above: a hidden drawing
         // hides its geometry, never the fact that a bot rides it — an
         // invisible armed instance is the one state this surface must not
@@ -392,7 +392,11 @@ impl DrawingPass<'_> {
             {
                 continue;
             }
-            let points = projection.projected_drawing_points(drawing, history_right, total, scale);
+            let points: SmallVec<[egui::Pos2; 4]> = projection
+                .projected_drawing_points(drawing, history_right, total, scale)
+                .into_iter()
+                .map(pos)
+                .collect();
             super::super::strategies::paint_strategy_badge(
                 &clipped,
                 instance,

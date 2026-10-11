@@ -2,21 +2,69 @@
 //!
 //! The composed series borrows its prefix and engine state. Neither view owns
 //! a drawing store, a gesture, or the pane that supplies these disjoint fields.
-use super::{
-    CANDLE_MAGNET_REACH_PX, DRAWING_ANCHOR_RADIUS_PX, DRAWING_SELECT_RADIUS_PX, MAGNET_REACH_PX,
-    MAGNET_REACH_UNLIMITED_PX, magnet_price_of, snap_bar_to_tape,
-};
-use crate::bands::{self, Band};
-use crate::chart::PriceScale;
-use crate::drawings::{self, ChartPoint, DrawContext, DrawingBand, pos, px, px_rect};
-use crate::indicators::IndicatorViews;
-use crate::viewport::Viewport;
-use eframe::egui;
-use quantick_drawings::{Px, UNMEASURED};
+use quantick_chart::indicator_views::IndicatorViews;
+use quantick_chart_interaction::viewport::Viewport;
 use rust_decimal::prelude::ToPrimitive as _;
 use smallvec::SmallVec;
 
-pub(crate) use quantick_chart::pane_series::PaneSeriesRead;
+use super::band::{self, Band};
+use super::{
+    CANDLE_MAGNET_REACH_PX, DRAWING_ANCHOR_RADIUS_PX, DRAWING_SELECT_RADIUS_PX, MAGNET_REACH_PX,
+    MAGNET_REACH_UNLIMITED_PX, Mark, Marks,
+};
+use crate::chart::PriceScale;
+use crate::{
+    AnchorSnap, BodySnap, ChartPoint, Constrain, DoubleClickHint, DrawContext, DrawingBand,
+    DrawingId, DrawingPayload, Px, PxRect, UNMEASURED,
+};
+
+pub use quantick_chart::pane_series::PaneSeriesRead;
+
+#[cfg(test)]
+#[path = "projection_tests.rs"]
+mod projection_tests;
+
+/// Clamp a fractional bar coordinate onto the bars that exist:
+/// `0 ..= total - 1`. The candle magnet's time half — a snap that reads a
+/// candle must stand on one.
+#[must_use]
+pub fn snap_bar_to_tape(bar: f32, total: usize) -> f32 {
+    #[allow(clippy::cast_precision_loss)]
+    bar.clamp(0.0, total.saturating_sub(1) as f32)
+}
+
+/// The open / high / low / close of `candle` nearest to the pointer on
+/// screen, when the pointer is on the candle or within `reach_px` of it.
+///
+/// This is the difference between a line that *looks* drawn off the swing
+/// high and one that is (`docs/ux/drawing-tools-2026-08.md` §D6). Reach is
+/// measured to the candle's span, not to each print, or a pointer inside a
+/// tall body missed. Off the candle and out of reach returns `None` and the
+/// free price is used — a magnet that always snaps is a magnet you cannot
+/// draw a diagonal with.
+#[must_use]
+pub fn magnet_price_of(
+    candle: &quantick_engine::Bar,
+    pointer_y: f32,
+    scale: &PriceScale,
+    reach_px: f32,
+) -> Option<f64> {
+    let (high, low) = (
+        scale.y(candle.high.to_f64()?),
+        scale.y(candle.low.to_f64()?),
+    );
+    if pointer_y < high.min(low) - reach_px || pointer_y > high.max(low) + reach_px {
+        return None;
+    }
+    [candle.open, candle.high, candle.low, candle.close]
+        .into_iter()
+        .filter_map(|price| {
+            let price = price.to_f64()?;
+            Some(((scale.y(price) - pointer_y).abs(), price))
+        })
+        .min_by(|left, right| left.0.total_cmp(&right.0))
+        .map(|(_, price)| price)
+}
 
 /// `anchor`, read back off the screen at `screen`, with each coordinate a
 /// tool copied from a source restored to that source's exact value: a pixel
@@ -27,8 +75,8 @@ pub(crate) use quantick_chart::pane_series::PaneSeriesRead;
 /// to that source's value anyway.
 fn exact_coordinates(
     mut anchor: ChartPoint,
-    screen: egui::Pos2,
-    sources: &[(egui::Pos2, ChartPoint)],
+    screen: Px,
+    sources: &[(Px, ChartPoint)],
 ) -> ChartPoint {
     if let Some((_, source)) = sources.iter().find(|(at, _)| at.x == screen.x) {
         anchor.bar = source.bar;
@@ -40,10 +88,10 @@ fn exact_coordinates(
     anchor
 }
 
-pub(crate) struct DrawingProjection<'a> {
-    pub(super) series: PaneSeriesRead<'a>,
-    pub(super) viewport: &'a Viewport,
-    pub(super) indicators: &'a IndicatorViews,
+pub struct DrawingProjection<'a> {
+    pub series: PaneSeriesRead<'a>,
+    pub viewport: &'a Viewport,
+    pub indicators: &'a IndicatorViews,
 }
 
 impl DrawingProjection<'_> {
@@ -52,13 +100,14 @@ impl DrawingProjection<'_> {
     /// to one screen pixel.
     /// The x half is shared by every band — the panes ride the candles' time
     /// axis — and only the y half asks which band it is being read against.
-    pub(super) fn drawing_point_at(
+    #[must_use]
+    pub fn drawing_point_at(
         &self,
-        pos: egui::Pos2,
+        pos: Px,
         history_right: f32,
         total: usize,
         magnet: bool,
-        snap: drawings::AnchorSnap,
+        snap: AnchorSnap,
         band: &Band,
     ) -> Option<ChartPoint> {
         let scale = band.scale.as_ref()?;
@@ -68,7 +117,7 @@ impl DrawingProjection<'_> {
         let bar = self.viewport.bar_at_x(pos.x, history_right, total);
         // A candle-magnet anchor cannot land where no candle is: the bar
         // clamps to the tape before the snap reads it.
-        let bar = if snap == drawings::AnchorSnap::NearestOhlc {
+        let bar = if snap == AnchorSnap::NearestOhlc {
             snap_bar_to_tape(bar, total)
         } else {
             bar
@@ -77,10 +126,10 @@ impl DrawingProjection<'_> {
             // A mark's own rule beats the magnet toggle in both directions:
             // it snaps with the magnet off, and it snaps to *its* extreme
             // rather than to whichever of the four OHLC prices is nearest.
-            drawings::AnchorSnap::BarLow => self.bar_extreme(band, bar, false),
-            drawings::AnchorSnap::BarHigh => self.bar_extreme(band, bar, true),
-            drawings::AnchorSnap::NearestOhlc => self.candle_nearest_ohlc(band, bar, pos.y, scale),
-            drawings::AnchorSnap::Pointer => magnet
+            AnchorSnap::BarLow => self.bar_extreme(band, bar, false),
+            AnchorSnap::BarHigh => self.bar_extreme(band, bar, true),
+            AnchorSnap::NearestOhlc => self.candle_nearest_ohlc(band, bar, pos.y, scale),
+            AnchorSnap::Pointer => magnet
                 .then(|| self.magnet_value(band, bar, pos.y, scale))
                 .flatten(),
         }
@@ -149,10 +198,11 @@ impl DrawingProjection<'_> {
             // A time-only object has no value to snap.
             DrawingBand::AllBands => None,
             DrawingBand::Indicator(_) => {
-                let view = self.indicators.visible_panes().find(|view| {
-                    DrawingBand::Indicator(crate::bands::pane_key(view)) == band.key
-                })?;
-                bands::magnet_value_of(view, row, pointer_y, scale, MAGNET_REACH_PX)
+                let view = self
+                    .indicators
+                    .visible_panes()
+                    .find(|view| DrawingBand::Indicator(band::pane_key(view)) == band.key)?;
+                band::magnet_value_of(view, row, pointer_y, scale, MAGNET_REACH_PX)
             }
         }
     }
@@ -162,15 +212,15 @@ impl DrawingProjection<'_> {
     /// onto the print under the pointer, and the whole object shifted by the
     /// same amount so it keeps its shape. The snapped anchor takes the print
     /// exactly; nothing in reach leaves `points` as they are.
-    pub(super) fn snap_body(
+    pub fn snap_body(
         &self,
         points: &mut [ChartPoint],
-        body: drawings::BodySnap,
+        body: BodySnap,
         band: &Band,
-        pointer: egui::Pos2,
+        pointer: Px,
         (history_right, total): (f32, usize),
     ) {
-        let (Some(scale), false) = (band.scale.as_ref(), body == drawings::BodySnap::Free) else {
+        let (Some(scale), false) = (band.scale.as_ref(), body == BodySnap::Free) else {
             return;
         };
         // The candle's own bar, so a line meets the print at the candle.
@@ -181,7 +231,7 @@ impl DrawingProjection<'_> {
         #[allow(clippy::cast_precision_loss)]
         let bar = slot as f32;
         let line = match points {
-            [a, b] if body == drawings::BodySnap::Line && a.bar != b.bar => Some(
+            [a, b] if body == BodySnap::Line && a.bar != b.bar => Some(
                 a.price + (b.price - a.price) * f64::from(bar - a.bar) / f64::from(b.bar - a.bar),
             ),
             _ => None,
@@ -190,7 +240,7 @@ impl DrawingProjection<'_> {
         let edge = points
             .iter()
             .enumerate()
-            .filter(|_| body == drawings::BodySnap::Levels || line.is_none())
+            .filter(|_| body == BodySnap::Levels || line.is_none())
             .map(|(index, point)| (Some(index), point.price))
             .chain(line.map(|price| (None, price)))
             .min_by(|left, right| off(left.1).total_cmp(&off(right.1)));
@@ -228,24 +278,10 @@ impl DrawingProjection<'_> {
         magnet_price_of(candle, pointer_y, scale, MAGNET_REACH_UNLIMITED_PX)
     }
 
+    #[must_use]
     pub fn projected_drawing_points(
         &self,
-        drawing: &drawings::Drawing,
-        history_right: f32,
-        total: usize,
-        scale: &PriceScale,
-    ) -> SmallVec<[egui::Pos2; 4]> {
-        drawing
-            .points
-            .iter()
-            .map(|point| self.drawing_screen_point(*point, history_right, total, scale))
-            .collect()
-    }
-
-    /// [`Self::projected_drawing_points`] in the tools' own screen type.
-    fn projected_px(
-        &self,
-        drawing: &drawings::Drawing,
+        drawing: &Mark,
         history_right: f32,
         total: usize,
         scale: &PriceScale,
@@ -253,16 +289,17 @@ impl DrawingProjection<'_> {
         drawing
             .points
             .iter()
-            .map(|point| px(self.drawing_screen_point(*point, history_right, total, scale)))
+            .map(|point| self.drawing_screen_point(*point, history_right, total, scale))
             .collect()
     }
 
     /// The topmost object of `band` under the pointer. Objects of the other
-    /// bands are not candidates at all — see [`bands::drawing_in_band`].
-    pub(super) fn drawing_at(
+    /// bands are not candidates at all — see [`band::drawing_in_band`].
+    #[must_use]
+    pub fn drawing_at(
         &self,
-        drawings: &drawings::Drawings,
-        pos: egui::Pos2,
+        drawings: &Marks,
+        pos: Px,
         band: &Band,
         history_right: f32,
         total: usize,
@@ -274,22 +311,16 @@ impl DrawingProjection<'_> {
             .enumerate()
             .rev()
             .filter(|(index, drawing)| {
-                drawings.is_visible(*index) && bands::drawing_in_band(drawing, band)
+                drawings.is_visible(*index) && band::drawing_in_band(drawing, band)
             })
             .find_map(|(index, drawing)| {
-                let projected = self.projected_px(drawing, history_right, total, scale);
+                let projected = self.projected_drawing_points(drawing, history_right, total, scale);
                 // Locked selections paint no editable affordances.
                 let selected = drawings.selected_id() == Some(drawing.id) && !drawing.locked;
                 let ctxt = self.draw_context(drawing, scale, band, selected);
                 drawing
                     .tool
-                    .hit_test(
-                        px_rect(band.rect),
-                        &projected,
-                        px(pos),
-                        DRAWING_SELECT_RADIUS_PX,
-                        &ctxt,
-                    )
+                    .hit_test(band.rect, &projected, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
                     .then_some(index)
             })
     }
@@ -297,10 +328,11 @@ impl DrawingProjection<'_> {
     /// Alt+click: deterministic z-order cycling through every visible object
     /// under the pointer. From the current selection, the next hit beneath
     /// it wins; past the bottom it wraps back to the top.
-    pub(super) fn drawing_below_selection(
+    #[must_use]
+    pub fn drawing_below_selection(
         &self,
-        drawings: &drawings::Drawings,
-        pos: egui::Pos2,
+        drawings: &Marks,
+        pos: Px,
         band: &Band,
         history_right: f32,
         total: usize,
@@ -309,19 +341,15 @@ impl DrawingProjection<'_> {
         let hits: Vec<usize> = (0..drawings.items().len())
             .rev()
             .filter(|&index| drawings.is_visible(index))
-            .filter(|&index| bands::drawing_in_band(&drawings.items()[index], band))
+            .filter(|&index| band::drawing_in_band(&drawings.items()[index], band))
             .filter(|&index| {
                 let drawing = &drawings.items()[index];
-                let projected = self.projected_px(drawing, history_right, total, scale);
+                let projected = self.projected_drawing_points(drawing, history_right, total, scale);
                 let selected = drawings.selected_id() == Some(drawing.id) && !drawing.locked;
                 let ctxt = self.draw_context(drawing, scale, band, selected);
-                drawing.tool.hit_test(
-                    px_rect(band.rect),
-                    &projected,
-                    px(pos),
-                    DRAWING_SELECT_RADIUS_PX,
-                    &ctxt,
-                )
+                drawing
+                    .tool
+                    .hit_test(band.rect, &projected, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
             })
             .collect();
         match drawings
@@ -337,11 +365,12 @@ impl DrawingProjection<'_> {
     /// its handles are, so the ring the trader sees is the ring they grab —
     /// a channel's width handle sits at the centre of a rail, not on the
     /// corner anchor that happens to define it.
-    pub(super) fn drawing_handle_in(
+    #[must_use]
+    pub fn drawing_handle_in(
         &self,
-        drawings: &drawings::Drawings,
+        drawings: &Marks,
         drawing_index: usize,
-        pos: egui::Pos2,
+        pos: Px,
         band: &Band,
         history_right: f32,
         total: usize,
@@ -353,27 +382,24 @@ impl DrawingProjection<'_> {
         let drawing = drawings
             .items()
             .get(drawing_index)
-            .filter(|drawing| bands::drawing_in_band(drawing, band))?;
-        let projected = self.projected_px(drawing, history_right, total, scale);
+            .filter(|drawing| band::drawing_in_band(drawing, band))?;
+        let projected = self.projected_drawing_points(drawing, history_right, total, scale);
         let selected = drawings.selected_id() == Some(drawing.id) && !drawing.locked;
         let ctxt = self.draw_context(drawing, scale, band, selected);
-        drawing.tool.hit_handle(
-            px_rect(band.rect),
-            &projected,
-            px(pos),
-            DRAWING_ANCHOR_RADIUS_PX,
-            &ctxt,
-        )
+        drawing
+            .tool
+            .hit_handle(band.rect, &projected, pos, DRAWING_ANCHOR_RADIUS_PX, &ctxt)
     }
 
     /// What a pointer at `pos` is on: a drawing's handle first, then its
     /// body. One function, so the press and the click that follows it can
     /// never answer differently — grabbing a handle *is* clicking the object,
     /// and the handle radius is the wider of the two.
-    pub(super) fn drawing_pick_at(
+    #[must_use]
+    pub fn drawing_pick_at(
         &self,
-        drawings: &drawings::Drawings,
-        pos: egui::Pos2,
+        drawings: &Marks,
+        pos: Px,
         band: &Band,
         history_right: f32,
         total: usize,
@@ -392,38 +418,29 @@ impl DrawingProjection<'_> {
     /// belongs to the point under the pointer, not to a rail computed from it.
     /// Everything else is the plain "handle `handle` is anchor `handle`" move.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn drag_drawing_handle(
+    pub fn drag_drawing_handle(
         &self,
-        drawings: &mut drawings::Drawings,
+        drawings: &mut Marks,
         drawing_index: usize,
         handle: usize,
         target: ChartPoint,
         band: &Band,
         history_right: f32,
         total: usize,
-        constrain: drawings::Constrain,
+        constrain: Constrain,
     ) {
         let moved = band.scale.as_ref().and_then(|scale| {
             let drawing = drawings.items().get(drawing_index)?;
             let projected = self.projected_drawing_points(drawing, history_right, total, scale);
             let ctxt = self.draw_context(drawing, scale, band, true);
             let to = self.drawing_screen_point(target, history_right, total, scale);
-            let projected_px: SmallVec<[Px; 4]> = projected.iter().copied().map(px).collect();
-            let moved: SmallVec<[egui::Pos2; 6]> = drawing
+            let moved: SmallVec<[Px; 6]> = drawing
                 .tool
-                .drag_handle(
-                    px_rect(band.rect),
-                    &projected_px,
-                    handle,
-                    px(to),
-                    &ctxt,
-                    constrain,
-                )?
+                .drag_handle(band.rect, &projected, handle, to, &ctxt, constrain)?
                 .into_iter()
-                .map(pos)
                 .collect();
             // The target (magnet included) first, then the anchors as they were.
-            let sources: SmallVec<[(egui::Pos2, ChartPoint); 5]> = std::iter::once((to, target))
+            let sources: SmallVec<[(Px, ChartPoint); 5]> = std::iter::once((to, target))
                 .chain(projected.into_iter().zip(drawing.points.iter().copied()))
                 .collect();
             Some((moved, sources))
@@ -442,7 +459,7 @@ impl DrawingProjection<'_> {
                     history_right,
                     total,
                     false,
-                    drawings::AnchorSnap::Pointer,
+                    AnchorSnap::Pointer,
                     band,
                 )
                 .map(|anchor| exact_coordinates(anchor, *point, &sources))
@@ -458,7 +475,7 @@ impl DrawingProjection<'_> {
     /// selection that is not locked, a handle drag passes `true`.
     fn draw_context<'a>(
         &self,
-        drawing: &'a drawings::Drawing,
+        drawing: &'a Mark,
         scale: &'a PriceScale,
         band: &'a Band,
         selected: bool,
@@ -482,21 +499,22 @@ impl DrawingProjection<'_> {
     /// What a double click at `pos` would do to drawing `drawing_index`, as
     /// its tool announces it on hover. Same projection and context as the
     /// hit-test, so the hint sits exactly where the click lands.
-    pub(super) fn drawing_double_click_hint(
+    #[must_use]
+    pub fn drawing_double_click_hint(
         &self,
-        drawings: &drawings::Drawings,
+        drawings: &Marks,
         drawing_index: usize,
-        pos: egui::Pos2,
+        pos: Px,
         band: &Band,
         history_right: f32,
         total: usize,
-    ) -> Option<drawings::DoubleClickHint> {
+    ) -> Option<DoubleClickHint> {
         let scale = band.scale.as_ref()?;
         let drawing = drawings
             .items()
             .get(drawing_index)
-            .filter(|drawing| !drawing.locked && bands::drawing_in_band(drawing, band))?;
-        let projected = self.projected_px(drawing, history_right, total, scale);
+            .filter(|drawing| !drawing.locked && band::drawing_in_band(drawing, band))?;
+        let projected = self.projected_drawing_points(drawing, history_right, total, scale);
         let ctxt = self.draw_context(
             drawing,
             scale,
@@ -505,7 +523,7 @@ impl DrawingProjection<'_> {
         );
         drawing
             .tool
-            .double_click_hint(px_rect(band.rect), &projected, px(pos), &ctxt)
+            .double_click_hint(band.rect, &projected, pos, &ctxt)
     }
 
     /// The drawing a double click at `pos` belongs to, with its payload as
@@ -521,35 +539,35 @@ impl DrawingProjection<'_> {
     /// The change is worked out on a copy, so the caller applies it whole
     /// or not at all; hover asks the same question for its hint.
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn double_click_target(
+    #[must_use]
+    pub fn double_click_target(
         &self,
-        drawings: &drawings::Drawings,
+        drawings: &Marks,
         picked: Option<usize>,
-        pos: egui::Pos2,
+        pos: Px,
         band: &Band,
         history_right: f32,
         total: usize,
-        held: &dyn Fn(drawings::DrawingId) -> bool,
-    ) -> Option<(usize, Box<dyn drawings::DrawingPayload>)> {
+        held: &dyn Fn(DrawingId) -> bool,
+    ) -> Option<(usize, Box<dyn DrawingPayload>)> {
         let scale = band.scale.as_ref()?;
         let trial = |index: usize, fallback: bool| {
             let drawing = drawings.items().get(index)?;
             if drawing.locked
                 || held(drawing.id)
                 || !drawings.is_visible(index)
-                || !bands::drawing_in_band(drawing, band)
+                || !band::drawing_in_band(drawing, band)
             {
                 return None;
             }
             let projected = self.projected_drawing_points(drawing, history_right, total, scale);
-            if fallback && !egui::Rect::from_points(&projected).contains(pos) {
+            if fallback && !PxRect::from_points(&projected).contains(pos) {
                 return None;
             }
             let mut payload = drawing.payload.clone_box();
-            let projected: SmallVec<[Px; 4]> = projected.into_iter().map(px).collect();
             drawing
                 .tool
-                .double_click(px_rect(band.rect), &projected, px(pos), payload.as_mut())
+                .double_click(band.rect, &projected, pos, payload.as_mut())
                 .then_some((index, payload))
         };
         match picked {
@@ -560,10 +578,11 @@ impl DrawingProjection<'_> {
         }
     }
 
-    pub(super) fn drawing_handle_at(
+    #[must_use]
+    pub fn drawing_handle_at(
         &self,
-        drawings: &drawings::Drawings,
-        pos: egui::Pos2,
+        drawings: &Marks,
+        pos: Px,
         band: &Band,
         history_right: f32,
         total: usize,
@@ -584,18 +603,40 @@ impl DrawingProjection<'_> {
             })
     }
 
-    pub(super) fn drawing_screen_point(
+    #[must_use]
+    pub fn drawing_screen_point(
         &self,
         point: ChartPoint,
         history_right: f32,
         total: usize,
         scale: &PriceScale,
-    ) -> egui::Pos2 {
-        egui::pos2(
+    ) -> Px {
+        Px::new(
             self.viewport
                 .x_at_bar_position(point.bar, history_right, total),
             scale.y(point.price),
         )
+    }
+
+    /// Each visible price-band drawing with the axis heights its tool
+    /// declares on `chart`, handed to `out` one height at a time.
+    pub fn axis_levels(
+        &self,
+        drawings: &Marks,
+        chart: PxRect,
+        (history_right, total): (f32, usize),
+        scale: &PriceScale,
+        out: &mut dyn FnMut(&Mark, f32),
+    ) {
+        for (index, drawing) in drawings.items().iter().enumerate() {
+            if !drawings.is_visible(index) || matches!(drawing.band, DrawingBand::Indicator(_)) {
+                continue;
+            }
+            let points = self.projected_drawing_points(drawing, history_right, total, scale);
+            for y in drawing.tool.axis_levels(chart, &points) {
+                out(drawing, y);
+            }
+        }
     }
 
     /// Rewrite the market instants behind the selected object's anchors after
@@ -604,7 +645,7 @@ impl DrawingProjection<'_> {
     /// Without this the mark moves on this chart and its shared twin stays
     /// where it was: market time is what the other panes read, so a move that
     /// does not update it has moved only half the object.
-    pub fn retime_selected(&self, drawings: &mut drawings::Drawings) {
+    pub fn retime_selected(&self, drawings: &mut Marks) {
         let Some(index) = drawings.selected() else {
             return;
         };
@@ -619,33 +660,5 @@ impl DrawingProjection<'_> {
             .map(|point| self.series.anchor_time(point.bar))
             .collect();
         drawings.set_times(index, &times);
-    }
-}
-
-impl DrawingProjection<'_> {
-    pub(crate) fn price_axis_levels(
-        &self,
-        drawings: &drawings::Drawings,
-        chart_rect: egui::Rect,
-        history_right: f32,
-        total: usize,
-        scale: &PriceScale,
-        out: &mut Vec<super::PriceAxisLevel>,
-    ) {
-        out.clear();
-        for (index, drawing) in drawings.items().iter().enumerate() {
-            if !drawings.is_visible(index) || matches!(drawing.band, DrawingBand::Indicator(_)) {
-                continue;
-            }
-            let points = self.projected_px(drawing, history_right, total, scale);
-            for y in drawing.tool.axis_levels(px_rect(chart_rect), &points) {
-                out.push(super::PriceAxisLevel {
-                    id: drawing.id,
-                    y,
-                    price: scale.price_at(y),
-                    color: drawings::painted_color(drawing),
-                });
-            }
-        }
     }
 }

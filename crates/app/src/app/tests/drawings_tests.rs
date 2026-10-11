@@ -2138,7 +2138,7 @@ fn a_parked_pointer_previews_the_draft_with_no_hand_on_the_mouse() {
     );
 
     app.active_tab_mut().flow_pane.gestures.parked_hand = Some(pane::ParkedHand {
-        position: release,
+        position: drawings::px(release),
         constrain: drawings::Constrain::Free,
     });
     let parked = run_frame(&mut app, &ctx);
@@ -2157,7 +2157,7 @@ fn a_real_pointer_takes_precedence_over_the_scenario_hand() {
     let release = egui::pos2(800.0, 340.0);
     drag_chart(&mut app, &ctx, egui::pos2(600.0, 400.0), release);
     app.active_tab_mut().flow_pane.gestures.parked_hand = Some(pane::ParkedHand {
-        position: release,
+        position: drawings::px(release),
         constrain: drawings::Constrain::Free,
     });
     run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerGone]);
