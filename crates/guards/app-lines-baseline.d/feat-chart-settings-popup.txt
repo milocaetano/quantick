@@ -1,0 +1,9 @@
+# Raised by 401 lines for the tabbed chart settings window
+# (`feat/chart-settings-popup`): the candle appearance and footprint windows
+# merge into one surface with a `SettingsTab` per tab (two old surfaces
+# deleted), the Candles tab gains Reset and saved presets (decisions headless
+# in `quantick_chart::style::StyleEdit` and `quantick_stores::candle_presets`),
+# the pane's double click on the bare candles opens it, and
+# `chart.settings.set` reaches the same window through `LayerWiring`.
+crates/app +401
+!budget +401

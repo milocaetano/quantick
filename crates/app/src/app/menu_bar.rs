@@ -9,6 +9,7 @@
 use super::{GatewayPort, LayoutPort};
 use eframe::egui;
 
+use crate::surfaces::ChartSettingsTab::Candles;
 use crate::tabstrip::{self, TabAction};
 use crate::theme;
 
@@ -287,7 +288,7 @@ impl QuantickApp {
             MenuCommand::SetProgressiveHistory(on) => self.history.progressive_history = on,
             MenuCommand::SetVenueLeadIn(on) => self.history.venue_lead_in = on,
             MenuCommand::SetTimezone(tz) => self.tz = tz,
-            MenuCommand::OpenAppearance => self.surfaces.style_panel.open(),
+            MenuCommand::OpenAppearance => self.surfaces.chart_settings.open(Candles),
             MenuCommand::OpenAgentAccess => {
                 if let Some(access) = self.control.control_access.as_mut() {
                     access.open_panel();

@@ -55,6 +55,8 @@ const CLIENT_NAME: &str = "quantick integration test";
 mod asset_bubbles_save_tests;
 #[path = "candle_aggression_tests.rs"]
 mod candle_aggression;
+#[path = "chart_settings_control_tests.rs"]
+mod chart_settings_control;
 #[path = "drawing_magnet_control_tests.rs"]
 mod drawing_magnet_control;
 #[path = "history_control_tests.rs"]
@@ -601,6 +603,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("feed.history.cancel", 1, json!({}), Readback::Moves),
         ("layers.visibility.set", 1, Value::Null, Readback::Moves),
         ("chart.price_axis.set", 1, Value::Null, Readback::Moves),
+        ("chart.settings.set", 1, Value::Null, Readback::Moves),
         ("chart.tape_view.set", 1, Value::Null, Readback::Moves),
         (
             "orderflow.tape.opening_scale.set",
@@ -814,6 +817,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     "window": { "kind": "fixed", "ms": 7_000 },
                 })
             }
+            "chart.settings.set" => json!({ "action": "open", "tab": "candles" }),
             "orderflow.tape.opening_scale.set" => json!({
                 "tab_id": app.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),

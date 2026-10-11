@@ -178,6 +178,31 @@ impl PaneHitTest<'_> {
         })
     }
 
+    /// Whether `pos` is on the candles themselves: the price band of the
+    /// chart, clear of every drawing — where a double click opens the chart
+    /// settings. A drawing, an indicator pane, an axis or the legend each
+    /// keep their own meaning for the gesture. Runs on a double click only.
+    pub(super) fn on_bare_candles(&self, pos: egui::Pos2) -> bool {
+        let Some(chart) = self.frame.chart_area.filter(|chart| chart.contains(pos)) else {
+            return false;
+        };
+        let Some(band) = bands::band_at(&self.frame.bands, pos) else {
+            return false;
+        };
+        if !matches!(band.key, DrawingBand::Price) {
+            return false;
+        }
+        let history_right = self.frame.lane_divider_x.unwrap_or_else(|| chart.right());
+        let total = self.projection.series.slots();
+        self.projection
+            .drawing_handle_at(self.drawings, pos, band, history_right, total)
+            .is_none()
+            && self
+                .projection
+                .drawing_at(self.drawings, pos, band, history_right, total)
+                .is_none()
+    }
+
     /// Which overlay indicator's plotted line a pointer at `pos` is sitting
     /// on, if any — the fourth place a double click opens settings from, and
     /// the most direct one: the thing the trader wants to change is the line

@@ -7,6 +7,7 @@
 
 mod actions;
 mod analysis;
+mod chart_settings;
 mod annotate;
 pub(crate) mod chart;
 mod contract;

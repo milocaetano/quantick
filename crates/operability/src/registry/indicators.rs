@@ -9,13 +9,23 @@ use super::{ExclusionClass, Mapping, PENDING_SURFACE, Source, UiBehaviour};
 pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "appearance.dialog.toggle",
-        title: "Open the appearance dialog — candles, canvas, grid",
-        reach: "toolbar brush button, Tools menu",
+        title: "Open the chart settings on the Candles tab — candles, canvas, grid",
+        reach: "toolbar brush button, Tools menu, a double click on the bare candles",
         keys: &[
             (Source::ToolbarAction, "ToggleAppearance"),
             (Source::MenuEntry, "Appearance…"),
         ],
-        mapping: PENDING_SURFACE,
+        mapping: capability!("chart.settings.set"),
+    },
+    UiBehaviour {
+        id: "appearance.candle_presets",
+        title: "Apply, save, delete or reset a candle preset",
+        reach: "the chart settings window's Candles tab",
+        keys: &[(
+            Source::Authored,
+            "the Candles tab's preset row, save field and Reset are widgets, not registry entries",
+        )],
+        mapping: capability!("chart.settings.set"),
     },
     UiBehaviour {
         id: "indicator.hidden.toggle",

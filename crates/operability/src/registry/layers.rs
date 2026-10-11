@@ -54,7 +54,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         title: "Open the footprint's settings window",
         reach: "right-click the toolbar's footprint button",
         keys: &[(Source::ToolbarAction, "OpenFootprintSettings")],
-        mapping: PENDING_SURFACE,
+        mapping: capability!("chart.settings.set"),
     },
     UiBehaviour {
         id: "layer.candle_aggression.toggle",

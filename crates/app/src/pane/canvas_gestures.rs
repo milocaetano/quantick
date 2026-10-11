@@ -23,7 +23,9 @@ pub(super) struct CanvasInput<'r> {
 }
 
 impl ChartPane {
-    pub(super) fn handle_canvas_gestures(&mut self, ui: &egui::Ui, input: CanvasInput<'_>) {
+    /// Pan, zoom and the double click. Answers whether a double click landed
+    /// on the bare candles, which asks the window for the chart settings.
+    pub(super) fn handle_canvas_gestures(&mut self, ui: &egui::Ui, input: CanvasInput<'_>) -> bool {
         let CanvasInput {
             chart,
             area,
@@ -92,18 +94,21 @@ impl ChartPane {
         // Not with a tool armed: two placement clicks are two anchors. Over
         // the tape a double click returns it to live; on an
         // overlay's own line it opens that line; elsewhere the candles snap
-        // back to the live edge. Each keeps the chosen zoom and price scale.
+        // back to the live edge and the chart settings open on the Candles
+        // tab. Each keeps the chosen zoom and price scale.
+        let mut open_settings = false;
         if chart.double_clicked() && primary_free {
             let at = chart.interact_pointer_pos();
             let overlay = at
                 .and_then(|position| self.hit_test().overlay_plot_at(position))
                 .map(|slot| slot.0);
+            let tape = at.is_some_and(over_tape);
+            open_settings = !tape
+                && overlay.is_none()
+                && at.is_some_and(|position| self.hit_test().on_bare_candles(position));
             navigate(
                 self,
-                quantick_chart_interaction::pane::Intent::ReturnToLive {
-                    tape: at.is_some_and(over_tape),
-                    overlay,
-                },
+                quantick_chart_interaction::pane::Intent::ReturnToLive { tape, overlay },
             );
         }
         if chart.hovered() && !scroll_taken && scroll.abs() > 0.0 {
@@ -118,6 +123,7 @@ impl ChartPane {
                 },
             );
         }
+        open_settings
     }
 
     /// Up and down pans the shared price axis wherever the drag is; sideways

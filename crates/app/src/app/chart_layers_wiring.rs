@@ -11,10 +11,11 @@
 use crate::chart_layers;
 use crate::footprint_config::FootprintConfig;
 use crate::style::ChartStyle;
-use crate::surfaces::{FootprintChange, FootprintSettingsSurface};
+use crate::surfaces::{ChartSettingsSurface, ChartSettingsTab, FootprintChange};
 use crate::tab::Tab;
 use crate::workspace_store::WorkspaceStore;
 use eframe::egui;
+use quantick_control_schema::chart_settings::{ChartSettingsInput, ChartSettingsResult};
 
 use super::arrangement_host::ArrangementHost;
 
@@ -27,7 +28,7 @@ pub(crate) struct LayerWiring<'a> {
     pub(super) style: &'a mut ChartStyle,
     pub(super) style_revision: &'a mut u64,
     pub(super) footprint_config: &'a mut FootprintConfig,
-    pub(super) footprint_settings: &'a mut FootprintSettingsSurface,
+    pub(super) chart_settings: &'a mut ChartSettingsSurface,
 }
 
 impl LayerWiring<'_> {
@@ -46,6 +47,75 @@ impl LayerWiring<'_> {
             &mut self.workspace.layers_mut().actions,
         );
         self.apply_actions();
+    }
+
+    /// The control plane's `chart.settings.set`: the same window and the
+    /// same preset store the clicks reach, so a named call and a click cannot
+    /// disagree. `Err` carries the refusal sentence.
+    pub(crate) fn chart_settings(
+        &mut self,
+        input: ChartSettingsInput,
+    ) -> Result<ChartSettingsResult, &'static str> {
+        let settings = &mut *self.chart_settings;
+        let window_before = (settings.is_open(), settings.tab());
+        let style_before = *self.style;
+        let mut list_changed = false;
+        match input {
+            ChartSettingsInput::Open { tab } => {
+                settings.open(tab);
+                settings.candles.begin(style_before);
+            }
+            ChartSettingsInput::Close => settings.close(),
+            ChartSettingsInput::ApplyCandlePreset { name } => {
+                let (look, _) = settings
+                    .candles
+                    .apply(&name, &style_before)
+                    .ok_or("no built-in or saved candle preset has that name")?;
+                *self.style = look;
+            }
+            ChartSettingsInput::SaveCandlePreset { name } => {
+                let before = settings.candles.saved(&name);
+                settings
+                    .candles
+                    .save(&name, style_before)
+                    .map_err(|refusal| refusal.message())?;
+                list_changed = before != Some(style_before);
+            }
+            ChartSettingsInput::DeleteCandlePreset { name } => {
+                if crate::style::CandlePreset::from_name(&name).is_some() {
+                    return Err("built-in presets cannot be deleted");
+                }
+                list_changed = settings.candles.delete(&name);
+            }
+            ChartSettingsInput::ResetCandles => {
+                if !settings.candles.in_sitting() {
+                    return Err(
+                        "the chart settings window is closed; reset restores the                                 appearance it opened on",
+                    );
+                }
+                if let Some(look) = settings.candles.reset(&style_before) {
+                    *self.style = look;
+                }
+            }
+        }
+        let style_changed = *self.style != style_before;
+        if style_changed {
+            *self.style_revision = self.style_revision.saturating_add(1);
+        }
+        let settings = &*self.chart_settings;
+        Ok(ChartSettingsResult {
+            open: settings.is_open(),
+            tab: settings.tab(),
+            candle_preset: settings.candles.matching(self.style),
+            built_in_presets: crate::style::CandlePreset::ALL
+                .iter()
+                .map(|preset| preset.label().to_owned())
+                .collect(),
+            custom_presets: settings.candles.custom_names(),
+            changed: style_changed
+                || list_changed
+                || window_before != (settings.is_open(), settings.tab()),
+        })
     }
 
     /// What a pane's layer menu could not switch itself.
@@ -76,7 +146,10 @@ impl LayerWiring<'_> {
             );
         }
         if actions.open_footprint_settings {
-            self.footprint_settings.open();
+            self.chart_settings.open(ChartSettingsTab::Footprint);
+        }
+        if actions.open_chart_settings {
+            self.chart_settings.open(ChartSettingsTab::Candles);
         }
     }
 

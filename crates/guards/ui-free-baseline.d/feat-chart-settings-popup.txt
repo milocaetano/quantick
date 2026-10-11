@@ -1,0 +1,5 @@
+# feat/chart-settings-popup: the `chart.settings.set` handler (control
+# handlers bind app ports and live with the window) and the candle presets'
+# path resolution beside `footprint_presets.rs`; the store itself is headless.
+crates/app +32
+!budget +32
