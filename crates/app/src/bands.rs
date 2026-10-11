@@ -16,6 +16,7 @@
 //! it annotates is a lie, and the only way to make the drift impossible
 //! rather than unlikely is for both to read one object.
 
+use crate::drawings::StyleColor32;
 use std::sync::Arc;
 
 use eframe::egui;

@@ -44,6 +44,7 @@ const SCRATCH_MODULES: &[&str] = &[
     "crates/backtest/tests/common/mod.rs",
     "crates/control-host/src/scratch.rs",
     "crates/control-local/src/scratch.rs",
+    "crates/drawings/src/scratch.rs",
     "crates/feed/src/scratch.rs",
     "crates/guards/src/scratch_dir.rs",
     // `mcp` needs two: an integration test links the crate as a dependency

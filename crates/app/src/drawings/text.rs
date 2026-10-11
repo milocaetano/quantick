@@ -5,6 +5,7 @@
 //! muted type — never nothing, because an invisible object the trader cannot
 //! find to delete is worse than a visible empty one.
 
+use crate::drawings::StyleColor32;
 use std::any::Any;
 
 use eframe::egui;

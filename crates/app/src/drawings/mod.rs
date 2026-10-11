@@ -13,36 +13,23 @@ pub mod presets;
 
 // Geometry shared by a family of tools. Not tools themselves, so they are not
 // in the registry — a family core exists so its members stay declarations.
-mod clipboard;
 mod line_core;
 mod mark_core;
 mod measure_core;
 mod shape_core;
-
-// The subsystem's other owners. This module keeps only the registry; a
-// tool's port and handle live in `tool`, the collection's behaviour in
-// `collection`, and the rules that draft or re-anchor an object in
-// `placement`.
-mod collection;
-mod placement;
 mod tool;
 
-// The envelope every tool and every feature outside the subsystem speaks,
-// one leaf per question: what a mark is (`object`, over the anchor, band and
-// identity values `quantick_chart_interaction::drawing_model` owns), what it
-// looks like (`style`), what a tool declares to the rail (`family`), what a
-// tool is handed to paint (`context`), what a tool's own state travels in
-// (`payload`), what a new object opens with (`defaults`), where the marks of
-// one pane live (`store`), and the screen geometry they share (`geometry`).
+// The subsystem's other owner here: a tool's port and handle live in `tool`.
+// The mark model — what a mark is, the per-pane book with its undo history,
+// placement, defaults and the preset file — is headless, in
+// `quantick_drawings`; the window keeps what a tool is handed to paint
+// (`context`), the egui side of a look (`style`), the shortcut key
+// (`family`) and the screen geometry in egui's coordinates (`geometry`).
 // The leaves are private: the re-exports below are the subsystem's address,
 // so no call site outside it moves when an item changes leaf.
 mod context;
-mod defaults;
 mod family;
 mod geometry;
-mod object;
-mod payload;
-mod store;
 mod style;
 
 // The test modules reach egui through `use super::*`.
@@ -55,35 +42,34 @@ use tool::DrawingToolImpl;
 pub use tool::{DoubleClickHint, DrawingTool};
 
 pub use context::{AxisLevels, DrawContext, Handles, ValueUnit};
+pub use family::ToolShortcut;
+pub(super) use geometry::{
+    dashed_segment, distance_to_segment, level_with, off_line_by, unit_normal,
+};
 #[cfg(test)]
-pub use defaults::NullPresetHost;
-pub use defaults::{
-    PresetHost, has_saved_default, new_drawing_from_defaults, reset_tool_default, save_tool_default,
+pub use quantick_drawings::NullPresetHost;
+#[cfg(test)]
+pub(crate) use quantick_drawings::UNDO_HISTORY_LIMIT;
+pub use quantick_drawings::{
+    AnchorSnap, BodySnap, ChartPoint, Constrain, DEFAULT_DRAWING_COLOR, DeleteOutcome,
+    DrawingAuthor, DrawingBand, DrawingId, DrawingPayload, DrawingScope, DrawingStyle, Duplicated,
+    GlyphSize, IconDots, IconLetter, IconStrokes, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX,
+    MIN_DRAWING_WIDTH_PX, NewDrawing, NoPayload, PaneKey, PresetHost, ToolFamily,
+    has_saved_default, new_drawing_from_defaults, reset_tool_default, save_tool_default,
 };
-pub(super) use family::level_with;
-pub use family::{
-    AnchorSnap, BodySnap, Constrain, IconDots, IconLetter, IconStrokes, ToolFamily, ToolShortcut,
+pub(crate) use quantick_drawings::{CLAMPED_OPACITY, reanchor_points};
+pub(super) use quantick_drawings::{
+    FIB_LABEL_OFFSET_PX, FIB_LABEL_SIZE_PX, SELECTED_ANCHOR_RADIUS_PX,
+    SELECTED_ANCHOR_RING_WIDTH_PX, SELECTION_HALO_EXTRA_WIDTH_PX,
 };
-pub(super) use geometry::{dashed_segment, distance_to_segment, off_line_by, unit_normal};
-pub use object::{
-    ChartPoint, DeleteOutcome, Drawing, DrawingAuthor, DrawingBand, DrawingId, DrawingScope,
-    Duplicated, NewDrawing, PaneKey,
-};
-pub use payload::{DrawingPayload, NoPayload};
-pub(crate) use placement::reanchor_points;
-pub(crate) use store::UNDO_HISTORY_LIMIT;
-use store::UndoEntry;
-pub use store::{Drawings, PlacementBatch};
-pub(crate) use style::{CLAMPED_OPACITY, from_color32, painted_color, to_color32};
-pub use style::{
-    DEFAULT_DRAWING_COLOR, DrawingStyle, GlyphSize, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX,
-    MIN_DRAWING_WIDTH_PX,
-};
-pub(super) use style::{
-    FIB_LABEL_OFFSET_PX, FIB_LABEL_SIZE_PX, SELECTED_ANCHOR_FILL, SELECTED_ANCHOR_RADIUS_PX,
-    SELECTED_ANCHOR_RING_WIDTH_PX, SELECTION_HALO_COLOR, SELECTION_HALO_EXTRA_WIDTH_PX,
-    drawing_fill, drawing_stroke,
-};
+pub use style::StyleColor32;
+pub(super) use style::{SELECTED_ANCHOR_FILL, SELECTION_HALO_COLOR, drawing_fill, drawing_stroke};
+pub(crate) use style::{from_color32, painted_color, to_color32};
+
+/// One drawn mark, holding the registry tool that paints it.
+pub type Drawing = quantick_drawings::Drawing<DrawingTool>;
+/// The marks of one pane and their undo history.
+pub type Drawings = quantick_drawings::Drawings<DrawingTool>;
 
 macro_rules! register_drawing_tools {
     ($($module:ident),+ $(,)?) => {

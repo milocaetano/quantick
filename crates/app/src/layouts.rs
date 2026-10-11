@@ -283,6 +283,7 @@ pub(crate) fn save(path: &Path, book: &LayoutBook) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::drawings::StyleColor32;
     use crate::indicators::state_file::{SavedInput, SavedKind};
 
     fn ema() -> SavedIndicator {

@@ -1,6 +1,6 @@
 //! What a new object opens with, and the store that remembers it.
 
-use super::{Drawing, DrawingStyle, DrawingTool, NewDrawing};
+use crate::{Drawing, DrawingStyle, NewDrawing, ToolCatalog};
 
 /// Named-preset storage a tool's inspector tab can talk to without knowing
 /// where presets live. Presets carry an opaque payload export; the host
@@ -53,7 +53,7 @@ pub trait PresetHost {
 /// default configuration, then the explicitly *named* default preset — a
 /// name the trader chose beats one they saved by pressing a button.
 #[must_use]
-pub fn new_drawing_from_defaults(host: &dyn PresetHost, tool: DrawingTool) -> NewDrawing {
+pub fn new_drawing_from_defaults<T: ToolCatalog>(host: &dyn PresetHost, tool: T) -> NewDrawing {
     let style = host
         .default_style(tool.id())
         .unwrap_or_else(|| tool.default_style());
@@ -76,7 +76,7 @@ pub fn new_drawing_from_defaults(host: &dyn PresetHost, tool: DrawingTool) -> Ne
 /// Objects already on the chart are never touched: a default is a statement
 /// about the *next* object, and repainting the marks a trader has placed is a
 /// bulk edit nobody asked for.
-pub fn save_tool_default(host: &mut dyn PresetHost, drawing: &Drawing) {
+pub fn save_tool_default<T: ToolCatalog>(host: &mut dyn PresetHost, drawing: &Drawing<T>) {
     let tool_id = drawing.tool.id();
     host.set_default_style(tool_id, Some(drawing.style));
     host.set_default_config(tool_id, drawing.payload.export_preset());
@@ -87,7 +87,7 @@ pub fn save_tool_default(host: &mut dyn PresetHost, drawing: &Drawing) {
 ///
 /// The named preset itself is kept: this restores the factory *start*, it
 /// does not delete work the trader saved under a name.
-pub fn reset_tool_default(host: &mut dyn PresetHost, tool: DrawingTool) {
+pub fn reset_tool_default<T: ToolCatalog>(host: &mut dyn PresetHost, tool: T) {
     let tool_id = tool.id();
     host.set_default_style(tool_id, None);
     host.set_default_config(tool_id, None);
@@ -97,7 +97,7 @@ pub fn reset_tool_default(host: &mut dyn PresetHost, tool: DrawingTool) {
 /// Whether this tool has anything saved to forget — what the reset control
 /// reads, so it is absent rather than inert when there is nothing to undo.
 #[must_use]
-pub fn has_saved_default(host: &dyn PresetHost, tool: DrawingTool) -> bool {
+pub fn has_saved_default<T: ToolCatalog>(host: &dyn PresetHost, tool: T) -> bool {
     let tool_id = tool.id();
     host.default_style(tool_id).is_some()
         || host.has_default_config(tool_id)
@@ -106,11 +106,11 @@ pub fn has_saved_default(host: &dyn PresetHost, tool: DrawingTool) -> bool {
 
 /// A host with no storage: custom presets are absent, saving reports success
 /// and drops the value. For contexts without a store (tests, previews).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug, Default)]
 pub struct NullPresetHost;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl PresetHost for NullPresetHost {
     fn custom_preset_names(&self, _tool_id: &str) -> Vec<String> {
         Vec::new()

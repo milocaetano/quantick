@@ -4,6 +4,7 @@
 //! for as [`InspectorActions`]; [`body`] lays them out and folds the reports
 //! into the one value the shared applier executes.
 
+use crate::drawings::StyleColor32;
 use eframe::egui;
 
 use super::super::{

@@ -4,25 +4,25 @@
 //! The collection these write into, and the undo history they record through,
 //! live in [`super::collection`].
 
-use super::{
-    ChartPoint, Drawing, DrawingBand, DrawingScope, DrawingTool, Drawings, Duplicated, NewDrawing,
+use crate::{
+    ChartPoint, Drawing, DrawingBand, DrawingScope, Drawings, Duplicated, NewDrawing, ToolCatalog,
 };
 // Named only by the test-side placement shorthands below.
-#[cfg(test)]
-use super::DrawingStyle;
+#[cfg(any(test, feature = "test-support"))]
+use crate::DrawingStyle;
 
-impl Drawings {
+impl<T: ToolCatalog> Drawings<T> {
     /// [`Self::place_with`] with the tool's stock look — the test-side
     /// shorthand; the app always goes through `place_with` to honour the
     /// trader's saved defaults.
-    #[cfg(test)]
-    pub fn place(&mut self, tool: DrawingTool, point: ChartPoint) -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn place(&mut self, tool: T, point: ChartPoint) -> bool {
         self.place_on(tool, &DrawingBand::Price, point)
     }
 
     /// [`Self::place`] on a named band.
-    #[cfg(test)]
-    pub fn place_on(&mut self, tool: DrawingTool, band: &DrawingBand, point: ChartPoint) -> bool {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn place_on(&mut self, tool: T, band: &DrawingBand, point: ChartPoint) -> bool {
         self.place_with(tool, band, point, |tool| NewDrawing {
             style: DrawingStyle::default(),
             payload: tool.default_payload(),
@@ -34,10 +34,10 @@ impl Drawings {
     /// Objects that already exist are never touched by a default changing.
     pub fn place_with(
         &mut self,
-        tool: DrawingTool,
+        tool: T,
         band: &DrawingBand,
         point: ChartPoint,
-        new_drawing: impl FnOnce(DrawingTool) -> NewDrawing,
+        new_drawing: impl FnOnce(T) -> NewDrawing,
     ) -> bool {
         if self.draft.as_ref().is_none_or(|draft| draft.tool != tool) {
             let fresh = new_drawing(tool);
@@ -168,7 +168,7 @@ impl Drawings {
         new_slots: usize,
         slot_of: impl Fn(i64) -> Option<f32>,
     ) {
-        let reanchor_all = |items: &mut [Drawing]| {
+        let reanchor_all = |items: &mut [Drawing<T>]| {
             for drawing in items {
                 drawing.off_series =
                     reanchor_points(&mut drawing.points, (old_slots, new_slots), &slot_of);
@@ -197,7 +197,7 @@ impl Drawings {
     /// switch must not restore a mark that claims to be a level on this
     /// instrument.
     pub fn mark_market_changed(&mut self) {
-        let mark = |items: &mut [Drawing]| {
+        let mark = |items: &mut [Drawing<T>]| {
             for drawing in items {
                 drawing.foreign_market = true;
             }
@@ -243,7 +243,7 @@ impl Drawings {
             return;
         }
         let delta = delta as f32;
-        let shift = |items: &mut Vec<Drawing>| {
+        let shift = |items: &mut Vec<Drawing<T>>| {
             for drawing in items {
                 for point in &mut drawing.points {
                     point.bar += delta;
@@ -323,7 +323,7 @@ impl Drawings {
 /// `old_slots`: each onto its instant's slot, or with no instant by however
 /// many slots the series grew. `true` when an instant is off the new series
 /// (that anchor parks on slot 0).
-pub(crate) fn reanchor_points(
+pub fn reanchor_points(
     points: &mut [ChartPoint],
     (old_slots, new_slots): (usize, usize),
     slot_of: &impl Fn(i64) -> Option<f32>,

@@ -2,6 +2,7 @@ mod pane_model_tests;
 
 use super::bare_canvas::{app_with_history, app_with_history_and_launch};
 use super::*;
+use crate::drawings::StyleColor32;
 use quantick_feed::replay::test_support as replay_test_support;
 mod placement_characterization {
     use super::*;

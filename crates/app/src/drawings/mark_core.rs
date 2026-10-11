@@ -18,6 +18,7 @@
 //!   by the trader. A note about the chart that inflates with the chart has
 //!   quietly become a second series.
 
+use crate::drawings::StyleColor32;
 use eframe::egui;
 
 use super::{DrawContext, DrawingPayload, DrawingStyle, GlyphSize, ToolFamily};

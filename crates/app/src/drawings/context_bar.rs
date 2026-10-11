@@ -20,6 +20,7 @@
 //! one click away. That is also the ceiling — a bar that needs a "more"
 //! button has stopped being a bar.
 
+use crate::drawings::StyleColor32;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use smallvec::SmallVec;

@@ -15,6 +15,7 @@
 //! the write side is [`SharedMarksMut`], the owning pane's store beside the
 //! projection its instants resolve through. Neither holds the pane.
 
+use crate::drawings::StyleColor32;
 use eframe::egui;
 use smallvec::SmallVec;
 
