@@ -249,7 +249,7 @@ pub(in crate::pane) struct TimeStripPass<'a> {
     /// Spans the day separator wrote dates or ticks on; labels stand aside.
     pub reserved: &'a [(f32, f32)],
     /// Dates the day separator wrote; a label in one stays a clock.
-    pub named: &'a [quantick_civil::CivilDate],
+    pub named: &'a [quantick_chart::day_turn::WrittenDate],
 }
 impl TimeStripPass<'_> {
     pub fn paint(&self) {
@@ -546,8 +546,9 @@ fn paint_tape_clock(
     #[allow(clippy::cast_precision_loss)]
     let x_of =
         |instant: i64| strip.left() + geometry.x((instant - start_ms) as f64 / window_ms as f64);
-    // Fed only the labels painted: the first in a new day names it.
-    let mut ticks = quantick_chart::day_turn::TickLabels::new(tz, format, None, &[]);
+    // Fed only the labels painted: the first in a new day names it, seeded
+    // by the window's start so the turn is named once the old day scrolls off.
+    let mut ticks = quantick_chart::day_turn::TickLabels::new(tz, format, Some(start_ms), &[]);
     for instant in quantick_orderflow::lane_time_ticks(end_ms, window_ms, max_labels) {
         let x = x_of(instant);
         let rect = egui::Rect::from_center_size(

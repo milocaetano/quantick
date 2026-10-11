@@ -90,7 +90,9 @@ impl ChartPane {
                 price_claims.extend(on_axis(compass.readout.position.y));
             }
             if compass.time {
-                time_chip = pointer_compass::time_tag(painter, history_strip, &compass.readout);
+                time_chip =
+                    pointer_compass::time_tag(painter, history_strip, &compass.readout, chrome.tz)
+                        .map(|(chip, _)| chip);
             }
         }
         // The armed crosshair writes its own price tag on this axis, on the

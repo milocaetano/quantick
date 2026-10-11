@@ -327,8 +327,50 @@ fn a_turn_is_named_on_the_first_label_painted_in_it() {
 fn a_date_the_separator_wrote_keeps_its_labels_a_clock() {
     let full = TimeLabelFormat::Full;
     let at = OCT_9_1357_UTC;
-    let named = [CivilDate::from_ms(at + DAY_MS, BRT)];
+    let named = [WrittenDate::turn(CivilDate::from_ms(at + DAY_MS, BRT))];
     let mut labels = TickLabels::new(BRT, full, Some(at), &named);
     assert_eq!(labels.label_at(at + DAY_MS), "10:57:03");
     assert_eq!(labels.label_at(at + 2 * DAY_MS), "11");
+}
+
+/// The separator's text covers only what it wrote: `Mon 2` names the day
+/// but not November, and no separator text names the year. `Sun 01 Nov`
+/// does name the month.
+#[test]
+fn a_separator_date_covers_only_what_its_text_names() {
+    let full = TimeLabelFormat::Full;
+    let fri_30_oct = CivilDate::from_ymd(2026, 10, 30).start_ms(BRT);
+    let mon_2_nov = CivilDate::from_ymd(2026, 11, 2).start_ms(BRT) + 9 * HOUR_MS;
+    let named = [WrittenDate::turn(CivilDate::from_ms(mon_2_nov, BRT))];
+    let mut labels = TickLabels::new(BRT, full, Some(fri_30_oct), &named);
+    assert_eq!(labels.label_at(mon_2_nov), "Nov");
+
+    let sun_1_nov = CivilDate::from_ymd(2026, 11, 1);
+    let named = [WrittenDate::turn(sun_1_nov)];
+    let mut labels = TickLabels::new(BRT, full, Some(fri_30_oct), &named);
+    assert_eq!(labels.label_at(sun_1_nov.start_ms(BRT)), "00:00:00");
+
+    let dec_31 = CivilDate::from_ymd(2026, 12, 31).start_ms(BRT);
+    let jan_1 = CivilDate::from_ymd(2027, 1, 1);
+    for written in [WrittenDate::turn(jan_1), WrittenDate::pinned(jan_1)] {
+        let named = [written];
+        let mut labels = TickLabels::new(BRT, full, Some(dec_31), &named);
+        assert_eq!(labels.label_at(jan_1.start_ms(BRT)), "2027");
+    }
+}
+
+/// On a strip too narrow for the full tag, the widest shorter form that is
+/// still true; the short clock when nothing else fits.
+#[test]
+fn the_pointer_tag_falls_back_to_the_widest_form_that_fits() {
+    let fits = |room: usize| move |text: &str| text.len() <= room;
+    let at = OCT_9_1357_UTC;
+    assert_eq!(
+        pointer_time_fitting(at, BRT, fits(40)),
+        "Fri 09 Oct '26 10:57:03"
+    );
+    assert_eq!(pointer_time_fitting(at, BRT, fits(22)), "Fri 09 10:57:03");
+    assert_eq!(pointer_time_fitting(at, BRT, fits(14)), "10:57:03");
+    assert_eq!(pointer_time_fitting(at, BRT, fits(7)), "10:57");
+    assert_eq!(pointer_time_fitting(at, BRT, fits(2)), "10:57");
 }

@@ -4,7 +4,7 @@
 //! with its first bar's open time right of it (`18:24 | Tue 29 09:00`), plus
 //! the date of the leftmost bar pinned to the strip's left edge. The time
 //! labels name a turn by what changed alone (`10`, `Oct`, `2026`), and stay
-//! a clock in a day this layer wrote the date of, so the date is written once:
+//! a clock where this layer's date already says it, so it is written once:
 //! without it a chart spanning midnight says neither the weekday nor when each
 //! session ran.
 //!
@@ -61,7 +61,7 @@ pub(in crate::pane) struct DaySeparatorPass<'a> {
     pub reserved: Vec<(f32, f32)>,
     /// Written here: the dates written on the strip, which the time labels
     /// then leave as clocks rather than name a second time.
-    pub named: Vec<CivilDate>,
+    pub named: Vec<day_turn::WrittenDate>,
 }
 fn day_separator(p: &mut DaySeparatorPass<'_>) {
     let font = egui::FontId::monospace(crate::chart::TIME_LABEL_FONT_PX);
@@ -103,7 +103,7 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
     };
     if let (Some(at), Some(text), Some(date)) = (plan.pinned_at, pinned, p.first_visible) {
         draw(&mut p.reserved, at, job(text, theme::TEXT_MUTED));
-        p.named.push(date);
+        p.named.push(day_turn::WrittenDate::pinned(date));
     }
     for (&(x, turn), tick) in ticks.iter().zip(&plan.ticks) {
         // Under the pointer's chip the chip wins, tick and labels alike.
@@ -133,6 +133,6 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
             dated.append(&opened_suffix(ms, tz), 0.0, format(theme::TEXT_MUTED));
         }
         draw(&mut p.reserved, x + DAY_LABEL_GAP_PX, dated);
-        p.named.push(turn.date);
+        p.named.push(day_turn::WrittenDate::turn(turn.date));
     }
 }

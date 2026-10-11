@@ -111,15 +111,61 @@ pub fn pointer_time_label(ms: i64, tz: TzOffset) -> String {
     )
 }
 
+/// The widest form of the pointer's sub-day tag that `fits`: the full
+/// [`pointer_time_label`], then the weekday and day with the clock
+/// (`Fri 09 10:57:03`), then the clock (`10:57:03`), then the short clock
+/// (`10:57`). Each is true and shorter; a strip too narrow even for the last
+/// gets the last, clipped by the caller.
+#[must_use]
+pub fn pointer_time_fitting(ms: i64, tz: TzOffset, fits: impl Fn(&str) -> bool) -> String {
+    let date = CivilDate::from_ms(ms, tz);
+    let clock = time_label(ms, tz, TimeLabelFormat::Full);
+    let short = time_label(ms, tz, TimeLabelFormat::Short);
+    let (_, _, day) = date.ymd();
+    let dated = format!("{} {day:02} {clock}", weekday_abbr(date.weekday()));
+    [pointer_time_label(ms, tz), dated, clock]
+        .into_iter()
+        .find(|text| fits(text))
+        .unwrap_or(short)
+}
+
+/// A date the day separator wrote on the strip, and whether its text named
+/// the month: the pinned date always does, a turn's only on the 1st. Neither
+/// names the year.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WrittenDate {
+    pub date: CivilDate,
+    pub month: bool,
+}
+
+impl WrittenDate {
+    /// The leftmost bar's date, as [`pinned_text`] writes it.
+    #[must_use]
+    pub fn pinned(date: CivilDate) -> Self {
+        Self { date, month: true }
+    }
+
+    /// A turn's date, as [`day_text`] writes it.
+    #[must_use]
+    pub fn turn(date: CivilDate) -> Self {
+        let (_, _, day) = date.ymd();
+        Self {
+            date,
+            month: day == 1,
+        }
+    }
+}
+
 /// Writes the time strip's labels left to right, as TradingView does: the
 /// first label *painted* in a new local day writes the day (`9`), in a new
 /// month the month (`Oct`), in a new year the year (`2026`); every other
 /// label is the clock in its format.
 ///
 /// Fed only the labels that are painted, so a label skipped for room, for a
-/// chip or for a missing open time never moves the comparison. A date the
-/// day separator already wrote on the strip keeps its labels a clock: one
-/// date, written once.
+/// chip or for a missing open time never moves the comparison. A turn the
+/// day separator already wrote keeps its label a clock, but only when its
+/// text carried what changed: any of its dates covers a day, only one that
+/// named the month covers a month, and none covers a year.
 ///
 /// A turn's name is never wider than the format's
 /// [`sample`](TimeLabelFormat::sample) — four characters at most against the
@@ -131,7 +177,7 @@ pub struct TickLabels<'a> {
     /// The date of the last label painted, or the seed before the first.
     last: Option<CivilDate>,
     /// Dates the day separator wrote on the strip this frame.
-    named: &'a [CivilDate],
+    named: &'a [WrittenDate],
 }
 
 impl<'a> TickLabels<'a> {
@@ -143,7 +189,7 @@ impl<'a> TickLabels<'a> {
         tz: TzOffset,
         format: TimeLabelFormat,
         seed_ms: Option<i64>,
-        named: &'a [CivilDate],
+        named: &'a [WrittenDate],
     ) -> Self {
         Self {
             tz,
@@ -157,25 +203,20 @@ impl<'a> TickLabels<'a> {
     /// label that is painted.
     pub fn label_at(&mut self, ms: i64) -> String {
         let date = CivilDate::from_ms(ms, self.tz);
-        match self.last.replace(date) {
-            Some(before) if before != date && !self.named.contains(&date) => {
-                turn_name(date, before)
-            }
-            _ => time_label(ms, self.tz, self.format),
+        let Some(before) = self.last.replace(date).filter(|before| *before != date) else {
+            return time_label(ms, self.tz, self.format);
+        };
+        let ((year, month, day), (before_year, before_month, _)) = (date.ymd(), before.ymd());
+        let written = self.named.iter().find(|written| written.date == date);
+        if year != before_year {
+            format!("{year:04}")
+        } else if month != before_month && !written.is_some_and(|written| written.month) {
+            month_abbr(month).to_owned()
+        } else if written.is_some() {
+            time_label(ms, self.tz, self.format)
+        } else {
+            day.to_string()
         }
-    }
-}
-
-/// What changed between `before` and `date`: the year, else the month, else
-/// the day.
-fn turn_name(date: CivilDate, before: CivilDate) -> String {
-    let ((year, month, day), (before_year, before_month, _)) = (date.ymd(), before.ymd());
-    if year != before_year {
-        format!("{year:04}")
-    } else if month != before_month {
-        month_abbr(month).to_owned()
-    } else {
-        day.to_string()
     }
 }
 
