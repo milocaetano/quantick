@@ -21,9 +21,22 @@ pub fn rgba_unmultiplied(r: u8, g: u8, b: u8, a: u8) -> PremultipliedRgba {
         0 => TRANSPARENT,
         255 => PremultipliedRgba::from_rgb(r, g, b),
         a => {
-            let alpha_lin = f32::from(a) / 255.0;
-            let [r, g, b] = [r, g, b]
-                .map(|value| gamma_u8_from_linear_f32(linear_f32_from_gamma_u8(value) * alpha_lin));
+            // The renderer's own table: every (channel, alpha) pair answered
+            // once, so a fill on the frame path costs a lookup, not six powf.
+            static LOOKUP: std::sync::OnceLock<Box<[u8; 256 * 256]>> = std::sync::OnceLock::new();
+            let lut = LOOKUP.get_or_init(|| {
+                let mut table = Box::new([0_u8; 256 * 256]);
+                for value in 0..=255_u8 {
+                    for alpha in 0..=255_u8 {
+                        table[usize::from(value) * 256 + usize::from(alpha)] =
+                            gamma_u8_from_linear_f32(
+                                linear_f32_from_gamma_u8(value) * (f32::from(alpha) / 255.0),
+                            );
+                    }
+                }
+                table
+            });
+            let [r, g, b] = [r, g, b].map(|value| lut[usize::from(value) * 256 + usize::from(a)]);
             rgba_premultiplied(r, g, b, a)
         }
     }

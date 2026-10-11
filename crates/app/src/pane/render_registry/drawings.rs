@@ -202,6 +202,8 @@ impl DrawingPass<'_> {
         let chart_rect = band.rect;
         let clipped = painter.with_clip_rect(chart_rect);
         let fonts = TextFonts(painter.ctx());
+        // One buffer for every object of the pass, cleared between them.
+        let mut scene = MarkScene::default();
         for (index, drawing) in self.drawings.items().iter().enumerate() {
             if !self.drawings.is_visible(index) || !bands::drawing_in_band(drawing, band) {
                 continue;
@@ -220,7 +222,7 @@ impl DrawingPass<'_> {
             // the mirrored marks use for the same reason.
             let style = if drawing.off_series || drawing.foreign_market {
                 DrawingStyle {
-                    color: crate::drawings::from_color32(crate::drawings::painted_color(drawing)),
+                    color: quantick_drawings::painted_color(drawing),
                     fill_alpha: 0,
                     ..drawing.style
                 }
@@ -240,7 +242,7 @@ impl DrawingPass<'_> {
                 content_editing: self.content_editing == Some(index),
                 text: &fonts,
             };
-            let mut scene = MarkScene::default();
+            scene.shapes.clear();
             // A locked object shows no resize handles: its geometry is not
             // editable, so the affordance would lie.
             if pass == DrawPass::UnderCandles {

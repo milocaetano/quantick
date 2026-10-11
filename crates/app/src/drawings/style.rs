@@ -43,8 +43,38 @@ pub fn painted_color(drawing: &Drawing) -> egui::Color32 {
 }
 
 /// The egui key a tool's shortcut letter names. Every shortcut a tool
-/// declares is a letter key; a test holds the registry to that.
+/// declares is a letter key; a test holds the registry to that. A match, not
+/// a name lookup: the rail asks this for every tool on every frame.
 #[must_use]
-pub fn shortcut_key(shortcut: ToolShortcut) -> Option<egui::Key> {
-    egui::Key::from_name(&shortcut.key.to_string())
+pub const fn shortcut_key(shortcut: ToolShortcut) -> Option<egui::Key> {
+    use egui::Key;
+    Some(match shortcut.key.to_ascii_uppercase() {
+        'A' => Key::A,
+        'B' => Key::B,
+        'C' => Key::C,
+        'D' => Key::D,
+        'E' => Key::E,
+        'F' => Key::F,
+        'G' => Key::G,
+        'H' => Key::H,
+        'I' => Key::I,
+        'J' => Key::J,
+        'K' => Key::K,
+        'L' => Key::L,
+        'M' => Key::M,
+        'N' => Key::N,
+        'O' => Key::O,
+        'P' => Key::P,
+        'Q' => Key::Q,
+        'R' => Key::R,
+        'S' => Key::S,
+        'T' => Key::T,
+        'U' => Key::U,
+        'V' => Key::V,
+        'W' => Key::W,
+        'X' => Key::X,
+        'Y' => Key::Y,
+        'Z' => Key::Z,
+        _ => return None,
+    })
 }

@@ -286,17 +286,11 @@ impl DrawingController {
         if let Some(edit) = ask.commit_edit_gesture.take() {
             host.record(edit.tab, edit.side, edit.index, edit.before);
         }
-        if ask.toggle_selected_hidden
-            && let Some(index) = host.drawings().selected()
-        {
-            let hidden = host.drawings().items()[index].hidden;
-            host.drawings_mut().set_selected_hidden(!hidden);
+        if ask.toggle_selected_hidden {
+            host.update(DrawingIntent::ToggleHideSelected);
         }
-        if ask.toggle_selected_locked
-            && let Some(index) = host.drawings().selected()
-        {
-            let locked = host.drawings().items()[index].locked;
-            host.drawings_mut().set_selected_locked(!locked);
+        if ask.toggle_selected_locked {
+            host.update(DrawingIntent::ToggleLockSelected);
         }
         if ask.request_delete {
             self.request_delete_selected(host, effects, now);
