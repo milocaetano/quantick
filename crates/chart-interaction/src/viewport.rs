@@ -420,7 +420,11 @@ mod tests {
         viewport.reset_zoom();
         assert_eq!(viewport.px_per_bar(), DEFAULT_PX_PER_BAR);
         viewport.open_at_px_per_bar(1_000.0);
-        assert_eq!(viewport.px_per_bar(), MAX_CANDLE_WIDTH, "the gesture's clamp");
+        assert_eq!(
+            viewport.px_per_bar(),
+            MAX_CANDLE_WIDTH,
+            "the gesture's clamp"
+        );
         viewport.zoom(0.25);
         viewport.set_px_per_bar(20.0);
         viewport.reset_zoom();
