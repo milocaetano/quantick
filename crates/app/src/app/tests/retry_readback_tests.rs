@@ -858,6 +858,9 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 })
             }
             "annotate.drawing_magnet.set" => {
+                // The settings window an earlier row opened would eat the click.
+                app.surfaces.chart_settings.close();
+                run_frame(&mut app, &ctx);
                 let at = app
                     .active_tab()
                     .drawing_pane()
