@@ -402,6 +402,17 @@ mod tests {
     }
 
     #[test]
+    fn a_drawings_own_magnet_survives_the_file_form_and_back() {
+        let off = level(1.0).to_drawing(DrawingId(1)).unwrap();
+        assert!(!off.magnet, "a file without the flag opens with it off");
+        let mut saved = level(1.0);
+        saved.magnet = true;
+        let drawing = saved.to_drawing(DrawingId(1)).unwrap();
+        assert!(drawing.magnet);
+        assert!(SavedDrawing::from_drawing(&drawing).magnet);
+    }
+
+    #[test]
     fn a_shared_drawing_keeps_its_scope() {
         let mut saved = level(1.0);
         saved.shared = true;

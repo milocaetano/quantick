@@ -1356,6 +1356,23 @@ mod tests {
     }
 
     #[test]
+    fn the_magnet_sits_beside_lock_and_only_where_it_snaps() {
+        let cells = slots(PLAIN);
+        let lock = cells.iter().position(|slot| *slot == Slot::Lock).unwrap();
+        assert_eq!(cells[lock + 1], Slot::Magnet);
+        assert_eq!(magnet_control(false).1, "Snap this drawing to OHLC");
+        assert_eq!(magnet_control(true).1, "Stop snapping this drawing to OHLC");
+        let own_rule = slots(Capabilities {
+            magnet: false,
+            ..PLAIN
+        });
+        assert!(
+            !own_rule.contains(&Slot::Magnet),
+            "a tool that snaps by its own rule has no dead magnet"
+        );
+    }
+
+    #[test]
     fn an_unshareable_drawing_has_no_dead_sharing_control() {
         let cells = slots(Capabilities {
             sharing: false,

@@ -495,3 +495,121 @@ fn a_body_drag_holds_still_while_the_axis_rescales() {
         vec![egui::Event::PointerMoved(held), pointer_button(held, false)],
     );
 }
+
+/// Place `id` through `anchors` with the rail's magnet off, then switch on
+/// that object's own magnet and leave the rail's off.
+fn place_with_own_magnet(
+    app: &mut QuantickApp,
+    ctx: &egui::Context,
+    id: &str,
+    anchors: &[egui::Pos2],
+) -> usize {
+    app.toolrail.set_magnet(false);
+    let index = place_drawing(app, ctx, id, anchors);
+    let drawings = &mut app.active_tab_mut().flow_pane.drawings;
+    assert!(!drawings.items()[index].magnet, "an object's magnet opens off");
+    assert!(drawings.set_magnet_at(index, true), "the flag moved");
+    run_frame(app, ctx);
+    assert!(!app.toolrail.magnet(), "the rail's magnet stays off");
+    index
+}
+
+/// The rail's magnet off, a horizontal line with its own magnet on still
+/// lands on the print of the candle it is carried into.
+#[test]
+fn a_horizontal_lines_own_magnet_snaps_its_body_drag_with_the_rail_off() {
+    let (mut app, _commands, ctx) = magnet_app();
+    let at = egui::pos2(bar_x(&app, 52.0), price_y(&app, PaneSide::Flow, 104.3));
+    place_with_own_magnet(&mut app, &ctx, "horizontal-line", &[at]);
+    let grab = egui::pos2(bar_x(&app, 35.0), at.y);
+    let [_, _, low_b, _] = ohlc(61);
+    let to = egui::pos2(
+        bar_x(&app, 61.0),
+        price_y(&app, PaneSide::Flow, low_b + 0.4),
+    );
+    drag_through(&mut app, &ctx, grab, &[to]);
+    assert_eq!(last_points(&app)[0].price, low_b);
+}
+
+/// The same for a rectangle: its body drag puts the nearest edge on the
+/// high, and a handle re-drag puts the corner on the close.
+#[test]
+fn a_rectangles_own_magnet_snaps_its_body_and_handle_drags_with_the_rail_off() {
+    let (mut app, _commands, ctx) = magnet_app();
+    let first = egui::pos2(bar_x(&app, 40.0), price_y(&app, PaneSide::Flow, 104.3));
+    let second = egui::pos2(bar_x(&app, 50.0), price_y(&app, PaneSide::Flow, 101.7));
+    place_with_own_magnet(&mut app, &ctx, "rectangle", &[first, second]);
+    let grab = egui::pos2(bar_x(&app, 45.0), first.y);
+    let [_, high_c, _, _] = ohlc(80);
+    let to = egui::pos2(
+        bar_x(&app, 80.0),
+        price_y(&app, PaneSide::Flow, high_c) - 10.0,
+    );
+    drag_through(&mut app, &ctx, grab, &[to]);
+    let points = last_points(&app);
+    assert_eq!(points[0].price, high_c, "{points:?}");
+
+    let corner = egui::pos2(
+        bar_x(&app, points[1].bar),
+        price_y(&app, PaneSide::Flow, points[1].price),
+    );
+    let [_, _, _, close_d] = ohlc(90);
+    let to = egui::pos2(
+        bar_x(&app, 90.45),
+        price_y(&app, PaneSide::Flow, close_d + 0.4),
+    );
+    drag_chart_with(&mut app, &ctx, corner, to, egui::Modifiers::NONE);
+    let points = last_points(&app);
+    assert_eq!(points[1].price, close_d, "{points:?}");
+    assert_eq!(slot_of(points[1].bar), 90);
+}
+
+/// One object's magnet is that object's: a second line beside it, with
+/// its own off and the rail's off, moves by exactly the pointer's travel.
+#[test]
+fn another_drawing_without_its_own_magnet_stays_free() {
+    let (mut app, _commands, ctx) = magnet_app();
+    let held = egui::pos2(bar_x(&app, 52.0), price_y(&app, PaneSide::Flow, 106.3));
+    place_with_own_magnet(&mut app, &ctx, "horizontal-line", &[held]);
+    let at = egui::pos2(bar_x(&app, 52.0), price_y(&app, PaneSide::Flow, 104.3));
+    let free = place_drawing(&mut app, &ctx, "horizontal-line", &[at]);
+    let free = &app.active_tab().flow_pane.drawings.items()[free];
+    assert!(!free.magnet);
+    let free = free.id;
+    let grab = egui::pos2(bar_x(&app, 35.0), at.y);
+    let [_, _, low_b, _] = ohlc(61);
+    let to = egui::pos2(
+        bar_x(&app, 61.0),
+        price_y(&app, PaneSide::Flow, low_b + 0.4),
+    );
+    drag_through(&mut app, &ctx, grab, &[to]);
+    let drawings = &app.active_tab().flow_pane.drawings;
+    let price = drawings.items()[drawings.index_of(free).unwrap()].points[0].price;
+    assert!((price - (low_b + 0.4)).abs() < 0.02, "{price}");
+}
+
+/// The magnet slot on the selected object's context bar flips that
+/// object's own magnet, and nothing else: the rail's stays where it was.
+#[test]
+fn the_context_bar_flips_the_selected_drawings_own_magnet() {
+    let (mut app, _commands, ctx) = magnet_app();
+    app.toolrail.set_magnet(false);
+    let at = egui::pos2(bar_x(&app, 52.0), price_y(&app, PaneSide::Flow, 104.3));
+    let index = place_drawing(&mut app, &ctx, "horizontal-line", &[at]);
+    run_frame(&mut app, &ctx);
+    for expected in [true, false] {
+        let slot = app
+            .drawings
+            .chrome
+            .context_bar()
+            .magnet_rect()
+            .expect("a pointer-anchored drawing renders the magnet slot");
+        click_chart(&mut app, &ctx, slot.center());
+        run_frame(&mut app, &ctx);
+        assert_eq!(
+            app.active_tab().flow_pane.drawings.items()[index].magnet,
+            expected
+        );
+        assert!(!app.toolrail.magnet(), "the rail's magnet never moves");
+    }
+}
