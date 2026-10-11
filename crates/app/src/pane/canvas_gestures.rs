@@ -103,8 +103,11 @@ impl ChartPane {
                 .and_then(|position| self.hit_test().overlay_plot_at(position))
                 .map(|slot| slot.0);
             let tape = at.is_some_and(over_tape);
+            // The lane divider is a handle, as it is for the drag above:
+            // grabbing it twice is not a request for the chart settings.
             open_settings = !tape
                 && overlay.is_none()
+                && !at.is_some_and(on_divider)
                 && at.is_some_and(|position| self.hit_test().on_bare_candles(position));
             navigate(
                 self,

@@ -4583,7 +4583,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Opens the chart settings window on its Candles or Footprint tab or closes it — the window a double click on the candles, the toolbar's appearance and footprint buttons and the menus open — and applies, saves, deletes or resets candle presets by name. Built-in presets change the candles and keep the canvas; saved presets are written to the candle presets file and restore the whole look. Reset restores the appearance the window opened on and needs the window open.",
+      "description": "Opens the chart settings window on its Candles or Footprint tab or closes it — the window a double click on the candles, the toolbar's appearance and footprint buttons and the menus open — and applies, saves, deletes or resets candle presets by name. Built-in presets change the candles and keep the canvas; saved presets are written to the candle presets file and restore the whole look. Reset restores the appearance the window opened on and needs the window open. A save or delete whose file cannot be written is undone and refused with control.capability_unavailable, retryable.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",

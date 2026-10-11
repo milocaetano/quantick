@@ -8,6 +8,7 @@
 //! effects land on, and one name for both would make the import at the top
 //! of `app.rs` ambiguous to a reader.
 
+use crate::candle_presets::PresetError;
 use crate::chart_layers;
 use crate::footprint_config::FootprintConfig;
 use crate::style::ChartStyle;
@@ -51,47 +52,49 @@ impl LayerWiring<'_> {
 
     /// The control plane's `chart.settings.set`: the same window and the
     /// same preset store the clicks reach, so a named call and a click cannot
-    /// disagree. `Err` carries the refusal sentence.
+    /// disagree — and a style change leaves the same appearance log line a
+    /// click does. `Err` says whether the call was refused or its write
+    /// failed; either way nothing changed.
     pub(crate) fn chart_settings(
         &mut self,
         input: ChartSettingsInput,
-    ) -> Result<ChartSettingsResult, &'static str> {
+    ) -> Result<ChartSettingsResult, PresetError> {
         let settings = &mut *self.chart_settings;
         let window_before = (settings.is_open(), settings.tab());
         let style_before = *self.style;
         let mut list_changed = false;
+        let mut applied_preset = None;
         match input {
-            ChartSettingsInput::Open { tab } => {
-                settings.open(tab);
-                settings.candles.begin(style_before);
-            }
+            ChartSettingsInput::Open { tab } => settings.open(tab, style_before),
             ChartSettingsInput::Close => settings.close(),
             ChartSettingsInput::ApplyCandlePreset { name } => {
-                let (look, _) = settings
-                    .candles
-                    .apply(&name, &style_before)
-                    .ok_or("no built-in or saved candle preset has that name")?;
+                let (look, preset) =
+                    settings
+                        .candles
+                        .apply(&name, &style_before)
+                        .ok_or(PresetError::Refused(
+                            "no built-in or saved candle preset has that name",
+                        ))?;
                 *self.style = look;
+                applied_preset = preset;
             }
             ChartSettingsInput::SaveCandlePreset { name } => {
                 let before = settings.candles.saved(&name);
-                settings
-                    .candles
-                    .save(&name, style_before)
-                    .map_err(|refusal| refusal.message())?;
+                settings.candles.save(&name, style_before)?;
                 list_changed = before != Some(style_before);
             }
             ChartSettingsInput::DeleteCandlePreset { name } => {
                 if crate::style::CandlePreset::from_name(&name).is_some() {
-                    return Err("built-in presets cannot be deleted");
+                    return Err(PresetError::Refused("built-in presets cannot be deleted"));
                 }
-                list_changed = settings.candles.delete(&name);
+                list_changed = settings.candles.delete(&name)?;
             }
             ChartSettingsInput::ResetCandles => {
                 if !settings.candles.in_sitting() {
-                    return Err(
-                        "the chart settings window is closed; reset restores the                                 appearance it opened on",
-                    );
+                    return Err(PresetError::Refused(
+                        "the chart settings window is closed; reset restores the appearance it \
+                         opened on",
+                    ));
                 }
                 if let Some(look) = settings.candles.reset(&style_before) {
                     *self.style = look;
@@ -101,6 +104,9 @@ impl LayerWiring<'_> {
         let style_changed = *self.style != style_before;
         if style_changed {
             *self.style_revision = self.style_revision.saturating_add(1);
+            // A click reaches this line through the window's debounce; a
+            // named call is one discrete change, so it is recorded at once.
+            super::health::emit_style_changed(self.style, *self.style_revision, applied_preset);
         }
         let settings = &*self.chart_settings;
         Ok(ChartSettingsResult {
@@ -116,6 +122,18 @@ impl LayerWiring<'_> {
                 || list_changed
                 || window_before != (settings.is_open(), settings.tab()),
         })
+    }
+
+    /// Open the chart settings at `tab` over the look in force — the door
+    /// the toolbar, the menus and the pane share, so each starts the sitting
+    /// Reset returns to.
+    pub(crate) fn open_settings(&mut self, tab: ChartSettingsTab) {
+        self.chart_settings.open(tab, *self.style);
+    }
+
+    /// The toolbar's flip of the chart settings at `tab`.
+    pub(crate) fn toggle_settings(&mut self, tab: ChartSettingsTab) {
+        self.chart_settings.toggle(tab, *self.style);
     }
 
     /// What a pane's layer menu could not switch itself.
@@ -146,10 +164,10 @@ impl LayerWiring<'_> {
             );
         }
         if actions.open_footprint_settings {
-            self.chart_settings.open(ChartSettingsTab::Footprint);
+            self.open_settings(ChartSettingsTab::Footprint);
         }
         if actions.open_chart_settings {
-            self.chart_settings.open(ChartSettingsTab::Candles);
+            self.open_settings(ChartSettingsTab::Candles);
         }
     }
 

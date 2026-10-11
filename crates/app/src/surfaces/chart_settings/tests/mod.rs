@@ -49,7 +49,7 @@ fn an_untouched_window_reports_no_edit_on_either_tab() {
     let style = ChartStyle::default();
     for tab in ChartSettingsTab::ALL {
         let mut surface = ChartSettingsSurface::default();
-        surface.open(tab);
+        surface.open(tab, style);
         let response = draw(&mut surface, &ctx, &env(&style, Instant::now()));
         assert_eq!(response, SurfaceResponse::default(), "{tab:?}");
         assert!(surface.is_open_on(tab));
@@ -60,31 +60,37 @@ fn an_untouched_window_reports_no_edit_on_either_tab() {
 /// second window, and the toolbar's flip closes only the tab it opens.
 #[test]
 fn every_door_reaches_the_one_window() {
+    let style = ChartStyle::default();
     let mut surface = ChartSettingsSurface::default();
-    surface.open(ChartSettingsTab::Footprint);
+    surface.open(ChartSettingsTab::Footprint, style);
     assert!(surface.is_open_on(ChartSettingsTab::Footprint));
-    surface.toggle(ChartSettingsTab::Candles);
+    surface.toggle(ChartSettingsTab::Candles, style);
     assert!(
         surface.is_open_on(ChartSettingsTab::Candles),
         "flipped to candles"
     );
-    surface.toggle(ChartSettingsTab::Candles);
+    surface.toggle(ChartSettingsTab::Candles, style);
     assert!(!surface.is_open());
     assert_eq!(surface.tab(), ChartSettingsTab::Candles, "remembered");
 }
 
-/// Drawing an open window starts the sitting on the style in force; Reset
-/// returns there however far the chart moved; closing forgets it.
+/// Opening starts the sitting on the style in force, before any frame is
+/// drawn; Reset returns there however far the chart moved; closing forgets
+/// it.
 #[test]
 fn reset_returns_to_the_look_the_window_opened_on() {
     let ctx = egui::Context::default();
     let opened_on = ChartStyle::default();
     let mut surface = ChartSettingsSurface::default();
-    surface.open(ChartSettingsTab::Candles);
-    draw(&mut surface, &ctx, &env(&opened_on, Instant::now()));
+    surface.open(ChartSettingsTab::Candles, opened_on);
     let mut moved = opened_on;
     moved.candles = crate::style::CandlePreset::Glass.style();
     moved.canvas.grid_enabled = !opened_on.canvas.grid_enabled;
+    assert_eq!(
+        surface.candles.reset(&moved),
+        Some(opened_on),
+        "the sitting began at the door, not at the first frame"
+    );
     // A later frame over the moved style does not move the starting point.
     draw(&mut surface, &ctx, &env(&moved, Instant::now()));
     assert_eq!(surface.candles.reset(&moved), Some(opened_on));
@@ -94,8 +100,7 @@ fn reset_returns_to_the_look_the_window_opened_on() {
         None,
         "closing ends the sitting"
     );
-    surface.open(ChartSettingsTab::Footprint);
-    draw(&mut surface, &ctx, &env(&moved, Instant::now()));
+    surface.open(ChartSettingsTab::Footprint, moved);
     assert_eq!(
         surface.candles.reset(&opened_on),
         Some(moved),
@@ -146,7 +151,7 @@ fn closing_from_the_toolbar_still_records_the_edit() {
     let now = Instant::now();
     let mut surface = pending(true, now);
     surface.pending_preset = Some(crate::style::CandlePreset::Classic);
-    surface.toggle(ChartSettingsTab::Candles);
+    surface.toggle(ChartSettingsTab::Candles, style);
     assert!(!surface.is_open());
     let response = draw(&mut surface, &ctx, &env(&style, now));
     assert_eq!(

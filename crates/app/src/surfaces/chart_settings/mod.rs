@@ -38,7 +38,7 @@ use eframe::egui;
 pub(crate) use quantick_control_schema::chart_settings::ChartSettingsTab;
 
 use super::{StyleLogRequest, Surface, SurfaceEnv, SurfaceResponse};
-use crate::style::CandlePreset;
+use crate::style::{CandlePreset, ChartStyle};
 pub(crate) use candles::CandlesTab;
 pub(crate) use footprint::FootprintTab;
 
@@ -118,11 +118,15 @@ impl ChartSettingsSurface {
         self.tab
     }
 
-    /// Put the window on screen at `tab` — every entry point comes through
-    /// here, so a click and a named call cannot disagree about the window.
-    pub fn open(&mut self, tab: ChartSettingsTab) {
+    /// Put the window on screen at `tab` over the chart's `current` look —
+    /// every entry point comes through here, so a click and a named call
+    /// cannot disagree about the window. The Candles sitting starts now, not
+    /// at the next draw, so Reset has the look the window opened on whichever
+    /// door opened it.
+    pub fn open(&mut self, tab: ChartSettingsTab, current: ChartStyle) {
         self.open = true;
         self.tab = tab;
+        self.candles.begin(current);
     }
 
     /// Close the window, ending the sitting. A pending log line is flushed
@@ -135,11 +139,11 @@ impl ChartSettingsSurface {
     }
 
     /// The toolbar's flip: close when already showing `tab`, else show it.
-    pub fn toggle(&mut self, tab: ChartSettingsTab) {
+    pub fn toggle(&mut self, tab: ChartSettingsTab, current: ChartStyle) {
         if self.is_open_on(tab) {
             self.close();
         } else {
-            self.open(tab);
+            self.open(tab, current);
         }
     }
 
@@ -185,13 +189,13 @@ impl Surface for ChartSettingsSurface {
     }
 
     #[cfg(any(feature = "scenario-harness", test))]
-    fn apply_env_hook(&mut self, _env: &SurfaceEnv<'_>) {
+    fn apply_env_hook(&mut self, env: &SurfaceEnv<'_>) {
         let on = |name: &str| crate::hooks::captured::var(name).is_some_and(|value| value == "1");
         if on("QUANTICK_STYLE_PANEL") {
-            self.open(ChartSettingsTab::Candles);
+            self.open(ChartSettingsTab::Candles, *env.style);
         }
         if on("QUANTICK_FOOTPRINT_PANEL") {
-            self.open(ChartSettingsTab::Footprint);
+            self.open(ChartSettingsTab::Footprint, *env.style);
         }
     }
 

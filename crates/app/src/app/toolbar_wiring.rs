@@ -14,7 +14,7 @@ use crate::surfaces::ChartSettingsTab::{Candles, Footprint};
 use crate::tab::CanvasLayout;
 use crate::toolbar::{self, ToolbarAction};
 
-use super::{QuantickApp, TabsMutPort};
+use super::{LayersPort, QuantickApp, TabsMutPort};
 
 // A failed recut still owns older prints after venue paging is exhausted.
 // The history button retries those retained pages through its ordinary action.
@@ -269,11 +269,11 @@ impl QuantickApp {
                 };
                 pane.set_layer_visible(toggle.layer(), shown, &mut Default::default());
             }
-            ToolbarAction::OpenFootprintSettings => self.surfaces.chart_settings.open(Footprint),
+            ToolbarAction::OpenFootprintSettings => self.layer_wiring().open_settings(Footprint),
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
             ToolbarAction::SetLayout(preset) => self.apply_layout_preset(preset),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
-            ToolbarAction::ToggleAppearance => self.surfaces.chart_settings.toggle(Candles),
+            ToolbarAction::ToggleAppearance => self.layer_wiring().toggle_settings(Candles),
             // Every indicator command lands on the focused pane (§11), which
             // is the flow pane whenever the canvas is not split.
             // Adding an indicator by hand is the plainest possible request to

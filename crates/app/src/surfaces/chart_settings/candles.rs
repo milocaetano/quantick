@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use eframe::egui;
 
 use super::{ChartSettingsTab, SettingsTab, TabResponse};
-use crate::candle_presets::{CandlePresetStore, MAX_NAME_LEN, SaveRefusal};
+use crate::candle_presets::{CandlePresetStore, MAX_NAME_LEN, PresetError};
 use crate::candle_view::{StylePanelResponse, draw_presets, draw_style_contents};
 use crate::style::{CandlePreset, ChartStyle, StyleEdit};
 use crate::surfaces::{SurfaceEnv, SurfaceResponse};
@@ -24,8 +24,9 @@ pub(crate) struct CandlesTab {
     presets: CandlePresetStore,
     presets_path: PathBuf,
     name_draft: String,
-    /// Why the last save was refused, shown under the field until the next.
-    refusal: Option<&'static str>,
+    /// Why the last save or delete did not land, shown under the field
+    /// until the next.
+    refusal: Option<String>,
 }
 
 impl Default for CandlesTab {
@@ -44,6 +45,17 @@ impl Default for CandlesTab {
 }
 
 impl CandlesTab {
+    /// A tab whose saved looks live at `presets_path` — for a test that needs
+    /// a file the disk refuses.
+    #[cfg(test)]
+    pub fn with_presets_path(presets_path: PathBuf) -> Self {
+        Self {
+            presets: CandlePresetStore::load(&presets_path),
+            presets_path,
+            ..Self::default()
+        }
+    }
+
     /// Start a sitting on `current`, unless one is under way.
     pub fn begin(&mut self, current: ChartStyle) {
         self.edit.begin(current);
@@ -75,11 +87,9 @@ impl CandlesTab {
     }
 
     /// Save `style` as `name` and write the file. Answers the name it landed
-    /// under.
-    pub fn save(&mut self, name: &str, style: ChartStyle) -> Result<String, SaveRefusal> {
-        let saved = self.presets.insert(name, style)?;
-        self.presets.save(&self.presets_path);
-        Ok(saved)
+    /// under; a refused name or a failed write leaves the list as it was.
+    pub fn save(&mut self, name: &str, style: ChartStyle) -> Result<String, PresetError> {
+        self.presets.save_as(&self.presets_path, name, style)
     }
 
     /// The look saved under `name`, if one is.
@@ -87,13 +97,10 @@ impl CandlesTab {
         self.presets.get(name).copied()
     }
 
-    /// Forget a saved look and write the file; answers whether there was one.
-    pub fn delete(&mut self, name: &str) -> bool {
-        let removed = self.presets.remove(name);
-        if removed {
-            self.presets.save(&self.presets_path);
-        }
-        removed
+    /// Forget a saved look and write the file; answers whether there was
+    /// one. A failed write keeps it.
+    pub fn delete(&mut self, name: &str) -> Result<bool, PresetError> {
+        self.presets.delete(&self.presets_path, name)
     }
 
     /// The name the look answers to, if any.
@@ -109,6 +116,14 @@ impl CandlesTab {
     /// Read the preset file again.
     pub fn reload_presets(&mut self) {
         self.presets = CandlePresetStore::load(&self.presets_path);
+    }
+
+    /// A warning is about the last attempt: a new name typed, or anything
+    /// that then went right, retires it.
+    fn settle(&mut self, moved_on: bool) {
+        if moved_on {
+            self.refusal = None;
+        }
     }
 
     /// The built-ins and the saved looks, one row; Reset beside them.
@@ -132,20 +147,29 @@ impl CandlesTab {
         let current = self.matching(edited);
         ui.horizontal_wrapped(|ui| {
             draw_presets(ui, edited, &mut response);
-            for name in self.custom_names() {
+            let saved = self.custom_names();
+            if !saved.is_empty() {
+                // The trader's own looks, told apart from the built-ins.
+                ui.separator();
+                ui.label(egui::RichText::new("Saved").small().weak());
+            }
+            for name in saved {
                 let selected = current.as_deref() == Some(name.as_str());
                 let label = ui
                     .selectable_label(selected, &name)
-                    .on_hover_text("your saved look · click to load · right-click to delete");
+                    .on_hover_text("your saved look · click to load · right-click for more");
                 if label.clicked()
                     && let Some((look, _)) = self.apply(&name, edited)
                 {
                     *edited = look;
                     response.changed = true;
                 }
-                if label.secondary_clicked() {
-                    self.delete(&name);
-                }
+                label.context_menu(|ui| {
+                    if ui.button("Delete").clicked() {
+                        self.refusal = self.delete(&name).err().map(|error| error.message());
+                        ui.close_menu();
+                    }
+                });
             }
         });
         ui.small(format!(
@@ -153,12 +177,15 @@ impl CandlesTab {
             current.as_deref().unwrap_or("Custom")
         ));
         ui.horizontal(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.name_draft)
-                    .desired_width(150.0)
-                    .char_limit(MAX_NAME_LEN)
-                    .hint_text("name this look"),
-            );
+            let typed = ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.name_draft)
+                        .desired_width(150.0)
+                        .char_limit(MAX_NAME_LEN)
+                        .hint_text("name this look"),
+                )
+                .changed();
+            self.settle(typed);
             let can_save = !self.name_draft.trim().is_empty();
             if ui
                 .add_enabled(can_save, egui::Button::new("save preset"))
@@ -178,7 +205,7 @@ impl CandlesTab {
                 };
             }
         });
-        if let Some(refusal) = self.refusal {
+        if let Some(refusal) = &self.refusal {
             ui.label(egui::RichText::new(refusal).size(10.5).color(theme::WARN));
         }
         response
@@ -205,6 +232,7 @@ impl SettingsTab for CandlesTab {
         ui.separator();
         let body = draw_style_contents(ui, &mut edited);
         let changed = (row.changed || body.changed) && edited != *env.style;
+        self.settle(changed);
         TabResponse {
             surface: SurfaceResponse {
                 style: changed.then_some(edited),
@@ -212,5 +240,26 @@ impl SettingsTab for CandlesTab {
             },
             applied_preset: body.applied_preset.or(row.applied_preset),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_warning_lasts_until_the_trader_moves_on() {
+        let refused = PresetError::from(crate::candle_presets::SaveRefusal::BuiltInName);
+        let mut tab = CandlesTab {
+            refusal: Some(refused.message()),
+            ..CandlesTab::default()
+        };
+        tab.settle(false);
+        assert!(tab.refusal.is_some(), "a quiet frame keeps it");
+        tab.settle(true);
+        assert_eq!(
+            tab.refusal, None,
+            "a new name or a landed change retires it"
+        );
     }
 }

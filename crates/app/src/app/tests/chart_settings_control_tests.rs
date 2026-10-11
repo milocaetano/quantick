@@ -138,6 +138,37 @@ fn the_window_and_the_candle_presets_are_driven_by_name() {
     );
     assert_eq!(reset["changed"], true);
 
+    // A presets file the disk refuses: the save and the delete say so with
+    // a retryable code, and the list stays what the disk holds.
+    let unwritable = gateway_test_directory("chart-settings-unwritable")
+        .join(crate::candle_presets::PRESETS_FILE);
+    std::fs::create_dir_all(unwritable.parent().unwrap()).unwrap();
+    let mut held =
+        crate::surfaces::chart_settings::CandlesTab::with_presets_path(unwritable.clone());
+    held.save("dawn", app.style)
+        .expect("written while the path is a file");
+    std::fs::remove_file(&unwritable).unwrap();
+    std::fs::create_dir_all(&unwritable).unwrap();
+    let working = std::mem::replace(&mut app.surfaces.chart_settings.candles, held);
+    for unwritten in [
+        json!({"action": "save_candle_preset", "name": "dusk"}),
+        json!({"action": "delete_candle_preset", "name": "dawn"}),
+    ] {
+        let refused = settings_call(&mut app, &mut client, unwritten.clone());
+        assert_eq!(
+            error_code(&refused),
+            Some(codes::CAPABILITY_UNAVAILABLE),
+            "{unwritten}"
+        );
+    }
+    assert_eq!(
+        app.surfaces.chart_settings.candles.custom_names(),
+        ["dawn"],
+        "neither change outlived its failed write"
+    );
+    app.surfaces.chart_settings.candles = working;
+    std::fs::remove_dir_all(unwritable.parent().unwrap()).ok();
+
     let deleted = success_result(&settings_call(
         &mut app,
         &mut client,
@@ -186,7 +217,9 @@ fn a_double_click_on_the_candles_opens_the_candles_tab() {
 #[test]
 fn the_footprint_entry_points_open_the_footprint_tab() {
     let (mut app, _commands) = app_with_history(20);
-    app.surfaces.chart_settings.open(ChartSettingsTab::Candles);
+    app.surfaces
+        .chart_settings
+        .open(ChartSettingsTab::Candles, app.style);
     // The pane's layer menu, drained by the window.
     app.workspace.layers_mut().actions.open_footprint_settings = true;
     app.layer_wiring().apply_actions();
@@ -210,5 +243,73 @@ fn the_footprint_entry_points_open_the_footprint_tab() {
         app.surfaces
             .chart_settings
             .is_open_on(ChartSettingsTab::Candles)
+    );
+}
+
+/// A named call that changes the look leaves the same appearance line a
+/// click leaves, naming the built-in it applied; a call that changes nothing
+/// leaves none.
+#[test]
+fn a_named_style_change_leaves_the_appearance_log_line() {
+    use super::control_launch_baselines::RecordedEvents;
+    use quantick_control_schema::chart_settings::ChartSettingsInput;
+    use tracing_subscriber::prelude::*;
+    let recorded = RecordedEvents::default();
+    let subscriber = tracing_subscriber::registry().with(recorded.clone());
+    tracing::subscriber::with_default(subscriber, || {
+        let (mut app, _commands) = app_with_history(20);
+        let call = |app: &mut QuantickApp, input| {
+            app.layer_wiring()
+                .chart_settings(input)
+                .expect("the call lands")
+        };
+        call(
+            &mut app,
+            ChartSettingsInput::Open {
+                tab: ChartSettingsTab::Candles,
+            },
+        );
+        assert!(recorded.named("CANDLE_STYLE_CHANGED").is_empty());
+        call(
+            &mut app,
+            ChartSettingsInput::ApplyCandlePreset {
+                name: "glass".to_owned(),
+            },
+        );
+        let lines = recorded.named("CANDLE_STYLE_CHANGED");
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert_eq!(lines[0]["preset"], CandlePreset::Glass.log_value());
+        assert_eq!(lines[0]["revision"], app.style_revision.to_string());
+        call(&mut app, ChartSettingsInput::ResetCandles);
+        assert_eq!(
+            recorded.named("CANDLE_STYLE_CHANGED").len(),
+            2,
+            "reset is a change too"
+        );
+    });
+}
+
+/// A double click on the lane divider is a grab of the handle, not a request
+/// for the chart settings — the same exclusion the drag makes.
+#[test]
+fn a_double_click_on_the_lane_divider_opens_no_settings() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(200);
+    app.active_tab_mut().tape_mut().set_lane_enabled(true);
+    app.active_tab_mut().tape_mut().record_trade(&trade(201));
+    app.active_tab_mut().tape_mut().flush_for_test();
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    let pane = &app.active_tab().flow_pane;
+    let chart = pane.frame.chart_area.expect("the canvas laid out");
+    let divider = pane.frame.lane_divider_x.expect("the tape lane is visible");
+    // Just on the candles' side of the line, inside the handle.
+    let at = egui::pos2(divider - 1.0, chart.center().y);
+    click_sized(&mut app, &ctx, TEST_WINDOW, at);
+    click_sized(&mut app, &ctx, TEST_WINDOW, at);
+    run_frame_at(&mut app, &ctx, TEST_WINDOW);
+    assert!(
+        !app.surfaces.chart_settings.is_open(),
+        "the double click at {at:?} on the divider at {divider} opened the settings"
     );
 }

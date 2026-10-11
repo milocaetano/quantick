@@ -87,7 +87,7 @@ pub fn descriptor() -> CapabilityDescriptor {
         CHART_SETTINGS_CAPABILITY_ID,
         crate::chart::MODULE_ID,
         "Drive the chart settings window",
-        "Opens the chart settings window on its Candles or Footprint tab or closes it — the window a double click on the candles, the toolbar's appearance and footprint buttons and the menus open — and applies, saves, deletes or resets candle presets by name. Built-in presets change the candles and keep the canvas; saved presets are written to the candle presets file and restore the whole look. Reset restores the appearance the window opened on and needs the window open.",
+        "Opens the chart settings window on its Candles or Footprint tab or closes it — the window a double click on the candles, the toolbar's appearance and footprint buttons and the menus open — and applies, saves, deletes or resets candle presets by name. Built-in presets change the candles and keep the canvas; saved presets are written to the candle presets file and restore the whole look. Reset restores the appearance the window opened on and needs the window open. A save or delete whose file cannot be written is undone and refused with control.capability_unavailable, retryable.",
         "Every action names the state it wants: opening an open window, applying the preset already shown, saving the same look under the same name or resetting an unchanged sitting are harmless, and the result reports the window and the presets as they stand.",
     );
     descriptor.persistence = EffectPersistence::Durable;

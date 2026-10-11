@@ -3,3 +3,8 @@
 # path resolution beside `footprint_presets.rs`; the store itself is headless.
 crates/app +32
 !budget +32
+# Review round: the handler maps a failed preset write to a structured,
+# retryable error, and `LayerWiring` gains the shared settings doors and the
+# appearance log call for named style changes.
+crates/app +19
+!budget +19

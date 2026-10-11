@@ -7,3 +7,11 @@
 # `chart.settings.set` reaches the same window through `LayerWiring`.
 crates/app +401
 !budget +401
+# Review round: a failed preset write is reported as a structured
+# `control.capability_unavailable` instead of `changed: true`, a named style
+# change leaves the appearance log line a click leaves, every door starts the
+# Reset sitting through `LayerWiring::open_settings`, the saved chips gain a
+# "Saved" label and a context menu with an explicit Delete, and the warning
+# clears once the trader moves on. The store rules stay headless.
+crates/app +73
+!budget +73

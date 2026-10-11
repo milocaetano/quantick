@@ -460,13 +460,18 @@ mod tests {
         // built-in's key and an overlong key.
         let overlong = "x".repeat(MAX_NAME_LEN + 1);
         for key in ["night", "  dusk  ", "   ", "Glass", overlong.as_str()] {
-            file.presets.insert(key.to_owned(), StyleFile::from(&look()));
+            file.presets
+                .insert(key.to_owned(), StyleFile::from(&look()));
         }
         std::fs::write(&path, toml::to_string_pretty(&file).unwrap()).unwrap();
 
         let mut loaded = CandlePresetStore::load(&path);
         assert_eq!(loaded.names().collect::<Vec<_>>(), ["dusk", "night"]);
-        assert_eq!(loaded.delete(&path, "dusk"), Ok(true), "a listed name deletes");
+        assert_eq!(
+            loaded.delete(&path, "dusk"),
+            Ok(true),
+            "a listed name deletes"
+        );
         std::fs::remove_file(&path).ok();
     }
 
@@ -480,10 +485,16 @@ mod tests {
         let before = store.clone();
 
         let saved = store.save_as(&path, "day", ChartStyle::default());
-        assert!(matches!(saved, Err(PresetError::NotWritten(_))), "{saved:?}");
+        assert!(
+            matches!(saved, Err(PresetError::NotWritten(_))),
+            "{saved:?}"
+        );
         assert_eq!(store, before, "the save was undone");
         let deleted = store.delete(&path, "night");
-        assert!(matches!(deleted, Err(PresetError::NotWritten(_))), "{deleted:?}");
+        assert!(
+            matches!(deleted, Err(PresetError::NotWritten(_))),
+            "{deleted:?}"
+        );
         assert_eq!(store, before, "the delete was undone");
         assert_eq!(
             store.save_as(&path, "Glass", look()),
