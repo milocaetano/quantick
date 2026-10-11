@@ -350,7 +350,7 @@ pub struct FootprintConfig {
     /// arrive at narrower candles and the numbers sit tighter; above 1 they
     /// wait for more room. Clamped to [`DETAIL_SCALE_RANGE`]: the low end
     /// still fits the digits it draws, and no level ever waits past the
-    /// deepest zoom.
+    /// deepest zoom - above about 3 the numbers simply wait for it.
     pub detail_scale: f32,
     /// The candle width, in pixels, at which Compact (one summary number per
     /// row) starts — zooming in it appears there, zooming out it leaves
@@ -469,10 +469,11 @@ impl FootprintConfig {
 /// the file guard and the settings window's slider.
 pub const PROFILE_ROW_PX_RANGE: std::ops::RangeInclusive<f32> = 2.0..=10.0;
 
-/// The bounds [`FootprintConfig::number_row_px`] is clamped to. The low end is
-/// the ladder's 7 px font plus a pixel - under it digits overlap the next
-/// row; past 16 px rows merge so early the numbers stop being per price.
-pub const NUMBER_ROW_PX_RANGE: std::ops::RangeInclusive<f32> = 8.0..=16.0;
+/// The bounds [`FootprintConfig::number_row_px`] is clamped to. The low end
+/// keeps Compact's floor (a pixel under it) a pixel above the ladder's 7 px
+/// font - under that digits overlap the next row; past 16 px rows merge so
+/// early the numbers stop being per price.
+pub const NUMBER_ROW_PX_RANGE: std::ops::RangeInclusive<f32> = 9.0..=16.0;
 
 /// The bounds [`FootprintConfig::detail_scale`] is clamped to.
 ///
@@ -482,7 +483,9 @@ pub const NUMBER_ROW_PX_RANGE: std::ops::RangeInclusive<f32> = 8.0..=16.0;
 /// crowd their neighbour — and 0.8 is as far as that stays a chart rather
 /// than a smear. The ceiling is generous: waiting longer for detail costs
 /// nothing but zoom, and a level that would wait past the deepest zoom
-/// arrives there instead (`footprint_lod::detailed_entry_width`).
+/// arrives there instead (`footprint_lod::detailed_entry_width`). Past about
+/// 3 every style's numbers wait for the deepest zoom, so the entry widths
+/// stop mattering there - the trader asked for the reach anyway.
 pub const DETAIL_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.8..=6.0;
 
 /// The bounds [`FootprintConfig::compact_from_px`] is clamped to. The low end
@@ -708,19 +711,11 @@ pub fn resolve(file: FootprintFile) -> FootprintConfig {
             .stacked_count
             .filter(|count| *count >= 2)
             .unwrap_or(defaults.stacked_count),
-        profile_row_px: file
-            .profile_row_px
-            .map(|px| (px as f32).clamp(*PROFILE_ROW_PX_RANGE.start(), *PROFILE_ROW_PX_RANGE.end()))
-            .filter(|px| px.is_finite())
+        profile_row_px: clamped_px(file.profile_row_px, &PROFILE_ROW_PX_RANGE)
             .unwrap_or(defaults.profile_row_px),
         number_row_px: clamped_px(file.number_row_px, &NUMBER_ROW_PX_RANGE)
             .unwrap_or(defaults.number_row_px),
-        detail_scale: file
-            .detail_scale
-            .map(|scale| {
-                (scale as f32).clamp(*DETAIL_SCALE_RANGE.start(), *DETAIL_SCALE_RANGE.end())
-            })
-            .filter(|scale| scale.is_finite())
+        detail_scale: clamped_px(file.detail_scale, &DETAIL_SCALE_RANGE)
             .unwrap_or(defaults.detail_scale),
         compact_from_px,
         detailed_from_px,
@@ -745,7 +740,7 @@ pub fn resolve(file: FootprintFile) -> FootprintConfig {
     config
 }
 
-/// A pixel width from the file, clamped to `range`; `None` when absent or
+/// A pixel width (or the detail scale) from the file, clamped to `range`; `None` when absent or
 /// not a number, so the default stands.
 fn clamped_px(value: Option<f64>, range: &std::ops::RangeInclusive<f32>) -> Option<f32> {
     value
@@ -794,7 +789,14 @@ mod tests {
         let defaults = FootprintConfig::default();
         assert_eq!(
             defaults.row_floors(),
-            quantick_chart::footprint_lod::RowFloors::from(defaults.profile_row_px)
+            quantick_chart::footprint_lod::RowFloors::new(
+                defaults.profile_row_px,
+                quantick_chart::footprint_lod::DETAILED_MIN_ROW
+            )
+        );
+        assert_eq!(
+            defaults.row_floors().compact,
+            quantick_chart::footprint_lod::COMPACT_MIN_ROW
         );
         let config = resolve(toml::from_str("number_row_px = 2.0").unwrap());
         assert_eq!(config.number_row_px, *NUMBER_ROW_PX_RANGE.start());

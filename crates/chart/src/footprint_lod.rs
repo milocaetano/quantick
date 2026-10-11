@@ -15,7 +15,7 @@ pub use crate::constants::{
     LEVEL_ENTRY_MARGIN, MARKS_MIN_WIDTH, PROFILE_MIN_WIDTH, QUANTITY_GLYPHS, QUANTITY_PADDING_PX,
     QUANTITY_PX, TYPICAL_BODY_FRAC,
 };
-use crate::constants::{LEVEL_HYSTERESIS, PROFILE_HYSTERESIS};
+use crate::constants::{LEVEL_HYSTERESIS, MAX_SPLIT_HINT_STRETCH, PROFILE_HYSTERESIS};
 
 /// How much detail the current zoom supports. Ordered: more detail is greater.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -39,9 +39,8 @@ pub enum DetailLevel {
 ///
 /// Profile's floor is the trader's band fineness; the two text levels share
 /// one configured floor, Compact a pixel under Detailed as the constants have
-/// it. A bare `f32` is the Profile floor with the text floors at their
-/// defaults, which is what every caller before the text floor became a
-/// setting meant.
+/// it. Always passed whole, so no caller falls back to a default floor
+/// silently.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RowFloors {
     /// Profile's band floor.
@@ -56,7 +55,7 @@ impl RowFloors {
     /// The floors from the two settings: `profile_row_px` for the bands and
     /// `number_row_px` for Detailed, Compact keeping its one-pixel lead.
     #[must_use]
-    pub fn new(profile_row_px: f32, number_row_px: f32) -> Self {
+    pub const fn new(profile_row_px: f32, number_row_px: f32) -> Self {
         Self {
             profile: profile_row_px,
             compact: number_row_px - (DETAILED_MIN_ROW - COMPACT_MIN_ROW),
@@ -72,12 +71,6 @@ impl RowFloors {
             DetailLevel::Compact => self.compact,
             _ => self.profile,
         }
-    }
-}
-
-impl From<f32> for RowFloors {
-    fn from(profile_row_px: f32) -> Self {
-        Self::new(profile_row_px, DETAILED_MIN_ROW)
     }
 }
 
@@ -104,11 +97,10 @@ impl LevelMemory {
         &mut self,
         candle_width: f32,
         base_row_px: f32,
-        floors: impl Into<RowFloors>,
+        floors: RowFloors,
         compact_min: f32,
         detailed_min: f32,
     ) -> DetailLevel {
-        let floors = floors.into();
         let by_row = |factor: f32| {
             level_for(
                 f32::INFINITY,
@@ -210,11 +202,10 @@ impl LevelMemory {
 pub fn level_for(
     candle_width: f32,
     base_row_px: f32,
-    floors: impl Into<RowFloors>,
+    floors: RowFloors,
     compact_min: f32,
     detailed_min: f32,
 ) -> DetailLevel {
-    let floors = floors.into();
     let row_reachable = |min_row: f32| display_multiple(base_row_px, min_row).is_some();
     if candle_width >= detailed_min && row_reachable(floors.detailed) {
         DetailLevel::Detailed
@@ -231,19 +222,18 @@ pub fn level_for(
 
 /// Where a style's Detailed starts, in the floors' units: the trader's ladder
 /// entry width (`detailed_from_px`) carried to the style by its typographic
-/// floor's ratio to the ladder's, so one setting moves every style. Never
-/// under the style's own `typographic` floor, so a setting cannot promise a
-/// level whose text does not fit; and a width past the deepest zoom
+/// floor's ratio to the ladder's, so one setting moves every style, never
+/// under the style's own `typographic` floor. A width past the deepest zoom
 /// `detail_scale` allows is answered at that zoom instead, so a style the
-/// registry offers stays drawable. That cap never undercuts the text: the
-/// floors' units are on-screen pixels over the scale, so above a scale of 1
-/// the typographic floor on screen is `typographic / detail_scale` in them,
-/// and the deepest zoom always clears it.
+/// registry offers stays drawable; in on-screen pixels that is the zoom
+/// ceiling itself, which every style's floor fits under
+/// (`every_style_is_reachable_at_some_zoom_and_every_detail_scale`). So
+/// past a scale of about 3 every style waits for the deepest zoom and the
+/// entry widths stop mattering.
 #[must_use]
 pub fn detailed_entry_width(typographic: f32, detailed_from_px: f32, detail_scale: f32) -> f32 {
     let configured = (typographic * detailed_from_px / DETAILED_MIN_WIDTH).max(typographic);
-    let legible = typographic / detail_scale.max(1.0);
-    configured.min(deepest_width(detail_scale).max(legible))
+    configured.min(deepest_width(detail_scale))
 }
 
 /// Where Compact starts, in the floors' units: the trader's
@@ -264,13 +254,19 @@ fn deepest_width(detail_scale: f32) -> f32 {
 }
 
 /// How many times taller the rows must draw before each capture-grid row is
-/// its own row, for the legend's "single rows at N× height": `None` when rows
-/// are not merged (`k` of 1) or the stretch left is under 5%, a nudge the
-/// trader would not act on.
+/// its own row, for the legend's "single rows at N× height", rounded up to a
+/// tenth. The last merge only lets go once the single row clears its floor by
+/// [`LevelMemory::resolve_multiple`]'s dead band, so the stretch named is
+/// that one, not the bare floor. `None` when rows are not merged, when `k`
+/// is the coarsest-snap fallback (`None` from `resolve_multiple`: no stretch
+/// the hint could name honestly), or past [`MAX_SPLIT_HINT_STRETCH`].
 #[must_use]
-pub fn height_to_split(k: i64, base_row_px: f32, min_row_px: f32) -> Option<f32> {
-    let taller = min_row_px / base_row_px;
-    (k > 1 && base_row_px > 0.0 && taller > 1.05).then_some(taller)
+pub fn height_to_split(k: Option<i64>, base_row_px: f32, min_row_px: f32) -> Option<f32> {
+    if k? <= 1 || base_row_px <= 0.0 {
+        return None;
+    }
+    let taller = (min_row_px * LEVEL_HYSTERESIS / base_row_px * 10.0).ceil() / 10.0;
+    (taller > 1.0 && taller <= MAX_SPLIT_HINT_STRETCH).then_some(taller)
 }
 
 /// The smallest snap multiple whose rows reach `min_row_px`, or `None` when
@@ -287,6 +283,9 @@ pub fn display_multiple(base_row_px: f32, min_row_px: f32) -> Option<i64> {
 mod tests {
     use super::*;
 
+    /// The default floors, as the settings ship them.
+    const FLOORS: RowFloors = RowFloors::new(4.0, DETAILED_MIN_ROW);
+
     /// One wheel notch: 50 px of scroll at the chart's `SCROLL_ZOOM_PX` of
     /// 300 zooms by 2^(50/300).
     const WHEEL_STEP: f32 = 1.122_462;
@@ -299,7 +298,7 @@ mod tests {
         let widths: Vec<f32> = (0..30).map(|i| 4.0 * WHEEL_STEP.powi(i)).collect();
         let detailed = DETAILED_FROM_PX;
         let mut memory = LevelMemory::default();
-        let mut zoom = |width: f32| memory.resolve(width, 12.0, 4.0, COMPACT_FROM_PX, detailed);
+        let mut zoom = |width: f32| memory.resolve(width, 12.0, FLOORS, COMPACT_FROM_PX, detailed);
         let entering: Vec<DetailLevel> = widths.iter().map(|w| zoom(*w)).collect();
         let mut leaving: Vec<DetailLevel> = widths.iter().rev().map(|w| zoom(*w)).collect();
         leaving.reverse();
@@ -319,7 +318,7 @@ mod tests {
         let detailed = DETAILED_FROM_PX;
         let mut memory = LevelMemory::default();
         let mut at = |width: f32, share: f32| {
-            memory.resolve(width, row(share), 4.0, COMPACT_FROM_PX, detailed)
+            memory.resolve(width, row(share), FLOORS, COMPACT_FROM_PX, detailed)
         };
         assert_eq!(at(detailed * 1.2, 1.5), DetailLevel::Detailed);
         assert_eq!(at(detailed * 1.2, 0.95), DetailLevel::Detailed);
@@ -348,7 +347,6 @@ mod tests {
         // The setting at its default is exactly the old fixed floors, so a
         // trader who never touches it sees the same bars.
         let floors = RowFloors::new(4.0, DETAILED_MIN_ROW);
-        assert_eq!(floors, RowFloors::from(4.0));
         assert!((floors.detailed - DETAILED_MIN_ROW).abs() < f32::EPSILON);
         assert!((floors.compact - COMPACT_MIN_ROW).abs() < f32::EPSILON);
         assert!((floors.for_level(DetailLevel::Profile) - 4.0).abs() < f32::EPSILON);
@@ -356,13 +354,13 @@ mod tests {
 
     #[test]
     fn a_finer_number_floor_splits_rows_at_the_same_row_height() {
-        // Same 8 px per tick: the default floor merges two ticks per row, an
-        // 8 px floor gives each tick its own row - twice the rows on screen.
+        // Same 9 px per tick: the default floor merges two ticks per row, a
+        // 9 px floor gives each tick its own row - twice the rows on screen.
         let coarse = RowFloors::new(4.0, DETAILED_MIN_ROW);
-        let fine = RowFloors::new(4.0, 8.0);
+        let fine = RowFloors::new(4.0, 9.0);
         for level in [DetailLevel::Detailed, DetailLevel::Compact] {
-            assert_eq!(display_multiple(8.0, coarse.for_level(level)), Some(2));
-            assert_eq!(display_multiple(8.0, fine.for_level(level)), Some(1));
+            assert_eq!(display_multiple(9.0, coarse.for_level(level)), Some(2));
+            assert_eq!(display_multiple(9.0, fine.for_level(level)), Some(1));
         }
         // And the level itself arrives at a shorter row.
         let rows = DETAILED_MIN_ROW / *GROUP_SNAP.last().unwrap() as f32 * 0.8;
@@ -373,15 +371,36 @@ mod tests {
 
     #[test]
     fn merged_rows_name_the_stretch_that_splits_them() {
-        assert_eq!(height_to_split(2, 6.0, 12.0), Some(2.0));
-        assert_eq!(height_to_split(1, 6.0, 12.0), None);
-        assert_eq!(height_to_split(2, 11.9, 12.0), None);
-        assert_eq!(height_to_split(2, 0.0, 12.0), None);
+        // 6 px rows under a 12 px floor merge two at a time; the hint names
+        // the stretch past the dead band, and at exactly that stretch the
+        // held multiple lets go - one notch short, it still holds.
+        let mut memory = LevelMemory::default();
+        assert_eq!(memory.resolve_multiple(6.0, 12.0), Some(2));
+        let taller = height_to_split(Some(2), 6.0, 12.0).unwrap();
+        assert!((taller - 2.3).abs() < 1e-4, "{taller}");
+        assert_eq!(memory.resolve_multiple(6.0 * 2.0, 12.0), Some(2));
+        assert_eq!(memory.resolve_multiple(6.0 * taller, 12.0), Some(1));
+        // Not merged, or nothing to measure: no hint.
+        assert_eq!(height_to_split(Some(1), 6.0, 12.0), None);
+        assert_eq!(height_to_split(Some(2), 0.0, 12.0), None);
+        // A held merge inside the dead band still names a stretch.
+        assert!(height_to_split(Some(2), 12.5, 12.0).is_some());
+    }
+
+    #[test]
+    fn the_split_hint_only_names_a_reachable_stretch() {
+        // The coarsest-snap fallback has no honest answer.
+        assert_eq!(height_to_split(None, 0.0001, 12.0), None);
+        // A stretch past the bound is not a nudge the hint should promise.
+        let past = 12.0 * LEVEL_HYSTERESIS / (MAX_SPLIT_HINT_STRETCH + 1.0);
+        assert_eq!(height_to_split(Some(20), past, 12.0), None);
+        let within = 12.0 * LEVEL_HYSTERESIS / (MAX_SPLIT_HINT_STRETCH - 1.0);
+        assert!(height_to_split(Some(2), within, 12.0).is_some());
     }
 
     #[test]
     fn a_wide_detail_scale_caps_every_entry_at_the_deepest_zoom() {
-        // A style whose text floor is past the deepest zoom at a wide scale is
+        // A style whose entry is past the deepest zoom at a wide scale is
         // answered at that zoom: on screen that is the full ceiling, wider
         // than the text needs, so the style stays reachable and legible.
         let scale = 6.0;

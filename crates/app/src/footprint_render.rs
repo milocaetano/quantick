@@ -44,7 +44,7 @@ use quantick_chart::footprint_lod::{
 #[cfg(test)]
 use quantick_chart::footprint_lod::{
     COMPACT_FROM_PX, COMPACT_MIN_WIDTH, DETAILED_FROM_PX, DETAILED_MIN_ROW, DETAILED_MIN_WIDTH,
-    LEVEL_ENTRY_MARGIN, MARKS_MIN_WIDTH, level_for,
+    LEVEL_ENTRY_MARGIN, MARKS_MIN_WIDTH, RowFloors, level_for,
 };
 use quantick_chart::footprint_projection::{
     ADAPTIVE_FLOOR_BARS, ZoneMark, adaptive_min_qty, bar_delta, coalesce_zones, fmt_delta, fmt_qty,
@@ -113,10 +113,10 @@ fn detailed_min_width_for(style: FootprintStyle, columns: f32) -> f32 {
     (text + furniture) / TYPICAL_BODY_FRAC
 }
 
-/// The Profile floor moved into config (`profile_row_px`, same default);
-/// the constant stays as the tests' reference value for that default.
+/// The row floors moved into config (`profile_row_px`, `number_row_px`,
+/// same defaults); the constant stays as the tests' reference value.
 #[cfg(test)]
-const PROFILE_MIN_ROW: f32 = 4.0;
+const DEFAULT_FLOORS: RowFloors = RowFloors::new(4.0, DETAILED_MIN_ROW);
 
 /// Hard cap of painted cells per frame, the heatmap's own budget: beyond it
 /// the layer stops and the legend says "capped" instead of eating the frame.
@@ -353,7 +353,7 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     if plan.level == DetailLevel::Off {
         // Nothing to compute and nothing to draw — but the legend still
         // explains the silence, or an enabled layer reads as broken.
-        plan.into_legend(1, Decimal::ZERO).draw(frame);
+        plan.into_legend(1, Decimal::ZERO, None).draw(frame);
         return;
     }
     let pass = LayerPass::new(frame, &plan, lod);
@@ -363,7 +363,7 @@ pub fn draw_layer(frame: &LayerFrame<'_>, lod: &mut FootprintLod) {
     let cells_left = pass.paint_bars(&ladders.rows, heat);
     pass.paint_delta_totals();
 
-    let mut legend = plan.into_legend(pass.k, pass.min_qty);
+    let mut legend = plan.into_legend(pass.k, pass.min_qty, pass.split_hint);
     legend.aggregated_any = ladders.aggregated_any;
     legend.capped = cells_left == 0;
     legend.zones_dropped = zones_dropped;
@@ -464,12 +464,12 @@ impl LayerPlan {
     }
 
     /// The legend for this plan at display multiple `k`, with no notes yet.
-    fn into_legend(self, k: i64, min_qty: Decimal) -> Legend {
+    fn into_legend(self, k: i64, min_qty: Decimal, split_hint: Option<f32>) -> Legend {
         Legend {
             level: self.level,
             style: self.style,
             group: self.group,
-            base_row_px: self.base_row_px,
+            split_hint,
             k,
             min_qty,
             aggregated_any: false,
@@ -501,6 +501,8 @@ struct LayerPass<'p, 'f> {
     k: i64,
     /// One display row's height in price.
     row_group_f: f64,
+    /// The legend's "single rows at N× height", when rows are merged.
+    split_hint: Option<f32>,
     ratio: Decimal,
     min_qty: Decimal,
 }
@@ -510,10 +512,11 @@ impl<'p, 'f> LayerPass<'p, 'f> {
         // The configured floors: band fineness for the profile, the number-row
         // height for the text levels - the trader's "more, thinner rows".
         let min_row = frame.config.row_floors().for_level(plan.level);
-        let k = lod
-            .levels
-            .resolve_multiple(plan.base_row_px, min_row)
-            .unwrap_or(GROUP_SNAP[GROUP_SNAP.len() - 1]);
+        let resolved = lod.levels.resolve_multiple(plan.base_row_px, min_row);
+        let split_hint = (plan.level >= DetailLevel::Profile)
+            .then(|| height_to_split(resolved, plan.base_row_px, min_row))
+            .flatten();
+        let k = resolved.unwrap_or(GROUP_SNAP[GROUP_SNAP.len() - 1]);
         let min_qty = match frame.config.imbalance_min_qty {
             Some(pinned) => pinned,
             None => lod.adaptive_floor(frame.footprints.len(), plan.group, || {
@@ -526,6 +529,7 @@ impl<'p, 'f> LayerPass<'p, 'f> {
             style: plan.style,
             k,
             row_group_f: plan.group_f * k as f64,
+            split_hint,
             ratio: frame.config.imbalance_ratio,
             min_qty,
         }
@@ -739,8 +743,8 @@ struct Legend {
     level: DetailLevel,
     style: FootprintStyle,
     group: Decimal,
-    /// One capture-grid row's height on screen, in pixels.
-    base_row_px: f32,
+    /// How much taller merged rows must draw to split (`height_to_split`).
+    split_hint: Option<f32>,
     k: i64,
     min_qty: Decimal,
     /// A cap-coarsened ladder was hidden.
@@ -758,7 +762,7 @@ impl Legend {
             level,
             style,
             group,
-            base_row_px,
+            split_hint,
             k,
             min_qty,
             aggregated_any,
@@ -804,10 +808,7 @@ impl Legend {
         text.push_str(&format!(" · rows {effective}"));
         // Merged rows say how much taller the candles must get to split them,
         // the height twin of the width hint above.
-        let floor = frame.config.row_floors().for_level(level);
-        if level >= DetailLevel::Profile
-            && let Some(taller) = height_to_split(k, base_row_px, floor)
-        {
+        if let Some(taller) = split_hint {
             text.push_str(&format!(" · single rows at {taller:.1}× height"));
         }
         // The imbalance floor in force, spoken like the rows are: a highlight
@@ -959,7 +960,7 @@ mod tests {
             level_for(
                 100.0,
                 12.0,
-                PROFILE_MIN_ROW,
+                DEFAULT_FLOORS,
                 COMPACT_MIN_WIDTH,
                 ladder_detailed_min_width()
             ),
@@ -970,7 +971,7 @@ mod tests {
             level_for(
                 100.0,
                 0.2,
-                PROFILE_MIN_ROW,
+                DEFAULT_FLOORS,
                 COMPACT_MIN_WIDTH,
                 ladder_detailed_min_width()
             ),
@@ -983,7 +984,7 @@ mod tests {
             level_for(
                 100.0,
                 0.05,
-                PROFILE_MIN_ROW,
+                DEFAULT_FLOORS,
                 COMPACT_MIN_WIDTH,
                 ladder_detailed_min_width()
             ),
@@ -993,7 +994,7 @@ mod tests {
             level_for(
                 100.0,
                 0.0006,
-                PROFILE_MIN_ROW,
+                DEFAULT_FLOORS,
                 COMPACT_MIN_WIDTH,
                 ladder_detailed_min_width()
             ),
@@ -1003,7 +1004,7 @@ mod tests {
             level_for(
                 100.0,
                 0.0003,
-                PROFILE_MIN_ROW,
+                DEFAULT_FLOORS,
                 COMPACT_MIN_WIDTH,
                 ladder_detailed_min_width()
             ),
@@ -1025,7 +1026,7 @@ mod tests {
                 level_for(
                     width,
                     12.0,
-                    PROFILE_MIN_ROW,
+                    DEFAULT_FLOORS,
                     COMPACT_MIN_WIDTH,
                     ladder_detailed_min_width()
                 ),
@@ -1519,14 +1520,14 @@ mod tests {
             let plain = level_for(
                 width,
                 12.0,
-                PROFILE_MIN_ROW,
+                DEFAULT_FLOORS,
                 COMPACT_MIN_WIDTH,
                 ladder_detailed_min_width(),
             );
             let scaled = level_for(
                 width / tight,
                 12.0,
-                PROFILE_MIN_ROW,
+                DEFAULT_FLOORS,
                 COMPACT_MIN_WIDTH,
                 ladder_detailed_min_width(),
             );
@@ -1568,7 +1569,7 @@ mod tests {
         let mut lod = FootprintLod::default();
         let mut at = |width: f32| {
             lod.levels
-                .resolve(width, 12.0, PROFILE_MIN_ROW, COMPACT_MIN_WIDTH, floor)
+                .resolve(width, 12.0, DEFAULT_FLOORS, COMPACT_MIN_WIDTH, floor)
         };
         // Width carries no dead band: the level a width shows does not
         // depend on the direction it was reached from.
@@ -1596,7 +1597,7 @@ mod tests {
             lod.levels.resolve(
                 100.0,
                 row(share),
-                PROFILE_MIN_ROW,
+                DEFAULT_FLOORS,
                 COMPACT_MIN_WIDTH,
                 ladder_detailed_min_width(),
             )
@@ -1623,7 +1624,7 @@ mod tests {
             lod.levels.resolve(
                 width,
                 12.0,
-                PROFILE_MIN_ROW,
+                DEFAULT_FLOORS,
                 COMPACT_MIN_WIDTH,
                 ladder_detailed_min_width(),
             )
@@ -1685,7 +1686,7 @@ mod tests {
             lod.levels.resolve(
                 width,
                 12.0,
-                PROFILE_MIN_ROW,
+                DEFAULT_FLOORS,
                 config.compact_entry_width(),
                 detailed,
             )
@@ -1713,7 +1714,7 @@ mod tests {
             lod.levels.resolve(
                 100.0,
                 0.0001,
-                PROFILE_MIN_ROW,
+                DEFAULT_FLOORS,
                 COMPACT_MIN_WIDTH,
                 ladder_detailed_min_width()
             ),
@@ -1724,7 +1725,7 @@ mod tests {
             lod.levels.resolve(
                 100.0,
                 12.0,
-                PROFILE_MIN_ROW,
+                DEFAULT_FLOORS,
                 COMPACT_MIN_WIDTH,
                 ladder_detailed_min_width()
             ),

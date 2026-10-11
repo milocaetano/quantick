@@ -81,10 +81,13 @@ approximate for the ladder style at `detail_scale = 1` and the default entry
 widths; row floors use the default configuration. The settings window names
 the two gates by axis: *Price rows by height* holds `profile_row_px` ("min
 band height") and `number_row_px` ("min number row height", Detailed's floor,
-Compact a pixel under it, 8-16 px); *Detail by candle width* holds
-`detail_scale` ("candle width for numbers", 0.8-6) and the two entry widths.
-Merged rows put `single rows at N× height` in the legend, beside the width
-hint `numbers at N× this width`.
+Compact a pixel under it, 9-16 px); *Detail by candle width* holds
+`detail_scale` ("candle width for numbers", 0.8-6) and the two entry widths;
+above a scale of about 3 every style's numbers wait for the deepest zoom and
+the entry widths stop mattering. Merged rows put `single rows at N× height`
+in the legend - the stretch that clears the row dead band, omitted past 10×
+or when even the coarsest grouping is too thin - beside the width hint
+`numbers at N× this width`.
 
 | Level | Candle width | Row height | Draws |
 | --- | --- | --- | --- |

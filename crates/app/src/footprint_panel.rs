@@ -340,8 +340,9 @@ impl DetailSection<'_> {
                 "how wide a candle must be before each detail level appears. \
                  1.0 = the numbers just fit; lower shows them on narrower \
                  candles but crowded, higher waits for wider candles with \
-                 roomier text. The legend says how much wider to zoom whenever \
-                 numbers are not showing yet",
+                 roomier text. Above about 3 the numbers wait for the deepest \
+                 zoom and the px widths below stop mattering. The legend says \
+                 how much wider to zoom whenever numbers are not showing yet",
             )
             .changed();
         let mut entry = |px: &mut f32, range, text, hover| {

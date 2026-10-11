@@ -52,7 +52,7 @@
 #profile_row_px = 4.0
 
 # The shortest a row with numbers may draw, in pixels, before neighbouring
-# prices merge (default 12.0, clamped 8-16; the one-number level keeps a
+# prices merge (default 12.0, clamped 9-16; the one-number level keeps a
 # pixel under it). Lower = each price gets its own row with less vertical
 # stretch, in smaller text.
 #number_row_px = 12.0
@@ -70,7 +70,9 @@
 # How wide a candle must be before each detail level appears, as a multiple
 # of the widths above (default 1.0, clamped 0.8-6.0). Lower = numbers on
 # narrower candles, crowded; higher = waits for wider candles, roomier text.
-# A level that would wait past the deepest zoom arrives there instead.
+# A level that would wait past the deepest zoom arrives there instead, so
+# above about 3 the numbers wait for the deepest zoom and the two widths
+# above stop mattering.
 #detail_scale = 1.0
 
 # The per-bar POC line (default true).
