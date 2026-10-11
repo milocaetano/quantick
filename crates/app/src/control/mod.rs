@@ -58,7 +58,7 @@ pub(crate) use annotate::{
 };
 #[cfg(test)]
 pub(crate) use contract::{DESCRIBE_CAPABILITY_ID, SNAPSHOT_CAPABILITY_ID, TRADER_PROFILE_ID};
-pub(crate) use drawing_magnet::DRAWING_MAGNET_CAPABILITY_ID;
+pub(crate) use drawing_magnet::{flip_rail_magnet, flip_selected_drawing_magnet};
 #[cfg(test)]
 pub(crate) use evidence::{RawScreenshot, ScreenshotPixels};
 pub(crate) use indicator_guide::INDICATOR_GUIDE_CAPABILITY_ID;

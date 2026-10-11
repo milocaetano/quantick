@@ -1307,16 +1307,36 @@ mod tests {
             !source.contains(concat!("DOTS_", "THREE")),
             "the gear is the overflow; a more-menu is the failure mode"
         );
-        let functional = slots(PLAIN)
-            .into_iter()
-            .filter(|slot| !matches!(slot, Slot::Grip | Slot::Separator))
-            .count();
-        // Nine since the object's own magnet joined Lock: both are switches
-        // a trader flips on the object under their eye mid-session.
+        // Every bar `capabilities` can ask for: width and glyph size are one
+        // or the other, everything else may come or go. The fullest is an
+        // assistant's pointer-anchored object, author chip and all.
+        let functional = (0..32_u8)
+            .map(|bits| {
+                let caps = Capabilities {
+                    stroke_width: bits & 1 != 0,
+                    glyph_size: bits & 1 == 0,
+                    authored: bits & 2 != 0,
+                    settings: bits & 4 != 0,
+                    sharing: bits & 8 != 0,
+                    magnet: bits & 16 != 0,
+                };
+                slots(caps)
+                    .into_iter()
+                    .filter(|slot| !matches!(slot, Slot::Grip | Slot::Separator))
+                    .count()
+            })
+            .max()
+            .unwrap_or_default();
+        // Ten: the object's own magnet joined Lock, both switches a trader
+        // flips on the object under their eye mid-session, on a bar that
+        // already carried an assistant's author chip. The ceiling is the
+        // fullest bar today; a new slot has to argue past it here.
+        const CEILING: usize = 10;
         assert!(
-            functional <= 9,
-            "the bar holds at most 9 functional slots; found {functional}"
+            functional <= CEILING,
+            "the bar holds at most {CEILING} functional slots; found {functional}"
         );
+        assert_eq!(functional, CEILING, "the ceiling is the fullest real bar");
     }
 
     #[test]

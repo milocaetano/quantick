@@ -610,29 +610,20 @@ fn move_handle(
     let pointer_position = frame.pointer.position;
     let history_right = frame.pointer.history_right;
     let total = frame.pointer.total;
-    // The rail's magnet, or the dragged object's own.
-    let magnet = frame.pointer.magnet
-        || drawings
-            .items()
-            .get(drawing_index)
-            .is_some_and(|drawing| drawing.magnet);
-    // The object's own band, not the one under the
-    // pointer: dragging a CVD anchor up into the candles
-    // stretches it to the top of its pane, and never
-    // writes a price into a CVD anchor.
-    let dragged = drawings
-        .items()
-        .get(drawing_index)
-        .and_then(|drawing| bands::band_of(bands, drawing));
-    // Moving a mark keeps it glued to a bar's extreme:
-    // the rule that placed it is the rule that holds it.
-    let handle_snap = drawings
-        .items()
-        .get(drawing_index)
-        .map_or(drawings::AnchorSnap::Pointer, |drawing| {
-            drawing.tool.anchor_snap()
-        });
-    if let Some(band) = dragged
+    // One read of the grabbed object. Its own band, not the one under the
+    // pointer: dragging a CVD anchor up into the candles stretches it to the
+    // top of its pane, and never writes a price into a CVD anchor. Moving a
+    // mark keeps it glued to a bar's extreme: the rule that placed it is the
+    // rule that holds it. The magnet is the rail's, or the object's own.
+    let dragged = drawings.items().get(drawing_index).and_then(|drawing| {
+        let magnet = frame.pointer.magnet || drawing.own_magnet();
+        Some((
+            bands::band_of(bands, drawing)?,
+            drawing.tool.anchor_snap(),
+            magnet,
+        ))
+    });
+    if let Some((band, handle_snap, magnet)) = dragged
         && let Some(position) = pointer_position
     {
         let position = egui::pos2(
@@ -676,7 +667,7 @@ fn translate_body(
     };
     let index = from.index;
     let dragged = drawings.items().get(index).and_then(|drawing| {
-        let magnet = pointer.magnet || drawing.magnet;
+        let magnet = pointer.magnet || drawing.own_magnet();
         Some((drawing.tool, magnet, bands::band_of(frame.bands, drawing)?))
     });
     if let Some((tool, magnet, band)) = dragged

@@ -89,6 +89,20 @@ impl Drawing {
     pub fn shared(&self) -> bool {
         self.scope == DrawingScope::AllCharts && !self.hidden && self.shareable()
     }
+
+    /// Whether the OHLC magnet moves this object's anchors at all: a tool
+    /// that snaps by its own rule (a mark, an anchored VWAP) has no magnet.
+    #[must_use]
+    pub fn takes_magnet(&self) -> bool {
+        self.tool.anchor_snap() == super::AnchorSnap::Pointer
+    }
+
+    /// This object's own magnet as its drags honour it, on its own pane or
+    /// mirrored on another.
+    #[must_use]
+    pub fn own_magnet(&self) -> bool {
+        self.magnet && self.takes_magnet()
+    }
 }
 
 impl PartialEq for Drawing {

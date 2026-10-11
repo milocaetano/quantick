@@ -67,7 +67,13 @@ pub struct SharedPick {
     pub anchor: Option<usize>,
     /// Locked geometry refuses to move, exactly as it does on its own pane.
     pub locked: bool,
-    /// The object's own magnet, which snaps its drag here as on its own pane.
+    /// The object's own magnet, which snaps its drag here as on its own pane:
+    /// [`crate::drawings::Drawing::own_magnet`], so a tool that snaps by its
+    /// own rule carries none. Read at the press and held for the gesture
+    /// (`shared_drag_magnet`): the pick under a moving pointer is not the
+    /// held mark, and this pane cannot read the owner's store mid-drag. The
+    /// switch cannot move under the hand anyway — the context bar stands
+    /// down while a drag runs — and a scripted flip lands from the next press.
     pub magnet: bool,
 }
 

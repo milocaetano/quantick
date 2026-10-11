@@ -261,7 +261,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Turns one drawing's own OHLC magnet on or off, by the `drawing_id` analysis.drawings lists: with it on, that drawing's re-dragged or body-dragged anchors land on the open, high, low or close of the candle under the pointer even while the rail's magnet (`annotate.magnet.set`) is off. The same switch as the magnet slot on the drawing's context bar; it is saved with the workspace, and analysis.drawings reads it back as the drawing's `magnet`.",
+      "description": "Turns one drawing's own OHLC magnet on or off, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists (a drawing id is unique only within its pane): with it on, that drawing's re-dragged or body-dragged anchors land on the open, high, low or close of the candle under the pointer even while the rail's magnet (`annotate.magnet.set`) is off. The same switch as the magnet slot on the drawing's context bar; it is saved with the workspace, and analysis.drawings reads it back as the drawing's `magnet`. Only a tool whose anchors follow the pointer has one: a mark that snaps by its own rule, like an arrow mark or an anchored VWAP, is refused with control.invalid_request, as is an id no pane on that tab holds.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -290,9 +290,19 @@
           "enabled": {
             "description": "`true` snaps this drawing's dragged anchors to the open / high / low /\nclose of the candle under the pointer; `false` leaves it to the rail.",
             "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The pane holding the drawing on that tab, as `analysis.drawings`\nlists it. A drawing id is unique only within its pane."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64",
+            "description": "The tab holding the drawing, as `analysis.drawings` lists it."
           }
         },
         "required": [
+          "tab_id",
+          "pane_id",
           "drawing_id",
           "enabled"
         ],

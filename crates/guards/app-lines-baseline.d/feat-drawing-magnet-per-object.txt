@@ -1,7 +1,10 @@
 # feat/drawing-magnet-per-object: each drawing's own OHLC magnet. Both magnet
-# call descriptors moved to control-schema (-84); what stays is app-only
-# state: the `Drawing` field and its file form, the context bar's magnet slot
-# (egui), the gestures that read it on a local and a mirrored drag, and the
-# `annotate.drawing_magnet.set` handler that finds the drawing in its pane.
-crates/app +79
-!budget +79
+# call descriptors, the call's refusals and its result moved to
+# control-schema; what stays is app-only state: the `Drawing` field, its file
+# form and its Pointer-snap rule, the context bar's magnet slot (egui), the
+# gestures that read it on a local and a mirrored drag, the
+# `annotate.drawing_magnet.set` handler that finds the drawing in the named
+# pane, and the two hand flips routed through their calls so they journal
+# (the rail's moved out of the QuantickApp root, which shrank by 5).
+crates/app +127
+!budget +127

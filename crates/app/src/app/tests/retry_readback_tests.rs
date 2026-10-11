@@ -862,8 +862,13 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     .expect("the pane reported its rect")
                     .center();
                 let index = place_drawing(&mut app, &ctx, "horizontal-line", &[at]);
-                let id = app.active_tab().drawing_pane().drawings.items()[index].id;
-                json!({ "drawing_id": id.0.to_string(), "enabled": true })
+                let pane = app.active_tab().drawing_pane();
+                json!({
+                    "tab_id": app.tabs.active_id().to_string(),
+                    "pane_id": pane.id.to_string(),
+                    "drawing_id": pane.drawings.items()[index].id.0.to_string(),
+                    "enabled": true,
+                })
             }
             _ => payload,
         };

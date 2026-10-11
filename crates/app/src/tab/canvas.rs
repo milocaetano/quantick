@@ -586,7 +586,7 @@ impl Tab {
                         index,
                         anchor,
                         locked: source.drawings.items()[index].locked,
-                        magnet: source.drawings.items()[index].magnet,
+                        magnet: source.drawings.items()[index].own_magnet(),
                     });
                     break;
                 }
