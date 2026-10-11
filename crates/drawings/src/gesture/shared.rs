@@ -18,11 +18,15 @@
 use smallvec::SmallVec;
 
 use super::band::{self, Band};
+use super::pointer::PointerOutcome;
 use super::projection::DrawingProjection;
-use super::{DRAWING_ANCHOR_RADIUS_PX, DRAWING_SELECT_RADIUS_PX, Mark, Marks};
+use super::{
+    DRAWING_ANCHOR_RADIUS_PX, DRAWING_DRAG_THRESHOLD_PX, DRAWING_SELECT_RADIUS_PX, GestureCursor,
+    Mark, Marks, PaneGestures,
+};
 use crate::{
-    CLAMPED_OPACITY, ChartPoint, DrawContext, DrawingBand, DrawingStyle, MarkScene, Px, PxRect,
-    RgbaExt as _, TextMetrics, UNMEASURED,
+    AnchorSnap, CLAMPED_OPACITY, ChartPoint, DrawContext, DrawingBand, DrawingStyle, MarkScene, Px,
+    PxRect, RgbaExt as _, TextMetrics, UNMEASURED,
 };
 
 /// What a pane resolved on *another* pane's shared marks this frame.
@@ -480,4 +484,181 @@ impl SharedMarksMut<'_> {
             self.drawings.move_anchor(index, anchor, point);
         }
     }
+}
+
+/// The pointer's side of a gesture on another pane's mark: pressing takes it,
+/// travel past the drag threshold moves it in market time and price, and the
+/// release commits it on the pane that owns it.
+impl PaneGestures {
+    pub(super) fn interact_shared(
+        &mut self,
+        projection: &DrawingProjection<'_>,
+        cached_bands: &[Band],
+        shared_pick: Option<SharedPick>,
+        outcome: &mut PointerOutcome,
+        pointer: SharedPointer,
+    ) {
+        if self.begin_shared_drag(projection, cached_bands, shared_pick, outcome, &pointer) {
+            return;
+        }
+        if !self.shared_drag.is_active() {
+            if let Some(cursor) = shared_hover_cursor(&pointer, shared_pick) {
+                outcome.set_cursor(cursor);
+            }
+            return;
+        }
+        // Shared cleanup intentionally precedes the combined consumed answer.
+        if pointer.released {
+            self.finish_shared_release(outcome);
+            return;
+        }
+        if !pointer.down || !self.shared_threshold_crossed(pointer.position) {
+            return;
+        }
+        // Held gestures clamp into the prior paint's carve; no future tick
+        // instant is invented when the pointer has no market-time anchor.
+        let Some(position) = pointer.position.map(|position| {
+            Px::new(
+                position.x.clamp(pointer.area.left(), pointer.area.right()),
+                position.y.clamp(pointer.area.top(), pointer.area.bottom()),
+            )
+        }) else {
+            return;
+        };
+        let Some((time_ms, price)) = shared_mark_at(projection, cached_bands, &pointer, position)
+        else {
+            return;
+        };
+        self.advance_shared_drag(time_ms, price, outcome);
+    }
+
+    fn begin_shared_drag(
+        &mut self,
+        projection: &DrawingProjection<'_>,
+        cached_bands: &[Band],
+        shared_pick: Option<SharedPick>,
+        outcome: &mut PointerOutcome,
+        pointer: &SharedPointer,
+    ) -> bool {
+        if pointer.pressed
+            && !pointer.over_chrome
+            && let Some((position, pick)) = pointer
+                .position
+                .filter(|position| pointer.area.contains(*position))
+                .zip(shared_pick)
+        {
+            // Selecting is not moving (§D9): the press takes the object
+            // whether or not the drag that may follow is allowed.
+            outcome.shared.owner = Some(pick.owner);
+            outcome.shared.edit = Some(SharedEdit::Select(pick.index));
+            self.shared_drag_owner = Some(pick.owner);
+            self.shared_drag_pending_from = Some(position);
+            self.shared_pointer_mark = shared_mark_at(projection, cached_bands, pointer, position);
+            self.shared_drag = if pick.locked {
+                SharedDrag::Blocked
+            } else {
+                outcome.shared.begin_gesture = true;
+                match pick.anchor {
+                    Some(anchor) => SharedDrag::Anchor {
+                        index: pick.index,
+                        anchor,
+                    },
+                    None => SharedDrag::Body { index: pick.index },
+                }
+            };
+            return true;
+        }
+        false
+    }
+
+    fn finish_shared_release(&mut self, outcome: &mut PointerOutcome) {
+        outcome.shared.owner = self.shared_drag_owner;
+        outcome.shared.commit_gesture = true;
+        self.shared_drag = SharedDrag::None;
+        self.shared_drag_owner = None;
+        self.shared_drag_pending_from = None;
+        self.shared_pointer_mark = None;
+    }
+
+    fn shared_threshold_crossed(&mut self, position: Option<Px>) -> bool {
+        if let Some(origin) = self.shared_drag_pending_from {
+            let travelled = position
+                .is_some_and(|position| (position - origin).length() >= DRAWING_DRAG_THRESHOLD_PX);
+            if !travelled {
+                return false;
+            }
+            self.shared_drag_pending_from = None;
+        }
+        true
+    }
+
+    fn advance_shared_drag(&mut self, time_ms: i64, price: f64, outcome: &mut PointerOutcome) {
+        // Every edit this gesture emits belongs to the pane the gesture took
+        // hold of, whatever the pointer is over now.
+        outcome.shared.owner = self.shared_drag_owner;
+        match self.shared_drag {
+            SharedDrag::Anchor { index, anchor } => {
+                outcome.shared.edit = Some(SharedEdit::MoveAnchor {
+                    index,
+                    anchor,
+                    time_ms,
+                    price,
+                });
+                outcome.set_cursor(GestureCursor::Resize);
+            }
+            SharedDrag::Body { index } => {
+                if let Some((last_time, last_price)) = self.shared_pointer_mark {
+                    outcome.shared.edit = Some(SharedEdit::Translate {
+                        index,
+                        delta_ms: time_ms - last_time,
+                        delta_price: price - last_price,
+                    });
+                }
+                outcome.set_cursor(GestureCursor::Move);
+            }
+            SharedDrag::Blocked => outcome.set_cursor(GestureCursor::NotAllowed),
+            SharedDrag::None => {}
+        }
+        self.shared_pointer_mark = Some((time_ms, price));
+    }
+}
+
+fn shared_mark_at(
+    projection: &DrawingProjection<'_>,
+    cached_bands: &[Band],
+    pointer: &SharedPointer,
+    position: Px,
+) -> Option<(i64, f64)> {
+    let band = band::band_at(cached_bands, position)?;
+    projection
+        .drawing_point_at(
+            position,
+            pointer.history_right,
+            pointer.total,
+            pointer.magnet,
+            AnchorSnap::Pointer,
+            band,
+        )
+        .and_then(|point| Some((point.time_ms?, point.price)))
+}
+
+fn shared_hover_cursor(
+    pointer: &SharedPointer,
+    shared_pick: Option<SharedPick>,
+) -> Option<GestureCursor> {
+    // Hover feedback, so a mirrored mark does not feel deader than the
+    // object it is: the same three cursors its own pane shows.
+    if !pointer.over_chrome
+        && pointer
+            .position
+            .is_some_and(|position| pointer.area.contains(position))
+        && let Some(pick) = shared_pick
+    {
+        return Some(match (pick.locked, pick.anchor) {
+            (true, _) => GestureCursor::NotAllowed,
+            (false, Some(_)) => GestureCursor::Resize,
+            (false, None) => GestureCursor::Move,
+        });
+    }
+    None
 }
