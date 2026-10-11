@@ -55,5 +55,6 @@ pub(super) struct DrawFrame<'a> {
 pub(super) struct AxisChips {
     pub(super) compass: Option<PointerCompass>,
     pub(super) price: pointer_compass::AxisClaims,
-    pub(super) time: pointer_compass::AxisClaims,
+    /// The pointer's chip on the time strip, its real width included.
+    pub(super) time: Option<pointer_compass::TimeChip>,
 }

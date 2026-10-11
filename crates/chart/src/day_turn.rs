@@ -9,7 +9,7 @@
 //! [`label_width`] bounds its width from its length without laying it out,
 //! and no label is laid out that is not drawn.
 
-use quantick_civil::{CivilDate, TzOffset, weekday_abbr};
+use quantick_civil::{CivilDate, TzOffset, month_abbr, weekday_abbr};
 
 use crate::geometry::{TimeLabelFormat, time_label};
 use crate::viewport::Viewport;
@@ -93,6 +93,90 @@ pub fn ended_text(ms: i64, tz: TzOffset) -> String {
 #[must_use]
 pub fn opened_suffix(ms: i64, tz: TzOffset) -> String {
     format!(" {}", time_label(ms, tz, TimeLabelFormat::Short))
+}
+
+/// The pointer's time tag below a day, in the display timezone `tz`:
+/// `Fri 09 Oct '26 10:57:03` — the [`pinned_text`] date, the two-digit year
+/// and the clock. The clock alone reads the same on every day of a tape that
+/// spans several; the tag names the day the bar opened on.
+#[must_use]
+pub fn pointer_time_label(ms: i64, tz: TzOffset) -> String {
+    let date = CivilDate::from_ms(ms, tz);
+    let (year, _, _) = date.ymd();
+    format!(
+        "{} '{:02} {}",
+        pinned_text(date),
+        year.rem_euclid(100),
+        time_label(ms, tz, TimeLabelFormat::Full)
+    )
+}
+
+/// Writes the time strip's labels left to right, as TradingView does: the
+/// first label *painted* in a new local day writes the day (`9`), in a new
+/// month the month (`Oct`), in a new year the year (`2026`); every other
+/// label is the clock in its format.
+///
+/// Fed only the labels that are painted, so a label skipped for room, for a
+/// chip or for a missing open time never moves the comparison. A date the
+/// day separator already wrote on the strip keeps its labels a clock: one
+/// date, written once.
+///
+/// A turn's name is never wider than the format's
+/// [`sample`](TimeLabelFormat::sample) — four characters at most against the
+/// clock's five — so the stride measured from the sample still holds.
+#[derive(Debug, Clone)]
+pub struct TickLabels<'a> {
+    tz: TzOffset,
+    format: TimeLabelFormat,
+    /// The date of the last label painted, or the seed before the first.
+    last: Option<CivilDate>,
+    /// Dates the day separator wrote on the strip this frame.
+    named: &'a [CivilDate],
+}
+
+impl<'a> TickLabels<'a> {
+    /// `seed_ms` is an instant before the first label (the bar before the
+    /// first visible one), so a day that turns before the first label is
+    /// still named on it; `None` writes the first label as a clock.
+    #[must_use]
+    pub fn new(
+        tz: TzOffset,
+        format: TimeLabelFormat,
+        seed_ms: Option<i64>,
+        named: &'a [CivilDate],
+    ) -> Self {
+        Self {
+            tz,
+            format,
+            last: seed_ms.map(|ms| CivilDate::from_ms(ms, tz)),
+            named,
+        }
+    }
+
+    /// The text of the label about to be painted at `ms`. Call it only for a
+    /// label that is painted.
+    pub fn label_at(&mut self, ms: i64) -> String {
+        let date = CivilDate::from_ms(ms, self.tz);
+        match self.last.replace(date) {
+            Some(before) if before != date && !self.named.contains(&date) => {
+                turn_name(date, before)
+            }
+            _ => time_label(ms, self.tz, self.format),
+        }
+    }
+}
+
+/// What changed between `before` and `date`: the year, else the month, else
+/// the day.
+fn turn_name(date: CivilDate, before: CivilDate) -> String {
+    let ((year, month, day), (before_year, before_month, _)) = (date.ymd(), before.ymd());
+    if year != before_year {
+        format!("{year:04}")
+    } else if month != before_month {
+        month_abbr(month).to_owned()
+    } else {
+        day.to_string()
+    }
 }
 
 /// At least as wide as `chars` characters of a monospace font whose

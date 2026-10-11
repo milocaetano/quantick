@@ -534,59 +534,6 @@ pub fn time_label(ms: i64, tz: quantick_civil::TzOffset, format: TimeLabelFormat
     format.write(secs / 3600, (secs % 3600) / 60, secs % 60)
 }
 
-/// A string exactly as wide as every [`pointer_time_label`]: what the time
-/// strip measures the pointer's chip by before it writes its own labels.
-pub const POINTER_TIME_SAMPLE: &str = "Mon 00 Mmm '00 00:00:00";
-
-/// The pointer's time tag below a day, in the display timezone `tz`:
-/// `Fri 09 Oct '26 10:57:03`. The clock alone reads the same on every day of
-/// a tape that spans several; the tag names the day the bar opened on.
-#[must_use]
-pub fn pointer_time_label(ms: i64, tz: quantick_civil::TzOffset) -> String {
-    let date = quantick_civil::CivilDate::from_ms(ms, tz);
-    let (year, _, _) = date.ymd();
-    format!(
-        "{} {} '{:02} {}",
-        quantick_civil::weekday_abbr(date.weekday()),
-        date.short(),
-        year.rem_euclid(100),
-        time_label(ms, tz, TimeLabelFormat::Full)
-    )
-}
-
-/// A time-axis label at `ms`, given the instant the label before it on the
-/// strip names (`previous_ms`), as TradingView writes it: the first label of
-/// a new local day writes the day (`9`), of a new month the month (`Oct`), of
-/// a new year the year (`2026`); every other label is the clock in `format`.
-///
-/// Never wider than `format`'s [`sample`](TimeLabelFormat::sample) — four
-/// characters at most against the clock's five — so the stride measured from
-/// the sample still keeps neighbours apart.
-#[must_use]
-pub fn tick_time_label(
-    ms: i64,
-    previous_ms: Option<i64>,
-    tz: quantick_civil::TzOffset,
-    format: TimeLabelFormat,
-) -> String {
-    let date = quantick_civil::CivilDate::from_ms(ms, tz);
-    let Some(before) = previous_ms
-        .map(|previous| quantick_civil::CivilDate::from_ms(previous, tz))
-        .filter(|before| *before != date)
-    else {
-        return time_label(ms, tz, format);
-    };
-    let ((year, month, day), (before_year, before_month, _)) = (date.ymd(), before.ymd());
-    if year != before_year {
-        format!("{year:04}")
-    } else if month != before_month {
-        // `09 Oct`: the month's abbreviation follows the day.
-        date.short().get(3..).unwrap_or_default().to_owned()
-    } else {
-        day.to_string()
-    }
-}
-
 /// Bar slots to advance between two time labels so that neighbours can never
 /// touch, given how wide one candle and one label are on screen.
 ///
@@ -631,6 +578,20 @@ pub fn time_label_stride(candle_width_px: f32, label_width_px: f32) -> usize {
 pub fn label_fits(x: f32, label_width_px: f32, left: f32, right: f32) -> bool {
     let half = label_width_px / 2.0;
     x - half >= left && x + half <= right
+}
+
+/// Where a chip `width_px` wide (its padding included) centres on a strip
+/// from `left` to `right` when it follows `at`: as near `at` as the strip
+/// lets it stay whole. On a strip narrower than the chip it sits flush with
+/// the left edge, so its start is read and the caller clips the rest at
+/// `right` rather than letting it run past the strip.
+#[must_use]
+pub fn chip_centre(at: f32, width_px: f32, left: f32, right: f32) -> f32 {
+    let half = width_px / 2.0;
+    if right - left <= width_px {
+        return left + half;
+    }
+    at.clamp(left + half, right - half)
 }
 
 /// The widest [`TimeLabelFormat`] that still writes `TIME_MIN_LABELS` labels
@@ -1352,64 +1313,18 @@ mod tests {
         assert_eq!(time_label_format(10.0, measured), TimeLabelFormat::Short);
     }
 
-    /// 2026-10-09 13:57:03 UTC: 10:57:03 in UTC-3.
-    const OCT_9_1357_UTC: i64 = 1_791_554_223_000;
-    const HOUR_MS: i64 = 3_600_000;
-
-    /// Below a day the pointer's tag names the day as well as the second, in
-    /// the display zone: near midnight UTC that is the zone's own date.
+    /// The pointer's chip follows the pointer but stays whole on the strip,
+    /// and a strip narrower than the chip starts it at its left edge: the
+    /// chip never begins past the strip, and is clipped at its right end.
     #[test]
-    fn the_pointer_tag_names_the_day_in_the_display_zone() {
-        let brt = quantick_civil::TzOffset::new(-180);
-        assert_eq!(
-            pointer_time_label(OCT_9_1357_UTC, brt),
-            "Fri 09 Oct '26 10:57:03"
-        );
-        // 01:30 UTC on the 10th is still 22:30 on the 9th in UTC-3.
-        let late = OCT_9_1357_UTC + 11 * HOUR_MS + 33 * 60_000 - 3_000;
-        assert_eq!(pointer_time_label(late, brt), "Fri 09 Oct '26 22:30:00");
-        let utc = quantick_civil::TzOffset::new(0);
-        assert_eq!(pointer_time_label(late, utc), "Sat 10 Oct '26 01:30:00");
-        assert_eq!(
-            pointer_time_label(late, brt).chars().count(),
-            POINTER_TIME_SAMPLE.chars().count()
-        );
-    }
-
-    /// The first label of a new local day writes the day, of a new month the
-    /// month, of a new year the year; the rest write the clock.
-    #[test]
-    fn a_tick_label_names_the_day_month_or_year_it_turns_into() {
-        let brt = quantick_civil::TzOffset::new(-180);
-        let full = TimeLabelFormat::Full;
-        let at = OCT_9_1357_UTC;
-        assert_eq!(tick_time_label(at, None, brt, full), "10:57:03");
-        assert_eq!(
-            tick_time_label(at, Some(at - HOUR_MS), brt, TimeLabelFormat::Short),
-            "10:57"
-        );
-        // 02:00 UTC on the 10th is 23:00 on the 9th in UTC-3: no day turn
-        // yet there, though UTC has crossed midnight.
-        let late = at + 12 * HOUR_MS + 2 * 60_000 + 57_000;
-        assert_eq!(tick_time_label(late, Some(at), brt, full), "23:00:00");
-        let utc = quantick_civil::TzOffset::new(0);
-        assert_eq!(tick_time_label(late, Some(at), utc, full), "10");
-        // An hour later UTC-3 crosses midnight too.
-        assert_eq!(tick_time_label(late + HOUR_MS, Some(late), brt, full), "10");
-        // Into November, and into 2027.
-        let day = 86_400_000;
-        let nov_1 = late + HOUR_MS + 22 * day;
-        assert_eq!(
-            tick_time_label(nov_1, Some(nov_1 - HOUR_MS), brt, full),
-            "Nov"
-        );
-        let jan_1 = nov_1 + 61 * day;
-        assert_eq!(
-            tick_time_label(jan_1, Some(jan_1 - HOUR_MS), brt, full),
-            "2027"
-        );
-        for text in ["10", "Nov", "2027"] {
-            assert!(text.len() <= TimeLabelFormat::Short.sample().len());
+    fn a_chip_stays_on_its_strip() {
+        assert!((chip_centre(200.0, 100.0, 0.0, 400.0) - 200.0).abs() < 1e-6);
+        assert!((chip_centre(10.0, 100.0, 0.0, 400.0) - 50.0).abs() < 1e-6);
+        assert!((chip_centre(395.0, 100.0, 0.0, 400.0) - 350.0).abs() < 1e-6);
+        // 60 px of strip for a 100 px chip: flush left, wherever the pointer.
+        for at in [0.0_f32, 30.0, 59.0] {
+            let centre = chip_centre(at, 100.0, 0.0, 60.0);
+            assert!((centre - 50.0).abs() < 1e-6, "{at}: {centre}");
         }
     }
 

@@ -241,3 +241,94 @@ fn a_time_bar_crossing_local_midnight_writes_the_date_alone() {
     assert_eq!(turn.ended_ms, Some(before_midnight));
     assert_eq!(turn.opened_ms, Some(opened));
 }
+
+/// 2026-10-09 13:57:03 UTC: 10:57:03 in UTC-3.
+const OCT_9_1357_UTC: i64 = 1_791_554_223_000;
+const HOUR_MS: i64 = 3_600_000;
+const DAY_MS: i64 = 86_400_000;
+
+/// Below a day the pointer's tag names the day as well as the second, in
+/// the display zone: near midnight UTC that is the zone's own date.
+#[test]
+fn the_pointer_tag_names_the_day_in_the_display_zone() {
+    assert_eq!(
+        pointer_time_label(OCT_9_1357_UTC, BRT),
+        "Fri 09 Oct '26 10:57:03"
+    );
+    // 01:30 UTC on the 10th is still 22:30 on the 9th in UTC-3.
+    let late = OCT_9_1357_UTC + 11 * HOUR_MS + 33 * 60_000 - 3_000;
+    assert_eq!(pointer_time_label(late, BRT), "Fri 09 Oct '26 22:30:00");
+    let utc = TzOffset::new(0);
+    assert_eq!(pointer_time_label(late, utc), "Sat 10 Oct '26 01:30:00");
+    // One width on every day: the chip is measured from its own text.
+    let wide = pointer_time_label(OCT_9_1357_UTC + 60 * DAY_MS, BRT);
+    assert_eq!(wide.len(), pointer_time_label(late, BRT).len());
+}
+
+/// The first label painted in a new local day writes the day, in a new
+/// month the month, in a new year the year; the rest write the clock.
+#[test]
+fn a_tick_label_names_the_day_month_or_year_it_turns_into() {
+    let full = TimeLabelFormat::Full;
+    let at = OCT_9_1357_UTC;
+    assert_eq!(
+        TickLabels::new(BRT, full, None, &[]).label_at(at),
+        "10:57:03"
+    );
+    let short = TimeLabelFormat::Short;
+    assert_eq!(
+        TickLabels::new(BRT, short, Some(at - HOUR_MS), &[]).label_at(at),
+        "10:57"
+    );
+    // 02:00 UTC on the 10th is 23:00 on the 9th in UTC-3: no day turn yet
+    // there, though UTC has crossed midnight.
+    let late = at + 12 * HOUR_MS + 2 * 60_000 + 57_000;
+    let mut brt = TickLabels::new(BRT, full, Some(at), &[]);
+    assert_eq!(brt.label_at(late), "23:00:00");
+    assert_eq!(brt.label_at(late + HOUR_MS), "10");
+    assert_eq!(brt.label_at(late + 2 * HOUR_MS), "01:00:00");
+    let utc = TzOffset::new(0);
+    assert_eq!(
+        TickLabels::new(utc, full, Some(at), &[]).label_at(late),
+        "10"
+    );
+    // Into November, and into 2027.
+    let nov_1 = late + HOUR_MS + 22 * DAY_MS;
+    let mut month = TickLabels::new(BRT, full, Some(nov_1 - HOUR_MS), &[]);
+    assert_eq!(month.label_at(nov_1), "Nov");
+    let jan_1 = nov_1 + 61 * DAY_MS;
+    assert_eq!(month.label_at(jan_1), "2027");
+    for text in ["10", "Nov", "2027"] {
+        assert!(text.len() <= TimeLabelFormat::Short.sample().len());
+    }
+}
+
+/// The comparison is with the last label *painted*: labels skipped between
+/// two painted ones never consume the turn, so the first label painted in
+/// the new day still names it, however many were skipped before it.
+#[test]
+fn a_turn_is_named_on_the_first_label_painted_in_it() {
+    let full = TimeLabelFormat::Full;
+    let mut labels = TickLabels::new(BRT, full, None, &[]);
+    let at = OCT_9_1357_UTC;
+    assert_eq!(labels.label_at(at), "10:57:03");
+    // The strip skipped every slot of the evening and the first two of the
+    // 10th (no room, the chip, no open time): none was fed in. The next
+    // label painted is the first one painted on the 10th.
+    let next_day = at + DAY_MS;
+    assert_eq!(labels.label_at(next_day), "10");
+    assert_eq!(labels.label_at(next_day + HOUR_MS), "11:57:03");
+}
+
+/// A date the day separator already wrote on the strip is not written a
+/// second time by the label after its tick: that label stays a clock, and
+/// the next turn the separator did not write is named again.
+#[test]
+fn a_date_the_separator_wrote_keeps_its_labels_a_clock() {
+    let full = TimeLabelFormat::Full;
+    let at = OCT_9_1357_UTC;
+    let named = [CivilDate::from_ms(at + DAY_MS, BRT)];
+    let mut labels = TickLabels::new(BRT, full, Some(at), &named);
+    assert_eq!(labels.label_at(at + DAY_MS), "10:57:03");
+    assert_eq!(labels.label_at(at + 2 * DAY_MS), "11");
+}

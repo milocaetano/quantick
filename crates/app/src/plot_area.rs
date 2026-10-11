@@ -147,7 +147,7 @@ pub fn fmt_time(ms: i64, tz: TzOffset) -> String {
 pub fn fmt_pointer_time(open_ms: i64, interval_ms: Option<i64>, tz: TzOffset) -> String {
     let Some(interval) = interval_ms.filter(|interval| calendar_label_sample(*interval).is_some())
     else {
-        return crate::chart::pointer_time_label(open_ms, tz);
+        return quantick_chart::day_turn::pointer_time_label(open_ms, tz);
     };
     let day = quantick_civil::CivilDate::from_ms(
         quantick_engine::time_bucket::time_bucket_start(open_ms, interval),
@@ -202,18 +202,16 @@ pub fn fmt_calendar_label(
         )
     };
     let day = date(open_ms);
-    let (year, _, _) = day.ymd();
-    // `07 Oct`: the day, then the month's abbreviation.
-    let short = day.short();
-    let month = short.get(3..).unwrap_or_default();
+    let (year, month, _) = day.ymd();
     Some(
         match quantick_engine::time_bucket::calendar_months(interval_ms) {
-            Some(1) => format!("{month} {year:04}"),
+            Some(1) => format!("{} {year:04}", quantick_civil::month_abbr(month)),
             Some(_) => format!("{year:04}"),
             None if previous_ms.is_some_and(|previous| date(previous).ymd().0 != year) => {
                 format!("{year:04}")
             }
-            None => short,
+            // `07 Oct`: the day, then the month's abbreviation.
+            None => day.short(),
         },
     )
 }

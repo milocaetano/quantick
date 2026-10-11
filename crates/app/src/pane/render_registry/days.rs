@@ -3,8 +3,10 @@
 //! the old day's last bar closed left of it, and the date the new day opens
 //! with its first bar's open time right of it (`18:24 | Tue 29 09:00`), plus
 //! the date of the leftmost bar pinned to the strip's left edge. The time
-//! labels carry a clock time only, so without it a chart spanning midnight
-//! reads as one day, and nothing says when each session ran.
+//! labels name a turn by what changed alone (`10`, `Oct`, `2026`), and stay
+//! a clock in a day this layer wrote the date of, so the date is written once:
+//! without it a chart spanning midnight says neither the weekday nor when each
+//! session ran.
 //!
 //! The text and where it goes are `quantick_chart::day_turn`'s; this module
 //! paints them.
@@ -54,13 +56,16 @@ pub(in crate::pane) struct DaySeparatorPass<'a> {
     /// The date of the leftmost visible bar, pinned to the strip's left edge.
     pub first_visible: Option<CivilDate>,
     /// The pointer's chip outranks a label: it is where the trader is looking.
-    pub claims: &'a pointer_compass::AxisClaims,
+    pub chip: Option<pointer_compass::TimeChip>,
     /// Written here: the spans the labels took, which the time labels avoid.
     pub reserved: Vec<(f32, f32)>,
+    /// Written here: the dates written on the strip, which the time labels
+    /// then leave as clocks rather than name a second time.
+    pub named: Vec<CivilDate>,
 }
 fn day_separator(p: &mut DaySeparatorPass<'_>) {
     let font = egui::FontId::monospace(crate::chart::TIME_LABEL_FONT_PX);
-    let (painter, claims, tz) = (p.painter, p.claims, p.tz);
+    let (painter, chip, tz) = (p.painter, p.chip, p.tz);
     let (left, right) = (p.history.left(), p.history.right());
     let y = p.strip.center().y;
     let sample = crate::chart::TimeLabelFormat::Full.sample();
@@ -70,11 +75,7 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
         .x;
     // Monospace: one sample character; `day_turn` bounds labels from it.
     let char_width = sample_width / sample.chars().count() as f32;
-    // The pointer's chip at its widest, its date included.
-    let chip_width = char_width * crate::chart::POINTER_TIME_SAMPLE.chars().count() as f32;
-    let claimed = |centre: f32, width: f32| {
-        pointer_compass::claimed(centre, width, chip_width, claims.iter().copied())
-    };
+    let claimed = |centre: f32, width: f32| pointer_compass::time_claimed(chip, centre, width);
     let ticks = day_turn::turn_xs(p.turns, p.viewport, (left, right), p.total, p.candle_width);
     let widths: Vec<_> = ticks
         .iter()
@@ -100,8 +101,9 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
         let at = egui::pos2(start, y - galley.size().y / 2.0);
         painter.galley(at, galley, theme::TEXT_MUTED);
     };
-    if let (Some(at), Some(text)) = (plan.pinned_at, pinned) {
+    if let (Some(at), Some(text), Some(date)) = (plan.pinned_at, pinned, p.first_visible) {
         draw(&mut p.reserved, at, job(text, theme::TEXT_MUTED));
+        p.named.push(date);
     }
     for (&(x, turn), tick) in ticks.iter().zip(&plan.ticks) {
         // Under the pointer's chip the chip wins, tick and labels alike.
@@ -131,5 +133,6 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
             dated.append(&opened_suffix(ms, tz), 0.0, format(theme::TEXT_MUTED));
         }
         draw(&mut p.reserved, x + DAY_LABEL_GAP_PX, dated);
+        p.named.push(turn.date);
     }
 }

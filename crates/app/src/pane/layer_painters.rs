@@ -84,16 +84,13 @@ impl ChartPane {
         // assuming it.
         let on_axis = |y: f32| (chart_rect.y_range().contains(y)).then_some(y);
         let mut price_claims = pointer_compass::AxisClaims::new();
-        let mut time_claims = pointer_compass::AxisClaims::new();
+        let mut time_chip = None;
         if let Some(compass) = compass.as_ref() {
             if compass.price {
                 price_claims.extend(on_axis(compass.readout.position.y));
             }
             if compass.time {
-                time_claims.extend(
-                    pointer_compass::time_tag(painter, history_strip, &compass.readout)
-                        .map(|(centre, _)| centre),
-                );
+                time_chip = pointer_compass::time_tag(painter, history_strip, &compass.readout);
             }
         }
         // The armed crosshair writes its own price tag on this axis, on the
@@ -118,7 +115,7 @@ impl ChartPane {
         AxisChips {
             compass,
             price: price_claims,
-            time: time_claims,
+            time: time_chip,
         }
     }
 
@@ -178,7 +175,7 @@ impl ChartPane {
         frame: &DrawFrame<'_>,
         axis_x: f32,
         levels: &[PriceAxisLevel],
-        time_claims: &pointer_compass::AxisClaims,
+        time_chip: Option<pointer_compass::TimeChip>,
         turns: Option<&[DayTurn]>,
         chrome: &PaneChrome<'_>,
     ) {
@@ -265,7 +262,7 @@ impl ChartPane {
                 });
         }
         // Before the time labels, which stand aside for the dates it writes.
-        let mut reserved = Vec::new();
+        let (mut reserved, mut named) = (Vec::new(), Vec::new());
         if let Some(turns) = turns {
             let series = self.series_read();
             let mut day_pass = crate::pane::render_registry::DaySeparatorPass {
@@ -281,20 +278,23 @@ impl ChartPane {
                     .then(|| series.slot_open_time(start))
                     .flatten()
                     .map(|ms| quantick_civil::CivilDate::from_ms(ms, chrome.tz)),
-                claims: time_claims,
+                chip: time_chip,
                 reserved: Vec::new(),
+                named: Vec::new(),
             };
             self.layer_renderers.day_separator(&mut day_pass);
             reserved = day_pass.reserved;
+            named = day_pass.named;
         }
         crate::pane::render_registry::TimeStripPass {
             reserved: &reserved,
+            named: &named,
             painter,
             strip: areas.time_strip,
             start,
             end,
             total,
-            claims: time_claims,
+            chip: time_chip,
             style: chrome.style,
             tz: chrome.tz,
             divider_x: self.frame.lane_divider_x,

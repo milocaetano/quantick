@@ -115,6 +115,22 @@ pub(crate) fn claimed(
         .any(|claim| (claim - at).abs() < clearance)
 }
 
+/// The pointer's time chip on the time strip: where it is centred and how
+/// wide its text is, as [`time_tag`] laid it out this frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct TimeChip {
+    pub centre: f32,
+    pub width: f32,
+}
+
+/// Whether a strip label `label` wide centred at `at` would share pixels with
+/// the pointer's chip, when there is one. The one width both the day
+/// separator and the time labels stand aside for: the chip's real text.
+#[must_use]
+pub(crate) fn time_claimed(chip: Option<TimeChip>, at: f32, label: f32) -> bool {
+    chip.is_some_and(|chip| claimed(at, label, chip.width, [chip.centre]))
+}
+
 /// Where the pointer's time chip will sit on `strip`, and how wide it is.
 ///
 /// Asked by the strip before it writes its own labels and by the paint that
@@ -126,7 +142,7 @@ pub(crate) fn time_tag(
     painter: &egui::Painter,
     strip: egui::Rect,
     readout: &PointerReadout,
-) -> Option<(f32, f32)> {
+) -> Option<TimeChip> {
     let bar = readout.bar?;
     // Monospace, so the tag's own text measured in any zone answers for it:
     // a clock time is the same width everywhere, and a date is not a clock.
@@ -142,12 +158,14 @@ pub(crate) fn time_tag(
         )
         .size()
         .x;
-    let half = width / 2.0 + TAG_PAD.x;
-    let centre = readout.position.x.clamp(
-        strip.left() + half,
-        (strip.right() - half).max(strip.left() + half),
+    // Flush left on a strip narrower than the chip; the paint clips the rest.
+    let centre = chart::chip_centre(
+        readout.position.x,
+        width + 2.0 * TAG_PAD.x,
+        strip.left(),
+        strip.right(),
     );
-    Some((centre, width))
+    Some(TimeChip { centre, width })
 }
 
 pub(crate) use quantick_chart::pane_series::PointerBar;
@@ -277,9 +295,14 @@ pub(crate) fn paint_time_mark(
     readout: &PointerReadout,
     tz: TzOffset,
 ) {
-    let (Some(bar), Some((centre, _))) = (readout.bar, time_tag(painter, strip, readout)) else {
+    let (Some(bar), Some(TimeChip { centre, .. })) =
+        (readout.bar, time_tag(painter, strip, readout))
+    else {
         return;
     };
+    // Never past the strip: on one narrower than the chip, the chip starts at
+    // its left edge and is cut at its right.
+    let painter = &painter.with_clip_rect(strip);
     painter.line_segment(
         [
             egui::pos2(centre, strip.top()),

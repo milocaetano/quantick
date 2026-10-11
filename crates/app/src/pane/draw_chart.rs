@@ -130,7 +130,7 @@ impl ChartPane {
         let AxisChips {
             compass,
             price: price_claims,
-            time: time_claims,
+            time: time_chip,
         } = self.axis_claims(&frame, chrome);
         // Gathered once, read twice: the axis stands aside for these just
         // below, and the same list is what gets painted onto the gutter
@@ -238,7 +238,7 @@ impl ChartPane {
         self.frame.bands = carved;
         self.paper_hud_anchor = self.paint_paper(&frame, axis_x, chrome);
         let turns = day_turns.as_deref();
-        self.paint_axis_marks(&frame, axis_x, &levels, &time_claims, turns, chrome);
+        self.paint_axis_marks(&frame, axis_x, &levels, time_chip, turns, chrome);
         let clock = layout
             .native_tape
             .then(|| layout.live_lane.map(|lane| (lane.end_ms, chrome.tz)))
