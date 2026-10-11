@@ -181,7 +181,8 @@ pub enum Effect {
         span_px: f32,
     },
     ZoomTape(f32),
-    /// The tape's window back to its default, from its strip's double-click.
+    /// The tape's window back to the asset's own setting, from its strip's
+    /// double-click.
     ResetTapeZoom,
     TapeLive,
     OpenIndicatorSettings(u64),

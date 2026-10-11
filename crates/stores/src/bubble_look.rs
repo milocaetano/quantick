@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use quantick_orderflow::HeatmapConfig;
+use quantick_orderflow::{HeatmapConfig, LaneWindow};
 
 use crate::bubble_asset_store::{Adoption, AssetBinding, RunHold, SaveSwitch};
 use crate::bubble_assets::AssetBubbles;
@@ -161,6 +161,20 @@ impl BubbleLook {
         if let Some(binding) = &mut self.asset {
             binding.note_edit();
         }
+    }
+
+    /// The tape window a reset returns to: what a launch hook holds for this
+    /// run, else the asset's own setting, else the default. Never the window
+    /// navigation shows, which is not a setting.
+    #[must_use]
+    pub fn lane_window_setting(&self) -> LaneWindow {
+        self.held
+            .window
+            .or_else(|| {
+                let binding = self.asset.as_ref()?;
+                Some(binding.on_screen().look.live_lane.window)
+            })
+            .unwrap_or_default()
     }
 
     /// The lane's width or window was set on purpose: a menu, the panel, a

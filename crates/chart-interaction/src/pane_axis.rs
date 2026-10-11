@@ -1,6 +1,5 @@
 //! Axis and indicator gestures, resolved from caller-supplied hit facts.
 use crate::pane::{Effect, Model};
-use crate::viewport::DEFAULT_PX_PER_BAR;
 
 pub const AXIS_ZOOM_DRAG_PX: f32 = 150.0;
 pub const AXIS_ZOOM_SCROLL_PX: f32 = 200.0;
@@ -28,7 +27,7 @@ pub enum ScaleAction {
 #[derive(Debug, Clone, Copy)]
 pub enum AxisGesture {
     /// A time strip: drag or scroll zooms its axis, `reset` (a double-click)
-    /// puts that axis back on its default spacing, as the price axis does.
+    /// puts that axis back on the spacing it opened on, as the price axis does.
     Time {
         reset: bool,
         drag: f32,
@@ -126,7 +125,7 @@ pub(crate) fn axis(model: &mut Model, gesture: AxisGesture) -> Vec<Effect> {
                 if tape {
                     out.push(Effect::ResetTapeZoom);
                 } else {
-                    model.viewport.set_px_per_bar(DEFAULT_PX_PER_BAR);
+                    model.viewport.reset_zoom();
                 }
             }
             for factor in [
@@ -449,13 +448,20 @@ mod tests {
     }
     #[test]
     fn a_time_strip_shows_one_cursor_resize_on_hover_crosshair_while_held() {
-        assert_eq!(time_strip_cursor(false, false), None);
-        assert_eq!(time_strip_cursor(true, false), Some(StripCursor::Resize));
-        assert_eq!(time_strip_cursor(true, true), Some(StripCursor::Crosshair));
+        let cursor = |over, held, chart_reads| time_strip_cursor(over, held, chart_reads);
+        assert_eq!(cursor(false, false, false), None);
+        assert_eq!(cursor(false, false, true), None, "the chart's own pointer");
+        assert_eq!(cursor(true, false, false), Some(StripCursor::Resize));
+        assert_eq!(cursor(true, true, false), Some(StripCursor::Crosshair));
         assert_eq!(
-            time_strip_cursor(false, true),
+            cursor(false, true, false),
             Some(StripCursor::Crosshair),
-            "a drag that left the strip still reads the chart"
+            "a held drag that left the strip keeps one crosshair"
+        );
+        assert_eq!(
+            cursor(false, true, true),
+            None,
+            "over the candles the chart's crosshair reads; a second one never joins it"
         );
     }
     #[test]
