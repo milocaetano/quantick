@@ -7,7 +7,10 @@
 //! be read is ignored rather than costing the trader a chart. A file entry
 //! goes through the same gate a new save does, so every listed name can be
 //! applied and deleted; and a change that cannot be written is undone, so
-//! the list never claims a look the disk does not hold.
+//! the list never claims a look the disk does not hold. A file entry that
+//! gate refuses is set aside, not dropped: it is logged at load, listed by
+//! [`CandlePresetStore::set_aside`], and written back as it was read, so a
+//! later save never deletes what a hand put in the file.
 //!
 //! A built-in preset changes the candles only, so applying one never repaints
 //! the trader's background. A saved preset is the whole look the trader saw
@@ -85,6 +88,28 @@ impl From<SaveRefusal> for PresetError {
     }
 }
 
+/// Why a file entry was set aside at load instead of listed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetAside {
+    /// The name a new save would refuse, for this reason.
+    Refused(SaveRefusal),
+    /// The name trims to one the file already lists.
+    Duplicate,
+}
+
+impl SetAside {
+    /// The stable word the load warning carries.
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::Refused(SaveRefusal::BadName) => "bad_name",
+            Self::Refused(SaveRefusal::BuiltInName) => "built_in_name",
+            Self::Refused(SaveRefusal::Full) => "list_full",
+            Self::Duplicate => "duplicate_name",
+        }
+    }
+}
+
 /// What a preset name resolves to.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Resolved {
@@ -112,6 +137,9 @@ impl Resolved {
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct CandlePresetStore {
     presets: BTreeMap<String, ChartStyle>,
+    /// File entries the load gate refused, under their raw key, written back
+    /// untouched on every save.
+    set_aside: BTreeMap<String, (SetAside, StyleFile)>,
 }
 
 impl CandlePresetStore {
@@ -125,11 +153,36 @@ impl CandlePresetStore {
         match toml::from_str::<PresetsFile>(&text) {
             Ok(file) if file.version == FORMAT_VERSION => {
                 // The gate a new save goes through: a name it would refuse —
-                // blank, too long, a built-in's — is dropped, and one it would
-                // trim is listed trimmed.
+                // blank, too long, a built-in's, past the cap, or one that
+                // trims onto a listed name — is set aside, and one it would
+                // trim is listed trimmed. Exact keys go first, so a padded
+                // twin is the one set aside.
                 let mut store = Self::default();
-                for (name, style) in file.presets {
-                    let _ = store.insert(&name, style.into());
+                let (exact, padded): (Vec<_>, Vec<_>) = file
+                    .presets
+                    .into_iter()
+                    .partition(|(name, _)| name.trim() == name);
+                for (name, style) in exact.into_iter().chain(padded) {
+                    let refusal = if store.presets.contains_key(name.trim()) {
+                        Err(SetAside::Duplicate)
+                    } else {
+                        store
+                            .insert(&name, style.clone().into())
+                            .map_err(SetAside::Refused)
+                    };
+                    if let Err(why) = refusal {
+                        tracing::warn!(
+                            target: "quantick::app",
+                            schema_version = 1_u8,
+                            event_code = "CANDLE_PRESET_SET_ASIDE",
+                            path = %path.display(),
+                            name = %name,
+                            reason = why.reason(),
+                            action = "kept_in_file_not_listed",
+                            "a candle preset in the file was not listed"
+                        );
+                        store.set_aside.insert(name, (why, style));
+                    }
                 }
                 store
             }
@@ -145,6 +198,14 @@ impl CandlePresetStore {
                 Self::default()
             }
         }
+    }
+
+    /// The file entries the load set aside, by raw key, and why. They are
+    /// not listed or applied, but every save writes them back.
+    pub fn set_aside(&self) -> impl Iterator<Item = (&str, SetAside)> {
+        self.set_aside
+            .iter()
+            .map(|(name, (why, _))| (name.as_str(), *why))
     }
 
     /// Every saved name, alphabetically.
@@ -232,13 +293,21 @@ impl CandlePresetStore {
 
     /// Write the store. See the [module docs](self) for the discipline.
     pub fn save(&self, path: &Path) -> Result<(), String> {
+        // Set-aside entries first, so a listed look saved under the same
+        // key since the load is the one the file keeps.
+        let presets = self
+            .set_aside
+            .iter()
+            .map(|(name, (_, style))| (name.clone(), style.clone()))
+            .chain(
+                self.presets
+                    .iter()
+                    .map(|(name, style)| (name.clone(), StyleFile::from(style))),
+            )
+            .collect();
         let file = PresetsFile {
             version: FORMAT_VERSION,
-            presets: self
-                .presets
-                .iter()
-                .map(|(name, style)| (name.clone(), StyleFile::from(style)))
-                .collect(),
+            presets,
         };
         let written = toml::to_string_pretty(&file)
             .map_err(|error| error.to_string())
@@ -281,13 +350,13 @@ struct PresetsFile {
     presets: BTreeMap<String, StyleFile>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct StyleFile {
     candles: CandlesFile,
     canvas: CanvasFile,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct CandlesFile {
     outline_only: bool,
     bull_fill: [u8; 3],
@@ -309,7 +378,7 @@ struct CandlesFile {
     forming_opacity: f32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct CanvasFile {
     background_enabled: bool,
     background: [u8; 3],
@@ -473,6 +542,67 @@ mod tests {
             "a listed name deletes"
         );
         std::fs::remove_file(&path).ok();
+    }
+
+    /// A refused file entry is set aside with its reason, and a later save
+    /// writes it back as it was read rather than deleting it.
+    #[test]
+    fn a_refused_file_entry_survives_the_next_save() {
+        let path = crate::scratch::thread_dir("candle-presets-set-aside").join(PRESETS_FILE);
+        let mut file = PresetsFile {
+            version: FORMAT_VERSION,
+            presets: BTreeMap::new(),
+        };
+        let overlong = "x".repeat(MAX_NAME_LEN + 1);
+        for key in ["night", " night ", "   ", "Glass", overlong.as_str()] {
+            file.presets
+                .insert(key.to_owned(), StyleFile::from(&look()));
+        }
+        // Past the cap: a full list of valid names plus one more.
+        for index in 0..MAX_PRESETS {
+            file.presets
+                .insert(format!("p{index:02}"), StyleFile::from(&look()));
+        }
+        std::fs::write(&path, toml::to_string_pretty(&file).unwrap()).unwrap();
+
+        let mut loaded = CandlePresetStore::load(&path);
+        assert_eq!(loaded.names().count(), MAX_PRESETS);
+        let set_aside: BTreeMap<_, _> = loaded
+            .set_aside()
+            .map(|(name, why)| (name.to_owned(), why))
+            .collect();
+        assert_eq!(set_aside.get(" night "), Some(&SetAside::Duplicate));
+        assert_eq!(
+            set_aside.get("   "),
+            Some(&SetAside::Refused(SaveRefusal::BadName))
+        );
+        assert_eq!(
+            set_aside.get("Glass"),
+            Some(&SetAside::Refused(SaveRefusal::BuiltInName))
+        );
+        assert_eq!(
+            set_aside.get(&overlong),
+            Some(&SetAside::Refused(SaveRefusal::BadName))
+        );
+        assert_eq!(
+            set_aside.get("p23"),
+            Some(&SetAside::Refused(SaveRefusal::Full))
+        );
+        assert_eq!(set_aside.len(), 5, "{set_aside:?}");
+
+        // A delete rewrites the file; every set-aside entry is still in it.
+        assert_eq!(loaded.delete(&path, "night"), Ok(true));
+        let written: PresetsFile =
+            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        for key in [" night ", "   ", "Glass", overlong.as_str(), "p23"] {
+            assert_eq!(
+                written.presets.get(key),
+                Some(&StyleFile::from(&look())),
+                "{key:?} survived the rewrite"
+            );
+        }
+        assert!(!written.presets.contains_key("night"), "the delete landed");
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     #[test]
