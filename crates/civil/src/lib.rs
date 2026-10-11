@@ -305,7 +305,8 @@ pub fn fmt_weekday_minute(timestamp_ms: i64, tz: TzOffset) -> String {
 
 /// `Jan`…`Dec`; anything outside 1..=12 is a bug upstream, and `???` says
 /// so rather than panicking inside a paint.
-fn month_abbr(month: i64) -> &'static str {
+#[must_use]
+pub fn month_abbr(month: i64) -> &'static str {
     const NAMES: [&str; 12] = [
         "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
     ];
