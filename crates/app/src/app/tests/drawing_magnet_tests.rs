@@ -507,7 +507,10 @@ fn place_with_own_magnet(
     app.toolrail.set_magnet(false);
     let index = place_drawing(app, ctx, id, anchors);
     let drawings = &mut app.active_tab_mut().flow_pane.drawings;
-    assert!(!drawings.items()[index].magnet, "an object's magnet opens off");
+    assert!(
+        !drawings.items()[index].magnet,
+        "an object's magnet opens off"
+    );
     assert!(drawings.set_magnet_at(index, true), "the flag moved");
     run_frame(app, ctx);
     assert!(!app.toolrail.magnet(), "the rail's magnet stays off");
@@ -612,4 +615,42 @@ fn the_context_bar_flips_the_selected_drawings_own_magnet() {
         );
         assert!(!app.toolrail.magnet(), "the rail's magnet never moves");
     }
+}
+
+/// Where a shared line ends after its mirror on the time pane is carried
+/// onto a time-pane candle's high, with the rail's and the object's own
+/// magnet as given.
+fn shared_mirror_drag(rail: bool, own: bool) -> f64 {
+    let ctx = egui::Context::default();
+    let (mut app, _commands, on_the_time_pane) = split_with_a_shared_line(&ctx);
+    app.toolrail.set_magnet(rail);
+    app.active_tab_mut()
+        .flow_pane
+        .drawings
+        .set_magnet_at(0, own);
+    run_frame(&mut app, &ctx);
+    let pane = app.active_tab().time_pane().expect("the split built it");
+    let slot = pane.slots() - 3;
+    let high = pane.state.bars()[slot].high.to_f64().unwrap();
+    let chart = pane.frame.chart_area.expect("the time pane drew");
+    let history_right = pane.frame.lane_divider_x.unwrap_or(chart.right());
+    let x = pane
+        .model
+        .viewport
+        .x_at_bar_position(slot as f32, history_right, pane.slots());
+    let (_, scale) = time_pane_projection(&app);
+    let to = egui::pos2(x, scale.y(high) - 4.0);
+    drag_chart(&mut app, &ctx, on_the_time_pane, to);
+    app.active_tab().flow_pane.drawings.items()[0].points[0].price
+}
+
+/// A mirror on another pane honours the object's own magnet exactly as it
+/// honours the rail's: the same drag lands on the same price.
+#[test]
+fn a_shared_mirror_drag_honours_the_drawings_own_magnet() {
+    let free = shared_mirror_drag(false, false);
+    let rail = shared_mirror_drag(true, false);
+    let own = shared_mirror_drag(false, true);
+    assert_ne!(rail, free, "the fixture's drag must reach a print");
+    assert_eq!(own, rail);
 }

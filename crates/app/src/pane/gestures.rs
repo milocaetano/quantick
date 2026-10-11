@@ -126,4 +126,6 @@ pub struct PaneGestures {
     pub(super) shared_drag_pending_from: Option<egui::Pos2>,
     /// See [`Self::shared_drag`].
     pub(super) shared_pointer_mark: Option<(i64, f64)>,
+    /// The held mark's own magnet, joining the rail's for this gesture.
+    pub(super) shared_drag_magnet: bool,
 }

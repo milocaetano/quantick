@@ -387,6 +387,7 @@ impl PaneGestures {
         self.shared_drag = SharedDrag::None;
         self.shared_drag_pending_from = None;
         self.shared_pointer_mark = None;
+        self.shared_drag_magnet = false;
     }
 
     fn interact_shared(
@@ -424,7 +425,9 @@ impl PaneGestures {
         }) else {
             return;
         };
-        let Some((time_ms, price)) = shared_mark_at(projection, cached_bands, &pointer, position)
+        let magnet = pointer.magnet || self.shared_drag_magnet;
+        let Some((time_ms, price)) =
+            shared_mark_at(projection, cached_bands, &pointer, position, magnet)
         else {
             return;
         };
@@ -452,7 +455,10 @@ impl PaneGestures {
             outcome.shared.edit = Some(SharedEdit::Select(pick.index));
             self.shared_drag_owner = Some(pick.owner);
             self.shared_drag_pending_from = Some(position);
-            self.shared_pointer_mark = shared_mark_at(projection, cached_bands, pointer, position);
+            self.shared_drag_magnet = pick.magnet;
+            let magnet = pointer.magnet || pick.magnet;
+            self.shared_pointer_mark =
+                shared_mark_at(projection, cached_bands, pointer, position, magnet);
             self.shared_drag = if pick.locked {
                 SharedDrag::Blocked
             } else {
@@ -477,6 +483,7 @@ impl PaneGestures {
         self.shared_drag_owner = None;
         self.shared_drag_pending_from = None;
         self.shared_pointer_mark = None;
+        self.shared_drag_magnet = false;
     }
 
     fn shared_threshold_crossed(&mut self, position: Option<egui::Pos2>) -> bool {
@@ -668,13 +675,10 @@ fn translate_body(
         return;
     };
     let index = from.index;
-    let dragged = drawings
-        .items()
-        .get(index)
-        .and_then(|drawing| {
-            let magnet = pointer.magnet || drawing.magnet;
-            Some((drawing.tool, magnet, bands::band_of(frame.bands, drawing)?))
-        });
+    let dragged = drawings.items().get(index).and_then(|drawing| {
+        let magnet = pointer.magnet || drawing.magnet;
+        Some((drawing.tool, magnet, bands::band_of(frame.bands, drawing)?))
+    });
     if let Some((tool, magnet, band)) = dragged
         && let Some(scale) = band.scale
     {
@@ -722,6 +726,7 @@ fn shared_mark_at(
     cached_bands: &Bands,
     pointer: &SharedPointer,
     position: egui::Pos2,
+    magnet: bool,
 ) -> Option<(i64, f64)> {
     let band = bands::band_at(cached_bands, position)?;
     projection
@@ -729,7 +734,7 @@ fn shared_mark_at(
             position,
             pointer.history_right,
             pointer.total,
-            pointer.magnet,
+            magnet,
             drawings::AnchorSnap::Pointer,
             band,
         )
@@ -1023,6 +1028,7 @@ mod tests {
                 index: 3,
                 anchor: None,
                 locked,
+                magnet: false,
             };
             let mut denied = PointerOutcome::default();
             gestures.interact_shared(

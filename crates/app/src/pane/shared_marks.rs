@@ -67,6 +67,8 @@ pub struct SharedPick {
     pub anchor: Option<usize>,
     /// Locked geometry refuses to move, exactly as it does on its own pane.
     pub locked: bool,
+    /// The object's own magnet, which snaps its drag here as on its own pane.
+    pub magnet: bool,
 }
 
 /// What a pane did to another pane's marks in one frame.
