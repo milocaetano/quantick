@@ -193,3 +193,36 @@ fn a_launch_hold_is_released_by_the_traders_own_switch() {
         "the trader's switch is filed, not the hold"
     );
 }
+
+/// The tape window a strip double-click returns to: the run's hold, else the
+/// asset's own setting, else the default — never the navigated window.
+#[test]
+fn the_lane_window_setting_is_the_hold_then_the_asset_then_the_default() {
+    use quantick_orderflow::LaneWindow;
+    let mut screen = Screen::open(embedded());
+    assert_eq!(screen.look.lane_window_setting(), LaneWindow::default());
+
+    let (binding, _) = bind(&AssetBubblesStore::default().shared(), "WINV26");
+    screen.look.bind(binding);
+    // Set on purpose, as the window menu does, and filed at the next sync.
+    screen.config.live_lane.window = LaneWindow::Fixed { ms: 6_000 };
+    screen.look.note_lane_set();
+    screen.look.sync(&screen.config, false, false);
+    // Then the wheel: navigation, never filed.
+    screen.config.live_lane.window = LaneWindow::Fixed { ms: 40_000 };
+    screen.look.sync(&screen.config, false, false);
+    assert_eq!(
+        screen.look.lane_window_setting(),
+        LaneWindow::Fixed { ms: 6_000 },
+        "the asset's setting, not the wheel's window"
+    );
+
+    screen.look.hold_for_run(
+        |held| held.window = Some(LaneWindow::Fixed { ms: 2_000 }),
+        &mut screen.config,
+    );
+    assert_eq!(
+        screen.look.lane_window_setting(),
+        LaneWindow::Fixed { ms: 2_000 }
+    );
+}

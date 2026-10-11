@@ -417,6 +417,9 @@ mod tests {
     #[test]
     fn a_time_strip_double_click_resets_its_own_axis_spacing_only() {
         let mut model = Model::default();
+        // A launch hook opened the pane at 12 px: that, not the compiled
+        // default, is the spacing a reset returns to.
+        model.viewport.open_at_px_per_bar(12.0);
         model.viewport.zoom(3.0);
         model.viewport.pan_pixels(40.0, 100);
         let time = |reset, tape| {
@@ -429,10 +432,7 @@ mod tests {
             })
         };
         assert!(update(&mut model, time(true, false)).is_empty());
-        assert_eq!(
-            model.viewport.px_per_bar(),
-            crate::viewport::DEFAULT_PX_PER_BAR
-        );
+        assert_eq!(model.viewport.px_per_bar(), 12.0);
         assert!(!model.viewport.follows_live(), "a reset is not a jump");
 
         model.viewport.zoom(3.0);
@@ -442,7 +442,7 @@ mod tests {
         );
         assert_eq!(
             model.viewport.px_per_bar(),
-            3.0 * crate::viewport::DEFAULT_PX_PER_BAR,
+            36.0,
             "the tape strip resets the tape, never the candles"
         );
         assert!(update(&mut model, time(false, true)).is_empty());

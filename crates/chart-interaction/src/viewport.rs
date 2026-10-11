@@ -397,6 +397,27 @@ impl Viewport {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_zoom_reset_returns_to_the_spacing_the_pane_opened_on() {
+        let mut viewport = Viewport::new();
+        viewport.zoom(4.0);
+        viewport.reset_zoom();
+        assert_eq!(viewport.px_per_bar(), DEFAULT_PX_PER_BAR);
+        viewport.open_at_px_per_bar(1_000.0);
+        assert_eq!(viewport.px_per_bar(), MAX_CANDLE_WIDTH, "the gesture's clamp");
+        viewport.zoom(0.25);
+        viewport.set_px_per_bar(20.0);
+        viewport.reset_zoom();
+        assert_eq!(
+            viewport.px_per_bar(),
+            MAX_CANDLE_WIDTH,
+            "a zoom is not where the pane opened"
+        );
+        viewport.open_at_px_per_bar(f32::NAN);
+        viewport.reset_zoom();
+        assert_eq!(viewport.px_per_bar(), MAX_CANDLE_WIDTH);
+    }
+
     /// The whole reason [`Viewport::slot_of`] rounds.
     ///
     /// A candle occupies its slot centred on [`Viewport::x_center`], so the
