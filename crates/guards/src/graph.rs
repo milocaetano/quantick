@@ -77,6 +77,19 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
         ],
     ),
     ("chart-interaction", &["layers", "orderflow"]),
+    // Chart drawings under Model-View-Update: the store, its update and the
+    // scenes the window paints, over the chart model and the studies a mark
+    // anchors.
+    (
+        "drawings",
+        &[
+            "anchored-studies",
+            "chart",
+            "chart-interaction",
+            "engine",
+            "indicators",
+        ],
+    ),
     ("control", &[]),
     ("control-local", &["control"]),
     ("control-host", &["control", "engine"]),

@@ -186,6 +186,18 @@ are equal. This is applicability, not recalibration: the 2026-10-06 ceilings,
 host, toolchain, jobs, protocol, top-three selection and representatives are
 unchanged, and the PR's own ordinary exact-final-head run must pass every one.
 
+The drawings member-only amendment (#660, authorized by the trader on
+2026-10-10 for feature #659) binds root SHA256
+`f19ebf326d7dc60c0198ec705b327d8fb5ad0b0099fa8e925d27bd60a52e03c5`.
+Relative to the control-handlers identity above, only the `crates/drawings`
+member is added; all other parsed manifest values are equal. This is
+applicability, not recalibration: the seven-minute ceilings, host, toolchain,
+jobs, protocol, top-three selection and representatives are unchanged, and
+the PR's own ordinary exact-final-head run must pass every one. The same
+authorization covers the top-three change expected when `drawings` overtakes
+the third owner later in #659; that change still needs its own scoped
+reference run and ceiling, under the rules below.
+
 #### Reviewed 2026-10-06 calibration
 
 The [reference series](https://github.com/milocaetano/quantick/actions/runs/37407876085)

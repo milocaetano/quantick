@@ -1,0 +1,17 @@
+[package]
+name = "quantick-drawings"
+description = "Headless chart drawings: the mark store, its update and the scenes a renderer paints"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+quantick-anchored-studies = { path = "../anchored-studies" }
+quantick-chart = { path = "../chart" }
+quantick-chart-interaction = { path = "../chart-interaction" }
+quantick-engine = { path = "../engine" }
+quantick-indicators = { path = "../indicators" }
+
+[lints]
+workspace = true

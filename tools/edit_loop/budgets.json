@@ -23,7 +23,7 @@
   ],
   "host_class": "Linux/x86_64/4/Linux/X64/ubuntu24",
   "jobs": 4,
-  "profile_hash": "f8d8375eda7dfcf8497b8a2cd5f84cad07ea5fecaaec01293931101440babf69",
+  "profile_hash": "f19ebf326d7dc60c0198ec705b327d8fb5ad0b0099fa8e925d27bd60a52e03c5",
   "protocol_hash": "d5bafb0bc44dc58250eb9274e4414d7169ed30c197ec2601833ac90c48e69501",
   "rationale": "Seven-minute protocol calibration from the first run of PR #658, https://github.com/milocaetano/quantick/actions/runs/38088480381 (cold target; crates identical to main 2c7b0761). Each ceiling is ceil(1.25 * max(touched build + package test run) * 1000) / 1000, with no additive allowance. Previous-protocol limits are recorded in tools/edit_loop/README.md.",
   "schema": 1,
