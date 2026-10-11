@@ -238,6 +238,21 @@ pub(super) fn pane_sizing(sizing: Sizing) -> PaneSizing {
     }
 }
 
+/// A time strip's single cursor: the resize arrow on hover, the crosshair while
+/// held. Either way the painted crosshair stands down, so the pointer never
+/// carries two marks.
+fn strip_cursor(pane: &mut ChartPane, ui: &egui::Ui, strip: &egui::Response) {
+    use quantick_chart_interaction::pane_axis::{StripCursor, time_strip_cursor};
+    let held = strip.is_pointer_button_down_on() || strip.dragged();
+    if let Some(cursor) = time_strip_cursor(strip.hovered(), held) {
+        pane.hover_pos = None;
+        ui.ctx().set_cursor_icon(match cursor {
+            StripCursor::Resize => egui::CursorIcon::ResizeHorizontal,
+            StripCursor::Crosshair => egui::CursorIcon::Crosshair,
+        });
+    }
+}
+
 /// The gestures on the frame around the candles: the lane divider, the time strip and its
 /// jump-to-live chip, the lane's own strip, and the price gutter with its menu. One arm of
 /// [`ChartPane::handle_navigation`], registered after the chart body so each handle takes the
@@ -288,9 +303,7 @@ pub(super) fn handle_axis_gestures(
         pane.interaction_id("time_nav"),
         egui::Sense::click_and_drag(),
     );
-    if time.hovered() || time.dragged() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-    }
+    strip_cursor(pane, ui, &time);
     super::canvas_gestures::navigate(
         pane,
         Intent::Axis(AxisGesture::Time {
@@ -348,6 +361,7 @@ pub(super) fn handle_axis_gestures(
             egui::Id::new(("lane_time_nav", pane.id)),
             egui::Sense::click_and_drag(),
         );
+        strip_cursor(pane, ui, &lane_time);
         super::canvas_gestures::navigate(
             pane,
             Intent::Axis(AxisGesture::Time {

@@ -89,6 +89,29 @@ pub enum IndicatorGesture {
     },
 }
 
+/// The one cursor a time strip shows. Never two: the strip's resize arrow and
+/// the chart's crosshair do not share the pointer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StripCursor {
+    /// Hovered: drag or scroll here zooms the time axis.
+    Resize,
+    /// Held: the drag reads the chart, so the pointer is a crosshair.
+    Crosshair,
+}
+
+/// The strip's cursor from its hover and primary-button hold, `None` when the
+/// pointer is elsewhere and the strip has nothing to say.
+#[must_use]
+pub fn time_strip_cursor(hovered: bool, held: bool) -> Option<StripCursor> {
+    if held {
+        Some(StripCursor::Crosshair)
+    } else if hovered {
+        Some(StripCursor::Resize)
+    } else {
+        None
+    }
+}
+
 pub(crate) fn axis(model: &mut Model, gesture: AxisGesture) -> Vec<Effect> {
     let mut out = Vec::new();
     match gesture {
@@ -413,7 +436,10 @@ mod tests {
         assert!(!model.viewport.follows_live(), "a reset is not a jump");
 
         model.viewport.zoom(3.0);
-        assert_eq!(update(&mut model, time(true, true)), [Effect::ResetTapeZoom]);
+        assert_eq!(
+            update(&mut model, time(true, true)),
+            [Effect::ResetTapeZoom]
+        );
         assert_eq!(
             model.viewport.px_per_bar(),
             3.0 * crate::viewport::DEFAULT_PX_PER_BAR,
