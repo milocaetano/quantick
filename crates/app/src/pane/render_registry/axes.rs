@@ -297,10 +297,18 @@ impl TimeStripPass<'_> {
                     .x
             },
         );
-        // The pointer's chip is always written in full, whatever this strip
-        // thinned its own labels down to, so the two extents are asked for
-        // separately: a narrow strip pairs a 30 px label with a 54 px chip.
-        let chip_width = width_of(crate::chart::TimeLabelFormat::Full);
+        // The pointer's chip is always written in full, with its date, whatever
+        // this strip thinned its own labels down to, so the two extents are
+        // asked for separately: a narrow strip pairs a 30 px label with a
+        // 140 px chip. Measured at its widest form, the sub-day tag.
+        let chip_width = painter
+            .layout_no_wrap(
+                crate::chart::POINTER_TIME_SAMPLE.to_owned(),
+                font.clone(),
+                theme::TEXT_MUTED,
+            )
+            .size()
+            .x;
         // Per *bar*, not per slot: the walk below steps a bar at a time and
         // labels the bar it lands on, so how far apart two labels end up is
         // how far apart two bars are.
@@ -335,7 +343,8 @@ impl TimeStripPass<'_> {
                             crate::plot_area::fmt_calendar_label(bar.open_time, interval, previous)
                         })
                         .unwrap_or_else(|| {
-                            crate::plot_area::fmt_time_as(bar.open_time, self.tz, format)
+                            // The first label of a new day names it.
+                            crate::chart::tick_time_label(bar.open_time, previous, self.tz, format)
                         });
                     painter.text(
                         egui::pos2(x, y),
@@ -546,7 +555,9 @@ fn paint_tape_clock(
     #[allow(clippy::cast_precision_loss)]
     let x_of =
         |instant: i64| strip.left() + geometry.x((instant - start_ms) as f64 / window_ms as f64);
+    let mut previous = None;
     for instant in quantick_orderflow::lane_time_ticks(end_ms, window_ms, max_labels) {
+        let before = previous.replace(instant);
         let x = x_of(instant);
         let rect = egui::Rect::from_center_size(
             egui::pos2(x, strip.center().y),
@@ -560,7 +571,7 @@ fn paint_tape_clock(
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            crate::plot_area::fmt_time_as(instant, tz, format),
+            crate::chart::tick_time_label(instant, before, tz, format),
             font.clone(),
             theme::TEXT_MUTED,
         );

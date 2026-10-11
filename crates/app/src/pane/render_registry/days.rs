@@ -64,12 +64,14 @@ fn day_separator(p: &mut DaySeparatorPass<'_>) {
     let (left, right) = (p.history.left(), p.history.right());
     let y = p.strip.center().y;
     let sample = crate::chart::TimeLabelFormat::Full.sample();
-    let chip_width = painter
+    let sample_width = painter
         .layout_no_wrap(sample.to_owned(), font.clone(), egui::Color32::WHITE)
         .size()
         .x;
     // Monospace: one sample character; `day_turn` bounds labels from it.
-    let char_width = chip_width / sample.chars().count() as f32;
+    let char_width = sample_width / sample.chars().count() as f32;
+    // The pointer's chip at its widest, its date included.
+    let chip_width = char_width * crate::chart::POINTER_TIME_SAMPLE.chars().count() as f32;
     let claimed = |centre: f32, width: f32| {
         pointer_compass::claimed(centre, width, chip_width, claims.iter().copied())
     };
