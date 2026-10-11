@@ -4,7 +4,11 @@ use super::*;
 use quantick_chart_interaction::viewport::DEFAULT_PX_PER_BAR;
 
 fn strip_app() -> (QuantickApp, egui::Context, egui::Rect, egui::Rect) {
-    let (mut app, _commands) = app_with_history(50);
+    strip_app_with(AppLaunch::default())
+}
+
+fn strip_app_with(launch: AppLaunch) -> (QuantickApp, egui::Context, egui::Rect, egui::Rect) {
+    let (mut app, _commands) = app_with_history_and_launch(50, launch);
     app.toolrail.arm(crate::toolrail::Tool::Crosshair);
     let ctx = egui::Context::default();
     pin_frame_clock(&ctx);
@@ -137,4 +141,79 @@ fn double_clicking_the_tape_strip_resets_the_lane_window_only() {
         spacing,
         "the tape strip never resets the candles"
     );
+}
+
+#[test]
+fn a_secondary_press_on_the_strip_keeps_the_resize_arrow() {
+    let (mut app, ctx, history, _) = strip_app();
+    let at = history.center();
+    hover(&mut app, &ctx, at);
+    let press = egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Secondary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    };
+    run_frame_with_events(&mut app, &ctx, vec![press]);
+    let held = run_frame_with_events(&mut app, &ctx, vec![]);
+    assert_eq!(
+        held.platform_output.cursor_icon,
+        egui::CursorIcon::ResizeHorizontal,
+        "the context menu's press is not a primary hold"
+    );
+}
+
+#[test]
+fn a_held_drag_that_leaves_the_strip_never_shows_two_crosshairs() {
+    let (mut app, ctx, history, _) = strip_app();
+    let at = history.center();
+    hover(&mut app, &ctx, at);
+    run_frame_with_events(&mut app, &ctx, vec![pointer_button(at, true)]);
+    for step in 1..=4 {
+        let output = run_frame_with_events(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(
+                at - egui::vec2(0.0, 40.0 * step as f32),
+            )],
+        );
+        let os_crosshair = output.platform_output.cursor_icon == egui::CursorIcon::Crosshair;
+        let painted = app.active_tab().flow_pane.hover_pos.is_some();
+        assert!(
+            os_crosshair != painted,
+            "exactly one crosshair at step {step}: os {os_crosshair}, painted {painted}"
+        );
+    }
+}
+
+#[test]
+fn the_jump_to_live_chip_shows_only_its_hand() {
+    let (mut app, ctx, history, _) = strip_app();
+    let pane = &mut app.active_tab_mut().flow_pane;
+    let slots = pane.slots();
+    pane.model.viewport.pan_pixels(200.0, slots);
+    run_frame(&mut app, &ctx);
+    run_frame(&mut app, &ctx);
+    let chip = crate::pane::test_live_chip_rect(history);
+    let output = hover(&mut app, &ctx, chip.center());
+    assert_eq!(
+        output.platform_output.cursor_icon,
+        egui::CursorIcon::PointingHand
+    );
+    assert_eq!(app.active_tab().flow_pane.hover_pos, None);
+}
+
+#[test]
+fn the_double_click_returns_to_the_spacing_a_launch_hook_opened_on() {
+    let launch = AppLaunch {
+        scenario: crate::hooks::ScenarioInputs::from_pairs(&[("QUANTICK_CANDLE_WIDTH", "20")]),
+        ..AppLaunch::default()
+    };
+    let (mut app, ctx, history, _) = strip_app_with(launch);
+    assert_eq!(app.active_tab().flow_pane.model.viewport.px_per_bar(), 20.0);
+    app.active_tab_mut().flow_pane.model.viewport.zoom(0.5);
+    click_chart(&mut app, &ctx, history.center());
+    click_chart(&mut app, &ctx, history.center());
+    run_frame(&mut app, &ctx);
+    assert_eq!(app.active_tab().flow_pane.model.viewport.px_per_bar(), 20.0);
 }

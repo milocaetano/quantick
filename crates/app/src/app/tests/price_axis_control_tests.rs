@@ -287,3 +287,50 @@ fn entering_tape_through_layers_or_a_source_preset_discards_candle_manual_framin
         );
     }
 }
+
+/// The time strips' double-click, by name: candles back to the spacing the
+/// pane opened on, the tape back to its setting — through the gesture's path.
+#[test]
+fn the_time_axis_reset_call_matches_the_strip_double_click_and_reads_it_back() {
+    const RESET: &str = "chart.time_axis.reset";
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(40);
+    enable_tape(&mut app);
+    run_frame(&mut app, &ctx);
+    let pane_id = app.active_tab().flow_pane.id;
+    let opened = app.active_tab().flow_pane.model.viewport.px_per_bar();
+    let window = app.active_tab().tape().live_lane_window();
+    {
+        let pane = &mut app.active_tab_mut().flow_pane;
+        pane.model.viewport.zoom(3.0);
+        pane.orderflow.as_mut().unwrap().zoom_live_lane(2.0);
+    }
+    assert_ne!(app.active_tab().tape().live_lane_window(), window);
+    let directory = gateway_test_directory("time-axis-reset");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let tab_id = app.tabs.active_id().to_string();
+    let payload =
+        |axis: &str| json!({"tab_id": tab_id, "pane_id": pane_id.to_string(), "axis": axis});
+    let (candles, _) = unkeyed_call(&mut app, &mut client, RESET, payload("candles"));
+    let spacing = success_result(&candles)["viewport"]["pixels_per_bar"].clone();
+    assert_eq!(spacing.as_str().unwrap().parse::<f32>().unwrap(), opened);
+    assert_ne!(
+        app.active_tab().tape().live_lane_window(),
+        window,
+        "the candles' reset leaves the tape alone"
+    );
+    let (tape, _) = unkeyed_call(&mut app, &mut client, RESET, payload("tape"));
+    success_result(&tape);
+    assert_eq!(app.active_tab().tape().live_lane_window(), window);
+    run_frame(&mut app, &ctx);
+    let readback = read_viewport(&mut app, &mut client, pane_id);
+    assert_eq!(readback["pixels_per_bar"], spacing);
+    let (unknown, _) = unkeyed_call(&mut app, &mut client, RESET, payload("price"));
+    assert_eq!(error_code(&unknown), Some(codes::INVALID_REQUEST));
+    disable_test_gateway(&mut app, &ctx);
+}

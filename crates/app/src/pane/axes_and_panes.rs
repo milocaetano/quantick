@@ -238,18 +238,66 @@ pub(super) fn pane_sizing(sizing: Sizing) -> PaneSizing {
     }
 }
 
-/// A time strip's single cursor: the resize arrow on hover, the crosshair while
-/// held. Either way the painted crosshair stands down, so the pointer never
-/// carries two marks.
-fn strip_cursor(pane: &mut ChartPane, ui: &egui::Ui, strip: &egui::Response) {
+/// One time strip, the candles' (`tape: false`) or the tape's: drag or scroll
+/// zooms its axis, a double-click resets it, and the pointer carries one mark
+/// — the resize arrow over it, the crosshair while the primary button holds it,
+/// the painted crosshair standing down while the pointer is on the strip.
+fn time_strip(
+    pane: &mut ChartPane,
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    id: egui::Id,
+    tape: bool,
+) -> egui::Response {
     use quantick_chart_interaction::pane_axis::{StripCursor, time_strip_cursor};
-    let held = strip.is_pointer_button_down_on() || strip.dragged();
-    if let Some(cursor) = time_strip_cursor(strip.hovered(), held) {
-        pane.hover_pos = None;
+    let strip = ui.interact(rect, id, egui::Sense::click_and_drag());
+    let held = strip.is_pointer_button_down_on() && ui.input(|i| i.pointer.primary_down());
+    let over = strip.hovered() || (held && strip.contains_pointer());
+    if let Some(cursor) = time_strip_cursor(over, held, pane.hover_pos.is_some()) {
         ui.ctx().set_cursor_icon(match cursor {
             StripCursor::Resize => egui::CursorIcon::ResizeHorizontal,
             StripCursor::Crosshair => egui::CursorIcon::Crosshair,
         });
+    }
+    if over {
+        pane.hover_pos = None;
+    }
+    let drag = if strip.dragged() {
+        strip.drag_delta().x
+    } else {
+        0.0
+    };
+    let scroll = if strip.hovered() {
+        ui.input(|i| i.raw_scroll_delta.y)
+    } else {
+        0.0
+    };
+    super::canvas_gestures::navigate(
+        pane,
+        Intent::Axis(AxisGesture::Time {
+            reset: strip.double_clicked(),
+            drag,
+            scroll,
+            scroll_gain: SCROLL_ZOOM_PX,
+            tape,
+        }),
+    );
+    strip
+}
+
+impl ChartPane {
+    /// A time axis back where it opened — the strip's double-click, by name.
+    pub(crate) fn reset_time_axis(&mut self, tape: bool) {
+        super::canvas_gestures::navigate(
+            self,
+            Intent::Axis(AxisGesture::Time {
+                reset: true,
+                drag: 0.0,
+                scroll: 0.0,
+                scroll_gain: SCROLL_ZOOM_PX,
+                tape,
+            }),
+        );
     }
 }
 
@@ -298,29 +346,12 @@ pub(super) fn handle_axis_gestures(
     // lane zooms the lane's window, the rest zooms the candle spacing —
     // each pane's own time axis, under the pane it belongs to.
     let (history_strip, lane_strip) = split_time_strip(areas.time_strip, pane.frame.lane_divider_x);
-    let time = ui.interact(
+    let time = time_strip(
+        pane,
+        ui,
         history_strip,
         pane.interaction_id("time_nav"),
-        egui::Sense::click_and_drag(),
-    );
-    strip_cursor(pane, ui, &time);
-    super::canvas_gestures::navigate(
-        pane,
-        Intent::Axis(AxisGesture::Time {
-            reset: time.double_clicked(),
-            drag: if time.dragged() {
-                time.drag_delta().x
-            } else {
-                0.0
-            },
-            scroll: if time.hovered() {
-                ui.input(|i| i.raw_scroll_delta.y)
-            } else {
-                0.0
-            },
-            scroll_gain: SCROLL_ZOOM_PX,
-            tape: false,
-        }),
+        false,
     );
     // The time axis's own menu, the price gutter's twin: what an axis
     // writes is switched from that axis. This one had no menu at all until
@@ -339,6 +370,8 @@ pub(super) fn handle_axis_gestures(
             egui::Sense::click(),
         );
         if chip.hovered() {
+            // The hand alone: no painted crosshair chases it on the strip.
+            pane.hover_pos = None;
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
         if chip.clicked() {
@@ -356,30 +389,8 @@ pub(super) fn handle_axis_gestures(
     if let Some(lane_strip) = lane_strip
         && pane.orderflow.is_some()
     {
-        let lane_time = ui.interact(
-            lane_strip,
-            egui::Id::new(("lane_time_nav", pane.id)),
-            egui::Sense::click_and_drag(),
-        );
-        strip_cursor(pane, ui, &lane_time);
-        super::canvas_gestures::navigate(
-            pane,
-            Intent::Axis(AxisGesture::Time {
-                reset: lane_time.double_clicked(),
-                drag: if lane_time.dragged() {
-                    lane_time.drag_delta().x
-                } else {
-                    0.0
-                },
-                scroll: if lane_time.hovered() {
-                    ui.input(|i| i.raw_scroll_delta.y)
-                } else {
-                    0.0
-                },
-                scroll_gain: SCROLL_ZOOM_PX,
-                tape: true,
-            }),
-        );
+        let id = egui::Id::new(("lane_time_nav", pane.id));
+        time_strip(pane, ui, lane_strip, id, true);
     }
 
     // Right price gutter: the candles' own axis gesture. It spans their

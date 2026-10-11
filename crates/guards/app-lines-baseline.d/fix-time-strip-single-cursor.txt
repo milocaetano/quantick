@@ -6,3 +6,9 @@
 # without them no branch cut from that main can pass the guard.
 crates/app +45
 !budget +45
+# Review round 1: +54 more — the `chart.time_axis.reset` action binding and
+# its schema documents, the strips' shared helper and the chip's single
+# cursor, the tape view's reset onto its asset setting, and the opening
+# spacing at the three launch hooks. Measured.
+crates/app +54
+!budget +54

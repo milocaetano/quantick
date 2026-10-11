@@ -116,6 +116,8 @@ use drag::{
 };
 pub use drag::{DRAWING_ANCHOR_RADIUS_PX, DrawingDrag};
 use hint::{magnet_price_of, paint_placement_hint, snap_bar_to_tape};
+#[cfg(test)]
+pub(crate) use painting::live_chip_rect as test_live_chip_rect;
 use painting::{
     LANE_AXIS_FONT_PX, LANE_AXIS_GAP_PX, LANE_HANDLE_HALF_WIDTH_PX, LAST_PRICE_CHIP_TEXT,
     LAST_PRICE_DASH_PX, LAST_PRICE_GAP_PX, LAST_PRICE_LINE_ALPHA, SCROLL_ZOOM_PX, SEAM_DASH_PX,

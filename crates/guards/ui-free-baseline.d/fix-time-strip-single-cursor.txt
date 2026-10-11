@@ -1,0 +1,8 @@
+# fix/time-strip-single-cursor review round 1: the `chart.time_axis.reset`
+# action binding (control/price_axis.rs, its registration and two schema
+# documents) and the tape view's reset onto its asset setting
+# (orderflow_view.rs). An action handler binds app ports and has no
+# headless home; the reset decisions live in chart-interaction's Viewport
+# and quantick_stores' BubbleLook. Measured.
+crates/app +37
+!budget +37

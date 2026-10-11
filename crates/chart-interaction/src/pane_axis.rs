@@ -88,26 +88,25 @@ pub enum IndicatorGesture {
     },
 }
 
-/// The one cursor a time strip shows. Never two: the strip's resize arrow and
-/// the chart's crosshair do not share the pointer.
+/// The one cursor a time strip shows; never a second one beside the chart's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StripCursor {
-    /// Hovered: drag or scroll here zooms the time axis.
+    /// Over the strip: drag or scroll here zooms the time axis.
     Resize,
-    /// Held: the drag reads the chart, so the pointer is a crosshair.
+    /// Primary held on the strip: the drag reads the chart.
     Crosshair,
 }
 
-/// The strip's cursor from its hover and primary-button hold, `None` when the
-/// pointer is elsewhere and the strip has nothing to say.
+/// The strip's cursor from whether the pointer is `over` it, the primary
+/// button is `held` on it, and the chart's own crosshair `chart_reads` the
+/// pointer — which, past the strip, it keeps to itself.
 #[must_use]
-pub fn time_strip_cursor(hovered: bool, held: bool) -> Option<StripCursor> {
-    if held {
-        Some(StripCursor::Crosshair)
-    } else if hovered {
-        Some(StripCursor::Resize)
-    } else {
-        None
+pub fn time_strip_cursor(over: bool, held: bool, chart_reads: bool) -> Option<StripCursor> {
+    match (held, over) {
+        (true, true) => Some(StripCursor::Crosshair),
+        (true, false) => (!chart_reads).then_some(StripCursor::Crosshair),
+        (false, true) => Some(StripCursor::Resize),
+        (false, false) => None,
     }
 }
 

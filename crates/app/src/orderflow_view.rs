@@ -693,6 +693,12 @@ impl OrderflowView {
         self.navigate_live_lane_window(window);
     }
 
+    /// The tape's window back to its setting ([`BubbleLook::lane_window_setting`]):
+    /// navigation undone, the asset untouched.
+    pub fn reset_live_lane_window(&mut self) {
+        self.navigate_live_lane_window(self.look.lane_window_setting());
+    }
+
     /// Move the tape's window as the wheel does: the view, not the asset.
     pub fn navigate_live_lane_window(&mut self, window: LaneWindow) {
         let before = self.config.clone();

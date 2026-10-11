@@ -11,7 +11,8 @@ use serde_json::Value;
 
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
     registry.register(descriptor(), set)?;
-    registry.register(quantick_control_schema::tape_view::descriptor(), set_tape)
+    registry.register(quantick_control_schema::tape_view::descriptor(), set_tape)?;
+    registry.register(quantick_control_schema::time_axis::descriptor(), reset_time)
 }
 
 pub(super) fn invalid(error: impl ToString) -> ControlError {
@@ -87,6 +88,36 @@ fn set_tape<P: TabsPort + TabsMutPort + ?Sized>(
         tab_id,
         pane_id,
         tape,
+    })
+    .map_err(invalid)
+}
+
+/// The strip double-click's own path, so the call and the gesture cannot drift.
+fn reset_time<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
+    _access: &mut ControlAccess,
+    _actor: &ActorContext,
+    value: &Value,
+) -> Result<Value, ControlError> {
+    use quantick_control_schema::time_axis::{TimeAxis, TimeAxisResetInput, TimeAxisResetResult};
+    let input: TimeAxisResetInput = serde_json::from_value(value.clone()).map_err(invalid)?;
+    let pane = pane(app, input.tab_id, input.pane_id)?;
+    let tape = input.axis == TimeAxis::Tape;
+    if tape
+        && !pane
+            .orderflow
+            .as_ref()
+            .is_some_and(|t| t.cached_config().native_tape())
+    {
+        return Err(invalid("the pane draws no native tape"));
+    }
+    pane.reset_time_axis(tape);
+    let viewport = super::chart::viewport_snapshot(pane);
+    let (tab_id, pane_id) = (input.tab_id, input.pane_id);
+    serde_json::to_value(TimeAxisResetResult {
+        tab_id,
+        pane_id,
+        viewport,
     })
     .map_err(invalid)
 }
