@@ -17971,6 +17971,32 @@
                 "$ref": "#/$defs/CanonicalDecimal",
                 "description": "A level is imbalanced when one side exceeds the diagonal other side by\nthis factor."
               },
+              "number_row_px": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The shortest a row with numbers may draw before neighbouring prices\nmerge (\"min number row height\"); the one-number level keeps a pixel\nunder it.",
+                "x-unit": "pixels"
+              },
+              "profile_row_px": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The shortest a profile band may draw before neighbouring prices merge\ninto one band (\"min band height\").",
+                "x-unit": "pixels"
+              },
               "show_delta_totals": {
                 "type": "boolean"
               },

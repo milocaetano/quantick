@@ -21,7 +21,7 @@ use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::footprint_config::{
     DETAIL_SCALE_RANGE, DETAILED_FROM_PX_RANGE, FootprintConfig, FootprintStyle,
-    PROFILE_ROW_PX_RANGE,
+    NUMBER_ROW_PX_RANGE, PROFILE_ROW_PX_RANGE,
 };
 use crate::footprint_presets::{MAX_NAME_LEN, PresetStore};
 use crate::theme;
@@ -272,25 +272,42 @@ impl StyleSection<'_> {
     }
 }
 
-/// How fine the price bands may get.
+/// How short a price row may get before neighbouring prices merge.
 struct RowsSection<'a> {
     config: &'a mut FootprintConfig,
 }
 
 impl RowsSection<'_> {
     fn show(self, ui: &mut egui::Ui) -> bool {
-        section_heading(ui, "Rows");
-        ui.add(
-            egui::Slider::new(&mut self.config.profile_row_px, PROFILE_ROW_PX_RANGE)
-                .text("thinnest band px")
-                .step_by(0.5),
-        )
-        .on_hover_text(
-            "how fine the price bands may get before neighbouring rows merge. \
-             Lower = more, thinner bands per candle; the legend always names \
-             the price width one band stands for",
-        )
-        .changed()
+        section_heading(ui, "Price rows by height");
+        let band = ui
+            .add(
+                egui::Slider::new(&mut self.config.profile_row_px, PROFILE_ROW_PX_RANGE)
+                    .text("min band height")
+                    .suffix(" px")
+                    .step_by(0.5),
+            )
+            .on_hover_text(
+                "the shortest a profile band can be before neighbouring prices \
+                 merge into one band. Lower = more, thinner bands; the legend \
+                 always names the price one row stands for",
+            )
+            .changed();
+        let numbers = ui
+            .add(
+                egui::Slider::new(&mut self.config.number_row_px, NUMBER_ROW_PX_RANGE)
+                    .text("min number row height")
+                    .suffix(" px")
+                    .step_by(0.5),
+            )
+            .on_hover_text(
+                "the shortest a row with numbers can be before neighbouring \
+                 prices merge. Lower = each price gets its own row with less \
+                 vertical stretch, in smaller text (never under 7 px); higher = \
+                 bigger text, rows merge sooner",
+            )
+            .changed();
+        band | numbers
     }
 }
 
@@ -301,18 +318,20 @@ struct DetailSection<'a> {
 
 impl DetailSection<'_> {
     fn show(self, ui: &mut egui::Ui) -> bool {
-        section_heading(ui, "Detail");
+        section_heading(ui, "Detail by candle width");
         let scale = ui
             .add(
                 egui::Slider::new(&mut self.config.detail_scale, DETAIL_SCALE_RANGE)
-                    .text("zoom needed for detail")
+                    .text("candle width for numbers")
+                    .suffix("×")
                     .step_by(0.05),
             )
             .on_hover_text(
-                "how much candle width each level waits for. 1.0 is where the \
-                 numbers exactly fit their candle; lower brings marks, profile \
-                 and numbers in at narrower candles, at the cost of the digits \
-                 crowding their neighbour. The legend says how much further to \
+                "how wide a candle must be before each detail level appears. \
+                 1.0 = numbers just fit; lower = narrower candles, crowded; \
+                 higher = wider candles, roomier. High values can push the full \
+                 ladder to the deepest zoom; summary numbers still follow \
+                 \"summary numbers from px\". The legend says how much wider to \
                  zoom whenever numbers are not showing yet",
             )
             .changed();
@@ -330,7 +349,7 @@ impl DetailSection<'_> {
             "summary numbers from px",
             "candle width where one delta number per row starts: zooming in it \
              appears there and zooming out it leaves at the same width \
-             (measured at zoom needed 1.0)",
+             (measured at candle width for numbers 1.0)",
         );
         let detailed = entry(
             &mut self.config.detailed_from_px,
