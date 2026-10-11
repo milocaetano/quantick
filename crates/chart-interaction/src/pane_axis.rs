@@ -422,6 +422,17 @@ mod tests {
         assert!(update(&mut model, time(false, true)).is_empty());
     }
     #[test]
+    fn a_time_strip_shows_one_cursor_resize_on_hover_crosshair_while_held() {
+        assert_eq!(time_strip_cursor(false, false), None);
+        assert_eq!(time_strip_cursor(true, false), Some(StripCursor::Resize));
+        assert_eq!(time_strip_cursor(true, true), Some(StripCursor::Crosshair));
+        assert_eq!(
+            time_strip_cursor(false, true),
+            Some(StripCursor::Crosshair),
+            "a drag that left the strip still reads the chart"
+        );
+    }
+    #[test]
     fn indicator_divider_auto_reset_wins_over_drag() {
         let mut model = Model::default();
         assert_eq!(
