@@ -169,8 +169,8 @@ const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
         crate::surfaces::bar_switch::HOOKS,
     ),
     (
-        "crates/app/src/surfaces/footprint_settings.rs",
-        crate::surfaces::footprint_settings::HOOKS,
+        "crates/app/src/surfaces/chart_settings/mod.rs",
+        crate::surfaces::chart_settings::HOOKS,
     ),
     (
         "crates/app/src/surfaces/indicator_preview.rs",
@@ -179,10 +179,6 @@ const SCENARIO_OWNERS: &[(&str, &[HookSpec])] = &[
     (
         "crates/app/src/surfaces/source_picker.rs",
         crate::surfaces::source_picker::HOOKS,
-    ),
-    (
-        "crates/app/src/surfaces/style_panel.rs",
-        crate::surfaces::style_panel::HOOKS,
     ),
     (
         "crates/app/src/surfaces/toast.rs",

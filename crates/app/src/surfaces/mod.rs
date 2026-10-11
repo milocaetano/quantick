@@ -43,12 +43,11 @@
 
 pub(crate) mod agent_popup;
 pub(crate) mod bar_switch;
+pub(crate) mod chart_settings;
 pub(crate) mod drawing_chrome;
-pub(crate) mod footprint_settings;
 pub(crate) mod indicator_preview;
 pub(crate) mod source_picker;
 pub(crate) mod strategy_popup;
-pub(crate) mod style_panel;
 pub(crate) mod toast;
 pub(crate) mod workspace_name;
 
@@ -58,12 +57,11 @@ use eframe::egui;
 
 pub(crate) use agent_popup::AgentPopupSurface;
 pub(crate) use bar_switch::{BarSwitchRequest, BarSwitchSurface};
+pub(crate) use chart_settings::{ChartSettingsSurface, ChartSettingsTab};
 pub(crate) use drawing_chrome::{DrawingChromeSurface, DrawingEnv};
-pub(crate) use footprint_settings::FootprintSettingsSurface;
 pub(crate) use indicator_preview::IndicatorPreviewSurface;
 pub(crate) use source_picker::SourcePickerSurface;
 pub(crate) use strategy_popup::StrategyPopupSurface;
-pub(crate) use style_panel::StylePanelSurface;
 pub(crate) use toast::ToastSurface;
 pub(crate) use workspace_name::WorkspaceNameSurface;
 
@@ -368,16 +366,14 @@ pub(crate) struct Surfaces {
     /// The banner over a pane whose indicator is previewing an unapplied
     /// draft.
     pub indicator_preview: IndicatorPreviewSurface,
-    /// The footprint settings window, opened from the toolbar and from a
-    /// pane's layer menu.
-    pub footprint_settings: FootprintSettingsSurface,
+    /// The chart settings window — candles and footprint as tabs — opened
+    /// by a double click on the candles, the toolbar, the menus and a pane's
+    /// layer menu.
+    pub chart_settings: ChartSettingsSurface,
     /// The "Open market" dialog, opened by the `+` and by Ctrl+T.
     pub source_picker: SourcePickerSurface,
     /// The "Arm strategy" dialog, opened by right-clicking a drawn region.
     pub strategy_popup: StrategyPopupSurface,
-    /// The candle-appearance window, opened from the toolbar and the View
-    /// menu.
-    pub style_panel: StylePanelSurface,
     /// The window's acknowledgement channel, with Undo where the act has one.
     pub toast: ToastSurface,
     /// The Save-as box, opened from the Workspace menu.
@@ -429,22 +425,20 @@ impl Surfaces {
             self.hooks_applied = true;
             self.agent_popup.apply_env_hook(env);
             self.bar_switch.apply_env_hook(env);
-            self.footprint_settings.apply_env_hook(env);
+            self.chart_settings.apply_env_hook(env);
             self.indicator_preview.apply_env_hook(env);
             self.source_picker.apply_env_hook(env);
             self.strategy_popup.apply_env_hook(env);
-            self.style_panel.apply_env_hook(env);
             self.toast.apply_env_hook(env);
             self.workspace_name.apply_env_hook(env);
         }
         let mut response = SurfaceResponse::default();
         response.merge(self.agent_popup.draw(ctx, env));
         response.merge(self.bar_switch.draw(ctx, env));
-        response.merge(self.footprint_settings.draw(ctx, env));
+        response.merge(self.chart_settings.draw(ctx, env));
         response.merge(self.indicator_preview.draw(ctx, env));
         response.merge(self.source_picker.draw(ctx, env));
         response.merge(self.strategy_popup.draw(ctx, env));
-        response.merge(self.style_panel.draw(ctx, env));
         response.merge(self.toast.draw(ctx, env));
         response.merge(self.workspace_name.draw(ctx, env));
         // Deliberately not `self.drawing_chrome` — see the field's own note.

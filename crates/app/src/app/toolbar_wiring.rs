@@ -10,10 +10,11 @@ use eframe::egui;
 
 use crate::indicator_worker::SlotId;
 use crate::pane::PaneSide;
+use crate::surfaces::ChartSettingsTab::{Candles, Footprint};
 use crate::tab::CanvasLayout;
 use crate::toolbar::{self, ToolbarAction};
 
-use super::{QuantickApp, TabsMutPort};
+use super::{LayersPort, QuantickApp, TabsMutPort};
 
 // A failed recut still owns older prints after venue paging is exhausted.
 // The history button retries those retained pages through its ordinary action.
@@ -111,7 +112,7 @@ impl QuantickApp {
             .map(|entry| entry.name.clone())
             .collect();
         let dock_visible = self.dock.visible();
-        let show_style = self.surfaces.style_panel.is_open();
+        let show_style = self.surfaces.chart_settings.is_open_on(Candles);
         // The History button names this tab's target and run.
         let history = toolbar::HistoryButton {
             main: self.active_tab().main_history_reach(),
@@ -268,11 +269,11 @@ impl QuantickApp {
                 };
                 pane.set_layer_visible(toggle.layer(), shown, &mut Default::default());
             }
-            ToolbarAction::OpenFootprintSettings => self.surfaces.footprint_settings.open(),
+            ToolbarAction::OpenFootprintSettings => self.layer_wiring().open_settings(Footprint),
             ToolbarAction::OpenDockTab(tab) => self.dock.open_tab(tab),
             ToolbarAction::SetLayout(preset) => self.apply_layout_preset(preset),
             ToolbarAction::ToggleDock => self.dock.toggle_visible(),
-            ToolbarAction::ToggleAppearance => self.surfaces.style_panel.toggle(),
+            ToolbarAction::ToggleAppearance => self.layer_wiring().toggle_settings(Candles),
             // Every indicator command lands on the focused pane (§11), which
             // is the flow pane whenever the canvas is not split.
             // Adding an indicator by hand is the plainest possible request to

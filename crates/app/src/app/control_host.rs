@@ -743,7 +743,7 @@ impl LayersPort for QuantickApp {
             style: &mut self.style,
             style_revision: &mut self.style_revision,
             footprint_config: &mut self.footprint_config,
-            footprint_settings: &mut self.surfaces.footprint_settings,
+            chart_settings: &mut self.surfaces.chart_settings,
         }
     }
 }

@@ -1,0 +1,65 @@
+{
+  "$defs": {
+    "ChartSettingsTab": {
+      "description": "A tab of the chart settings window.",
+      "oneOf": [
+        {
+          "const": "candles",
+          "description": "Candle and canvas appearance, with its presets.",
+          "type": "string"
+        },
+        {
+          "const": "footprint",
+          "description": "The focused chart's footprint knobs, with their presets.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The window and the candle presets after the call.",
+  "properties": {
+    "built_in_presets": {
+      "description": "The built-in presets, by label, in the window's order.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "candle_preset": {
+      "description": "The preset the chart's look answers to: a built-in label when the\ncandles match one, a saved name when the whole look matches one, or\n`None` for a look nobody named.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "changed": {
+      "description": "Whether the call changed the window, the appearance or the saved list.",
+      "type": "boolean"
+    },
+    "custom_presets": {
+      "description": "The saved looks, alphabetically.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "open": {
+      "description": "Whether the window is on screen.",
+      "type": "boolean"
+    },
+    "tab": {
+      "$ref": "#/$defs/ChartSettingsTab",
+      "description": "The tab it shows, or would show when opened."
+    }
+  },
+  "required": [
+    "open",
+    "tab",
+    "built_in_presets",
+    "custom_presets",
+    "changed"
+  ],
+  "title": "ChartSettingsResult",
+  "type": "object"
+}

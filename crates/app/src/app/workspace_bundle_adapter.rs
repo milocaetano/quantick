@@ -24,7 +24,7 @@ pub(crate) struct WorkspaceBundleAdapter<'a> {
     pub(super) added_symbols: &'a mut crate::symbols_file::AddedSymbols,
     pub(super) drawing_presets: &'a mut crate::drawings::presets::PresetStore,
     pub(super) footprint_config: &'a mut crate::footprint_config::FootprintConfig,
-    pub(super) footprint_settings: &'a mut crate::surfaces::FootprintSettingsSurface,
+    pub(super) chart_settings: &'a mut crate::surfaces::ChartSettingsSurface,
 }
 
 impl WorkspaceBundleAdapter<'_> {
@@ -289,7 +289,7 @@ impl WorkspaceBundleAdapter<'_> {
         );
         *self.footprint_config =
             crate::footprint_config::load(self.arrangement.workspace.footprint_settings_path());
-        self.footprint_settings.reload_presets();
+        self.chart_settings.reload_presets();
         self.arrangement.indicators.indicator_presets =
             preset_file::PresetStore::load(self.arrangement.workspace.indicator_presets_path());
 
