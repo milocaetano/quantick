@@ -48,14 +48,14 @@ fn drawing_env<'a>(
         if !matches!(selection.drawing.band, drawings::DrawingBand::Indicator(_)) {
             return None;
         }
-        let band = host.band(selection.drawing)?;
-        let header = crate::indicator_render::pane_header_rect(band.rect, false);
+        let band = drawings::egui_rect(host.band(selection.drawing)?.rect);
+        let header = crate::indicator_render::pane_header_rect(band, false);
         Some(egui::Rect::from_min_max(
             egui::pos2(
-                band.rect.left(),
+                band.left(),
                 header.bottom() + drawings::context_bar::OBJECT_GAP_PX,
             ),
-            band.rect.max,
+            band.max,
         ))
     });
     crate::surfaces::DrawingEnv {
@@ -153,7 +153,7 @@ impl DrawingController {
         let bbox = drawings::egui_rect(
             drawing
                 .tool
-                .painted_bounds(drawings::px_rect(bbox), drawings::px_rect(band.rect)),
+                .painted_bounds(drawings::px_rect(bbox), band.rect),
         );
         Some(bbox.expand(DRAWING_ANCHOR_RADIUS_PX))
     }

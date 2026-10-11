@@ -5,30 +5,25 @@
 //! nothing across them; the market timestamp each anchor captured at placement
 //! is the only coordinate they share (`docs/ux/drawing-tools-2026-08.md` §D7).
 //! Everything here speaks in market time and price: `reproject` reads a foreign
-//! mark into this pane's slots, `paint_shared_from` paints it, `shared_pick`
+//! mark into this pane's slots, `shared_scenes` paints it, `shared_pick_in`
 //! and `PaneGestures::interact_shared` let the trader take hold of it here, and
 //! [`SharedMarksMut::apply_edit`] lands the edit back on the pane that owns the
-//! object. Gesture updates live in `pointer_gestures`; this module keeps the
+//! object. Gesture updates live in `pointer`; this module keeps the
 //! shared contract, projection and destination-store adapter.
 //!
-//! The read side rides [`PaneHitTest`], the last frame's geometry lent out;
-//! the write side is [`SharedMarksMut`], the owning pane's store beside the
-//! projection its instants resolve through. Neither holds the pane.
+//! The read side runs on the last frame's geometry, which the window lends
+//! out; the write side is [`SharedMarksMut`], the owning pane's store beside
+//! the projection its instants resolve through. Neither holds the pane.
 
-use crate::drawings::StyleColor32;
-use eframe::egui;
 use smallvec::SmallVec;
 
-use crate::bands;
-use crate::drawings::{
-    ChartPoint, DrawContext, Drawing, DrawingBand, DrawingStyle, Drawings, MarkScene, px, px_rect,
+use super::band::{self, Band};
+use super::projection::DrawingProjection;
+use super::{DRAWING_ANCHOR_RADIUS_PX, DRAWING_SELECT_RADIUS_PX, Mark, Marks};
+use crate::{
+    CLAMPED_OPACITY, ChartPoint, DrawContext, DrawingBand, DrawingStyle, MarkScene, Px, PxRect,
+    RgbaExt as _, TextMetrics, UNMEASURED,
 };
-use quantick_drawings::{Px, UNMEASURED};
-
-use super::drawing_projection::DrawingProjection;
-use super::pointer_hit::PaneHitTest;
-use super::render_registry::{TextFonts, paint_scene};
-use super::{DRAWING_ANCHOR_RADIUS_PX, DRAWING_SELECT_RADIUS_PX};
 
 /// What a pane resolved on *another* pane's shared marks this frame.
 ///
@@ -94,9 +89,9 @@ pub struct SharedInteraction {
 }
 
 /// What the pointer is doing this frame, as the shared-mark handler needs it.
-pub(super) struct SharedPointer {
+pub struct SharedPointer {
     /// Where it is, wherever that is. The band below decides what counts.
-    pub(super) position: Option<egui::Pos2>,
+    pub position: Option<Px>,
     /// The band drawings live in on this pane, this frame.
     ///
     /// A press must land inside it. A drag already running is *clamped* into
@@ -104,7 +99,7 @@ pub(super) struct SharedPointer {
     /// narrows by the inspector's width on the very frame a press opens it
     /// (§D8), and a gesture that stopped whenever the pointer left the
     /// shrunken pane would die on the frame it was born.
-    pub(super) area: egui::Rect,
+    pub area: PxRect,
     /// Whether floating chrome — the inspector, the manager, a flyout — is
     /// under it right now.
     ///
@@ -113,13 +108,13 @@ pub(super) struct SharedPointer {
     /// running while the pointer crosses a panel, which matters most here of
     /// all — the press that selects a mark is what *opens* the inspector, and
     /// the inspector opens over the chart the mark is on.
-    pub(super) over_chrome: bool,
-    pub(super) pressed: bool,
-    pub(super) down: bool,
-    pub(super) released: bool,
-    pub(super) history_right: f32,
-    pub(super) total: usize,
-    pub(super) magnet: bool,
+    pub over_chrome: bool,
+    pub pressed: bool,
+    pub down: bool,
+    pub released: bool,
+    pub history_right: f32,
+    pub total: usize,
+    pub magnet: bool,
 }
 
 /// Where a pane sits in its tab: `0` is the flow pane, `1..` the context
@@ -132,7 +127,7 @@ pub type PaneIndex = usize;
 
 /// A gesture a pane is running on another pane's mark.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum SharedDrag {
+pub enum SharedDrag {
     #[default]
     None,
     /// Dragging the whole object.
@@ -145,7 +140,8 @@ pub(super) enum SharedDrag {
 }
 
 impl SharedDrag {
-    pub(super) const fn is_active(self) -> bool {
+    #[must_use]
+    pub const fn is_active(self) -> bool {
         !matches!(self, Self::None)
     }
 }
@@ -153,64 +149,56 @@ impl SharedDrag {
 /// The marks another pane of the tab holds, as this pane reads them: the
 /// owning store and whether one of them is in its text editor right now.
 #[derive(Clone, Copy)]
-pub(crate) struct SharedSource<'a> {
-    pub(crate) drawings: &'a Drawings,
+pub struct SharedSource<'a> {
+    pub drawings: &'a Marks,
     /// The object living on the source pane whose words are being typed.
     /// Left hardcoded, a shared note being typed kept painting its old words
     /// on the companion chart — the same double render the editor stands the
     /// original down to avoid.
-    pub(crate) content_editing: Option<usize>,
+    pub content_editing: Option<usize>,
 }
 
-impl PaneHitTest<'_> {
-    /// What a pointer at `pos` grabs among `source`'s shared marks: a handle
-    /// anywhere first, then the topmost body — the same order, and the same
-    /// primitives, this pane uses on its own objects.
+impl DrawingProjection<'_> {
+    /// What a pointer at `pos` grabs among `source`'s shared marks in `band`
+    /// (the band the pointer is in): a handle anywhere first, then the
+    /// topmost body — the same order, and the same primitives, this pane
+    /// uses on its own objects.
     ///
-    /// Runs on the projection cached by the last frame, which is the geometry
-    /// the trader was looking at when they pressed (§D8: no gesture re-measures
-    /// a world it moved).
+    /// The window runs it on the projection cached by the last frame, which
+    /// is the geometry the trader was looking at when they pressed (§D8: no
+    /// gesture re-measures a world it moved).
     ///
     /// Per-frame cost: nothing until a mark is actually shared, and bounded by
     /// the handful of objects on the chart when one is.
-    pub(crate) fn shared_pick(
+    #[must_use]
+    pub fn shared_pick_in(
         &self,
-        source: &Drawings,
-        pos: egui::Pos2,
+        source: &Marks,
+        pos: Px,
+        band: &Band,
+        (history_right, total): (f32, usize),
     ) -> Option<(usize, Option<usize>)> {
-        if !source.items().iter().any(Drawing::shared) {
-            return None;
-        }
-        let (_, history_right, total, _) = self.last_projection()?;
-        // Only the band the pointer is in: a mirrored CVD level and a
-        // mirrored price level can be one pixel apart on screen and mean
-        // unrelated things, exactly as they can on the pane that owns them.
-        let band = bands::band_at(&self.frame.bands, pos)?;
         let scale = band.scale?;
         let mut body = None;
         for (index, drawing) in source.items().iter().enumerate().rev() {
             if !drawing.shared()
                 || !source.is_visible(index)
-                || !bands::drawing_in_band(drawing, band)
+                || !band::drawing_in_band(drawing, band)
             {
                 continue;
             }
-            let Some((anchors, _)) = self.projection.reproject(drawing) else {
+            let Some((anchors, _)) = self.reproject(drawing) else {
                 continue;
             };
             let points: SmallVec<[Px; 4]> = anchors
                 .iter()
-                .map(|anchor| {
-                    px(self
-                        .projection
-                        .drawing_screen_point(*anchor, history_right, total, &scale))
-                })
+                .map(|anchor| self.drawing_screen_point(*anchor, history_right, total, &scale))
                 .collect();
             let ctxt = DrawContext {
                 payload: drawing.payload.as_ref(),
                 anchors: &anchors,
                 scale: &scale,
-                px_per_bar: self.projection.viewport.px_per_bar(),
+                px_per_bar: self.viewport.px_per_bar(),
                 unit: band.unit(),
                 primary_band: true,
                 style: drawing.style,
@@ -229,22 +217,18 @@ impl PaneHitTest<'_> {
             // invisible grab point on the mirror would be worse than an
             // absent one: the ring the trader sees is the ring they get.
             if let Some(anchor) = drawing.tool.hit_shared_handle(
-                px_rect(band.rect),
+                band.rect,
                 &points,
-                px(pos),
+                pos,
                 DRAWING_ANCHOR_RADIUS_PX,
                 &ctxt,
             ) {
                 return Some((index, Some(anchor)));
             }
             if body.is_none()
-                && drawing.tool.hit_test(
-                    px_rect(band.rect),
-                    &points,
-                    px(pos),
-                    DRAWING_SELECT_RADIUS_PX,
-                    &ctxt,
-                )
+                && drawing
+                    .tool
+                    .hit_test(band.rect, &points, pos, DRAWING_SELECT_RADIUS_PX, &ctxt)
             {
                 body = Some((index, None));
             }
@@ -252,8 +236,9 @@ impl PaneHitTest<'_> {
         body
     }
 
-    /// Paint the shared drawings that live on `source`, re-expressed on this
-    /// pane (`docs/ux/drawing-tools-2026-08.md` §D7).
+    /// The scenes of the shared drawings that live on `source`, re-expressed
+    /// on this pane (`docs/ux/drawing-tools-2026-08.md` §D7), each handed to
+    /// `paint` with the band rect it clips to.
     ///
     /// The two panes cut the same trades into different bars, so a bar index
     /// means nothing across them — the market timestamp each anchor captured
@@ -268,18 +253,19 @@ impl PaneHitTest<'_> {
     /// Per-frame cost: nothing at all until a drawing is actually shared —
     /// the loop below runs over `source.drawings` and does nothing for the
     /// `ThisChart` default every object opens with.
-    pub(crate) fn paint_shared_from(&self, painter: &egui::Painter, source: SharedSource<'_>) {
-        if !source.drawings.items().iter().any(Drawing::shared) {
-            return;
-        }
-        let Some((_, history_right, total, _)) = self.last_projection() else {
-            return;
-        };
+    pub fn shared_scenes(
+        &self,
+        source: SharedSource<'_>,
+        bands: &[Band],
+        (history_right, total): (f32, usize),
+        text: &dyn TextMetrics,
+        paint: &mut dyn FnMut(PxRect, &MarkScene),
+    ) {
         for (index, drawing) in source.drawings.items().iter().enumerate() {
             if !drawing.shared() || !source.drawings.is_visible(index) {
                 continue;
             }
-            let Some((anchors, clamped)) = self.projection.reproject(drawing) else {
+            let Some((anchors, clamped)) = self.reproject(drawing) else {
                 continue;
             };
             // A clamped anchor is an honest half-truth: the object really is
@@ -287,12 +273,7 @@ impl PaneHitTest<'_> {
             // rather than by pretending to sit on the edge bar.
             let style = if clamped {
                 DrawingStyle {
-                    color: crate::drawings::from_color32(
-                        drawing
-                            .style
-                            .color32()
-                            .gamma_multiply(crate::drawings::CLAMPED_OPACITY),
-                    ),
+                    color: drawing.style.color.gamma_multiply(CLAMPED_OPACITY),
                     fill_alpha: 0,
                     ..drawing.style
                 }
@@ -307,37 +288,29 @@ impl PaneHitTest<'_> {
             //
             // A time-only object is the case where sharing is most obviously
             // right: one instant, marked through every band of both charts.
-            for (band_index, band) in self.frame.bands.iter().enumerate() {
-                if !bands::drawing_in_band(drawing, band) {
+            for (band_index, band) in bands.iter().enumerate() {
+                if !band::drawing_in_band(drawing, band) {
                     continue;
                 }
                 let Some(scale) = band.scale else {
                     continue;
                 };
-                let clipped = painter.with_clip_rect(band.rect);
                 // Stack-allocated: this is a per-frame path, and every shipped
                 // tool has at most three anchors, so the heap is never touched.
                 let points: SmallVec<[Px; 4]> = anchors
                     .iter()
-                    .map(|anchor| {
-                        px(self.projection.drawing_screen_point(
-                            *anchor,
-                            history_right,
-                            total,
-                            &scale,
-                        ))
-                    })
+                    .map(|anchor| self.drawing_screen_point(*anchor, history_right, total, &scale))
                     .collect();
                 // A mark selected here shows it here. The trader can take and
-                // move it from this pane (`Self::interact_shared`), and a
-                // selection that painted only on the other chart would leave
-                // the gesture with no visible subject.
+                // move it from this pane (`PaneGestures::interact_shared`),
+                // and a selection that painted only on the other chart would
+                // leave the gesture with no visible subject.
                 let selected = source.drawings.selected_id() == Some(drawing.id);
                 let ctxt = DrawContext {
                     payload: drawing.payload.as_ref(),
                     anchors: &anchors,
                     scale: &scale,
-                    px_per_bar: self.projection.viewport.px_per_bar(),
+                    px_per_bar: self.viewport.px_per_bar(),
                     unit: band.unit(),
                     primary_band: drawing.band != DrawingBand::AllBands || band_index == 0,
                     style,
@@ -346,7 +319,7 @@ impl PaneHitTest<'_> {
                     // The object lives on `source`, so that is the pane that
                     // knows whether its words are in an editor right now.
                     content_editing: source.content_editing == Some(index),
-                    text: &TextFonts(painter.ctx()),
+                    text,
                 };
                 // Both halves, so a shared object is the same object on both
                 // charts. A tool whose body lives in the background pass —
@@ -363,18 +336,18 @@ impl PaneHitTest<'_> {
                 let mut scene = MarkScene::default();
                 drawing
                     .tool
-                    .paint_under(&mut scene, px_rect(band.rect), style, &points, &ctxt);
+                    .paint_under(&mut scene, band.rect, style, &points, &ctxt);
                 // Locked geometry shows no handles on either chart: they would
                 // advertise a drag that is refused.
                 drawing.tool.paint(
                     &mut scene,
-                    px_rect(band.rect),
+                    band.rect,
                     style,
                     &points,
                     &ctxt,
                     selected && !drawing.locked,
                 );
-                paint_scene(&clipped, &scene);
+                paint(band.rect, &scene);
             }
         }
     }
@@ -384,7 +357,7 @@ impl DrawingProjection<'_> {
     /// Re-express a foreign drawing's anchors in this pane's bar space.
     /// Returns the anchors and whether any of them had to be clamped to the
     /// end of this pane's series.
-    fn reproject(&self, drawing: &Drawing) -> Option<(SmallVec<[ChartPoint; 4]>, bool)> {
+    fn reproject(&self, drawing: &Mark) -> Option<(SmallVec<[ChartPoint; 4]>, bool)> {
         let slots = self.series.slots();
         if slots == 0 {
             return None;
@@ -434,9 +407,9 @@ impl DrawingProjection<'_> {
 
 /// The owning pane's store beside the projection its instants resolve
 /// through — the destination of an edit made from another pane.
-pub(crate) struct SharedMarksMut<'a> {
-    pub(super) projection: DrawingProjection<'a>,
-    pub(super) drawings: &'a mut Drawings,
+pub struct SharedMarksMut<'a> {
+    pub projection: DrawingProjection<'a>,
+    pub drawings: &'a mut Marks,
 }
 
 impl SharedMarksMut<'_> {
@@ -446,7 +419,7 @@ impl SharedMarksMut<'_> {
     /// The instants arrive as they were read off the other chart and are
     /// resolved here, which is what makes the two views one object rather than
     /// two copies of one.
-    pub(crate) fn apply_edit(self, edit: SharedEdit) {
+    pub fn apply_edit(self, edit: SharedEdit) {
         match edit {
             SharedEdit::Select(index) => self.drawings.select(Some(index)),
             SharedEdit::MoveAnchor {

@@ -1,38 +1,57 @@
 //! Placement transitions own the draft gesture, borrowing its longer-lived store.
 //! Canvas and context-menu placement share completion; the pane applies effects.
-use super::drawing_projection::DrawingProjection;
-use super::primary_button::pane_chrome_hit;
-use super::{DRAWING_DRAG_COMPLETES_PX, FREEHAND_MAX_POINTS, FREEHAND_MIN_STEP_PX, PaneGestures};
-use crate::bands::{self, Band};
-use crate::drawings::{self, ChartPoint, DrawingBand, DrawingTool, Drawings, PresetHost};
-use crate::plot_area::PlotAreas;
-use eframe::egui;
+use super::band::{self, Band};
+use super::projection::DrawingProjection;
+use super::{
+    DRAWING_DRAG_COMPLETES_PX, FREEHAND_MAX_POINTS, FREEHAND_MIN_STEP_PX, GestureCursor, Marks,
+    PaneGestures,
+};
+use crate::{
+    ChartPoint, Constrain, DrawingBand, DrawingTool, PresetHost, Px, PxRect,
+    new_drawing_from_defaults,
+};
 
-pub(super) struct PlacementFrame<'a> {
-    pub(super) ui: &'a egui::Ui,
-    pub(super) areas: &'a PlotAreas,
-    pub(super) bands: &'a [Band],
-    pub(super) id: egui::Id,
-    pub(super) history_right: f32,
+/// One frame of the pointer while a drawing tool is armed, as the window read
+/// it off the placement surface ([`placement_surface`]).
+pub struct PlacementFrame<'a> {
+    pub bands: &'a [Band],
+    pub history_right: f32,
+    /// Where the surface reports the pointer hovering it.
+    pub hover: Option<Px>,
+    /// Whether the surface is hovered or being dragged.
+    pub surface_active: bool,
+    /// The pointer's latest position, wherever it is.
+    pub latest: Option<Px>,
+    /// Where the primary button went down this frame, if it did.
+    pub pressed: Option<Px>,
+    /// Where the primary button came up this frame, if it did.
+    pub released: Option<Px>,
+    /// Whether the primary button is held.
+    pub down: bool,
+    /// Whether floating chrome (a panel, a flyout) sits over a position.
+    pub over_chrome: &'a dyn Fn(Px) -> bool,
+    /// Whether a position is on the pane's own chrome — an indicator pane's
+    /// chevron, header or divider.
+    pub on_pane_chrome: &'a dyn Fn(Px) -> bool,
 }
 
-pub(super) struct PlacementOptions {
-    pub(super) tool: Option<DrawingTool>,
-    pub(super) magnet: bool,
-    pub(super) constrain: drawings::Constrain,
-    pub(super) parked_position: Option<egui::Pos2>,
+pub struct PlacementOptions {
+    pub tool: Option<DrawingTool>,
+    pub magnet: bool,
+    pub constrain: Constrain,
+    pub parked_position: Option<Px>,
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct PlacementDefaults<'a> {
-    pub(super) presets: &'a dyn PresetHost,
-    pub(super) repeat: bool,
+pub struct PlacementDefaults<'a> {
+    pub presets: &'a dyn PresetHost,
+    pub repeat: bool,
 }
 
 #[derive(Default)]
-pub(super) struct PlacementCompletion {
-    pub(super) arm_pointer: bool,
-    pub(super) begin_text_edit: bool,
+pub struct PlacementCompletion {
+    pub arm_pointer: bool,
+    pub begin_text_edit: bool,
 }
 impl PlacementCompletion {
     fn include(&mut self, next: Self) {
@@ -42,26 +61,39 @@ impl PlacementCompletion {
 }
 
 #[derive(Default)]
-pub(super) struct PlacementOutcome {
-    pub(super) tool_armed: bool,
+pub struct PlacementOutcome {
+    pub tool_armed: bool,
     // Inactive placement leaves the pane's existing hover alone.
-    pub(super) hover_position: Option<Option<egui::Pos2>>,
-    pub(super) completion: PlacementCompletion,
+    pub hover_position: Option<Option<Px>>,
+    pub completion: PlacementCompletion,
+    /// The cursor the surface asks for, when it asks for one.
+    pub cursor: Option<GestureCursor>,
+    /// Why the band under the pointer refuses an anchor, for the hover text.
+    pub refusal: Option<&'static str>,
+}
+
+/// The surface an armed tool takes the pointer on: every band, so a tool
+/// reaches an indicator pane below the candles.
+#[must_use]
+pub fn placement_surface(bands: &[Band]) -> PxRect {
+    bands
+        .iter()
+        .fold(bands[0].rect, |union, band| union.union(band.rect))
 }
 
 struct PlacementRead<'a, 'series> {
     projection: &'a DrawingProjection<'series>,
-    areas: &'a PlotAreas,
+    on_pane_chrome: &'a dyn Fn(Px) -> bool,
     bands: &'a [Band],
     history_right: f32,
     magnet: bool,
-    constrain: drawings::Constrain,
+    constrain: Constrain,
 }
 
 impl PaneGestures {
-    pub(super) fn update_placement(
+    pub fn update_placement(
         &mut self,
-        drawings: &mut Drawings,
+        drawings: &mut Marks,
         projection: &DrawingProjection<'_>,
         frame: PlacementFrame<'_>,
         options: PlacementOptions,
@@ -73,42 +105,32 @@ impl PaneGestures {
         };
         let read = PlacementRead {
             projection,
-            areas: frame.areas,
+            on_pane_chrome: frame.on_pane_chrome,
             bands: frame.bands,
             history_right: frame.history_right,
             magnet: options.magnet,
             constrain: options.constrain,
         };
-        let ui = frame.ui;
-        let surface = frame
-            .bands
-            .iter()
-            .fold(frame.bands[0].rect, |union, band| union.union(band.rect));
-        let response = ui.interact(surface, frame.id, egui::Sense::click_and_drag());
+        let surface = placement_surface(frame.bands);
         let mut outcome = PlacementOutcome {
             tool_armed: true,
-            hover_position: Some(response.hover_pos()),
-            completion: PlacementCompletion::default(),
+            hover_position: Some(frame.hover),
+            ..PlacementOutcome::default()
         };
         self.preview_placement(
             drawings,
             &read,
-            ui,
-            &response,
+            &frame,
+            &mut outcome,
             tool,
-            ui.input(|input| input.pointer.latest_pos())
+            frame
+                .latest
                 .filter(|position| surface.contains(*position))
                 .or(options.parked_position),
         );
-        let pressed_position = ui.input(|input| {
-            input
-                .pointer
-                .primary_pressed()
-                .then(|| input.pointer.interact_pos())
-                .flatten()
-        });
-        if let Some(position) = pressed_position
-            .filter(|position| surface.contains(*position) && !over_chrome(ui, *position))
+        if let Some(position) = frame
+            .pressed
+            .filter(|position| surface.contains(*position) && !(frame.over_chrome)(*position))
             && let Some((band, point)) = read.shaped_placement(drawings, tool, position)
         {
             let band = band.key.clone();
@@ -117,19 +139,13 @@ impl PaneGestures {
                 .completion
                 .include(self.place_point(drawings, tool, &band, point, defaults));
         }
-        let released_position = ui.input(|input| {
-            input
-                .pointer
-                .primary_released()
-                .then(|| input.pointer.latest_pos())
-                .flatten()
-        });
+        let released_position = frame.released;
         // Capture the tool for the whole update, even when a press completes an
         // object and requests Pointer. Existing release behavior still uses it.
         if tool.freehand() {
             outcome
                 .completion
-                .include(self.advance_freehand(drawings, &read, ui, tool, defaults));
+                .include(self.advance_freehand(drawings, &read, &frame, tool, defaults));
             if released_position.is_some() {
                 outcome
                     .completion
@@ -152,7 +168,7 @@ impl PaneGestures {
         outcome
     }
 
-    fn cancel_placement(&mut self, drawings: &mut Drawings) {
+    fn cancel_placement(&mut self, drawings: &mut Marks) {
         drawings.cancel_draft();
         self.hover = None;
         self.band_hint = None;
@@ -162,48 +178,41 @@ impl PaneGestures {
 
     fn preview_placement(
         &mut self,
-        drawings: &Drawings,
+        drawings: &Marks,
         read: &PlacementRead<'_, '_>,
-        ui: &egui::Ui,
-        response: &egui::Response,
+        frame: &PlacementFrame<'_>,
+        outcome: &mut PlacementOutcome,
         tool: DrawingTool,
-        preview_position: Option<egui::Pos2>,
+        preview_position: Option<Px>,
     ) {
         // Widget hover serves the hint/cursor; raw pointer serves the preview.
         // A dragged widget is not necessarily hovered.
-        let hovered = response
-            .hover_pos()
-            .filter(|position| !over_chrome(ui, *position))
-            .and_then(|position| bands::band_at(read.bands, position));
-        let over_pane_chrome = response
-            .hover_pos()
-            .is_some_and(|position| pane_chrome_hit(read.areas, position));
+        let hovered = frame
+            .hover
+            .filter(|position| !(frame.over_chrome)(*position))
+            .and_then(|position| band::band_at(read.bands, position));
+        let over_pane_chrome = frame
+            .hover
+            .is_some_and(|position| (frame.on_pane_chrome)(position));
         self.band_hint = hovered
             .filter(|band| band.drawable() && !over_pane_chrome)
             .map(|band| band.rect);
         self.hover = preview_position
-            .filter(|position| !over_chrome(ui, *position))
+            .filter(|position| !(frame.over_chrome)(*position))
             .and_then(|position| {
                 read.shaped_placement(drawings, tool, position)
                     .map(|(_, point)| point)
             });
-        if (response.hovered() || response.dragged()) && !over_pane_chrome {
-            ui.ctx().set_cursor_icon(match hovered {
-                Some(band) if band.drawable() => egui::CursorIcon::Crosshair,
-                _ => egui::CursorIcon::NotAllowed,
+        if frame.surface_active && !over_pane_chrome {
+            outcome.cursor = Some(match hovered {
+                Some(band) if band.drawable() => GestureCursor::Crosshair,
+                _ => GestureCursor::NotAllowed,
             });
         }
-        if let Some(refusal) = hovered.and_then(|band| band.refusal) {
-            response.clone().on_hover_text(refusal);
-        }
+        outcome.refusal = hovered.and_then(|band| band.refusal);
     }
 
-    fn begin_placement_press(
-        &mut self,
-        drawings: &Drawings,
-        tool: DrawingTool,
-        position: egui::Pos2,
-    ) {
+    fn begin_placement_press(&mut self, drawings: &Marks, tool: DrawingTool, position: Px) {
         self.press_started_empty = drawings.draft_len() == 0;
         self.press_position = Some(position);
         // Seed decimation from the actual press: a stationary held frame must
@@ -215,15 +224,15 @@ impl PaneGestures {
 
     fn advance_freehand(
         &mut self,
-        drawings: &mut Drawings,
+        drawings: &mut Marks,
         read: &PlacementRead<'_, '_>,
-        ui: &egui::Ui,
+        frame: &PlacementFrame<'_>,
         tool: DrawingTool,
         defaults: PlacementDefaults<'_>,
     ) -> PlacementCompletion {
         if drawings.draft_len() > 0
-            && ui.input(|input| input.pointer.primary_down())
-            && let Some(position) = ui.input(|input| input.pointer.latest_pos())
+            && frame.down
+            && let Some(position) = frame.latest
             && let Some((band, position)) = read.placement_target(drawings, position)
             && drawings
                 .draft()
@@ -248,7 +257,7 @@ impl PaneGestures {
         PlacementCompletion::default()
     }
 
-    fn finish_freehand(&mut self, drawings: &mut Drawings, repeat: bool) -> PlacementCompletion {
+    fn finish_freehand(&mut self, drawings: &mut Marks, repeat: bool) -> PlacementCompletion {
         self.freehand_last_position = None;
         let mut completion = PlacementCompletion::default();
         if drawings.finish_draft() {
@@ -262,11 +271,11 @@ impl PaneGestures {
 
     fn finish_anchor_release(
         &mut self,
-        drawings: &mut Drawings,
+        drawings: &mut Marks,
         read: &PlacementRead<'_, '_>,
         tool: DrawingTool,
-        released_position: Option<egui::Pos2>,
-        surface: egui::Rect,
+        released_position: Option<Px>,
+        surface: PxRect,
         defaults: PlacementDefaults<'_>,
     ) -> PlacementCompletion {
         if tool.required_points() > 1
@@ -283,9 +292,9 @@ impl PaneGestures {
         PlacementCompletion::default()
     }
 
-    pub(super) fn place_point(
+    pub fn place_point(
         &mut self,
-        drawings: &mut Drawings,
+        drawings: &mut Marks,
         tool: DrawingTool,
         band: &DrawingBand,
         point: ChartPoint,
@@ -293,7 +302,7 @@ impl PaneGestures {
     ) -> PlacementCompletion {
         // Only a fresh draft constructs defaults; existing objects are untouched.
         if !drawings.place_with(tool, band, point, |tool| {
-            drawings::new_drawing_from_defaults(defaults.presets, tool)
+            new_drawing_from_defaults(defaults.presets, tool)
         }) {
             return PlacementCompletion::default();
         }
@@ -311,12 +320,8 @@ impl PaneGestures {
 }
 
 impl PlacementRead<'_, '_> {
-    fn placement_target(
-        &self,
-        drawings: &Drawings,
-        position: egui::Pos2,
-    ) -> Option<(&Band, egui::Pos2)> {
-        if pane_chrome_hit(self.areas, position) {
+    fn placement_target(&self, drawings: &Marks, position: Px) -> Option<(&Band, Px)> {
+        if (self.on_pane_chrome)(position) {
             return None;
         }
         let pinned = drawings
@@ -325,14 +330,14 @@ impl PlacementRead<'_, '_> {
             .and_then(|draft| self.bands.iter().find(|band| band.key == draft.band));
         let band = match pinned {
             Some(band) => band,
-            None => bands::band_at(self.bands, position)?,
+            None => band::band_at(self.bands, position)?,
         };
         if !band.drawable() {
             return None;
         }
         Some((
             band,
-            egui::pos2(
+            Px::new(
                 position.x,
                 position.y.clamp(band.rect.top(), band.rect.bottom()),
             ),
@@ -341,9 +346,9 @@ impl PlacementRead<'_, '_> {
 
     fn shaped_placement(
         &self,
-        drawings: &Drawings,
+        drawings: &Marks,
         tool: DrawingTool,
-        position: egui::Pos2,
+        position: Px,
     ) -> Option<(&Band, ChartPoint)> {
         let (band, position) = self.placement_target(drawings, position)?;
         let total = self.projection.series.slots();
@@ -357,16 +362,10 @@ impl PlacementRead<'_, '_> {
                     total,
                     scale,
                 );
-                let placed_px: smallvec::SmallVec<[quantick_drawings::Px; 4]> =
-                    placed.iter().copied().map(drawings::px).collect();
-                let shaped = drawings::pos(tool.pending_anchor(
-                    &placed_px,
-                    drawings::px(position),
-                    self.constrain,
-                ));
+                let shaped = tool.pending_anchor(&placed, position, self.constrain);
                 // A levelled far end copies the near price; a screen trip lands ulps off.
                 let level = match (self.constrain, placed.as_slice(), draft.points.first()) {
-                    (drawings::Constrain::Level, [start], Some(near)) if shaped.y == start.y => {
+                    (Constrain::Level, [start], Some(near)) if shaped.y == start.y => {
                         Some(near.price)
                     }
                     _ => None,
@@ -390,10 +389,4 @@ impl PlacementRead<'_, '_> {
         }
         Some((band, point))
     }
-}
-
-fn over_chrome(ui: &egui::Ui, position: egui::Pos2) -> bool {
-    ui.ctx()
-        .layer_id_at(position)
-        .is_some_and(|layer| layer != ui.layer_id())
 }

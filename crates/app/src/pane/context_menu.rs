@@ -19,8 +19,8 @@ use crate::plot_area::PlotAreas;
 use quantick_layers::ChartLayer;
 
 use super::PaneFrame;
-use super::drawing_projection::DrawingProjection;
 use super::menus::PaneMenuIntent;
+use quantick_drawings::gesture::DrawingProjection;
 
 /// The last right-click, as the press resolved it. See the module docs.
 #[derive(Default)]
@@ -161,9 +161,10 @@ impl ContextPress {
         // The most specific thing under the click: a drawing, resolved on the
         // band the click actually landed in (a CVD line and a price line can
         // share the pixel).
-        let drawing = bands::band_at(bands, position)
+        let at = drawings::px(position);
+        let drawing = bands::band_at(bands, at)
             .filter(|band| band.drawable())
-            .and_then(|band| projection.drawing_at(drawings, position, band, history_right, total));
+            .and_then(|band| projection.drawing_at(drawings, at, band, history_right, total));
         // The same click, resolved once per placing tool through the
         // projection `drawing_point_at` owns, each with the tool's own snap —
         // the anchored VWAP's candle magnet included.
@@ -173,7 +174,7 @@ impl ContextPress {
             .filter_map(|tool| {
                 projection
                     .drawing_point_at(
-                        position,
+                        at,
                         history_right,
                         total,
                         false,

@@ -10,13 +10,14 @@
 use eframe::egui;
 
 use crate::bands::Band;
-use crate::drawings::{self, DrawContext, MarkScene, px, px_rect};
+use crate::drawings::{self, DrawContext, MarkScene};
 use crate::surfaces::drawing_chrome::QuickRangeOwner;
 use crate::toolrail::Tool;
 
-use super::drawing_projection::DrawingProjection;
+use super::PaneChrome;
 use super::render_registry::{TextFonts, paint_scene};
-use super::{DRAWING_DRAG_THRESHOLD_PX, PaneChrome};
+use quantick_drawings::gesture::DRAWING_DRAG_THRESHOLD_PX;
+use quantick_drawings::gesture::DrawingProjection;
 
 /// Enough history for the demo's two anchors to span a real, visible range.
 #[cfg(any(feature = "quick-range-harness", test))]
@@ -65,7 +66,7 @@ impl QuickRangeView<'_> {
             if pressed
                 && let Some(position) = pointer
                 && let Some(anchor) = self.projection.drawing_point_at(
-                    position,
+                    drawings::px(position),
                     history_right,
                     total,
                     magnet,
@@ -102,7 +103,7 @@ impl QuickRangeView<'_> {
                 let [x, y] = area.clamp([position.x, position.y]);
                 let position = egui::pos2(x, y);
                 if let Some(anchor) = self.projection.drawing_point_at(
-                    position,
+                    drawings::px(position),
                     history_right,
                     total,
                     magnet,
@@ -177,9 +178,8 @@ impl QuickRangeView<'_> {
                 let scale = band.scale.as_ref()?;
                 let tool = drawings::DrawingTool::by_id("measure")?;
                 let points = quick.anchors.map(|anchor| {
-                    px(self
-                        .projection
-                        .drawing_screen_point(anchor, history_right, total, scale))
+                    self.projection
+                        .drawing_screen_point(anchor, history_right, total, scale)
                 });
                 let ctxt = DrawContext {
                     payload: quick.payload,
@@ -195,20 +195,14 @@ impl QuickRangeView<'_> {
                     text: &TextFonts(painter.ctx()),
                 };
                 let mut scene = MarkScene::default();
-                tool.paint(
-                    &mut scene,
-                    px_rect(band.rect),
-                    quick.style,
-                    &points,
-                    &ctxt,
-                    false,
-                );
-                paint_scene(&painter.with_clip_rect(band.rect), &scene);
+                tool.paint(&mut scene, band.rect, quick.style, &points, &ctxt, false);
+                let rect = drawings::egui_rect(band.rect);
+                paint_scene(&painter.with_clip_rect(rect), &scene);
                 let mut bounds = quantick_drawings::PxRect::from_min_max(points[0], points[0]);
                 bounds.extend_with(points[1]);
                 Some((
-                    band.rect,
-                    drawings::egui_rect(tool.painted_bounds(bounds, px_rect(band.rect))),
+                    rect,
+                    drawings::egui_rect(tool.painted_bounds(bounds, band.rect)),
                 ))
             })
             .or_else(|| {
@@ -217,7 +211,7 @@ impl QuickRangeView<'_> {
                     .quick_range
                     .stale(owner)
                     .then(|| {
-                        let chart = bands.first()?.rect;
+                        let chart = drawings::egui_rect(bands.first()?.rect);
                         Some((
                             chart,
                             egui::Rect::from_center_size(chart.center(), egui::Vec2::ZERO),

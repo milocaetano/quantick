@@ -1375,7 +1375,8 @@ fn the_armed_crosshair_keeps_the_price_tag_to_itself() {
 /// Every level the pane would write on the price axis this frame.
 fn axis_levels_of(pane: &ChartPane, scale: &PriceScale) -> Vec<PriceAxisLevel> {
     let mut levels = Vec::new();
-    pane.drawing_projection().price_axis_levels(
+    price_axis::price_axis_levels(
+        &pane.drawing_projection(),
         &pane.drawings,
         TEST_PLOT,
         TEST_PLOT.right(),
@@ -2056,7 +2057,7 @@ fn hit_testing_never_crosses_bands() {
     assert_eq!(
         pane.drawing_projection().drawing_at(
             &pane.drawings,
-            on_the_level,
+            drawings::px(on_the_level),
             indicator,
             indicator.rect.right(),
             3
@@ -2070,7 +2071,7 @@ fn hit_testing_never_crosses_bands() {
     assert_eq!(
         pane.drawing_projection().drawing_at(
             &pane.drawings,
-            in_price_band,
+            drawings::px(in_price_band),
             price,
             price.rect.right(),
             3
@@ -2973,7 +2974,7 @@ fn g6_badge_band(top: f32) -> bands::Band {
     let rect = egui::Rect::from_min_max(egui::pos2(10.0, top), egui::pos2(400.0, top + 200.0));
     bands::Band {
         key: DrawingBand::Price,
-        rect,
+        rect: drawings::px_rect(rect),
         scale: Some(PriceScale::from_range(
             90.0,
             120.0,
@@ -3034,7 +3035,7 @@ fn g6_characterization_hidden_badges_and_actual_stage_order() {
             1,
             "a hidden geometry still reports its strategy"
         );
-        assert_eq!(badges[0].1.clip_rect, band.rect);
+        assert_eq!(badges[0].1.clip_rect, drawings::egui_rect(band.rect));
         let object = output.shapes.iter().position(|shape| matches!(&shape.shape, egui::epaint::Shape::Rect(rect) if rect.stroke.color == egui::Color32::from_rgb(11, 77, 143)));
         let draft = output.shapes.iter().position(|shape| matches!(&shape.shape, egui::epaint::Shape::Rect(rect) if rect.stroke.color == egui::Color32::from_rgb(227, 91, 17)));
         if hidden || all_hidden {
@@ -3079,7 +3080,7 @@ fn g6_characterization_all_bands_has_one_clipped_badge() {
     });
     let badges: Vec<_> = output.shapes.iter().filter(|shape| matches!(&shape.shape, egui::epaint::Shape::Text(text) if text.galley.job.text.contains("G6-anchored"))).collect();
     assert_eq!(badges.len(), 1);
-    assert_eq!(badges[0].clip_rect, bands[0].rect);
+    assert_eq!(badges[0].clip_rect, drawings::egui_rect(bands[0].rect));
 }
 #[test]
 fn g6_characterization_band_metadata_precedes_cached_geometry() {
@@ -3144,8 +3145,9 @@ fn g6_characterization_mutable_contribution_keeps_original_stage_decisions() {
             }),
             Contribution::DrawingDraft(|pass| {
                 assert!(pass.pass == DrawPass::UnderCandles);
-                pass.painter.with_clip_rect(pass.band.rect).text(
-                    pass.band.rect.center(),
+                let rect = drawings::egui_rect(pass.band.rect);
+                pass.painter.with_clip_rect(rect).text(
+                    rect.center(),
                     egui::Align2::CENTER_CENTER,
                     "G6-draft-mutated-under",
                     egui::FontId::proportional(12.0),
@@ -3178,5 +3180,9 @@ fn g6_characterization_mutable_contribution_keeps_original_stage_decisions() {
     assert_eq!(texts.len(), 2);
     assert!(texts[0].1.contains("G6-anchored"));
     assert_eq!(texts[1].1, "G6-draft-mutated-under");
-    assert!(texts.iter().all(|(clip, _)| *clip == band.rect));
+    assert!(
+        texts
+            .iter()
+            .all(|(clip, _)| *clip == drawings::egui_rect(band.rect))
+    );
 }

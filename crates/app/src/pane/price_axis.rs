@@ -23,6 +23,38 @@ pub struct PriceAxisLevel {
     pub color: egui::Color32,
 }
 
+/// Every level the visible price-band drawings declare, into `out`.
+pub(crate) fn price_axis_levels(
+    projection: &quantick_drawings::gesture::DrawingProjection<'_>,
+    drawings: &drawings::Drawings,
+    chart_rect: egui::Rect,
+    history_right: f32,
+    total: usize,
+    scale: &crate::chart::PriceScale,
+    out: &mut Vec<PriceAxisLevel>,
+) {
+    out.clear();
+    for (index, drawing) in drawings.items().iter().enumerate() {
+        if !drawings.is_visible(index)
+            || matches!(drawing.band, drawings::DrawingBand::Indicator(_))
+        {
+            continue;
+        }
+        let points = projection.projected_drawing_points(drawing, history_right, total, scale);
+        for y in drawing
+            .tool
+            .axis_levels(drawings::px_rect(chart_rect), &points)
+        {
+            out.push(PriceAxisLevel {
+                id: drawing.id,
+                y,
+                price: scale.price_at(y),
+                color: drawings::painted_color(drawing),
+            });
+        }
+    }
+}
+
 /// What the price axis may not write a round number over this frame.
 ///
 /// Two sources, kept apart because they are *stored* differently and not

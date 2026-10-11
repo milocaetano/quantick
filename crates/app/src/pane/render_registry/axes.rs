@@ -244,7 +244,7 @@ pub(in crate::pane) struct TimeStripPass<'a> {
     pub tz: TzOffset,
     pub divider_x: Option<f32>,
     pub viewport: &'a crate::viewport::Viewport,
-    pub series: super::super::drawing_projection::PaneSeriesRead<'a>,
+    pub series: quantick_drawings::gesture::PaneSeriesRead<'a>,
     /// Spans the day separator wrote dates or ticks on; labels stand aside.
     pub reserved: &'a [(f32, f32)],
 }

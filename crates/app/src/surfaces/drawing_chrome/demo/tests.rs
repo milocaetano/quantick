@@ -192,7 +192,10 @@ fn draft_waits_for_prerequisites_and_consumes_effective_zero() {
     let mut target = RefusingRecipient::default();
     plan.apply(&mut target);
     assert!(target.points.is_empty());
-    assert_eq!(plan.hand.position, egui::pos2(660.0, 240.0));
+    assert_eq!(
+        plan.hand.position,
+        crate::drawings::px(egui::pos2(660.0, 240.0))
+    );
     assert_eq!(plan.hand.constrain, crate::drawings::Constrain::Level);
 }
 
