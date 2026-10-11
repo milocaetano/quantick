@@ -92,6 +92,7 @@ mod tests {
             ("quantick-drawing-presets.toml", "version = 1\n"),
             ("footprint-settings.toml", "version = 2\n\n[config]\n"),
             ("footprint-presets.toml", "version = 1\n"),
+            ("candle-presets.toml", "version = 1\n"),
             (
                 "paper-state.toml",
                 "version = 1

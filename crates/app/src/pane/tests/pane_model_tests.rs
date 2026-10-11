@@ -43,3 +43,34 @@ fn the_axis_tag_and_the_control_cursor_name_one_bar() {
         "the axis and the cursor scope may not name two different bars"
     );
 }
+
+/// A double click opens the Candles settings only on the history side of the
+/// lane divider: the right lane — a book or a heatmap as much as the tape —
+/// is not the candles, even inside the price band.
+#[test]
+fn the_bare_candles_end_at_the_lane_divider() {
+    let mut pane = pane_with_timed_bars(200);
+    let ctx = egui::Context::default();
+    let _ = drive_navigation(&mut pane, &ctx, TEST_PLOT, Vec::new());
+    let divider = TEST_PLOT.center().x;
+    pane.frame.lane_divider_x = Some(divider);
+    let areas = test_areas(&pane, TEST_PLOT);
+    pane.frame.bands = crate::bands::BandGeometry {
+        auto_range: pane.frame.auto_range,
+        price_view: &pane.price_view,
+        lane_divider_x: pane.frame.lane_divider_x,
+        indicators: &pane.indicators,
+        price_label: &pane.price_band_label,
+    }
+    .bands(&areas);
+    let y = areas.chart.center().y;
+    let hit = pane.hit_test();
+    assert!(
+        hit.on_bare_candles(egui::pos2(divider - 20.0, y)),
+        "left of the divider is the candles"
+    );
+    assert!(
+        !hit.on_bare_candles(egui::pos2(divider + 20.0, y)),
+        "right of the divider is the lane, not the candles"
+    );
+}

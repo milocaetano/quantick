@@ -580,6 +580,20 @@ pub fn label_fits(x: f32, label_width_px: f32, left: f32, right: f32) -> bool {
     x - half >= left && x + half <= right
 }
 
+/// Where a chip `width_px` wide (its padding included) centres on a strip
+/// from `left` to `right` when it follows `at`: as near `at` as the strip
+/// lets it stay whole. On a strip narrower than the chip it sits flush with
+/// the left edge, so its start is read and the caller clips the rest at
+/// `right` rather than letting it run past the strip.
+#[must_use]
+pub fn chip_centre(at: f32, width_px: f32, left: f32, right: f32) -> f32 {
+    let half = width_px / 2.0;
+    if right - left <= width_px {
+        return left + half;
+    }
+    at.clamp(left + half, right - half)
+}
+
 /// The widest [`TimeLabelFormat`] that still writes `TIME_MIN_LABELS` labels
 /// across a strip this wide, given each format's measured width.
 ///
@@ -1297,6 +1311,21 @@ mod tests {
         // Narrower than even the short form fits twice: it is still what gets
         // written, because a coarser instant is true and a blank axis is not.
         assert_eq!(time_label_format(10.0, measured), TimeLabelFormat::Short);
+    }
+
+    /// The pointer's chip follows the pointer but stays whole on the strip,
+    /// and a strip narrower than the chip starts it at its left edge: the
+    /// chip never begins past the strip, and is clipped at its right end.
+    #[test]
+    fn a_chip_stays_on_its_strip() {
+        assert!((chip_centre(200.0, 100.0, 0.0, 400.0) - 200.0).abs() < 1e-6);
+        assert!((chip_centre(10.0, 100.0, 0.0, 400.0) - 50.0).abs() < 1e-6);
+        assert!((chip_centre(395.0, 100.0, 0.0, 400.0) - 350.0).abs() < 1e-6);
+        // 60 px of strip for a 100 px chip: flush left, wherever the pointer.
+        for at in [0.0_f32, 30.0, 59.0] {
+            let centre = chip_centre(at, 100.0, 0.0, 60.0);
+            assert!((centre - 50.0).abs() < 1e-6, "{at}: {centre}");
+        }
     }
 
     /// A label is placed by its centre but occupies its width. Containing only

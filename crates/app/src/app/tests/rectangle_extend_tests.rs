@@ -82,6 +82,10 @@ fn a_double_click_by_a_side_extends_that_way_and_the_next_one_restores() {
         let undo_before = app.active_tab().flow_pane.drawings.undo_depth();
         double_click(&mut app, &ctx, position);
         assert_eq!(extent(&app), expected, "double click at {position:?}");
+        assert!(
+            !app.surfaces.chart_settings.is_open(),
+            "a drawing's double click is the drawing's, not the chart settings'"
+        );
         assert_eq!(
             app.active_tab().flow_pane.drawings.undo_depth(),
             undo_before + 1,

@@ -33,7 +33,7 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for RecordedEvents {
 }
 
 impl RecordedEvents {
-    fn named(&self, code: &str) -> Vec<BTreeMap<String, String>> {
+    pub(super) fn named(&self, code: &str) -> Vec<BTreeMap<String, String>> {
         self.0
             .lock()
             .unwrap()
