@@ -3,8 +3,11 @@
 //!
 //! Same store discipline as the footprint presets: a versioned TOML (override
 //! with `QUANTICK_CANDLE_PRESETS`), read once at startup, written on every
-//! change, temp-file-and-rename, and a file that cannot be read is ignored
-//! rather than costing the trader a chart.
+//! change through [`crate::bundle::write_atomically`], and a file that cannot
+//! be read is ignored rather than costing the trader a chart. A file entry
+//! goes through the same gate a new save does, so every listed name can be
+//! applied and deleted; and a change that cannot be written is undone, so
+//! the list never claims a look the disk does not hold.
 //!
 //! A built-in preset changes the candles only, so applying one never repaints
 //! the trader's background. A saved preset is the whole look the trader saw
@@ -56,6 +59,32 @@ impl SaveRefusal {
     }
 }
 
+/// Why a preset change did not land. Either way, nothing changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PresetError {
+    /// The request was refused; the sentence says why.
+    Refused(&'static str),
+    /// The change could not be written to disk, so it was undone.
+    NotWritten(String),
+}
+
+impl PresetError {
+    /// The sentence a trader or an operator is shown.
+    #[must_use]
+    pub fn message(&self) -> String {
+        match self {
+            Self::Refused(reason) => (*reason).to_owned(),
+            Self::NotWritten(error) => format!("the candle presets were not saved: {error}"),
+        }
+    }
+}
+
+impl From<SaveRefusal> for PresetError {
+    fn from(refusal: SaveRefusal) -> Self {
+        Self::Refused(refusal.message())
+    }
+}
+
 /// What a preset name resolves to.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Resolved {
@@ -94,15 +123,16 @@ impl CandlePresetStore {
             return Self::default();
         };
         match toml::from_str::<PresetsFile>(&text) {
-            Ok(file) if file.version == FORMAT_VERSION => Self {
-                presets: file
-                    .presets
-                    .into_iter()
-                    .filter(|(name, _)| CandlePreset::from_name(name).is_none())
-                    .take(MAX_PRESETS)
-                    .map(|(name, style)| (name, style.into()))
-                    .collect(),
-            },
+            Ok(file) if file.version == FORMAT_VERSION => {
+                // The gate a new save goes through: a name it would refuse —
+                // blank, too long, a built-in's — is dropped, and one it would
+                // trim is listed trimmed.
+                let mut store = Self::default();
+                for (name, style) in file.presets {
+                    let _ = store.insert(&name, style.into());
+                }
+                store
+            }
             _ => {
                 tracing::warn!(
                     target: "quantick::app",
@@ -136,25 +166,23 @@ impl CandlePresetStore {
             .or_else(|| self.get(name).copied().map(Resolved::Custom))
     }
 
-    /// The name the chart's current look answers to: a built-in whose candles
-    /// match (canvas aside), else a saved look that matches whole.
+    /// The name the chart's current look answers to: a saved look that
+    /// matches whole, else a built-in whose candles match (canvas aside). The
+    /// whole-look match is the more exact answer, so it wins.
     #[must_use]
     pub fn matching(&self, style: &ChartStyle) -> Option<&str> {
-        CandlePreset::detect(&style.candles)
-            .map(CandlePreset::label)
-            .or_else(|| {
-                self.presets
-                    .iter()
-                    .find(|(_, saved)| *saved == style)
-                    .map(|(name, _)| name.as_str())
-            })
+        self.presets
+            .iter()
+            .find(|(_, saved)| *saved == style)
+            .map(|(name, _)| name.as_str())
+            .or_else(|| CandlePreset::detect(&style.candles).map(CandlePreset::label))
     }
 
     /// Save `style` under `name`, replacing a look of that name. Returns the
     /// trimmed name it landed under.
     pub fn insert(&mut self, name: &str, style: ChartStyle) -> Result<String, SaveRefusal> {
         let name = name.trim();
-        if name.is_empty() || name.len() > MAX_NAME_LEN {
+        if name.is_empty() || name.chars().count() > MAX_NAME_LEN {
             return Err(SaveRefusal::BadName);
         }
         if CandlePreset::from_name(name).is_some() {
@@ -172,11 +200,38 @@ impl CandlePresetStore {
         self.presets.remove(name.trim()).is_some()
     }
 
+    /// Save `style` under `name` and write the file; a write that fails
+    /// undoes the save. Returns the trimmed name it landed under.
+    pub fn save_as(
+        &mut self,
+        path: &Path,
+        name: &str,
+        style: ChartStyle,
+    ) -> Result<String, PresetError> {
+        let before = self.clone();
+        let name = self.insert(name, style)?;
+        self.save(path).map_err(|error| {
+            *self = before;
+            PresetError::NotWritten(error)
+        })?;
+        Ok(name)
+    }
+
+    /// Forget `name` and write the file; a write that fails puts it back.
+    /// Answers whether there was one.
+    pub fn delete(&mut self, path: &Path, name: &str) -> Result<bool, PresetError> {
+        let Some(style) = self.presets.remove(name.trim()) else {
+            return Ok(false);
+        };
+        self.save(path).map_err(|error| {
+            self.presets.insert(name.trim().to_owned(), style);
+            PresetError::NotWritten(error)
+        })?;
+        Ok(true)
+    }
+
     /// Write the store. See the [module docs](self) for the discipline.
-    pub fn save(&self, path: &Path) {
-        if quantick_workspace::write_refusal::guard_write(path).is_err() {
-            return;
-        }
+    pub fn save(&self, path: &Path) -> Result<(), String> {
         let file = PresetsFile {
             version: FORMAT_VERSION,
             presets: self
@@ -185,13 +240,12 @@ impl CandlePresetStore {
                 .map(|(name, style)| (name.clone(), StyleFile::from(style)))
                 .collect(),
         };
-        let Ok(text) = toml::to_string_pretty(&file) else {
-            return;
-        };
-        let temp = path.with_extension("toml.tmp");
-        if let Err(error) = std::fs::write(&temp, text).and_then(|()| std::fs::rename(&temp, path))
-        {
-            let _ = std::fs::remove_file(&temp);
+        let written = toml::to_string_pretty(&file)
+            .map_err(|error| error.to_string())
+            .and_then(|text| {
+                crate::bundle::write_atomically(path, &text).map_err(|error| error.to_string())
+            });
+        if let Err(error) = &written {
             tracing::warn!(
                 target: "quantick::app",
                 schema_version = 1_u8,
@@ -202,6 +256,7 @@ impl CandlePresetStore {
                 "could not save the candle presets"
             );
         }
+        written
     }
 }
 
@@ -371,7 +426,7 @@ mod tests {
         store
             .insert("day", ChartStyle::default())
             .expect("a fresh name");
-        store.save(&path);
+        store.save(&path).expect("a writable scratch file");
 
         let loaded = CandlePresetStore::load(&path);
         assert_eq!(loaded, store);
@@ -395,6 +450,49 @@ mod tests {
     }
 
     #[test]
+    fn a_hand_edited_file_lists_only_names_a_save_would_take() {
+        let path = path();
+        let mut file = PresetsFile {
+            version: FORMAT_VERSION,
+            presets: BTreeMap::new(),
+        };
+        // The same look under its own name, a padded key, a blank key, a
+        // built-in's key and an overlong key.
+        let overlong = "x".repeat(MAX_NAME_LEN + 1);
+        for key in ["night", "  dusk  ", "   ", "Glass", overlong.as_str()] {
+            file.presets.insert(key.to_owned(), StyleFile::from(&look()));
+        }
+        std::fs::write(&path, toml::to_string_pretty(&file).unwrap()).unwrap();
+
+        let mut loaded = CandlePresetStore::load(&path);
+        assert_eq!(loaded.names().collect::<Vec<_>>(), ["dusk", "night"]);
+        assert_eq!(loaded.delete(&path, "dusk"), Ok(true), "a listed name deletes");
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_write_that_fails_undoes_the_change_and_says_so() {
+        // A folder where the file should be: the rename onto it fails.
+        let path = crate::scratch::thread_dir("candle-presets-unwritable").join(PRESETS_FILE);
+        std::fs::create_dir_all(&path).unwrap();
+        let mut store = CandlePresetStore::default();
+        store.insert("night", look()).unwrap();
+        let before = store.clone();
+
+        let saved = store.save_as(&path, "day", ChartStyle::default());
+        assert!(matches!(saved, Err(PresetError::NotWritten(_))), "{saved:?}");
+        assert_eq!(store, before, "the save was undone");
+        let deleted = store.delete(&path, "night");
+        assert!(matches!(deleted, Err(PresetError::NotWritten(_))), "{deleted:?}");
+        assert_eq!(store, before, "the delete was undone");
+        assert_eq!(
+            store.save_as(&path, "Glass", look()),
+            Err(PresetError::Refused(SaveRefusal::BuiltInName.message()))
+        );
+        std::fs::remove_dir_all(&path).ok();
+    }
+
+    #[test]
     fn names_are_bounded_unshadowed_and_never_evict() {
         let mut store = CandlePresetStore::default();
         assert_eq!(store.insert("  ", look()), Err(SaveRefusal::BadName));
@@ -403,6 +501,11 @@ mod tests {
             Err(SaveRefusal::BadName)
         );
         assert_eq!(store.insert("glass", look()), Err(SaveRefusal::BuiltInName));
+        // Counted in characters, as the name field counts them.
+        let accented = "\u{e9}".repeat(MAX_NAME_LEN);
+        assert!(accented.len() > MAX_NAME_LEN);
+        assert_eq!(store.insert(&accented, look()), Ok(accented.clone()));
+        assert!(store.remove(&accented));
         for index in 0..MAX_PRESETS {
             store.insert(&format!("p{index}"), look()).unwrap();
         }
@@ -431,5 +534,9 @@ mod tests {
         own.candles.gap_px = 5.0;
         store.insert("own", own).unwrap();
         assert_eq!(store.matching(&own), Some("own"));
+        // A saved look that is a built-in's candles on its canvas: the whole
+        // match is the exact one.
+        store.insert("day", current).unwrap();
+        assert_eq!(store.matching(&current), Some("day"));
     }
 }
