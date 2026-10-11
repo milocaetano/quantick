@@ -2925,6 +2925,7 @@ dependencies = [
  "quantick-control-host",
  "quantick-control-local",
  "quantick-control-schema",
+ "quantick-drawings",
  "quantick-engine",
  "quantick-feed",
  "quantick-feed-binance",
@@ -3083,6 +3084,17 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "quantick-drawings"
+version = "0.1.0"
+dependencies = [
+ "quantick-anchored-studies",
+ "quantick-chart",
+ "quantick-chart-interaction",
+ "quantick-engine",
+ "quantick-indicators",
 ]
 
 [[package]]

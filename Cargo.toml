@@ -5,6 +5,7 @@ members = [
     "crates/backpressure",
     "crates/chart",
     "crates/chart-interaction",
+    "crates/drawings",
     "crates/control",
     "crates/control-local",
     "crates/control-host",

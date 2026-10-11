@@ -77,6 +77,7 @@ pub const HEADLESS_CRATES: &[&str] = &[
     "backpressure",
     "chart",
     "chart-interaction",
+    "drawings",
     "layers",
     "workspace",
     "engine",
