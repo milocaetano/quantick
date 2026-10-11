@@ -37,14 +37,14 @@ use bar::cluster_column_px_from;
 use bar::{BarPaint, draw_bar, draw_poc_dot, draw_zone_mark};
 use heat::{HeatScale, heat_scale};
 use quantick_chart::footprint_lod::{
-    AXIS_CLEARANCE_PX, COMPACT_MIN_ROW, DETAILED_MIN_ROW, DetailLevel, GLYPH_EM, GROUP_SNAP,
-    LADDER_MIN_FONT_PX, LevelMemory, PROFILE_MIN_WIDTH, QUANTITY_GLYPHS, QUANTITY_PADDING_PX,
-    QUANTITY_PX, TYPICAL_BODY_FRAC, detailed_entry_width,
+    AXIS_CLEARANCE_PX, DetailLevel, GLYPH_EM, GROUP_SNAP, LADDER_MIN_FONT_PX, LevelMemory,
+    PROFILE_MIN_WIDTH, QUANTITY_GLYPHS, QUANTITY_PADDING_PX, QUANTITY_PX, TYPICAL_BODY_FRAC,
+    detailed_entry_width, height_to_split,
 };
 #[cfg(test)]
 use quantick_chart::footprint_lod::{
-    COMPACT_FROM_PX, COMPACT_MIN_WIDTH, DETAILED_FROM_PX, DETAILED_MIN_WIDTH, LEVEL_ENTRY_MARGIN,
-    MARKS_MIN_WIDTH, level_for,
+    COMPACT_FROM_PX, COMPACT_MIN_WIDTH, DETAILED_FROM_PX, DETAILED_MIN_ROW, DETAILED_MIN_WIDTH,
+    LEVEL_ENTRY_MARGIN, MARKS_MIN_WIDTH, level_for,
 };
 use quantick_chart::footprint_projection::{
     ADAPTIVE_FLOOR_BARS, ZoneMark, adaptive_min_qty, bar_delta, coalesce_zones, fmt_delta, fmt_qty,
@@ -414,7 +414,7 @@ impl LayerPlan {
         let level = lod.levels.resolve(
             scaled_width,
             base_row_px,
-            frame.config.profile_row_px,
+            frame.config.row_floors(),
             frame.config.compact_entry_width(),
             detailed_min_width(requested, frame.config),
         );
@@ -469,6 +469,7 @@ impl LayerPlan {
             level: self.level,
             style: self.style,
             group: self.group,
+            base_row_px: self.base_row_px,
             k,
             min_qty,
             aggregated_any: false,
@@ -506,12 +507,9 @@ struct LayerPass<'p, 'f> {
 
 impl<'p, 'f> LayerPass<'p, 'f> {
     fn new(frame: &'p LayerFrame<'f>, plan: &LayerPlan, lod: &mut FootprintLod) -> Self {
-        let min_row = match plan.level {
-            DetailLevel::Detailed => DETAILED_MIN_ROW,
-            DetailLevel::Compact => COMPACT_MIN_ROW,
-            // The configured band fineness: the boss's "more, thinner rows".
-            _ => frame.config.profile_row_px,
-        };
+        // The configured floors: band fineness for the profile, the number-row
+        // height for the text levels - the trader's "more, thinner rows".
+        let min_row = frame.config.row_floors().for_level(plan.level);
         let k = lod
             .levels
             .resolve_multiple(plan.base_row_px, min_row)
@@ -741,6 +739,8 @@ struct Legend {
     level: DetailLevel,
     style: FootprintStyle,
     group: Decimal,
+    /// One capture-grid row's height on screen, in pixels.
+    base_row_px: f32,
     k: i64,
     min_qty: Decimal,
     /// A cap-coarsened ladder was hidden.
@@ -758,6 +758,7 @@ impl Legend {
             level,
             style,
             group,
+            base_row_px,
             k,
             min_qty,
             aggregated_any,
@@ -794,13 +795,21 @@ impl Legend {
             let further =
                 frame.config.compact_entry_width() * frame.config.detail_scale / frame.candle_width;
             if further > 1.05 {
-                text.push_str(&format!(" · numbers at {further:.1}× this zoom"));
+                text.push_str(&format!(" · numbers at {further:.1}× this width"));
             }
         }
         // The effective grouping is always spoken: the number a row stands for
         // must never change meaning silently (data honesty).
         let effective = group.saturating_mul(Decimal::from(k));
         text.push_str(&format!(" · rows {effective}"));
+        // Merged rows say how much taller the candles must get to split them,
+        // the height twin of the width hint above.
+        let floor = frame.config.row_floors().for_level(level);
+        if level >= DetailLevel::Profile
+            && let Some(taller) = height_to_split(k, base_row_px, floor)
+        {
+            text.push_str(&format!(" · single rows at {taller:.1}× height"));
+        }
         // The imbalance floor in force, spoken like the rows are: a highlight
         // whose threshold is secret reads as arbitrary.
         if level > DetailLevel::Off && !min_qty.is_zero() {

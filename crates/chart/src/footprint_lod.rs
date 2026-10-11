@@ -34,6 +34,53 @@ pub enum DetailLevel {
     Detailed,
 }
 
+/// The shortest a display row may draw at each level, in pixels: the price
+/// rows merge (a coarser display multiple) until they reach it.
+///
+/// Profile's floor is the trader's band fineness; the two text levels share
+/// one configured floor, Compact a pixel under Detailed as the constants have
+/// it. A bare `f32` is the Profile floor with the text floors at their
+/// defaults, which is what every caller before the text floor became a
+/// setting meant.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RowFloors {
+    /// Profile's band floor.
+    pub profile: f32,
+    /// Compact's row floor.
+    pub compact: f32,
+    /// Detailed's row floor.
+    pub detailed: f32,
+}
+
+impl RowFloors {
+    /// The floors from the two settings: `profile_row_px` for the bands and
+    /// `number_row_px` for Detailed, Compact keeping its one-pixel lead.
+    #[must_use]
+    pub fn new(profile_row_px: f32, number_row_px: f32) -> Self {
+        Self {
+            profile: profile_row_px,
+            compact: number_row_px - (DETAILED_MIN_ROW - COMPACT_MIN_ROW),
+            detailed: number_row_px,
+        }
+    }
+
+    /// The floor a level's rows are held to; Marks and Off take Profile's.
+    #[must_use]
+    pub fn for_level(self, level: DetailLevel) -> f32 {
+        match level {
+            DetailLevel::Detailed => self.detailed,
+            DetailLevel::Compact => self.compact,
+            _ => self.profile,
+        }
+    }
+}
+
+impl From<f32> for RowFloors {
+    fn from(profile_row_px: f32) -> Self {
+        Self::new(profile_row_px, DETAILED_MIN_ROW)
+    }
+}
+
 /// What the row height last allowed and the row multiple last answered, per
 /// pane — the sticky state the row-side dead band is measured from. Candle
 /// width keeps no memory: it is answered strictly every frame.
@@ -51,21 +98,22 @@ impl LevelMemory {
     /// (`LEVEL_HYSTERESIS`, Marks/Profile the narrower `PROFILE_HYSTERESIS`).
     /// The band never touches width in either direction, so rows sitting
     /// inside it cannot make the way in differ from the way out.
-    /// `profile_row_px` configures Profile's row floor; the first frame takes
-    /// the strict answer.
+    /// `floors` holds each level's row floor ([`RowFloors`]); the first
+    /// frame takes the strict answer.
     pub fn resolve(
         &mut self,
         candle_width: f32,
         base_row_px: f32,
-        profile_row_px: f32,
+        floors: impl Into<RowFloors>,
         compact_min: f32,
         detailed_min: f32,
     ) -> DetailLevel {
+        let floors = floors.into();
         let by_row = |factor: f32| {
             level_for(
                 f32::INFINITY,
                 base_row_px * factor,
-                profile_row_px,
+                floors,
                 compact_min,
                 detailed_min,
             )
@@ -104,7 +152,7 @@ impl LevelMemory {
         let by_width = level_for(
             candle_width,
             f32::INFINITY,
-            profile_row_px,
+            floors,
             compact_min,
             detailed_min,
         );
@@ -156,22 +204,23 @@ impl LevelMemory {
 /// What `candle_width` and the *achievable* row height allow. A thin base row
 /// is not a refusal — the display grouping can merge up to [`GROUP_SNAP`]'s
 /// largest multiple — so each level asks whether some multiple reaches its
-/// row floor. `compact_min` and `detailed_min` are the candle widths the two
-/// text levels start at.
+/// row floor ([`RowFloors`]). `compact_min` and `detailed_min` are the candle
+/// widths the two text levels start at.
 #[must_use]
 pub fn level_for(
     candle_width: f32,
     base_row_px: f32,
-    profile_row_px: f32,
+    floors: impl Into<RowFloors>,
     compact_min: f32,
     detailed_min: f32,
 ) -> DetailLevel {
+    let floors = floors.into();
     let row_reachable = |min_row: f32| display_multiple(base_row_px, min_row).is_some();
-    if candle_width >= detailed_min && row_reachable(DETAILED_MIN_ROW) {
+    if candle_width >= detailed_min && row_reachable(floors.detailed) {
         DetailLevel::Detailed
-    } else if candle_width >= compact_min && row_reachable(COMPACT_MIN_ROW) {
+    } else if candle_width >= compact_min && row_reachable(floors.compact) {
         DetailLevel::Compact
-    } else if candle_width >= PROFILE_MIN_WIDTH && row_reachable(profile_row_px) {
+    } else if candle_width >= PROFILE_MIN_WIDTH && row_reachable(floors.profile) {
         DetailLevel::Profile
     } else if candle_width >= MARKS_MIN_WIDTH {
         DetailLevel::Marks
@@ -185,19 +234,23 @@ pub fn level_for(
 /// floor's ratio to the ladder's, so one setting moves every style. Never
 /// under the style's own `typographic` floor, so a setting cannot promise a
 /// level whose text does not fit; and a width past the deepest zoom
-/// `detail_scale` allows is answered at that zoom instead (still no lower
-/// than the floor), so a style the registry offers stays drawable.
+/// `detail_scale` allows is answered at that zoom instead, so a style the
+/// registry offers stays drawable. That cap never undercuts the text: the
+/// floors' units are on-screen pixels over the scale, so above a scale of 1
+/// the typographic floor on screen is `typographic / detail_scale` in them,
+/// and the deepest zoom always clears it.
 #[must_use]
 pub fn detailed_entry_width(typographic: f32, detailed_from_px: f32, detail_scale: f32) -> f32 {
     let configured = (typographic * detailed_from_px / DETAILED_MIN_WIDTH).max(typographic);
-    configured.min(deepest_width(detail_scale).max(typographic))
+    let legible = typographic / detail_scale.max(1.0);
+    configured.min(deepest_width(detail_scale).max(legible))
 }
 
 /// Where Compact starts, in the floors' units: the trader's
 /// `compact_from_px`, never past the ladder's Detailed entry (`detailed_from_px`)
 /// — the summary numbers come before the full ladder, not after it — and
 /// never past the deepest zoom `detail_scale` allows, so the legend's "numbers
-/// at N× this zoom" always names a zoom the wheel can reach.
+/// at N× this width" always names a zoom the wheel can reach.
 #[must_use]
 pub fn compact_entry_width(compact_from_px: f32, detailed_from_px: f32, detail_scale: f32) -> f32 {
     compact_from_px
@@ -208,6 +261,16 @@ pub fn compact_entry_width(compact_from_px: f32, detailed_from_px: f32, detail_s
 /// The widest candle the zoom can reach, in the floors' units.
 fn deepest_width(detail_scale: f32) -> f32 {
     crate::viewport::MAX_CANDLE_WIDTH / detail_scale.max(1e-3)
+}
+
+/// How many times taller the rows must draw before each capture-grid row is
+/// its own row, for the legend's "single rows at N× height": `None` when rows
+/// are not merged (`k` of 1) or the stretch left is under 5%, a nudge the
+/// trader would not act on.
+#[must_use]
+pub fn height_to_split(k: i64, base_row_px: f32, min_row_px: f32) -> Option<f32> {
+    let taller = min_row_px / base_row_px;
+    (k > 1 && base_row_px > 0.0 && taller > 1.05).then_some(taller)
 }
 
 /// The smallest snap multiple whose rows reach `min_row_px`, or `None` when
@@ -278,6 +341,55 @@ mod tests {
         let deepest = crate::viewport::MAX_CANDLE_WIDTH / 2.0;
         let compact = compact_entry_width(160.0, 240.0, 2.0);
         assert!((compact - deepest).abs() < 1e-3, "{compact}");
+    }
+
+    #[test]
+    fn default_number_floor_keeps_the_constant_floors() {
+        // The setting at its default is exactly the old fixed floors, so a
+        // trader who never touches it sees the same bars.
+        let floors = RowFloors::new(4.0, DETAILED_MIN_ROW);
+        assert_eq!(floors, RowFloors::from(4.0));
+        assert!((floors.detailed - DETAILED_MIN_ROW).abs() < f32::EPSILON);
+        assert!((floors.compact - COMPACT_MIN_ROW).abs() < f32::EPSILON);
+        assert!((floors.for_level(DetailLevel::Profile) - 4.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn a_finer_number_floor_splits_rows_at_the_same_row_height() {
+        // Same 8 px per tick: the default floor merges two ticks per row, an
+        // 8 px floor gives each tick its own row - twice the rows on screen.
+        let coarse = RowFloors::new(4.0, DETAILED_MIN_ROW);
+        let fine = RowFloors::new(4.0, 8.0);
+        for level in [DetailLevel::Detailed, DetailLevel::Compact] {
+            assert_eq!(display_multiple(8.0, coarse.for_level(level)), Some(2));
+            assert_eq!(display_multiple(8.0, fine.for_level(level)), Some(1));
+        }
+        // And the level itself arrives at a shorter row.
+        let rows = DETAILED_MIN_ROW / *GROUP_SNAP.last().unwrap() as f32 * 0.8;
+        let at = |floors| level_for(f32::INFINITY, rows, floors, 0.0, 0.0);
+        assert_eq!(at(coarse), DetailLevel::Profile);
+        assert_eq!(at(fine), DetailLevel::Detailed);
+    }
+
+    #[test]
+    fn merged_rows_name_the_stretch_that_splits_them() {
+        assert_eq!(height_to_split(2, 6.0, 12.0), Some(2.0));
+        assert_eq!(height_to_split(1, 6.0, 12.0), None);
+        assert_eq!(height_to_split(2, 11.9, 12.0), None);
+        assert_eq!(height_to_split(2, 0.0, 12.0), None);
+    }
+
+    #[test]
+    fn a_wide_detail_scale_caps_every_entry_at_the_deepest_zoom() {
+        // A style whose text floor is past the deepest zoom at a wide scale is
+        // answered at that zoom: on screen that is the full ceiling, wider
+        // than the text needs, so the style stays reachable and legible.
+        let scale = 6.0;
+        let typographic = 120.0;
+        let entry = detailed_entry_width(typographic, DETAILED_FROM_PX, scale);
+        let deepest = crate::viewport::MAX_CANDLE_WIDTH / scale;
+        assert!((entry - deepest).abs() < 1e-3, "{entry}");
+        assert!(entry * scale >= typographic, "{entry}");
     }
 
     #[test]
