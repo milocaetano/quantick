@@ -36,6 +36,7 @@ use crate::theme;
 use bar::cluster_column_px_from;
 use bar::{BarPaint, draw_bar, draw_poc_dot, draw_zone_mark};
 use heat::{HeatScale, heat_scale};
+use quantick_chart::footprint_legend::{LegendFacts, legend_text};
 use quantick_chart::footprint_lod::{
     AXIS_CLEARANCE_PX, DetailLevel, GLYPH_EM, GROUP_SNAP, LADDER_MIN_FONT_PX, LevelMemory,
     PROFILE_MIN_WIDTH, QUANTITY_GLYPHS, QUANTITY_PADDING_PX, QUANTITY_PX, TYPICAL_BODY_FRAC,
@@ -770,89 +771,24 @@ impl Legend {
             zones_dropped,
             debug,
         } = self;
-        let mut text = String::from("footprint");
-        // A style that handed over says so, naming both: the trader asked for one
-        // reading and is looking at another, and a chart that quietly became a
-        // different chart is the same defect as a layer that is on and invisible.
-        if style != frame.config.style {
-            text.push_str(" · ");
-            text.push_str(frame.config.style.id());
-            text.push_str(" → ");
-            text.push_str(style.id());
-        }
-        match level {
-            DetailLevel::Off => text.push_str(" · zoom in for detail"),
-            DetailLevel::Marks => text.push_str(" · marks"),
-            DetailLevel::Profile => text.push_str(" · profile"),
-            DetailLevel::Compact => text.push_str(" · delta"),
-            // The legend names what the columns actually are — "sell|buy" over
-            // a delta ladder would misread every number (data honesty).
-            DetailLevel::Detailed => {
-                text.push_str(" · ");
-                text.push_str(style.detailed_legend());
-            }
-        }
-        // How much further to zoom, in the only unit the gesture has. "zoom in for
-        // numbers" with no number is why this layer read as slow to arrive: a
-        // trader could not tell a nudge from a different chart entirely.
-        if level < DetailLevel::Compact && frame.candle_width > 0.0 {
-            let further =
-                frame.config.compact_entry_width() * frame.config.detail_scale / frame.candle_width;
-            if further > 1.05 {
-                text.push_str(&format!(" · numbers at {further:.1}× this width"));
-            }
-        }
-        // The effective grouping is always spoken: the number a row stands for
-        // must never change meaning silently (data honesty).
-        let effective = group.saturating_mul(Decimal::from(k));
-        text.push_str(&format!(" · rows {effective}"));
-        // Merged rows say how much taller the candles must get to split them,
-        // the height twin of the width hint above.
-        if let Some(taller) = split_hint {
-            text.push_str(&format!(" · single rows at {taller:.1}× height"));
-        }
-        // The imbalance floor in force, spoken like the rows are: a highlight
-        // whose threshold is secret reads as arbitrary.
-        if level > DetailLevel::Off && !min_qty.is_zero() {
-            text.push_str(&format!(" · min qty {}", fmt_qty(min_qty)));
-        }
-        // What the cell colours mean. A six-step scale with no key is a chart
-        // asking to be guessed at: bright could be "a lot" or "imbalanced", and
-        // the two lead to opposite trades. Same rule as the rows and the floor —
-        // a mark whose meaning is secret reads as arbitrary.
-        if style == crate::footprint_config::FootprintStyle::Cluster
-            && level >= DetailLevel::Detailed
-        {
-            text.push_str(" · heat: cell volume vs the screen");
-        }
-        if aggregated_any {
-            text.push_str(" · coarsened bars hidden");
-        }
-        if frame.side_inferred {
-            text.push_str(" · side inferred");
-        }
-        // The plate is opaque by design — that is what gives the digits a floor
-        // they control — so where the map used to show through, it no longer
-        // does. Said out loud for the same reason the effective row size is: a
-        // trader reading the liquidity map must never wonder whether the gaps are
-        // the market or the chart. And only where a plate is actually painted:
-        // claiming occlusion that is not there undercuts the same guarantee from
-        // the other side.
-        if frame.depth_visible
-            && style.plate() == StylePlate::Casing
-            && level >= DetailLevel::Profile
-        {
-            text.push_str(" · map hidden behind the bars");
-        }
-        if capped {
-            text.push_str(" · capped");
-        }
-        if zones_dropped {
-            text.push_str(&format!(" · strongest {MAX_ZONE_MARKS} zones"));
-        }
-        if let Some(debug) = debug {
-            text.push_str(&debug);
-        }
+        let text = legend_text(&LegendFacts {
+            requested_style: frame.config.style.id(),
+            drawn_style: style.id(),
+            detailed_legend: style.detailed_legend(),
+            level,
+            candle_width: frame.candle_width,
+            numbers_at_px: frame.config.compact_entry_width() * frame.config.detail_scale,
+            rows: group.saturating_mul(Decimal::from(k)),
+            split_hint,
+            min_qty,
+            heat_cells: style == crate::footprint_config::FootprintStyle::Cluster,
+            aggregated_any,
+            side_inferred: frame.side_inferred,
+            plate_over_map: frame.depth_visible && style.plate() == StylePlate::Casing,
+            capped,
+            zone_cap: zones_dropped.then_some(MAX_ZONE_MARKS),
+            debug: debug.as_deref(),
+        });
         // Bottom-left: the top-left is the bubbles legend's home, and that panel
         // paints an opaque background *after* this layer — a legend carrying the
         // rows' meaning must not live under someone else's paint.
