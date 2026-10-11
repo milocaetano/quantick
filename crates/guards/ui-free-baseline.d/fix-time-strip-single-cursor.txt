@@ -6,3 +6,7 @@
 # and quantick_stores' BubbleLook. Measured.
 crates/app +37
 !budget +37
+# Review round 2: +9 — the handler docks in its own control/time_axis.rs
+# (module header, imports and registration). Measured.
+crates/app +9
+!budget +9

@@ -12,3 +12,8 @@ crates/app +45
 # spacing at the three launch hooks. Measured.
 crates/app +54
 !budget +54
+# Review round 2: +20 — one reset owner shared by the strip and the call
+# (ChartPane::has_time_axis / reset_time_axis), the published lane strip
+# it reads, and the handler's own control/time_axis.rs. Measured.
+crates/app +20
+!budget +20
