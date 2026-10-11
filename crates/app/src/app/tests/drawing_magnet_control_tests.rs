@@ -345,7 +345,8 @@ fn the_object_magnet_moves_only_the_named_panes_drawing_when_ids_collide() {
 }
 
 /// A mark that snaps by its own rule shows no magnet slot, and the call
-/// refuses it the same way, saying why in a field a client can branch on.
+/// refuses to turn one on, saying why in a field a client can branch on;
+/// turning it off is always accepted, so a stale flag can be cleared.
 #[test]
 fn a_tool_that_snaps_by_its_own_rule_refuses_the_object_magnet() {
     let ctx = egui::Context::default();
@@ -366,7 +367,7 @@ fn a_tool_that_snaps_by_its_own_rule_refuses_the_object_magnet() {
         &directory,
         &options("cockpit", &["cockpit", "cockpit.layout"]),
     );
-    let (refused, _) = unkeyed_call(&mut app, &mut client, OBJECT_CAPABILITY, input);
+    let (refused, _) = unkeyed_call(&mut app, &mut client, OBJECT_CAPABILITY, input.clone());
     assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST));
     assert_eq!(
         response_error(&refused).context.details,
@@ -377,8 +378,58 @@ fn a_tool_that_snaps_by_its_own_rule_refuses_the_object_magnet() {
         object_magnet_events(&app).is_empty(),
         "a refusal journals nothing"
     );
+
+    // A stale flag (an older build, a hand-edited layout) reads back off,
+    // since no drag honours it, and turning it off is accepted and clears it.
+    app.drawing_pane_mut().drawings.items_mut()[index].magnet = true;
+    let (response, _) = unkeyed_call(
+        &mut app,
+        &mut client,
+        "snapshot.read",
+        json!({"scopes":["analysis.drawings"]}),
+    );
+    let drawing_id = input["drawing_id"].clone();
+    let read = success_result(&response)["scopes"]["analysis.drawings"]["value"]["tabs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|tab| tab["panes"].as_array().unwrap().clone())
+        .flat_map(|pane| pane["drawings"].as_array().unwrap().clone())
+        .find(|drawing| drawing["drawing_id"] == drawing_id)
+        .expect("the drawings scope lists the mark")["magnet"]
+        .clone();
+    assert_eq!(read, json!(false), "a mark has no magnet to report");
+    let mut off = input.clone();
+    off["enabled"] = json!(false);
+    let (cleared, _) = unkeyed_call(&mut app, &mut client, OBJECT_CAPABILITY, off.clone());
+    assert_eq!(success_result(&cleared)["changed"], json!(true));
+    assert!(!app.active_tab().drawing_pane().drawings.items()[index].magnet);
+    let (again, _) = unkeyed_call(&mut app, &mut client, OBJECT_CAPABILITY, off);
+    assert_eq!(success_result(&again)["changed"], json!(false));
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
+}
+
+/// Click the context bar's magnet slot on a fresh horizontal line and
+/// prove the flip landed as one undo step; answers the drawing's index.
+fn hand_flip_own_magnet(app: &mut QuantickApp, ctx: &egui::Context) -> usize {
+    run_frame(app, ctx);
+    let index = place_drawing(app, ctx, "horizontal-line", &[egui::pos2(700.0, 300.0)]);
+    run_frame(app, ctx);
+    let slot = app
+        .drawings
+        .chrome
+        .context_bar()
+        .magnet_rect()
+        .expect("a pointer-anchored drawing renders the magnet slot")
+        .center();
+    click_chart(app, ctx, slot);
+    run_frame(app, ctx);
+    index
+}
+
+fn own_magnet_at(app: &QuantickApp, index: usize) -> bool {
+    app.active_tab().drawing_pane().drawings.items()[index].magnet
 }
 
 /// A hand on the context bar's magnet slot leaves the same journal event a
@@ -389,32 +440,48 @@ fn a_hand_flip_of_a_drawings_own_magnet_journals_like_the_call() {
     let (mut app, _commands) = app_with_history(20);
     let directory = gateway_test_directory("drawing-object-magnet-hand");
     enable_test_gateway(&mut app, &ctx, &directory, 4);
-    run_frame(&mut app, &ctx);
-    let index = place_drawing(
-        &mut app,
-        &ctx,
-        "horizontal-line",
-        &[egui::pos2(700.0, 300.0)],
-    );
-    run_frame(&mut app, &ctx);
-    let slot = app
-        .drawings
-        .chrome
-        .context_bar()
-        .magnet_rect()
-        .expect("a pointer-anchored drawing renders the magnet slot")
-        .center();
-    click_chart(&mut app, &ctx, slot);
-    run_frame(&mut app, &ctx);
-    let own = |app: &QuantickApp| app.active_tab().drawing_pane().drawings.items()[index].magnet;
-    assert!(own(&app), "the click turned it on");
+    let index = hand_flip_own_magnet(&mut app, &ctx);
+    assert!(own_magnet_at(&app, index), "the click turned it on");
     assert!(!app.toolrail.magnet(), "the rail's magnet never moves");
     assert_eq!(object_magnet_events(&app), [json!(true)]);
+    let event = app
+        .control
+        .control_access
+        .as_ref()
+        .unwrap()
+        .journal()
+        .read(1, 256, 1 << 20)
+        .events
+        .into_iter()
+        .find(|event| event.kind.as_str() == "annotate.drawing_magnet.changed")
+        .unwrap();
+    assert_eq!(
+        event.actor.map(|actor| actor.kind),
+        Some(quantick_control::wire::ActorKind::HumanUi),
+        "the trader's own hand"
+    );
     assert!(
         app.drawing_pane_mut().drawings.undo(),
         "the flip is one undo step"
     );
-    assert!(!own(&app), "undo takes it back");
+    assert!(!own_magnet_at(&app, index), "undo takes it back");
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
+}
+
+/// The default build has no control access: the hand's flip still lands,
+/// as one undo step, with nothing to journal.
+#[test]
+fn a_hand_flip_of_a_drawings_own_magnet_lands_without_a_gateway() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(20);
+    app.control.control_access = None;
+    let index = hand_flip_own_magnet(&mut app, &ctx);
+    assert!(own_magnet_at(&app, index), "the click turned it on");
+    assert!(!app.toolrail.magnet(), "the rail's magnet never moves");
+    assert!(
+        app.drawing_pane_mut().drawings.undo(),
+        "the flip is one undo step"
+    );
+    assert!(!own_magnet_at(&app, index), "undo takes it back");
 }

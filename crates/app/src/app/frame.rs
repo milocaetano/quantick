@@ -672,13 +672,13 @@ impl QuantickApp {
                 }
             }
         }
-        crate::control::flip_selected_drawing_magnet(self, ask.set_selected_magnet.take());
         let effects = self.drawings.apply_drawing_chrome(
             ask,
             &mut super::drawing_controller::DrawingAccess::new(&mut self.tabs),
             &mut *self.audio.alerts,
             now,
         );
+        crate::control::journal_own_magnet_flip(self, effects.own_magnet);
         if effects.inspector_moved {
             self.workspace.session_mut().inspector_moved();
         }

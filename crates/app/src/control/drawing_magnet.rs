@@ -65,7 +65,8 @@ fn set_object<P: TabsPort + TabsMutPort + ?Sized>(
         .index_of(id)
         .ok_or_else(|| input.unknown_drawing())?;
     let drawing = &pane.drawings.items()[index];
-    if !drawing.takes_magnet() {
+    // Off is always reachable, so a stale flag on such a tool can be cleared.
+    if input.enabled && !drawing.takes_magnet() {
         return Err(no_magnet(drawing.tool.name(), drawing.tool.id()));
     }
     let result = input.result(pane.drawings.set_magnet_at(index, input.enabled));
@@ -92,38 +93,39 @@ pub(crate) fn flip_rail_magnet<P: GatewayPort + ToolRailPort + ?Sized>(app: &mut
     }
 }
 
-/// A hand's flip of the selected drawing's own magnet (the context bar's
-/// slot, when it asked for one) is `annotate.drawing_magnet.set`, so it
-/// journals alike. Without control access it lands directly; one undo step
-/// either way.
-pub(crate) fn flip_selected_drawing_magnet<P>(app: &mut P, on: Option<bool>)
+/// Journal a hand's flip of the selection's own magnet as
+/// `annotate.drawing_magnet.changed`, the event the call leaves, by the
+/// trader's hand. The flip itself landed with the context bar's edited copy,
+/// one undo step with the rest of the edit, so it never enters the control
+/// trace a replay re-runs. Without control access there is no journal.
+pub(crate) fn journal_own_magnet_flip<P>(app: &mut P, flip: Option<(DrawingId, bool)>)
 where
-    P: GatewayPort + TabsPort + TabsMutPort + ?Sized,
+    P: GatewayPort + TabsPort + ?Sized,
 {
-    let Some(on) = on else {
+    let Some((id, enabled)) = flip else {
         return;
     };
     let reads = app.tab_reads();
     let tab_index = reads.active_tab_index();
     let tabs = reads.tabs();
-    let side = tabs[tab_index].drawing_side();
-    let pane = tabs[tab_index].pane(side);
-    let Some(index) = pane.drawings.selected() else {
-        return;
-    };
+    let pane = tabs[tab_index].pane(tabs[tab_index].drawing_side());
     let input = ObjectMagnetInput {
         tab_id: WireU64::new(tabs.id_at(tab_index)),
         pane_id: WireU64::new(pane.id),
-        drawing_id: WireU64::new(pane.drawings.items()[index].id.0),
-        enabled: on,
+        drawing_id: WireU64::new(id.0),
+        enabled,
     };
-    let human = super::ActionOrigin::Human;
-    let called = serde_json::to_value(input).is_ok_and(|input| {
-        app.control_action(OBJECT_MAGNET_CAPABILITY_ID, 1, human, input)
-            .is_ok()
-    });
-    if !called {
-        let pane = app.tabs_mut().pane_mut(tab_index, side);
-        pane.drawings.set_magnet_at(index, on);
-    }
+    let Some(access) = app.gateway_slot().as_mut() else {
+        return;
+    };
+    let Some(actor) = access.hand_actor() else {
+        return;
+    };
+    let payload = serde_json::json!({ "drawing_magnet": input.result(true) });
+    access.append_event(NewEvent::by(
+        ANNOTATE_MODULE_ID,
+        OBJECT_MAGNET_EVENT_KIND,
+        &actor,
+        payload,
+    ));
 }

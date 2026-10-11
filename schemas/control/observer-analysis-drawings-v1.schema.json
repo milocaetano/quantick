@@ -54,7 +54,7 @@
         },
         "magnet": {
           "default": false,
-          "description": "This object's own OHLC magnet (`annotate.drawing_magnet.set`), which\nsnaps its drags whatever the rail's `magnet` above says. Optional in\nthe schema only so v1 readers stay compatible.",
+          "description": "This object's own OHLC magnet (`annotate.drawing_magnet.set`), which\nsnaps its drags whatever the rail's `magnet` above says; always false\nfor a tool that snaps by its own rule. Optional in the schema only so\nv1 readers stay compatible.",
           "type": "boolean"
         },
         "off_series": {

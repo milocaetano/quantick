@@ -100,7 +100,7 @@ impl DrawingKey {
     fn matches(&self, drawing: &crate::drawings::Drawing) -> bool {
         self.id == drawing.id.0
             && self.locked == drawing.locked
-            && self.magnet == drawing.magnet
+            && self.magnet == drawing.own_magnet()
             && self.hidden == drawing.hidden
             && self.named == drawing.name.is_some()
             && match (&self.author, &drawing.author) {
@@ -116,7 +116,7 @@ impl DrawingKey {
         Self {
             id: drawing.id.0,
             locked: drawing.locked,
-            magnet: drawing.magnet,
+            magnet: drawing.own_magnet(),
             hidden: drawing.hidden,
             named: drawing.name.is_some(),
             author: drawing
@@ -474,7 +474,7 @@ impl ControlAccess {
                             "drawing_id": drawing.id.0.to_string(),
                             "tool_id": drawing.tool.id(),
                             "locked": drawing.locked,
-                            "magnet": drawing.magnet,
+                            "magnet": drawing.own_magnet(),
                             "hidden": drawing.hidden,
                             // Presence, never the text: the journal is held to
                             // the same rule as the wire.

@@ -261,7 +261,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Turns one drawing's own OHLC magnet on or off, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists (a drawing id is unique only within its pane): with it on, that drawing's re-dragged or body-dragged anchors land on the open, high, low or close of the candle under the pointer even while the rail's magnet (`annotate.magnet.set`) is off. The same switch as the magnet slot on the drawing's context bar; it is saved with the workspace, and analysis.drawings reads it back as the drawing's `magnet`. Only a tool whose anchors follow the pointer has one: a mark that snaps by its own rule, like an arrow mark or an anchored VWAP, is refused with control.invalid_request, as is an id no pane on that tab holds.",
+      "description": "Turns one drawing's own OHLC magnet on or off, named by the `tab_id`, `pane_id` and `drawing_id` analysis.drawings lists (a drawing id is unique only within its pane): with it on, that drawing's re-dragged or body-dragged anchors land on the open, high, low or close of the candle under the pointer even while the rail's magnet (`annotate.magnet.set`) is off. The same switch as the magnet slot on the drawing's context bar; it is saved with the workspace, and analysis.drawings reads it back as the drawing's `magnet`. Only a tool whose anchors follow the pointer has one: turning it on for a mark that snaps by its own rule, like an arrow mark or an anchored VWAP, is refused with control.invalid_request, while turning it off is accepted on any tool so a stale flag can be cleared (`changed` reports the stored flag, and analysis.drawings reads such a tool's `magnet` as false). An id no pane on that tab holds is refused too.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -14577,7 +14577,7 @@
               },
               "magnet": {
                 "default": false,
-                "description": "This object's own OHLC magnet (`annotate.drawing_magnet.set`), which\nsnaps its drags whatever the rail's `magnet` above says. Optional in\nthe schema only so v1 readers stay compatible.",
+                "description": "This object's own OHLC magnet (`annotate.drawing_magnet.set`), which\nsnaps its drags whatever the rail's `magnet` above says; always false\nfor a tool that snaps by its own rule. Optional in the schema only so\nv1 readers stay compatible.",
                 "type": "boolean"
               },
               "off_series": {

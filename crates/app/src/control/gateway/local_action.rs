@@ -304,6 +304,13 @@ impl ControlAccess {
         Some(actor)
     }
 
+    /// The trader's own hand as the journal names it, for a gesture that
+    /// lands without an action call; `None` without a process identity.
+    pub(crate) fn hand_actor(&mut self) -> Option<ActorContext> {
+        self.identity.as_ref()?;
+        Some(self.local_actor(ActorKind::HumanUi, None))
+    }
+
     /// The trusted actor context for an action taken in this window by the
     /// human (`HumanUi`) or replayed from a control trace (`Automation`).
     fn local_actor(&mut self, actor_kind: ActorKind, reason: Option<String>) -> ActorContext {

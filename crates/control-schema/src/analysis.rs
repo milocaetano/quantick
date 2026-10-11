@@ -229,8 +229,9 @@ pub struct DrawingSnapshot {
     pub scope: String,
     pub locked: bool,
     /// This object's own OHLC magnet (`annotate.drawing_magnet.set`), which
-    /// snaps its drags whatever the rail's `magnet` above says. Optional in
-    /// the schema only so v1 readers stay compatible.
+    /// snaps its drags whatever the rail's `magnet` above says; always false
+    /// for a tool that snaps by its own rule. Optional in the schema only so
+    /// v1 readers stay compatible.
     #[serde(default)]
     pub magnet: bool,
     /// This object's own eye. It is not the whole answer to "is it on screen":

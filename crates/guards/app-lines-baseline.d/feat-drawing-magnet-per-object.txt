@@ -4,7 +4,9 @@
 # form and its Pointer-snap rule, the context bar's magnet slot (egui), the
 # gestures that read it on a local and a mirrored drag, the
 # `annotate.drawing_magnet.set` handler that finds the drawing in the named
-# pane, and the two hand flips routed through their calls so they journal
-# (the rail's moved out of the QuantickApp root, which shrank by 5).
-crates/app +127
-!budget +127
+# pane, the rail's hand flip routed through its call so it journals (moved
+# out of the QuantickApp root, which shrank by 5), and the object's hand flip
+# applied with the context bar's edit and journalled by the trader's hand
+# without entering the control trace.
+crates/app +135
+!budget +135

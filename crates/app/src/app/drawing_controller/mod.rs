@@ -37,6 +37,8 @@ pub(crate) struct DrawingEffects {
     pub(crate) inspector_moved: bool,
     /// Arm this tool: a conversion left a draft for the trader to finish.
     arm: Option<crate::drawings::DrawingTool>,
+    /// The selection's own magnet, when the bar's applied edit moved it.
+    pub(crate) own_magnet: Option<(crate::drawings::DrawingId, bool)>,
 }
 impl DrawingEffects {
     fn note(&mut self, text: impl Into<String>, now: Instant) {

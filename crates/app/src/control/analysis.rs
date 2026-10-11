@@ -137,7 +137,7 @@ fn revision<P: TabsPort + ChromePort + ?Sized>(app: &P) -> (bool, Vec<AnalysisRe
                             (
                                 drawing.id.0,
                                 drawing.locked,
-                                drawing.magnet,
+                                drawing.own_magnet(),
                                 drawing.hidden,
                                 drawing.name.is_some(),
                                 drawing.author.is_some(),
@@ -339,7 +339,7 @@ fn drawing_snapshot(drawing: &Drawing) -> DrawingSnapshot {
         }
         .to_owned(),
         locked: drawing.locked,
-        magnet: drawing.magnet,
+        magnet: drawing.own_magnet(),
         hidden: drawing.hidden,
         foreign_market: drawing.foreign_market,
         off_series: drawing.off_series,

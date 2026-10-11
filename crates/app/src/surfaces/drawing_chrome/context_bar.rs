@@ -180,6 +180,7 @@ pub(crate) fn draw(
         let edit = BarEdit {
             style,
             toggle_shared: intent.toggle_shared,
+            toggle_magnet: intent.toggle_magnet,
             glyph_px: glyph_after.map(|size| size.px),
         };
         ask.edited = Some(Box::new(edit.applied_to(drawing)));
@@ -190,11 +191,6 @@ pub(crate) fn draw(
         chrome.shared.last_selection = None;
     }
     ask.duplicate |= intent.duplicate;
-    // Not an edit of the copy: the flip is `annotate.drawing_magnet.set`,
-    // so the host runs it through the call and it journals alike.
-    if intent.toggle_magnet {
-        ask.set_selected_magnet = Some(!drawing.magnet);
-    }
     ask.merge(super::apply_actions(chrome, ctx, actions, index, env));
     ask
 }
@@ -346,7 +342,7 @@ fn actions_of(intent: &drawings::context_bar::ContextBarIntent) -> InspectorActi
         delete: intent.actions.delete,
         force_delete: intent.force_delete,
         cancel_delete: intent.cancel_delete,
-        edited: intent.edited || intent.toggle_shared,
+        edited: intent.edited || intent.toggle_shared || intent.toggle_magnet,
         ..InspectorActions::default()
     }
 }
@@ -356,6 +352,7 @@ fn actions_of(intent: &drawings::context_bar::ContextBarIntent) -> InspectorActi
 struct BarEdit {
     style: drawings::DrawingStyle,
     toggle_shared: bool,
+    toggle_magnet: bool,
     /// The glyph size the bar left, for a tool drawn as a glyph.
     glyph_px: Option<f32>,
 }
@@ -371,6 +368,7 @@ impl BarEdit {
                 drawings::DrawingScope::AllCharts
             };
         }
+        edited.magnet ^= self.toggle_magnet;
         if let Some(px) = self.glyph_px {
             drawing.tool.set_glyph_size(&mut edited, px);
         }

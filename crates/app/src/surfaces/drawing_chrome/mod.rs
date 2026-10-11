@@ -567,9 +567,6 @@ pub(crate) struct DrawingChromeAsk {
     pub toggle_selected_hidden: bool,
     /// Lock or unlock the selection.
     pub toggle_selected_locked: bool,
-    /// Set the selection's own OHLC magnet to this, through
-    /// `annotate.drawing_magnet.set`.
-    pub set_selected_magnet: Option<bool>,
     /// Delete the selection, through the confirmation rule the keyboard uses.
     pub request_delete: bool,
     /// Delete the selection even though it is locked — the trader answered
@@ -647,7 +644,6 @@ impl DrawingChromeAsk {
             .or(other.commit_edit_gesture);
         self.toggle_selected_hidden |= other.toggle_selected_hidden;
         self.toggle_selected_locked |= other.toggle_selected_locked;
-        self.set_selected_magnet = self.set_selected_magnet.or(other.set_selected_magnet);
         self.request_delete |= other.request_delete;
         self.force_delete |= other.force_delete;
         self.cancel_delete |= other.cancel_delete;
