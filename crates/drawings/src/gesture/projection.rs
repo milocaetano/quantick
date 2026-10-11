@@ -20,6 +20,10 @@ use crate::{
 
 pub use quantick_chart::pane_series::PaneSeriesRead;
 
+#[cfg(test)]
+#[path = "projection_tests.rs"]
+mod projection_tests;
+
 /// Clamp a fractional bar coordinate onto the bars that exist:
 /// `0 ..= total - 1`. The candle magnet's time half — a snap that reads a
 /// candle must stand on one.
@@ -612,6 +616,27 @@ impl DrawingProjection<'_> {
                 .x_at_bar_position(point.bar, history_right, total),
             scale.y(point.price),
         )
+    }
+
+    /// Each visible price-band drawing with the axis heights its tool
+    /// declares on `chart`, handed to `out` one height at a time.
+    pub fn axis_levels(
+        &self,
+        drawings: &Marks,
+        chart: PxRect,
+        (history_right, total): (f32, usize),
+        scale: &PriceScale,
+        out: &mut dyn FnMut(&Mark, f32),
+    ) {
+        for (index, drawing) in drawings.items().iter().enumerate() {
+            if !drawings.is_visible(index) || matches!(drawing.band, DrawingBand::Indicator(_)) {
+                continue;
+            }
+            let points = self.projected_drawing_points(drawing, history_right, total, scale);
+            for y in drawing.tool.axis_levels(chart, &points) {
+                out(drawing, y);
+            }
+        }
     }
 
     /// Rewrite the market instants behind the selected object's anchors after

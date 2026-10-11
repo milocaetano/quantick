@@ -40,7 +40,9 @@ pub use shared::{
     SharedPointer, SharedSource,
 };
 
-use crate::{ChartPoint, Constrain, DrawingTool, Px, PxRect};
+#[cfg(any(feature = "drawing-harness", test))]
+use crate::Constrain;
+use crate::{ChartPoint, DrawingTool, Px, PxRect};
 
 /// The marks of one pane, as the gestures edit them.
 type Marks = crate::Drawings<DrawingTool>;
@@ -103,6 +105,7 @@ pub const FREEHAND_MAX_POINTS: usize = 512;
 /// A pointer and a modifier for a run with nobody at the keyboard — see
 /// [`PaneGestures::parked_hand`]. Never constructed outside the harness hook
 /// and the tests.
+#[cfg(any(feature = "drawing-harness", test))]
 #[derive(Debug, Clone, Copy)]
 pub struct ParkedHand {
     pub position: Px,
@@ -212,6 +215,7 @@ pub struct PaneGestures {
     /// pointer and the real modifier are read and nowhere else, so everything
     /// downstream — the tool's shaping, the hint chip, the rubber band — runs
     /// the same code a hand runs.
+    #[cfg(any(feature = "drawing-harness", test))]
     pub parked_hand: Option<ParkedHand>,
     /// The last screen position a freehand stroke actually recorded, so the
     /// capture decimates as it goes rather than storing every mouse event.

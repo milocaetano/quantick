@@ -25,6 +25,8 @@ quantick-chart-interaction = { path = "../chart-interaction", features = ["test-
 [features]
 # The shorthands and the inert preset host a dependent crate's tests build on.
 test-support = []
+# The parked hand: a pointer for a run with nobody at the mouse.
+drawing-harness = []
 
 [lints]
 workspace = true

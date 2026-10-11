@@ -31,7 +31,7 @@ use crate::theme;
 #[cfg(test)]
 use pointer_hit::PLOT_PICK_TOLERANCE_PX;
 #[cfg(test)]
-use quantick_drawings::gesture::{MAGNET_REACH_PX, magnet_price_of, snap_bar_to_tape};
+use quantick_drawings::gesture::MAGNET_REACH_PX;
 #[cfg(test)]
 use strategies::strategy_badge_text;
 

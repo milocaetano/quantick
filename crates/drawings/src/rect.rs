@@ -193,7 +193,6 @@ impl PxRect {
         }
     }
 
-    /// Grow to include `p`.
     /// The smallest rectangle holding every point, as `emath::Rect::from_points`.
     #[must_use]
     pub fn from_points(points: &[Px]) -> Self {
@@ -204,6 +203,7 @@ impl PxRect {
         rect
     }
 
+    /// Grow to include `p`.
     pub fn extend_with(&mut self, p: Px) {
         self.min = Px::new(self.min.x.min(p.x), self.min.y.min(p.y));
         self.max = Px::new(self.max.x.max(p.x), self.max.y.max(p.y));

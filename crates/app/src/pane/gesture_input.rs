@@ -49,10 +49,10 @@ pub(super) fn update_placement(
     defaults: PlacementDefaults<'_>,
 ) -> PlacementOutcome {
     let ui = input.ui;
-    let response = options.tool.map(|_| {
-        let surface = egui_rect(gesture::placement_surface(input.bands));
-        ui.interact(surface, input.id, egui::Sense::click_and_drag())
-    });
+    let surface = gesture::placement_surface(input.bands);
+    let response = options
+        .tool
+        .map(|_| ui.interact(egui_rect(surface), input.id, egui::Sense::click_and_drag()));
     let (latest, pressed, released, down) = ui.input(|input| {
         let pointer = &input.pointer;
         (
@@ -75,6 +75,7 @@ pub(super) fn update_placement(
         projection,
         gesture::PlacementFrame {
             bands: input.bands,
+            surface,
             history_right: input.history_right,
             hover: response
                 .as_ref()

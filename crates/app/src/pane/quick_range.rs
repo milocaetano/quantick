@@ -80,10 +80,7 @@ impl QuickRangeView<'_> {
                     anchor,
                     quantick_chart_interaction::quick_range::GestureEligibility {
                         pointer_tool: chrome.toolrail.tool() == Tool::Pointer,
-                        unoccluded: ui
-                            .ctx()
-                            .layer_id_at(position)
-                            .is_none_or(|layer| layer == ui.layer_id()),
+                        unoccluded: !super::gesture_input::over_chrome(ui, position),
                         area,
                     },
                 );

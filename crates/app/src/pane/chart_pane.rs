@@ -600,13 +600,14 @@ impl ChartPane {
             chrome,
         );
         self.handle_context_menu(&chart, &areas, &bands, chrome);
-        let (primary_pressed, primary_down, primary_released, pointer_position) =
-            ui.input(|input| {
+        let (primary_pressed, primary_down, primary_released, pointer_position, modifiers) = ui
+            .input(|input| {
                 (
                     input.pointer.primary_pressed(),
                     input.pointer.primary_down(),
                     input.pointer.primary_released(),
                     input.pointer.latest_pos(),
+                    input.modifiers,
                 )
             });
         // Floating chrome (inspector, manager, toast, flyouts) is opaque to the pointer: while it
@@ -655,8 +656,8 @@ impl ChartPane {
                 pointer: &pointer,
                 on_pane_chrome: pointer_position
                     .is_some_and(|position| primary_button::pane_chrome_hit(&areas, position)),
-                alt: ui.input(|input| input.modifiers.alt),
-                shift: ui.input(|input| input.modifiers.shift),
+                alt: modifiers.alt,
+                shift: modifiers.shift,
                 double_clicked: chart.double_clicked(),
                 paper_gesture,
                 pointer_tool: chrome.toolrail.tool() == Tool::Pointer,

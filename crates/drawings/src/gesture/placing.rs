@@ -15,6 +15,8 @@ use crate::{
 /// it off the placement surface ([`placement_surface`]).
 pub struct PlacementFrame<'a> {
     pub bands: &'a [Band],
+    /// [`placement_surface`] of `bands`, as the window took the pointer on it.
+    pub surface: PxRect,
     pub history_right: f32,
     /// Where the surface reports the pointer hovering it.
     pub hover: Option<Px>,
@@ -78,7 +80,7 @@ pub struct PlacementOutcome {
 pub fn placement_surface(bands: &[Band]) -> PxRect {
     bands
         .iter()
-        .fold(bands[0].rect, |union, band| union.union(band.rect))
+        .fold(PxRect::NOTHING, |union, band| union.union(band.rect))
 }
 
 struct PlacementRead<'a, 'series> {
@@ -111,7 +113,7 @@ impl PaneGestures {
             magnet: options.magnet,
             constrain: options.constrain,
         };
-        let surface = placement_surface(frame.bands);
+        let surface = frame.surface;
         let mut outcome = PlacementOutcome {
             tool_armed: true,
             hover_position: Some(frame.hover),
@@ -390,3 +392,7 @@ impl PlacementRead<'_, '_> {
         Some((band, point))
     }
 }
+
+#[cfg(test)]
+#[path = "placing_tests.rs"]
+mod placing_tests;

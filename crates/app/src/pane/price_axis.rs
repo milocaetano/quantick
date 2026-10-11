@@ -34,25 +34,21 @@ pub(crate) fn price_axis_levels(
     out: &mut Vec<PriceAxisLevel>,
 ) {
     out.clear();
-    for (index, drawing) in drawings.items().iter().enumerate() {
-        if !drawings.is_visible(index)
-            || matches!(drawing.band, drawings::DrawingBand::Indicator(_))
-        {
-            continue;
-        }
-        let points = projection.projected_drawing_points(drawing, history_right, total, scale);
-        for y in drawing
-            .tool
-            .axis_levels(drawings::px_rect(chart_rect), &points)
-        {
+    let chart = drawings::px_rect(chart_rect);
+    projection.axis_levels(
+        drawings,
+        chart,
+        (history_right, total),
+        scale,
+        &mut |drawing, y| {
             out.push(PriceAxisLevel {
                 id: drawing.id,
                 y,
                 price: scale.price_at(y),
                 color: drawings::painted_color(drawing),
             });
-        }
-    }
+        },
+    );
 }
 
 /// What the price axis may not write a round number over this frame.
