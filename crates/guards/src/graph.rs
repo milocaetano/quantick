@@ -79,7 +79,8 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     ("chart-interaction", &["layers", "orderflow"]),
     // Chart drawings under Model-View-Update: the store, its update and the
     // scenes the window paints, over the chart model and the studies a mark
-    // anchors.
+    // anchors; `workspace` for the one store-write gate the preset file asks
+    // (DS7).
     (
         "drawings",
         &[
@@ -88,6 +89,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "chart-interaction",
             "engine",
             "indicators",
+            "workspace",
         ],
     ),
     ("control", &[]),
