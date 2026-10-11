@@ -603,7 +603,12 @@ fn move_handle(
     let pointer_position = frame.pointer.position;
     let history_right = frame.pointer.history_right;
     let total = frame.pointer.total;
-    let magnet = frame.pointer.magnet;
+    // The rail's magnet, or the dragged object's own.
+    let magnet = frame.pointer.magnet
+        || drawings
+            .items()
+            .get(drawing_index)
+            .is_some_and(|drawing| drawing.magnet);
     // The object's own band, not the one under the
     // pointer: dragging a CVD anchor up into the candles
     // stretches it to the top of its pane, and never
@@ -666,8 +671,11 @@ fn translate_body(
     let dragged = drawings
         .items()
         .get(index)
-        .and_then(|drawing| Some((drawing.tool, bands::band_of(frame.bands, drawing)?)));
-    if let Some((tool, band)) = dragged
+        .and_then(|drawing| {
+            let magnet = pointer.magnet || drawing.magnet;
+            Some((drawing.tool, magnet, bands::band_of(frame.bands, drawing)?))
+        });
+    if let Some((tool, magnet, band)) = dragged
         && let Some(scale) = band.scale
     {
         let (right, total) = (pointer.history_right, pointer.total);
@@ -685,7 +693,7 @@ fn translate_body(
         }
         let mut moved = from.free.clone();
         match tool.anchor_snap() {
-            drawings::AnchorSnap::Pointer if pointer.magnet => {
+            drawings::AnchorSnap::Pointer if magnet => {
                 projection.snap_body(&mut moved, tool.body_snap(), band, position, (right, total));
             }
             drawings::AnchorSnap::Pointer => {}

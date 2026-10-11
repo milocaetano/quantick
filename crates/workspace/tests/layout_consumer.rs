@@ -80,6 +80,7 @@ fn level(price: f64) -> SavedDrawing {
         fill_alpha: 0,
         locked: false,
         hidden: false,
+        magnet: false,
         shared: false,
         payload: None,
         text: None,

@@ -101,6 +101,7 @@ impl SavedDrawingExt for SavedDrawing {
             fill_alpha: drawing.style.fill_alpha,
             locked: drawing.locked,
             hidden: drawing.hidden,
+            magnet: drawing.magnet,
             shared: drawing.scope == DrawingScope::AllCharts,
             payload: drawing.payload.export_preset(),
             text: drawing
@@ -161,6 +162,7 @@ impl SavedDrawingExt for SavedDrawing {
             },
             locked: self.locked,
             hidden: self.hidden,
+            magnet: self.magnet,
             scope: if self.shared {
                 DrawingScope::AllCharts
             } else {
@@ -319,6 +321,7 @@ mod tests {
             fill_alpha: 0,
             locked: false,
             hidden: false,
+            magnet: false,
             shared: false,
             payload: None,
             text: None,

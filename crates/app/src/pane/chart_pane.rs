@@ -473,7 +473,8 @@ impl ChartPane {
         self.unhide_layer_for_armed_tool(chrome);
         // The magnet applies to every anchor gesture, placement and re-drag
         // alike: a handle that snaps only while you first draw it would make
-        // the second edit undo the precision of the first.
+        // the second edit undo the precision of the first. An object's own
+        // magnet joins it on that object's drags (`pointer_gestures`).
         let magnet = chrome.toolrail.magnet();
         // Remembered for inspector placement and manager centring: the pane
         // where drawings live, already free of both axes and the live lane.

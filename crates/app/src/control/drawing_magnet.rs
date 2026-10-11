@@ -1,8 +1,10 @@
-//! The drawing rail's OHLC magnet, shared by the rail button and automation.
+//! The drawing rail's OHLC magnet, shared by the rail button and automation,
+//! and each drawing's own, shared by its context bar and automation.
 
 pub(crate) use quantick_control_schema::drawing_magnet::*;
 
-use crate::app::ToolRailPort;
+use crate::app::{TabsMutPort, TabsPort, ToolRailPort};
+use crate::drawings::DrawingId;
 use std::collections::BTreeSet;
 
 use quantick_control::{
@@ -16,7 +18,7 @@ use quantick_control::{
         RegistryError, RevisionPolicy,
     },
     schema::generated_schema,
-    wire::ActorContext,
+    wire::{ActorContext, WireU64},
 };
 
 use quantick_control::annotation::ANNOTATE_MODULE_ID;
@@ -84,6 +86,90 @@ fn set<P: ToolRailPort + ?Sized>(
     access.append_event(NewEvent::by(
         ANNOTATE_MODULE_ID,
         DRAWING_MAGNET_EVENT_KIND,
+        actor,
+        payload,
+    ));
+    serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
+}
+
+/// Dock `annotate.drawing_magnet.set`: one drawing's own magnet, the switch
+/// its context bar flips.
+pub(crate) fn register_object(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
+    registry.register(
+        CapabilityDescriptor {
+            id: CapabilityId::new(OBJECT_MAGNET_CAPABILITY_ID).expect("static capability ID is valid"),
+            version: CAPABILITY_VERSION,
+            title: "Set one drawing's own magnet".to_owned(),
+            description: "Turns one drawing's own OHLC magnet on or off, by the `drawing_id` analysis.drawings lists: with it on, that drawing's re-dragged or body-dragged anchors land on the open, high, low or close of the candle under the pointer even while the rail's magnet (`annotate.magnet.set`) is off. The same switch as the magnet slot on the drawing's context bar; it is saved with the workspace, and analysis.drawings reads it back as the drawing's `magnet`.".to_owned(),
+            module: ModuleId::new(ANNOTATE_MODULE_ID).expect("static module ID is valid"),
+            input_schema: generated_schema::<ObjectMagnetInput>(),
+            output_schema: generated_schema::<ObjectMagnetResult>(),
+            examples: Vec::new(),
+            effect: EffectId::new(COCKPIT_EFFECT_ID).expect("static effect ID is valid"),
+            risk_flags: BTreeSet::<RiskFlagId>::new(),
+            read_only: false,
+            idempotency: IdempotencyPolicy::Optional,
+            revision_policy: RevisionPolicy::OptionalForAdditive,
+            stale_input_safety: Some("The call names the state it wants rather than flipping it; repeating it is harmless and the result reads the drawing's magnet back.".to_owned()),
+            dry_run_supported: false,
+            persistence: EffectPersistence::Durable,
+            reversible: true,
+            destructive: false,
+            risk_reducing: false,
+            required_permissions: BTreeSet::from([
+                PermissionId::new(COCKPIT_PERMISSION_ID).expect("static permission ID is valid"),
+            ]),
+            preconditions: Vec::new(),
+            confirmation_class: ConfirmationClassId::new(NO_CONFIRMATION_ID).expect("static confirmation class is valid"),
+            availability: Availability::available(),
+            expected_cost: ExpectedCost {
+                class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
+                max_items: None,
+                max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
+            },
+            pagination: None,
+        },
+        set_object,
+    )
+}
+
+fn set_object<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let input: ObjectMagnetInput = serde_json::from_value(input.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let id = DrawingId(input.drawing_id.get());
+    let mut found = None;
+    for (tab_index, tab) in app.tab_reads().tabs().iter().enumerate() {
+        for side in tab.sides() {
+            let pane = tab.pane(side);
+            if let Some(index) = pane.drawings.index_of(id) {
+                found = Some((tab_index, side, index));
+            }
+        }
+    }
+    let Some((tab_index, side, index)) = found else {
+        return Err(ControlError::invalid_request(format!(
+            "no open chart holds a drawing with id {}",
+            id.0
+        )));
+    };
+    let tab_id = app.tab_reads().tabs().id_at(tab_index);
+    let pane = app.tabs_mut().pane_mut(tab_index, side);
+    let result = ObjectMagnetResult {
+        drawing_id: input.drawing_id,
+        tab_id: WireU64::new(tab_id),
+        pane_id: WireU64::new(pane.id),
+        enabled: input.enabled,
+        changed: pane.drawings.set_magnet_at(index, input.enabled),
+    };
+    let payload = serde_json::json!({ "drawing_magnet": result });
+    access.append_event(NewEvent::by(
+        ANNOTATE_MODULE_ID,
+        OBJECT_MAGNET_EVENT_KIND,
         actor,
         payload,
     ));

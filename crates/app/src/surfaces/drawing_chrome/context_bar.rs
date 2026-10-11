@@ -134,6 +134,8 @@ pub(crate) fn draw(
         glyph_size: tool.glyph_size(drawing),
         author: author.as_deref(),
         locked,
+        // A tool that snaps by its own rule has no magnet to switch.
+        magnet: (tool.anchor_snap() == drawings::AnchorSnap::Pointer).then_some(drawing.magnet),
         hidden: drawing.hidden,
         shared: drawing.scope == drawings::DrawingScope::AllCharts,
         shareable: drawing.shareable(),
@@ -178,6 +180,7 @@ pub(crate) fn draw(
         let edit = BarEdit {
             style,
             toggle_shared: intent.toggle_shared,
+            toggle_magnet: intent.toggle_magnet,
             glyph_px: glyph_after.map(|size| size.px),
         };
         ask.edited = Some(Box::new(edit.applied_to(drawing)));
@@ -339,7 +342,7 @@ fn actions_of(intent: &drawings::context_bar::ContextBarIntent) -> InspectorActi
         delete: intent.actions.delete,
         force_delete: intent.force_delete,
         cancel_delete: intent.cancel_delete,
-        edited: intent.edited || intent.toggle_shared,
+        edited: intent.edited || intent.toggle_shared || intent.toggle_magnet,
         ..InspectorActions::default()
     }
 }
@@ -349,6 +352,7 @@ fn actions_of(intent: &drawings::context_bar::ContextBarIntent) -> InspectorActi
 struct BarEdit {
     style: drawings::DrawingStyle,
     toggle_shared: bool,
+    toggle_magnet: bool,
     /// The glyph size the bar left, for a tool drawn as a glyph.
     glyph_px: Option<f32>,
 }
@@ -364,6 +368,7 @@ impl BarEdit {
                 drawings::DrawingScope::AllCharts
             };
         }
+        edited.magnet ^= self.toggle_magnet;
         if let Some(px) = self.glyph_px {
             drawing.tool.set_glyph_size(&mut edited, px);
         }

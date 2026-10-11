@@ -141,6 +141,10 @@ pub struct SavedDrawing {
     pub locked: bool,
     #[serde(default)]
     pub hidden: bool,
+    /// This object's own OHLC magnet, on top of the rail's. Written only
+    /// when on, so a document from before the flag saves back unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub magnet: bool,
     /// "Show on all charts": mirrored onto the other panes of the market.
     #[serde(default)]
     pub shared: bool,

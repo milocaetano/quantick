@@ -228,6 +228,11 @@ pub struct DrawingSnapshot {
     /// `this_chart` or `all_charts` — whether the tab's other panes show it.
     pub scope: String,
     pub locked: bool,
+    /// This object's own OHLC magnet (`annotate.drawing_magnet.set`), which
+    /// snaps its drags whatever the rail's `magnet` above says. Optional in
+    /// the schema only so v1 readers stay compatible.
+    #[serde(default)]
+    pub magnet: bool,
     /// This object's own eye. It is not the whole answer to "is it on screen":
     /// the pane's `layer_hidden` above hides every object regardless.
     pub hidden: bool,

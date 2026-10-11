@@ -33,6 +33,9 @@ pub struct Drawing {
     pub locked: bool,
     /// A hidden drawing neither paints nor hit-tests, and stays recoverable.
     pub hidden: bool,
+    /// This object's own OHLC magnet: a drag of it snaps whenever this or the
+    /// rail's magnet is on. Off unless the trader turned it on.
+    pub magnet: bool,
     /// Whether the other panes of this tab show it too.
     pub scope: DrawingScope,
     /// Set when the tab changed the instrument under this mark.
@@ -102,6 +105,7 @@ impl PartialEq for Drawing {
             && self.style == other.style
             && self.locked == other.locked
             && self.hidden == other.hidden
+            && self.magnet == other.magnet
             && self.scope == other.scope
             && self.payload.eq_dyn(other.payload.as_ref())
     }
