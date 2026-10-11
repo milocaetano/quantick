@@ -380,6 +380,36 @@ mod tests {
         );
     }
     #[test]
+    fn a_time_strip_double_click_resets_its_own_axis_spacing_only() {
+        let mut model = Model::default();
+        model.viewport.zoom(3.0);
+        model.viewport.pan_pixels(40.0, 100);
+        let time = |reset, tape| {
+            Intent::Axis(AxisGesture::Time {
+                reset,
+                drag: 0.0,
+                scroll: 0.0,
+                scroll_gain: 120.0,
+                tape,
+            })
+        };
+        assert!(update(&mut model, time(true, false)).is_empty());
+        assert_eq!(
+            model.viewport.px_per_bar(),
+            crate::viewport::DEFAULT_PX_PER_BAR
+        );
+        assert!(!model.viewport.follows_live(), "a reset is not a jump");
+
+        model.viewport.zoom(3.0);
+        assert_eq!(update(&mut model, time(true, true)), [Effect::ResetTapeZoom]);
+        assert_eq!(
+            model.viewport.px_per_bar(),
+            3.0 * crate::viewport::DEFAULT_PX_PER_BAR,
+            "the tape strip resets the tape, never the candles"
+        );
+        assert!(update(&mut model, time(false, true)).is_empty());
+    }
+    #[test]
     fn indicator_divider_auto_reset_wins_over_drag() {
         let mut model = Model::default();
         assert_eq!(
