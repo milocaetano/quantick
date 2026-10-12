@@ -284,9 +284,8 @@ impl WorkspaceBundleAdapter<'_> {
     /// how the two would drift.
     fn reload_cockpit_stores(&mut self, imported: &[&str]) {
         *self.added_symbols = symbols_file::load(self.arrangement.workspace.symbols_path());
-        *self.drawing_presets = drawings::presets::PresetStore::load_from(
-            drawings::presets::PresetStore::default_path(),
-        );
+        *self.drawing_presets =
+            drawings::presets::PresetStore::load_from(drawings::presets::default_path());
         *self.footprint_config =
             crate::footprint_config::load(self.arrangement.workspace.footprint_settings_path());
         self.chart_settings.reload_presets();

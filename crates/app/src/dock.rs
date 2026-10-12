@@ -140,6 +140,9 @@ pub struct DockResponse {
     /// The Trades tab asked to center the chart on a round trip
     /// (`opened_ms`, `closed_ms`).
     pub navigate_to_trade: Option<(i64, i64)>,
+    /// The Trades tab renamed, tagged or deleted a session — app-wide, so
+    /// every tab's live file is refused and every ledger re-reads.
+    pub journal_edit: Option<quantick_paper::report::session_edit::JournalEdit>,
     /// The Trading tab asked for the trades-folder picker — app-wide, so
     /// the app owns the dialog and the fan-out to every tab.
     pub pick_trades_dir: bool,
@@ -225,6 +228,24 @@ impl Dock {
         } else {
             Some(tab)
         };
+    }
+
+    /// Whether the pointer is on the dock — its strip or its open body, where
+    /// they were last laid out. Read before the dock draws: Del there is the
+    /// dock's (the Trades ledger deletes a session with it), not the chart's.
+    #[must_use]
+    pub fn holds_pointer(&self, ctx: &egui::Context) -> bool {
+        let Some(pointer) = ctx.pointer_latest_pos().filter(|_| self.visible) else {
+            return false;
+        };
+        let body = self
+            .active
+            .map(|tab| egui::Id::new(("dock_body", tab.index())));
+        [Some(egui::Id::new("dock_strip")), body]
+            .into_iter()
+            .flatten()
+            .filter_map(|id| egui::containers::panel::PanelState::load(ctx, id))
+            .any(|panel| panel.rect.contains(pointer))
     }
 
     /// Remember `width` for the active tab, clamped to the model's range.
@@ -359,6 +380,7 @@ impl Dock {
                                 response.navigate_to_trade = Some((opened, closed));
                             }
                             Some(LedgerAction::OpenTicket) => open_ticket = true,
+                            Some(LedgerAction::Edit(edit)) => response.journal_edit = Some(edit),
                             None => {}
                         },
                     }

@@ -15,17 +15,17 @@
       "source": "crates/orderflow/src/engine.rs"
     },
     {
-      "crate": "guards",
-      "max_seconds": 7.075,
-      "package": "quantick-guards",
-      "source": "crates/guards/src/generated.rs"
+      "crate": "drawings",
+      "max_seconds": 1.196,
+      "package": "quantick-drawings",
+      "source": "crates/drawings/src/tools/fib.rs"
     }
   ],
   "host_class": "Linux/x86_64/4/Linux/X64/ubuntu24",
   "jobs": 4,
-  "profile_hash": "f8d8375eda7dfcf8497b8a2cd5f84cad07ea5fecaaec01293931101440babf69",
+  "profile_hash": "f19ebf326d7dc60c0198ec705b327d8fb5ad0b0099fa8e925d27bd60a52e03c5",
   "protocol_hash": "d5bafb0bc44dc58250eb9274e4414d7169ed30c197ec2601833ac90c48e69501",
-  "rationale": "Seven-minute protocol calibration from the first run of PR #658, https://github.com/milocaetano/quantick/actions/runs/38088480381 (cold target; crates identical to main 2c7b0761). Each ceiling is ceil(1.25 * max(touched build + package test run) * 1000) / 1000, with no additive allowance. Previous-protocol limits are recorded in tools/edit_loop/README.md.",
+  "rationale": "Seven-minute protocol calibration from the first run of PR #658, https://github.com/milocaetano/quantick/actions/runs/38088480381 (cold target; crates identical to main 2c7b0761). Each ceiling is ceil(1.25 * max(touched build + package test run) * 1000) / 1000, with no additive allowance. Previous-protocol limits are recorded in tools/edit_loop/README.md. The drawings entry replaces guards in the top three (#662, scoped amendment authorized for #659): its ceiling is the same formula over https://github.com/milocaetano/quantick/actions/runs/38169479268 at 364f52cc; app and orderflow keep their 7365855 ceilings.",
   "schema": 1,
   "status": "calibrated",
   "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-unknown-linux-gnu\nrelease: 1.98.0\nLLVM version: 22.1.8"

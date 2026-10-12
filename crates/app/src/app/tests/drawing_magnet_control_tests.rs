@@ -145,3 +145,343 @@ fn a_hand_flip_of_the_magnet_journals_like_the_call() {
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
 }
+
+const OBJECT_CAPABILITY: &str = "annotate.drawing_magnet.set";
+
+/// One drawing's own magnet through the control plane: a named call sets it
+/// by the object's id, the drawings scope reads it back, a repeat changes
+/// nothing, and an unknown id is refused without touching anything.
+#[test]
+fn a_drawings_own_magnet_is_set_by_a_named_call_and_read_back() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(20);
+    run_frame(&mut app, &ctx);
+    let index = place_drawing(
+        &mut app,
+        &ctx,
+        "horizontal-line",
+        &[egui::pos2(700.0, 300.0)],
+    );
+    let drawing_id = app.active_tab().drawing_pane().drawings.items()[index].id;
+    let pane_id = app.active_tab().drawing_pane().id;
+    let own = |app: &QuantickApp| {
+        let drawings = &app.active_tab().drawing_pane().drawings;
+        drawings.items()[drawings.index_of(drawing_id).unwrap()].magnet
+    };
+    assert!(!own(&app), "an object's magnet opens off");
+
+    let directory = gateway_test_directory("drawing-object-magnet-control");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut observer = connect(&directory, &options("observer", &[]));
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let id = drawing_id.0.to_string();
+    let tab_id = app.tabs.active_id().to_string();
+    let pane = pane_id.to_string();
+    let call = |enabled: serde_json::Value| json!({"tab_id": tab_id, "pane_id": pane, "drawing_id": id, "enabled": enabled});
+    let read = |app: &mut QuantickApp, client: &mut LocalClient| {
+        let (response, _) = unkeyed_call(
+            app,
+            client,
+            "snapshot.read",
+            json!({"scopes":["analysis.drawings"]}),
+        );
+        let value = success_result(&response)["scopes"]["analysis.drawings"]["value"].clone();
+        value["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|tab| tab["panes"].as_array().unwrap().clone())
+            .flat_map(|pane| pane["drawings"].as_array().unwrap().clone())
+            .find(|drawing| drawing["drawing_id"] == json!(id.clone()))
+            .expect("the drawings scope lists the object")["magnet"]
+            .clone()
+    };
+    assert_eq!(read(&mut app, &mut client), json!(false));
+
+    let (denied, _) = unkeyed_call(
+        &mut app,
+        &mut observer,
+        OBJECT_CAPABILITY,
+        call(json!(true)),
+    );
+    assert_eq!(error_code(&denied), Some(codes::PERMISSION_DENIED));
+    for invalid in [
+        call(json!("yes")),
+        json!({"tab_id": tab_id, "pane_id": pane, "enabled": true}),
+        json!({"tab_id": tab_id, "pane_id": pane, "drawing_id": id}),
+        json!({"pane_id": pane, "drawing_id": id, "enabled": true}),
+        json!({"tab_id": tab_id, "drawing_id": id, "enabled": true}),
+        json!({"tab_id": tab_id, "pane_id": pane, "drawing_id": id, "enabled": true, "x": 1}),
+        json!({"tab_id": tab_id, "pane_id": pane, "drawing_id": "999999", "enabled": true}),
+        json!({"tab_id": tab_id, "pane_id": "999999", "drawing_id": id, "enabled": true}),
+        json!({"tab_id": "999999", "pane_id": pane, "drawing_id": id, "enabled": true}),
+    ] {
+        let (refused, _) = unkeyed_call(&mut app, &mut client, OBJECT_CAPABILITY, invalid);
+        assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST));
+        assert!(!own(&app), "a refused call changes nothing");
+    }
+
+    let answer = |enabled: bool, changed: bool| {
+        json!({
+            "drawing_id": id,
+            "tab_id": tab_id,
+            "pane_id": pane,
+            "enabled": enabled,
+            "changed": changed,
+        })
+    };
+    let (on, _) = unkeyed_call(&mut app, &mut client, OBJECT_CAPABILITY, call(json!(true)));
+    assert_eq!(success_result(&on), answer(true, true));
+    assert!(own(&app));
+    assert!(
+        !app.toolrail.magnet(),
+        "the rail's magnet is another switch"
+    );
+    assert_eq!(read(&mut app, &mut client), json!(true));
+
+    let (again, _) = unkeyed_call(&mut app, &mut client, OBJECT_CAPABILITY, call(json!(true)));
+    assert_eq!(success_result(&again), answer(true, false));
+
+    let (off, _) = unkeyed_call(&mut app, &mut client, OBJECT_CAPABILITY, call(json!(false)));
+    assert_eq!(success_result(&off), answer(false, true));
+    assert!(!own(&app));
+    assert_eq!(read(&mut app, &mut client), json!(false));
+
+    let events = app
+        .control
+        .control_access
+        .as_ref()
+        .unwrap()
+        .journal()
+        .read(1, 256, 1 << 20)
+        .events
+        .iter()
+        .filter(|event| event.kind.as_str() == "annotate.drawing_magnet.changed")
+        .map(|event| event.payload["drawing_magnet"]["enabled"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(events, [json!(true), json!(true), json!(false)]);
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}
+
+/// The object magnet's events, in order, as `enabled` values.
+fn object_magnet_events(app: &QuantickApp) -> Vec<serde_json::Value> {
+    app.control
+        .control_access
+        .as_ref()
+        .unwrap()
+        .journal()
+        .read(1, 256, 1 << 20)
+        .events
+        .iter()
+        .filter(|event| event.kind.as_str() == "annotate.drawing_magnet.changed")
+        .map(|event| event.payload["drawing_magnet"]["enabled"].clone())
+        .collect()
+}
+
+/// A drawing id is unique only within its pane: with the same id on both
+/// panes of a split tab, the call moves exactly the one on the pane it
+/// names, whichever pane that is.
+#[test]
+fn the_object_magnet_moves_only_the_named_panes_drawing_when_ids_collide() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands, _) = split_with_a_shared_line(&ctx);
+    let flow_id = app.active_tab().flow_pane.drawings.items()[0].id;
+    let time = app
+        .active_tab_mut()
+        .time_pane_mut()
+        .expect("the split built it");
+    time.drawings.place_with(
+        drawing_tool("horizontal-line"),
+        &drawings::DrawingBand::Price,
+        drawings::ChartPoint::at(5.5, 100.0),
+        |tool| drawings::NewDrawing {
+            style: drawings::DrawingStyle::default(),
+            payload: tool.default_payload(),
+        },
+    );
+    let last = time.drawings.items().len() - 1;
+    time.drawings.items_mut()[last].id = flow_id;
+    run_frame(&mut app, &ctx);
+    let tab_id = app.tabs.active_id().to_string();
+    let flow_pane = app.active_tab().flow_pane.id.to_string();
+    let time_pane = app.active_tab().time_pane().unwrap().id.to_string();
+    assert_ne!(flow_pane, time_pane);
+    let own = |app: &QuantickApp| {
+        let tab = app.active_tab();
+        let of = |drawings: &drawings::Drawings| {
+            drawings.items()[drawings.index_of(flow_id).unwrap()].magnet
+        };
+        (
+            of(&tab.flow_pane.drawings),
+            of(&tab.time_pane().unwrap().drawings),
+        )
+    };
+
+    let directory = gateway_test_directory("drawing-object-magnet-collide");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let id = flow_id.0.to_string();
+    for (pane, expected) in [(&time_pane, (false, true)), (&flow_pane, (true, true))] {
+        let (answer, _) = unkeyed_call(
+            &mut app,
+            &mut client,
+            OBJECT_CAPABILITY,
+            json!({"tab_id": tab_id, "pane_id": pane, "drawing_id": id, "enabled": true}),
+        );
+        assert_eq!(success_result(&answer)["pane_id"], json!(pane));
+        assert_eq!(own(&app), expected, "only the named pane's drawing moved");
+    }
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}
+
+/// A mark that snaps by its own rule shows no magnet slot, and the call
+/// refuses to turn one on, saying why in a field a client can branch on;
+/// turning it off is always accepted, so a stale flag can be cleared.
+#[test]
+fn a_tool_that_snaps_by_its_own_rule_refuses_the_object_magnet() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(20);
+    run_frame(&mut app, &ctx);
+    let index = place_drawing(&mut app, &ctx, "arrow-mark-up", &[egui::pos2(700.0, 300.0)]);
+    let pane = app.active_tab().drawing_pane();
+    let input = json!({
+        "tab_id": app.tabs.active_id().to_string(),
+        "pane_id": pane.id.to_string(),
+        "drawing_id": pane.drawings.items()[index].id.0.to_string(),
+        "enabled": true,
+    });
+    let directory = gateway_test_directory("drawing-object-magnet-mark");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let (refused, _) = unkeyed_call(&mut app, &mut client, OBJECT_CAPABILITY, input.clone());
+    assert_eq!(error_code(&refused), Some(codes::INVALID_REQUEST));
+    assert_eq!(
+        response_error(&refused).context.details,
+        Some(json!({"reason": "tool_snaps_by_its_own_rule", "tool_id": "arrow-mark-up"}))
+    );
+    assert!(!app.active_tab().drawing_pane().drawings.items()[index].magnet);
+    assert!(
+        object_magnet_events(&app).is_empty(),
+        "a refusal journals nothing"
+    );
+
+    // A stale flag (an older build, a hand-edited layout) reads back off,
+    // since no drag honours it, and turning it off is accepted and clears it.
+    app.drawing_pane_mut().drawings.items_mut()[index].magnet = true;
+    let (response, _) = unkeyed_call(
+        &mut app,
+        &mut client,
+        "snapshot.read",
+        json!({"scopes":["analysis.drawings"]}),
+    );
+    let drawing_id = input["drawing_id"].clone();
+    let read = success_result(&response)["scopes"]["analysis.drawings"]["value"]["tabs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|tab| tab["panes"].as_array().unwrap().clone())
+        .flat_map(|pane| pane["drawings"].as_array().unwrap().clone())
+        .find(|drawing| drawing["drawing_id"] == drawing_id)
+        .expect("the drawings scope lists the mark")["magnet"]
+        .clone();
+    assert_eq!(read, json!(false), "a mark has no magnet to report");
+    let mut off = input.clone();
+    off["enabled"] = json!(false);
+    let (cleared, _) = unkeyed_call(&mut app, &mut client, OBJECT_CAPABILITY, off.clone());
+    assert_eq!(success_result(&cleared)["changed"], json!(true));
+    assert!(!app.active_tab().drawing_pane().drawings.items()[index].magnet);
+    let (again, _) = unkeyed_call(&mut app, &mut client, OBJECT_CAPABILITY, off);
+    assert_eq!(success_result(&again)["changed"], json!(false));
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}
+
+/// Click the context bar's magnet slot on a fresh horizontal line and
+/// prove the flip landed as one undo step; answers the drawing's index.
+fn hand_flip_own_magnet(app: &mut QuantickApp, ctx: &egui::Context) -> usize {
+    run_frame(app, ctx);
+    let index = place_drawing(app, ctx, "horizontal-line", &[egui::pos2(700.0, 300.0)]);
+    run_frame(app, ctx);
+    let slot = app
+        .drawings
+        .chrome
+        .context_bar()
+        .magnet_rect()
+        .expect("a pointer-anchored drawing renders the magnet slot")
+        .center();
+    click_chart(app, ctx, slot);
+    run_frame(app, ctx);
+    index
+}
+
+fn own_magnet_at(app: &QuantickApp, index: usize) -> bool {
+    app.active_tab().drawing_pane().drawings.items()[index].magnet
+}
+
+/// A hand on the context bar's magnet slot leaves the same journal event a
+/// script does, and the flip stays one undo step.
+#[test]
+fn a_hand_flip_of_a_drawings_own_magnet_journals_like_the_call() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(20);
+    let directory = gateway_test_directory("drawing-object-magnet-hand");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let index = hand_flip_own_magnet(&mut app, &ctx);
+    assert!(own_magnet_at(&app, index), "the click turned it on");
+    assert!(!app.toolrail.magnet(), "the rail's magnet never moves");
+    assert_eq!(object_magnet_events(&app), [json!(true)]);
+    let event = app
+        .control
+        .control_access
+        .as_ref()
+        .unwrap()
+        .journal()
+        .read(1, 256, 1 << 20)
+        .events
+        .into_iter()
+        .find(|event| event.kind.as_str() == "annotate.drawing_magnet.changed")
+        .unwrap();
+    assert_eq!(
+        event.actor.map(|actor| actor.kind),
+        Some(quantick_control::wire::ActorKind::HumanUi),
+        "the trader's own hand"
+    );
+    assert!(
+        app.drawing_pane_mut().drawings.undo(),
+        "the flip is one undo step"
+    );
+    assert!(!own_magnet_at(&app, index), "undo takes it back");
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}
+
+/// The default build has no control access: the hand's flip still lands,
+/// as one undo step, with nothing to journal.
+#[test]
+fn a_hand_flip_of_a_drawings_own_magnet_lands_without_a_gateway() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(20);
+    app.control.control_access = None;
+    let index = hand_flip_own_magnet(&mut app, &ctx);
+    assert!(own_magnet_at(&app, index), "the click turned it on");
+    assert!(!app.toolrail.magnet(), "the rail's magnet never moves");
+    assert!(
+        app.drawing_pane_mut().drawings.undo(),
+        "the flip is one undo step"
+    );
+    assert!(!own_magnet_at(&app, index), "undo takes it back");
+}

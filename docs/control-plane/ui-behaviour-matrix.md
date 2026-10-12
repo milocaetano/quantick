@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 64 |
+| Reachable by capability | 70 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
 | Excluded: `pending_capability` | 50 |
-| **Total** | **122** |
+| **Total** | **128** |
 
-83 of the 122 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 39 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+83 of the 128 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 45 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -109,6 +109,11 @@ The three exclusion classes are closed:
 | `indicator.settings.open` | Open an indicator's settings | the legend row's gear, and the indicators menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `trade.aim.bracket` | Send an entry with its stop and target attached | the ticket's bracket fields, and the aim on the chart | `trade.order.bracket` | — |
 | `trade.instrument.money.set` | Declare what one point of an instrument is worth | the Trading panel's instrument section | `trade.instrument.set_money` | — |
+| `trade.journal.filter` | Filter the trades ledger by source, dates, #tags or session name | the Trades tab's filter row | `session.journal.set` | — |
+| `trade.journal.session.delete` | Delete a saved trading session behind an inline confirm | a session or trade row's menu in the Trades tab, Del over the ledger | `session.journal.delete` | — |
+| `trade.journal.session.fold` | Fold a trading session shut inside its day, or open it | a session row's caret in the Trades tab | `session.journal.set` | — |
+| `trade.journal.session.rename` | Name a trading session | a session or trade row's menu in the Trades tab, F2 over the ledger | `session.journal.set` | — |
+| `trade.journal.trade.tag` | Tag a closed trade | the Trades tab's tag strip for the selected trade, # over the ledger | `session.journal.set` | — |
 | `trade.market.buy` | Buy at market, simulated | toolbar trade group, Trading panel, Shift+B | `trade.order.place` | — |
 | `trade.market.sell` | Sell at market, simulated | toolbar trade group, Trading panel, Shift+S | `trade.order.place` | — |
 | `trade.order.place_at_price` | Rest an order at the price under the pointer | the canvas right-click menu's trade section | `trade.order.place` | — |
@@ -161,6 +166,7 @@ The three exclusion classes are closed:
 | `drawing.quick_range_parallel_channel` | Measure a range with a right-drag and turn its leg into a parallel channel's base | a secondary-button drag on the price band with the Pointer tool, then the range's Parallel channel action, then a click above or below the leg that sets the channel's width | `annotate.parallel_channel.create` | — |
 | `drawing.rename` | Rename a drawing | the canvas right-click menu, drawing section | — | `pending_capability` — `annotate.*` places and removes; nothing edits an object that already exists. Tracked in issue 401 |
 | `drawing.select_and_move` | Select a drawing and drag it, or one of its handles | primary click and drag on the canvas | — | `pending_capability` — an object can be placed and removed by capability and not moved, so an operator corrects a level by deleting and replacing it. Tracked in issue 401 |
+| `drawing.magnet.toggle` | Snap one drawing to the candle's open, high, low or close, whatever the rail says | the object context bar's magnet button, beside Lock | `annotate.drawing_magnet.set` | — |
 | `drawing.hide` | Hide or show one drawing without deleting it | the object context bar, Alt+H, the canvas right-click menu (drawing section and objects submenu), the object manager | — | `pending_capability` — `annotate.*` places and removes; nothing toggles an object that already exists. Tracked in issue 401 |
 | `drawing.clear_all` | Delete every drawing on a chart, behind a count-bearing confirmation | the canvas right-click menu's clear objects entry; the object manager's Delete all | — | `pending_capability` — the annotate tier never discards work done by hand: `annotate.remove` refuses an object the trader drew, so an operator removes its own marks one by one. Tracked in issue 401 |
 | `workspace.bookmark.delete` | Forget a named arrangement | Workspace menu, Delete | — | `pending_capability` — no capability reaches the saved cockpit; `layout.*` moves panes within a session and stops there. Tracked in issue 401 |
@@ -198,7 +204,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 39 |
+| `authored` | 45 |
 
 ## Appendix: rows no registry stands behind
 
@@ -230,6 +236,11 @@ declares nothing here is a guard failure.
 | `indicator.native.remove` | the legend row close, which the toolbar enum sees only as `RemoveIndicator` |
 | `trade.aim.bracket` | the ticket bracket fields and the aim on the chart |
 | `trade.instrument.money.set` | the Trading panel instrument section |
+| `trade.journal.filter` | the Trades tab source pills, date picker and search box |
+| `trade.journal.session.delete` | the Trades tab session menu and Del over the ledger |
+| `trade.journal.session.fold` | the Trades tab session row caret |
+| `trade.journal.session.rename` | the Trades tab session menu and F2 over the ledger |
+| `trade.journal.trade.tag` | the Trades tab tag strip and # over the ledger |
 | `trade.order.place_at_price` | the canvas right-click menu trade section, resolved per click |
 | `trade.ticket.risk.set` | the Trading panel risk field |
 | `trade.ticket.ruler.set` | the ruler wheel on the chart aim |
@@ -247,6 +258,7 @@ declares nothing here is a guard failure.
 | `drawing.quick_range_parallel_channel` | the quick-range action bar arms the registered parallel channel tool with the leg as its first two anchors; the third is the trader's click |
 | `drawing.rename` | the rename box inside the canvas right-click menu |
 | `drawing.select_and_move` | a primary click and drag on the canvas |
+| `drawing.magnet.toggle` | the context bar's magnet button is a widget, not a registry entry |
 | `drawing.hide` | Alt+H is read per frame by `app/drawing_controller/input.rs`; the Hide and Show buttons on the menu and manager rows are widgets, not hotkey registry entries |
 | `drawing.clear_all` | a menu entry and a manager button that ask the same question |
 

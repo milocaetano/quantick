@@ -5512,8 +5512,11 @@ fn observer_schemas(update: bool) {
     // Every published wire type has a committed document, so a breaking
     // change shows up as a diff in review (contract §6). The count is
     // here to make an accidental *removal* visible too.
-    assert_eq!(documents.len(), 71);
+    assert_eq!(documents.len(), 76);
     for file_name in [
+        "session-journal-delete-input-v1.schema.json",
+        "session-journal-input-v1.schema.json",
+        "session-journal-result-v1.schema.json",
         "feed-history-load-input-v1.schema.json",
         "feed-history-load-result-v1.schema.json",
         "feed-history-cancel-input-v1.schema.json",
@@ -5614,6 +5617,10 @@ fn observer_catalog(update: bool) {
                         // position and disarms every strategy, and which is
                         // marked sensitive so it is off until ticked.
                         || capability["effect"] == "cockpit.recover"
+                        // The same shape for deleting a journal session: its
+                        // consent text is the `cockpit.journal.delete`
+                        // permission, sensitive and off until ticked.
+                        || capability["effect"] == "cockpit.journal.delete"
                         // The trade tier. Discoverable like the rest, and
                         // reachable by nothing a trader can currently grant:
                         // its permission's only ceiling is the `trader`

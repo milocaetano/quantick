@@ -231,14 +231,8 @@ impl QuantickApp {
                 if self.toolrail.take_favorites_change() {
                     self.workspace_save_adapter().write_favorites();
                 }
-                // A hand's flip is `annotate.magnet.set`, so it journals alike.
                 if let Some(on) = self.toolrail.take_magnet_request() {
-                    let input = serde_json::json!({ "enabled": on });
-                    let human = crate::control::ActionOrigin::Human;
-                    let id = crate::control::DRAWING_MAGNET_CAPABILITY_ID;
-                    if self.control_action(id, 1, human, input).is_err() {
-                        self.toolrail.set_magnet(on);
-                    }
+                    crate::control::flip_rail_magnet(self, on);
                 }
             }
             FrameStage::Dock => self.draw_dock_stage(ctx),
@@ -338,8 +332,7 @@ impl QuantickApp {
     /// right dock. The chart keeps whatever remains.
     fn draw_top_chrome(&mut self, ctx: &egui::Context, now: Instant, scratch: &mut FrameScratch) {
         scratch.background = Some(pane::background_color(&self.style));
-        // Rail shortcuts first: Esc/1/2 must be read before any widget can
-        // claim the keyboard this frame.
+        // Rail shortcuts (Esc, 1, 2) first: no widget holds the keyboard yet.
         self.toolrail.handle_keys(ctx);
         self.handle_tab_keys(ctx);
         let effects = self.drawings.handle_drawing_keys(
@@ -348,6 +341,7 @@ impl QuantickApp {
             &mut *self.audio.alerts,
             ctx,
             now,
+            self.dock.holds_pointer(ctx),
         );
         effects.apply(&mut self.surfaces.toast, &mut self.toolrail);
         self.draw_menu_bar(ctx);
@@ -684,6 +678,7 @@ impl QuantickApp {
             &mut *self.audio.alerts,
             now,
         );
+        crate::control::journal_own_magnet_flip(self, effects.own_magnet);
         if effects.inspector_moved {
             self.workspace.session_mut().inspector_moved();
         }

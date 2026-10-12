@@ -11,6 +11,10 @@
 
 use std::path::PathBuf;
 
+use quantick_paper::report::session_edit::{
+    JournalEdit, JournalEditOutcome, JournalScope, SessionEditError, apply_journal_edit, edit_toast,
+};
+
 use super::arrangement_host::ArrangementHost;
 use crate::paper_trading::PaperTrading;
 use crate::workspace_store::WorkspaceStore;
@@ -38,6 +42,19 @@ pub(crate) struct PaperSettingsAdapter<'a> {
 impl PaperSettingsAdapter<'_> {
     fn active(&self) -> &PaperTrading {
         &self.tabs[self.tabs.active_index()].paper
+    }
+
+    /// The trades folder and every file any tab is still journaling to.
+    pub(crate) fn journal_scope(&self) -> JournalScope {
+        journal_scope(self.tabs)
+    }
+
+    /// One session edit, as the ledger's gesture makes it.
+    pub(crate) fn apply_journal_edit(
+        &mut self,
+        edit: &JournalEdit,
+    ) -> Result<JournalEditOutcome, SessionEditError> {
+        apply_journal_edit_across(self.tabs, edit)
     }
 
     /// Ask the operating system for a trades folder, off the UI thread —
@@ -184,4 +201,41 @@ impl PaperSettingsAdapter<'_> {
         state.ruler_steps = steps;
         crate::paper_state::save(&path, &state);
     }
+}
+
+/// The trades folder and every file any tab is still journaling to.
+fn journal_scope(tabs: &ArrangementHost) -> JournalScope {
+    let live = tabs
+        .iter()
+        .flat_map(|tab| tab.paper.account().session_journal_paths());
+    JournalScope {
+        dir: tabs[tabs.active_index()]
+            .paper
+            .account()
+            .trades_dir()
+            .to_path_buf(),
+        live: live.cloned().collect(),
+    }
+}
+
+/// One session edit, from a ledger gesture or a capability alike: every
+/// tab's live file is refused, a done edit has every ledger and report
+/// re-read the folder — a refused one changed nothing to re-read — and the
+/// toast lands on the active tab either way.
+pub(super) fn apply_journal_edit_across(
+    tabs: &mut ArrangementHost,
+    edit: &JournalEdit,
+) -> Result<JournalEditOutcome, SessionEditError> {
+    let outcome = apply_journal_edit(&journal_scope(tabs), edit);
+    if outcome.is_ok() {
+        for tab in tabs.iter_mut() {
+            let (report, env) = tab.paper.account_mut().report_parts();
+            report.journal_edited(&env);
+        }
+    }
+    let index = tabs.active_index();
+    tabs.runtime_mut(index)
+        .paper
+        .show_toast(edit_toast(&outcome));
+    outcome
 }

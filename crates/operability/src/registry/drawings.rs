@@ -374,6 +374,16 @@ pub(super) const OBJECTS: &[UiBehaviour] = &[
         ),
     },
     UiBehaviour {
+        id: "drawing.magnet.toggle",
+        title: "Snap one drawing to the candle's open, high, low or close, whatever the rail says",
+        reach: "the object context bar's magnet button, beside Lock",
+        keys: &[(
+            Source::Authored,
+            "the context bar's magnet button is a widget, not a registry entry",
+        )],
+        mapping: capability!("annotate.drawing_magnet.set"),
+    },
+    UiBehaviour {
         id: "drawing.hide",
         title: "Hide or show one drawing without deleting it",
         reach: "the object context bar, Alt+H, the canvas right-click menu (drawing section and \

@@ -595,7 +595,8 @@ impl ChartPane {
             self.layer_switched_on(ChartLayer::Drawings, chrome.style),
             chrome.capabilities,
         ) {
-            self.drawing_projection().price_axis_levels(
+            super::price_axis::price_axis_levels(
+                &self.drawing_projection(),
                 &self.drawings,
                 frame.chart_rect,
                 frame.right,

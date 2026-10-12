@@ -8,11 +8,12 @@
 
 use eframe::egui;
 
-use super::super::{Drawing, PresetHost};
-use super::{
-    Extend, FibLevelSpec, FibPayload, LabelMode, LabelPosition, MAX_BAND_ALPHA,
+use quantick_drawings::{
+    FibExtend as Extend, FibLevelSpec, FibPayload, LabelMode, LabelPosition, MAX_BAND_ALPHA,
     MAX_LEVEL_LABEL_LEN, RATIO_DUPLICATE_TOLERANCE, builtin_presets, parse_ratio,
 };
+
+use super::super::{Drawing, PresetHost};
 use crate::drawings::DrawingPayload;
 
 /// The Levels tab both Fib tools mount in the inspector. Returns whether the

@@ -2925,6 +2925,7 @@ dependencies = [
  "quantick-control-host",
  "quantick-control-local",
  "quantick-control-schema",
+ "quantick-drawings",
  "quantick-engine",
  "quantick-feed",
  "quantick-feed-binance",
@@ -3029,10 +3030,12 @@ name = "quantick-control-handlers"
 version = "0.1.0"
 dependencies = [
  "quantick-chart",
+ "quantick-civil",
  "quantick-control",
  "quantick-control-host",
  "quantick-control-schema",
  "quantick-engine",
+ "quantick-paper",
  "quantick-sources",
  "rust_decimal",
  "schemars",
@@ -3083,6 +3086,23 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "quantick-drawings"
+version = "0.1.0"
+dependencies = [
+ "quantick-anchored-studies",
+ "quantick-chart",
+ "quantick-chart-interaction",
+ "quantick-engine",
+ "quantick-indicators",
+ "quantick-workspace",
+ "rust_decimal",
+ "serde",
+ "smallvec",
+ "toml 0.8.20",
+ "tracing",
 ]
 
 [[package]]

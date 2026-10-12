@@ -1,71 +1,26 @@
-//! The drawing rail's OHLC magnet, shared by the rail button and automation.
+//! The drawing rail's OHLC magnet, shared by the rail button and automation,
+//! and each drawing's own, shared by its context bar and automation.
 
 pub(crate) use quantick_control_schema::drawing_magnet::*;
 
-use crate::app::ToolRailPort;
-use std::collections::BTreeSet;
+use crate::app::{GatewayPort, TabsMutPort, TabsPort, ToolRailPort};
+
+use super::price_axis::invalid;
+use crate::drawings::DrawingId;
 
 use quantick_control::{
     error::ControlError,
-    id::{
-        CapabilityId, ConfirmationClassId, CostClassId, EffectId, ModuleId, PermissionId,
-        RiskFlagId,
-    },
-    registry::{
-        Availability, CapabilityDescriptor, EffectPersistence, ExpectedCost, IdempotencyPolicy,
-        RegistryError, RevisionPolicy,
-    },
-    schema::generated_schema,
-    wire::ActorContext,
+    registry::RegistryError,
+    wire::{ActorContext, WireU64},
 };
 
 use quantick_control::annotation::ANNOTATE_MODULE_ID;
 use serde_json::Value;
 
-use super::{
-    actions::{ActionRegistry, CAPABILITY_VERSION, NO_CONFIRMATION_ID, UI_BOUNDED_COST_ID},
-    contract::{COCKPIT_EFFECT_ID, COCKPIT_PERMISSION_ID},
-    gateway::ControlAccess,
-    journal::NewEvent,
-};
+use super::{actions::ActionRegistry, gateway::ControlAccess, journal::NewEvent};
 
 pub(crate) fn register(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
-    registry.register(
-        CapabilityDescriptor {
-            id: CapabilityId::new(DRAWING_MAGNET_CAPABILITY_ID).expect("static capability ID is valid"),
-            version: CAPABILITY_VERSION,
-            title: "Set the drawing magnet".to_owned(),
-            description: "Turns the drawing rail's magnet on or off: with it on, anchors placed, re-dragged or carried by a body drag land on the open, high, low or close of the candle under the pointer when the pointer is on or near that candle. The same switch the rail's magnet button and its More menu entry flip; scene.read lists it as `tool_rail.toggle.magnet`.".to_owned(),
-            module: ModuleId::new(ANNOTATE_MODULE_ID).expect("static module ID is valid"),
-            input_schema: generated_schema::<DrawingMagnetInput>(),
-            output_schema: generated_schema::<DrawingMagnetResult>(),
-            examples: Vec::new(),
-            effect: EffectId::new(COCKPIT_EFFECT_ID).expect("static effect ID is valid"),
-            risk_flags: BTreeSet::<RiskFlagId>::new(),
-            read_only: false,
-            idempotency: IdempotencyPolicy::Optional,
-            revision_policy: RevisionPolicy::OptionalForAdditive,
-            stale_input_safety: Some("The call names the state it wants rather than flipping it; repeating it is harmless and the result reads the magnet back.".to_owned()),
-            dry_run_supported: false,
-            persistence: EffectPersistence::Transient,
-            reversible: true,
-            destructive: false,
-            risk_reducing: false,
-            required_permissions: BTreeSet::from([
-                PermissionId::new(COCKPIT_PERMISSION_ID).expect("static permission ID is valid"),
-            ]),
-            preconditions: Vec::new(),
-            confirmation_class: ConfirmationClassId::new(NO_CONFIRMATION_ID).expect("static confirmation class is valid"),
-            availability: Availability::available(),
-            expected_cost: ExpectedCost {
-                class: CostClassId::new(UI_BOUNDED_COST_ID).expect("static cost ID is valid"),
-                max_items: None,
-                max_response_bytes: Some(quantick_control::limits::CONTROL_MAX_RESPONSE_BYTES),
-            },
-            pagination: None,
-        },
-        set,
-    )
+    registry.register(rail_descriptor(), set)
 }
 
 fn set<P: ToolRailPort + ?Sized>(
@@ -88,4 +43,81 @@ fn set<P: ToolRailPort + ?Sized>(
         payload,
     ));
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
+}
+
+/// Dock `annotate.drawing_magnet.set`: one drawing's own magnet, the switch
+/// its context bar flips.
+pub(crate) fn register_object(registry: &mut ActionRegistry) -> Result<(), RegistryError> {
+    registry.register(object_descriptor(), set_object)
+}
+
+fn set_object<P: TabsPort + TabsMutPort + ?Sized>(
+    app: &mut P,
+    access: &mut ControlAccess,
+    actor: &ActorContext,
+    input: &Value,
+) -> Result<Value, ControlError> {
+    let input: ObjectMagnetInput = serde_json::from_value(input.clone()).map_err(invalid)?;
+    let pane = super::price_axis::pane(app, input.tab_id, input.pane_id)?;
+    let id = DrawingId(input.drawing_id.get());
+    let changed = pane.drawings.set_own_magnet(id, input.enabled);
+    let result = input.result(changed.map_err(|tool| input.refusal(tool))?);
+    let payload = input.event_payload(result.changed);
+    access.append_event(NewEvent::by(
+        ANNOTATE_MODULE_ID,
+        OBJECT_MAGNET_EVENT_KIND,
+        actor,
+        payload,
+    ));
+    serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
+}
+
+/// A hand's flip of the rail's magnet is `annotate.magnet.set`, so it
+/// journals alike. Without control access it lands directly.
+pub(crate) fn flip_rail_magnet<P: GatewayPort + ToolRailPort + ?Sized>(app: &mut P, on: bool) {
+    let input = serde_json::json!({ "enabled": on });
+    let human = super::ActionOrigin::Human;
+    if app
+        .control_action(DRAWING_MAGNET_CAPABILITY_ID, 1, human, input)
+        .is_err()
+    {
+        app.set_drawing_magnet(on);
+    }
+}
+
+/// Journal a hand's flip of the selection's own magnet as
+/// `annotate.drawing_magnet.changed`, the event the call leaves, by the
+/// trader's hand. The flip itself landed with the context bar's edited copy,
+/// one undo step with the rest of the edit, so it never enters the control
+/// trace a replay re-runs. Without control access there is no journal.
+pub(crate) fn journal_own_magnet_flip<P>(app: &mut P, flip: Option<(DrawingId, bool)>)
+where
+    P: GatewayPort + TabsPort + ?Sized,
+{
+    let Some((id, enabled)) = flip else {
+        return;
+    };
+    let reads = app.tab_reads();
+    let tab_index = reads.active_tab_index();
+    let tabs = reads.tabs();
+    let pane = tabs[tab_index].pane(tabs[tab_index].drawing_side());
+    let input = ObjectMagnetInput {
+        tab_id: WireU64::new(tabs.id_at(tab_index)),
+        pane_id: WireU64::new(pane.id),
+        drawing_id: WireU64::new(id.0),
+        enabled,
+    };
+    let Some(access) = app.gateway_slot().as_mut() else {
+        return;
+    };
+    let Some(actor) = access.hand_actor() else {
+        return;
+    };
+    let payload = input.event_payload(true);
+    access.append_event(NewEvent::by(
+        ANNOTATE_MODULE_ID,
+        OBJECT_MAGNET_EVENT_KIND,
+        &actor,
+        payload,
+    ));
 }

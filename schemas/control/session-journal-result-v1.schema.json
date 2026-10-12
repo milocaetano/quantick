@@ -1,0 +1,244 @@
+{
+  "$defs": {
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "JournalLedgerView": {
+      "description": "What the active tab's Trades ledger shows.",
+      "properties": {
+        "folded_sessions": {
+          "description": "Sessions folded shut inside their day.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "from": {
+          "description": "The first civil day shown; absent shows every day.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "search": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/JournalSourceFilter"
+        },
+        "to": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "search",
+        "folded_sessions"
+      ],
+      "type": "object"
+    },
+    "JournalSessionSnapshot": {
+      "description": "One session, as a listing or an edit reports it.",
+      "properties": {
+        "first_closed_unix_ms": {
+          "description": "When its first trade closed.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "label": {
+          "description": "The name, or the default label the ledger shows.",
+          "type": "string"
+        },
+        "live": {
+          "description": "A tab is still journaling to it: it cannot be deleted.",
+          "type": "boolean"
+        },
+        "name": {
+          "description": "The trader's name; absent until one is given.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "net_points": {
+          "$ref": "#/$defs/CanonicalDecimal",
+          "x-unit": "points"
+        },
+        "session": {
+          "description": "`<symbol folder>/<file>.csv` — what every edit takes.",
+          "type": "string"
+        },
+        "source": {
+          "description": "`live`, `replay` or `unrecorded`.",
+          "type": "string"
+        },
+        "symbol": {
+          "type": "string"
+        },
+        "tagged_trades": {
+          "description": "Its tagged trades.",
+          "items": {
+            "$ref": "#/$defs/JournalTaggedTrade"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "tagged_trades_truncated": {
+          "type": "boolean"
+        },
+        "trade_count": {
+          "$ref": "#/$defs/WireU64",
+          "description": "Trades kept by the filter (a listing), or every trade (an edit)."
+        }
+      },
+      "required": [
+        "session",
+        "symbol",
+        "source",
+        "label",
+        "live",
+        "trade_count",
+        "net_points",
+        "tagged_trades",
+        "tagged_trades_truncated"
+      ],
+      "type": "object"
+    },
+    "JournalSourceFilter": {
+      "description": "The ledger's source pills.",
+      "oneOf": [
+        {
+          "const": "real",
+          "description": "Live sessions, and files from before a source was recorded.",
+          "type": "string"
+        },
+        {
+          "const": "replay",
+          "description": "Replay-driven practice sessions.",
+          "type": "string"
+        },
+        {
+          "const": "both",
+          "description": "Everything.",
+          "type": "string"
+        }
+      ]
+    },
+    "JournalTaggedTrade": {
+      "description": "One tagged trade.",
+      "properties": {
+        "closed_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "nth": {
+          "description": "How many earlier trades of the session share both times.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "opened_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "opened_unix_ms",
+        "closed_unix_ms",
+        "nth",
+        "tags"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What the call did, and the sessions it reads.",
+  "properties": {
+    "action": {
+      "description": "The action performed.",
+      "type": "string"
+    },
+    "changed": {
+      "description": "Whether a file or the ledger's view changed.",
+      "type": "boolean"
+    },
+    "hidden_trades": {
+      "$ref": "#/$defs/WireU64",
+      "description": "A listing: trades the filter kept out."
+    },
+    "moved_to": {
+      "description": "A delete: where the file went, relative to the trades folder.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "session": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/JournalSessionSnapshot"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The edited session after the edit; absent for a listing, a view and\na delete."
+    },
+    "session_count": {
+      "$ref": "#/$defs/WireU64",
+      "description": "A listing: every session that matched, listed or not."
+    },
+    "sessions": {
+      "description": "A listing: the sessions, newest first.",
+      "items": {
+        "$ref": "#/$defs/JournalSessionSnapshot"
+      },
+      "maxItems": 200,
+      "type": "array"
+    },
+    "sessions_truncated": {
+      "type": "boolean"
+    },
+    "view": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/JournalLedgerView"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "A view call: what the ledger shows after it."
+    }
+  },
+  "required": [
+    "action",
+    "changed",
+    "sessions",
+    "session_count",
+    "sessions_truncated",
+    "hidden_trades"
+  ],
+  "title": "JournalSessionsResult",
+  "type": "object"
+}

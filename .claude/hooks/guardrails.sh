@@ -42,6 +42,9 @@
 #                     the already-built binary, and reports. It never
 #                     denies and never blocks; `cargo test --workspace`
 #                     remains the thing that enforces those guards.
+#   review-verdict    PostToolUse on SubagentHandback, and SubagentStop.
+#                     Records `code-review-ok` from a review subagent's
+#                     verdict line, so the agent never writes it.
 #
 # What `runs_command` can and cannot see is a known, bounded limitation, and it
 # is deliberately left as it was rather than deepened. It splits on `&&`, `||`
@@ -474,6 +477,10 @@ require_marker() {
     require_record="git -C \\\"$require_dir\\\" diff origin/$MAIN_BRANCH...HEAD | git hash-object --stdin > \\\"$require_file\\\""
     if [ -e "$(marker_path "$require_dir" mission-base)" ]; then
         require_record="sh .claude/hooks/campaign_context.sh key \\\"$require_dir\\\" > \\\"$require_file\\\""
+    fi
+    if [ "$require_name" = "$IMPLEMENT_MARKER" ]; then
+        # Claude Code's classifier denies the agent this write; the hook does it.
+        require_record="end the review with \`REVIEW-VERDICT: pass $require_dir <HEAD>\` and the review-verdict hook records it. Codex only: $require_record"
     fi
     if [ -n "$require_branch" ]; then
         # Do not offer a bare restamp as the remedy for a review that never ran.
@@ -1153,10 +1160,62 @@ guard_watch() {
     exit 0
 }
 
+# --- review-verdict ---------------------------------------------------------
+
+# A background code-review hands its report back through SubagentHandback; a
+# foreground fork ends on it as the subagent's last message. The main agent's
+# own text is never read; a subagent could still write the line, so this is
+# workflow evidence like every marker, not a boundary. The report's last
+# `REVIEW-VERDICT: pass|fail <worktree> <reviewed HEAD>` counts only while that
+# worktree declares the implement tier and sits at that HEAD: `pass` writes
+# `review_key`, the value pr-gate compares, so a later commit leaves it stale;
+# `fail` removes the record. Anything else changes nothing.
+review_verdict() {
+    verdict_flat=$(printf '%s' "$input" | tr -d '\r\n')
+    if [ "$(json_string_field hook_event_name)" = SubagentStop ]; then
+        verdict_report=${verdict_flat#*\"last_assistant_message\"}
+    elif [ "$(json_string_field tool_name)" = SubagentHandback ]; then
+        verdict_report=${verdict_flat#*\"tool_input\"}
+    else
+        exit 0
+    fi
+    [ "$verdict_report" != "$verdict_flat" ] || exit 0
+
+    # JSON spells C:\src\x as C:\\src\\x: one slash first, so a path segment
+    # starting with n never reads as a \n line break.
+    verdict=$(printf '%s' "$verdict_report" |
+        sed 's/\\\\/\//g; s/\\[nrt]/\n/g' |
+        sed -n 's/^.*REVIEW-VERDICT:[[:space:]*_]*\(pass\|fail\)[*_]*[[:space:]]\{1,\}["`]*\([^"`[:space:]]\{1,\}\)["`]*[[:space:]]\{1,\}\([0-9a-fA-F]\{7,40\}\).*$/\1 \2 \3/p' |
+        tail -n 1)
+    [ -n "$verdict" ] || exit 0
+    set -f
+    # shellcheck disable=SC2086 # three words, none of them globbed
+    set -- $verdict
+    set +f
+    verdict_reviewed=$(printf '%s' "$3" | tr 'A-F' 'a-f')
+    dir=$2
+    [ -d "$dir" ] || exit 0
+    [ "$(declared_tier "$dir")" = "$IMPLEMENT_TIER" ] || exit 0
+    case "$(git -C "$dir" rev-parse HEAD 2>/dev/null)" in
+        "$verdict_reviewed"*) ;;
+        *) exit 0 ;;
+    esac
+    verdict_file=$(marker_path "$dir" "$IMPLEMENT_MARKER") || exit 0
+    if [ "$1" = fail ]; then
+        rm -f "$verdict_file"
+        exit 0
+    fi
+    verdict_key=$(review_key "$dir")
+    [ -n "$verdict_key" ] || exit 0
+    printf '%s\n' "$verdict_key" > "$verdict_file"
+    exit 0
+}
+
 case "$mode" in
     worktree-guard) worktree_guard ;;
     pr-gate) pr_gate ;;
     commit-reminder) commit_reminder ;;
     guard-watch) guard_watch ;;
+    review-verdict) review_verdict ;;
     *) exit 0 ;;
 esac

@@ -101,6 +101,7 @@ impl SavedDrawingExt for SavedDrawing {
             fill_alpha: drawing.style.fill_alpha,
             locked: drawing.locked,
             hidden: drawing.hidden,
+            magnet: drawing.magnet,
             shared: drawing.scope == DrawingScope::AllCharts,
             payload: drawing.payload.export_preset(),
             text: drawing
@@ -161,6 +162,7 @@ impl SavedDrawingExt for SavedDrawing {
             },
             locked: self.locked,
             hidden: self.hidden,
+            magnet: self.magnet,
             scope: if self.shared {
                 DrawingScope::AllCharts
             } else {
@@ -283,6 +285,7 @@ pub(crate) fn save(path: &Path, book: &LayoutBook) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::drawings::StyleColor32;
     use crate::indicators::state_file::{SavedInput, SavedKind};
 
     fn ema() -> SavedIndicator {
@@ -319,6 +322,7 @@ mod tests {
             fill_alpha: 0,
             locked: false,
             hidden: false,
+            magnet: false,
             shared: false,
             payload: None,
             text: None,
@@ -399,6 +403,17 @@ mod tests {
             Some(1),
             "clearing the pane keeps what the pane never held"
         );
+    }
+
+    #[test]
+    fn a_drawings_own_magnet_survives_the_file_form_and_back() {
+        let off = level(1.0).to_drawing(DrawingId(1)).unwrap();
+        assert!(!off.magnet, "a file without the flag opens with it off");
+        let mut saved = level(1.0);
+        saved.magnet = true;
+        let drawing = saved.to_drawing(DrawingId(1)).unwrap();
+        assert!(drawing.magnet);
+        assert!(SavedDrawing::from_drawing(&drawing).magnet);
     }
 
     #[test]

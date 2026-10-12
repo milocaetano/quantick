@@ -77,6 +77,21 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
         ],
     ),
     ("chart-interaction", &["layers", "orderflow"]),
+    // Chart drawings under Model-View-Update: the store, its update and the
+    // scenes the window paints, over the chart model and the studies a mark
+    // anchors; `workspace` for the one store-write gate the preset file asks
+    // (DS7).
+    (
+        "drawings",
+        &[
+            "anchored-studies",
+            "chart",
+            "chart-interaction",
+            "engine",
+            "indicators",
+            "workspace",
+        ],
+    ),
     ("control", &[]),
     ("control-local", &["control"]),
     ("control-host", &["control", "engine"]),
@@ -99,14 +114,18 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     ),
     // The handler families over headless ports: the window adapts its own
     // state to each port and registers what this crate validates and answers.
+    // `paper` and `civil` for the journal's sessions, so the capability lists,
+    // filters and edits through the very calls the ledger's gestures make.
     (
         "control-handlers",
         &[
             "chart",
+            "civil",
             "control",
             "control-host",
             "control-schema",
             "engine",
+            "paper",
             "sources",
         ],
     ),

@@ -73,6 +73,19 @@ pub const RECOVER_EFFECT_ID: &str = "cockpit.recover";
 /// What a capability under [`RECOVER_EFFECT_ID`] declares it may cost: the
 /// chart's timeline, and with it the paper position and every armed strategy.
 pub const TIMELINE_REBUILT_RISK_FLAG: &str = "timeline_rebuilt";
+/// Permission to move a saved trading session out of the trades journal.
+///
+/// The second cockpit act that removes the trader's work, so it gets what
+/// [`COCKPIT_RECOVER_PERMISSION_ID`] got and for the same reason: its own
+/// scope, marked sensitive and off until ticked, under an effect of its own.
+/// Neither `cockpit` — "never removes" — nor `cockpit.recover` — whose words
+/// are a rebuilt chart — is consent the trader gave to losing a session.
+pub const COCKPIT_JOURNAL_DELETE_PERMISSION_ID: &str = "cockpit.journal.delete";
+/// The effect for deleting a journal session.
+pub const JOURNAL_DELETE_EFFECT_ID: &str = "cockpit.journal.delete";
+/// What a capability under [`JOURNAL_DELETE_EFFECT_ID`] declares it may
+/// cost: a session the ledger, the report and every listing stop reading.
+pub const SESSION_REMOVED_RISK_FLAG: &str = "journal_session_removed";
 /// The ceiling the `trade.*` family sits under.
 ///
 /// It exists because the registry requires every permission to name one, and
@@ -340,6 +353,14 @@ pub fn permissions() -> Vec<PermissionDescriptor> {
             // that ends something the trader started. Reconnecting — which
             // keeps the timeline, the position and the strategies — needs
             // none of this and stays under plain `cockpit`.
+            sensitive: true,
+            default_grant: DefaultGrant::Prompt,
+            profile_ceilings: BTreeSet::from([cockpit.clone()]),
+        },
+        PermissionDescriptor {
+            id: permission(COCKPIT_JOURNAL_DELETE_PERMISSION_ID),
+            label: "Delete trading sessions".to_owned(),
+            description: "Move a saved trading session out of the trades journal into `.deleted` under the trades folder: the ledger, the report and every listing stop reading it, and only moving the file back by hand restores it. The session being traded is always refused.".to_owned(),
             sensitive: true,
             default_grant: DefaultGrant::Prompt,
             profile_ceilings: BTreeSet::from([cockpit.clone()]),
@@ -651,6 +672,39 @@ pub fn effects() -> Vec<EffectPolicy> {
                 // A rebuilt chart is durable and cannot be put back. Saying so
                 // here is what lets the descriptor say `reversible: false`
                 // instead of claiming a reversal it cannot perform.
+                durable_requires_reversible: false,
+                irreversible_transient_risk: None,
+                allows_risk_reducing: false,
+            },
+        },
+        // Deleting a journal session: `cockpit.recover`'s shape, for the
+        // same reasons, with its own consent text and risk flag.
+        EffectPolicy {
+            id: effect(JOURNAL_DELETE_EFFECT_ID),
+            permission_floor: permission(COCKPIT_JOURNAL_DELETE_PERMISSION_ID),
+            profile_ceilings: BTreeSet::from([cockpit.clone()]),
+            confirmation_class: confirmation(NO_CONFIRMATION_ID),
+            risk_reducing_confirmation_class: None,
+            mcp_hint_floor: McpHintFloor {
+                read_only: false,
+                // As under `cockpit.recover`: the registry couples
+                // `destructive` to an expected-revision check this host
+                // refuses. The loss is declared by the required risk flag,
+                // the sensitive permission and `reversible: false`.
+                destructive: false,
+                // A repeated delete finds the session gone and removes
+                // nothing more, so a dropped call may be retried.
+                idempotent: true,
+                open_world: false,
+            },
+            required_risk_flags: BTreeSet::from([
+                RiskFlagId::new(SESSION_REMOVED_RISK_FLAG).expect("static risk flag is valid")
+            ]),
+            constraints: EffectConstraints {
+                required_read_only: Some(false),
+                allows_destructive: true,
+                // The file moves aside rather than vanishing, but nothing in
+                // the contract moves it back.
                 durable_requires_reversible: false,
                 irreversible_transient_risk: None,
                 allows_risk_reducing: false,

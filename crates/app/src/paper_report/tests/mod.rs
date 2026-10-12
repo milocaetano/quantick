@@ -15,11 +15,13 @@ use rust_decimal::Decimal;
 // The items the split gave owners; `super::*` still carries the state
 // itself, the environment types and the module's constants.
 use super::ledger::{LedgerPage, LedgerTotals};
-use super::rows::{LedgerRow, elide_tail, ledger_detail, push_by_day};
+use super::rows::{GroupView, Item, LedgerRow, TradeMeta, elide_tail, ledger_detail, push_groups};
 use super::window::ReportPeriod;
 use super::*;
 use crate::paper_calendar::{CivilDate, DateRange, DaySelection};
 use crate::paper_trading::PaperTrading;
+
+mod ledger_keys_tests;
 
 /// A closed trade that netted `pnl` points, closing at `closed_ms`.
 fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
@@ -39,11 +41,54 @@ fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
     }
 }
 
+/// Saved rows no session file names, as the ledger cuts them.
+fn plain_items<'a>(items: &[(&'a str, &'a ClosedTrade)]) -> Vec<Item<'a>> {
+    items
+        .iter()
+        .map(|&(symbol, trade)| Item {
+            trade,
+            symbol,
+            live: None,
+            meta: TradeMeta {
+                session: None,
+                trade_ref: Default::default(),
+                source: None,
+                tags: &[],
+            },
+        })
+        .collect()
+}
+
+/// Cut `items` into rows with nothing focused, edited or folded but
+/// `collapsed_days`.
+fn push_plain<'a>(
+    rows: &mut Vec<LedgerRow<'a>>,
+    items: &'a [Item<'a>],
+    tz: TzOffset,
+    collapsed_days: &std::collections::BTreeSet<i64>,
+) {
+    let sessions = std::collections::BTreeSet::new();
+    let labels = std::collections::BTreeMap::new();
+    let view = GroupView {
+        collapsed_days,
+        collapsed_sessions: &sessions,
+        focused: None,
+        editing: None,
+        labels: &labels,
+        live: &sessions,
+        tz,
+    };
+    push_groups(rows, items, &view, &mut false);
+}
+
 fn row(symbol: &str, source: Option<history::SessionSource>, trade: ClosedTrade) -> HistoryRow {
     HistoryRow {
         symbol: symbol.to_owned(),
         source,
+        trade_ref: history::TradeRefs::default().next(&trade),
         trade,
+        session: None,
+        tags: Vec::new(),
     }
 }
 
@@ -70,6 +115,7 @@ fn the_report_opens_on_real_and_keeps_replay_out_until_asked() {
         files: 3,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     paper.report_state_mut().ensure_report_view(utc);
     let view = paper
@@ -133,6 +179,7 @@ fn the_report_reports_itself_as_data() {
         files: 1,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     paper.report_state_mut().report_symbol = Some("WINV26".to_owned());
 
@@ -216,6 +263,7 @@ fn days_fold_shut_one_at_a_time_or_all_at_once() {
         files: 1,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     assert!(
         !{
@@ -295,14 +343,8 @@ fn the_ledger_builds_a_bounded_number_of_rows_however_deep_the_history() {
     assert_eq!(page.shown, LEDGER_PAGE_TRADES);
     assert_eq!(page.remaining, 4_950, "and the control says so out loud");
     let mut rows = Vec::new();
-    push_by_day(
-        &mut rows,
-        &items[..page.shown],
-        tz,
-        &std::collections::BTreeSet::new(),
-        |item| item.1,
-        |item| LedgerRow::Earlier(item.0, item.1),
-    );
+    let plain = plain_items(&items[..page.shown]);
+    push_plain(&mut rows, &plain, tz, &std::collections::BTreeSet::new());
     // Fifty trades plus at most one day caption each — nowhere near
     // the five thousand rows the pre-paging ledger would have built.
     assert!(
@@ -439,14 +481,8 @@ fn ledger_rows_open_a_new_day_caption_when_the_day_changes() {
         .map(|(symbol, trade)| (*symbol, trade))
         .collect();
     let mut rows = Vec::new();
-    push_by_day(
-        &mut rows,
-        &items,
-        tz,
-        &std::collections::BTreeSet::new(),
-        |item| item.1,
-        |item| LedgerRow::Earlier(item.0, item.1),
-    );
+    let plain = plain_items(&items);
+    push_plain(&mut rows, &plain, tz, &std::collections::BTreeSet::new());
     assert_eq!(rows.len(), 5, "two day captions over three trades");
     match rows[0] {
         LedgerRow::Day(date, count, net, folded) => {
@@ -474,14 +510,7 @@ fn ledger_rows_open_a_new_day_caption_when_the_day_changes() {
     let mut folded_days = std::collections::BTreeSet::new();
     folded_days.insert(day.day_number());
     let mut rows = Vec::new();
-    push_by_day(
-        &mut rows,
-        &items,
-        tz,
-        &folded_days,
-        |item| item.1,
-        |item| LedgerRow::Earlier(item.0, item.1),
-    );
+    push_plain(&mut rows, &plain, tz, &folded_days);
     assert_eq!(rows.len(), 3, "two captions and only the open day's row");
     match rows[2] {
         LedgerRow::Day(date, count, net, folded) => {
@@ -519,6 +548,7 @@ fn a_picked_calendar_range_cuts_the_report_and_the_pills_stand_down() {
         files: 1,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     // A pill that would hide the older trades is deliberately left on:
     // the range must win outright, not intersect.
@@ -577,6 +607,7 @@ fn a_picked_day_with_no_trades_reports_an_honest_empty() {
         files: 1,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     let picked = paper.report_state().calendar.selection.click(day);
     paper.report_state_mut().pick_report_dates(picked);
@@ -613,6 +644,7 @@ fn the_day_index_follows_the_source_filter_and_the_timezone() {
         files: 1,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     paper.report_state_mut().ensure_report_view(tz);
     assert_eq!(
@@ -666,6 +698,7 @@ fn the_report_view_filters_by_period_from_the_newest_trade() {
         files: 1,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     paper.report_state_mut().report_period = ReportPeriod::Week;
     paper.report_state_mut().ensure_report_view(utc);
@@ -711,6 +744,7 @@ fn all_symbols_hides_older_markets_but_says_so_and_scope_restores_them() {
         files: 2,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     paper.report_state_mut().report_period = ReportPeriod::Month;
     paper.report_state_mut().ensure_report_view(utc);
@@ -733,6 +767,7 @@ fn all_symbols_hides_older_markets_but_says_so_and_scope_restores_them() {
         files: 1,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     paper.report_state_mut().report_view = None;
     paper.report_state_mut().ensure_report_view(utc);
@@ -776,4 +811,54 @@ fn a_refusal_the_report_raises_reaches_the_windows_one_toast() {
         None,
         "and once only - the outbox is a slot that is handed over, not a copy"
     );
+}
+
+/// A session renamed while it spans two days gets one rename row, not one
+/// per day: two would be two text fields under one id fighting for focus,
+/// and a delete would ask twice.
+#[test]
+fn an_inline_edit_row_stands_once_however_many_days_its_session_spans() {
+    use quantick_paper::report::sessions::SessionKey;
+    let tz = TzOffset::new(0);
+    let day = 86_400_000_i64;
+    let a = SessionKey::parse("X/a.csv").unwrap();
+    let b = SessionKey::parse("X/b.csv").unwrap();
+    let trades = [
+        trade_at(2 * day + 10, 1),
+        trade_at(2 * day + 5, 2),
+        trade_at(day + 10, 3),
+        trade_at(day + 5, 4),
+    ];
+    let items: Vec<Item<'_>> = trades
+        .iter()
+        .zip([&a, &b, &a, &b])
+        .map(|(trade, key)| Item {
+            trade,
+            symbol: "X",
+            live: None,
+            meta: TradeMeta {
+                session: Some(key),
+                trade_ref: Default::default(),
+                source: None,
+                tags: &[],
+            },
+        })
+        .collect();
+    let none = std::collections::BTreeSet::new();
+    let labels = std::collections::BTreeMap::new();
+    let view = GroupView {
+        collapsed_days: &none,
+        collapsed_sessions: &std::collections::BTreeSet::new(),
+        focused: None,
+        editing: Some(&a),
+        labels: &labels,
+        live: &std::collections::BTreeSet::new(),
+        tz,
+    };
+    let mut rows = Vec::new();
+    push_groups(&mut rows, &items, &view, &mut false);
+    let count = |pick: fn(&LedgerRow<'_>) -> bool| rows.iter().filter(|row| pick(row)).count();
+    assert_eq!(count(|row| matches!(row, LedgerRow::Inline)), 1);
+    assert_eq!(count(|row| matches!(row, LedgerRow::SessionHead(_))), 3);
+    assert_eq!(count(|row| matches!(row, LedgerRow::Day(..))), 2);
 }

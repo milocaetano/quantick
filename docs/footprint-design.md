@@ -78,7 +78,16 @@ floors — where zooming in used to confirm them); wider styles keep their
 ratio to the ladder's. Numbers never fade (a half-transparent number is
 illegible and present at the same time — trader veto). Widths below are
 approximate for the ladder style at `detail_scale = 1` and the default entry
-widths; row floors use the default configuration.
+widths; row floors use the default configuration. The settings window names
+the two gates by axis: *Price rows by height* holds `profile_row_px` ("min
+band height") and `number_row_px` ("min number row height", Detailed's floor,
+Compact a pixel under it, 9-16 px); *Detail by candle width* holds
+`detail_scale` ("candle width for numbers", 0.8-6) and the two entry widths;
+high scales can push the full ladder to the deepest zoom, while the summary
+numbers still follow `compact_from_px`. Merged rows put `single rows at N× height`
+in the legend - the stretch that clears the row dead band, omitted past 10×
+or when even the coarsest grouping is too thin - beside the width hint
+`numbers at N× this width`.
 
 | Level | Candle width | Row height | Draws |
 | --- | --- | --- | --- |

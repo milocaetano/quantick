@@ -20,6 +20,7 @@ pub mod health;
 pub mod history;
 pub mod indicator_guide;
 pub mod interaction;
+pub mod journal_sessions;
 pub mod layers;
 pub mod layout;
 pub mod layout_v2;

@@ -23,6 +23,14 @@ pub trait ActionDock<H: ?Sized, A> {
         descriptor: CapabilityDescriptor,
         handler: ActionHandler<H, A>,
     ) -> Result<(), RegistryError>;
+
+    /// Dock one action that acts outside every replay: a replay's control
+    /// trace never records it and never runs it.
+    fn register_outside_replay(
+        &mut self,
+        descriptor: CapabilityDescriptor,
+        handler: ActionHandler<H, A>,
+    ) -> Result<(), RegistryError>;
 }
 
 impl<H: ?Sized, A> ActionDock<H, A> for ActionRegistry<H, A> {
@@ -32,6 +40,14 @@ impl<H: ?Sized, A> ActionDock<H, A> for ActionRegistry<H, A> {
         handler: ActionHandler<H, A>,
     ) -> Result<(), RegistryError> {
         ActionRegistry::register(self, descriptor, handler)
+    }
+
+    fn register_outside_replay(
+        &mut self,
+        descriptor: CapabilityDescriptor,
+        handler: ActionHandler<H, A>,
+    ) -> Result<(), RegistryError> {
+        ActionRegistry::register_outside_replay(self, descriptor, handler)
     }
 }
 

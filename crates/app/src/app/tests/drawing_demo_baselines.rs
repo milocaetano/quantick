@@ -271,7 +271,7 @@ fn nine_hook_case(case: &str, env: Env) {
             );
             let hand = pane.gestures.parked_hand.as_ref().unwrap();
             assert_eq!(
-                hand.position,
+                drawings::pos(hand.position),
                 if case == "draft-zero" {
                     egui::pos2(660.0, 240.0)
                 } else {

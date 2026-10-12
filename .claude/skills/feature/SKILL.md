@@ -1,6 +1,6 @@
 ---
 name: feature
-description: Split a large feature into a few implement-sized child issues, run fresh workers on them and judge the combined result.
+description: Split a large feature into a few implement-sized child issues, run fresh workers on them, judge the combined result and deliver one ready PR with green CI.
 disable-model-invocation: true
 ---
 
@@ -94,20 +94,40 @@ Parallel workers save wall-clock time, not tokens; the child count drives cost.
     decision skips the repair. Either way, after that the row is `blocked`, and
     one comment on the child issue gives the reason and next action. Continue
     independent work. Never waive acceptance.
-12. Do not sync `feature/<slug>` with `main` mid-run. A sibling merge moves
-    the base: rebase the next child onto it before its merge.
+12. Do not sync `feature/<slug>` with `main` while children run; the verdict
+    syncs once. A sibling merge moves the base: rebase the next child onto it
+    before its merge.
 
 ## Verdict
 
-When every child is `merged` and a `combined` criterion exists, spawn one
-fresh judge (`model: opus`) on the tip of `feature/<slug>`. It gets the `C<n>`
-list and that SHA, runs the combined tests and returns PASS or FAIL per
-criterion, with the gap. A FAIL earns one repair child; then the parent is
-`blocked`. With no `combined` criterion, the child checks are the verdict.
+Done means one non-draft PR `feature/<slug>` -> `main` with every required
+check green at its recorded head. A draft, pending or red PR is `blocked`,
+never done.
 
-On PASS, open one draft PR `feature/<slug>` -> `main` with `--label full-ci`
-and the body line `Campaign-parent: <parent URL>`, carrying the full diff and
-the verdict. The user reviews and merges it; do not poll. Close the parent
-after that merge. When nothing can advance, write the table and return
-blockers and `/feature resume <URL>`. Keep only the table and receipts in
-context.
+1. **Sync.** When every child is `merged`, in a `feature/<slug>` worktree at
+   the fetched tip, merge `origin/main` unless it is an ancestor, and push. A
+   conflict aborts the merge and becomes one `sync` child (Do: merge
+   `origin/main`; Review: `low`) through steps 9-11. Declare tier `implement`
+   there ([execute.md](../implement/references/execute.md) step 1).
+2. **Judge.** Spawn one fresh judge (`model: opus`) with the synced SHA and
+   the `C<n>` list. It runs the `combined` tests (PASS or FAIL per criterion,
+   with the gap), then code-review `low` over `origin/main...<SHA>` (each
+   child had its own review; this pass covers seams and the sync) and records
+   `code-review-ok` as execute.md step 5 does. A FAIL earns one repair child;
+   then the parent is `blocked`.
+3. **PR.** On PASS, open the PR non-draft from that worktree (a draft skips
+   CI and `gh pr ready` re-runs it), body `Campaign-parent: <parent URL>` and
+   the verdict. Record PR and head in the coordinator section; a resume
+   reuses them.
+4. **Watch.** One background `gh pr checks <PR> --watch --interval 60`; stop
+   it early on `CONFLICTING` (no merge ref, no CI) or a step running past 25
+   min (`gh run cancel`, then `gh run rerun --failed`). Green means
+   `sh .claude/hooks/full_ci.sh verify <worktree>` exits 0. Rerun a red job
+   once only when its failing test lies outside the feature's diff. Any other
+   red, a second red, a conflict or a second stall earns one fix child
+   (steps 9-11, briefed with the job, its shortest error line and the head),
+   then a new watch. After that the parent is `blocked`.
+5. **Report** PR, head and the `main` SHA that CI tested; do not chase later
+   `main` moves. When nothing can advance, return the table, PR, failing job
+   and `/feature resume <URL>`. The user merges; close the parent after. Keep
+   only the table and receipts in context.
