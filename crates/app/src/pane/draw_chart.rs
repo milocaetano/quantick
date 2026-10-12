@@ -355,8 +355,10 @@ impl ChartPane {
         // rect the candles scale to is the same one the input handler uses.
         let chart_rect = areas.chart;
         self.frame.price_gutter = Some(areas.price_gutter);
-        self.frame.time_strip =
-            Some(split_time_strip(areas.time_strip, self.frame.lane_divider_x).0);
+        let (history_strip, lane_strip) =
+            split_time_strip(areas.time_strip, self.frame.lane_divider_x);
+        self.frame.time_strip = Some(history_strip);
+        self.frame.lane_time_strip = lane_strip;
         let indicator_guide_x = self
             .hover_pos
             .filter(|position| chart_rect.contains(*position))

@@ -85,6 +85,12 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         ),
         document::<TapeViewInput>("chart-tape-view-input-v1.schema.json"),
         document::<TapeViewResult>("chart-tape-view-result-v1.schema.json"),
+        document::<quantick_control_schema::time_axis::TimeAxisResetInput>(
+            "chart-time-axis-reset-input-v1.schema.json",
+        ),
+        document::<quantick_control_schema::time_axis::TimeAxisResetResult>(
+            "chart-time-axis-reset-result-v1.schema.json",
+        ),
         document::<quantick_control_schema::opening_scale::OpeningScaleInput>(
             "orderflow-opening-scale-input-v1.schema.json",
         ),

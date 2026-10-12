@@ -112,10 +112,10 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 30 |
+| deduplicated per connection | 31 |
 | key refused; not retryable, read back | 17 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **54** |
+| **Total** | **55** |
 
 ## Capabilities
 
@@ -138,6 +138,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `chart.price_axis.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `chart.summary` | `panes[].viewport` | The target pane reports manual framing with the requested price_range, or automatic fitting after reset. | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_price_axis_call_holds_manual_tape_framing_and_reads_it_back_without_moving_the_left_pane` |
 | `chart.settings.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `chart.settings.changed` | `payload.chart_settings` | an event after the pre-call cursor carries the window and presets the call left | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `chart.tape_view.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `chart.summary` | `panes[].viewport.tape` | The target pane's tape reports the requested end (or live) and window. | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_tape_view_call_moves_the_tape_end_and_window_and_reads_them_back` |
+| `chart.time_axis.reset` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `chart.summary` | `panes[].viewport` | The target pane reports its opening pixels_per_bar, or its tape window back on the asset's setting. | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `the_time_axis_reset_call_matches_the_strip_double_click_and_reads_it_back` |
 | `feed.deal_recording.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].deal_recording.state` | the tab's recorder reads the state asked for: `recording` or `stale` after `enabled: true`, `off` after `enabled: false`, and `record_by_default` the standing choice asked for; a tab whose feed carries no counter and has no recorded day lists no `deal_recording` at all, and the call changed nothing there | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `feed.history.cancel` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].history_load.state` | the tab's run reads `idle`: nothing pages and nothing is queued | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `a_history_load_runs_reads_back_and_cancels_through_the_control_plane` |
 | `feed.history.load` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `feed.status` | `tabs[].history_load.state` | the tab's run reads `loading` or `queued` for the target asked for (a target already on the chart answers `finished` and the state stays `idle`, with the note saying so) | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once`, `a_history_load_runs_reads_back_and_cancels_through_the_control_plane` |
@@ -176,4 +177,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `trade.ruler.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].ruler_ticks` | the ruler stands at the distance the call answered with | `a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once`, `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.strategy.select` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].armed_strategy` | the ticket is armed with the strategy asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 
-54 mutable capabilities registered, 54 with a readback.
+55 mutable capabilities registered, 55 with a readback.

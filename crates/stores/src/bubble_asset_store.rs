@@ -601,6 +601,12 @@ impl AssetBinding {
         self.lane_set = true;
     }
 
+    /// Whether a lane set on purpose waits for the next filing.
+    #[must_use]
+    pub fn lane_set_pending(&self) -> bool {
+        self.lane_set
+    }
+
     /// Whether a setting changed since the last filing.
     #[must_use]
     pub fn edited(&self) -> bool {

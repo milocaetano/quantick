@@ -240,7 +240,7 @@ impl Harness {
             &mut tab.flow_pane
         };
         if let Some(px) = width {
-            pane.model.viewport.set_px_per_bar(px);
+            pane.model.viewport.open_at_px_per_bar(px);
         }
         let slots = pane.slots();
         if let Some(dx) = pan

@@ -689,8 +689,14 @@ impl OrderflowView {
     /// or back to following the bars. A setting of the asset on screen, even
     /// when the wheel already shows that window.
     pub fn set_live_lane_window(&mut self, window: LaneWindow) {
-        self.look.note_lane_set();
         self.navigate_live_lane_window(window);
+        self.look.note_lane_set(&self.config);
+    }
+
+    /// The tape's window back to its setting ([`BubbleLook::lane_window_setting`]):
+    /// navigation undone, the asset untouched.
+    pub fn reset_live_lane_window(&mut self) {
+        self.navigate_live_lane_window(self.look.lane_window_setting());
     }
 
     /// Move the tape's window as the wheel does: the view, not the asset.

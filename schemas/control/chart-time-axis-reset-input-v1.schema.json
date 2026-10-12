@@ -1,0 +1,43 @@
+{
+  "$defs": {
+    "TimeAxis": {
+      "description": "Which of the pane's two time strips is reset.",
+      "oneOf": [
+        {
+          "const": "candles",
+          "description": "The candles' bar spacing, back to the one the pane opened on.",
+          "type": "string"
+        },
+        {
+          "const": "tape",
+          "description": "The native tape's window, back to the asset's own setting.",
+          "type": "string"
+        }
+      ]
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "axis": {
+      "$ref": "#/$defs/TimeAxis"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "axis"
+  ],
+  "title": "TimeAxisResetInput",
+  "type": "object"
+}

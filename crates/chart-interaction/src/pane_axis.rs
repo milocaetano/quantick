@@ -85,6 +85,28 @@ pub enum IndicatorGesture {
     },
 }
 
+/// The one cursor a time strip shows; never a second one beside the chart's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StripCursor {
+    /// Over the strip: drag or scroll here zooms the time axis.
+    Resize,
+    /// Primary held on the strip: the drag reads the chart.
+    Crosshair,
+}
+
+/// The strip's cursor from whether the pointer is `over` it, the primary
+/// button is `held` on it, and the chart's own crosshair `chart_reads` the
+/// pointer — which, past the strip, it keeps to itself.
+#[must_use]
+pub fn time_strip_cursor(over: bool, held: bool, chart_reads: bool) -> Option<StripCursor> {
+    match (held, over) {
+        (true, true) => Some(StripCursor::Crosshair),
+        (true, false) => (!chart_reads).then_some(StripCursor::Crosshair),
+        (false, true) => Some(StripCursor::Resize),
+        (false, false) => None,
+    }
+}
+
 pub(crate) fn axis(model: &mut Model, gesture: AxisGesture) -> Vec<Effect> {
     let mut out = Vec::new();
     match gesture {
@@ -377,6 +399,24 @@ mod tests {
                 target: ScaleTarget::Indicator(7),
                 action: ScaleAction::Reset
             }]
+        );
+    }
+    #[test]
+    fn a_time_strip_shows_one_cursor_resize_on_hover_crosshair_while_held() {
+        let cursor = |over, held, chart_reads| time_strip_cursor(over, held, chart_reads);
+        assert_eq!(cursor(false, false, false), None);
+        assert_eq!(cursor(false, false, true), None, "the chart's own pointer");
+        assert_eq!(cursor(true, false, false), Some(StripCursor::Resize));
+        assert_eq!(cursor(true, true, false), Some(StripCursor::Crosshair));
+        assert_eq!(
+            cursor(false, true, false),
+            Some(StripCursor::Crosshair),
+            "a held drag that left the strip keeps one crosshair"
+        );
+        assert_eq!(
+            cursor(false, true, true),
+            None,
+            "over the candles the chart's crosshair reads; a second one never joins it"
         );
     }
     #[test]
