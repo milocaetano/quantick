@@ -122,7 +122,10 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                     ),
                     history_reach_running: tab.session.history_reach_running(),
                     feed_generation: WireU64::new(tab.feed_generation()),
-                    opening_slices_remaining: tab.opening_slices_remaining().map(WireU64::new),
+                    opening_slices_remaining: tab
+                        .session
+                        .opening_slices_remaining()
+                        .map(WireU64::new),
                     history_reach_note: tab.session.history_note().map(str::to_owned),
                     history_load: Some(quantick_control_handlers::history::snapshot(
                         tab.session.history_status(),

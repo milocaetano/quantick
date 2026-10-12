@@ -8,7 +8,6 @@
 //! has no print. Written against the `FeedEvent` channel alone, so a replay
 //! and a live venue take the same path through it.
 
-use std::collections::VecDeque;
 use std::time::Instant;
 
 use eframe::egui;
@@ -25,7 +24,7 @@ use crate::metrics;
 use crate::pane::{ChartPane, PaneSide};
 use crate::paper_home::shelf_dir;
 use quantick_feed as feed;
-use quantick_feed::history_reach::{HistoryReach, Outage};
+use quantick_feed::history_reach::HistoryReach;
 use quantick_feed::history_run::{Cancelled, Press};
 use quantick_feed::stall::{self, Stall, StallInput};
 use quantick_feed::{
@@ -122,9 +121,14 @@ impl Tab {
         tab_id: u64,
         capabilities: FeedCapabilities,
     ) -> bool {
-        let act = Act::LoadOlderCandles { tab_id };
-        self.carry_out_session(None, capabilities, act, Instant::now())
-            .sent
+        let judged = Judged {
+            config: None,
+            capabilities,
+            now: Instant::now(),
+        };
+        let mut run = SessionRun::default();
+        self.carry_out_session(judged, Act::LoadOlderCandles { tab_id }, &mut run);
+        run.sent
     }
     /// Shorthand for a test that only needs the yes/no.
     pub fn can_load_older_candles(&self, capabilities: FeedCapabilities) -> bool {
@@ -331,7 +335,7 @@ impl Tab {
         self.history_trades = 0;
         // The old feed's unanswered loads died with its channel; the new feed
         // opens with exactly one backfill in flight.
-        self.opening_slices_remaining = None;
+        self.run_session(None, Act::OpeningFill(None));
         self.loading.restart(LoadingTask::History);
         self.latest_trade_latency_ms = None;
         let symbol = self.symbol.clone();
@@ -587,7 +591,11 @@ impl Tab {
                     // chart already holds in front of the bars it duplicates.
                     // The run's own reply is not that window: it takes the
                     // ordinary path below, judged on what it brought.
-                    if self.resume_floor_ms.is_some() && !self.answers_history_run(&trades) {
+                    let oldest = self.flow_pane.state.trades().first();
+                    let oldest_ms = oldest.map(|trade| trade.timestamp_ms);
+                    if self.resume_floor_ms.is_some()
+                        && !self.session.answers_run(&trades, oldest_ms)
+                    {
                         if !self.session.awaiting_reply() {
                             self.loading.end(LoadingTask::History);
                         }
@@ -623,10 +631,7 @@ impl Tab {
                     // rise with no denominator. Cleared at zero: the field
                     // means "a fill is running", and a stale count would keep
                     // saying so after the last slice landed.
-                    self.opening_slices_remaining = match remaining {
-                        Some(0) | None => None,
-                        some => some,
-                    };
+                    self.run_session(None, Act::OpeningFill(remaining));
                     // The rest of the opening session, drawn but not counted.
                     // Everything the reply path does *except* the two things
                     // that belong to a request: the loading indicator a press
@@ -700,22 +705,6 @@ impl Tab {
             self.refold_history_prefix();
         }
         live
-    }
-
-    /// Whether a page under the resume floor is the run's reply, not the
-    /// session's recovery window (which replays the live edge): a request is
-    /// out, and the page is empty, lands on an empty chart, or is no newer
-    /// than the oldest print charted. Where the two cannot be told apart the
-    /// page is the reply, since a run left waiting on one waits forever.
-    fn answers_history_run(&self, page: &[quantick_engine::Trade]) -> bool {
-        self.session.awaiting_reply()
-            && page.last().is_none_or(|newest| {
-                self.flow_pane
-                    .state
-                    .trades()
-                    .first()
-                    .is_none_or(|oldest| newest.timestamp_ms <= oldest.timestamp_ms)
-            })
     }
 
     fn defer_history(&self, count: usize) -> bool {
@@ -1320,6 +1309,14 @@ pub struct SessionRun {
     pub refused: Option<Refusal>,
 }
 
+/// What one run is judged on, fixed across its acknowledgements and resumes.
+#[derive(Clone, Copy)]
+struct Judged<'c> {
+    config: Option<&'c AppConfig>,
+    capabilities: FeedCapabilities,
+    now: Instant,
+}
+
 /// Every pane holding this market's bars, as the session reads them: flow
 /// first, then the context stack, the order an `InstallPrefix` addresses.
 fn pane_views<'a>(
@@ -1359,59 +1356,49 @@ impl Tab {
     ) -> SessionRun {
         let feed = *self.feed_capabilities.borrow();
         let capabilities = config.map_or(feed, |config| self.capabilities(config));
-        self.carry_out_session(config, capabilities, act, now)
+        let mut run = SessionRun::default();
+        let judged = Judged {
+            config,
+            capabilities,
+            now,
+        };
+        self.carry_out_session(judged, act, &mut run);
+        run
     }
 
-    /// Dispatch `act`, then each effect in order. A feed request is only out
-    /// once its delivery is acknowledged, and the acknowledgement's effects
-    /// run before the ones queued behind it; a resumed act is judged against
-    /// the tab the effects ahead of it left.
-    fn carry_out_session(
-        &mut self,
-        config: Option<&AppConfig>,
-        capabilities: FeedCapabilities,
-        act: Act<'_>,
-        now: Instant,
-    ) -> SessionRun {
-        let mut run = SessionRun::default();
-        let mut queue = VecDeque::new();
-        let mut next = Some(act);
-        loop {
-            if let Some(act) = next.take() {
-                match self.dispatch_session(config, capabilities, act, now) {
-                    Ok(effects) => effects.into_iter().rev().for_each(|e| queue.push_front(e)),
-                    Err(refusal) => run.refused = Some(refusal),
-                }
+    /// Dispatch `act`, then carry out each effect in order: a feed request's
+    /// acknowledgement, with its own effects, before the ones behind it, and
+    /// a resumed act judged against the tab the effects ahead of it left.
+    fn carry_out_session(&mut self, judged: Judged<'_>, act: Act<'_>, run: &mut SessionRun) {
+        let effects = match self.dispatch_session(judged, act) {
+            Ok(effects) => effects,
+            Err(refusal) => {
+                run.refused = Some(refusal);
+                return;
             }
-            let Some(effect) = queue.pop_front() else {
-                return run;
-            };
-            next = match effect {
+        };
+        for effect in effects {
+            match effect {
                 Effect::Feed(request) => {
                     let delivery = self.deliver(request);
                     run.sent |= delivery == Delivery::Sent;
-                    Some(Act::FeedAck { request, delivery })
+                    self.carry_out_session(judged, Act::FeedAck { request, delivery }, run);
                 }
-                Effect::Resume(resume) => Some(Act::Resume(resume)),
+                Effect::Resume(resume) => self.carry_out_session(judged, Act::Resume(resume), run),
                 Effect::InstallPrefix {
                     pane,
                     bars,
                     lead,
                     covers_seam,
                     seam,
-                } => {
-                    run.changed |= self.install_prefix(pane, bars, lead, covers_seam, seam);
-                    None
-                }
+                } => run.changed |= self.install_prefix(pane, bars, lead, covers_seam, seam),
                 Effect::HoldPages(held) => {
-                    self.panes_mut().for_each(|pane| pane.hold_history(held));
-                    None
+                    self.panes_mut().for_each(|pane| pane.hold_history(held))
                 }
                 Effect::RetryRebuilds => {
                     for pane in self.panes_mut() {
                         pane.retry_history();
                     }
-                    None
                 }
                 Effect::Wait(wait, change) => {
                     let task = match wait {
@@ -1423,44 +1410,36 @@ impl Tab {
                         WaitChange::End => self.loading.end(task),
                         WaitChange::Clear => self.loading.set_active(task, false),
                     }
-                    None
                 }
-            };
+            }
         }
     }
 
     /// One dispatch, judged against the tab as it stands.
     fn dispatch_session(
         &mut self,
-        config: Option<&AppConfig>,
-        capabilities: FeedCapabilities,
+        judged: Judged<'_>,
         act: Act<'_>,
-        now: Instant,
     ) -> Result<Vec<Effect>, Refusal> {
         let panes = pane_views(&self.flow_pane, &self.time_panes);
         let tab = TabView {
             symbol: &self.symbol,
-            capabilities,
+            capabilities: judged.capabilities,
             feed_pages: self.feed_capabilities.borrow().history_paging,
             panes: &panes,
             tape: self.flow_pane.state.trades(),
-            opening_fill: self.opening_slices_remaining.is_some(),
             history_wait: self.loading.is_active(LoadingTask::History),
-            outages: self
-                .feed_gaps
-                .iter()
-                .map(|gap| Outage {
-                    from_ms: gap.from_ms,
-                    to_ms: gap.to_ms,
-                })
-                .collect(),
-            provider: config.and_then(|config| config.provider_of(&self.feed_id)),
+            outages: self.feed_gaps.iter().map(|gap| gap.outage()).collect(),
+            provider: judged
+                .config
+                .and_then(|config| config.provider_of(&self.feed_id)),
             page_step: self.history_step,
-            reach_bounds: config
+            reach_bounds: judged
+                .config
                 .map(|config| config.history.reach_bounds())
                 .unwrap_or_default(),
         };
-        self.session.dispatch(Msg { act, tab: &tab }, now)
+        self.session.dispatch(Msg { act, tab: &tab }, judged.now)
     }
 
     /// Send one request the session phrased, and say what the channel did.
@@ -1521,19 +1500,13 @@ impl Tab {
     /// toolbar, the History menu and `feed.history.load` all press here.
     pub fn load_history(&mut self, config: &AppConfig, reach: HistoryReach) -> Press {
         self.run_session(Some(config), Act::PressHistory(reach));
-        self.session
-            .snapshot()
-            .last_press
-            .unwrap_or(Press::AlreadyRunning)
+        self.session.last_press().unwrap_or(Press::AlreadyRunning)
     }
 
     /// Stop the run and keep what arrived; the note says where it stopped.
     pub fn cancel_history(&mut self) -> Cancelled {
         self.run_session(None, Act::CancelHistory);
-        self.session
-            .snapshot()
-            .last_cancel
-            .unwrap_or(Cancelled::Nothing)
+        self.session.last_cancel().unwrap_or(Cancelled::Nothing)
     }
 
     /// Whether asking for older candles could get the trader anything, and
@@ -1554,13 +1527,6 @@ impl Tab {
     /// one changed.
     pub(crate) fn refold_history_prefix(&mut self) -> bool {
         self.run_session(None, Act::Refold).changed
-    }
-
-    /// Slices of the opening session still to arrive, or `None` when the chart
-    /// is not being filled in behind.
-    #[must_use]
-    pub const fn opening_slices_remaining(&self) -> Option<u64> {
-        self.opening_slices_remaining
     }
 
     /// The main click: load back to this tab's last target (yesterday until

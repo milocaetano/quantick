@@ -192,7 +192,7 @@ impl Tab {
         // The refill arrives as one backfill batch; keep the loading indicator
         // up until it lands. Requests sent to the source before the reset will
         // never be answered, so the count restarts rather than accumulates.
-        self.opening_slices_remaining = None;
+        self.run_session(None, quantick_session::Act::OpeningFill(None));
         self.loading.restart(LoadingTask::History);
         let symbol = self.symbol.clone();
         self.tape_mut().reset_for_symbol(symbol);

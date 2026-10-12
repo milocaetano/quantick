@@ -296,6 +296,16 @@ pub struct FeedGap {
 }
 
 impl FeedGap {
+    /// The silence as a history run reads it: a stretch the feed marked as
+    /// lost, which is not a session close.
+    #[must_use]
+    pub const fn outage(self) -> history_reach::Outage {
+        history_reach::Outage {
+            from_ms: self.from_ms,
+            to_ms: self.to_ms,
+        }
+    }
+
     /// How long nothing was heard, in milliseconds.
     #[must_use]
     pub fn duration_ms(self) -> i64 {

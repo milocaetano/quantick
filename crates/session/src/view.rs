@@ -38,8 +38,6 @@ pub struct TabView<'a> {
     pub panes: &'a [PaneView<'a>],
     /// The flow pane's tape, which a history run measures its reach against.
     pub tape: &'a TradeTape,
-    /// Whether the opening session is still filling in behind the chart.
-    pub opening_fill: bool,
     /// Whether a page of trade history is still owed a reply.
     pub history_wait: bool,
     /// Silences in the tape the feed marked as lost, oldest first.
@@ -53,17 +51,16 @@ pub struct TabView<'a> {
 }
 
 impl TabView<'_> {
-    /// The chart holds what it is going to hold: no opening fill arriving and
-    /// no rebuild pending or failed, so a run judges what the trader sees. A
-    /// failed rebuild waits for the press that retries it.
+    /// The tab is idle: no page of trade history owed a reply and no rebuild
+    /// pending or failed, so a run judges what the trader sees. A failed
+    /// rebuild waits for the press that retries it.
     ///
     /// A reconnect's resume floor does not count: on a quiet market no print
     /// comes to spend it, and the run's reply is told from the session's
     /// recovery window where it lands.
     #[must_use]
     pub fn history_idle(&self) -> bool {
-        !self.opening_fill
-            && !self.history_wait
+        !self.history_wait
             && !self
                 .panes
                 .iter()

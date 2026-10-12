@@ -23,6 +23,7 @@
 //! [`Effect::Feed`] the shell sends, and its delivery comes back as
 //! [`Act::FeedAck`].
 
+mod button;
 mod paging;
 mod venue;
 mod view;
@@ -35,10 +36,11 @@ use quantick_engine::{Bar, Trade};
 use quantick_sources::candle_base::CandleAsk;
 pub use quantick_sources::candles::OlderCandles;
 use quantick_sources::config::FeedCapabilities;
-use quantick_sources::history_reach::{HistoryReach, ReachOutcome};
+use quantick_sources::history_reach::{HistoryReach, MAX_CAMPAIGN_SPAN_MS, ReachOutcome};
 use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use quantick_sources::ohlcv::OhlcvSlice;
 
+pub use button::{HistoryPagingOff, fmt_history_span};
 pub use paging::REBUILD_FAILED_NOTE;
 pub use view::{PaneView, TabView};
 
@@ -92,6 +94,78 @@ impl Default for HistoryFrame {
     }
 }
 
+/// How much tape one press of *load older* reaches for, and how it is
+/// fetched — a standing choice of the window, mirrored onto every tab's
+/// session as a [`HistoryPolicy`] on each frame's drain, which is where a
+/// press is actually served. The toolbar edits it, the menu bar toggles
+/// two of it, the launch hooks seed it and the saved workspace keeps it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistorySettings {
+    /// Whether venue candle history is asked for in slices, newest first
+    /// (View → progressive venue history).
+    ///
+    /// On by default. A span of one-minute candles is a run of sequential
+    /// venue round trips — seconds for the opening week, and another such run
+    /// for every span the trader reaches back through — and fetched whole the
+    /// chart shows nothing at all for the whole of it. Off restores exactly
+    /// that: one
+    /// request, one reply, one very late frame — kept because a trader on a
+    /// metered or rate-limited connection may prefer the smaller number of
+    /// requests, and because a setting whose "off" is not the old behaviour is
+    /// not a setting the user can fall back to.
+    pub progressive_history: bool,
+
+    /// What the History button's main click loads on a tab that has never
+    /// pressed: the last target pressed in this window, saved with the
+    /// workspace. A tab that has pressed repeats its own last target, and a
+    /// run belongs to its tab alone. Every press the toolbar and the control
+    /// plane share sets it; the history-reach launch hook and an opened
+    /// workspace set it directly.
+    pub history_reach: HistoryReach,
+
+    /// Minutes of traded time a workspace saved with the old `by time` reach
+    /// meant, so its `span` token loads as the same `hours:N` target. Seeded
+    /// from `[history] reach_span_minutes`.
+    pub history_reach_span_minutes: u32,
+
+    /// Whether a chart *not* cut by time may carry the venue's own candles in
+    /// front of its bars.
+    ///
+    /// Off by default: a tick chart has always opened on the prints this
+    /// session saw, and nothing is put in front of them unasked. On, a chart
+    /// cut by trades gets the venue's 1-minute candles as a labelled prefix —
+    /// the only way such a chart can show yesterday at all, since a candle
+    /// cannot be folded into a tick bar and must never pretend to be one.
+    pub venue_lead_in: bool,
+}
+
+impl HistorySettings {
+    /// The minutes a legacy `span` token means, clamped to what an hours
+    /// target can reach.
+    pub fn set_span_minutes(&mut self, minutes: u32) {
+        let ceiling = (MAX_CAMPAIGN_SPAN_MS / 60_000) as u32;
+        self.history_reach_span_minutes = minutes.clamp(1, ceiling);
+    }
+
+    /// The window's standing choice, phrased for the tabs. The switch lives
+    /// on the window, the request is phrased by the tab: handed to every
+    /// tab's drain each frame so every tab asks the way the trader last said,
+    /// including one opened after the choice was made.
+    /// Only the tab on screen (`visible`) keeps paging a history run.
+    #[must_use]
+    pub const fn policy(&self, tz: TzOffset, visible: bool) -> HistoryPolicy {
+        HistoryPolicy {
+            progressive: self.progressive_history,
+            venue_lead_in: self.venue_lead_in,
+            frame: HistoryFrame {
+                default_reach: self.history_reach,
+                tz,
+                visible,
+            },
+        }
+    }
+}
+
 /// One command to the session, and the facts it is judged against.
 ///
 /// The facts travel with the act rather than living in the session because
@@ -128,6 +202,9 @@ pub enum Act<'a> {
     RaiseNote(String),
     /// Drop the note once it has had its [`HISTORY_NOTE_LINGER`].
     ExpireNote,
+    /// What the opening fill said is still to arrive: slices left, or `None`
+    /// (and zero) once nothing is filling in behind the chart.
+    OpeningFill(Option<u64>),
     /// The window's switches and this frame's History button facts; a press
     /// queued behind the opening fill begins, and a paused run resumes.
     MirrorPolicy(HistoryPolicy),
@@ -500,6 +577,7 @@ impl TabSession {
             Act::AbandonRun => self.paging.abandon(step),
             Act::RaiseNote(text) => self.paging.raise_note(step, text),
             Act::ExpireNote => self.paging.expire_note(step),
+            Act::OpeningFill(remaining) => self.paging.opening = remaining.filter(|&left| left > 0),
             Act::MirrorPolicy(policy) => {
                 // The switches live on the window; the reach does not: a run
                 // and the last target pressed belong to this tab.
@@ -592,10 +670,43 @@ impl TabSession {
         self.paging.note()
     }
 
+    /// What the last press did, for a caller that has to say so.
+    #[must_use]
+    pub const fn last_press(&self) -> Option<Press> {
+        self.paging.last_press
+    }
+
+    /// What the last cancel stopped.
+    #[must_use]
+    pub const fn last_cancel(&self) -> Option<Cancelled> {
+        self.paging.last_cancel
+    }
+
+    /// Slices of the opening session still to arrive, or `None` when the
+    /// chart is not being filled in behind.
+    #[must_use]
+    pub const fn opening_slices_remaining(&self) -> Option<u64> {
+        self.paging.opening
+    }
+
     /// Whether a run is paging. Read by the toolbar and the control plane.
     #[must_use]
     pub const fn history_reach_running(&self) -> bool {
         self.paging.holds_pages()
+    }
+
+    /// Whether a page that landed under a reconnect's resume floor is the
+    /// run's reply rather than the session's recovery window, which replays
+    /// the live edge: a request is out, and the page is empty, lands on an
+    /// empty chart, or is no newer than the oldest print charted. Where the
+    /// two cannot be told apart the page is the reply, since a run left
+    /// waiting on one waits forever.
+    #[must_use]
+    pub fn answers_run(&self, page: &[Trade], oldest_charted_ms: Option<i64>) -> bool {
+        self.awaiting_reply()
+            && page.last().is_none_or(|newest| {
+                oldest_charted_ms.is_none_or(|oldest| newest.timestamp_ms <= oldest)
+            })
     }
 
     /// Whether a page request is out, perhaps from a run since cancelled.

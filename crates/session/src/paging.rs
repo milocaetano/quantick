@@ -47,6 +47,14 @@ pub(crate) struct TradePaging {
     pub(crate) last_press: Option<Press>,
     /// What the last cancel stopped.
     pub(crate) last_cancel: Option<Cancelled>,
+    /// Slices of the opening session still to arrive, while one is filling
+    /// in behind the chart; `None` when nothing is filling.
+    ///
+    /// Cleared by every way a fill can *end*, not only by the last slice
+    /// saying zero. A bridge that dies mid-fill sends no final slice, and a
+    /// count frozen at twelve would go on telling an operator the chart was
+    /// still arriving for the life of the tab.
+    pub(crate) opening: Option<u64>,
 }
 
 impl TradePaging {
@@ -74,6 +82,12 @@ impl TradePaging {
         self.note.as_ref().map(|note| note.text.as_str())
     }
 
+    /// The chart holds what it is going to hold: no opening fill arriving,
+    /// and the tab idle besides ([`crate::TabView::history_idle`]).
+    fn idle(&self, step: &Step<'_>) -> bool {
+        self.opening.is_none() && step.tab.history_idle()
+    }
+
     /// A pane's copy of the tape counts against a running campaign's memory
     /// ceiling.
     pub(crate) fn count_copies(&mut self, copies: usize) {
@@ -95,7 +109,7 @@ impl TradePaging {
         step: &mut Step<'_>,
         reach: HistoryReach,
     ) -> Result<(), Refusal> {
-        let press = self.run.press(reach, step.tab.history_idle());
+        let press = self.run.press(reach, self.idle(step));
         tracing::info!(target: "quantick::app", event_code = "HISTORY_REACH_PRESSED", symbol = %step.tab.symbol,
             reach = %reach.token(), press = ?press, "a history target was pressed");
         self.last_press = Some(press);
@@ -167,7 +181,7 @@ impl TradePaging {
     /// Once a frame: begin a queued press when the chart is idle, resume a
     /// run paused while its tab was hidden.
     pub(crate) fn poll(&mut self, step: &mut Step<'_>) {
-        match self.run.poll(step.tab.history_idle(), self.frame.visible) {
+        match self.run.poll(self.idle(step), self.frame.visible) {
             Poll::Begin(reach) => self.begin(step, reach),
             Poll::Send(count) => self.carry_out(step, RunAction::Send(count)),
             Poll::Nothing => {}

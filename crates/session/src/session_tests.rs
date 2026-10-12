@@ -50,7 +50,6 @@ struct Shell {
     tape: quantick_engine::trade_tape::TradeTape,
     intervals: Vec<Option<i64>>,
     capabilities: FeedCapabilities,
-    opening_fill: bool,
     sent: Vec<FeedRequest>,
     delivery: Delivery,
     prefixes: Vec<usize>,
@@ -68,7 +67,6 @@ impl Shell {
             tape: session(20).into_iter().collect(),
             intervals: intervals.to_vec(),
             capabilities,
-            opening_fill: false,
             sent: Vec::new(),
             delivery: Delivery::Sent,
             prefixes: vec![0; intervals.len()],
@@ -98,7 +96,6 @@ impl Shell {
             feed_pages: self.capabilities.history_paging,
             panes: &panes,
             tape: &self.tape,
-            opening_fill: self.opening_fill,
             history_wait: false,
             outages: Vec::new(),
             provider: None,
@@ -159,12 +156,17 @@ fn a_press_on_an_idle_chart_asks_for_one_page_and_holds_the_panes() {
 fn a_press_behind_the_opening_fill_queues_and_begins_when_it_lands() {
     let mut session = TabSession::new();
     let mut shell = Shell::new(&[None]);
-    shell.opening_fill = true;
     let now = Instant::now();
+    shell.dispatch(&mut session, Act::OpeningFill(Some(3)), now);
     shell.dispatch(&mut session, Act::PressHistory(YESTERDAY), now);
     assert!(shell.sent.is_empty());
     assert_eq!(session.snapshot().last_press, Some(Press::Queued));
-    shell.opening_fill = false;
+    shell.dispatch(&mut session, Act::OpeningFill(Some(0)), now);
+    assert_eq!(
+        session.opening_slices_remaining(),
+        None,
+        "zero left is no fill"
+    );
     let policy = HistoryPolicy {
         progressive: true,
         venue_lead_in: false,
@@ -403,4 +405,20 @@ fn the_trail_records_each_decision_in_order_and_stays_bounded() {
         shell.dispatch(&mut session, Act::RaiseNote("n".to_owned()), now);
     }
     assert_eq!(session.drain_events().len(), MAX_RETAINED_EVENTS);
+}
+
+#[test]
+fn a_page_under_the_resume_floor_is_the_reply_only_while_one_is_owed() {
+    let mut session = TabSession::new();
+    let mut shell = Shell::new(&[None]);
+    let page = [trade(10)];
+    assert!(!session.answers_run(&page, Some(20)), "nothing was asked");
+    shell.dispatch(&mut session, Act::PressHistory(YESTERDAY), Instant::now());
+    assert!(session.answers_run(&page, Some(20)), "older than the chart");
+    assert!(session.answers_run(&[], Some(20)), "an empty page");
+    assert!(session.answers_run(&page, None), "an empty chart");
+    assert!(
+        !session.answers_run(&[trade(30)], Some(20)),
+        "the live edge replayed"
+    );
 }

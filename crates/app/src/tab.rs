@@ -50,7 +50,7 @@ mod tape_clock;
 pub use canvas::CanvasChrome;
 #[cfg(test)]
 pub use quantick_session::HISTORY_NOTE_LINGER;
-pub use quantick_session::{HistoryFrame, HistoryPolicy, OlderCandles};
+pub use quantick_session::{HistoryPolicy, OlderCandles};
 
 /// Each UI capture epoch reserves room for reconnect generations. This keeps
 /// late events from an aborted task below the next accepted generation floor.
@@ -317,15 +317,6 @@ pub struct Tab {
     // trades have been backfilled in total (for the readout).
     pub history_step: usize,
     pub history_trades: usize,
-    /// Slices of the opening session still to arrive, while one is filling in
-    /// behind the chart. `None` when nothing is filling.
-    ///
-    /// Cleared by every way a fill can *end*, not only by the last slice
-    /// saying zero. A bridge that dies mid-fill sends no final slice, and a
-    /// count frozen at twelve would go on telling an operator the chart was
-    /// still arriving for the life of the tab — which is the one question this
-    /// field exists to answer.
-    opening_slices_remaining: Option<u64>,
     /// This tab's reaching back — the venue's candles folded in front of
     /// the tape, and the trade-history run a *load older* press starts —
     /// behind one command bus. Every press, reply and poll reaches it through
@@ -504,7 +495,6 @@ impl Tab {
             replay: feed.replay,
             history_step: 2000,
             history_trades: 0,
-            opening_slices_remaining: None,
             session: quantick_session::TabSession::new(),
             loading,
             book_capture_epoch: 0,
