@@ -738,7 +738,7 @@ fn widest_stop_that_fits(budget: &Money, money: &InstrumentMoney) -> Option<Deci
 
 /// A decimal as a trader writes it: no trailing zeros, no exponent.
 fn number(value: Decimal) -> String {
-    value.normalize().to_string()
+    crate::format::fmt_decimal(value)
 }
 
 /// An amount with its currency, in the order a trader reads it.

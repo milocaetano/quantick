@@ -572,11 +572,7 @@ pub fn level_price(
 }
 
 fn format_price(price: f64) -> String {
-    if price.abs() < 1.0 {
-        format!("{price:.6}")
-    } else {
-        format!("{price:.2}")
-    }
+    format!("{price:.2}")
 }
 
 fn format_label(mode: LabelMode, level: &FibLevelSpec, price: f64) -> String {

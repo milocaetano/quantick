@@ -41,12 +41,12 @@ const PANE_RULE_WIDTH_PX: f32 = 1.0;
 /// Inset of a pane's corner labels from its own edges, in pixels.
 const PANE_LABEL_INSET_PX: egui::Vec2 = egui::vec2(6.0, 3.0);
 /// Above this magnitude a headline value is shown with fewer decimals: a
-/// five-figure price needs no ten-thousandths, a ratio near 1 does.
+/// five-figure price needs no hundredths.
 const LARGE_VALUE_THRESHOLD: f64 = 1000.0;
 /// Decimals shown at or above [`LARGE_VALUE_THRESHOLD`].
 const LARGE_VALUE_DECIMALS: usize = 1;
 /// Decimals shown below [`LARGE_VALUE_THRESHOLD`].
-const SMALL_VALUE_DECIMALS: usize = 4;
+const SMALL_VALUE_DECIMALS: usize = quantick_engine::display::DISPLAY_DECIMALS as usize;
 /// Marker size (triangle half-height / circle radius), in pixels.
 const MARKER_SIZE_PX: f32 = 4.0;
 /// Gap between a bar's extreme and its above/below marker, in pixels.
@@ -1273,7 +1273,7 @@ mod tests {
     #[test]
     fn format_value_drops_decimals_only_at_price_scale() {
         assert_eq!(format_value(1234.5678), "1234.6");
-        assert_eq!(format_value(0.12345), "0.1235");
+        assert_eq!(format_value(0.12345), "0.12");
         assert_eq!(format_value(-9999.99), "-10000.0");
     }
 

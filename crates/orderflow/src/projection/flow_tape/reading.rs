@@ -93,8 +93,8 @@ pub fn caption_text(
             hints.push(format!(
                 "{} first daily regions: total {}, recorded opening {} (faint area proportional)",
                 count,
-                total.normalize(),
-                opening.normalize()
+                quantick_engine::display::display_decimal(total),
+                quantick_engine::display::display_decimal(opening)
             ));
         }
         if frame.opening_exclusion_effective {
