@@ -1,0 +1,19 @@
+# fix/time-strip-single-cursor: the time strips' one-cursor rule (resize
+# arrow on hover, crosshair while held, painted crosshair stood down) and the
+# double-click reset's tape effect are egui cursor and pane-owner adapters;
+# the decisions live in chart-interaction's pane_axis. +21 is this branch.
+# The other +24 were already over the ceiling, unsigned, on main at 81a6cc53;
+# without them no branch cut from that main can pass the guard.
+crates/app +45
+!budget +45
+# Review round 1: +54 more — the `chart.time_axis.reset` action binding and
+# its schema documents, the strips' shared helper and the chip's single
+# cursor, the tape view's reset onto its asset setting, and the opening
+# spacing at the three launch hooks. Measured.
+crates/app +54
+!budget +54
+# Review round 2: +20 — one reset owner shared by the strip and the call
+# (ChartPane::has_time_axis / reset_time_axis), the published lane strip
+# it reads, and the handler's own control/time_axis.rs. Measured.
+crates/app +20
+!budget +20

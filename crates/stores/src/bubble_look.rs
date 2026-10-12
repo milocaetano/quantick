@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use quantick_orderflow::HeatmapConfig;
+use quantick_orderflow::{HeatmapConfig, LaneWindow};
 
 use crate::bubble_asset_store::{Adoption, AssetBinding, RunHold, SaveSwitch};
 use crate::bubble_assets::AssetBubbles;
@@ -52,6 +52,10 @@ pub struct BubbleLook {
     /// the view wears an asset's settings, so it reaches the asset a replay
     /// autostart switches to. Empty outside a capture run.
     held: RunHold,
+    /// The tape window last set on purpose here — the active preset's at
+    /// open, then each [`Self::note_lane_set`]'s: what a reset returns to
+    /// while no asset is bound, or while the bound asset has not filed it.
+    lane_setting: LaneWindow,
 }
 
 impl BubbleLook {
@@ -88,6 +92,7 @@ impl BubbleLook {
             look_name,
             asset: None,
             held: RunHold::default(),
+            lane_setting: config.live_lane.window,
         }
     }
 
@@ -163,9 +168,24 @@ impl BubbleLook {
         }
     }
 
-    /// The lane's width or window was set on purpose: a menu, the panel, a
-    /// preset or the panel's reset ([`AssetBinding::note_lane_set`]).
-    pub fn note_lane_set(&mut self) {
+    /// The tape window a reset returns to: what a launch hook holds for this
+    /// run, else the bound asset's filed setting, else the window last set on
+    /// purpose here — a set the asset has not filed yet included. Never the
+    /// window navigation shows, which is not a setting.
+    #[must_use]
+    pub fn lane_window_setting(&self) -> LaneWindow {
+        let filed = self
+            .asset
+            .as_ref()
+            .filter(|binding| !binding.lane_set_pending())
+            .map(|binding| binding.on_screen().look.live_lane.window);
+        self.held.window.or(filed).unwrap_or(self.lane_setting)
+    }
+
+    /// The lane's width or window was set on purpose on `config`: a menu,
+    /// the panel, a preset or the panel's reset ([`AssetBinding::note_lane_set`]).
+    pub fn note_lane_set(&mut self, config: &HeatmapConfig) {
+        self.lane_setting = config.live_lane.window;
         if let Some(binding) = &mut self.asset {
             binding.note_lane_set();
         }
@@ -307,7 +327,7 @@ impl BubbleLook {
         self.look_name = preset.name.clone();
         self.name_draft = preset.name.clone();
         self.status = Some(format!("'{}' applied", preset.name));
-        self.note_lane_set();
+        self.note_lane_set(config);
         true
     }
 
@@ -380,9 +400,9 @@ impl BubbleLook {
     /// The panel restored the bubble defaults: no stored preset is on screen
     /// any more, so the picker must not keep claiming one, and the asset on
     /// screen keeps them.
-    pub fn defaults_restored(&mut self) {
+    pub fn defaults_restored(&mut self, config: &HeatmapConfig) {
         self.look_name.clear();
-        self.note_lane_set();
+        self.note_lane_set(config);
         self.status = Some("bubble defaults restored for the asset on screen".to_owned());
     }
 

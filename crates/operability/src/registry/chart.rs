@@ -51,6 +51,16 @@ pub(super) const CANVAS: &[UiBehaviour] = &[
         mapping: capability!("chart.price_axis.set"),
     },
     UiBehaviour {
+        id: "chart.time_axis.reset",
+        title: "Reset a time axis to where it opened",
+        reach: "double-click the candles' time strip, or the tape's",
+        keys: &[(
+            Source::Authored,
+            "a time-strip double-click the canvas handles directly",
+        )],
+        mapping: capability!("chart.time_axis.reset"),
+    },
+    UiBehaviour {
         id: "chart.tape.pan",
         title: "Drag the tape beside the candles through time and price",
         reach: "primary or middle drag over the native tape; double-click it to return to live",

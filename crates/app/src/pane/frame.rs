@@ -56,6 +56,9 @@ pub struct PaneFrame {
     /// on the time axis, and past the lane divider the strip belongs to the
     /// tape's own window rather than to this menu.
     pub time_strip: Option<egui::Rect>,
+    /// The tape's segment of the time strip, past the lane divider: where
+    /// the tape's time axis lives, and so whether the pane has one.
+    pub lane_time_strip: Option<egui::Rect>,
     /// The automatic tape window at the last draw — the recent bars' typical
     /// duration. Only the menu reads it, and only to state what "follows the
     /// bars" currently amounts to; the drawing itself is handed the resolved
@@ -102,6 +105,7 @@ impl Default for PaneFrame {
             layout_strip: None,
             price_gutter: None,
             time_strip: None,
+            lane_time_strip: None,
             lane_reference_ms: None,
             auto_range: None,
             flip_span: None,
@@ -125,6 +129,7 @@ impl PaneFrame {
         self.layout_strip = None;
         self.price_gutter = None;
         self.time_strip = None;
+        self.lane_time_strip = None;
         self.lane_reference_ms = None;
         self.auto_range = None;
         self.chart_height = 1.0;

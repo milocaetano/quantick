@@ -42,6 +42,7 @@ capability that cannot change application state.
 | `chart.price_axis.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.settings.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.tape_view.set` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
+| `chart.time_axis.reset` | 1 | `chart` | no | `cockpit`, `cockpit.layout` |
 | `chart.window.read` | 1 | `chart` | yes | `observe`, `observe.chart`, `observe.market` |
 | `control.describe` | 1 | `control` | yes | `observe` |
 | `events.read` | 1 | `events` | yes | `observe`, `observe.events` |
@@ -99,4 +100,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-74 capabilities registered.
+75 capabilities registered.

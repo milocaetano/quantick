@@ -85,6 +85,9 @@ pub struct Viewport {
     /// The value may exceed `total - 1`: past the newest bar is empty canvas
     /// to project into, and a deliberate place to be.
     right_bar: Option<f32>,
+    /// The spacing the pane opened on — the default, or a launch hook's —
+    /// and the one [`Self::reset_zoom`] returns to.
+    opening_px_per_bar: f32,
 }
 
 impl Default for Viewport {
@@ -92,6 +95,7 @@ impl Default for Viewport {
         Self {
             px_per_bar: DEFAULT_PX_PER_BAR,
             right_bar: None,
+            opening_px_per_bar: DEFAULT_PX_PER_BAR,
         }
     }
 }
@@ -142,6 +146,18 @@ impl Viewport {
         if px.is_finite() && px > 0.0 {
             self.px_per_bar = px.clamp(MIN_PX_PER_BAR, MAX_CANDLE_WIDTH);
         }
+    }
+
+    /// Open on `px` per bar: the zoom now, and the one a reset returns to.
+    /// The scripted opening (`QUANTICK_CANDLE_WIDTH`), clamped as the gesture is.
+    pub fn open_at_px_per_bar(&mut self, px: f32) {
+        self.set_px_per_bar(px);
+        self.opening_px_per_bar = self.px_per_bar;
+    }
+
+    /// Back to the spacing the pane opened on; the right edge stays put.
+    pub fn reset_zoom(&mut self) {
+        self.px_per_bar = self.opening_px_per_bar;
     }
 
     /// The bar index at the right edge for a series of `total` bars.
@@ -396,6 +412,31 @@ impl Viewport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_zoom_reset_returns_to_the_spacing_the_pane_opened_on() {
+        let mut viewport = Viewport::new();
+        viewport.zoom(4.0);
+        viewport.reset_zoom();
+        assert_eq!(viewport.px_per_bar(), DEFAULT_PX_PER_BAR);
+        viewport.open_at_px_per_bar(1_000.0);
+        assert_eq!(
+            viewport.px_per_bar(),
+            MAX_CANDLE_WIDTH,
+            "the gesture's clamp"
+        );
+        viewport.zoom(0.25);
+        viewport.set_px_per_bar(20.0);
+        viewport.reset_zoom();
+        assert_eq!(
+            viewport.px_per_bar(),
+            MAX_CANDLE_WIDTH,
+            "a zoom is not where the pane opened"
+        );
+        viewport.open_at_px_per_bar(f32::NAN);
+        viewport.reset_zoom();
+        assert_eq!(viewport.px_per_bar(), MAX_CANDLE_WIDTH);
+    }
 
     /// The whole reason [`Viewport::slot_of`] rounds.
     ///

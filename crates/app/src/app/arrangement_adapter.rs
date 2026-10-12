@@ -239,7 +239,7 @@ impl ArrangementAdapter<'_> {
                     .flow_pane
                     .model
                     .viewport
-                    .set_px_per_bar(px);
+                    .open_at_px_per_bar(px);
             }
         }
         // After the declared layout ran: that is what decides whether the

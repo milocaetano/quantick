@@ -314,7 +314,7 @@ fn tape(app: &mut QuantickApp, env: &ScenarioInputs) {
             .flow_pane
             .model
             .viewport
-            .set_px_per_bar(px);
+            .open_at_px_per_bar(px);
     }
     // The bubble budget, scriptable. The fold is the one bubble state a
     // capture cannot otherwise reach: it needs a tape dense enough to

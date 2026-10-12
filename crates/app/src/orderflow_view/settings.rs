@@ -287,7 +287,7 @@ impl OrderflowView {
         .show(ui);
         ColoursSection { bubbles, theme_rgb }.show(ui);
         if lane_set {
-            self.look.note_lane_set();
+            self.look.note_lane_set(&self.config);
         }
     }
 
@@ -295,7 +295,7 @@ impl OrderflowView {
     /// no stored preset is on screen any more.
     fn reset_bubble_visuals(&mut self) {
         self.config.reset_bubble_visuals();
-        self.look.defaults_restored();
+        self.look.defaults_restored(&self.config);
     }
 }
 
