@@ -17,6 +17,7 @@
 mod constants;
 pub mod day_turn;
 pub mod flow_execution;
+pub mod footprint_legend;
 pub mod footprint_lod;
 pub mod footprint_projection;
 pub mod footprint_series;

@@ -494,7 +494,7 @@ fn the_footprint_says_how_much_further_to_zoom() {
     assert!(
         opening
             .iter()
-            .any(|text| text.contains("numbers at") && text.contains("this zoom")),
+            .any(|text| text.contains("numbers at") && text.contains("this width")),
         "the default zoom says how far off the numbers are: {opening:?}"
     );
 }

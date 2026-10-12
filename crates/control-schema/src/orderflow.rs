@@ -256,6 +256,17 @@ pub struct FootprintSetupSnapshot {
     /// it, so it is a configured entry, not a measured one.
     #[serde(default)]
     pub detail_scale: Option<CanonicalDecimal>,
+    /// The shortest a profile band may draw before neighbouring prices merge
+    /// into one band ("min band height").
+    #[serde(default)]
+    #[schemars(extend("x-unit" = "pixels"))]
+    pub profile_row_px: Option<CanonicalDecimal>,
+    /// The shortest a row with numbers may draw before neighbouring prices
+    /// merge ("min number row height"); the one-number level keeps a pixel
+    /// under it.
+    #[serde(default)]
+    #[schemars(extend("x-unit" = "pixels"))]
+    pub number_row_px: Option<CanonicalDecimal>,
 }
 
 impl From<&FootprintConfig> for FootprintSetupSnapshot {
@@ -271,6 +282,8 @@ impl From<&FootprintConfig> for FootprintSetupSnapshot {
             compact_from_px: canonical_f32(config.effective_compact_from_px(), 2),
             detailed_from_px: canonical_f32(config.detailed_from_px, 2),
             detail_scale: canonical_f32(config.detail_scale, 2),
+            profile_row_px: canonical_f32(config.profile_row_px, 2),
+            number_row_px: canonical_f32(config.number_row_px, 2),
         }
     }
 }

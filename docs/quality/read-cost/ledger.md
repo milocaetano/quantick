@@ -94,4 +94,5 @@ a bound.
 | 633 | 2026-10-07 | fix/heatmap-hidden-on-pan | main | 21076 | 16 | `crates/orderflow/src/history.rs` (776) |
 | 634 | 2026-10-08 | fix/implement-headless-default | main | 0 | 0 | — |
 | 658 | 2026-10-10 | fix/edit-loop-seven-minutes | main | 0 | 0 | — |
+| 665 | 2026-10-11 | feat/footprint-zoom-controls | main | 3273 | 6 | `crates/app/src/footprint_render/bar.rs` (754) |
 | 666 | 2026-10-11 | feat/drawing-magnet-per-object | main | 21118 | 25 | `crates/app/src/orderflow_view.rs` (732) |
