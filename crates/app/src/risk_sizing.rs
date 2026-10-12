@@ -347,7 +347,8 @@ fn edit_decimal(
     let response = ui.add(egui::TextEdit::singleline(text).desired_width(width));
     if !response.has_focus() && !response.changed() {
         let shown = if *value > Decimal::ZERO {
-            crate::paper_chrome::fmt_decimal(*value)
+            // Read back as the value on the next edit, so it stays exact.
+            crate::paper_chrome::fmt_exact(*value)
         } else {
             String::new()
         };

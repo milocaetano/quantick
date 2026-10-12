@@ -149,8 +149,8 @@ const AUTOSTART_NATIVES: &[&str] = &["native.ema", "native.cvd"];
 fn fmt_progress(progress: &quantick_engine::BarProgress, unit: &str) -> String {
     format!(
         "{}/{} {unit}",
-        progress.done.normalize(),
-        progress.target.normalize()
+        quantick_engine::display::display_decimal(progress.done),
+        quantick_engine::display::display_decimal(progress.target)
     )
 }
 

@@ -42,7 +42,7 @@ pub(crate) fn draw_flow_perimeters(
         let label = clip.layout_no_wrap(
             format!(
                 "First {}{}",
-                dot.mark.quantity.normalize(),
+                quantick_engine::display::display_decimal(dot.mark.quantity),
                 if clipped { " (clipped)" } else { "" }
             ),
             egui::FontId::monospace(FLOW_OPENING_LABEL_FONT_PX),

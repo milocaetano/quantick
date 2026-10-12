@@ -1,9 +1,9 @@
 //! Painting the profile: one per-frame [`ProfileFrame`] measured once, then
 //! the passes that read it — edges, histogram, silhouette, levels, labels.
 
-use crate::{Align2, MarkScene, MarkShape, pos2, Px, PxRect, RgbaExt, Stroke};
-use quantick_chart::style::PremultipliedRgba;
+use crate::{Align2, MarkScene, MarkShape, Px, PxRect, RgbaExt, Stroke, pos2};
 use quantick_anchored_studies::{FrvpEmpty, LevelPrices, ProfileOutput};
+use quantick_chart::style::PremultipliedRgba;
 use quantick_engine::{ValueArea, VolumeProfile};
 use rust_decimal::Decimal;
 
@@ -14,9 +14,9 @@ use super::{
     knockout_text_within, price_extent, range_edges, status_line,
 };
 use crate::chart::to_f64;
-use crate::{DrawContext, DrawingStyle, drawing_stroke};
 use crate::palette as theme;
 use crate::palette::{CASING, CASING_EXTRA_PX};
+use crate::{DrawContext, DrawingStyle, drawing_stroke};
 
 /// Which side of the candles one pass of the profile paints on.
 ///
@@ -179,10 +179,8 @@ impl<'a> ProfileFrame<'a> {
 
     fn paint_edges(&mut self, stroke: Stroke) {
         for x in [self.left, self.right] {
-            self.painter.line_segment(
-                [pos2(x, self.top), pos2(x, self.bottom)],
-                stroke,
-            );
+            self.painter
+                .line_segment([pos2(x, self.top), pos2(x, self.bottom)], stroke);
         }
     }
 
@@ -221,29 +219,20 @@ impl<'a> ProfileFrame<'a> {
                 let buy_width = ((to_f64(level.buy) / volume) as f32) * width;
                 let buy_tip = (left + buy_width).min(fill_tip);
                 self.painter.rect_filled(
-                    PxRect::from_min_max(
-                        pos2(left, row_top),
-                        pos2(buy_tip, row_bottom),
-                    ),
+                    PxRect::from_min_max(pos2(left, row_top), pos2(buy_tip, row_bottom)),
                     0.0,
                     theme::BUY.gamma_multiply(alpha),
                 );
                 if fill_tip > buy_tip {
                     self.painter.rect_filled(
-                        PxRect::from_min_max(
-                            pos2(buy_tip, row_top),
-                            pos2(fill_tip, row_bottom),
-                        ),
+                        PxRect::from_min_max(pos2(buy_tip, row_top), pos2(fill_tip, row_bottom)),
                         0.0,
                         theme::SELL.gamma_multiply(alpha),
                     );
                 }
             } else {
                 self.painter.rect_filled(
-                    PxRect::from_min_max(
-                        pos2(left, row_top),
-                        pos2(fill_tip, row_bottom),
-                    ),
+                    PxRect::from_min_max(pos2(left, row_top), pos2(fill_tip, row_bottom)),
                     0.0,
                     self.style.color.gamma_multiply(alpha),
                 );
@@ -371,7 +360,10 @@ impl<'a> ProfileFrame<'a> {
                                 self.ctxt.scale.y(to_f64(price)),
                             ),
                             Align2::LEFT_CENTER,
-                            &format!("{name} {price}"),
+                            &format!(
+                                "{name} {}",
+                                quantick_engine::display::display_decimal(price)
+                            ),
                             color,
                         );
                     }

@@ -120,7 +120,8 @@ impl Ticket {
         let current = self.quantity_preview().unwrap_or(floor);
         let next = current.saturating_add(notches.saturating_mul(unit));
         if next >= floor {
-            self.qty_text = fmt_decimal(next);
+            // An editable field is read back as the order size: it stays exact.
+            self.qty_text = crate::format::fmt_exact(next);
         }
     }
 

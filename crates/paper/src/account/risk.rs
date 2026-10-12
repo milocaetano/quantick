@@ -44,9 +44,9 @@ impl RiskRefusal {
     pub fn sentence(&self) -> String {
         format!(
             "this order risks {} {} - over your {} {} risk per trade. Raise the risk, or turn the lock off.",
-            self.risk.amount.normalize(),
+            crate::format::fmt_decimal(self.risk.amount),
             self.risk.currency.code(),
-            self.budget.amount.normalize(),
+            crate::format::fmt_decimal(self.budget.amount),
             self.budget.currency.code(),
         )
     }

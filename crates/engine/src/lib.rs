@@ -25,6 +25,7 @@
 pub mod bar_registry;
 pub mod bar_selection;
 pub mod bar_timeline;
+pub mod display;
 pub mod fixture;
 pub mod forming_run;
 pub mod golden;

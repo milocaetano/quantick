@@ -15,7 +15,7 @@ use quantick_sim::{ClosedTrade, history};
 use rust_decimal::Decimal;
 
 use super::{PaperAccount, utc_compact};
-use crate::format::{fmt_decimal, sanitize_symbol};
+use crate::format::{fmt_exact, sanitize_symbol};
 use crate::report::HistoryRow;
 use crate::report::sessions::{JournaledTrade, SessionKey};
 use quantick_civil::civil_utc;
@@ -155,7 +155,7 @@ pub fn export_csv(rows: &[HistoryRow]) -> String {
     );
     let mut cumulative = Decimal::ZERO;
     let opt_u64 = |value: Option<u64>| value.map(|value| value.to_string()).unwrap_or_default();
-    let opt_points = |value: Option<Decimal>| value.map(fmt_decimal).unwrap_or_default();
+    let opt_points = |value: Option<Decimal>| value.map(fmt_exact).unwrap_or_default();
     for row in rows {
         let trade = &row.trade;
         cumulative = cumulative.saturating_add(trade.pnl_points);
@@ -167,15 +167,15 @@ pub fn export_csv(rows: &[HistoryRow]) -> String {
             "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             row.symbol.replace(',', "_"),
             side,
-            fmt_decimal(trade.quantity),
+            fmt_exact(trade.quantity),
             trade.opened_ms,
             fmt_utc_iso(trade.opened_ms),
-            fmt_decimal(trade.entry_price),
+            fmt_exact(trade.entry_price),
             trade.closed_ms,
             fmt_utc_iso(trade.closed_ms),
-            fmt_decimal(trade.exit_price),
-            fmt_decimal(trade.pnl_points),
-            fmt_decimal(cumulative),
+            fmt_exact(trade.exit_price),
+            fmt_exact(trade.pnl_points),
+            fmt_exact(cumulative),
             trade.closed_ms.saturating_sub(trade.opened_ms).max(0),
             trade.exit_reason.as_str(),
             opt_u64(trade.entry_agg_id),
