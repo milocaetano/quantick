@@ -249,3 +249,82 @@ fn live_trades_are_filtered_by_their_files_tags_and_counted_when_hidden() {
     let order: Vec<usize> = kept.iter().map(|live| live.index).collect();
     assert_eq!(order, vec![2, 1, 0], "newest first");
 }
+
+/// A session row picked, then a trade of another session selected: F2 and
+/// Del follow the selection, never the row picked before it.
+#[test]
+fn selecting_a_trade_makes_its_session_what_the_keys_act_on() {
+    let loaded = history(&["a.csv", "b.csv"]);
+    let mut state = LedgerState::default();
+    state.reloaded(&loaded);
+    state.ensure_cut(Some(&loaded), UTC);
+    let none = BTreeSet::new();
+    assert_eq!(
+        state.apply(SessionPress::Fold(key("a.csv"), true), None),
+        None
+    );
+    let selected = key("b.csv");
+    state.trade_selected();
+    assert_eq!(
+        state.key_press(true, Some(&selected), &none, Some(&loaded)),
+        Some(SessionPress::StartRename(selected.clone()))
+    );
+    assert!(matches!(
+        state.key_press(false, Some(&selected), &none, Some(&loaded)),
+        Some(SessionPress::StartDelete(session, _, 1)) if session == selected
+    ));
+    // Picking a session row again makes it the target once more.
+    state.apply(SessionPress::Fold(key("a.csv"), false), None);
+    assert_eq!(
+        state.key_press(true, Some(&selected), &none, Some(&loaded)),
+        Some(SessionPress::StartRename(key("a.csv")))
+    );
+}
+
+/// An edit takes the keyboard once, when it starts; an edit whose inline row
+/// the cut placed nowhere is cancelled rather than left waiting.
+#[test]
+fn an_edit_focuses_once_and_ends_when_its_row_is_unreachable() {
+    let loaded = history(&["a.csv"]);
+    let mut state = LedgerState::default();
+    state.reloaded(&loaded);
+    state.apply(SessionPress::StartRename(key("a.csv")), Some(&loaded));
+    assert!(state.focus_edit, "the new edit asks for the keyboard");
+    state.edit_placed(true);
+    assert!(state.edit.is_some(), "a placed row keeps its edit");
+    state.edit_placed(false);
+    assert_eq!(state.edit, None, "a row nobody can reach is no edit");
+    assert!(!state.focus_edit);
+}
+
+/// The strip completes the token being typed: suggestions narrow by its
+/// prefix and leave out what is typed already, and a pick replaces the
+/// partial token instead of appending a second one.
+#[test]
+fn a_tag_suggestion_completes_the_token_being_typed() {
+    let known = vec![
+        ("msc".to_owned(), 4),
+        ("open".to_owned(), 3),
+        ("mean".to_owned(), 2),
+    ];
+    let tags = |text: &str| -> Vec<&str> {
+        tag_suggestions(&known, text, 6)
+            .into_iter()
+            .map(|(tag, _)| tag)
+            .collect()
+    };
+    assert_eq!(tags(""), ["msc", "open", "mean"]);
+    assert_eq!(tags("#m"), ["msc", "mean"]);
+    assert_eq!(tags("#M"), ["msc", "mean"], "tags are lowercase");
+    assert_eq!(
+        tags("#msc "),
+        ["open", "mean"],
+        "a typed tag is not offered"
+    );
+    assert_eq!(tags("#msc #me"), ["mean"]);
+    assert_eq!(tags("#x"), Vec::<&str>::new());
+    assert_eq!(complete_tag("#m", "msc"), "#msc ");
+    assert_eq!(complete_tag("", "msc"), "#msc ");
+    assert_eq!(complete_tag("#open #m", "msc"), "#open #msc ");
+    assert_eq!(complete_tag("#open ", "msc"), "#open #msc ");
+}

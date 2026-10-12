@@ -90,10 +90,22 @@ pub struct TradeRef {
 }
 
 /// Hands out each trade's [`TradeRef`] in the order its file holds them.
+/// The reader and the account appending to a file count with this one rule.
 #[derive(Debug, Default)]
 pub struct TradeRefs(BTreeMap<(i64, i64), u32>);
 
 impl TradeRefs {
+    /// The counter after `trades`, a file's parsed rows in file order: where
+    /// the next trade appended to that file is counted from.
+    #[must_use]
+    pub fn after<'a>(trades: impl IntoIterator<Item = &'a ClosedTrade>) -> Self {
+        let mut refs = Self::default();
+        for trade in trades {
+            refs.next(trade);
+        }
+        refs
+    }
+
     /// The next trade's reference: its times, and how many trades handed
     /// out before it shared them.
     pub fn next(&mut self, trade: &ClosedTrade) -> TradeRef {

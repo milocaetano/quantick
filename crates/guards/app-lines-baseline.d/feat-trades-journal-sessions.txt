@@ -3,12 +3,13 @@
 # renames and tags sessions and deletes one behind an inline confirm. The
 # session model, the filter, the grouping and which row each session gets,
 # the file edits, the ledger's state between frames (view, focus, selection,
-# edit, cut, F2/Del decisions, live-trade filtering, reload pruning) are
-# headless in `quantick_paper::report::{sessions, session_edit,
-# ledger_state}`. What lands here is egui: the filter row, date picker,
-# session head, inline rename/confirm rows and tag strip in the new
-# `paper_report/sessions.rs`, the ledger list and its rows, the key claim
-# that keeps Del/Esc over the ledger from reaching the chart's drawing keys,
-# and the app-only glue the UI-free ratchet counts (+95, signed there).
-crates/app +975
-!budget +975
+# edit, cut, F2/Del decisions, unreachable-edit cancel, tag completion,
+# live-trade filtering, reload pruning) are headless in
+# `quantick_paper::report::{sessions, session_edit, ledger_state}`. What
+# lands here is egui: the filter row, date picker, session head, inline
+# rename/confirm rows (focus taken once, Esc held while focused) and tag
+# strip in the new `paper_report/sessions.rs`, the ledger list and its rows,
+# `Dock::holds_pointer` that keeps Del over the dock from the chart's drawing
+# keys, and the app-only glue the UI-free ratchet counts (+97, signed there).
+crates/app +996
+!budget +996

@@ -883,20 +883,7 @@ fn three_runs_of_one_tape_are_three_session_files() {
 fn same_time_closes_are_journaled_as_distinct_trades_of_their_file() {
     let dir = ScratchDir::new("account-same-time-closes");
     let mut account = account(&dir, "PARTIAL");
-    let close = quantick_sim::ClosedTrade {
-        side: Side::Buy,
-        quantity: Decimal::ONE,
-        entry_price: Decimal::from(100),
-        exit_price: Decimal::from(103),
-        opened_ms: 1_773_666_000_000,
-        closed_ms: 1_773_666_060_000,
-        pnl_points: Decimal::from(3),
-        exit_reason: quantick_sim::ExitReason::TakeProfit,
-        entry_agg_id: None,
-        exit_agg_id: None,
-        mae_points: None,
-        mfe_points: None,
-    };
+    let close = take_profit_close();
     assert!(account.journal(&close));
     assert!(account.journal(&close));
     let at: Vec<_> = account
@@ -909,4 +896,66 @@ fn same_time_closes_are_journaled_as_distinct_trades_of_their_file() {
     let loaded = crate::report::load_history(account.trades_dir(), None, &[]);
     let refs: Vec<_> = loaded.rows.iter().map(|row| row.trade_ref).collect();
     assert_eq!(refs, vec![at[0].trade, at[1].trade]);
+}
+
+/// One take-profit close at fixed venue times.
+fn take_profit_close() -> quantick_sim::ClosedTrade {
+    quantick_sim::ClosedTrade {
+        side: Side::Buy,
+        quantity: Decimal::ONE,
+        entry_price: Decimal::from(100),
+        exit_price: Decimal::from(103),
+        opened_ms: 1_773_666_000_000,
+        closed_ms: 1_773_666_060_000,
+        pnl_points: Decimal::from(3),
+        exit_reason: quantick_sim::ExitReason::TakeProfit,
+        entry_agg_id: None,
+        exit_agg_id: None,
+        mae_points: None,
+        mfe_points: None,
+    }
+}
+
+/// A close appended into a file that already holds rows — where the
+/// rerun-limit fallback lands, here with a row that does not parse — is
+/// counted the way a reader counts that file, not from the account's own
+/// writes alone, or its tags land on another trade.
+#[test]
+fn an_append_into_an_existing_file_counts_its_trades_like_the_reader() {
+    let dir = ScratchDir::new("account-append-existing");
+    let mut account = account(&dir, "APPEND");
+    let close = take_profit_close();
+    let folder = dir.path().join("APPEND");
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("20260316-130100.csv");
+    let mut text = history::write_header("APPEND", history::SessionSource::Live);
+    text.push_str(&history::write_trade(&close));
+    text.push_str("not,a,trade\n");
+    std::fs::write(&path, text).unwrap();
+    account.journal_path = Some(path);
+    assert!(account.journal(&close));
+    let at = account.session_trade_at()[0].clone().expect("journaled");
+    let loaded = crate::report::load_history(account.trades_dir(), None, &[]);
+    assert_eq!(loaded.problem_rows, 1, "the bad row is counted, not parsed");
+    let refs: Vec<_> = loaded.rows.iter().map(|row| row.trade_ref).collect();
+    assert_eq!(refs.len(), 2);
+    assert_eq!(at.trade, refs[1], "the writer counts the reader's way");
+    assert_eq!(at.trade.nth, 1);
+}
+
+/// An MT5 suffix symbol journals under a folder ending in a dot (`US30.`,
+/// as `sanitize_symbol` keeps it). Its trades still name their session, and
+/// the ledger scoped to that symbol names the same one.
+#[test]
+fn a_suffix_symbols_trades_are_keyed_to_their_session() {
+    let dir = ScratchDir::new("account-suffix-symbol");
+    let mut account = account(&dir, "US30.");
+    assert!(account.journal(&take_profit_close()));
+    let at = account.session_trade_at()[0]
+        .clone()
+        .expect("keyed to its file");
+    assert!(at.session.as_str().starts_with("US30./"), "{}", at.session);
+    let loaded = crate::report::load_history(account.trades_dir(), Some("US30."), &[]);
+    assert_eq!(loaded.rows[0].session.as_ref(), Some(&at.session));
+    assert_eq!(loaded.rows[0].trade_ref, at.trade);
 }

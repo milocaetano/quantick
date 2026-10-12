@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use quantick_civil::{DateRange, TzOffset};
 use quantick_sim::ClosedTrade;
-use quantick_sim::history::SessionSource;
+use quantick_sim::history::{self, SessionSource};
 
 use super::session_edit::JournalEdit;
 use super::sessions::{
@@ -139,6 +139,10 @@ pub struct LedgerState {
     pub focused: Option<SessionKey>,
     /// A rename or a delete waiting on its inline row.
     pub edit: Option<LedgerEdit>,
+    /// The edit just started: its inline row takes the keyboard when next
+    /// drawn, once. A trader who then clicks away keeps the edit and gets
+    /// the keyboard back.
+    pub focus_edit: bool,
     /// The tag strip's text and the trade it was opened for.
     pub tag_text: Option<(SessionKey, TradeRef, String)>,
     /// Every tag on record with its count, for the strip's completions.
@@ -169,6 +173,7 @@ impl LedgerState {
         }
         if self.edit.as_ref().is_some_and(|edit| !held(edit.session())) {
             self.edit = None;
+            self.focus_edit = false;
         }
         if self.tag_text.as_ref().is_some_and(|(key, ..)| !held(key)) {
             self.tag_text = None;
@@ -218,6 +223,7 @@ impl LedgerState {
                     .and_then(|info| info.name.clone())
                     .unwrap_or_default();
                 self.edit = Some(LedgerEdit::Rename { session: key, text });
+                self.focus_edit = true;
                 None
             }
             SessionPress::StartDelete(key, label, trades) => {
@@ -227,6 +233,7 @@ impl LedgerState {
                     label,
                     trades,
                 });
+                self.focus_edit = true;
                 None
             }
             SessionPress::Cancel => {
@@ -237,6 +244,23 @@ impl LedgerState {
                 self.edit = None;
                 Some(edit)
             }
+        }
+    }
+
+    /// A trade row was selected: F2 and Del now act on its session, through
+    /// the selection, and no longer on a session row picked before it.
+    pub fn trade_selected(&mut self) {
+        self.focused = None;
+    }
+
+    /// The rows were cut; `placed` says whether they hold the edit's inline
+    /// row. An edit whose row is nowhere — its day folded, its session
+    /// filtered away or past the revealed pages — is cancelled: nothing may
+    /// wait on a row the trader cannot reach.
+    pub fn edit_placed(&mut self, placed: bool) {
+        if !placed {
+            self.edit = None;
+            self.focus_edit = false;
         }
     }
 
@@ -331,6 +355,47 @@ impl LedgerState {
             .map_or(0, |info| info.trades);
         Some(SessionPress::StartDelete(key, label, trades))
     }
+}
+
+/// The tags on record (`known`, most used first) that complete the tag
+/// strip's `text`, at most `limit`: those starting with the token being
+/// typed (the last one, unless the text ends in a space), none already typed.
+#[must_use]
+pub fn tag_suggestions<'k>(
+    known: &'k [(String, usize)],
+    text: &str,
+    limit: usize,
+) -> Vec<(&'k str, usize)> {
+    let (typed, partial) = split_typing(text);
+    let typed: Vec<String> = typed
+        .split_whitespace()
+        .filter_map(history::normalize_tag)
+        .collect();
+    let prefix = partial.trim_start_matches('#').to_lowercase();
+    known
+        .iter()
+        .filter(|(tag, _)| tag.starts_with(&prefix) && !typed.contains(tag))
+        .take(limit)
+        .map(|(tag, count)| (tag.as_str(), *count))
+        .collect()
+}
+
+/// The tag strip's `text` with the token being typed replaced by `#tag`
+/// and a space, ready for the next one.
+#[must_use]
+pub fn complete_tag(text: &str, tag: &str) -> String {
+    let (typed, _) = split_typing(text);
+    if typed.trim().is_empty() {
+        format!("#{tag} ")
+    } else {
+        format!("{} #{tag} ", typed.trim_end())
+    }
+}
+
+/// `text` split before the token being typed: everything up to its last
+/// whitespace, and what follows it — empty when the text ends in a space.
+fn split_typing(text: &str) -> (&str, &str) {
+    text.rsplit_once(char::is_whitespace).unwrap_or(("", text))
 }
 
 #[cfg(test)]

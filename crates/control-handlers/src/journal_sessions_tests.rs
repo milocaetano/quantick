@@ -222,7 +222,7 @@ fn a_session_that_is_not_a_listed_file_is_refused_before_the_window_is_asked() {
         "../escape.csv",
         "/abs/x.csv",
         "WINJ26/x.txt",
-        "WINJ26./x.csv",
+        "WINJ26 /x.csv",
     ] {
         let error =
             delete(&mut window, &mut events, json!({ "session": session })).expect_err("refused");

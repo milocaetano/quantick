@@ -509,12 +509,12 @@ fn the_live_session_is_never_deleted_and_is_read_only_for_its_metadata() {
     assert_eq!(info.tags_of(&first_ref(&trade)), ["live".to_owned()]);
 }
 
-/// Windows opens `WINJ26./x.csv`, `WINJ26 /x.csv` and `winj26/x.csv` as the
-/// live `WINJ26/x.csv`. None of those spellings may move it.
+/// Windows opens `WINJ26./x.csv` and `winj26/x.csv` as the live
+/// `WINJ26/x.csv`, and the account itself may journal under either
+/// spelling. None of them may move it.
 #[test]
 fn no_spelling_of_the_live_session_gets_past_the_delete_refusal() {
     for refused in [
-        "WINJ26./20260316-130000.csv",
         "WINJ26 /20260316-130000.csv",
         "WINJ26/20260316-130000.csv ",
         "WINJ26/20260316-130000.csv.",
@@ -529,19 +529,34 @@ fn no_spelling_of_the_live_session_gets_past_the_delete_refusal() {
         SessionSource::Live,
         std::slice::from_ref(&trade),
     );
-    let live = vec![key.path(dir.path())];
     let shouted = SessionKey::parse("winj26/20260316-130000.csv").expect("another spelling");
-    let error = delete_session(dir.path(), &shouted, &live).unwrap_err();
-    // A case-insensitive volume finds the live file under the other case and
-    // refuses it; a case-sensitive one finds no such file at all.
-    assert!(
-        matches!(
-            error,
-            SessionEditError::LiveSession(_) | SessionEditError::NotFound(_)
-        ),
-        "{error:?}"
-    );
-    assert!(key.path(dir.path()).is_file(), "the live file never moved");
+    let dotted = SessionKey::parse("WINJ26./20260316-130000.csv").expect("a suffix folder");
+    // Elsewhere `WINJ26.` is a folder of its own, holding no file here.
+    let mut lives = vec![key.path(dir.path())];
+    if cfg!(windows) {
+        lives.push(dotted.path(dir.path()));
+    }
+    let mut error = None;
+    for live in lives {
+        for spelling in [&key, &shouted, &dotted] {
+            let refused = delete_session(dir.path(), spelling, std::slice::from_ref(&live))
+                .expect_err("the live file is never deleted");
+            // A case-insensitive volume finds the live file under the other
+            // spelling and refuses it; a case-sensitive one finds none.
+            assert!(
+                matches!(
+                    refused,
+                    SessionEditError::LiveSession(_) | SessionEditError::NotFound(_)
+                ),
+                "{spelling} against {live:?}: {refused:?}"
+            );
+            assert!(key.path(dir.path()).is_file(), "the live file never moved");
+            if spelling == &shouted {
+                error = Some(refused);
+            }
+        }
+    }
+    let error = error.expect("the shouted spelling was tried");
     if cfg!(windows) {
         assert_eq!(error, SessionEditError::LiveSession(key.clone()));
         // An edit acts on, and answers with, the file's own spelling.

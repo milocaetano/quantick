@@ -21,6 +21,8 @@ use super::*;
 use crate::paper_calendar::{CivilDate, DateRange, DaySelection};
 use crate::paper_trading::PaperTrading;
 
+mod ledger_keys_tests;
+
 /// A closed trade that netted `pnl` points, closing at `closed_ms`.
 fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
     ClosedTrade {

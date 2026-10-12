@@ -323,7 +323,7 @@ fn delete_file(
     // the spelling a caller sent may differ and still be one file.
     if live
         .iter()
-        .any(|live| std::fs::canonicalize(live).is_ok_and(|live| live == path))
+        .any(|live| std::fs::canonicalize(live).is_ok_and(|live| same_file(&live, path)))
     {
         return Err(SessionEditError::LiveSession(key.clone()));
     }
@@ -367,6 +367,12 @@ fn append(path: &Path, line: &str) -> Result<(), SessionEditError> {
     }
     text.push_str(line);
     file.write_all(text.as_bytes()).map_err(io)
+}
+
+/// Whether two canonical paths are one file: equal, or on Windows equal but
+/// for ASCII case, which is how its volumes compare names.
+fn same_file(a: &Path, b: &Path) -> bool {
+    a == b || (cfg!(windows) && a.as_os_str().eq_ignore_ascii_case(b.as_os_str()))
 }
 
 fn guard(path: &Path) -> Result<(), SessionEditError> {

@@ -317,35 +317,110 @@ fn only_an_edit_that_happened_makes_the_ledgers_read_again() {
     );
 }
 
-/// Del over the Trades ledger is the ledger's. The chart's drawing keys are
-/// read before the dock draws, so they hear the ledger's claim from the
-/// frame before and leave the selected drawing alone — until it lapses.
+/// Del with the pointer on the dock is the dock's — the Trades ledger deletes
+/// a session with it — so the selected drawing survives it, on the very
+/// frame the pointer arrives; with the pointer back on the chart, Del deletes
+/// the drawing again. Nothing is claimed from one frame for the next.
 #[test]
-fn delete_claimed_by_the_ledger_never_deletes_the_selected_drawing() {
+fn delete_over_the_dock_never_deletes_the_selected_drawing() {
     let (mut app, _commands) = app_with_history(200);
     let ctx = egui::Context::default();
+    app.dock.open_tab(crate::dock::DockTab::Trades);
     run_frame(&mut app, &ctx);
     app.toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
-    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+    let chart = egui::pos2(500.0, 300.0);
+    click_chart(&mut app, &ctx, chart);
     assert!(app.active_tab().flow_pane.drawings.selected().is_some());
-    let claim = crate::widgets::KeyClaim {
-        delete: true,
-        escape: true,
+    // Inside the Trades tab's body, which hugs the window's right edge.
+    let dock = egui::pos2(TEST_WINDOW.x - 120.0, 450.0);
+    let press_at = |app: &mut QuantickApp, at: egui::Pos2| {
+        let events = vec![egui::Event::PointerMoved(at), key_press(egui::Key::Delete)];
+        run_frame_with_events(app, &ctx, events);
     };
-    crate::widgets::claim_keys(&ctx, claim);
-    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
-    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
-    assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
-    assert!(
-        app.active_tab().flow_pane.drawings.selected().is_some(),
-        "Escape went to the ledger too"
+    press_at(&mut app, dock);
+    assert!(app.dock.holds_pointer(&ctx), "the press landed on the dock");
+    assert_eq!(
+        app.active_tab().flow_pane.drawings.items().len(),
+        1,
+        "Del on the dock left the drawing alone"
     );
-
-    run_frame(&mut app, &ctx);
-    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
+    assert!(app.active_tab().flow_pane.drawings.selected().is_some());
+    press_at(&mut app, chart);
     assert!(
         app.active_tab().flow_pane.drawings.items().is_empty(),
-        "an unclaimed Del is the chart's again"
+        "Del on the chart is the chart's"
+    );
+}
+
+/// One trace line as the action door writes it: the intent, or with
+/// `done` the result that closes it.
+fn trace_line(capability: &str, input: Value, done: bool) -> String {
+    let entry = quantick_control_host::trace::TraceEntry {
+        trace_version: quantick_control_host::trace::TRACE_VERSION,
+        replay_elapsed_ms: 0,
+        sequence: quantick_control::wire::WireU64::new(1),
+        actor_kind: quantick_control::wire::ActorKind::HumanUi,
+        client_name: "quantick-ui".to_owned(),
+        capability_id: quantick_control::id::CapabilityId::new(capability).expect("an id"),
+        capability_version: 1,
+        canonical_input: input,
+        expected_revisions: Vec::new(),
+        result_code: done.then(|| quantick_control::id::ErrorCode::new("control.ok").unwrap()),
+        result_digest: None,
+    };
+    format!(
+        "{}\n",
+        serde_json::to_string(&entry).expect("an entry encodes")
+    )
+}
+
+/// A journal edit made while a replay plays is the trader's, not the tape's:
+/// the replay's control trace never records it, and a trace that holds one —
+/// written before this rule — never runs it. Replaying a tape renames, tags
+/// and deletes nothing by itself.
+#[test]
+fn journal_edits_are_never_recorded_into_or_replayed_from_a_control_trace() {
+    use quantick_feed::replay::test_support as replay_test_support;
+    let ctx = egui::Context::default();
+    let tape = crate::scratch::ScratchDir::new("journal-trace-tape");
+    let trades = crate::scratch::ScratchDir::new("journal-trace-trades");
+    let session = write_session(&trades, "20260316-130000.csv", &[1_773_666_000_000]);
+    let replaying = |app: &mut QuantickApp| {
+        let recording = recording_at(tape.path());
+        app.active_tab_mut().replay = Some(replay_test_support::detached_link(recording));
+        app.active_tab_mut()
+            .paper
+            .account_mut()
+            .set_trades_dir(trades.path().to_path_buf());
+    };
+    let sidecar = crate::control::replay_trace_path_for(&recording_at(tape.path()).path);
+
+    let (mut app, _commands) = app_with_history(12);
+    replaying(&mut app);
+    run_frame(&mut app, &ctx);
+    let rename = json!({ "action": "rename", "session": session, "name": "Mine" });
+    let human = crate::control::ActionOrigin::Human;
+    app.control_action(CAPABILITY, 1, human, rename)
+        .expect("a rename during a replay is done");
+    let recorded = std::fs::read_to_string(&sidecar).unwrap_or_default();
+    assert!(
+        !recorded.contains(CAPABILITY),
+        "the trace recorded a journal edit: {recorded}"
+    );
+    drop(app);
+
+    // A trace an older build wrote, holding a delete of that session.
+    let delete = json!({ "session": session });
+    let lines = trace_line(DELETE, delete.clone(), false) + &trace_line(DELETE, delete, true);
+    std::fs::write(&sidecar, lines).expect("the sidecar is written");
+    let (mut app, _commands) = app_with_history(12);
+    replaying(&mut app);
+    for _ in 0..3 {
+        run_frame(&mut app, &ctx);
+    }
+    assert!(
+        trades.path().join(&session).is_file(),
+        "replaying the tape deleted the trader's session"
     );
 }

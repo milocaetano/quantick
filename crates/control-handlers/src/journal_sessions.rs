@@ -51,15 +51,17 @@ pub trait JournalSessionsPort {
 }
 
 /// Dock both capabilities. An edit journals through the access the notify
-/// handlers journal through, on its clock.
+/// handlers journal through, on its clock. Both act on the trader's trades
+/// journal, which no tape owns: a replay's control trace never records them,
+/// and a replay never renames, tags or deletes a session by itself.
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
     H: JournalSessionsPort + ?Sized,
     A: NotifyAccess,
 {
-    registry.register(descriptor(), journal_sessions)?;
-    registry.register(delete_descriptor(), journal_delete)
+    registry.register_outside_replay(descriptor(), journal_sessions)?;
+    registry.register_outside_replay(delete_descriptor(), journal_delete)
 }
 
 fn journal_sessions<H: JournalSessionsPort + ?Sized, A: NotifyAccess>(

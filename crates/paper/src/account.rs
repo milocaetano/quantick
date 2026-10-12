@@ -235,6 +235,9 @@ pub struct PaperAccount {
     dir: PathBuf,
     /// Current session file, named after the first closed trade.
     journal_path: Option<PathBuf>,
+    /// The file the trade counter below counts, and the counter: seeded
+    /// from that file when the account opens it, one more per row written.
+    journal_refs: Option<(PathBuf, history::TradeRefs)>,
     /// Every file this host has journaled to. The ledger excludes them
     /// all — their trades are still in the simulator, which keeps closed
     /// trades across every retarget; excluding only the current file
@@ -384,6 +387,7 @@ impl PaperAccount {
             symbol: String::new(),
             dir,
             journal_path: None,
+            journal_refs: None,
             session_journal_paths: Vec::new(),
             session_trade_sources: Vec::new(),
             session_trade_at: Vec::new(),

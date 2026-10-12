@@ -2827,6 +2827,7 @@ fn drawing_owner_cleanup_case(operation: &str, focused_owner: bool) {
                     &mut *app.audio.alerts,
                     ctx,
                     Instant::now(),
+                    false,
                 );
             },
         );

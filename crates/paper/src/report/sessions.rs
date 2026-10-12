@@ -33,16 +33,19 @@ impl SessionKey {
     /// Read a key a caller sent. `None` unless it is exactly one symbol
     /// folder and one `.csv` file name: no absolute path, no `..`, no
     /// hidden folder — a key can only ever name a file the ledger lists.
-    /// No part may end in a dot or a space either: Windows drops those when
-    /// it opens a path, so `X./a.csv` would reach `X/a.csv` under a name no
-    /// listing ever gave it.
+    /// A folder may end in a dot: an MT5 suffix symbol's does (`US30.`,
+    /// which `sanitize_symbol` keeps), and it is the folder the account
+    /// journals to. Windows opens `X./a.csv` as `X/a.csv`, so every edit
+    /// resolves a key to its file and the delete refusal compares files,
+    /// never spellings ([`super::session_edit`]). No part ends in a space,
+    /// which no symbol folder does.
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
         let (folder, file) = text.split_once('/')?;
         let plain = |part: &str| {
             !part.is_empty()
                 && !part.starts_with('.')
-                && !part.ends_with(['.', ' '])
+                && !part.ends_with(' ')
                 && !part.contains(['/', '\\', ':'])
                 && !part.chars().any(char::is_control)
         };

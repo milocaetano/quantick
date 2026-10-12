@@ -8,6 +8,8 @@
 # `ReportState`; `paper_report.rs` (+8) holds the env fields and the
 # ledger's state field; `paper_account/report.rs` (+2) fills those env
 # fields from the account; `schema_catalog.rs` (+9) publishes the three
-# wire schemas; `control/actions.rs` (+1) registers the family.
-crates/app +95
-!budget +95
+# wire schemas; `control/actions.rs` (+1) registers the family;
+# `control/gateway/local_action.rs` (+2) asks the docked action whether a
+# replay's trace holds it (`RegisteredAction::traced`, in control-host).
+crates/app +97
+!budget +97

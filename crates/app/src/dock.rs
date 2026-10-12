@@ -230,6 +230,24 @@ impl Dock {
         };
     }
 
+    /// Whether the pointer is on the dock — its strip or its open body, where
+    /// they were last laid out. Read before the dock draws: Del there is the
+    /// dock's (the Trades ledger deletes a session with it), not the chart's.
+    #[must_use]
+    pub fn holds_pointer(&self, ctx: &egui::Context) -> bool {
+        let Some(pointer) = ctx.pointer_latest_pos().filter(|_| self.visible) else {
+            return false;
+        };
+        let body = self
+            .active
+            .map(|tab| egui::Id::new(("dock_body", tab.index())));
+        [Some(egui::Id::new("dock_strip")), body]
+            .into_iter()
+            .flatten()
+            .filter_map(|id| egui::containers::panel::PanelState::load(ctx, id))
+            .any(|panel| panel.rect.contains(pointer))
+    }
+
     /// Remember `width` for the active tab, clamped to the model's range.
     fn remember_width(&mut self, tab: DockTab, width: f32) {
         self.widths[tab.index()] = width.clamp(DOCK_MIN_WIDTH, DOCK_MAX_WIDTH);

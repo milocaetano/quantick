@@ -306,8 +306,10 @@ impl ReportState {
             live: &live_keys,
             deletes: delete_key.is_some(),
             edit: &mut self.sessions.state.edit,
+            focus_edit: &mut self.sessions.state.focus_edit,
         }
         .show(ui, list_height);
+        self.sessions.state.edit_placed(inline_placed);
         let focus_tags = presses.tag || (presses.hovered && presses.hash);
         let keyed = if presses.f2 {
             let selected = target.as_ref().map(|(key, ..)| key);
@@ -455,11 +457,13 @@ impl ReportState {
             self.selected_trade = selection;
             if selection.is_some() {
                 self.sessions.state.selected_saved = None;
+                self.sessions.state.trade_selected();
             }
         }
         if let Some(selection) = presses.select_saved {
             if selection.is_some() {
                 self.selected_trade = None;
+                self.sessions.state.trade_selected();
             }
             self.sessions.state.selected_saved = selection;
         }
@@ -513,6 +517,8 @@ struct RowList<'a, 'r> {
     /// Del over the list would start a delete, so the list takes the key.
     deletes: bool,
     edit: &'a mut Option<LedgerEdit>,
+    /// The edit just started: its inline row takes the keyboard, once.
+    focus_edit: &'a mut bool,
 }
 
 /// What the ledger's rows were pressed for in one frame.
@@ -553,12 +559,12 @@ impl RowList<'_, '_> {
                 }
             });
         // Keys belong to the ledger only while the pointer is over it and
-        // nothing is being typed: a trading hotkey is never taken. What it
-        // takes it consumes, and claims for the next frame too — the chart's
-        // drawing keys are read before the dock draws, and Del there would
-        // delete a selected drawing as well as start this delete.
-        let over = ui.rect_contains_pointer(output.inner_rect);
-        presses.hovered = over && !ui.ctx().wants_keyboard_input();
+        // nothing is being typed: a trading hotkey is never taken. The
+        // chart's Del and Backspace stand down while the pointer is on the
+        // dock (`Dock::holds_pointer`); Esc is the inline row's only while
+        // its field or button holds the keyboard.
+        presses.hovered =
+            ui.rect_contains_pointer(output.inner_rect) && !ui.ctx().wants_keyboard_input();
         if presses.hovered {
             ui.input_mut(|input| {
                 presses.f2 = input.consume_key(egui::Modifiers::NONE, egui::Key::F2);
@@ -570,13 +576,6 @@ impl RowList<'_, '_> {
                     .any(|event| matches!(event, egui::Event::Text(text) if text == "#"));
             });
         }
-        crate::widgets::claim_keys(
-            ui.ctx(),
-            crate::widgets::KeyClaim {
-                delete: over && self.deletes,
-                escape: self.edit.is_some(),
-            },
-        );
         presses
     }
 
@@ -596,7 +595,7 @@ impl RowList<'_, '_> {
             }
             LedgerRow::Inline => {
                 if let Some(edit) = self.edit.as_mut()
-                    && let Some(press) = draw_inline(ui, edit)
+                    && let Some(press) = draw_inline(ui, edit, self.focus_edit)
                 {
                     presses.session = Some(press);
                 }

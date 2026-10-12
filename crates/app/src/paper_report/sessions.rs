@@ -11,10 +11,11 @@ use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_paper::report::LoadedHistory;
 use quantick_paper::report::ledger_state::{
-    LedgerEdit, LedgerState, LedgerView, LedgerViewChange, SessionPress,
+    LedgerEdit, LedgerState, LedgerView, LedgerViewChange, SessionPress, complete_tag,
+    tag_suggestions,
 };
 use quantick_paper::report::session_edit::JournalEdit;
-use quantick_paper::report::sessions::{LedgerFilter, LedgerQuery, SessionKey, TradeRef};
+use quantick_paper::report::sessions::{LedgerFilter, SessionKey, TradeRef};
 use quantick_sim::history::SessionSource;
 use rust_decimal::Decimal;
 
@@ -204,45 +205,57 @@ impl LedgerSessions {
         }
         let (_, _, text) = self.state.tag_text.as_mut()?;
         let mut send = false;
+        let mut field_id = None;
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new("#")
                     .monospace()
                     .color(theme::TEXT_MUTED),
             );
-            let field = ui.add(
-                egui::TextEdit::singleline(text)
-                    .id_salt("paper_ledger_tags")
-                    .hint_text("#tag #tag")
-                    .desired_width(ui.available_width() - 48.0),
-            );
-            if focus {
-                field.request_focus();
-            }
-            send |= field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-            send |= ui
-                .small_button("Save")
-                .on_hover_text("set this trade's tags - none clears them")
-                .clicked();
+            // Save first, from the right edge, and the field takes exactly
+            // what is left: a row wider than the dock widens the dock.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                send |= ui
+                    .small_button("Save")
+                    .on_hover_text("set this trade's tags - none clears them")
+                    .clicked();
+                let field = ui.add(
+                    egui::TextEdit::singleline(text)
+                        .id_salt("paper_ledger_tags")
+                        .hint_text("#tag #tag")
+                        .desired_width(ui.available_width()),
+                );
+                if focus {
+                    field.request_focus();
+                }
+                send |= field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                field_id = Some(field.id);
+            });
         });
-        let typed = LedgerQuery::parse(text).tags;
+        let mut completed = false;
         ui.horizontal_wrapped(|ui| {
-            for (tag, count) in self
-                .state
-                .known_tags
-                .iter()
-                .filter(|(tag, _)| !typed.contains(tag))
-                .take(TAG_SUGGESTIONS)
-            {
+            for (tag, count) in tag_suggestions(&self.state.known_tags, text, TAG_SUGGESTIONS) {
                 if ui
                     .small_button(egui::RichText::new(format!("#{tag} {count}")).small())
-                    .on_hover_text("add this tag")
+                    .on_hover_text("complete the tag being typed with this one")
                     .clicked()
                 {
-                    text.push_str(&format!(" #{tag}"));
+                    *text = complete_tag(text, tag);
+                    completed = true;
                 }
             }
         });
+        // Back to the field with the caret after the completion, so the
+        // next tag is typed straight on.
+        if completed && let Some(id) = field_id {
+            let mut state = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+            let end = egui::text::CCursor::new(text.chars().count());
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(end)));
+            state.store(ui.ctx(), id);
+            ui.memory_mut(|memory| memory.request_focus(id));
+        }
         send.then(|| JournalEdit::Tag {
             session,
             trade,
@@ -350,7 +363,14 @@ pub(super) fn session_menu(
 }
 
 /// The inline row a rename or a delete puts where its session's row was.
-pub(super) fn draw_inline(ui: &mut egui::Ui, edit: &mut LedgerEdit) -> Option<SessionPress> {
+/// It takes the keyboard when the edit starts (`focus`, spent here) and
+/// answers Esc only while its field or button still holds the keyboard;
+/// clicked away from, it leaves Esc to the chart.
+pub(super) fn draw_inline(
+    ui: &mut egui::Ui,
+    edit: &mut LedgerEdit,
+    focus: &mut bool,
+) -> Option<SessionPress> {
     let width = ui.available_width();
     let mut press = None;
     ui.allocate_ui_with_layout(
@@ -367,14 +387,15 @@ pub(super) fn draw_inline(ui: &mut egui::Ui, edit: &mut LedgerEdit) -> Option<Se
                             .hint_text("session name - empty clears it")
                             .desired_width(width - 90.0),
                     );
-                    if !field.has_focus() && ui.memory(|memory| memory.focused().is_none()) {
+                    if std::mem::take(focus) {
                         field.request_focus();
                     }
+                    hold_escape(ui, &field, true);
+                    // Enter ends the field's focus as it commits; nothing
+                    // asks for the focus again before this reads it.
                     let enter =
                         field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                    let escape = ui.input_mut(|input| {
-                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
-                    });
+                    let escape = escape_pressed(ui, &field);
                     if enter || ui.small_button("Save").clicked() {
                         press = Some(SessionPress::Apply(JournalEdit::Rename {
                             session: session.clone(),
@@ -397,12 +418,11 @@ pub(super) fn draw_inline(ui: &mut egui::Ui, edit: &mut LedgerEdit) -> Option<Se
                     );
                     // Keep holds the focus: Enter is the safe answer.
                     let keep = ui.small_button("Keep");
-                    if !keep.has_focus() && ui.memory(|memory| memory.focused().is_none()) {
+                    if std::mem::take(focus) {
                         keep.request_focus();
                     }
-                    let escape = ui.input_mut(|input| {
-                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
-                    });
+                    hold_escape(ui, &keep, false);
+                    let escape = escape_pressed(ui, &keep);
                     if keep.clicked() || escape {
                         press = Some(SessionPress::Cancel);
                     }
@@ -422,6 +442,30 @@ pub(super) fn draw_inline(ui: &mut egui::Ui, edit: &mut LedgerEdit) -> Option<Se
         },
     );
     press
+}
+
+/// Keep the keyboard on `held` through Esc. egui drops the focus on Esc
+/// before any panel draws, and the chart's Esc would then act on the same
+/// press; held, the inline row answers it alone. `arrows` keeps the arrow
+/// keys a text field's.
+fn hold_escape(ui: &egui::Ui, held: &egui::Response, arrows: bool) {
+    let filter = egui::EventFilter {
+        escape: true,
+        horizontal_arrows: arrows,
+        vertical_arrows: arrows,
+        tab: false,
+    };
+    ui.memory_mut(|memory| memory.set_focus_lock_filter(held.id, filter));
+}
+
+/// Esc, taken only while `held` has the keyboard; the focus goes with it.
+fn escape_pressed(ui: &egui::Ui, held: &egui::Response) -> bool {
+    let escape = held.has_focus()
+        && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    if escape {
+        held.surrender_focus();
+    }
+    escape
 }
 
 /// The line that says the current session is there, only filtered out.
