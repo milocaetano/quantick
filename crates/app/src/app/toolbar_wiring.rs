@@ -75,7 +75,7 @@ impl QuantickApp {
                 ),
             });
         let capabilities = toolbar_caps(self.active_tab(), &self.config);
-        let candles_held = self.active_tab().venue_candles_held();
+        let candles_held = self.active_tab().session.venue_candles_held();
         let older_candles = self.active_tab().older_candles(capabilities);
         let feed_display_name = self.active_tab().feed_display_name(&self.config).to_owned();
         // One reading per lamp, taken through the call the semantic scene
@@ -115,8 +115,8 @@ impl QuantickApp {
         let show_style = self.surfaces.chart_settings.is_open_on(Candles);
         // The History button names this tab's target and run.
         let history = toolbar::HistoryButton {
-            main: self.active_tab().main_history_reach(),
-            status: self.active_tab().history_status(),
+            main: self.active_tab().session.main_history_reach(),
+            status: self.active_tab().session.history_status(),
             tz: self.tz,
         };
         let mut history_menu_rect = self.chrome.history_menu_rect;
@@ -253,13 +253,11 @@ impl QuantickApp {
                 self.active_tab_mut().apply_deal_recording(action);
             }
             ToolbarAction::LoadOlderCandles => {
-                // Read before the tab is borrowed mutably — and the capability
-                // block rather than the whole config, because that is all the
-                // request needs to know.
-                let tab_id = self.tabs.active_id();
-                let capabilities = self.active_tab().capabilities(&self.config);
-                self.active_tab_mut()
-                    .request_older_ohlcv_history(tab_id, capabilities);
+                let (active, tab_id) = (self.tabs.active_index(), self.tabs.active_id());
+                let act = quantick_session::Act::LoadOlderCandles { tab_id };
+                self.tabs
+                    .runtime_mut(active)
+                    .run_session(Some(&self.config), act);
             }
             ToolbarAction::SetLayer(toggle, shown) => {
                 let pane = if toggle == toolbar::LayerToggle::Footprint {

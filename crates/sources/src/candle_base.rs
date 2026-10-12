@@ -16,7 +16,7 @@ use crate::candles::{
     seam_minutes_wanted,
 };
 use crate::config::FeedCapabilities;
-use crate::{
+use crate::ohlcv::{
     OHLCV_BASE_INTERVAL_MS, OHLCV_DAILY_INTERVAL_MS, OHLCV_SLICE_SPAN_MS, OhlcvSlice,
     ohlcv_base_interval_for, ohlcv_span_for,
 };
@@ -921,7 +921,7 @@ mod candle_base_tests {
             base.ask(true),
             CandleAsk {
                 interval_ms: OHLCV_BASE_INTERVAL_MS,
-                span_ms: crate::TIME_HISTORY_SPAN_MS,
+                span_ms: crate::ohlcv::TIME_HISTORY_SPAN_MS,
                 slice_ms: Some(OHLCV_SLICE_SPAN_MS),
                 before_ms: None,
             }
@@ -931,7 +931,7 @@ mod candle_base_tests {
             base.ask(true),
             CandleAsk {
                 interval_ms: OHLCV_DAILY_INTERVAL_MS,
-                span_ms: crate::DAILY_HISTORY_SPAN_MS,
+                span_ms: crate::ohlcv::DAILY_HISTORY_SPAN_MS,
                 slice_ms: None,
                 before_ms: None,
             }

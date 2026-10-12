@@ -15,7 +15,7 @@
 //! # No timeframe control, on purpose
 //!
 //! The run-up is fetched once as minute candles and folded to 2m/5m/15m by
-//! [`crate::resample`]. Asking the trader to pick a timeframe *here* would be
+//! `quantick_sources::candles`. Asking the trader to pick a timeframe *here* would be
 //! asking the same question twice — the chart already has that control — and
 //! would let the four views disagree with one another.
 

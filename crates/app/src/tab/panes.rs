@@ -1,7 +1,11 @@
 //! Addressing the tab's panes: the context column's collapse and order,
-//! the index and side accessors, focus, and the tape the flow pane shows.
+//! the index and side accessors, focus, and the tape the flow pane shows —
+//! and the panes as the session reads them and installs a prefix into.
+
+use smallvec::SmallVec;
 
 use super::Tab;
+use crate::canvas_layout::MAX_CANVAS_PANES;
 use crate::canvas_layout::PaneKind;
 use crate::config::FeedCapabilities;
 use crate::orderflow_view::OrderflowView;
@@ -9,6 +13,7 @@ use crate::pane::{ChartPane, PaneIndex, PaneSide};
 use crate::style::ChartStyle;
 use quantick_feed::{FeedConnectionState, FeedNotice};
 use quantick_layers::{ChartLayer, LayerBlock};
+use quantick_session::{PaneView, SeamTrace};
 
 impl Tab {
     /// Put the context column away, or bring it back.
@@ -465,4 +470,59 @@ impl Tab {
             .as_mut()
             .expect("the flow pane is built with a tape and never drops it")
     }
+
+    /// Put a prefix in front of one pane; a seam bar that changed, or says
+    /// why it holds no lead, is logged beside the pane.
+    pub(super) fn install_prefix(
+        &mut self,
+        index: usize,
+        bars: Vec<quantick_engine::Bar>,
+        lead: Option<quantick_engine::Bar>,
+        covers_seam: bool,
+        seam: Option<SeamTrace>,
+    ) -> bool {
+        let Some(pane) = self.pane_at_mut(index) else {
+            return false;
+        };
+        let had = seam.and_then(|_| pane.state.venue_lead().cloned());
+        let changed = pane.install_venue_history(bars, lead, covers_seam);
+        let seated = pane.state.venue_lead();
+        if let Some(seam) = seam
+            && (had.as_ref() != seated
+                || seated.is_none() && seam.token != "nothing_before_first_trade")
+        {
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "SEAM_LEAD",
+                pane = pane.id,
+                interval_ms = seam.interval_ms,
+                first_print_ms = seam.first_print_ms,
+                lead_open_ms = seated.map_or(0, |bar| bar.open_time),
+                lead_trades = seated.map_or(0, |bar| bar.trade_count),
+                action = if seated.is_some() { "merged_into_seam_bar" } else { seam.token },
+                "the venue's history of the seam bucket before the first trade"
+            );
+        }
+        changed
+    }
+}
+
+/// Every pane holding this market's bars, as the session reads them: flow
+/// first, then the context stack, the order an `InstallPrefix` addresses.
+pub(super) fn pane_views<'a>(
+    flow: &'a ChartPane,
+    context: &'a [ChartPane],
+) -> SmallVec<[PaneView<'a>; MAX_CANVAS_PANES]> {
+    std::iter::once(flow)
+        .chain(context)
+        .map(|pane| PaneView {
+            interval_ms: pane.state.spec().time_interval_ms(),
+            first_print_open_ms: pane.state.first_print_open_ms(),
+            first_bar: pane.state.bars().first(),
+            partial: pane.state.partial(),
+            rebuild_pending: pane.history_pending(),
+            rebuild_failed: pane.history_failed(),
+        })
+        .collect()
 }

@@ -159,6 +159,7 @@ impl ChartPane {
     /// trade-history prepend moves it: the viewport keeps its right edge, the
     /// drawings keep their bars, the indicator columns keep their candles
     /// until the rebuild lands. Returns whether anything changed.
+    #[cfg(test)]
     pub fn install_history_prefix(&mut self, bars: Vec<quantick_engine::Bar>) -> bool {
         self.install_venue_history(bars, None, false)
     }

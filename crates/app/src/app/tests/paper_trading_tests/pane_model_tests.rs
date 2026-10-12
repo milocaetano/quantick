@@ -58,7 +58,10 @@ fn pulling_older_trades_re_trims_the_venue_prefix() {
         .open_time;
     assert!(
         pane.history_prefix.iter().all(|bar| bar.open_time
-            < crate::resample::bucket_start(first_engine, quantick_feed::OHLCV_BASE_INTERVAL_MS)),
+            < quantick_feed::candles::bucket_start(
+                first_engine,
+                quantick_feed::OHLCV_BASE_INTERVAL_MS
+            )),
         "no venue candle may cover a minute the engine has now re-cut"
     );
     assert_eq!(

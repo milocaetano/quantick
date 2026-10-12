@@ -3292,14 +3292,14 @@ fn a_tab_repeats_its_own_target_and_a_fresh_one_the_windows() {
     let ctx = egui::Context::default();
     let (mut app, _events, _commands) = history_app(&ctx);
     assert_eq!(
-        app.active_tab().main_history_reach(),
+        app.active_tab().session.main_history_reach(),
         history_reach::HistoryReach::Sessions(1),
         "yesterday is what a chart opens on"
     );
     app.history.history_reach = history_reach::HistoryReach::Sessions(3);
     app.drain_tabs();
     assert_eq!(
-        app.active_tab().main_history_reach(),
+        app.active_tab().session.main_history_reach(),
         history_reach::HistoryReach::Sessions(3),
         "a tab that never pressed follows the window"
     );
@@ -3309,7 +3309,7 @@ fn a_tab_repeats_its_own_target_and_a_fresh_one_the_windows() {
     app.history.history_reach = history_reach::HistoryReach::Sessions(5);
     app.drain_tabs();
     assert_eq!(
-        app.active_tab().main_history_reach(),
+        app.active_tab().session.main_history_reach(),
         history_reach::HistoryReach::Hours(4),
         "a tab that pressed repeats its own target"
     );

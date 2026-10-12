@@ -17,7 +17,6 @@ use crate::chart_layers::ChartLayer;
 use crate::indicator_worker::SlotId;
 use crate::symbols_file;
 use crate::tabstrip::TabAction;
-use quantick_feed::history_reach;
 
 use crate::config::AppConfig;
 
@@ -53,52 +52,8 @@ pub(super) fn saved_context_intervals(bars: &[String], time_bars: Option<&str>) 
         .collect()
 }
 
-/// How much tape one press of *load older* reaches for, and how it is
-/// fetched — a standing choice of the window, mirrored onto every tab by
-/// [`QuantickApp::drain_tabs`], which is where a press is actually served.
-///
-/// Owned here because that mirroring is this module's job. The toolbar
-/// edits it, the menu bar toggles two of it, `launch_hooks` seeds it from
-/// the environment and `workspace_save` persists it.
-pub(super) struct HistorySettings {
-    /// Whether venue candle history is asked for in slices, newest first
-    /// (View → progressive venue history).
-    ///
-    /// On by default. A span of one-minute candles is a run of sequential
-    /// venue round trips — seconds for the opening week, and another such run
-    /// for every span the trader reaches back through — and fetched whole the
-    /// chart shows nothing at all for the whole of it. Off restores exactly
-    /// that: one
-    /// request, one reply, one very late frame — kept because a trader on a
-    /// metered or rate-limited connection may prefer the smaller number of
-    /// requests, and because a setting whose "off" is not the old behaviour is
-    /// not a setting the user can fall back to.
-    pub(super) progressive_history: bool,
-
-    /// What the History button's main click loads on a tab that has never
-    /// pressed: the last target pressed in this window, saved with the
-    /// workspace. A tab that has pressed repeats its own last target, and a
-    /// run belongs to its tab alone. Every press sets it through
-    /// [`super::control_host::TabsMut::press_history`], the one press the
-    /// toolbar and the control plane share; the `QUANTICK_HISTORY_REACH` hook
-    /// and an opened workspace set it directly.
-    pub(super) history_reach: history_reach::HistoryReach,
-
-    /// Minutes of traded time a workspace saved with the old `by time` reach
-    /// meant, so its `span` token loads as the same `hours:N` target. Seeded
-    /// from `[history] reach_span_minutes`.
-    pub(super) history_reach_span_minutes: u32,
-
-    /// Whether a chart *not* cut by time may carry the venue's own candles in
-    /// front of its bars.
-    ///
-    /// Off by default: a tick chart has always opened on the prints this
-    /// session saw, and nothing is put in front of them unasked. On, a chart
-    /// cut by trades gets the venue's 1-minute candles as a labelled prefix —
-    /// the only way such a chart can show yesterday at all, since a candle
-    /// cannot be folded into a tick bar and must never pretend to be one.
-    pub(super) venue_lead_in: bool,
-}
+/// The window's history choices; see [`quantick_session::HistorySettings`].
+pub(super) use quantick_session::HistorySettings;
 
 impl QuantickApp {
     /// The slot a command from the chrome addresses: the active tab, its
@@ -233,36 +188,6 @@ impl QuantickApp {
             }
             TabAction::Close(index) => self.arrangement_adapter().close_tab(index),
             TabAction::New => self.surfaces.source_picker.open(&self.config),
-        }
-    }
-}
-
-impl HistorySettings {
-    /// The minutes a legacy `span` token means, clamped to what an hours
-    /// target can reach.
-    pub(super) fn set_span_minutes(&mut self, minutes: u32) {
-        let ceiling = (history_reach::MAX_CAMPAIGN_SPAN_MS / 60_000) as u32;
-        self.history_reach_span_minutes = minutes.clamp(1, ceiling);
-    }
-
-    /// The window's standing choice, phrased for the tabs. The switch lives
-    /// on the window, the request is phrased by the tab: handed to every
-    /// tab's drain each frame so every tab asks the way the trader last said,
-    /// including one opened after the choice was made.
-    /// Only the tab on screen (`visible`) keeps paging a history run.
-    pub(super) fn policy(
-        &self,
-        tz: crate::timezone::TzOffset,
-        visible: bool,
-    ) -> crate::tab::HistoryPolicy {
-        crate::tab::HistoryPolicy {
-            progressive: self.progressive_history,
-            venue_lead_in: self.venue_lead_in,
-            frame: crate::tab::HistoryFrame {
-                default_reach: self.history_reach,
-                tz,
-                visible,
-            },
         }
     }
 }

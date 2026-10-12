@@ -99,7 +99,11 @@ fn a_history_load_runs_reads_back_and_cancels_through_the_control_plane() {
     let (stopped, _) = unkeyed_call(&mut app, &mut cockpit, cancel, json!({}));
     assert_eq!(success_result(&stopped)["cancelled"], "run");
     assert_eq!(history_read(&mut app, &mut observer)["state"], "idle");
-    let note = app.active_tab().history_note().expect("never silent");
+    let note = app
+        .active_tab()
+        .session
+        .history_note()
+        .expect("never silent");
     assert!(note.contains("cancelled"), "{note}");
     let (nothing, _) = unkeyed_call(&mut app, &mut cockpit, cancel, json!({}));
     assert_eq!(
@@ -178,7 +182,7 @@ fn a_mouse_press_and_a_control_press_leave_the_same_state() {
             assert_eq!(summary.2, reach.token().as_str(), "{reach:?}");
             states.push((
                 app.history.history_reach,
-                app.active_tab().main_history_reach(),
+                app.active_tab().session.main_history_reach(),
                 summary,
             ));
             disable_test_gateway(&mut app, &ctx);
@@ -210,7 +214,7 @@ fn a_press_refused_while_a_run_loads_leaves_the_default_alone() {
         app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
             HistoryReach::Hours(2),
         ));
-        assert!(app.active_tab().history_reach_running());
+        assert!(app.active_tab().session.history_reach_running());
 
         if by_control {
             let (pressed, _) = unkeyed_call(
@@ -231,11 +235,91 @@ fn a_press_refused_while_a_run_loads_leaves_the_default_alone() {
             "by control: {by_control}; the refused target is not the default"
         );
         assert_eq!(
-            app.active_tab().main_history_reach(),
+            app.active_tab().session.main_history_reach(),
             HistoryReach::Hours(2)
         );
         assert_eq!(summary_reach(&mut app, &mut observer).2, "hours:2");
         disable_test_gateway(&mut app, &ctx);
         std::fs::remove_dir_all(directory).ok();
     }
+}
+
+/// One tape, the same presses: through `feed.history.load` and
+/// `feed.history.cancel`, and through the toolbar, the session ends in one
+/// state after every press and tells one story. The two entries are one
+/// dispatch, so they cannot drift into two accounts of the same press.
+#[test]
+fn a_control_press_and_a_toolbar_press_reach_the_session_as_one() {
+    use crate::toolbar::ToolbarAction;
+    use quantick_feed::history_reach::HistoryReach;
+    use quantick_feed::history_run::{Cancelled, Press};
+    use quantick_session::SessionEvent;
+    let ctx = egui::Context::default();
+    // A press, one refused while it runs, a cancel, a cancel of nothing, and
+    // a fresh press after it.
+    let presses = [
+        Some(HistoryReach::Hours(2)),
+        Some(HistoryReach::Sessions(5)),
+        None,
+        None,
+        Some(HistoryReach::Sessions(1)),
+    ];
+    let mut runs = Vec::new();
+    for by_control in [false, true] {
+        let (mut app, _commands) = app_with_history(4);
+        run_frame(&mut app, &ctx);
+        let directory = gateway_test_directory("history-bus");
+        grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+        enable_test_gateway(&mut app, &ctx, &directory, 4);
+        let mut cockpit = connect(
+            &directory,
+            &options("cockpit", &["cockpit", "cockpit.layout"]),
+        );
+        app.active_tab_mut().session.drain_events();
+        let mut snapshots = Vec::new();
+        for press in presses {
+            match (press, by_control) {
+                (Some(reach), true) => {
+                    let payload = json!({ "reach": reach.token() });
+                    let (pressed, _) =
+                        unkeyed_call(&mut app, &mut cockpit, "feed.history.load", payload);
+                    success_result(&pressed);
+                }
+                (Some(reach), false) => app.apply_toolbar_action(ToolbarAction::LoadHistory(reach)),
+                (None, true) => {
+                    let cancel = "feed.history.cancel";
+                    let (stopped, _) = unkeyed_call(&mut app, &mut cockpit, cancel, json!({}));
+                    success_result(&stopped);
+                }
+                (None, false) => app.apply_toolbar_action(ToolbarAction::CancelHistory),
+            }
+            snapshots.push(app.active_tab().session.snapshot());
+        }
+        let trail = app.active_tab_mut().session.drain_events();
+        disable_test_gateway(&mut app, &ctx);
+        std::fs::remove_dir_all(directory).ok();
+        runs.push((snapshots, trail));
+    }
+    assert_eq!(runs[0], runs[1], "the toolbar and the control plane agree");
+    let (snapshots, trail) = &runs[0];
+    assert_eq!(snapshots[1].last_press, Some(Press::AlreadyRunning));
+    assert_eq!(snapshots[3].last_cancel, Some(Cancelled::Nothing));
+    assert!(
+        matches!(
+            trail.first(),
+            Some(SessionEvent::Pressed {
+                press: Press::Start,
+                ..
+            })
+        ),
+        "{trail:?}"
+    );
+    // The cancelled run's page is still owed a reply, so the fresh press
+    // queues behind it rather than asking twice.
+    assert_eq!(snapshots[4].last_press, Some(Press::Queued));
+    let asked = trail
+        .iter()
+        .filter(|event| matches!(event, SessionEvent::Asked(_)))
+        .count();
+    assert_eq!(asked, 1, "one page out: {trail:?}");
 }

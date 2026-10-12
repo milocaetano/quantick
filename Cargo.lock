@@ -2940,6 +2940,7 @@ dependencies = [
  "quantick-paper",
  "quantick-pine",
  "quantick-replay",
+ "quantick-session",
  "quantick-sim",
  "quantick-stores",
  "quantick-strategy",
@@ -3273,6 +3274,17 @@ dependencies = [
  "quantick-engine",
  "rust_decimal",
  "serde_json",
+]
+
+[[package]]
+name = "quantick-session"
+version = "0.1.0"
+dependencies = [
+ "quantick-civil",
+ "quantick-engine",
+ "quantick-sources",
+ "rust_decimal",
+ "tracing",
 ]
 
 [[package]]

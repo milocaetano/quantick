@@ -299,7 +299,7 @@ mod move_pane_tests {
             "and it is still charted and counted — it is the trader's morning"
         );
         assert_eq!(
-            tab.opening_slices_remaining(),
+            tab.session.opening_slices_remaining(),
             Some(4),
             "and how much of the session is still arriving is readable, not              only loggable: an operator has to be able to tell a chart that is              still filling from one that has all it will get"
         );

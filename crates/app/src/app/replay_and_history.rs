@@ -335,7 +335,7 @@ impl Harness {
         // turning above it. That is the dishonesty this branch removes, and a
         // hook has no business manufacturing it for a capture.
         if tab.flow_pane.slots() == 0
-            || tab.history_note().is_some()
+            || tab.session.history_note().is_some()
             || tab.loading.is_active(LoadingTask::History)
         {
             return;
@@ -347,8 +347,8 @@ impl Harness {
             .trades()
             .first()
             .map(|trade| trade.timestamp_ms);
-        let outcome = ReachOutcome::ended(tab.main_history_reach(), end, oldest);
-        let tz = tab.history_frame.tz;
+        let outcome = ReachOutcome::ended(tab.session.main_history_reach(), end, oldest);
+        let tz = tab.session.history_frame().tz;
         tab.raise_history_note(outcome.sentence(|ms| quantick_civil::fmt_weekday_minute(ms, tz)));
     }
 
@@ -356,7 +356,7 @@ impl Harness {
     /// candles" entry, pressed without a hand, once per frame at most.
     ///
     /// Same shape and same reasons as [`Self::apply_load_older`], against a
-    /// different record: it goes through `Tab::request_older_ohlcv_history`
+    /// different record: it goes through `Act::LoadOlderCandles`
     /// rather than the feed command, so a run under this hook exercises the
     /// trader's own path; it waits, because there is nothing to reach back
     /// *from* until the opening request has landed; and it gives up rather
@@ -394,7 +394,7 @@ impl Harness {
             }
             return;
         }
-        if !tab.can_load_older_candles(capabilities) {
+        if !tab.older_candles(capabilities).is_available() {
             // Nothing to reach back *from* yet, or the venue's record starts
             // here. Both are worth waiting a bounded while for, and both end
             // the same way; the log names what the tab held so an operator can
@@ -406,7 +406,7 @@ impl Harness {
                     event_code = "LOAD_OLDER_CANDLES_AUTOSTART_GAVE_UP",
                     spans,
                     frames_waited = crate::harness::LOAD_OLDER_CANDLES_HOOK_FRAMES,
-                    candles_held = tab.venue_candles_held(),
+                    candles_held = tab.session.venue_candles_held(),
                     ohlcv_history = capabilities.ohlcv_history,
                     action = "chart_left_as_it_is",
                     "QUANTICK_LOAD_OLDER_CANDLES found nothing to reach back from"
@@ -419,7 +419,8 @@ impl Harness {
         // would quietly shorten the reach the operator asked for — but it still
         // costs a frame of budget, or a permanently saturated channel leaves
         // the hook armed for the life of the process with nothing ever logged.
-        if tab.request_older_ohlcv_history(tab_id, capabilities) {
+        let act = quantick_session::Act::LoadOlderCandles { tab_id };
+        if tab.run_session(Some(config), act).sent {
             self.load_older_candles_span_sent();
         } else if self.spend_load_older_candles_frame().gave_up {
             tracing::warn!(

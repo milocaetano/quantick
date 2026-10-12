@@ -62,7 +62,7 @@ fn snapshot<P: TabsPort + ChromePort + HealthPort + LayoutPort + ?Sized>(
     let (history_reach, venue_lead_in) = app.health_reads().history_settings();
     let history_reach_running = tabs
         .get(active_index)
-        .is_some_and(|tab| tab.history_reach_running());
+        .is_some_and(|tab| tab.session.history_reach_running());
     WorkspaceSnapshot {
         active_tab_index: wire_usize(active_index),
         active_tab_id: tabs.get(active_index).map_or_else(

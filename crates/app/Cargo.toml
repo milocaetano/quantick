@@ -30,6 +30,8 @@ quantick-chart-interaction = { path = "../chart-interaction" }
 quantick-civil = { path = "../civil" }
 # Headless chart drawings: the mark store, its update and the scenes painted.
 quantick-drawings = { path = "../drawings" }
+# Reaching back: venue candles and trade-history paging behind one command bus.
+quantick-session = { path = "../session" }
 quantick-layers = { path = "../layers" }
 quantick-control = { path = "../control" }
 # Private descriptor publication for the local gateway (ADR 0001). The

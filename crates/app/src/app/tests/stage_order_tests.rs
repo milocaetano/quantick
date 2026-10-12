@@ -163,7 +163,7 @@ fn the_note_hook_before_the_expiry_draws_a_frame_with_an_empty_lane() {
         // The frame on which the held note has outlived its linger.
         let past_linger = Instant::now() + crate::tab::HISTORY_NOTE_LINGER;
         staged_frame_at(&mut app, &ctx, order, past_linger);
-        app.active_tab().history_note().is_some()
+        app.active_tab().session.history_note().is_some()
     };
     assert!(
         note_after_frame(&FrameStage::ORDER),

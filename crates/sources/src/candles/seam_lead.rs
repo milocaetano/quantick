@@ -34,7 +34,7 @@ use quantick_engine::Bar;
 use quantick_engine::time_bucket::{DAY_MS, TimeBucketLaw, time_bucket_start};
 
 use super::placement_ms;
-use crate::OHLCV_BASE_INTERVAL_MS;
+use crate::ohlcv::OHLCV_BASE_INTERVAL_MS;
 
 /// What the venue's candles say about the seam bucket before the first trade.
 #[derive(Debug, Clone, PartialEq, Eq)]
