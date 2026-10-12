@@ -29,6 +29,10 @@ use crate::{
     PxRect, RgbaExt as _, TextMetrics, UNMEASURED,
 };
 
+#[cfg(test)]
+#[path = "shared_tests.rs"]
+mod shared_tests;
+
 /// What a pane resolved on *another* pane's shared marks this frame.
 ///
 /// Said in market time and price, because those are the only coordinates two
