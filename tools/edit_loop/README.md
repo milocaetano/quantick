@@ -223,9 +223,28 @@ at `eddf77504a9771d42bd5aa9808b3d29fb093cd32` failed with
 7,241 lines. By the usual formula,
 `ceil(1.25 * 1.198982527 * 1000) / 1000`, the `quantick-drawings` ceiling is
 now **1.499 s**, with `crates/drawings/src/tools/fib.rs` as its
-representative. This is a scoped third-owner amendment, not recalibration: the app and
-orderflow ceilings, host, toolchain, jobs, profile hash and protocol hash are
-unchanged, and the PR's exact-final-head run must pass every one.
+representative.
+
+The same change re-anchors the app ceiling (same authorization). Hosted
+runners that report the same host class fall into two speed groups:
+1580b5fd and 443d1ea2 share tree `fcaab114` and run the same 2,124 app tests,
+yet the package test run finished in 33.10 s in
+[one run](https://github.com/milocaetano/quantick/actions/runs/38089337280)
+and 52.05 s in [the other](https://github.com/milocaetano/quantick/actions/runs/38091504369).
+Edit-loop runs from 2026-10-10 to 2026-10-12 land near 33-40 s or 52-59 s
+with no recorded contention, and on the slower group the app loop passes or
+fails the 64.363 s ceiling by chance. A local per-test comparison of
+16b91285 and 3f80028d found no test or shared setup that got heavier. The
+[first run of this change](https://github.com/milocaetano/quantick/actions/runs/38271378585)
+at `e1d98f915a6c29bfc7336d6050e4989710bf6c37` landed on the slower group and
+failed with `edit-loop budget exceeded: quantick-app`: its slowest app loop
+was 65.700330035 s (touched build 6.689002343 s plus package test run
+59.011327692 s). By the usual formula, `ceil(1.25 * 65.700330035 * 1000) / 1000`,
+the `quantick-app` ceiling is now **82.126 s**. On the faster group the gate
+now catches only larger growth. This is a scoped amendment, not
+recalibration: the orderflow ceiling, selection, representatives, host,
+toolchain, jobs, profile hash and protocol hash are unchanged, and the PR's
+exact-final-head run must pass every one.
 
 #### Reviewed 2026-10-06 calibration
 
