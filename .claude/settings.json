@@ -77,7 +77,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PROJECT_DIR}/.claude/hooks/review_verdict.sh\"",
+            "command": "sh \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guardrails.sh\" review-verdict",
             "timeout": 10
           }
         ]
@@ -88,7 +88,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PROJECT_DIR}/.claude/hooks/review_verdict.sh\"",
+            "command": "sh \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guardrails.sh\" review-verdict",
             "timeout": 10
           }
         ]

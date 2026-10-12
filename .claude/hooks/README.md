@@ -18,7 +18,7 @@ its `/hooks` screen, as required by the
 | `pr-gate` | `PreToolUse` | `Bash`, `exec_command` | Denies non-draft creation/readiness/merge until `arch-review-ok`, applicable `delivery-review-ok`, and `ai-review-complete` match the exact change. Ready/merge also require each marker's durable current-review PR report and zero open AI threads. Only delivery has a bounded `small` exemption; draft creation is ungated. Alongside the gate, and never as part of it, it prints the read-cost advisory described below. |
 | `commit-reminder` | `PostToolUse` | `Bash` | Cannot block (the commit already landed). After a `git commit` on a branch ahead of `origin/main`, says the gate is coming and names the markers that branch's tier actually owes. |
 | `guard-watch` | `PostToolUse` | `Edit`, `Write`, `apply_patch` | Cannot block, and is not meant to. Runs the already-built `quantick-guards` binary over each file just written and reports what the repository guards found. Silent when nothing was found, when the binary has not been built, or when the file is outside a repository. |
-| `review_verdict.sh` | `PostToolUse`, `SubagentStop` | `SubagentHandback` | Cannot block. Records `code-review-ok` from a review subagent's `REVIEW-VERDICT` line; see the `implement` tier. Claude Code only. |
+| `review-verdict` | `PostToolUse`, `SubagentStop` | `SubagentHandback` | Cannot block. Records `code-review-ok` from a review subagent's `REVIEW-VERDICT` line; see the `implement` tier. Claude Code only. |
 
 ## Why `guard-watch` never blocks and never builds
 
@@ -586,13 +586,14 @@ mission loops and the `small` bound never see it. A branch that declares it owes
 exactly one review: `code-review-ok`, the exact-diff key, required before
 **any** PR, draft included, and again at ready and merge. The agent never
 writes it; Claude Code's auto-mode classifier denies that write.
-`review_verdict.sh` does, from the review subagent's report (a background
+The `review-verdict` mode does, from the review subagent's report (a background
 review's `SubagentHandback` message, a foreground fork's last message). Its
 last `REVIEW-VERDICT: pass|fail <worktree> <HEAD>` line counts only while that
 worktree declares the tier and still sits at that HEAD: `pass` writes
-`campaign_context.sh key`, the key pr-gate computes, so a later commit leaves
-it stale; `fail` removes the record; no line changes nothing. Codex has no
-such event and records it with the command pr-gate prints. No arch, AI or delivery marker, durable report, thread count or
+`review_key`, the key pr-gate computes, so a later commit leaves it stale;
+`fail` removes the record; no line changes nothing. Codex has no such event
+and records it with the command pr-gate prints. No arch, AI or delivery
+marker, durable report, thread count or
 full-CI check is asked for; a merge to `main` stays the user's alone. The trade
 is deliberate: the tier exists to make a goal cheap in tokens, and what protects
 `main` past the review is CI on the PR and the user's own merge. Into an
