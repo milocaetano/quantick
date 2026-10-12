@@ -9,8 +9,8 @@ use crate::{
     bands::{self, Band},
     chart::PriceScale,
     drawings::{
-        ChartPoint, DrawContext, DrawingBand, DrawingStyle, Drawings, MarkScene, egui_rect, pos,
-        px_rect, to_color32,
+        ChartPoint, DrawContext, DrawingBand, Drawings, MarkScene, egui_rect, pos, px_rect,
+        to_color32,
     },
     viewport::Viewport,
 };
@@ -218,17 +218,9 @@ impl DrawingPass<'_> {
             // the loaded series, or it was drawn on the instrument this tab
             // used to show. It survived the change, because only the trader
             // deletes a drawing, and it says what it is by fading rather than
-            // by passing itself off as a level on this market. Same opacity
-            // the mirrored marks use for the same reason.
-            let style = if drawing.off_series || drawing.foreign_market {
-                DrawingStyle {
-                    color: quantick_drawings::painted_color(drawing),
-                    fill_alpha: 0,
-                    ..drawing.style
-                }
-            } else {
-                drawing.style
-            };
+            // by passing itself off as a level on this market. Same fade the
+            // mirrored marks use for the same reason.
+            let style = quantick_drawings::painted_style(drawing);
             let ctxt = DrawContext {
                 payload: drawing.payload.as_ref(),
                 anchors: &drawing.points,

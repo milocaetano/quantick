@@ -73,7 +73,7 @@ pub use style::{
     DrawingStyle, FIB_LABEL_OFFSET_PX, FIB_LABEL_SIZE_PX, GlyphSize, MAX_DRAWING_FILL_ALPHA,
     MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX, SELECTED_ANCHOR_FILL, SELECTED_ANCHOR_RADIUS_PX,
     SELECTED_ANCHOR_RING_WIDTH_PX, SELECTION_HALO_COLOR, SELECTION_HALO_EXTRA_WIDTH_PX,
-    drawing_fill, drawing_stroke, painted_color,
+    drawing_fill, drawing_stroke, faded_style, painted_color, painted_style,
 };
 pub use tool::{DoubleClickHint, DrawingTool, MarkTool};
 pub use tools::*;

@@ -169,21 +169,49 @@ impl<T: ToolCatalog> Drawings<T> {
         new_slots: usize,
         slot_of: impl Fn(i64) -> Option<f32>,
     ) {
-        let reanchor_all = |items: &mut [Drawing<T>]| {
+        self.each_copy(|items| {
             for drawing in items {
                 drawing.off_series =
                     reanchor_points(&mut drawing.points, (old_slots, new_slots), &slot_of);
             }
-        };
-        reanchor_all(&mut self.items);
+        });
+    }
+
+    /// Re-ask the series for the marks it could not reach, once older
+    /// history has arrived in front of it.
+    ///
+    /// A re-cut onto a short series parks the anchors it cannot place on slot
+    /// 0 and flags the object [`Drawing::off_series`] ([`Self::reanchor`]).
+    /// The history that lands next only shifts indices, so without this the
+    /// mark stayed faded on whatever bar the shift left it, after the series
+    /// had grown to cover its instant. Only flagged objects are re-asked: a
+    /// mark the series already backs keeps the exact spot the trader gave it.
+    ///
+    /// Rate: once per history arrival, over a handful of objects.
+    pub fn resettle_off_series(&mut self, slot_of: impl Fn(i64) -> Option<f32>) {
+        self.each_copy(|items| {
+            for drawing in items.iter_mut().filter(|drawing| drawing.off_series) {
+                // Same length either side: an undated anchor already moved
+                // with the shift and has nothing to re-ask.
+                drawing.off_series = reanchor_points(&mut drawing.points, (0, 0), &slot_of);
+            }
+        });
+    }
+
+    /// Every copy of the objects a change of bar space has to reach: the live
+    /// items, the draft, the undo and redo snapshots and a gesture's baseline.
+    /// Undoing later must not resurrect coordinates from a series that no
+    /// longer exists.
+    fn each_copy(&mut self, mut apply: impl FnMut(&mut [Drawing<T>])) {
+        apply(&mut self.items);
         if let Some(draft) = self.draft.as_mut() {
-            reanchor_all(std::slice::from_mut(draft));
+            apply(std::slice::from_mut(draft));
         }
         for entry in self.undo.iter_mut().chain(self.redo.iter_mut()) {
-            reanchor_all(&mut entry.items);
+            apply(&mut entry.items);
         }
         if let Some(baseline) = &mut self.gesture_baseline {
-            reanchor_all(&mut baseline.items);
+            apply(&mut baseline.items);
         }
     }
 

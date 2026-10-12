@@ -25,8 +25,8 @@ use super::{
     Mark, Marks, PaneGestures,
 };
 use crate::{
-    AnchorSnap, CLAMPED_OPACITY, ChartPoint, DrawContext, DrawingBand, DrawingStyle, MarkScene, Px,
-    PxRect, RgbaExt as _, TextMetrics, UNMEASURED,
+    AnchorSnap, ChartPoint, DrawContext, DrawingBand, MarkScene, Px, PxRect, TextMetrics,
+    UNMEASURED, faded_style,
 };
 
 #[cfg(test)]
@@ -286,13 +286,11 @@ impl DrawingProjection<'_> {
             };
             // A clamped anchor is an honest half-truth: the object really is
             // off the end of this pane's series, and it says so by fading
-            // rather than by pretending to sit on the edge bar.
+            // rather than by pretending to sit on the edge bar. Its prices are
+            // still exact, so a zone keeps its fill — the same fade the owning
+            // pane paints an off-series mark with.
             let style = if clamped {
-                DrawingStyle {
-                    color: drawing.style.color.gamma_multiply(CLAMPED_OPACITY),
-                    fill_alpha: 0,
-                    ..drawing.style
-                }
+                faded_style(drawing.style)
             } else {
                 drawing.style
             };
@@ -406,11 +404,14 @@ impl DrawingProjection<'_> {
             // further than the tape has. Only a *closed* bar can prove that,
             // by having ended before the anchor's instant — a time inside the
             // forming bar is simply now, and fading it would be a lie in the
-            // other direction.
-            clamped |= self
-                .series
-                .closed_bar(slot)
-                .is_some_and(|bar| bar.close_time < time);
+            // other direction. On any older slot the instant merely fell in
+            // the quiet between that bar's last print and the next bar's
+            // first, which is inside the series, not off its end.
+            clamped |= slot == slots - 1
+                && self
+                    .series
+                    .closed_bar(slot)
+                    .is_some_and(|bar| bar.close_time < time);
             anchors.push(ChartPoint::at_time(
                 slot as f32 + 0.5,
                 point.price,

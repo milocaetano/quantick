@@ -1281,7 +1281,11 @@ fn history_growth_that_still_misses_the_instant_keeps_the_fade() {
     drawings.resettle_off_series(|_| None);
 
     assert!(drawings.items()[0].off_series);
-    assert_eq!(drawings.items()[0].points[0].bar, 3.0, "only shifted");
+    assert_eq!(
+        drawings.items()[0].points[0].bar,
+        0.0,
+        "parked on the first bar again, as a re-cut parks it"
+    );
 }
 
 /// A mark the series already backs keeps the exact spot the trader put it
