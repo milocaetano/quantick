@@ -6,9 +6,10 @@
 //! because the menu bar is their only production reader — the paper
 //! shortcuts are re-exported to `super` for the tests that name them.
 
-use super::{GatewayPort, LayoutPort};
+use super::{GatewayPort, LayersPort, LayoutPort};
 use eframe::egui;
 
+use crate::surfaces::ChartSettingsTab::Candles;
 use crate::tabstrip::{self, TabAction};
 use crate::theme;
 
@@ -287,7 +288,7 @@ impl QuantickApp {
             MenuCommand::SetProgressiveHistory(on) => self.history.progressive_history = on,
             MenuCommand::SetVenueLeadIn(on) => self.history.venue_lead_in = on,
             MenuCommand::SetTimezone(tz) => self.tz = tz,
-            MenuCommand::OpenAppearance => self.surfaces.style_panel.open(),
+            MenuCommand::OpenAppearance => self.layer_wiring().open_settings(Candles),
             MenuCommand::OpenAgentAccess => {
                 if let Some(access) = self.control.control_access.as_mut() {
                     access.open_panel();

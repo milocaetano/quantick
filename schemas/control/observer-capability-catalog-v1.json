@@ -4583,6 +4583,227 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Opens the chart settings window on its Candles or Footprint tab or closes it — the window a double click on the candles, the toolbar's appearance and footprint buttons and the menus open — and applies, saves, deletes or resets candle presets by name. Built-in presets change the candles and keep the canvas; saved presets are written to the candle presets file and restore the whole look. Reset restores the appearance the window opened on and needs the window open. A save or delete whose file cannot be written is undone and refused with control.capability_unavailable, retryable. Persistence differs by action: only save and delete outlive the session (they write the candle presets file); open, close, apply and reset change this session's window and appearance only, which a relaunch does not keep. The declared persistence is durable because it names the strongest effect any action can have.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "chart.settings.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "ChartSettingsTab": {
+            "description": "A tab of the chart settings window.",
+            "oneOf": [
+              {
+                "const": "candles",
+                "description": "Candle and canvas appearance, with its presets.",
+                "type": "string"
+              },
+              {
+                "const": "footprint",
+                "description": "The focused chart's footprint knobs, with their presets.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "One thing to do with the window or its candle presets.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Put the window on screen at `tab`. Opening starts a sitting: the\nappearance at that moment is what `reset_candles` returns to.",
+            "properties": {
+              "action": {
+                "const": "open",
+                "type": "string"
+              },
+              "tab": {
+                "$ref": "#/$defs/ChartSettingsTab"
+              }
+            },
+            "required": [
+              "action",
+              "tab"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Take the window off screen and end the sitting.",
+            "properties": {
+              "action": {
+                "const": "close",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Apply a built-in candle preset (by label or snake_case value) or a\nsaved one (by name). A built-in changes the candles and keeps the\ncanvas; a saved one brings back candles and canvas.",
+            "properties": {
+              "action": {
+                "const": "apply_candle_preset",
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "name"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Save the chart's current look under `name`, replacing a saved look of\nthat name. Built-in names are refused.",
+            "properties": {
+              "action": {
+                "const": "save_candle_preset",
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "name"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Forget a saved look. Built-ins cannot be deleted.",
+            "properties": {
+              "action": {
+                "const": "delete_candle_preset",
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "name"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Restore the appearance the window opened on. Refused while the window\nis closed: there is no sitting to return to.",
+            "properties": {
+              "action": {
+                "const": "reset_candles",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "type": "object"
+          }
+        ],
+        "title": "ChartSettingsInput"
+      },
+      "module": "chart",
+      "output_schema": {
+        "$defs": {
+          "ChartSettingsTab": {
+            "description": "A tab of the chart settings window.",
+            "oneOf": [
+              {
+                "const": "candles",
+                "description": "Candle and canvas appearance, with its presets.",
+                "type": "string"
+              },
+              {
+                "const": "footprint",
+                "description": "The focused chart's footprint knobs, with their presets.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "The window and the candle presets after the call.",
+        "properties": {
+          "built_in_presets": {
+            "description": "The built-in presets, by label, in the window's order.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "candle_preset": {
+            "description": "The preset the chart's look answers to: a built-in label when the\ncandles match one, a saved name when the whole look matches one, or\n`None` for a look nobody named.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "changed": {
+            "description": "Whether the call changed the window, the appearance or the saved list.",
+            "type": "boolean"
+          },
+          "custom_presets": {
+            "description": "The saved looks, alphabetically.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "open": {
+            "description": "Whether the window is on screen.",
+            "type": "boolean"
+          },
+          "tab": {
+            "$ref": "#/$defs/ChartSettingsTab",
+            "description": "The tab it shows, or would show when opened."
+          }
+        },
+        "required": [
+          "open",
+          "tab",
+          "built_in_presets",
+          "custom_presets",
+          "changed"
+        ],
+        "title": "ChartSettingsResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Every action names the state it wants: opening an open window, applying the preset already shown, saving the same look under the same name or resetting an unchanged sitting are harmless, and the result reports the window and the presets as they stand.",
+      "title": "Drive the chart settings window",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Holds the native tape's right edge at a past instant or pins it to live, and sets how much market time it shows. Never moves the candles beside it.",
       "destructive": false,
       "dry_run_supported": false,
@@ -17749,6 +17970,32 @@
               "imbalance_ratio": {
                 "$ref": "#/$defs/CanonicalDecimal",
                 "description": "A level is imbalanced when one side exceeds the diagonal other side by\nthis factor."
+              },
+              "number_row_px": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The shortest a row with numbers may draw before neighbouring prices\nmerge (\"min number row height\"); the one-number level keeps a pixel\nunder it.",
+                "x-unit": "pixels"
+              },
+              "profile_row_px": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/CanonicalDecimal"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "The shortest a profile band may draw before neighbouring prices merge\ninto one band (\"min band height\").",
+                "x-unit": "pixels"
               },
               "show_delta_totals": {
                 "type": "boolean"

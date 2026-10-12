@@ -267,7 +267,7 @@ pub fn write(path: &Path, bundle: &Bundle) -> Result<(), String> {
 /// truncates first, so a crash mid-write would leave a half file that the
 /// next read reports unreadable — the whole cockpit gone rather than a
 /// stale one.
-fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
+pub(crate) fn write_atomically(path: &Path, text: &str) -> std::io::Result<()> {
     quantick_workspace::write_refusal::guard_write(path).map_err(std::io::Error::other)?;
     let temp = path.with_extension("tmp");
     match std::fs::write(&temp, text).and_then(|()| std::fs::rename(&temp, path)) {

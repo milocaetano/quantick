@@ -115,7 +115,25 @@ pub(crate) fn claimed(
         .any(|claim| (claim - at).abs() < clearance)
 }
 
-/// Where the pointer's time chip will sit on `strip`, and how wide it is.
+/// The pointer's time chip on the time strip: where it is centred and how
+/// wide its text is, as [`time_tag`] laid it out this frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct TimeChip {
+    pub centre: f32,
+    pub width: f32,
+}
+
+/// Whether a strip label `label` wide centred at `at` would share pixels with
+/// the pointer's chip, when there is one. The one width both the day
+/// separator and the time labels stand aside for: the chip's real text.
+#[must_use]
+pub(crate) fn time_claimed(chip: Option<TimeChip>, at: f32, label: f32) -> bool {
+    chip.is_some_and(|chip| claimed(at, label, chip.width, [chip.centre]))
+}
+
+/// Where the pointer's time chip will sit on `strip`, how wide it is, and
+/// its text: the full tag, or below a day the widest shorter true form that
+/// fits a strip too narrow for it.
 ///
 /// Asked by the strip before it writes its own labels and by the paint that
 /// puts the chip there, so the coordinate an axis stands aside for and the one
@@ -126,28 +144,28 @@ pub(crate) fn time_tag(
     painter: &egui::Painter,
     strip: egui::Rect,
     readout: &PointerReadout,
-) -> Option<(f32, f32)> {
+    tz: TzOffset,
+) -> Option<(TimeChip, String)> {
     let bar = readout.bar?;
-    // Monospace, so the tag's own text measured in any zone answers for it:
-    // a clock time is the same width everywhere, and a date is not a clock.
-    let width = painter
-        .layout_no_wrap(
-            crate::plot_area::fmt_pointer_time(
-                bar.open_time_unix_ms,
-                bar.interval_ms,
-                TzOffset::new(0),
-            ),
-            egui::FontId::monospace(chart::TIME_LABEL_FONT_PX),
-            theme::TEXT_PRIMARY,
-        )
-        .size()
-        .x;
-    let half = width / 2.0 + TAG_PAD.x;
-    let centre = readout.position.x.clamp(
-        strip.left() + half,
-        (strip.right() - half).max(strip.left() + half),
-    );
-    Some((centre, width))
+    let full = crate::plot_area::fmt_pointer_time(bar.open_time_unix_ms, bar.interval_ms, tz);
+    let font = egui::FontId::monospace(chart::TIME_LABEL_FONT_PX);
+    let galley = painter.layout_no_wrap(full.clone(), font, theme::TEXT_PRIMARY);
+    // Monospace: one character of the full tag measures every shorter form.
+    let char_width = galley.size().x / full.chars().count().max(1) as f32;
+    let room = strip.width() - 2.0 * TAG_PAD.x;
+    let fits = |text: &str| text.chars().count() as f32 * char_width <= room;
+    let text = match bar
+        .interval_ms
+        .and_then(crate::plot_area::calendar_label_sample)
+    {
+        Some(_) => full,
+        None => quantick_chart::day_turn::pointer_time_fitting(bar.open_time_unix_ms, tz, fits),
+    };
+    let width = text.chars().count() as f32 * char_width;
+    // Flush left where even the shortest form overflows; the paint clips it.
+    let padded = width + 2.0 * TAG_PAD.x;
+    let centre = chart::chip_centre(readout.position.x, padded, strip.left(), strip.right());
+    Some((TimeChip { centre, width }, text))
 }
 
 pub(crate) use quantick_chart::pane_series::PointerBar;
@@ -277,9 +295,12 @@ pub(crate) fn paint_time_mark(
     readout: &PointerReadout,
     tz: TzOffset,
 ) {
-    let (Some(bar), Some((centre, _))) = (readout.bar, time_tag(painter, strip, readout)) else {
+    let Some((TimeChip { centre, .. }, text)) = time_tag(painter, strip, readout, tz) else {
         return;
     };
+    // Never past the strip: on one narrower than the chip, the chip starts at
+    // its left edge and is cut at its right.
+    let painter = &painter.with_clip_rect(strip);
     painter.line_segment(
         [
             egui::pos2(centre, strip.top()),
@@ -291,8 +312,7 @@ pub(crate) fn paint_time_mark(
     // written at. The strip drops seconds when it runs out of room for six
     // labels; there is only ever one of these, and a trader who points at a
     // bar to ask when it happened is asking to the second — or, on a day,
-    // week or month chart, to the date.
-    let text = crate::plot_area::fmt_pointer_time(bar.open_time_unix_ms, bar.interval_ms, tz);
+    // week or month chart, to the date. Shortened only when the strip is.
     let galley = painter.layout_no_wrap(
         text,
         egui::FontId::monospace(chart::TIME_LABEL_FONT_PX),

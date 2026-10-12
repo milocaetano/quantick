@@ -251,7 +251,7 @@ pub struct QuantickApp {
     audio: replay_and_history::AlertState,
 
     /// The chart appearance every renderer reads. The window that edits it
-    /// is `surfaces::style_panel`, which hands back a copy rather than
+    /// is `surfaces::chart_settings`, which hands back a copy rather than
     /// holding a reference to this one.
     style: ChartStyle,
     style_revision: u64,
@@ -341,7 +341,7 @@ impl QuantickApp {
             added_symbols: &mut self.added_symbols,
             drawing_presets: &mut self.drawings.presets,
             footprint_config: &mut self.footprint_config,
-            footprint_settings: &mut self.surfaces.footprint_settings,
+            chart_settings: &mut self.surfaces.chart_settings,
         }
     }
     pub(crate) fn arrangement_adapter(&mut self) -> arrangement_adapter::ArrangementAdapter<'_> {

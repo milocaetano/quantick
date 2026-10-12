@@ -229,6 +229,11 @@ pub const DETAILED_MIN_ROW: f32 = 12.0;
 /// Compact's row-height floor, in pixels.
 pub const COMPACT_MIN_ROW: f32 = 11.0;
 
+/// The tallest stretch the legend's "single rows at N× height" names. Past
+/// it the rows are merged by the data's density, not by a nudge of the
+/// price axis, and the spoken "rows N" is the honest answer on its own.
+pub const MAX_SPLIT_HINT_STRETCH: f32 = 10.0;
+
 /// The clearance an in-candle style keeps either side of the body's axis.
 pub const AXIS_CLEARANCE_PX: f32 = 2.0;
 

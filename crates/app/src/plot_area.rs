@@ -134,17 +134,12 @@ pub struct PlotAreas {
 /// Format a UTC epoch-millisecond timestamp as `HH:MM:SS` in the display
 /// timezone `tz`, for the time axis.
 pub fn fmt_time(ms: i64, tz: TzOffset) -> String {
-    fmt_time_as(ms, tz, crate::chart::TimeLabelFormat::Full)
+    crate::chart::time_label(ms, tz, crate::chart::TimeLabelFormat::Full)
 }
 
-/// The same instant written in a chosen [`TimeLabelFormat`] — what the time
-/// axis calls when the strip is too narrow for the full form.
-pub fn fmt_time_as(ms: i64, tz: TzOffset, format: crate::chart::TimeLabelFormat) -> String {
-    crate::chart::time_label(ms, tz, format)
-}
-
-/// The pointer's time tag for a bar opening at `open_ms`: the instant to the
-/// second below a day, and on a calendar chart the date of its UTC bucket,
+/// The pointer's time tag for a bar opening at `open_ms`: below a day the
+/// instant to the second with its date, `Fri 09 Oct '26 10:57:03`, and on a
+/// calendar chart the date of its UTC bucket,
 /// as the axis labels name it — `Wed 07 Oct 2026` for a day or a week,
 /// `Oct 2026` for a month or several. A clock time alone there would read
 /// the same `21:00:00` on every bar west of UTC.
@@ -152,7 +147,7 @@ pub fn fmt_time_as(ms: i64, tz: TzOffset, format: crate::chart::TimeLabelFormat)
 pub fn fmt_pointer_time(open_ms: i64, interval_ms: Option<i64>, tz: TzOffset) -> String {
     let Some(interval) = interval_ms.filter(|interval| calendar_label_sample(*interval).is_some())
     else {
-        return fmt_time_as(open_ms, tz, crate::chart::TimeLabelFormat::Full);
+        return quantick_chart::day_turn::pointer_time_label(open_ms, tz);
     };
     let day = quantick_civil::CivilDate::from_ms(
         quantick_engine::time_bucket::time_bucket_start(open_ms, interval),
@@ -207,18 +202,16 @@ pub fn fmt_calendar_label(
         )
     };
     let day = date(open_ms);
-    let (year, _, _) = day.ymd();
-    // `07 Oct`: the day, then the month's abbreviation.
-    let short = day.short();
-    let month = short.get(3..).unwrap_or_default();
+    let (year, month, _) = day.ymd();
     Some(
         match quantick_engine::time_bucket::calendar_months(interval_ms) {
-            Some(1) => format!("{month} {year:04}"),
+            Some(1) => format!("{} {year:04}", quantick_civil::month_abbr(month)),
             Some(_) => format!("{year:04}"),
             None if previous_ms.is_some_and(|previous| date(previous).ymd().0 != year) => {
                 format!("{year:04}")
             }
-            None => short,
+            // `07 Oct`: the day, then the month's abbreviation.
+            None => day.short(),
         },
     )
 }
@@ -251,8 +244,10 @@ mod tests {
             fmt_pointer_time(oct_7, Some(3 * CALENDAR_MONTH_MS), brt),
             "Oct 2026"
         );
-        assert_eq!(fmt_pointer_time(oct_7, Some(60_000), brt), "21:00:00");
-        assert_eq!(fmt_pointer_time(oct_7, None, brt), "21:00:00");
+        // Below a day the tag is the instant with its date in the zone.
+        let tag = "Tue 06 Oct '26 21:00:00";
+        assert_eq!(fmt_pointer_time(oct_7, Some(60_000), brt), tag);
+        assert_eq!(fmt_pointer_time(oct_7, None, brt), tag);
     }
 
     #[test]

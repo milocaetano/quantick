@@ -461,7 +461,8 @@ impl ChartPane {
     /// - drag the bottom time strip left/right → zoom time (spread candles);
     /// - drag the right price gutter up/down → zoom the price scale;
     /// - scroll over either axis → zoom that axis;
-    /// - double-click the canvas → return to live, keeping zoom and price scale;
+    /// - double-click the canvas → return to live, keeping zoom and price scale,
+    ///   and open the chart settings when it landed on the bare candles;
     /// - double-click the price gutter → resume automatic price fitting.
     ///
     /// The native Tape owns its time navigation: dragging moves its history,
@@ -683,7 +684,7 @@ impl ChartPane {
         // middle-button pan added below keep answering. A primary drag with a tool armed is that
         // tool's second anchor, so it cannot also pan, which is why the middle button does.
         let primary_free = !tool_armed && !drawing_drag_consumes_gesture && !paper_gesture;
-        self.handle_canvas_gestures(
+        chrome.layers.open_chart_settings |= self.handle_canvas_gestures(
             ui,
             super::canvas_gestures::CanvasInput {
                 chart: &chart,
