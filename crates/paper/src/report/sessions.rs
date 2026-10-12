@@ -297,6 +297,66 @@ impl LedgerMatcher {
     }
 }
 
+/// The label each session of `history` wears in `tz`.
+#[must_use]
+pub fn session_labels(
+    history: &super::LoadedHistory,
+    tz: TzOffset,
+) -> BTreeMap<SessionKey, String> {
+    history
+        .sessions
+        .iter()
+        .map(|(key, info)| (key.clone(), info.label(tz)))
+        .collect()
+}
+
+/// The positions in `history.rows` of every row `filter` keeps, in row order
+/// (oldest first). Cut once per filter or reload, never per frame.
+#[must_use]
+pub fn kept_rows(
+    history: &super::LoadedHistory,
+    filter: &LedgerFilter,
+    tz: TzOffset,
+) -> Vec<usize> {
+    let labels = session_labels(history, tz);
+    let matcher = filter.matcher(tz);
+    history
+        .rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| {
+            let label = row
+                .session
+                .as_ref()
+                .and_then(|key| labels.get(key))
+                .map_or("", String::as_str);
+            matcher.admits(row.source, &row.trade, &row.tags, label)
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// Every tag in `history` — on saved rows and on the live sessions' trades —
+/// with how many trades carry it, most used first, then by name. What the
+/// tag editor offers to complete.
+#[must_use]
+pub fn tag_counts(history: &super::LoadedHistory) -> Vec<(String, usize)> {
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for info in history.sessions.values() {
+        for tags in info.tags.values() {
+            for tag in tags {
+                *counts.entry(tag.as_str()).or_default() += 1;
+            }
+        }
+    }
+    let mut counts: Vec<(String, usize)> = counts
+        .into_iter()
+        .map(|(tag, count)| (tag.to_owned(), count))
+        .collect();
+    counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    counts
+}
+
 /// One session as a listing reports it: what its file says, and the trades
 /// of it a filter kept.
 #[derive(Clone, Debug, PartialEq, Eq)]

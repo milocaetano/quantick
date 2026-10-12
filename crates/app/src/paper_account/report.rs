@@ -50,9 +50,18 @@ impl PaperAccount {
                 dir: core.trades_dir(),
                 session_journal_paths: core.session_journal_paths(),
                 session_trades: core.session_trades(),
+                session_trade_files: core.session_trade_files(),
+                session_trade_sources: core.session_trade_sources(),
                 open,
             },
         )
+    }
+
+    /// A session file was renamed, tagged or deleted: the ledger and an open
+    /// report re-read the folder.
+    pub(crate) fn journal_edited(&mut self) {
+        let (report, env) = self.report_parts();
+        report.journal_edited(&env);
     }
 
     /// Test-only: the report state this host holds.

@@ -5,15 +5,23 @@
 //! "which trades, in what order, from which file?", so the two read the same
 //! journal for different questions and keep their state apart.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_paper::report::load_history;
+use quantick_paper::report::session_edit::JournalEdit;
+use quantick_paper::report::sessions::{SessionInfo, SessionKey, source_word};
 use quantick_sim::ClosedTrade;
+use quantick_sim::history::TradeTimes;
 use rust_decimal::Decimal;
 
 use super::rows::{
-    LedgerRow, draw_day_header, draw_group_header, draw_ledger_row, draw_more_row, draw_open_row,
-    push_by_day,
+    GroupView, Item, LedgerRow, TradeMeta, draw_day_header, draw_group_header, draw_ledger_row,
+    draw_more_row, draw_open_row, push_groups,
+};
+use super::sessions::{
+    LedgerEdit, SessionPress, draw_hidden_live, draw_inline, draw_session_head, session_menu,
 };
 use super::{
     LEDGER_PAGE_TRADES, LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, ReportEnv, ReportState,
@@ -38,8 +46,18 @@ impl ReportState {
         // The strip under the list sums every saved trade, not the revealed
         // page, so it is summed once here rather than on every frame.
         self.saved_totals = LedgerTotals::of(history.rows.iter().map(|row| &row.trade));
+        self.sessions.reloaded(&history);
         self.history_cache = Some(history);
         self.ledger_symbols = list_symbol_folders(env.dir);
+    }
+
+    /// A session file was renamed, tagged or deleted — by a gesture here, in
+    /// another tab, or through the control plane: re-read the folder.
+    pub(crate) fn journal_edited(&mut self, env: &ReportEnv<'_>) {
+        self.history_cache = None;
+        if self.report_open {
+            self.reload_report(env);
+        }
     }
 
     /// Fold or unfold one civil day in the ledger. A named action taking
@@ -99,7 +117,8 @@ impl ReportState {
 
     /// The Trades dock tab: the ledger of closed simulated trades — the
     /// open position pinned on top, this session under it, the saved
-    /// history under that, and a totals strip that never scrolls away.
+    /// history under that, each day split by session where it holds
+    /// several, and a totals strip that never scrolls away.
     pub(crate) fn draw_trades_tab(
         &mut self,
         ui: &mut egui::Ui,
@@ -112,6 +131,9 @@ impl ReportState {
         self.ledger_tz = tz;
 
         self.draw_scope_row(ui, env);
+        self.sessions
+            .draw_filter_row(ui, self.history_cache.as_ref(), tz);
+        self.sessions.ensure_cut(self.history_cache.as_ref(), tz);
         ui.horizontal(|ui| {
             ui.label(caption("TRADE"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -128,34 +150,11 @@ impl ReportState {
             draw_open_row(ui, &open.summary, symbol, open.mark_price, open.held_ms);
         }
 
-        let session: Vec<(usize, &ClosedTrade)> =
-            env.session_trades.iter().enumerate().rev().collect();
         let saved_len = self
             .history_cache
             .as_ref()
             .map_or(0, |cache| cache.rows.len());
-        // Only the revealed pages are turned into rows; the rest stay
-        // loaded and counted, which is what the control below them says.
-        // The `take` is the point — a year of sessions must cost the same
-        // per frame as a week of them, so the untouched tail is never even
-        // walked into a Vec.
-        let page = LedgerPage::of(saved_len, self.ledger_pages);
-        let earlier: Vec<(&str, &ClosedTrade)> = self
-            .history_cache
-            .as_ref()
-            .map(|cache| {
-                cache
-                    .rows
-                    .iter()
-                    .rev()
-                    .take(page.shown)
-                    .map(|row| (row.symbol.as_str(), &row.trade))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let earlier = earlier.as_slice();
-
-        if session.is_empty() && saved_len == 0 {
+        if env.session_trades.is_empty() && saved_len == 0 {
             let action = if env.open.is_none() {
                 self.draw_empty_state(ui, env)
             } else {
@@ -165,30 +164,107 @@ impl ReportState {
             return action;
         }
 
+        let cache = self.history_cache.as_ref();
+        let cut = self.sessions.cut.as_ref()?;
+        let live_keys: BTreeSet<SessionKey> = env
+            .session_journal_paths
+            .iter()
+            .filter_map(|path| SessionKey::of(env.dir, path))
+            .collect();
+        let live_sessions: Vec<Option<SessionKey>> = (0..env.session_trades.len())
+            .map(|index| {
+                let path = env
+                    .session_trade_files
+                    .get(index)
+                    .and_then(Option::as_deref);
+                path.and_then(|path| SessionKey::of(env.dir, path))
+            })
+            .collect();
+        // This session's trades go through the same filter the saved rows
+        // were cut with, a handful per frame.
+        let matcher = self.sessions.filter.matcher(tz);
+        let mut hidden_live = 0usize;
+        let live: Vec<Item<'_>> = env
+            .session_trades
+            .iter()
+            .enumerate()
+            .rev()
+            .filter_map(|(index, trade)| {
+                let session = live_sessions[index].as_ref();
+                let source = env.session_trade_sources.get(index).copied();
+                let info = session.and_then(|key| cache.and_then(|cache| cache.sessions.get(key)));
+                let tags = info.map_or(&[][..], |info| info.tags_of(trade));
+                let label = session
+                    .and_then(|key| cut.labels.get(key))
+                    .map_or_else(|| source_word(source), String::as_str);
+                if !matcher.admits(source, trade, tags, label) {
+                    hidden_live += 1;
+                    return None;
+                }
+                let meta = TradeMeta {
+                    session,
+                    source,
+                    tags,
+                };
+                Some(Item {
+                    trade,
+                    symbol: env.symbol,
+                    live: Some(index),
+                    meta,
+                })
+            })
+            .collect();
+        // Only the revealed pages are turned into rows; the rest stay
+        // loaded and counted, which is what the control below them says.
+        // The `take` is the point — a year of sessions must cost the same
+        // per frame as a week of them, so the untouched tail is never even
+        // walked into a Vec.
+        let page = LedgerPage::of(cut.kept.len(), self.ledger_pages);
+        let saved: Vec<Item<'_>> = cache
+            .map(|cache| {
+                cut.kept
+                    .iter()
+                    .rev()
+                    .take(page.shown)
+                    .map(|&index| {
+                        let row = &cache.rows[index];
+                        Item {
+                            trade: &row.trade,
+                            symbol: &row.symbol,
+                            live: None,
+                            meta: TradeMeta {
+                                session: row.session.as_ref(),
+                                source: row.source,
+                                tags: &row.tags,
+                            },
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         // Rows are cut newest first, so day headers open each day as the
         // list walks back in time.
+        let view = GroupView {
+            collapsed_days: &self.collapsed_days,
+            collapsed_sessions: &self.sessions.collapsed,
+            focused: self.sessions.focused.as_ref(),
+            editing: self.sessions.edit.as_ref().map(LedgerEdit::session),
+            labels: &cut.labels,
+            live: &live_keys,
+            tz,
+        };
         let mut rows = Vec::new();
-        if !session.is_empty() {
-            rows.push(LedgerRow::Header("THIS SESSION", session.len()));
-            push_by_day(
-                &mut rows,
-                &session,
-                tz,
-                &self.collapsed_days,
-                |item| item.1,
-                |item| LedgerRow::Session(item.0, item.1),
-            );
+        if !live.is_empty() || hidden_live > 0 {
+            rows.push(LedgerRow::Header("THIS SESSION", live.len()));
+            if hidden_live > 0 {
+                rows.push(LedgerRow::HiddenLive(hidden_live));
+            }
+            push_groups(&mut rows, &live, &view);
         }
-        if !earlier.is_empty() {
-            rows.push(LedgerRow::Header("EARLIER SESSIONS", saved_len));
-            push_by_day(
-                &mut rows,
-                earlier,
-                tz,
-                &self.collapsed_days,
-                |item| item.1,
-                |item| LedgerRow::Earlier(item.0, item.1),
-            );
+        if !saved.is_empty() {
+            rows.push(LedgerRow::Header("EARLIER SESSIONS", cut.kept.len()));
+            push_groups(&mut rows, &saved, &view);
         }
         if page.remaining > 0 {
             rows.push(LedgerRow::More(page.remaining));
@@ -198,30 +274,134 @@ impl ReportState {
         // rows above are one revealed page and the strip must not swing
         // every time the trader reveals another. The saved half was summed
         // when the folder was read; only this session's own trades — a
-        // handful — are counted here.
-        let totals = self
-            .saved_totals
-            .plus(LedgerTotals::of(env.session_trades.iter()));
-
-        let rows_listed = session.len() + earlier.len();
-        let list_height = (ui.available_height() - TOTALS_STRIP_PX).max(LEDGER_ROW_HEIGHT_PX);
+        // handful — are counted here. A filter narrows the scope, and the
+        // strip follows it.
+        let totals = if self.sessions.filter.is_default() {
+            self.saved_totals
+                .plus(LedgerTotals::of(env.session_trades.iter()))
+        } else {
+            let kept = cache.map_or(LedgerTotals::default(), |cache| {
+                LedgerTotals::of(cut.kept.iter().map(|&index| &cache.rows[index].trade))
+            });
+            kept.plus(LedgerTotals::of(live.iter().map(|item| item.trade)))
+        };
+        let shown = live.len() + cut.kept.len();
+        let rows_listed = live.len() + saved.len();
+        let list_height = (ui.available_height() - TOTALS_STRIP_PX * 3.0).max(LEDGER_ROW_HEIGHT_PX);
         // Session rows carry the chart's own instrument; a ledger row that
         // does not name its market is unreadable the moment a second tab
         // exists.
         let own_symbol = (!env.symbol.is_empty()).then_some(env.symbol);
+        if rows.is_empty() {
+            ui.label(
+                egui::RichText::new("Nothing matches the filter.")
+                    .color(theme::TEXT_MUTED)
+                    .small(),
+            );
+        }
         let presses = RowList {
             rows: &rows,
             selected: self.selected_trade,
+            selected_saved: self.sessions.selected_saved.as_ref(),
             own_symbol,
             tz,
+            labels: &cut.labels,
+            infos: cache.map(|cache| &cache.sessions),
+            live: &live_keys,
+            edit: &mut self.sessions.edit,
         }
         .show(ui, list_height);
-        let action = self.apply_row_presses(presses);
+        let target = self.tag_target(env);
+        let focus_tags = presses.tag || (presses.hovered && presses.hash);
+        let keyed = presses
+            .hovered
+            .then(|| self.keyed_press(&presses, env))
+            .flatten();
+        let mut action = self.apply_row_presses(presses);
+        if let Some(press) = keyed {
+            action = action.or(self.apply_session_press(press));
+        }
 
         ui.separator();
+        let target = target
+            .as_ref()
+            .map(|(key, times, tags)| (key.clone(), *times, tags.as_slice()));
+        if let Some(edit) = self.sessions.draw_tag_strip(ui, target, focus_tags) {
+            action = Some(LedgerAction::Edit(edit));
+        }
+        self.sessions
+            .draw_filter_status(ui, shown, env.session_trades.len() + saved_len);
         draw_totals_strip(ui, totals, page, rows_listed);
         self.draw_ledger_disclosure(ui);
         action
+    }
+
+    /// The selected trade's session, times and tags — what the tag strip
+    /// edits. A live trade whose close no file took has none.
+    fn tag_target(&self, env: &ReportEnv<'_>) -> Option<(SessionKey, TradeTimes, Vec<String>)> {
+        let cache = self.history_cache.as_ref();
+        let (key, times) = match (self.selected_trade, &self.sessions.selected_saved) {
+            (Some(index), _) => {
+                let trade = env.session_trades.get(index)?;
+                let path = env.session_trade_files.get(index)?.as_deref()?;
+                (
+                    SessionKey::of(env.dir, path)?,
+                    (trade.opened_ms, trade.closed_ms),
+                )
+            }
+            (None, Some((key, times))) => (key.clone(), *times),
+            (None, None) => return None,
+        };
+        let tags = cache
+            .and_then(|cache| cache.sessions.get(&key))
+            .and_then(|info| info.tags.get(&times))
+            .cloned()
+            .unwrap_or_default();
+        Some((key, times, tags))
+    }
+
+    /// F2, Del and `#` while the pointer is over the list: they act on the
+    /// focused session, else the selected trade's.
+    fn keyed_press(&self, presses: &RowPresses, env: &ReportEnv<'_>) -> Option<SessionPress> {
+        if !(presses.f2 || presses.delete) {
+            return None;
+        }
+        let key = self
+            .sessions
+            .focused
+            .clone()
+            .or_else(|| self.tag_target(env).map(|(key, ..)| key))?;
+        if presses.f2 {
+            return Some(SessionPress::StartRename(key));
+        }
+        let live = env
+            .session_journal_paths
+            .iter()
+            .any(|path| SessionKey::of(env.dir, path).as_ref() == Some(&key));
+        let info = self
+            .history_cache
+            .as_ref()
+            .and_then(|cache| cache.sessions.get(&key));
+        let label = self
+            .sessions
+            .cut
+            .as_ref()
+            .and_then(|cut| cut.labels.get(&key).cloned())
+            .unwrap_or_else(|| key.to_string());
+        (!live).then(|| SessionPress::StartDelete(key, label, info.map_or(0, |info| info.trades)))
+    }
+
+    /// Hand a session gesture to the session layer; an edit leaves for the
+    /// host, which applies it for every tab.
+    fn apply_session_press(&mut self, press: SessionPress) -> Option<LedgerAction> {
+        let cache = self.history_cache.as_ref();
+        let name = |key: &SessionKey| {
+            cache
+                .and_then(|cache| cache.sessions.get(key))
+                .and_then(|info| info.name.clone())
+                .unwrap_or_default()
+        };
+        self.sessions.apply(press, &name).map(LedgerAction::Edit)
     }
 
     /// Scope row: which instrument's saved history the ledger lists, the
@@ -323,6 +503,20 @@ impl ReportState {
     fn apply_row_presses(&mut self, presses: RowPresses) -> Option<LedgerAction> {
         if let Some(selection) = presses.select {
             self.selected_trade = selection;
+            if selection.is_some() {
+                self.sessions.selected_saved = None;
+            }
+        }
+        if let Some(selection) = presses.select_saved {
+            if selection.is_some() {
+                self.selected_trade = None;
+            }
+            self.sessions.selected_saved = selection;
+        }
+        if let Some(press) = presses.session
+            && let Some(action) = self.apply_session_press(press)
+        {
+            return Some(action);
         }
         if presses.reveal_more {
             self.ledger_pages = self.ledger_pages.saturating_add(1);
@@ -355,12 +549,18 @@ impl ReportState {
 
 /// The ledger's scrolling list as a view: the rows already cut, and the
 /// readings a row needs to paint itself. It reports what was pressed as
-/// [`RowPresses`] and changes nothing.
+/// [`RowPresses`] and changes nothing but the inline edit's own text.
 struct RowList<'a, 'r> {
     rows: &'a [LedgerRow<'r>],
     selected: Option<usize>,
+    selected_saved: Option<&'a (SessionKey, TradeTimes)>,
     own_symbol: Option<&'a str>,
     tz: TzOffset,
+    labels: &'a BTreeMap<SessionKey, String>,
+    infos: Option<&'a BTreeMap<SessionKey, SessionInfo>>,
+    /// Sessions this tab still journals to.
+    live: &'a BTreeSet<SessionKey>,
+    edit: &'a mut Option<LedgerEdit>,
 }
 
 /// What the ledger's rows were pressed for in one frame.
@@ -369,56 +569,157 @@ struct RowPresses {
     /// A session row's selection changed: `Some(index)` selects, `None`
     /// clears.
     select: Option<Option<usize>>,
+    /// A saved row's selection changed.
+    select_saved: Option<Option<(SessionKey, TradeTimes)>>,
     /// Center the chart on a round trip.
     navigate: Option<LedgerAction>,
     /// Reveal one more page of saved history.
     reveal_more: bool,
     /// Fold (`true`) or unfold one day.
     fold: Option<(CivilDate, bool)>,
+    /// A session row, its menu or an inline row asked for something.
+    session: Option<SessionPress>,
+    /// A trade's menu asked for the tag strip.
+    tag: bool,
+    /// The pointer is over the list, so its keys are the ledger's.
+    hovered: bool,
+    f2: bool,
+    delete: bool,
+    hash: bool,
 }
 
 impl RowList<'_, '_> {
-    fn show(self, ui: &mut egui::Ui, list_height: f32) -> RowPresses {
+    fn show(mut self, ui: &mut egui::Ui, list_height: f32) -> RowPresses {
         let mut presses = RowPresses::default();
-        egui::ScrollArea::vertical()
+        let output = egui::ScrollArea::vertical()
             .id_salt("paper_trades_ledger")
             .auto_shrink([false, false])
             .max_height(list_height)
             .show_rows(ui, LEDGER_ROW_HEIGHT_PX, self.rows.len(), |ui, range| {
                 for index in range {
-                    self.row(ui, &self.rows[index], &mut presses);
+                    self.row(ui, index, &mut presses);
                 }
             });
+        // Keys belong to the ledger only while the pointer is over it and
+        // nothing is being typed: a trading hotkey is never taken.
+        presses.hovered =
+            ui.rect_contains_pointer(output.inner_rect) && !ui.ctx().wants_keyboard_input();
+        if presses.hovered {
+            ui.input(|input| {
+                presses.f2 = input.key_pressed(egui::Key::F2);
+                presses.delete = input.key_pressed(egui::Key::Delete);
+                presses.hash = input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Text(text) if text == "#"));
+            });
+        }
         presses
     }
 
-    fn row(&self, ui: &mut egui::Ui, row: &LedgerRow<'_>, presses: &mut RowPresses) {
-        match row {
+    fn row(&mut self, ui: &mut egui::Ui, index: usize, presses: &mut RowPresses) {
+        let rows = self.rows;
+        match &rows[index] {
             LedgerRow::Header(label, count) => draw_group_header(ui, label, *count),
             LedgerRow::Day(date, count, net, folded) => {
                 if draw_day_header(ui, *date, *count, *net, *folded) {
                     presses.fold = Some((*date, !*folded));
                 }
             }
-            LedgerRow::Session(trade_index, trade) => {
+            LedgerRow::SessionHead(head) => {
+                if let Some(press) = draw_session_head(ui, head) {
+                    presses.session = Some(press);
+                }
+            }
+            LedgerRow::Inline => {
+                if let Some(edit) = self.edit.as_mut()
+                    && let Some(press) = draw_inline(ui, edit)
+                {
+                    presses.session = Some(press);
+                }
+            }
+            LedgerRow::HiddenLive(hidden) => draw_hidden_live(ui, *hidden),
+            LedgerRow::Session(trade_index, trade, meta) => {
                 let is_selected = self.selected == Some(*trade_index);
-                let response =
-                    draw_ledger_row(ui, trade, self.own_symbol, is_selected, true, self.tz);
+                let response = draw_ledger_row(
+                    ui,
+                    trade,
+                    *meta,
+                    self.own_symbol,
+                    is_selected,
+                    true,
+                    self.tz,
+                );
                 if response.navigate {
                     presses.navigate =
                         Some(LedgerAction::Navigate(trade.opened_ms, trade.closed_ms));
                 } else if response.clicked {
                     presses.select = Some((!is_selected).then_some(*trade_index));
                 }
+                if let Some(row) = response.response {
+                    self.trade_menu(&row, *meta, presses, || TradePick::Live(*trade_index));
+                }
             }
-            LedgerRow::Earlier(symbol, trade) => {
-                draw_ledger_row(ui, trade, Some(symbol), false, false, self.tz);
+            LedgerRow::Earlier(symbol, trade, meta) => {
+                let times = (trade.opened_ms, trade.closed_ms);
+                let pick = meta.session.map(|key| (key.clone(), times));
+                let is_selected = pick.is_some() && pick.as_ref() == self.selected_saved;
+                let response =
+                    draw_ledger_row(ui, trade, *meta, Some(symbol), is_selected, false, self.tz);
+                if response.clicked {
+                    presses.select_saved = Some(if is_selected { None } else { pick.clone() });
+                }
+                if let Some(row) = response.response {
+                    self.trade_menu(&row, *meta, presses, || TradePick::Saved(pick.clone()));
+                }
             }
             LedgerRow::More(remaining) => {
                 presses.reveal_more |= draw_more_row(ui, *remaining);
             }
         }
     }
+
+    /// A trade's context menu: tag it, or rename or delete its session.
+    fn trade_menu(
+        &self,
+        row: &egui::Response,
+        meta: TradeMeta<'_>,
+        presses: &mut RowPresses,
+        pick: impl Fn() -> TradePick,
+    ) {
+        let Some(key) = meta.session else {
+            return;
+        };
+        let label = self
+            .labels
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| source_word(meta.source).to_owned());
+        let trades = self
+            .infos
+            .and_then(|infos| infos.get(key))
+            .map_or(0, |info| info.trades);
+        let live = self.live.contains(key);
+        row.context_menu(|ui| {
+            if ui.button("Tag…").clicked() {
+                match pick() {
+                    TradePick::Live(index) => presses.select = Some(Some(index)),
+                    TradePick::Saved(saved) => presses.select_saved = Some(saved),
+                }
+                presses.tag = true;
+                ui.close_menu();
+            }
+            if let Some(press) = session_menu(ui, key, &label, trades, live) {
+                presses.session = Some(press);
+            }
+        });
+    }
+}
+
+/// Which trade a menu's Tag… selects.
+enum TradePick {
+    Live(usize),
+    Saved(Option<(SessionKey, TradeTimes)>),
 }
 
 /// The strip under the list: trades and win rate over everything in scope,
@@ -496,13 +797,16 @@ impl LedgerScope {
 }
 
 /// What the Trades ledger asked of its host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LedgerAction {
     /// Center the chart on this round trip (`opened_ms`, `closed_ms`).
     Navigate(i64, i64),
     /// Switch the dock to the Trading tab — the empty state's call to
     /// action.
     OpenTicket,
+    /// Rename, tag or delete a session. The host applies it for every tab,
+    /// the same way the `session.journal.set` capability does.
+    Edit(JournalEdit),
 }
 
 /// The ledger's totals over every saved trade in scope. Summed when the

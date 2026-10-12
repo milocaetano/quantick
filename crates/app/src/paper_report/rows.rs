@@ -5,12 +5,17 @@
 //! test, with no state of its own - what to draw arrives as an argument, and
 //! what the pointer did leaves as a return value.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::Side;
+use quantick_paper::report::sessions::{SessionKey, group_by_day_and_session, source_word};
 use quantick_sim::ClosedTrade;
+use quantick_sim::history::SessionSource;
 use rust_decimal::Decimal;
 
+use super::sessions::{SessionHead, source_glyph};
 use super::{
     DAY_HEADER_INSET_PX, DAY_HEADER_TEXT_X_PX, DETAIL_GAP_PX, DETAIL_RIGHT_PAD_PX,
     LEDGER_PAGE_TRADES, LEDGER_ROW_HEIGHT_PX, SIDE_RAIL_WIDTH_PX,
@@ -32,15 +37,55 @@ pub(super) enum LedgerRow<'a> {
     /// that" — the day header is where the answer lives, it carries the
     /// day's result for free, and clicking it folds the day away.
     Day(CivilDate, usize, Decimal, bool),
+    /// A session's own row inside its day — shown when the day holds two or
+    /// more sessions, or when this one is focused or under an edit.
+    SessionHead(SessionHead),
+    /// The rename or delete row standing where its session's row was.
+    Inline,
     /// A closed trade from this session's simulator: selectable, and its
     /// round trip is on the current tape.
-    Session(usize, &'a ClosedTrade),
-    /// A row loaded from an earlier session's journal — display only; its
-    /// tape is not the one on screen.
-    Earlier(&'a str, &'a ClosedTrade),
+    Session(usize, &'a ClosedTrade, TradeMeta<'a>),
+    /// A row loaded from an earlier session's journal. Selectable for its
+    /// tags; its tape is not the one on screen, so it never navigates.
+    Earlier(&'a str, &'a ClosedTrade, TradeMeta<'a>),
+    /// This session's trades the filter hides — said, never dropped.
+    HiddenLive(usize),
     /// The control that reveals the next page of saved history, carrying
     /// how many trades are still held back.
     More(usize),
+}
+
+/// What the session layer knows of one trade row.
+#[derive(Clone, Copy)]
+pub(super) struct TradeMeta<'a> {
+    /// The session file it is in; `None` when no file under the trades
+    /// folder took it.
+    pub(super) session: Option<&'a SessionKey>,
+    pub(super) source: Option<SessionSource>,
+    pub(super) tags: &'a [String],
+}
+
+/// One trade before it is cut into rows.
+pub(super) struct Item<'a> {
+    pub(super) trade: &'a ClosedTrade,
+    pub(super) symbol: &'a str,
+    /// Its index among this session's closed trades; `None` for a saved row.
+    pub(super) live: Option<usize>,
+    pub(super) meta: TradeMeta<'a>,
+}
+
+/// How the list folds and shows sessions while rows are cut.
+pub(super) struct GroupView<'s> {
+    pub(super) collapsed_days: &'s BTreeSet<i64>,
+    pub(super) collapsed_sessions: &'s BTreeSet<SessionKey>,
+    /// The session F2 and Del act on.
+    pub(super) focused: Option<&'s SessionKey>,
+    /// The session whose row an inline rename or delete replaces.
+    pub(super) editing: Option<&'s SessionKey>,
+    pub(super) labels: &'s BTreeMap<SessionKey, String>,
+    /// Sessions a tab still journals to.
+    pub(super) live: &'s BTreeSet<SessionKey>,
+    pub(super) tz: TzOffset,
 }
 
 /// What one painted ledger row reported back.
@@ -48,35 +93,73 @@ pub(super) enum LedgerRow<'a> {
 pub(super) struct LedgerRowResponse {
     pub(super) clicked: bool,
     pub(super) navigate: bool,
+    /// The row's own response, for its context menu.
+    pub(super) response: Option<egui::Response>,
 }
 
-pub(super) fn push_by_day<'a, T>(
+/// Cut `items` (newest first) into rows: a header per civil day, then — in
+/// a day of two or more sessions, or for a session focused or under an
+/// edit — a row per session, then the trades.
+pub(super) fn push_groups<'a>(
     rows: &mut Vec<LedgerRow<'a>>,
-    items: &'a [T],
-    tz: TzOffset,
-    collapsed: &std::collections::BTreeSet<i64>,
-    trade_of: impl Fn(&'a T) -> &'a ClosedTrade,
-    row_of: impl Fn(&'a T) -> LedgerRow<'a>,
+    items: &'a [Item<'a>],
+    view: &GroupView<'_>,
 ) {
-    let mut start = 0;
-    while start < items.len() {
-        let day = CivilDate::from_ms(trade_of(&items[start]).closed_ms, tz);
-        let mut end = start;
-        let mut net = Decimal::ZERO;
-        while end < items.len() && CivilDate::from_ms(trade_of(&items[end]).closed_ms, tz) == day {
-            net = net.saturating_add(trade_of(&items[end]).pnl_points);
-            end += 1;
-        }
-        let folded = collapsed.contains(&day.day_number());
-        rows.push(LedgerRow::Day(day, end - start, net, folded));
+    let days = group_by_day_and_session(
+        items.iter().map(|item| (item.meta.session, item.trade)),
+        view.tz,
+    );
+    for day in days {
+        let folded = view.collapsed_days.contains(&day.day.day_number());
+        rows.push(LedgerRow::Day(day.day, day.count, day.net, folded));
         // A folded day builds no trade rows at all — the header keeps the
         // date, the count and the net, so the day is summarised rather
         // than merely hidden, and the frame does not pay for what it does
         // not show.
-        if !folded {
-            rows.extend(items[start..end].iter().map(&row_of));
+        if folded {
+            continue;
         }
-        start = end;
+        let pinned = |key: Option<&SessionKey>| {
+            key.is_some_and(|key| view.focused == Some(key) || view.editing == Some(key))
+        };
+        let heads = day.sessions.len() > 1
+            || day
+                .sessions
+                .iter()
+                .any(|session| pinned(session.key.as_ref()));
+        for session in day.sessions {
+            let first = &items[session.items[0]];
+            if heads && let Some(key) = &session.key {
+                if view.editing == Some(key) {
+                    rows.push(LedgerRow::Inline);
+                } else {
+                    rows.push(LedgerRow::SessionHead(SessionHead {
+                        key: key.clone(),
+                        label: view
+                            .labels
+                            .get(key)
+                            .cloned()
+                            .unwrap_or_else(|| source_word(first.meta.source).to_owned()),
+                        source: first.meta.source,
+                        count: session.count,
+                        net: session.net,
+                        folded: view.collapsed_sessions.contains(key),
+                        focused: view.focused == Some(key),
+                        live: view.live.contains(key),
+                    }));
+                }
+                if view.collapsed_sessions.contains(key) {
+                    continue;
+                }
+            }
+            rows.extend(session.items.iter().map(|&index| {
+                let item = &items[index];
+                match item.live {
+                    Some(live) => LedgerRow::Session(live, item.trade, item.meta),
+                    None => LedgerRow::Earlier(item.symbol, item.trade, item.meta),
+                }
+            }));
+        }
     }
 }
 
@@ -270,6 +353,7 @@ pub(super) fn draw_open_row(
             // yet, and a date on a trade still running would be a guess.
             stamp: None,
             tag: symbol.map(str::to_owned),
+            marker: None,
         },
     );
 }
@@ -291,6 +375,9 @@ struct RowLines {
     /// the exit reason paid for it in elided characters — "stop …" is not
     /// a fact, and the room to say "stop loss" was free one line up.
     tag: Option<String>,
+    /// The session's source glyph, left of the instrument: amber play for a
+    /// replay, a faint `?` for an unrecorded file, nothing for live.
+    marker: Option<(&'static str, egui::Color32)>,
 }
 
 fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
@@ -326,10 +413,21 @@ fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
     }
     if let Some(tag) = lines.tag {
         let galley = painter.layout_no_wrap(tag, font.clone(), theme::TEXT_FAINT);
+        let tag_w = galley.size().x;
         painter.galley(
-            egui::pos2(head_right - galley.size().x, y1 - galley.size().y / 2.0),
+            egui::pos2(head_right - tag_w, y1 - galley.size().y / 2.0),
             galley,
             theme::TEXT_FAINT,
+        );
+        head_right -= tag_w + 4.0;
+    }
+    if let Some((glyph, color)) = lines.marker {
+        painter.text(
+            egui::pos2(head_right, y1),
+            egui::Align2::RIGHT_CENTER,
+            glyph,
+            egui::FontId::proportional(10.0),
+            color,
         );
     }
     // The detail line and its stamp share one row from opposite ends.
@@ -380,27 +478,30 @@ pub(super) fn elide_tail(text: &str, budget: usize) -> String {
     out
 }
 
-/// One closed trade in the ledger. Session rows select on click and reveal
-/// a jump-to-chart control on hover; rows from earlier sessions are
-/// display-only — their tape is not the one on screen, so the chart has
-/// nothing honest to point at.
+/// One closed trade in the ledger. Every row selects on click (the tag
+/// strip edits the selected one) and carries its tags on the detail line;
+/// session rows also reveal a jump-to-chart control on hover. Rows from
+/// earlier sessions never navigate — their tape is not the one on screen,
+/// so the chart has nothing honest to point at.
 pub(super) fn draw_ledger_row(
     ui: &mut egui::Ui,
     trade: &ClosedTrade,
+    meta: TradeMeta<'_>,
     symbol: Option<&str>,
     selected: bool,
     session: bool,
     tz: TzOffset,
 ) -> LedgerRowResponse {
     let width = ui.available_width();
-    let sense = if session {
-        egui::Sense::click()
-    } else {
-        egui::Sense::hover()
-    };
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, LEDGER_ROW_HEIGHT_PX), sense);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
+        egui::Sense::click(),
+    );
     if !ui.is_rect_visible(rect) {
-        return LedgerRowResponse::default();
+        return LedgerRowResponse {
+            response: Some(response),
+            ..LedgerRowResponse::default()
+        };
     }
     if selected {
         ui.painter().rect_filled(
@@ -420,7 +521,11 @@ pub(super) fn draw_ledger_row(
         egui::Rounding::ZERO,
         theme::side_color(trade.side),
     );
-    let detail = ledger_detail(trade, tz);
+    let mut detail = ledger_detail(trade, tz);
+    if !meta.tags.is_empty() {
+        detail.push_str(" · #");
+        detail.push_str(&meta.tags.join(" #"));
+    }
     draw_row_lines(
         ui.painter(),
         rect,
@@ -441,6 +546,7 @@ pub(super) fn draw_ledger_row(
             // Compact: the day header directly above carries the year.
             stamp: Some(CivilDate::from_ms(trade.closed_ms, tz).short()),
             tag: symbol.map(str::to_owned),
+            marker: source_glyph(meta.source),
         },
     );
     let mut navigate = false;
@@ -473,6 +579,7 @@ pub(super) fn draw_ledger_row(
     LedgerRowResponse {
         clicked: response.clicked() && !navigate,
         navigate,
+        response: Some(response),
     }
 }
 

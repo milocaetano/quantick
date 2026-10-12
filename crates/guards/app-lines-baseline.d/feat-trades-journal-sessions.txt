@@ -1,0 +1,9 @@
+# feat/trades-journal-sessions: the Trades ledger groups a day by session
+# (one journal file), filters by source, civil dates and a #tag/name search,
+# renames and tags sessions and deletes one behind an inline confirm. The
+# session model, the filter, the grouping and the file edits are headless in
+# `quantick_paper::report::{sessions, session_edit}`; what lands here is the
+# painting in the new `paper_report/sessions.rs`, the ledger's rows, and the
+# one adapter the `session.journal.set` capability and the gestures share.
+crates/app +1058
+!budget +1058

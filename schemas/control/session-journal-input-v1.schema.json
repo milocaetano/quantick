@@ -1,0 +1,162 @@
+{
+  "$defs": {
+    "JournalSourceFilter": {
+      "description": "The ledger's source pills.",
+      "oneOf": [
+        {
+          "const": "real",
+          "description": "Live sessions, and files from before a source was recorded.",
+          "type": "string"
+        },
+        {
+          "const": "replay",
+          "description": "Replay-driven practice sessions.",
+          "type": "string"
+        },
+        {
+          "const": "both",
+          "description": "Everything.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "One thing to do with the journal's sessions.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "description": "List sessions holding at least one trade the filter keeps, newest\nfirst. Changes nothing.",
+      "properties": {
+        "action": {
+          "const": "list",
+          "type": "string"
+        },
+        "from": {
+          "description": "First civil day kept, `YYYY-MM-DD` in the display timezone.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "search": {
+          "description": "The ledger's search box: `#tag` tokens must all be on a trade,\nother words must all appear in its session's name or label.",
+          "maxLength": 256,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JournalSourceFilter"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Defaults to `both`."
+        },
+        "symbol": {
+          "description": "One instrument's folder; omitted lists every instrument.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "to": {
+          "description": "Last civil day kept, inclusive; alone, it keeps that one day.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "action"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Name a session. An empty name clears it; past 80 characters it is cut.",
+      "properties": {
+        "action": {
+          "const": "rename",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 256,
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "session",
+        "name"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Set one trade's tags, replacing what it had; none clears them.",
+      "properties": {
+        "action": {
+          "const": "tag",
+          "type": "string"
+        },
+        "closed_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "opened_unix_ms": {
+          "format": "int64",
+          "type": "integer",
+          "x-unit": "unix_milliseconds"
+        },
+        "session": {
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array"
+        }
+      },
+      "required": [
+        "action",
+        "session",
+        "opened_unix_ms",
+        "closed_unix_ms",
+        "tags"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "Move a session file out of the history. The live session is refused.",
+      "properties": {
+        "action": {
+          "const": "delete",
+          "type": "string"
+        },
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "action",
+        "session"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "JournalSessionsInput"
+}

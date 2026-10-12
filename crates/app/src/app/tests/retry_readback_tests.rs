@@ -61,6 +61,8 @@ mod chart_settings_control;
 mod drawing_magnet_control;
 #[path = "history_control_tests.rs"]
 mod history_control_tests;
+#[path = "journal_sessions_control_tests.rs"]
+mod journal_sessions_control_tests;
 #[path = "layer_control_tests.rs"]
 mod layer_control;
 #[path = "native_tape_readback_tests.rs"]
@@ -604,6 +606,15 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("layers.visibility.set", 1, Value::Null, Readback::Moves),
         ("chart.price_axis.set", 1, Value::Null, Readback::Moves),
         ("chart.settings.set", 1, Value::Null, Readback::Moves),
+        // A listing changes nothing, so no `session.journal.changed` is
+        // journaled either side of it; the edits are proven in
+        // `quantick-paper` and `quantick-control-handlers`.
+        (
+            "session.journal.set",
+            1,
+            json!({ "action": "list" }),
+            Readback::Stays,
+        ),
         ("chart.tape_view.set", 1, Value::Null, Readback::Moves),
         (
             "orderflow.tape.opening_scale.set",

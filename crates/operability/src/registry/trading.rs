@@ -25,6 +25,46 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         mapping: capability!("trade.instrument.set_money"),
     },
     UiBehaviour {
+        id: "trade.journal.filter",
+        title: "Filter the trades ledger by source, dates, #tags or session name",
+        reach: "the Trades tab's filter row",
+        keys: &[(
+            Source::Authored,
+            "the Trades tab source pills, date picker and search box",
+        )],
+        mapping: capability!("session.journal.set"),
+    },
+    UiBehaviour {
+        id: "trade.journal.session.delete",
+        title: "Delete a saved trading session behind an inline confirm",
+        reach: "a session or trade row's menu in the Trades tab, Del over the ledger",
+        keys: &[(
+            Source::Authored,
+            "the Trades tab session menu and Del over the ledger",
+        )],
+        mapping: capability!("session.journal.set"),
+    },
+    UiBehaviour {
+        id: "trade.journal.session.rename",
+        title: "Name a trading session",
+        reach: "a session or trade row's menu in the Trades tab, F2 over the ledger",
+        keys: &[(
+            Source::Authored,
+            "the Trades tab session menu and F2 over the ledger",
+        )],
+        mapping: capability!("session.journal.set"),
+    },
+    UiBehaviour {
+        id: "trade.journal.trade.tag",
+        title: "Tag a closed trade",
+        reach: "the Trades tab's tag strip for the selected trade, # over the ledger",
+        keys: &[(
+            Source::Authored,
+            "the Trades tab tag strip and # over the ledger",
+        )],
+        mapping: capability!("session.journal.set"),
+    },
+    UiBehaviour {
         id: "trade.market.buy",
         title: "Buy at market, simulated",
         reach: "toolbar trade group, Trading panel, Shift+B",

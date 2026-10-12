@@ -140,6 +140,9 @@ pub struct DockResponse {
     /// The Trades tab asked to center the chart on a round trip
     /// (`opened_ms`, `closed_ms`).
     pub navigate_to_trade: Option<(i64, i64)>,
+    /// The Trades tab renamed, tagged or deleted a session — app-wide, so
+    /// every tab's live file is refused and every ledger re-reads.
+    pub journal_edit: Option<quantick_paper::report::session_edit::JournalEdit>,
     /// The Trading tab asked for the trades-folder picker — app-wide, so
     /// the app owns the dialog and the fan-out to every tab.
     pub pick_trades_dir: bool,
@@ -359,6 +362,7 @@ impl Dock {
                                 response.navigate_to_trade = Some((opened, closed));
                             }
                             Some(LedgerAction::OpenTicket) => open_ticket = true,
+                            Some(LedgerAction::Edit(edit)) => response.journal_edit = Some(edit),
                             None => {}
                         },
                     }

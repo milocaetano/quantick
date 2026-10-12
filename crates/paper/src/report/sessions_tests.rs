@@ -313,6 +313,13 @@ fn a_listing_keeps_sessions_with_a_kept_trade_newest_first() {
     assert_eq!(hidden, 2, "only the tagged trade stays");
     assert_eq!(tagged.len(), 1);
     assert_eq!((tagged[0].trades, tagged[0].net), (1, Decimal::from(3)));
+
+    // The ledger's own cut agrees with the listing, row for row.
+    let kept = kept_rows(&loaded, &msc, UTC);
+    assert_eq!(kept.len(), 1);
+    assert_eq!(loaded.rows[kept[0]].tags, vec!["msc"]);
+    assert_eq!(kept_rows(&loaded, &LedgerFilter::default(), UTC).len(), 3);
+    assert_eq!(tag_counts(&loaded), vec![("msc".to_owned(), 1)]);
 }
 
 #[test]
@@ -323,7 +330,7 @@ fn a_name_and_tags_survive_a_reload_and_the_ledger_reads_them() {
         dir.path(),
         "20260316-130000.csv",
         SessionSource::Live,
-        &[trade.clone()],
+        std::slice::from_ref(&trade),
     );
     let times = (trade.opened_ms, trade.closed_ms);
     assert_eq!(
@@ -378,7 +385,7 @@ fn edits_refuse_what_they_cannot_name() {
         dir.path(),
         "20260316-130000.csv",
         SessionSource::Live,
-        &[trade.clone()],
+        std::slice::from_ref(&trade),
     );
     let missing = SessionKey::parse("WINJ26/nope.csv").unwrap();
     assert_eq!(
@@ -477,7 +484,7 @@ fn the_live_session_is_never_deleted_and_is_read_only_for_its_metadata() {
         dir.path(),
         "20260316-130000.csv",
         SessionSource::Live,
-        &[trade.clone()],
+        std::slice::from_ref(&trade),
     );
     let live = vec![key.path(dir.path())];
     let error = delete_session(dir.path(), &key, &live).unwrap_err();

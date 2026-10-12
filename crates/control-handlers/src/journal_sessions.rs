@@ -282,7 +282,7 @@ fn refusal(error: SessionEditError) -> ControlError {
         }
         SessionEditError::Io(_) => "retry; the trades folder refused the write",
     };
-    let mut control = known_error(code, &error.to_string(), error.retryable());
+    let mut control = known_error(code, error.to_string(), error.retryable());
     control.context.details = Some(json!({ "code": error.code() }));
     control.context.next_steps = vec![next_step.to_owned()];
     control

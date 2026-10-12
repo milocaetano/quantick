@@ -5,12 +5,16 @@
 use quantick_control_handlers::{
     TabDirectory,
     history::{HistoryPort, HistoryRun},
+    journal_sessions::JournalSessionsPort,
     notify::AttentionPort,
     recovery::{FeedRecoveryPort, RecoveredFeed},
 };
 use quantick_control_schema::notify::AgentPopup;
 use quantick_feed::history_reach::HistoryReach;
 use quantick_feed::history_run::{Cancelled, Press};
+use quantick_paper::report::session_edit::{
+    JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
+};
 
 use crate::{app::control_host::ControlPort, tab::Tab};
 
@@ -61,6 +65,18 @@ fn run(tab: &Tab) -> HistoryRun {
     HistoryRun {
         status: tab.history_status(),
         main_reach: tab.main_history_reach(),
+    }
+}
+
+impl JournalSessionsPort for dyn ControlPort {
+    fn journal_scope(&mut self) -> JournalScope {
+        self.paper_settings().journal_scope()
+    }
+    fn journal_timezone(&mut self) -> crate::timezone::TzOffset {
+        self.chrome_reads().timezone()
+    }
+    fn edit_journal(&mut self, edit: &JournalEdit) -> Result<JournalEditOutcome, SessionEditError> {
+        self.paper_settings().apply_journal_edit(edit)
     }
 }
 

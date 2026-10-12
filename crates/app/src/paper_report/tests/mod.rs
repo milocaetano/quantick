@@ -15,7 +15,7 @@ use rust_decimal::Decimal;
 // The items the split gave owners; `super::*` still carries the state
 // itself, the environment types and the module's constants.
 use super::ledger::{LedgerPage, LedgerTotals};
-use super::rows::{LedgerRow, elide_tail, ledger_detail, push_by_day};
+use super::rows::{GroupView, Item, LedgerRow, TradeMeta, elide_tail, ledger_detail, push_groups};
 use super::window::ReportPeriod;
 use super::*;
 use crate::paper_calendar::{CivilDate, DateRange, DaySelection};
@@ -37,6 +37,45 @@ fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
         mae_points: None,
         mfe_points: None,
     }
+}
+
+/// Saved rows no session file names, as the ledger cuts them.
+fn plain_items<'a>(items: &[(&'a str, &'a ClosedTrade)]) -> Vec<Item<'a>> {
+    items
+        .iter()
+        .map(|&(symbol, trade)| Item {
+            trade,
+            symbol,
+            live: None,
+            meta: TradeMeta {
+                session: None,
+                source: None,
+                tags: &[],
+            },
+        })
+        .collect()
+}
+
+/// Cut `items` into rows with nothing focused, edited or folded but
+/// `collapsed_days`.
+fn push_plain<'a>(
+    rows: &mut Vec<LedgerRow<'a>>,
+    items: &'a [Item<'a>],
+    tz: TzOffset,
+    collapsed_days: &std::collections::BTreeSet<i64>,
+) {
+    let sessions = std::collections::BTreeSet::new();
+    let labels = std::collections::BTreeMap::new();
+    let view = GroupView {
+        collapsed_days,
+        collapsed_sessions: &sessions,
+        focused: None,
+        editing: None,
+        labels: &labels,
+        live: &sessions,
+        tz,
+    };
+    push_groups(rows, items, &view);
 }
 
 fn row(symbol: &str, source: Option<history::SessionSource>, trade: ClosedTrade) -> HistoryRow {
@@ -300,14 +339,8 @@ fn the_ledger_builds_a_bounded_number_of_rows_however_deep_the_history() {
     assert_eq!(page.shown, LEDGER_PAGE_TRADES);
     assert_eq!(page.remaining, 4_950, "and the control says so out loud");
     let mut rows = Vec::new();
-    push_by_day(
-        &mut rows,
-        &items[..page.shown],
-        tz,
-        &std::collections::BTreeSet::new(),
-        |item| item.1,
-        |item| LedgerRow::Earlier(item.0, item.1),
-    );
+    let plain = plain_items(&items[..page.shown]);
+    push_plain(&mut rows, &plain, tz, &std::collections::BTreeSet::new());
     // Fifty trades plus at most one day caption each — nowhere near
     // the five thousand rows the pre-paging ledger would have built.
     assert!(
@@ -444,14 +477,8 @@ fn ledger_rows_open_a_new_day_caption_when_the_day_changes() {
         .map(|(symbol, trade)| (*symbol, trade))
         .collect();
     let mut rows = Vec::new();
-    push_by_day(
-        &mut rows,
-        &items,
-        tz,
-        &std::collections::BTreeSet::new(),
-        |item| item.1,
-        |item| LedgerRow::Earlier(item.0, item.1),
-    );
+    let plain = plain_items(&items);
+    push_plain(&mut rows, &plain, tz, &std::collections::BTreeSet::new());
     assert_eq!(rows.len(), 5, "two day captions over three trades");
     match rows[0] {
         LedgerRow::Day(date, count, net, folded) => {
@@ -479,14 +506,7 @@ fn ledger_rows_open_a_new_day_caption_when_the_day_changes() {
     let mut folded_days = std::collections::BTreeSet::new();
     folded_days.insert(day.day_number());
     let mut rows = Vec::new();
-    push_by_day(
-        &mut rows,
-        &items,
-        tz,
-        &folded_days,
-        |item| item.1,
-        |item| LedgerRow::Earlier(item.0, item.1),
-    );
+    push_plain(&mut rows, &plain, tz, &folded_days);
     assert_eq!(rows.len(), 3, "two captions and only the open day's row");
     match rows[2] {
         LedgerRow::Day(date, count, net, folded) => {

@@ -1,0 +1,7 @@
+# feat/trades-journal-sessions: the ledger state's new field and its env
+# fields on `paper_report.rs`, the `PaperSettingsAdapter` edit that refuses
+# every tab's live session and re-reads every ledger, and the
+# `JournalSessionsPort` adapter for `session.journal.set`. The decisions and
+# file edits stay headless in `quantick_paper::report::session_edit`.
+crates/app +97
+!budget +97
