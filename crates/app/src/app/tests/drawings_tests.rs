@@ -2,6 +2,7 @@ mod pane_model_tests;
 
 use super::bare_canvas::{app_with_history, app_with_history_and_launch};
 use super::*;
+use crate::drawings::StyleColor32;
 use quantick_feed::replay::test_support as replay_test_support;
 mod placement_characterization {
     use super::*;
@@ -1666,7 +1667,7 @@ fn clicking_a_drawing_keeps_it_selected_after_the_release() {
 ///   its targets back over the measured leg is backwards on its face.
 #[test]
 fn each_fib_kind_opens_with_the_span_its_own_question_asks_for() {
-    use crate::drawings::fib::{Extend, FibPayload};
+    use quantick_drawings::{FibExtend as Extend, FibPayload};
     for (tool, expected) in [
         ("fib-retracement", Extend::Anchors),
         ("fib-extension", Extend::Forward),
@@ -1729,7 +1730,7 @@ fn a_draft_says_what_the_next_click_will_do() {
 /// corridor of no width, which is a straight line, and the click that
 /// looked like it confirmed the shape committed one — a three-anchor
 /// object that is a line. The tool now refuses to be born degenerate
-/// (`DrawingToolImpl::pending_anchor`), and the preview and the commit
+/// (`MarkTool::pending_anchor`), and the preview and the commit
 /// come through the same door, so what is clicked is what is created.
 #[test]
 fn a_dragged_channel_is_born_a_corridor_and_not_a_line() {
@@ -2137,7 +2138,7 @@ fn a_parked_pointer_previews_the_draft_with_no_hand_on_the_mouse() {
     );
 
     app.active_tab_mut().flow_pane.gestures.parked_hand = Some(pane::ParkedHand {
-        position: release,
+        position: drawings::px(release),
         constrain: drawings::Constrain::Free,
     });
     let parked = run_frame(&mut app, &ctx);
@@ -2156,7 +2157,7 @@ fn a_real_pointer_takes_precedence_over_the_scenario_hand() {
     let release = egui::pos2(800.0, 340.0);
     drag_chart(&mut app, &ctx, egui::pos2(600.0, 400.0), release);
     app.active_tab_mut().flow_pane.gestures.parked_hand = Some(pane::ParkedHand {
-        position: release,
+        position: drawings::px(release),
         constrain: drawings::Constrain::Free,
     });
     run_frame_with_events(&mut app, &ctx, vec![egui::Event::PointerGone]);

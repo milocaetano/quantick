@@ -104,7 +104,7 @@ pub(crate) const COCKPIT_STORES: &[CockpitStore] = &[
         key: "drawing_presets",
         file: crate::drawings::presets::PRESETS_FILE,
         validate: crate::drawings::presets::validate,
-        path: crate::drawings::presets::PresetStore::default_path,
+        path: crate::drawings::presets::default_path,
         in_bundle: true,
         local_keys: &[],
     },

@@ -418,8 +418,8 @@ impl ChartPane {
     /// where it was: market time is what the other panes read, so a move that
     /// does not update it has moved only half the object.
     pub fn retime_selected(&mut self) {
-        let projection = super::drawing_projection::DrawingProjection {
-            series: super::drawing_projection::PaneSeriesRead {
+        let projection = quantick_drawings::gesture::DrawingProjection {
+            series: quantick_drawings::gesture::PaneSeriesRead {
                 history_prefix: &self.history_prefix,
                 state: &self.state,
                 spec: &self.spec,

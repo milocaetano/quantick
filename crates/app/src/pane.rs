@@ -31,6 +31,8 @@ use crate::theme;
 #[cfg(test)]
 use pointer_hit::PLOT_PICK_TOLERANCE_PX;
 #[cfg(test)]
+use quantick_drawings::gesture::MAGNET_REACH_PX;
+#[cfg(test)]
 use strategies::strategy_badge_text;
 
 mod axes_and_panes;
@@ -44,17 +46,14 @@ pub(crate) mod canvas_split;
 mod context_menu;
 mod draw_chart;
 mod draw_frame;
-mod drawing_projection;
 mod footprint;
 mod frame;
 mod frame_layout;
 mod frame_stages;
-mod gestures;
+mod gesture_input;
 mod history_worker;
 mod layer_painters;
 mod layers;
-mod placement_gestures;
-mod pointer_gestures;
 mod render_registry;
 pub(crate) fn registered_layers() -> quantick_layers::LayerRegistry {
     render_registry::standard().layers()
@@ -66,7 +65,6 @@ mod pointer_hit;
 mod primary_button;
 mod quick_range;
 mod series;
-mod shared_marks;
 pub(crate) mod strategies;
 mod tape_switch;
 
@@ -75,7 +73,7 @@ mod tape_switch;
 pub use context_menu::PaneContextMenu;
 pub use footprint::PaneFootprint;
 pub use frame::PaneFrame;
-pub use gestures::PaneGestures;
+pub use quantick_drawings::gesture::PaneGestures;
 pub use strategies::PaneStrategies;
 pub use tape_switch::TapeSwitch;
 
@@ -87,9 +85,9 @@ pub use canvas_split::{
 };
 pub(crate) use pointer_hit::PaneHitTest;
 pub(crate) use pointer_hit::{ControlDrawingHit, ControlPointerHit};
-pub use shared_marks::{PaneIndex, SharedEdit, SharedInteraction, SharedPick};
-use shared_marks::{SharedDrag, SharedPointer};
-pub(crate) use shared_marks::{SharedMarksMut, SharedSource};
+use quantick_drawings::gesture::{self, SharedPointer};
+pub use quantick_drawings::gesture::{PaneIndex, SharedEdit, SharedInteraction, SharedPick};
+pub(crate) use quantick_drawings::gesture::{SharedMarksMut, SharedSource};
 pub(crate) use tape_switch::tape_switch_rect;
 
 // The pane's own vocabulary, one leaf per question: the pane itself in
@@ -107,15 +105,8 @@ mod price_axis;
 pub use chart_pane::ChartPane;
 use chart_pane::DrawPass;
 pub use chrome::PaneChrome;
-#[cfg(any(feature = "drawing-harness", test))]
-pub use drag::ParkedHand;
-use drag::{
-    CANDLE_MAGNET_REACH_PX, DRAWING_DRAG_COMPLETES_PX, DRAWING_DRAG_THRESHOLD_PX,
-    DRAWING_SELECT_RADIUS_PX, FREEHAND_MAX_POINTS, FREEHAND_MIN_STEP_PX, MAGNET_REACH_PX,
-    MAGNET_REACH_UNLIMITED_PX, region_pause,
-};
-pub use drag::{DRAWING_ANCHOR_RADIUS_PX, DrawingDrag};
-use hint::{magnet_price_of, paint_placement_hint, snap_bar_to_tape};
+use drag::region_pause;
+use hint::paint_placement_hint;
 use painting::{
     LANE_AXIS_FONT_PX, LANE_AXIS_GAP_PX, LANE_HANDLE_HALF_WIDTH_PX, LAST_PRICE_CHIP_TEXT,
     LAST_PRICE_DASH_PX, LAST_PRICE_GAP_PX, LAST_PRICE_LINE_ALPHA, SCROLL_ZOOM_PX, SEAM_DASH_PX,
@@ -125,6 +116,9 @@ use painting::{
 pub use painting::{background_color, grid_color};
 use price_axis::PriceAxisClaims;
 pub(crate) use price_axis::PriceAxisLevel;
+#[cfg(any(feature = "drawing-harness", test))]
+pub use quantick_drawings::gesture::ParkedHand;
+pub use quantick_drawings::gesture::{DRAWING_ANCHOR_RADIUS_PX, DrawingDrag};
 
 // The compass is painted by several of the leaves and by the axes registry,
 // which all reach it as `pane::PointerCompass`.

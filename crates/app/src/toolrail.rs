@@ -192,7 +192,7 @@ impl Tool {
             Self::Pointer => Some("1".to_owned()),
             Self::Crosshair => Some("2".to_owned()),
             Self::Drawing(tool) => tool.shortcut().map(|shortcut| {
-                let key = shortcut.key.name();
+                let key = shortcut.key.to_string();
                 if shortcut.shift {
                     format!("Shift+{key}")
                 } else {

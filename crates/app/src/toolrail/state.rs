@@ -360,7 +360,8 @@ impl ToolRail {
                         // belong to whoever claims them — the mark hotkey does
                         // — and must not also arm a tool out from under the
                         // trader's hand.
-                        input.key_pressed(shortcut.key)
+                        crate::drawings::shortcut_key(*shortcut)
+                            .is_some_and(|key| input.key_pressed(key))
                             && input.modifiers.shift == shortcut.shift
                             && !input.modifiers.ctrl
                             && !input.modifiers.command

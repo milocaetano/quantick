@@ -34,7 +34,7 @@ impl ChartPane {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrawPass {
     /// Before the candles: the object's own body, for the few tools that are
-    /// context rather than annotation. See [`DrawingToolImpl::paint_under`].
+    /// context rather than annotation. See [`quantick_drawings::MarkTool::paint_under`].
     UnderCandles,
     /// After the candles: everything else, plus halo, handles and badges.
     OverCandles,
@@ -160,15 +160,15 @@ impl ChartPane {
         }
     }
 
-    pub(crate) fn series_read(&self) -> drawing_projection::PaneSeriesRead<'_> {
-        drawing_projection::PaneSeriesRead {
+    pub(crate) fn series_read(&self) -> gesture::PaneSeriesRead<'_> {
+        gesture::PaneSeriesRead {
             history_prefix: &self.history_prefix,
             state: &self.state,
             spec: &self.spec,
         }
     }
-    pub(crate) fn drawing_projection(&self) -> drawing_projection::DrawingProjection<'_> {
-        drawing_projection::DrawingProjection {
+    pub(crate) fn drawing_projection(&self) -> gesture::DrawingProjection<'_> {
+        gesture::DrawingProjection {
             series: self.series_read(),
             viewport: &self.model.viewport,
             indicators: &self.indicators,
@@ -192,8 +192,8 @@ impl ChartPane {
     /// resolves through — see [`SharedMarksMut`].
     pub(crate) fn shared_marks_mut(&mut self) -> SharedMarksMut<'_> {
         SharedMarksMut {
-            projection: drawing_projection::DrawingProjection {
-                series: drawing_projection::PaneSeriesRead {
+            projection: gesture::DrawingProjection {
+                series: gesture::PaneSeriesRead {
                     history_prefix: &self.history_prefix,
                     state: &self.state,
                     spec: &self.spec,
@@ -219,10 +219,10 @@ impl ChartPane {
     #[cfg(test)]
     pub(crate) fn strategies_with_series(
         &mut self,
-    ) -> (&mut PaneStrategies, drawing_projection::PaneSeriesRead<'_>) {
+    ) -> (&mut PaneStrategies, gesture::PaneSeriesRead<'_>) {
         (
             &mut self.strategies,
-            drawing_projection::PaneSeriesRead {
+            gesture::PaneSeriesRead {
                 history_prefix: &self.history_prefix,
                 state: &self.state,
                 spec: &self.spec,
@@ -436,7 +436,10 @@ impl ChartPane {
 
     #[cfg(any(feature = "scenario-harness", test))]
     pub(crate) fn first_indicator_pane_center(&self) -> Option<egui::Pos2> {
-        self.frame.bands.get(1).map(|band| band.rect.center())
+        self.frame
+            .bands
+            .get(1)
+            .map(|band| drawings::pos(band.rect.center()))
     }
 
     #[cfg(test)]
@@ -500,8 +503,8 @@ impl ChartPane {
             .parked_hand
             .map(|hand| (hand.constrain, hand.position));
         #[cfg(not(any(feature = "drawing-harness", test)))]
-        let hand: Option<(drawings::Constrain, egui::Pos2)> = None;
-        let options = placement_gestures::PlacementOptions {
+        let hand: Option<(drawings::Constrain, quantick_drawings::Px)> = None;
+        let options = gesture::PlacementOptions {
             tool: chrome.toolrail.tool().drawing_tool(),
             magnet: chrome.toolrail.magnet(),
             constrain: if ui.input(|input| input.modifiers.shift) {
@@ -511,10 +514,11 @@ impl ChartPane {
             },
             parked_position: hand.map(|hand| hand.1),
         };
-        let placement = self.gestures.update_placement(
+        let placement = gesture_input::update_placement(
+            &mut self.gestures,
             &mut self.drawings,
-            &drawing_projection::DrawingProjection {
-                series: drawing_projection::PaneSeriesRead {
+            &gesture::DrawingProjection {
+                series: gesture::PaneSeriesRead {
                     history_prefix: &self.history_prefix,
                     state: &self.state,
                     spec: &self.spec,
@@ -522,7 +526,7 @@ impl ChartPane {
                 viewport: &self.model.viewport,
                 indicators: &self.indicators,
             },
-            placement_gestures::PlacementFrame {
+            gesture_input::PlacementInput {
                 ui,
                 areas: &areas,
                 bands: &bands,
@@ -530,13 +534,13 @@ impl ChartPane {
                 history_right: self.frame.lane_divider_x.unwrap_or(areas.chart.right()),
             },
             options,
-            placement_gestures::PlacementDefaults {
+            gesture::PlacementDefaults {
                 presets: chrome.presets,
                 repeat: chrome.toolrail.repeat(),
             },
         );
         if let Some(position) = placement.hover_position {
-            self.hover_pos = position;
+            self.hover_pos = position.map(drawings::pos);
         }
         if placement.completion.arm_pointer {
             chrome.toolrail.arm(Tool::Pointer);
@@ -597,25 +601,24 @@ impl ChartPane {
             chrome,
         );
         self.handle_context_menu(&chart, &areas, &bands, chrome);
-        let drawing_area = price_band.rect;
-        let (primary_pressed, primary_down, primary_released, pointer_position) =
-            ui.input(|input| {
+        let (primary_pressed, primary_down, primary_released, pointer_position, modifiers) = ui
+            .input(|input| {
                 (
                     input.pointer.primary_pressed(),
                     input.pointer.primary_down(),
                     input.pointer.primary_released(),
                     input.pointer.latest_pos(),
+                    input.modifiers,
                 )
             });
         // Floating chrome (inspector, manager, toast, flyouts) is opaque to the pointer: while it
         // sits under the cursor the chart neither sets a cursor nor selects nor starts a drag.
         // Gated at press time only, so a drag begun on the canvas keeps running across a panel.
-        let over_chrome = pointer_position
-            .and_then(|position| ui.ctx().layer_id_at(position))
-            .is_some_and(|layer| layer != ui.layer_id());
+        let over_chrome =
+            pointer_position.is_some_and(|position| gesture_input::over_chrome(ui, position));
         let pointer = SharedPointer {
-            position: pointer_position,
-            area: drawing_area,
+            position: pointer_position.map(drawings::px),
+            area: price_band.rect,
             over_chrome,
             pressed: primary_pressed,
             down: primary_down,
@@ -632,8 +635,8 @@ impl ChartPane {
             tape_switch: super::tape_switch_rect(areas.chart, tape_only),
         }
         .handle(ui, chrome, &areas, &bands, &pointer, tool_armed);
-        let projection = drawing_projection::DrawingProjection {
-            series: drawing_projection::PaneSeriesRead {
+        let projection = gesture::DrawingProjection {
+            series: gesture::PaneSeriesRead {
                 history_prefix: &self.history_prefix,
                 state: &self.state,
                 spec: &self.spec,
@@ -648,22 +651,24 @@ impl ChartPane {
         let outcome = self.gestures.handle_pointer_tool(
             &mut self.drawings,
             &projection,
-            pointer_gestures::PointerFrame {
-                ui,
-                chart: &chart,
-                areas: &areas,
+            gesture::PointerFrame {
                 bands: &bands,
                 cached_bands: &self.frame.bands,
                 pointer: &pointer,
+                on_pane_chrome: pointer_position
+                    .is_some_and(|position| primary_button::pane_chrome_hit(&areas, position)),
+                alt: modifiers.alt,
+                shift: modifiers.shift,
+                double_clicked: chart.double_clicked(),
                 paper_gesture,
-                tool: chrome.toolrail.tool(),
+                pointer_tool: chrome.toolrail.tool() == Tool::Pointer,
                 shared_pick: chrome.shared_pick,
                 shared: chrome.shared,
                 held: &held,
             },
         );
         if let Some(cursor) = outcome.cursor {
-            ui.ctx().set_cursor_icon(cursor);
+            ui.ctx().set_cursor_icon(gesture_input::cursor_icon(cursor));
         }
         if let Some(hint) = outcome.hint {
             paint_double_click_hint(ui.ctx(), areas.chart, hint);
@@ -734,7 +739,7 @@ impl ChartPane {
             drawings: &self.drawings,
             indicators: &self.indicators,
             strategies: &self.strategies,
-            series: drawing_projection::PaneSeriesRead {
+            series: gesture::PaneSeriesRead {
                 history_prefix: &self.history_prefix,
                 state: &self.state,
                 spec: &self.spec,
@@ -908,7 +913,7 @@ impl ChartPane {
                     tool,
                     &drawings::DrawingBand::Price,
                     point,
-                    placement_gestures::PlacementDefaults {
+                    gesture::PlacementDefaults {
                         presets: chrome.presets,
                         repeat: chrome.toolrail.repeat(),
                     },
@@ -969,7 +974,7 @@ impl ChartPane {
                 if self.drawings.index_of(id).is_none() => {}
             PaneMenuIntent::StrategyDisarm(id) => self.strategies.disarm(id),
             PaneMenuIntent::StrategyRearm(id) => {
-                let series = drawing_projection::PaneSeriesRead {
+                let series = gesture::PaneSeriesRead {
                     history_prefix: &self.history_prefix,
                     state: &self.state,
                     spec: &self.spec,
@@ -1018,7 +1023,7 @@ fn paint_double_click_hint(
         ))
         .with_clip_rect(chart);
     painter.text(
-        hint.at,
+        crate::drawings::pos(hint.at),
         egui::Align2::CENTER_CENTER,
         hint.glyph,
         egui::FontId::proportional(DOUBLE_CLICK_HINT_FONT_PX),

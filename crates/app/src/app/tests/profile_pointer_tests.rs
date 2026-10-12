@@ -93,8 +93,14 @@ fn profile_handle(app: &QuantickApp, index: usize) -> egui::Pos2 {
         selected: true,
         halo: false,
         content_editing: false,
+        text: &quantick_drawings::UNMEASURED,
     };
-    drawing.tool.handles(chart, &points, &drawing_context)[index]
+    let points: Vec<_> = points.into_iter().map(crate::drawings::px).collect();
+    crate::drawings::pos(
+        drawing
+            .tool
+            .handles(crate::drawings::px_rect(chart), &points, &drawing_context)[index],
+    )
 }
 
 #[test]

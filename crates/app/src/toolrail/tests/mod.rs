@@ -105,7 +105,7 @@ fn shortcuts_cannot_arm_a_tool_while_the_rail_is_hidden() {
     let shortcut = DRAWING_TOOLS[0].shortcut().expect("the first tool has one");
     let press = egui::RawInput {
         events: vec![egui::Event::Key {
-            key: shortcut.key,
+            key: crate::drawings::shortcut_key(shortcut).expect("a letter key"),
             physical_key: None,
             pressed: true,
             repeat: false,
@@ -125,7 +125,7 @@ fn shortcuts_cannot_arm_a_tool_while_the_rail_is_hidden() {
     rail.toggle_visible();
     let press = egui::RawInput {
         events: vec![egui::Event::Key {
-            key: shortcut.key,
+            key: crate::drawings::shortcut_key(shortcut).expect("a letter key"),
             physical_key: None,
             pressed: true,
             repeat: false,

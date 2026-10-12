@@ -48,14 +48,14 @@ fn drawing_env<'a>(
         if !matches!(selection.drawing.band, drawings::DrawingBand::Indicator(_)) {
             return None;
         }
-        let band = host.band(selection.drawing)?;
-        let header = crate::indicator_render::pane_header_rect(band.rect, false);
+        let band = drawings::egui_rect(host.band(selection.drawing)?.rect);
+        let header = crate::indicator_render::pane_header_rect(band, false);
         Some(egui::Rect::from_min_max(
             egui::pos2(
-                band.rect.left(),
+                band.left(),
                 header.bottom() + drawings::context_bar::OBJECT_GAP_PX,
             ),
-            band.rect.max,
+            band.max,
         ))
     });
     crate::surfaces::DrawingEnv {
@@ -150,7 +150,11 @@ impl DrawingController {
         // popup that keeps clear of an object reads this rectangle, so asking
         // the anchors alone is what let a panel land in the middle of a
         // profile while believing it had walked around it.
-        let bbox = drawing.tool.painted_bounds(bbox, band.rect);
+        let bbox = drawings::egui_rect(
+            drawing
+                .tool
+                .painted_bounds(drawings::px_rect(bbox), band.rect),
+        );
         Some(bbox.expand(DRAWING_ANCHOR_RADIUS_PX))
     }
     pub(crate) fn draw_pinned_inspector(
