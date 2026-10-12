@@ -37,7 +37,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "trade.journal.session.delete",
         title: "Delete a saved trading session behind an inline confirm",
-        reach: "a session or trade row's menu in the Trades tab, Del over the ledger",
+        reach: "a session row's menu in the Trades tab, Del over the ledger",
         keys: &[(
             Source::Authored,
             "the Trades tab session menu and Del over the ledger",
@@ -54,7 +54,7 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "trade.journal.session.rename",
         title: "Name a trading session",
-        reach: "a session or trade row's menu in the Trades tab, F2 over the ledger",
+        reach: "a session row's menu in the Trades tab, F2 over the ledger",
         keys: &[(
             Source::Authored,
             "the Trades tab session menu and F2 over the ledger",

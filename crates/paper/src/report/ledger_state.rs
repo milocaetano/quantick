@@ -247,8 +247,9 @@ impl LedgerState {
         }
     }
 
-    /// A trade row was selected: F2 and Del now act on its session, through
-    /// the selection, and no longer on a session row picked before it.
+    /// A trade row was selected: F2 and Del no longer act on a session row
+    /// picked before it, and never on the trade's own session — rename and
+    /// delete belong to the session row.
     pub fn trade_selected(&mut self) {
         self.focused = None;
     }
@@ -327,18 +328,18 @@ impl LedgerState {
         Some((key, trade, tags))
     }
 
-    /// What F2 (`rename`) or Del asks for. Both act on the focused session,
-    /// else on `selected`, the selected trade's; Del on a session in `live`
-    /// asks for nothing — a tab is still writing it.
+    /// What F2 (`rename`) or Del asks for. Both act on the focused session
+    /// only — never on a selected trade's, since rename and delete belong to
+    /// the session row; Del on a session in `live` asks for nothing — a tab
+    /// is still writing it.
     #[must_use]
     pub fn key_press(
         &self,
         rename: bool,
-        selected: Option<&SessionKey>,
         live: &BTreeSet<SessionKey>,
         history: Option<&LoadedHistory>,
     ) -> Option<SessionPress> {
-        let key = self.focused.as_ref().or(selected)?.clone();
+        let key = self.focused.clone()?;
         if rename {
             return Some(SessionPress::StartRename(key));
         }
