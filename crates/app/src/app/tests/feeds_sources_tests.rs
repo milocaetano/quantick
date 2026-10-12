@@ -274,7 +274,7 @@ fn the_load_older_hook_waits_for_bars_then_presses_once_per_frame() {
     loop {
         app.drain_tabs();
         let tab = app.active_tab();
-        if !tab.history_reach_running()
+        if !tab.session.history_reach_running()
             && !tab.loading.is_active(LoadingTask::History)
             && !tab.loading.is_active(LoadingTask::HistoryRebuild)
         {
@@ -368,6 +368,7 @@ fn rejected_request_does_not_arm_the_loader() {
     );
     assert!(
         app.active_tab()
+            .session
             .history_note()
             .is_some_and(|note| note.contains("press again")),
         "and the press says it could not ask"
@@ -906,7 +907,7 @@ fn asking_for_older_candles_reaches_back_past_the_oldest_held() {
         .unwrap();
     app.drain_tabs();
     let oldest = -120 * quantick_feed::OHLCV_BASE_INTERVAL_MS;
-    assert_eq!(app.active_tab().venue_candles_held(), 100);
+    assert_eq!(app.active_tab().session.venue_candles_held(), 100);
     assert!(
         app.active_tab()
             .can_load_older_candles(app.active_tab().capabilities(&app.config)),
@@ -937,7 +938,7 @@ fn asking_for_older_candles_reaches_back_past_the_oldest_held() {
     app.drain_tabs();
 
     assert_eq!(
-        app.active_tab().venue_candles_held(),
+        app.active_tab().session.venue_candles_held(),
         180,
         "the older span went in front of what was already held"
     );
@@ -1016,7 +1017,7 @@ fn a_reach_back_at_a_bad_interval_keeps_the_history_already_paged_in() {
         })
         .unwrap();
     app.drain_tabs();
-    let held = app.active_tab().venue_candles_held();
+    let held = app.active_tab().session.venue_candles_held();
     assert_eq!(held, 100);
 
     app.apply_toolbar_action(ToolbarAction::LoadOlderCandles);
@@ -1031,7 +1032,7 @@ fn a_reach_back_at_a_bad_interval_keeps_the_history_already_paged_in() {
     app.drain_tabs();
 
     assert_eq!(
-        app.active_tab().venue_candles_held(),
+        app.active_tab().session.venue_candles_held(),
         held,
         "the week the trader already has survives a slice it cannot fold"
     );
@@ -1477,13 +1478,13 @@ fn a_replay_installs_its_downloaded_context_without_a_press() {
     while std::time::Instant::now() < deadline {
         run_frame(&mut app, &ctx);
         app.drain_tabs();
-        if app.active_tab().venue_candles_held() > 0 {
+        if app.active_tab().session.venue_candles_held() > 0 {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     assert_eq!(
-        app.active_tab().venue_candles_held(),
+        app.active_tab().session.venue_candles_held(),
         3,
         "the run-up downloaded beside the recording is on the chart, unpressed"
     );
@@ -1520,7 +1521,7 @@ fn yesterday_pages_to_the_previous_open_and_the_chart_holds_still_while_it_does(
     ));
     assert_eq!(drain_load_older(&mut commands).len(), 1, "the press");
     assert!(
-        app.active_tab().history_reach_running(),
+        app.active_tab().session.history_reach_running(),
         "and the run is on"
     );
 
@@ -1554,11 +1555,12 @@ fn yesterday_pages_to_the_previous_open_and_the_chart_holds_still_while_it_does(
         );
     }
     assert!(
-        !app.active_tab().history_reach_running(),
+        !app.active_tab().session.history_reach_running(),
         "the target was met"
     );
     let note = app
         .active_tab()
+        .session
         .history_note()
         .expect("the run says where it landed");
     assert!(
@@ -1580,11 +1582,11 @@ fn a_venue_answering_empty_without_saying_so_stops_the_run_early_and_says_so() {
     ));
     let mut asked = drain_load_older(&mut commands).len();
     assert!(
-        app.active_tab().history_note().is_none(),
+        app.active_tab().session.history_note().is_none(),
         "nothing to report yet"
     );
     for _ in 0..history_reach::MAX_CAMPAIGN_PAGES {
-        if !app.active_tab().history_reach_running() {
+        if !app.active_tab().session.history_reach_running() {
             break;
         }
         events
@@ -1593,13 +1595,20 @@ fn a_venue_answering_empty_without_saying_so_stops_the_run_early_and_says_so() {
         app.drain_tabs();
         asked += drain_load_older(&mut commands).len();
     }
-    assert!(!app.active_tab().history_reach_running(), "the run gave up");
+    assert!(
+        !app.active_tab().session.history_reach_running(),
+        "the run gave up"
+    );
     assert!(
         asked <= history_reach::MAX_IDLE_PAGES as usize,
         "one press cost {asked} requests"
     );
     assert!(!app.active_tab().loading.is_active(LoadingTask::History));
-    let note = app.active_tab().history_note().expect("never silent");
+    let note = app
+        .active_tab()
+        .session
+        .history_note()
+        .expect("never silent");
     assert!(
         note.contains(history_reach::CampaignEnd::NothingComingBack.reason())
             && note.ends_with("(0 of 1 sessions)"),
@@ -1650,7 +1659,11 @@ fn a_target_already_on_the_chart_sends_nothing_and_says_so() {
         history_reach::HistoryReach::Sessions(1),
     ));
     assert!(drain_load_older(&mut commands).is_empty(), "no request");
-    let note = app.active_tab().history_note().expect("the outcome");
+    let note = app
+        .active_tab()
+        .session
+        .history_note()
+        .expect("the outcome");
     assert!(note.starts_with("Already loaded back to "), "{note}");
 }
 
@@ -1676,7 +1689,7 @@ fn a_press_during_the_opening_fill_is_queued_and_starts_after() {
         "held behind the fill"
     );
     assert_eq!(
-        app.active_tab().history_status(),
+        app.active_tab().session.history_status(),
         quantick_feed::history_run::RunStatus::Queued(history_reach::HistoryReach::Hours(2))
     );
     events
@@ -1686,7 +1699,8 @@ fn a_press_during_the_opening_fill_is_queued_and_starts_after() {
         })
         .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !app.active_tab().history_reach_running() && std::time::Instant::now() < deadline {
+    while !app.active_tab().session.history_reach_running() && std::time::Instant::now() < deadline
+    {
         app.drain_tabs();
         std::thread::yield_now();
     }
@@ -1720,8 +1734,12 @@ fn cancel_stops_paging_keeps_what_arrived_and_says_where() {
         "the next page is out"
     );
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::CancelHistory);
-    assert!(!app.active_tab().history_reach_running());
-    let note = app.active_tab().history_note().expect("never silent");
+    assert!(!app.active_tab().session.history_reach_running());
+    let note = app
+        .active_tab()
+        .session
+        .history_note()
+        .expect("never silent");
     assert!(
         note.contains("cancelled") && note.ends_with("(0 of 5 sessions)"),
         "{note}"
@@ -1777,7 +1795,7 @@ fn a_hidden_tabs_run_pauses_and_resumes_when_shown() {
         "a hidden tab asks nothing"
     );
     assert!(matches!(
-        app.active_tab().history_status(),
+        app.active_tab().session.history_status(),
         quantick_feed::history_run::RunStatus::Paused(_)
     ));
     policy.frame.visible = true;
@@ -1843,8 +1861,12 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
         drain_load_older(&mut cmd_rx).is_empty(),
         "nothing is asked of a venue that has said it has no more"
     );
-    assert!(!app.active_tab().history_reach_running());
-    let note = app.active_tab().history_note().expect("never silent");
+    assert!(!app.active_tab().session.history_reach_running());
+    let note = app
+        .active_tab()
+        .session
+        .history_note()
+        .expect("never silent");
     assert!(note.contains("the venue has nothing older"), "{note}");
 }
 
@@ -1942,7 +1964,7 @@ fn the_seam_drops_a_venue_bucket_that_overlaps_the_first_engine_bar() {
         .map(|bar| bar.open_time)
         .expect("the pane holds the fixture trades");
     assert_ne!(
-        crate::resample::bucket_start(first_open, interval),
+        quantick_feed::candles::bucket_start(first_open, interval),
         first_open,
         "the fixture's first engine bar opens inside its bucket"
     );

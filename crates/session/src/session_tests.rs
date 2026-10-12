@@ -95,6 +95,7 @@ impl Shell {
         let view = TabView {
             symbol: "TEST",
             capabilities: self.capabilities,
+            feed_pages: self.capabilities.history_paging,
             panes: &panes,
             tape: &self.tape,
             opening_fill: self.opening_fill,

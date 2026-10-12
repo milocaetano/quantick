@@ -688,7 +688,9 @@ fn a_restored_workspace_puts_the_window_back() {
         "a trader who chose the single-request fetch reopens on it"
     );
     assert!(
-        app.tabs.iter().all(|tab| !tab.progressive_history),
+        app.tabs
+            .iter()
+            .all(|tab| !tab.session.progressive_history()),
         "and every tab phrases its request that way"
     );
     assert_eq!(

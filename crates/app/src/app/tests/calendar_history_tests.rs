@@ -202,7 +202,7 @@ fn a_weekly_pane_asks_for_daily_candles_and_folds_them_into_monday_weeks() {
     let tab = app.active_tab();
     let pane = tab.pane(PaneSide::Time(0));
     assert_eq!(pane.seam_slot(), 5, "five venue weeks before the seam week");
-    assert_eq!(tab.venue_candles_held(), 35);
+    assert_eq!(tab.session.venue_candles_held(), 35);
     // The record's start cuts into the first week, which holds four of its
     // days: it says so, and the whole weeks after it do not.
     let completeness = |slot: usize| {
@@ -251,7 +251,7 @@ fn a_trip_to_a_daily_pane_and_back_keeps_the_paged_minutes() {
     );
     app.drain_tabs();
     drain_ohlcv_bases(&mut commands);
-    assert_eq!(app.active_tab().venue_candles_held(), 240);
+    assert_eq!(app.active_tab().session.venue_candles_held(), 240);
     let five_minutes = 5 * quantick_feed::OHLCV_BASE_INTERVAL_MS;
     set_time_pane(&mut app, five_minutes);
     let seam_on_minutes = app.active_tab().pane(PaneSide::Time(0)).seam_slot();
@@ -282,7 +282,7 @@ fn a_trip_to_a_daily_pane_and_back_keeps_the_paged_minutes() {
         seam_on_minutes,
         "the paged minutes are back under the five-minute chart"
     );
-    assert_eq!(app.active_tab().venue_candles_held(), 240);
+    assert_eq!(app.active_tab().session.venue_candles_held(), 240);
     assert!(
         drain_ohlcv_bases(&mut commands).is_empty(),
         "nothing is fetched again"
@@ -344,11 +344,15 @@ fn a_daily_generation_leaves_a_minute_chart_alone() {
         venue_history(120),
     );
     app.drain_tabs();
-    assert_eq!(app.active_tab().venue_candles_held(), 120);
+    assert_eq!(app.active_tab().session.venue_candles_held(), 120);
 
     caps.send_modify(|caps| caps.ohlcv_daily_generation = 2);
     app.drain_tabs();
-    assert_eq!(app.active_tab().venue_candles_held(), 120, "base kept");
+    assert_eq!(
+        app.active_tab().session.venue_candles_held(),
+        120,
+        "base kept"
+    );
     assert!(drain_ohlcv_bases(&mut commands).is_empty(), "nothing asked");
 
     caps.send_modify(|caps| caps.ohlcv_generation = 2);
@@ -531,7 +535,7 @@ fn the_forming_day_week_and_month_hold_the_venue_part_before_the_first_trade() {
     app.drain_tabs();
     assert!(drain_ohlcv_bases(&mut commands).is_empty(), "asked once");
     assert_eq!(
-        app.active_tab().venue_candles_held(),
+        app.active_tab().session.venue_candles_held(),
         days_to_the_seam().len(),
         "the days are still the base; the minutes are parked"
     );
@@ -696,7 +700,7 @@ fn venue_candles_ahead_of_the_first_print_meet_it_at_the_seam() {
     answer(&events, minute, minutes_to_the_seam());
     app.drain_tabs();
     assert_eq!(
-        app.active_tab().venue_candles_held(),
+        app.active_tab().session.venue_candles_held(),
         minutes_to_the_seam().len()
     );
     events
@@ -782,7 +786,7 @@ fn a_reconnect_with_the_seam_minutes_out_asks_for_them_again() {
     answer(&events, day, days_to_the_seam());
     app.drain_tabs();
     assert_eq!(
-        app.active_tab().venue_candles_held(),
+        app.active_tab().session.venue_candles_held(),
         days_to_the_seam().len(),
         "the days are the base, not the seam's minutes"
     );

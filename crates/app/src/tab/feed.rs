@@ -8,55 +8,36 @@
 //! has no print. Written against the `FeedEvent` channel alone, so a replay
 //! and a live venue take the same path through it.
 
+use std::collections::VecDeque;
+use std::time::Instant;
+
 use eframe::egui;
 use quantick_chart_interaction::live_trade_plan::{LiveTradePlan, LiveTradeStage};
 use quantick_chart_interaction::tab_drain_plan::{TabDrainPlan, TabDrainStage};
+use smallvec::SmallVec;
 use tokio::sync::mpsc;
 
-use super::{BOOK_DRAIN_BUDGET, BOOK_GENERATION_STRIDE, CanvasLayout, Tab};
-use crate::config::AppConfig;
+use super::{BOOK_DRAIN_BUDGET, BOOK_GENERATION_STRIDE, CanvasLayout, HistoryPolicy, Tab};
+use crate::canvas_layout::MAX_CANVAS_PANES;
+use crate::config::{AppConfig, FeedCapabilities};
 use crate::loading::LoadingTask;
 use crate::metrics;
-use crate::pane::PaneSide;
+use crate::pane::{ChartPane, PaneSide};
 use crate::paper_home::shelf_dir;
 use quantick_feed as feed;
+use quantick_feed::history_reach::{HistoryReach, Outage};
+use quantick_feed::history_run::{Cancelled, Press};
 use quantick_feed::stall::{self, Stall, StallInput};
 use quantick_feed::{
     FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedNotice, MAX_REMEMBERED_GAPS,
     MIN_MARKED_GAP_MS, past_resume_floor,
 };
 use quantick_layers::ChartLayer;
+use quantick_session::{
+    Act, Delivery, Effect, FeedRequest, Msg, OlderCandles, PaneView, Refusal, SeamTrace, TabView,
+    Wait, WaitChange,
+};
 use quantick_stores::bubble_asset_store::{AssetBinding, SharedAssetBubbles};
-
-/// The window's history choices every tab mirrors on each frame's drain.
-#[derive(Clone, Copy, Debug)]
-pub struct HistoryPolicy {
-    pub progressive: bool,
-    pub venue_lead_in: bool,
-    pub frame: HistoryFrame,
-}
-
-/// What a tab's history button needs from the window each frame. A tab
-/// counts as on screen until a frame says otherwise.
-#[derive(Clone, Copy, Debug)]
-pub struct HistoryFrame {
-    /// What the main click loads on a tab that never pressed.
-    pub default_reach: quantick_feed::history_reach::HistoryReach,
-    /// The clock face the note is written in.
-    pub tz: crate::timezone::TzOffset,
-    /// Whether the tab is on screen; a hidden tab's run stops paging.
-    pub visible: bool,
-}
-
-impl Default for HistoryFrame {
-    fn default() -> Self {
-        Self {
-            default_reach: Default::default(),
-            tz: Default::default(),
-            visible: true,
-        }
-    }
-}
 
 /// The actual effect owners for one print; no app, transport or layout access.
 struct LiveTradeOwners<'a> {
@@ -133,6 +114,21 @@ impl Tab {
         stages: impl IntoIterator<Item = TabDrainStage>,
     ) {
         self.drain_frame_with_stages(tab_id, config, policy, stages);
+    }
+    /// *Load older candles* judged on `capabilities`, as the toolbar
+    /// presses it; reports whether the request went out.
+    pub fn request_older_ohlcv_history(
+        &mut self,
+        tab_id: u64,
+        capabilities: FeedCapabilities,
+    ) -> bool {
+        let act = Act::LoadOlderCandles { tab_id };
+        self.carry_out_session(None, capabilities, act, Instant::now())
+            .sent
+    }
+    /// Shorthand for a test that only needs the yes/no.
+    pub fn can_load_older_candles(&self, capabilities: FeedCapabilities) -> bool {
+        self.older_candles(capabilities).is_available()
     }
     pub(crate) fn ingest_live_trade_test_order(
         &mut self,
@@ -479,24 +475,19 @@ impl Tab {
                 // instead of leaving the session silently unrecorded. Free
                 // while it is running: one bool read and an early return.
                 TabDrainStage::BookCaptureHeartbeat => self.ensure_book_capture(config),
+                // The window's switches; a press queued behind the opening
+                // fill begins, and a run paused while hidden resumes, once
+                // the tab can serve it.
                 TabDrainStage::MirrorHistoryPolicy => {
-                    // The switches live on the window; the reach does not: a
-                    // run and the last target pressed belong to this tab.
-                    self.progressive_history = policy.progressive;
-                    self.history_frame = policy.frame;
-                    // Through the setter, not the field: flipping the lead-in
-                    // refolds the prefix. Idempotent, so the steady state
-                    // costs one comparison.
-                    self.set_venue_lead_in(policy.venue_lead_in);
-                    // A press queued behind the opening fill begins, and a run
-                    // paused while hidden resumes, once the tab can serve it.
-                    self.poll_history_run(config);
+                    self.run_session(Some(config), Act::MirrorPolicy(policy));
                 }
                 // MetaTrader narrows its capabilities when the bridge says
                 // hello, after the pane may already have asked and been told
                 // there was nothing held. Watching the edge asks again once
                 // the answer can be a real one.
-                TabDrainStage::PollCandleHistory => self.poll_ohlcv_capability(tab_id, config),
+                TabDrainStage::PollCandleHistory => {
+                    self.run_session(Some(config), Act::PollCandles { tab_id });
+                }
             }
         }
     }
@@ -597,7 +588,7 @@ impl Tab {
                     // The run's own reply is not that window: it takes the
                     // ordinary path below, judged on what it brought.
                     if self.resume_floor_ms.is_some() && !self.answers_history_run(&trades) {
-                        if !self.history_run.awaiting_reply() {
+                        if !self.session.awaiting_reply() {
                             self.loading.end(LoadingTask::History);
                         }
                         live |= self.ingest_resumed(&trades);
@@ -608,9 +599,10 @@ impl Tab {
                     // The run judges the raw page first, so its next request
                     // is out while this one is still being rebuilt; while it
                     // runs the panes hold every page and rebuild once.
-                    self.judge_history_page(&trades);
+                    self.run_session(None, Act::HistoryPage(&trades));
                     let trades = std::sync::Arc::new(trades);
-                    let defer = self.history_reach_running() || self.defer_history(trades.len());
+                    let defer =
+                        self.session.history_reach_running() || self.defer_history(trades.len());
                     let mut pending = false;
                     // Each pane cuts the older trades into its own bars, so
                     // each shifts its own anchors by its own count.
@@ -690,12 +682,21 @@ impl Tab {
                     bars,
                     slice,
                 }) => {
-                    self.take_ohlcv_history(tab_id, interval_ms, bars, slice);
+                    let act = Act::CandleReply {
+                        tab_id,
+                        interval_ms,
+                        bars,
+                        slice,
+                    };
+                    self.run_session(None, act);
                 }
                 Err(_) => break,
             }
         }
-        if printless && !self.flow_pane.state.trades().is_empty() && self.ohlcv_base.is_some() {
+        if printless
+            && !self.flow_pane.state.trades().is_empty()
+            && self.session.holds_venue_candles()
+        {
             self.refold_history_prefix();
         }
         live
@@ -707,7 +708,7 @@ impl Tab {
     /// than the oldest print charted. Where the two cannot be told apart the
     /// page is the reply, since a run left waiting on one waits forever.
     fn answers_history_run(&self, page: &[quantick_engine::Trade]) -> bool {
-        self.history_run.awaiting_reply()
+        self.session.awaiting_reply()
             && page.last().is_none_or(|newest| {
                 self.flow_pane
                     .state
@@ -733,11 +734,7 @@ impl Tab {
         if self.panes().any(|(pane, _)| pane.history_failed()) {
             self.loading.set_active(LoadingTask::HistoryRebuild, false);
             self.loading.set_active(LoadingTask::History, false);
-            const FAILED: &str = "History could not be built. Press History to retry.";
-            if self.history_note() != Some(FAILED) {
-                self.stop_history_run_on_failure();
-                self.raise_history_note(FAILED);
-            }
+            self.run_session(None, Act::RebuildFailed);
             return;
         }
         let mut changed = false;
@@ -749,7 +746,7 @@ impl Tab {
             pending |= pane.history_pending();
         }
         // Pages held for a run in flight are not a rebuild yet.
-        let rebuilding = pending && !self.history_reach_running();
+        let rebuilding = pending && !self.session.history_reach_running();
         self.loading
             .set_active(LoadingTask::HistoryRebuild, rebuilding);
         if changed {
@@ -1308,5 +1305,297 @@ impl Tab {
             duration_ms = gap.duration_ms(),
             "marked a stretch of market time no print covers"
         );
+    }
+}
+
+/// What carrying out one session act did to the tab.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct SessionRun {
+    /// Whether a pane's prefix changed. An installed prefix rebuilds the
+    /// indicators, so a caller can skip sending a second rebuild.
+    pub changed: bool,
+    /// Whether a request reached the feed.
+    pub sent: bool,
+    /// Why the act changed nothing, when it did not.
+    pub refused: Option<Refusal>,
+}
+
+/// Every pane holding this market's bars, as the session reads them: flow
+/// first, then the context stack, the order an `InstallPrefix` addresses.
+fn pane_views<'a>(
+    flow: &'a ChartPane,
+    context: &'a [ChartPane],
+) -> SmallVec<[PaneView<'a>; MAX_CANVAS_PANES]> {
+    std::iter::once(flow)
+        .chain(context)
+        .map(|pane| PaneView {
+            interval_ms: pane.state.spec().time_interval_ms(),
+            first_print_open_ms: pane.state.first_print_open_ms(),
+            first_bar: pane.state.bars().first(),
+            partial: pane.state.partial(),
+            rebuild_pending: pane.history_pending(),
+            rebuild_failed: pane.history_failed(),
+        })
+        .collect()
+}
+
+/// The shell half of the session bus: every entry into reaching back — the
+/// toolbar, the History menu, `feed.history.load`, the drain, a hook — is
+/// one [`Tab::run_session`], and this carries out what the session decides.
+impl Tab {
+    /// Hand the session `act` now, and carry out what it decides.
+    pub fn run_session(&mut self, config: Option<&AppConfig>, act: Act<'_>) -> SessionRun {
+        self.run_session_at(config, act, Instant::now())
+    }
+
+    /// [`Self::run_session`], told the time. Without a `config` the act is
+    /// judged on the feed's own capabilities: the drain has no config, and
+    /// nothing it hands in is judged on one.
+    pub fn run_session_at(
+        &mut self,
+        config: Option<&AppConfig>,
+        act: Act<'_>,
+        now: Instant,
+    ) -> SessionRun {
+        let feed = *self.feed_capabilities.borrow();
+        let capabilities = config.map_or(feed, |config| self.capabilities(config));
+        self.carry_out_session(config, capabilities, act, now)
+    }
+
+    /// Dispatch `act`, then each effect in order. A feed request is only out
+    /// once its delivery is acknowledged, and the acknowledgement's effects
+    /// run before the ones queued behind it; a resumed act is judged against
+    /// the tab the effects ahead of it left.
+    fn carry_out_session(
+        &mut self,
+        config: Option<&AppConfig>,
+        capabilities: FeedCapabilities,
+        act: Act<'_>,
+        now: Instant,
+    ) -> SessionRun {
+        let mut run = SessionRun::default();
+        let mut queue = VecDeque::new();
+        let mut next = Some(act);
+        loop {
+            if let Some(act) = next.take() {
+                match self.dispatch_session(config, capabilities, act, now) {
+                    Ok(effects) => effects.into_iter().rev().for_each(|e| queue.push_front(e)),
+                    Err(refusal) => run.refused = Some(refusal),
+                }
+            }
+            let Some(effect) = queue.pop_front() else {
+                return run;
+            };
+            next = match effect {
+                Effect::Feed(request) => {
+                    let delivery = self.deliver(request);
+                    run.sent |= delivery == Delivery::Sent;
+                    Some(Act::FeedAck { request, delivery })
+                }
+                Effect::Resume(resume) => Some(Act::Resume(resume)),
+                Effect::InstallPrefix {
+                    pane,
+                    bars,
+                    lead,
+                    covers_seam,
+                    seam,
+                } => {
+                    run.changed |= self.install_prefix(pane, bars, lead, covers_seam, seam);
+                    None
+                }
+                Effect::HoldPages(held) => {
+                    self.panes_mut().for_each(|pane| pane.hold_history(held));
+                    None
+                }
+                Effect::RetryRebuilds => {
+                    for pane in self.panes_mut() {
+                        pane.retry_history();
+                    }
+                    None
+                }
+                Effect::Wait(wait, change) => {
+                    let task = match wait {
+                        Wait::VenueCandles => LoadingTask::VenueHistory,
+                        Wait::OlderTrades => LoadingTask::History,
+                    };
+                    match change {
+                        WaitChange::Begin => self.loading.begin(task),
+                        WaitChange::End => self.loading.end(task),
+                        WaitChange::Clear => self.loading.set_active(task, false),
+                    }
+                    None
+                }
+            };
+        }
+    }
+
+    /// One dispatch, judged against the tab as it stands.
+    fn dispatch_session(
+        &mut self,
+        config: Option<&AppConfig>,
+        capabilities: FeedCapabilities,
+        act: Act<'_>,
+        now: Instant,
+    ) -> Result<Vec<Effect>, Refusal> {
+        let panes = pane_views(&self.flow_pane, &self.time_panes);
+        let tab = TabView {
+            symbol: &self.symbol,
+            capabilities,
+            feed_pages: self.feed_capabilities.borrow().history_paging,
+            panes: &panes,
+            tape: self.flow_pane.state.trades(),
+            opening_fill: self.opening_slices_remaining.is_some(),
+            history_wait: self.loading.is_active(LoadingTask::History),
+            outages: self
+                .feed_gaps
+                .iter()
+                .map(|gap| Outage {
+                    from_ms: gap.from_ms,
+                    to_ms: gap.to_ms,
+                })
+                .collect(),
+            provider: config.and_then(|config| config.provider_of(&self.feed_id)),
+            page_step: self.history_step,
+            reach_bounds: config
+                .map(|config| config.history.reach_bounds())
+                .unwrap_or_default(),
+        };
+        self.session.dispatch(Msg { act, tab: &tab }, now)
+    }
+
+    /// Send one request the session phrased, and say what the channel did.
+    fn deliver(&mut self, request: FeedRequest) -> Delivery {
+        let command = match request {
+            FeedRequest::Candles { ask, .. } => FeedCommand::FetchOhlcv {
+                interval_ms: ask.interval_ms,
+                span_ms: ask.span_ms,
+                slice_ms: ask.slice_ms,
+                before_ms: ask.before_ms,
+            },
+            FeedRequest::OlderTrades { count } => FeedCommand::LoadOlder { count },
+        };
+        match self.commands.try_send(command) {
+            Ok(()) => Delivery::Sent,
+            Err(mpsc::error::TrySendError::Full(_)) => Delivery::Busy,
+            Err(mpsc::error::TrySendError::Closed(_)) => Delivery::Gone,
+        }
+    }
+
+    /// Put a prefix in front of one pane; a seam bar that changed, or says
+    /// why it holds no lead, is logged beside the pane.
+    fn install_prefix(
+        &mut self,
+        index: usize,
+        bars: Vec<quantick_engine::Bar>,
+        lead: Option<quantick_engine::Bar>,
+        covers_seam: bool,
+        seam: Option<SeamTrace>,
+    ) -> bool {
+        let Some(pane) = self.pane_at_mut(index) else {
+            return false;
+        };
+        let had = seam.and_then(|_| pane.state.venue_lead().cloned());
+        let changed = pane.install_venue_history(bars, lead, covers_seam);
+        let seated = pane.state.venue_lead();
+        if let Some(seam) = seam
+            && (had.as_ref() != seated
+                || seated.is_none() && seam.token != "nothing_before_first_trade")
+        {
+            tracing::info!(
+                target: "quantick::app",
+                schema_version = 1_u8,
+                event_code = "SEAM_LEAD",
+                pane = pane.id,
+                interval_ms = seam.interval_ms,
+                first_print_ms = seam.first_print_ms,
+                lead_open_ms = seated.map_or(0, |bar| bar.open_time),
+                lead_trades = seated.map_or(0, |bar| bar.trade_count),
+                action = if seated.is_some() { "merged_into_seam_bar" } else { seam.token },
+                "the venue's history of the seam bucket before the first trade"
+            );
+        }
+        changed
+    }
+
+    /// Load back to `reach`: begin now, or queue behind the opening fill. The
+    /// toolbar, the History menu and `feed.history.load` all press here.
+    pub fn load_history(&mut self, config: &AppConfig, reach: HistoryReach) -> Press {
+        self.run_session(Some(config), Act::PressHistory(reach));
+        self.session
+            .snapshot()
+            .last_press
+            .unwrap_or(Press::AlreadyRunning)
+    }
+
+    /// Stop the run and keep what arrived; the note says where it stopped.
+    pub fn cancel_history(&mut self) -> Cancelled {
+        self.run_session(None, Act::CancelHistory);
+        self.session
+            .snapshot()
+            .last_cancel
+            .unwrap_or(Cancelled::Nothing)
+    }
+
+    /// Whether asking for older candles could get the trader anything, and
+    /// when it could not, which of the reasons it is.
+    #[must_use]
+    pub fn older_candles(&self, capabilities: FeedCapabilities) -> OlderCandles {
+        let panes = pane_views(&self.flow_pane, &self.time_panes);
+        self.session.older_candles(capabilities, &panes)
+    }
+
+    /// Drop the note once it has had its
+    /// [`quantick_session::HISTORY_NOTE_LINGER`].
+    pub fn expire_history_note(&mut self, now: Instant) {
+        self.run_session_at(None, Act::ExpireNote, now);
+    }
+
+    /// Rebuild every pane's prefix from the candles held; reports whether
+    /// one changed.
+    pub(crate) fn refold_history_prefix(&mut self) -> bool {
+        self.run_session(None, Act::Refold).changed
+    }
+
+    /// Slices of the opening session still to arrive, or `None` when the chart
+    /// is not being filled in behind.
+    #[must_use]
+    pub const fn opening_slices_remaining(&self) -> Option<u64> {
+        self.opening_slices_remaining
+    }
+
+    /// The main click: load back to this tab's last target (yesterday until
+    /// it has pressed), as `QUANTICK_LOAD_OLDER` presses it.
+    #[cfg(any(feature = "scenario-harness", test))]
+    pub fn request_older_history(&mut self, config: &AppConfig) -> Press {
+        self.run_session(Some(config), Act::PressMainHistory);
+        self.session
+            .snapshot()
+            .last_press
+            .unwrap_or(Press::AlreadyRunning)
+    }
+
+    /// Put one sentence about the last press where the trader is looking.
+    #[cfg(any(feature = "scenario-harness", test))]
+    pub(crate) fn raise_history_note(&mut self, text: impl Into<String>) {
+        self.run_session(None, Act::RaiseNote(text.into()));
+    }
+
+    /// Hand the tab one candle-history reply directly, as the feed drain does:
+    /// the `QUANTICK_VENUE_HISTORY_DEMO` hook's one door in.
+    #[cfg(any(feature = "drawing-harness", feature = "scenario-harness", test))]
+    pub fn deliver_ohlcv_slice(
+        &mut self,
+        tab_id: u64,
+        interval_ms: i64,
+        bars: Vec<quantick_engine::Bar>,
+        slice: quantick_feed::OhlcvSlice,
+    ) {
+        let act = Act::DeliverCandles {
+            tab_id,
+            interval_ms,
+            bars,
+            slice,
+        };
+        self.run_session(None, act);
     }
 }

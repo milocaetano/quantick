@@ -64,8 +64,8 @@ impl HistoryPort for dyn ControlPort {
 
 fn run(tab: &Tab) -> HistoryRun {
     HistoryRun {
-        status: tab.history_status(),
-        main_reach: tab.main_history_reach(),
+        status: tab.session.history_status(),
+        main_reach: tab.session.main_history_reach(),
     }
 }
 

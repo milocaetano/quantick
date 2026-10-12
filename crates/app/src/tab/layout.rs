@@ -129,7 +129,7 @@ impl Tab {
         for page in self.flow_pane.unpublished_history() {
             pane.receive_history(page, true);
         }
-        pane.hold_history(self.history_reach_running());
+        pane.hold_history(self.session.history_reach_running());
         // The pane opens looking like the one it splits away from: a user who
         // switched the crosshair off is not asking for it back by opening a
         // second view of the same market. Orientation is part of that look —
@@ -142,8 +142,6 @@ impl Tab {
         pane.price_view
             .set_inverted(self.flow_pane.price_view.is_inverted());
         self.time_panes.push(pane);
-        // Its copy counts against a running campaign's memory ceiling.
-        self.history_run.set_tape_copies(self.panes().count());
         // One pane per frame, for the reason the first one waits a frame at
         // all: seeding replays every retained trade, and building three at
         // once would hold the render thread for three times as long. The
@@ -151,15 +149,9 @@ impl Tab {
         if self.pending_context_panes == 0 {
             self.loading.end(LoadingTask::BarRebuild);
         }
-        // The pane exists now, so there is something for a prefix to go in
-        // front of. A base already held (a layout toggled off and on) is
-        // folded rather than re-fetched; otherwise this is the first moment
-        // asking for one means anything.
-        if self.ohlcv_base.is_some() {
-            self.refold_history_prefix();
-        } else {
-            self.request_ohlcv_history(tab_id, config);
-        }
+        // Its copy counts against a running campaign's memory ceiling, and
+        // there is something for a prefix to go in front of now.
+        self.run_session(Some(config), quantick_session::Act::PaneAdded { tab_id });
     }
 
     /// The layout each pane opens on, from a saved workspace: the flow pane's

@@ -124,7 +124,7 @@ impl ChartPaneSource for PaneRead<'_> {
         self.tab.capabilities(self.config).history_paging
     }
     fn venue_record_starts_inside(&self, interval_ms: i64) -> bool {
-        self.tab.venue_record_starts_inside(interval_ms)
+        self.tab.session.venue_record_starts_inside(interval_ms)
     }
     fn provenance(&self) -> BarProvenanceContext {
         provenance_context(self.tab, self.config)

@@ -27,8 +27,12 @@ pub struct PaneView<'a> {
 pub struct TabView<'a> {
     /// The market, for the log.
     pub symbol: &'a str,
-    /// What the running feed can do.
+    /// What the running feed can do, as the tab's config allows it.
     pub capabilities: FeedCapabilities,
+    /// Whether the running feed itself says it pages history, read before
+    /// the config is consulted: a page that already landed is judged on what
+    /// the feed that sent it can do.
+    pub feed_pages: bool,
     /// Every pane holding this market's bars: flow first, then the context
     /// stack, in the order [`crate::Effect::InstallPrefix`] addresses them.
     pub panes: &'a [PaneView<'a>],

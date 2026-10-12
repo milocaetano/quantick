@@ -44,7 +44,7 @@ fn one_press_of_yesterday_reaches_the_previous_open_on_a_million_print_tape() {
     let deadline = start + std::time::Duration::from_secs(120);
     let mut pages = 0;
     let mut frame_peak = std::time::Duration::ZERO;
-    while app.active_tab().history_reach_running() {
+    while app.active_tab().session.history_reach_running() {
         if let Ok(FeedCommand::LoadOlder { count }) = commands.try_recv() {
             pages += 1;
             let first = cursor.saturating_sub(count as u64);
@@ -76,7 +76,11 @@ fn one_press_of_yesterday_reaches_the_previous_open_on_a_million_print_tape() {
         cursor < SESSION_PRINTS,
         "the run crossed into the day before yesterday to prove the open"
     );
-    let note = app.active_tab().history_note().expect("the run says where");
+    let note = app
+        .active_tab()
+        .session
+        .history_note()
+        .expect("the run says where");
     assert!(note.ends_with("(1 session)"), "{note}");
     // One rebuild publishes everything at once.
     let mut lengths = std::collections::BTreeSet::new();

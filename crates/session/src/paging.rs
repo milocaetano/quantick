@@ -177,11 +177,9 @@ impl TradePaging {
     /// A reply landed: judge its raw page before any rebuild, so the next
     /// request goes out while the chart is still being rebuilt.
     pub(crate) fn judge_page(&mut self, step: &mut Step<'_>, page: &[Trade]) {
-        let action = self.run.on_reply(
-            page,
-            step.tab.capabilities.history_paging,
-            self.frame.visible,
-        );
+        let action = self
+            .run
+            .on_reply(page, step.tab.feed_pages, self.frame.visible);
         self.carry_out(step, action);
     }
 

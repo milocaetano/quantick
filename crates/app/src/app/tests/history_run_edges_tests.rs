@@ -70,7 +70,7 @@ fn a_pane_opened_during_a_run_ends_with_the_whole_tape() {
     }
     assert!(app.active_tab().time_pane().is_some(), "the split opened");
     assert_eq!(
-        app.active_tab().history_tape_copies(),
+        app.active_tab().session.history_tape_copies(),
         Some(2),
         "the run's memory ceiling counts the new pane's copy"
     );
@@ -89,7 +89,10 @@ fn a_pane_opened_during_a_run_ends_with_the_whole_tape() {
         events.try_send(FeedEvent::HistoryPrepended(page)).unwrap();
         app.drain_tabs();
     }
-    assert!(!app.active_tab().history_reach_running(), "the target met");
+    assert!(
+        !app.active_tab().session.history_reach_running(),
+        "the target met"
+    );
     settle_rebuilds(&mut app);
 
     let tab = app.active_tab();
@@ -118,7 +121,7 @@ fn a_pane_opened_during_a_run_ends_with_the_whole_tape() {
 
 /// Where the run stands while it pages, or a failure naming what it is.
 fn loading_progress(app: &QuantickApp) -> quantick_feed::history_reach::ReachProgress {
-    match app.active_tab().history_status() {
+    match app.active_tab().session.history_status() {
         RunStatus::Loading(progress) => progress,
         other => panic!("the run is not loading: {other:?}"),
     }
@@ -242,21 +245,25 @@ fn esc_disarms_a_drawing_tool_before_it_cancels_a_run() {
     let (mut app, _commands) = app_with_history(200);
     run_frame(&mut app, &ctx);
     app.apply_toolbar_action(ToolbarAction::LoadHistory(HistoryReach::Hours(2)));
-    assert!(app.active_tab().history_reach_running());
+    assert!(app.active_tab().session.history_reach_running());
 
     app.toolrail
         .arm(Tool::Drawing(drawing_tool("horizontal-line")));
     run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
     assert_eq!(app.toolrail.tool(), Tool::Pointer, "the tool went down");
     assert!(
-        app.active_tab().history_reach_running(),
+        app.active_tab().session.history_reach_running(),
         "the run kept loading"
     );
 
     run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
-    assert!(!app.active_tab().history_reach_running(), "now it cancels");
+    assert!(
+        !app.active_tab().session.history_reach_running(),
+        "now it cancels"
+    );
     assert!(
         app.active_tab()
+            .session
             .history_note()
             .is_some_and(|note| note.contains("cancelled"))
     );
@@ -278,9 +285,13 @@ fn a_press_after_a_failed_rebuild_retries_and_queues_the_target() {
         .unwrap();
     app.active_tab_mut().flow_pane.fail_history_publication();
     app.drain_tabs();
-    assert!(!app.active_tab().history_reach_running(), "the run gave up");
+    assert!(
+        !app.active_tab().session.history_reach_running(),
+        "the run gave up"
+    );
     assert!(
         app.active_tab()
+            .session
             .history_note()
             .is_some_and(|note| note.contains("could not be built"))
     );
@@ -292,7 +303,7 @@ fn a_press_after_a_failed_rebuild_retries_and_queues_the_target() {
         .load_history(&config, HistoryReach::Hours(4));
     assert_eq!(press, Press::Queued, "the press is taken, not swallowed");
     assert_eq!(
-        app.active_tab().history_status(),
+        app.active_tab().session.history_status(),
         RunStatus::Queued(HistoryReach::Hours(4))
     );
     // The reply the failed run still had out lands; then the rebuild.
@@ -306,7 +317,7 @@ fn a_press_after_a_failed_rebuild_retries_and_queues_the_target() {
         1,
         "the queued target begins once the retried rebuild lands"
     );
-    assert!(app.active_tab().history_reach_running());
+    assert!(app.active_tab().session.history_reach_running());
     assert_eq!(
         app.active_tab().flow_pane.state.trades().len(),
         320,
@@ -343,11 +354,12 @@ fn a_target_queued_behind_a_failed_recut_survives_for_the_retry() {
     app.drain_tabs();
     assert!(
         app.active_tab()
+            .session
             .history_note()
             .is_some_and(|note| note.contains("could not be built"))
     );
     assert_eq!(
-        app.active_tab().history_status(),
+        app.active_tab().session.history_status(),
         RunStatus::Queued(HistoryReach::Hours(4)),
         "the failed recut did not drop the target"
     );
@@ -362,7 +374,7 @@ fn a_target_queued_behind_a_failed_recut_survives_for_the_retry() {
         "nothing on a failed chart"
     );
     assert_eq!(
-        app.active_tab().history_status(),
+        app.active_tab().session.history_status(),
         RunStatus::Queued(HistoryReach::Hours(4))
     );
 

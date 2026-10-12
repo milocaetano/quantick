@@ -5116,6 +5116,7 @@ fn a_history_note_leaves_on_its_own_and_a_new_press_clears_it() {
     app.apply_toolbar_action(crate::toolbar::ToolbarAction::CancelHistory);
     assert!(
         app.active_tab()
+            .session
             .history_note()
             .is_some_and(|note| note.contains("cancelled")),
         "a cancel says where it stopped"
@@ -5124,7 +5125,7 @@ fn a_history_note_leaves_on_its_own_and_a_new_press_clears_it() {
     let past_its_welcome = std::time::Instant::now() + crate::tab::HISTORY_NOTE_LINGER;
     app.active_tab_mut().expire_history_note(past_its_welcome);
     assert_eq!(
-        app.active_tab().history_note(),
+        app.active_tab().session.history_note(),
         None,
         "it fades rather than waiting to be dismissed"
     );
@@ -5140,7 +5141,7 @@ fn a_history_note_leaves_on_its_own_and_a_new_press_clears_it() {
         HistoryReach::Hours(2),
     ));
     assert_eq!(
-        app.active_tab().history_note(),
+        app.active_tab().session.history_note(),
         None,
         "a press in flight has no outcome yet, so it reports none"
     );
@@ -5161,12 +5162,12 @@ fn a_run_in_flight_keeps_its_target_when_the_default_changes() {
     app.history.history_reach = HistoryReach::Hours(2);
     app.drain_tabs();
     assert!(matches!(
-        app.active_tab().history_status(),
+        app.active_tab().session.history_status(),
         quantick_feed::history_run::RunStatus::Loading(progress)
             if progress.reach == HistoryReach::Sessions(3)
     ));
     assert_eq!(
-        app.active_tab().main_history_reach(),
+        app.active_tab().session.main_history_reach(),
         HistoryReach::Sessions(3)
     );
 }

@@ -32,7 +32,6 @@ use crate::metrics;
 use crate::pane::{ChartPane, DEFAULT_PANE_FRACTION, PaneIndex, PaneSide, SharedPick};
 use crate::paper_trading::PaperTrading;
 use crate::state::BarConfiguration;
-use quantick_feed::history_run::HistoryRun;
 use quantick_feed::stall::{self};
 use quantick_feed::{
     FeedCommand, FeedConnectionState, FeedEvent, FeedGap, FeedHandle, FeedLatency, FeedNotice,
@@ -43,15 +42,15 @@ use std::path::PathBuf;
 mod canvas;
 pub(crate) mod context_resize;
 mod feed;
-mod history;
 mod layout;
 mod panes;
 mod strategies;
 mod tape_clock;
 
 pub use canvas::CanvasChrome;
-pub use feed::{HistoryFrame, HistoryPolicy};
-pub use history::OlderCandles;
+#[cfg(test)]
+pub use quantick_session::HISTORY_NOTE_LINGER;
+pub use quantick_session::{HistoryFrame, HistoryPolicy, OlderCandles};
 
 /// Each UI capture epoch reserves room for reconnect generations. This keeps
 /// late events from an aborted task below the next accepted generation floor.
@@ -207,30 +206,6 @@ pub(crate) struct CanvasCollapseRestore<'a> {
     pub collapsed_slots: &'a [bool],
 }
 
-/// How long the outcome of a *load older* press stays on screen.
-///
-/// Long enough to read one short line without hunting for it, short enough
-/// that it is gone before the trader's next decision. It leaves on its own
-/// because it is a remark and not a fault: nothing here needs acknowledging,
-/// and a card waiting to be dismissed over a live chart interrupts more than
-/// the silence it replaced.
-pub const HISTORY_NOTE_LINGER: std::time::Duration = std::time::Duration::from_secs(6);
-
-/// What the last *load older* press had to say, and when it said it.
-///
-/// Raised only when the press left the chart where it was, or stopped short of
-/// the reach it promised. A press that landed what it promised raises nothing:
-/// the bars are the acknowledgement, and a sentence after every success is
-/// noise a trader learns to stop reading.
-#[derive(Debug, Clone)]
-struct HistoryNote {
-    /// Written by [`quantick_feed::history_reach::ReachOutcome::sentence`],
-    /// so the outcome and the run that produced it cannot drift into two
-    /// different accounts of the same press.
-    text: String,
-    raised_at: std::time::Instant,
-}
-
 pub(crate) type LiveFeedSpawn<'a> = dyn FnMut(
         quantick_feed::config::ProviderKind,
         &str,
@@ -342,9 +317,6 @@ pub struct Tab {
     // trades have been backfilled in total (for the readout).
     pub history_step: usize,
     pub history_trades: usize,
-    /// What the window tells this tab each frame about its history button:
-    /// the default target, the clock face and whether it is on screen.
-    pub history_frame: HistoryFrame,
     /// Slices of the opening session still to arrive, while one is filling in
     /// behind the chart. `None` when nothing is filling.
     ///
@@ -354,34 +326,11 @@ pub struct Tab {
     /// still arriving for the life of the tab — which is the one question this
     /// field exists to answer.
     opening_slices_remaining: Option<u64>,
-    /// This tab's history run: its last target, a press queued behind the
-    /// opening fill, and the campaign paging toward a target. Per tab: a run
-    /// on one market never changes another's. See
-    /// [`quantick_feed::history_run`].
-    history_run: HistoryRun,
-    /// What the last *load older* press had to say, while it is still on
-    /// screen. See [`HistoryNote`].
-    history_note: Option<HistoryNote>,
-    /// Whether a pane that is *not* cut by time may carry the venue's own
-    /// candles in front of its bars.
-    ///
-    /// Off by default, so a tick chart opens exactly as it always has: with
-    /// the prints this session saw and nothing invented in front of them. On,
-    /// the venue's 1-minute candles are installed unfolded — real candles,
-    /// counted apart from built bars on the status bar — which is the only way
-    /// a chart cut by trades can show yesterday at all. A minute is not a tick
-    /// bar and never becomes one; the two simply sit side by side, named.
-    ///
-    /// **What the trader is accepting by switching it on**, said here because
-    /// it is the honest cost and the View menu's hover says it too: the series
-    /// an indicator is computed over is the prefix plus the pane's own bars
-    /// (`ChartPane::closed_bars`). On a time pane the prefix is folded to that
-    /// pane's interval, so the series stays one population; here it does not,
-    /// and an average running across the seam averages minute candles with
-    /// bars cut by trades. The alternative — hiding the prefix from the
-    /// indicators of a chart cut by trades and not of one cut by time — would
-    /// make the same prefix mean two things, which is the worse dishonesty.
-    pub venue_lead_in: bool,
+    /// This tab's reaching back — the venue's candles folded in front of
+    /// the tape, and the trade-history run a *load older* press starts —
+    /// behind one command bus. Every press, reply and poll reaches it through
+    /// [`Self::run_session`]; see [`quantick_session`].
+    pub session: quantick_session::TabSession,
     // Every wait currently in flight in this tab, drawn by one overlay (see
     // crate::loading) while the tab is on screen.
     pub loading: LoadingTracker,
@@ -450,81 +399,6 @@ pub struct Tab {
     pub time_panes: SmallVec<[ChartPane; MAX_CONTEXT_PANES]>,
     /// `SYMBOL · venue`, as the strip shows it — see [`Self::chip_label`].
     chip_label: String,
-    /// The venue's own candles for this market — one-minute, or daily for
-    /// charts cut at a day or longer — fetched once and folded locally to
-    /// whatever interval the time pane shows.
-    ///
-    /// `None` until a reply lands; `Some(empty)` after one that carried
-    /// nothing, which is what keeps a failed or unsupported fetch from being
-    /// retried every frame. Held by the tab rather than the pane because it is
-    /// the *market's* history: changing the pane's interval refolds it, a move
-    /// between the minute and the daily base parks it in
-    /// [`Self::ohlcv_interval`] until it is wanted again, and only a change of
-    /// market (or a new answer from the venue) throws it away.
-    ohlcv_base: Option<Vec<quantick_engine::Bar>>,
-    /// The interval the candles in [`Self::ohlcv_base`] were served at, the
-    /// one the panes want — minutes, or days for a chart cut at a day or
-    /// longer — the base parked for the other wish, and the candle
-    /// generations already acted on.
-    ///
-    /// A pull feed leaves the generations at zero forever — it answers
-    /// whenever asked, so nothing changes behind us. A push feed moves one
-    /// every time a block changes the answer to that base's request, including
-    /// a replacement for one already delivered, and that is the only signal
-    /// saying "the answer changed, ask again". A rising *capability* edge
-    /// cannot say it: the flag rises once and stays, so a block arriving after
-    /// an empty answer would sit unread.
-    ohlcv_interval: quantick_feed::candle_base::CandleBaseInterval,
-    /// Whether a fetch is out. One at a time — the *closing* reply is what
-    /// clears it, and every provider always sends one. A progressive fetch
-    /// stays pending across all of its slices: it is one request throughout,
-    /// and a chart already showing the most recent week has not finished
-    /// loading.
-    ohlcv_pending: bool,
-    /// Whether the slices still arriving belong to a request whose answer is
-    /// no longer wanted.
-    ///
-    /// A push feed can store a fresh block partway through a progressive run,
-    /// and that discards the base being built (see [`Self::poll_ohlcv_capability`]).
-    /// The slices already in flight know nothing about it, and folding them
-    /// onto an empty base would build a history missing exactly the newest
-    /// part — the slices that had already been thrown away. So they are
-    /// dropped, and the closing one re-opens the door for a fresh request.
-    ohlcv_stale: bool,
-    /// The oldest candle held when the in-flight request went out, for a
-    /// request that was reaching *back* past it — `None` for the opening one.
-    ///
-    /// Kept so the closing reply can answer the only question the trader has
-    /// after clicking "older": did that get me anything? A reply is not empty
-    /// when the venue has nothing older — a provider serving from a block it
-    /// already holds honestly re-sends the same candles — so the answer is
-    /// "did the oldest bar move", which is a fact rather than an inference.
-    ohlcv_reaching_back: Option<i64>,
-    /// Whether the last *load older* came back with nothing older than what
-    /// was already held: the venue's record starts here, or the provider's
-    /// reach does.
-    ///
-    /// Latched rather than recomputed, because the only way to know is to
-    /// have asked. Cleared by a change of market, and by the opening request
-    /// of a new one — never by time passing, which cannot make a venue's
-    /// record deeper.
-    ohlcv_older_exhausted: bool,
-    /// Whether the next candle request asks for slices (View → progressive
-    /// venue history). Mirrored from the app each frame rather than read from
-    /// it, because the tab is what phrases the request and a tab in a test has
-    /// no app around it.
-    ///
-    /// Only read when a request is *sent*: flipping the switch mid-run never
-    /// reshapes an answer already being fetched, which is the honest
-    /// behaviour — the venue was asked one way and is answering that way.
-    pub progressive_history: bool,
-    /// What `ohlcv_history` said last frame, so the rising edge can be seen.
-    ///
-    /// MetaTrader narrows its capabilities when the bridge says hello, which
-    /// happens *after* the pane may already have asked and been answered
-    /// `nothing_held`. The edge is what asks again once the answer can be a
-    /// real one.
-    ohlcv_capable: bool,
     /// The interval the time pane opens on when it is first built. The
     /// header's default unless the feed declared one (`default_bars` with a
     /// time-showing `default_layout`); once the pane exists, its own header
@@ -630,12 +504,8 @@ impl Tab {
             replay: feed.replay,
             history_step: 2000,
             history_trades: 0,
-            // Overwritten by `drain_tabs` on the first frame from the window.
-            history_frame: HistoryFrame::default(),
             opening_slices_remaining: None,
-            history_run: HistoryRun::default(),
-            history_note: None,
-            venue_lead_in: false,
+            session: quantick_session::TabSession::new(),
             loading,
             book_capture_epoch: 0,
             book_channel_closed_reported: false,
@@ -647,14 +517,6 @@ impl Tab {
             paper_drag_pane: None,
             flow_pane: ChartPane::flow(flow_pane_id, spec, symbol.clone()),
             chip_label: String::new(),
-            ohlcv_base: None,
-            ohlcv_interval: quantick_feed::candle_base::CandleBaseInterval::default(),
-            ohlcv_pending: false,
-            ohlcv_stale: false,
-            ohlcv_reaching_back: None,
-            ohlcv_older_exhausted: false,
-            progressive_history: true,
-            ohlcv_capable: false,
             time_panes: SmallVec::new(),
             time_pane_opening_interval_ms: crate::time_header::DEFAULT_INTERVAL_MS,
             context_opening_intervals_ms: SmallVec::new(),
@@ -709,19 +571,11 @@ impl Tab {
     /// everything tied to the handle itself is replaced either way, because an
     /// in-flight reply belongs to a channel that is about to be dropped.
     fn attach_with(&mut self, handle: FeedHandle, keep_timeline: bool) {
+        // The old market's candles, and how far back it reached, describe the
+        // old market; anything in flight belongs to the channel about to be
+        // dropped, and the run to the old session's tape.
+        self.run_session(None, quantick_session::Act::Attach { keep_timeline });
         if !keep_timeline {
-            // The old market's candles describe the old market.
-            self.ohlcv_base = None;
-            // A different market has a different record. Whatever this tab
-            // learned about how far back the last one reached says nothing
-            // here.
-            self.ohlcv_reaching_back = None;
-            self.ohlcv_older_exhausted = false;
-            self.ohlcv_interval.drop_parked();
-            self.ohlcv_capable = false;
-            for pane in self.panes_mut() {
-                pane.install_history_prefix(Vec::new());
-            }
             // A seam and a resume floor both belong to the timeline being
             // thrown away with them. Left standing across a market switch, the
             // floor filters the *new* market's prints against the old one's
@@ -737,20 +591,6 @@ impl Tab {
             // belonged to the channel about to be dropped.
             self.loading.set_active(LoadingTask::History, false);
         }
-        // Any reply still in flight belongs to a channel that is about to be
-        // dropped, so the wait restarts rather than draining to zero on an
-        // answer that never comes.
-        self.ohlcv_pending = false;
-        // The channel carrying any in-flight slices is dropped with the old
-        // handle, so nothing survives to be dropped as stale — the seam's
-        // minutes included, which the new session is asked for again.
-        self.ohlcv_stale = false;
-        self.ohlcv_interval.channel_dropped();
-        // The run belonged to the old session's tape; its reply is on a channel
-        // about to be dropped, and whatever it had to say was about a record
-        // this tab no longer shows.
-        self.abandon_history_run();
-        self.loading.set_active(LoadingTask::VenueHistory, false);
         self.feed_generation = self.feed_generation.saturating_add(1);
         self.events = handle.events;
         self.book_events = handle.book_events;
@@ -828,7 +668,7 @@ impl Tab {
     /// the feed's as new — what a reconnect storing a fresh block does.
     #[cfg(test)]
     pub fn forget_ohlcv_generation_for_test(&mut self) {
-        self.ohlcv_interval.forget_generations();
+        self.session.forget_candle_generations();
     }
 
     /// How many feed sessions this tab has taken over; see the field.

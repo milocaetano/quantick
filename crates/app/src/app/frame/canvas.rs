@@ -67,7 +67,7 @@ pub(super) fn draw_overlays(
 }
 
 fn draw_loading_waits(ui: &mut egui::Ui, area: egui::Rect, tab: &Tab) {
-    let history_note = tab.history_note();
+    let history_note = tab.session.history_note();
     loading::overlay_scoped(ui, area, &tab.loading, LoadingScope::Whole, history_note);
     // A scope whose surface is not on screen falls back to the canvas rather
     // than dropping its wait: the flow pane is not painted in the Time

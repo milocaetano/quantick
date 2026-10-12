@@ -99,7 +99,11 @@ fn a_history_load_runs_reads_back_and_cancels_through_the_control_plane() {
     let (stopped, _) = unkeyed_call(&mut app, &mut cockpit, cancel, json!({}));
     assert_eq!(success_result(&stopped)["cancelled"], "run");
     assert_eq!(history_read(&mut app, &mut observer)["state"], "idle");
-    let note = app.active_tab().history_note().expect("never silent");
+    let note = app
+        .active_tab()
+        .session
+        .history_note()
+        .expect("never silent");
     assert!(note.contains("cancelled"), "{note}");
     let (nothing, _) = unkeyed_call(&mut app, &mut cockpit, cancel, json!({}));
     assert_eq!(
@@ -178,7 +182,7 @@ fn a_mouse_press_and_a_control_press_leave_the_same_state() {
             assert_eq!(summary.2, reach.token().as_str(), "{reach:?}");
             states.push((
                 app.history.history_reach,
-                app.active_tab().main_history_reach(),
+                app.active_tab().session.main_history_reach(),
                 summary,
             ));
             disable_test_gateway(&mut app, &ctx);
@@ -210,7 +214,7 @@ fn a_press_refused_while_a_run_loads_leaves_the_default_alone() {
         app.apply_toolbar_action(crate::toolbar::ToolbarAction::LoadHistory(
             HistoryReach::Hours(2),
         ));
-        assert!(app.active_tab().history_reach_running());
+        assert!(app.active_tab().session.history_reach_running());
 
         if by_control {
             let (pressed, _) = unkeyed_call(
@@ -231,7 +235,7 @@ fn a_press_refused_while_a_run_loads_leaves_the_default_alone() {
             "by control: {by_control}; the refused target is not the default"
         );
         assert_eq!(
-            app.active_tab().main_history_reach(),
+            app.active_tab().session.main_history_reach(),
             HistoryReach::Hours(2)
         );
         assert_eq!(summary_reach(&mut app, &mut observer).2, "hours:2");
