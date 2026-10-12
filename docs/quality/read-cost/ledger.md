@@ -96,3 +96,4 @@ a bound.
 | 658 | 2026-10-10 | fix/edit-loop-seven-minutes | main | 0 | 0 | — |
 | 665 | 2026-10-11 | feat/footprint-zoom-controls | main | 3273 | 6 | `crates/app/src/footprint_render/bar.rs` (754) |
 | 666 | 2026-10-11 | feat/drawing-magnet-per-object | main | 21118 | 25 | `crates/app/src/orderflow_view.rs` (732) |
+| 681 | 2026-10-12 | fix/two-decimal-display | main | 21516 | 19 | `crates/app/src/replay_view.rs` (783) |
