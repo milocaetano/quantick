@@ -231,7 +231,7 @@ impl PaneHitTest<'_> {
         if !bands::drawing_area(chart, self.frame.lane_divider_x).contains(pos) {
             return false;
         }
-        let Some(band) = bands::band_at(&self.frame.bands, pos) else {
+        let Some(band) = bands::band_at(&self.frame.bands, px(pos)) else {
             return false;
         };
         if !matches!(band.key, DrawingBand::Price) {
@@ -240,11 +240,11 @@ impl PaneHitTest<'_> {
         let history_right = self.frame.lane_divider_x.unwrap_or_else(|| chart.right());
         let total = self.projection.series.slots();
         self.projection
-            .drawing_handle_at(self.drawings, pos, band, history_right, total)
+            .drawing_handle_at(self.drawings, px(pos), band, history_right, total)
             .is_none()
             && self
                 .projection
-                .drawing_at(self.drawings, pos, band, history_right, total)
+                .drawing_at(self.drawings, px(pos), band, history_right, total)
                 .is_none()
     }
 
