@@ -295,7 +295,7 @@ pub fn records_from_book(book: &InstrumentBook) -> BTreeMap<String, InstrumentMo
                     size_step: exact(money.size_step),
                     currency: money.currency.code().to_owned(),
                     min_size: Some(exact(money.min_size)),
-                    max_size: money.max_size.map(number),
+                    max_size: money.max_size.map(exact),
                 },
             )
         })
@@ -1279,6 +1279,27 @@ mod tests {
             "five is not the smallest size: {sentence}"
         );
         assert!(sentence.contains("Reduce the size"), "{sentence}");
+    }
+
+    /// The sidecar is data, not a label: a crypto size step and a max size
+    /// finer than the two display decimals survive a save-and-load.
+    #[test]
+    fn instrument_money_saves_exact_digits() {
+        let fine = InstrumentMoney {
+            point_value: d("0.125"),
+            size_step: d("0.001"),
+            min_size: d("0.123"),
+            max_size: Some(d("0.125")),
+            ..win()
+        };
+        let book: InstrumentBook = [("BTCUSDT".to_owned(), fine)].into_iter().collect();
+        let records = records_from_book(&book);
+        let record = &records["BTCUSDT"];
+        assert_eq!(record.point_value, "0.125");
+        assert_eq!(record.size_step, "0.001");
+        assert_eq!(record.min_size.as_deref(), Some("0.123"));
+        assert_eq!(record.max_size.as_deref(), Some("0.125"));
+        assert_eq!(records_from_book(&book_from_records(&records)), records);
     }
 
     #[test]
