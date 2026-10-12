@@ -287,6 +287,9 @@ impl DrawingController {
             // note's words take part in payload equality — writing them through
             // it would let an unrelated in-flight gesture swallow this edit.
             if let Some(drawing) = host.drawings_mut().selected_mut() {
+                if drawing.magnet != edited.magnet {
+                    effects.own_magnet = Some((edited.id, edited.magnet));
+                }
                 *drawing = *edited;
             }
         }

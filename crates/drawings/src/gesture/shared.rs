@@ -71,6 +71,14 @@ pub struct SharedPick {
     pub anchor: Option<usize>,
     /// Locked geometry refuses to move, exactly as it does on its own pane.
     pub locked: bool,
+    /// The object's own magnet, which snaps its drag here as on its own pane:
+    /// [`crate::Drawing::own_magnet`], so a tool that snaps by its
+    /// own rule carries none. Read at the press and held for the gesture
+    /// (`shared_drag_magnet`): the pick under a moving pointer is not the
+    /// held mark, and this pane cannot read the owner's store mid-drag. The
+    /// switch cannot move under the hand anyway — the context bar stands
+    /// down while a drag runs — and a scripted flip lands from the next press.
+    pub magnet: bool,
 }
 
 /// What a pane did to another pane's marks in one frame.
@@ -525,7 +533,9 @@ impl PaneGestures {
         }) else {
             return;
         };
-        let Some((time_ms, price)) = shared_mark_at(projection, cached_bands, &pointer, position)
+        let magnet = pointer.magnet || self.shared_drag_magnet;
+        let Some((time_ms, price)) =
+            shared_mark_at(projection, cached_bands, &pointer, position, magnet)
         else {
             return;
         };
@@ -553,7 +563,10 @@ impl PaneGestures {
             outcome.shared.edit = Some(SharedEdit::Select(pick.index));
             self.shared_drag_owner = Some(pick.owner);
             self.shared_drag_pending_from = Some(position);
-            self.shared_pointer_mark = shared_mark_at(projection, cached_bands, pointer, position);
+            self.shared_drag_magnet = pick.magnet;
+            let magnet = pointer.magnet || pick.magnet;
+            self.shared_pointer_mark =
+                shared_mark_at(projection, cached_bands, pointer, position, magnet);
             self.shared_drag = if pick.locked {
                 SharedDrag::Blocked
             } else {
@@ -578,6 +591,7 @@ impl PaneGestures {
         self.shared_drag_owner = None;
         self.shared_drag_pending_from = None;
         self.shared_pointer_mark = None;
+        self.shared_drag_magnet = false;
     }
 
     fn shared_threshold_crossed(&mut self, position: Option<Px>) -> bool {
@@ -628,6 +642,7 @@ fn shared_mark_at(
     cached_bands: &[Band],
     pointer: &SharedPointer,
     position: Px,
+    magnet: bool,
 ) -> Option<(i64, f64)> {
     let band = band::band_at(cached_bands, position)?;
     projection
@@ -635,7 +650,7 @@ fn shared_mark_at(
             position,
             pointer.history_right,
             pointer.total,
-            pointer.magnet,
+            magnet,
             AnchorSnap::Pointer,
             band,
         )

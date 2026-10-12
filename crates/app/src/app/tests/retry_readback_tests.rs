@@ -729,6 +729,13 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             json!({ "enabled": true }),
             Readback::Moves,
         ),
+        // Filled in when it runs: a line placed for the call to act on.
+        (
+            "annotate.drawing_magnet.set",
+            1,
+            Value::Null,
+            Readback::Moves,
+        ),
     ]
 }
 
@@ -867,6 +874,26 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                     "tab_id": tab_id.to_string(),
                     "pane_id": tab.flow_pane.id.to_string(),
                     "slot_id": view.slot.0.to_string(),
+                    "enabled": true,
+                })
+            }
+            "annotate.drawing_magnet.set" => {
+                // The settings window an earlier row opened would eat the click.
+                app.surfaces.chart_settings.close();
+                run_frame(&mut app, &ctx);
+                let at = app
+                    .active_tab()
+                    .drawing_pane()
+                    .frame
+                    .chart_area
+                    .expect("the pane reported its rect")
+                    .center();
+                let index = place_drawing(&mut app, &ctx, "horizontal-line", &[at]);
+                let pane = app.active_tab().drawing_pane();
+                json!({
+                    "tab_id": app.tabs.active_id().to_string(),
+                    "pane_id": pane.id.to_string(),
+                    "drawing_id": pane.drawings.items()[index].id.0.to_string(),
                     "enabled": true,
                 })
             }

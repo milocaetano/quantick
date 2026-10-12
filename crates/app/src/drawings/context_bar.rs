@@ -101,6 +101,8 @@ pub enum Slot {
     Separator,
     Duplicate,
     Lock,
+    /// This object's own OHLC magnet, for the tools the magnet moves.
+    Magnet,
     Hide,
     Sharing,
     Settings,
@@ -135,6 +137,9 @@ pub struct Capabilities {
     /// Whether this drawing has enough market-time information to be shown
     /// on the tab's other charts.
     pub sharing: bool,
+    /// Whether the OHLC magnet moves this object's anchors: a tool that
+    /// snaps by its own rule has no magnet to switch.
+    pub magnet: bool,
 }
 
 /// The cells of a bar for an object with these capabilities.
@@ -142,7 +147,7 @@ pub struct Capabilities {
 /// A `SmallVec`, not a `Vec`: this is rebuilt on every frame something is
 /// selected, and the bar never holds more cells than fit inline.
 #[must_use]
-pub fn slots(caps: Capabilities) -> SmallVec<[Slot; 13]> {
+pub fn slots(caps: Capabilities) -> SmallVec<[Slot; 14]> {
     let mut slots = SmallVec::from_slice(&[Slot::Grip]);
     if caps.authored {
         slots.push(Slot::Author);
@@ -158,6 +163,9 @@ pub fn slots(caps: Capabilities) -> SmallVec<[Slot; 13]> {
     slots.push(Slot::Separator);
     slots.push(Slot::Duplicate);
     slots.push(Slot::Lock);
+    if caps.magnet {
+        slots.push(Slot::Magnet);
+    }
     slots.push(Slot::Hide);
     if caps.sharing {
         slots.push(Slot::Sharing);
@@ -359,6 +367,8 @@ pub struct ContextBar {
     #[cfg(test)]
     sharing_rect: Option<egui::Rect>,
     #[cfg(test)]
+    magnet_rect: Option<egui::Rect>,
+    #[cfg(test)]
     color_rect: Option<egui::Rect>,
     #[cfg(test)]
     swatch_rects: Vec<egui::Rect>,
@@ -500,6 +510,12 @@ impl ContextBar {
 
     #[cfg(test)]
     #[must_use]
+    pub fn magnet_rect(&self) -> Option<egui::Rect> {
+        self.magnet_rect
+    }
+
+    #[cfg(test)]
+    #[must_use]
     pub fn color_rect(&self) -> Option<egui::Rect> {
         self.color_rect
     }
@@ -532,6 +548,7 @@ pub struct ContextBarIntent {
     pub actions: ActionBarIntent,
     pub toggle_hidden: bool,
     pub toggle_shared: bool,
+    pub toggle_magnet: bool,
     pub duplicate: bool,
     pub open_settings: bool,
     /// The second step of a protected delete was taken.
@@ -554,6 +571,8 @@ pub struct BarObject<'a> {
     /// of stroke width, and writes the chosen size back here.
     pub glyph_size: Option<GlyphSize>,
     pub locked: bool,
+    /// This object's own magnet; `None` for a tool the magnet does not move.
+    pub magnet: Option<bool>,
     pub hidden: bool,
     pub shared: bool,
     pub shareable: bool,
@@ -593,6 +612,7 @@ pub fn capabilities(object: &BarObject<'_>) -> Capabilities {
         authored: object.author.is_some(),
         settings: object.settings_available,
         sharing: object.shareable,
+        magnet: object.magnet.is_some(),
     }
 }
 
@@ -697,6 +717,21 @@ fn draw_slot(
                 intent.actions.toggle_lock = true;
             }
         }
+        Slot::Magnet => {
+            let on = object.magnet.unwrap_or_default();
+            let (glyph, hover) = magnet_control(on);
+            let magnet = IconButton::new(glyph, TOOLRAIL_ICON)
+                .active(on)
+                .hover_text(hover)
+                .show(ui);
+            #[cfg(test)]
+            {
+                bar.magnet_rect = Some(magnet.rect);
+            }
+            if magnet.clicked() {
+                intent.toggle_magnet = true;
+            }
+        }
         Slot::Hide => {
             let (glyph, hover) = if object.hidden {
                 (icons::EYE_SLASH, "Show this drawing again")
@@ -769,6 +804,16 @@ fn draw_slot(
                 intent.actions.delete = true;
             }
         }
+    }
+}
+
+/// The rail's magnet glyph, named for this object alone: the rail's switch
+/// is a different one and stays where it is.
+fn magnet_control(on: bool) -> (&'static str, &'static str) {
+    if on {
+        (icons::MAGNET, "Stop snapping this drawing to OHLC")
+    } else {
+        (icons::MAGNET, "Snap this drawing to OHLC")
     }
 }
 
@@ -1238,6 +1283,7 @@ mod tests {
         glyph_size: false,
         settings: true,
         sharing: true,
+        magnet: true,
     };
 
     #[test]
@@ -1262,14 +1308,36 @@ mod tests {
             !source.contains(concat!("DOTS_", "THREE")),
             "the gear is the overflow; a more-menu is the failure mode"
         );
-        let functional = slots(PLAIN)
-            .into_iter()
-            .filter(|slot| !matches!(slot, Slot::Grip | Slot::Separator))
-            .count();
+        // Every bar `capabilities` can ask for: width and glyph size are one
+        // or the other, everything else may come or go. The fullest is an
+        // assistant's pointer-anchored object, author chip and all.
+        let functional = (0..32_u8)
+            .map(|bits| {
+                let caps = Capabilities {
+                    stroke_width: bits & 1 != 0,
+                    glyph_size: bits & 1 == 0,
+                    authored: bits & 2 != 0,
+                    settings: bits & 4 != 0,
+                    sharing: bits & 8 != 0,
+                    magnet: bits & 16 != 0,
+                };
+                slots(caps)
+                    .into_iter()
+                    .filter(|slot| !matches!(slot, Slot::Grip | Slot::Separator))
+                    .count()
+            })
+            .max()
+            .unwrap_or_default();
+        // Ten: the object's own magnet joined Lock, both switches a trader
+        // flips on the object under their eye mid-session, on a bar that
+        // already carried an assistant's author chip. The ceiling is the
+        // fullest bar today; a new slot has to argue past it here.
+        const CEILING: usize = 10;
         assert!(
-            functional <= 8,
-            "the bar holds at most 8 functional slots; found {functional}"
+            functional <= CEILING,
+            "the bar holds at most {CEILING} functional slots; found {functional}"
         );
+        assert_eq!(functional, CEILING, "the ceiling is the fullest real bar");
     }
 
     #[test]
@@ -1285,6 +1353,7 @@ mod tests {
             glyph_size: true,
             settings: true,
             sharing: true,
+            magnet: true,
         });
         assert!(!glyph_tool.contains(&Slot::Width));
         assert!(glyph_tool.contains(&Slot::GlyphSize));
@@ -1333,6 +1402,7 @@ mod tests {
                 glyph_size: true,
                 settings: false,
                 sharing: true,
+                magnet: true,
             },
         ] {
             let cells = slots(caps);
@@ -1354,6 +1424,23 @@ mod tests {
         assert_eq!(sharing_control(true).1, "Show only on this chart");
         assert_eq!(sharing_control(false).0, icons::GRID_FOUR);
         assert_eq!(sharing_control(true).0, icons::GRID_FOUR);
+    }
+
+    #[test]
+    fn the_magnet_sits_beside_lock_and_only_where_it_snaps() {
+        let cells = slots(PLAIN);
+        let lock = cells.iter().position(|slot| *slot == Slot::Lock).unwrap();
+        assert_eq!(cells[lock + 1], Slot::Magnet);
+        assert_eq!(magnet_control(false).1, "Snap this drawing to OHLC");
+        assert_eq!(magnet_control(true).1, "Stop snapping this drawing to OHLC");
+        let own_rule = slots(Capabilities {
+            magnet: false,
+            ..PLAIN
+        });
+        assert!(
+            !own_rule.contains(&Slot::Magnet),
+            "a tool that snaps by its own rule has no dead magnet"
+        );
     }
 
     #[test]

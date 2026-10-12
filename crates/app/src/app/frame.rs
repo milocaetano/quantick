@@ -231,14 +231,8 @@ impl QuantickApp {
                 if self.toolrail.take_favorites_change() {
                     self.workspace_save_adapter().write_favorites();
                 }
-                // A hand's flip is `annotate.magnet.set`, so it journals alike.
                 if let Some(on) = self.toolrail.take_magnet_request() {
-                    let input = serde_json::json!({ "enabled": on });
-                    let human = crate::control::ActionOrigin::Human;
-                    let id = crate::control::DRAWING_MAGNET_CAPABILITY_ID;
-                    if self.control_action(id, 1, human, input).is_err() {
-                        self.toolrail.set_magnet(on);
-                    }
+                    crate::control::flip_rail_magnet(self, on);
                 }
             }
             FrameStage::Dock => self.draw_dock_stage(ctx),
@@ -684,6 +678,7 @@ impl QuantickApp {
             &mut *self.audio.alerts,
             now,
         );
+        crate::control::journal_own_magnet_flip(self, effects.own_magnet);
         if effects.inspector_moved {
             self.workspace.session_mut().inspector_moved();
         }

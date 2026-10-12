@@ -93,7 +93,7 @@ pub(crate) fn register(registry: &mut ProjectionRegistry) -> Result<(), Projecti
 /// a second, and a key holding them would differ at every capture and so would
 /// mark nothing. What this tracks is a change to the *arrangement*: an
 /// indicator added, removed, re-input, hidden, re-declared by a hot reload or
-/// newly failing; a drawing created, removed, locked, hidden, renamed,
+/// newly failing; a drawing created, removed, locked, magnetised, hidden, renamed,
 /// re-authored, selected, or left standing over a market it was not drawn on.
 ///
 /// Everything either scope publishes and the readings do not carry belongs
@@ -137,6 +137,7 @@ fn revision<P: TabsPort + ChromePort + ?Sized>(app: &P) -> (bool, Vec<AnalysisRe
                             (
                                 drawing.id.0,
                                 drawing.locked,
+                                drawing.own_magnet(),
                                 drawing.hidden,
                                 drawing.name.is_some(),
                                 drawing.author.is_some(),
@@ -171,14 +172,17 @@ struct PaneAnalysisRevisionKey {
     /// `Eq`; the rendering is exact for every variant and neither value ever
     /// reaches the wire.
     indicators: Vec<IndicatorAnalysisRevisionKey>,
-    /// `(id, locked, hidden, named, authored, foreign market, off series)` —
-    /// never the name itself.
-    drawings: Vec<(u64, bool, bool, bool, bool, bool, bool)>,
+    /// One [`DrawingRevisionKey`] per drawing.
+    drawings: Vec<DrawingRevisionKey>,
     /// The toolrail's "Hide all", which the scope publishes per pane.
     layer_hidden: bool,
     /// Which row the selection sits on, which the scope publishes too.
     selected_drawing: Option<usize>,
 }
+
+/// `(id, locked, magnet, hidden, named, authored, foreign market, off
+/// series)` — never the name itself.
+type DrawingRevisionKey = (u64, bool, bool, bool, bool, bool, bool, bool);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct IndicatorAnalysisRevisionKey {
@@ -335,6 +339,7 @@ fn drawing_snapshot(drawing: &Drawing) -> DrawingSnapshot {
         }
         .to_owned(),
         locked: drawing.locked,
+        magnet: drawing.own_magnet(),
         hidden: drawing.hidden,
         foreign_market: drawing.foreign_market,
         off_series: drawing.off_series,

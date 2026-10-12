@@ -126,3 +126,34 @@ fn parse_names_why_a_layouts_file_is_refused() {
         "layouts format version 9 (this build reads 1)"
     );
 }
+
+/// An object's own OHLC magnet travels with it, and a document written
+/// before the flag existed loads with it off and saves back unchanged.
+#[test]
+fn a_drawings_own_magnet_round_trips_and_old_documents_default_off() {
+    let old = concat!(
+        "tool = \"horizontal-line\"\n",
+        "color = [1, 2, 3, 255]\nwidth_px = 1.0\nfill_alpha = 0\n",
+        "band = { axis = \"price\" }\n",
+        "points = [{ price = 100.0, bar = 3.0 }]\n",
+    );
+    let saved: SavedDrawing = toml::from_str(old).expect("an old drawing parses");
+    assert!(
+        !saved.magnet,
+        "an old document's drawing opens with no magnet"
+    );
+    let resaved = toml::to_string(&saved).unwrap();
+    assert!(
+        !resaved.contains("magnet"),
+        "an off magnet writes nothing, so old documents save back unchanged: {resaved}"
+    );
+    let on = SavedDrawing {
+        magnet: true,
+        ..saved
+    };
+    let text = toml::to_string(&on).unwrap();
+    assert!(text.contains("magnet = true"), "{text}");
+    let back: SavedDrawing = toml::from_str(&text).unwrap();
+    assert!(back.magnet);
+    assert_eq!(back, on);
+}

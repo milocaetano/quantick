@@ -86,6 +86,7 @@ impl IndicatorKey {
 struct DrawingKey {
     id: u64,
     locked: bool,
+    magnet: bool,
     hidden: bool,
     /// Whether the trader gave it a name — never the name, which is their own
     /// text and does not belong in the journal any more than on the wire.
@@ -99,6 +100,7 @@ impl DrawingKey {
     fn matches(&self, drawing: &crate::drawings::Drawing) -> bool {
         self.id == drawing.id.0
             && self.locked == drawing.locked
+            && self.magnet == drawing.own_magnet()
             && self.hidden == drawing.hidden
             && self.named == drawing.name.is_some()
             && match (&self.author, &drawing.author) {
@@ -114,6 +116,7 @@ impl DrawingKey {
         Self {
             id: drawing.id.0,
             locked: drawing.locked,
+            magnet: drawing.own_magnet(),
             hidden: drawing.hidden,
             named: drawing.name.is_some(),
             author: drawing
@@ -471,6 +474,7 @@ impl ControlAccess {
                             "drawing_id": drawing.id.0.to_string(),
                             "tool_id": drawing.tool.id(),
                             "locked": drawing.locked,
+                            "magnet": drawing.own_magnet(),
                             "hidden": drawing.hidden,
                             // Presence, never the text: the journal is held to
                             // the same rule as the wire.

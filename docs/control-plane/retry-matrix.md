@@ -112,16 +112,17 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 29 |
+| deduplicated per connection | 30 |
 | key refused; not retryable, read back | 17 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **53** |
+| **Total** | **54** |
 
 ## Capabilities
 
 | Capability | Versions | Policy | Enforced | Reach | Readback | Field | Applied when | Proven by |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `annotate.arrow.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].author.client_name` | a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
+| `annotate.drawing_magnet.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].magnet` | the row under the named `tab_id` and `pane_id` whose `drawing_id` was named carries the requested boolean | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `annotate.fib_projection.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].author.client_name` | a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `annotate.fib_retracement.create` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].author.client_name` | a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `annotate.fixed_range_profile.create` | 1, 2 | forbidden | key refused; not retryable, read back | `annotator` | `snapshot.read` `analysis.drawings` | `tabs[].panes[].drawings[].author.client_name` | a drawing authored by the caller, of the call's `tool_id`, that the pre-call reading lacked; the author name is not authenticated, so keep one create per tool in flight. A pane lists at most 512 drawings: when its `drawings_truncated` is set, read `events.read` `annotate.object.created` from the pre-call cursor instead | `an_interrupted_annotation_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
@@ -175,4 +176,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `trade.ruler.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].ruler_ticks` | the ruler stands at the distance the call answered with | `a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once`, `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.strategy.select` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].armed_strategy` | the ticket is armed with the strategy asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 
-53 mutable capabilities registered, 53 with a readback.
+54 mutable capabilities registered, 54 with a readback.

@@ -399,6 +399,22 @@ impl<T: Clone + PartialEq> Drawings<T> {
         }
     }
 
+    /// Turn one object's own magnet on or off as one undo step; answers
+    /// whether it moved.
+    pub fn set_magnet_at(&mut self, index: usize, magnet: bool) -> bool {
+        if self
+            .items
+            .get(index)
+            .is_none_or(|drawing| drawing.magnet == magnet)
+        {
+            return false;
+        }
+        let before = self.snapshot();
+        self.items[index].magnet = magnet;
+        self.record(before);
+        true
+    }
+
     pub fn set_hidden_at(&mut self, index: usize, hidden: bool) {
         let before = self.snapshot();
         if let Some(drawing) = self.items.get_mut(index) {
@@ -452,5 +468,24 @@ impl<T: Clone + PartialEq> Drawings<T> {
             item.locked = locked;
         }
         self.record(before);
+    }
+}
+
+impl Drawings<crate::DrawingTool> {
+    /// Switch the drawing `id`'s own magnet as one undo step; answers whether
+    /// it moved. Refused with `None` for an id this store does not hold, and
+    /// with the tool's `(name, id)` when asked on for a tool that snaps by its
+    /// own rule. Off is always reachable, so a stale flag can be cleared.
+    pub fn set_own_magnet(
+        &mut self,
+        id: DrawingId,
+        enabled: bool,
+    ) -> Result<bool, Option<(&'static str, &'static str)>> {
+        let index = self.index_of(id).ok_or(None)?;
+        let tool = self.items[index].tool;
+        if enabled && !self.items[index].takes_magnet() {
+            return Err(Some((tool.name(), tool.id())));
+        }
+        Ok(self.set_magnet_at(index, enabled))
     }
 }

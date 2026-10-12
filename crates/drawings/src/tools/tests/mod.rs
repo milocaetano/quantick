@@ -2111,3 +2111,37 @@ fn a_saved_rectangle_default_carries_no_restore_point() {
     assert!(fresh.extend_left);
     assert_eq!(fresh.extended_from, None);
 }
+
+/// A drawing's own magnet moves only the tools whose anchors follow the
+/// pointer, on its own pane and in every mirror: a mark that snaps by its
+/// own rule carries none, whatever its flag says.
+#[test]
+fn only_a_pointer_anchored_tool_honours_its_own_magnet() {
+    let mut drawings = Drawings::default();
+    drawings.place(tool("horizontal-line"), ChartPoint::at(2.0, 100.0));
+    drawings.place(tool("arrow-mark-up"), ChartPoint::at(3.0, 100.0));
+    for index in 0..2 {
+        assert!(drawings.set_magnet_at(index, true));
+    }
+    let [line, mark] = drawings.items() else {
+        panic!("two objects placed");
+    };
+    assert!(line.takes_magnet() && line.own_magnet());
+    assert!(mark.magnet && !mark.takes_magnet() && !mark.own_magnet());
+}
+
+/// The call's switch: an unknown id and a mark asked on are refused, off is
+/// accepted on any tool, and `changed` says whether the flag moved.
+#[test]
+fn set_own_magnet_refuses_what_the_bar_would_not_offer() {
+    let mut drawings = Drawings::default();
+    drawings.place(tool("horizontal-line"), ChartPoint::at(2.0, 100.0));
+    drawings.place(tool("arrow-mark-up"), ChartPoint::at(3.0, 100.0));
+    let [line, mark] = [0, 1].map(|index| drawings.items()[index].id);
+    assert_eq!(drawings.set_own_magnet(DrawingId(999), true), Err(None));
+    assert_eq!(drawings.set_own_magnet(line, true), Ok(true));
+    assert_eq!(drawings.set_own_magnet(line, true), Ok(false));
+    let refused = drawings.set_own_magnet(mark, true);
+    assert!(matches!(refused, Err(Some((_, "arrow-mark-up")))));
+    assert_eq!(drawings.set_own_magnet(mark, false), Ok(false));
+}

@@ -33,6 +33,9 @@ pub struct Drawing<T> {
     pub locked: bool,
     /// A hidden drawing neither paints nor hit-tests, and stays recoverable.
     pub hidden: bool,
+    /// This object's own OHLC magnet: a drag of it snaps whenever this or the
+    /// rail's magnet is on. Off unless the trader turned it on.
+    pub magnet: bool,
     /// Whether the other panes of this tab show it too.
     pub scope: DrawingScope,
     /// Set when the tab changed the instrument under this mark.
@@ -90,6 +93,22 @@ impl<T> Drawing<T> {
     }
 }
 
+impl Drawing<crate::DrawingTool> {
+    /// Whether the OHLC magnet moves this object's anchors at all: a tool
+    /// that snaps by its own rule (a mark, an anchored VWAP) has no magnet.
+    #[must_use]
+    pub fn takes_magnet(&self) -> bool {
+        self.tool.anchor_snap() == crate::AnchorSnap::Pointer
+    }
+
+    /// This object's own magnet as its drags honour it, on its own pane or
+    /// mirrored on another.
+    #[must_use]
+    pub fn own_magnet(&self) -> bool {
+        self.magnet && self.takes_magnet()
+    }
+}
+
 impl<T: PartialEq> PartialEq for Drawing<T> {
     fn eq(&self, other: &Self) -> bool {
         // `id` stays out: identity is not content, and an undo snapshot
@@ -104,6 +123,7 @@ impl<T: PartialEq> PartialEq for Drawing<T> {
             && self.style == other.style
             && self.locked == other.locked
             && self.hidden == other.hidden
+            && self.magnet == other.magnet
             && self.scope == other.scope
             && self.payload.eq_dyn(other.payload.as_ref())
     }
