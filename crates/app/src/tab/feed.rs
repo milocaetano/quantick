@@ -13,15 +13,14 @@ use std::time::Instant;
 use eframe::egui;
 use quantick_chart_interaction::live_trade_plan::{LiveTradePlan, LiveTradeStage};
 use quantick_chart_interaction::tab_drain_plan::{TabDrainPlan, TabDrainStage};
-use smallvec::SmallVec;
 use tokio::sync::mpsc;
 
+use super::panes::pane_views;
 use super::{BOOK_DRAIN_BUDGET, BOOK_GENERATION_STRIDE, CanvasLayout, HistoryPolicy, Tab};
-use crate::canvas_layout::MAX_CANVAS_PANES;
 use crate::config::{AppConfig, FeedCapabilities};
 use crate::loading::LoadingTask;
 use crate::metrics;
-use crate::pane::{ChartPane, PaneSide};
+use crate::pane::PaneSide;
 use crate::paper_home::shelf_dir;
 use quantick_feed as feed;
 use quantick_feed::history_reach::HistoryReach;
@@ -33,8 +32,7 @@ use quantick_feed::{
 };
 use quantick_layers::ChartLayer;
 use quantick_session::{
-    Act, Delivery, Effect, FeedRequest, Msg, OlderCandles, PaneView, Refusal, SeamTrace, TabView,
-    Wait, WaitChange,
+    Act, Delivery, Effect, FeedRequest, Msg, OlderCandles, Refusal, TabView, Wait, WaitChange,
 };
 use quantick_stores::bubble_asset_store::{AssetBinding, SharedAssetBubbles};
 
@@ -1317,25 +1315,6 @@ struct Judged<'c> {
     now: Instant,
 }
 
-/// Every pane holding this market's bars, as the session reads them: flow
-/// first, then the context stack, the order an `InstallPrefix` addresses.
-fn pane_views<'a>(
-    flow: &'a ChartPane,
-    context: &'a [ChartPane],
-) -> SmallVec<[PaneView<'a>; MAX_CANVAS_PANES]> {
-    std::iter::once(flow)
-        .chain(context)
-        .map(|pane| PaneView {
-            interval_ms: pane.state.spec().time_interval_ms(),
-            first_print_open_ms: pane.state.first_print_open_ms(),
-            first_bar: pane.state.bars().first(),
-            partial: pane.state.partial(),
-            rebuild_pending: pane.history_pending(),
-            rebuild_failed: pane.history_failed(),
-        })
-        .collect()
-}
-
 /// The shell half of the session bus: every entry into reaching back — the
 /// toolbar, the History menu, `feed.history.load`, the drain, a hook — is
 /// one [`Tab::run_session`], and this carries out what the session decides.
@@ -1458,42 +1437,6 @@ impl Tab {
             Err(mpsc::error::TrySendError::Full(_)) => Delivery::Busy,
             Err(mpsc::error::TrySendError::Closed(_)) => Delivery::Gone,
         }
-    }
-
-    /// Put a prefix in front of one pane; a seam bar that changed, or says
-    /// why it holds no lead, is logged beside the pane.
-    fn install_prefix(
-        &mut self,
-        index: usize,
-        bars: Vec<quantick_engine::Bar>,
-        lead: Option<quantick_engine::Bar>,
-        covers_seam: bool,
-        seam: Option<SeamTrace>,
-    ) -> bool {
-        let Some(pane) = self.pane_at_mut(index) else {
-            return false;
-        };
-        let had = seam.and_then(|_| pane.state.venue_lead().cloned());
-        let changed = pane.install_venue_history(bars, lead, covers_seam);
-        let seated = pane.state.venue_lead();
-        if let Some(seam) = seam
-            && (had.as_ref() != seated
-                || seated.is_none() && seam.token != "nothing_before_first_trade")
-        {
-            tracing::info!(
-                target: "quantick::app",
-                schema_version = 1_u8,
-                event_code = "SEAM_LEAD",
-                pane = pane.id,
-                interval_ms = seam.interval_ms,
-                first_print_ms = seam.first_print_ms,
-                lead_open_ms = seated.map_or(0, |bar| bar.open_time),
-                lead_trades = seated.map_or(0, |bar| bar.trade_count),
-                action = if seated.is_some() { "merged_into_seam_bar" } else { seam.token },
-                "the venue's history of the seam bucket before the first trade"
-            );
-        }
-        changed
     }
 
     /// Load back to `reach`: begin now, or queue behind the opening fill. The
