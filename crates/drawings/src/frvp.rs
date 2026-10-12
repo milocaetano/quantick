@@ -163,3 +163,7 @@ pub fn refresh(drawings: &mut Drawings<DrawingTool>, inputs: &RefreshInputs<'_>)
     }
     folding
 }
+
+#[cfg(test)]
+#[path = "frvp_tests.rs"]
+mod frvp_tests;

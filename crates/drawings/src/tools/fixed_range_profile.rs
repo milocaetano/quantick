@@ -15,7 +15,7 @@
 //! - partial coverage is spoken (`N of M bars`), never blended away;
 //! - the range that folds is the rectangle that was drawn — an anchor's
 //!   integer bar coordinate is a candle's centre, the same convention the
-//!   viewport paints with (see the window's `frvp` refresh pass);
+//!   viewport paints with (see [`crate::frvp::refresh`]);
 //! - a cap-coarsened profile names its effective row width, like the
 //!   footprint legend does.
 
@@ -531,7 +531,7 @@ impl MarkTool for FixedRangeProfile {
         )
     }
     fn id(&self) -> &'static str {
-        "fixed-range-profile"
+        crate::frvp::TOOL_ID
     }
     fn name(&self) -> &'static str {
         "Fixed range volume profile"
