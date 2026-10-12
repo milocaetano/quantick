@@ -18,6 +18,7 @@
 
 use quantick_chart::geometry as chart;
 
+pub mod frvp;
 pub mod gesture;
 pub mod icons;
 pub mod palette;

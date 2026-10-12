@@ -25,18 +25,17 @@ mod headless_pin_tests;
 pub(crate) use geometry::{distance_to_segment, egui_rect, pos, px, px_rect};
 #[cfg(test)]
 pub(crate) use quantick_drawings::UNDO_HISTORY_LIMIT;
-#[cfg(test)]
-pub(crate) use quantick_drawings::ValueUnit;
 pub(crate) use quantick_drawings::reanchor_points;
 pub use quantick_drawings::{
     AvwapPayload, ChartPoint, Constrain, DEFAULT_DRAWING_COLOR, DRAWING_TOOLS, DeleteOutcome,
     DoubleClickHint, DrawContext, DrawingAuthor, DrawingBand, DrawingId, DrawingPayload,
-    DrawingScope, DrawingStyle, DrawingTool, Duplicated, FrvpPayload, GlyphSize, IconDots,
-    IconLetter, IconStrokes, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX,
-    MarkScene, NewDrawing, PaneKey, PresetHost, RECTANGLE_TOOL_ID, RectanglePayload, ToolFamily,
-    ToolShortcut, has_saved_default, new_drawing_from_defaults, reset_tool_default,
-    save_tool_default,
+    DrawingScope, DrawingStyle, DrawingTool, Duplicated, GlyphSize, IconDots, IconLetter,
+    IconStrokes, MAX_DRAWING_FILL_ALPHA, MAX_DRAWING_WIDTH_PX, MIN_DRAWING_WIDTH_PX, MarkScene,
+    NewDrawing, PaneKey, PresetHost, RECTANGLE_TOOL_ID, RectanglePayload, ToolFamily, ToolShortcut,
+    has_saved_default, new_drawing_from_defaults, reset_tool_default, save_tool_default,
 };
+#[cfg(test)]
+pub(crate) use quantick_drawings::{FrvpPayload, ValueUnit};
 pub use style::{StyleColor32, shortcut_key};
 pub(crate) use style::{from_color32, painted_color, to_color32};
 pub use tool_tabs::draw_extra_tab;
