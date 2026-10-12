@@ -45,8 +45,6 @@ const PANE_LABEL_INSET_PX: egui::Vec2 = egui::vec2(6.0, 3.0);
 const LARGE_VALUE_THRESHOLD: f64 = 1000.0;
 /// Decimals shown at or above [`LARGE_VALUE_THRESHOLD`].
 const LARGE_VALUE_DECIMALS: usize = 1;
-/// Decimals shown below [`LARGE_VALUE_THRESHOLD`].
-const SMALL_VALUE_DECIMALS: usize = quantick_engine::display::DISPLAY_DECIMALS as usize;
 /// Marker size (triangle half-height / circle radius), in pixels.
 const MARKER_SIZE_PX: f32 = 4.0;
 /// Gap between a bar's extreme and its above/below marker, in pixels.
@@ -607,7 +605,7 @@ fn format_value(v: f64) -> String {
     if v.abs() >= LARGE_VALUE_THRESHOLD {
         format!("{v:.*}", LARGE_VALUE_DECIMALS)
     } else {
-        format!("{v:.*}", SMALL_VALUE_DECIMALS)
+        quantick_engine::display::display_f64(v)
     }
 }
 

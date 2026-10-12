@@ -572,7 +572,7 @@ pub fn level_price(
 }
 
 fn format_price(price: f64) -> String {
-    format!("{price:.2}")
+    quantick_engine::display::display_f64(price)
 }
 
 fn format_label(mode: LabelMode, level: &FibLevelSpec, price: f64) -> String {
@@ -1026,7 +1026,7 @@ mod tests {
         named.label = "golden".to_owned();
         assert_eq!(
             format_label(LabelMode::PercentPrice, &named, 1.0),
-            "golden \u{00b7} 1.00"
+            "golden \u{00b7} 1"
         );
     }
 

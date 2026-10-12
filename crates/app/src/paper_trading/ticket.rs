@@ -193,7 +193,7 @@ impl PaperTrading {
             // The mode writes into the field the whole form already reads,
             // rather than adding a second number beside it: one quantity on
             // screen is the quantity that will be sent.
-            let derived = fmt_decimal(quantity);
+            let derived = crate::paper_chrome::fmt_exact(quantity);
             if self.desk.ticket.qty_text != derived {
                 self.desk.ticket.qty_text = derived;
             }

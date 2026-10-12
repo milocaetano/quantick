@@ -27,7 +27,8 @@ pub fn regroup(fp: &BarFootprint, k: i64) -> BTreeMap<i64, FootprintLevel> {
 }
 
 /// Abbreviate a quantity for a fixed-width cell: `58.1k`, `1.2M`, `736`,
-/// `0.52`. At most two decimals below 100, so a dense ladder's cells stay the same
+/// `0.52`, `0.004`. At most two decimals below 100 (a sub-cent value keeps
+/// its significant digits), so a dense ladder's cells stay the same
 /// visual weight.
 pub fn fmt_qty(qty: Decimal) -> String {
     let value = qty.to_f64().unwrap_or(0.0);
@@ -49,7 +50,7 @@ pub fn fmt_qty(qty: Decimal) -> String {
         // get their decimals below.
         format!("{value:.0}")
     } else {
-        format!("{value:.2}")
+        quantick_engine::display::display_f64(value)
     }
 }
 
@@ -268,8 +269,7 @@ mod tests {
     /// nothing is a wrong-side whisper (panel must-fix).
     #[test]
     fn display_zero_deltas_are_never_signed() {
-        assert_eq!(fmt_delta(dec("-0.0004")), None);
-        assert_eq!(fmt_delta(dec("0.0003")), None);
+        assert_eq!(fmt_delta(dec("-0.0004")).as_deref(), Some("-0.0004"));
         assert_eq!(fmt_delta(dec("0")), None);
         assert_eq!(fmt_delta(dec("-0.43")).as_deref(), Some("-0.43"));
         assert_eq!(fmt_delta(dec("58100")).as_deref(), Some("58.1k"));

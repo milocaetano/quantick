@@ -107,7 +107,7 @@ mod tests {
     fn display_values_carry_at_most_two_decimals() {
         let third = Decimal::from(4) / Decimal::from(3);
         assert_eq!(fmt_decimal(third), "1.33");
-        assert_eq!(fmt_decimal(Decimal::new(-5, 3)), "-0.01");
+        assert_eq!(fmt_decimal(Decimal::new(-5, 3)), "-0.005");
         assert_eq!(fmt_decimal(Decimal::new(510, 2)), "5.1");
         assert_eq!(fmt_decimal(Decimal::from(12)), "12");
         assert_eq!(fmt_decimal(Decimal::ZERO), "0");

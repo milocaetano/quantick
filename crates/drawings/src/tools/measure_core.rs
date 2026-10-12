@@ -89,7 +89,7 @@ fn percent_move(from: f64, to: f64) -> Option<f64> {
 }
 
 fn format_points(delta: f64) -> String {
-    format!("{delta:+.2}")
+    quantick_engine::display::display_signed_f64(delta)
 }
 
 /// Elapsed market time, coarsened to the largest unit that still carries
@@ -427,7 +427,7 @@ mod tests {
             ValueUnit::Indicator("CVD"),
         )
         .expect("two anchors");
-        assert_eq!(readout.lines[0], "+412.00  ·  CVD");
+        assert_eq!(readout.lines[0], "+412  ·  CVD");
         assert!(!readout.lines[0].contains("pts"));
         assert!(!readout.lines[0].contains('%'));
         // The time line is the same sentence on every band.
@@ -443,7 +443,7 @@ mod tests {
             ValueUnit::Price,
         )
         .expect("two anchors");
-        assert_eq!(readout.lines[0], "-20.00 pts   -10.00%");
+        assert_eq!(readout.lines[0], "-20 pts   -10.00%");
         assert_eq!(readout.rising, Some(false));
     }
 
@@ -505,7 +505,7 @@ mod tests {
             ValueUnit::Price,
         )
         .expect("anchors");
-        assert_eq!(price.lines, ["+0.00 pts   +0.00%"]);
+        assert_eq!(price.lines, ["0 pts   +0.00%"]);
     }
 
     /// Flat means equal, not "small next to the level": on a cumulative axis
@@ -518,7 +518,7 @@ mod tests {
             ValueUnit::Indicator("CVD"),
         )
         .expect("anchors");
-        assert_eq!(readout.lines, ["+0.50  ·  CVD", "3 bars   5s"]);
+        assert_eq!(readout.lines, ["+0.5  ·  CVD", "3 bars   5s"]);
         assert_eq!(readout.rising, Some(true));
     }
 
@@ -555,7 +555,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sub_unit_move_shows_at_most_two_decimals() {
+    fn a_sub_cent_move_keeps_its_significant_digits() {
         let readout = readout(
             &anchors((0.0, 0.5, 0), (2.0, 0.500_12, 1_000)),
             PRICE_ONLY,
@@ -563,8 +563,8 @@ mod tests {
         )
         .expect("anchors");
         assert!(
-            readout.lines[0].starts_with("+0.00 pts"),
-            "every painted number carries at most two decimals: {}",
+            readout.lines[0].starts_with("+0.00012 pts"),
+            "a crypto-sized move must not round to +0: {}",
             readout.lines[0]
         );
     }

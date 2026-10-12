@@ -5,12 +5,11 @@
 //! the same price. The default step is derived by the account; what is here
 //! is the winding, and the step a trader named for each instrument.
 
+use crate::format::fmt_exact;
 use std::collections::BTreeMap;
 
 use quantick_engine::Side;
 use rust_decimal::Decimal;
-
-use crate::format::fmt_decimal;
 
 /// The smallest wheel travel that can still count as a notch.
 ///
@@ -188,7 +187,8 @@ impl Ruler {
         self.step_text = self
             .steps
             .get(symbol)
-            .map(|step| fmt_decimal(*step))
+            // Read back as the saved step on the next edit: it stays exact.
+            .map(|step| fmt_exact(*step))
             .unwrap_or_default();
     }
 

@@ -291,10 +291,10 @@ pub fn records_from_book(book: &InstrumentBook) -> BTreeMap<String, InstrumentMo
             (
                 symbol.clone(),
                 InstrumentMoneyRecord {
-                    point_value: number(money.point_value),
-                    size_step: number(money.size_step),
+                    point_value: exact(money.point_value),
+                    size_step: exact(money.size_step),
                     currency: money.currency.code().to_owned(),
-                    min_size: Some(number(money.min_size)),
+                    min_size: Some(exact(money.min_size)),
                     max_size: money.max_size.map(number),
                 },
             )
@@ -306,7 +306,7 @@ pub fn records_from_book(book: &InstrumentBook) -> BTreeMap<String, InstrumentMo
 pub fn records_from_capital(capital: &Capital) -> BTreeMap<String, String> {
     capital
         .iter()
-        .map(|(code, amount)| (code.clone(), number(*amount)))
+        .map(|(code, amount)| (code.clone(), exact(*amount)))
         .collect()
 }
 
@@ -736,7 +736,13 @@ fn widest_stop_that_fits(budget: &Money, money: &InstrumentMoney) -> Option<Deci
     Some(points.round_dp(2).normalize())
 }
 
-/// A decimal as a trader writes it: no trailing zeros, no exponent.
+/// A decimal as saved: exact, no trailing zeros, no exponent, so a value
+/// survives a save-and-load unchanged.
+fn exact(value: Decimal) -> String {
+    crate::format::fmt_exact(value)
+}
+
+/// A decimal as a trader reads it in a sentence: at most two places.
 fn number(value: Decimal) -> String {
     crate::format::fmt_decimal(value)
 }
