@@ -675,3 +675,45 @@ fn a_day_is_listed_once_and_an_edit_stands_in_one_place() {
     place_session_rows(&mut days, None, Some(&a), &folded, &mut placed);
     assert_eq!(rows_of(&days[1..], &a), vec![SessionRow::Inline]);
 }
+
+/// A day of one session still says which session it was — Live or Replay —
+/// so its trades never stand without a head; only a session no file holds
+/// stays bare, and a folded day places nothing.
+#[test]
+fn a_one_session_day_is_headed_and_a_keyless_session_stays_bare() {
+    let a = SessionKey::parse("X/a.csv").unwrap();
+    let b = SessionKey::parse("X/b.csv").unwrap();
+    let day = 86_400_000;
+    let rows = [
+        (None, trade_at(DAY_START + 2 * day, 5)),
+        (Some(&b), trade_at(DAY_START + day, 1)),
+        (Some(&a), trade_at(DAY_START, 2)),
+    ];
+    let mut days = group_by_day_and_session(rows.iter().map(|(key, trade)| (*key, trade)), UTC);
+    assert_eq!(days.len(), 3);
+    assert!(days.iter().all(|day| day.sessions.len() == 1));
+
+    let mut placed = false;
+    place_session_rows(&mut days, None, None, &BTreeSet::new(), &mut placed);
+    let placed_rows: Vec<SessionRow> = days.iter().map(|day| day.sessions[0].row).collect();
+    assert_eq!(
+        placed_rows,
+        vec![SessionRow::Bare, SessionRow::Head, SessionRow::Head],
+        "keyless bare; every keyed one-session day headed"
+    );
+    assert!(!placed, "no edit, no inline row");
+
+    // Editing a one-session day's session puts the inline row there, once.
+    let mut placed = false;
+    place_session_rows(&mut days, None, Some(&a), &BTreeSet::new(), &mut placed);
+    assert_eq!(days[2].sessions[0].row, SessionRow::Inline);
+    assert_eq!(days[1].sessions[0].row, SessionRow::Head);
+
+    // A folded day places nothing.
+    let mut fresh = group_by_day_and_session(rows.iter().map(|(key, trade)| (*key, trade)), UTC);
+    let folded = BTreeSet::from([fresh[1].day.day_number()]);
+    let mut placed = false;
+    place_session_rows(&mut fresh, None, None, &folded, &mut placed);
+    assert_eq!(fresh[1].sessions[0].row, SessionRow::Bare, "folded: untouched");
+    assert_eq!(fresh[2].sessions[0].row, SessionRow::Head);
+}

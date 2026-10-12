@@ -178,20 +178,19 @@ fn f2_names_and_del_deletes_the_focused_session_but_never_a_live_one() {
     state.reloaded(&loaded);
     state.ensure_cut(Some(&loaded), UTC);
     let none = BTreeSet::new();
-    assert_eq!(state.key_press(false, None, &none, Some(&loaded)), None);
-    let selected = key("b.csv");
-    assert_eq!(
-        state.key_press(true, Some(&selected), &none, Some(&loaded)),
-        Some(SessionPress::StartRename(selected.clone())),
-        "nothing focused: the selected trade's session"
-    );
+    assert_eq!(state.key_press(false, &none, Some(&loaded)), None);
+    assert_eq!(state.key_press(true, &none, Some(&loaded)), None);
     state.focused = Some(key("a.csv"));
+    assert_eq!(
+        state.key_press(true, &none, Some(&loaded)),
+        Some(SessionPress::StartRename(key("a.csv")))
+    );
     assert!(matches!(
-        state.key_press(false, Some(&selected), &none, Some(&loaded)),
+        state.key_press(false, &none, Some(&loaded)),
         Some(SessionPress::StartDelete(session, _, 1)) if session == key("a.csv")
     ));
     let live = BTreeSet::from([key("a.csv")]);
-    assert_eq!(state.key_press(false, None, &live, Some(&loaded)), None);
+    assert_eq!(state.key_press(false, &live, Some(&loaded)), None);
 }
 
 #[test]
@@ -253,7 +252,7 @@ fn live_trades_are_filtered_by_their_files_tags_and_counted_when_hidden() {
 /// A session row picked, then a trade of another session selected: F2 and
 /// Del follow the selection, never the row picked before it.
 #[test]
-fn selecting_a_trade_makes_its_session_what_the_keys_act_on() {
+fn selecting_a_trade_never_makes_its_session_what_the_keys_act_on() {
     let loaded = history(&["a.csv", "b.csv"]);
     let mut state = LedgerState::default();
     state.reloaded(&loaded);
@@ -263,20 +262,15 @@ fn selecting_a_trade_makes_its_session_what_the_keys_act_on() {
         state.apply(SessionPress::Fold(key("a.csv"), true), None),
         None
     );
-    let selected = key("b.csv");
+    // Rename and delete belong to the session row: a selected trade gives
+    // F2 and Del nothing to act on.
     state.trade_selected();
-    assert_eq!(
-        state.key_press(true, Some(&selected), &none, Some(&loaded)),
-        Some(SessionPress::StartRename(selected.clone()))
-    );
-    assert!(matches!(
-        state.key_press(false, Some(&selected), &none, Some(&loaded)),
-        Some(SessionPress::StartDelete(session, _, 1)) if session == selected
-    ));
-    // Picking a session row again makes it the target once more.
+    assert_eq!(state.key_press(true, &none, Some(&loaded)), None);
+    assert_eq!(state.key_press(false, &none, Some(&loaded)), None);
+    // Picking a session row makes it the target once more.
     state.apply(SessionPress::Fold(key("a.csv"), false), None);
     assert_eq!(
-        state.key_press(true, Some(&selected), &none, Some(&loaded)),
+        state.key_press(true, &none, Some(&loaded)),
         Some(SessionPress::StartRename(key("a.csv")))
     );
 }
