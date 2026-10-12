@@ -31,6 +31,20 @@
 //! Version 1 files (the first 8 columns only) still load: the missing
 //! fields come back as `None`, and writing such a row emits empty fields —
 //! unknown is not zero.
+//!
+//! The trader's own words about a session ride the same file as append-only
+//! comment lines, so the CSV columns never change and a reader that skips
+//! comments still reads every trade. The last line of each kind wins:
+//!
+//! ```text
+//! # name=Morning fade practice
+//! # tags=1700000000000:1700000060000 #fade #msc
+//! ```
+//!
+//! An empty `# name=` clears the name; a `# tags=` line naming a trade and no
+//! tags clears that trade's tags.
+
+use std::collections::BTreeMap;
 
 use quantick_engine::Side;
 use rust_decimal::Decimal;
@@ -50,6 +64,17 @@ pub const HEADER: &str = "opened_ms,closed_ms,side,quantity,entry_price,exit_pri
 /// The version-1 column header, still accepted on read.
 const HEADER_V1: &str =
     "opened_ms,closed_ms,side,quantity,entry_price,exit_price,pnl_points,exit_reason";
+/// Longest session name kept, in characters; longer text is cut, never
+/// refused, because a name is a note and not an identifier.
+pub const MAX_SESSION_NAME_CHARS: usize = 80;
+/// Longest tag, in characters, without its `#`.
+pub const MAX_TAG_CHARS: usize = 32;
+/// Most tags one trade carries.
+pub const MAX_TAGS_PER_TRADE: usize = 16;
+
+/// Which trade a `# tags=` line speaks for: its opening and closing venue
+/// times, the pair the ledger already shows for every row.
+pub type TradeTimes = (i64, i64);
 
 /// Where a session's trades came from — recorded once per file, so the
 /// report can keep practice runs out of the real track record.
@@ -90,6 +115,12 @@ pub struct TradeHistory {
     /// Session source from the `# source=` comment; `None` for files from
     /// before the line existed (unrecorded, never guessed).
     pub source: Option<SessionSource>,
+    /// The session's name from the last `# name=` line; `None` when it was
+    /// never named or the last line cleared it.
+    pub name: Option<String>,
+    /// Each tagged trade's tags from the last `# tags=` line naming it,
+    /// keyed by `(opened_ms, closed_ms)`. Trades never tagged are absent.
+    pub tags: BTreeMap<TradeTimes, Vec<String>>,
     /// Rows that parsed, in file order (which is closing order).
     pub trades: Vec<ClosedTrade>,
     /// Rows that did not parse, reported instead of silently dropped.
@@ -155,6 +186,98 @@ pub fn write_trade(trade: &ClosedTrade) -> String {
     )
 }
 
+/// The line that names a session (newline included). The name is cleaned
+/// with [`clean_session_name`]; an empty one writes the clearing line.
+#[must_use]
+pub fn write_name(name: &str) -> String {
+    format!("# name={}\n", clean_session_name(name))
+}
+
+/// The line that sets one trade's tags (newline included). Tags are taken
+/// as [`normalize_tag`] leaves them; none writes the clearing line.
+#[must_use]
+pub fn write_tags(times: TradeTimes, tags: &[String]) -> String {
+    let mut line = format!("# tags={}:{}", times.0, times.1);
+    for tag in tags {
+        line.push_str(" #");
+        line.push_str(tag);
+    }
+    line.push('\n');
+    line
+}
+
+/// A session name as the file keeps it: one line, trimmed, at most
+/// [`MAX_SESSION_NAME_CHARS`] characters.
+#[must_use]
+pub fn clean_session_name(raw: &str) -> String {
+    let one_line: String = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    one_line
+        .trim()
+        .chars()
+        .take(MAX_SESSION_NAME_CHARS)
+        .collect::<String>()
+        .trim_end()
+        .to_owned()
+}
+
+/// One tag as the file keeps it: leading `#`s dropped, lowercase, at most
+/// [`MAX_TAG_CHARS`] characters. `None` for text that cannot be one tag —
+/// empty, too long, or holding whitespace, a `#` or a comma.
+#[must_use]
+pub fn normalize_tag(raw: &str) -> Option<String> {
+    let bare = raw.trim().trim_start_matches('#');
+    let valid = !bare.is_empty()
+        && bare.chars().count() <= MAX_TAG_CHARS
+        && !bare
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || c == '#' || c == ',');
+    valid.then(|| bare.to_lowercase())
+}
+
+/// The tags of one trade, normalized, in the order given with repeats
+/// dropped. `Err` names the first token that is not a tag, or says there
+/// are more than [`MAX_TAGS_PER_TRADE`].
+///
+/// # Errors
+///
+/// A token [`normalize_tag`] refuses, or too many tags.
+pub fn normalize_tags<'a>(raw: impl IntoIterator<Item = &'a str>) -> Result<Vec<String>, String> {
+    let mut tags: Vec<String> = Vec::new();
+    for token in raw {
+        let tag = normalize_tag(token).ok_or_else(|| {
+            format!(
+                "`{token}` is not a tag - one word of at most {MAX_TAG_CHARS} characters, no spaces, `#` or commas"
+            )
+        })?;
+        if !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    if tags.len() > MAX_TAGS_PER_TRADE {
+        return Err(format!(
+            "{} tags - a trade carries at most {MAX_TAGS_PER_TRADE}",
+            tags.len()
+        ));
+    }
+    Ok(tags)
+}
+
+/// `<opened_ms>:<closed_ms> #a #b` — the body of a `# tags=` line.
+fn parse_tags_line(body: &str) -> Result<(TradeTimes, Vec<String>), String> {
+    let mut tokens = body.split_whitespace();
+    let times = tokens.next().unwrap_or_default();
+    let (opened, closed) = times
+        .split_once(':')
+        .and_then(|(opened, closed)| Some((opened.parse().ok()?, closed.parse().ok()?)))
+        .ok_or_else(|| {
+            format!("tags line must start `<opened_ms>:<closed_ms>`, found `{times}`")
+        })?;
+    Ok(((opened, closed), normalize_tags(tokens)?))
+}
+
 fn opt_u64(value: Option<u64>) -> String {
     value.map(|value| value.to_string()).unwrap_or_default()
 }
@@ -193,6 +316,8 @@ pub fn parse(text: &str) -> Result<TradeHistory, HistoryError> {
 
     let mut symbol = None;
     let mut source = None;
+    let mut name = None;
+    let mut tags = BTreeMap::new();
     let mut header_seen = false;
     let mut trades = Vec::new();
     let mut problems = Vec::new();
@@ -218,6 +343,24 @@ pub fn parse(text: &str) -> Result<TradeHistory, HistoryError> {
                             "unknown source `{}` - treated as unrecorded",
                             value.trim()
                         ),
+                    }),
+                }
+            } else if let Some(value) = comment.strip_prefix("name=") {
+                let value = clean_session_name(value);
+                name = (!value.is_empty()).then_some(value);
+            } else if let Some(value) = comment.strip_prefix("tags=") {
+                match parse_tags_line(value) {
+                    Ok((times, list)) if list.is_empty() => {
+                        tags.remove(&times);
+                    }
+                    Ok((times, list)) => {
+                        tags.insert(times, list);
+                    }
+                    // A torn or hand-edited tags line costs that line, said
+                    // out loud; the trades and every other line still load.
+                    Err(message) => problems.push(HistoryProblem {
+                        line: line_number,
+                        message,
                     }),
                 }
             }
@@ -252,6 +395,8 @@ pub fn parse(text: &str) -> Result<TradeHistory, HistoryError> {
     Ok(TradeHistory {
         symbol,
         source,
+        name,
+        tags,
         trades,
         problems,
     })
@@ -498,6 +643,91 @@ mod tests {
         let history = parse(&text).expect("file loads");
         assert!(history.trades.is_empty());
         assert!(history.problems[0].message.contains("liquidated"));
+    }
+
+    #[test]
+    fn a_name_and_tags_round_trip_through_comment_lines() {
+        let trade = sample(Side::Buy, 5, ExitReason::TakeProfit);
+        let times = (trade.opened_ms, trade.closed_ms);
+        let mut text = write_header("WINZ26", SessionSource::Replay);
+        text.push_str(&write_trade(&trade));
+        text.push_str(&write_name("  Morning fade\npractice "));
+        let tags = normalize_tags(["#MSC", "fade", "#msc"]).expect("valid tags");
+        text.push_str(&write_tags(times, &tags));
+        let history = parse(&text).expect("parses");
+        assert_eq!(history.name.as_deref(), Some("Morning fade practice"));
+        assert_eq!(
+            history.tags.get(&times),
+            Some(&vec!["msc".to_owned(), "fade".to_owned()])
+        );
+        assert_eq!(history.trades, vec![trade], "the columns are untouched");
+        assert!(history.problems.is_empty());
+    }
+
+    #[test]
+    fn the_last_name_and_tags_line_wins_and_an_empty_one_clears() {
+        let times = (1, 2);
+        let mut text = write_header("X", SessionSource::Live);
+        text.push_str(&write_name("first"));
+        text.push_str(&write_tags(times, &["a".to_owned()]));
+        text.push_str(&write_tags((3, 4), &["keep".to_owned()]));
+        text.push_str(&write_name("second"));
+        text.push_str(&write_tags(times, &["b".to_owned(), "c".to_owned()]));
+        let history = parse(&text).expect("parses");
+        assert_eq!(history.name.as_deref(), Some("second"));
+        assert_eq!(
+            history.tags.get(&times),
+            Some(&vec!["b".to_owned(), "c".to_owned()])
+        );
+        assert_eq!(history.tags.get(&(3, 4)), Some(&vec!["keep".to_owned()]));
+
+        text.push_str(&write_name(""));
+        text.push_str(&write_tags(times, &[]));
+        let history = parse(&text).expect("parses");
+        assert_eq!(history.name, None, "an empty name clears it");
+        assert!(
+            !history.tags.contains_key(&times),
+            "no tags clears the trade"
+        );
+        assert!(history.tags.contains_key(&(3, 4)), "and only that trade");
+    }
+
+    #[test]
+    fn a_file_without_metadata_has_no_name_and_no_tags() {
+        let mut text = write_header("X", SessionSource::Live);
+        text.push_str(&write_trade(&sample(Side::Buy, 5, ExitReason::Manual)));
+        let history = parse(&text).expect("parses");
+        assert_eq!(history.name, None);
+        assert!(history.tags.is_empty());
+    }
+
+    #[test]
+    fn a_bad_tags_line_is_reported_and_the_rest_still_loads() {
+        let mut text = write_header("X", SessionSource::Live);
+        text.push_str("# tags=17000 #a\n");
+        text.push_str("# tags=1:2 #a,b\n");
+        text.push_str(&write_trade(&sample(Side::Buy, 5, ExitReason::Manual)));
+        let history = parse(&text).expect("parses");
+        assert_eq!(history.trades.len(), 1);
+        assert_eq!(history.problems.len(), 2);
+        assert!(history.tags.is_empty());
+    }
+
+    #[test]
+    fn tags_are_one_lowercase_word_and_bounded() {
+        assert_eq!(normalize_tag("##Fade"), Some("fade".to_owned()));
+        assert_eq!(normalize_tag("two words"), None);
+        assert_eq!(normalize_tag("a,b"), None);
+        assert_eq!(normalize_tag("#"), None);
+        assert_eq!(normalize_tag(&"x".repeat(MAX_TAG_CHARS + 1)), None);
+        let many: Vec<String> = (0..=MAX_TAGS_PER_TRADE).map(|i| format!("t{i}")).collect();
+        assert!(normalize_tags(many.iter().map(String::as_str)).is_err());
+        assert_eq!(
+            clean_session_name(&"n".repeat(MAX_SESSION_NAME_CHARS + 5))
+                .chars()
+                .count(),
+            MAX_SESSION_NAME_CHARS
+        );
     }
 
     #[test]

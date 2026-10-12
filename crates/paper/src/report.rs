@@ -11,6 +11,7 @@
 //! these numbers stay in `app`; what is here is what a backtest or an
 //! operator with no window needs to get the same answer the window paints.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use quantick_sim::{ClosedTrade, PerformanceReport, history};
@@ -19,6 +20,11 @@ use rust_decimal::prelude::ToPrimitive;
 
 use crate::format::sanitize_symbol;
 use quantick_civil::{CivilDate, DAY_MS, DateRange, TzOffset};
+
+pub mod session_edit;
+pub mod sessions;
+
+use sessions::{SessionInfo, SessionKey};
 
 /// One journal row loaded from disk: the trade, the symbol folder it came
 /// from, and the session source its file recorded.
@@ -30,6 +36,11 @@ pub struct HistoryRow {
     /// would "lose" the user's history all over again.
     pub source: Option<history::SessionSource>,
     pub trade: ClosedTrade,
+    /// The session file the row was read from; `None` for a row no file
+    /// under the trades folder holds.
+    pub session: Option<SessionKey>,
+    /// The trader's tags on this trade, from its session file.
+    pub tags: Vec<String>,
 }
 
 /// Journal rows loaded from disk, each remembering the symbol folder it
@@ -42,6 +53,9 @@ pub struct LoadedHistory {
     pub unreadable_files: usize,
     /// Rows the parser had to report as unreadable (torn tails and such).
     pub problem_rows: usize,
+    /// Every session file read, the excluded live ones included (marked
+    /// `live`, their rows left out) so their names and tags are known too.
+    pub sessions: BTreeMap<SessionKey, SessionInfo>,
 }
 
 /// The report's session-source filter. Default `Real`: practice runs must
@@ -98,9 +112,11 @@ impl SourceFilter {
 }
 
 /// Read every history file under `dir` (one symbol's folder, or all of
-/// them), remembering each row's symbol and skipping every path in
-/// `exclude` (the live session's own files — their trades are already in
-/// the simulator). Missing folders are simply empty, not an error.
+/// them), remembering each row's symbol and session, and leaving out the
+/// rows of every path in `exclude` (the live session's own files — their
+/// trades are already in the simulator; only their name and tags are read).
+/// Missing folders are simply empty, not an error; dot folders (deleted
+/// sessions) are never read.
 pub fn load_history(dir: &Path, symbol: Option<&str>, exclude: &[PathBuf]) -> LoadedHistory {
     let mut folders = Vec::new();
     match symbol {
@@ -109,7 +125,8 @@ pub fn load_history(dir: &Path, symbol: Option<&str>, exclude: &[PathBuf]) -> Lo
             if let Ok(entries) = std::fs::read_dir(dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.is_dir() {
+                    let hidden = entry.file_name().to_string_lossy().starts_with('.');
+                    if path.is_dir() && !hidden {
                         folders.push(path);
                     }
                 }
@@ -121,6 +138,7 @@ pub fn load_history(dir: &Path, symbol: Option<&str>, exclude: &[PathBuf]) -> Lo
     let mut files = 0usize;
     let mut unreadable_files = 0usize;
     let mut problem_rows = 0usize;
+    let mut sessions = BTreeMap::new();
     for folder in folders {
         let Ok(entries) = std::fs::read_dir(&folder) else {
             continue;
@@ -139,26 +157,44 @@ pub fn load_history(dir: &Path, symbol: Option<&str>, exclude: &[PathBuf]) -> Lo
             .collect();
         paths.sort();
         for path in paths {
-            if exclude.contains(&path) {
+            let live = exclude.contains(&path);
+            let key = SessionKey::of(dir, &path);
+            if !live {
+                files += 1;
+            }
+            let parsed = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|text| history::parse(&text).ok());
+            let Some(mut parsed) = parsed else {
+                // A live file not yet on disk is not unreadable.
+                unreadable_files += usize::from(!live);
+                continue;
+            };
+            let symbol = parsed
+                .symbol
+                .clone()
+                .unwrap_or_else(|| folder_symbol.clone());
+            if let Some(key) = &key {
+                let info = SessionInfo::of(key.clone(), symbol.clone(), &parsed, live);
+                sessions.insert(key.clone(), info);
+            }
+            if live {
                 continue;
             }
-            files += 1;
-            match std::fs::read_to_string(&path).map_err(|error| error.to_string()) {
-                Ok(text) => match history::parse(&text) {
-                    Ok(parsed) => {
-                        problem_rows += parsed.problems.len();
-                        let symbol = parsed.symbol.unwrap_or_else(|| folder_symbol.clone());
-                        let source = parsed.source;
-                        rows.extend(parsed.trades.into_iter().map(|trade| HistoryRow {
-                            symbol: symbol.clone(),
-                            source,
-                            trade,
-                        }));
-                    }
-                    Err(_) => unreadable_files += 1,
-                },
-                Err(_) => unreadable_files += 1,
-            }
+            problem_rows += parsed.problems.len();
+            let source = parsed.source;
+            let mut tags = std::mem::take(&mut parsed.tags);
+            rows.extend(parsed.trades.into_iter().map(|trade| {
+                HistoryRow {
+                    symbol: symbol.clone(),
+                    source,
+                    session: key.clone(),
+                    tags: tags
+                        .remove(&(trade.opened_ms, trade.closed_ms))
+                        .unwrap_or_default(),
+                    trade,
+                }
+            }));
         }
     }
     // Files are per-session; merge into one closing-order timeline so the
@@ -169,6 +205,7 @@ pub fn load_history(dir: &Path, symbol: Option<&str>, exclude: &[PathBuf]) -> Lo
         files,
         unreadable_files,
         problem_rows,
+        sessions,
     }
 }
 

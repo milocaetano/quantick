@@ -20,6 +20,7 @@
 pub mod chart;
 pub mod dock;
 pub mod history;
+pub mod journal_sessions;
 pub mod notify;
 pub mod recovery;
 mod tabs;

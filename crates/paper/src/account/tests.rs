@@ -391,11 +391,15 @@ fn the_export_csv_carries_readable_stamps_and_running_equity() {
             symbol: "BTCUSDT".to_owned(),
             source: Some(history::SessionSource::Live),
             trade: trade(1_773_666_068_000, 5, Some(2)),
+            session: None,
+            tags: Vec::new(),
         },
         HistoryRow {
             symbol: "WINQ26".to_owned(),
             source: None,
             trade: trade(1_773_666_368_000, -2, None),
+            session: None,
+            tags: Vec::new(),
         },
     ];
     let text = export_csv(&rows);
@@ -825,5 +829,43 @@ fn a_refused_reprice_leaves_the_order_resting() {
         account.working_orders()[0].price,
         Some(Decimal::from(95)),
         "and the order stays at its price"
+    );
+}
+
+/// The same tape traded three times — each run ended by the timeline reset a
+/// replay restart sends — lands in three session files, never one: the venue
+/// stamp repeats, so the second and third runs take `.rerun-N` names.
+#[test]
+fn three_runs_of_one_tape_are_three_session_files() {
+    let dir = ScratchDir::new("account-three-runs");
+    let mut account = account(&dir, "RERUN");
+    account.set_session_source(history::SessionSource::Replay);
+    for _ in 0..3 {
+        account.seed(&print(0, 100));
+        ticket_market(&mut account, Side::Buy, &plain_form());
+        account.on_trade(&print(1, 100));
+        account.on_trade(&print(2, 103));
+        account.reset_timeline();
+    }
+    let paths = account.session_journal_paths().to_vec();
+    assert_eq!(paths.len(), 3, "{paths:?}");
+    let names: Vec<String> = paths
+        .iter()
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert!(names[1].ends_with(".rerun-1.csv"), "{names:?}");
+    assert!(names[2].ends_with(".rerun-2.csv"), "{names:?}");
+    let files: Vec<Option<PathBuf>> = paths.iter().cloned().map(Some).collect();
+    assert_eq!(
+        account.session_trade_files(),
+        files.as_slice(),
+        "one trade per file"
+    );
+    let rows = account.session_history_rows();
+    let keys: Vec<_> = rows.iter().map(|row| row.session.clone()).collect();
+    assert!(keys.iter().all(Option::is_some));
+    assert_eq!(
+        keys.iter().collect::<std::collections::BTreeSet<_>>().len(),
+        3
     );
 }

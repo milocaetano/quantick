@@ -243,6 +243,10 @@ pub struct PaperAccount {
     /// under, index-aligned with `sim.closed_trades()` — the export must
     /// not stamp a pre-switch trade with the current source.
     session_trade_sources: Vec<history::SessionSource>,
+    /// The session file each of those trades was journaled to, index-aligned
+    /// the same way; `None` for a close no file took (no symbol yet). The
+    /// ledger groups and tags this session's rows by it.
+    session_trade_files: Vec<Option<PathBuf>>,
     /// A failed journal write warns once, not once per trade.
     journal_warned: bool,
     /// Where this session's trades come from — the tab's feed sets it,
@@ -380,6 +384,7 @@ impl PaperAccount {
             journal_path: None,
             session_journal_paths: Vec::new(),
             session_trade_sources: Vec::new(),
+            session_trade_files: Vec::new(),
             journal_warned: false,
             session_source: history::SessionSource::Live,
             strategies: Vec::new(),
@@ -479,6 +484,20 @@ impl PaperAccount {
     #[must_use]
     pub fn session_journal_paths(&self) -> &[PathBuf] {
         &self.session_journal_paths
+    }
+
+    /// The file each of this session's closed trades went to, index-aligned
+    /// with [`Self::session_trades`]; `None` where no file took the close.
+    #[must_use]
+    pub fn session_trade_files(&self) -> &[Option<PathBuf>] {
+        &self.session_trade_files
+    }
+
+    /// The source each of this session's closed trades closed under,
+    /// index-aligned with [`Self::session_trades`].
+    #[must_use]
+    pub fn session_trade_sources(&self) -> &[history::SessionSource] {
+        &self.session_trade_sources
     }
 
     /// Point the journal somewhere new, in-session — the panel's folder

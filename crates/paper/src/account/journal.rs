@@ -17,6 +17,7 @@ use rust_decimal::Decimal;
 use super::{PaperAccount, utc_compact};
 use crate::format::{fmt_decimal, sanitize_symbol};
 use crate::report::HistoryRow;
+use crate::report::sessions::SessionKey;
 use quantick_civil::civil_utc;
 
 impl PaperAccount {
@@ -40,6 +41,13 @@ impl PaperAccount {
                         .unwrap_or(self.session_source),
                 ),
                 trade: trade.clone(),
+                session: self
+                    .session_trade_files
+                    .get(index)
+                    .and_then(Option::as_deref)
+                    .and_then(|path| SessionKey::of(&self.dir, path)),
+                // Read from the file by the ledger; the export carries none.
+                tags: Vec::new(),
             })
             .collect()
     }
@@ -53,6 +61,7 @@ impl PaperAccount {
     pub(super) fn journal(&mut self, trade: &ClosedTrade) -> bool {
         self.session_trade_sources.push(self.session_source);
         if self.symbol.is_empty() {
+            self.session_trade_files.push(None);
             return false;
         }
         let folder = self.dir.join(sanitize_symbol(&self.symbol));
@@ -62,6 +71,7 @@ impl PaperAccount {
         if self.session_journal_paths.last() != Some(path) {
             self.session_journal_paths.push(path.clone());
         }
+        self.session_trade_files.push(Some(path.clone()));
         let mut text = String::new();
         if !path.exists() {
             text.push_str(&history::write_header(&self.symbol, self.session_source));

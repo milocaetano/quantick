@@ -31,6 +31,8 @@ fn row(symbol: &str, source: Option<history::SessionSource>, trade: ClosedTrade)
         symbol: symbol.to_owned(),
         source,
         trade,
+        session: None,
+        tags: Vec::new(),
     }
 }
 
@@ -490,6 +492,7 @@ fn golden_history() -> LoadedHistory {
         files: 3,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     }
 }
 

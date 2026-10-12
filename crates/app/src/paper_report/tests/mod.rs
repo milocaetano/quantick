@@ -44,6 +44,8 @@ fn row(symbol: &str, source: Option<history::SessionSource>, trade: ClosedTrade)
         symbol: symbol.to_owned(),
         source,
         trade,
+        session: None,
+        tags: Vec::new(),
     }
 }
 
@@ -70,6 +72,7 @@ fn the_report_opens_on_real_and_keeps_replay_out_until_asked() {
         files: 3,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     paper.report_state_mut().ensure_report_view(utc);
     let view = paper
@@ -133,6 +136,7 @@ fn the_report_reports_itself_as_data() {
         files: 1,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     paper.report_state_mut().report_symbol = Some("WINV26".to_owned());
 
@@ -216,6 +220,7 @@ fn days_fold_shut_one_at_a_time_or_all_at_once() {
         files: 1,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     assert!(
         !{
@@ -519,6 +524,7 @@ fn a_picked_calendar_range_cuts_the_report_and_the_pills_stand_down() {
         files: 1,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     // A pill that would hide the older trades is deliberately left on:
     // the range must win outright, not intersect.
@@ -577,6 +583,7 @@ fn a_picked_day_with_no_trades_reports_an_honest_empty() {
         files: 1,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     let picked = paper.report_state().calendar.selection.click(day);
     paper.report_state_mut().pick_report_dates(picked);
@@ -613,6 +620,7 @@ fn the_day_index_follows_the_source_filter_and_the_timezone() {
         files: 1,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     paper.report_state_mut().ensure_report_view(tz);
     assert_eq!(
@@ -666,6 +674,7 @@ fn the_report_view_filters_by_period_from_the_newest_trade() {
         files: 1,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     paper.report_state_mut().report_period = ReportPeriod::Week;
     paper.report_state_mut().ensure_report_view(utc);
@@ -711,6 +720,7 @@ fn all_symbols_hides_older_markets_but_says_so_and_scope_restores_them() {
         files: 2,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     paper.report_state_mut().report_period = ReportPeriod::Month;
     paper.report_state_mut().ensure_report_view(utc);
@@ -733,6 +743,7 @@ fn all_symbols_hides_older_markets_but_says_so_and_scope_restores_them() {
         files: 1,
         unreadable_files: 0,
         problem_rows: 0,
+        sessions: Default::default(),
     });
     paper.report_state_mut().report_view = None;
     paper.report_state_mut().ensure_report_view(utc);
