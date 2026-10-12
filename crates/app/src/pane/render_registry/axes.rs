@@ -239,7 +239,8 @@ pub(in crate::pane) struct TimeStripPass<'a> {
     pub start: usize,
     pub end: usize,
     pub total: usize,
-    pub claims: &'a pointer_compass::AxisClaims,
+    /// The pointer's chip, as wide as its own text this frame.
+    pub chip: Option<pointer_compass::TimeChip>,
     pub style: &'a ChartStyle,
     pub tz: TzOffset,
     pub divider_x: Option<f32>,
@@ -247,6 +248,8 @@ pub(in crate::pane) struct TimeStripPass<'a> {
     pub series: quantick_drawings::gesture::PaneSeriesRead<'a>,
     /// Spans the day separator wrote dates or ticks on; labels stand aside.
     pub reserved: &'a [(f32, f32)],
+    /// Dates the day separator wrote; a label in one stays a clock.
+    pub named: &'a [quantick_chart::day_turn::WrittenDate],
 }
 impl TimeStripPass<'_> {
     pub fn paint(&self) {
@@ -256,7 +259,7 @@ impl TimeStripPass<'_> {
             start,
             end,
             total,
-            claims,
+            chip,
             ..
         } = *self;
         painter.line_segment(
@@ -297,14 +300,18 @@ impl TimeStripPass<'_> {
                     .x
             },
         );
-        // The pointer's chip is always written in full, whatever this strip
-        // thinned its own labels down to, so the two extents are asked for
-        // separately: a narrow strip pairs a 30 px label with a 54 px chip.
-        let chip_width = width_of(crate::chart::TimeLabelFormat::Full);
         // Per *bar*, not per slot: the walk below steps a bar at a time and
         // labels the bar it lands on, so how far apart two labels end up is
         // how far apart two bars are.
         let stride = crate::chart::time_label_stride(self.viewport.px_per_bar(), label_width);
+        // Compared with the last label painted, never with a slot skipped:
+        // a turn is named on the first label painted in it (unless the day
+        // separator wrote its date), seeded by the bar before the view.
+        let mut last_painted = start
+            .checked_sub(1)
+            .and_then(|slot| self.series.slot_open_time(slot));
+        let mut ticks =
+            quantick_chart::day_turn::TickLabels::new(self.tz, format, last_painted, self.named);
 
         let mut index = start;
         while index < end {
@@ -317,26 +324,19 @@ impl TimeStripPass<'_> {
                     label_width,
                     history_strip.left(),
                     history_strip.right(),
-                ) && !pointer_compass::claimed(
-                    x,
-                    label_width,
-                    chip_width,
-                    claims.iter().copied(),
-                ) && !super::days::reserved_by(
-                    x - label_width / 2.0,
-                    x + label_width / 2.0,
-                    self.reserved,
-                ) {
-                    let previous = index
-                        .checked_sub(stride)
-                        .and_then(|slot| self.series.slot_open_time(slot));
+                ) && !pointer_compass::time_claimed(chip, x, label_width)
+                    && !super::days::reserved_by(
+                        x - label_width / 2.0,
+                        x + label_width / 2.0,
+                        self.reserved,
+                    )
+                {
+                    let previous = last_painted.replace(bar.open_time);
                     let text = interval_ms
                         .and_then(|interval| {
                             crate::plot_area::fmt_calendar_label(bar.open_time, interval, previous)
                         })
-                        .unwrap_or_else(|| {
-                            crate::plot_area::fmt_time_as(bar.open_time, self.tz, format)
-                        });
+                        .unwrap_or_else(|| ticks.label_at(bar.open_time));
                     painter.text(
                         egui::pos2(x, y),
                         egui::Align2::CENTER_CENTER,
@@ -546,6 +546,9 @@ fn paint_tape_clock(
     #[allow(clippy::cast_precision_loss)]
     let x_of =
         |instant: i64| strip.left() + geometry.x((instant - start_ms) as f64 / window_ms as f64);
+    // Fed only the labels painted: the first in a new day names it, seeded
+    // by the window's start so the turn is named once the old day scrolls off.
+    let mut ticks = quantick_chart::day_turn::TickLabels::new(tz, format, Some(start_ms), &[]);
     for instant in quantick_orderflow::lane_time_ticks(end_ms, window_ms, max_labels) {
         let x = x_of(instant);
         let rect = egui::Rect::from_center_size(
@@ -560,7 +563,7 @@ fn paint_tape_clock(
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            crate::plot_area::fmt_time_as(instant, tz, format),
+            ticks.label_at(instant),
             font.clone(),
             theme::TEXT_MUTED,
         );

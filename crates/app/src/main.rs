@@ -26,6 +26,7 @@ mod audio;
 mod avwap;
 mod bands;
 mod bubble_presets;
+mod candle_presets;
 mod candle_view;
 mod canvas_layout;
 mod chart_layers;

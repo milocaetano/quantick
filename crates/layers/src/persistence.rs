@@ -55,4 +55,6 @@ pub struct LayerActions {
     pub indicators_changed: bool,
     pub footprint_changed: bool,
     pub open_footprint_settings: bool,
+    /// A double click on the candles asked for the chart settings window.
+    pub open_chart_settings: bool,
 }

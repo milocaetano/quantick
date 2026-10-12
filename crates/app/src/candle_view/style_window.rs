@@ -19,74 +19,47 @@ pub struct StylePanelResponse {
     pub applied_preset: Option<CandlePreset>,
 }
 
-/// Draw the complete candle/canvas appearance window.
-pub fn draw_style_window(
-    ctx: &egui::Context,
-    open: &mut bool,
-    style: &mut ChartStyle,
-) -> StylePanelResponse {
-    if !*open {
-        return StylePanelResponse::default();
-    }
-
+/// Draw every candle and canvas knob, and the live preview above them, into
+/// `ui` — the body of the chart settings window's Candles tab, which owns the
+/// window, its presets row and its Reset.
+pub fn draw_style_contents(ui: &mut egui::Ui, style: &mut ChartStyle) -> StylePanelResponse {
     let mut response = StylePanelResponse::default();
-    let mut window_open = *open;
-    egui::Window::new("candle appearance")
-        .open(&mut window_open)
-        .default_width(390.0)
-        .min_width(350.0)
-        .resizable(true)
-        .show(ctx, |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("candle_style_scroll")
-                .max_height(650.0)
-                .show(ui, |ui| {
-                    draw_presets(ui, style, &mut response);
-                    draw_preview(ui, style);
-                    ui.separator();
-                    draw_body_settings(ui, &mut style.candles, &mut response.changed);
-                    ui.separator();
-                    draw_outline_settings(ui, &mut style.candles, &mut response.changed);
-                    ui.separator();
-                    draw_wick_settings(ui, &mut style.candles, &mut response.changed);
-                    ui.separator();
-                    draw_live_settings(ui, &mut style.candles, &mut response.changed);
-                    ui.separator();
-                    draw_canvas_settings(ui, style, &mut response.changed);
-                    ui.separator();
+    draw_preview(ui, style);
+    ui.separator();
+    draw_body_settings(ui, &mut style.candles, &mut response.changed);
+    ui.separator();
+    draw_outline_settings(ui, &mut style.candles, &mut response.changed);
+    ui.separator();
+    draw_wick_settings(ui, &mut style.candles, &mut response.changed);
+    ui.separator();
+    draw_live_settings(ui, &mut style.candles, &mut response.changed);
+    ui.separator();
+    draw_canvas_settings(ui, style, &mut response.changed);
+    ui.separator();
 
-                    if ui
-                        .button("restore Order flow defaults")
-                        .on_hover_text("restore candle and canvas appearance only")
-                        .clicked()
-                    {
-                        *style = ChartStyle::default();
-                        response.changed = true;
-                        response.applied_preset = Some(CandlePreset::OrderFlow);
-                    }
-                    ui.small("Appearance changes redraw the chart only; feeds and book capture stay untouched.");
-                });
-        });
-    *open = window_open;
+    if ui
+        .button("restore Order flow defaults")
+        .on_hover_text("restore candle and canvas appearance only")
+        .clicked()
+    {
+        *style = ChartStyle::default();
+        response.changed = true;
+        response.applied_preset = Some(CandlePreset::OrderFlow);
+    }
+    ui.small("Appearance changes redraw the chart only; feeds and book capture stay untouched.");
     response
 }
 
+/// The built-in presets, one selectable label each.
 pub fn draw_presets(ui: &mut egui::Ui, style: &mut ChartStyle, response: &mut StylePanelResponse) {
-    ui.heading("Preset");
-    let current = CandlePreset::detect(&style.candles)
-        .map(CandlePreset::label)
-        .unwrap_or("Custom");
-    ui.horizontal_wrapped(|ui| {
-        for preset in CandlePreset::ALL {
-            let selected = CandlePreset::detect(&style.candles) == Some(preset);
-            if ui.selectable_label(selected, preset.label()).clicked() {
-                style.candles = preset.style();
-                response.changed = true;
-                response.applied_preset = Some(preset);
-            }
+    for preset in CandlePreset::ALL {
+        let selected = CandlePreset::detect(&style.candles) == Some(preset);
+        if ui.selectable_label(selected, preset.label()).clicked() {
+            style.candles = preset.style();
+            response.changed = true;
+            response.applied_preset = Some(preset);
         }
-    });
-    ui.small(format!("current: {current}"));
+    }
 }
 
 pub fn draw_body_settings(ui: &mut egui::Ui, style: &mut CandleStyle, changed: &mut bool) {

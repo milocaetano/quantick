@@ -11,6 +11,7 @@ pub mod analysis;
 pub mod attention;
 pub mod bubble_save;
 pub mod chart;
+pub mod chart_settings;
 pub mod deal_recording;
 pub mod drawing_magnet;
 pub mod evidence;

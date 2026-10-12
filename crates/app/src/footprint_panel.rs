@@ -1,5 +1,6 @@
-//! The footprint settings window — the Profitchart-style properties dialog,
-//! opened from the layer menu's "configure footprint…" entry.
+//! The footprint settings — the Profitchart-style properties dialog, drawn
+//! as the Footprint tab of the chart settings window and opened on that tab
+//! from the layer menu's "configure footprint…" entry.
 //!
 //! It edits the **focused chart's** knobs, not the window's: a split layout
 //! is two different readings of the same market (a 90-day context chart and
@@ -20,7 +21,7 @@ use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::footprint_config::{
     DETAIL_SCALE_RANGE, DETAILED_FROM_PX_RANGE, FootprintConfig, FootprintStyle,
-    PROFILE_ROW_PX_RANGE,
+    NUMBER_ROW_PX_RANGE, PROFILE_ROW_PX_RANGE,
 };
 use crate::footprint_presets::{MAX_NAME_LEN, PresetStore};
 use crate::theme;
@@ -32,7 +33,6 @@ const DEFAULT_PINNED_MIN_QTY: f64 = 20.0;
 
 /// Everything the window edits, borrowed for one frame.
 pub struct PanelInput<'a> {
-    pub open: &'a mut bool,
     /// The focused chart's effective config (its own, or the window default
     /// it still follows).
     pub config: &'a mut FootprintConfig,
@@ -57,17 +57,13 @@ pub enum PanelOutcome {
     ResetToDefault,
 }
 
-/// Draw the window when `open`; returns what the frame asked for.
+/// Draw the knobs into `ui`; returns what the frame asked for.
 ///
-/// The window is a column of sections, each a small view that owns the knobs
+/// The body is a column of sections, each a small view that owns the knobs
 /// it draws and answers whether one of them moved. A new knob docks in the
 /// section it belongs to, and the section order is read here in one place.
-pub fn draw(ctx: &egui::Context, input: PanelInput<'_>) -> PanelOutcome {
-    if !*input.open {
-        return PanelOutcome::Untouched;
-    }
+pub fn draw(ui: &mut egui::Ui, input: PanelInput<'_>) -> PanelOutcome {
     let PanelInput {
-        open,
         config,
         presets,
         presets_path,
@@ -77,41 +73,35 @@ pub fn draw(ctx: &egui::Context, input: PanelInput<'_>) -> PanelOutcome {
     } = input;
     let mut outcome = PanelOutcome::Untouched;
     let mut changed = false;
-    let mut window_open = *open;
-    egui::Window::new(format!("footprint settings — {target}"))
-        .id(egui::Id::new("footprint_settings"))
-        .open(&mut window_open)
-        .default_width(340.0)
-        .resizable(false)
-        .show(ctx, |ui| {
-            ui.label(
-                egui::RichText::new(if customized {
-                    "these knobs are this chart's own"
-                } else {
-                    "this chart follows your last setup"
-                })
-                .size(10.5)
-                .color(theme::TEXT_MUTED),
-            );
-            changed |= PresetsSection {
-                config,
-                presets,
-                presets_path,
-                name_draft,
+    ui.label(
+        egui::RichText::new(format!(
+            "{target}: {}",
+            if customized {
+                "these knobs are this chart's own"
+            } else {
+                "this chart follows your last setup"
             }
-            .show(ui);
-            changed |= StyleSection { config }.show(ui);
-            changed |= RowsSection { config }.show(ui);
-            changed |= DetailSection { config }.show(ui);
-            changed |= NumbersSection { config }.show(ui);
-            changed |= ImbalanceSection { config }.show(ui);
-            changed |= MarksSection { config }.show(ui);
-            let footer = FollowDefaultFooter { customized };
-            if footer.show(ui) {
-                outcome = PanelOutcome::ResetToDefault;
-            }
-        });
-    *open = window_open;
+        ))
+        .size(10.5)
+        .color(theme::TEXT_MUTED),
+    );
+    changed |= PresetsSection {
+        config,
+        presets,
+        presets_path,
+        name_draft,
+    }
+    .show(ui);
+    changed |= StyleSection { config }.show(ui);
+    changed |= RowsSection { config }.show(ui);
+    changed |= DetailSection { config }.show(ui);
+    changed |= NumbersSection { config }.show(ui);
+    changed |= ImbalanceSection { config }.show(ui);
+    changed |= MarksSection { config }.show(ui);
+    let footer = FollowDefaultFooter { customized };
+    if footer.show(ui) {
+        outcome = PanelOutcome::ResetToDefault;
+    }
     if outcome == PanelOutcome::Untouched && changed {
         outcome = PanelOutcome::Changed;
     }
@@ -282,25 +272,42 @@ impl StyleSection<'_> {
     }
 }
 
-/// How fine the price bands may get.
+/// How short a price row may get before neighbouring prices merge.
 struct RowsSection<'a> {
     config: &'a mut FootprintConfig,
 }
 
 impl RowsSection<'_> {
     fn show(self, ui: &mut egui::Ui) -> bool {
-        section_heading(ui, "Rows");
-        ui.add(
-            egui::Slider::new(&mut self.config.profile_row_px, PROFILE_ROW_PX_RANGE)
-                .text("thinnest band px")
-                .step_by(0.5),
-        )
-        .on_hover_text(
-            "how fine the price bands may get before neighbouring rows merge. \
-             Lower = more, thinner bands per candle; the legend always names \
-             the price width one band stands for",
-        )
-        .changed()
+        section_heading(ui, "Price rows by height");
+        let band = ui
+            .add(
+                egui::Slider::new(&mut self.config.profile_row_px, PROFILE_ROW_PX_RANGE)
+                    .text("min band height")
+                    .suffix(" px")
+                    .step_by(0.5),
+            )
+            .on_hover_text(
+                "the shortest a profile band can be before neighbouring prices \
+                 merge into one band. Lower = more, thinner bands; the legend \
+                 always names the price one row stands for",
+            )
+            .changed();
+        let numbers = ui
+            .add(
+                egui::Slider::new(&mut self.config.number_row_px, NUMBER_ROW_PX_RANGE)
+                    .text("min number row height")
+                    .suffix(" px")
+                    .step_by(0.5),
+            )
+            .on_hover_text(
+                "the shortest a row with numbers can be before neighbouring \
+                 prices merge. Lower = each price gets its own row with less \
+                 vertical stretch, in smaller text (never under 7 px); higher = \
+                 bigger text, rows merge sooner",
+            )
+            .changed();
+        band | numbers
     }
 }
 
@@ -311,18 +318,20 @@ struct DetailSection<'a> {
 
 impl DetailSection<'_> {
     fn show(self, ui: &mut egui::Ui) -> bool {
-        section_heading(ui, "Detail");
+        section_heading(ui, "Detail by candle width");
         let scale = ui
             .add(
                 egui::Slider::new(&mut self.config.detail_scale, DETAIL_SCALE_RANGE)
-                    .text("zoom needed for detail")
+                    .text("candle width for numbers")
+                    .suffix("×")
                     .step_by(0.05),
             )
             .on_hover_text(
-                "how much candle width each level waits for. 1.0 is where the \
-                 numbers exactly fit their candle; lower brings marks, profile \
-                 and numbers in at narrower candles, at the cost of the digits \
-                 crowding their neighbour. The legend says how much further to \
+                "how wide a candle must be before each detail level appears. \
+                 1.0 = numbers just fit; lower = narrower candles, crowded; \
+                 higher = wider candles, roomier. High values can push the full \
+                 ladder to the deepest zoom; summary numbers still follow \
+                 \"summary numbers from px\". The legend says how much wider to \
                  zoom whenever numbers are not showing yet",
             )
             .changed();
@@ -340,7 +349,7 @@ impl DetailSection<'_> {
             "summary numbers from px",
             "candle width where one delta number per row starts: zooming in it \
              appears there and zooming out it leaves at the same width \
-             (measured at zoom needed 1.0)",
+             (measured at candle width for numbers 1.0)",
         );
         let detailed = entry(
             &mut self.config.detailed_from_px,

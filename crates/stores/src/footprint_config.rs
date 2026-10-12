@@ -332,8 +332,16 @@ pub struct FootprintConfig {
     /// The thinnest a profile row may draw, in pixels. Lower = finer bands
     /// (more rows per candle before the display grouping merges them);
     /// clamped to 2–10 px — under 2 px a band is a moiré, over 10 the
-    /// profile is a staircase. Text levels keep their own legibility floors.
+    /// profile is a staircase. The number levels have their own floor,
+    /// [`Self::number_row_px`].
     pub profile_row_px: f32,
+    /// The shortest a price row with numbers may draw, in pixels, before
+    /// neighbouring prices merge into one row. Lower = each price gets its own
+    /// row at less vertical stretch, with tighter text (the font never drops
+    /// under the ladder's 7 px); higher = roomier text, rows merge sooner.
+    /// Detailed's floor; Compact keeps a pixel under it. Clamped to
+    /// [`NUMBER_ROW_PX_RANGE`]; the default is the fixed floor it replaces.
+    pub number_row_px: f32,
     /// How early the ladder's levels arrive, as a multiplier on the
     /// candle-width each one needs.
     ///
@@ -341,8 +349,9 @@ pub struct FootprintConfig {
     /// level's text is drawn at its smallest legible size. Below 1 the levels
     /// arrive at narrower candles and the numbers sit tighter; above 1 they
     /// wait for more room. Clamped to [`DETAIL_SCALE_RANGE`]: the low end
-    /// still fits the digits it draws, and past the high end a trader may as
-    /// well switch the layer off.
+    /// still fits the digits it draws, and no level ever waits past the
+    /// deepest zoom - high values can push the full ladder there, while the
+    /// summary numbers still follow `compact_from_px`.
     pub detail_scale: f32,
     /// The candle width, in pixels, at which Compact (one summary number per
     /// row) starts — zooming in it appears there, zooming out it leaves
@@ -389,6 +398,7 @@ impl Default for FootprintConfig {
             imbalance_min_qty: None,
             stacked_count: 3,
             profile_row_px: 4.0,
+            number_row_px: quantick_chart::footprint_lod::DETAILED_MIN_ROW,
             detail_scale: 1.0,
             compact_from_px: quantick_chart::footprint_lod::COMPACT_FROM_PX,
             detailed_from_px: quantick_chart::footprint_lod::DETAILED_FROM_PX,
@@ -404,6 +414,12 @@ impl Default for FootprintConfig {
 }
 
 impl FootprintConfig {
+    /// Each level's row floor: the band fineness and the number-row floor.
+    #[must_use]
+    pub fn row_floors(&self) -> quantick_chart::footprint_lod::RowFloors {
+        quantick_chart::footprint_lod::RowFloors::new(self.profile_row_px, self.number_row_px)
+    }
+
     /// Where Compact starts, in the floors' units (candle width over
     /// `detail_scale`): [`Self::effective_compact_from_px`], capped at the
     /// deepest zoom. The level and the legend's hint both read it.
@@ -454,6 +470,12 @@ impl FootprintConfig {
 /// the file guard and the settings window's slider.
 pub const PROFILE_ROW_PX_RANGE: std::ops::RangeInclusive<f32> = 2.0..=10.0;
 
+/// The bounds [`FootprintConfig::number_row_px`] is clamped to. The low end
+/// keeps Compact's floor (a pixel under it) a pixel above the ladder's 7 px
+/// font - under that digits overlap the next row; past 16 px rows merge so
+/// early the numbers stop being per price.
+pub const NUMBER_ROW_PX_RANGE: std::ops::RangeInclusive<f32> = 9.0..=16.0;
+
 /// The bounds [`FootprintConfig::detail_scale`] is clamped to.
 ///
 /// The floors it scales are already derived from the smallest font the ladder
@@ -461,8 +483,12 @@ pub const PROFILE_ROW_PX_RANGE: std::ops::RangeInclusive<f32> = 2.0..=10.0;
 /// trader is deliberately trading room for earliness — the digits start to
 /// crowd their neighbour — and 0.8 is as far as that stays a chart rather
 /// than a smear. The ceiling is generous: waiting longer for detail costs
-/// nothing but zoom.
-pub const DETAIL_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.8..=2.0;
+/// nothing but zoom, and a level that would wait past the deepest zoom
+/// arrives there instead (`footprint_lod::detailed_entry_width`). High
+/// values can push the full ladder to the deepest zoom (about 3.3 at the
+/// default `detailed_from_px`); the summary numbers still follow
+/// `compact_from_px`.
+pub const DETAIL_SCALE_RANGE: std::ops::RangeInclusive<f32> = 0.8..=6.0;
 
 /// The bounds [`FootprintConfig::compact_from_px`] is clamped to. The low end
 /// sits under the one-number floor (33 px), for a trader who accepts digits
@@ -496,6 +522,8 @@ pub struct FootprintFile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_row_px: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub number_row_px: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub detail_scale: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compact_from_px: Option<f64>,
@@ -527,6 +555,7 @@ pub fn to_file(config: &FootprintConfig) -> FootprintFile {
         imbalance_min_qty: config.imbalance_min_qty.and_then(|qty| qty.to_f64()),
         stacked_count: Some(config.stacked_count),
         profile_row_px: Some(f64::from(config.profile_row_px)),
+        number_row_px: Some(f64::from(config.number_row_px)),
         detail_scale: Some(f64::from(config.detail_scale)),
         compact_from_px: Some(f64::from(config.compact_from_px)),
         detailed_from_px: Some(f64::from(config.detailed_from_px)),
@@ -684,17 +713,11 @@ pub fn resolve(file: FootprintFile) -> FootprintConfig {
             .stacked_count
             .filter(|count| *count >= 2)
             .unwrap_or(defaults.stacked_count),
-        profile_row_px: file
-            .profile_row_px
-            .map(|px| (px as f32).clamp(*PROFILE_ROW_PX_RANGE.start(), *PROFILE_ROW_PX_RANGE.end()))
-            .filter(|px| px.is_finite())
+        profile_row_px: clamped_px(file.profile_row_px, &PROFILE_ROW_PX_RANGE)
             .unwrap_or(defaults.profile_row_px),
-        detail_scale: file
-            .detail_scale
-            .map(|scale| {
-                (scale as f32).clamp(*DETAIL_SCALE_RANGE.start(), *DETAIL_SCALE_RANGE.end())
-            })
-            .filter(|scale| scale.is_finite())
+        number_row_px: clamped_px(file.number_row_px, &NUMBER_ROW_PX_RANGE)
+            .unwrap_or(defaults.number_row_px),
+        detail_scale: clamped_px(file.detail_scale, &DETAIL_SCALE_RANGE)
             .unwrap_or(defaults.detail_scale),
         compact_from_px,
         detailed_from_px,
@@ -719,7 +742,7 @@ pub fn resolve(file: FootprintFile) -> FootprintConfig {
     config
 }
 
-/// A pixel width from the file, clamped to `range`; `None` when absent or
+/// A pixel width (or the detail scale) from the file, clamped to `range`; `None` when absent or
 /// not a number, so the default stands.
 fn clamped_px(value: Option<f64>, range: &std::ops::RangeInclusive<f32>) -> Option<f32> {
     value
@@ -759,6 +782,35 @@ mod tests {
         assert_eq!(config.compact_from_px, 120.0);
         assert_eq!(config.effective_compact_from_px(), 90.0);
         assert_eq!(config.detailed_from_px, 90.0);
+    }
+
+    /// The number-row floor defaults to the fixed floor it replaced (same
+    /// bars for a trader who never touches it) and a hand-edit is clamped.
+    #[test]
+    fn number_row_floor_defaults_to_the_old_floor_and_clamps() {
+        let defaults = FootprintConfig::default();
+        assert_eq!(
+            defaults.row_floors(),
+            quantick_chart::footprint_lod::RowFloors::new(
+                defaults.profile_row_px,
+                quantick_chart::footprint_lod::DETAILED_MIN_ROW
+            )
+        );
+        assert_eq!(
+            defaults.row_floors().compact,
+            quantick_chart::footprint_lod::COMPACT_MIN_ROW
+        );
+        let config = resolve(toml::from_str("number_row_px = 2.0").unwrap());
+        assert_eq!(config.number_row_px, *NUMBER_ROW_PX_RANGE.start());
+        let config = resolve(toml::from_str("number_row_px = 99.0").unwrap());
+        assert_eq!(config.number_row_px, *NUMBER_ROW_PX_RANGE.end());
+        let config = resolve(toml::from_str("number_row_px = 9.5").unwrap());
+        assert_eq!(config.number_row_px, 9.5);
+        assert_eq!(config.row_floors().compact, 8.5);
+        // The detail scale reaches 6 and is clamped there.
+        assert_eq!(*DETAIL_SCALE_RANGE.end(), 6.0);
+        let config = resolve(toml::from_str("detail_scale = 9.0").unwrap());
+        assert_eq!(config.detail_scale, 6.0);
     }
 
     /// The settings slider, the chart and the snapshot read one Compact
@@ -904,7 +956,8 @@ mod tests {
             imbalance_min_qty: Some(Decimal::from(40)),
             stacked_count: 4,
             profile_row_px: 2.5,
-            detail_scale: 1.4,
+            number_row_px: 9.0,
+            detail_scale: 5.5,
             compact_from_px: 30.0,
             detailed_from_px: 90.0,
             show_poc: false,
