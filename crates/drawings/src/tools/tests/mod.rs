@@ -1243,6 +1243,90 @@ fn reanchoring_travels_with_the_undo_history() {
     assert_eq!(drawings.items()[0].points[0].bar, 3.0);
 }
 
+/// A timeframe switch that lands on a short series parks the mark on slot
+/// 0 and fades it. History arriving afterwards used to only shift it, so it
+/// stayed faded, on the wrong bar, for good.
+#[test]
+fn history_growth_puts_an_off_series_mark_back_on_its_instant() {
+    let mut drawings = Drawings::default();
+    drawings.place(
+        tool("horizontal-line"),
+        ChartPoint::at_time(6.0, 100.0, Some(1_700_000_006_000)),
+    );
+    drawings.begin_gesture();
+    drawings.translate_selected(0.0, 1.0);
+    drawings.commit_gesture();
+    drawings.reanchor(10, 5, |_| None);
+    drawings.shift_bars(3);
+
+    drawings.resettle_off_series(halved);
+
+    assert!(!drawings.items()[0].off_series, "the series reaches it now");
+    assert_eq!(drawings.items()[0].points[0].bar, 3.0, "on its own instant");
+    drawings.undo();
+    assert!(!drawings.items()[0].off_series, "undo keeps the new answer");
+    assert_eq!(drawings.items()[0].points[0].bar, 3.0);
+}
+
+#[test]
+fn history_growth_that_still_misses_the_instant_keeps_the_fade() {
+    let mut drawings = Drawings::default();
+    drawings.place(
+        tool("horizontal-line"),
+        ChartPoint::at_time(6.0, 100.0, Some(1_700_000_006_000)),
+    );
+    drawings.reanchor(10, 5, |_| None);
+    drawings.shift_bars(3);
+
+    drawings.resettle_off_series(|_| None);
+
+    assert!(drawings.items()[0].off_series);
+    assert_eq!(
+        drawings.items()[0].points[0].bar,
+        0.0,
+        "parked on the first bar again, as a re-cut parks it"
+    );
+}
+
+/// A mark the series already backs keeps the exact spot the trader put it
+/// on: re-asking its instant would snap it to the bar centre on every page
+/// of history.
+#[test]
+fn history_growth_leaves_a_mark_on_the_series_where_it_is() {
+    let mut drawings = Drawings::default();
+    drawings.place(
+        tool("horizontal-line"),
+        ChartPoint::at_time(2.3, 100.0, Some(1_700_000_002_000)),
+    );
+    drawings.shift_bars(3);
+
+    drawings.resettle_off_series(|_| Some(9.5));
+
+    assert!((drawings.items()[0].points[0].bar - 5.3).abs() < 1e-5);
+}
+
+/// The trader's report: a rectangle zone showing as two faded border lines.
+/// A mark off this series fades, but its prices are exact, so the zone keeps
+/// its fill; only a mark from another instrument gives the fill up.
+#[test]
+fn an_off_series_zone_fades_but_keeps_its_fill() {
+    let mut drawings = Drawings::default();
+    let rectangle = tool("rectangle");
+    drawings.place(rectangle, ChartPoint::at(1.0, 100.0));
+    drawings.place(rectangle, ChartPoint::at(3.0, 110.0));
+    let mut drawing = drawings.items()[0].clone();
+    drawing.style.fill_alpha = 40;
+
+    drawing.off_series = true;
+    let off_series = painted_style(&drawing);
+    assert_eq!(off_series.fill_alpha, 40, "the zone keeps its fill");
+    assert_eq!(off_series.color, painted_color(&drawing), "and fades");
+    assert_ne!(off_series.color, drawing.style.color);
+
+    drawing.foreign_market = true;
+    assert_eq!(painted_style(&drawing).fill_alpha, 0);
+}
+
 #[test]
 fn setting_times_rewrites_the_instants_behind_the_anchors() {
     let mut drawings = Drawings::default();

@@ -95,3 +95,34 @@ pub fn painted_color<T>(drawing: &crate::Drawing<T>) -> PremultipliedRgba {
         drawing.style.color
     }
 }
+
+/// `style` faded for a mark whose place in time the chart under it does not
+/// prove. Only the colour fades: its prices are still exact, so a zone keeps
+/// its fill and reads as the zone the trader drew rather than two stray
+/// border lines.
+#[must_use]
+pub fn faded_style(style: DrawingStyle) -> DrawingStyle {
+    use crate::RgbaExt as _;
+    DrawingStyle {
+        color: style.color.gamma_multiply(CLAMPED_OPACITY),
+        ..style
+    }
+}
+
+/// The style a mark paints in on its own pane. Off this series it fades but
+/// keeps its fill ([`faded_style`]); drawn on another market its prices are
+/// not levels here at all, so it gives the fill up too.
+#[must_use]
+pub fn painted_style<T>(drawing: &crate::Drawing<T>) -> DrawingStyle {
+    if drawing.foreign_market {
+        DrawingStyle {
+            color: painted_color(drawing),
+            fill_alpha: 0,
+            ..drawing.style
+        }
+    } else if drawing.off_series {
+        faded_style(drawing.style)
+    } else {
+        drawing.style
+    }
+}
