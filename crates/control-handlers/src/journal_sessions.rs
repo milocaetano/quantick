@@ -1,10 +1,12 @@
-//! `session.journal.set`: the Trades ledger's session acts — list through
-//! the ledger's filter, rename, tag, delete — over [`JournalSessionsPort`].
+//! `session.journal.set` and `session.journal.delete`: the Trades ledger's
+//! session acts — list through the ledger's filter, rename, tag, set what
+//! the ledger shows, delete — over [`JournalSessionsPort`].
 //!
 //! Every write goes through the port's `edit_journal`, which the window
 //! answers with the very call its ledger gestures make, so a refusal here and
 //! a refusal on screen are one refusal. Listing reads the folder directly:
-//! it changes nothing the window holds.
+//! it changes nothing the window holds. A view call sets the active tab's
+//! ledger through the same state its filter row and fold carets change.
 
 use quantick_civil::{DateRange, TzOffset, parse_iso_date};
 use quantick_control::{
@@ -14,21 +16,24 @@ use quantick_control::{
 };
 use quantick_control_host::{admission::known_error, journal::NewEvent, wire::canonical_decimal};
 use quantick_control_schema::journal_sessions::{
-    JOURNAL_SESSIONS_EVENT_KIND, JournalSessionSnapshot, JournalSessionsInput,
-    JournalSessionsResult, JournalSourceFilter, JournalTaggedTrade, MAX_LISTED_SESSIONS,
-    MAX_LISTED_TAGGED_TRADES, descriptor,
+    JOURNAL_SESSIONS_EVENT_KIND, JournalDeleteInput, JournalLedgerView, JournalSessionSnapshot,
+    JournalSessionsInput, JournalSessionsResult, JournalSourceFilter, JournalTaggedTrade,
+    MAX_LISTED_SESSIONS, MAX_LISTED_TAGGED_TRADES, delete_descriptor, descriptor,
 };
 use quantick_control_schema::session::MODULE_ID;
+use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{
     JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
 };
 use quantick_paper::report::sessions::{
-    LedgerFilter, SessionInfo, SessionKey, live_keys, source_word, summarize_sessions,
+    LedgerFilter, SessionInfo, SessionKey, TradeRef, live_keys, source_word, summarize_sessions,
 };
 use quantick_paper::report::{SourceFilter, load_history};
+
 use serde_json::{Value, json};
 
 use crate::dock::ActionDock;
+use crate::notify::NotifyAccess;
 
 /// What the journal's session acts need of the window.
 pub trait JournalSessionsPort {
@@ -39,25 +44,25 @@ pub trait JournalSessionsPort {
     /// Apply one edit exactly as the ledger's gesture does, and have every
     /// open ledger and report re-read the folder.
     fn edit_journal(&mut self, edit: &JournalEdit) -> Result<JournalEditOutcome, SessionEditError>;
+    /// Apply `change` to the active tab's ledger — an empty one only reads —
+    /// and answer what it shows and whether that moved; `None` when no tab
+    /// holds a ledger.
+    fn ledger_view(&mut self, change: &LedgerViewChange) -> Option<(LedgerView, bool)>;
 }
 
-/// What an edit needs of the control access it runs in.
-pub trait JournalEventAccess {
-    /// Journal one event, stamped by the access's own clock.
-    fn record_event(&mut self, event: NewEvent);
-}
-
-/// Dock the capability.
+/// Dock both capabilities. An edit journals through the access the notify
+/// handlers journal through, on its clock.
 pub fn register<D, H, A>(registry: &mut D) -> Result<(), RegistryError>
 where
     D: ActionDock<H, A>,
     H: JournalSessionsPort + ?Sized,
-    A: JournalEventAccess,
+    A: NotifyAccess,
 {
-    registry.register(descriptor(), journal_sessions)
+    registry.register(descriptor(), journal_sessions)?;
+    registry.register(delete_descriptor(), journal_delete)
 }
 
-fn journal_sessions<H: JournalSessionsPort + ?Sized, A: JournalEventAccess>(
+fn journal_sessions<H: JournalSessionsPort + ?Sized, A: NotifyAccess>(
     app: &mut H,
     access: &mut A,
     actor: &ActorContext,
@@ -65,7 +70,7 @@ fn journal_sessions<H: JournalSessionsPort + ?Sized, A: JournalEventAccess>(
 ) -> Result<Value, ControlError> {
     let input: JournalSessionsInput = serde_json::from_value(value.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let (action, edit) = match input {
+    let edit = match input {
         JournalSessionsInput::List {
             source,
             from,
@@ -78,77 +83,159 @@ fn journal_sessions<H: JournalSessionsPort + ?Sized, A: JournalEventAccess>(
                 range: date_range(from.as_deref(), to.as_deref())?,
                 search: search.unwrap_or_default(),
             };
-            let result = list(app, &filter, symbol.as_deref());
-            return to_value(&result);
+            return to_value(&list(app, &filter, symbol.as_deref()));
         }
-        JournalSessionsInput::Rename { session, name } => (
-            "rename",
-            JournalEdit::Rename {
-                session: key(&session)?,
-                name,
-            },
-        ),
+        JournalSessionsInput::View {
+            clear,
+            source,
+            from,
+            to,
+            search,
+            fold,
+        } => {
+            let change = LedgerViewChange {
+                clear,
+                source: source.map(source_filter),
+                range: date_range(from.as_deref(), to.as_deref())?.map(Some),
+                search,
+                fold: fold
+                    .iter()
+                    .map(|fold| Ok((key(&fold.session)?, fold.folded)))
+                    .collect::<Result<_, ControlError>>()?,
+            };
+            return view(app, access, actor, &change);
+        }
+        JournalSessionsInput::Rename { session, name } => JournalEdit::Rename {
+            session: key(&session)?,
+            name,
+        },
         JournalSessionsInput::Tag {
             session,
             opened_unix_ms,
             closed_unix_ms,
+            nth,
             tags,
-        } => (
-            "tag",
-            JournalEdit::Tag {
-                session: key(&session)?,
-                times: (opened_unix_ms, closed_unix_ms),
-                tags,
+        } => JournalEdit::Tag {
+            session: key(&session)?,
+            trade: TradeRef {
+                opened_ms: opened_unix_ms,
+                closed_ms: closed_unix_ms,
+                nth,
             },
-        ),
-        JournalSessionsInput::Delete { session } => (
-            "delete",
-            JournalEdit::Delete {
-                session: key(&session)?,
-            },
-        ),
+            tags,
+        },
     };
-    let outcome = app.edit_journal(&edit).map_err(refusal)?;
+    run_edit(app, access, actor, &edit)
+}
+
+fn journal_delete<H: JournalSessionsPort + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    access: &mut A,
+    actor: &ActorContext,
+    value: &Value,
+) -> Result<Value, ControlError> {
+    let input: JournalDeleteInput = serde_json::from_value(value.clone())
+        .map_err(|error| ControlError::invalid_request(error.to_string()))?;
+    let edit = JournalEdit::Delete {
+        session: key(&input.session)?,
+    };
+    run_edit(app, access, actor, &edit)
+}
+
+/// One edit through the window, read back and journaled.
+fn run_edit<H: JournalSessionsPort + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    access: &mut A,
+    actor: &ActorContext,
+    edit: &JournalEdit,
+) -> Result<Value, ControlError> {
+    let outcome = app.edit_journal(edit).map_err(refusal)?;
     let scope = app.journal_scope();
     let tz = app.journal_timezone();
     let live = live_keys(&scope.dir, &scope.live);
-    let session = match &outcome {
-        JournalEditOutcome::Deleted { .. } => None,
-        _ => SessionInfo::read(
-            &scope.dir,
-            outcome.session(),
-            live.contains(outcome.session()),
-        )
-        .map(|info| snapshot(&info, info.label(tz), info.trades, info.net)),
+    let result = match &outcome {
+        JournalEditOutcome::Deleted { moved_to, .. } => JournalSessionsResult {
+            moved_to: Some(
+                moved_to
+                    .strip_prefix(&scope.dir)
+                    .unwrap_or(moved_to)
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+            ),
+            ..answer("delete", true)
+        },
+        JournalEditOutcome::Renamed { session, .. }
+        | JournalEditOutcome::Tagged { session, .. } => {
+            let action = match outcome {
+                JournalEditOutcome::Renamed { .. } => "rename",
+                _ => "tag",
+            };
+            JournalSessionsResult {
+                session: SessionInfo::read(&scope.dir, session, live.contains(session))
+                    .map(|info| snapshot(&info, info.label(tz), info.trades, info.net)),
+                ..answer(action, true)
+            }
+        }
     };
-    let moved_to = match &outcome {
-        JournalEditOutcome::Deleted { moved_to, .. } => Some(
-            moved_to
-                .strip_prefix(&scope.dir)
-                .unwrap_or(moved_to)
-                .to_string_lossy()
-                .replace('\\', "/"),
-        ),
-        _ => None,
-    };
+    journal_event(access, actor, &result)?;
+    to_value(&result)
+}
+
+/// Set or read the active ledger's view; a change that moved it journals.
+fn view<H: JournalSessionsPort + ?Sized, A: NotifyAccess>(
+    app: &mut H,
+    access: &mut A,
+    actor: &ActorContext,
+    change: &LedgerViewChange,
+) -> Result<Value, ControlError> {
+    let (view, changed) = app.ledger_view(change).ok_or_else(|| {
+        let mut error = known_error(
+            codes::CAPABILITY_UNAVAILABLE,
+            "no tab holds a Trades ledger",
+            false,
+        );
+        error.context.details = Some(json!({ "code": "no_ledger" }));
+        error.context.next_steps = vec!["open a chart tab and call again".to_owned()];
+        error
+    })?;
     let result = JournalSessionsResult {
-        action: action.to_owned(),
-        changed: true,
-        session,
-        moved_to,
-        sessions: Vec::new(),
-        session_count: WireU64::new(0),
-        sessions_truncated: false,
-        hidden_trades: WireU64::new(0),
+        view: Some(ledger_view(&view)),
+        ..answer("view", changed)
     };
-    let payload = json!({ "journal_session": to_value(&result)? });
+    if changed {
+        journal_event(access, actor, &result)?;
+    }
+    to_value(&result)
+}
+
+fn journal_event<A: NotifyAccess>(
+    access: &mut A,
+    actor: &ActorContext,
+    result: &JournalSessionsResult,
+) -> Result<(), ControlError> {
+    let payload = json!({ "journal_session": to_value(result)? });
     access.record_event(NewEvent::by(
         MODULE_ID,
         JOURNAL_SESSIONS_EVENT_KIND,
         actor,
         payload,
     ));
-    to_value(&result)
+    Ok(())
+}
+
+/// A result carrying nothing but its action.
+fn answer(action: &str, changed: bool) -> JournalSessionsResult {
+    JournalSessionsResult {
+        action: action.to_owned(),
+        changed,
+        session: None,
+        moved_to: None,
+        view: None,
+        sessions: Vec::new(),
+        session_count: WireU64::new(0),
+        sessions_truncated: false,
+        hidden_trades: WireU64::new(0),
+    }
 }
 
 /// The listing: the folder read with nothing excluded, so a live session's
@@ -174,14 +261,11 @@ fn list<H: JournalSessionsPort + ?Sized>(
         })
         .collect();
     JournalSessionsResult {
-        action: "list".to_owned(),
-        changed: false,
-        session: None,
-        moved_to: None,
         sessions,
         session_count: wire_count(count),
         sessions_truncated: count > MAX_LISTED_SESSIONS,
         hidden_trades: wire_count(hidden),
+        ..answer("list", false)
     }
 }
 
@@ -195,9 +279,10 @@ fn snapshot(
         .tags
         .iter()
         .take(MAX_LISTED_TAGGED_TRADES)
-        .map(|(&(opened, closed), tags)| JournalTaggedTrade {
-            opened_unix_ms: opened,
-            closed_unix_ms: closed,
+        .map(|(trade, tags)| JournalTaggedTrade {
+            opened_unix_ms: trade.opened_ms,
+            closed_unix_ms: trade.closed_ms,
+            nth: trade.nth,
             tags: tags.clone(),
         })
         .collect();
@@ -213,6 +298,20 @@ fn snapshot(
         first_closed_unix_ms: info.first_closed_ms,
         tagged_trades,
         tagged_trades_truncated: info.tags.len() > MAX_LISTED_TAGGED_TRADES,
+    }
+}
+
+fn ledger_view(view: &LedgerView) -> JournalLedgerView {
+    JournalLedgerView {
+        source: match view.filter.source {
+            SourceFilter::Real => JournalSourceFilter::Real,
+            SourceFilter::Replay => JournalSourceFilter::Replay,
+            SourceFilter::All => JournalSourceFilter::Both,
+        },
+        from: view.filter.range.map(|range| range.start.iso()),
+        to: view.filter.range.map(|range| range.end.iso()),
+        search: view.filter.search.clone(),
+        folded_sessions: view.folded.iter().map(SessionKey::to_string).collect(),
     }
 }
 
@@ -268,10 +367,10 @@ fn refusal(error: SessionEditError) -> ControlError {
             "a tab is still journaling to this session; it can be deleted once that tab moves to another feed, replay or symbol"
         }
         SessionEditError::NotFound(_) | SessionEditError::InvalidKey(_) => {
-            "call with action list and send a session exactly as listed"
+            "call session.journal.set with action list and send a session exactly as listed"
         }
         SessionEditError::TradeNotFound(..) => {
-            "send opened_unix_ms and closed_unix_ms of a trade the session holds, as session.paper or the ledger reports them"
+            "send opened_unix_ms, closed_unix_ms and nth of a trade the session holds, as session.paper, the ledger or a listing reports them"
         }
         SessionEditError::InvalidTag(_) => "send tags as single words, with or without a leading #",
         SessionEditError::Unreadable(..) => {

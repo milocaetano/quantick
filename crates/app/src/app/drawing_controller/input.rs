@@ -90,7 +90,11 @@ impl DrawingController {
         if ctx.memory(|memory| memory.focused().is_some()) {
             return output;
         }
-        let keys = DrawingKeys::read(ctx);
+        let mut keys = DrawingKeys::read(ctx);
+        // A panel under the pointer (the Trades ledger) took these.
+        let claimed = crate::widgets::claimed_keys(ctx);
+        keys.delete &= !claimed.delete;
+        keys.escape &= !claimed.escape;
         if keys.escape {
             self.cancel_one_layer(host, tools);
         }

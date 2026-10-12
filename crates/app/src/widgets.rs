@@ -42,6 +42,40 @@ pub const ACTIVE_MARKER_INSET_PX: f32 = 6.0;
 /// Stroke width of the keyboard-focus ring.
 pub const FOCUS_RING_WIDTH_PX: f32 = 1.5;
 
+/// Delete and Escape, taken by a panel for itself.
+///
+/// The chart's drawing keys are read at the top of a frame, before any panel
+/// draws, so a panel that consumes a key it acts on is heard too late: the
+/// selected drawing is already gone. A claim made this frame is what the
+/// drawing keys hear on the next, which is the frame a key pressed over the
+/// panel arrives in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct KeyClaim {
+    pub(crate) delete: bool,
+    pub(crate) escape: bool,
+}
+
+fn key_claim_id() -> egui::Id {
+    egui::Id::new("quantick.key_claim")
+}
+
+/// Claim keys for this frame and the next.
+pub(crate) fn claim_keys(ctx: &egui::Context, claim: KeyClaim) {
+    if claim != KeyClaim::default() {
+        let pass = ctx.cumulative_pass_nr();
+        ctx.data_mut(|data| data.insert_temp(key_claim_id(), (pass, claim)));
+    }
+}
+
+/// The keys a panel claimed on this frame or the one before.
+pub(crate) fn claimed_keys(ctx: &egui::Context) -> KeyClaim {
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data(|data| data.get_temp::<(u64, KeyClaim)>(key_claim_id()))
+        .filter(|(claimed, _)| claimed.saturating_add(1) >= pass)
+        .map(|(_, claim)| claim)
+        .unwrap_or_default()
+}
+
 /// Which outer edge of the button the active marker hugs — the edge facing
 /// the window border the owning rail is docked against.
 ///

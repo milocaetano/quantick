@@ -17,8 +17,9 @@ use rust_decimal::Decimal;
 use super::{PaperAccount, utc_compact};
 use crate::format::{fmt_decimal, sanitize_symbol};
 use crate::report::HistoryRow;
-use crate::report::sessions::SessionKey;
+use crate::report::sessions::{JournaledTrade, SessionKey};
 use quantick_civil::civil_utc;
+use quantick_sim::history::TradeRef;
 
 impl PaperAccount {
     /// This session's closed round trips as history rows, each stamped with
@@ -28,6 +29,7 @@ impl PaperAccount {
     /// history it loaded and hands the lot to [`export_csv`].
     #[must_use]
     pub fn session_history_rows(&self) -> Vec<HistoryRow> {
+        let at = |index: usize| self.session_trade_at.get(index).and_then(Option::as_ref);
         self.venue
             .closed_trades()
             .iter()
@@ -41,11 +43,9 @@ impl PaperAccount {
                         .unwrap_or(self.session_source),
                 ),
                 trade: trade.clone(),
-                session: self
-                    .session_trade_files
-                    .get(index)
-                    .and_then(Option::as_deref)
-                    .and_then(|path| SessionKey::of(&self.dir, path)),
+                session: at(index).map(|at| at.session.clone()),
+                trade_ref: at(index)
+                    .map_or_else(|| history::TradeRefs::default().next(trade), |at| at.trade),
                 // Read from the file by the ledger; the export carries none.
                 tags: Vec::new(),
             })
@@ -61,7 +61,7 @@ impl PaperAccount {
     pub(super) fn journal(&mut self, trade: &ClosedTrade) -> bool {
         self.session_trade_sources.push(self.session_source);
         if self.symbol.is_empty() {
-            self.session_trade_files.push(None);
+            self.session_trade_at.push(None);
             return false;
         }
         let folder = self.dir.join(sanitize_symbol(&self.symbol));
@@ -71,7 +71,28 @@ impl PaperAccount {
         if self.session_journal_paths.last() != Some(path) {
             self.session_journal_paths.push(path.clone());
         }
-        self.session_trade_files.push(Some(path.clone()));
+        // Which trade of its file this close is: the trades of this session
+        // already written there with the same two times come before it.
+        let at = SessionKey::of(&self.dir, path).map(|session| {
+            let times = (trade.opened_ms, trade.closed_ms);
+            let nth = self
+                .session_trade_at
+                .iter()
+                .flatten()
+                .filter(|earlier| {
+                    earlier.session == session
+                        && (earlier.trade.opened_ms, earlier.trade.closed_ms) == times
+                })
+                .count();
+            JournaledTrade {
+                session,
+                trade: TradeRef {
+                    opened_ms: trade.opened_ms,
+                    closed_ms: trade.closed_ms,
+                    nth: u32::try_from(nth).unwrap_or(u32::MAX),
+                },
+            }
+        });
         let mut text = String::new();
         if !path.exists() {
             text.push_str(&history::write_header(&self.symbol, self.session_source));
@@ -102,6 +123,8 @@ impl PaperAccount {
                 "SIM: could not save the trade history - see the log for the path.".to_owned(),
             );
         }
+        // A row that never reached the file is no trade of it to tag.
+        self.session_trade_at.push(at.filter(|_| written.is_ok()));
         written.is_ok()
     }
 }

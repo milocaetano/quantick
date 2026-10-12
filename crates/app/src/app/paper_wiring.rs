@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 
 use quantick_paper::report::session_edit::{
-    JournalEdit, JournalEditOutcome, JournalScope, SessionEditError, apply_journal_edit,
+    JournalEdit, JournalEditOutcome, JournalScope, SessionEditError, apply_journal_edit, edit_toast,
 };
 
 use super::arrangement_host::ArrangementHost;
@@ -205,33 +205,37 @@ impl PaperSettingsAdapter<'_> {
 
 /// The trades folder and every file any tab is still journaling to.
 fn journal_scope(tabs: &ArrangementHost) -> JournalScope {
-    let live = tabs.iter();
-    let live = live.flat_map(|tab| tab.paper.account().session_journal_paths().to_vec());
+    let live = tabs
+        .iter()
+        .flat_map(|tab| tab.paper.account().session_journal_paths());
     JournalScope {
         dir: tabs[tabs.active_index()]
             .paper
             .account()
             .trades_dir()
             .to_path_buf(),
-        live: live.collect(),
+        live: live.cloned().collect(),
     }
 }
 
 /// One session edit, from a ledger gesture or a capability alike: every
-/// tab's live file is refused, every ledger and report re-reads, and the
-/// acknowledgement lands on the active tab.
+/// tab's live file is refused, a done edit has every ledger and report
+/// re-read the folder — a refused one changed nothing to re-read — and the
+/// toast lands on the active tab either way.
 pub(super) fn apply_journal_edit_across(
     tabs: &mut ArrangementHost,
     edit: &JournalEdit,
 ) -> Result<JournalEditOutcome, SessionEditError> {
     let outcome = apply_journal_edit(&journal_scope(tabs), edit);
-    for tab in tabs.iter_mut() {
-        tab.paper.account_mut().journal_edited();
+    if outcome.is_ok() {
+        for tab in tabs.iter_mut() {
+            let (report, env) = tab.paper.account_mut().report_parts();
+            report.journal_edited(&env);
+        }
     }
     let index = tabs.active_index();
-    tabs.runtime_mut(index).paper.show_toast(match &outcome {
-        Ok(done) => done.sentence(),
-        Err(refused) => format!("Trades: {refused}."),
-    });
+    tabs.runtime_mut(index)
+        .paper
+        .show_toast(edit_toast(&outcome));
     outcome
 }

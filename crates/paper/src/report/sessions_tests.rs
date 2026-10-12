@@ -37,6 +37,15 @@ fn trade_at(closed_ms: i64, pnl: i64) -> ClosedTrade {
     }
 }
 
+/// The first (here the only) trade of its file with `trade`'s times.
+fn first_ref(trade: &ClosedTrade) -> TradeRef {
+    TradeRef {
+        opened_ms: trade.opened_ms,
+        closed_ms: trade.closed_ms,
+        nth: 0,
+    }
+}
+
 /// Write one session file the way the account does.
 fn write_session(
     dir: &Path,
@@ -176,7 +185,10 @@ fn the_filter_ands_source_dates_tags_and_session_words() {
         search: search.to_owned(),
     };
     let admits = |filter: LedgerFilter, source, tags: &[String], label: &str| {
-        filter.matcher(UTC).admits(source, &trade, tags, label)
+        let label = SessionLabel::new(label.to_owned());
+        filter
+            .matcher(UTC)
+            .admits(source, &trade, tags, Some(&label))
     };
     let live = Some(SessionSource::Live);
     let replay = Some(SessionSource::Replay);
@@ -288,13 +300,7 @@ fn a_listing_keeps_sessions_with_a_kept_trade_newest_first() {
         ],
     );
     let trade = trade_at(DAY_START + 7_300_000, 3);
-    tag_trade(
-        dir.path(),
-        &new,
-        (trade.opened_ms, trade.closed_ms),
-        &["msc"],
-    )
-    .unwrap();
+    tag_trade(dir.path(), &new, first_ref(&trade), &["msc"]).unwrap();
     let loaded = load_history(dir.path(), None, &[]);
     let live = live_keys(dir.path(), &[old.path(dir.path())]);
 
@@ -315,10 +321,14 @@ fn a_listing_keeps_sessions_with_a_kept_trade_newest_first() {
     assert_eq!((tagged[0].trades, tagged[0].net), (1, Decimal::from(3)));
 
     // The ledger's own cut agrees with the listing, row for row.
-    let kept = kept_rows(&loaded, &msc, UTC);
+    let labels = session_labels(&loaded, UTC);
+    let kept = kept_rows(&loaded, &labels, &msc, UTC);
     assert_eq!(kept.len(), 1);
     assert_eq!(loaded.rows[kept[0]].tags, vec!["msc"]);
-    assert_eq!(kept_rows(&loaded, &LedgerFilter::default(), UTC).len(), 3);
+    assert_eq!(
+        kept_rows(&loaded, &labels, &LedgerFilter::default(), UTC).len(),
+        3
+    );
     assert_eq!(tag_counts(&loaded), vec![("msc".to_owned(), 1)]);
 }
 
@@ -332,7 +342,7 @@ fn a_name_and_tags_survive_a_reload_and_the_ledger_reads_them() {
         SessionSource::Live,
         std::slice::from_ref(&trade),
     );
-    let times = (trade.opened_ms, trade.closed_ms);
+    let times = first_ref(&trade);
     assert_eq!(
         rename_session(dir.path(), &key, "  Opening drive  ").unwrap(),
         Some("Opening drive".to_owned())
@@ -394,15 +404,9 @@ fn edits_refuse_what_they_cannot_name() {
             .code(),
         "session_not_found"
     );
-    let error = tag_trade(dir.path(), &key, (1, 2), &["a"]).unwrap_err();
+    let error = tag_trade(dir.path(), &key, first_ref(&trade_at(2, 0)), &["a"]).unwrap_err();
     assert_eq!(error.code(), "trade_not_found");
-    let error = tag_trade(
-        dir.path(),
-        &key,
-        (trade.opened_ms, trade.closed_ms),
-        &["two words"],
-    )
-    .unwrap_err();
+    let error = tag_trade(dir.path(), &key, first_ref(&trade), &["two words"]).unwrap_err();
     assert_eq!(error.code(), "invalid_tag");
     let text = std::fs::read_to_string(key.path(dir.path())).unwrap();
     assert!(!text.contains("# tags="), "a refused edit writes nothing");
@@ -495,18 +499,164 @@ fn the_live_session_is_never_deleted_and_is_read_only_for_its_metadata() {
     // Naming and tagging the live session is allowed; its rows stay out of
     // the saved history, its name and tags do not.
     rename_session(dir.path(), &key, "Now").unwrap();
-    tag_trade(
-        dir.path(),
-        &key,
-        (trade.opened_ms, trade.closed_ms),
-        &["live"],
-    )
-    .unwrap();
+    tag_trade(dir.path(), &key, first_ref(&trade), &["live"]).unwrap();
     let loaded = load_history(dir.path(), None, &live);
     assert!(loaded.rows.is_empty(), "its trades are in the simulator");
     assert_eq!(loaded.files, 0);
     let info = &loaded.sessions[&key];
     assert!(info.live);
     assert_eq!(info.name.as_deref(), Some("Now"));
-    assert_eq!(info.tags_of(&trade), ["live".to_owned()]);
+    assert_eq!(info.tags_of(&first_ref(&trade)), ["live".to_owned()]);
+}
+
+/// Windows opens `WINJ26./x.csv`, `WINJ26 /x.csv` and `winj26/x.csv` as the
+/// live `WINJ26/x.csv`. None of those spellings may move it.
+#[test]
+fn no_spelling_of_the_live_session_gets_past_the_delete_refusal() {
+    for refused in [
+        "WINJ26./20260316-130000.csv",
+        "WINJ26 /20260316-130000.csv",
+        "WINJ26/20260316-130000.csv ",
+        "WINJ26/20260316-130000.csv.",
+    ] {
+        assert_eq!(SessionKey::parse(refused), None, "{refused:?}");
+    }
+    let dir = ScratchDir::new("sessions-live-spellings");
+    let trade = trade_at(DAY_START, 1);
+    let key = write_session(
+        dir.path(),
+        "20260316-130000.csv",
+        SessionSource::Live,
+        std::slice::from_ref(&trade),
+    );
+    let live = vec![key.path(dir.path())];
+    let shouted = SessionKey::parse("winj26/20260316-130000.csv").expect("another spelling");
+    let error = delete_session(dir.path(), &shouted, &live).unwrap_err();
+    // A case-insensitive volume finds the live file under the other case and
+    // refuses it; a case-sensitive one finds no such file at all.
+    assert!(
+        matches!(
+            error,
+            SessionEditError::LiveSession(_) | SessionEditError::NotFound(_)
+        ),
+        "{error:?}"
+    );
+    assert!(key.path(dir.path()).is_file(), "the live file never moved");
+    if cfg!(windows) {
+        assert_eq!(error, SessionEditError::LiveSession(key.clone()));
+        // An edit acts on, and answers with, the file's own spelling.
+        assert_eq!(
+            rename_session(dir.path(), &shouted, "Now"),
+            Ok(Some("Now".to_owned()))
+        );
+        assert_eq!(
+            load_history(dir.path(), None, &[]).sessions[&key]
+                .name
+                .as_deref(),
+            Some("Now")
+        );
+    }
+}
+
+/// A ledger scoped to another instrument still knows the live session's
+/// tags, so its tag strip opens on them and Save cannot wipe them blind.
+#[test]
+fn the_live_sessions_names_and_tags_are_read_whatever_the_scope() {
+    let dir = ScratchDir::new("sessions-live-out-of-scope");
+    let trade = trade_at(DAY_START, 1);
+    let key = write_session(
+        dir.path(),
+        "20260316-130000.csv",
+        SessionSource::Live,
+        std::slice::from_ref(&trade),
+    );
+    rename_session(dir.path(), &key, "Now").unwrap();
+    tag_trade(dir.path(), &key, first_ref(&trade), &["keep"]).unwrap();
+    let live = vec![key.path(dir.path())];
+    let loaded = load_history(dir.path(), Some("OTHER"), &live);
+    assert!(loaded.rows.is_empty());
+    assert_eq!(loaded.files, 0, "the out-of-scope file is not counted");
+    let info = &loaded.sessions[&key];
+    assert!(info.live);
+    assert_eq!(info.name.as_deref(), Some("Now"));
+    assert_eq!(info.tags_of(&first_ref(&trade)), ["keep".to_owned()]);
+}
+
+/// Two partial closes of one position share both times. Each is its own
+/// trade to tag, read back on its own row — never the first row's tags on
+/// both, never only on the first.
+#[test]
+fn partial_closes_with_the_same_times_carry_their_own_tags() {
+    let dir = ScratchDir::new("sessions-partial-closes");
+    let trade = trade_at(DAY_START, 1);
+    let key = write_session(
+        dir.path(),
+        "20260316-130000.csv",
+        SessionSource::Live,
+        &[trade.clone(), trade.clone()],
+    );
+    let second = TradeRef {
+        nth: 1,
+        ..first_ref(&trade)
+    };
+    tag_trade(dir.path(), &key, second, &["scale"]).unwrap();
+    let loaded = load_history(dir.path(), None, &[]);
+    let tags: Vec<&[String]> = loaded.rows.iter().map(|row| row.tags.as_slice()).collect();
+    assert_eq!(tags, vec![&[][..], &["scale".to_owned()][..]]);
+    assert_eq!(loaded.rows[1].trade_ref, second);
+    let third = TradeRef {
+        nth: 2,
+        ..first_ref(&trade)
+    };
+    assert_eq!(
+        tag_trade(dir.path(), &key, third, &["x"])
+            .unwrap_err()
+            .code(),
+        "trade_not_found"
+    );
+}
+
+/// This session's re-runs of a tape that crossed midnight come back to a
+/// day already listed: one header per day, and one inline editor for a
+/// session however many days it spans.
+#[test]
+fn a_day_is_listed_once_and_an_edit_stands_in_one_place() {
+    let a = SessionKey::parse("X/a.csv").unwrap();
+    let b = SessionKey::parse("X/b.csv").unwrap();
+    let day = 86_400_000;
+    // Newest first: run b across midnight, then run a across the same one.
+    let rows = [
+        (Some(&b), trade_at(DAY_START + day, 1)),
+        (Some(&b), trade_at(DAY_START, 2)),
+        (Some(&a), trade_at(DAY_START + day, 3)),
+        (Some(&a), trade_at(DAY_START, 4)),
+    ];
+    let mut days = group_by_day_and_session(rows.iter().map(|(key, trade)| (*key, trade)), UTC);
+    assert_eq!(days.len(), 2, "two civil days, each listed once");
+    assert!(days.iter().all(|day| day.sessions.len() == 2));
+
+    let mut placed = false;
+    place_session_rows(&mut days, None, Some(&a), &BTreeSet::new(), &mut placed);
+    let rows_of = |days: &[DayGroup], key: &SessionKey| -> Vec<SessionRow> {
+        days.iter()
+            .flat_map(|day| &day.sessions)
+            .filter(|session| session.key.as_ref() == Some(key))
+            .map(|session| session.row)
+            .collect()
+    };
+    assert_eq!(
+        rows_of(&days, &a),
+        vec![SessionRow::Inline, SessionRow::Head]
+    );
+    assert_eq!(rows_of(&days, &b), vec![SessionRow::Head, SessionRow::Head]);
+    // The saved list after the live one: the editor is already placed.
+    let mut saved = group_by_day_and_session([(Some(&a), &rows[3].1)], UTC);
+    place_session_rows(&mut saved, None, Some(&a), &BTreeSet::new(), &mut placed);
+    assert_eq!(rows_of(&saved, &a), vec![SessionRow::Head]);
+
+    // A folded newest day hands the editor to the next open one.
+    let mut placed = false;
+    let folded = BTreeSet::from([days[0].day.day_number()]);
+    place_session_rows(&mut days, None, Some(&a), &folded, &mut placed);
+    assert_eq!(rows_of(&days[1..], &a), vec![SessionRow::Inline]);
 }

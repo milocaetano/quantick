@@ -21,6 +21,7 @@ use rust_decimal::prelude::ToPrimitive;
 use crate::format::sanitize_symbol;
 use quantick_civil::{CivilDate, DAY_MS, DateRange, TzOffset};
 
+pub mod ledger_state;
 pub mod session_edit;
 pub mod sessions;
 
@@ -39,6 +40,8 @@ pub struct HistoryRow {
     /// The session file the row was read from; `None` for a row no file
     /// under the trades folder holds.
     pub session: Option<SessionKey>,
+    /// Which trade of that file it is — what its tags are keyed by.
+    pub trade_ref: history::TradeRef,
     /// The trader's tags on this trade, from its session file.
     pub tags: Vec<String>,
 }
@@ -183,18 +186,34 @@ pub fn load_history(dir: &Path, symbol: Option<&str>, exclude: &[PathBuf]) -> Lo
             }
             problem_rows += parsed.problems.len();
             let source = parsed.source;
+            let refs = parsed.refs();
             let mut tags = std::mem::take(&mut parsed.tags);
-            rows.extend(parsed.trades.into_iter().map(|trade| {
-                HistoryRow {
-                    symbol: symbol.clone(),
-                    source,
-                    session: key.clone(),
-                    tags: tags
-                        .remove(&(trade.opened_ms, trade.closed_ms))
-                        .unwrap_or_default(),
-                    trade,
-                }
-            }));
+            rows.extend(
+                parsed
+                    .trades
+                    .into_iter()
+                    .zip(refs)
+                    .map(|(trade, at)| HistoryRow {
+                        symbol: symbol.clone(),
+                        source,
+                        session: key.clone(),
+                        trade_ref: at,
+                        tags: tags.remove(&at).unwrap_or_default(),
+                        trade,
+                    }),
+            );
+        }
+    }
+    // A live file the scope left out still names and tags this session's
+    // own trades, which the ledger lists whatever the scope: without it a
+    // tag strip would open blank on tags the file holds, and Save would
+    // replace them.
+    for path in exclude {
+        if let Some(key) = SessionKey::of(dir, path)
+            && !sessions.contains_key(&key)
+            && let Some(info) = SessionInfo::read(dir, &key, true)
+        {
+            sessions.insert(key, info);
         }
     }
     // Files are per-session; merge into one closing-order timeline so the

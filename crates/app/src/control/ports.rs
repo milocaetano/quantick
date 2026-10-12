@@ -12,6 +12,7 @@ use quantick_control_handlers::{
 use quantick_control_schema::notify::AgentPopup;
 use quantick_feed::history_reach::HistoryReach;
 use quantick_feed::history_run::{Cancelled, Press};
+use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{
     JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
 };
@@ -77,6 +78,10 @@ impl JournalSessionsPort for dyn ControlPort {
     }
     fn edit_journal(&mut self, edit: &JournalEdit) -> Result<JournalEditOutcome, SessionEditError> {
         self.paper_settings().apply_journal_edit(edit)
+    }
+    fn ledger_view(&mut self, change: &LedgerViewChange) -> Option<(LedgerView, bool)> {
+        let paper = self.tabs_mut().active_paper_mut()?;
+        Some(paper.account_mut().report_parts().0.ledger_view(change))
     }
 }
 

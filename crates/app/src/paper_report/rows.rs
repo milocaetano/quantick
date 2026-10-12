@@ -10,7 +10,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::Side;
-use quantick_paper::report::sessions::{SessionKey, group_by_day_and_session, source_word};
+use quantick_paper::report::sessions::{
+    SessionKey, SessionLabel, SessionRow, TradeRef, group_by_day_and_session, place_session_rows,
+    source_word,
+};
 use quantick_sim::ClosedTrade;
 use quantick_sim::history::SessionSource;
 use rust_decimal::Decimal;
@@ -61,6 +64,8 @@ pub(super) struct TradeMeta<'a> {
     /// The session file it is in; `None` when no file under the trades
     /// folder took it.
     pub(super) session: Option<&'a SessionKey>,
+    /// Which trade of that file it is.
+    pub(super) trade_ref: TradeRef,
     pub(super) source: Option<SessionSource>,
     pub(super) tags: &'a [String],
 }
@@ -82,7 +87,7 @@ pub(super) struct GroupView<'s> {
     pub(super) focused: Option<&'s SessionKey>,
     /// The session whose row an inline rename or delete replaces.
     pub(super) editing: Option<&'s SessionKey>,
-    pub(super) labels: &'s BTreeMap<SessionKey, String>,
+    pub(super) labels: &'s BTreeMap<SessionKey, SessionLabel>,
     /// Sessions a tab still journals to.
     pub(super) live: &'s BTreeSet<SessionKey>,
     pub(super) tz: TzOffset,
@@ -97,17 +102,26 @@ pub(super) struct LedgerRowResponse {
     pub(super) response: Option<egui::Response>,
 }
 
-/// Cut `items` (newest first) into rows: a header per civil day, then — in
-/// a day of two or more sessions, or for a session focused or under an
-/// edit — a row per session, then the trades.
+/// Cut `items` (newest first) into rows: a header per civil day, then each
+/// session's own row where [`place_session_rows`] gives it one, then the
+/// trades. `inline_placed` carries the one inline editor across the lists
+/// of one ledger.
 pub(super) fn push_groups<'a>(
     rows: &mut Vec<LedgerRow<'a>>,
     items: &'a [Item<'a>],
     view: &GroupView<'_>,
+    inline_placed: &mut bool,
 ) {
-    let days = group_by_day_and_session(
+    let mut days = group_by_day_and_session(
         items.iter().map(|item| (item.meta.session, item.trade)),
         view.tz,
+    );
+    place_session_rows(
+        &mut days,
+        view.focused,
+        view.editing,
+        view.collapsed_days,
+        inline_placed,
     );
     for day in days {
         let folded = view.collapsed_days.contains(&day.day.day_number());
@@ -119,27 +133,20 @@ pub(super) fn push_groups<'a>(
         if folded {
             continue;
         }
-        let pinned = |key: Option<&SessionKey>| {
-            key.is_some_and(|key| view.focused == Some(key) || view.editing == Some(key))
-        };
-        let heads = day.sessions.len() > 1
-            || day
-                .sessions
-                .iter()
-                .any(|session| pinned(session.key.as_ref()));
         for session in day.sessions {
             let first = &items[session.items[0]];
-            if heads && let Some(key) = &session.key {
-                if view.editing == Some(key) {
+            if session.row != SessionRow::Bare
+                && let Some(key) = &session.key
+            {
+                if session.row == SessionRow::Inline {
                     rows.push(LedgerRow::Inline);
                 } else {
                     rows.push(LedgerRow::SessionHead(SessionHead {
                         key: key.clone(),
-                        label: view
-                            .labels
-                            .get(key)
-                            .cloned()
-                            .unwrap_or_else(|| source_word(first.meta.source).to_owned()),
+                        label: view.labels.get(key).map_or_else(
+                            || source_word(first.meta.source).to_owned(),
+                            |label| label.text.clone(),
+                        ),
                         source: first.meta.source,
                         count: session.count,
                         net: session.net,

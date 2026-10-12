@@ -1,5 +1,22 @@
 {
   "$defs": {
+    "JournalSessionFold": {
+      "additionalProperties": false,
+      "description": "One session folded or opened.",
+      "properties": {
+        "folded": {
+          "type": "boolean"
+        },
+        "session": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session",
+        "folded"
+      ],
+      "type": "object"
+    },
     "JournalSourceFilter": {
       "description": "The ledger's source pills.",
       "oneOf": [
@@ -114,6 +131,13 @@
           "type": "integer",
           "x-unit": "unix_milliseconds"
         },
+        "nth": {
+          "default": 0,
+          "description": "Which of the session's trades with these two times: 0, the\ndefault, is the first. Only partial closes of one position or\nfills in one millisecond share both; a listing reports it.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "opened_unix_ms": {
           "format": "int64",
           "type": "integer",
@@ -141,19 +165,59 @@
     },
     {
       "additionalProperties": false,
-      "description": "Move a session file out of the history. The live session is refused.",
+      "description": "Set, or with no field read, what the active tab's Trades ledger\nshows: its filter row and the sessions folded shut. Fields left out\nkeep their value.",
       "properties": {
         "action": {
-          "const": "delete",
+          "const": "view",
           "type": "string"
         },
-        "session": {
-          "type": "string"
+        "clear": {
+          "default": false,
+          "description": "Drop every filter first — both sources, any date, no search — so\nthe rest of the call states the whole filter.",
+          "type": "boolean"
+        },
+        "fold": {
+          "description": "Sessions to fold shut or open inside their day.",
+          "items": {
+            "$ref": "#/$defs/JournalSessionFold"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "from": {
+          "description": "First civil day shown, `YYYY-MM-DD` in the display timezone.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "search": {
+          "maxLength": 256,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JournalSourceFilter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "to": {
+          "description": "Last civil day shown, inclusive; alone, it shows that one day.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
-        "action",
-        "session"
+        "action"
       ],
       "type": "object"
     }

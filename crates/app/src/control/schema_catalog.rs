@@ -78,6 +78,9 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<quantick_control_schema::journal_sessions::JournalSessionsResult>(
             "session-journal-result-v1.schema.json",
         ),
+        document::<quantick_control_schema::journal_sessions::JournalDeleteInput>(
+            "session-journal-delete-input-v1.schema.json",
+        ),
         document::<TapeViewInput>("chart-tape-view-input-v1.schema.json"),
         document::<TapeViewResult>("chart-tape-view-result-v1.schema.json"),
         document::<quantick_control_schema::opening_scale::OpeningScaleInput>(

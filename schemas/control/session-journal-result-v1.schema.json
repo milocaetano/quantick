@@ -4,6 +4,43 @@
       "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
       "type": "string"
     },
+    "JournalLedgerView": {
+      "description": "What the active tab's Trades ledger shows.",
+      "properties": {
+        "folded_sessions": {
+          "description": "Sessions folded shut inside their day.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "from": {
+          "description": "The first civil day shown; absent shows every day.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "search": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/JournalSourceFilter"
+        },
+        "to": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "search",
+        "folded_sessions"
+      ],
+      "type": "object"
+    },
     "JournalSessionSnapshot": {
       "description": "One session, as a listing or an edit reports it.",
       "properties": {
@@ -75,6 +112,26 @@
       ],
       "type": "object"
     },
+    "JournalSourceFilter": {
+      "description": "The ledger's source pills.",
+      "oneOf": [
+        {
+          "const": "real",
+          "description": "Live sessions, and files from before a source was recorded.",
+          "type": "string"
+        },
+        {
+          "const": "replay",
+          "description": "Replay-driven practice sessions.",
+          "type": "string"
+        },
+        {
+          "const": "both",
+          "description": "Everything.",
+          "type": "string"
+        }
+      ]
+    },
     "JournalTaggedTrade": {
       "description": "One tagged trade.",
       "properties": {
@@ -82,6 +139,12 @@
           "format": "int64",
           "type": "integer",
           "x-unit": "unix_milliseconds"
+        },
+        "nth": {
+          "description": "How many earlier trades of the session share both times.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "opened_unix_ms": {
           "format": "int64",
@@ -98,6 +161,7 @@
       "required": [
         "opened_unix_ms",
         "closed_unix_ms",
+        "nth",
         "tags"
       ],
       "type": "object"
@@ -115,7 +179,7 @@
       "type": "string"
     },
     "changed": {
-      "description": "Whether a file changed.",
+      "description": "Whether a file or the ledger's view changed.",
       "type": "boolean"
     },
     "hidden_trades": {
@@ -138,7 +202,7 @@
           "type": "null"
         }
       ],
-      "description": "The edited session after the edit; absent for a listing and a delete."
+      "description": "The edited session after the edit; absent for a listing, a view and\na delete."
     },
     "session_count": {
       "$ref": "#/$defs/WireU64",
@@ -154,6 +218,17 @@
     },
     "sessions_truncated": {
       "type": "boolean"
+    },
+    "view": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/JournalLedgerView"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "A view call: what the ledger shows after it."
     }
   },
   "required": [

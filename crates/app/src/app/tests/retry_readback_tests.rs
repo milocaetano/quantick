@@ -615,6 +615,14 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             json!({ "action": "list" }),
             Readback::Stays,
         ),
+        // A delete of a session already gone: refused with
+        // `session_not_found`, journaling nothing, the same answer twice.
+        (
+            "session.journal.delete",
+            1,
+            json!({ "session": "WINJ26/no-such-session.csv" }),
+            Readback::Stays,
+        ),
         ("chart.tape_view.set", 1, Value::Null, Readback::Moves),
         (
             "orderflow.tape.opening_scale.set",
@@ -779,7 +787,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
     let directory = gateway_test_directory("retry-every-optional");
     grant_annotate_for_test(
         &mut app,
-        "all-reads,observe.user_text,cockpit,cockpit.layout,cockpit.recover",
+        "all-reads,observe.user_text,cockpit,cockpit.layout,cockpit.recover,cockpit.journal.delete",
     );
     enable_test_gateway(&mut app, &ctx, &directory, 4);
     let cockpit = options(
@@ -789,6 +797,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             "cockpit",
             "cockpit.layout",
             "cockpit.recover",
+            "cockpit.journal.delete",
         ],
     );
     let reachable: BTreeSet<&str> = retry_matrix::READBACKS

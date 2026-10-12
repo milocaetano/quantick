@@ -1,12 +1,23 @@
 //! The trades journal's sessions through the real gateway: list through the
-//! ledger's filter, rename, tag, delete — the live session refused — and the
-//! ledger re-reading what the call wrote.
+//! ledger's filter, rename, tag, set the ledger's view, delete — behind its
+//! own permission, the live session refused — and the ledger re-reading what
+//! the call wrote, and only then.
 use super::*;
 
+use quantick_paper::report::session_edit::JournalEdit;
+use quantick_paper::report::sessions::SessionKey;
+
 const CAPABILITY: &str = "session.journal.set";
+const DELETE: &str = "session.journal.delete";
+/// The cockpit grant plus the one a delete needs.
+const DELETE_SCOPES: &[&str] = &["cockpit", "cockpit.layout", "cockpit.journal.delete"];
 
 fn journal_call(app: &mut QuantickApp, client: &mut LocalClient, input: Value) -> ResponseEnvelope {
     unkeyed_call(app, client, CAPABILITY, input).0
+}
+
+fn delete_call(app: &mut QuantickApp, client: &mut LocalClient, session: &str) -> ResponseEnvelope {
+    unkeyed_call(app, client, DELETE, json!({ "session": session })).0
 }
 
 /// One replay session file the way the account writes it.
@@ -97,32 +108,29 @@ fn sessions_are_listed_named_tagged_and_deleted_by_name() {
         "words match the session's name"
     );
 
-    let deleted = success_result(&journal_call(
-        &mut app,
-        &mut client,
-        json!({ "action": "delete", "session": second }),
-    ));
-    assert!(
-        deleted["moved_to"]
-            .as_str()
-            .is_some_and(|to| to.starts_with(".deleted/WINJ26/")),
-        "{deleted}"
-    );
-    let gone = journal_call(
+    // A delete is not this capability's, and the cockpit grant alone does
+    // not reach the one that does it.
+    let not_here = journal_call(
         &mut app,
         &mut client,
         json!({ "action": "delete", "session": second }),
     );
+    assert_eq!(error_code(&not_here), Some(codes::INVALID_REQUEST));
+    let ungranted = delete_call(&mut app, &mut client, &second);
+    assert_eq!(error_code(&ungranted), Some(codes::PERMISSION_DENIED));
+    assert!(trades.path().join(&second).is_file(), "nothing moved");
+
+    // Every edit journaled one event a client can reconcile against.
+    let events = readback(&mut app, &ctx, &mut client, CAPABILITY);
     assert_eq!(
-        error_code(&gone),
-        Some(codes::RESOURCE_GONE),
-        "a repeat removes nothing"
+        events.len(),
+        2,
+        "rename and tag; the listings journal nothing"
     );
 
     // The name and the tags are in the file: a fresh read — a restart —
     // sees them.
     let reread = quantick_paper::report::load_history(trades.path(), None, &[]);
-    assert_eq!(reread.sessions.len(), 1);
     assert_eq!(
         reread
             .rows
@@ -131,21 +139,47 @@ fn sessions_are_listed_named_tagged_and_deleted_by_name() {
             .count(),
         1
     );
-    assert_eq!(
-        reread
-            .sessions
-            .values()
-            .next()
-            .and_then(|info| info.name.as_deref()),
-        Some("Opening drive")
-    );
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}
 
-    // Every edit journaled one event a client can reconcile against.
-    let events = readback(&mut app, &ctx, &mut client, CAPABILITY);
+#[test]
+fn a_delete_needs_its_own_permission_and_a_repeat_removes_nothing() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let trades = crate::scratch::ScratchDir::new("journal-sessions-delete");
+    app.active_tab_mut()
+        .paper
+        .account_mut()
+        .set_trades_dir(trades.path().to_path_buf());
+    let session = write_session(&trades, "20260316-130000.csv", &[1_773_666_000_000]);
+
+    let directory = gateway_test_directory("journal-sessions-delete");
+    grant_annotate_for_test(
+        &mut app,
+        "all-reads,cockpit,cockpit.layout,cockpit.journal.delete",
+    );
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(&directory, &options("cockpit", DELETE_SCOPES));
+    let deleted = success_result(&delete_call(&mut app, &mut client, &session));
+    assert!(
+        deleted["moved_to"]
+            .as_str()
+            .is_some_and(|to| to.starts_with(".deleted/WINJ26/")),
+        "{deleted}"
+    );
+    let gone = delete_call(&mut app, &mut client, &session);
     assert_eq!(
-        events.len(),
-        3,
-        "rename, tag and delete; the listings journal nothing"
+        error_code(&gone),
+        Some(codes::RESOURCE_GONE),
+        "a repeat removes nothing"
+    );
+    assert_eq!(readback(&mut app, &ctx, &mut client, DELETE).len(), 1);
+    assert!(
+        quantick_paper::report::load_history(trades.path(), None, &[])
+            .sessions
+            .is_empty()
     );
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
@@ -180,22 +214,18 @@ fn the_session_a_tab_is_writing_cannot_be_deleted() {
         .first()
         .cloned()
         .expect("the close was journaled");
-    let session = quantick_paper::report::sessions::SessionKey::of(trades.path(), &live)
+    let session = SessionKey::of(trades.path(), &live)
         .expect("a session key")
         .to_string();
 
     let directory = gateway_test_directory("journal-sessions-live");
-    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
-    enable_test_gateway(&mut app, &ctx, &directory, 4);
-    let mut client = connect(
-        &directory,
-        &options("cockpit", &["cockpit", "cockpit.layout"]),
-    );
-    let refused = journal_call(
+    grant_annotate_for_test(
         &mut app,
-        &mut client,
-        json!({ "action": "delete", "session": session }),
+        "all-reads,cockpit,cockpit.layout,cockpit.journal.delete",
     );
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(&directory, &options("cockpit", DELETE_SCOPES));
+    let refused = delete_call(&mut app, &mut client, &session);
     assert_eq!(error_code(&refused), Some(codes::CAPABILITY_UNAVAILABLE));
     assert!(live.is_file(), "the live session is untouched");
     let listed = success_result(&journal_call(
@@ -206,4 +236,116 @@ fn the_session_a_tab_is_writing_cannot_be_deleted() {
     assert_eq!(listed["sessions"][0]["live"], true);
     disable_test_gateway(&mut app, &ctx);
     std::fs::remove_dir_all(directory).ok();
+}
+
+/// The filter row and a session's fold caret, by name: what the call sets is
+/// what the ledger holds, read back by a second call.
+#[test]
+fn the_ledgers_filter_and_folds_are_set_and_read_by_name() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let directory = gateway_test_directory("journal-sessions-view");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut client = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let set = success_result(&journal_call(
+        &mut app,
+        &mut client,
+        json!({
+            "action": "view", "source": "replay", "from": "2026-03-16", "search": "#msc",
+            "fold": [{ "session": "WINJ26/20260316-130000.csv", "folded": true }],
+        }),
+    ));
+    assert_eq!(set["changed"], true);
+    let read = success_result(&journal_call(
+        &mut app,
+        &mut client,
+        json!({ "action": "view" }),
+    ));
+    assert_eq!(read["changed"], false);
+    assert_eq!(
+        read["view"],
+        json!({
+            "source": "replay", "from": "2026-03-16", "to": "2026-03-16", "search": "#msc",
+            "folded_sessions": ["WINJ26/20260316-130000.csv"],
+        })
+    );
+    assert_eq!(readback(&mut app, &ctx, &mut client, CAPABILITY).len(), 1);
+    disable_test_gateway(&mut app, &ctx);
+    std::fs::remove_dir_all(directory).ok();
+}
+
+/// A refused edit changed nothing on disk, so no ledger throws away its read
+/// of the folder; a done one has every ledger read it again.
+#[test]
+fn only_an_edit_that_happened_makes_the_ledgers_read_again() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    run_frame(&mut app, &ctx);
+    let trades = crate::scratch::ScratchDir::new("journal-sessions-refused");
+    app.active_tab_mut()
+        .paper
+        .account_mut()
+        .set_trades_dir(trades.path().to_path_buf());
+    let session = write_session(&trades, "20260316-130000.csv", &[1_773_666_000_000]);
+    let load = |app: &mut QuantickApp| {
+        let (report, env) = app.active_tab_mut().paper.account_mut().report_parts();
+        report.reload_ledger(&env);
+    };
+    let loaded = |app: &QuantickApp| app.active_tab().paper.report_state().ledger_loaded();
+    load(&mut app);
+    let missing = JournalEdit::Rename {
+        session: SessionKey::parse("WINJ26/missing.csv").expect("a key"),
+        name: "x".to_owned(),
+    };
+    let refused = crate::app::paper_wiring::apply_journal_edit_across(&mut app.tabs, &missing);
+    assert!(refused.is_err());
+    assert!(loaded(&app), "nothing changed, nothing to re-read");
+    let rename = JournalEdit::Rename {
+        session: SessionKey::parse(&session).expect("a key"),
+        name: "x".to_owned(),
+    };
+    let done = crate::app::paper_wiring::apply_journal_edit_across(&mut app.tabs, &rename);
+    assert!(done.is_ok());
+    assert!(
+        !loaded(&app),
+        "the file changed: the next frame re-reads it"
+    );
+}
+
+/// Del over the Trades ledger is the ledger's. The chart's drawing keys are
+/// read before the dock draws, so they hear the ledger's claim from the
+/// frame before and leave the selected drawing alone — until it lapses.
+#[test]
+fn delete_claimed_by_the_ledger_never_deletes_the_selected_drawing() {
+    let (mut app, _commands) = app_with_history(200);
+    let ctx = egui::Context::default();
+    run_frame(&mut app, &ctx);
+    app.toolrail
+        .arm(Tool::Drawing(drawing_tool("horizontal-line")));
+    click_chart(&mut app, &ctx, egui::pos2(700.0, 300.0));
+    assert!(app.active_tab().flow_pane.drawings.selected().is_some());
+    let claim = crate::widgets::KeyClaim {
+        delete: true,
+        escape: true,
+    };
+    crate::widgets::claim_keys(&ctx, claim);
+    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
+    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Escape)]);
+    assert_eq!(app.active_tab().flow_pane.drawings.items().len(), 1);
+    assert!(
+        app.active_tab().flow_pane.drawings.selected().is_some(),
+        "Escape went to the ledger too"
+    );
+
+    run_frame(&mut app, &ctx);
+    run_frame_with_events(&mut app, &ctx, vec![key_press(egui::Key::Delete)]);
+    assert!(
+        app.active_tab().flow_pane.drawings.items().is_empty(),
+        "an unclaimed Del is the chart's again"
+    );
 }

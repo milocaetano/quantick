@@ -25,10 +25,3 @@ impl NotifyAccess for ControlAccess {
         ControlAccess::append_event(self, event);
     }
 }
-
-/// A session edit journals through the same lane, on the same clock.
-impl quantick_control_handlers::journal_sessions::JournalEventAccess for ControlAccess {
-    fn record_event(&mut self, event: NewEvent) {
-        ControlAccess::append_event(self, event);
-    }
-}

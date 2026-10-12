@@ -49,6 +49,7 @@ fn plain_items<'a>(items: &[(&'a str, &'a ClosedTrade)]) -> Vec<Item<'a>> {
             live: None,
             meta: TradeMeta {
                 session: None,
+                trade_ref: Default::default(),
                 source: None,
                 tags: &[],
             },
@@ -75,13 +76,14 @@ fn push_plain<'a>(
         live: &sessions,
         tz,
     };
-    push_groups(rows, items, &view);
+    push_groups(rows, items, &view, &mut false);
 }
 
 fn row(symbol: &str, source: Option<history::SessionSource>, trade: ClosedTrade) -> HistoryRow {
     HistoryRow {
         symbol: symbol.to_owned(),
         source,
+        trade_ref: history::TradeRefs::default().next(&trade),
         trade,
         session: None,
         tags: Vec::new(),
@@ -807,4 +809,54 @@ fn a_refusal_the_report_raises_reaches_the_windows_one_toast() {
         None,
         "and once only - the outbox is a slot that is handed over, not a copy"
     );
+}
+
+/// A session renamed while it spans two days gets one rename row, not one
+/// per day: two would be two text fields under one id fighting for focus,
+/// and a delete would ask twice.
+#[test]
+fn an_inline_edit_row_stands_once_however_many_days_its_session_spans() {
+    use quantick_paper::report::sessions::SessionKey;
+    let tz = TzOffset::new(0);
+    let day = 86_400_000_i64;
+    let a = SessionKey::parse("X/a.csv").unwrap();
+    let b = SessionKey::parse("X/b.csv").unwrap();
+    let trades = [
+        trade_at(2 * day + 10, 1),
+        trade_at(2 * day + 5, 2),
+        trade_at(day + 10, 3),
+        trade_at(day + 5, 4),
+    ];
+    let items: Vec<Item<'_>> = trades
+        .iter()
+        .zip([&a, &b, &a, &b])
+        .map(|(trade, key)| Item {
+            trade,
+            symbol: "X",
+            live: None,
+            meta: TradeMeta {
+                session: Some(key),
+                trade_ref: Default::default(),
+                source: None,
+                tags: &[],
+            },
+        })
+        .collect();
+    let none = std::collections::BTreeSet::new();
+    let labels = std::collections::BTreeMap::new();
+    let view = GroupView {
+        collapsed_days: &none,
+        collapsed_sessions: &std::collections::BTreeSet::new(),
+        focused: None,
+        editing: Some(&a),
+        labels: &labels,
+        live: &std::collections::BTreeSet::new(),
+        tz,
+    };
+    let mut rows = Vec::new();
+    push_groups(&mut rows, &items, &view, &mut false);
+    let count = |pick: fn(&LedgerRow<'_>) -> bool| rows.iter().filter(|row| pick(row)).count();
+    assert_eq!(count(|row| matches!(row, LedgerRow::Inline)), 1);
+    assert_eq!(count(|row| matches!(row, LedgerRow::SessionHead(_))), 3);
+    assert_eq!(count(|row| matches!(row, LedgerRow::Day(..))), 2);
 }

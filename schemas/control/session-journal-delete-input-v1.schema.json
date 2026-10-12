@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "`session.journal.delete`'s input.",
+  "properties": {
+    "session": {
+      "description": "`<symbol folder>/<file>.csv`, as a listing names it.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "session"
+  ],
+  "title": "JournalDeleteInput",
+  "type": "object"
+}

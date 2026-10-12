@@ -1,7 +1,13 @@
-# feat/trades-journal-sessions: the ledger state's new field and its env
-# fields on `paper_report.rs`, the `PaperSettingsAdapter` edit that refuses
-# every tab's live session and re-reads every ledger, and the
-# `JournalSessionsPort` adapter for `session.journal.set`. The decisions and
-# file edits stay headless in `quantick_paper::report::session_edit`.
-crates/app +97
-!budget +97
+# feat/trades-journal-sessions: only code that must touch app-only state.
+# Every decision (edits, refusals, toast wording, ledger state, view
+# changes, live-trade filtering) is in `quantick_paper::report`. What stays:
+# `paper_wiring.rs` (+52) builds the journal scope from every tab's account
+# and, after a done edit only, has every tab's ledger re-read — it needs the
+# `ArrangementHost`; `control/ports.rs` (+21) adapts `ControlPort` to
+# `JournalSessionsPort`, the view action reaching the active tab's
+# `ReportState`; `paper_report.rs` (+8) holds the env fields and the
+# ledger's state field; `paper_account/report.rs` (+2) fills those env
+# fields from the account; `schema_catalog.rs` (+9) publishes the three
+# wire schemas; `control/actions.rs` (+1) registers the family.
+crates/app +95
+!budget +95

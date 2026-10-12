@@ -39,10 +39,14 @@
 //! ```text
 //! # name=Morning fade practice
 //! # tags=1700000000000:1700000060000 #fade #msc
+//! # tags=1700000000000:1700000060000:1 #scale-out
 //! ```
 //!
-//! An empty `# name=` clears the name; a `# tags=` line naming a trade and no
-//! tags clears that trade's tags.
+//! A tags line names its trade by opening and closing times; a third field
+//! counts the earlier trades of the file with the same two (see
+//! [`TradeRef`]) and is left out when there are none. An empty `# name=`
+//! clears the name; a `# tags=` line naming a trade and no tags clears that
+//! trade's tags.
 
 use std::collections::BTreeMap;
 
@@ -72,9 +76,40 @@ pub const MAX_TAG_CHARS: usize = 32;
 /// Most tags one trade carries.
 pub const MAX_TAGS_PER_TRADE: usize = 16;
 
-/// Which trade a `# tags=` line speaks for: its opening and closing venue
-/// times, the pair the ledger already shows for every row.
-pub type TradeTimes = (i64, i64);
+/// Which trade of one session file a `# tags=` line speaks for: its opening
+/// and closing venue times — the pair the ledger shows for every row — and
+/// how many earlier trades of the same file share both. The partial closes
+/// of one position, or two fills in one millisecond, close trades with equal
+/// times; `nth` tells them apart and is 0 for every trade whose times are its
+/// own. Trade rows are only ever appended, so a trade's `nth` never changes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TradeRef {
+    pub opened_ms: i64,
+    pub closed_ms: i64,
+    pub nth: u32,
+}
+
+/// Hands out each trade's [`TradeRef`] in the order its file holds them.
+#[derive(Debug, Default)]
+pub struct TradeRefs(BTreeMap<(i64, i64), u32>);
+
+impl TradeRefs {
+    /// The next trade's reference: its times, and how many trades handed
+    /// out before it shared them.
+    pub fn next(&mut self, trade: &ClosedTrade) -> TradeRef {
+        let seen = self
+            .0
+            .entry((trade.opened_ms, trade.closed_ms))
+            .or_default();
+        let nth = *seen;
+        *seen = seen.saturating_add(1);
+        TradeRef {
+            opened_ms: trade.opened_ms,
+            closed_ms: trade.closed_ms,
+            nth,
+        }
+    }
+}
 
 /// Where a session's trades came from — recorded once per file, so the
 /// report can keep practice runs out of the real track record.
@@ -118,13 +153,22 @@ pub struct TradeHistory {
     /// The session's name from the last `# name=` line; `None` when it was
     /// never named or the last line cleared it.
     pub name: Option<String>,
-    /// Each tagged trade's tags from the last `# tags=` line naming it,
-    /// keyed by `(opened_ms, closed_ms)`. Trades never tagged are absent.
-    pub tags: BTreeMap<TradeTimes, Vec<String>>,
+    /// Each tagged trade's tags from the last `# tags=` line naming it.
+    /// Trades never tagged are absent.
+    pub tags: BTreeMap<TradeRef, Vec<String>>,
     /// Rows that parsed, in file order (which is closing order).
     pub trades: Vec<ClosedTrade>,
     /// Rows that did not parse, reported instead of silently dropped.
     pub problems: Vec<HistoryProblem>,
+}
+
+impl TradeHistory {
+    /// Each trade's [`TradeRef`], index-aligned with [`Self::trades`].
+    #[must_use]
+    pub fn refs(&self) -> Vec<TradeRef> {
+        let mut refs = TradeRefs::default();
+        self.trades.iter().map(|trade| refs.next(trade)).collect()
+    }
 }
 
 /// One unreadable row: where and why.
@@ -196,8 +240,11 @@ pub fn write_name(name: &str) -> String {
 /// The line that sets one trade's tags (newline included). Tags are taken
 /// as [`normalize_tag`] leaves them; none writes the clearing line.
 #[must_use]
-pub fn write_tags(times: TradeTimes, tags: &[String]) -> String {
-    let mut line = format!("# tags={}:{}", times.0, times.1);
+pub fn write_tags(trade: TradeRef, tags: &[String]) -> String {
+    let mut line = format!("# tags={}:{}", trade.opened_ms, trade.closed_ms);
+    if trade.nth > 0 {
+        line.push_str(&format!(":{}", trade.nth));
+    }
     for tag in tags {
         line.push_str(" #");
         line.push_str(tag);
@@ -265,17 +312,25 @@ pub fn normalize_tags<'a>(raw: impl IntoIterator<Item = &'a str>) -> Result<Vec<
     Ok(tags)
 }
 
-/// `<opened_ms>:<closed_ms> #a #b` — the body of a `# tags=` line.
-fn parse_tags_line(body: &str) -> Result<(TradeTimes, Vec<String>), String> {
+/// `<opened_ms>:<closed_ms>[:<nth>] #a #b` — the body of a `# tags=` line.
+fn parse_tags_line(body: &str) -> Result<(TradeRef, Vec<String>), String> {
     let mut tokens = body.split_whitespace();
     let times = tokens.next().unwrap_or_default();
-    let (opened, closed) = times
-        .split_once(':')
-        .and_then(|(opened, closed)| Some((opened.parse().ok()?, closed.parse().ok()?)))
-        .ok_or_else(|| {
-            format!("tags line must start `<opened_ms>:<closed_ms>`, found `{times}`")
-        })?;
-    Ok(((opened, closed), normalize_tags(tokens)?))
+    let mut fields = times.split(':');
+    let trade = (|| {
+        let opened_ms = fields.next()?.parse().ok()?;
+        let closed_ms = fields.next()?.parse().ok()?;
+        let nth = fields.next().map_or(Some(0), |nth| nth.parse().ok())?;
+        fields.next().is_none().then_some(TradeRef {
+            opened_ms,
+            closed_ms,
+            nth,
+        })
+    })()
+    .ok_or_else(|| {
+        format!("tags line must start `<opened_ms>:<closed_ms>[:<nth>]`, found `{times}`")
+    })?;
+    Ok((trade, normalize_tags(tokens)?))
 }
 
 fn opt_u64(value: Option<u64>) -> String {
@@ -645,10 +700,18 @@ mod tests {
         assert!(history.problems[0].message.contains("liquidated"));
     }
 
+    fn at(opened_ms: i64, closed_ms: i64) -> TradeRef {
+        TradeRef {
+            opened_ms,
+            closed_ms,
+            nth: 0,
+        }
+    }
+
     #[test]
     fn a_name_and_tags_round_trip_through_comment_lines() {
         let trade = sample(Side::Buy, 5, ExitReason::TakeProfit);
-        let times = (trade.opened_ms, trade.closed_ms);
+        let times = at(trade.opened_ms, trade.closed_ms);
         let mut text = write_header("WINZ26", SessionSource::Replay);
         text.push_str(&write_trade(&trade));
         text.push_str(&write_name("  Morning fade\npractice "));
@@ -666,11 +729,11 @@ mod tests {
 
     #[test]
     fn the_last_name_and_tags_line_wins_and_an_empty_one_clears() {
-        let times = (1, 2);
+        let times = at(1, 2);
         let mut text = write_header("X", SessionSource::Live);
         text.push_str(&write_name("first"));
         text.push_str(&write_tags(times, &["a".to_owned()]));
-        text.push_str(&write_tags((3, 4), &["keep".to_owned()]));
+        text.push_str(&write_tags(at(3, 4), &["keep".to_owned()]));
         text.push_str(&write_name("second"));
         text.push_str(&write_tags(times, &["b".to_owned(), "c".to_owned()]));
         let history = parse(&text).expect("parses");
@@ -679,7 +742,7 @@ mod tests {
             history.tags.get(&times),
             Some(&vec!["b".to_owned(), "c".to_owned()])
         );
-        assert_eq!(history.tags.get(&(3, 4)), Some(&vec!["keep".to_owned()]));
+        assert_eq!(history.tags.get(&at(3, 4)), Some(&vec!["keep".to_owned()]));
 
         text.push_str(&write_name(""));
         text.push_str(&write_tags(times, &[]));
@@ -689,7 +752,39 @@ mod tests {
             !history.tags.contains_key(&times),
             "no tags clears the trade"
         );
-        assert!(history.tags.contains_key(&(3, 4)), "and only that trade");
+        assert!(history.tags.contains_key(&at(3, 4)), "and only that trade");
+    }
+
+    /// Two partial closes of one position share both times; each keeps its
+    /// own tags, and the line for the first is the one older files wrote.
+    #[test]
+    fn trades_sharing_their_times_are_tagged_one_by_one() {
+        let trade = sample(Side::Buy, 5, ExitReason::TakeProfit);
+        let mut text = write_header("X", SessionSource::Live);
+        text.push_str(&write_trade(&trade));
+        text.push_str(&write_trade(&trade));
+        let parsed = parse(&text).expect("parses");
+        let refs = parsed.refs();
+        assert_eq!(refs[0], at(trade.opened_ms, trade.closed_ms));
+        assert_eq!(refs[1].nth, 1, "the second close of the same times");
+        assert_eq!(
+            write_tags(refs[0], &[]),
+            format!("# tags={}:{}\n", trade.opened_ms, trade.closed_ms)
+        );
+        text.push_str(&write_tags(refs[1], &["scale".to_owned()]));
+        text.push_str(&write_tags(refs[0], &["entry".to_owned()]));
+        let parsed = parse(&text).expect("parses");
+        assert_eq!(parsed.tags.get(&refs[0]), Some(&vec!["entry".to_owned()]));
+        assert_eq!(parsed.tags.get(&refs[1]), Some(&vec!["scale".to_owned()]));
+        assert!(parsed.problems.is_empty());
+        assert!(
+            parse(&format!("{text}# tags=1:2:3:4 #a\n"))
+                .expect("parses")
+                .problems
+                .len()
+                == 1,
+            "a fourth field is not a trade"
+        );
     }
 
     #[test]

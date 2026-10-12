@@ -8,16 +8,20 @@
 //! by civil day and then by session ([`group_by_day_and_session`]). The
 //! painting stays in `app`; an operator with no window gets the same answers.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use quantick_civil::{CivilDate, DateRange, TzOffset, civil_utc};
 use quantick_sim::ClosedTrade;
-use quantick_sim::history::{self, SessionSource, TradeTimes};
+use quantick_sim::history::{self, SessionSource};
 use rust_decimal::Decimal;
 
 use super::SourceFilter;
+
+/// Which trade of a session file — what tags are keyed by. Re-exported so a
+/// caller naming a session's trade needs no second crate for it.
+pub use quantick_sim::history::TradeRef;
 
 /// One session file, named relative to the trades folder:
 /// `<symbol folder>/<file>.csv`. Stable across restarts and the identifier
@@ -29,12 +33,16 @@ impl SessionKey {
     /// Read a key a caller sent. `None` unless it is exactly one symbol
     /// folder and one `.csv` file name: no absolute path, no `..`, no
     /// hidden folder — a key can only ever name a file the ledger lists.
+    /// No part may end in a dot or a space either: Windows drops those when
+    /// it opens a path, so `X./a.csv` would reach `X/a.csv` under a name no
+    /// listing ever gave it.
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
         let (folder, file) = text.split_once('/')?;
         let plain = |part: &str| {
             !part.is_empty()
                 && !part.starts_with('.')
+                && !part.ends_with(['.', ' '])
                 && !part.contains(['/', '\\', ':'])
                 && !part.chars().any(char::is_control)
         };
@@ -109,7 +117,7 @@ pub struct SessionInfo {
     /// When its first trade closed — the moment its file was named after.
     pub first_closed_ms: Option<i64>,
     /// Each tagged trade's tags.
-    pub tags: BTreeMap<TradeTimes, Vec<String>>,
+    pub tags: BTreeMap<TradeRef, Vec<String>>,
 }
 
 impl SessionInfo {
@@ -166,12 +174,36 @@ impl SessionInfo {
         label
     }
 
-    /// The tags this session's file gives one trade.
+    /// The tags this session's file gives one of its trades.
     #[must_use]
-    pub fn tags_of(&self, trade: &ClosedTrade) -> &[String] {
-        self.tags
-            .get(&(trade.opened_ms, trade.closed_ms))
-            .map_or(&[], Vec::as_slice)
+    pub fn tags_of(&self, trade: &TradeRef) -> &[String] {
+        self.tags.get(trade).map_or(&[], Vec::as_slice)
+    }
+}
+
+/// Where one close was journaled: its session file, and which trade of that
+/// file it is. The account records it as it writes the close, so the ledger
+/// never derives it again per frame.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JournaledTrade {
+    pub session: SessionKey,
+    pub trade: TradeRef,
+}
+
+/// A session's label as the ledger shows it, and lowercased once for the
+/// search box rather than once per row it is matched against.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionLabel {
+    pub text: String,
+    /// `text` lowercased — what a [`LedgerQuery`]'s words are found in.
+    pub folded: String,
+}
+
+impl SessionLabel {
+    #[must_use]
+    pub fn new(text: String) -> Self {
+        let folded = text.to_lowercase();
+        Self { text, folded }
     }
 }
 
@@ -215,18 +247,15 @@ impl LedgerQuery {
         self.tags.is_empty() && self.words.is_empty()
     }
 
-    /// Whether a trade carrying `tags`, in a session labelled `label`, is
-    /// what was asked for.
+    /// Whether a trade carrying `tags`, in a session whose label lowercased
+    /// is `folded_label` ([`SessionLabel::folded`]), is what was asked for.
     #[must_use]
-    pub fn admits(&self, tags: &[String], label: &str) -> bool {
-        if !self.tags.iter().all(|wanted| tags.contains(wanted)) {
-            return false;
-        }
-        if self.words.is_empty() {
-            return true;
-        }
-        let label = label.to_lowercase();
-        self.words.iter().all(|word| label.contains(word.as_str()))
+    pub fn admits(&self, tags: &[String], folded_label: &str) -> bool {
+        self.tags.iter().all(|wanted| tags.contains(wanted))
+            && self
+                .words
+                .iter()
+                .all(|word| folded_label.contains(word.as_str()))
     }
 }
 
@@ -280,20 +309,25 @@ pub struct LedgerMatcher {
 }
 
 impl LedgerMatcher {
-    /// Whether one trade stays in the list.
+    /// Whether one trade stays in the list. `label` is its session's; a
+    /// trade no session file holds is matched by its source's word.
     #[must_use]
     pub fn admits(
         &self,
         source: Option<SessionSource>,
         trade: &ClosedTrade,
         tags: &[String],
-        session_label: &str,
+        label: Option<&SessionLabel>,
     ) -> bool {
+        let folded = label.map_or_else(
+            || source.map_or("unrecorded", SessionSource::as_str),
+            |label| label.folded.as_str(),
+        );
         self.source.admits(source)
             && self
                 .range
                 .is_none_or(|range| range.contains_ms(trade.closed_ms, self.tz))
-            && self.query.admits(tags, session_label)
+            && self.query.admits(tags, folded)
     }
 }
 
@@ -302,34 +336,31 @@ impl LedgerMatcher {
 pub fn session_labels(
     history: &super::LoadedHistory,
     tz: TzOffset,
-) -> BTreeMap<SessionKey, String> {
+) -> BTreeMap<SessionKey, SessionLabel> {
     history
         .sessions
         .iter()
-        .map(|(key, info)| (key.clone(), info.label(tz)))
+        .map(|(key, info)| (key.clone(), SessionLabel::new(info.label(tz))))
         .collect()
 }
 
 /// The positions in `history.rows` of every row `filter` keeps, in row order
-/// (oldest first). Cut once per filter or reload, never per frame.
+/// (oldest first), with `labels` from [`session_labels`]. Cut once per
+/// filter or reload, never per frame.
 #[must_use]
 pub fn kept_rows(
     history: &super::LoadedHistory,
+    labels: &BTreeMap<SessionKey, SessionLabel>,
     filter: &LedgerFilter,
     tz: TzOffset,
 ) -> Vec<usize> {
-    let labels = session_labels(history, tz);
     let matcher = filter.matcher(tz);
     history
         .rows
         .iter()
         .enumerate()
         .filter(|(_, row)| {
-            let label = row
-                .session
-                .as_ref()
-                .and_then(|key| labels.get(key))
-                .map_or("", String::as_str);
+            let label = row.session.as_ref().and_then(|key| labels.get(key));
             matcher.admits(row.source, &row.trade, &row.tags, label)
         })
         .map(|(index, _)| index)
@@ -382,13 +413,9 @@ pub fn summarize_sessions<'a>(
     history: &'a super::LoadedHistory,
     filter: &LedgerFilter,
     tz: TzOffset,
-    live: &std::collections::BTreeSet<SessionKey>,
+    live: &BTreeSet<SessionKey>,
 ) -> (Vec<SessionSummary<'a>>, usize) {
-    let labels: BTreeMap<&SessionKey, String> = history
-        .sessions
-        .iter()
-        .map(|(key, info)| (key, info.label(tz)))
-        .collect();
+    let labels = session_labels(history, tz);
     let matcher = filter.matcher(tz);
     let mut kept: BTreeMap<&SessionKey, (usize, Decimal, i64)> = BTreeMap::new();
     let mut hidden = 0usize;
@@ -396,8 +423,7 @@ pub fn summarize_sessions<'a>(
         let Some(key) = row.session.as_ref() else {
             continue;
         };
-        let label = labels.get(key).map_or("", String::as_str);
-        if !matcher.admits(row.source, &row.trade, &row.tags, label) {
+        if !matcher.admits(row.source, &row.trade, &row.tags, labels.get(key)) {
             hidden += 1;
             continue;
         }
@@ -412,7 +438,10 @@ pub fn summarize_sessions<'a>(
             let info = history.sessions.get(key)?;
             Some(SessionSummary {
                 info,
-                label: labels.get(key).cloned().unwrap_or_default(),
+                label: labels
+                    .get(key)
+                    .map(|label| label.text.clone())
+                    .unwrap_or_default(),
                 live: live.contains(key),
                 trades,
                 net,
@@ -430,7 +459,7 @@ pub fn summarize_sessions<'a>(
 
 /// The keys of the files `live` names under `dir`.
 #[must_use]
-pub fn live_keys(dir: &Path, live: &[PathBuf]) -> std::collections::BTreeSet<SessionKey> {
+pub fn live_keys(dir: &Path, live: &[PathBuf]) -> BTreeSet<SessionKey> {
     live.iter()
         .filter_map(|path| SessionKey::of(dir, path))
         .collect()
@@ -455,29 +484,47 @@ pub struct SessionGroup {
     pub net: Decimal,
     /// Positions in the grouped input, in input order.
     pub items: Vec<usize>,
+    /// The row of its own it gets, set by [`place_session_rows`].
+    pub row: SessionRow,
+}
+
+/// What stands above a session's trades inside one day.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SessionRow {
+    /// Nothing: the day holds this session alone, or no file holds it.
+    #[default]
+    Bare,
+    /// Its row: label, count, net, fold caret.
+    Head,
+    /// The rename or delete row an edit puts in its place.
+    Inline,
 }
 
 /// Group rows already in ledger order (newest first) by the civil day they
 /// closed on, then by session. Sessions of one day may interleave in time —
 /// three replays of one tape close trades at the same venue times — so a
 /// session collects its rows wherever they fall in the day rather than
-/// splitting at each interleave.
+/// splitting at each interleave, and a day collects its rows wherever they
+/// fall in the list: this session's re-runs of a tape that crossed midnight
+/// come back to a day already listed, and must not list it twice.
 pub fn group_by_day_and_session<'a>(
     items: impl IntoIterator<Item = (Option<&'a SessionKey>, &'a ClosedTrade)>,
     tz: TzOffset,
 ) -> Vec<DayGroup> {
     let mut days: Vec<DayGroup> = Vec::new();
+    let mut day_at: BTreeMap<i64, usize> = BTreeMap::new();
     for (index, (key, trade)) in items.into_iter().enumerate() {
         let day = CivilDate::from_ms(trade.closed_ms, tz);
-        if days.last().is_none_or(|last| last.day != day) {
+        let at = *day_at.entry(day.day_number()).or_insert_with(|| {
             days.push(DayGroup {
                 day,
                 count: 0,
                 net: Decimal::ZERO,
                 sessions: Vec::new(),
             });
-        }
-        let group = days.last_mut().expect("pushed above");
+            days.len() - 1
+        });
+        let group = &mut days[at];
         group.count += 1;
         group.net = group.net.saturating_add(trade.pnl_points);
         let session = match group
@@ -492,6 +539,7 @@ pub fn group_by_day_and_session<'a>(
                     count: 0,
                     net: Decimal::ZERO,
                     items: Vec::new(),
+                    row: SessionRow::Bare,
                 });
                 group.sessions.last_mut().expect("pushed above")
             }
@@ -501,6 +549,43 @@ pub fn group_by_day_and_session<'a>(
         session.items.push(index);
     }
     days
+}
+
+/// Give each session of `days` its row. A day of two or more sessions heads
+/// every one; a day of one heads it only while it is `focused` or `editing`.
+/// The edit's inline row stands once — in the newest open day the session
+/// closed trades on — because a session spanning days would otherwise put
+/// one rename field (one id, two owners fighting for focus) or one delete
+/// confirm per day. `inline_placed` carries that across every list one
+/// ledger cuts; folded days (`collapsed_days`, by day number) show nothing.
+pub fn place_session_rows(
+    days: &mut [DayGroup],
+    focused: Option<&SessionKey>,
+    editing: Option<&SessionKey>,
+    collapsed_days: &BTreeSet<i64>,
+    inline_placed: &mut bool,
+) {
+    for day in days {
+        if collapsed_days.contains(&day.day.day_number()) {
+            continue;
+        }
+        let pinned = |key: &SessionKey| focused == Some(key) || editing == Some(key);
+        let heads = day.sessions.len() > 1
+            || day
+                .sessions
+                .iter()
+                .any(|session| session.key.as_ref().is_some_and(pinned));
+        for session in &mut day.sessions {
+            session.row = match &session.key {
+                Some(key) if heads && editing == Some(key) && !*inline_placed => {
+                    *inline_placed = true;
+                    SessionRow::Inline
+                }
+                Some(_) if heads => SessionRow::Head,
+                _ => SessionRow::Bare,
+            };
+        }
+    }
 }
 
 #[cfg(test)]

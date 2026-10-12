@@ -5,10 +5,16 @@
 //! trade row and a crash mid-edit costs at most that one line. A delete moves
 //! the file into `<trades folder>/.deleted/<symbol>/`, which no reader of the
 //! history lists, and refuses any file this app is still writing.
+//!
+//! Every edit first finds the file the filesystem itself would open for the
+//! key and acts on — and compares — that file's own path. A case-insensitive
+//! volume opens `btcusdt/…` as `BTCUSDT/…`, and an 8.3 short name as its long
+//! one, so comparing the caller's spelling would let a second spelling of the
+//! live session past the one refusal that protects it.
 
 use std::path::{Path, PathBuf};
 
-use quantick_sim::history::{self, TradeTimes};
+use quantick_sim::history::{self, TradeRef};
 
 use super::sessions::SessionKey;
 
@@ -25,8 +31,8 @@ pub enum SessionEditError {
     NotFound(SessionKey),
     /// The file this app is still journaling to; it cannot be deleted.
     LiveSession(SessionKey),
-    /// The session holds no trade with these times.
-    TradeNotFound(SessionKey, TradeTimes),
+    /// The session holds no such trade.
+    TradeNotFound(SessionKey, TradeRef),
     /// A tag that is not one tag, or too many of them.
     InvalidTag(String),
     /// The file is not a readable quantick-trades file.
@@ -72,9 +78,15 @@ impl std::fmt::Display for SessionEditError {
                 f,
                 "`{key}` is the session being traded now - it cannot be deleted while it is written"
             ),
-            Self::TradeNotFound(key, (opened, closed)) => write!(
+            Self::TradeNotFound(key, trade) => write!(
                 f,
-                "session `{key}` holds no trade opened at {opened} and closed at {closed}"
+                "session `{key}` holds no trade opened at {} and closed at {}{}",
+                trade.opened_ms,
+                trade.closed_ms,
+                match trade.nth {
+                    0 => String::new(),
+                    nth => format!(" after {nth} with the same times"),
+                }
             ),
             Self::InvalidTag(message) => f.write_str(message),
             Self::Unreadable(key, message) => {
@@ -107,14 +119,14 @@ pub enum JournalEdit {
     /// Set one trade's tags; none clears them.
     Tag {
         session: SessionKey,
-        times: TradeTimes,
+        trade: TradeRef,
         tags: Vec<String>,
     },
     /// Move a session out of the history.
     Delete { session: SessionKey },
 }
 
-/// What an edit did.
+/// What an edit did. Its session is the file's own spelling of the key.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum JournalEditOutcome {
     Renamed {
@@ -123,7 +135,7 @@ pub enum JournalEditOutcome {
     },
     Tagged {
         session: SessionKey,
-        times: TradeTimes,
+        trade: TradeRef,
         tags: Vec<String>,
     },
     Deleted {
@@ -162,6 +174,15 @@ impl JournalEditOutcome {
     }
 }
 
+/// The toast an edit leaves, done or refused.
+#[must_use]
+pub fn edit_toast(result: &Result<JournalEditOutcome, SessionEditError>) -> String {
+    match result {
+        Ok(done) => done.sentence(),
+        Err(refused) => format!("Trades: {refused}."),
+    }
+}
+
 /// Apply one edit inside `scope` — the one path the ledger and the control
 /// plane share, so they refuse the same things in the same words.
 ///
@@ -173,26 +194,33 @@ pub fn apply_journal_edit(
     edit: &JournalEdit,
 ) -> Result<JournalEditOutcome, SessionEditError> {
     match edit {
-        JournalEdit::Rename { session, name } => Ok(JournalEditOutcome::Renamed {
-            session: session.clone(),
-            name: rename_session(&scope.dir, session, name)?,
-        }),
-        JournalEdit::Tag {
-            session,
-            times,
-            tags,
-        } => {
-            let tags: Vec<&str> = tags.iter().map(String::as_str).collect();
-            Ok(JournalEditOutcome::Tagged {
-                session: session.clone(),
-                times: *times,
-                tags: tag_trade(&scope.dir, session, *times, &tags)?,
+        JournalEdit::Rename { session, name } => {
+            let (session, path) = resolve(&scope.dir, session)?;
+            Ok(JournalEditOutcome::Renamed {
+                name: rename_file(&path, &session, name)?,
+                session,
             })
         }
-        JournalEdit::Delete { session } => Ok(JournalEditOutcome::Deleted {
-            session: session.clone(),
-            moved_to: delete_session(&scope.dir, session, &scope.live)?,
-        }),
+        JournalEdit::Tag {
+            session,
+            trade,
+            tags,
+        } => {
+            let (session, path) = resolve(&scope.dir, session)?;
+            let tags: Vec<&str> = tags.iter().map(String::as_str).collect();
+            Ok(JournalEditOutcome::Tagged {
+                tags: tag_file(&path, &session, *trade, &tags)?,
+                trade: *trade,
+                session,
+            })
+        }
+        JournalEdit::Delete { session } => {
+            let (session, path) = resolve(&scope.dir, session)?;
+            Ok(JournalEditOutcome::Deleted {
+                moved_to: delete_file(&scope.dir, &path, &session, &scope.live)?,
+                session,
+            })
+        }
     }
 }
 
@@ -206,11 +234,8 @@ pub fn rename_session(
     key: &SessionKey,
     name: &str,
 ) -> Result<Option<String>, SessionEditError> {
-    let path = key.path(dir);
-    read_session(&path, key)?;
-    append(&path, &history::write_name(name))?;
-    let kept = history::clean_session_name(name);
-    Ok((!kept.is_empty()).then_some(kept))
+    let (key, path) = resolve(dir, key)?;
+    rename_file(&path, &key, name)
 }
 
 /// Set one trade's tags (none clears them). Answers the tags as kept.
@@ -222,27 +247,16 @@ pub fn rename_session(
 pub fn tag_trade(
     dir: &Path,
     key: &SessionKey,
-    times: TradeTimes,
+    trade: TradeRef,
     tags: &[&str],
 ) -> Result<Vec<String>, SessionEditError> {
-    let tags =
-        history::normalize_tags(tags.iter().copied()).map_err(SessionEditError::InvalidTag)?;
-    let path = key.path(dir);
-    let parsed = read_session(&path, key)?;
-    if !parsed
-        .trades
-        .iter()
-        .any(|trade| (trade.opened_ms, trade.closed_ms) == times)
-    {
-        return Err(SessionEditError::TradeNotFound(key.clone(), times));
-    }
-    append(&path, &history::write_tags(times, &tags))?;
-    Ok(tags)
+    let (key, path) = resolve(dir, key)?;
+    tag_file(&path, &key, trade, tags)
 }
 
 /// Move a session file out of the history, into [`DELETED_DIR`]. `live` is
-/// every file this app is still journaling to; each is refused. Answers
-/// where the file went.
+/// every file this app is still journaling to; each is refused, however
+/// the key spells it. Answers where the file went.
 ///
 /// # Errors
 ///
@@ -252,30 +266,78 @@ pub fn delete_session(
     key: &SessionKey,
     live: &[PathBuf],
 ) -> Result<PathBuf, SessionEditError> {
-    if live
-        .iter()
-        .any(|path| SessionKey::of(dir, path).as_ref() == Some(key))
-    {
-        return Err(SessionEditError::LiveSession(key.clone()));
-    }
+    let (key, path) = resolve(dir, key)?;
+    delete_file(dir, &path, &key, live)
+}
+
+/// The file `key` opens under `dir`, as the filesystem names it: its key
+/// spelled the way the folder lists it, and its canonical path.
+fn resolve(dir: &Path, key: &SessionKey) -> Result<(SessionKey, PathBuf), SessionEditError> {
     let path = key.path(dir);
     if !path.is_file() {
         return Err(SessionEditError::NotFound(key.clone()));
     }
-    guard(&path)?;
+    let io = |error: std::io::Error| SessionEditError::Io(error.to_string());
+    let path = std::fs::canonicalize(path).map_err(io)?;
+    let root = std::fs::canonicalize(dir).map_err(io)?;
+    // A link out of the trades folder resolves to no key of it, and is no
+    // session of it either.
+    let own = SessionKey::of(&root, &path)
+        .ok_or_else(|| SessionEditError::InvalidKey(key.to_string()))?;
+    Ok((own, path))
+}
+
+fn rename_file(
+    path: &Path,
+    key: &SessionKey,
+    name: &str,
+) -> Result<Option<String>, SessionEditError> {
+    read_session(path, key)?;
+    append(path, &history::write_name(name))?;
+    let kept = history::clean_session_name(name);
+    Ok((!kept.is_empty()).then_some(kept))
+}
+
+fn tag_file(
+    path: &Path,
+    key: &SessionKey,
+    trade: TradeRef,
+    tags: &[&str],
+) -> Result<Vec<String>, SessionEditError> {
+    let tags =
+        history::normalize_tags(tags.iter().copied()).map_err(SessionEditError::InvalidTag)?;
+    if !read_session(path, key)?.refs().contains(&trade) {
+        return Err(SessionEditError::TradeNotFound(key.clone(), trade));
+    }
+    append(path, &history::write_tags(trade, &tags))?;
+    Ok(tags)
+}
+
+fn delete_file(
+    dir: &Path,
+    path: &Path,
+    key: &SessionKey,
+    live: &[PathBuf],
+) -> Result<PathBuf, SessionEditError> {
+    // Canonical against canonical: the spelling a tab journals under and
+    // the spelling a caller sent may differ and still be one file.
+    if live
+        .iter()
+        .any(|live| std::fs::canonicalize(live).is_ok_and(|live| live == path))
+    {
+        return Err(SessionEditError::LiveSession(key.clone()));
+    }
+    guard(path)?;
     let (folder, file) = key.parts();
     let bin = dir.join(DELETED_DIR).join(folder);
     std::fs::create_dir_all(&bin).map_err(|error| SessionEditError::Io(error.to_string()))?;
     let target = free_name(&bin, file);
-    std::fs::rename(&path, &target).map_err(|error| SessionEditError::Io(error.to_string()))?;
+    std::fs::rename(path, &target).map_err(|error| SessionEditError::Io(error.to_string()))?;
     Ok(target)
 }
 
 /// The file parsed, or why it cannot be edited.
 fn read_session(path: &Path, key: &SessionKey) -> Result<history::TradeHistory, SessionEditError> {
-    if !path.is_file() {
-        return Err(SessionEditError::NotFound(key.clone()));
-    }
     let text = std::fs::read_to_string(path)
         .map_err(|error| SessionEditError::Unreadable(key.clone(), error.to_string()))?;
     history::parse(&text)

@@ -112,10 +112,10 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 28 |
+| deduplicated per connection | 29 |
 | key refused; not retryable, read back | 17 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **52** |
+| **Total** | **53** |
 
 ## Capabilities
 
@@ -165,7 +165,8 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `notify.toast` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `notify.raised` | `payload.message` | an event after the pre-call cursor carries the call's own `message`; send one unique to the call | `an_interrupted_notification_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `orderflow.bubbles.save_changes.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.bubbles` | `tabs[].panes[].bubbles.asset.save_changes` | the addressed pane's asset reports the requested switch | `save_changes_is_the_assets_permission_checked_retry_safe_and_read_back`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `orderflow.tape.opening_scale.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.bubbles` | `tabs[].panes[].opening_scale` | the addressed pane reports independent tape and candle opening-burst scaling preferences | `opening_scale_is_default_off_named_permission_checked_and_read_back`, `flow_opening_scale_is_independent_retry_safe_and_refuses_context`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
-| `session.journal.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `session.journal.changed` | `payload.journal_session` | an event after the pre-call cursor names the session and the name, tags or deletion the call asked for | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `session.journal.delete` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `session.journal.changed` | `payload.journal_session` | an event after the pre-call cursor names the deleted session and where its file moved | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
+| `session.journal.set` | 1 | optional | deduplicated per connection | `cockpit` | `events.read` `session.journal.changed` | `payload.journal_session` | an event after the pre-call cursor names the session and the name or tags, or the ledger view, the call asked for | `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `trade.instrument.set_money` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `events.read` `trade.ticket.changed` | `payload.asked` | an event after the pre-call cursor carries the caller's input as `asked` | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.order.bracket` | 1 | forbidden | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].working_orders[].stop_loss` | the named order carries the stop and target asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.order.cancel` | 1 | forbidden | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].working_orders[].order_id` | the named order is no longer working | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
@@ -174,4 +175,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `trade.ruler.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].ruler_ticks` | the ruler stands at the distance the call answered with | `a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once`, `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.strategy.select` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].armed_strategy` | the ticket is armed with the strategy asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 
-52 mutable capabilities registered, 52 with a readback.
+53 mutable capabilities registered, 53 with a readback.

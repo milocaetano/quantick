@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 67 |
+| Reachable by capability | 68 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
 | Excluded: `pending_capability` | 50 |
-| **Total** | **125** |
+| **Total** | **126** |
 
-83 of the 125 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 42 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+83 of the 126 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 43 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -109,7 +109,8 @@ The three exclusion classes are closed:
 | `trade.aim.bracket` | Send an entry with its stop and target attached | the ticket's bracket fields, and the aim on the chart | `trade.order.bracket` | — |
 | `trade.instrument.money.set` | Declare what one point of an instrument is worth | the Trading panel's instrument section | `trade.instrument.set_money` | — |
 | `trade.journal.filter` | Filter the trades ledger by source, dates, #tags or session name | the Trades tab's filter row | `session.journal.set` | — |
-| `trade.journal.session.delete` | Delete a saved trading session behind an inline confirm | a session or trade row's menu in the Trades tab, Del over the ledger | `session.journal.set` | — |
+| `trade.journal.session.delete` | Delete a saved trading session behind an inline confirm | a session or trade row's menu in the Trades tab, Del over the ledger | `session.journal.delete` | — |
+| `trade.journal.session.fold` | Fold a trading session shut inside its day, or open it | a session row's caret in the Trades tab | `session.journal.set` | — |
 | `trade.journal.session.rename` | Name a trading session | a session or trade row's menu in the Trades tab, F2 over the ledger | `session.journal.set` | — |
 | `trade.journal.trade.tag` | Tag a closed trade | the Trades tab's tag strip for the selected trade, # over the ledger | `session.journal.set` | — |
 | `trade.market.buy` | Buy at market, simulated | toolbar trade group, Trading panel, Shift+B | `trade.order.place` | — |
@@ -201,7 +202,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 42 |
+| `authored` | 43 |
 
 ## Appendix: rows no registry stands behind
 
@@ -234,6 +235,7 @@ declares nothing here is a guard failure.
 | `trade.instrument.money.set` | the Trading panel instrument section |
 | `trade.journal.filter` | the Trades tab source pills, date picker and search box |
 | `trade.journal.session.delete` | the Trades tab session menu and Del over the ledger |
+| `trade.journal.session.fold` | the Trades tab session row caret |
 | `trade.journal.session.rename` | the Trades tab session menu and F2 over the ledger |
 | `trade.journal.trade.tag` | the Trades tab tag strip and # over the ledger |
 | `trade.order.place_at_price` | the canvas right-click menu trade section, resolved per click |

@@ -95,8 +95,8 @@ pub(crate) struct ReportEnv<'a> {
     /// This session's closed round trips, oldest first — the ledger's live
     /// rows, and the only trades whose fills the tape on screen can prove.
     pub session_trades: &'a [ClosedTrade],
-    /// The file each of those trades went to, index-aligned with them.
-    pub session_trade_files: &'a [Option<PathBuf>],
+    /// Where each of those trades was journaled, index-aligned with them.
+    pub session_trade_at: &'a [Option<quantick_paper::report::sessions::JournaledTrade>],
     /// The source each of those trades closed under, index-aligned.
     pub session_trade_sources: &'a [quantick_sim::history::SessionSource],
     /// The position still open, if there is one. Gathered by the host

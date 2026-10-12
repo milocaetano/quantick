@@ -392,6 +392,7 @@ fn the_export_csv_carries_readable_stamps_and_running_equity() {
             source: Some(history::SessionSource::Live),
             trade: trade(1_773_666_068_000, 5, Some(2)),
             session: None,
+            trade_ref: history::TradeRef::default(),
             tags: Vec::new(),
         },
         HistoryRow {
@@ -399,6 +400,7 @@ fn the_export_csv_carries_readable_stamps_and_running_equity() {
             source: None,
             trade: trade(1_773_666_368_000, -2, None),
             session: None,
+            trade_ref: history::TradeRef::default(),
             tags: Vec::new(),
         },
     ];
@@ -855,10 +857,14 @@ fn three_runs_of_one_tape_are_three_session_files() {
         .collect();
     assert!(names[1].ends_with(".rerun-1.csv"), "{names:?}");
     assert!(names[2].ends_with(".rerun-2.csv"), "{names:?}");
-    let files: Vec<Option<PathBuf>> = paths.iter().cloned().map(Some).collect();
+    let files: Vec<_> = account
+        .session_trade_at()
+        .iter()
+        .map(|at| at.as_ref().map(|at| at.session.path(account.trades_dir())))
+        .collect();
     assert_eq!(
-        account.session_trade_files(),
-        files.as_slice(),
+        files,
+        paths.iter().cloned().map(Some).collect::<Vec<_>>(),
         "one trade per file"
     );
     let rows = account.session_history_rows();
@@ -868,4 +874,39 @@ fn three_runs_of_one_tape_are_three_session_files() {
         keys.iter().collect::<std::collections::BTreeSet<_>>().len(),
         3
     );
+}
+
+/// Two closes with the same times — the partial exits of one position —
+/// are two trades of the file. The live record and a fresh read of the file
+/// must name them alike, or a tag set on one lands on the other.
+#[test]
+fn same_time_closes_are_journaled_as_distinct_trades_of_their_file() {
+    let dir = ScratchDir::new("account-same-time-closes");
+    let mut account = account(&dir, "PARTIAL");
+    let close = quantick_sim::ClosedTrade {
+        side: Side::Buy,
+        quantity: Decimal::ONE,
+        entry_price: Decimal::from(100),
+        exit_price: Decimal::from(103),
+        opened_ms: 1_773_666_000_000,
+        closed_ms: 1_773_666_060_000,
+        pnl_points: Decimal::from(3),
+        exit_reason: quantick_sim::ExitReason::TakeProfit,
+        entry_agg_id: None,
+        exit_agg_id: None,
+        mae_points: None,
+        mfe_points: None,
+    };
+    assert!(account.journal(&close));
+    assert!(account.journal(&close));
+    let at: Vec<_> = account
+        .session_trade_at()
+        .iter()
+        .map(|at| at.clone().expect("journaled"))
+        .collect();
+    assert_eq!((at[0].trade.nth, at[1].trade.nth), (0, 1));
+    assert_eq!(at[0].session, at[1].session);
+    let loaded = crate::report::load_history(account.trades_dir(), None, &[]);
+    let refs: Vec<_> = loaded.rows.iter().map(|row| row.trade_ref).collect();
+    assert_eq!(refs, vec![at[0].trade, at[1].trade]);
 }

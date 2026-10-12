@@ -42,6 +42,13 @@ pub(super) const ROWS: &[UiBehaviour] = &[
             Source::Authored,
             "the Trades tab session menu and Del over the ledger",
         )],
+        mapping: capability!("session.journal.delete"),
+    },
+    UiBehaviour {
+        id: "trade.journal.session.fold",
+        title: "Fold a trading session shut inside its day, or open it",
+        reach: "a session row's caret in the Trades tab",
+        keys: &[(Source::Authored, "the Trades tab session row caret")],
         mapping: capability!("session.journal.set"),
     },
     UiBehaviour {

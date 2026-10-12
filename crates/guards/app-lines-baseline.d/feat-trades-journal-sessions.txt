@@ -1,9 +1,14 @@
 # feat/trades-journal-sessions: the Trades ledger groups a day by session
 # (one journal file), filters by source, civil dates and a #tag/name search,
 # renames and tags sessions and deletes one behind an inline confirm. The
-# session model, the filter, the grouping and the file edits are headless in
-# `quantick_paper::report::{sessions, session_edit}`; what lands here is the
-# painting in the new `paper_report/sessions.rs`, the ledger's rows, and the
-# one adapter the `session.journal.set` capability and the gestures share.
-crates/app +1058
-!budget +1058
+# session model, the filter, the grouping and which row each session gets,
+# the file edits, the ledger's state between frames (view, focus, selection,
+# edit, cut, F2/Del decisions, live-trade filtering, reload pruning) are
+# headless in `quantick_paper::report::{sessions, session_edit,
+# ledger_state}`. What lands here is egui: the filter row, date picker,
+# session head, inline rename/confirm rows and tag strip in the new
+# `paper_report/sessions.rs`, the ledger list and its rows, the key claim
+# that keeps Del/Esc over the ledger from reaching the chart's drawing keys,
+# and the app-only glue the UI-free ratchet counts (+95, signed there).
+crates/app +975
+!budget +975

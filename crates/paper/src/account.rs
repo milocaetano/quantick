@@ -24,6 +24,7 @@ use rust_decimal::Decimal;
 
 use crate::format::{PositionSummary, fmt_decimal, fmt_signed_points, position_word};
 use crate::order_strategies::OrderStrategy;
+use crate::report::sessions::JournaledTrade;
 use crate::risk_sizing::{Capital, InstrumentBook, RiskHook, RiskSettings};
 use quantick_civil::civil_utc;
 
@@ -243,10 +244,11 @@ pub struct PaperAccount {
     /// under, index-aligned with `sim.closed_trades()` — the export must
     /// not stamp a pre-switch trade with the current source.
     session_trade_sources: Vec<history::SessionSource>,
-    /// The session file each of those trades was journaled to, index-aligned
-    /// the same way; `None` for a close no file took (no symbol yet). The
-    /// ledger groups and tags this session's rows by it.
-    session_trade_files: Vec<Option<PathBuf>>,
+    /// The session file and file trade each of those trades was journaled
+    /// as, index-aligned the same way; `None` for a close no file under the
+    /// trades folder holds (no symbol yet, a failed write, or a folder
+    /// changed since). The ledger groups and tags this session's rows by it.
+    session_trade_at: Vec<Option<JournaledTrade>>,
     /// A failed journal write warns once, not once per trade.
     journal_warned: bool,
     /// Where this session's trades come from — the tab's feed sets it,
@@ -384,7 +386,7 @@ impl PaperAccount {
             journal_path: None,
             session_journal_paths: Vec::new(),
             session_trade_sources: Vec::new(),
-            session_trade_files: Vec::new(),
+            session_trade_at: Vec::new(),
             journal_warned: false,
             session_source: history::SessionSource::Live,
             strategies: Vec::new(),
@@ -486,11 +488,12 @@ impl PaperAccount {
         &self.session_journal_paths
     }
 
-    /// The file each of this session's closed trades went to, index-aligned
-    /// with [`Self::session_trades`]; `None` where no file took the close.
+    /// Where each of this session's closed trades was journaled,
+    /// index-aligned with [`Self::session_trades`]; `None` where no file
+    /// under the trades folder holds the close.
     #[must_use]
-    pub fn session_trade_files(&self) -> &[Option<PathBuf>] {
-        &self.session_trade_files
+    pub fn session_trade_at(&self) -> &[Option<JournaledTrade>] {
+        &self.session_trade_at
     }
 
     /// The source each of this session's closed trades closed under,
@@ -512,6 +515,9 @@ impl PaperAccount {
         self.dir = dir;
         self.journal_path = None;
         self.journal_warned = false;
+        // Their files stay in the old folder, which no session key of the
+        // new one names.
+        self.session_trade_at.fill(None);
         self.set_toast(format!("SIM: trades now save to {}", elide_path(&self.dir)));
         true
     }

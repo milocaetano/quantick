@@ -1,21 +1,21 @@
 //! The ledger's session layer, painted: the filter row, a session's row
 //! inside a day, the inline rename and delete rows, and the tag strip.
 //!
-//! What a session is, which rows a filter keeps and what an edit does are
-//! `quantick_paper::report::sessions` and `session_edit`; this file draws
-//! them and turns a gesture into a [`JournalEdit`] the host applies — the same
-//! edit the `session.journal.set` capability makes.
-
-use std::collections::{BTreeMap, BTreeSet};
+//! What a session is, which rows a filter keeps, what an edit does and what
+//! the layer remembers between frames are `quantick_paper::report::{sessions,
+//! session_edit, ledger_state}`; this file draws them and turns a gesture
+//! into a [`SessionPress`] — an edit leaves as the same [`JournalEdit`] the
+//! `session.journal.set` capability makes.
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_paper::report::LoadedHistory;
-use quantick_paper::report::session_edit::JournalEdit;
-use quantick_paper::report::sessions::{
-    LedgerFilter, LedgerQuery, SessionKey, kept_rows, session_labels, tag_counts,
+use quantick_paper::report::ledger_state::{
+    LedgerEdit, LedgerState, LedgerView, LedgerViewChange, SessionPress,
 };
-use quantick_sim::history::{SessionSource, TradeTimes};
+use quantick_paper::report::session_edit::JournalEdit;
+use quantick_paper::report::sessions::{LedgerFilter, LedgerQuery, SessionKey, TradeRef};
+use quantick_sim::history::SessionSource;
 use rust_decimal::Decimal;
 
 use super::{LEDGER_ROW_HEIGHT_PX, SourceFilter};
@@ -33,59 +33,15 @@ const TAG_SUGGESTIONS: usize = 6;
 /// One calendar cell of the ledger's date picker.
 const PICKER_CELL_PX: egui::Vec2 = egui::vec2(30.0, 24.0);
 
-/// What the ledger's session layer remembers between frames.
+/// What the ledger's session layer remembers between frames: the headless
+/// state, and the date picker the window alone has.
 #[derive(Default)]
 pub(crate) struct LedgerSessions {
-    /// The filter row: source pills, a date span, the search box. Not
-    /// persisted — the ledger opens on everything, as it always did.
-    pub(super) filter: LedgerFilter,
+    pub(super) state: LedgerState,
     /// The date picker's month and whether it is open.
     calendar: CalendarState,
-    /// Sessions folded shut inside their day.
-    pub(super) collapsed: BTreeSet<SessionKey>,
-    /// A saved row the trader selected — what the tag strip edits.
-    pub(super) selected_saved: Option<(SessionKey, TradeTimes)>,
-    /// The session row F2 and Del act on.
-    pub(super) focused: Option<SessionKey>,
-    /// A rename or a delete waiting on its inline row.
-    pub(super) edit: Option<LedgerEdit>,
-    /// The tag strip's text and the trade it was opened for.
-    tag_text: Option<(SessionKey, TradeTimes, String)>,
-    /// The filter's cut, made once per filter, reload or timezone.
-    pub(super) cut: Option<LedgerCut>,
     /// The picker's day tints, built when it first opens after a reload.
     days: Option<DayIndex>,
-    /// Every tag on record with its count, for the strip's completions.
-    known_tags: Vec<(String, usize)>,
-}
-
-/// The saved rows a filter keeps and every session's label, in one timezone.
-pub(super) struct LedgerCut {
-    tz: TzOffset,
-    /// Positions in the history's rows, oldest first.
-    pub(super) kept: Vec<usize>,
-    pub(super) labels: BTreeMap<SessionKey, String>,
-}
-
-/// A session edit waiting on its inline row.
-pub(super) enum LedgerEdit {
-    Rename {
-        session: SessionKey,
-        text: String,
-    },
-    ConfirmDelete {
-        session: SessionKey,
-        label: String,
-        trades: usize,
-    },
-}
-
-impl LedgerEdit {
-    pub(super) fn session(&self) -> &SessionKey {
-        match self {
-            Self::Rename { session, .. } | Self::ConfirmDelete { session, .. } => session,
-        }
-    }
 }
 
 /// A session's row as the list paints it.
@@ -101,97 +57,41 @@ pub(super) struct SessionHead {
     pub(super) live: bool,
 }
 
-/// What a session row, its menu or an inline row asked for.
-pub(super) enum SessionPress {
-    Fold(SessionKey, bool),
-    StartRename(SessionKey),
-    StartDelete(SessionKey, String, usize),
-    Cancel,
-    Apply(JournalEdit),
-}
-
 impl LedgerSessions {
-    /// The folder was read again: every cut and completion goes stale.
+    /// The folder was read again.
     pub(super) fn reloaded(&mut self, history: &LoadedHistory) {
-        self.cut = None;
+        self.state.reloaded(history);
         self.days = None;
-        self.known_tags = tag_counts(history);
     }
 
-    /// Cut the saved rows for the filter in force, unless that cut stands.
-    pub(super) fn ensure_cut(&mut self, history: Option<&LoadedHistory>, tz: TzOffset) {
-        if self.cut.as_ref().is_some_and(|cut| cut.tz == tz) {
-            return;
+    /// Set the view from outside the filter row; a picked span the change
+    /// replaced stops showing in the picker.
+    pub(super) fn view(&mut self, change: &LedgerViewChange) -> (LedgerView, bool) {
+        if change.clear || change.range.is_some() {
+            self.calendar.selection = Default::default();
         }
-        self.cut = Some(LedgerCut {
-            tz,
-            kept: history.map_or_else(Vec::new, |history| kept_rows(history, &self.filter, tz)),
-            labels: history.map_or_else(BTreeMap::new, |history| session_labels(history, tz)),
-        });
+        let moved = self.state.view.apply(change);
+        (self.state.view.clone(), moved)
     }
 
-    /// Apply what a session row or an inline row asked for; an edit leaves
-    /// for the host.
-    pub(super) fn apply(
-        &mut self,
-        press: SessionPress,
-        labels: &dyn Fn(&SessionKey) -> String,
-    ) -> Option<JournalEdit> {
-        match press {
-            SessionPress::Fold(key, folded) => {
-                if folded {
-                    self.collapsed.insert(key.clone());
-                } else {
-                    self.collapsed.remove(&key);
-                }
-                self.focused = Some(key);
-                None
-            }
-            SessionPress::StartRename(key) => {
-                self.focused = Some(key.clone());
-                let text = labels(&key);
-                self.edit = Some(LedgerEdit::Rename { session: key, text });
-                None
-            }
-            SessionPress::StartDelete(key, label, trades) => {
-                self.focused = Some(key.clone());
-                self.edit = Some(LedgerEdit::ConfirmDelete {
-                    session: key,
-                    label,
-                    trades,
-                });
-                None
-            }
-            SessionPress::Cancel => {
-                self.edit = None;
-                None
-            }
-            SessionPress::Apply(edit) => {
-                self.edit = None;
-                Some(edit)
-            }
-        }
-    }
-
-    /// Source pills, the date picker and the search box. Answers whether
-    /// the filter moved.
+    /// Source pills, the date picker and the search box. The cut follows
+    /// the filter by itself.
     pub(super) fn draw_filter_row(
         &mut self,
         ui: &mut egui::Ui,
         history: Option<&LoadedHistory>,
         tz: TzOffset,
-    ) -> bool {
-        let before = self.filter.clone();
+    ) {
         ui.horizontal(|ui| {
             for pill in SourceFilter::PILLS {
-                if pill_toggle(ui, pill.label(), self.filter.source == pill, pill.hover()).clicked()
-                {
-                    self.filter.source = pill;
+                let on = self.state.view.filter.source == pill;
+                if pill_toggle(ui, pill.label(), on, pill.hover()).clicked() {
+                    self.state.view.filter.source = pill;
                 }
             }
             self.draw_date_button(ui, history, tz);
             ui.add(
-                egui::TextEdit::singleline(&mut self.filter.search)
+                egui::TextEdit::singleline(&mut self.state.view.filter.search)
                     .id_salt("paper_ledger_search")
                     .hint_text("#tag or session")
                     .desired_width(SEARCH_FIELD_PX),
@@ -200,11 +100,6 @@ impl LedgerSessions {
                 "#tags must all be on a trade; other words must all appear in its session's name",
             );
         });
-        let moved = self.filter != before;
-        if moved {
-            self.cut = None;
-        }
-        moved
     }
 
     fn draw_date_button(
@@ -213,14 +108,14 @@ impl LedgerSessions {
         history: Option<&LoadedHistory>,
         tz: TzOffset,
     ) {
-        let label = match self.filter.range {
+        let label = match self.state.view.filter.range {
             Some(range) => format!("{} {}", icons::CALENDAR_BLANK, range.label()),
             None => format!("{} any date", icons::CALENDAR_BLANK),
         };
         let button = pill_toggle(
             ui,
             &label,
-            self.filter.range.is_some(),
+            self.state.view.filter.range.is_some(),
             "pick a day, or a second day for a span - tinted days hold trades",
         );
         let id = ui.id().with("paper_ledger_dates");
@@ -251,14 +146,14 @@ impl LedgerSessions {
             },
         );
         if let Some(range) = picked {
-            self.filter.range = range;
+            self.state.view.filter.range = range;
         }
     }
 
     /// `N of M · K hidden [clear]`, pinned under the filter row while any
     /// filter cuts.
     pub(super) fn draw_filter_status(&mut self, ui: &mut egui::Ui, shown: usize, total: usize) {
-        if self.filter.is_default() {
+        if self.state.view.filter.is_default() {
             return;
         }
         ui.horizontal(|ui| {
@@ -276,9 +171,8 @@ impl LedgerSessions {
                 .on_hover_text("drop every filter: both sources, any date, no search")
                 .clicked()
             {
-                self.filter = LedgerFilter::default();
+                self.state.view.filter = LedgerFilter::default();
                 self.calendar.selection = Default::default();
-                self.cut = None;
             }
         });
     }
@@ -288,26 +182,27 @@ impl LedgerSessions {
     pub(super) fn draw_tag_strip(
         &mut self,
         ui: &mut egui::Ui,
-        target: Option<(SessionKey, TradeTimes, &[String])>,
+        target: Option<(SessionKey, TradeRef, &[String])>,
         focus: bool,
     ) -> Option<JournalEdit> {
-        let Some((session, times, tags)) = target else {
-            self.tag_text = None;
+        let Some((session, trade, tags)) = target else {
+            self.state.tag_text = None;
             return None;
         };
         if self
+            .state
             .tag_text
             .as_ref()
-            .is_none_or(|(key, at, _)| *key != session || *at != times)
+            .is_none_or(|(key, at, _)| *key != session || *at != trade)
         {
             let text = tags
                 .iter()
                 .map(|tag| format!("#{tag}"))
                 .collect::<Vec<_>>()
                 .join(" ");
-            self.tag_text = Some((session.clone(), times, text));
+            self.state.tag_text = Some((session.clone(), trade, text));
         }
-        let (_, _, text) = self.tag_text.as_mut()?;
+        let (_, _, text) = self.state.tag_text.as_mut()?;
         let mut send = false;
         ui.horizontal(|ui| {
             ui.label(
@@ -333,6 +228,7 @@ impl LedgerSessions {
         let typed = LedgerQuery::parse(text).tags;
         ui.horizontal_wrapped(|ui| {
             for (tag, count) in self
+                .state
                 .known_tags
                 .iter()
                 .filter(|(tag, _)| !typed.contains(tag))
@@ -349,7 +245,7 @@ impl LedgerSessions {
         });
         send.then(|| JournalEdit::Tag {
             session,
-            times,
+            trade,
             tags: text.split_whitespace().map(str::to_owned).collect(),
         })
     }
@@ -476,7 +372,9 @@ pub(super) fn draw_inline(ui: &mut egui::Ui, edit: &mut LedgerEdit) -> Option<Se
                     }
                     let enter =
                         field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                    let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
+                    let escape = ui.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                    });
                     if enter || ui.small_button("Save").clicked() {
                         press = Some(SessionPress::Apply(JournalEdit::Rename {
                             session: session.clone(),
@@ -502,7 +400,10 @@ pub(super) fn draw_inline(ui: &mut egui::Ui, edit: &mut LedgerEdit) -> Option<Se
                     if !keep.has_focus() && ui.memory(|memory| memory.focused().is_none()) {
                         keep.request_focus();
                     }
-                    if keep.clicked() || ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                    let escape = ui.input_mut(|input| {
+                        input.consume_key(egui::Modifiers::NONE, egui::Key::Escape)
+                    });
+                    if keep.clicked() || escape {
                         press = Some(SessionPress::Cancel);
                     }
                     if ui
