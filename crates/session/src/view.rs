@@ -40,8 +40,9 @@ pub struct TabView<'a> {
     pub tape: &'a TradeTape,
     /// Whether a page of trade history is still owed a reply.
     pub history_wait: bool,
-    /// Silences in the tape the feed marked as lost, oldest first.
-    pub outages: Vec<Outage>,
+    /// Silences in the tape the feed marked as lost, oldest first. Read
+    /// only when a run begins, so the tab hands a function, not a list.
+    pub outages: &'a dyn Fn() -> Vec<Outage>,
     /// Which backend streams this tab's feed, when the config names one.
     pub provider: Option<ProviderKind>,
     /// The configured prints per page.

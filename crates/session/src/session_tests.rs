@@ -4,7 +4,7 @@
 use super::*;
 use quantick_engine::{Side, Trade};
 use quantick_sources::candles::OlderCandles;
-use quantick_sources::history_reach::ReachBounds;
+use quantick_sources::history_reach::{Outage, ReachBounds};
 use rust_decimal::Decimal;
 
 const MINUTE: i64 = 60 * 1_000;
@@ -97,7 +97,7 @@ impl Shell {
             panes: &panes,
             tape: &self.tape,
             history_wait: false,
-            outages: Vec::new(),
+            outages: &Vec::<Outage>::new,
             provider: None,
             page_step: 2_000,
             reach_bounds: ReachBounds::default(),
@@ -336,7 +336,12 @@ fn a_tick_chart_wants_no_candles_until_the_lead_in_is_asked_for() {
     let now = Instant::now();
     shell.dispatch(&mut session, Act::PollCandles { tab_id: TAB }, now);
     assert!(shell.sent.is_empty());
-    shell.dispatch(&mut session, Act::SetVenueLeadIn(true), now);
+    let policy = HistoryPolicy {
+        progressive: false,
+        venue_lead_in: true,
+        frame: HistoryFrame::default(),
+    };
+    shell.dispatch(&mut session, Act::MirrorPolicy(policy), now);
     shell.dispatch(&mut session, Act::PollCandles { tab_id: TAB }, now);
     assert_eq!(shell.sent.len(), 1);
 }

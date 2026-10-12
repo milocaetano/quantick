@@ -244,8 +244,6 @@ pub enum Act<'a> {
     },
     /// Rebuild every pane's prefix from the candles held.
     Refold,
-    /// Put the venue's minutes in front of a chart cut by trades, or not.
-    SetVenueLeadIn(bool),
     /// A context pane was just built: its copy of the tape counts against a
     /// running campaign, and it wants a prefix of its own.
     PaneAdded {
@@ -603,7 +601,6 @@ impl TabSession {
             } => self.venue.deliver(step, tab_id, interval_ms, bars, slice),
             Act::LoadOlderCandles { tab_id } => return self.venue.request_older(step, tab_id),
             Act::Refold => self.venue.refold(step),
-            Act::SetVenueLeadIn(enabled) => self.venue.set_lead_in(step, enabled),
             Act::PaneAdded { tab_id } => {
                 self.paging.count_copies(step.tab.panes.len());
                 self.venue.pane_added(step, tab_id);

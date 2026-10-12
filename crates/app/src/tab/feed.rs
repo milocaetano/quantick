@@ -1325,8 +1325,9 @@ impl Tab {
     }
 
     /// [`Self::run_session`], told the time. Without a `config` the act is
-    /// judged on the feed's own capabilities: the drain has no config, and
-    /// nothing it hands in is judged on one.
+    /// judged on the feed's own capabilities. The per-frame `MirrorPolicy` and
+    /// `PollCandles` need the config; the drain's `HistoryPage`,
+    /// `CandleReply` and `OpeningFill` are judged without one.
     pub fn run_session_at(
         &mut self,
         config: Option<&AppConfig>,
@@ -1401,6 +1402,8 @@ impl Tab {
         act: Act<'_>,
     ) -> Result<Vec<Effect>, Refusal> {
         let panes = pane_views(&self.flow_pane, &self.time_panes);
+        let feed_gaps = &self.feed_gaps;
+        let outages = || feed_gaps.iter().map(|gap| gap.outage()).collect();
         let tab = TabView {
             symbol: &self.symbol,
             capabilities: judged.capabilities,
@@ -1408,7 +1411,7 @@ impl Tab {
             panes: &panes,
             tape: self.flow_pane.state.trades(),
             history_wait: self.loading.is_active(LoadingTask::History),
-            outages: self.feed_gaps.iter().map(|gap| gap.outage()).collect(),
+            outages: &outages,
             provider: judged
                 .config
                 .and_then(|config| config.provider_of(&self.feed_id)),
@@ -1463,6 +1466,9 @@ impl Tab {
     /// Drop the note once it has had its
     /// [`quantick_session::HISTORY_NOTE_LINGER`].
     pub fn expire_history_note(&mut self, now: Instant) {
+        if self.session.history_note().is_none() {
+            return;
+        }
         self.run_session_at(None, Act::ExpireNote, now);
     }
 

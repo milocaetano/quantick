@@ -138,7 +138,7 @@ impl TradePaging {
         // marked as lost is not a session close.
         let facts = TapeFacts {
             copies: step.tab.panes.len(),
-            outages: step.tab.outages.clone(),
+            outages: (step.tab.outages)(),
         };
         let action = self.run.begin(
             reach,
