@@ -1,0 +1,21 @@
+[package]
+name = "quantick-session"
+description = "Headless tab session: one command bus for reaching back, venue candle history and trade-history paging"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The clock face a history note is written in, and the sentence's time.
+quantick-civil = { path = "../civil" }
+quantick-engine = { path = "../engine" }
+# The candle vocabulary, the history reach and the run that pages toward it.
+quantick-sources = { path = "../sources" }
+tracing = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+rust_decimal = { workspace = true }

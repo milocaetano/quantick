@@ -198,6 +198,15 @@ authorization covers the top-three change expected when `drawings` overtakes
 the third owner later in #659; that change still needs its own scoped
 reference run and ceiling, under the rules below.
 
+The session member-only amendment (authorized by the trader on 2026-10-12 for
+the headless session core pilot) binds root SHA256
+`0da7249ac04758abf0677e0d910ce5d3ef81c6473accf2e935da59c5aeb49529`.
+Relative to the drawings identity above, only the `crates/session` member is
+added; all other parsed manifest values are equal. This is applicability, not
+recalibration: the seven-minute ceilings, host, toolchain, jobs, protocol,
+top-three selection and representatives are unchanged, and the PR's own
+ordinary exact-final-head run must pass every one.
+
 The drawings top-three change (#662, under the #660 authorization for
 feature #659) happened when the tools moved into `quantick-drawings`: by the
 frozen lexer it holds 7,241 production lines to `guards`' 5,898, so the

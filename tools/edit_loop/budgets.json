@@ -23,7 +23,7 @@
   ],
   "host_class": "Linux/x86_64/4/Linux/X64/ubuntu24",
   "jobs": 4,
-  "profile_hash": "f19ebf326d7dc60c0198ec705b327d8fb5ad0b0099fa8e925d27bd60a52e03c5",
+  "profile_hash": "0da7249ac04758abf0677e0d910ce5d3ef81c6473accf2e935da59c5aeb49529",
   "protocol_hash": "d5bafb0bc44dc58250eb9274e4414d7169ed30c197ec2601833ac90c48e69501",
   "rationale": "Seven-minute protocol calibration from the first run of PR #658, https://github.com/milocaetano/quantick/actions/runs/38088480381 (cold target; crates identical to main 2c7b0761). Each ceiling is ceil(1.25 * max(touched build + package test run) * 1000) / 1000, with no additive allowance. Previous-protocol limits are recorded in tools/edit_loop/README.md. The drawings entry replaces guards in the top three (#662, scoped amendment authorized for #659): its ceiling is the same formula over https://github.com/milocaetano/quantick/actions/runs/38169479268 at 364f52cc; app and orderflow keep their 7365855 ceilings.",
   "schema": 1,

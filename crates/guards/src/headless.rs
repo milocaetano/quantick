@@ -94,6 +94,7 @@ pub const HEADLESS_CRATES: &[&str] = &[
     "indicator-session",
     "pine",
     "replay",
+    "session",
     "sim",
     "sources",
     "stores",

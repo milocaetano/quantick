@@ -3,8 +3,8 @@
 //! trimming them to the seam where the chart's own bars begin.
 //!
 //! [`fold`] groups **by time**: every provider delivers candle history at a
-//! base interval ([`crate::OHLCV_BASE_INTERVAL_MS`], a minute, or
-//! [`crate::OHLCV_DAILY_INTERVAL_MS`] for a pane cut at a day or longer) and
+//! base interval ([`crate::ohlcv::OHLCV_BASE_INTERVAL_MS`], a minute, or
+//! [`crate::ohlcv::OHLCV_DAILY_INTERVAL_MS`] for a pane cut at a day or longer) and
 //! the time pane shows whatever its header asks for, so folding locally is
 //! what makes changing that free — a chip click is a different fold over bars
 //! already held, not a round trip to a venue. The buckets are the engine's own
@@ -334,7 +334,7 @@ impl OlderCandles {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::OHLCV_BASE_INTERVAL_MS;
+    use crate::ohlcv::OHLCV_BASE_INTERVAL_MS;
     use rust_decimal::Decimal;
 
     /// One base candle: minute `minute`, prices derived from `seed` so a merge
