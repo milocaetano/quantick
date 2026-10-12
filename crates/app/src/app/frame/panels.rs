@@ -86,7 +86,7 @@ pub(super) fn draw_dock(
         .orderflow
         .as_mut()
         .expect("the flow pane is built with a tape and never drops it");
-    dock.draw(
+    let mut response = dock.draw(
         ctx,
         &mut DockEnv {
             orderflow,
@@ -95,7 +95,13 @@ pub(super) fn draw_dock(
             paper,
             tz,
         },
-    )
+    );
+    // A session edit is app-wide: every tab's live file is refused and every
+    // ledger re-reads. The answer goes to the toast lane.
+    if let Some(edit) = response.journal_edit.take() {
+        let _ = super::super::paper_wiring::apply_journal_edit_across(tabs, &edit);
+    }
+    response
 }
 
 /// The ledger's jump-to-trade: center the flow pane on the round trip's

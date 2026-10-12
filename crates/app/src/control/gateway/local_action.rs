@@ -69,6 +69,7 @@ impl ControlAccess {
                 )
             })?;
         let descriptor = &action.descriptor;
+        let traced = action.traced(origin.is_trace_replay())?;
         let actor = match &origin {
             // A remote caller's actor is what the connection proved at the
             // handshake, so an agent cannot sign an action as the trader.
@@ -106,8 +107,8 @@ impl ControlAccess {
         };
 
         // The trace: a replaying tab records the action at its logical time;
-        // a live tab has nothing to record. Opening the sidecar is rare and
-        // off the hot path (an action is a human gesture).
+        // a live tab, or an action outside every replay, records nothing.
+        // Opening the sidecar is rare and off the hot path (a human gesture).
         let replaying = {
             let tabs = app.tab_reads().tabs();
             let active = &tabs[app
@@ -117,6 +118,7 @@ impl ControlAccess {
             active
                 .replay
                 .as_ref()
+                .filter(|_| traced)
                 .map(|link| (link.session.path.clone(), link.status.elapsed_ms()))
         };
         // A replayed entry is the trace speaking; recording it again would

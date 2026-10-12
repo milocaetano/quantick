@@ -338,8 +338,7 @@ impl QuantickApp {
     /// right dock. The chart keeps whatever remains.
     fn draw_top_chrome(&mut self, ctx: &egui::Context, now: Instant, scratch: &mut FrameScratch) {
         scratch.background = Some(pane::background_color(&self.style));
-        // Rail shortcuts first: Esc/1/2 must be read before any widget can
-        // claim the keyboard this frame.
+        // Rail shortcuts (Esc, 1, 2) first: no widget holds the keyboard yet.
         self.toolrail.handle_keys(ctx);
         self.handle_tab_keys(ctx);
         let effects = self.drawings.handle_drawing_keys(
@@ -348,6 +347,7 @@ impl QuantickApp {
             &mut *self.audio.alerts,
             ctx,
             now,
+            self.dock.holds_pointer(ctx),
         );
         effects.apply(&mut self.surfaces.toast, &mut self.toolrail);
         self.draw_menu_bar(ctx);

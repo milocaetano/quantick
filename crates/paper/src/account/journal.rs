@@ -17,6 +17,7 @@ use rust_decimal::Decimal;
 use super::{PaperAccount, utc_compact};
 use crate::format::{fmt_decimal, sanitize_symbol};
 use crate::report::HistoryRow;
+use crate::report::sessions::{JournaledTrade, SessionKey};
 use quantick_civil::civil_utc;
 
 impl PaperAccount {
@@ -27,6 +28,7 @@ impl PaperAccount {
     /// history it loaded and hands the lot to [`export_csv`].
     #[must_use]
     pub fn session_history_rows(&self) -> Vec<HistoryRow> {
+        let at = |index: usize| self.session_trade_at.get(index).and_then(Option::as_ref);
         self.venue
             .closed_trades()
             .iter()
@@ -40,6 +42,11 @@ impl PaperAccount {
                         .unwrap_or(self.session_source),
                 ),
                 trade: trade.clone(),
+                session: at(index).map(|at| at.session.clone()),
+                trade_ref: at(index)
+                    .map_or_else(|| history::TradeRefs::default().next(trade), |at| at.trade),
+                // Read from the file by the ledger; the export carries none.
+                tags: Vec::new(),
             })
             .collect()
     }
@@ -53,15 +60,25 @@ impl PaperAccount {
     pub(super) fn journal(&mut self, trade: &ClosedTrade) -> bool {
         self.session_trade_sources.push(self.session_source);
         if self.symbol.is_empty() {
+            self.session_trade_at.push(None);
             return false;
         }
         let folder = self.dir.join(sanitize_symbol(&self.symbol));
+        let opened = self.journal_path.is_none();
         let path = self
             .journal_path
             .get_or_insert_with(|| free_session_path(&folder, &utc_compact(trade.closed_ms)));
         if self.session_journal_paths.last() != Some(path) {
             self.session_journal_paths.push(path.clone());
         }
+        // Which trade of its file this close is, counted the way a reader of
+        // the file counts: from the rows the file already parses to when the
+        // account opens it — an append into an existing file, or rows the
+        // account did not write — then one per row that lands.
+        if opened || self.journal_refs.as_ref().is_none_or(|(at, _)| at != path) {
+            self.journal_refs = Some((path.clone(), file_trade_refs(path)));
+        }
+        let session = SessionKey::of(&self.dir, path);
         let mut text = String::new();
         if !path.exists() {
             text.push_str(&history::write_header(&self.symbol, self.session_source));
@@ -92,8 +109,27 @@ impl PaperAccount {
                 "SIM: could not save the trade history - see the log for the path.".to_owned(),
             );
         }
+        // A row that never reached the file is no trade of it to tag, and
+        // takes no place in its count.
+        let at = match (session, &written, self.journal_refs.as_mut()) {
+            (Some(session), Ok(()), Some((_, refs))) => Some(JournaledTrade {
+                session,
+                trade: refs.next(trade),
+            }),
+            _ => None,
+        };
+        self.session_trade_at.push(at);
         written.is_ok()
     }
+}
+
+/// The trade counter of the session file at `path` as a reader counts it:
+/// one per row that parses, in file order. A missing file counts nothing.
+fn file_trade_refs(path: &Path) -> history::TradeRefs {
+    let parsed = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| history::parse(&text).ok());
+    history::TradeRefs::after(parsed.iter().flat_map(|parsed| &parsed.trades))
 }
 /// A toast-sized path: printed whole when short, elided to `…/file.csv`
 /// past the limit — the file name always stays whole.

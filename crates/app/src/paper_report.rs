@@ -50,6 +50,7 @@ use crate::timezone::TzOffset;
 mod curve;
 mod ledger;
 mod rows;
+mod sessions;
 mod tables;
 mod window;
 
@@ -94,6 +95,10 @@ pub(crate) struct ReportEnv<'a> {
     /// This session's closed round trips, oldest first — the ledger's live
     /// rows, and the only trades whose fills the tape on screen can prove.
     pub session_trades: &'a [ClosedTrade],
+    /// Where each of those trades was journaled, index-aligned with them.
+    pub session_trade_at: &'a [Option<quantick_paper::report::sessions::JournaledTrade>],
+    /// The source each of those trades closed under, index-aligned.
+    pub session_trade_sources: &'a [quantick_sim::history::SessionSource],
     /// The position still open, if there is one. Gathered by the host
     /// because it takes three reads of a venue this module cannot see.
     pub open: Option<OpenRow>,
@@ -315,6 +320,8 @@ pub(crate) struct ReportState {
     /// Index into the session's closed trades selected in the ledger; the
     /// chart emphasizes that round trip.
     selected_trade: Option<usize>,
+    /// The ledger's session layer: its filter, folds, selection and edits.
+    sessions: sessions::LedgerSessions,
 }
 
 impl Default for ReportState {
@@ -346,6 +353,7 @@ impl Default for ReportState {
             history_cache: None,
             saved_totals: LedgerTotals::default(),
             selected_trade: None,
+            sessions: sessions::LedgerSessions::default(),
         }
     }
 }

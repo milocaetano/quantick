@@ -77,6 +77,10 @@ impl DrawingKeys {
 }
 
 impl DrawingController {
+    /// The drawing keys, read before any panel draws. A widget holding the
+    /// keyboard keeps them all; Del and Backspace with the pointer on the
+    /// dock (`pointer_on_dock`) are the dock's — the Trades ledger deletes a
+    /// session with Del there — and never delete the selected drawing too.
     pub(crate) fn handle_drawing_keys(
         &mut self,
         host: &mut DrawingAccess<'_>,
@@ -84,13 +88,16 @@ impl DrawingController {
         alerts: &mut dyn crate::audio::AlertSink,
         ctx: &egui::Context,
         now: Instant,
+        pointer_on_dock: bool,
     ) -> DrawingEffects {
         let mut output = DrawingEffects::default();
         let effects = &mut output;
         if ctx.memory(|memory| memory.focused().is_some()) {
             return output;
         }
-        let keys = DrawingKeys::read(ctx);
+        let mut keys = DrawingKeys::read(ctx);
+        keys.delete &= !pointer_on_dock;
+        keys.backspace &= !pointer_on_dock;
         if keys.escape {
             self.cancel_one_layer(host, tools);
         }
