@@ -64,7 +64,7 @@ fi
 # --- fixture ----------------------------------------------------------------
 
 root=$(mktemp -d)
-trap 'git -C "$root/mainco" worktree remove --force "$root/wt" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/big" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/binary" >/dev/null 2>&1; rm -rf "$root"' EXIT
+trap 'git -C "$root/mainco" worktree remove --force "$root/wt" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/big" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/binary" >/dev/null 2>&1; git -C "$root/mainco" worktree remove --force "$root/rv" >/dev/null 2>&1; rm -rf "$root"' EXIT
 
 git init -b main -q "$root/mainco"
 git -C "$root/mainco" config user.email t@t
@@ -131,6 +131,18 @@ binary_sha=$(git -C "$root/binary" rev-parse HEAD)
 binary_git_dir=$(git -C "$root/binary" rev-parse --absolute-git-dir)
 if [ -z "$binary_git_dir" ]; then
     printf 'FAIL the binary-asset fixture worktree was not created\n'
+    failed=$((failed + 1))
+fi
+
+# A branch for review-verdict, whose cases commit on it.
+git -C "$root/mainco" worktree add -q -b feat/verdict "$root/rv"
+echo verdict > "$root/rv/src/a.txt"
+git -C "$root/rv" add -A
+git -C "$root/rv" commit -qm "reviewed change"
+rv_head=$(git -C "$root/rv" rev-parse HEAD)
+rv_git_dir=$(git -C "$root/rv" rev-parse --absolute-git-dir)
+if [ -z "$rv_git_dir" ]; then
+    printf 'FAIL the review-verdict fixture worktree was not created\n'
     failed=$((failed + 1))
 fi
 
@@ -1010,6 +1022,71 @@ run "a code-review of another change does not count" \
 set_marker code-review-ok ""
 set_marker arch-review-ok "$(marker_key "$root/wt")"
 set_tier "$root/wt" small
+
+# --- review-verdict: the hook that records code-review-ok -------------------
+#
+# The reviewer's last verdict line records the marker; the implementer never
+# writes it. On the `rv` fixture, so its commits move no other case.
+set_tier "$root/rv" implement
+
+# verdict_case <name> <stdin-json> <expected marker contents, empty for none>
+verdict_case() {
+    rm -f "$rv_git_dir/code-review-ok"
+    printf '%s' "$2" | sh "$GUARDRAILS" review-verdict >/dev/null 2>&1
+    verdict_status=$?
+    verdict_got=$(cat "$rv_git_dir/code-review-ok" 2>/dev/null)
+    if [ "$verdict_status" -eq 0 ] && [ "$verdict_got" = "$3" ]; then
+        passed=$((passed + 1))
+    else
+        printf 'FAIL %s: exited %s, marker "%s", wanted "%s"\n' "$1" "$verdict_status" "$verdict_got" "$3"
+        failed=$((failed + 1))
+    fi
+}
+stop_json() { printf '{"hook_event_name":"SubagentStop","agent_id":"a1","last_assistant_message":"Findings: none.\\n%s"}' "$1"; }
+handback_json() { printf '{"hook_event_name":"PostToolUse","agent_id":"a1","tool_name":"SubagentHandback","tool_input":{"message":"Reviewed.\\n%s"},"tool_response":{"success":true}}' "$1"; }
+
+verdict_case "a passing review records the exact key pr-gate checks" \
+    "$(stop_json "REVIEW-VERDICT: pass $root/rv $rv_head")" "$(marker_key "$root/rv")"
+verdict_case "a background review's handback records it too" \
+    "$(handback_json "REVIEW-VERDICT: pass $root/rv $(printf '%.10s' "$rv_head")")" "$(marker_key "$root/rv")"
+verdict_case "a failing review records nothing" \
+    "$(stop_json "REVIEW-VERDICT: fail $root/rv $rv_head")" ""
+verdict_case "a report with no verdict line records nothing" \
+    "$(stop_json "Findings: none.")" ""
+verdict_case "a verdict on another HEAD records nothing" \
+    "$(stop_json "REVIEW-VERDICT: pass $root/rv 0123456789abcdef")" ""
+verdict_case "a main-agent tool payload records nothing" \
+    "$(printf '{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"echo REVIEW-VERDICT: pass %s %s"}}' "$root/rv" "$rv_head")" ""
+verdict_case "the brief's template records nothing" \
+    "$(stop_json "End with REVIEW-VERDICT: pass|fail $root/rv $rv_head")" ""
+verdict_case "markdown around the verdict still records it" \
+    "$(stop_json "**REVIEW-VERDICT: **pass** \`$root/rv\` $rv_head**")" "$(marker_key "$root/rv")"
+printf '%s\timplement\n' "$(git -C "$root/rv" rev-parse --abbrev-ref HEAD)" > "$rv_git_dir/$tier_file_name"
+verdict_case "a tier pr-gate reads is a tier the hook reads" \
+    "$(stop_json "REVIEW-VERDICT: pass $root/rv $rv_head")" "$(marker_key "$root/rv")"
+set_tier "$root/rv" ""
+verdict_case "a worktree outside the implement tier records nothing" \
+    "$(stop_json "REVIEW-VERDICT: pass $root/rv $rv_head")" ""
+set_tier "$root/rv" implement
+
+printf '%s' "$(stop_json "REVIEW-VERDICT: pass $root/rv $rv_head")" | sh "$GUARDRAILS" review-verdict
+printf '%s' "$(stop_json "REVIEW-VERDICT: fail $root/rv $rv_head")" | sh "$GUARDRAILS" review-verdict
+if [ -e "$rv_git_dir/code-review-ok" ]; then
+    printf 'FAIL a failing review of the same HEAD removes an earlier pass\n'
+    failed=$((failed + 1))
+else
+    passed=$((passed + 1))
+fi
+
+run "pr-gate's denial names the verdict line, not a hand-written marker" \
+    pr-gate "$(json_bash "$root/rv" "gh pr create --fill")" deny "REVIEW-VERDICT: pass"
+printf '%s' "$(stop_json "REVIEW-VERDICT: pass $root/rv $rv_head")" | sh "$GUARDRAILS" review-verdict
+run "pr-gate accepts the hook's record" \
+    pr-gate "$(json_bash "$root/rv" "gh pr create --fill")" silent
+echo after > "$root/rv/src/a.txt"
+git -C "$root/rv" commit -qam "unreviewed change"
+run "a commit after the review leaves the record stale" \
+    pr-gate "$(json_bash "$root/rv" "gh pr create --fill")" deny "code-review-ok"
 
 # The bound, on a branch that really is too big. Two cases rather than one: the
 # first pins that the exemption lapses, the second that it lapsed because the
