@@ -40,8 +40,7 @@ pub(super) enum LedgerRow<'a> {
     /// that" — the day header is where the answer lives, it carries the
     /// day's result for free, and clicking it folds the day away.
     Day(CivilDate, usize, Decimal, bool),
-    /// A session's own row inside its day — shown when the day holds two or
-    /// more sessions, or when this one is focused or under an edit.
+    /// A session's own row inside its day — every session a file holds.
     SessionHead(SessionHead),
     /// The rename or delete row standing where its session's row was.
     Inline,
@@ -116,13 +115,7 @@ pub(super) fn push_groups<'a>(
         items.iter().map(|item| (item.meta.session, item.trade)),
         view.tz,
     );
-    place_session_rows(
-        &mut days,
-        view.focused,
-        view.editing,
-        view.collapsed_days,
-        inline_placed,
-    );
+    place_session_rows(&mut days, view.editing, view.collapsed_days, inline_placed);
     for day in days {
         let folded = view.collapsed_days.contains(&day.day.day_number());
         rows.push(LedgerRow::Day(day.day, day.count, day.net, folded));

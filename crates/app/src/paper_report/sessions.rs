@@ -336,7 +336,7 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
 }
 
 /// Rename and delete, as a session's or a trade's context menu offers them.
-pub(super) fn session_menu(
+fn session_menu(
     ui: &mut egui::Ui,
     key: &SessionKey,
     label: &str,

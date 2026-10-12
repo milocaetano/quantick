@@ -494,7 +494,7 @@ pub struct SessionGroup {
 /// What stands above a session's trades inside one day.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SessionRow {
-    /// Nothing: the day holds this session alone, or no file holds it.
+    /// Nothing: no file holds this session, so there is nothing to name.
     #[default]
     Bare,
     /// Its row: label, count, net, fold caret.
@@ -554,16 +554,15 @@ pub fn group_by_day_and_session<'a>(
     days
 }
 
-/// Give each session of `days` its row. A day of two or more sessions heads
-/// every one; a day of one heads it only while it is `focused` or `editing`.
-/// The edit's inline row stands once — in the newest open day the session
+/// Give each session of `days` its row. Every session a file holds is
+/// headed, even a day's only one, so its trades always say Live or Replay;
+/// one no file holds stays bare. The edit's inline row stands once — in the newest open day the session
 /// closed trades on — because a session spanning days would otherwise put
 /// one rename field (one id, two owners fighting for focus) or one delete
 /// confirm per day. `inline_placed` carries that across every list one
 /// ledger cuts; folded days (`collapsed_days`, by day number) show nothing.
 pub fn place_session_rows(
     days: &mut [DayGroup],
-    focused: Option<&SessionKey>,
     editing: Option<&SessionKey>,
     collapsed_days: &BTreeSet<i64>,
     inline_placed: &mut bool,
@@ -572,20 +571,14 @@ pub fn place_session_rows(
         if collapsed_days.contains(&day.day.day_number()) {
             continue;
         }
-        let pinned = |key: &SessionKey| focused == Some(key) || editing == Some(key);
-        let heads = day.sessions.len() > 1
-            || day
-                .sessions
-                .iter()
-                .any(|session| session.key.as_ref().is_some_and(pinned));
         for session in &mut day.sessions {
             session.row = match &session.key {
-                Some(key) if heads && editing == Some(key) && !*inline_placed => {
+                Some(key) if editing == Some(key) && !*inline_placed => {
                     *inline_placed = true;
                     SessionRow::Inline
                 }
-                Some(_) if heads => SessionRow::Head,
-                _ => SessionRow::Bare,
+                Some(_) => SessionRow::Head,
+                None => SessionRow::Bare,
             };
         }
     }

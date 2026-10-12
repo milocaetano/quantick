@@ -651,7 +651,7 @@ fn a_day_is_listed_once_and_an_edit_stands_in_one_place() {
     assert!(days.iter().all(|day| day.sessions.len() == 2));
 
     let mut placed = false;
-    place_session_rows(&mut days, None, Some(&a), &BTreeSet::new(), &mut placed);
+    place_session_rows(&mut days, Some(&a), &BTreeSet::new(), &mut placed);
     let rows_of = |days: &[DayGroup], key: &SessionKey| -> Vec<SessionRow> {
         days.iter()
             .flat_map(|day| &day.sessions)
@@ -666,13 +666,13 @@ fn a_day_is_listed_once_and_an_edit_stands_in_one_place() {
     assert_eq!(rows_of(&days, &b), vec![SessionRow::Head, SessionRow::Head]);
     // The saved list after the live one: the editor is already placed.
     let mut saved = group_by_day_and_session([(Some(&a), &rows[3].1)], UTC);
-    place_session_rows(&mut saved, None, Some(&a), &BTreeSet::new(), &mut placed);
+    place_session_rows(&mut saved, Some(&a), &BTreeSet::new(), &mut placed);
     assert_eq!(rows_of(&saved, &a), vec![SessionRow::Head]);
 
     // A folded newest day hands the editor to the next open one.
     let mut placed = false;
     let folded = BTreeSet::from([days[0].day.day_number()]);
-    place_session_rows(&mut days, None, Some(&a), &folded, &mut placed);
+    place_session_rows(&mut days, Some(&a), &folded, &mut placed);
     assert_eq!(rows_of(&days[1..], &a), vec![SessionRow::Inline]);
 }
 
@@ -694,7 +694,7 @@ fn a_one_session_day_is_headed_and_a_keyless_session_stays_bare() {
     assert!(days.iter().all(|day| day.sessions.len() == 1));
 
     let mut placed = false;
-    place_session_rows(&mut days, None, None, &BTreeSet::new(), &mut placed);
+    place_session_rows(&mut days, None, &BTreeSet::new(), &mut placed);
     let placed_rows: Vec<SessionRow> = days.iter().map(|day| day.sessions[0].row).collect();
     assert_eq!(
         placed_rows,
@@ -705,7 +705,7 @@ fn a_one_session_day_is_headed_and_a_keyless_session_stays_bare() {
 
     // Editing a one-session day's session puts the inline row there, once.
     let mut placed = false;
-    place_session_rows(&mut days, None, Some(&a), &BTreeSet::new(), &mut placed);
+    place_session_rows(&mut days, Some(&a), &BTreeSet::new(), &mut placed);
     assert_eq!(days[2].sessions[0].row, SessionRow::Inline);
     assert_eq!(days[1].sessions[0].row, SessionRow::Head);
 
@@ -713,7 +713,11 @@ fn a_one_session_day_is_headed_and_a_keyless_session_stays_bare() {
     let mut fresh = group_by_day_and_session(rows.iter().map(|(key, trade)| (*key, trade)), UTC);
     let folded = BTreeSet::from([fresh[1].day.day_number()]);
     let mut placed = false;
-    place_session_rows(&mut fresh, None, None, &folded, &mut placed);
-    assert_eq!(fresh[1].sessions[0].row, SessionRow::Bare, "folded: untouched");
+    place_session_rows(&mut fresh, None, &folded, &mut placed);
+    assert_eq!(
+        fresh[1].sessions[0].row,
+        SessionRow::Bare,
+        "folded: untouched"
+    );
     assert_eq!(fresh[2].sessions[0].row, SessionRow::Head);
 }

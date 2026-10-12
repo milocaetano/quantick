@@ -5,8 +5,6 @@
 //! "which trades, in what order, from which file?", so the two read the same
 //! journal for different questions and keep their state apart.
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_paper::report::ledger_state::{
@@ -14,9 +12,7 @@ use quantick_paper::report::ledger_state::{
 };
 use quantick_paper::report::load_history;
 use quantick_paper::report::session_edit::JournalEdit;
-use quantick_paper::report::sessions::{
-    JournaledTrade, SessionInfo, SessionKey, SessionLabel, TradeRef, live_keys, source_word,
-};
+use quantick_paper::report::sessions::{JournaledTrade, SessionKey, TradeRef, live_keys};
 use quantick_sim::ClosedTrade;
 use rust_decimal::Decimal;
 
@@ -24,7 +20,7 @@ use super::rows::{
     GroupView, Item, LedgerRow, TradeMeta, draw_day_header, draw_group_header, draw_ledger_row,
     draw_more_row, draw_open_row, push_groups,
 };
-use super::sessions::{draw_hidden_live, draw_inline, draw_session_head, session_menu};
+use super::sessions::{draw_hidden_live, draw_inline, draw_session_head};
 use super::{
     LEDGER_PAGE_TRADES, LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, ReportEnv, ReportState,
     TOTALS_STRIP_PX,
@@ -290,20 +286,13 @@ impl ReportState {
             );
         }
         let target = self.sessions.state.tag_target(self.live_pick(env), cache);
-        let selected = target.as_ref().map(|(key, ..)| key);
-        let delete_key = self
-            .sessions
-            .state
-            .key_press(false, selected, &live_keys, cache);
+        let delete_key = self.sessions.state.key_press(false, &live_keys, cache);
         let presses = RowList {
             rows: &rows,
             selected: self.selected_trade,
             selected_saved: self.sessions.state.selected_saved.as_ref(),
             own_symbol,
             tz,
-            labels: &cut.labels,
-            infos: cache.map(|cache| &cache.sessions),
-            live: &live_keys,
             deletes: delete_key.is_some(),
             edit: &mut self.sessions.state.edit,
             focus_edit: &mut self.sessions.state.focus_edit,
@@ -312,9 +301,7 @@ impl ReportState {
         self.sessions.state.edit_placed(inline_placed);
         let focus_tags = presses.tag || (presses.hovered && presses.hash);
         let keyed = if presses.f2 {
-            let selected = target.as_ref().map(|(key, ..)| key);
-            let state = &self.sessions.state;
-            state.key_press(true, selected, &live_keys, cache)
+            self.sessions.state.key_press(true, &live_keys, cache)
         } else if presses.delete {
             delete_key
         } else {
@@ -510,10 +497,6 @@ struct RowList<'a, 'r> {
     selected_saved: Option<&'a (SessionKey, TradeRef)>,
     own_symbol: Option<&'a str>,
     tz: TzOffset,
-    labels: &'a BTreeMap<SessionKey, SessionLabel>,
-    infos: Option<&'a BTreeMap<SessionKey, SessionInfo>>,
-    /// Sessions this tab still journals to.
-    live: &'a BTreeSet<SessionKey>,
     /// Del over the list would start a delete, so the list takes the key.
     deletes: bool,
     edit: &'a mut Option<LedgerEdit>,
@@ -640,7 +623,8 @@ impl RowList<'_, '_> {
         }
     }
 
-    /// A trade's context menu: tag it, or rename or delete its session.
+    /// A trade's context menu: tag it. Rename and delete belong to the
+    /// session row, never to one of its trades.
     fn trade_menu(
         &self,
         row: &egui::Response,
@@ -648,18 +632,9 @@ impl RowList<'_, '_> {
         presses: &mut RowPresses,
         pick: impl Fn() -> TradePick,
     ) {
-        let Some(key) = meta.session else {
+        if meta.session.is_none() {
             return;
-        };
-        let label = self.labels.get(key).map_or_else(
-            || source_word(meta.source).to_owned(),
-            |label| label.text.clone(),
-        );
-        let trades = self
-            .infos
-            .and_then(|infos| infos.get(key))
-            .map_or(0, |info| info.trades);
-        let live = self.live.contains(key);
+        }
         row.context_menu(|ui| {
             if ui.button("Tag…").clicked() {
                 match pick() {
@@ -668,9 +643,6 @@ impl RowList<'_, '_> {
                 }
                 presses.tag = true;
                 ui.close_menu();
-            }
-            if let Some(press) = session_menu(ui, key, &label, trades, live) {
-                presses.session = Some(press);
             }
         });
     }
