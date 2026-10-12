@@ -10,6 +10,7 @@
 //! Presentation only: nothing here holds state or reads a clock.
 
 use quantick_engine::Side;
+use quantick_engine::display::display_decimal;
 use quantick_sim::EntryKind;
 use rust_decimal::Decimal;
 
@@ -61,14 +62,22 @@ pub fn kind_short(kind: EntryKind) -> &'static str {
     }
 }
 
-/// Exact value, trailing zeros stripped — prices and quantities.
+/// A value for display: at most two places, trailing zeros stripped —
+/// prices and quantities on every paper surface, so an average price of
+/// `1.3333333333` reads `1.33`.
 pub fn fmt_decimal(value: Decimal) -> String {
+    display_decimal(value)
+}
+
+/// Exact value, trailing zeros stripped — for the journal and its exports,
+/// which are the source of truth and never round.
+pub fn fmt_exact(value: Decimal) -> String {
     value.normalize().to_string()
 }
 
-/// Points rounded to two places for display (the stored value stays exact).
+/// Points rounded for display (the stored value stays exact).
 pub fn fmt_points(value: Decimal) -> String {
-    value.round_dp(2).normalize().to_string()
+    fmt_decimal(value)
 }
 
 /// Signed points: an explicit `+` on gains so a green `12` can never be
@@ -92,5 +101,22 @@ mod tests {
         assert_eq!(fmt_signed_points(Decimal::from(12)), "+12");
         assert_eq!(fmt_signed_points(Decimal::from(-3)), "-3");
         assert_eq!(fmt_signed_points(Decimal::ZERO), "0");
+    }
+
+    #[test]
+    fn display_values_carry_at_most_two_decimals() {
+        let third = Decimal::from(4) / Decimal::from(3);
+        assert_eq!(fmt_decimal(third), "1.33");
+        assert_eq!(fmt_decimal(Decimal::new(-5, 3)), "-0.01");
+        assert_eq!(fmt_decimal(Decimal::new(510, 2)), "5.1");
+        assert_eq!(fmt_decimal(Decimal::from(12)), "12");
+        assert_eq!(fmt_decimal(Decimal::ZERO), "0");
+        assert_eq!(fmt_signed_points(third), "+1.33");
+    }
+
+    #[test]
+    fn exact_values_never_round() {
+        assert_eq!(fmt_exact(Decimal::new(13_333, 4)), "1.3333");
+        assert_eq!(fmt_exact(Decimal::new(510, 2)), "5.1");
     }
 }
