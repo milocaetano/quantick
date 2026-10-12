@@ -10,18 +10,21 @@ publish.workspace = true
 # The chart model a chart pane's port hands over as it is: the bar state is
 # already headless, so the port names it rather than copying it.
 quantick-chart = { path = "../chart" }
+# The civil dates a journal listing is filtered by.
+quantick-civil = { path = "../civil" }
 quantick-control = { path = "../control" }
 quantick-control-host = { path = "../control-host" }
 quantick-control-schema = { path = "../control-schema" }
 quantick-engine = { path = "../engine" }
+# The trades journal's sessions: the listing, the filter and the edits the
+# ledger makes, so the capability and the gesture share one path.
+quantick-paper = { path = "../paper" }
 # The history reach and run vocabulary the History press speaks.
 quantick-sources = { path = "../sources" }
+rust_decimal = { workspace = true }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
 [lints]
 workspace = true
-
-[dev-dependencies]
-rust_decimal = { workspace = true }

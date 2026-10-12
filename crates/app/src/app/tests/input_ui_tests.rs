@@ -800,6 +800,7 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
                 &mut *app.audio.alerts,
                 ctx,
                 Instant::now(),
+                false,
             );
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut text).id(text_id));
@@ -818,6 +819,7 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
                 &mut *app.audio.alerts,
                 ctx,
                 Instant::now(),
+                false,
             );
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut text).id(text_id));
@@ -838,6 +840,7 @@ fn native_clipboard_events_remain_available_to_a_focused_text_field() {
                 &mut *app.audio.alerts,
                 ctx,
                 Instant::now(),
+                false,
             );
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add(egui::TextEdit::singleline(&mut text).id(text_id));

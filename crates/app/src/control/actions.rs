@@ -82,6 +82,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     super::bubble_save::register(&mut registry)?;
     quantick_control_handlers::recovery::register(&mut registry)?;
     quantick_control_handlers::history::register(&mut registry)?;
+    quantick_control_handlers::journal_sessions::register(&mut registry)?;
     super::deal_recording::register(&mut registry)?;
     super::drawing_magnet::register(&mut registry)?;
     super::drawing_magnet::register_object(&mut registry)?;

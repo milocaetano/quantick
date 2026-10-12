@@ -741,7 +741,11 @@ replay position. Wall-clock time is never used. The dispatcher durably appends
 an intent before state changes and records its terminal result afterwards. An
 incomplete trace is not fixture-eligible. If a determinism-affecting action
 cannot append its intent, the action fails before state changes. Observe calls
-and reads of human attention do not enter the trace.
+and reads of human attention do not enter the trace. Neither does an action
+that acts outside every replay and so affects no session output — naming,
+tagging or deleting a trades-journal session: it docks as outside the replay
+(`ReplayTrace::Excluded`), is never recorded, and a trace entry naming one is
+refused rather than run.
 
 The trace is required for annotate, cockpit, and paper actions that affect
 plots, layout, replay position, strategy state, or simulated trading. The PR

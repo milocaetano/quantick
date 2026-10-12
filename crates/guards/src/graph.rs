@@ -114,14 +114,18 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     ),
     // The handler families over headless ports: the window adapts its own
     // state to each port and registers what this crate validates and answers.
+    // `paper` and `civil` for the journal's sessions, so the capability lists,
+    // filters and edits through the very calls the ledger's gestures make.
     (
         "control-handlers",
         &[
             "chart",
+            "civil",
             "control",
             "control-host",
             "control-schema",
             "engine",
+            "paper",
             "sources",
         ],
     ),

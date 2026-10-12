@@ -391,11 +391,17 @@ fn the_export_csv_carries_readable_stamps_and_running_equity() {
             symbol: "BTCUSDT".to_owned(),
             source: Some(history::SessionSource::Live),
             trade: trade(1_773_666_068_000, 5, Some(2)),
+            session: None,
+            trade_ref: history::TradeRef::default(),
+            tags: Vec::new(),
         },
         HistoryRow {
             symbol: "WINQ26".to_owned(),
             source: None,
             trade: trade(1_773_666_368_000, -2, None),
+            session: None,
+            trade_ref: history::TradeRef::default(),
+            tags: Vec::new(),
         },
     ];
     let text = export_csv(&rows);
@@ -826,4 +832,130 @@ fn a_refused_reprice_leaves_the_order_resting() {
         Some(Decimal::from(95)),
         "and the order stays at its price"
     );
+}
+
+/// The same tape traded three times — each run ended by the timeline reset a
+/// replay restart sends — lands in three session files, never one: the venue
+/// stamp repeats, so the second and third runs take `.rerun-N` names.
+#[test]
+fn three_runs_of_one_tape_are_three_session_files() {
+    let dir = ScratchDir::new("account-three-runs");
+    let mut account = account(&dir, "RERUN");
+    account.set_session_source(history::SessionSource::Replay);
+    for _ in 0..3 {
+        account.seed(&print(0, 100));
+        ticket_market(&mut account, Side::Buy, &plain_form());
+        account.on_trade(&print(1, 100));
+        account.on_trade(&print(2, 103));
+        account.reset_timeline();
+    }
+    let paths = account.session_journal_paths().to_vec();
+    assert_eq!(paths.len(), 3, "{paths:?}");
+    let names: Vec<String> = paths
+        .iter()
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert!(names[1].ends_with(".rerun-1.csv"), "{names:?}");
+    assert!(names[2].ends_with(".rerun-2.csv"), "{names:?}");
+    let files: Vec<_> = account
+        .session_trade_at()
+        .iter()
+        .map(|at| at.as_ref().map(|at| at.session.path(account.trades_dir())))
+        .collect();
+    assert_eq!(
+        files,
+        paths.iter().cloned().map(Some).collect::<Vec<_>>(),
+        "one trade per file"
+    );
+    let rows = account.session_history_rows();
+    let keys: Vec<_> = rows.iter().map(|row| row.session.clone()).collect();
+    assert!(keys.iter().all(Option::is_some));
+    assert_eq!(
+        keys.iter().collect::<std::collections::BTreeSet<_>>().len(),
+        3
+    );
+}
+
+/// Two closes with the same times — the partial exits of one position —
+/// are two trades of the file. The live record and a fresh read of the file
+/// must name them alike, or a tag set on one lands on the other.
+#[test]
+fn same_time_closes_are_journaled_as_distinct_trades_of_their_file() {
+    let dir = ScratchDir::new("account-same-time-closes");
+    let mut account = account(&dir, "PARTIAL");
+    let close = take_profit_close();
+    assert!(account.journal(&close));
+    assert!(account.journal(&close));
+    let at: Vec<_> = account
+        .session_trade_at()
+        .iter()
+        .map(|at| at.clone().expect("journaled"))
+        .collect();
+    assert_eq!((at[0].trade.nth, at[1].trade.nth), (0, 1));
+    assert_eq!(at[0].session, at[1].session);
+    let loaded = crate::report::load_history(account.trades_dir(), None, &[]);
+    let refs: Vec<_> = loaded.rows.iter().map(|row| row.trade_ref).collect();
+    assert_eq!(refs, vec![at[0].trade, at[1].trade]);
+}
+
+/// One take-profit close at fixed venue times.
+fn take_profit_close() -> quantick_sim::ClosedTrade {
+    quantick_sim::ClosedTrade {
+        side: Side::Buy,
+        quantity: Decimal::ONE,
+        entry_price: Decimal::from(100),
+        exit_price: Decimal::from(103),
+        opened_ms: 1_773_666_000_000,
+        closed_ms: 1_773_666_060_000,
+        pnl_points: Decimal::from(3),
+        exit_reason: quantick_sim::ExitReason::TakeProfit,
+        entry_agg_id: None,
+        exit_agg_id: None,
+        mae_points: None,
+        mfe_points: None,
+    }
+}
+
+/// A close appended into a file that already holds rows — where the
+/// rerun-limit fallback lands, here with a row that does not parse — is
+/// counted the way a reader counts that file, not from the account's own
+/// writes alone, or its tags land on another trade.
+#[test]
+fn an_append_into_an_existing_file_counts_its_trades_like_the_reader() {
+    let dir = ScratchDir::new("account-append-existing");
+    let mut account = account(&dir, "APPEND");
+    let close = take_profit_close();
+    let folder = dir.path().join("APPEND");
+    std::fs::create_dir_all(&folder).unwrap();
+    let path = folder.join("20260316-130100.csv");
+    let mut text = history::write_header("APPEND", history::SessionSource::Live);
+    text.push_str(&history::write_trade(&close));
+    text.push_str("not,a,trade\n");
+    std::fs::write(&path, text).unwrap();
+    account.journal_path = Some(path);
+    assert!(account.journal(&close));
+    let at = account.session_trade_at()[0].clone().expect("journaled");
+    let loaded = crate::report::load_history(account.trades_dir(), None, &[]);
+    assert_eq!(loaded.problem_rows, 1, "the bad row is counted, not parsed");
+    let refs: Vec<_> = loaded.rows.iter().map(|row| row.trade_ref).collect();
+    assert_eq!(refs.len(), 2);
+    assert_eq!(at.trade, refs[1], "the writer counts the reader's way");
+    assert_eq!(at.trade.nth, 1);
+}
+
+/// An MT5 suffix symbol journals under a folder ending in a dot (`US30.`,
+/// as `sanitize_symbol` keeps it). Its trades still name their session, and
+/// the ledger scoped to that symbol names the same one.
+#[test]
+fn a_suffix_symbols_trades_are_keyed_to_their_session() {
+    let dir = ScratchDir::new("account-suffix-symbol");
+    let mut account = account(&dir, "US30.");
+    assert!(account.journal(&take_profit_close()));
+    let at = account.session_trade_at()[0]
+        .clone()
+        .expect("keyed to its file");
+    assert!(at.session.as_str().starts_with("US30./"), "{}", at.session);
+    let loaded = crate::report::load_history(account.trades_dir(), Some("US30."), &[]);
+    assert_eq!(loaded.rows[0].session.as_ref(), Some(&at.session));
+    assert_eq!(loaded.rows[0].trade_ref, at.trade);
 }

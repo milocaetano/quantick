@@ -44,9 +44,22 @@ pub fn identity_resolution<H: ?Sized>(
     Ok(input)
 }
 
+/// Whether a replay's control trace holds an action (contract §11), as the
+/// action declares when it docks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplayTrace {
+    /// Part of the session a replay reproduces: recorded while a replay
+    /// plays, and run again when it is replayed.
+    Recorded,
+    /// Acts on something the tape does not own — the trader's own trades
+    /// journal: never recorded, and never run from a trace that holds it.
+    Excluded,
+}
+
 /// One docked action: what `describe` publishes, what runs, and the three
 /// schemas that bound it — the caller's input, the resolved input the trace
-/// records and a replay feeds back, and the result.
+/// records and a replay feeds back, and the result — and whether a replay's
+/// trace holds it at all.
 pub struct RegisteredAction<H: ?Sized, A> {
     pub descriptor: CapabilityDescriptor,
     pub handler: ActionHandler<H, A>,
@@ -54,6 +67,29 @@ pub struct RegisteredAction<H: ?Sized, A> {
     pub input: CompiledSchema,
     pub canonical: CompiledSchema,
     pub output: CompiledSchema,
+    pub replay_trace: ReplayTrace,
+}
+
+impl<H: ?Sized, A> RegisteredAction<H, A> {
+    /// Whether a replay's control trace records this call. `from_trace` is a
+    /// call the trace itself makes: refused for an action no trace may hold,
+    /// which a build from before the rule may still have written there.
+    ///
+    /// # Errors
+    ///
+    /// `control.capability_unavailable` for a traced call to an
+    /// [`ReplayTrace::Excluded`] action.
+    pub fn traced(&self, from_trace: bool) -> Result<bool, ControlError> {
+        match self.replay_trace {
+            ReplayTrace::Recorded => Ok(true),
+            ReplayTrace::Excluded if from_trace => Err(crate::admission::known_error(
+                quantick_control::error::codes::CAPABILITY_UNAVAILABLE,
+                "this action acts outside every replay and is never run from a control trace",
+                false,
+            )),
+            ReplayTrace::Excluded => Ok(false),
+        }
+    }
 }
 
 /// The registry: descriptors for discovery, handlers for execution, schemas
@@ -86,6 +122,22 @@ impl<H: ?Sized, A> ActionRegistry<H, A> {
         self.register_resolved(descriptor, handler, identity_resolution, canonical)
     }
 
+    /// Dock one action that acts outside every replay — on the trader's own
+    /// trades journal: a replay's trace never records it and never runs it.
+    pub fn register_outside_replay(
+        &mut self,
+        descriptor: CapabilityDescriptor,
+        handler: ActionHandler<H, A>,
+    ) -> Result<(), RegistryError> {
+        let canonical = descriptor.input_schema.clone();
+        self.dock(
+            descriptor,
+            (handler, identity_resolution),
+            canonical,
+            ReplayTrace::Excluded,
+        )
+    }
+
     /// Dock one action that resolves live state before it acts. The descriptor
     /// is what `describe` and search report; its schemas are compiled once
     /// here and reused for every invocation. `canonical_schema` describes the
@@ -98,6 +150,21 @@ impl<H: ?Sized, A> ActionRegistry<H, A> {
         handler: ActionHandler<H, A>,
         resolve: ActionResolver<H>,
         canonical_schema: Value,
+    ) -> Result<(), RegistryError> {
+        self.dock(
+            descriptor,
+            (handler, resolve),
+            canonical_schema,
+            ReplayTrace::Recorded,
+        )
+    }
+
+    fn dock(
+        &mut self,
+        descriptor: CapabilityDescriptor,
+        (handler, resolve): (ActionHandler<H, A>, ActionResolver<H>),
+        canonical_schema: Value,
+        replay_trace: ReplayTrace,
     ) -> Result<(), RegistryError> {
         let key = (descriptor.id.clone(), descriptor.version);
         if self.actions.contains_key(&key) {
@@ -126,6 +193,7 @@ impl<H: ?Sized, A> ActionRegistry<H, A> {
                 input,
                 canonical,
                 output,
+                replay_trace,
             }),
         );
         Ok(())

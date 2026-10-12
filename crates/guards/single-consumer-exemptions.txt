@@ -8,8 +8,10 @@
 # crate that is gone, or no longer has exactly one consumer, is itself a
 # finding: delete the line.
 #
-# The three below are what remains of the five recorded when the guard landed,
-# at main bcfb5f19, so that change could land green. They are the finding, not
+# The two below are what remains of the five recorded when the guard landed,
+# at main bcfb5f19, so that change could land green (`paper` left when
+# `control-handlers` began listing and editing journal sessions through it).
+# They are the finding, not
 # a verdict that each is fine: every one is a crate that left `app`'s line
 # count without yet giving a second consumer anything to link. A line leaves
 # when its crate gains a consumer or folds back into the one it has.
@@ -23,7 +25,6 @@
 # split is for.
 
 feed consumed by `app` only; it is the one crate below `app` allowed runtimes, threads and the wall clock, and isolating that exception is its reason to exist. Open: `backtest` reads recorded sessions through `replay`, not through the feed host.
-paper consumed by `app` only in shipped code; `backtest` links it as a dev-dependency to prove the paper account in a test, which the rule does not count. Open: a backtest report built on the paper account would make it a second consumer.
 trading consumed by `sim` only; the venue-neutral `TradingVenue` port a broker adapter docks against beside the simulator. Open: no second venue implements it yet.
 backpressure consumed by `app` only; the owner-to-worker admission discipline (park, fold, never drop) moved out of `app` in #542, told the time. Open: `feed` workers still use their own channels.
 control-handlers consumed by `app` only; the control handler families over headless ports, moved out of `app` so the window keeps one adapter per family. Open: `mcp` or a test host could drive the same handlers over a fake window.

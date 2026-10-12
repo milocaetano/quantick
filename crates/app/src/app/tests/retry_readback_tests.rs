@@ -61,6 +61,8 @@ mod chart_settings_control;
 mod drawing_magnet_control;
 #[path = "history_control_tests.rs"]
 mod history_control_tests;
+#[path = "journal_sessions_control_tests.rs"]
+mod journal_sessions_control_tests;
 #[path = "layer_control_tests.rs"]
 mod layer_control;
 #[path = "native_tape_readback_tests.rs"]
@@ -604,6 +606,23 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         ("layers.visibility.set", 1, Value::Null, Readback::Moves),
         ("chart.price_axis.set", 1, Value::Null, Readback::Moves),
         ("chart.settings.set", 1, Value::Null, Readback::Moves),
+        // A listing changes nothing, so no `session.journal.changed` is
+        // journaled either side of it; the edits are proven in
+        // `quantick-paper` and `quantick-control-handlers`.
+        (
+            "session.journal.set",
+            1,
+            json!({ "action": "list" }),
+            Readback::Stays,
+        ),
+        // A delete of a session already gone: refused with
+        // `session_not_found`, journaling nothing, the same answer twice.
+        (
+            "session.journal.delete",
+            1,
+            json!({ "session": "WINJ26/no-such-session.csv" }),
+            Readback::Stays,
+        ),
         ("chart.tape_view.set", 1, Value::Null, Readback::Moves),
         (
             "orderflow.tape.opening_scale.set",
@@ -775,7 +794,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
     let directory = gateway_test_directory("retry-every-optional");
     grant_annotate_for_test(
         &mut app,
-        "all-reads,observe.user_text,cockpit,cockpit.layout,cockpit.recover",
+        "all-reads,observe.user_text,cockpit,cockpit.layout,cockpit.recover,cockpit.journal.delete",
     );
     enable_test_gateway(&mut app, &ctx, &directory, 4);
     let cockpit = options(
@@ -785,6 +804,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
             "cockpit",
             "cockpit.layout",
             "cockpit.recover",
+            "cockpit.journal.delete",
         ],
     );
     let reachable: BTreeSet<&str> = retry_matrix::READBACKS
