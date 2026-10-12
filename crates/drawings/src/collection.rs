@@ -470,3 +470,22 @@ impl<T: Clone + PartialEq> Drawings<T> {
         self.record(before);
     }
 }
+
+impl Drawings<crate::DrawingTool> {
+    /// Switch the drawing `id`'s own magnet as one undo step; answers whether
+    /// it moved. Refused with `None` for an id this store does not hold, and
+    /// with the tool's `(name, id)` when asked on for a tool that snaps by its
+    /// own rule. Off is always reachable, so a stale flag can be cleared.
+    pub fn set_own_magnet(
+        &mut self,
+        id: DrawingId,
+        enabled: bool,
+    ) -> Result<bool, Option<(&'static str, &'static str)>> {
+        let index = self.index_of(id).ok_or(None)?;
+        let tool = self.items[index].tool;
+        if enabled && !self.items[index].takes_magnet() {
+            return Err(Some((tool.name(), tool.id())));
+        }
+        Ok(self.set_magnet_at(index, enabled))
+    }
+}

@@ -1,6 +1,0 @@
-# feat/drawing-magnet-per-object: the per-drawing magnet's app-only plumbing
-# (the context bar's slot hand flip, the handler finding the drawing in its
-# pane) carries UI-free lines; merged with origin/main the combined total
-# clears the ceiling by 35 lines.
-crates/app +35
-!budget +35

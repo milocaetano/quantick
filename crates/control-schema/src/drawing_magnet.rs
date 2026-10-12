@@ -80,6 +80,21 @@ impl ObjectMagnetInput {
         }
     }
 
+    /// The journal payload of a change the call or the hand made.
+    pub fn event_payload(&self, changed: bool) -> serde_json::Value {
+        serde_json::json!({ "drawing_magnet": self.result(changed) })
+    }
+
+    /// The refusal for a drawing the store would not switch: `tool` names
+    /// one that snaps by its own rule as `(name, id)`; `None` is an id the
+    /// named pane does not hold.
+    pub fn refusal(&self, tool: Option<(&str, &str)>) -> ControlError {
+        match tool {
+            Some((name, id)) => no_magnet(name, id),
+            None => self.unknown_drawing(),
+        }
+    }
+
     /// The refusal for an id the named pane does not hold.
     pub fn unknown_drawing(&self) -> ControlError {
         ControlError::invalid_request(format!(

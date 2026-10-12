@@ -60,17 +60,9 @@ fn set_object<P: TabsPort + TabsMutPort + ?Sized>(
     let input: ObjectMagnetInput = serde_json::from_value(input.clone()).map_err(invalid)?;
     let pane = super::price_axis::pane(app, input.tab_id, input.pane_id)?;
     let id = DrawingId(input.drawing_id.get());
-    let index = pane
-        .drawings
-        .index_of(id)
-        .ok_or_else(|| input.unknown_drawing())?;
-    let drawing = &pane.drawings.items()[index];
-    // Off is always reachable, so a stale flag on such a tool can be cleared.
-    if input.enabled && !drawing.takes_magnet() {
-        return Err(no_magnet(drawing.tool.name(), drawing.tool.id()));
-    }
-    let result = input.result(pane.drawings.set_magnet_at(index, input.enabled));
-    let payload = serde_json::json!({ "drawing_magnet": result });
+    let changed = pane.drawings.set_own_magnet(id, input.enabled);
+    let result = input.result(changed.map_err(|tool| input.refusal(tool))?);
+    let payload = input.event_payload(result.changed);
     access.append_event(NewEvent::by(
         ANNOTATE_MODULE_ID,
         OBJECT_MAGNET_EVENT_KIND,
@@ -121,7 +113,7 @@ where
     let Some(actor) = access.hand_actor() else {
         return;
     };
-    let payload = serde_json::json!({ "drawing_magnet": input.result(true) });
+    let payload = input.event_payload(true);
     access.append_event(NewEvent::by(
         ANNOTATE_MODULE_ID,
         OBJECT_MAGNET_EVENT_KIND,
