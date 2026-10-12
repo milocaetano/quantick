@@ -20,6 +20,7 @@
 //! one click away. That is also the ceiling — a bar that needs a "more"
 //! button has stopped being a bar.
 
+use crate::drawings::StyleColor32;
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use smallvec::SmallVec;
@@ -122,7 +123,7 @@ impl Slot {
 
 /// What the selected object can actually be asked for. The bar is built from
 /// this and nothing else — an unsupported property is absent, never a grey
-/// button, which is the rule [`super::DrawingToolImpl`] already states for
+/// button, which is the rule [`quantick_drawings::MarkTool`] already states for
 /// the inspector.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capabilities {

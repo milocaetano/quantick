@@ -1865,7 +1865,7 @@ fn no_drawing_shortcut_shares_a_chord_with_an_order() {
             // The rail matches key *and* shift exactly, so `B` and
             // `Shift+B` are genuinely different chords — which is what
             // lets the marks keep the letter of the side they mean.
-            let same_chord = order.logical_key == shortcut.key
+            let same_chord = Some(order.logical_key) == crate::drawings::shortcut_key(shortcut)
                 && order.modifiers.shift == shortcut.shift
                 && !order.modifiers.command
                 && !order.modifiers.alt;

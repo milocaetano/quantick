@@ -13,7 +13,7 @@ default = []
 # `harness` is the whole set, which is what capture workflows build with.
 harness = ["quick-range-harness", "drawing-harness", "control-harness", "scenario-harness"]
 quick-range-harness = []
-drawing-harness = []
+drawing-harness = ["quantick-drawings/drawing-harness"]
 control-harness = []
 # Launch scenarios, scripted menus and pointers, demo stagers, store isolation
 # for captures, and the feed's fault injection.
@@ -28,6 +28,8 @@ quantick-chart = { path = "../chart" }
 quantick-workspace = { path = "../workspace" }
 quantick-chart-interaction = { path = "../chart-interaction" }
 quantick-civil = { path = "../civil" }
+# Headless chart drawings: the mark store, its update and the scenes painted.
+quantick-drawings = { path = "../drawings" }
 quantick-layers = { path = "../layers" }
 quantick-control = { path = "../control" }
 # Private descriptor publication for the local gateway (ADR 0001). The
@@ -124,6 +126,8 @@ quantick-indicators = { path = "../indicators", features = ["fake-native"] }
 quantick-feed = { path = "../feed", features = ["harness"] }
 # The time-less `ChartPoint::at` the drawing tests place anchors with.
 quantick-chart-interaction = { path = "../chart-interaction", features = ["test-support"] }
+# The placement shorthands and the inert preset host the drawing tests use.
+quantick-drawings = { path = "../drawings", features = ["test-support", "drawing-harness"] }
 # The per-thread store-write refusal the saves-off tests hold (DS7).
 quantick-workspace = { path = "../workspace", features = ["test-support"] }
 

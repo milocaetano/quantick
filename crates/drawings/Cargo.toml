@@ -1,0 +1,32 @@
+[package]
+name = "quantick-drawings"
+description = "Headless chart drawings: the mark store, its update and the scenes a renderer paints"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+quantick-anchored-studies = { path = "../anchored-studies" }
+quantick-chart = { path = "../chart" }
+quantick-chart-interaction = { path = "../chart-interaction" }
+quantick-engine = { path = "../engine" }
+quantick-indicators = { path = "../indicators" }
+quantick-workspace = { path = "../workspace" }
+rust_decimal.workspace = true
+serde = { workspace = true, features = ["derive"] }
+smallvec.workspace = true
+toml.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+quantick-chart-interaction = { path = "../chart-interaction", features = ["test-support"] }
+
+[features]
+# The shorthands and the inert preset host a dependent crate's tests build on.
+test-support = []
+# The parked hand: a pointer for a run with nobody at the mouse.
+drawing-harness = []
+
+[lints]
+workspace = true

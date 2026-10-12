@@ -5,21 +5,22 @@
 //!
 //! Paper arbitration takes the pointer the frame already read and answers
 //! whether paper consumed it. `PaneGestures` then updates local and mirrored
-//! drawings in `pointer_gestures`; navigation receives both answers before pan.
+//! drawings in `quantick_drawings::gesture`; navigation receives both answers
+//! before pan.
 //! The pane-chrome classifier is shared with placement and the gesture owner.
 
 use eframe::egui;
 
 use crate::bands::{self, Bands};
-use crate::drawings::Drawings;
+use crate::drawings::{Drawings, egui_rect, pos, px};
 use crate::indicator_render;
 use crate::paper_trading::ChartInput;
 use crate::plot_area::PlotAreas;
 use crate::toolrail::Tool;
 
 use super::constants::PANE_DIVIDER_HANDLE_PX;
-use super::drawing_projection::DrawingProjection;
 use super::{PaneChrome, SharedPointer};
+use quantick_drawings::gesture::DrawingProjection;
 
 /// What the paper arbitration reads off the pane: the projection its handles
 /// are picked through, the drawings under the pointer, and whether the paper
@@ -61,6 +62,7 @@ impl PaperArbitration<'_> {
             total,
             ..
         } = pointer;
+        let (pointer_position, drawing_area) = (pointer_position.map(pos), egui_rect(drawing_area));
         // Simulated order lines take the pointer before the drawings: they
         // sit higher in the draw stack, and a grabbed stop is operational,
         // not annotational. The flag mirrors the drawings' gesture
@@ -117,13 +119,13 @@ impl PaperArbitration<'_> {
                     || self.tape_switch.contains(position)
                     || (chrome.toolrail.tool() == Tool::Pointer
                         && !over_chrome
-                        && bands::band_at(bands, position)
+                        && bands::band_at(bands, px(position))
                             .filter(|band| band.drawable())
                             .is_some_and(|band| {
                                 self.projection
                                     .drawing_handle_at(
                                         self.drawings,
-                                        position,
+                                        px(position),
                                         band,
                                         history_right,
                                         total,

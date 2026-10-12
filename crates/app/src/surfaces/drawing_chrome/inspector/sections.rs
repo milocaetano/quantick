@@ -4,6 +4,7 @@
 //! for as [`InspectorActions`]; [`body`] lays them out and folds the reports
 //! into the one value the shared applier executes.
 
+use crate::drawings::StyleColor32;
 use eframe::egui;
 
 use super::super::{
@@ -60,7 +61,7 @@ pub(super) fn body(
 
     match chrome.inspector.tab {
         InspectorTab::Extra => {
-            actions.edited |= tool.draw_extra_tab(ui, edited, presets);
+            actions.edited |= crate::drawings::draw_extra_tab(tool, ui, edited, presets);
         }
         InspectorTab::Style => actions.merge(StyleTab { edited, presets }.show(ui)),
         InspectorTab::Coordinates => {

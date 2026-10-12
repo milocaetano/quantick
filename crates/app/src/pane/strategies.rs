@@ -27,8 +27,8 @@ use crate::drawings::{self, Drawing, Drawings};
 use crate::state::dec_from_f64;
 use crate::theme;
 
-use super::drawing_projection::PaneSeriesRead;
 use super::region_pause;
+use quantick_drawings::gesture::PaneSeriesRead;
 
 /// The armed strategies and the work they park for the tab. See the module
 /// docs.

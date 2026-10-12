@@ -20,9 +20,9 @@ use crate::style::ChartStyle;
 use quantick_layers::{ChartLayer, LayerBlock};
 use quantick_orderflow::LaneWindow;
 
-use super::drawing_projection::PaneSeriesRead;
 use super::layers::PaneLayerRead;
 use super::{PaneContextMenu, PaneStrategies};
+use quantick_drawings::gesture::PaneSeriesRead;
 
 pub(crate) use quantick_chart_interaction::pane::MenuIntent as PaneMenuIntent;
 use quantick_chart_interaction::pane::Model;

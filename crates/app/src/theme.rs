@@ -26,10 +26,13 @@ pub use ink::{active_tint, ink, ink_on, press_tint, side_color};
 // layer draws against its background; production code asks `ink_on` instead.
 #[cfg(test)]
 pub use ink::{contrast_ratio, relative_luminance};
+// The anchored VWAP's colour, painted by the headless tool; pinned to it here.
+#[cfg(test)]
+pub use palette::DRAW_CYAN;
 pub use palette::{
     ACCENT, AMBER, BORDER, BUY, CANVAS, CASING, CASING_EXTRA_PX, CHIP_INK, CHROME, CONTROL,
-    DAY_RULE, DRAW_CYAN, DRAWING_SWATCHES, FLOAT_SHADOW, GAP_LABEL, GAP_LINE, INSET, POC, REC,
-    SEAM_LABEL, SEAM_LINE, SELL, TAG_BG, TEXT_FAINT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SUPPORT, WARN,
+    DAY_RULE, DRAWING_SWATCHES, FLOAT_SHADOW, GAP_LABEL, GAP_LINE, INSET, POC, REC, SEAM_LABEL,
+    SEAM_LINE, SELL, TAG_BG, TEXT_FAINT, TEXT_MUTED, TEXT_PRIMARY, TEXT_SUPPORT, WARN,
 };
 
 #[cfg(test)]

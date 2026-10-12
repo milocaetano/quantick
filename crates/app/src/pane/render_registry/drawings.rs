@@ -1,14 +1,145 @@
 //! Drawing geometry consumes only the drawings owner, viewport and gesture readback.
+//!
+//! The tools paint headless [`MarkScene`]s; [`paint_scene`] is the one place
+//! a scene becomes egui shapes, and [`TextFonts`] is how a tool sizes a label
+//! with the window's fonts.
 use super::super::{DrawPass, paint_placement_hint};
 use super::{Contribution, Package};
 use crate::{
     bands::{self, Band},
     chart::PriceScale,
-    drawings::{ChartPoint, DrawContext, DrawingBand, DrawingStyle, Drawings},
+    drawings::{
+        ChartPoint, DrawContext, DrawingBand, DrawingStyle, Drawings, MarkScene, egui_rect, pos,
+        px_rect, to_color32,
+    },
     viewport::Viewport,
 };
 use eframe::egui;
+use quantick_drawings::{Align, Align2, FontFamily, FontSpec, MarkShape, Px, TextMetrics};
 use smallvec::SmallVec;
+
+/// How big a label sets, measured with the window's own fonts — the same
+/// layout [`paint_scene`] will paint it with.
+pub(in crate::pane) struct TextFonts<'a>(pub &'a egui::Context);
+
+impl TextMetrics for TextFonts<'_> {
+    fn size(&self, text: &str, font: FontSpec) -> Px {
+        let size = self
+            .0
+            .fonts(|fonts| {
+                fonts.layout_no_wrap(text.to_owned(), font_id(font), egui::Color32::PLACEHOLDER)
+            })
+            .size();
+        Px::new(size.x, size.y)
+    }
+}
+
+fn font_id(font: FontSpec) -> egui::FontId {
+    match font.family {
+        FontFamily::Proportional => egui::FontId::proportional(font.size_px),
+        FontFamily::Monospace => egui::FontId::monospace(font.size_px),
+    }
+}
+
+fn align(align: Align) -> egui::Align {
+    match align {
+        Align::Min => egui::Align::Min,
+        Align::Center => egui::Align::Center,
+        Align::Max => egui::Align::Max,
+    }
+}
+
+fn stroke(stroke: quantick_drawings::Stroke) -> egui::Stroke {
+    egui::Stroke::new(stroke.width, to_color32(stroke.color))
+}
+
+/// Paint `scene` through `painter`: each [`MarkShape`] becomes exactly the
+/// egui shape the tool's own painter call made before the tools left `app`
+/// (`drawings_scene_golden` holds the two to the same list).
+pub(in crate::pane) fn paint_scene(painter: &egui::Painter, scene: &MarkScene) {
+    for shape in &scene.shapes {
+        match shape {
+            MarkShape::Line {
+                from,
+                to,
+                stroke: line,
+            } => {
+                painter.line_segment([pos(*from), pos(*to)], stroke(*line));
+            }
+            MarkShape::Path {
+                points,
+                closed,
+                fill,
+                stroke: outline,
+            } => {
+                painter.add(egui::Shape::Path(egui::epaint::PathShape {
+                    points: points.iter().copied().map(pos).collect(),
+                    closed: *closed,
+                    fill: to_color32(*fill),
+                    stroke: stroke(*outline).into(),
+                }));
+            }
+            MarkShape::DashedLine {
+                points,
+                stroke: line,
+                dash_px,
+                gap_px,
+            } => {
+                let points: Vec<egui::Pos2> = points.iter().copied().map(pos).collect();
+                painter.add(egui::Shape::dashed_line(
+                    &points,
+                    stroke(*line),
+                    *dash_px,
+                    *gap_px,
+                ));
+            }
+            MarkShape::Rect {
+                rect,
+                rounding_px,
+                fill,
+                stroke: outline,
+            } => {
+                painter.add(egui::epaint::RectShape::new(
+                    egui::Rect::from_min_max(
+                        egui::pos2(rect.left, rect.top),
+                        egui::pos2(rect.right, rect.bottom),
+                    ),
+                    egui::Rounding::same(*rounding_px),
+                    to_color32(*fill),
+                    stroke(*outline),
+                ));
+            }
+            MarkShape::Circle {
+                center,
+                radius_px,
+                fill,
+                stroke: outline,
+            } => {
+                painter.add(egui::epaint::CircleShape {
+                    center: pos(*center),
+                    radius: *radius_px,
+                    fill: to_color32(*fill),
+                    stroke: stroke(*outline),
+                });
+            }
+            MarkShape::Text {
+                at,
+                anchor: Align2([x, y]),
+                text,
+                font,
+                color,
+            } => {
+                painter.text(
+                    pos(*at),
+                    egui::Align2([align(*x), align(*y)]),
+                    text,
+                    font_id(*font),
+                    to_color32(*color),
+                );
+            }
+        }
+    }
+}
 pub(super) const PACKAGE: Package = Package {
     layers: &[quantick_layers::ChartLayer::Drawings],
     contributions: &[
@@ -35,8 +166,8 @@ impl DrawingPass<'_> {
         history_right: f32,
         total: usize,
         scale: &PriceScale,
-    ) -> egui::Pos2 {
-        egui::pos2(
+    ) -> Px {
+        Px::new(
             self.viewport
                 .x_at_bar_position(point.bar, history_right, total),
             scale.y(point.price),
@@ -48,7 +179,7 @@ impl DrawingPass<'_> {
         history_right: f32,
         total: usize,
         scale: &PriceScale,
-    ) -> SmallVec<[egui::Pos2; 4]> {
+    ) -> SmallVec<[Px; 4]> {
         drawing
             .points
             .iter()
@@ -68,8 +199,11 @@ impl DrawingPass<'_> {
         let Some(scale) = band.scale.as_ref() else {
             return;
         };
-        let chart_rect = band.rect;
+        let chart_rect = egui_rect(band.rect);
         let clipped = painter.with_clip_rect(chart_rect);
+        let fonts = TextFonts(painter.ctx());
+        // One buffer for every object of the pass, cleared between them.
+        let mut scene = MarkScene::default();
         for (index, drawing) in self.drawings.items().iter().enumerate() {
             if !self.drawings.is_visible(index) || !bands::drawing_in_band(drawing, band) {
                 continue;
@@ -88,7 +222,7 @@ impl DrawingPass<'_> {
             // the mirrored marks use for the same reason.
             let style = if drawing.off_series || drawing.foreign_market {
                 DrawingStyle {
-                    color: crate::drawings::from_color32(crate::drawings::painted_color(drawing)),
+                    color: quantick_drawings::painted_color(drawing),
                     fill_alpha: 0,
                     ..drawing.style
                 }
@@ -106,7 +240,9 @@ impl DrawingPass<'_> {
                 selected,
                 halo: false,
                 content_editing: self.content_editing == Some(index),
+                text: &fonts,
             };
+            scene.shapes.clear();
             // A locked object shows no resize handles: its geometry is not
             // editable, so the affordance would lie.
             if pass == DrawPass::UnderCandles {
@@ -115,17 +251,20 @@ impl DrawingPass<'_> {
                 // chrome under the price is chrome nobody can read.
                 drawing
                     .tool
-                    .paint_under(&clipped, chart_rect, style, &points, &ctxt);
+                    .paint_under(&mut scene, px_rect(chart_rect), style, &points, &ctxt);
+                paint_scene(&clipped, &scene);
                 continue;
             }
             drawing.tool.paint(
-                &clipped,
-                chart_rect,
+                &mut scene,
+                px_rect(chart_rect),
                 style,
                 &points,
                 &ctxt,
                 selected && !drawing.locked && primary_band,
             );
+            paint_scene(&clipped, &scene);
+            let points: SmallVec<[egui::Pos2; 4]> = points.iter().copied().map(pos).collect();
             bands::paint_off_band_caret(&clipped, chart_rect, &points, drawing);
         }
     }
@@ -141,8 +280,9 @@ impl DrawingPass<'_> {
         let Some(scale) = band.scale.as_ref() else {
             return;
         };
-        let chart_rect = band.rect;
+        let chart_rect = egui_rect(band.rect);
         let clipped = painter.with_clip_rect(chart_rect);
+        let fonts = TextFonts(painter.ctx());
         // With hide-all engaged the finished object would be invisible, so
         // the rubber-band must not pretend otherwise (audit M8) — placement
         // itself releases hide-all when it commits, in `place_with`.
@@ -174,6 +314,7 @@ impl DrawingPass<'_> {
                 selected: false,
                 halo: false,
                 content_editing: false,
+                text: &fonts,
             };
             // Both halves, in order. A tool whose body lives in the
             // background pass would otherwise preview as an empty outline
@@ -181,18 +322,31 @@ impl DrawingPass<'_> {
             // already folded for a draft, so there is data to show.
             // Over the candles rather than under them: a preview is a thing
             // in flight, and burying it would hide the gesture.
+            let mut scene = MarkScene::default();
             draft
                 .tool
-                .paint_under(&clipped, chart_rect, draft.style, &points, &ctxt);
-            draft
-                .tool
-                .paint(&clipped, chart_rect, draft.style, &points, &ctxt, false);
+                .paint_under(&mut scene, px_rect(chart_rect), draft.style, &points, &ctxt);
+            draft.tool.paint(
+                &mut scene,
+                px_rect(chart_rect),
+                draft.style,
+                &points,
+                &ctxt,
+                false,
+            );
+            paint_scene(&clipped, &scene);
             // What the next click will do, printed where the eye already is.
             // The rail's `n/N` badge says the same thing on the far side of
             // the screen, which is why a trader who drags a three-anchor tool
             // and lets go reads the waiting object as frozen.
             if let Some(cursor) = points.last().copied() {
-                paint_placement_hint(&clipped, chart_rect, cursor, draft.tool, draft.points.len());
+                paint_placement_hint(
+                    &clipped,
+                    chart_rect,
+                    pos(cursor),
+                    draft.tool,
+                    draft.points.len(),
+                );
             }
         }
     }
@@ -203,7 +357,7 @@ impl DrawingPass<'_> {
         &mut self,
         registry: &super::RenderRegistry,
         anchors: &crate::strategy_anchors::StrategyAnchors,
-        projection: &super::super::drawing_projection::DrawingProjection<'_>,
+        projection: &quantick_drawings::gesture::DrawingProjection<'_>,
         closed_slots: usize,
     ) {
         let DrawingPass {
@@ -223,7 +377,7 @@ impl DrawingPass<'_> {
         let Some(scale) = band.scale.as_ref() else {
             return;
         };
-        let clipped = painter.with_clip_rect(band.rect);
+        let clipped = painter.with_clip_rect(egui_rect(band.rect));
         // Badges paint outside the visibility gate above: a hidden drawing
         // hides its geometry, never the fact that a bot rides it — an
         // invisible armed instance is the one state this surface must not
@@ -238,7 +392,11 @@ impl DrawingPass<'_> {
             {
                 continue;
             }
-            let points = projection.projected_drawing_points(drawing, history_right, total, scale);
+            let points: SmallVec<[egui::Pos2; 4]> = projection
+                .projected_drawing_points(drawing, history_right, total, scale)
+                .into_iter()
+                .map(pos)
+                .collect();
             super::super::strategies::paint_strategy_badge(
                 &clipped,
                 instance,
