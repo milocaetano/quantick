@@ -250,7 +250,7 @@ fn live_trades_are_filtered_by_their_files_tags_and_counted_when_hidden() {
 }
 
 /// A session row picked, then a trade of another session selected: F2 and
-/// Del follow the selection, never the row picked before it.
+/// Del act on neither until a session row is picked again.
 #[test]
 fn selecting_a_trade_never_makes_its_session_what_the_keys_act_on() {
     let loaded = history(&["a.csv", "b.csv"]);

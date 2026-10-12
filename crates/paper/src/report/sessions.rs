@@ -556,8 +556,8 @@ pub fn group_by_day_and_session<'a>(
 
 /// Give each session of `days` its row. Every session a file holds is
 /// headed, even a day's only one, so its trades always say Live or Replay;
-/// one no file holds stays bare. The edit's inline row stands once — in the newest open day the session
-/// closed trades on — because a session spanning days would otherwise put
+/// one no file holds stays bare. The edit's inline row stands once — in the
+/// newest open day the session closed trades on — because a session spanning days would otherwise put
 /// one rename field (one id, two owners fighting for focus) or one delete
 /// confirm per day. `inline_placed` carries that across every list one
 /// ledger cuts; folded days (`collapsed_days`, by day number) show nothing.

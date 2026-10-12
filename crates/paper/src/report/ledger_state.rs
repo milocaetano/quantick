@@ -247,8 +247,9 @@ impl LedgerState {
         }
     }
 
-    /// A trade row was selected: F2 and Del now act on its session, through
-    /// the selection, and no longer on a session row picked before it.
+    /// A trade row was selected: F2 and Del no longer act on a session row
+    /// picked before it, and never on the trade's own session — rename and
+    /// delete belong to the session row.
     pub fn trade_selected(&mut self) {
         self.focused = None;
     }

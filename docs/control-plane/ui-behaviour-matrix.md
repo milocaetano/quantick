@@ -110,9 +110,9 @@ The three exclusion classes are closed:
 | `trade.aim.bracket` | Send an entry with its stop and target attached | the ticket's bracket fields, and the aim on the chart | `trade.order.bracket` | — |
 | `trade.instrument.money.set` | Declare what one point of an instrument is worth | the Trading panel's instrument section | `trade.instrument.set_money` | — |
 | `trade.journal.filter` | Filter the trades ledger by source, dates, #tags or session name | the Trades tab's filter row | `session.journal.set` | — |
-| `trade.journal.session.delete` | Delete a saved trading session behind an inline confirm | a session or trade row's menu in the Trades tab, Del over the ledger | `session.journal.delete` | — |
+| `trade.journal.session.delete` | Delete a saved trading session behind an inline confirm | a session row's menu in the Trades tab, Del over the ledger | `session.journal.delete` | — |
 | `trade.journal.session.fold` | Fold a trading session shut inside its day, or open it | a session row's caret in the Trades tab | `session.journal.set` | — |
-| `trade.journal.session.rename` | Name a trading session | a session or trade row's menu in the Trades tab, F2 over the ledger | `session.journal.set` | — |
+| `trade.journal.session.rename` | Name a trading session | a session row's menu in the Trades tab, F2 over the ledger | `session.journal.set` | — |
 | `trade.journal.trade.tag` | Tag a closed trade | the Trades tab's tag strip for the selected trade, # over the ledger | `session.journal.set` | — |
 | `trade.market.buy` | Buy at market, simulated | toolbar trade group, Trading panel, Shift+B | `trade.order.place` | — |
 | `trade.market.sell` | Sell at market, simulated | toolbar trade group, Trading panel, Shift+S | `trade.order.place` | — |
