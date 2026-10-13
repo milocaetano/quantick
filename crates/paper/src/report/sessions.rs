@@ -478,6 +478,8 @@ pub struct DayGroup {
     /// The same net in every figure, and as the header reads it.
     pub pnl: PnlTotal,
     pub net_text: String,
+    /// The sign of the header's leading figure, which its colour follows.
+    pub tint: Decimal,
     /// In the order their newest trade appears.
     pub sessions: Vec<SessionGroup>,
 }
@@ -492,6 +494,8 @@ pub struct SessionGroup {
     /// The same net in every figure, and as the session row reads it.
     pub pnl: PnlTotal,
     pub net_text: String,
+    /// The sign of the row's leading figure, which its colour follows.
+    pub tint: Decimal,
     /// Positions in the grouped input, in input order.
     pub items: Vec<usize>,
     /// The row of its own it gets, set by [`place_session_rows`].
@@ -536,6 +540,7 @@ pub fn group_by_day_and_session<'a>(
                 net: Decimal::ZERO,
                 pnl: PnlTotal::default(),
                 net_text: String::new(),
+                tint: Decimal::ZERO,
                 sessions: Vec::new(),
             });
             days.len() - 1
@@ -557,6 +562,7 @@ pub fn group_by_day_and_session<'a>(
                     net: Decimal::ZERO,
                     pnl: PnlTotal::default(),
                     net_text: String::new(),
+                    tint: Decimal::ZERO,
                     items: Vec::new(),
                     row: SessionRow::Bare,
                 });
@@ -570,9 +576,9 @@ pub fn group_by_day_and_session<'a>(
     }
     if let Some(reader) = reader {
         for day in &mut days {
-            day.net_text = reader.word(&day.pnl);
+            (day.net_text, day.tint) = reader.worded(&day.pnl);
             for session in &mut day.sessions {
-                session.net_text = reader.word(&session.pnl);
+                (session.net_text, session.tint) = reader.worded(&session.pnl);
             }
         }
     }

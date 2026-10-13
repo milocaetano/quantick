@@ -15,7 +15,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 
 use super::{HistoryRow, ReportView};
-use crate::pnl::{PnlPrimary, PnlReader, PnlTotal, SymbolPnl, fmt_amount};
+use crate::pnl::{PnlKey, PnlPrimary, PnlReader, PnlTotal, SymbolPnl, fmt_amount};
 
 /// Why a walk is in grouped points when money was asked for.
 const UNSET_FALLBACK: &str = "pt value unset";
@@ -169,6 +169,7 @@ impl ReportView {
             .map(|row| pnl.trade(&row.symbol, row.trade.pnl_points, row.trade.quantity))
             .collect();
         self.net_text = pnl.word_split(&total);
+        self.net_tint = pnl.tint(&total);
         self.pnl_key = Some(pnl.key());
         self
     }
@@ -196,6 +197,9 @@ pub struct LedgerTotals {
     pub trades: usize,
     pub wins: usize,
     pub net: PnlTotal,
+    /// What [`Self::of_rows`] was worded under; `None` for a sum that is
+    /// not kept across frames.
+    worded: Option<PnlKey>,
 }
 
 impl LedgerTotals {
@@ -214,10 +218,23 @@ impl LedgerTotals {
 
     /// Saved rows, each worded by its own symbol folder.
     pub fn of_rows<'r>(pnl: PnlReader<'_>, rows: impl IntoIterator<Item = &'r HistoryRow>) -> Self {
-        Self::of(
+        let mut totals = Self::of(
             rows.into_iter()
                 .map(|row| (pnl.of(&row.symbol), &row.trade)),
-        )
+        );
+        totals.worded = Some(pnl.key());
+        totals
+    }
+
+    /// These saved totals, summed again from `rows` when `pnl` no longer
+    /// reads as it did when they were summed — a declared point value, the
+    /// mode or the feed changed.
+    pub fn reworded(&mut self, pnl: PnlReader<'_>, rows: Option<&[HistoryRow]>) -> &Self {
+        let stale = self.worded.as_ref().is_some_and(|key| !pnl.wrote(key));
+        if let (true, Some(rows)) = (stale, rows) {
+            *self = Self::of_rows(pnl, rows);
+        }
+        self
     }
 
     /// One symbol's trades — this session's, on the chart's instrument.
@@ -239,6 +256,7 @@ impl LedgerTotals {
             trades: self.trades + other.trades,
             wins: self.wins + other.wins,
             net,
+            worded: self.worded.clone().or_else(|| other.worded.clone()),
         }
     }
 

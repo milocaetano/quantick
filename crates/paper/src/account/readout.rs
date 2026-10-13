@@ -8,7 +8,7 @@ use quantick_sim::ClosedTrade;
 use rust_decimal::Decimal;
 
 use super::PaperAccount;
-use crate::pnl::{PnlPrimary, PnlReader};
+use crate::pnl::{PnlPrimary, PnlReader, PnlTotal, SymbolPnl};
 
 impl PaperAccount {
     /// Every P&L readout's lookups: the declared book, the catalog and the
@@ -48,16 +48,41 @@ impl PaperAccount {
             .trade(&self.symbol, trade.pnl_points, trade.quantity)
     }
 
-    /// This session's realized trades, totalled.
+    /// The reader bound to this chart's symbol.
     #[must_use]
-    pub fn realized_pnl_text(&self) -> String {
+    pub fn symbol_pnl(&self) -> SymbolPnl<'_> {
+        self.pnl_reader().of(&self.symbol)
+    }
+
+    fn realized_total(&self) -> PnlTotal {
         let symbol = self.symbol.as_str();
-        self.pnl_reader().total(
+        self.pnl_reader().sum(
             self.venue
                 .closed_trades()
                 .iter()
                 .map(|trade| (symbol, trade)),
         )
+    }
+
+    /// This session's realized trades, totalled.
+    #[must_use]
+    pub fn realized_pnl_text(&self) -> String {
+        self.pnl_reader().word(&self.realized_total())
+    }
+
+    /// The sign of [`Self::realized_pnl_text`]'s leading figure: what it
+    /// is coloured by.
+    #[must_use]
+    pub fn realized_pnl_tint(&self) -> Decimal {
+        self.pnl_reader().tint(&self.realized_total())
+    }
+
+    /// One figure of this chart's symbol in the mode the ticket leads with,
+    /// alone: the HUD and the chart's position tag.
+    #[must_use]
+    pub fn pnl_compact(&self, pnl_points: Decimal, quantity: Decimal) -> String {
+        self.pnl_reader()
+            .compact(&self.symbol, pnl_points, quantity)
     }
 
     /// The open position's profit at the last print, `None` while flat or

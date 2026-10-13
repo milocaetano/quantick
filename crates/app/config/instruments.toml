@@ -26,6 +26,13 @@
 #   price_unit   points | pips | quote — what the per-contract move is called.
 #                Crypto never says "points": it reads as a quote-asset move.
 #   pip_size     the price increment one pip is; required with pips only.
+#   feeds        the feed ids (feeds.toml `id`) the entry prices; absent, every
+#                feed. A family is a prefix and prefixes cross venues: `WIN*`
+#                on B3 must never price Binance's `WINUSDT`, so every shipped
+#                entry names its feeds. Charting B3 under another feed id?
+#                Copy the entry into your own file with that id.
+#   disabled     `true` in your own file switches a shipped key off; the
+#                other fields may then be left out.
 #
 # Not supported: inverse (coin-margined) contracts such as Binance COIN-M
 # BTCUSD_PERP. Their P&L is contracts x size x (1/entry - 1/exit), in coin:
@@ -42,6 +49,7 @@ version = 1
 # Mini index: R$0.20 per point, tick 5 points (R$1.00 per tick).
 # Source: borainvestir.b3.com.br/glossario/mini-indice/
 [instruments."WIN*"]
+feeds = ["metatrader-b3"]
 currency = "BRL"
 point_value = "0.20"
 size_step = "1"
@@ -50,6 +58,7 @@ price_unit = "points"
 
 # Full index: R$1.00 per point (5x the mini). Source: as above.
 [instruments."IND*"]
+feeds = ["metatrader-b3"]
 currency = "BRL"
 point_value = "1"
 size_step = "1"
@@ -59,6 +68,7 @@ price_unit = "points"
 # Mini dollar: quoted in R$ per US$1,000, R$10 per point, tick 0.5 points.
 # Source: blog.toroinvestimentos.com.br/trading/mini-dolar-o-que-e-como-funciona-wdo/
 [instruments."WDO*"]
+feeds = ["metatrader-b3"]
 currency = "BRL"
 point_value = "10"
 size_step = "1"
@@ -67,6 +77,7 @@ price_unit = "points"
 
 # Full dollar: R$50 per point (5x the mini, derived). Source: as above.
 [instruments."DOL*"]
+feeds = ["metatrader-b3"]
 currency = "BRL"
 point_value = "50"
 size_step = "1"
@@ -79,6 +90,7 @@ price_unit = "points"
 # finer one, so it serves both. Source: api.binance.com/api/v3/exchangeInfo,
 # fapi.binance.com/fapi/v1/exchangeInfo
 [instruments.BTCUSDT]
+feeds = ["binance"]
 currency = "USDT"
 point_value = "1"
 size_step = "0.00001"
@@ -86,6 +98,7 @@ min_size = "0.00001"
 price_unit = "quote"
 
 [instruments.ETHUSDT]
+feeds = ["binance"]
 currency = "USDT"
 point_value = "1"
 size_step = "0.0001"
@@ -95,6 +108,7 @@ price_unit = "quote"
 # Hyperliquid perps settle in USDC; the step is 10^-szDecimals.
 # Source: hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
 [instruments.BTC]
+feeds = ["hyperliquid"]
 currency = "USDC"
 point_value = "1"
 size_step = "0.00001"
@@ -102,6 +116,7 @@ min_size = "0.00001"
 price_unit = "quote"
 
 [instruments.ETH]
+feeds = ["hyperliquid"]
 currency = "USDC"
 point_value = "1"
 size_step = "0.0001"
@@ -109,6 +124,7 @@ min_size = "0.0001"
 price_unit = "quote"
 
 [instruments.SOL]
+feeds = ["hyperliquid"]
 currency = "USDC"
 point_value = "1"
 size_step = "0.01"
@@ -116,6 +132,7 @@ min_size = "0.01"
 price_unit = "quote"
 
 [instruments.HYPE]
+feeds = ["hyperliquid"]
 currency = "USDC"
 point_value = "1"
 size_step = "0.01"
@@ -123,6 +140,7 @@ min_size = "0.01"
 price_unit = "quote"
 
 [instruments.ZEC]
+feeds = ["hyperliquid"]
 currency = "USDC"
 point_value = "1"
 size_step = "0.01"

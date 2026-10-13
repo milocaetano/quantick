@@ -68,6 +68,9 @@ pub struct RiskEditor<'a> {
     pub capital: &'a mut Capital,
     /// What one point of each instrument is worth, by bare symbol.
     pub book: &'a mut InstrumentBook,
+    /// The catalog's money for the symbol on this feed: what the block
+    /// shows until the trader declares their own.
+    pub seeded: Option<InstrumentMoney>,
 }
 
 impl PaperAccount {
@@ -120,9 +123,8 @@ impl PaperAccount {
             &risk_sizing::RiskContext {
                 settings: &self.risk,
                 capital: &self.capital,
-                book: &self.instrument_money,
+                book: self.pnl_book(),
                 symbol: &self.symbol,
-                seeded: self.seeded_money(),
             },
             side,
             reference,
@@ -268,19 +270,22 @@ impl PaperAccount {
     /// declared record outranks it.
     #[must_use]
     pub fn seeded_money(&self) -> Option<&InstrumentMoney> {
-        self.pnl
-            .catalog
-            .lookup(&self.symbol)
-            .map(|spec| &spec.money)
+        self.pnl_book().spec(&self.symbol).map(|spec| &spec.money)
+    }
+
+    /// Follow the tab's feed: a catalog entry prices only the feeds it
+    /// names, so `WIN*` on B3 never reads onto a crypto pair `WINUSDT`.
+    pub fn set_feed(&mut self, feed: &str) {
+        if self.feed != feed {
+            feed.clone_into(&mut self.feed);
+        }
     }
 
     /// The money this account's symbol is sized and read in: the trader's
     /// declared record, else the instrument catalog's, else none.
     #[must_use]
     pub fn symbol_money(&self) -> Option<&InstrumentMoney> {
-        self.instrument_money
-            .get(&self.symbol)
-            .or_else(|| self.seeded_money())
+        self.pnl_book().money(&self.symbol)
     }
 
     /// The instrument catalog and the trader's P&L display choice.
@@ -300,6 +305,7 @@ impl PaperAccount {
         PnlBook {
             declared: &self.instrument_money,
             catalog: &self.pnl.catalog,
+            feed: &self.feed,
         }
     }
 
@@ -311,6 +317,11 @@ impl PaperAccount {
             settings: &mut self.risk,
             capital: &mut self.capital,
             book: &mut self.instrument_money,
+            seeded: self
+                .pnl
+                .catalog
+                .lookup(&self.feed, &self.symbol)
+                .map(|spec| spec.money.clone()),
         }
     }
 

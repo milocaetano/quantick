@@ -124,7 +124,7 @@ pub(super) fn push_groups<'a>(
         rows.push(LedgerRow::Day(
             day.day,
             day.count,
-            (day.net, day.net_text),
+            (day.tint, day.net_text),
             folded,
         ));
         // A folded day builds no trade rows at all — the header keeps the
@@ -150,7 +150,7 @@ pub(super) fn push_groups<'a>(
                         ),
                         source: first.meta.source,
                         count: session.count,
-                        net: (session.net, session.net_text.clone()),
+                        net: (session.tint, session.net_text.clone()),
                         folded: view.collapsed_sessions.contains(key),
                         focused: view.focused == Some(key),
                         live: view.live.contains(key),

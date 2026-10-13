@@ -29,20 +29,25 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, LazyLock};
 
+use quantick_engine::display::round_for_display;
 use quantick_sim::{ClosedTrade, Currency, InstrumentMoney, Money};
 use rust_decimal::Decimal;
 
 use crate::format::{fmt_decimal, fmt_exact};
 pub use crate::instruments::PnlPrimary;
-use crate::instruments::{InstrumentCatalog, PriceUnit};
-use crate::risk_sizing::InstrumentBook;
+use crate::instruments::{InstrumentBook, InstrumentCatalog, InstrumentSpec, PriceUnit};
 
 /// What a money figure reads when no point value is known: a dash and what
 /// to do about it, never a bare dash and never a zero.
 pub const UNSET_MONEY: &str = "— set pt value";
 
-/// Places a money amount is shown with: cents, whatever the instrument.
+/// Fewest places a money amount is shown with: cents, whatever the
+/// instrument — more only where cents would hide a real amount.
 const MONEY_PLACES: u32 = 2;
+
+/// What a points total over instruments whose points are worth different
+/// things reads as: no sum of them means anything.
+const MIXED_UNITS: &str = "mixed units";
 
 /// The mode a readout uses: the trader's choice when they made one, else
 /// money where a point value is known and points per contract where not.
@@ -133,6 +138,7 @@ impl PnlReader<'_> {
         for (symbol, trade) in rows {
             let units = self.book.units(symbol);
             total.add(
+                symbol,
                 &TradePnl::of(trade.pnl_points, trade.quantity, &units),
                 &units,
             );
@@ -150,7 +156,35 @@ impl PnlReader<'_> {
     /// every trade in it has a point value.
     #[must_use]
     pub fn total_primary(&self, total: &PnlTotal) -> PnlPrimary {
+        if total.mixed_units {
+            // Points of instruments worth different things never add up:
+            // the total leads with the money, per currency.
+            return PnlPrimary::Money;
+        }
         self.settings.primary(total.money().is_some())
+    }
+
+    /// The sign of the figure a total leads with — what its colour follows,
+    /// never a figure the readout does not show.
+    #[must_use]
+    pub fn tint(&self, total: &PnlTotal) -> Decimal {
+        total.tint(self.total_primary(total))
+    }
+
+    /// A total as a row reads it, with the sign its colour follows.
+    #[must_use]
+    pub fn worded(&self, total: &PnlTotal) -> (String, Decimal) {
+        (self.word(total), self.tint(total))
+    }
+
+    /// One figure of `symbol` alone, in the mode the ticket leads with: a
+    /// chart label's compact form of the ticket's pair, same figure, same
+    /// unit.
+    #[must_use]
+    pub fn compact(&self, symbol: &str, pnl_points: Decimal, quantity: Decimal) -> String {
+        let units = self.book.units(symbol);
+        let pnl = TradePnl::of(pnl_points, quantity, &units);
+        fmt_primary(&pnl, &units, self.settings.primary(units.money.is_some()))
     }
 
     /// A total as a row reads it: the primary figure, the secondary behind.
@@ -174,14 +208,17 @@ impl PnlReader<'_> {
         PnlKey {
             chosen: self.settings.chosen,
             declared: self.book.declared.clone(),
+            feed: self.book.feed.to_owned(),
         }
     }
 
-    /// Whether `key` still describes this reader: the same choice and the
-    /// same declared money. The catalog is fixed after startup.
+    /// Whether `key` still describes this reader: the same choice, the
+    /// same declared money and the same feed. The catalog is fixed after startup.
     #[must_use]
     pub fn wrote(&self, key: &PnlKey) -> bool {
-        key.chosen == self.settings.chosen && key.declared == *self.book.declared
+        key.chosen == self.settings.chosen
+            && key.declared == *self.book.declared
+            && key.feed == self.book.feed
     }
 
     /// The primary figure of one trade, for a curve: `None` where the
@@ -220,6 +257,7 @@ impl PnlReader<'static> {
             book: PnlBook {
                 declared,
                 catalog: &settings.catalog,
+                feed: "",
             },
             settings,
         }
@@ -231,6 +269,7 @@ impl PnlReader<'static> {
 pub struct PnlKey {
     chosen: Option<PnlPrimary>,
     declared: InstrumentBook,
+    feed: String,
 }
 
 /// A reader bound to one symbol: what a ledger row carries so the row and
@@ -249,35 +288,71 @@ impl SymbolPnl<'_> {
             .trade(self.symbol, trade.pnl_points, trade.quantity)
     }
 
+    /// One closed trade of this symbol, in the leading figure alone.
+    #[must_use]
+    pub fn compact(&self, trade: &ClosedTrade) -> String {
+        self.reader
+            .compact(self.symbol, trade.pnl_points, trade.quantity)
+    }
+
     /// Fold one closed trade of this symbol into `total`.
     pub fn add_to(&self, total: &mut PnlTotal, trade: &ClosedTrade) {
         let units = self.reader.book.units(self.symbol);
         total.add(
+            self.symbol,
             &TradePnl::of(trade.pnl_points, trade.quantity, &units),
             &units,
         );
     }
 }
 
-/// Where a symbol's P&L units are looked up: the trader's declared records
-/// first, then the catalog.
+/// Where a symbol's money and P&L units are looked up: the trader's
+/// declared records first, then the catalog's entry for this feed.
+///
+/// The one lookup: sizing ([`crate::risk_sizing::RiskContext`]), the
+/// ticket's step and every P&L readout ask [`Self::money`], so no surface
+/// can read the declared book alone and miss what the catalog knows.
 #[derive(Clone, Copy)]
 pub struct PnlBook<'a> {
     pub declared: &'a InstrumentBook,
     pub catalog: &'a InstrumentCatalog,
+    /// The feed the account trades on; catalog entries price only theirs.
+    pub feed: &'a str,
 }
 
 impl<'a> PnlBook<'a> {
+    /// A book of declared records only, with no catalog behind it.
+    #[must_use]
+    pub fn declared_only(declared: &'a InstrumentBook) -> Self {
+        Self {
+            declared,
+            catalog: &PLAIN.1.catalog,
+            feed: "",
+        }
+    }
+
+    /// The money `symbol` is sized and read in: the trader's declared
+    /// record, else the catalog's for this feed, else none.
+    #[must_use]
+    pub fn money(&self, symbol: &str) -> Option<&'a InstrumentMoney> {
+        self.declared
+            .get(symbol)
+            .or_else(|| self.spec(symbol).map(|spec| &spec.money))
+    }
+
+    /// The catalog's entry for `symbol` on this feed.
+    #[must_use]
+    pub fn spec(&self, symbol: &str) -> Option<&'a InstrumentSpec> {
+        self.catalog.lookup(self.feed, symbol)
+    }
+
     /// The units `symbol` reads in. A declared record supplies the money;
     /// the catalog supplies the price unit either way.
     #[must_use]
     pub fn units(&self, symbol: &str) -> PnlUnits<'a> {
-        let spec = self.catalog.lookup(symbol);
+        let spec = self.spec(symbol);
         PnlUnits {
-            money: self
-                .declared
-                .get(symbol)
-                .or_else(|| spec.map(|spec| &spec.money)),
+            money: self.money(symbol),
             price_unit: spec.map_or(PriceUnit::Points, |spec| spec.price_unit),
             pip_size: spec.and_then(|spec| spec.pip_size),
         }
@@ -364,20 +439,16 @@ pub fn fmt_money(money: &Money) -> String {
     fmt_cents(money.amount, money.currency.code())
 }
 
-/// `amount` with exactly two places, signed, then `unit`.
+/// `amount` signed, then `unit`: cents, or the engine's display rule's
+/// significant digits where cents would read a real amount as zero. A zero
+/// is `0.00`, never `-0.00`.
 fn fmt_cents(amount: Decimal, unit: &str) -> String {
-    let rounded = amount.round_dp(MONEY_PLACES);
-    let mut text = rounded.to_string();
-    let places = text
-        .split_once('.')
-        .map_or(0, |(_, fraction)| fraction.len());
-    if places == 0 {
-        text.push('.');
+    let mut shown = round_for_display(amount);
+    if shown.is_zero() {
+        shown = Decimal::ZERO;
     }
-    for _ in places..MONEY_PLACES as usize {
-        text.push('0');
-    }
-    signed(rounded, format!("{text} {unit}"))
+    shown.rescale(shown.scale().max(MONEY_PLACES));
+    signed(shown, format!("{shown} {unit}"))
 }
 
 /// One plotted value in the figure it was plotted in: money with cents and
@@ -427,17 +498,27 @@ fn fmt_money_or_unset(money: Option<&Money>) -> String {
     money.map_or_else(|| UNSET_MONEY.to_owned(), fmt_money)
 }
 
+/// One figure of a trade alone: what a chart label shows where the
+/// ticket's pair would not fit. Every surface words a figure through here.
+#[must_use]
+pub fn fmt_primary(pnl: &TradePnl, units: &PnlUnits<'_>, primary: PnlPrimary) -> String {
+    match primary {
+        PnlPrimary::Money => fmt_money_or_unset(pnl.money.as_ref()),
+        PnlPrimary::PointsPerContract => fmt_per_unit(pnl, units),
+        PnlPrimary::PointsTimesQty => fmt_grouped(pnl, units),
+    }
+}
+
 /// The readout a trade row shows: the primary figure, then the one that
 /// keeps it honest. Money leads with the per-contract figure behind it; a
 /// points figure leads with the money behind it.
 #[must_use]
 pub fn fmt_trade(pnl: &TradePnl, units: &PnlUnits<'_>, primary: PnlPrimary) -> String {
-    let money = fmt_money_or_unset(pnl.money.as_ref());
-    match primary {
-        PnlPrimary::Money => format!("{money} · {}", fmt_per_unit(pnl, units)),
-        PnlPrimary::PointsPerContract => format!("{} · {money}", fmt_per_unit(pnl, units)),
-        PnlPrimary::PointsTimesQty => format!("{} · {money}", fmt_grouped(pnl, units)),
-    }
+    format!(
+        "{} · {}",
+        fmt_primary(pnl, units, primary),
+        fmt_primary(pnl, units, secondary_of(primary))
+    )
 }
 
 /// The primary figure alone, as a number a curve can plot: `None` for money
@@ -460,14 +541,16 @@ pub struct PnlTotal {
     money: BTreeMap<Currency, Decimal>,
     /// Whether any trade in the total had no point value.
     money_unknown: bool,
-    /// The unit suffix shared by every trade, or `None` once they differ.
-    unit: Option<String>,
+    /// The unit shared by every trade — its suffix and what one of it is
+    /// worth (point value and currency, else the symbol) — or `None` once
+    /// they differ: WIN and WDO both say `pts` and never add up.
+    unit: Option<(String, String)>,
     mixed_units: bool,
 }
 
 impl PnlTotal {
-    /// Fold one trade in.
-    pub fn add(&mut self, pnl: &TradePnl, units: &PnlUnits<'_>) {
+    /// Fold one trade of `symbol` in.
+    pub fn add(&mut self, symbol: &str, pnl: &TradePnl, units: &PnlUnits<'_>) {
         self.per_unit = self.per_unit.saturating_add(pnl.per_unit);
         self.grouped = self.grouped.saturating_add(pnl.grouped);
         match &pnl.money {
@@ -477,7 +560,17 @@ impl PnlTotal {
             }
             None => self.money_unknown = true,
         }
-        self.note_unit(units.unit_suffix());
+        let basis = units.money.map_or_else(
+            || symbol.to_owned(),
+            |money| {
+                format!(
+                    "{} {}",
+                    money.point_value.normalize(),
+                    money.currency.code()
+                )
+            },
+        );
+        self.note_unit((units.unit_suffix(), basis));
     }
 
     /// Fold another total in: the ledger adds this session's trades to the
@@ -498,10 +591,10 @@ impl PnlTotal {
         }
     }
 
-    fn note_unit(&mut self, suffix: String) {
+    fn note_unit(&mut self, identity: (String, String)) {
         match &self.unit {
-            None if !self.mixed_units => self.unit = Some(suffix),
-            Some(unit) if *unit != suffix => {
+            None if !self.mixed_units => self.unit = Some(identity),
+            Some(unit) if *unit != identity => {
                 self.unit = None;
                 self.mixed_units = true;
             }
@@ -509,11 +602,38 @@ impl PnlTotal {
         }
     }
 
-    /// The move times the quantity, summed — the stored figure, whose sign
-    /// a total is tinted by.
+    /// The move times the quantity, summed — the stored figure.
     #[must_use]
     pub fn grouped(&self) -> Decimal {
         self.grouped
+    }
+
+    /// Whether the trades' points are worth different things, so no points
+    /// total of them reads.
+    #[must_use]
+    pub fn mixed_units(&self) -> bool {
+        self.mixed_units
+    }
+
+    /// A value with the sign of the total in `primary`: what a readout of
+    /// that figure is coloured by. Money not known, or in currencies whose
+    /// signs disagree, and points that do not add up are neutral.
+    #[must_use]
+    pub fn tint(&self, primary: PnlPrimary) -> Decimal {
+        match primary {
+            PnlPrimary::Money => self.money().map_or(Decimal::ZERO, |money| {
+                let up = money.values().any(|amount| *amount > Decimal::ZERO);
+                let down = money.values().any(|amount| *amount < Decimal::ZERO);
+                match (up, down) {
+                    (true, false) => Decimal::ONE,
+                    (false, true) => Decimal::NEGATIVE_ONE,
+                    _ => Decimal::ZERO,
+                }
+            }),
+            _ if self.mixed_units => Decimal::ZERO,
+            PnlPrimary::PointsPerContract => self.per_unit,
+            PnlPrimary::PointsTimesQty => self.grouped,
+        }
     }
 
     /// The total's money, one amount per currency, when every trade in it
@@ -526,8 +646,8 @@ impl PnlTotal {
     /// The unit shared by every trade in the total, or that they differ.
     fn unit_text(&self) -> String {
         match (&self.unit, self.mixed_units) {
-            (_, true) => "mixed units".to_owned(),
-            (Some(unit), false) => unit.clone(),
+            (_, true) => MIXED_UNITS.to_owned(),
+            (Some((unit, _)), false) => unit.clone(),
             (None, false) => "pts".to_owned(),
         }
     }
@@ -538,6 +658,9 @@ impl PnlTotal {
     pub fn fmt(&self, primary: PnlPrimary) -> String {
         let unit = self.unit_text();
         match primary {
+            PnlPrimary::PointsPerContract | PnlPrimary::PointsTimesQty if self.mixed_units => {
+                MIXED_UNITS.to_owned()
+            }
             PnlPrimary::Money => match self.money() {
                 None => UNSET_MONEY.to_owned(),
                 Some(money) if money.is_empty() => fmt_decimal(Decimal::ZERO),
@@ -585,6 +708,7 @@ impl PnlTotal {
                         .join(" / ")
                 },
             ),
+            _ if self.mixed_units => unit,
             PnlPrimary::PointsPerContract => format!("{unit}/ct"),
             PnlPrimary::PointsTimesQty => unit,
         }

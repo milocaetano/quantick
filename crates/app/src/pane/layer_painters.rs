@@ -150,6 +150,7 @@ impl ChartPane {
                 background: canvas_background,
                 pointer: self.hover_pos,
                 tz: chrome.tz,
+                pnl: chrome.paper.account().symbol_pnl(),
             };
             // The window once, not once per fill: `draw` asks about every
             // closed round trip of the session, twice each, every frame.

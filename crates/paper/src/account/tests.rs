@@ -411,6 +411,7 @@ fn the_export_csv_carries_readable_stamps_and_running_equity() {
         &crate::pnl::PnlBook {
             declared: &declared,
             catalog: &catalog,
+            feed: "",
         },
     );
     let lines: Vec<&str> = text.lines().collect();
@@ -486,6 +487,7 @@ size_step = \"1\"
         &crate::pnl::PnlBook {
             declared: &declared,
             catalog: &catalog,
+            feed: "",
         },
     );
     let lines: Vec<&str> = text.lines().collect();
@@ -1127,4 +1129,36 @@ fn the_brackets_read_what_the_position_would_at_each_level() {
         target,
         Some((Decimal::from(120), "+8.00 BRL · +20 pts × 2".to_owned()))
     );
+}
+
+#[test]
+fn the_account_reads_the_catalog_for_its_own_feed_only() {
+    let dir = ScratchDir::new("catalog-feed");
+    let mut account = account(&dir, "BTCUSDT");
+    account.set_pnl_settings(crate::pnl::PnlSettings::load(
+        include_str!("../../../app/config/instruments.toml"),
+        None,
+        None,
+    ));
+    account.set_feed("binance");
+    let money = account.symbol_money().cloned().expect("BTCUSDT on binance");
+    assert_eq!(
+        money.size_step,
+        Decimal::new(1, 5),
+        "the ticket steps 0.00001"
+    );
+    assert_eq!(
+        money.currency.code(),
+        "USDT",
+        "a risk amount is stamped USDT"
+    );
+    let seeded = account.risk_editor().seeded;
+    assert_eq!(seeded.as_ref(), Some(&money));
+    assert!(
+        crate::risk_sizing::money_note(seeded.as_ref()).contains("from instruments.toml"),
+        "the risk block names where the value came from"
+    );
+    account.set_feed("hyperliquid");
+    assert_eq!(account.symbol_money(), None, "never another venue's entry");
+    assert!(crate::risk_sizing::money_note(None).contains("No feed reports"));
 }

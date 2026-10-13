@@ -8,6 +8,13 @@
 //! contracts — the same law as the feeds' `symbol_bubble_presets`: the exact
 //! key first, else the longest matching family.
 //!
+//! An entry may name the `feeds` it prices. A family is a prefix, and a
+//! prefix crosses venues — `WIN*` on a B3 feed is the mini index, `WINUSDT`
+//! on Binance is a crypto pair — so the shipped entries are scoped to the
+//! feeds that list them, and a lookup is always made for one feed. An entry
+//! with no `feeds` prices every feed. A trader's overlay can switch a shipped
+//! key off with `disabled = true`.
+//!
 //! Precedence above this file is the account's: a record the trader declares
 //! for a symbol (the ticket, `trade.instrument_money.set`) outranks it, and
 //! the readout names which one it used ([`MoneySource::Config`]).
@@ -17,11 +24,18 @@
 //! entry fails the whole file by name — the loader then keeps the shipped
 //! catalog — rather than leaving one symbol silently unpriced.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use quantick_sim::{Currency, InstrumentMoney, MoneySource};
 use rust_decimal::Decimal;
 use serde::Deserialize;
+
+/// The declared money for each symbol, keyed by the bare symbol.
+///
+/// Bare, like `ruler_steps` beside it: what a point of an instrument is
+/// worth describes the instrument, not who streams it, so a recorded
+/// session must not make a trader type it again.
+pub type InstrumentBook = BTreeMap<String, InstrumentMoney>;
 
 /// The catalog format this build reads.
 const CATALOG_VERSION: u32 = 1;
@@ -107,12 +121,16 @@ pub struct InstrumentSpec {
     pub price_unit: PriceUnit,
     /// The price increment one pip is; `Some` exactly when the unit is pips.
     pub pip_size: Option<Decimal>,
+    /// The feed ids this entry prices; empty prices every feed.
+    pub feeds: Vec<String>,
 }
 
 /// The parsed catalog: entries by key, and the display default it declares.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct InstrumentCatalog {
     entries: BTreeMap<String, InstrumentSpec>,
+    /// Keys this file switches off, for an overlay to remove.
+    disabled: BTreeSet<String>,
     primary: Option<PnlPrimary>,
 }
 
@@ -135,29 +153,45 @@ struct DisplayRecord {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SpecRecord {
-    currency: String,
-    point_value: String,
-    size_step: String,
+    currency: Option<String>,
+    point_value: Option<String>,
+    size_step: Option<String>,
     min_size: Option<String>,
     price_unit: Option<String>,
     pip_size: Option<String>,
+    feeds: Option<Vec<String>>,
+    #[serde(default)]
+    disabled: bool,
 }
 
 impl SpecRecord {
-    fn resolve(&self, key: &str) -> Result<InstrumentSpec, String> {
+    /// The entry, or `None` for a key the file switches off.
+    fn resolve(&self, key: &str) -> Result<Option<InstrumentSpec>, String> {
         if key.strip_suffix(FAMILY_WILDCARD).is_some_and(str::is_empty) {
             return Err(format!("{key}: a family needs a prefix before `*`"));
         }
+        if self.disabled {
+            return Ok(None);
+        }
+        let required = |field: &str, value: &Option<String>| {
+            value
+                .clone()
+                .ok_or_else(|| format!("{key}: {field} is required"))
+        };
         let positive = |field: &str, text: &str| match Decimal::from_str_exact(text.trim()) {
             Ok(value) if value > Decimal::ZERO => Ok(value),
             _ => Err(format!(
                 "{key}: {field} must be a decimal above zero, got {text:?}"
             )),
         };
-        let currency =
-            Currency::new(&self.currency).ok_or_else(|| format!("{key}: currency is blank"))?;
-        let point_value = positive("point_value", &self.point_value)?;
-        let size_step = positive("size_step", &self.size_step)?;
+        let currency = Currency::new(&required("currency", &self.currency)?)
+            .ok_or_else(|| format!("{key}: currency is blank"))?;
+        let point_value = positive("point_value", &required("point_value", &self.point_value)?)?;
+        let size_step = positive("size_step", &required("size_step", &self.size_step)?)?;
+        let feeds = self.feeds.clone().unwrap_or_default();
+        if feeds.iter().any(|feed| feed.trim().is_empty()) {
+            return Err(format!("{key}: a feed id must not be blank"));
+        }
         let min_size = match &self.min_size {
             Some(text) => positive("min_size", text)?,
             None => size_step,
@@ -182,7 +216,7 @@ impl SpecRecord {
             }
             (None, _) => None,
         };
-        Ok(InstrumentSpec {
+        Ok(Some(InstrumentSpec {
             money: InstrumentMoney {
                 point_value,
                 size_step,
@@ -193,7 +227,8 @@ impl SpecRecord {
             },
             price_unit,
             pip_size,
-        })
+            feeds,
+        }))
     }
 }
 
@@ -218,12 +253,23 @@ impl InstrumentCatalog {
             })?),
             None => None,
         };
-        let entries = file
-            .instruments
-            .iter()
-            .map(|(key, record)| record.resolve(key).map(|spec| (key.clone(), spec)))
-            .collect::<Result<_, _>>()?;
-        Ok(Self { entries, primary })
+        let mut entries = BTreeMap::new();
+        let mut disabled = BTreeSet::new();
+        for (key, record) in &file.instruments {
+            match record.resolve(key)? {
+                Some(spec) => {
+                    entries.insert(key.clone(), spec);
+                }
+                None => {
+                    disabled.insert(key.clone());
+                }
+            }
+        }
+        Ok(Self {
+            entries,
+            disabled,
+            primary,
+        })
     }
 
     /// The shipped catalog with the trader's file laid over it key by key.
@@ -242,6 +288,9 @@ impl InstrumentCatalog {
         };
         match Self::parse(text) {
             Ok(overlay) => {
+                for key in &overlay.disabled {
+                    catalog.entries.remove(key);
+                }
                 catalog.entries.extend(overlay.entries);
                 catalog.primary = overlay.primary.or(catalog.primary);
                 (catalog, None)
@@ -250,20 +299,27 @@ impl InstrumentCatalog {
         }
     }
 
-    /// The entry for `symbol`: its exact key, else the longest family
-    /// matching it.
+    /// The entry for `symbol` on `feed`: its exact key, else the longest
+    /// family matching it — only among entries that price that feed.
     #[must_use]
-    pub fn lookup(&self, symbol: &str) -> Option<&InstrumentSpec> {
-        self.entries.get(symbol).or_else(|| {
-            self.entries
-                .iter()
-                .filter(|(key, _)| {
-                    key.strip_suffix(FAMILY_WILDCARD)
-                        .is_some_and(|prefix| !prefix.is_empty() && symbol.starts_with(prefix))
-                })
-                .max_by_key(|(key, _)| key.len())
-                .map(|(_, spec)| spec)
-        })
+    pub fn lookup(&self, feed: &str, symbol: &str) -> Option<&InstrumentSpec> {
+        let serves =
+            |spec: &InstrumentSpec| spec.feeds.is_empty() || spec.feeds.iter().any(|id| id == feed);
+        self.entries
+            .get(symbol)
+            .filter(|spec| serves(spec))
+            .or_else(|| {
+                self.entries
+                    .iter()
+                    .filter(|(key, spec)| {
+                        serves(spec)
+                            && key.strip_suffix(FAMILY_WILDCARD).is_some_and(|prefix| {
+                                !prefix.is_empty() && symbol.starts_with(prefix)
+                            })
+                    })
+                    .max_by_key(|(key, _)| key.len())
+                    .map(|(_, spec)| spec)
+            })
     }
 
     /// The display the file asks P&L to open on, if it names one.

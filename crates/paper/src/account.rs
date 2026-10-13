@@ -288,6 +288,8 @@ pub struct PaperAccount {
     instrument_money: InstrumentBook,
     /// The instrument catalog and how P&L reads; see [`crate::pnl`].
     pnl: crate::pnl::PnlSettings,
+    /// The tab's feed id: catalog entries price only the feeds they name.
+    feed: String,
     /// Money a launch hook asked for, waiting for the tab to learn which
     /// symbol it opens on. Spent once, on the first symbol.
     hook_money: Option<quantick_sim::InstrumentMoney>,
@@ -403,6 +405,7 @@ impl PaperAccount {
             capital: Capital::new(),
             instrument_money: InstrumentBook::new(),
             pnl: crate::pnl::PnlSettings::default(),
+            feed: String::new(),
             risk_from_hook: false,
             hook_money: None,
             demo: None,
@@ -680,10 +683,9 @@ impl PaperAccount {
         if untouched {
             return None;
         }
-        let realized = self.venue.realized_points();
         Some((
             format!("SIM flat · {}", self.realized_pnl_text()),
-            realized.cmp(&Decimal::ZERO),
+            self.realized_pnl_tint().cmp(&Decimal::ZERO),
         ))
     }
 

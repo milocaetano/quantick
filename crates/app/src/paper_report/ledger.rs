@@ -264,7 +264,9 @@ impl ReportState {
         // strip follows it.
         let totals = if self.sessions.state.view.filter.is_default() {
             let own = LedgerTotals::of_trades(env.pnl, env.symbol, env.session_trades);
-            self.saved_totals.plus(&own)
+            self.saved_totals
+                .reworded(env.pnl, cache.map(|cache| cache.rows.as_slice()))
+                .plus(&own)
         } else {
             let kept = cache.map_or(LedgerTotals::default(), |cache| {
                 LedgerTotals::of_rows(env.pnl, cut.kept.iter().map(|&index| &cache.rows[index]))
@@ -323,7 +325,7 @@ impl ReportState {
         }
         self.sessions
             .draw_filter_status(ui, shown, env.session_trades.len() + saved_len);
-        draw_totals_strip(ui, env.pnl.word(&totals.net), &totals, page, rows_listed);
+        draw_totals_strip(ui, env.pnl.worded(&totals.net), &totals, page, rows_listed);
         self.draw_ledger_disclosure(ui);
         action
     }
@@ -660,7 +662,7 @@ enum TradePick {
 /// and the net points.
 fn draw_totals_strip(
     ui: &mut egui::Ui,
-    net: String,
+    net: (String, rust_decimal::Decimal),
     totals: &LedgerTotals,
     page: LedgerPage,
     rows_listed: usize,
@@ -687,10 +689,10 @@ fn draw_totals_strip(
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
-                egui::RichText::new(net)
+                egui::RichText::new(net.0)
                     .monospace()
                     .strong()
-                    .color(points_color(totals.net.grouped())),
+                    .color(points_color(net.1)),
             );
         });
     });

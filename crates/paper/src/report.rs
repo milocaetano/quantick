@@ -373,6 +373,8 @@ pub struct ReportView {
     pnl_rows: Vec<String>,
     /// The net as the headline reads it: primary figure, then secondary.
     pub net_text: (String, String),
+    /// The sign of the net's leading figure, which its tile is coloured by.
+    pub net_tint: rust_decimal::Decimal,
     /// What the wording above was worded under.
     pnl_key: Option<crate::pnl::PnlKey>,
 }
@@ -431,6 +433,7 @@ impl ReportView {
             report,
             pnl_rows: Vec::new(),
             net_text: (String::new(), String::new()),
+            net_tint: rust_decimal::Decimal::ZERO,
             pnl_key: None,
         }
     }

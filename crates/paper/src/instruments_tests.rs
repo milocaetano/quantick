@@ -23,22 +23,33 @@ fn the_shipped_catalog_prices_the_b3_minis_and_the_offered_crypto() {
         ("BTCUSDT", "1", "USDT"),
         ("ETHUSDT", "1", "USDT"),
     ] {
-        let spec = catalog.lookup(symbol).unwrap_or_else(|| panic!("{symbol}"));
+        let feed = if symbol.starts_with('W') {
+            "metatrader-b3"
+        } else {
+            "binance"
+        };
+        let spec = catalog
+            .lookup(feed, symbol)
+            .unwrap_or_else(|| panic!("{symbol}"));
         assert_eq!(spec.money.point_value, d(point_value), "{symbol}");
         assert_eq!(spec.money.currency.code(), currency, "{symbol}");
         assert_eq!(spec.money.source, MoneySource::Config, "{symbol}");
     }
     assert_eq!(
-        catalog.lookup("BTCUSDT").map(|spec| spec.price_unit),
+        catalog
+            .lookup("binance", "BTCUSDT")
+            .map(|spec| spec.price_unit),
         Some(PriceUnit::Quote)
     );
     assert_eq!(
-        catalog.lookup("WINV26").map(|spec| spec.price_unit),
+        catalog
+            .lookup("metatrader-b3", "WINV26")
+            .map(|spec| spec.price_unit),
         Some(PriceUnit::Points)
     );
     // Forex ships as commented examples only: nothing here knows a broker's
     // contract size.
-    assert!(catalog.lookup("EURUSD").is_none());
+    assert!(catalog.lookup("metatrader-b3", "EURUSD").is_none());
 }
 
 #[test]
@@ -61,7 +72,11 @@ size_step = "1"
 "#,
     )
     .expect("parses");
-    let value = |symbol: &str| catalog.lookup(symbol).map(|spec| spec.money.point_value);
+    let value = |symbol: &str| {
+        catalog
+            .lookup("any", symbol)
+            .map(|spec| spec.money.point_value)
+    };
     assert_eq!(value("WINV26"), Some(d("0.25")));
     assert_eq!(value("WINZ26"), Some(d("0.20")));
     assert_eq!(value("WDOX26"), Some(d("1")));
@@ -80,7 +95,7 @@ size_step = "1"
 "#,
     )
     .expect("parses");
-    let spec = catalog.lookup("ES").expect("ES");
+    let spec = catalog.lookup("any", "ES").expect("ES");
     assert_eq!(spec.money.min_size, Decimal::ONE);
     assert_eq!(spec.price_unit, PriceUnit::Points);
     assert_eq!(spec.pip_size, None);
@@ -126,4 +141,36 @@ fn a_bad_entry_is_refused_by_name() {
         let error = InstrumentCatalog::parse(text).expect_err(needle);
         assert!(error.contains(needle), "{error:?} should name {needle:?}");
     }
+}
+
+#[test]
+fn a_family_prices_only_the_feeds_it_names() {
+    let catalog = InstrumentCatalog::parse(SHIPPED).expect("shipped catalog parses");
+    // `WIN*` and `DOL*` are prefixes, and Binance lists pairs that share
+    // them: no B3 point value may read onto a crypto pair.
+    assert!(catalog.lookup("binance", "WINUSDT").is_none());
+    assert!(catalog.lookup("binance", "DOLOUSDT").is_none());
+    let win = catalog
+        .lookup("metatrader-b3", "WINZ25")
+        .expect("the mini index on its own feed");
+    assert_eq!(win.money.point_value, d("0.20"));
+    assert_eq!(win.money.currency.code(), "BRL");
+    assert!(
+        catalog.lookup("hyperliquid", "BTCUSDT").is_none(),
+        "a Binance pair is priced on Binance only"
+    );
+}
+
+#[test]
+fn a_trader_overlay_switches_a_shipped_key_off() {
+    let (catalog, warning) = InstrumentCatalog::layered(
+        SHIPPED,
+        Some("version = 1\n[instruments.\"WIN*\"]\ndisabled = true\n"),
+    );
+    assert_eq!(warning, None);
+    assert!(catalog.lookup("metatrader-b3", "WINZ25").is_none());
+    assert!(
+        catalog.lookup("metatrader-b3", "WDOX25").is_some(),
+        "only the key named goes"
+    );
 }

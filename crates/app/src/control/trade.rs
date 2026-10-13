@@ -360,8 +360,7 @@ fn set_risk<P: TabsPort + TabsMutPort + PaperPort + ?Sized>(
     // so it describes the instrument the caller was looking at.
     let instrument_currency = paper
         .account()
-        .instrument_money()
-        .get(paper.account().symbol())
+        .symbol_money()
         .map(|money| money.currency.clone());
     let mut risk = paper.account().risk_settings().clone();
     risk.basis = basis;

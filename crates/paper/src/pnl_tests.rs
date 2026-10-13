@@ -57,6 +57,7 @@ fn trade(symbol: &str, pnl_points: &str, quantity: &str) -> (TradePnl, String) {
     let book = PnlBook {
         declared: &declared,
         catalog: &catalog,
+        feed: "",
     };
     let units = book.units(symbol);
     let pnl = TradePnl::of(d(pnl_points), d(quantity), &units);
@@ -74,6 +75,7 @@ fn win_two_contracts_read_per_contract_grouped_and_in_reais() {
     let book = PnlBook {
         declared: &declared,
         catalog: &catalog,
+        feed: "",
     };
     let units = book.units("WINV26");
     let pnl = TradePnl::of(d("400"), d("2"), &units);
@@ -172,6 +174,7 @@ fn a_declared_point_value_wins_over_the_config() {
     let book = PnlBook {
         declared: &declared,
         catalog: &catalog,
+        feed: "",
     };
     let units = book.units("WINV26");
     let money = units.money.expect("declared money");
@@ -191,11 +194,16 @@ fn totals_sum_per_currency_and_never_partially() {
     let book = PnlBook {
         declared: &declared,
         catalog: &catalog,
+        feed: "",
     };
     let mut reais = PnlTotal::default();
     for (pnl_points, quantity) in [("400", "2"), ("-100", "1")] {
         let units = book.units("WINV26");
-        reais.add(&TradePnl::of(d(pnl_points), d(quantity), &units), &units);
+        reais.add(
+            "WINV26",
+            &TradePnl::of(d(pnl_points), d(quantity), &units),
+            &units,
+        );
     }
     assert_eq!(reais.fmt(PnlPrimary::Money), "+60.00 BRL");
     assert_eq!(reais.fmt(PnlPrimary::PointsPerContract), "+100 pts/ct");
@@ -203,12 +211,12 @@ fn totals_sum_per_currency_and_never_partially() {
 
     let mut mixed = reais.clone();
     let btc = book.units("BTCUSDT");
-    mixed.add(&TradePnl::of(d("60"), d("0.5"), &btc), &btc);
+    mixed.add("BTCUSDT", &TradePnl::of(d("60"), d("0.5"), &btc), &btc);
     assert_eq!(mixed.fmt(PnlPrimary::Money), "+60.00 BRL / +60.00 USDT");
 
     let mut unknown = reais;
     let gold = book.units("XAUUSD");
-    unknown.add(&TradePnl::of(d("30"), d("3"), &gold), &gold);
+    unknown.add("XAUUSD", &TradePnl::of(d("30"), d("3"), &gold), &gold);
     assert_eq!(unknown.fmt(PnlPrimary::Money), UNSET_MONEY);
 }
 
@@ -248,6 +256,7 @@ fn the_reader_leads_with_the_chosen_figure_and_keeps_the_other_beside_it() {
     let book = PnlBook {
         declared: &declared,
         catalog: &catalog,
+        feed: "",
     };
     let reader = PnlReader {
         book,
@@ -279,8 +288,8 @@ fn the_reader_leads_with_the_chosen_figure_and_keeps_the_other_beside_it() {
     );
     assert_eq!(
         reader.total([("WINZ26", &win), ("XYZ", &closed("5", "1"))]),
-        "+405 pts · — set pt value",
-        "a money total with an unpriced trade is never a partial sum"
+        "— set pt value · mixed units",
+        "a money total with an unpriced trade is never a partial sum, and WIN          points never add to another instrument's"
     );
     assert_eq!(
         reader.sum([("WINZ26", &win)]).unit_label(PnlPrimary::Money),
@@ -295,11 +304,162 @@ fn a_missing_trader_catalog_loads_the_shipped_one_silently() {
         Some(std::path::Path::new("no-such-instruments.toml")),
         Some("points_per_contract"),
     );
-    assert!(settings.catalog.lookup("WINZ26").is_some());
+    assert!(settings.catalog.lookup("metatrader-b3", "WINZ26").is_some());
     assert_eq!(settings.chosen, Some(PnlPrimary::PointsPerContract));
     let settings = PnlSettings::load(CATALOG, None, Some("dollars"));
     assert_eq!(
         settings.chosen, None,
         "an unknown stored token is no choice"
     );
+}
+
+const SHIPPED: &str = include_str!("../../app/config/instruments.toml");
+
+fn shipped() -> InstrumentCatalog {
+    InstrumentCatalog::parse(SHIPPED).expect("shipped catalog parses")
+}
+
+fn money(amount: &str, code: &str) -> Money {
+    Money::new(d(amount), Currency::new(code).expect("currency"))
+}
+
+#[test]
+fn one_lookup_answers_sizing_the_ticket_step_and_the_readouts() {
+    let catalog = shipped();
+    let mut declared = InstrumentBook::new();
+    let book = PnlBook {
+        declared: &declared,
+        catalog: &catalog,
+        feed: "binance",
+    };
+    let btc = book.money("BTCUSDT").expect("the catalog knows BTCUSDT");
+    assert_eq!(
+        btc.size_step,
+        d("0.00001"),
+        "never a step of one whole coin"
+    );
+    assert_eq!(btc.currency.code(), "USDT");
+    assert_eq!(btc.source, MoneySource::Config);
+    let settings = crate::risk_sizing::RiskSettings::default();
+    let capital = crate::risk_sizing::Capital::new();
+    let context = crate::risk_sizing::RiskContext {
+        settings: &settings,
+        capital: &capital,
+        book,
+        symbol: "BTCUSDT",
+    };
+    assert_eq!(context.money(), Some(btc), "sizing reads the same record");
+    assert_eq!(book.units("BTCUSDT").money, Some(btc), "so do the readouts");
+
+    let mut mine = btc.clone();
+    mine.size_step = d("0.001");
+    mine.source = MoneySource::Declared;
+    declared.insert("BTCUSDT".to_owned(), mine);
+    let book = PnlBook {
+        declared: &declared,
+        catalog: &catalog,
+        feed: "binance",
+    };
+    assert_eq!(
+        book.money("BTCUSDT").map(|money| money.size_step),
+        Some(d("0.001")),
+        "a declared record outranks the catalog"
+    );
+}
+
+#[test]
+fn small_money_never_reads_zero_and_zero_never_reads_negative() {
+    assert_eq!(fmt_money(&money("0.004", "USDT")), "+0.004 USDT");
+    assert_eq!(fmt_money(&money("-0.0012", "USDT")), "-0.0012 USDT");
+    assert_eq!(fmt_money(&money("-0.00", "BRL")), "0.00 BRL");
+    assert_eq!(fmt_money(&money("0", "BRL")), "0.00 BRL");
+    assert_eq!(fmt_money(&money("80", "BRL")), "+80.00 BRL");
+    assert_eq!(fmt_money(&money("-1234.567", "BRL")), "-1234.57 BRL");
+}
+
+fn b3_reader<'a>(
+    declared: &'a InstrumentBook,
+    catalog: &'a InstrumentCatalog,
+    settings: &'a PnlSettings,
+) -> PnlReader<'a> {
+    PnlReader {
+        book: PnlBook {
+            declared,
+            catalog,
+            feed: "metatrader-b3",
+        },
+        settings,
+    }
+}
+
+#[test]
+fn win_and_wdo_points_never_sum_into_one_total() {
+    let catalog = shipped();
+    let declared = InstrumentBook::new();
+    let settings = PnlSettings {
+        chosen: Some(PnlPrimary::PointsPerContract),
+        ..PnlSettings::default()
+    };
+    let reader = b3_reader(&declared, &catalog, &settings);
+    let win = closed("400", "2");
+    let wdo = closed("10", "1");
+    let mixed = reader.sum([("WINZ25", &win), ("WDOX25", &wdo)]);
+    assert!(mixed.mixed_units());
+    assert_eq!(mixed.fmt(PnlPrimary::PointsPerContract), "mixed units");
+    assert_eq!(mixed.fmt(PnlPrimary::PointsTimesQty), "mixed units");
+    assert_eq!(
+        reader.word(&mixed),
+        "+180.00 BRL · mixed units",
+        "falls back to money per currency, labelled"
+    );
+    let rolled = reader.sum([("WINV25", &win), ("WINZ25", &win)]);
+    assert!(!rolled.mixed_units(), "two WIN contracts are one unit");
+    assert_eq!(rolled.fmt(PnlPrimary::PointsPerContract), "+400 pts/ct");
+}
+
+#[test]
+fn a_total_is_tinted_by_the_figure_it_shows() {
+    let catalog = shipped();
+    let declared = InstrumentBook::new();
+    // +10 points on one contract, then -3 points on five: per contract
+    // +7, but the account lost 5 points, which is -1.00 BRL.
+    let trades = [closed("10", "1"), closed("-15", "5")];
+    let rows = trades.iter().map(|trade| ("WINZ25", trade));
+    let mut settings = PnlSettings {
+        chosen: Some(PnlPrimary::PointsPerContract),
+        ..PnlSettings::default()
+    };
+    let total = b3_reader(&declared, &catalog, &settings).sum(rows.clone());
+    assert!(b3_reader(&declared, &catalog, &settings).tint(&total) > Decimal::ZERO);
+    settings.chosen = Some(PnlPrimary::Money);
+    let reader = b3_reader(&declared, &catalog, &settings);
+    assert_eq!(reader.word(&total), "-1.00 BRL · +7 pts/ct");
+    assert!(
+        reader.tint(&total) < Decimal::ZERO,
+        "the money shown is a loss"
+    );
+}
+
+#[test]
+fn the_chart_label_is_the_ticket_lead_figure() {
+    let catalog = shipped();
+    let declared = InstrumentBook::new();
+    for (primary, compact) in [
+        (PnlPrimary::Money, "+80.00 BRL"),
+        (PnlPrimary::PointsPerContract, "+200 pts × 2"),
+        (PnlPrimary::PointsTimesQty, "+400 pts"),
+    ] {
+        let settings = PnlSettings {
+            chosen: Some(primary),
+            ..PnlSettings::default()
+        };
+        let reader = b3_reader(&declared, &catalog, &settings);
+        assert_eq!(reader.compact("WINZ25", d("400"), d("2")), compact);
+        assert!(
+            reader
+                .trade("WINZ25", d("400"), d("2"))
+                .starts_with(&format!("{compact} · ")),
+            "the ticket leads with the same figure"
+        );
+    }
 }

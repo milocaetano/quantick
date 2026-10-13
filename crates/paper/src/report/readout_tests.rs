@@ -87,6 +87,7 @@ impl World {
             book: PnlBook {
                 declared: &self.declared,
                 catalog: &self.catalog,
+                feed: "",
             },
             settings: &self.settings,
         }
@@ -127,7 +128,7 @@ fn the_ledger_totals_keep_each_currency_apart() {
     );
     assert_eq!(
         world.reader().word(&totals.net),
-        "+80.00 BRL / +60.00 USDT · +320 mixed units/ct"
+        "+80.00 BRL / +60.00 USDT · mixed units"
     );
     assert_eq!(
         LedgerTotals::default().plus(&totals),
@@ -137,7 +138,7 @@ fn the_ledger_totals_keep_each_currency_apart() {
     let session = LedgerTotals::of_trades(world.reader(), "WINZ26", [&rows[0].trade]);
     assert_eq!(
         world.reader().word(&totals.plus(&session).net),
-        "+160.00 BRL / +60.00 USDT · +520 mixed units/ct",
+        "+160.00 BRL / +60.00 USDT · mixed units",
         "the session's half folds into the saved one per currency"
     );
     assert_eq!(LedgerTotals::default().win_rate(), None, "0/0 is not 0%");
@@ -154,13 +155,13 @@ fn a_ledger_total_with_an_unpriced_trade_is_never_a_partial_money_sum() {
     assert_eq!(totals.net.money(), None);
     assert_eq!(
         world.reader().word(&totals.net),
-        format!("{UNSET_MONEY} · +205 pts/ct")
+        format!("{UNSET_MONEY} · mixed units")
     );
     let world = World::new(None);
     assert_eq!(
         world.reader().word(&totals.net),
-        format!("+205 pts/ct · {UNSET_MONEY}"),
-        "with no choice made, an unpriced total leads with points"
+        format!("{UNSET_MONEY} · mixed units"),
+        "points of two instruments never add up, choice or not"
     );
 }
 
@@ -313,4 +314,36 @@ fn a_worded_view_leads_each_row_and_the_net_with_the_chosen_figure() {
     let view = cut().with_pnl(grouped.reader());
     assert_eq!(view.trade_text(0), "+400 pts · +80.00 BRL");
     assert_eq!(view.equity.text(3), "+350 pts");
+}
+
+#[test]
+fn saved_totals_are_summed_again_when_the_money_changes() {
+    let rows = vec![row("WINZ26", 1_000, "400", "2")];
+    let world = World::new(None);
+    let mut totals = LedgerTotals::of_rows(world.reader(), &rows);
+    let eighty = BTreeMap::from([(quantick_sim::Currency::new("BRL").expect("BRL"), d("80"))]);
+    assert_eq!(totals.net.money(), Some(&eighty));
+    totals.reworded(world.reader(), Some(&rows));
+    assert_eq!(totals.net.money(), Some(&eighty), "same reader, same sum");
+
+    let mut declared = World::new(None);
+    declared.declared.insert(
+        "WINZ26".to_owned(),
+        quantick_sim::InstrumentMoney {
+            point_value: d("1"),
+            size_step: d("1"),
+            min_size: d("1"),
+            max_size: None,
+            currency: quantick_sim::Currency::new("BRL").expect("BRL"),
+            source: quantick_sim::MoneySource::Declared,
+        },
+    );
+    totals.reworded(declared.reader(), Some(&rows));
+    let four_hundred =
+        BTreeMap::from([(quantick_sim::Currency::new("BRL").expect("BRL"), d("400"))]);
+    assert_eq!(
+        totals.net.money(),
+        Some(&four_hundred),
+        "a declared point value re-sums the saved half"
+    );
 }

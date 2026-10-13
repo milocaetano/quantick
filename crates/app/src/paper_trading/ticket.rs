@@ -163,7 +163,7 @@ impl PaperTrading {
         let card = PositionCard {
             position: position.as_ref(),
             mark: venue.mark_price(),
-            realized: venue.realized_points(),
+            realized: self.account.realized_pnl_tint(),
             realized_text: self.account.realized_pnl_text(),
             open_text: self.account.open_pnl_text(),
             brackets: self.account.bracket_pnl(),
@@ -238,6 +238,7 @@ impl PaperTrading {
                 settings: editor.settings,
                 capital: editor.capital,
                 book: editor.book,
+                seeded: editor.seeded,
                 amount_text: &mut self.desk.ticket.risk_amount_text,
                 percent_text: &mut self.desk.ticket.risk_percent_text,
                 capital_text: &mut self.desk.ticket.capital_text,
@@ -372,8 +373,7 @@ impl PaperTrading {
     pub(super) fn step_quantity(&mut self, notches: Decimal) {
         let (unit, floor) = self
             .account
-            .instrument_money()
-            .get(self.account.symbol())
+            .symbol_money()
             .map_or((Decimal::ONE, Decimal::ONE), |money| {
                 (money.size_step, money.min_size)
             });
@@ -496,7 +496,7 @@ impl PaperTrading {
     fn draw_session_summary(&mut self, ui: &mut egui::Ui) -> Option<TradingTabAction> {
         let mut action = None;
         ui.horizontal(|ui| {
-            let realized = self.account.venue().realized_points();
+            let realized = self.account.realized_pnl_tint();
             ui.label(
                 egui::RichText::new(self.account.realized_pnl_text())
                     .monospace()

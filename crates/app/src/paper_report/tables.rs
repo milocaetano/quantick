@@ -34,7 +34,7 @@ pub(super) fn draw_report_tiles(ui: &mut egui::Ui, view: &ReportView) {
             "NET",
             view.net_text.0.clone(),
             "",
-            points_color(report.net_points),
+            points_color(view.net_tint),
             format!("{} trades · {}", report.trades, view.net_text.1),
         );
         draw_tile(

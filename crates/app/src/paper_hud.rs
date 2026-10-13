@@ -17,9 +17,7 @@ use quantick_engine::Side;
 use rust_decimal::prelude::ToPrimitive;
 
 use crate::chart::PriceScale;
-use crate::paper_chrome::{
-    PositionSummary, fmt_decimal, fmt_signed_points, points_color, position_word,
-};
+use crate::paper_chrome::{PositionSummary, fmt_decimal, points_color, position_word};
 use crate::paper_trading::PaperTrading;
 use crate::theme;
 
@@ -121,14 +119,16 @@ pub fn draw(
                         );
                         if let Some(open) = summary.open_points {
                             ui.label(
-                                egui::RichText::new(format!("{} pts", fmt_signed_points(open)))
-                                    .monospace()
-                                    .strong()
-                                    .color(points_color(open)),
+                                egui::RichText::new(
+                                    paper.account().pnl_compact(open, summary.quantity),
+                                )
+                                .monospace()
+                                .strong()
+                                .color(points_color(open)),
                             )
                             .on_hover_text(
-                                "open profit at the last print, in points \
-                                 (price units × quantity)",
+                                "open profit at the last print, in the figure the ticket \
+                                 leads with",
                             );
                         }
                     });
