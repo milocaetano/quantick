@@ -133,6 +133,7 @@ impl<T: PartialEq> PartialEq for Drawing<T> {
 /// for the tool when there is one, the built-in start otherwise. Both halves
 /// travel together because a saved look is one thing to a trader, not a style
 /// and a payload.
+#[derive(Debug)]
 pub struct NewDrawing {
     pub style: DrawingStyle,
     pub payload: Box<dyn DrawingPayload>,

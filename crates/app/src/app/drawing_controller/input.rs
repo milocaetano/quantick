@@ -252,7 +252,8 @@ impl DrawingController {
                     effects.note_with_undo(format!("{label} deleted."), now);
                 }
                 DrawingEffect::ConfirmDelete => self.chrome.set_delete_confirm(true),
-                DrawingEffect::HistoryReplaced => {}
+                // A delete answers nothing else.
+                _ => {}
             }
         }
     }
