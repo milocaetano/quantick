@@ -22,6 +22,7 @@ use quantick_feed_binance::{
     },
     fetch_history, run_with_reconnect,
 };
+use quantick_sources::trade_admission::{RecentTradeIds, TradeAdmission};
 
 use super::{
     FeedCommand, FeedEvent, FeedHandle, FeedNotice, connection_notice, initial_backfill_target,
@@ -107,8 +108,10 @@ pub(crate) async fn feed_task(
     let market = http.market();
     // 1. Backfill recent history so the chart opens populated. Remember the
     //    earliest agg_id so we can page further back on demand.
+    let mut continuity = crate::continuity::BinanceContinuity::default();
+    let mut admission = RecentTradeIds::default();
     let ControlFlow::Continue((earliest_id, history_retention_limited)) =
-        initial_backfill(&http, &symbol, &tx).await
+        initial_backfill(&http, &symbol, &tx, &mut admission, &mut continuity).await
     else {
         return; // UI gone
     };
@@ -144,7 +147,9 @@ pub(crate) async fn feed_task(
         book_capture: None,
         ohlcv_tx,
         ohlcv_task: None,
-        continuity: crate::continuity::BinanceContinuity::default(),
+        continuity,
+        admission,
+        stale_notice_sent: false,
         ever_connected: false,
     };
 
@@ -188,6 +193,8 @@ async fn initial_backfill(
     http: &BinanceHttp,
     symbol: &str,
     tx: &mpsc::Sender<FeedEvent>,
+    admission: &mut RecentTradeIds,
+    continuity: &mut crate::continuity::BinanceContinuity,
 ) -> ControlFlow<(), (Option<u64>, bool)> {
     let target = initial_backfill_target();
     match backfill_with_boundary(http, symbol, target).await {
@@ -195,6 +202,10 @@ async fn initial_backfill(
             let retention_limited = batch.retention_limited;
             let trades = batch.trades;
             let earliest_id = trades.first().map(|t| t.agg_id);
+            for trade in &trades {
+                admission.observe(trade.agg_id);
+                continuity.observe(trade);
+            }
             info!(target: "quantick::app", symbol, count = trades.len(), target, "backfill ready");
             if tx.send(FeedEvent::Backfilled(trades)).await.is_err() {
                 return ControlFlow::Break(()); // UI gone
@@ -230,6 +241,8 @@ struct BinanceLoop {
     ohlcv_tx: mpsc::Sender<OhlcvReply>,
     ohlcv_task: Option<JoinHandle<()>>,
     continuity: crate::continuity::BinanceContinuity,
+    admission: RecentTradeIds,
+    stale_notice_sent: bool,
     ever_connected: bool,
 }
 
@@ -254,6 +267,23 @@ impl BinanceLoop {
     async fn on_trade(&mut self, trade: Trade) -> ControlFlow<()> {
         if let Some(event) = self.continuity.observe(&trade) {
             send_or_break(&self.tx, FeedEvent::Continuity(event)).await?;
+        }
+        match self.admission.observe(trade.agg_id) {
+            TradeAdmission::Accept => {}
+            TradeAdmission::Duplicate => return ControlFlow::Continue(()),
+            TradeAdmission::TooOld => {
+                warn!(target: "quantick::app", event_code = "BINANCE_TRADE_OUTSIDE_ADMISSION_WINDOW",
+                    symbol = self.symbol, agg_id = trade.agg_id,
+                    "old execution not admitted: duplicate status cannot be verified");
+                if !self.stale_notice_sent {
+                    self.stale_notice_sent = true;
+                    send_or_break(&self.notice_tx, FeedNotice::attention(
+                        "Binance delivered executions older than the reconnect ID window",
+                        "Old arrivals were excluded because duplicate status cannot be verified. Recent unseen reordered executions are retained.",
+                    )).await?;
+                }
+                return ControlFlow::Continue(());
+            }
         }
         send_or_break(&self.tx, FeedEvent::Live(trade)).await // UI gone
     }

@@ -21,6 +21,8 @@
 //! states the rule in full.
 
 pub mod binance;
+#[cfg(test)]
+mod binance_admission_tests;
 pub use quantick_sources::candle_base;
 pub use quantick_sources::candles;
 pub mod clock;

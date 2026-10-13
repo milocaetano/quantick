@@ -27,6 +27,8 @@ pub enum DepthSnapshotError {
     },
     /// Successful response with an invalid depth payload.
     Decode(DepthWireError),
+    /// Invalid or absent instrument price-step metadata.
+    Metadata(String),
 }
 
 impl std::fmt::Display for DepthSnapshotError {
@@ -37,6 +39,7 @@ impl std::fmt::Display for DepthSnapshotError {
                 write!(f, "depth snapshot HTTP {status}: {body}")
             }
             Self::Decode(error) => write!(f, "depth snapshot decode error: {error}"),
+            Self::Metadata(error) => write!(f, "depth metadata error: {error}"),
         }
     }
 }
@@ -46,6 +49,18 @@ impl std::error::Error for DepthSnapshotError {}
 /// A source of current Binance-style depth snapshots.
 #[allow(async_fn_in_trait)]
 pub trait DepthSnapshotSource {
+    /// Optional exact venue price step, fetched once per socket generation.
+    /// Sources without instrument metadata retain their existing behavior.
+    ///
+    /// # Errors
+    /// Returns transport, HTTP-status or invalid metadata errors.
+    async fn fetch_price_step(
+        &self,
+        _symbol: &str,
+    ) -> Result<Option<rust_decimal::Decimal>, DepthSnapshotError> {
+        Ok(None)
+    }
+
     /// Fetch up to `limit` current levels per side for `symbol`.
     ///
     /// # Errors
@@ -103,6 +118,40 @@ impl Default for BinanceDepthHttp {
 }
 
 impl DepthSnapshotSource for BinanceDepthHttp {
+    async fn fetch_price_step(
+        &self,
+        symbol: &str,
+    ) -> Result<Option<rust_decimal::Decimal>, DepthSnapshotError> {
+        let wire_symbol = self.market.wire_symbol(symbol);
+        let url = format!(
+            "{}{}/exchangeInfo",
+            self.base_url,
+            self.market.rest_prefix()
+        );
+        let response = self
+            .client
+            .get(url)
+            .query(&[("symbol", wire_symbol.as_str())])
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|error| DepthSnapshotError::Transport(error.to_string()))?;
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|error| DepthSnapshotError::Transport(error.to_string()))?;
+        if !status.is_success() {
+            return Err(DepthSnapshotError::HttpStatus {
+                status: status.as_u16(),
+                body,
+            });
+        }
+        super::metadata::price_step(&body, &wire_symbol)
+            .map(Some)
+            .map_err(DepthSnapshotError::Metadata)
+    }
+
     async fn fetch_depth(
         &self,
         symbol: &str,

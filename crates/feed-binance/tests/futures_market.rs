@@ -94,6 +94,45 @@ async fn perpetual_depth_and_candles_share_the_selected_market() {
     );
 }
 
+#[tokio::test]
+async fn each_market_reads_its_price_filter_without_using_display_precision() {
+    for (market, display, prefix) in [
+        (BinanceMarket::Spot, "BTCUSDT", "/api/v3"),
+        (BinanceMarket::UsdM, "BTCUSDT.p", "/fapi/v1"),
+    ] {
+        let (base, request) = response(r#"{"symbols":[{"symbol":"BTCUSDT","pricePrecision":2,"filters":[{"filterType":"LOT_SIZE","stepSize":"0.001"},{"filterType":"PRICE_FILTER","tickSize":"0.10"}]}]}"#).await;
+        let source = BinanceDepthHttp::with_market_base(market, base);
+        assert_eq!(
+            source.fetch_price_step(display).await.unwrap(),
+            Some(rust_decimal::Decimal::new(1, 1))
+        );
+        assert_eq!(
+            request.await.unwrap(),
+            format!("GET {prefix}/exchangeInfo?symbol=BTCUSDT HTTP/1.1")
+        );
+    }
+}
+
+#[tokio::test]
+async fn unavailable_metadata_retains_typed_errors_instead_of_a_guessed_tick() {
+    let (base, request) = response_with_status("rate limited", "429 Too Many Requests").await;
+    let source = BinanceDepthHttp::with_market_base(BinanceMarket::UsdM, base);
+    assert!(matches!(
+        source.fetch_price_step("BTCUSDT.p").await,
+        Err(quantick_feed_binance::depth::DepthSnapshotError::HttpStatus { status: 429, .. })
+    ));
+    request.await.unwrap();
+    let (base, request) = response(r#"{"symbols":[]}"#).await;
+    let source = BinanceDepthHttp::with_market_base(BinanceMarket::Spot, base);
+    assert!(matches!(
+        source.fetch_price_step("BTCUSDT").await,
+        Err(quantick_feed_binance::depth::DepthSnapshotError::Metadata(
+            _
+        ))
+    ));
+    request.await.unwrap();
+}
+
 fn synchronizer() -> DepthSynchronizer {
     let mut sync = DepthSynchronizer::for_market("BTCUSDT.p", 1, BinanceMarket::UsdM);
     let snapshot =

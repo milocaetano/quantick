@@ -256,14 +256,18 @@ async fn benchmark_contiguous_binance_delivery() {
             let (tx, mut rx) = mpsc::channel(8);
             let mut socket_tracker = quantick_feed_binance::ContinuityTracker::new();
             let mut host_tracker = BinanceContinuity::default();
+            let mut admission = quantick_sources::trade_admission::RecentTradeIds::default();
             let start = Instant::now();
             for id in 0..PRINTS {
                 let mut print =
                     quantick_feed_binance::stream::decode_text(black_box(FRAME)).unwrap();
                 print.agg_id = id;
                 black_box(socket_tracker.observe(&print));
-                if candidate && let Some(event) = host_tracker.observe(&print) {
+                if let Some(event) = host_tracker.observe(&print) {
                     tx.send(FeedEvent::Continuity(event)).await.unwrap();
+                }
+                if candidate {
+                    black_box(admission.observe(print.agg_id));
                 }
                 tx.send(FeedEvent::Live(print)).await.unwrap();
                 black_box(rx.recv().await);
@@ -279,7 +283,7 @@ async fn benchmark_contiguous_binance_delivery() {
         values.sort_by(f64::total_cmp);
     }
     println!(
-        "contiguous Binance decode/tracker/channel, {PRINTS} prints x20: baseline_median_ns={:.2} candidate_median_ns={:.2}",
+        "contiguous Binance decode/continuity/channel versus added ID admission, {PRINTS} prints x20: baseline_median_ns={:.2} candidate_median_ns={:.2}",
         (timings[0][9] + timings[0][10]) / 2.0,
         (timings[1][9] + timings[1][10]) / 2.0
     );

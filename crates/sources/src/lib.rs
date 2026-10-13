@@ -18,3 +18,4 @@ pub mod history_reach;
 pub mod history_run;
 pub mod ohlcv;
 pub mod recovery;
+pub mod trade_admission;
