@@ -31,6 +31,6 @@ control-handlers consumed by `app` only; the control handler families over headl
 operability consumed by `app` only; the behaviour-to-capability table and its drift check, pure data by design (#542). Open: a generator or `mcp` could read it without the window.
 
 # `anchored-studies` left the list in #660, gaining `drawings` as a second
-# consumer. `drawings` joined it the same change.
-drawings consumed by `app` only; chart drawings under Model-View-Update, moving out of `app` in #659 so the headless guard scans them. Open: `backtest` or `mcp` could read a mark store without the window.
+# consumer. `drawings` joined it the same change, and left it when the
+# annotate handlers in `control-handlers` began folding through its update.
 session consumed by `app` only; one tab's reaching back (venue candles, trade-history paging) behind a command bus, moved out of `app` so its decisions are headless and one entry serves the toolbar and the control plane. Open: `mcp` or a test host could drive a tab session over a fake window.
