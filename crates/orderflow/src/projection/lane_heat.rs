@@ -5,8 +5,9 @@
 //! It used to be part of the settled half, which is re-cut at most once per
 //! projection interval: between two cuts the tape's bubbles rolled on the
 //! frame's clock while its book stood still on the clock of the last cut, and
-//! the newest confirmations waited up to an interval to be drawn. The tape's
-//! window is short, so reading just that window each frame is cheap.
+//! the newest confirmations waited up to an interval to be drawn. Native rows
+//! reuse the captured RLE intervals directly, including in a five-minute lane;
+//! only wider display rows require another quantity sweep.
 
 use rust_decimal::Decimal;
 
@@ -15,6 +16,8 @@ use super::model::{HeatmapCell, PriceWindow};
 use crate::grouping::{EffectiveGrouping, GroupingWindow, sweep_grouped_runs};
 use crate::history::LiquidityHistory;
 use crate::timeline::BarTimeline;
+
+mod native_runs;
 
 /// The longest stretch the live book is carried past its last confirmation.
 ///
@@ -85,25 +88,31 @@ pub(super) fn project_lane_heat(
         || history.latest_book_ms().unwrap_or(lane_end_ms),
         |carry| carry.until_ms,
     );
-    let grouped = sweep_grouped_runs(
-        history.runs_intersecting(start_ms, lane_end_ms),
-        history.coverage_segments(),
-        grouping,
-        GroupingWindow {
-            start_ms,
-            end_ms: lane_end_ms,
-            open_run_end_ms,
-            price_low: prices.low,
-            price_high: prices.high,
-        },
-    );
+    let window = GroupingWindow {
+        start_ms,
+        end_ms: lane_end_ms,
+        open_run_end_ms,
+        price_low: prices.low,
+        price_high: prices.high,
+    };
+    let runs = if grouping.multiple == 1 && grouping.bucket_width == config.price_grouping {
+        native_runs::project(history, window)
+    } else {
+        sweep_grouped_runs(
+            history.runs_intersecting(start_ms, lane_end_ms),
+            history.coverage_segments(),
+            grouping,
+            window,
+        )
+        .runs
+    };
     let x = |time_ms: i64| {
         timeline
             .locate_in_lane_clamped(time_ms)
             .map(|position| position.normalized)
     };
-    let mut drafts = Vec::with_capacity(grouped.runs.len());
-    for run in &grouped.runs {
+    let mut drafts = Vec::with_capacity(runs.len());
+    for run in &runs {
         let Some((y0, y1)) = bucket_rows(run.price_bucket, grouping, prices) else {
             continue;
         };
