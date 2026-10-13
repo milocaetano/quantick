@@ -1365,7 +1365,10 @@ mod tests {
             b3.bubble_preset_for("WDO$N").as_deref(),
             Some("live lane pie")
         );
-        assert_eq!(binance.bubble_preset_for("BTCUSDT").as_deref(), None);
+        assert_eq!(
+            binance.bubble_preset_for("BTCUSDT").as_deref(),
+            Some("Binance BTC Spot spheres")
+        );
         assert_eq!(hyperliquid.bubble_preset_for("BTC").as_deref(), None);
 
         // The default open is the split: timeframe context beside the flow

@@ -172,3 +172,62 @@ fn short_tape_axes_keep_extreme_forming_discs_whole_without_moving_their_price()
         }
     }
 }
+
+/// A native tape uses one clock for discs, factual reduction fronts and L2 picking.
+#[test]
+fn native_book_and_reductions_share_the_bubble_time_axis() {
+    for width in [100.0, 600.0] {
+        for fraction in [0.0, 0.01, 0.1, 0.9, 1.0] {
+            let viewport = Viewport::new();
+            let rect = egui::Rect::from_min_size(egui::pos2(20.0, 30.0), egui::vec2(width, 400.0));
+            let mut config = HeatmapConfig::default();
+            config.volume_dots.enabled = true;
+            config.live_lane.native_tape = true;
+            let mut style = style_for(&config);
+            style.bubbles.max_radius = 48.0;
+            let dot = mark(1, true, 10, fraction, 0.5);
+            let frame = projection(vec![dot]);
+            let layout = ProjectedLayout::new(rect, &viewport, 0, 0, 1, rect.width());
+            let context = RenderContext::new(&frame, layout, &style);
+            let geometry = quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
+                width,
+                rect.height(),
+                &style.sanitized().bubbles,
+            );
+            let expected = rect.left() + geometry.x(fraction);
+            let mut held = projection(Vec::new());
+            held.volume_dots = false;
+            let held_context = RenderContext::new(&held, layout.with_lane_only(), &style);
+            assert!(
+                (held_context.layout.x(fraction) - expected).abs() < 0.001,
+                "a held book keeps the same native inset without aggression primitives"
+            );
+            let front = context.layout.event_band(fraction, 0.4, 0.6, 1.0);
+            let hit = context.layout.heat_cell_rect(fraction, 1.0, 0.4, 0.6, 1.0);
+            assert!((front.x - expected).abs() < 0.001);
+            assert!((hit.left() - expected).abs() < 0.001);
+            let ctx = egui::Context::default();
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                draw_aggression_bubbles(&ctx.layer_painter(egui::LayerId::background()), &context);
+            });
+            let circle = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Circle(circle) if circle.fill != egui::Color32::TRANSPARENT => {
+                        Some(circle)
+                    }
+                    _ => None,
+                })
+                .expect("the factual native bubble is drawn");
+            assert!(
+                (circle.center.x - front.x).abs() < 0.001,
+                "book consumption and bubble must occupy the same instant"
+            );
+            assert!(
+                hit.contains(circle.center),
+                "the painted cell is the hovered cell"
+            );
+        }
+    }
+}

@@ -213,7 +213,7 @@ const SERIALIZED_FLOAT_PLACES: i32 = 4;
 /// Presets are tracked in git precisely so a look can be reviewed and rolled
 /// back like code, and a diff of noise defeats that — this is the write path
 /// for every visual float, so rounding here fixes the file for all of them.
-fn serialize_short_f32<S>(value: &f32, serializer: S) -> Result<S::Ok, S::Error>
+pub(super) fn serialize_short_f32<S>(value: &f32, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {

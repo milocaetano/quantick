@@ -41,7 +41,7 @@ fn btc_identity_is_market_specific_and_current_feed_presets_cannot_leak() {
     let future = config.bubble_asset("binance-futures", "BTCUSDT.p");
     let other = config.bubble_asset("hyperliquid", "BTCUSDT");
     assert_eq!(spot.key, "BTCUSDT");
-    assert_eq!(spot.preset, None);
+    assert_eq!(spot.preset.as_deref(), Some("Binance BTC Spot spheres"));
     assert_eq!(future.key, "binance-futures:BTCUSDT.p");
     assert_ne!(other.key, spot.key);
     assert_ne!(other.key, future.key);

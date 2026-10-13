@@ -137,20 +137,6 @@ fn bubble_area_above_floor_tracks_normalized_quantity() {
 }
 
 #[test]
-fn partial_marker_height_grows_with_reduction_fraction() {
-    let band = EventBand {
-        x: 50.0,
-        top: 10.0,
-        bottom: 30.0,
-    };
-    let quiet = marker_band(band, 0.1, false);
-    let strong = marker_band(band, 0.8, false);
-    assert!(quiet.height() < strong.height());
-    assert!(strong.height() < band.height());
-    assert_eq!(marker_band(band, 0.2, true).height(), band.height());
-}
-
-#[test]
 fn compact_legend_wraps_without_exceeding_width() {
     let widths = [90.0, 90.0, 90.0];
     let layout = flow_layout(&widths, 190.0, 17.0, 3.0);

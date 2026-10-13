@@ -19,6 +19,18 @@ pub struct TapeHorizontalGeometry {
 }
 
 impl TapeHorizontalGeometry {
+    /// Native time geometry shared by every painted or picked tape layer.
+    #[must_use]
+    pub fn from_style(
+        style: &crate::config::theme::OrderflowRenderStyle,
+        width: f32,
+        height: f32,
+    ) -> Option<Self> {
+        style
+            .native_tape
+            .then(|| Self::resolve(width, height, &style.sanitized().bubbles))
+    }
+
     /// Resolve a common inset. Every volume retains its area ratio when a
     /// narrow or short pane requires a smaller largest radius; no dot is individually
     /// displaced. A pane exactly one diameter wide has a zero time span.
@@ -71,5 +83,15 @@ impl TapeHorizontalGeometry {
     #[must_use]
     pub fn x(self, fraction: f64) -> f32 {
         self.inset_px + fraction as f32 * self.span_px
+    }
+}
+
+/// Clamp a normalized projection coordinate, treating non-finite input as zero.
+#[must_use]
+pub fn finite_unit_f64(value: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(0.0, 1.0)
+    } else {
+        0.0
     }
 }

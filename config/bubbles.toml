@@ -351,3 +351,84 @@ time_zoom = 1.0
 cluster_ms = 100
 radius_scale = 1.7
 show_marks = true
+
+[[presets]]
+name = "Binance BTC Spot spheres"
+cluster_ms = 500
+dust_merge_ms = 1500
+candle_summary = true
+
+[presets.bubbles]
+min_radius = 2.1885
+max_radius = 15.0
+opacity = 0.9
+outline_width = 0.0
+halo_strength = 0.1
+detail_min_radius = 3.541
+readable_min_radius = 5.7295
+hollow_small_buys = false
+render_mode = "sphere"
+sphere_shading = 0.34
+sphere_highlight = 0.18
+size_reference = "visible_p99"
+size_reference_quantity = 100.0
+min_quantity = 0.0
+side_offset = 3.0
+consumption_mark = "crown"
+front_width = 1.6
+front_length_scale = 0.618
+show_impact_ring = false
+impact_ring_width = 1.4
+trail_length = 0.0
+trail_opacity = 0.45
+show_quantity_labels = true
+show_trade_count = true
+label_min_radius = 13.5
+
+
+[presets.tick_bubbles]
+reference_quantity = 4.0
+max_radius = 32.0
+label_min_radius = 8.0
+opacity = 0.9
+
+# Scoped tick-chart spheres; the native tape keeps its existing settings.
+[[presets]]
+name = "Binance BTC perpetual spheres"
+cluster_ms = 500
+dust_merge_ms = 1500
+candle_summary = true
+
+[presets.bubbles]
+min_radius = 2.1885
+max_radius = 15.0
+opacity = 0.9
+outline_width = 0.0
+halo_strength = 0.1
+detail_min_radius = 3.541
+readable_min_radius = 5.7295
+hollow_small_buys = false
+render_mode = "sphere"
+sphere_shading = 0.34
+sphere_highlight = 0.18
+size_reference = "visible_p99"
+size_reference_quantity = 100.0
+min_quantity = 0.0
+side_offset = 3.0
+consumption_mark = "crown"
+front_width = 1.6
+front_length_scale = 0.618
+show_impact_ring = false
+impact_ring_width = 1.4
+trail_length = 0.0
+trail_opacity = 0.45
+show_quantity_labels = true
+show_trade_count = true
+label_min_radius = 13.5
+
+
+[presets.tick_bubbles]
+reference_quantity = 40.0
+max_radius = 36.0
+label_min_radius = 8.0
+opacity = 0.9

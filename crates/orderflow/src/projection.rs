@@ -25,6 +25,7 @@ mod past_heat;
 mod past_tape;
 mod pending;
 mod pending_overlay;
+mod reduction_band;
 mod tape;
 mod tape_frame;
 mod tape_geometry;
@@ -58,12 +59,13 @@ pub use model::{
 pub use past_heat::{PastHeat, PlacedPastHeat, project_past_heat};
 pub use past_tape::{PastBars, PastTape, past_block_ms, past_span, project_past_tape};
 pub use pending::PendingTape;
+pub use reduction_band::{EventBand, marker_band};
 pub use tape::{TapeDotGeometry, merge_tape_dots, position_tape_at};
 pub use tape_frame::{
     TapeFrameInputs, TapeRebuild, project_past_tape_frame, project_retained_tape_frame,
     project_tape_frame, project_tape_frame_with_overlay, tape_frame_work,
 };
-pub use tape_geometry::TapeHorizontalGeometry;
+pub use tape_geometry::{TapeHorizontalGeometry, finite_unit_f64};
 pub use tape_memory::{
     PastTapeMemory, TapeDotFrame, TapeDotMemory, TapeDotView, TapeSource, TapeWork,
 };

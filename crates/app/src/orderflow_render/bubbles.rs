@@ -637,18 +637,24 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     // whole reason it gets a radius range of its own (volume dots excepted).
     let (lane_min, lane_max) = style.live_lane.pane_radii(bubbles, true, dots);
     let (candle_min, candle_max) = style.live_lane.pane_radii(bubbles, false, dots);
-    let lane_start = 1.0 - 1.0 / context.layout.slot_count.max(1) as f64;
     let center_at = |trade: &AggressionPrimitive| {
-        let x = if factual_tape && trade.live {
-            let fraction = (trade.x - lane_start) / (1.0 - lane_start);
-            tape_rect.left() + tape_geometry.x(fraction)
-        } else {
-            context.layout.x(trade.x)
-        };
-        egui::pos2(x, context.layout.y_unclamped(trade.y))
+        egui::pos2(
+            if factual_tape && trade.live {
+                context.layout.with_lane_only().x(trade.x)
+            } else {
+                context.layout.x(trade.x)
+            },
+            context.layout.y_unclamped(trade.y),
+        )
     };
-    let on_screen =
-        |trade: &&AggressionPrimitive| context.layout.pane(trade.x).contains(center_at(trade));
+    let pane_at = |trade: &AggressionPrimitive| {
+        if factual_tape && trade.live {
+            context.layout.lane_rect()
+        } else {
+            context.layout.pane(trade.x)
+        }
+    };
+    let on_screen = |trade: &&AggressionPrimitive| pane_at(trade).contains(center_at(trade));
     let marks = || {
         merged.iter().flat_map(|frame| &frame.marks).chain(
             context
@@ -679,7 +685,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     let center_of = |trade: &AggressionPrimitive| {
         let mut center = center_at(trade);
         let lean = (finite_unit(trade.buy_share) - 0.5) * 2.0;
-        let pane = context.layout.pane(trade.x);
+        let pane = pane_at(trade);
         if !pane.contains(center) {
             return None;
         }
@@ -700,7 +706,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         history_clip.clone()
     };
     let clip_for = |trade: &AggressionPrimitive| {
-        if context.layout.in_lane(trade.x) {
+        if (factual_tape && trade.live) || context.layout.in_lane(trade.x) {
             &lane_clip
         } else {
             &history_clip
@@ -724,7 +730,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             let Some(center) = center_of(trade) else {
                 continue;
             };
-            let pane = context.layout.pane(trade.x);
+            let pane = pane_at(trade);
             let half_height = trail_half_height(radius_of(trade));
             add_gradient_rect(
                 &mut trail_mesh,

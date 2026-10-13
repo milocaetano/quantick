@@ -20,7 +20,7 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive as _;
 
 use crate::bubble_presets;
-use crate::orderflow_render::{OrderflowRenderStyle, ProjectedLayout};
+use crate::orderflow_render::{OrderflowRenderStyle, ProjectedLayout, RenderContext};
 use crate::orderflow_worker::{BookCommand, BookWorker};
 use crate::viewport::Viewport;
 
@@ -294,6 +294,7 @@ impl OrderflowView {
             Some(heat) => (heat, layout.with_lane_only()),
             None => (&frame.projection, layout),
         };
+        let layout = RenderContext::new(projection, layout, &style).layout;
         let cell = projection.cells.iter().rev().find(|cell| {
             layout
                 .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)

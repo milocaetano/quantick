@@ -70,8 +70,8 @@ fn a_win_edit_is_filed_for_win_alone_and_survives_a_restart() {
 
     // BTC never saw any of it.
     let (btc, settings) = bind(&reread, "BTCUSDT");
-    assert_eq!(btc.source(), AssetSource::Default);
-    assert_eq!(settings.look.name, bubble_presets::embedded().active);
+    assert_eq!(btc.source(), AssetSource::Declared);
+    assert_eq!(settings.look.name, "Binance BTC Spot spheres");
     assert!(!settings.candle_aggression && !settings.flow_ignore_opening);
     assert!(!settings.look.live_lane.tape_only && !settings.look.live_lane.native_tape);
 }
@@ -207,7 +207,7 @@ fn a_presets_reload_in_one_view_refreshes_every_view() {
     assert_eq!(there.take_reloaded_presets(), None, "nothing reloaded yet");
 
     let mut reloaded = presets.clone();
-    let active = reloaded.active.clone();
+    let active = opened.look.name.clone();
     let look = reloaded
         .presets
         .iter_mut()

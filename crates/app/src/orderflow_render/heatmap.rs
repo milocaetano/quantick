@@ -18,6 +18,7 @@ use super::layout::{EventBand, RenderContext};
 use super::{
     OrderflowRenderStyle, Palette, add_gradient_rect, draw_dashed_vertical, finite_unit, rgba,
 };
+use quantick_orderflow::projection::marker_band;
 
 /// Draw resting liquidity and explicit L2 coverage gaps behind the chart.
 pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderContext<'_>) {
@@ -508,20 +509,6 @@ fn add_vline(
         color,
         color,
     );
-}
-
-pub(super) fn marker_band(band: EventBand, reduction: f32, full: bool) -> EventBand {
-    if full {
-        return band;
-    }
-    let fraction = finite_unit(reduction);
-    let height = (band.height() * (0.30 + 0.70 * fraction)).max(1.5);
-    let center = band.center_y();
-    EventBand {
-        x: band.x,
-        top: center - height / 2.0,
-        bottom: center + height / 2.0,
-    }
 }
 
 /// Which marks one coverage gap gets.

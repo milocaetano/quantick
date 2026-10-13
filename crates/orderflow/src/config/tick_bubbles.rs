@@ -7,10 +7,13 @@ pub struct TickBubbleStyle {
     /// Fixed executed quantity in the instrument's units at the full radius.
     pub reference_quantity: f64,
     /// Full-size radius in logical pixels.
+    #[serde(serialize_with = "super::bubbles::serialize_short_f32")]
     pub max_radius: f32,
     /// Smallest disc eligible for an inside quantity label.
+    #[serde(serialize_with = "super::bubbles::serialize_short_f32")]
     pub label_min_radius: f32,
     /// Sphere fill opacity; candle contours are painted afterwards.
+    #[serde(serialize_with = "super::bubbles::serialize_short_f32")]
     pub opacity: f32,
 }
 
