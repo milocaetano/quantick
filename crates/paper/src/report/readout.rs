@@ -112,16 +112,16 @@ impl EquityWalk {
             (PnlPrimary::Money, Some(money)) if money.len() > 1 => Some(MIXED_FALLBACK),
             _ => None,
         };
-        if fallback.is_some() && total.mixed_units() {
-            // Grouped points of instruments worth different things are no
-            // figure at all: no curve beats a sum across units.
-            return Self::unplotted();
-        }
         let primary = if fallback.is_some() {
             PnlPrimary::PointsTimesQty
         } else {
             chosen
         };
+        if primary != PnlPrimary::Money && total.mixed_units() {
+            // Points of instruments worth different things are no figure at
+            // all, chosen or fallen back to: no curve beats a sum across units.
+            return Self::unplotted();
+        }
         let values = rows.iter().map(|row| {
             pnl.value(&row.symbol, &row.trade, primary)
                 .unwrap_or_default()

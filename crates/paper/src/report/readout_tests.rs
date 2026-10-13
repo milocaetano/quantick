@@ -256,6 +256,25 @@ fn a_walk_over_mixed_units_without_money_plots_nothing() {
     }
 }
 
+/// Points chosen outright, not fallen back to, still never sum across
+/// instruments: index points and tether moves are worth different things.
+#[test]
+fn a_walk_in_chosen_points_over_mixed_units_plots_nothing() {
+    for chosen in [PnlPrimary::PointsTimesQty, PnlPrimary::PointsPerContract] {
+        let world = World::new(Some(chosen));
+        let reader = world.reader();
+        let rows = vec![
+            row("WINZ26", 1_000, "400", "2"),
+            row("BTCUSDT", 2_000, "60", "0.5"),
+        ];
+        let total = reader.sum(rows.iter().map(|row| (row.symbol.as_str(), &row.trade)));
+        let walk = EquityWalk::read(&rows, reader, &total);
+        assert!(!walk.plotted(), "{chosen:?} plotted a sum across units");
+        assert_eq!(walk.drawdown, None, "no chip on a curve not drawn");
+        assert_eq!(walk.text(rows.len()), "", "no EQUITY cell value");
+    }
+}
+
 #[test]
 fn the_bare_walk_stays_in_stored_points() {
     let walk = EquityWalk::of(&win_rows());
