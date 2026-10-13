@@ -259,8 +259,11 @@ fn quick_range_wire_round_trip_preserves_near_boundary_coordinates_for_all_actio
             };
             assert!(request.anchors[0].time_ms.is_some());
             assert!(request.anchors[1].time_ms.is_none());
-            let mut input =
-                crate::control::quick_range_input(&request, crate::pane::PaneSide::Flow).unwrap();
+            let mut input = quantick_control_handlers::annotate::quick_range_input(
+                &request,
+                crate::pane::PaneSide::Flow.into(),
+            )
+            .unwrap();
             if action.arms_placement() {
                 // The channel's button arms a placement; the trader's width
                 // click is the third anchor a client sends in one call.

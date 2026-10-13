@@ -577,7 +577,11 @@ fn quick_range_serialization_failure_keeps_range_without_refusal_toast() {
     quick.release(owner);
     let placement = quick.convert(QuickRangeAction::Profile).unwrap();
     assert!(
-        crate::control::quick_range_input(placement.conversion.request(), placement.side).is_none()
+        quantick_control_handlers::annotate::quick_range_input(
+            placement.conversion.request(),
+            placement.side.into(),
+        )
+        .is_none()
     );
     app.surfaces.toast.clear();
     app.resolve_drawing_response(

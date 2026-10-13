@@ -393,7 +393,7 @@ impl<'a> TabsMut<'a> {
     /// make.
     pub(crate) fn active_paper_mut(self) -> Option<&'a mut crate::paper_trading::PaperTrading> {
         // Fallible, because the rest of the control code does not trust the
-        // invariant either: `annotate::resolve_target` guards an empty tab
+        // invariant either: the annotate tier's target resolution guards an empty tab
         // list and clamps the index, and two more sites clamp it. A
         // `trade.*` call must answer "this window has no chart open" rather
         // than panic the whole trading application, and it must resolve the
