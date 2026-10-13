@@ -132,6 +132,9 @@ impl DrawingProjection<'_> {
             AnchorSnap::Pointer => magnet
                 .then(|| self.magnet_value(band, bar, pos.y, scale))
                 .flatten(),
+            AnchorSnap::VisibleLevels => magnet
+                .then(|| self.visible_level_value(band, bar, pos.y, scale, (history_right, total)))
+                .flatten(),
         }
         .unwrap_or_else(|| scale.price_at(pos.y));
         Some(ChartPoint::at_time(
@@ -207,9 +210,44 @@ impl DrawingProjection<'_> {
         }
     }
 
+    /// The magnet for a level ([`AnchorSnap::VisibleLevels`]): the open,
+    /// high, low or close of any candle in view — the forming one included —
+    /// nearest `pointer_y` on screen within [`CANDLE_MAGNET_REACH_PX`], or
+    /// the candle under the pointer's own snap when that is nearer.
+    ///
+    /// A level is drawn off a swing wherever it sits on screen, so the
+    /// candidates are not tied to the pointer's bar; only the value moves,
+    /// never the bar. A candle scrolled out of view is no candidate: a level
+    /// snapping to a print the trader cannot see reads as a bug. An indicator
+    /// band keeps its own magnet unchanged.
+    fn visible_level_value(
+        &self,
+        band: &Band,
+        bar: f32,
+        pointer_y: f32,
+        scale: &PriceScale,
+        (history_right, total): (f32, usize),
+    ) -> Option<f64> {
+        let under = self.magnet_value(band, bar, pointer_y, scale);
+        if !matches!(band.key, DrawingBand::Price) {
+            return under;
+        }
+        let off = |price: f64| (scale.y(price) - pointer_y).abs();
+        let width = (history_right - band.rect.left()).max(0.0);
+        let (start, end) = self.viewport.visible_range(width, total);
+        (start..end)
+            .filter_map(|slot| self.series.candle_at_slot(slot))
+            .flat_map(|candle| [candle.open, candle.high, candle.low, candle.close])
+            .filter_map(|price| price.to_f64())
+            .filter(|price| off(*price) <= CANDLE_MAGNET_REACH_PX)
+            .chain(under)
+            .min_by(|left, right| off(*left).total_cmp(&off(*right)))
+    }
+
     /// The magnet on a body drag: the edge of `points` nearest the pointer —
     /// an anchor's level, or a straight line's value at the pointer's bar —
-    /// onto the print under the pointer, and the whole object shifted by the
+    /// onto the print under the pointer (for levels, any visible print — see
+    /// [`Self::visible_level_value`]), and the whole object shifted by the
     /// same amount so it keeps its shape. The snapped anchor takes the print
     /// exactly; nothing in reach leaves `points` as they are.
     pub fn snap_body(
@@ -247,7 +285,12 @@ impl DrawingProjection<'_> {
         let Some((snapped, price)) = edge else {
             return;
         };
-        let Some(print) = self.magnet_value(band, bar, scale.y(price), scale) else {
+        let print = if body == BodySnap::Levels {
+            self.visible_level_value(band, bar, scale.y(price), scale, (history_right, total))
+        } else {
+            self.magnet_value(band, bar, scale.y(price), scale)
+        };
+        let Some(print) = print else {
             return;
         };
         for (index, point) in points.iter_mut().enumerate() {

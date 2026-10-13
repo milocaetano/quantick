@@ -249,7 +249,10 @@ fn a_trend_line_still_reads_only_the_candle_under_the_pointer() {
             point.price
         );
         let point = placed(projection, band, "trend-line", 55.0);
-        assert_eq!(point.price, 50.0, "the candle under the pointer still snaps");
+        assert_eq!(
+            point.price, 50.0,
+            "the candle under the pointer still snaps"
+        );
     });
 }
 

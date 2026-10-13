@@ -6,7 +6,7 @@ use super::{
     DRAWING_DRAG_THRESHOLD_PX, DrawingDrag, GestureCursor, Marks, PaneGestures, SharedDrag,
     SharedInteraction, SharedPick, SharedPointer, TranslateFrom,
 };
-use crate::{AnchorSnap, Constrain, DoubleClickHint, DrawingId, Px};
+use crate::{Constrain, DoubleClickHint, DrawingId, Px};
 
 /// One frame of the pointer under the Pointer tool, as the window read it.
 pub struct PointerFrame<'a> {
@@ -553,10 +553,17 @@ fn translate_body(
         }
         let mut moved = from.free.clone();
         match tool.anchor_snap() {
-            AnchorSnap::Pointer if magnet => {
-                projection.snap_body(&mut moved, tool.body_snap(), band, position, (right, total));
+            snap if snap.takes_magnet() => {
+                if magnet {
+                    projection.snap_body(
+                        &mut moved,
+                        tool.body_snap(),
+                        band,
+                        position,
+                        (right, total),
+                    );
+                }
             }
-            AnchorSnap::Pointer => {}
             snap => {
                 for point in &mut moved {
                     let at = projection.drawing_screen_point(*point, right, total, &scale);
@@ -770,7 +777,14 @@ mod tests {
             let future = crate::pos2(projection.viewport.x_at_bar_position(3.0, 200.0, 1), 120.0);
             assert!(bands[0].rect.contains(future));
             let point = projection
-                .drawing_point_at(future, 200.0, 1, false, AnchorSnap::Pointer, &bands[0])
+                .drawing_point_at(
+                    future,
+                    200.0,
+                    1,
+                    false,
+                    crate::AnchorSnap::Pointer,
+                    &bands[0],
+                )
                 .unwrap();
             assert_eq!(
                 point.time_ms, None,

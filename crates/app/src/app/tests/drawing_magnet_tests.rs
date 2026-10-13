@@ -327,18 +327,23 @@ fn a_body_drag_lets_go_of_the_print_when_carried_away() {
     let grab = egui::pos2(bar_x(&app, 35.0), at.y);
     let [_, _, low_b, _] = ohlc(61);
     let near = price_y(&app, PaneSide::Flow, low_b + 0.4);
+    // Every whole price from 97 to 106 is printed by some visible candle,
+    // and a level's magnet reaches all of them: the hand lets go only
+    // clear of the highest print by more than the reach.
+    let away = 106.0
+        + f64::from((quantick_drawings::gesture::CANDLE_MAGNET_REACH_PX + 8.0) / px_per_unit(&app));
     let path: Vec<_> = (0..6)
         .map(|step| egui::pos2(bar_x(&app, 61.0), near - 2.0 * step as f32))
         .chain([egui::pos2(
             bar_x(&app, 52.0),
-            price_y(&app, PaneSide::Flow, 104.8),
+            price_y(&app, PaneSide::Flow, away),
         )])
         .collect();
     drag_through(&mut app, &ctx, grab, &path);
     let price = last_points(&app)[0].price;
     assert!(
-        (price - 104.8).abs() < 0.02,
-        "the line followed the hand: {price}"
+        (price - away).abs() < 0.02,
+        "the line followed the hand to {away}: {price}"
     );
 }
 
