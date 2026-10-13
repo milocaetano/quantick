@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TickBubbleStyle {
-    /// Fixed executed quantity in the instrument's units at the full radius.
+    /// Minimum common reference in instrument units at the full radius.
+    /// Larger visible groups raise it uniformly, preserving every area ratio.
     pub reference_quantity: f64,
     /// Full-size radius in logical pixels.
     #[serde(serialize_with = "super::bubbles::serialize_short_f32")]

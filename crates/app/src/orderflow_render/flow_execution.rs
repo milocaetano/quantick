@@ -215,8 +215,12 @@ pub(crate) fn flow_caption(
     legend_visible: bool,
     tick: bool,
 ) -> Option<egui::Rect> {
-    let detail =
-        quantick_orderflow::projection::flow_tape::caption_text(frame, progress, legend_visible);
+    let detail = quantick_orderflow::projection::flow_tape::styled_caption_text(
+        frame,
+        progress,
+        legend_visible,
+        tick,
+    );
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = (history.width() - FLOW_CAPTION_WRAP_MARGIN_PX).max(1.0);
     let mut append = |text: &str, color| {

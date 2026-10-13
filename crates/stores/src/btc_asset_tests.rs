@@ -196,3 +196,47 @@ fn migration_preserves_an_existing_scoped_override() {
     assert_eq!(restored, scoped);
     assert!(other.saves_changes());
 }
+
+#[test]
+fn tick_calibration_survives_restart_without_replacing_a_saved_tape() {
+    let dir = ScratchDir::new("btc-tick-settings");
+    let path = dir.join(ASSETS_FILE);
+    let config = config();
+    let store = AssetBubblesStore::load(path.clone()).shared();
+    let (mut spot, mut saved) = bind(&store, &config, "binance", "BTCUSDT");
+    saved.look.bubbles.max_radius = 48.0;
+    saved.look.volume_dot_full_quantity = 120.0;
+    saved.look.tick_bubbles = None;
+    spot.note_edit();
+    assert!(spot.file(saved.clone()));
+    let (_, reopened) = bind(&store, &config, "binance", "BTCUSDT");
+    assert_eq!(
+        reopened, saved,
+        "new presets preserve an existing saved look"
+    );
+    let mut spheres = saved.clone();
+    spheres.look.tick_bubbles = bubble_presets::embedded()
+        .get("Binance BTC Spot spheres")
+        .unwrap()
+        .tick_bubbles;
+    spot.note_edit();
+    assert!(spot.file(spheres.clone()));
+    assert_eq!(store.borrow_mut().flush(), Some(Ok(())));
+    let restart = AssetBubblesStore::load(path).shared();
+    assert_eq!(bind(&restart, &config, "binance", "BTCUSDT").1, spheres);
+    assert_ne!(
+        bind(&restart, &config, "binance-futures", "BTCUSDT.p")
+            .1
+            .look
+            .tick_bubbles,
+        spheres.look.tick_bubbles
+    );
+    assert_ne!(
+        bind(&restart, &config, "hyperliquid", "BTCUSDT")
+            .1
+            .look
+            .bubbles
+            .max_radius,
+        48.0
+    );
+}

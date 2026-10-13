@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "TickBubblesSnapshot": {
+      "properties": {
+        "label_min_radius": {
+          "type": "string"
+        },
+        "max_radius": {
+          "type": "string"
+        },
+        "opacity": {
+          "type": "string"
+        },
+        "reference_quantity": {
+          "description": "Instrument quantity at max_radius. Larger visible groups increase the\ncommon reference uniformly, so all areas remain proportional.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reference_quantity",
+        "max_radius",
+        "label_min_radius",
+        "opacity"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "changed": {
+      "type": "boolean"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tick_bubbles": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TickBubblesSnapshot"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "changed"
+  ],
+  "title": "TickBubblesResult",
+  "type": "object"
+}

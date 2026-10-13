@@ -127,4 +127,14 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         )],
         mapping: capability!("orderflow.bubbles.save_changes.set"),
     },
+    UiBehaviour {
+        id: "orderflow.bubbles.tick.set",
+        title: "Select Binance BTC tick-chart spheres independently of the tape",
+        reach: "Bubbles settings, Tick chart spheres preset picker",
+        keys: &[(
+            Source::Authored,
+            "chart-only preset picker under the whole-look presets",
+        )],
+        mapping: capability!("orderflow.bubbles.tick.set"),
+    },
 ];

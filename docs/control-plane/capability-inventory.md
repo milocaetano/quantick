@@ -87,6 +87,7 @@ capability that cannot change application state.
 | `notify.sound` | 1 | `notify` | no | `annotate`, `annotate.sound` |
 | `notify.toast` | 1 | `notify` | no | `annotate`, `annotate.notification` |
 | `orderflow.bubbles.save_changes.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
+| `orderflow.bubbles.tick.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `orderflow.tape.opening_scale.set` | 1 | `orderflow` | no | `cockpit`, `cockpit.layout` |
 | `scene.read` | 1 | `scene` | yes | `observe`, `observe.attention`, `observe.market`, `observe.workspace` |
 | `session.journal.delete` | 1 | `session` | no | `cockpit`, `cockpit.journal.delete` |
@@ -100,4 +101,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-75 capabilities registered.
+76 capabilities registered.

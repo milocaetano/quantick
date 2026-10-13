@@ -12853,6 +12853,130 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Applies only a named tick-chart sphere calibration to a Binance BTC tick pane. Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW. Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.bubbles.tick.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "preset": {
+            "description": "A name in orderflow.bubbles.tick_presets; null restores regional FLOW.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id"
+        ],
+        "title": "TickBubblesInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "TickBubblesSnapshot": {
+            "properties": {
+              "label_min_radius": {
+                "type": "string"
+              },
+              "max_radius": {
+                "type": "string"
+              },
+              "opacity": {
+                "type": "string"
+              },
+              "reference_quantity": {
+                "description": "Instrument quantity at max_radius. Larger visible groups increase the\ncommon reference uniformly, so all areas remain proportional.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reference_quantity",
+              "max_radius",
+              "label_min_radius",
+              "opacity"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tick_bubbles": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TickBubblesSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "changed"
+        ],
+        "title": "TickBubblesResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs, tick membership, asset ownership and preset names are validated before any edit. Repeating a selection is a no-op.",
+      "title": "Set tick chart sphere preset",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Optionally changes opening calibration without changing executions, prices or grouping. The default target tape excludes the first recorded 100 ms burst per UTC date and caps its radius; it has no effect on a typed tape reference. Target candle requires active tick FLOW bubbles and has an independent pane preference. Both belong to the asset the pane shows (orderflow.bubbles names it): saved for it, and back whenever a tab shows it, while its save switch is on (asset.save_changes); off, the change lasts on this pane for the session only. Target candle: only the region containing the canonical first recorded execution per UTC date excludes its opening portion from the visible reference and may grow uncapped with area proportional to gross volume. Other first-window regions contribute their full volume. Offscreen or evicted anchors never transfer to visible regions. A frame with no ordinary reference uses an explicitly reported full-volume fallback. Both preferences default off; first recorded activity is not an exchange auction flag.",
       "destructive": false,
       "dry_run_supported": false,
@@ -18554,6 +18678,25 @@
                 "description": "The pane shows the tape alone, Bookmap style: the native tape takes\nthe whole canvas, no candle or candle mark is drawn and time runs\nacross the full width on the tape's own window. The lane setting\n`tape_only`, switched by `layers.visibility.set` as layer `tape_only`.",
                 "type": "boolean"
               },
+              "tick_bubbles": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TickBubblesSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "tick_presets": {
+                "default": [],
+                "description": "Chart-only presets available for this asset.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "volume_dots": {
                 "anyOf": [
                   {
@@ -19027,6 +19170,30 @@
             "required": [
               "tab_id",
               "panes"
+            ],
+            "type": "object"
+          },
+          "TickBubblesSnapshot": {
+            "properties": {
+              "label_min_radius": {
+                "type": "string"
+              },
+              "max_radius": {
+                "type": "string"
+              },
+              "opacity": {
+                "type": "string"
+              },
+              "reference_quantity": {
+                "description": "Instrument quantity at max_radius. Larger visible groups increase the\ncommon reference uniformly, so all areas remain proportional.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reference_quantity",
+              "max_radius",
+              "label_min_radius",
+              "opacity"
             ],
             "type": "object"
           },

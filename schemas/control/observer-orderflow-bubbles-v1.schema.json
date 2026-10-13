@@ -118,6 +118,25 @@
           "description": "The pane shows the tape alone, Bookmap style: the native tape takes\nthe whole canvas, no candle or candle mark is drawn and time runs\nacross the full width on the tape's own window. The lane setting\n`tape_only`, switched by `layers.visibility.set` as layer `tape_only`.",
           "type": "boolean"
         },
+        "tick_bubbles": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TickBubblesSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tick_presets": {
+          "default": [],
+          "description": "Chart-only presets available for this asset.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "volume_dots": {
           "anyOf": [
             {
@@ -591,6 +610,30 @@
       "required": [
         "tab_id",
         "panes"
+      ],
+      "type": "object"
+    },
+    "TickBubblesSnapshot": {
+      "properties": {
+        "label_min_radius": {
+          "type": "string"
+        },
+        "max_radius": {
+          "type": "string"
+        },
+        "opacity": {
+          "type": "string"
+        },
+        "reference_quantity": {
+          "description": "Instrument quantity at max_radius. Larger visible groups increase the\ncommon reference uniformly, so all areas remain proportional.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reference_quantity",
+        "max_radius",
+        "label_min_radius",
+        "opacity"
       ],
       "type": "object"
     },

@@ -1221,3 +1221,6 @@ mod tests {
         assert_eq!(bubbles.show_legend, edited.show_legend);
     }
 }
+
+pub mod controls;
+pub mod painting;

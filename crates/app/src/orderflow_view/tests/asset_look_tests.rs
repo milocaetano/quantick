@@ -56,7 +56,7 @@ fn a_presets_reload_in_one_tab_dresses_every_tab_on_an_untuned_asset() {
     let mut here = bound_to(&store, ("binance", "BTCUSDT"));
     let mut there = bound_to(&store, ("binance", "BTCUSDT"));
     let mut reloaded = embedded();
-    let active = reloaded.active.clone();
+    let active = "Binance BTC Spot spheres";
     let look = reloaded
         .presets
         .iter_mut()
@@ -82,7 +82,7 @@ fn a_presets_reload_in_one_tab_dresses_every_tab_on_an_untuned_asset() {
     there.sync_asset(false);
     assert_eq!(
         there.look.asset().expect("bound").source(),
-        AssetSource::Default,
+        AssetSource::Declared,
         "an edit undone on the new look pins nothing"
     );
 }

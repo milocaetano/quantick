@@ -22,6 +22,7 @@ mod l2_sections;
 #[cfg(test)]
 #[path = "settings/tests/tape_only_controls.rs"]
 mod tape_only_controls;
+mod tick_bubbles;
 
 use bubble_sections::{
     BubbleHealthSection, ClusteringSection, ColoursSection, ConsumptionMarksSection, LabelsSection,
@@ -223,6 +224,7 @@ impl OrderflowView {
                 ui.separator();
 
                 self.draw_bubble_presets(ui);
+                self.draw_tick_bubbles(ui);
                 ui.separator();
 
                 ui.checkbox(&mut self.config.show_aggressions, "show aggression bubbles")

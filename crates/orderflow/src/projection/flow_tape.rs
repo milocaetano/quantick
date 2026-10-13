@@ -10,7 +10,7 @@ mod constants;
 use constants::{FLOW_MERGE_HEIGHT_PX, FLOW_MERGE_WIDTH_PX};
 pub use constants::{FLOW_REGION_WINDOW_MS, LARGE_REGION_REFERENCE_DIVISOR, MAX_FLOW_EXECUTIONS};
 mod reading;
-pub use reading::caption_text;
+pub use reading::{caption_text, styled_caption_text};
 mod source;
 pub use source::{FlowCoverage, FlowOpeningSelection, FlowTapeSource};
 mod stream;

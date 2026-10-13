@@ -183,8 +183,14 @@ fn native_book_and_reductions_share_the_bubble_time_axis() {
             let mut config = HeatmapConfig::default();
             config.volume_dots.enabled = true;
             config.live_lane.native_tape = true;
+            config.show_aggressions = true;
+            config.live_lane.enabled = true;
+            config.live_lane.show_aggressions = true;
             let mut style = style_for(&config);
             style.bubbles.max_radius = 48.0;
+            // Dressing is clamped at 32px; use a flat factual disc so the
+            // geometry assertion does not mistake a sphere mesh for no mark.
+            style.bubbles.render_mode = quantick_orderflow::BubbleRenderMode::Flat;
             let dot = mark(1, true, 10, fraction, 0.5);
             let frame = projection(vec![dot]);
             let layout = ProjectedLayout::new(rect, &viewport, 0, 0, 1, rect.width());

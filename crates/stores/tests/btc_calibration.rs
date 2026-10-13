@@ -14,6 +14,8 @@ use quantick_orderflow::{
 };
 use quantick_stores::bubble_presets;
 use rust_decimal::Decimal;
+#[path = "btc_tick_calibration/mod.rs"]
+mod tick;
 
 fn dec(value: &str) -> Decimal {
     Decimal::from_str(value).unwrap()

@@ -142,6 +142,33 @@ fn warm_paint_reuses_the_same_geometry_and_exact_mesh_output() {
 }
 
 #[test]
+fn tick_sphere_appearance_invalidates_cached_mesh_without_changing_facts() {
+    let frame = frame();
+    let ctx = egui::Context::default();
+    let (flat, _) = paint(&ctx, key(&frame));
+    let mut styled = key(&frame);
+    styled.tick_bubbles = Some(quantick_orderflow::TickBubbleStyle {
+        reference_quantity: 10.0,
+        max_radius: 36.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    });
+    let (sphere, shapes) = paint(&ctx, styled);
+    let (warm, repeated) = paint(&ctx, styled);
+    assert!(!Arc::ptr_eq(&flat, &sphere));
+    assert!(Arc::ptr_eq(&sphere, &warm));
+    assert_eq!(shapes, repeated);
+    assert_eq!(
+        flat.mesh.get().unwrap().plan,
+        sphere.mesh.get().unwrap().plan
+    );
+    let mut changed = styled;
+    changed.tick_bubbles.as_mut().unwrap().opacity = 0.5;
+    let (faded, _) = paint(&ctx, changed);
+    assert!(!Arc::ptr_eq(&sphere, &faded));
+}
+
+#[test]
 fn a_new_partial_frame_allocation_cannot_reuse_old_geometry_with_identical_revisions() {
     let original = frame();
     let mut changed = (*original).clone();

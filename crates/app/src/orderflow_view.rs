@@ -197,6 +197,7 @@ impl OrderflowView {
                     self.look.look_name(),
                 )
             }),
+            self.look.tick_presets(),
         )
     }
 

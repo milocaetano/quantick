@@ -17,6 +17,7 @@ use quantick_orderflow::{HeatmapConfig, LaneWindow};
 use crate::bubble_asset_store::{Adoption, AssetBinding, RunHold, SaveSwitch};
 use crate::bubble_assets::AssetBubbles;
 use crate::bubble_presets::{BubblePreset, BubblePresetFile, PresetSource};
+mod tick;
 
 /// The presets file as a loader reads it: the document, where it came from
 /// and why it could not be read, if it could not.

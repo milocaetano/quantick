@@ -73,6 +73,8 @@ mod opening_scale_control;
 mod price_axis_control;
 #[path = "tape_navigation_tests.rs"]
 mod tape_navigation;
+#[path = "tick_bubbles_control_tests.rs"]
+mod tick_bubbles_control;
 #[path = "mutation_uncertainty_tests.rs"]
 mod uncertainty;
 

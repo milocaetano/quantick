@@ -321,6 +321,11 @@ pub struct PaneBubblesSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BubblesStateSnapshot {
+    #[serde(default)]
+    pub tick_bubbles: Option<crate::tick_bubbles::TickBubblesSnapshot>,
+    /// Chart-only presets available for this asset.
+    #[serde(default)]
+    pub tick_presets: Vec<String>,
     /// Aggression bubbles are drawn over the chart. Beside the native tape,
     /// FLOW draws regional execution totals on the tick candles;
     /// `layers.visibility` names any block.
@@ -450,8 +455,11 @@ impl BubblesStateSnapshot {
         dot_scale: Option<&quantick_orderflow::DotScale>,
         opening_bursts: &[i64],
         asset: Option<BubbleAssetSnapshot>,
+        tick_presets: Vec<String>,
     ) -> Self {
         Self {
+            tick_bubbles: config.volume_dots.tick_bubbles.map(Into::into),
+            tick_presets,
             enabled: config.show_aggressions,
             lane_enabled: config.lane_aggressions_visible(),
             aggression_provenance: AGGRESSION_PROVENANCE.to_owned(),

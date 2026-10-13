@@ -44,6 +44,15 @@ pub fn caption_text(
     progress: super::FlowProgress,
     legend_visible: bool,
 ) -> Option<String> {
+    styled_caption_text(frame, progress, legend_visible, false)
+}
+
+pub fn styled_caption_text(
+    frame: Option<&FlowTapeFrame>,
+    progress: super::FlowProgress,
+    legend_visible: bool,
+    tick_spheres: bool,
+) -> Option<String> {
     let mut hints = Vec::new();
     if legend_visible {
         hints.push(
@@ -63,7 +72,14 @@ pub fn caption_text(
                     },
                 ),
         );
-        hints.push("brightness rises with regional volume".to_owned());
+        hints.push(
+            if tick_spheres {
+                "quantity in BTC; sphere area follows gross volume"
+            } else {
+                "brightness rises with regional volume"
+            }
+            .to_owned(),
+        );
     }
     if progress.pending {
         hints.push(
