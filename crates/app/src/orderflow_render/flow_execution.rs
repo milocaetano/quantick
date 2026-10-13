@@ -320,6 +320,12 @@ pub(crate) fn flow_caption(
     );
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = (history.width() - FLOW_CAPTION_WRAP_MARGIN_PX).max(1.0);
+    if tick {
+        job.wrap.max_width = job
+            .wrap
+            .max_width
+            .min(quantick_chart::flow_execution::FLOW_CHROME_MAX_WIDTH_PX);
+    }
     let mut append = |text: &str, color| {
         job.append(
             text,

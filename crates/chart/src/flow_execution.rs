@@ -11,7 +11,10 @@ use rust_decimal::{Decimal, prelude::FromPrimitive as _};
 
 mod chrome;
 mod constants;
-pub use chrome::{FlowChromeLayout, flow_chrome_layout, place_flow_chrome};
+pub use chrome::{
+    FLOW_CHROME_MAX_HEIGHT_PX, FLOW_CHROME_MAX_WIDTH_PX, FlowChromeLayout, flow_chrome_layout,
+    place_flow_chrome,
+};
 pub use constants::FLOW_EXECUTION_OFFSET;
 use constants::{FLOW_MERGE_SUPPORT_RADIUS_PX, FLOW_RADIUS_LIMIT_PX};
 mod geometry;

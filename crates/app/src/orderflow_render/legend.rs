@@ -102,6 +102,9 @@ pub(crate) fn draw_compact_legend_avoiding(
     let max_panel_width = style.legend_max_width.min(
         (context.layout.chart_rect.width() - outer_margin * 2.0).max(LEGEND_MIN_PANEL_WIDTH_PX),
     );
+    let max_panel_width = tick_regions.map_or(max_panel_width, |_| {
+        max_panel_width.min(quantick_chart::flow_execution::FLOW_CHROME_MAX_WIDTH_PX)
+    });
     let max_content_width = (max_panel_width - inner_margin * 2.0).max(LEGEND_MIN_CONTENT_WIDTH_PX);
     let flow = flow_chrome_layout(&widths, max_content_width, row_height, LEGEND_ENTRY_GAP_PX);
     let panel_size = egui::vec2(
