@@ -120,7 +120,7 @@ The three exclusion classes are closed:
 | `trade.orders.cancel_all` | Cancel every working order without trading | Trading panel, Shift+X | `trade.order.cancel` | — |
 | `trade.position.close` | Exit the open position at the next print | toolbar trade group, Trading panel | `trade.order.place` | — |
 | `trade.position.flatten` | Close the position and cancel every working order | Trading panel, Shift+F | — | `pending_capability` — `trade.order.place` and `trade.order.cancel` do the two halves, and a caller that runs them in sequence is not flat between them. The one-shot has no capability. Tracked in issue 401 |
-| `trade.position.reverse` | Reverse the simulated position | Trading panel, Shift+R | — | `pending_capability` — no capability reverses; a caller would have to size the flip itself from a read that may already be stale. Tracked in issue 401 |
+| `trade.position.reverse` | Reverse the simulated position | toolbar trade group, Trading panel, Shift+R | — | `pending_capability` — no capability reverses; a caller would have to size the flip itself from a read that may already be stale. Tracked in issue 401 |
 | `trade.ticket.risk.set` | Say what one trade may lose | the Trading panel's risk section | `trade.risk.set` | — |
 | `trade.ticket.ruler.set` | Walk the projected stop and target out from the aim | the ruler wheel on the chart's aim | `trade.ruler.set` | — |
 | `trade.ticket.strategy.select` | Choose the ticket's exit ladder | the Trading panel's strategy selector | `trade.strategy.select` | — |
@@ -191,7 +191,7 @@ matrix fails the build.
 
 | Source | Claims |
 | --- | --- |
-| `toolbar_action` | 18 |
+| `toolbar_action` | 19 |
 | `strip_action` | 6 |
 | `tab_action` | 3 |
 | `dock_tab` | 5 |

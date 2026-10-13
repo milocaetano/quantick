@@ -130,8 +130,11 @@ pub(super) const ROWS: &[UiBehaviour] = &[
     UiBehaviour {
         id: "trade.position.reverse",
         title: "Reverse the simulated position",
-        reach: "Trading panel, Shift+R",
-        keys: &[(Source::Hotkey, "PAPER_REVERSE_SHORTCUT")],
+        reach: "toolbar trade group, Trading panel, Shift+R",
+        keys: &[
+            (Source::Hotkey, "PAPER_REVERSE_SHORTCUT"),
+            (Source::ToolbarAction, "PaperReverse"),
+        ],
         mapping: excluded!(
             PendingCapability,
             "no capability reverses; a caller would have to size the flip itself from a read \

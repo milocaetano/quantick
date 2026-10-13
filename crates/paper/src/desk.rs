@@ -29,6 +29,7 @@ pub mod gesture;
 pub mod leg_tag;
 pub mod ruler;
 pub mod ticket;
+mod trade_bar;
 
 #[cfg(test)]
 mod tests;
@@ -44,6 +45,7 @@ pub use gesture::{
 };
 pub use ruler::Ruler;
 pub use ticket::Ticket;
+pub use trade_bar::{EntryTexts, NO_MARKET_YET, TradeBar};
 
 /// Whether the strategy editor is up, what it has open and whether it holds
 /// an edit not yet saved.
@@ -197,12 +199,18 @@ impl Desk {
     /// another is the plainest kind of lie this surface can tell.
     #[must_use]
     pub fn entry_label(&self, account: &PaperAccount, side: Side) -> String {
-        let derived = self.risk_report(account).0.derived_quantity();
         ticket::entry_label(
             side,
-            derived.or_else(|| self.ticket.quantity_preview()),
+            self.entry_quantity(account),
             account.venue().position(),
         )
+    }
+
+    /// The size an entry press would send: the risk-derived one, else the
+    /// typed field.
+    fn entry_quantity(&self, account: &PaperAccount) -> Option<Decimal> {
+        let derived = self.risk_report(account).0.derived_quantity();
+        derived.or_else(|| self.ticket.quantity_preview())
     }
 
     /// Cancel the transient chart interaction — an armed placement, else a

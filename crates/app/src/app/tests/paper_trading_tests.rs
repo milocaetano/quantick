@@ -266,6 +266,52 @@ fn the_toolbar_close_action_exits_the_open_position() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The toolbar's reverse beside the close: one press turns a long into a
+/// short of the same size at the next print, and the faces of the entry
+/// pair keep naming side and size only, with the disclosure in the hover.
+#[test]
+fn the_toolbar_reverse_action_flips_the_open_position() {
+    let (mut app, evt_tx, _cmd_rx, _book_tx) = test_app();
+    let dir = crate::scratch::ScratchDir::new("paper-app-reverse");
+    app.active_tab_mut()
+        .paper
+        .redirect_history_dir(dir.path().to_path_buf());
+    evt_tx
+        .try_send(FeedEvent::Backfilled(vec![trade(2)]))
+        .unwrap();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
+    app.apply_toolbar_action(ToolbarAction::PaperBuy);
+    evt_tx.try_send(FeedEvent::Live(trade(4))).unwrap();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
+    let (text, _) = app.active_tab().paper.status_cell().expect("open");
+    assert!(text.contains("LONG"), "the cell names the side: {text}");
+    let bar = app.active_tab().paper.trade_bar("Shift+R");
+    assert_eq!(bar.sell.face, "SELL 1");
+    assert!(
+        bar.sell.hover.starts_with(
+            "SELL 1 (closes)
+"
+        ),
+        "the hover carries the disclosure the face leaves out"
+    );
+    assert_eq!(bar.blocked, None, "the reverse is live");
+
+    app.apply_toolbar_action(ToolbarAction::PaperReverse);
+    evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();
+    let tab_id = app.tabs.active_id();
+    app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
+    let (text, _) = app.active_tab().paper.status_cell().expect("open");
+    assert!(text.contains("SHORT"), "the reverse filled short: {text}");
+    assert_eq!(
+        app.active_tab().paper.close_button_label().as_deref(),
+        Some("Close 1 SHORT"),
+        "the same size, the other way"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A source reset (replay seek, feed switch) flattens the simulated
 /// position at the last mark and journals the round trip — the same
 /// honesty contract the drawings' clear follows.

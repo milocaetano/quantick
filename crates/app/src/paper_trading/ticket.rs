@@ -45,6 +45,13 @@ impl PaperTrading {
         self.desk.ticket.entry_hover(side)
     }
 
+    /// The toolbar TRADE group's words, from one risk read; see
+    /// `Desk::trade_bar`.
+    #[must_use]
+    pub fn trade_bar(&self, reverse_key: &str) -> quantick_paper::desk::TradeBar {
+        self.desk.trade_bar(&self.account, reverse_key)
+    }
+
     // ------------------------------------------------------------------
     // Chart layer
     // ------------------------------------------------------------------
