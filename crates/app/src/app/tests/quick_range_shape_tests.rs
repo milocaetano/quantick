@@ -326,7 +326,8 @@ fn hand_line(app: &mut QuantickApp, price: f64) {
     assert!(drawings.place_with(tool, &band, point, |_| fresh.take().unwrap()));
 }
 
-/// A call that places its first line and fails on the second.
+/// A batch of two placements whose second fails: the first line was placed,
+/// then retracted with the batch.
 fn fail_on_the_second_line(app: &mut QuantickApp) {
     use quantick_drawings::{DrawingEffect, DrawingIntent, Placement, update};
     let placement = |tool_id: &str| {

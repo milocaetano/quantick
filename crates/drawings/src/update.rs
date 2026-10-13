@@ -29,13 +29,19 @@ pub struct Placement {
     pub text: Option<String>,
 }
 
-/// Why a placement left nothing behind.
+/// Why a placement was not made.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlacementFailure {
     /// The tool did not finish from the anchors it was given.
     Incomplete,
     /// The tool finished but the placed mark could not be read back.
+    ///
+    /// The mark stays: a single placement does not retract it, as the
+    /// path before the fold did not.
     Unreadable,
+    /// The trader is mid-gesture: a placement would push its anchor onto
+    /// their draft or replace it, so nothing is touched.
+    DraftInProgress,
 }
 
 /// An edit the window asks the drawings to make.
@@ -78,8 +84,8 @@ pub enum DrawingEffect {
     ConfirmDelete,
     /// A mark is placed and selected; `label` is what the object list shows.
     Placed { id: DrawingId, label: String },
-    /// Placement `index` of the intent left nothing, and neither did the
-    /// intent.
+    /// Placement `index` of the intent failed. A batch retracts everything it
+    /// placed; a single placement that is `Unreadable` leaves its mark.
     NotPlaced {
         index: usize,
         failure: PlacementFailure,
@@ -88,6 +94,16 @@ pub enum DrawingEffect {
     Removed { id: DrawingId },
     /// The mark was drawn by the trader's hand, and stays.
     RemovalRefused { id: DrawingId },
+}
+
+impl DrawingEffect {
+    /// Whether any of `effects` took marks that something may have ridden:
+    /// the window sweeps whatever lost its mark.
+    pub fn any_strand_riders(effects: &[Self]) -> bool {
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Self::HistoryReplaced | Self::Removed { .. }))
+    }
 }
 
 /// Fold `intent` into `store`, answering the effects the window runs.
@@ -120,6 +136,12 @@ pub fn update(store: &mut Drawings<DrawingTool>, intent: DrawingIntent) -> Vec<D
             Vec::new()
         }
         DrawingIntent::DeleteSelected { force } => delete_selected(store, force),
+        DrawingIntent::Place(_) | DrawingIntent::PlaceAll(_) if store.draft().is_some() => {
+            vec![DrawingEffect::NotPlaced {
+                index: 0,
+                failure: PlacementFailure::DraftInProgress,
+            }]
+        }
         DrawingIntent::Place(placement) => vec![placed(0, place(store, placement))],
         DrawingIntent::PlaceAll(placements) => place_all(store, placements),
         DrawingIntent::RemoveAuthored(id) => remove_authored(store, id),
@@ -243,6 +265,32 @@ mod tests {
         }
         store.select(None);
         store
+    }
+
+    #[test]
+    fn placing_over_the_traders_draft_is_refused_and_leaves_it_alone() {
+        let mut store = Drawings::default();
+        assert!(!store.place(line(), ChartPoint::at(0.0, 100.0)));
+        let placement = || {
+            placement(
+                line(),
+                vec![ChartPoint::at(1.0, 100.0), ChartPoint::at(2.0, 101.0)],
+            )
+        };
+        let refused = [DrawingEffect::NotPlaced {
+            index: 0,
+            failure: PlacementFailure::DraftInProgress,
+        }];
+        assert_eq!(
+            update(&mut store, DrawingIntent::Place(placement())),
+            refused
+        );
+        assert_eq!(
+            update(&mut store, DrawingIntent::PlaceAll(vec![placement()])),
+            refused
+        );
+        assert!(store.draft().is_some(), "the hand-drawn draft survives");
+        assert!(store.items().is_empty());
     }
 
     #[test]

@@ -55,7 +55,10 @@ use quantick_drawings::{
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
-use crate::{dock::ActionDock, tabs::TabDirectory};
+use crate::{
+    dock::ActionDock,
+    tabs::{TabDirectory, tab_index},
+};
 
 /// Which pane of a tab an annotation lands on: the flow pane, or a context
 /// chart by its slot in the stack, top to bottom from `0`.
@@ -278,7 +281,7 @@ fn place<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
         text: input.text,
     };
     let effects = update(pane.drawings_mut(), DrawingIntent::Place(placement));
-    let [(annotation_id, label)] = placed::<1>(effects, tool, required)?;
+    let (annotation_id, label) = placed(effects, tool, required)?;
     let result = AnnotationResult {
         annotation_id: WireU64::new(annotation_id),
         tab_id: WireU64::new(tab_id),
@@ -319,7 +322,7 @@ fn place_chart<H: AnnotatePort + ?Sized, A: AnnotateAccess>(
         text: None,
     };
     let effects = update(pane.drawings_mut(), DrawingIntent::Place(placement));
-    let [placed] = placed::<1>(effects, tool, required)?;
+    let placed = placed(effects, tool, required)?;
     let target = (tab_id, pane.pane_id(), side);
     let result = chart_result(placed, target, tool, &validated, actor);
     journal(access, actor, ANNOTATION_CREATED_EVENT_KIND, &result)?;
@@ -505,6 +508,10 @@ fn placed_all(
             } => Err(capability_unavailable(
                 "the placed annotation could not be read back",
             )),
+            DrawingEffect::NotPlaced {
+                failure: PlacementFailure::DraftInProgress,
+                ..
+            } => Err(refused(Refusal::DraftInProgress)),
             _ => Err(capability_unavailable(format!(
                 "the `{}` tool did not complete from {anchors} anchor(s)",
                 tool.name()
@@ -513,15 +520,15 @@ fn placed_all(
         .collect()
 }
 
-/// [`placed_all`] for an intent of exactly `N` placements.
-fn placed<const N: usize>(
+/// [`placed_all`] for an intent of exactly one placement.
+fn placed(
     effects: Vec<DrawingEffect>,
     tool: DrawingTool,
     anchors: usize,
-) -> Result<[(u64, String); N], ControlError> {
-    placed_all(effects, tool, anchors)?
-        .try_into()
-        .map_err(|_| capability_unavailable("the placed annotation could not be read back"))
+) -> Result<(u64, String), ControlError> {
+    let [placement] = <[_; 1]>::try_from(placed_all(effects, tool, anchors)?)
+        .map_err(|_| capability_unavailable("the placed annotation could not be read back"))?;
+    Ok(placement)
 }
 
 fn chart_result(
@@ -574,11 +581,13 @@ fn resolve_target<H: AnnotatePort + ?Sized>(
     if count == 0 {
         return Err(capability_unavailable("this window has no chart open"));
     }
-    let index = match target.and_then(|target| target.tab_id) {
-        None => app.active_tab_index().min(count - 1),
-        Some(tab_id) => app.tab_position(tab_id.get()).ok_or_else(|| {
-            ControlError::invalid_request(format!("no open tab has id {}", tab_id.get()))
-        })?,
+    let named = target.and_then(|target| target.tab_id);
+    let index = tab_index(app, named)?;
+    // The active position can outlive a closing tab by a frame.
+    let index = if named.is_none() {
+        index.min(count - 1)
+    } else {
+        index
     };
     let side = match target.and_then(|target| target.pane_side) {
         None => app.drawing_side(index),

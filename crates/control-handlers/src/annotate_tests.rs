@@ -294,6 +294,40 @@ fn a_draft_in_progress_refuses_before_anything_is_placed() {
     );
 }
 
+#[test]
+fn a_levels_call_that_cannot_place_leaves_no_drawing_and_no_journal_entry() {
+    let mut window = FakeWindow::new();
+    let tool = DrawingTool::by_id(TREND_LINE_TOOL_ID).expect("registered");
+    let opening = window.new_drawing(tool);
+    let point = ChartPoint::at_time(0.5, 100.0, None);
+    let band = quantick_drawings::DrawingBand::Price;
+    assert!(
+        !window
+            .flow
+            .drawings
+            .place_with(tool, &band, point, |_| opening)
+    );
+    let mut access = FakeAccess::default();
+    let input = json!({
+        "anchors": [
+            { "time_unix_ms": 3_000, "bar_position": "2.5", "price": "99" },
+            { "time_unix_ms": 1_000, "bar_position": "0.5", "price": "101" },
+        ],
+    });
+    let error = call(
+        &mut window,
+        &mut access,
+        HORIZONTAL_LEVELS_CAPABILITY_ID,
+        input,
+    )
+    .expect_err("the trader is mid-gesture");
+    assert_eq!(error.code.as_str(), codes::CAPABILITY_UNAVAILABLE);
+    assert!(error.retryable);
+    assert!(window.flow.drawings.items().is_empty());
+    assert!(access.events.is_empty(), "nothing journaled");
+    assert_eq!(window.flow.drawings.draft_len(), 1, "their draft stays");
+}
+
 /// Three bars and a gap: no bar covers any time asked of it.
 struct Gap;
 

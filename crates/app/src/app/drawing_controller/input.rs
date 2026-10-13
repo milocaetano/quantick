@@ -238,22 +238,23 @@ impl DrawingController {
         effects: &mut DrawingEffects,
         now: Instant,
     ) {
-        // The toast names what went — the trader's own name, else the tool's
-        // — because the context bar deletes on a bare glyph and an undo is
+        // The toast names what went (their name, else the tool's): an undo is
         // useless to a trader who cannot tell what it would bring back.
         for effect in host.update(DrawingIntent::DeleteSelected { force: false }) {
             match effect {
                 DrawingEffect::Deleted { id, label } => {
                     self.chrome.set_delete_confirm(false);
-                    // The instance dies with its drawing, immediately — not
-                    // on the next closed bar, which a quiet tape may never
-                    // bring.
+                    // The instance dies with its drawing, not on a closed bar
+                    // a quiet tape may never bring.
                     host.remove_strategy(id);
                     effects.note_with_undo(format!("{label} deleted."), now);
                 }
                 DrawingEffect::ConfirmDelete => self.chrome.set_delete_confirm(true),
-                // A delete answers nothing else.
-                _ => {}
+                DrawingEffect::HistoryReplaced
+                | DrawingEffect::Placed { .. }
+                | DrawingEffect::NotPlaced { .. }
+                | DrawingEffect::Removed { .. }
+                | DrawingEffect::RemovalRefused { .. } => {}
             }
         }
     }
