@@ -327,8 +327,8 @@ impl DetailSection<'_> {
                     .step_by(0.05),
             )
             .on_hover_text(
-                "how wide a candle must be before each detail level appears. \
-                 1.0 = numbers just fit; lower = narrower candles, crowded; \
+                "how wide a candle must be before the numbers appear; the POC \
+                 and the profile never wait for it. 1.0 = numbers just fit; lower = narrower candles, crowded; \
                  higher = wider candles, roomier. High values can push the full \
                  ladder to the deepest zoom; summary numbers still follow \
                  \"summary numbers from px\". The legend says how much wider to \

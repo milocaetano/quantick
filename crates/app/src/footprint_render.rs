@@ -40,7 +40,7 @@ use quantick_chart::footprint_legend::{LegendFacts, legend_text};
 use quantick_chart::footprint_lod::{
     AXIS_CLEARANCE_PX, DetailLevel, GLYPH_EM, GROUP_SNAP, LADDER_MIN_FONT_PX, LevelMemory,
     PROFILE_MIN_WIDTH, QUANTITY_GLYPHS, QUANTITY_PADDING_PX, QUANTITY_PX, TYPICAL_BODY_FRAC,
-    detailed_entry_width, height_to_split,
+    detailed_entry_width, height_to_split, on_screen_entries,
 };
 #[cfg(test)]
 use quantick_chart::footprint_lod::{
@@ -412,12 +412,17 @@ impl LayerPlan {
             .config
             .style
             .resolve_auto(|style| scaled_width >= detailed_min_width(style, frame.config));
-        let level = lod.levels.resolve(
-            scaled_width,
-            base_row_px,
-            frame.config.row_floors(),
+        let (compact_min, detailed_min) = on_screen_entries(
             frame.config.compact_entry_width(),
             detailed_min_width(requested, frame.config),
+            frame.config.detail_scale,
+        );
+        let level = lod.levels.resolve(
+            frame.candle_width,
+            base_row_px,
+            frame.config.row_floors(),
+            compact_min,
+            detailed_min,
         );
         // A style that cannot pay for itself at this zoom hands over to the one it
         // names, rather than drawing a worse version of itself. The legend says
