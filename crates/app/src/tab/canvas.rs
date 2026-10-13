@@ -587,6 +587,7 @@ impl Tab {
                         anchor,
                         locked: source.drawings.items()[index].locked,
                         magnet: source.drawings.items()[index].own_magnet(),
+                        snap: source.drawings.items()[index].tool.anchor_snap(),
                     });
                     break;
                 }

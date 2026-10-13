@@ -67,12 +67,23 @@ impl PaperAccount {
 
     /// Turn the open position around: close it and take the same size the
     /// other way, in one order, protected by `bracket`.
+    ///
+    /// The flip opens a position, so the risk lock measures it as the
+    /// entry it is: the leg it opens - the same size the other way, under
+    /// `bracket` - is refused exactly where that entry would be, with the
+    /// same sentence. The closing half carries no new risk and is not
+    /// counted.
     pub fn reverse_position(&mut self, bracket: Bracket) {
         let (Some(position), Some((side, _))) =
             (self.venue.position().cloned(), self.reverse_aim())
         else {
             return;
         };
+        let opening = OrderIntent::market(side, position.quantity).with_bracket(bracket);
+        if let Some(refusal) = self.risk_refusal(&opening) {
+            self.set_toast(format!("SIM: {}", refusal.sentence()));
+            return;
+        }
         let events = self.venue.submit(
             OrderIntent::market(side, position.quantity.saturating_add(position.quantity))
                 .with_bracket(bracket),

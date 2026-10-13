@@ -959,3 +959,58 @@ fn a_suffix_symbols_trades_are_keyed_to_their_session() {
     assert_eq!(loaded.rows[0].session.as_ref(), Some(&at.session));
     assert_eq!(loaded.rows[0].trade_ref, at.trade);
 }
+
+/// A reverse opens a position, so the risk lock measures the leg it opens
+/// like any entry: refused with the entry's own sentence while the lock
+/// stands, nothing reaching the venue, and let through once it is lifted.
+#[test]
+fn the_risk_lock_refuses_a_reverse_it_would_refuse_as_an_entry() {
+    let dir = ScratchDir::new("account-reverse-lock");
+    let mut account = account(&dir, "WIN$N");
+    account.seed(&print(0, 100));
+    account.place_intent(OrderIntent::market(Side::Buy, Decimal::from(1000)));
+    account.on_trade(&print(1, 100));
+    assert_eq!(account.venue().position().map(|p| p.side), Some(Side::Buy));
+    let mut book = InstrumentBook::new();
+    book.insert(
+        "WIN$N".to_owned(),
+        InstrumentMoney {
+            point_value: Decimal::new(20, 2),
+            size_step: Decimal::ONE,
+            min_size: Decimal::ONE,
+            max_size: None,
+            currency: Currency::new("BRL").expect("BRL"),
+            source: MoneySource::Declared,
+        },
+    );
+    account.set_instrument_money(book);
+    let mut risk = account.risk_settings().clone();
+    risk.lock = true;
+    risk.basis = RiskBasis::Amount;
+    risk.amount = Decimal::from(1);
+    account.set_risk_settings(risk.clone());
+    // A short of 1000 stopped 99 points above is far past a 1 BRL budget.
+    let stop = Bracket::whole(Some(Decimal::from(199)), None);
+
+    account.reverse_position(stop);
+    account.on_trade(&print(2, 100));
+    let position = account.venue().position().expect("still open");
+    assert_eq!(
+        (position.side, position.quantity),
+        (Side::Buy, Decimal::from(1000)),
+        "the refused flip never reached the venue"
+    );
+    let toast = account.peek_toast().expect("the refusal is said");
+    assert!(toast.starts_with("SIM: "), "{toast}");
+
+    risk.lock = false;
+    account.set_risk_settings(risk);
+    account.reverse_position(stop);
+    account.on_trade(&print(3, 100));
+    let position = account.venue().position().expect("flipped");
+    assert_eq!(
+        (position.side, position.quantity),
+        (Side::Sell, Decimal::from(1000)),
+        "unlocked, the same flip goes through"
+    );
+}

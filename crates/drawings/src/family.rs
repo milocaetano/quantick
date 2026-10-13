@@ -38,6 +38,21 @@ pub enum AnchorSnap {
     /// price is presentation, and a ball floating in empty space far above
     /// any candle reads as a bug, not as a choice.
     NearestOhlc,
+    /// [`AnchorSnap::Pointer`] for a tool whose anchors are levels (a
+    /// horizontal line, a rectangle's edges — [`BodySnap::Levels`]): the
+    /// magnet stays the trader's switch, but its candidates are the OHLC of
+    /// every candle in view, not only the one under the pointer. A level is
+    /// drawn off a swing anywhere on screen; the anchor's bar never moves.
+    VisibleLevels,
+}
+
+impl AnchorSnap {
+    /// Whether the trader's magnet (the rail's, or the object's own) moves
+    /// this anchor at all. A tool that snaps by its own rule has none.
+    #[must_use]
+    pub fn takes_magnet(self) -> bool {
+        matches!(self, Self::Pointer | Self::VisibleLevels)
+    }
 }
 
 /// How a body drag of an object meets the magnet: by the levels its anchors

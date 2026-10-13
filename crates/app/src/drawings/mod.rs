@@ -29,7 +29,6 @@ pub(crate) use quantick_drawings::FrvpPayload;
 pub(crate) use quantick_drawings::UNDO_HISTORY_LIMIT;
 #[cfg(test)]
 pub(crate) use quantick_drawings::ValueUnit;
-pub(crate) use quantick_drawings::reanchor_points;
 pub use quantick_drawings::{
     AvwapPayload, ChartPoint, Constrain, DEFAULT_DRAWING_COLOR, DRAWING_TOOLS, DeleteOutcome,
     DoubleClickHint, DrawContext, DrawingAuthor, DrawingBand, DrawingId, DrawingPayload,

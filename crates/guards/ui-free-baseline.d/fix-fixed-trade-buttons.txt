@@ -1,0 +1,6 @@
+# Unbreak main after the #682 merge. Both parents of 2a2d730a pass the
+# UI-free ratchet on their own; the merge of the session-core pilot (which
+# tightened this ceiling) with #683/#684 leaves main 8 lines over it. This
+# branch adds no UI-free line; it signs the merge remainder so the gate runs.
+crates/app +8
+!budget +8
