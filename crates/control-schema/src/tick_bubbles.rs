@@ -3,7 +3,7 @@ use quantick_control::{registry::IdempotencyPolicy, wire::WireU64};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub const CAPABILITY_ID: &str = "orderflow.bubbles.tick.set";
+pub const TICK_BUBBLES_CAPABILITY_ID: &str = "orderflow.bubbles.tick.set";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -45,7 +45,7 @@ impl From<quantick_orderflow::TickBubbleStyle> for TickBubblesSnapshot {
 
 pub fn descriptor() -> quantick_control::registry::CapabilityDescriptor {
     let mut descriptor = crate::layout::transient_descriptor::<TickBubblesInput, TickBubblesResult>(
-        CAPABILITY_ID,
+        TICK_BUBBLES_CAPABILITY_ID,
         crate::orderflow::MODULE_ID,
         "Set tick chart sphere preset",
         "Applies only a named tick-chart sphere calibration to a Binance BTC tick pane. Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW. Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
@@ -56,7 +56,7 @@ pub fn descriptor() -> quantick_control::registry::CapabilityDescriptor {
 }
 
 pub const READBACKS: &[crate::readback::Readback] = &[crate::readback::snapshot(
-    CAPABILITY_ID,
+    TICK_BUBBLES_CAPABILITY_ID,
     IdempotencyPolicy::Optional,
     crate::orderflow::BUBBLES_SCOPE_ID,
     "tabs[].panes[].bubbles.tick_bubbles",
