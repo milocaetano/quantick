@@ -9,7 +9,7 @@
 //! [`ChartCommand`] to carry out.
 
 use quantick_engine::Side;
-use quantick_sim::{Bracket, BracketTarget, EntryKind, OrderId};
+use quantick_trading::{Bracket, BracketTarget, EntryKind, OrderId};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 

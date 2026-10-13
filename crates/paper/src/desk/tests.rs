@@ -6,7 +6,7 @@
 //! gesture through its window-typed input; these pin the rules underneath.
 
 use quantick_engine::{Side, Trade};
-use quantick_sim::{BracketTarget, EntryKind, OrderId, Position};
+use quantick_trading::{BracketTarget, EntryKind, OrderId, Position};
 use rust_decimal::Decimal;
 
 use super::cmd::{
@@ -787,7 +787,7 @@ fn the_trade_bar_says_why_it_is_locked_and_keeps_faces_short() {
     assert!(bar.reverse_hover.ends_with("· Shift+R"));
 
     account.seed(&print(0, 100));
-    account.place_intent(quantick_sim::OrderIntent::market(
+    account.place_intent(quantick_trading::OrderIntent::market(
         Side::Buy,
         Decimal::from(2),
     ));
@@ -804,13 +804,13 @@ fn the_trade_bar_says_why_it_is_locked_and_keeps_faces_short() {
     let mut book = crate::risk_sizing::InstrumentBook::new();
     book.insert(
         "DESKX".to_owned(),
-        quantick_sim::InstrumentMoney {
+        quantick_trading::InstrumentMoney {
             point_value: Decimal::new(20, 2),
             size_step: Decimal::ONE,
             min_size: Decimal::ONE,
             max_size: None,
-            currency: quantick_sim::Currency::new("BRL").expect("BRL"),
-            source: quantick_sim::MoneySource::Declared,
+            currency: quantick_trading::Currency::new("BRL").expect("BRL"),
+            source: quantick_trading::MoneySource::Declared,
         },
     );
     account.set_instrument_money(book);

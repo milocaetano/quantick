@@ -6,7 +6,7 @@ use std::path::Path;
 use quantick_civil::{CivilDate, DateRange, TzOffset};
 use quantick_engine::Side;
 use quantick_sim::history::{self, SessionSource};
-use quantick_sim::{ClosedTrade, ExitReason};
+use quantick_trading::{ClosedTrade, ExitReason};
 use rust_decimal::Decimal;
 
 use super::*;

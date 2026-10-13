@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use quantick_civil::{CivilDate, DateRange, TzOffset, civil_utc};
-use quantick_sim::ClosedTrade;
 use quantick_sim::history::{self, SessionSource};
+use quantick_trading::ClosedTrade;
 use rust_decimal::Decimal;
 
 use super::SourceFilter;
