@@ -40,9 +40,10 @@ pub struct RectanglePayload {
     /// edge. An armed strategy reads it too: the region is then active
     /// before its left anchor as well.
     pub extend_left: bool,
-    /// The `(left, right)` extension a double click replaced, held so the
-    /// next double click puts back exactly the extent that was there. `None`
-    /// while the extension is the trader's own setting.
+    /// The `(left, right)` extension a double click on the centre replaced,
+    /// held so the next centre double click puts back exactly the extent
+    /// that was there. `None` while the extension is the trader's own
+    /// setting, and after a side's double click, which owns only its side.
     ///
     /// Session state, never exported: a tool default or a named preset that
     /// carried it would hand every new rectangle a restore point it never
@@ -57,9 +58,6 @@ pub(crate) const EDGE_ZONE_PX: f32 = 18.0;
 /// Reach outside the drawn border that still counts as on the rectangle -
 /// the same slack the pane gives a click that selects a drawing.
 const EDGE_ZONE_SLACK_PX: f32 = 10.0;
-/// Offset of the hint glyph above the pointer, so the cursor never covers it.
-const HINT_GLYPH_RISE_PX: f32 = 16.0;
-
 /// Where on the rectangle a double click lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExtendZone {
@@ -68,35 +66,29 @@ enum ExtendZone {
     Center,
 }
 
-impl ExtendZone {
-    /// The `(left, right)` sides a double click in this zone extends.
-    fn sides(self) -> (bool, bool) {
-        match self {
-            Self::Left => (true, false),
-            Self::Right => (false, true),
-            Self::Center => (true, true),
-        }
-    }
-}
-
 /// The zone under `position` of a band drawn as `drawn` and painted as
 /// `painted` (the drawn rectangle run to the chart edges it extends to), or
-/// `None` off the band. The zones are measured from the drawn sides, so a
-/// side keeps its zone after the band runs past it, and whatever is painted
-/// beyond a drawn side belongs to that side. A narrow rectangle keeps a
-/// centre: each side zone takes at most a third of the drawn width.
+/// `None` off the band. A side's zone is the strip by its drawn side, which
+/// keeps its place after the band runs past it, and the strip by the painted
+/// edge the band now runs to - the side the trader sees. The painted run
+/// between them is no zone: there the band is only a band, and the chart
+/// keeps its double click. A narrow rectangle keeps a centre: each side zone
+/// takes at most a third of the drawn width.
 fn extend_zone(drawn: PxRect, painted: PxRect, position: Px) -> Option<ExtendZone> {
     if !painted.expand(EDGE_ZONE_SLACK_PX).contains(position) {
         return None;
     }
     let zone = side_zone_width(drawn);
-    Some(if position.x <= drawn.left() + zone {
-        ExtendZone::Left
-    } else if position.x >= drawn.right() - zone {
-        ExtendZone::Right
+    let x = position.x;
+    let by_drawn = |side: f32| (x - side).abs() <= zone.max(EDGE_ZONE_SLACK_PX);
+    if x <= drawn.left() + zone && (by_drawn(drawn.left()) || x <= painted.left() + zone) {
+        Some(ExtendZone::Left)
+    } else if x >= drawn.right() - zone && (by_drawn(drawn.right()) || x >= painted.right() - zone)
+    {
+        Some(ExtendZone::Right)
     } else {
-        ExtendZone::Center
-    })
+        (x > drawn.left() && x < drawn.right()).then_some(ExtendZone::Center)
+    }
 }
 
 fn side_zone_width(rect: PxRect) -> f32 {
@@ -104,18 +96,33 @@ fn side_zone_width(rect: PxRect) -> f32 {
 }
 
 impl RectanglePayload {
-    /// The double click: restore the extent a previous double click
-    /// replaced, else extend toward `zone`'s sides. Answers whether anything
-    /// changed - extending a side that already runs to the edge is a no-op.
+    /// The double click. A side zone toggles that side alone - run it to
+    /// the chart edge, or take it back - so the trader can extend one way
+    /// and then the other without a restore in between. The centre restores
+    /// the extent a previous centre double click replaced, else extends both
+    /// sides. Answers whether anything changed - extending from the centre
+    /// when both sides already run to the edge is a no-op.
     fn apply_double_click(&mut self, zone: ExtendZone) -> bool {
+        match zone {
+            ExtendZone::Left => {
+                self.extend_left = !self.extend_left;
+                self.extended_from = None;
+                return true;
+            }
+            ExtendZone::Right => {
+                self.extend_right = !self.extend_right;
+                self.extended_from = None;
+                return true;
+            }
+            ExtendZone::Center => {}
+        }
         if let Some((left, right)) = self.extended_from.take() {
             self.extend_left = left;
             self.extend_right = right;
             return true;
         }
         let before = (self.extend_left, self.extend_right);
-        let (left, right) = zone.sides();
-        let after = (before.0 || left, before.1 || right);
+        let after = (true, true);
         if after == before {
             return false;
         }
@@ -124,19 +131,6 @@ impl RectanglePayload {
         true
     }
 
-    /// What a double click in side zone `zone` would do, as the glyph that
-    /// says so - `None` when it would change nothing. The centre has no
-    /// glyph: it is the move grip.
-    fn double_click_glyph(&self, zone: ExtendZone) -> Option<&'static str> {
-        if self.extended_from.is_some() {
-            return Some(icons::ARROWS_IN_LINE_HORIZONTAL);
-        }
-        match zone {
-            ExtendZone::Left if !self.extend_left => Some(icons::ARROW_LINE_LEFT),
-            ExtendZone::Right if !self.extend_right => Some(icons::ARROW_LINE_RIGHT),
-            _ => None,
-        }
-    }
 }
 
 impl DrawingPayload for RectanglePayload {
@@ -351,24 +345,14 @@ impl MarkTool for Rectangle {
         if points.len() != 2 {
             return None;
         }
-        let payload = payload_of(ctxt);
         let drawn = PxRect::from_two_pos(points[0], points[1]);
-        let painted = screen_rect(points, chart_rect, payload);
-        // The hint lives in the side zones only: the centre is where the
-        // trader grabs the band to move it, and a glyph there on every
-        // hover would be noise. The centre's double click still works.
-        let zone = extend_zone(drawn, painted, position).filter(|zone| *zone != ExtendZone::Center)?;
-        let glyph = payload.double_click_glyph(zone)?;
-        let inset = side_zone_width(drawn) / 2.0;
-        let x = if zone == ExtendZone::Left {
-            drawn.left() + inset
-        } else {
-            drawn.right() - inset
-        };
-        Some(DoubleClickHint {
-            glyph,
-            at: pos2(x, position.y - HINT_GLYPH_RISE_PX),
-        })
+        let painted = screen_rect(points, chart_rect, payload_of(ctxt));
+        // The hint lives in the side zones only, where a double click always
+        // toggles that side: the centre is where the trader grabs the band
+        // to move it, and keeps the move cursor. Its double click still works.
+        extend_zone(drawn, painted, position)
+            .is_some_and(|zone| zone != ExtendZone::Center)
+            .then_some(DoubleClickHint::ExtendSideways)
     }
     fn double_click(
         &self,
@@ -550,64 +534,101 @@ mod tests {
         );
     }
 
-    #[test]
-    fn each_zone_extends_its_sides_and_the_next_double_click_restores() {
-        for (x, extended) in [(105.0, (true, false)), (295.0, (false, true)), (200.0, (true, true))] {
-            let mut payload = RectanglePayload::default();
-            assert!(double_click_at(&mut payload, x));
-            assert_eq!((payload.extend_left, payload.extend_right), extended, "at x={x}");
-            assert_eq!(payload.extended_from, Some((false, false)));
-            // Anywhere on the band restores, wherever the extension put its sides.
-            assert!(double_click_at(&mut payload, 200.0));
-            assert_eq!(payload, RectanglePayload::default(), "at x={x}");
-        }
+    fn extent(payload: &RectanglePayload) -> (bool, bool) {
+        (payload.extend_left, payload.extend_right)
     }
 
     #[test]
-    fn a_restore_puts_back_an_extension_the_trader_set_by_hand() {
-        let mut payload = RectanglePayload {
+    fn a_side_double_click_toggles_that_side_alone() {
+        let mut payload = RectanglePayload::default();
+        assert!(double_click_at(&mut payload, 295.0));
+        assert_eq!(extent(&payload), (false, true));
+        // The other side extends too: a side never restores the last extent.
+        assert!(double_click_at(&mut payload, 105.0));
+        assert_eq!(extent(&payload), (true, true));
+        // The same side again takes back that side only.
+        assert!(double_click_at(&mut payload, 295.0));
+        assert_eq!(extent(&payload), (true, false));
+        assert!(double_click_at(&mut payload, 105.0));
+        assert_eq!(payload, RectanglePayload::default());
+    }
+
+    #[test]
+    fn the_centre_extends_both_sides_and_the_next_centre_double_click_restores() {
+        let by_hand = RectanglePayload {
             extend_right: true,
             ..RectanglePayload::default()
         };
-        // The right side already runs to the edge, and everything painted
-        // past the drawn right side is that side's zone: nothing to extend.
-        assert!(!double_click_at(&mut payload, 495.0));
-        assert_eq!(payload.extended_from, None);
-        assert!(double_click_at(&mut payload, 105.0));
-        assert_eq!((payload.extend_left, payload.extend_right), (true, true));
+        let mut payload = by_hand.clone();
         assert!(double_click_at(&mut payload, 200.0));
-        assert_eq!(
-            payload,
-            RectanglePayload {
-                extend_right: true,
-                ..RectanglePayload::default()
-            }
-        );
+        assert_eq!(extent(&payload), (true, true));
+        assert_eq!(payload.extended_from, Some((false, true)));
+        assert!(double_click_at(&mut payload, 200.0));
+        assert_eq!(payload, by_hand, "the trader's own extension comes back");
+        // Both sides already at the edge: the centre has nothing to add.
+        let mut both = RectanglePayload {
+            extend_left: true,
+            extend_right: true,
+            extended_from: None,
+        };
+        assert!(!double_click_at(&mut both, 200.0));
     }
 
     #[test]
-    fn the_hint_shows_only_in_a_side_zone_whose_double_click_does_something() {
-        let payload = RectanglePayload::default();
-        let left = hint_at(&payload, 105.0).expect("the left zone announces itself");
-        assert_eq!(left.glyph, icons::ARROW_LINE_LEFT);
-        assert!(left.at.x > 100.0 && left.at.x < 100.0 + EDGE_ZONE_PX);
-        assert_eq!(hint_at(&payload, 295.0).map(|hint| hint.glyph), Some(icons::ARROW_LINE_RIGHT));
-        assert_eq!(hint_at(&payload, 200.0), None, "the centre is the move grip");
-        assert_eq!(hint_at(&payload, 50.0), None, "off the band");
+    fn a_side_double_click_after_the_centre_drops_the_restore_point() {
+        let mut payload = RectanglePayload::default();
+        assert!(double_click_at(&mut payload, 200.0));
+        assert!(double_click_at(&mut payload, 105.0));
+        assert_eq!(extent(&payload), (false, true));
+        assert_eq!(payload.extended_from, None);
+        // The centre now extends from what is there, not a stale extent.
+        assert!(double_click_at(&mut payload, 200.0));
+        assert_eq!(extent(&payload), (true, true));
+        assert_eq!(payload.extended_from, Some((false, true)));
+    }
 
+    #[test]
+    fn the_hint_is_every_side_zone_and_never_the_centre() {
+        for payload in [
+            RectanglePayload::default(),
+            RectanglePayload {
+                extend_left: true,
+                extend_right: true,
+                extended_from: None,
+            },
+        ] {
+            for x in [105.0, 295.0] {
+                assert_eq!(
+                    hint_at(&payload, x),
+                    Some(DoubleClickHint::ExtendSideways),
+                    "at x={x}, {payload:?}"
+                );
+            }
+            assert_eq!(hint_at(&payload, 200.0), None, "the centre is the move grip");
+        }
+        assert_eq!(hint_at(&RectanglePayload::default(), 50.0), None, "off the band");
+        // Run to the edge, the painted part past the drawn side is that side.
         let extended = RectanglePayload {
             extend_left: true,
             ..RectanglePayload::default()
         };
-        assert_eq!(hint_at(&extended, 5.0), None, "an extension set by hand has nothing to add");
+        assert_eq!(hint_at(&extended, 5.0), Some(DoubleClickHint::ExtendSideways));
+        let mut payload = extended.clone();
+        assert!(double_click_at(&mut payload, 5.0), "the painted edge takes its side back");
+        assert_eq!(payload, RectanglePayload::default());
+    }
 
-        let mut gestured = RectanglePayload::default();
-        assert!(double_click_at(&mut gestured, 295.0));
-        assert_eq!(
-            hint_at(&gestured, 495.0).map(|hint| hint.glyph),
-            Some(icons::ARROWS_IN_LINE_HORIZONTAL),
-            "a gesture's extension offers its restore"
-        );
+    #[test]
+    fn the_painted_run_between_the_edge_and_the_drawn_side_leaves_the_double_click_alone() {
+        let mut extended = RectanglePayload {
+            extend_left: true,
+            ..RectanglePayload::default()
+        };
+        assert_eq!(hint_at(&extended, 50.0), None, "the band, not a side");
+        assert!(!double_click_at(&mut extended, 50.0), "the chart keeps its double click");
+        assert!(extended.extend_left);
+        // The drawn side's slack still reaches just outside it.
+        assert_eq!(hint_at(&extended, 92.0), Some(DoubleClickHint::ExtendSideways));
     }
 
     #[test]
@@ -628,23 +649,19 @@ mod tests {
     #[test]
     fn a_drawn_side_keeps_its_zone_after_the_band_runs_past_it() {
         // Extended left by hand: the drawn left side is still the left zone,
-        // so a double click there has nothing to add - it does not read as
-        // the centre and extend the right side too.
+        // so a double click there takes the left side back - it does not
+        // read as the centre and extend the right side too.
         let mut payload = RectanglePayload {
             extend_left: true,
             ..RectanglePayload::default()
         };
-        assert!(!double_click_at(&mut payload, 105.0));
-        assert_eq!((payload.extend_left, payload.extend_right), (true, false));
+        assert!(double_click_at(&mut payload, 105.0));
+        assert_eq!(extent(&payload), (false, false));
         assert!(double_click_at(&mut payload, 295.0));
-        assert_eq!((payload.extend_left, payload.extend_right), (true, true));
-        // A gesture's restore is offered on the drawn side, not only at
-        // the chart edge the band now runs to.
-        let mut gestured = RectanglePayload::default();
-        assert!(double_click_at(&mut gestured, 105.0));
-        let restore = hint_at(&gestured, 105.0).expect("the drawn left side offers the restore");
-        assert_eq!(restore.glyph, icons::ARROWS_IN_LINE_HORIZONTAL);
-        assert!(restore.at.x > 100.0 && restore.at.x < 100.0 + EDGE_ZONE_PX);
+        assert_eq!(extent(&payload), (false, true));
+        // The drawn side keeps its hint after the band runs past it.
+        assert!(double_click_at(&mut payload, 105.0));
+        assert_eq!(hint_at(&payload, 105.0), Some(DoubleClickHint::ExtendSideways));
     }
 
     #[test]
