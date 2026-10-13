@@ -128,6 +128,18 @@ pub struct RiskContext<'a> {
     pub capital: &'a Capital,
     pub book: &'a InstrumentBook,
     pub symbol: &'a str,
+    /// The instrument catalog's money for `symbol`, read when the trader
+    /// declared none: a declared record always outranks the shipped one.
+    pub seeded: Option<&'a InstrumentMoney>,
+}
+
+impl<'a> RiskContext<'a> {
+    /// The money this symbol is sized in: the declared record, else the
+    /// catalog's.
+    #[must_use]
+    pub fn money(&self) -> Option<&'a InstrumentMoney> {
+        self.book.get(self.symbol).or(self.seeded)
+    }
 }
 
 /// Why no budget could be resolved at all.
@@ -563,7 +575,7 @@ pub fn evaluate(
     if context.settings.basis == RiskBasis::Off {
         return RiskState::Off;
     }
-    let Some(money) = context.book.get(context.symbol) else {
+    let Some(money) = context.money() else {
         return RiskState::NoInstrumentMoney {
             symbol: context.symbol.to_owned(),
         };
@@ -635,14 +647,10 @@ pub fn sized_for_aim(
     if resting == probe {
         return (state, resting);
     }
-    let Some(risk) = risk_of(
-        context.book,
-        context.symbol,
-        side,
-        entry,
-        &resting,
-        quantity,
-    ) else {
+    let Some(risk) = context
+        .money()
+        .and_then(|money| quantick_sim::risk_at(side, entry, &resting, quantity, money).ok())
+    else {
         return (state, resting);
     };
     (with_restated_risk(state, risk), resting)
@@ -907,6 +915,7 @@ mod tests {
             capital,
             book,
             symbol,
+            seeded: None,
         }
     }
 

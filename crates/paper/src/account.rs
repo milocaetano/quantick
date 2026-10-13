@@ -285,6 +285,8 @@ pub struct PaperAccount {
     /// What one point of each instrument is worth, by bare symbol. Declared
     /// by the trader; nothing here derives it from the tape.
     instrument_money: InstrumentBook,
+    /// The instrument catalog and how P&L reads; see [`crate::pnl`].
+    pnl: crate::pnl::PnlSettings,
     /// Money a launch hook asked for, waiting for the tab to learn which
     /// symbol it opens on. Spent once, on the first symbol.
     hook_money: Option<quantick_sim::InstrumentMoney>,
@@ -399,6 +401,7 @@ impl PaperAccount {
             risk: RiskSettings::default(),
             capital: Capital::new(),
             instrument_money: InstrumentBook::new(),
+            pnl: crate::pnl::PnlSettings::default(),
             risk_from_hook: false,
             hook_money: None,
             demo: None,

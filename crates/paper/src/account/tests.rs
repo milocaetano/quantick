@@ -426,7 +426,11 @@ fn the_export_csv_carries_readable_stamps_and_running_equity() {
         "human-readable UTC beside the epoch: {}",
         lines[1]
     );
-    assert!(lines[1].ends_with(",manual,1,2,2,2,live,5,,"), "{}", lines[1]);
+    assert!(
+        lines[1].ends_with(",manual,1,2,2,2,live,5,,"),
+        "{}",
+        lines[1]
+    );
     assert!(
         lines[2].contains(",3,"),
         "running equity 5 + (-2): {}",
@@ -485,8 +489,16 @@ size_step = \"1\"
         },
     );
     let lines: Vec<&str> = text.lines().collect();
-    assert!(lines[1].ends_with(",400,400,60000,manual,,,,,,200,80,BRL"), "{}", lines[1]);
-    assert!(lines[2].ends_with(",10,,"), "unknown money stays empty: {}", lines[2]);
+    assert!(
+        lines[1].ends_with(",400,400,60000,manual,,,,,,200,80,BRL"),
+        "{}",
+        lines[1]
+    );
+    assert!(
+        lines[2].ends_with(",10,,"),
+        "unknown money stays empty: {}",
+        lines[2]
+    );
 }
 
 #[test]

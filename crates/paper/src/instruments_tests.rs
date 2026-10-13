@@ -5,7 +5,6 @@ use quantick_sim::MoneySource;
 use rust_decimal::Decimal;
 
 use super::*;
-use crate::pnl::PnlPrimary;
 
 /// The file `crates/app` compiles in as the default.
 const SHIPPED: &str = include_str!("../../app/config/instruments.toml");
@@ -89,10 +88,9 @@ size_step = "1"
 
 #[test]
 fn the_display_default_is_read_from_the_file() {
-    let catalog = InstrumentCatalog::parse(
-        "version = 1\n[display]\nprimary = \"points_times_qty\"\n",
-    )
-    .expect("parses");
+    let catalog =
+        InstrumentCatalog::parse("version = 1\n[display]\nprimary = \"points_times_qty\"\n")
+            .expect("parses");
     assert_eq!(catalog.default_primary(), Some(PnlPrimary::PointsTimesQty));
 }
 

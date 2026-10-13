@@ -140,7 +140,10 @@ fn a_symbol_with_no_point_value_shows_money_as_unset() {
     assert_eq!(pnl.per_unit, d("10"));
     assert!(pnl.money.is_none());
     assert_eq!(row, format!("+10 pts × 3 · {UNSET_MONEY}"));
-    assert_eq!(effective_primary(None, false), PnlPrimary::PointsPerContract);
+    assert_eq!(
+        effective_primary(None, false),
+        PnlPrimary::PointsPerContract
+    );
     assert_eq!(effective_primary(None, true), PnlPrimary::Money);
     assert_eq!(
         effective_primary(Some(PnlPrimary::PointsTimesQty), true),
