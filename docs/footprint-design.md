@@ -82,9 +82,8 @@ widths; row floors use the default configuration. The settings window names
 the two gates: *Price rows by height* holds `profile_row_px` ("min
 band height") and `number_row_px` ("min number row height", Detailed's floor,
 Compact a pixel under it, 9-16 px); *Zoom for detail* holds
-`detail_scale` ("zoom for numbers", 0.8-6, stretching only the text
-levels' entries; the POC and the profile keep their own floors) and the two
-entry widths;
+`detail_scale` ("zoom for numbers", 0.8-6, holding back every level but
+the POC dot, which keeps its own floor) and the two entry widths;
 high scales can push the full ladder to the deepest zoom, while the summary
 numbers still follow `compact_from_px`. Merged rows put `single rows at N× height`
 in the legend - the stretch that clears the row dead band, omitted past 10×

@@ -249,19 +249,17 @@ pub fn compact_entry_width(compact_from_px: f32, detailed_from_px: f32, detail_s
         .min(deepest_width(detail_scale))
 }
 
-/// The text levels' entry widths on screen: `detail_scale` stretches only
-/// Compact's and Detailed's entries (given in the floors' units), never the
-/// Marks and Profile floors, so a scale chosen for roomier numbers never
-/// hides the POC or the profile at zoom-out. Pass the result with the
-/// candle's own width to [`LevelMemory::resolve`].
+/// The level drawn at `candle_width` on screen, given the `scaled` level the
+/// width over `detail_scale` earned: the POC dot (Marks) keeps its own floor
+/// at every scale, so a scale raised to hold the profile and the numbers back
+/// never hides the POC at zoom-out.
 #[must_use]
-pub fn on_screen_entries(compact_min: f32, detailed_min: f32, detail_scale: f32) -> (f32, f32) {
-    let scale = if detail_scale > 0.0 {
-        detail_scale
+pub fn with_poc_floor(scaled: DetailLevel, candle_width: f32) -> DetailLevel {
+    if candle_width >= MARKS_MIN_WIDTH {
+        scaled.max(DetailLevel::Marks)
     } else {
-        1.0
-    };
-    (compact_min * scale, detailed_min * scale)
+        scaled
+    }
 }
 
 /// The widest candle the zoom can reach, in the floors' units.
@@ -415,21 +413,27 @@ mod tests {
     }
 
     #[test]
-    fn a_wide_detail_scale_delays_only_the_numbers() {
-        // The POC and the profile arrive at their own floors whatever the
-        // scale; only the text levels wait for the stretched entries.
+    fn a_wide_detail_scale_holds_back_everything_but_the_poc() {
+        // At scale 6 the profile and the numbers wait for six times the
+        // width; the POC dot arrives at its own floor.
         let scale = 6.0;
-        let (compact, detailed) = on_screen_entries(COMPACT_FROM_PX, DETAILED_FROM_PX, scale);
-        let at = |width| level_for(width, 12.0, FLOORS, compact, detailed);
+        let at = |width: f32| {
+            let scaled = level_for(
+                width / scale,
+                12.0,
+                FLOORS,
+                COMPACT_FROM_PX,
+                DETAILED_FROM_PX,
+            );
+            with_poc_floor(scaled, width)
+        };
+        assert_eq!(at(MARKS_MIN_WIDTH - 1.0), DetailLevel::Off);
         assert_eq!(at(MARKS_MIN_WIDTH), DetailLevel::Marks);
-        assert_eq!(at(PROFILE_MIN_WIDTH), DetailLevel::Profile);
-        assert_eq!(at(COMPACT_FROM_PX * scale - 1.0), DetailLevel::Profile);
-        assert_eq!(at(COMPACT_FROM_PX * scale), DetailLevel::Compact);
-        assert_eq!(at(DETAILED_FROM_PX * scale), DetailLevel::Detailed);
-        assert_eq!(
-            on_screen_entries(COMPACT_FROM_PX, DETAILED_FROM_PX, 0.0),
-            (COMPACT_FROM_PX, DETAILED_FROM_PX)
-        );
+        assert_eq!(at(PROFILE_MIN_WIDTH * scale - 1.0), DetailLevel::Marks);
+        assert_eq!(at(PROFILE_MIN_WIDTH * scale), DetailLevel::Profile);
+        assert_eq!(at(COMPACT_FROM_PX * scale + 0.01), DetailLevel::Compact);
+        // A tight scale earns more than the raw width; the floor never lowers it.
+        assert_eq!(with_poc_floor(DetailLevel::Marks, 1.0), DetailLevel::Marks);
     }
 
     #[test]

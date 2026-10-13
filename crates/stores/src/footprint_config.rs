@@ -342,9 +342,9 @@ pub struct FootprintConfig {
     /// Detailed's floor; Compact keeps a pixel under it. Clamped to
     /// [`NUMBER_ROW_PX_RANGE`]; the default is the fixed floor it replaces.
     pub number_row_px: f32,
-    /// How early the ladder's text levels (Compact, Detailed) arrive, as a
-    /// multiplier on the candle-width each one needs. Marks and Profile — the
-    /// POC and the bands — keep their own floors at every scale.
+    /// How early the ladder's levels arrive, as a multiplier on the
+    /// candle-width each one needs. The POC dot (Marks) keeps its own floor
+    /// at every scale.
     ///
     /// `1.0` is the typographic budget itself — the width at which that
     /// level's text is drawn at its smallest legible size. Below 1 the levels
@@ -357,7 +357,7 @@ pub struct FootprintConfig {
     /// The candle width, in pixels, at which Compact (one summary number per
     /// row) starts — zooming in it appears there, zooming out it leaves
     /// there. Measured at a `detail_scale` of 1; the scale stretches it like
-    /// Detailed's entry. Clamped to [`COMPACT_FROM_PX_RANGE`].
+    /// every other floor. Clamped to [`COMPACT_FROM_PX_RANGE`].
     pub compact_from_px: f32,
     /// The candle width, in pixels, at which the ladder's Detailed starts, in
     /// both zoom directions. Styles that write more columns keep their
@@ -429,18 +429,6 @@ impl FootprintConfig {
         quantick_chart::footprint_lod::compact_entry_width(
             self.effective_compact_from_px(),
             self.detailed_from_px,
-            self.detail_scale,
-        )
-    }
-
-    /// Compact's entry and the given Detailed entry (floors' units) on
-    /// screen: the candle widths the text levels start at, `detail_scale`
-    /// applied; Marks and Profile are never stretched.
-    #[must_use]
-    pub fn on_screen_entries(&self, detailed_min: f32) -> (f32, f32) {
-        quantick_chart::footprint_lod::on_screen_entries(
-            self.compact_entry_width(),
-            detailed_min,
             self.detail_scale,
         )
     }
