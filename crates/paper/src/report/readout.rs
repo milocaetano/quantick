@@ -8,7 +8,8 @@
 //! all three figures at once, so a mode switch never re-reads the folder.
 //!
 //! A walk is never plotted across currencies, nor in money a trade cannot
-//! express: it falls back to the grouped points and says why.
+//! express: it falls back to the grouped points and says why — or, where
+//! those points are worth different things, plots nothing and says so.
 
 use quantick_sim::ClosedTrade;
 use rust_decimal::Decimal;
@@ -20,6 +21,9 @@ use crate::pnl::{PnlKey, PnlPrimary, PnlReader, PnlTotal, SymbolPnl, fmt_amount}
 /// Why a walk is in grouped points when money was asked for.
 const UNSET_FALLBACK: &str = "pt value unset";
 const MIXED_FALLBACK: &str = "mixed currencies";
+/// Why there is no walk at all: no money to plot, and points that add up
+/// to nothing.
+const NO_CURVE: &str = "mixed units — no curve";
 
 /// The realized-equity walk `E_0..E_n` (`E_0 = 0` before the first trade),
 /// in the two shapes its two readers need: exact values for the trade
@@ -108,6 +112,11 @@ impl EquityWalk {
             (PnlPrimary::Money, Some(money)) if money.len() > 1 => Some(MIXED_FALLBACK),
             _ => None,
         };
+        if fallback.is_some() && total.mixed_units() {
+            // Grouped points of instruments worth different things are no
+            // figure at all: no curve beats a sum across units.
+            return Self::unplotted();
+        }
         let primary = if fallback.is_some() {
             PnlPrimary::PointsTimesQty
         } else {
@@ -122,9 +131,35 @@ impl EquityWalk {
         walk
     }
 
-    /// `E_k` in the walk's figure and unit; flat past the end.
+    /// The walk that is not plotted: trades whose money cannot be read and
+    /// whose points are worth different things. No values, no drawdown —
+    /// only the caption saying why.
+    fn unplotted() -> Self {
+        Self {
+            points: Vec::new(),
+            plot: Vec::new(),
+            low: 0.0,
+            high: 0.0,
+            primary: PnlPrimary::PointsTimesQty,
+            unit: String::new(),
+            fallback: Some(NO_CURVE),
+            drawdown: None,
+        }
+    }
+
+    /// Whether there is a curve to paint; see [`Self::unplotted`].
+    #[must_use]
+    pub fn plotted(&self) -> bool {
+        !self.plot.is_empty()
+    }
+
+    /// `E_k` in the walk's figure and unit; flat past the end. Empty for a
+    /// walk that is not plotted.
     #[must_use]
     pub fn text(&self, k: usize) -> String {
+        if !self.plotted() {
+            return String::new();
+        }
         let value = self.points.get(k).copied().unwrap_or_default();
         fmt_amount(value, self.primary, &self.unit)
     }

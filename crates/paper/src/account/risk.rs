@@ -68,7 +68,7 @@ pub struct RiskEditor<'a> {
     pub capital: &'a mut Capital,
     /// What one point of each instrument is worth, by bare symbol.
     pub book: &'a mut InstrumentBook,
-    /// The catalog's money for the symbol on this feed: what the block
+    /// The catalog's money for the symbol: what the block
     /// shows until the trader declares their own.
     pub seeded: Option<InstrumentMoney>,
 }
@@ -273,8 +273,8 @@ impl PaperAccount {
         self.pnl_book().spec(&self.symbol).map(|spec| &spec.money)
     }
 
-    /// Follow the tab's feed: a catalog entry prices only the feeds it
-    /// names, so `WIN*` on B3 never reads onto a crypto pair `WINUSDT`.
+    /// Follow the tab's feed. Only a trader's catalog entry that names
+    /// its `feeds` asks it; every shipped entry prices any tab alike.
     pub fn set_feed(&mut self, feed: &str) {
         if self.feed != feed {
             feed.clone_into(&mut self.feed);

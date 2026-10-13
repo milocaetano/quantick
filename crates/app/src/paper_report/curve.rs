@@ -27,6 +27,9 @@ pub(super) fn draw_equity_curve(ui: &mut egui::Ui, view: &ReportView, floor: f32
         return;
     }
     ui.label(caption(&view.equity.caption()));
+    if !view.equity.plotted() {
+        return;
+    }
     let height = (ui.available_height() - CURVE_GRID_RESERVE_PX).clamp(floor, CURVE_MAX_H_PX);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),

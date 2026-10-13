@@ -307,7 +307,7 @@ impl SymbolPnl<'_> {
 }
 
 /// Where a symbol's money and P&L units are looked up: the trader's
-/// declared records first, then the catalog's entry for this feed.
+/// declared records first, then the catalog's entry.
 ///
 /// The one lookup: sizing ([`crate::risk_sizing::RiskContext`]), the
 /// ticket's step and every P&L readout ask [`Self::money`], so no surface
@@ -316,7 +316,8 @@ impl SymbolPnl<'_> {
 pub struct PnlBook<'a> {
     pub declared: &'a InstrumentBook,
     pub catalog: &'a InstrumentCatalog,
-    /// The feed the account trades on; catalog entries price only theirs.
+    /// The feed the account trades on; only a trader's entry that names
+    /// its `feeds` asks it, so a shipped price never depends on the tab.
     pub feed: &'a str,
 }
 
@@ -332,7 +333,7 @@ impl<'a> PnlBook<'a> {
     }
 
     /// The money `symbol` is sized and read in: the trader's declared
-    /// record, else the catalog's for this feed, else none.
+    /// record, else the catalog's, else none.
     #[must_use]
     pub fn money(&self, symbol: &str) -> Option<&'a InstrumentMoney> {
         self.declared
@@ -340,7 +341,7 @@ impl<'a> PnlBook<'a> {
             .or_else(|| self.spec(symbol).map(|spec| &spec.money))
     }
 
-    /// The catalog's entry for `symbol` on this feed.
+    /// The catalog's entry for `symbol`.
     #[must_use]
     pub fn spec(&self, symbol: &str) -> Option<&'a InstrumentSpec> {
         self.catalog.lookup(self.feed, symbol)
@@ -355,6 +356,9 @@ impl<'a> PnlBook<'a> {
             money: self.money(symbol),
             price_unit: spec.map_or(PriceUnit::Points, |spec| spec.price_unit),
             pip_size: spec.and_then(|spec| spec.pip_size),
+            family: spec
+                .filter(|_| !self.declared.contains_key(symbol))
+                .map(|spec| spec.family.as_str()),
         }
     }
 }
@@ -366,6 +370,10 @@ pub struct PnlUnits<'a> {
     pub money: Option<&'a InstrumentMoney>,
     pub price_unit: PriceUnit,
     pub pip_size: Option<Decimal>,
+    /// The catalog key the symbol is priced under; `None` when the trader
+    /// declared its money or nothing priced it, and the symbol is its own
+    /// unit.
+    pub family: Option<&'a str>,
 }
 
 impl PnlUnits<'_> {
@@ -541,9 +549,10 @@ pub struct PnlTotal {
     money: BTreeMap<Currency, Decimal>,
     /// Whether any trade in the total had no point value.
     money_unknown: bool,
-    /// The unit shared by every trade — its suffix and what one of it is
-    /// worth (point value and currency, else the symbol) — or `None` once
-    /// they differ: WIN and WDO both say `pts` and never add up.
+    /// The unit shared by every trade — its suffix and the instrument it
+    /// measures (the catalog key, else the symbol) — or `None` once they
+    /// differ: WIN and WDO both say `pts` and never add up, nor do a
+    /// BTCUSDT and an ETHUSDT move although both are worth 1 USDT.
     unit: Option<(String, String)>,
     mixed_units: bool,
 }
@@ -560,17 +569,8 @@ impl PnlTotal {
             }
             None => self.money_unknown = true,
         }
-        let basis = units.money.map_or_else(
-            || symbol.to_owned(),
-            |money| {
-                format!(
-                    "{} {}",
-                    money.point_value.normalize(),
-                    money.currency.code()
-                )
-            },
-        );
-        self.note_unit((units.unit_suffix(), basis));
+        let instrument = units.family.unwrap_or(symbol).to_owned();
+        self.note_unit((units.unit_suffix(), instrument));
     }
 
     /// Fold another total in: the ledger adds this session's trades to the

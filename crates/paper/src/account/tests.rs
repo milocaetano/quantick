@@ -1131,34 +1131,110 @@ fn the_brackets_read_what_the_position_would_at_each_level() {
     );
 }
 
-#[test]
-fn the_account_reads_the_catalog_for_its_own_feed_only() {
-    let dir = ScratchDir::new("catalog-feed");
-    let mut account = account(&dir, "BTCUSDT");
-    account.set_pnl_settings(crate::pnl::PnlSettings::load(
+/// Every feed id a tab could carry, and none.
+const TAB_FEEDS: [&str; 4] = ["metatrader-b3", "binance", "hyperliquid", ""];
+
+fn shipped_settings() -> crate::pnl::PnlSettings {
+    crate::pnl::PnlSettings::load(
         include_str!("../../../app/config/instruments.toml"),
         None,
         None,
-    ));
+    )
+}
+
+#[test]
+fn the_account_reads_the_shipped_catalog_whatever_the_tab_feed() {
+    let dir = ScratchDir::new("catalog-feed");
+    let mut account = account(&dir, "BTCUSDT");
+    account.set_pnl_settings(shipped_settings());
+    for feed in TAB_FEEDS {
+        account.set_feed(feed);
+        let money = account.symbol_money().cloned().expect("BTCUSDT");
+        assert_eq!(
+            money.size_step,
+            Decimal::new(1, 5),
+            "the ticket steps 0.00001"
+        );
+        assert_eq!(
+            money.currency.code(),
+            "USDT",
+            "a risk amount is stamped USDT"
+        );
+        let seeded = account.risk_editor().seeded;
+        assert_eq!(seeded.as_ref(), Some(&money));
+        assert!(
+            crate::risk_sizing::money_note(seeded.as_ref()).contains("from instruments.toml"),
+            "the risk block names where the value came from"
+        );
+    }
+    // A WIN replay opened on a tab whose live feed is Binance still reads
+    // the mini index's money; Binance's WINUSDT never does.
     account.set_feed("binance");
-    let money = account.symbol_money().cloned().expect("BTCUSDT on binance");
-    assert_eq!(
-        money.size_step,
-        Decimal::new(1, 5),
-        "the ticket steps 0.00001"
-    );
-    assert_eq!(
-        money.currency.code(),
-        "USDT",
-        "a risk amount is stamped USDT"
-    );
-    let seeded = account.risk_editor().seeded;
-    assert_eq!(seeded.as_ref(), Some(&money));
-    assert!(
-        crate::risk_sizing::money_note(seeded.as_ref()).contains("from instruments.toml"),
-        "the risk block names where the value came from"
-    );
-    account.set_feed("hyperliquid");
-    assert_eq!(account.symbol_money(), None, "never another venue's entry");
+    account.set_symbol("WINV26");
+    let win = account
+        .symbol_money()
+        .cloned()
+        .expect("WINV26 on a binance tab");
+    assert_eq!(win.point_value, Decimal::new(20, 2));
+    assert_eq!(win.currency.code(), "BRL");
+    for symbol in ["WINUSDT", "DOLOUSDT"] {
+        account.set_symbol(symbol);
+        assert_eq!(account.symbol_money(), None, "{symbol} is no B3 contract");
+    }
     assert!(crate::risk_sizing::money_note(None).contains("No feed reports"));
+}
+
+/// A saved trade is worth what it is worth: the ledger row, the total and
+/// the CSV export read the same money from every tab.
+#[test]
+fn a_saved_trade_prices_identically_from_any_tab() {
+    let dir = ScratchDir::new("catalog-any-tab");
+    let mut account = account(&dir, "BTCUSDT");
+    account.set_pnl_settings(shipped_settings());
+    let trade = ClosedTrade {
+        side: Side::Buy,
+        quantity: Decimal::from(2),
+        entry_price: Decimal::from(100),
+        exit_price: Decimal::from(300),
+        opened_ms: 1_773_666_000_000,
+        closed_ms: 1_773_666_060_000,
+        pnl_points: Decimal::from(400),
+        exit_reason: quantick_sim::ExitReason::Manual,
+        entry_agg_id: None,
+        exit_agg_id: None,
+        mae_points: None,
+        mfe_points: None,
+    };
+    let rows = vec![HistoryRow {
+        symbol: "WINV26".to_owned(),
+        source: None,
+        trade: trade.clone(),
+        session: None,
+        trade_ref: history::TradeRef::default(),
+        tags: Vec::new(),
+    }];
+    let read = |account: &PaperAccount| {
+        let reader = account.pnl_reader();
+        (
+            reader.trade("WINV26", trade.pnl_points, trade.quantity),
+            reader.total(rows.iter().map(|row| (row.symbol.as_str(), &row.trade))),
+            export_csv(&rows, &account.pnl_book()),
+        )
+    };
+    account.set_feed("metatrader-b3");
+    let on_b3 = read(&account);
+    assert!(on_b3.0.contains("80.00 BRL"), "{}", on_b3.0);
+    assert!(
+        on_b3
+            .2
+            .lines()
+            .nth(1)
+            .is_some_and(|line| line.ends_with(",200,80,BRL")),
+        "{}",
+        on_b3.2
+    );
+    for feed in TAB_FEEDS {
+        account.set_feed(feed);
+        assert_eq!(read(&account), on_b3, "read from a {feed:?} tab");
+    }
 }

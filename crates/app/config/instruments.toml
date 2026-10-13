@@ -11,9 +11,12 @@
 # the `trade.instrument_money.set` capability) > this catalog > nothing. With
 # nothing, money reads "— set pt value": it is never guessed.
 #
-# Keys: an exact symbol, or a `PREFIX*` family of dated contracts. The exact
-# key wins, else the longest matching family — the same law as
-# `symbol_bubble_presets` in feeds.toml.
+# Keys: an exact symbol, a `PREFIX*` family, or a futures root with
+# `series = "b3"`. The exact key wins, else the longest matching root.
+# A B3 series matches the contract code's shape only: the root, a month
+# letter (F G H J K M N Q U V X Z) and a two-digit year (WINV26), or the MT5
+# continuous aliases WIN$ and WIN$N. A bare `WIN*` would also price Binance's
+# WINUSDT, which is why no shipped entry is a prefix.
 #
 # Fields (decimals are strings, so a value is never rounded through a float):
 #   currency     the currency P&L is in; currencies are never converted or
@@ -26,11 +29,12 @@
 #   price_unit   points | pips | quote — what the per-contract move is called.
 #                Crypto never says "points": it reads as a quote-asset move.
 #   pip_size     the price increment one pip is; required with pips only.
-#   feeds        the feed ids (feeds.toml `id`) the entry prices; absent, every
-#                feed. A family is a prefix and prefixes cross venues: `WIN*`
-#                on B3 must never price Binance's `WINUSDT`, so every shipped
-#                entry names its feeds. Charting B3 under another feed id?
-#                Copy the entry into your own file with that id.
+#   series       "b3" on a bare root: match B3 contract codes, as above.
+#   feeds        optional, your own file only: the feed ids (feeds.toml `id`)
+#                the entry is limited to; absent, every feed. No shipped entry
+#                names one: a point value belongs to the instrument, so a
+#                saved trade reads the same money from any tab. An entry that
+#                names feeds prices a saved trade only from a tab on them.
 #   disabled     `true` in your own file switches a shipped key off; the
 #                other fields may then be left out.
 #
@@ -48,8 +52,8 @@ version = 1
 # --- B3 futures (BRL). Step and minimum 1 contract. -------------------------
 # Mini index: R$0.20 per point, tick 5 points (R$1.00 per tick).
 # Source: borainvestir.b3.com.br/glossario/mini-indice/
-[instruments."WIN*"]
-feeds = ["metatrader-b3"]
+[instruments.WIN]
+series = "b3"
 currency = "BRL"
 point_value = "0.20"
 size_step = "1"
@@ -57,8 +61,8 @@ min_size = "1"
 price_unit = "points"
 
 # Full index: R$1.00 per point (5x the mini). Source: as above.
-[instruments."IND*"]
-feeds = ["metatrader-b3"]
+[instruments.IND]
+series = "b3"
 currency = "BRL"
 point_value = "1"
 size_step = "1"
@@ -67,8 +71,8 @@ price_unit = "points"
 
 # Mini dollar: quoted in R$ per US$1,000, R$10 per point, tick 0.5 points.
 # Source: blog.toroinvestimentos.com.br/trading/mini-dolar-o-que-e-como-funciona-wdo/
-[instruments."WDO*"]
-feeds = ["metatrader-b3"]
+[instruments.WDO]
+series = "b3"
 currency = "BRL"
 point_value = "10"
 size_step = "1"
@@ -76,8 +80,8 @@ min_size = "1"
 price_unit = "points"
 
 # Full dollar: R$50 per point (5x the mini, derived). Source: as above.
-[instruments."DOL*"]
-feeds = ["metatrader-b3"]
+[instruments.DOL]
+series = "b3"
 currency = "BRL"
 point_value = "50"
 size_step = "1"
@@ -90,7 +94,6 @@ price_unit = "points"
 # finer one, so it serves both. Source: api.binance.com/api/v3/exchangeInfo,
 # fapi.binance.com/fapi/v1/exchangeInfo
 [instruments.BTCUSDT]
-feeds = ["binance"]
 currency = "USDT"
 point_value = "1"
 size_step = "0.00001"
@@ -98,7 +101,6 @@ min_size = "0.00001"
 price_unit = "quote"
 
 [instruments.ETHUSDT]
-feeds = ["binance"]
 currency = "USDT"
 point_value = "1"
 size_step = "0.0001"
@@ -108,7 +110,6 @@ price_unit = "quote"
 # Hyperliquid perps settle in USDC; the step is 10^-szDecimals.
 # Source: hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
 [instruments.BTC]
-feeds = ["hyperliquid"]
 currency = "USDC"
 point_value = "1"
 size_step = "0.00001"
@@ -116,7 +117,6 @@ min_size = "0.00001"
 price_unit = "quote"
 
 [instruments.ETH]
-feeds = ["hyperliquid"]
 currency = "USDC"
 point_value = "1"
 size_step = "0.0001"
@@ -124,7 +124,6 @@ min_size = "0.0001"
 price_unit = "quote"
 
 [instruments.SOL]
-feeds = ["hyperliquid"]
 currency = "USDC"
 point_value = "1"
 size_step = "0.01"
@@ -132,7 +131,6 @@ min_size = "0.01"
 price_unit = "quote"
 
 [instruments.HYPE]
-feeds = ["hyperliquid"]
 currency = "USDC"
 point_value = "1"
 size_step = "0.01"
@@ -140,7 +138,6 @@ min_size = "0.01"
 price_unit = "quote"
 
 [instruments.ZEC]
-feeds = ["hyperliquid"]
 currency = "USDC"
 point_value = "1"
 size_step = "0.01"

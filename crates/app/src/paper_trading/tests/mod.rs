@@ -2030,21 +2030,25 @@ fn a_bracket_leg_tag_is_a_pill_until_the_pointer_reaches_it() {
 
     let resting = frame_at(&mut paper, 175.0);
     assert!(
-        resting.contains(&format!("\"#{id} SL -5\"")),
+        resting.contains(&format!("\"#{id} SL -5 pts × 1\"")),
         "the pill names the order, the leg and what it risks: {resting}"
     );
-    assert!(resting.contains(&format!("\"#{id} TP +15\"")), "{resting}");
+    assert!(
+        resting.contains(&format!("\"#{id} TP +15 pts × 1\"")),
+        "{resting}"
+    );
     assert!(!resting.contains("on fill"), "the words wait: {resting}");
-    assert!(!resting.contains('×'), "and no ✕ beside the axis");
+    // The clear is its own glyph; the `×` inside `pts × 1` is the quantity.
+    assert!(!resting.contains("\"×\""), "and no ✕ beside the axis");
 
     let opened = frame_at(&mut paper, 300.0);
     assert!(
-        opened.contains(&format!("#{id} SL 90 -5 pts · on fill")),
+        opened.contains(&format!("#{id} SL 90 -5 pts × 1 · on fill")),
         "reaching for it states the leg whole: {opened}"
     );
-    assert!(opened.contains('×'), "…and offers the clear: {opened}");
+    assert!(opened.contains("\"×\""), "…and offers the clear: {opened}");
     assert!(
-        opened.contains(&format!("\"#{id} TP +15\"")),
+        opened.contains(&format!("\"#{id} TP +15 pts × 1\"")),
         "only the row under the pointer opens: {opened}"
     );
 }
@@ -2068,7 +2072,7 @@ fn a_position_leg_rests_as_the_leg_and_its_points() {
         false,
     ));
     let shapes = layer_shapes(&paper, chart, &scale, Some(egui::pos2(400.0, 175.0)));
-    assert!(shapes.contains("\"SL -10\""), "{shapes}");
+    assert!(shapes.contains("\"SL -10 pts × 1\""), "{shapes}");
     assert!(
         !shapes.contains("SL 90"),
         "the price is the chip's: {shapes}"
@@ -2099,7 +2103,7 @@ fn a_leg_offers_its_clear_exactly_while_it_paints_one() {
             egui::Modifiers::default(),
             false,
         ));
-        let painted = layer_shapes(&paper, chart, &scale, Some(pointer)).contains('×');
+        let painted = layer_shapes(&paper, chart, &scale, Some(pointer)).contains("\"×\"");
         let control = paper.control_at(pointer, chart, &scale);
         let pressable = matches!(
             control,

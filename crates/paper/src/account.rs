@@ -288,7 +288,7 @@ pub struct PaperAccount {
     instrument_money: InstrumentBook,
     /// The instrument catalog and how P&L reads; see [`crate::pnl`].
     pnl: crate::pnl::PnlSettings,
-    /// The tab's feed id: catalog entries price only the feeds they name.
+    /// The tab's feed id, for a trader's catalog entry that names feeds.
     feed: String,
     /// Money a launch hook asked for, waiting for the tab to learn which
     /// symbol it opens on. Spent once, on the first symbol.

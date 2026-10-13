@@ -6,7 +6,10 @@
 //! gesture through its window-typed input; these pin the rules underneath.
 
 use quantick_engine::{Side, Trade};
-use quantick_sim::{BracketTarget, EntryKind, OrderId, Position};
+use quantick_sim::{
+    BracketTarget, Currency, EntryKind, InstrumentMoney, MoneySource, OrderId, Position,
+    signed_points,
+};
 use rust_decimal::Decimal;
 
 use super::cmd::{
@@ -25,7 +28,9 @@ use super::ticket::{
 use super::{Desk, HeldKeys, PriceAxis, StrategyEditor};
 use crate::PaperAccount;
 use crate::account::Leg;
+use crate::instruments::InstrumentBook;
 use crate::order_strategies::{NEW_RUNG_TICKS, OrderStrategy, StrategyRow};
+use crate::pnl::{PnlBook, PnlPrimary, PnlReader, PnlSettings};
 use crate::scratch::ScratchDir;
 
 /// The stated kind wins where both are conceivable to a trader but only
@@ -898,18 +903,73 @@ fn a_leg_tag_says_what_it_is_and_what_it_is_worth() {
         pending: false,
     };
     let stop = Decimal::from(95);
-    assert_eq!(leg_tag_text(&paint, stop, false, false), "SL -5");
-    assert_eq!(leg_tag_text(&paint, stop, true, false), "SL 95 -5 pts");
+    let pnl = PnlReader::plain().of("WIN$N");
     assert_eq!(
-        leg_tag_text(&paint, stop, true, true),
-        "SL 95 -5 pts · R:R 2"
+        leg_tag_text(&paint, stop, false, false, pnl),
+        "SL -5 pts × 1"
+    );
+    assert_eq!(
+        leg_tag_text(&paint, stop, true, false, pnl),
+        "SL 95 -5 pts × 1"
+    );
+    assert_eq!(
+        leg_tag_text(&paint, stop, true, true, pnl),
+        "SL 95 -5 pts × 1 · R:R 2"
     );
     paint.owner = BracketTarget::Order(OrderId(3));
     paint.pending = true;
-    assert_eq!(leg_tag_text(&paint, stop, false, false), "#3 SL -5");
     assert_eq!(
-        leg_tag_text(&paint, stop, true, false),
-        "#3 SL 95 -5 pts · on fill"
+        leg_tag_text(&paint, stop, false, false, pnl),
+        "#3 SL -5 pts × 1"
+    );
+    assert_eq!(
+        leg_tag_text(&paint, stop, true, false, pnl),
+        "#3 SL 95 -5 pts × 1 · on fill"
+    );
+}
+
+/// The main bracket's tag and the ticket word a leg in one figure: with
+/// money chosen, the tag reads the HUD's compact money, never points.
+#[test]
+fn a_leg_tag_reads_the_figure_the_ticket_leads_with() {
+    let paint = LegPaint {
+        owner: BracketTarget::Position,
+        leg: Leg::StopLoss,
+        side: Side::Buy,
+        reference: Decimal::from(100),
+        quantity: Decimal::from(2),
+        level: Some(Decimal::from(90)),
+        other_level: None,
+        pending: false,
+    };
+    let declared: InstrumentBook = [(
+        "WINV26".to_owned(),
+        InstrumentMoney {
+            point_value: Decimal::new(20, 2),
+            size_step: Decimal::ONE,
+            min_size: Decimal::ONE,
+            max_size: None,
+            currency: Currency::new("BRL").expect("BRL"),
+            source: MoneySource::Declared,
+        },
+    )]
+    .into_iter()
+    .collect();
+    let settings = PnlSettings {
+        chosen: Some(PnlPrimary::Money),
+        ..PnlSettings::default()
+    };
+    let reader = PnlReader {
+        book: PnlBook::declared_only(&declared),
+        settings: &settings,
+    };
+    let stop = Decimal::from(90);
+    let at = signed_points(paint.side, paint.reference, stop, paint.quantity);
+    let compact = reader.compact("WINV26", at, paint.quantity);
+    assert_eq!(compact, "-4.00 BRL", "ten points on two contracts at 0.20");
+    assert_eq!(
+        leg_tag_text(&paint, stop, false, false, reader.of("WINV26")),
+        format!("SL {compact}")
     );
 }
 

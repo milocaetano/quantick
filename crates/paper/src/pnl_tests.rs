@@ -417,6 +417,29 @@ fn win_and_wdo_points_never_sum_into_one_total() {
     assert_eq!(rolled.fmt(PnlPrimary::PointsPerContract), "+400 pts/ct");
 }
 
+/// A unit is the instrument, not what a point of it is worth: a BTCUSDT
+/// and an ETHUSDT move are both worth 1 USDT and still never add up.
+#[test]
+fn btcusdt_and_ethusdt_moves_never_sum_into_one_total() {
+    let catalog = shipped();
+    let declared = InstrumentBook::new();
+    let settings = PnlSettings {
+        chosen: Some(PnlPrimary::PointsPerContract),
+        ..PnlSettings::default()
+    };
+    let reader = b3_reader(&declared, &catalog, &settings);
+    let btc = closed("60", "0.5");
+    let eth = closed("10", "1");
+    let mixed = reader.sum([("BTCUSDT", &btc), ("ETHUSDT", &eth)]);
+    assert!(mixed.mixed_units());
+    assert_eq!(mixed.fmt(PnlPrimary::PointsPerContract), "mixed units");
+    assert_eq!(mixed.fmt(PnlPrimary::PointsTimesQty), "mixed units");
+    assert_eq!(reader.word(&mixed), "+70.00 USDT · mixed units");
+    let one = reader.sum([("BTCUSDT", &btc), ("BTCUSDT", &btc)]);
+    assert!(!one.mixed_units(), "one pair is one unit");
+    assert_eq!(one.fmt(PnlPrimary::PointsPerContract), "+240 USDT move/ct");
+}
+
 #[test]
 fn a_total_is_tinted_by_the_figure_it_shows() {
     let catalog = shipped();

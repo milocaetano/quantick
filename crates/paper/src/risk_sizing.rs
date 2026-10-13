@@ -126,7 +126,7 @@ impl Default for RiskSettings {
 pub struct RiskContext<'a> {
     pub settings: &'a RiskSettings,
     pub capital: &'a Capital,
-    /// The declared records and the catalog for this feed: a declared
+    /// The declared records and the catalog: a declared
     /// record always outranks the shipped one.
     pub book: PnlBook<'a>,
     pub symbol: &'a str,

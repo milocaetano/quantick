@@ -475,7 +475,8 @@ impl PaperTrading {
             .desk
             .gesture
             .open_tag(TagKey::Leg(paint.owner, paint.leg));
-        let text = leg_tag_text(paint, shown, dragging || open.is_some(), dragging);
+        let pnl = self.account.symbol_pnl();
+        let text = leg_tag_text(paint, shown, dragging || open.is_some(), dragging, pnl);
         ctx.chip_tag(
             y,
             color,

@@ -3,7 +3,7 @@
 //!
 //! At rest the pill says what the leg is and what it is worth — `SL -77.29`
 //! on a position — and nothing the chart already says elsewhere. The price
-//! is the gutter chip's job; the ✕ waits for the pointer, because a stop
+//! is the gutter chip's job, and the worth is the ticket's figure; the ✕ waits for the pointer, because a stop
 //! cleared by one stray press beside the axis is protection lost. The full
 //! statement used to sit there all session, and with a position and two
 //! bracketed orders up the tags buried the candles they sat on.
@@ -22,7 +22,8 @@ use quantick_sim::{BracketTarget, signed_points};
 use rust_decimal::Decimal;
 
 use crate::account::Leg;
-use crate::format::{fmt_decimal, fmt_points, fmt_signed_points};
+use crate::format::{fmt_decimal, fmt_points};
+use crate::pnl::SymbolPnl;
 
 /// One protective leg, as its tag and line read it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,26 +49,29 @@ pub struct LegPaint {
 }
 
 /// The words on a leg's tag. At rest: the order's id while it has not
-/// filled, the leg, and its signed points (`#1 SL -5`, `TP +10`). Open:
-/// the whole statement — the price, the unit, `on fill`, and the R:R
-/// while `dragging`.
+/// filled, the leg, and what the leg is worth in the figure the ticket
+/// leads with — `pnl`'s compact form, the HUD's and the rungs' own
+/// (`#1 SL -5 pts × 1`, `TP +2.00 BRL`). Open: the price before it,
+/// `on fill`, and the R:R while `dragging`.
 #[must_use]
-pub fn leg_tag_text(paint: &LegPaint, shown: Decimal, open: bool, dragging: bool) -> String {
+pub fn leg_tag_text(
+    paint: &LegPaint,
+    shown: Decimal,
+    open: bool,
+    dragging: bool,
+    pnl: SymbolPnl<'_>,
+) -> String {
     let owner = match paint.owner {
         BracketTarget::Order(id) => format!("#{} ", id.0),
         BracketTarget::Position => String::new(),
     };
-    let points = fmt_signed_points(signed_points(
-        paint.side,
-        paint.reference,
-        shown,
-        paint.quantity,
-    ));
+    let at = signed_points(paint.side, paint.reference, shown, paint.quantity);
+    let figure = pnl.reader.compact(pnl.symbol, at, paint.quantity);
     if !open {
-        return format!("{owner}{} {points}", paint.leg.word());
+        return format!("{owner}{} {figure}", paint.leg.word());
     }
     let mut text = format!(
-        "{owner}{} {} {points} pts",
+        "{owner}{} {} {figure}",
         paint.leg.word(),
         fmt_decimal(shown)
     );

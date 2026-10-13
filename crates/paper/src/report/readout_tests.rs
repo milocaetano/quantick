@@ -215,40 +215,45 @@ fn the_equity_walk_follows_the_chosen_figure() {
 fn the_equity_walk_falls_back_to_grouped_points_and_says_why() {
     let world = World::new(Some(PnlPrimary::Money));
     let reader = world.reader();
-    for (rows, why) in [
-        (
-            vec![
-                row("WINZ26", 1_000, "400", "2"),
-                row("BTCUSDT", 2_000, "60", "0.5"),
-            ],
-            "mixed currencies",
-        ),
-        (
-            vec![
-                row("WINZ26", 1_000, "400", "2"),
-                row("XYZ", 2_000, "5", "1"),
-            ],
-            "pt value unset",
-        ),
+    let rows = vec![row("XYZ", 1_000, "5", "1"), row("XYZ", 2_000, "-3", "1")];
+    let total = reader.sum(rows.iter().map(|row| (row.symbol.as_str(), &row.trade)));
+    let walk = EquityWalk::read(&rows, reader, &total);
+    assert_eq!(walk.primary, PnlPrimary::PointsTimesQty);
+    assert_eq!(walk.fallback, Some("pt value unset"));
+    assert_eq!(walk.points, vec![d("0"), d("5"), d("2")]);
+    assert!(
+        walk.caption().ends_with("(pt value unset)"),
+        "the curve says why it is not in money: {}",
+        walk.caption()
+    );
+}
+
+/// No money to plot and points worth different things: no curve, no
+/// drawdown and no equity cells — never a sum of index points and tether.
+#[test]
+fn a_walk_over_mixed_units_without_money_plots_nothing() {
+    let world = World::new(Some(PnlPrimary::Money));
+    let reader = world.reader();
+    for rows in [
+        vec![
+            row("WINZ26", 1_000, "400", "2"),
+            row("BTCUSDT", 2_000, "60", "0.5"),
+        ],
+        vec![
+            row("WINZ26", 1_000, "400", "2"),
+            row("XYZ", 2_000, "-500", "1"),
+        ],
+        vec![row("ABC", 1_000, "5", "1"), row("XYZ", 2_000, "-9", "1")],
     ] {
         let total = reader.sum(rows.iter().map(|row| (row.symbol.as_str(), &row.trade)));
         let walk = EquityWalk::read(&rows, reader, &total);
-        assert_eq!(walk.primary, PnlPrimary::PointsTimesQty, "{why}");
-        assert_eq!(walk.fallback, Some(why));
-        assert!(
-            walk.caption().ends_with(&format!("({why})")),
-            "the curve says why it is not in money: {}",
-            walk.caption()
-        );
+        assert!(!walk.plotted());
+        assert!(walk.points.is_empty() && walk.plot.is_empty());
+        assert_eq!(walk.drawdown, None, "no chip on a curve not drawn");
+        assert_eq!(walk.text(0), "");
+        assert_eq!(walk.text(rows.len()), "", "no EQUITY cell value");
+        assert_eq!(walk.caption(), "REALIZED EQUITY (mixed units — no curve)");
     }
-    // Grouped points over two units say they differ rather than adding
-    // index points to tether as if they were one thing.
-    let rows = vec![
-        row("WINZ26", 1_000, "400", "2"),
-        row("BTCUSDT", 2_000, "60", "0.5"),
-    ];
-    let total = reader.sum(rows.iter().map(|row| (row.symbol.as_str(), &row.trade)));
-    assert_eq!(EquityWalk::read(&rows, reader, &total).unit, "mixed units");
 }
 
 #[test]
