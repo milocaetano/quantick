@@ -153,3 +153,7 @@ pub fn snapshot(status: RunStatus, main: HistoryReach) -> HistoryLoadSnapshot {
 #[cfg(test)]
 #[path = "history_tests.rs"]
 mod history_tests;
+
+#[cfg(test)]
+#[path = "history_session_tests.rs"]
+mod history_session_tests;
