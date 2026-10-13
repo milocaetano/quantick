@@ -463,6 +463,7 @@ impl PaperTrading {
     // money path and not the ticket that draws it.
     // ------------------------------------------------------------------
 
+    #[cfg(test)]
     pub(crate) fn close_button_label(&self) -> Option<String> {
         self.account().close_button_label()
     }
@@ -490,6 +491,7 @@ impl PaperTrading {
         self.account().position_summary()
     }
 
+    #[cfg(test)]
     pub(crate) fn ready(&self) -> bool {
         self.account().ready()
     }

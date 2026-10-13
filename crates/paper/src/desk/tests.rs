@@ -750,13 +750,81 @@ fn the_entry_face_is_side_and_size_only_and_capped() {
     assert_eq!(entry_face(Side::Buy, Some(Decimal::from(5))), "BUY 5");
     assert_eq!(entry_face(Side::Sell, None), "SELL");
     assert_eq!(entry_face(Side::Sell, Some(Decimal::from(999))), "SELL 999");
+    // A crypto size keeps the digits the display keeps.
     assert_eq!(
-        entry_face(Side::Sell, Some(Decimal::new(1, 2))),
-        "SELL 0.01"
+        entry_face(Side::Sell, Some(Decimal::new(123, 5))),
+        "SELL 0.0012"
     );
-    let long = entry_face(Side::Sell, Some(Decimal::from(12_345_678)));
-    assert_eq!(long, "SELL 1234…");
-    assert_eq!(long.chars().count(), ENTRY_FACE_MAX_CHARS);
+    // Too long with the side word: the word goes, never a digit.
+    assert_eq!(
+        entry_face(Side::Sell, Some(Decimal::from(12_345_678))),
+        "12345678"
+    );
+    // Too long even alone: no partial number at all.
+    assert_eq!(
+        entry_face(Side::Buy, Some(Decimal::from(123_456_789_012_i64))),
+        "BUY …"
+    );
+    for qty in [Decimal::new(123, 5), Decimal::from(12_345_678)] {
+        for side in [Side::Buy, Side::Sell] {
+            assert!(entry_face(side, Some(qty)).chars().count() <= ENTRY_FACE_MAX_CHARS);
+        }
+    }
+}
+
+/// The TRADE group's words come from one read: faces without disclosure,
+/// the disclosure in the hover and the full label for the menu, and the
+/// lock reason honest about which lock it is.
+#[test]
+fn the_trade_bar_says_why_it_is_locked_and_keeps_faces_short() {
+    let dir = ScratchDir::new("desk-trade-bar");
+    let desk = Desk::default();
+    let mut account = PaperAccount::with_trades_dir(dir.path().to_path_buf());
+    account.set_symbol("DESKX");
+    let bar = desk.trade_bar(&account, "Shift+R");
+    assert_eq!(bar.blocked.as_deref(), Some(super::NO_MARKET_YET));
+    assert!(bar.close.is_none());
+    assert!(bar.reverse_hover.ends_with("· Shift+R"));
+
+    account.seed(&print(0, 100));
+    account.place_intent(quantick_sim::OrderIntent::market(
+        Side::Buy,
+        Decimal::from(2),
+    ));
+    account.on_trade(&print(1, 100));
+    let bar = desk.trade_bar(&account, "Shift+R");
+    assert_eq!(bar.blocked, None);
+    assert_eq!(bar.sell.face, "SELL 1");
+    assert_eq!(bar.sell.label, "SELL 1 (closes 1 of 2)");
+    assert!(bar.sell.hover.starts_with("SELL 1 (closes 1 of 2)\n"));
+    assert_eq!(bar.close.as_deref(), Some("Close 2 LONG"));
+
+    // The lock: one contract stopped 99 points out risks 19.80 BRL against
+    // a 1 BRL budget, so the floor itself is over it.
+    let mut book = crate::risk_sizing::InstrumentBook::new();
+    book.insert(
+        "DESKX".to_owned(),
+        quantick_sim::InstrumentMoney {
+            point_value: Decimal::new(20, 2),
+            size_step: Decimal::ONE,
+            min_size: Decimal::ONE,
+            max_size: None,
+            currency: quantick_sim::Currency::new("BRL").expect("BRL"),
+            source: quantick_sim::MoneySource::Declared,
+        },
+    );
+    account.set_instrument_money(book);
+    let mut risk = account.risk_settings().clone();
+    risk.lock = true;
+    risk.basis = crate::risk_sizing::RiskBasis::Amount;
+    risk.amount = Decimal::from(1);
+    account.set_risk_settings(risk);
+    let mut desk = desk;
+    desk.ticket.stop_offset_text = "99".to_owned();
+    let bar = desk.trade_bar(&account, "Shift+R");
+    let reason = bar.blocked.expect("the lock blocks");
+    assert!(reason.starts_with("the risk lock is on"), "{reason}");
+    assert!(!reason.contains("first print"), "{reason}");
 }
 
 /// The editor opens on the armed strategy, follows the list through an

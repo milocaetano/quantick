@@ -45,16 +45,11 @@ impl PaperTrading {
         self.desk.ticket.entry_hover(side)
     }
 
-    /// The toolbar's fixed-width face (`BUY 5`); see `Desk::entry_face`.
+    /// The toolbar TRADE group's words, from one risk read; see
+    /// `Desk::trade_bar`.
     #[must_use]
-    pub fn entry_face(&self, side: Side) -> String {
-        self.desk.entry_face(&self.account, side)
-    }
-
-    /// The hover under the toolbar face: its disclosure, then the details.
-    #[must_use]
-    pub fn entry_face_hover(&self, side: Side) -> String {
-        self.desk.entry_face_hover(&self.account, side)
+    pub fn trade_bar(&self, reverse_key: &str) -> quantick_paper::desk::TradeBar {
+        self.desk.trade_bar(&self.account, reverse_key)
     }
 
     // ------------------------------------------------------------------

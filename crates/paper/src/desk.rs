@@ -29,6 +29,7 @@ pub mod gesture;
 pub mod leg_tag;
 pub mod ruler;
 pub mod ticket;
+mod trade_bar;
 
 #[cfg(test)]
 mod tests;
@@ -44,6 +45,7 @@ pub use gesture::{
 };
 pub use ruler::Ruler;
 pub use ticket::Ticket;
+pub use trade_bar::{EntryTexts, NO_MARKET_YET, TradeBar};
 
 /// Whether the strategy editor is up, what it has open and whether it holds
 /// an edit not yet saved.
@@ -202,27 +204,6 @@ impl Desk {
             self.entry_quantity(account),
             account.venue().position(),
         )
-    }
-
-    /// The fixed-width entry button's face for `side`; see
-    /// [`ticket::entry_face`]. Same size as [`Self::entry_label`] names.
-    #[must_use]
-    pub fn entry_face(&self, account: &PaperAccount, side: Side) -> String {
-        ticket::entry_face(side, self.entry_quantity(account))
-    }
-
-    /// The hover under an [`Self::entry_face`] button: the disclosure the
-    /// face leaves out (`SELL 5 (reverses to short 4)`) on its own line
-    /// whenever it says more than the face, then the ticket's details.
-    #[must_use]
-    pub fn entry_face_hover(&self, account: &PaperAccount, side: Side) -> String {
-        let label = self.entry_label(account, side);
-        let details = self.ticket.entry_hover(side);
-        if label == self.entry_face(account, side) {
-            details
-        } else {
-            format!("{label}\n{details}")
-        }
     }
 
     /// The size an entry press would send: the risk-derived one, else the

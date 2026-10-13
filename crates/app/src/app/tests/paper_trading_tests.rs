@@ -287,14 +287,16 @@ fn the_toolbar_reverse_action_flips_the_open_position() {
     app.active_tab_mut().drain_feed_with_clock(tab_id, || 0);
     let (text, _) = app.active_tab().paper.status_cell().expect("open");
     assert!(text.contains("LONG"), "the cell names the side: {text}");
-    let paper = &app.active_tab().paper;
-    assert_eq!(paper.entry_face(quantick_engine::Side::Sell), "SELL 1");
+    let bar = app.active_tab().paper.trade_bar("Shift+R");
+    assert_eq!(bar.sell.face, "SELL 1");
     assert!(
-        paper
-            .entry_face_hover(quantick_engine::Side::Sell)
-            .starts_with("SELL 1 (closes)\n"),
+        bar.sell.hover.starts_with(
+            "SELL 1 (closes)
+"
+        ),
         "the hover carries the disclosure the face leaves out"
     );
+    assert_eq!(bar.blocked, None, "the reverse is live");
 
     app.apply_toolbar_action(ToolbarAction::PaperReverse);
     evt_tx.try_send(FeedEvent::Live(trade(6))).unwrap();

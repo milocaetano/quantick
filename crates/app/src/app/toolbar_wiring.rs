@@ -174,18 +174,11 @@ impl QuantickApp {
             layers,
             dock_visible,
             appearance_open: show_style,
-            paper: toolbar::PaperTradeModel {
-                // The lock reaches the toolbar too. Gating only the dock's
-                // pair left these lit while the ticket refused, so a fast
-                // click here only toasted - and the doc promises the entry
-                // pair disables.
-                ready: tab.paper.ready() && !tab.paper.risk_report().1,
-                buy_label: tab.paper.entry_face(Side::Buy),
-                sell_label: tab.paper.entry_face(Side::Sell),
-                buy_hover: tab.paper.entry_face_hover(Side::Buy),
-                sell_hover: tab.paper.entry_face_hover(Side::Sell),
-                close_label: tab.paper.close_button_label(),
-            },
+            // The lock reaches the toolbar too: `blocked` carries it, so a
+            // fast click here cannot only toast while the ticket refuses.
+            paper: tab
+                .paper
+                .trade_bar(&ctx.format_shortcut(&super::menu_bar::PAPER_REVERSE_SHORTCUT)),
             indicators,
             scripts,
         };
