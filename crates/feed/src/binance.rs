@@ -16,7 +16,7 @@ use tracing::{error, info, warn};
 use quantick_engine::Trade;
 use quantick_feed_binance::{
     Backoff, BinanceHttp, BinanceKlineHttp, BinanceMarket, KLINE_INTERVAL_1D, KLINE_INTERVAL_1M,
-    ONE_MINUTE_MS, agg_trade_url, backfill, backfill_before,
+    ONE_MINUTE_MS, agg_trade_url, backfill_before_with_boundary, backfill_with_boundary,
     depth::{
         BinanceDepthHttp, DepthEvent, DepthSessionConfig, MAX_DEPTH_LIMIT, run_depth_with_reconnect,
     },
@@ -107,7 +107,9 @@ pub(crate) async fn feed_task(
     let market = http.market();
     // 1. Backfill recent history so the chart opens populated. Remember the
     //    earliest agg_id so we can page further back on demand.
-    let ControlFlow::Continue(earliest_id) = initial_backfill(&http, &symbol, &tx).await else {
+    let ControlFlow::Continue((earliest_id, history_retention_limited)) =
+        initial_backfill(&http, &symbol, &tx).await
+    else {
         return; // UI gone
     };
 
@@ -137,6 +139,7 @@ pub(crate) async fn feed_task(
         book_tx,
         notice_tx,
         earliest_id,
+        history_retention_limited,
         snapshot_limit: initial_book_depth(),
         book_capture: None,
         ohlcv_tx,
@@ -185,16 +188,18 @@ async fn initial_backfill(
     http: &BinanceHttp,
     symbol: &str,
     tx: &mpsc::Sender<FeedEvent>,
-) -> ControlFlow<(), Option<u64>> {
+) -> ControlFlow<(), (Option<u64>, bool)> {
     let target = initial_backfill_target();
-    match backfill(http, symbol, target).await {
-        Ok(trades) => {
+    match backfill_with_boundary(http, symbol, target).await {
+        Ok(batch) => {
+            let retention_limited = batch.retention_limited;
+            let trades = batch.trades;
             let earliest_id = trades.first().map(|t| t.agg_id);
             info!(target: "quantick::app", symbol, count = trades.len(), target, "backfill ready");
             if tx.send(FeedEvent::Backfilled(trades)).await.is_err() {
                 return ControlFlow::Break(()); // UI gone
             }
-            ControlFlow::Continue(earliest_id)
+            ControlFlow::Continue((earliest_id, retention_limited))
         }
         Err(e) => {
             error!(target: "quantick::app", symbol, %e, "backfill failed; continuing to live only");
@@ -202,7 +207,7 @@ async fn initial_backfill(
             if tx.send(FeedEvent::Backfilled(Vec::new())).await.is_err() {
                 return ControlFlow::Break(());
             }
-            ControlFlow::Continue(None)
+            ControlFlow::Continue((None, false))
         }
     }
 }
@@ -219,6 +224,7 @@ struct BinanceLoop {
     klines: BinanceKlineHttp,
     /// Earliest agg_id held, the cursor *load older* pages back from.
     earliest_id: Option<u64>,
+    history_retention_limited: bool,
     snapshot_limit: u16,
     book_capture: Option<BookCaptureTask>,
     ohlcv_tx: mpsc::Sender<OhlcvReply>,
@@ -254,7 +260,11 @@ impl BinanceLoop {
 
     async fn on_link(&mut self, connected: bool) -> ControlFlow<()> {
         let notice = connection_notice(connected, &mut self.ever_connected, "Binance");
-        send_or_break(&self.notice_tx, notice).await
+        send_or_break(&self.notice_tx, notice).await?;
+        if connected && self.history_retention_limited {
+            send_or_break(&self.notice_tx, retention_notice()).await?;
+        }
+        ControlFlow::Continue(())
     }
 
     async fn on_command(&mut self, cmd: Option<FeedCommand>) -> ControlFlow<()> {
@@ -262,8 +272,16 @@ impl BinanceLoop {
         let ohlcv = Slot::observe(self.ohlcv_task.as_ref().map(JoinHandle::is_finished));
         match plan_command(cmd, book, ohlcv) {
             CommandPlan::LoadOlder { count } => {
-                self.earliest_id =
-                    load_older(&self.http, &self.symbol, self.earliest_id, count, &self.tx).await;
+                (self.earliest_id, self.history_retention_limited) = load_older(
+                    &self.http,
+                    &self.symbol,
+                    self.earliest_id,
+                    self.history_retention_limited,
+                    count,
+                    &self.tx,
+                    &self.notice_tx,
+                )
+                .await;
                 if self.tx.is_closed() {
                     return ControlFlow::Break(()); // UI gone
                 }
@@ -595,39 +613,84 @@ async fn load_older(
     http: &BinanceHttp,
     symbol: &str,
     earliest: Option<u64>,
+    retention_limited: bool,
     count: usize,
     tx: &mpsc::Sender<FeedEvent>,
-) -> Option<u64> {
+    notice_tx: &mpsc::Sender<FeedNotice>,
+) -> (Option<u64>, bool) {
+    if retention_limited {
+        let _ = notice_tx.send(retention_notice()).await;
+        let _ = tx.send(FeedEvent::HistoryPrepended(Vec::new())).await;
+        return (earliest, true);
+    }
     let Some(before) = earliest else {
         warn!(target: "quantick::app", "load older ignored: no history to page back from");
         let _ = tx.send(FeedEvent::HistoryPrepended(Vec::new())).await;
-        return None;
+        return (None, false);
     };
-    match backfill_before(http, symbol, before, count).await {
-        Ok(older) if !older.is_empty() => {
-            let new_earliest = older.first().map(|t| t.agg_id);
-            info!(target: "quantick::app", symbol, count = older.len(), "older history ready");
-            if tx.send(FeedEvent::HistoryPrepended(older)).await.is_err() {
-                return earliest; // UI gone; caller notices via tx.is_closed()
+    match backfill_before_with_boundary(http, symbol, before, count).await {
+        Ok(batch) => {
+            let new_earliest = batch.trades.first().map(|trade| trade.agg_id).or(earliest);
+            if batch.retention_limited {
+                let _ = notice_tx.send(retention_notice()).await;
             }
-            new_earliest
+            info!(target: "quantick::app", symbol, count = batch.trades.len(),
+                retention_limited = batch.retention_limited, "older history ready");
+            let _ = tx.send(FeedEvent::HistoryPrepended(batch.trades)).await;
+            (new_earliest, batch.retention_limited)
         }
-        Ok(_) => {
-            info!(target: "quantick::app", symbol, "no older history available");
+        Err(error) => {
+            error!(target: "quantick::app", symbol, %error, "load older failed");
+            let _ = notice_tx
+                .send(FeedNotice::attention(
+                    "Binance trade history could not be fetched",
+                    format!("{error}. Retry the history request."),
+                ))
+                .await;
             let _ = tx.send(FeedEvent::HistoryPrepended(Vec::new())).await;
-            earliest
-        }
-        Err(e) => {
-            error!(target: "quantick::app", symbol, %e, "load older failed");
-            let _ = tx.send(FeedEvent::HistoryPrepended(Vec::new())).await;
-            earliest
+            (earliest, false)
         }
     }
+}
+
+fn retention_notice() -> FeedNotice {
+    FeedNotice::attention(
+        "Binance perpetual trade history is limited to the recent 48 hours",
+        "Available executions were retained. Record sessions to keep older tape.",
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_known_retention_boundary_answers_retries_without_another_http_request() {
+        let source = BinanceHttp::with_market_base(BinanceMarket::UsdM, "http://127.0.0.1:1");
+        let (tx, mut rx) = mpsc::channel(2);
+        let (notice_tx, mut notices) = mpsc::channel(2);
+        for _ in 0..2 {
+            assert_eq!(
+                load_older(
+                    &source,
+                    "BTCUSDT.p",
+                    Some(1_550),
+                    true,
+                    1000,
+                    &tx,
+                    &notice_tx
+                )
+                .await,
+                (Some(1_550), true)
+            );
+            assert!(
+                matches!(rx.recv().await, Some(FeedEvent::HistoryPrepended(trades)) if trades.is_empty())
+            );
+            assert!(
+                matches!(notices.recv().await, Some(FeedNotice::Attention { headline, .. }) if headline.contains("48 hours"))
+            );
+        }
+    }
 
     #[test]
     fn book_depth_defaults_and_clamps_the_environment_value() {

@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+mod btc_assets;
+
 use crate::symbols_file::AddedSymbols;
 use quantick_sources::history_reach;
 
@@ -136,6 +138,9 @@ impl FeedConfig {
     /// the feed-wide declaration.
     #[must_use]
     pub fn bubble_asset(&self, symbol: &str) -> BubbleAsset {
+        if let Some(asset) = btc_assets::scoped_asset(self, symbol) {
+            return asset;
+        }
         self.declared_asset(symbol).unwrap_or_else(|| BubbleAsset {
             key: symbol.to_owned(),
             preset: self.bubble_preset.clone(),
@@ -335,9 +340,23 @@ impl AppConfig {
     /// else the feed-wide preset of the first feed offering it, else the tab
     /// feed's own. A key declared on several feeds opens on the first one's
     /// preset, so one key has one declared look whichever tab shows it.
+    /// BTCUSDT and BTCUSDT.p use separate venue/market identities; a current
+    /// feed's BTC declaration never borrows another venue's preset.
     #[must_use]
     pub fn bubble_asset(&self, feed_id: &str, symbol: &str) -> BubbleAsset {
         let tab_feed = self.feed(feed_id);
+        let offers_identity = |feed: &FeedConfig| {
+            feed.symbols
+                .iter()
+                .any(|offered| offered.eq_ignore_ascii_case(symbol))
+        };
+        let btc_owner = tab_feed
+            .filter(|feed| offers_identity(feed))
+            .or_else(|| self.feeds.iter().find(|feed| offers_identity(feed)))
+            .or(tab_feed);
+        if let Some(asset) = btc_owner.and_then(|feed| btc_assets::scoped_asset(feed, symbol)) {
+            return asset;
+        }
         let offers = |feed: &FeedConfig| feed.symbols.iter().any(|offered| offered == symbol);
         let asset = match tab_feed {
             Some(feed) if offers(feed) => feed.bubble_asset(symbol),
@@ -611,6 +630,19 @@ impl AppConfig {
             // for every feed, because the catalog the app runs on includes
             // whatever the added-symbols sidecar merged into it.
             for symbol in &feed.symbols {
+                if feed.provider == ProviderKind::BinanceFutures
+                    && !symbol.strip_suffix(".p").is_some_and(|wire| {
+                        !wire.is_empty()
+                            && wire
+                                .bytes()
+                                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+                    })
+                {
+                    return Err(format!(
+                        "feed '{}' requires canonical USD-M symbols such as BTCUSDT.p",
+                        feed.id
+                    ));
+                }
                 if symbol.trim().is_empty() {
                     return Err(format!("feed '{}' lists an empty symbol", feed.id));
                 }
@@ -1252,6 +1284,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "binance",
+                "binance-futures",
                 "hyperliquid",
                 "metatrader-tickmill",
                 "metatrader-b3"
@@ -1370,6 +1403,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "binance",
+                "binance-futures",
                 "hyperliquid",
                 "metatrader-tickmill",
                 "metatrader-b3"
@@ -1394,7 +1428,7 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "QUANTICK_DEFAULT_FEED='ghost' is not a configured feed; available feeds: \
-             binance, hyperliquid, metatrader-tickmill, metatrader-b3"
+             binance, binance-futures, hyperliquid, metatrader-tickmill, metatrader-b3"
         );
     }
 

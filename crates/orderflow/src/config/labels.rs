@@ -120,3 +120,55 @@ fn trim_decimal_zeros(value: &str) -> &str {
         value
     }
 }
+
+/// Quantity and execution count inside a bubble. A cluster uses `×`; a
+/// canvas-budget fold uses the renderer's supplied circled-plus glyph, so
+/// visual aggregation cannot masquerade as executions at one price.
+#[must_use]
+pub fn bubble_label(
+    quantity: Decimal,
+    trade_count: usize,
+    folded: u32,
+    show_quantity: bool,
+    show_count: bool,
+    folded_glyph: &str,
+) -> Option<String> {
+    let mark = if folded > 1 { folded_glyph } else { "×" };
+    match (show_quantity, show_count && trade_count > 1) {
+        (false, false) => None,
+        (true, false) => Some(format_quantity(quantity)),
+        (false, true) => Some(format!("{mark}{trade_count}")),
+        (true, true) => Some(format!(
+            "{} · {mark}{trade_count}",
+            format_quantity(quantity)
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn labels_are_honest_and_compact() {
+        assert_eq!(
+            bubble_label(Decimal::from(1_250), 4, 0, true, true, "⊕"),
+            Some("1.25K · ×4".to_owned())
+        );
+        assert_eq!(format_quantity(Decimal::from(100)), "100");
+        assert_eq!(format_quantity(Decimal::ZERO), "0");
+        assert_eq!(bubble_label(Decimal::ONE, 1, 0, false, true, "⊕"), None);
+    }
+
+    #[test]
+    fn a_fold_and_a_cluster_do_not_share_a_glyph() {
+        assert_eq!(
+            bubble_label(Decimal::from(20), 4, 0, true, true, "⊕"),
+            Some("20 · ×4".to_owned())
+        );
+        assert_eq!(
+            bubble_label(Decimal::from(20), 4, 4, true, true, "⊕"),
+            Some("20 · ⊕4".to_owned())
+        );
+    }
+}

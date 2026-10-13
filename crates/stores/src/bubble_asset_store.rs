@@ -42,6 +42,10 @@ use crate::bubble_assets::{self, AssetBubbles, AssetBubblesFile, AssetSource};
 use crate::bubble_presets::{BubblePreset, BubblePresetFile};
 use crate::config::{AppConfig, BubbleAsset};
 
+#[cfg(test)]
+#[path = "btc_asset_tests.rs"]
+mod btc_asset_tests;
+
 /// The store every view of one app shares.
 pub type SharedAssetBubbles = Rc<RefCell<AssetBubblesStore>>;
 
@@ -81,6 +85,45 @@ pub struct AssetBubblesStore {
 }
 
 impl AssetBubblesStore {
+    /// Preserve the formerly shared BTCUSDT customization once, before any
+    /// view can edit it. Already scoped entries win; Futures is a new market.
+    fn migrate_btc_venues(&mut self, config: &AppConfig) {
+        if self.file.btc_venue_migration_done {
+            return;
+        }
+        self.file.btc_venue_migration_done = true;
+        let legacy = self.file.get("BTCUSDT").cloned();
+        let saving_off = !self.file.saves_changes("BTCUSDT");
+        for feed in &config.feeds {
+            if matches!(
+                feed.provider,
+                crate::config::ProviderKind::Binance | crate::config::ProviderKind::BinanceFutures
+            ) {
+                continue;
+            }
+            for symbol in &feed.symbols {
+                if !symbol.eq_ignore_ascii_case("BTCUSDT") {
+                    continue;
+                }
+                let key = config.bubble_asset(&feed.id, symbol).key;
+                if self.file.get(&key).is_some() {
+                    continue;
+                }
+                if let Some(settings) = &legacy {
+                    self.file.assets.insert(key.clone(), settings.clone());
+                }
+                if saving_off {
+                    self.file.save_changes_off.insert(key.clone());
+                }
+                if legacy.is_some() || saving_off {
+                    self.unwritten.insert(key);
+                }
+            }
+        }
+        if legacy.is_some() || saving_off {
+            self.pending = true;
+        }
+    }
     /// Read the store at `path`; a missing file is an empty store.
     #[must_use]
     pub fn load(path: PathBuf) -> Self {
@@ -444,6 +487,7 @@ impl AssetBinding {
         presets: &BubblePresetFile,
         candle_default: bool,
     ) -> (Self, AssetBubbles) {
+        store.borrow_mut().migrate_btc_venues(config);
         let asset = config.bubble_asset(feed_id, symbol);
         if let Some(name) = asset
             .preset

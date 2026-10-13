@@ -31,6 +31,20 @@ use quantick_orderflow::{
 /// what the file is, and project configuration belongs in one obvious place.
 pub const PRESETS_PATH: &str = "config/bubbles.toml";
 
+/// Resolve an operator override without duplicating the document's default.
+#[must_use]
+pub fn operator_path(override_path: Option<&std::ffi::OsStr>) -> PathBuf {
+    override_path.map_or_else(|| PathBuf::from(PRESETS_PATH), PathBuf::from)
+}
+
+/// Load the operator's optional path through the standard fallback policy.
+#[must_use]
+pub fn load_operator(
+    override_path: Option<&std::ffi::OsStr>,
+) -> (BubblePresetFile, PresetSource, Option<String>) {
+    load_from(override_path.map(PathBuf::from))
+}
+
 /// Built-in presets, compiled in so the app works with no external file.
 const EMBEDDED_DEFAULT: &str = include_str!("../../app/config/bubbles.toml");
 

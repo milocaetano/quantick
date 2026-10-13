@@ -18,7 +18,10 @@ pub mod reconnect;
 pub mod stream;
 pub mod wire;
 
-pub use backfill::{AggTradeSource, BinanceHttp, FeedError, backfill, backfill_before};
+pub use backfill::{
+    AggTradeSource, BackfillBatch, BinanceHttp, FeedError, backfill, backfill_before,
+    backfill_before_with_boundary, backfill_with_boundary,
+};
 pub use continuity::{Anomaly, ContinuityTracker};
 pub use klines::{
     BinanceKlineHttp, KLINE_INTERVAL_1D, KLINE_INTERVAL_1M, Kline, KlineHistory, KlineSource,

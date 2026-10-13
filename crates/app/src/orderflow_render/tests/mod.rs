@@ -161,21 +161,6 @@ fn compact_legend_wraps_without_exceeding_width() {
     assert_eq!(layout.size.y, 34.0);
 }
 
-#[test]
-fn labels_are_honest_and_compact() {
-    assert_eq!(
-        bubble_label(Decimal::from(1_250), 4, 0, true, true),
-        Some("1.25K · ×4".to_owned())
-    );
-    assert_eq!(format_quantity(Decimal::from(100)), "100");
-    assert_eq!(format_quantity(Decimal::ZERO), "0");
-    assert_eq!(
-        bubble_label(Decimal::ONE, 1, 0, false, true),
-        None,
-        "one trade does not need a redundant count"
-    );
-}
-
 /// The stretch older than this session's capture used to be a hatched,
 /// tinted block covering a third of the chart. It is now its boundary and
 /// nothing else, so the candles and bubbles recorded there stay readable.
@@ -1547,30 +1532,6 @@ fn a_folded_bubble_wears_a_ring_a_print_does_not() {
         "a folded dot is indistinguishable from a single print"
     );
 }
-/// A fold and a cluster may not read the same.
-///
-/// `×4` says four prints happened together at one price — a fact about the
-/// market, and a size a trader may act on. `⊕4` says the frame put four
-/// marks together to fit its budget — a fact about the canvas, and a size
-/// that never crossed the tape at once. Sharing a glyph would let the
-/// second be read as the first.
-#[test]
-fn a_fold_and_a_cluster_do_not_share_a_glyph() {
-    let cluster =
-        bubble_label(rust_decimal::Decimal::from(20), 4, 0, true, true).expect("labels are on");
-    let fold =
-        bubble_label(rust_decimal::Decimal::from(20), 4, 4, true, true).expect("labels are on");
-    assert_eq!(cluster, "20 · ×4");
-    assert_eq!(
-        fold,
-        format!("20 · {}4", egui_phosphor::regular::PLUS_CIRCLE)
-    );
-    assert_ne!(
-        cluster, fold,
-        "a budget fold reads as four prints that traded"
-    );
-}
-
 /// Switching the book off clears the marks that describe it, on the pane
 /// that lost it — and switching one kind off clears that kind everywhere.
 ///

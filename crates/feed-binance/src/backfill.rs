@@ -28,6 +28,8 @@ pub const MAX_PAGE_LIMIT: u32 = 1000;
 pub enum FeedError {
     /// Transport / HTTP-status error (message preserved, reqwest not leaked).
     Http(String),
+    /// USD-M aggregate trades older than the public 48-hour retention.
+    HistoryExpired,
     /// The response body was not valid aggTrade JSON.
     Decode(String),
     /// A decoded aggTrade could not be mapped to a `Trade`.
@@ -46,6 +48,10 @@ impl std::fmt::Display for FeedError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FeedError::Http(m) => write!(f, "http error: {m}"),
+            FeedError::HistoryExpired => write!(
+                f,
+                "Binance USD-M aggregate-trade history is restricted to the recent 48 hours"
+            ),
             FeedError::Decode(m) => write!(f, "decode error: {m}"),
             FeedError::Map(e) => write!(f, "mapping error: {e}"),
             FeedError::RateLimited { retry_after } => match retry_after {
@@ -171,10 +177,97 @@ impl AggTradeSource for BinanceHttp {
             .map_err(|e| FeedError::Http(e.to_string()))?;
         if !status.is_success() {
             warn!(target: "quantick::feed", %status, symbol, "aggTrades request returned non-success");
+            if self.market == BinanceMarket::UsdM
+                && serde_json::from_str::<serde_json::Value>(&body)
+                    .ok()
+                    .and_then(|error| error.get("code").and_then(serde_json::Value::as_i64))
+                    == Some(-4166)
+            {
+                return Err(FeedError::HistoryExpired);
+            }
             return Err(FeedError::Http(format!("HTTP {status}: {body}")));
         }
         wire::parse_rest(&body).map_err(|e| FeedError::Decode(e.to_string()))
     }
+}
+
+/// Factual trades plus the venue's bounded-history outcome. A successful
+/// partial response retains every fetched page even when older IDs expired.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackfillBatch {
+    /// Executions in ascending aggregate-ID order, without duplicates.
+    pub trades: Vec<Trade>,
+    /// Paging reached the USD-M 48-hour retention boundary.
+    pub retention_limited: bool,
+}
+
+/// Compatibility entry point returning only the fetched executions.
+/// Use [`backfill_with_boundary`] when presenting history coverage.
+///
+/// # Errors
+/// Returns transport, decoding or mapping failures.
+pub async fn backfill<S: AggTradeSource>(
+    source: &S,
+    symbol: &str,
+    target: usize,
+) -> Result<Vec<Trade>, FeedError> {
+    Ok(backfill_with_boundary(source, symbol, target).await?.trades)
+}
+
+/// Compatibility entry point returning executions older than `before_id`.
+/// Use [`backfill_before_with_boundary`] when presenting history coverage.
+///
+/// # Errors
+/// Returns transport, decoding or mapping failures.
+pub async fn backfill_before<S: AggTradeSource>(
+    source: &S,
+    symbol: &str,
+    before_id: u64,
+    count: usize,
+) -> Result<Vec<Trade>, FeedError> {
+    Ok(
+        backfill_before_with_boundary(source, symbol, before_id, count)
+            .await?
+            .trades,
+    )
+}
+
+/// Recover the retained suffix of an expired page. Probes stay in the known
+/// page's ID interval (at most ten binary probes for a 1000-ID page). Every
+/// unrelated failure propagates; it is never labelled as a retention limit.
+async fn older_page<S: AggTradeSource>(
+    source: &S,
+    symbol: &str,
+    from: u64,
+    before: u64,
+) -> Result<(Vec<AggTrade>, bool), FeedError> {
+    match source.fetch(symbol, Some(from), MAX_PAGE_LIMIT).await {
+        Ok(page) => return Ok((page, false)),
+        Err(FeedError::HistoryExpired) => {}
+        Err(error) => return Err(error),
+    }
+    let mut invalid = from;
+    let mut valid = before.saturating_sub(1);
+    if valid <= invalid {
+        return Ok((Vec::new(), true));
+    }
+    let mut retained = match source.fetch(symbol, Some(valid), MAX_PAGE_LIMIT).await {
+        Ok(page) => page,
+        Err(FeedError::HistoryExpired) => return Ok((Vec::new(), true)),
+        Err(error) => return Err(error),
+    };
+    while valid - invalid > 1 {
+        let middle = invalid + (valid - invalid) / 2;
+        match source.fetch(symbol, Some(middle), MAX_PAGE_LIMIT).await {
+            Ok(page) => {
+                valid = middle;
+                retained = page;
+            }
+            Err(FeedError::HistoryExpired) => invalid = middle,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok((retained, true))
 }
 
 /// Backfill the most recent `target` trades for `symbol`, ascending by agg_id.
@@ -189,13 +282,14 @@ impl AggTradeSource for BinanceHttp {
 /// Returns [`FeedError`] on any fetch/decode/map failure. Mapping fails fast: a
 /// malformed price is surfaced, never silently dropped (data-honesty rule).
 #[instrument(target = "quantick::feed", skip(source), fields(pages = tracing::field::Empty))]
-pub async fn backfill<S: AggTradeSource>(
+pub async fn backfill_with_boundary<S: AggTradeSource>(
     source: &S,
     symbol: &str,
     target: usize,
-) -> Result<Vec<Trade>, FeedError> {
+) -> Result<BackfillBatch, FeedError> {
     let mut collected: BTreeMap<u64, AggTrade> = BTreeMap::new();
     let mut pages = 0u32;
+    let mut retention_limited = false;
 
     // Newest batch first (no from_id => most recent trades).
     let newest = source.fetch(symbol, None, MAX_PAGE_LIMIT).await?;
@@ -213,13 +307,14 @@ pub async fn backfill<S: AggTradeSource>(
             break; // reached the very first trade
         }
         let from = earliest.saturating_sub(u64::from(MAX_PAGE_LIMIT));
-        let batch = source.fetch(symbol, Some(from), MAX_PAGE_LIMIT).await?;
+        let (batch, limited) = older_page(source, symbol, from, earliest).await?;
+        retention_limited |= limited;
         pages += 1;
         let before = collected.len();
         for t in batch {
             collected.entry(t.agg_id).or_insert(t);
         }
-        if collected.len() == before {
+        if retention_limited || collected.len() == before {
             debug!(target: "quantick::feed", "no new trades from page; stopping backfill");
             break; // no progress; avoid looping forever
         }
@@ -242,7 +337,10 @@ pub async fn backfill<S: AggTradeSource>(
         pages,
         "backfill complete"
     );
-    Ok(trades)
+    Ok(BackfillBatch {
+        trades,
+        retention_limited,
+    })
 }
 
 /// Backfill up to `count` trades *older than* `before_id`, ascending by agg_id.
@@ -259,23 +357,28 @@ pub async fn backfill<S: AggTradeSource>(
 /// Returns [`FeedError`] on any fetch/decode/map failure. Mapping fails fast: a
 /// malformed price is surfaced, never silently dropped (data-honesty rule).
 #[instrument(target = "quantick::feed", skip(source), fields(pages = tracing::field::Empty))]
-pub async fn backfill_before<S: AggTradeSource>(
+pub async fn backfill_before_with_boundary<S: AggTradeSource>(
     source: &S,
     symbol: &str,
     before_id: u64,
     count: usize,
-) -> Result<Vec<Trade>, FeedError> {
+) -> Result<BackfillBatch, FeedError> {
     if before_id == 0 || count == 0 {
-        return Ok(Vec::new()); // nothing older exists, or nothing requested
+        return Ok(BackfillBatch {
+            trades: Vec::new(),
+            retention_limited: false,
+        }); // nothing older exists, or nothing requested
     }
     let mut collected: BTreeMap<u64, AggTrade> = BTreeMap::new();
     let mut pages = 0u32;
+    let mut retention_limited = false;
     // Exclusive upper bound of the region still to fetch.
     let mut cursor = before_id;
 
     while collected.len() < count && cursor > 0 {
         let from = cursor.saturating_sub(u64::from(MAX_PAGE_LIMIT));
-        let batch = source.fetch(symbol, Some(from), MAX_PAGE_LIMIT).await?;
+        let (batch, limited) = older_page(source, symbol, from, cursor).await?;
+        retention_limited |= limited;
         pages += 1;
         let before = collected.len();
         for t in batch {
@@ -283,7 +386,7 @@ pub async fn backfill_before<S: AggTradeSource>(
                 collected.entry(t.agg_id).or_insert(t);
             }
         }
-        if from == 0 {
+        if retention_limited || from == 0 {
             break; // reached the very first trade
         }
         if collected.len() == before {
@@ -312,7 +415,10 @@ pub async fn backfill_before<S: AggTradeSource>(
         pages,
         "older backfill complete"
     );
-    Ok(trades)
+    Ok(BackfillBatch {
+        trades,
+        retention_limited,
+    })
 }
 
 #[cfg(test)]

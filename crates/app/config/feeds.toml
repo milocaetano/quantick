@@ -17,7 +17,7 @@ default_symbol = "BTCUSDT"
 #   id            — stable identifier, referenced by `default_feed` (unique).
 #   name          — label shown in the feed selector.
 #   provider      — which backend streams it; maps to a code path.
-#                   Supported today: "binance", "hyperliquid", "metatrader".
+#                   Supported: "binance", "binance-futures", "hyperliquid", "metatrader".
 #   symbols       — the assets offered for this feed (first is its fallback).
 #   bubble_preset — optional: a bubble preset (by name, from bubbles.toml)
 #                   each symbol of this feed opens on. Leave it out and a
@@ -37,7 +37,8 @@ default_symbol = "BTCUSDT"
 #                   venue's symbol; a symbol its feed does not offer (a
 #                   recording replayed there) takes the key another feed
 #                   declares for it. A key two feeds declare opens on the
-#                   first one's preset.
+#                   first one's preset. BTCUSDT keeps separate venue/market
+#                   identities; Binance Spot retains its legacy saved key.
 #   default_layout — optional: the canvas layout a tab on this feed opens
 #                   showing — "flow" (the default), "time" (a full-window
 #                   timeframe chart) or "time+flow" (the split). Startup-only:
@@ -72,6 +73,17 @@ default_layout = "time+flow"
 # which is the comparison quantick exists to make. The timeframe pane keeps its
 # own 1m default — `default_bars` names a time pane's interval only when it is
 # itself a time spec.
+default_bars = "tick:50"
+
+# Optional USDT-margined perpetual. The .p suffix identifies this independent
+# market in the app; Binance receives BTCUSDT on its Futures endpoints.
+# Public aggregate-trade paging reaches only the recent 48 hours.
+[[feeds]]
+id = "binance-futures"
+name = "Binance USD-M perpetual"
+provider = "binance-futures"
+symbols = ["BTCUSDT.p"]
+default_layout = "time+flow"
 default_bars = "tick:50"
 
 # Hyperliquid perpetuals, over unauthenticated public REST/WebSocket endpoints.

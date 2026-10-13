@@ -12,6 +12,13 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpListener;
 
 async fn response(body: &'static str) -> (String, tokio::task::JoinHandle<String>) {
+    response_with_status(body, "200 OK").await
+}
+
+async fn response_with_status(
+    body: &'static str,
+    status: &'static str,
+) -> (String, tokio::task::JoinHandle<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
@@ -24,7 +31,7 @@ async fn response(body: &'static str) -> (String, tokio::task::JoinHandle<String
             request.extend_from_slice(&buffer[..count]);
         }
         let reply = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         );
         stream.write_all(reply.as_bytes()).await.unwrap();
@@ -178,4 +185,27 @@ fn futures_requires_snapshot_overlap_even_when_the_next_numeric_id_is_present() 
         Err(DepthApplyError::Gap { .. })
     ));
     assert!(matches!(sync.phase(), SyncPhase::AwaitingBridge { .. }));
+}
+
+#[tokio::test]
+async fn only_futures_retention_errors_are_classified_as_history_expired() {
+    for (market, code, expired) in [
+        (BinanceMarket::UsdM, -4166, true),
+        (BinanceMarket::Spot, -4166, false),
+        (BinanceMarket::UsdM, -1121, false),
+    ] {
+        let body = if code == -4166 {
+            r#"{"code":-4166,"msg":"Search window is restricted to recent 2 days only."}"#
+        } else {
+            r#"{"code":-1121,"msg":"Invalid symbol."}"#
+        };
+        let (base, request) = response_with_status(body, "400 Bad Request").await;
+        let source = BinanceHttp::with_market_base(market, base);
+        let error = source.fetch("BTCUSDT.p", Some(0), 1).await.unwrap_err();
+        assert_eq!(
+            matches!(error, quantick_feed_binance::FeedError::HistoryExpired),
+            expired
+        );
+        request.await.unwrap();
+    }
 }

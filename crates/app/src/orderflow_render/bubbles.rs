@@ -22,7 +22,6 @@ pub(super) use quantick_orderflow::config::dressing::{
     halo_alpha, hollow_ring_width, impact_ring_alpha, separator_ring_width, sphere_segments,
     trail_half_height,
 };
-pub(super) use quantick_orderflow::config::labels::format_quantity;
 use quantick_orderflow::{
     AggressionPrimitive, BubbleRenderMode, BubbleStyle, ConsumptionMark, INV_PHI,
     bubble_halo_padding, bubble_impact_ring_padding,
@@ -790,16 +789,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     }
 }
 
-/// The text inside a bubble: what traded, and how many prints it stands for.
-///
-/// `folded` is what the frame's budget merged into this mark, and it changes
-/// the *separator* rather than adding a second number. `×4` is a cluster — four
-/// prints that happened together at one price, which is a fact about the
-/// market. `⊕4` is a fold — four marks the frame put together to fit, which is
-/// a fact about the canvas. A trader sizing a position off the first would be
-/// right and off the second would be wrong, so they may not share a glyph. The
-/// ring around a folded disc says the same thing again, further out, for the
-/// dots too small to carry text.
+/// Supply the painter's font glyph to the headless label formatter.
 pub(super) fn bubble_label(
     quantity: Decimal,
     trade_count: usize,
@@ -807,15 +797,12 @@ pub(super) fn bubble_label(
     show_quantity: bool,
     show_count: bool,
 ) -> Option<String> {
-    // Phosphor's circled plus: the text font has no U+2295 and drew a box.
-    let mark = ["×", egui_phosphor::regular::PLUS_CIRCLE][usize::from(folded > 1)];
-    match (show_quantity, show_count && trade_count > 1) {
-        (false, false) => None,
-        (true, false) => Some(format_quantity(quantity)),
-        (false, true) => Some(format!("{mark}{trade_count}")),
-        (true, true) => Some(format!(
-            "{} · {mark}{trade_count}",
-            format_quantity(quantity)
-        )),
-    }
+    quantick_orderflow::config::labels::bubble_label(
+        quantity,
+        trade_count,
+        folded,
+        show_quantity,
+        show_count,
+        egui_phosphor::regular::PLUS_CIRCLE,
+    )
 }

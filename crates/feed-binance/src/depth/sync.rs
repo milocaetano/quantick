@@ -1,9 +1,10 @@
 //! Deterministic Binance snapshot + diff synchronization.
 //!
 //! This module has no network, async or wall clock. A caller installs one REST
-//! snapshot and then applies WebSocket updates. The first non-stale update must
-//! bridge `snapshot.last_update_id + 1`; every later update must overlap the
-//! next expected id. A gap is returned as typed data and logged with stable
+//! snapshot and then applies WebSocket updates. Spot bridges the snapshot's
+//! next ID and later numeric ranges. USD-M includes the snapshot ID in its
+//! initial bridge and subsequently follows each update's explicit `pu` link.
+//! A gap is returned as typed data and logged with stable
 //! fields so the transport can discard the book and resynchronize.
 
 use quantick_orderbook::{ApplyOutcome, BookError, OrderBook};

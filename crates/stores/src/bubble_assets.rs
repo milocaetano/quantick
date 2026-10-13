@@ -94,6 +94,10 @@ pub struct AssetBubblesFile {
     /// never stored. Saving is on for every asset not listed.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub save_changes_off: BTreeSet<String>,
+    /// Legacy BTCUSDT settings have been copied to existing venue identities.
+    /// Kept after a reset so another bind cannot resurrect the legacy look.
+    #[serde(default)]
+    pub btc_venue_migration_done: bool,
     /// Settings by asset key, in key order.
     #[serde(default)]
     pub assets: BTreeMap<String, AssetBubbles>,
@@ -104,6 +108,7 @@ impl Default for AssetBubblesFile {
         Self {
             version: FORMAT_VERSION,
             save_changes_off: BTreeSet::new(),
+            btc_venue_migration_done: false,
             assets: BTreeMap::new(),
         }
     }
