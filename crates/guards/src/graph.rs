@@ -116,6 +116,8 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // state to each port and registers what this crate validates and answers.
     // `paper` and `civil` for the journal's sessions, so the capability lists,
     // filters and edits through the very calls the ledger's gestures make.
+    // `session` for the History press, which the handler phrases as the
+    // tab session's own act and judges from its answer.
     (
         "control-handlers",
         &[
@@ -126,6 +128,7 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "control-schema",
             "engine",
             "paper",
+            "session",
             "sources",
         ],
     ),

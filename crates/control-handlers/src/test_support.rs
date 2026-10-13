@@ -13,12 +13,13 @@ use quantick_control_host::{journal::NewEvent, wire::PaneSideDto};
 use quantick_control_schema::chart::{BarProvenanceContext, ViewportSnapshot};
 use quantick_control_schema::notify::AgentPopup;
 use quantick_engine::{Bar, BarSpec, Side, Trade};
+use quantick_session::{Act, SessionSnapshot};
 use quantick_sources::history_reach::{HistoryReach, ReachProgress};
 use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use rust_decimal::Decimal;
 
 use crate::chart::{ChartPaneEntry, ChartPaneSource, ChartPort, MissingPane, PaneFraming};
-use crate::history::{HistoryPort, HistoryRun};
+use crate::history::HistoryPort;
 use crate::notify::{AttentionPort, NotifyAccess};
 use crate::recovery::{FeedRecoveryPort, RecoveredFeed};
 use crate::tabs::TabDirectory;
@@ -165,10 +166,53 @@ impl FakeTab {
         }
     }
 
-    fn run(&self) -> HistoryRun {
-        HistoryRun {
-            status: self.history,
+    /// A press judged the way the session judges one: refused while a run
+    /// pages, queued while the chart fills, begun otherwise.
+    fn press(&mut self, reach: HistoryReach) -> Press {
+        let press = match self.history {
+            RunStatus::Loading(_) | RunStatus::Paused(_) => return Press::AlreadyRunning,
+            _ if self.filling => {
+                self.history = RunStatus::Queued(reach);
+                Press::Queued
+            }
+            _ => {
+                self.history = if self.start_finishes {
+                    RunStatus::Idle
+                } else {
+                    loading(reach)
+                };
+                Press::Start
+            }
+        };
+        self.main_reach = reach;
+        press
+    }
+
+    fn cancel(&mut self) -> Cancelled {
+        let cancelled = match self.history {
+            RunStatus::Queued(reach) => Cancelled::Queued(reach),
+            _ => Cancelled::Nothing,
+        };
+        self.history = RunStatus::Idle;
+        cancelled
+    }
+
+    fn snapshot(
+        &self,
+        last_press: Option<Press>,
+        last_cancel: Option<Cancelled>,
+    ) -> SessionSnapshot {
+        SessionSnapshot {
+            run: self.history,
             main_reach: self.main_reach,
+            last_press,
+            last_cancel,
+            note: None,
+            candles_held: 0,
+            candles_pending: false,
+            older_exhausted: false,
+            venue_lead_in: false,
+            progressive: true,
         }
     }
 }
@@ -181,6 +225,8 @@ pub(crate) struct FakeWindow {
     pub popups: Vec<AgentPopup>,
     pub toasts: Vec<String>,
     pub speaker_refusal: Option<String>,
+    /// The main-click default the last press that moved it set.
+    pub default_reach: Option<HistoryReach>,
 }
 
 impl FakeWindow {
@@ -191,6 +237,7 @@ impl FakeWindow {
             popups: Vec::new(),
             toasts: Vec::new(),
             speaker_refusal: None,
+            default_reach: None,
         }
     }
 
@@ -236,38 +283,18 @@ impl HistoryPort for FakeWindow {
     fn history_paging(&self, index: usize) -> Option<bool> {
         self.tabs.get(index).map(|tab| tab.history_paging)
     }
-    /// A press refused because a run is paging moves nothing, the main-click
-    /// default included, as `TabsMut::press_history` does.
-    fn press_history(&mut self, index: usize, reach: HistoryReach) -> Option<(Press, HistoryRun)> {
+    /// The two acts the History handlers send, over plain fields.
+    fn dispatch_history(&mut self, index: usize, act: Act<'_>) -> Option<SessionSnapshot> {
         let tab = self.tabs.get_mut(index)?;
-        let press = match tab.history {
-            RunStatus::Loading(_) | RunStatus::Paused(_) => {
-                return Some((Press::AlreadyRunning, tab.run()));
-            }
-            _ if tab.filling => {
-                tab.history = RunStatus::Queued(reach);
-                Press::Queued
-            }
-            _ => {
-                tab.history = if tab.start_finishes {
-                    RunStatus::Idle
-                } else {
-                    loading(reach)
-                };
-                Press::Start
-            }
+        let (press, cancel) = match act {
+            Act::PressHistory(reach) => (Some(tab.press(reach)), None),
+            Act::CancelHistory => (None, Some(tab.cancel())),
+            _ => (None, None),
         };
-        tab.main_reach = reach;
-        Some((press, tab.run()))
+        Some(tab.snapshot(press, cancel))
     }
-    fn cancel_history(&mut self, index: usize) -> Option<(Cancelled, HistoryRun)> {
-        let tab = self.tabs.get_mut(index)?;
-        let cancelled = match tab.history {
-            RunStatus::Queued(reach) => Cancelled::Queued(reach),
-            _ => Cancelled::Nothing,
-        };
-        tab.history = RunStatus::Idle;
-        Some((cancelled, tab.run()))
+    fn set_default_reach(&mut self, reach: HistoryReach) {
+        self.default_reach = Some(reach);
     }
 }
 

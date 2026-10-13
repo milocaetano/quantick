@@ -166,6 +166,15 @@ impl HistorySettings {
     }
 }
 
+/// Whether a press makes its target the window's main-click default
+/// ([`HistorySettings::history_reach`]): a press the tab took — started or
+/// queued — does, and one refused because a run is paging moves nothing. The
+/// toolbar and `feed.history.load` both ask here.
+#[must_use]
+pub const fn sets_window_default(press: Press) -> bool {
+    !matches!(press, Press::AlreadyRunning)
+}
+
 /// One command to the session, and the facts it is judged against.
 ///
 /// The facts travel with the act rather than living in the session because

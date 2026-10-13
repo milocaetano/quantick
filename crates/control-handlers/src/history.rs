@@ -1,5 +1,7 @@
 //! `feed.history.load` and `feed.history.cancel`: the History button's press
-//! and its cancel, through the same calls a click makes ([`HistoryPort`]).
+//! and its cancel, as the tab session's own acts. The handler picks the
+//! [`Act`] and judges the session's answer; the window only routes the act
+//! to the tab ([`HistoryPort`]).
 
 use quantick_control::{
     error::ControlError,
@@ -10,6 +12,7 @@ use quantick_control_schema::history::{
     HistoryCancelInput, HistoryCancelResult, HistoryLoadInput, HistoryLoadResult,
     HistoryLoadSnapshot, cancel_descriptor, load_descriptor,
 };
+use quantick_session::{Act, SessionSnapshot, sets_window_default};
 use quantick_sources::history_reach::{HistoryReach, MAX_REACH_HOURS, MAX_REACH_SESSIONS};
 use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use serde_json::{Value, json};
@@ -17,25 +20,18 @@ use serde_json::{Value, json};
 use crate::dock::ActionDock;
 use crate::tabs::{TabDirectory, tab_closed, tab_index};
 
-/// One tab's history run as the window holds it after an act.
-#[derive(Clone, Copy, Debug)]
-pub struct HistoryRun {
-    /// The run's state: idle, queued, loading or paused.
-    pub status: RunStatus,
-    /// The reach the toolbar's main click asks for.
-    pub main_reach: HistoryReach,
-}
-
-/// The History button's own acts on one tab.
+/// The window's routing of the History button's acts to one tab.
 pub trait HistoryPort: TabDirectory {
     /// Whether the feed of the tab at `index` can page older trades; `None`
     /// when that tab is gone.
     fn history_paging(&self, index: usize) -> Option<bool>;
-    /// The toolbar's own press for `reach`, so the main-click default moves
-    /// with it; `None` when the tab is gone.
-    fn press_history(&mut self, index: usize, reach: HistoryReach) -> Option<(Press, HistoryRun)>;
-    /// Cancel the tab's run or its queued press; `None` when the tab is gone.
-    fn cancel_history(&mut self, index: usize) -> Option<(Cancelled, HistoryRun)>;
+    /// Hand the session of the tab at `index` one act the way the window
+    /// hands it every other — in a `Msg` with the tab's `TabView`, told the
+    /// time, its effects carried out — and answer with the session as it
+    /// then stands; `None` when the tab is gone.
+    fn dispatch_history(&mut self, index: usize, act: Act<'_>) -> Option<SessionSnapshot>;
+    /// Make `reach` the window's main-click default.
+    fn set_default_reach(&mut self, reach: HistoryReach);
 }
 
 /// Dock the press and its cancel.
@@ -84,9 +80,17 @@ fn load<H: HistoryPort + ?Sized, A>(
             "read feed.status capabilities.history_paging; venue candles load with the History menu's + older candles",
         ));
     }
-    let (press, run) = app.press_history(index, reach).ok_or_else(tab_closed)?;
+    let session = app
+        .dispatch_history(index, Act::PressHistory(reach))
+        .ok_or_else(tab_closed)?;
+    // The press is the session's own verdict on this act: a refused press is
+    // recorded as `AlreadyRunning` before the refusal returns.
+    let press = session.last_press.unwrap_or(Press::AlreadyRunning);
+    if sets_window_default(press) {
+        app.set_default_reach(reach);
+    }
     let press = match press {
-        Press::Start if matches!(run.status, RunStatus::Idle) => "finished",
+        Press::Start if matches!(session.run, RunStatus::Idle) => "finished",
         Press::Start => "started",
         Press::Queued => "queued",
         Press::AlreadyRunning => "already_running",
@@ -95,7 +99,7 @@ fn load<H: HistoryPort + ?Sized, A>(
         tab_id: WireU64::new(tab_id),
         reach: reach.token(),
         press: press.to_owned(),
-        status: snapshot(run.status, run.main_reach),
+        status: snapshot(session.run, session.main_reach),
     };
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
 }
@@ -110,8 +114,10 @@ fn cancel<H: HistoryPort + ?Sized, A>(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.tab_id)?;
     let tab_id = app.tab_id_at(index);
-    let (cancelled, run) = app.cancel_history(index).ok_or_else(tab_closed)?;
-    let cancelled = match cancelled {
+    let session = app
+        .dispatch_history(index, Act::CancelHistory)
+        .ok_or_else(tab_closed)?;
+    let cancelled = match session.last_cancel.unwrap_or(Cancelled::Nothing) {
         Cancelled::Run(_) => "run",
         Cancelled::Queued(_) => "queued",
         Cancelled::Nothing => "nothing",
@@ -119,7 +125,7 @@ fn cancel<H: HistoryPort + ?Sized, A>(
     let result = HistoryCancelResult {
         tab_id: WireU64::new(tab_id),
         cancelled: cancelled.to_owned(),
-        status: snapshot(run.status, run.main_reach),
+        status: snapshot(session.run, session.main_reach),
     };
     serde_json::to_value(result).map_err(|error| ControlError::invalid_request(error.to_string()))
 }

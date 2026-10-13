@@ -3037,6 +3037,7 @@ dependencies = [
  "quantick-control-schema",
  "quantick-engine",
  "quantick-paper",
+ "quantick-session",
  "quantick-sources",
  "rust_decimal",
  "schemars",
