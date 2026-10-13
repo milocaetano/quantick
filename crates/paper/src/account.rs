@@ -22,7 +22,7 @@ use quantick_sim::{
 };
 use rust_decimal::Decimal;
 
-use crate::format::{PositionSummary, fmt_decimal, fmt_signed_points, position_word};
+use crate::format::{PositionSummary, fmt_decimal, position_word};
 use crate::order_strategies::OrderStrategy;
 use crate::report::sessions::JournaledTrade;
 use crate::risk_sizing::{Capital, InstrumentBook, RiskHook, RiskSettings};
@@ -844,13 +844,13 @@ impl PaperAccount {
                     // The toast slot holds one message: a healthy "closed"
                     // must not paint over the could-not-save warning.
                     if saved {
+                        // In the ticket's own words: the chosen figure,
+                        // then the one that keeps it honest.
                         self.set_toast(format!(
-                            // Same reason as the hover card above: the
-                            // toast is a proportional-font label.
-                            "SIM closed: {} {} for {} pts ({})",
+                            "SIM closed: {} {} for {} ({})",
                             position_word(trade.side),
                             fmt_decimal(trade.quantity),
-                            fmt_signed_points(trade.pnl_points),
+                            self.trade_pnl_text(&trade),
                             trade.exit_reason.as_str().replace('_', " "),
                         ));
                     }

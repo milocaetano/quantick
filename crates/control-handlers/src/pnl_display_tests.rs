@@ -85,6 +85,7 @@ fn a_set_reaches_the_account_persists_once_and_is_journaled() {
     assert_eq!(answer["chosen"], "points_times_qty");
     assert_eq!(answer["primary_unit"], "pts times quantity");
     assert_eq!(answer["secondary_unit"], "BRL");
+    assert_eq!(answer["changed"], true);
     assert_eq!(desk.persisted, 1);
     assert_eq!(access.events.len(), 1);
     assert_eq!(
@@ -113,11 +114,59 @@ fn an_unknown_mode_and_a_missing_chart_are_refused() {
         &mut FakeAccess::with_budget(0),
         json!({ "primary": "dollars" }),
     );
-    assert!(refused.is_err(), "an unknown mode is invalid input");
+    let refused = refused.expect_err("an unknown mode is invalid input");
+    assert_eq!(refused.code.as_str(), "control.invalid_request");
+    assert_eq!(
+        refused.context.details,
+        Some(json!({
+            "code": "invalid_input",
+            "allowed_primary": ["money", "points_per_contract", "points_times_qty"],
+        })),
+        "the refusal lists the modes a caller may ask for"
+    );
     assert_eq!(desk.persisted, 0);
     let mut empty = FakeDesk {
         account: None,
         persisted: 0,
     };
     assert!(call(&mut empty, &mut FakeAccess::with_budget(0), json!({})).is_err());
+}
+
+#[test]
+fn a_repeated_set_is_idempotent() {
+    let mut desk = FakeDesk::on("WINZ26");
+    let mut access = FakeAccess::with_budget(0);
+    let ask = json!({ "primary": "points_per_contract" });
+    let first = call(&mut desk, &mut access, ask.clone()).expect("set");
+    let second = call(&mut desk, &mut access, ask).expect("same set");
+    assert_eq!(first["changed"], true);
+    assert_eq!(second["changed"], false, "the repeat moved nothing");
+    let strip = |mut answer: Value| {
+        answer["changed"] = Value::Null;
+        answer
+    };
+    assert_eq!(strip(first), strip(second), "the same display either way");
+    assert_eq!(desk.persisted, 1, "the repeat saves nothing");
+    assert_eq!(access.events.len(), 1, "the repeat journals nothing");
+    assert_eq!(
+        desk.account.as_ref().map(PaperAccount::pnl_primary),
+        Some(PnlPrimary::PointsPerContract)
+    );
+}
+
+#[test]
+fn the_capability_is_a_cockpit_display_preference() {
+    let descriptor = descriptor();
+    assert_eq!(descriptor.id.as_str(), "session.pnl_display.set");
+    assert_eq!(descriptor.module.as_str(), "session");
+    let permissions: Vec<&str> = descriptor
+        .required_permissions
+        .iter()
+        .map(|permission| permission.as_str())
+        .collect();
+    assert_eq!(
+        permissions,
+        ["cockpit"],
+        "a grant a trader can tick reaches it"
+    );
 }

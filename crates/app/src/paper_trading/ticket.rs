@@ -482,7 +482,7 @@ impl PaperTrading {
         let mut picked = None;
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             for (primary, label) in self.account.pnl_modes().into_iter().rev() {
-                let hover = format!("lead P&L with {label} - the other figure stays beside it (trade.pnl_display.set)");
+                let hover = format!("lead P&L with {label} - the other figure stays beside it (session.pnl_display.set)");
                 if ui.selectable_label(primary == current, egui::RichText::new(label).small()).on_hover_text(hover).clicked() && primary != current {
                     picked = Some(primary);
                 }

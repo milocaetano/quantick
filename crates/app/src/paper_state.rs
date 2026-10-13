@@ -22,8 +22,11 @@ pub(crate) use quantick_paper::state::*;
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub(crate) const STATE_FILE: &str = "paper-state.toml";
 
-/// The instrument catalog this build ships; the trader's `instruments.toml`
-/// in the cockpit home is laid over it (`quantick_paper::instruments`).
+/// The trader's instrument catalog inside the cockpit home, laid over the
+/// shipped one (`quantick_paper::instruments`).
+pub(crate) const INSTRUMENTS_FILE: &str = "instruments.toml";
+
+/// The instrument catalog this build ships.
 const INSTRUMENTS: &str = include_str!("../config/instruments.toml");
 
 /// The declared instrument money, the catalog and the stored P&L display an
@@ -33,7 +36,7 @@ pub(crate) fn restore_money(account: &mut quantick_paper::PaperAccount, state: &
     account.set_instrument_money(crate::risk_sizing::book_from_records(
         &state.instrument_money,
     ));
-    let trader = (!cfg!(test)).then(|| crate::store_home::resolve("instruments.toml"));
+    let trader = (!cfg!(test)).then(|| crate::store_home::resolve(INSTRUMENTS_FILE));
     let chosen = state.pnl_primary.as_deref();
     account.set_pnl_settings(quantick_paper::pnl::PnlSettings::load(
         INSTRUMENTS,

@@ -201,6 +201,23 @@ impl PnlReader<'_> {
         (total.fmt(primary), total.fmt(secondary_of(primary)))
     }
 
+    /// The report's footnote: which figure leads and where a point's
+    /// value comes from.
+    #[must_use]
+    pub fn footnote(&self) -> String {
+        let lead = self
+            .settings
+            .chosen
+            .or_else(|| self.settings.catalog.default_primary())
+            .map_or_else(
+                || "money where a point value is known, else pts/ct".to_owned(),
+                |primary| format!("{} first, as the P&L switch reads", primary.label(None)),
+            );
+        format!(
+            "Simulated figures, {lead}; point values from instruments.toml or a declared value."
+        )
+    }
+
     /// What a readout cached under this reader was worded by — compared
     /// with [`Self::wrote`] to know when to word it again.
     #[must_use]

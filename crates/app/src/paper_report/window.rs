@@ -384,12 +384,9 @@ impl ReportState {
                     );
                 }
                 ui.label(
-                    egui::RichText::new(
-                        "All figures are simulated, in points (price units × quantity) - \
-                         the workspace knows no per-instrument currency value.",
-                    )
-                    .color(theme::TEXT_MUTED)
-                    .small(),
+                    egui::RichText::new(env.pnl.footnote())
+                        .color(theme::TEXT_MUTED)
+                        .small(),
                 );
             });
         if toggle_list {

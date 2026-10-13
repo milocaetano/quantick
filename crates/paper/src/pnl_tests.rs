@@ -486,3 +486,28 @@ fn the_chart_label_is_the_ticket_lead_figure() {
         );
     }
 }
+
+/// The report's footnote names the figure that leads and the catalog
+/// behind the money, never the old "points only, no currency" claim.
+#[test]
+fn the_report_footnote_names_the_chosen_figure_and_the_catalog() {
+    let catalog = shipped();
+    let declared = InstrumentBook::new();
+    let unchosen = PnlSettings::default();
+    let auto = b3_reader(&declared, &catalog, &unchosen).footnote();
+    assert_eq!(
+        auto,
+        "Simulated figures, money where a point value is known, else pts/ct; \
+         point values from instruments.toml or a declared value."
+    );
+    let chosen = PnlSettings {
+        chosen: Some(PnlPrimary::PointsPerContract),
+        ..PnlSettings::default()
+    };
+    let footnote = b3_reader(&declared, &catalog, &chosen).footnote();
+    assert!(footnote.contains("pts/ct first"), "{footnote}");
+    assert!(
+        !footnote.contains("no per-instrument currency"),
+        "{footnote}"
+    );
+}

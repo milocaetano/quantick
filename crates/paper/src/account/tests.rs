@@ -1238,3 +1238,40 @@ fn a_saved_trade_prices_identically_from_any_tab() {
         assert_eq!(read(&account), on_b3, "read from a {feed:?} tab");
     }
 }
+
+/// The close toast words the trade in the figure the ticket leads with —
+/// the trader's chosen mode, its honest second figure and their units —
+/// never a bare points total that ignores the switch.
+#[test]
+fn the_close_toast_reads_in_the_chosen_figure() {
+    let dir = ScratchDir::new("close-toast-pnl");
+    let mut account = account(&dir, "WINZ26");
+    account.set_pnl_settings(shipped_settings());
+    let close_two = |account: &mut PaperAccount, first: u64| {
+        account.seed(&print(first, 100));
+        let env = AccountEnv {
+            ruler_levels: None,
+            form: TicketForm {
+                quantity: Ok(Decimal::from(2)),
+                offsets: Some((None, None)),
+            },
+        };
+        account.market(Side::Buy, Decimal::from(100), Bracket::none(), &env);
+        account.on_trade(&print(first + 1, 100));
+        let events = account.dispatch(Command::ClosePosition);
+        account.handle_events(events);
+        account.on_trade(&print(first + 2, 105));
+        account.take_toast().expect("the close is said")
+    };
+    account.set_pnl_primary(crate::pnl::PnlPrimary::PointsPerContract);
+    assert_eq!(
+        close_two(&mut account, 0),
+        "SIM closed: LONG 2 for +5 pts × 2 · +2.00 BRL (manual)",
+        "pts/ct leads, money keeps it honest"
+    );
+    account.set_pnl_primary(crate::pnl::PnlPrimary::Money);
+    assert_eq!(
+        close_two(&mut account, 10),
+        "SIM closed: LONG 2 for +2.00 BRL · +5 pts × 2 (manual)"
+    );
+}
