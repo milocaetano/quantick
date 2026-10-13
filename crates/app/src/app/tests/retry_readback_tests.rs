@@ -642,6 +642,12 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         (
+            "orderflow.bubbles.tick.set",
+            1,
+            Value::Null,
+            Readback::Stays,
+        ),
+        (
             "layout.preset.apply",
             LAYOUT_V2,
             json!({ "preset_id": "time+time+flow" }),
@@ -835,6 +841,26 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         let mut client = connect(&directory, &cockpit);
         let row = retry_matrix::readback(capability).expect("the matrix has a row");
         let payload = match capability {
+            "orderflow.bubbles.tick.set" => {
+                let config: crate::config::AppConfig =
+                    toml::from_str(quantick_stores::config::EMBEDDED_DEFAULT).unwrap();
+                let presets = quantick_stores::bubble_presets::embedded();
+                let (binding, settings) = quantick_stores::bubble_asset_store::AssetBinding::bind(
+                    quantick_stores::bubble_asset_store::AssetBubblesStore::default().shared(),
+                    &config,
+                    ("binance", "BTCUSDT"),
+                    &presets,
+                    false,
+                );
+                app.active_tab_mut()
+                    .tape_mut()
+                    .bind_asset(binding, &settings);
+                json!({
+                    "tab_id": app.tabs.active_id().to_string(),
+                    "pane_id": app.active_tab().flow_pane.id.to_string(),
+                    "preset": "Binance BTC Spot spheres",
+                })
+            }
             "feed.source.set" => json!({
                 "tab_id": app.tabs.active_id().to_string(),
                 "feed_id": app.active_tab().active.0,
