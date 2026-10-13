@@ -18,6 +18,7 @@ use quantick_sim::history::{self, SessionSource};
 use rust_decimal::Decimal;
 
 use super::SourceFilter;
+use crate::pnl::{PnlTotal, SymbolPnl};
 
 /// Which trade of a session file — what tags are keyed by. Re-exported so a
 /// caller naming a session's trade needs no second crate for it.
@@ -474,6 +475,9 @@ pub struct DayGroup {
     pub day: CivilDate,
     pub count: usize,
     pub net: Decimal,
+    /// The same net in every figure, and as the header reads it.
+    pub pnl: PnlTotal,
+    pub net_text: String,
     /// In the order their newest trade appears.
     pub sessions: Vec<SessionGroup>,
 }
@@ -485,6 +489,9 @@ pub struct SessionGroup {
     pub key: Option<SessionKey>,
     pub count: usize,
     pub net: Decimal,
+    /// The same net in every figure, and as the session row reads it.
+    pub pnl: PnlTotal,
+    pub net_text: String,
     /// Positions in the grouped input, in input order.
     pub items: Vec<usize>,
     /// The row of its own it gets, set by [`place_session_rows`].
@@ -509,20 +516,26 @@ pub enum SessionRow {
 /// session collects its rows wherever they fall in the day rather than
 /// splitting at each interleave, and a day collects its rows wherever they
 /// fall in the list: this session's re-runs of a tape that crossed midnight
-/// come back to a day already listed, and must not list it twice.
+/// come back to a day already listed, and must not list it twice. Each
+/// trade carries the reader it is worded by; every net is worded by the
+/// last one, which is the one reader a ledger holds.
 pub fn group_by_day_and_session<'a>(
-    items: impl IntoIterator<Item = (Option<&'a SessionKey>, &'a ClosedTrade)>,
+    items: impl IntoIterator<Item = (Option<&'a SessionKey>, SymbolPnl<'a>, &'a ClosedTrade)>,
     tz: TzOffset,
 ) -> Vec<DayGroup> {
     let mut days: Vec<DayGroup> = Vec::new();
     let mut day_at: BTreeMap<i64, usize> = BTreeMap::new();
-    for (index, (key, trade)) in items.into_iter().enumerate() {
+    let mut reader = None;
+    for (index, (key, pnl, trade)) in items.into_iter().enumerate() {
+        reader = Some(pnl.reader);
         let day = CivilDate::from_ms(trade.closed_ms, tz);
         let at = *day_at.entry(day.day_number()).or_insert_with(|| {
             days.push(DayGroup {
                 day,
                 count: 0,
                 net: Decimal::ZERO,
+                pnl: PnlTotal::default(),
+                net_text: String::new(),
                 sessions: Vec::new(),
             });
             days.len() - 1
@@ -530,6 +543,7 @@ pub fn group_by_day_and_session<'a>(
         let group = &mut days[at];
         group.count += 1;
         group.net = group.net.saturating_add(trade.pnl_points);
+        pnl.add_to(&mut group.pnl, trade);
         let session = match group
             .sessions
             .iter()
@@ -541,6 +555,8 @@ pub fn group_by_day_and_session<'a>(
                     key: key.cloned(),
                     count: 0,
                     net: Decimal::ZERO,
+                    pnl: PnlTotal::default(),
+                    net_text: String::new(),
                     items: Vec::new(),
                     row: SessionRow::Bare,
                 });
@@ -549,7 +565,16 @@ pub fn group_by_day_and_session<'a>(
         };
         session.count += 1;
         session.net = session.net.saturating_add(trade.pnl_points);
+        pnl.add_to(&mut session.pnl, trade);
         session.items.push(index);
+    }
+    if let Some(reader) = reader {
+        for day in &mut days {
+            day.net_text = reader.word(&day.pnl);
+            for session in &mut day.sessions {
+                session.net_text = reader.word(&session.pnl);
+            }
+        }
     }
     days
 }

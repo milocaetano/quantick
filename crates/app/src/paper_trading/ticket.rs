@@ -166,6 +166,7 @@ impl PaperTrading {
             realized: venue.realized_points(),
             realized_text: self.account.realized_pnl_text(),
             open_text: self.account.open_pnl_text(),
+            brackets: self.account.bracket_pnl(),
             has_working_orders: !venue.working_orders().is_empty(),
             stop_offset: parse_offset(&self.desk.ticket.stop_offset_text)
                 .ok()

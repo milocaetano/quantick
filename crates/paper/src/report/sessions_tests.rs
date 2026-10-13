@@ -10,6 +10,7 @@ use quantick_sim::{ClosedTrade, ExitReason};
 use rust_decimal::Decimal;
 
 use super::*;
+use crate::pnl::{PnlReader, SymbolPnl};
 use crate::report::session_edit::{
     DELETED_DIR, SessionEditError, delete_session, rename_session, tag_trade,
 };
@@ -17,6 +18,10 @@ use crate::report::{SourceFilter, load_history};
 use crate::scratch::ScratchDir;
 
 const UTC: TzOffset = TzOffset::new(0);
+
+fn plain() -> SymbolPnl<'static> {
+    PnlReader::plain().of("WINJ26")
+}
 /// 2026-03-16 13:00:00 UTC.
 const DAY_START: i64 = 1_773_666_000_000;
 
@@ -121,16 +126,20 @@ fn three_replays_of_one_day_are_three_sessions_not_one() {
     assert_eq!(loaded.rows.len(), 5);
     assert_eq!(loaded.sessions.len(), 3);
 
-    let newest_first: Vec<(Option<&SessionKey>, &ClosedTrade)> = loaded
+    let newest_first: Vec<(Option<&SessionKey>, SymbolPnl<'_>, &ClosedTrade)> = loaded
         .rows
         .iter()
         .rev()
-        .map(|row| (row.session.as_ref(), &row.trade))
+        .map(|row| (row.session.as_ref(), plain(), &row.trade))
         .collect();
     let days = group_by_day_and_session(newest_first, UTC);
     assert_eq!(days.len(), 1, "one civil day");
     assert_eq!(days[0].count, 5);
     assert_eq!(days[0].net, Decimal::from(4 + 4 + 4 - 1 - 1));
+    assert_eq!(
+        days[0].net_text, "+10 pts/ct · — set pt value",
+        "a day with no point value leads with points and says money is unset"
+    );
     let mut keys: Vec<_> = days[0]
         .sessions
         .iter()
@@ -161,7 +170,8 @@ fn days_split_before_sessions_do() {
         (Some(&a), trade_at(DAY_START + day - 20, 3)),
         (Some(&a), trade_at(DAY_START, 5)),
     ];
-    let days = group_by_day_and_session(rows.iter().map(|(key, trade)| (*key, trade)), UTC);
+    let days =
+        group_by_day_and_session(rows.iter().map(|(key, trade)| (*key, plain(), trade)), UTC);
     assert_eq!(days.len(), 2);
     assert_eq!(days[0].sessions.len(), 2);
     assert_eq!(
@@ -646,7 +656,8 @@ fn a_day_is_listed_once_and_an_edit_stands_in_one_place() {
         (Some(&a), trade_at(DAY_START + day, 3)),
         (Some(&a), trade_at(DAY_START, 4)),
     ];
-    let mut days = group_by_day_and_session(rows.iter().map(|(key, trade)| (*key, trade)), UTC);
+    let mut days =
+        group_by_day_and_session(rows.iter().map(|(key, trade)| (*key, plain(), trade)), UTC);
     assert_eq!(days.len(), 2, "two civil days, each listed once");
     assert!(days.iter().all(|day| day.sessions.len() == 2));
 
@@ -665,7 +676,7 @@ fn a_day_is_listed_once_and_an_edit_stands_in_one_place() {
     );
     assert_eq!(rows_of(&days, &b), vec![SessionRow::Head, SessionRow::Head]);
     // The saved list after the live one: the editor is already placed.
-    let mut saved = group_by_day_and_session([(Some(&a), &rows[3].1)], UTC);
+    let mut saved = group_by_day_and_session([(Some(&a), plain(), &rows[3].1)], UTC);
     place_session_rows(&mut saved, Some(&a), &BTreeSet::new(), &mut placed);
     assert_eq!(rows_of(&saved, &a), vec![SessionRow::Head]);
 
@@ -689,7 +700,8 @@ fn a_one_session_day_is_headed_and_a_keyless_session_stays_bare() {
         (Some(&b), trade_at(DAY_START + day, 1)),
         (Some(&a), trade_at(DAY_START, 2)),
     ];
-    let mut days = group_by_day_and_session(rows.iter().map(|(key, trade)| (*key, trade)), UTC);
+    let mut days =
+        group_by_day_and_session(rows.iter().map(|(key, trade)| (*key, plain(), trade)), UTC);
     assert_eq!(days.len(), 3);
     assert!(days.iter().all(|day| day.sessions.len() == 1));
 
@@ -710,7 +722,8 @@ fn a_one_session_day_is_headed_and_a_keyless_session_stays_bare() {
     assert_eq!(days[1].sessions[0].row, SessionRow::Head);
 
     // A folded day places nothing.
-    let mut fresh = group_by_day_and_session(rows.iter().map(|(key, trade)| (*key, trade)), UTC);
+    let mut fresh =
+        group_by_day_and_session(rows.iter().map(|(key, trade)| (*key, plain(), trade)), UTC);
     let folded = BTreeSet::from([fresh[1].day.day_number()]);
     let mut placed = false;
     place_session_rows(&mut fresh, None, &folded, &mut placed);

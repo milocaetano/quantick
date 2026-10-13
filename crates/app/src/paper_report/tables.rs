@@ -23,7 +23,8 @@ use crate::theme;
 /// The three headline tiles: NET (the one coloured number in the window),
 /// WIN RATE, PROFIT FACTOR — each with its denominator under it, so every
 /// tile is a self-explaining fact rather than a floating statistic.
-pub(super) fn draw_report_tiles(ui: &mut egui::Ui, report: &PerformanceReport) {
+pub(super) fn draw_report_tiles(ui: &mut egui::Ui, view: &ReportView) {
+    let report = &view.report;
     let width = ((ui.available_width() - 2.0 * TILE_GUTTER_PX) / 3.0).max(80.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = TILE_GUTTER_PX;
@@ -31,10 +32,10 @@ pub(super) fn draw_report_tiles(ui: &mut egui::Ui, report: &PerformanceReport) {
             ui,
             width,
             "NET",
-            fmt_signed_points(report.net_points),
-            "pts",
+            view.net_text.0.clone(),
+            "",
             points_color(report.net_points),
-            format!("{} trades", report.trades),
+            format!("{} trades · {}", report.trades, view.net_text.1),
         );
         draw_tile(
             ui,
@@ -138,8 +139,8 @@ const TRADE_LIST_COLUMNS: [(&str, f32); 11] = [
     ("ENTRY → EXIT", 122.0),
     ("HELD", 52.0),
     ("EXIT", 74.0),
-    ("PTS", 52.0),
-    ("EQUITY", 60.0),
+    ("P&L", 196.0),
+    ("EQUITY", 96.0),
     // Not a hover: under Source "Both" a practice trade and a real one
     // are otherwise the same row, and a replay result readable as a real
     // one is the worst thing this window could do.
@@ -322,10 +323,10 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
                         ),
                         (trade.exit_reason.as_str().replace('_', " "), muted),
                         (
-                            fmt_signed_points(trade.pnl_points),
+                            view.trade_text(ordinal).to_owned(),
                             points_color(trade.pnl_points),
                         ),
-                        (fmt_signed_points(equity), points_color(equity)),
+                        (view.equity.text(index), points_color(equity)),
                         match row.source {
                             Some(history::SessionSource::Live) => {
                                 ("live".to_owned(), theme::TEXT_FAINT)
@@ -347,13 +348,13 @@ pub(super) fn draw_trade_list(ui: &mut egui::Ui, view: &ReportView, open: bool) 
                     // for → and paints a tofu box. The arrow survives in the
                     // painted row above, which is monospace.
                     response.on_hover_text(format!(
-                        "#{} · {} {} · {} to {} · {} pts · {} · held {} · {}",
+                        "#{} · {} {} · {} to {} · {} · {} · held {} · {}",
                         ordinal + 1,
                         position_word(trade.side),
                         fmt_decimal(trade.quantity),
                         fmt_decimal(trade.entry_price),
                         fmt_decimal(trade.exit_price),
-                        fmt_signed_points(trade.pnl_points),
+                        view.trade_text(ordinal),
                         trade.exit_reason.as_str().replace('_', " "),
                         fmt_duration_ms(trade.closed_ms.saturating_sub(trade.opened_ms)),
                         match row.source {

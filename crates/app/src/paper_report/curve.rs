@@ -13,7 +13,7 @@ use super::{
     CURVE_MAX_H_PX, CURVE_MAX_POINTS, ReportView,
 };
 use crate::paper_calendar::fmt_offset_minute;
-use crate::paper_chrome::{caption, fmt_decimal, fmt_points, fmt_signed_points, position_word};
+use crate::paper_chrome::{caption, fmt_decimal, fmt_points, position_word};
 use crate::theme;
 
 /// The realized equity curve, `E_k` by trade index — the closing order
@@ -26,7 +26,7 @@ pub(super) fn draw_equity_curve(ui: &mut egui::Ui, view: &ReportView, floor: f32
     if n == 0 {
         return;
     }
-    ui.label(caption("REALIZED EQUITY"));
+    ui.label(caption(&view.equity.caption()));
     let height = (ui.available_height() - CURVE_GRID_RESERVE_PX).clamp(floor, CURVE_MAX_H_PX);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
@@ -52,8 +52,8 @@ pub(super) fn draw_equity_curve(ui: &mut egui::Ui, view: &ReportView, floor: f32
     curve.grid(high);
     let stride = n.div_ceil(CURVE_MAX_POINTS).max(1);
     curve.fill_and_line(stride);
-    if let Some((peak, trough)) = view.report.max_drawdown_span {
-        curve.drawdown(peak as usize, trough as usize, view);
+    if let Some((peak, trough, _)) = view.equity.drawdown {
+        curve.drawdown(peak, trough, view);
     }
     curve.axis_words(stride);
     // Hover: snap to the nearest trade index and answer in the ledger's
@@ -235,7 +235,7 @@ impl CurveFrame<'_> {
             [egui::pos2(trough_x, peak_y), egui::pos2(trough_x, trough_y)],
             egui::Stroke::new(1.0_f32, theme::SELL),
         );
-        let label = format!("-{} pts", fmt_points(view.report.max_drawdown_points));
+        let label = view.equity.drawdown_text();
         let galley = painter.layout_no_wrap(label, egui::FontId::monospace(10.0), theme::CHIP_INK);
         let center = egui::pos2(
             (self.x_at(peak) + trough_x) / 2.0,
@@ -300,21 +300,16 @@ impl CurveFrame<'_> {
         } else {
             let row = &view.rows[k - 1];
             format!(
-                "#{k} · {} · {} {} · {} pts",
+                "#{k} · {} · {} {} · {}",
                 row.symbol,
                 position_word(row.trade.side),
                 fmt_decimal(row.trade.quantity),
-                fmt_signed_points(row.trade.pnl_points),
+                view.trade_text(k - 1),
             )
         };
         let lines = [
             head,
-            format!(
-                "equity {} pts",
-                fmt_signed_points(
-                    Decimal::from_f64_retain(f64::from(self.equity[k])).unwrap_or_default()
-                )
-            ),
+            format!("equity {}", view.equity.text(k)),
             if k == 0 {
                 String::new()
             } else {

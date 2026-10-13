@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use eframe::egui;
 use egui_phosphor::regular as icons;
 use quantick_engine::Side;
+use quantick_paper::pnl::SymbolPnl;
 use quantick_paper::report::sessions::{
     SessionKey, SessionLabel, SessionRow, TradeRef, group_by_day_and_session, place_session_rows,
     source_word,
@@ -21,12 +22,10 @@ use rust_decimal::Decimal;
 use super::sessions::{SessionHead, source_glyph};
 use super::{
     DAY_HEADER_INSET_PX, DAY_HEADER_TEXT_X_PX, DETAIL_GAP_PX, DETAIL_RIGHT_PAD_PX,
-    LEDGER_PAGE_TRADES, LEDGER_ROW_HEIGHT_PX, SIDE_RAIL_WIDTH_PX,
+    LEDGER_PAGE_TRADES, LEDGER_ROW_HEIGHT_PX, OpenRow, SIDE_RAIL_WIDTH_PX,
 };
 use crate::paper_calendar::CivilDate;
-use crate::paper_chrome::{
-    PositionSummary, fmt_decimal, fmt_duration_ms, fmt_signed_points, points_color, position_word,
-};
+use crate::paper_chrome::{fmt_decimal, fmt_duration_ms, points_color, position_word};
 use crate::theme;
 use crate::timezone::TzOffset;
 
@@ -39,7 +38,7 @@ pub(super) enum LedgerRow<'a> {
     /// shut. A ledger of bare clock times cannot answer "which session was
     /// that" — the day header is where the answer lives, it carries the
     /// day's result for free, and clicking it folds the day away.
-    Day(CivilDate, usize, Decimal, bool),
+    Day(CivilDate, usize, (Decimal, String), bool),
     /// A session's own row inside its day — every session a file holds.
     SessionHead(SessionHead),
     /// The rename or delete row standing where its session's row was.
@@ -67,6 +66,8 @@ pub(super) struct TradeMeta<'a> {
     pub(super) trade_ref: TradeRef,
     pub(super) source: Option<SessionSource>,
     pub(super) tags: &'a [String],
+    /// How its P&L is worded, bound to its own symbol.
+    pub(super) pnl: SymbolPnl<'a>,
 }
 
 /// One trade before it is cut into rows.
@@ -112,13 +113,20 @@ pub(super) fn push_groups<'a>(
     inline_placed: &mut bool,
 ) {
     let mut days = group_by_day_and_session(
-        items.iter().map(|item| (item.meta.session, item.trade)),
+        items
+            .iter()
+            .map(|item| (item.meta.session, item.meta.pnl, item.trade)),
         view.tz,
     );
     place_session_rows(&mut days, view.editing, view.collapsed_days, inline_placed);
     for day in days {
         let folded = view.collapsed_days.contains(&day.day.day_number());
-        rows.push(LedgerRow::Day(day.day, day.count, day.net, folded));
+        rows.push(LedgerRow::Day(
+            day.day,
+            day.count,
+            (day.net, day.net_text),
+            folded,
+        ));
         // A folded day builds no trade rows at all — the header keeps the
         // date, the count and the net, so the day is summarised rather
         // than merely hidden, and the frame does not pay for what it does
@@ -142,7 +150,7 @@ pub(super) fn push_groups<'a>(
                         ),
                         source: first.meta.source,
                         count: session.count,
-                        net: session.net,
+                        net: (session.net, session.net_text.clone()),
                         folded: view.collapsed_sessions.contains(key),
                         focused: view.focused == Some(key),
                         live: view.live.contains(key),
@@ -192,7 +200,7 @@ pub(super) fn draw_day_header(
     ui: &mut egui::Ui,
     date: CivilDate,
     count: usize,
-    net: Decimal,
+    net: &(Decimal, String),
     folded: bool,
 ) -> bool {
     let width = ui.available_width();
@@ -251,15 +259,15 @@ pub(super) fn draw_day_header(
     painter.text(
         egui::pos2(rect.right() - 6.0, band.center().y),
         egui::Align2::RIGHT_CENTER,
-        format!("{count} · {}", fmt_signed_points(net)),
+        format!("{count} · {}", net.1),
         egui::FontId::monospace(10.0),
-        points_color(net),
+        points_color(net.0),
     );
     response
         .on_hover_text(format!(
-            "{} · {count} trade(s) closed · {} pts on the day - click to {}",
+            "{} · {count} trade(s) closed · {} on the day - click to {}",
             date.iso(),
-            fmt_signed_points(net),
+            net.1,
             if folded { "open it" } else { "fold it shut" },
         ))
         .clicked()
@@ -303,13 +311,8 @@ pub(super) fn draw_more_row(ui: &mut egui::Ui, remaining: usize) -> bool {
 
 /// The pinned open-position row: sunken, live open points on the right,
 /// the current mark standing in for the exit.
-pub(super) fn draw_open_row(
-    ui: &mut egui::Ui,
-    summary: &PositionSummary,
-    symbol: Option<&str>,
-    mark: Option<Decimal>,
-    held_ms: Option<i64>,
-) {
+pub(super) fn draw_open_row(ui: &mut egui::Ui, open: &OpenRow, symbol: Option<&str>) {
+    let summary = &open.summary;
     let width = ui.available_width();
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(width, LEDGER_ROW_HEIGHT_PX),
@@ -334,8 +337,10 @@ pub(super) fn draw_open_row(
         egui::Rounding::ZERO,
         theme::side_color(summary.side),
     );
-    let exit = mark.map_or_else(|| "…".to_owned(), fmt_decimal);
-    let held = held_ms.map_or_else(String::new, |ms| format!("open {}", fmt_duration_ms(ms)));
+    let exit = open.mark_price.map_or_else(|| "…".to_owned(), fmt_decimal);
+    let held = open
+        .held_ms
+        .map_or_else(String::new, |ms| format!("open {}", fmt_duration_ms(ms)));
     draw_row_lines(
         painter,
         rect,
@@ -347,7 +352,7 @@ pub(super) fn draw_open_row(
                 fmt_decimal(summary.quantity)
             ),
             route: format!("{} → {}", fmt_decimal(summary.avg_price), exit),
-            points: summary.open_points,
+            points: summary.open_points.zip(open.pnl.clone()),
             detail: format!("{held} · at the last print"),
             // No stamp: the open position closes at a time nobody knows
             // yet, and a date on a trade still running would be a guess.
@@ -363,7 +368,7 @@ struct RowLines {
     side: Side,
     head: String,
     route: String,
-    points: Option<Decimal>,
+    points: Option<(Decimal, String)>,
     detail: String,
     /// A stamp pinned to the right end of the detail line — the trade's
     /// date. It gets the space no other field wants (under the points),
@@ -397,12 +402,8 @@ fn draw_row_lines(painter: &egui::Painter, rect: egui::Rect, lines: RowLines) {
         theme::TEXT_MUTED,
     );
     let mut head_right = rect.right() - DETAIL_RIGHT_PAD_PX;
-    if let Some(points) = lines.points {
-        let galley = painter.layout_no_wrap(
-            fmt_signed_points(points),
-            font.clone(),
-            points_color(points),
-        );
+    if let Some((points, text)) = lines.points {
+        let galley = painter.layout_no_wrap(text, font.clone(), points_color(points));
         let width = galley.size().x;
         painter.galley(
             egui::pos2(head_right - width, y1 - galley.size().y / 2.0),
@@ -541,7 +542,7 @@ pub(super) fn draw_ledger_row(
                 fmt_decimal(trade.entry_price),
                 fmt_decimal(trade.exit_price)
             ),
-            points: Some(trade.pnl_points),
+            points: Some((trade.pnl_points, meta.pnl.closed(trade))),
             detail,
             // Compact: the day header directly above carries the year.
             stamp: Some(CivilDate::from_ms(trade.closed_ms, tz).short()),

@@ -54,12 +54,12 @@ mod sessions;
 mod tables;
 mod window;
 
-use ledger::LedgerTotals;
 /// The ledger's vocabulary, named by the ticket that hosts the tab.
 pub(crate) use ledger::{LedgerAction, LedgerScope};
 /// Named by the ticket's own tests, which drive a real journal folder.
 #[cfg(test)]
 pub(crate) use quantick_paper::report::load_history;
+use quantick_paper::report::readout::LedgerTotals;
 /// The report's numbers — the journal read back, cut and walked — live in
 /// the paper account's crate, so a backtest gets the answer this window
 /// paints. Re-exported where the window's callers already look.
@@ -102,6 +102,8 @@ pub(crate) struct ReportEnv<'a> {
     /// The position still open, if there is one. Gathered by the host
     /// because it takes three reads of a venue this module cannot see.
     pub open: Option<OpenRow>,
+    /// How every P&L figure here is worded: the ticket's own reader.
+    pub pnl: quantick_paper::pnl::PnlReader<'a>,
 }
 
 /// The open position as the ledger's top row needs it: the summary, the
@@ -119,6 +121,8 @@ pub(crate) struct OpenRow {
     /// from a clock — the tape says how long, so a replay's ages are the
     /// recording's, not this afternoon's.
     pub held_ms: Option<i64>,
+    /// The open profit as the ticket words it; `None` before a print.
+    pub pnl: Option<String>,
 }
 
 /// What the report asked its host to do.

@@ -1088,3 +1088,43 @@ fn the_risk_lock_refuses_a_reverse_it_would_refuse_as_an_entry() {
         "unlocked, the same flip goes through"
     );
 }
+
+/// The position card's stop and target read what the position would at
+/// each level, in the same words as the open P&L beside them.
+#[test]
+fn the_brackets_read_what_the_position_would_at_each_level() {
+    let dir = ScratchDir::new("account-bracket-pnl");
+    let mut account = account(&dir, "WINZ26");
+    account.seed(&print(0, 100));
+    assert_eq!(account.bracket_pnl(), [None, None], "flat: no legs");
+    let mut book = InstrumentBook::new();
+    book.insert(
+        "WINZ26".to_owned(),
+        InstrumentMoney {
+            point_value: Decimal::new(20, 2),
+            size_step: Decimal::ONE,
+            min_size: Decimal::ONE,
+            max_size: None,
+            currency: Currency::new("BRL").expect("BRL"),
+            source: MoneySource::Declared,
+        },
+    );
+    account.set_instrument_money(book);
+    let intent = OrderIntent::market(Side::Buy, Decimal::from(2)).with_bracket(Bracket::whole(
+        Some(Decimal::from(90)),
+        Some(Decimal::from(120)),
+    ));
+    let events = account.place_intent(intent);
+    account.handle_events(events);
+    account.on_trade(&print(1, 100));
+    let [stop, target] = account.bracket_pnl();
+    assert_eq!(
+        stop,
+        Some((Decimal::from(90), "-4.00 BRL · -10 pts × 2".to_owned())),
+        "ten points against two contracts at 0.20 a point"
+    );
+    assert_eq!(
+        target,
+        Some((Decimal::from(120), "+8.00 BRL · +20 pts × 2".to_owned()))
+    );
+}

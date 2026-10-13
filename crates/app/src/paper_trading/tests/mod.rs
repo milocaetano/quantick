@@ -3193,7 +3193,10 @@ fn a_close_refreshes_an_open_report_by_itself() {
         let (state, env) = paper.report_parts();
         state.open(&env)
     };
-    paper.account.report_state_mut().ensure_report_view(utc);
+    paper
+        .account
+        .report_state_mut()
+        .ensure_report_view(utc, quantick_paper::pnl::PnlReader::plain());
     assert!(
         paper
             .account
@@ -3211,7 +3214,10 @@ fn a_close_refreshes_an_open_report_by_itself() {
     paper.account.handle_events(events);
     paper.on_trade(&print(2, 105));
 
-    paper.account.report_state_mut().ensure_report_view(utc);
+    paper
+        .account
+        .report_state_mut()
+        .ensure_report_view(utc, quantick_paper::pnl::PnlReader::plain());
     let view = paper.account.report_state().view_rows().expect("refreshed");
     assert_eq!(
         view.len(),

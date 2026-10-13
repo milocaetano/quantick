@@ -15,15 +15,16 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use quantick_sim::{ClosedTrade, PerformanceReport, history};
-use rust_decimal::Decimal;
-use rust_decimal::prelude::ToPrimitive;
 
 use crate::format::sanitize_symbol;
 use quantick_civil::{CivilDate, DAY_MS, DateRange, TzOffset};
 
 pub mod ledger_state;
+pub mod readout;
 pub mod session_edit;
 pub mod sessions;
+
+pub use readout::EquityWalk;
 
 use sessions::{SessionInfo, SessionKey};
 
@@ -339,45 +340,6 @@ pub fn fmt_period_ms(period_ms: i64) -> String {
     format!("{value}{unit}")
 }
 
-/// The realized-equity walk `E_0..E_n` (`E_0 = 0` before the first trade),
-/// in the two shapes its two readers need: exact points for the trade
-/// list's running total, and plot-ready `f32` with its bounds for the
-/// curve. Computed once when the view is cut — a window holding a year of
-/// trades must not walk them again sixty times a second.
-pub struct EquityWalk {
-    /// `n + 1` exact running totals in points.
-    pub points: Vec<Decimal>,
-    /// The same walk as the curve plots it.
-    pub plot: Vec<f32>,
-    pub low: f32,
-    pub high: f32,
-}
-
-impl EquityWalk {
-    pub fn of(rows: &[HistoryRow]) -> Self {
-        let mut points = Vec::with_capacity(rows.len() + 1);
-        let mut plot = Vec::with_capacity(rows.len() + 1);
-        points.push(Decimal::ZERO);
-        plot.push(0.0_f32);
-        let (mut low, mut high) = (0.0_f32, 0.0_f32);
-        let mut sum = Decimal::ZERO;
-        for row in rows {
-            sum = sum.saturating_add(row.trade.pnl_points);
-            points.push(sum);
-            let value = sum.to_f64().unwrap_or_default() as f32;
-            low = low.min(value);
-            high = high.max(value);
-            plot.push(value);
-        }
-        Self {
-            points,
-            plot,
-            low,
-            high,
-        }
-    }
-}
-
 /// The report as filtered for display: the period's trades in closing
 /// order, their aggregation, and the anchor the period was measured from.
 pub struct ReportView {
@@ -407,6 +369,12 @@ pub struct ReportView {
     /// re-walked on every frame.
     pub equity: EquityWalk,
     pub report: PerformanceReport,
+    /// Each row worded by [`Self::with_pnl`]; empty on a bare cut.
+    pnl_rows: Vec<String>,
+    /// The net as the headline reads it: primary figure, then secondary.
+    pub net_text: (String, String),
+    /// What the wording above was worded under.
+    pnl_key: Option<crate::pnl::PnlKey>,
 }
 
 impl ReportView {
@@ -461,6 +429,9 @@ impl ReportView {
             rows,
             equity,
             report,
+            pnl_rows: Vec::new(),
+            net_text: (String::new(), String::new()),
+            pnl_key: None,
         }
     }
 }

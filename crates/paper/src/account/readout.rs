@@ -5,6 +5,7 @@
 //! which symbol and which trades the account holds.
 
 use quantick_sim::ClosedTrade;
+use rust_decimal::Decimal;
 
 use super::PaperAccount;
 use crate::pnl::{PnlPrimary, PnlReader};
@@ -69,5 +70,21 @@ impl PaperAccount {
             self.pnl_reader()
                 .trade(&self.symbol, open, position.quantity),
         )
+    }
+
+    /// The open position's stop and target, each with what the position
+    /// would read at that level; `None` for a leg not set, or while flat.
+    #[must_use]
+    pub fn bracket_pnl(&self) -> [Option<(Decimal, String)>; 2] {
+        let Some(position) = self.venue.position() else {
+            return [None, None];
+        };
+        [position.stop_loss, position.take_profit].map(|level| {
+            level.map(|level| {
+                let at = position.open_points(level);
+                let text = self.pnl_reader().trade(&self.symbol, at, position.quantity);
+                (level, text)
+            })
+        })
     }
 }
