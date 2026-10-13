@@ -37,6 +37,15 @@ impl PriceAxis for Axis<'_> {
     }
 }
 
+/// The window's modifiers, as the desk's held keys.
+pub(super) fn held_keys(modifiers: egui::Modifiers) -> HeldKeys {
+    HeldKeys {
+        shift: modifiers.shift,
+        command: modifiers.command,
+        alt: modifiers.alt,
+    }
+}
+
 impl ChartInput<'_> {
     /// The frame, in the desk's plain values.
     fn frame(&self) -> ChartFrame {
@@ -46,11 +55,7 @@ impl ChartInput<'_> {
             primary_pressed: self.primary_pressed,
             primary_down: self.primary_down,
             primary_released: self.primary_released,
-            keys: HeldKeys {
-                shift: self.modifiers.shift,
-                command: self.modifiers.command,
-                alt: self.modifiers.alt,
-            },
+            keys: held_keys(self.modifiers),
             canvas_claimed: self.canvas_claimed,
             scroll_y: self.scroll_y,
             middle_pressed: self.middle_pressed,
@@ -202,5 +207,11 @@ impl PaperTrading {
     #[must_use]
     pub fn aiming(&self) -> bool {
         self.desk.gesture.cmd_preview.is_some()
+    }
+
+    /// This frame's aimed price, snapped; `None` with no aim.
+    #[cfg(test)]
+    pub(crate) fn aim_price(&self) -> Option<rust_decimal::Decimal> {
+        self.desk.gesture.cmd_preview.map(|preview| preview.price)
     }
 }
