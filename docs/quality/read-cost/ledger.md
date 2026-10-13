@@ -97,3 +97,4 @@ a bound.
 | 665 | 2026-10-11 | feat/footprint-zoom-controls | main | 3273 | 6 | `crates/app/src/footprint_render/bar.rs` (754) |
 | 666 | 2026-10-11 | feat/drawing-magnet-per-object | main | 21118 | 25 | `crates/app/src/orderflow_view.rs` (732) |
 | 681 | 2026-10-12 | fix/two-decimal-display | main | 21516 | 19 | `crates/app/src/replay_view.rs` (783) |
+| 687 | 2026-10-13 | fix/app-ui-free-ceiling | main | 7231 | 5 | `crates/app/src/orderflow_view.rs` (735) |
