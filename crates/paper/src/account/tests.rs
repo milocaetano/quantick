@@ -404,27 +404,89 @@ fn the_export_csv_carries_readable_stamps_and_running_equity() {
             tags: Vec::new(),
         },
     ];
-    let text = export_csv(&rows);
+    let declared = crate::risk_sizing::InstrumentBook::new();
+    let catalog = crate::instruments::InstrumentCatalog::default();
+    let text = export_csv(
+        &rows,
+        &crate::pnl::PnlBook {
+            declared: &declared,
+            catalog: &catalog,
+        },
+    );
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 3, "header plus two rows");
     assert!(lines[0].starts_with("symbol,side,quantity,opened_ms,opened_utc"));
-    assert!(lines[0].ends_with(",source"), "{}", lines[0]);
+    assert!(
+        lines[0].ends_with(",source,pnl_per_unit,pnl_money,currency"),
+        "{}",
+        lines[0]
+    );
     assert!(
         lines[1].contains("2026-03-16T13:01:08Z"),
         "human-readable UTC beside the epoch: {}",
         lines[1]
     );
-    assert!(lines[1].ends_with(",manual,1,2,2,2,live"), "{}", lines[1]);
+    assert!(lines[1].ends_with(",manual,1,2,2,2,live,5,,"), "{}", lines[1]);
     assert!(
         lines[2].contains(",3,"),
         "running equity 5 + (-2): {}",
         lines[2]
     );
     assert!(
-        lines[2].ends_with(",manual,,,,,"),
+        lines[2].ends_with(",manual,,,,,,-2,,"),
         "unknown v1 fields and an unrecorded source stay empty: {}",
         lines[2]
     );
+}
+
+/// The export carries what the report shows: the move per contract and the
+/// money it made, in the instrument's own currency - empty where no point
+/// value is known, never a guessed zero.
+#[test]
+fn the_export_csv_adds_per_contract_points_and_money() {
+    let trade = |pnl: i64, quantity: i64| ClosedTrade {
+        side: Side::Buy,
+        quantity: Decimal::from(quantity),
+        entry_price: Decimal::from(100),
+        exit_price: Decimal::from(100 + pnl / quantity),
+        opened_ms: 1_773_666_000_000,
+        closed_ms: 1_773_666_060_000,
+        pnl_points: Decimal::from(pnl),
+        exit_reason: quantick_sim::ExitReason::Manual,
+        entry_agg_id: None,
+        exit_agg_id: None,
+        mae_points: None,
+        mfe_points: None,
+    };
+    let row = |symbol: &str, trade: ClosedTrade| HistoryRow {
+        symbol: symbol.to_owned(),
+        source: None,
+        trade,
+        session: None,
+        trade_ref: history::TradeRef::default(),
+        tags: Vec::new(),
+    };
+    let rows = vec![row("WINV26", trade(400, 2)), row("XAUUSD", trade(30, 3))];
+    let catalog = crate::instruments::InstrumentCatalog::parse(
+        "version = 1
+[instruments.\"WIN*\"]
+currency = \"BRL\"
+point_value = \"0.20\"
+size_step = \"1\"
+",
+    )
+    .expect("catalog");
+    let declared = crate::risk_sizing::InstrumentBook::new();
+    let text = export_csv(
+        &rows,
+        &crate::pnl::PnlBook {
+            declared: &declared,
+            catalog: &catalog,
+        },
+    );
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[1].ends_with(",400,400,60000,manual,,,,,,200,80,BRL"), "{}", lines[1]);
+    assert!(lines[2].ends_with(",10,,"), "unknown money stays empty: {}", lines[2]);
 }
 
 #[test]
