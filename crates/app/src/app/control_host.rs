@@ -357,9 +357,9 @@ impl<'a> TabsMut<'a> {
 
     /// Press History on one tab: the one press the toolbar and
     /// `feed.history.load` both make. The tab loads the target, and a press
-    /// it took (started or queued) makes it the window's main-click default
-    /// — what `workspace.summary` reads and the saved workspace keeps. A
-    /// press refused because a run is loading changes nothing.
+    /// that [`quantick_session::sets_window_default`] makes it the window's
+    /// main-click default — what `workspace.summary` reads and the saved
+    /// workspace keeps.
     pub(crate) fn press_history(
         self,
         index: usize,
@@ -367,7 +367,7 @@ impl<'a> TabsMut<'a> {
     ) -> Option<(&'a mut Tab, quantick_feed::history_run::Press)> {
         let tab = self.tabs.get_mut(index)?;
         let press = tab.load_history(self.config, reach);
-        if press != quantick_feed::history_run::Press::AlreadyRunning {
+        if quantick_session::sets_window_default(press) {
             *self.default_reach = reach;
         }
         Some((tab, press))

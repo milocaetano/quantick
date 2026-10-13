@@ -19,6 +19,9 @@ quantick-engine = { path = "../engine" }
 # The trades journal's sessions: the listing, the filter and the edits the
 # ledger makes, so the capability and the gesture share one path.
 quantick-paper = { path = "../paper" }
+# The tab session the History press and its cancel are acts of: the handler
+# picks the act and judges the session's answer.
+quantick-session = { path = "../session" }
 # The history reach and run vocabulary the History press speaks.
 quantick-sources = { path = "../sources" }
 rust_decimal = { workspace = true }

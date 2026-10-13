@@ -166,6 +166,51 @@ impl HistorySettings {
     }
 }
 
+/// Whether a press makes its target the window's main-click default
+/// ([`HistorySettings::history_reach`]): a press the tab took — started or
+/// queued — does, and one refused because a run is paging moves nothing.
+/// Asked by the window's press that the toolbar's reach menu and
+/// `feed.history.load` share.
+#[must_use]
+pub const fn sets_window_default(press: Press) -> bool {
+    !matches!(press, Press::AlreadyRunning)
+}
+
+/// The History button's own acts on one tab: the closed set
+/// `feed.history.load` and `feed.history.cancel` send, so a port routing
+/// them cannot carry any other [`Act`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryAct {
+    /// Load back to a target: [`Act::PressHistory`].
+    Press(HistoryReach),
+    /// Stop the run or drop the queued press: [`Act::CancelHistory`].
+    Cancel,
+}
+
+impl HistoryAct {
+    /// The bus act this is.
+    #[must_use]
+    pub const fn act(self) -> Act<'static> {
+        match self {
+            Self::Press(reach) => Act::PressHistory(reach),
+            Self::Cancel => Act::CancelHistory,
+        }
+    }
+}
+
+/// What one [`HistoryAct`] did, read from that act's own run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryOutcome {
+    /// The press's verdict.
+    Pressed(Press),
+    /// What the cancel stopped.
+    Cancelled(Cancelled),
+}
+
+/// What a routed [`HistoryAct`] answers: its own outcome and the session
+/// as it then stands.
+pub type HistoryReply = (HistoryOutcome, SessionSnapshot);
+
 /// One command to the session, and the facts it is judged against.
 ///
 /// The facts travel with the act rather than living in the session because
