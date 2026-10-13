@@ -1,7 +1,7 @@
 //! `feed.history.load` and `feed.history.cancel`: the History button's press
 //! and its cancel, as the tab session's own acts. The handler picks the
-//! [`Act`] and judges the session's answer; the window only routes the act
-//! to the tab ([`HistoryPort`]).
+//! [`HistoryAct`] and judges its outcome; the window routes the act to the
+//! tab through the toolbar's own press and cancel ([`HistoryPort`]).
 
 use quantick_control::{
     error::ControlError,
@@ -12,7 +12,7 @@ use quantick_control_schema::history::{
     HistoryCancelInput, HistoryCancelResult, HistoryLoadInput, HistoryLoadResult,
     HistoryLoadSnapshot, cancel_descriptor, load_descriptor,
 };
-use quantick_session::{Act, SessionSnapshot, sets_window_default};
+use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
 use quantick_sources::history_reach::{HistoryReach, MAX_REACH_HOURS, MAX_REACH_SESSIONS};
 use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use serde_json::{Value, json};
@@ -25,13 +25,16 @@ pub trait HistoryPort: TabDirectory {
     /// Whether the feed of the tab at `index` can page older trades; `None`
     /// when that tab is gone.
     fn history_paging(&self, index: usize) -> Option<bool>;
-    /// Hand the session of the tab at `index` one act the way the window
-    /// hands it every other — in a `Msg` with the tab's `TabView`, told the
-    /// time, its effects carried out — and answer with the session as it
-    /// then stands; `None` when the tab is gone.
-    fn dispatch_history(&mut self, index: usize, act: Act<'_>) -> Option<SessionSnapshot>;
-    /// Make `reach` the window's main-click default.
-    fn set_default_reach(&mut self, reach: HistoryReach);
+    /// Make the toolbar's own press or cancel on the tab at `index` — a
+    /// taken press moves the window's main-click default
+    /// ([`quantick_session::sets_window_default`]) — and answer with what
+    /// this act did and the session as it then stands; `None` when the tab
+    /// is gone.
+    fn dispatch_history(
+        &mut self,
+        index: usize,
+        act: HistoryAct,
+    ) -> Option<(HistoryOutcome, SessionSnapshot)>;
 }
 
 /// Dock the press and its cancel.
@@ -80,20 +83,19 @@ fn load<H: HistoryPort + ?Sized, A>(
             "read feed.status capabilities.history_paging; venue candles load with the History menu's + older candles",
         ));
     }
-    let session = app
-        .dispatch_history(index, Act::PressHistory(reach))
+    let (outcome, session) = app
+        .dispatch_history(index, HistoryAct::Press(reach))
         .ok_or_else(tab_closed)?;
-    // The press is the session's own verdict on this act: a refused press is
-    // recorded as `AlreadyRunning` before the refusal returns.
-    let press = session.last_press.unwrap_or(Press::AlreadyRunning);
-    if sets_window_default(press) {
-        app.set_default_reach(reach);
-    }
-    let press = match press {
-        Press::Start if matches!(session.run, RunStatus::Idle) => "finished",
-        Press::Start => "started",
-        Press::Queued => "queued",
-        Press::AlreadyRunning => "already_running",
+    let press = match outcome {
+        HistoryOutcome::Pressed(Press::Start) if matches!(session.run, RunStatus::Idle) => {
+            "finished"
+        }
+        HistoryOutcome::Pressed(Press::Start) => "started",
+        HistoryOutcome::Pressed(Press::Queued) => "queued",
+        // A press is answered with a press; any other answer took nothing.
+        HistoryOutcome::Pressed(Press::AlreadyRunning) | HistoryOutcome::Cancelled(_) => {
+            "already_running"
+        }
     };
     let result = HistoryLoadResult {
         tab_id: WireU64::new(tab_id),
@@ -114,13 +116,14 @@ fn cancel<H: HistoryPort + ?Sized, A>(
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
     let index = tab_index(app, input.tab_id)?;
     let tab_id = app.tab_id_at(index);
-    let session = app
-        .dispatch_history(index, Act::CancelHistory)
+    let (outcome, session) = app
+        .dispatch_history(index, HistoryAct::Cancel)
         .ok_or_else(tab_closed)?;
-    let cancelled = match session.last_cancel.unwrap_or(Cancelled::Nothing) {
-        Cancelled::Run(_) => "run",
-        Cancelled::Queued(_) => "queued",
-        Cancelled::Nothing => "nothing",
+    let cancelled = match outcome {
+        HistoryOutcome::Cancelled(Cancelled::Run(_)) => "run",
+        HistoryOutcome::Cancelled(Cancelled::Queued(_)) => "queued",
+        // A cancel is answered with a cancel; any other answer stopped nothing.
+        HistoryOutcome::Cancelled(Cancelled::Nothing) | HistoryOutcome::Pressed(_) => "nothing",
     };
     let result = HistoryCancelResult {
         tab_id: WireU64::new(tab_id),

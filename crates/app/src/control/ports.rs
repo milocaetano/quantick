@@ -10,12 +10,11 @@ use quantick_control_handlers::{
     recovery::{FeedRecoveryPort, RecoveredFeed},
 };
 use quantick_control_schema::notify::AgentPopup;
-use quantick_feed::history_reach::HistoryReach;
 use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{
     JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
 };
-use quantick_session::{Act, SessionSnapshot};
+use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
 
 use crate::app::control_host::ControlPort;
 
@@ -52,13 +51,25 @@ impl HistoryPort for dyn ControlPort {
         let tab = reads.tab_at(index)?;
         Some(tab.capabilities(reads.config()).history_paging)
     }
-    fn dispatch_history(&mut self, index: usize, act: Act<'_>) -> Option<SessionSnapshot> {
-        let (tab, config) = self.tabs_mut().tab_with_config(index)?;
-        tab.run_session(Some(config), act);
-        Some(tab.session.snapshot())
-    }
-    fn set_default_reach(&mut self, reach: HistoryReach) {
-        self.tabs_mut().set_default_reach(reach);
+    /// The toolbar's own press and cancel (Escape's too), so the two
+    /// surfaces cannot judge one act two ways.
+    fn dispatch_history(
+        &mut self,
+        index: usize,
+        act: HistoryAct,
+    ) -> Option<(HistoryOutcome, SessionSnapshot)> {
+        let (tab, outcome) = match act {
+            HistoryAct::Press(reach) => {
+                let (tab, press) = self.tabs_mut().press_history(index, reach)?;
+                (tab, HistoryOutcome::Pressed(press))
+            }
+            HistoryAct::Cancel => {
+                let tab = self.tabs_mut().tab_at_mut(index)?;
+                let cancelled = tab.cancel_history();
+                (tab, HistoryOutcome::Cancelled(cancelled))
+            }
+        };
+        Some((outcome, tab.session.snapshot()))
     }
 }
 

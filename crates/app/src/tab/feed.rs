@@ -1316,8 +1316,8 @@ struct Judged<'c> {
 }
 
 /// The shell half of the session bus: every entry into reaching back — the
-/// toolbar, the History menu, `feed.history.load`, the drain, a hook — is
-/// one [`Tab::run_session`], and this carries out what the session decides.
+/// History press and cancel of every surface, the drain, a hook — is one
+/// [`Tab::run_session`], and this carries out what the session decides.
 impl Tab {
     /// Hand the session `act` now, and carry out what it decides.
     pub fn run_session(&mut self, config: Option<&AppConfig>, act: Act<'_>) -> SessionRun {
@@ -1440,14 +1440,14 @@ impl Tab {
         }
     }
 
-    /// Load back to `reach`: begin now, or queue behind the opening fill. The
-    /// toolbar, the History menu and `feed.history.load` all press here.
+    /// Load back to `reach` (begin now, or queue behind the opening fill) and
+    /// say what this press did; every surface presses via `TabsMut::press_history`.
     pub fn load_history(&mut self, config: &AppConfig, reach: HistoryReach) -> Press {
         self.run_session(Some(config), Act::PressHistory(reach));
         self.session.last_press().unwrap_or(Press::AlreadyRunning)
     }
 
-    /// Stop the run and keep what arrived; the note says where it stopped.
+    /// Stop the run, keep what arrived, say what stopped: toolbar, Escape, `feed.history.cancel`.
     pub fn cancel_history(&mut self) -> Cancelled {
         self.run_session(None, Act::CancelHistory);
         self.session.last_cancel().unwrap_or(Cancelled::Nothing)

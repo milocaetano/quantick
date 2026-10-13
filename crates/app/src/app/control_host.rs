@@ -355,21 +355,22 @@ impl<'a> TabsMut<'a> {
         }
     }
 
-    /// The toolbar's History press on one tab. The tab loads the target, and
-    /// a press that [`quantick_session::sets_window_default`] makes it the
-    /// window's main-click default — what `workspace.summary` reads and the
-    /// saved workspace keeps; `feed.history.load` asks the same.
-    pub(crate) fn press_history(self, index: usize, reach: history_reach::HistoryReach) {
-        if let Some(tab) = self.tabs.get_mut(index)
-            && quantick_session::sets_window_default(tab.load_history(self.config, reach))
-        {
+    /// Press History on one tab: the one press the toolbar and
+    /// `feed.history.load` both make. The tab loads the target, and a press
+    /// that [`quantick_session::sets_window_default`] makes it the window's
+    /// main-click default — what `workspace.summary` reads and the saved
+    /// workspace keeps.
+    pub(crate) fn press_history(
+        self,
+        index: usize,
+        reach: history_reach::HistoryReach,
+    ) -> Option<(&'a mut Tab, quantick_feed::history_run::Press)> {
+        let tab = self.tabs.get_mut(index)?;
+        let press = tab.load_history(self.config, reach);
+        if quantick_session::sets_window_default(press) {
             *self.default_reach = reach;
         }
-    }
-
-    /// Make `reach` the window's main-click default.
-    pub(crate) fn set_default_reach(self, reach: history_reach::HistoryReach) {
-        *self.default_reach = reach;
+        Some((tab, press))
     }
 
     /// The mutable twin of [`TabReads::tab_at`].

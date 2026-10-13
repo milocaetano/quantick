@@ -13,7 +13,7 @@ use quantick_control_host::{journal::NewEvent, wire::PaneSideDto};
 use quantick_control_schema::chart::{BarProvenanceContext, ViewportSnapshot};
 use quantick_control_schema::notify::AgentPopup;
 use quantick_engine::{Bar, BarSpec, Side, Trade};
-use quantick_session::{Act, SessionSnapshot};
+use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot, sets_window_default};
 use quantick_sources::history_reach::{HistoryReach, ReachProgress};
 use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use rust_decimal::Decimal;
@@ -197,11 +197,11 @@ impl FakeTab {
         cancelled
     }
 
-    fn snapshot(
-        &self,
-        last_press: Option<Press>,
-        last_cancel: Option<Cancelled>,
-    ) -> SessionSnapshot {
+    fn snapshot(&self, outcome: HistoryOutcome) -> SessionSnapshot {
+        let (last_press, last_cancel) = match outcome {
+            HistoryOutcome::Pressed(press) => (Some(press), None),
+            HistoryOutcome::Cancelled(cancelled) => (None, Some(cancelled)),
+        };
         SessionSnapshot {
             run: self.history,
             main_reach: self.main_reach,
@@ -225,7 +225,7 @@ pub(crate) struct FakeWindow {
     pub popups: Vec<AgentPopup>,
     pub toasts: Vec<String>,
     pub speaker_refusal: Option<String>,
-    /// The main-click default the last press that moved it set.
+    /// The main-click default the last taken press set.
     pub default_reach: Option<HistoryReach>,
 }
 
@@ -283,18 +283,25 @@ impl HistoryPort for FakeWindow {
     fn history_paging(&self, index: usize) -> Option<bool> {
         self.tabs.get(index).map(|tab| tab.history_paging)
     }
-    /// The two acts the History handlers send, over plain fields.
-    fn dispatch_history(&mut self, index: usize, act: Act<'_>) -> Option<SessionSnapshot> {
+    /// The press and cancel over plain fields; a taken press moves the
+    /// default as `TabsMut::press_history` does.
+    fn dispatch_history(
+        &mut self,
+        index: usize,
+        act: HistoryAct,
+    ) -> Option<(HistoryOutcome, SessionSnapshot)> {
         let tab = self.tabs.get_mut(index)?;
-        let (press, cancel) = match act {
-            Act::PressHistory(reach) => (Some(tab.press(reach)), None),
-            Act::CancelHistory => (None, Some(tab.cancel())),
-            _ => (None, None),
+        let outcome = match act {
+            HistoryAct::Press(reach) => {
+                let press = tab.press(reach);
+                if sets_window_default(press) {
+                    self.default_reach = Some(reach);
+                }
+                HistoryOutcome::Pressed(press)
+            }
+            HistoryAct::Cancel => HistoryOutcome::Cancelled(tab.cancel()),
         };
-        Some(tab.snapshot(press, cancel))
-    }
-    fn set_default_reach(&mut self, reach: HistoryReach) {
-        self.default_reach = Some(reach);
+        Some((outcome, tab.snapshot(outcome)))
     }
 }
 

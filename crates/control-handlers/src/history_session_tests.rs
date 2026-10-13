@@ -6,7 +6,10 @@ use std::time::Instant;
 
 use quantick_engine::trade_tape::TradeTape;
 use quantick_engine::{Side, Trade};
-use quantick_session::{Act, Effect, Msg, SessionSnapshot, TabSession, TabView};
+use quantick_session::{
+    Act, Effect, HistoryAct, HistoryOutcome, Msg, SessionSnapshot, TabSession, TabView,
+    sets_window_default,
+};
 use quantick_sources::config::FeedCapabilities;
 use quantick_sources::history_reach::{HistoryReach, Outage, ReachBounds};
 use rust_decimal::Decimal;
@@ -89,7 +92,9 @@ fn run(session: &mut TabSession, tape: &TradeTape, act: Act<'_>, now: Instant) {
 }
 
 /// One tab whose History port is a real session: the second adapter after
-/// the window's own, told the time once.
+/// the window's own, told the time once, reading each act's outcome and
+/// moving the default the way the window's `Tab::load_history`,
+/// `Tab::cancel_history` and `TabsMut::press_history` do.
 struct SessionTab {
     session: TabSession,
     tape: TradeTape,
@@ -113,14 +118,28 @@ impl HistoryPort for SessionTab {
     fn history_paging(&self, index: usize) -> Option<bool> {
         (index == 0).then_some(capabilities().history_paging)
     }
-    fn dispatch_history(&mut self, index: usize, act: Act<'_>) -> Option<SessionSnapshot> {
-        (index == 0).then(|| {
-            run(&mut self.session, &self.tape, act, self.now);
-            self.session.snapshot()
-        })
-    }
-    fn set_default_reach(&mut self, reach: HistoryReach) {
-        self.window_default = Some(reach);
+    fn dispatch_history(
+        &mut self,
+        index: usize,
+        act: HistoryAct,
+    ) -> Option<(HistoryOutcome, SessionSnapshot)> {
+        if index != 0 {
+            return None;
+        }
+        run(&mut self.session, &self.tape, act.act(), self.now);
+        let outcome = match act {
+            HistoryAct::Press(reach) => {
+                let press = self.session.last_press().unwrap_or(Press::AlreadyRunning);
+                if sets_window_default(press) {
+                    self.window_default = Some(reach);
+                }
+                HistoryOutcome::Pressed(press)
+            }
+            HistoryAct::Cancel => {
+                HistoryOutcome::Cancelled(self.session.last_cancel().unwrap_or(Cancelled::Nothing))
+            }
+        };
+        Some((outcome, self.session.snapshot()))
     }
 }
 
@@ -158,8 +177,7 @@ fn press_page_and_cancel_through_the_handlers_match_the_session_bus() {
     assert_eq!(pressed["press"], "started");
     assert_eq!(pressed["status"]["state"], "loading");
     assert_eq!(tab.window_default, Some(YESTERDAY));
-    tab.dispatch_history(0, Act::HistoryPage(&page))
-        .expect("the tab is open");
+    run(&mut tab.session, &tab.tape, Act::HistoryPage(&page), now);
     let cancelled = call(cancel, &mut tab, json!({}));
     assert_eq!(cancelled["cancelled"], "run");
     assert_eq!(cancelled["status"]["state"], "idle");
