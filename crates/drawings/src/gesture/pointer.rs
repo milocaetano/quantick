@@ -391,6 +391,7 @@ impl PaneGestures {
         self.shared_drag_pending_from = None;
         self.shared_pointer_mark = None;
         self.shared_drag_magnet = false;
+        self.shared_drag_snap = crate::AnchorSnap::default();
     }
 }
 
@@ -836,6 +837,7 @@ mod tests {
                 anchor: None,
                 locked,
                 magnet: false,
+                snap: crate::AnchorSnap::Pointer,
             };
             let mut denied = PointerOutcome::default();
             gestures.interact_shared(

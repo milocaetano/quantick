@@ -83,6 +83,12 @@ pub struct SharedPick {
     /// switch cannot move under the hand anyway — the context bar stands
     /// down while a drag runs — and a scripted flip lands from the next press.
     pub magnet: bool,
+    /// The object's tool's snap ([`crate::DrawingTool::anchor_snap`]), so
+    /// the magnet reads the same candidates here as on its own pane: a level
+    /// ([`AnchorSnap::VisibleLevels`]) takes any visible candle's print on
+    /// this chart too. Every other tool keeps the candle under the pointer.
+    /// Held for the gesture with [`Self::magnet`].
+    pub snap: AnchorSnap,
 }
 
 /// What a pane did to another pane's marks in one frame.
@@ -539,8 +545,9 @@ impl PaneGestures {
             return;
         };
         let magnet = pointer.magnet || self.shared_drag_magnet;
+        let snap = self.shared_drag_snap;
         let Some((time_ms, price)) =
-            shared_mark_at(projection, cached_bands, &pointer, position, magnet)
+            shared_mark_at(projection, cached_bands, &pointer, position, (magnet, snap))
         else {
             return;
         };
@@ -569,9 +576,15 @@ impl PaneGestures {
             self.shared_drag_owner = Some(pick.owner);
             self.shared_drag_pending_from = Some(position);
             self.shared_drag_magnet = pick.magnet;
+            self.shared_drag_snap = pick.snap;
             let magnet = pointer.magnet || pick.magnet;
-            self.shared_pointer_mark =
-                shared_mark_at(projection, cached_bands, pointer, position, magnet);
+            self.shared_pointer_mark = shared_mark_at(
+                projection,
+                cached_bands,
+                pointer,
+                position,
+                (magnet, pick.snap),
+            );
             self.shared_drag = if pick.locked {
                 SharedDrag::Blocked
             } else {
@@ -597,6 +610,7 @@ impl PaneGestures {
         self.shared_drag_pending_from = None;
         self.shared_pointer_mark = None;
         self.shared_drag_magnet = false;
+        self.shared_drag_snap = AnchorSnap::default();
     }
 
     fn shared_threshold_crossed(&mut self, position: Option<Px>) -> bool {
@@ -642,21 +656,29 @@ impl PaneGestures {
     }
 }
 
+/// The market instant and price the pointer is on, the magnet read as the
+/// held object's own pane reads it: a level's over every visible candle,
+/// anything else's over the candle under the pointer — a mark's own rule
+/// stays on its own pane.
 fn shared_mark_at(
     projection: &DrawingProjection<'_>,
     cached_bands: &[Band],
     pointer: &SharedPointer,
     position: Px,
-    magnet: bool,
+    (magnet, snap): (bool, AnchorSnap),
 ) -> Option<(i64, f64)> {
     let band = band::band_at(cached_bands, position)?;
+    let snap = match snap {
+        AnchorSnap::VisibleLevels => snap,
+        _ => AnchorSnap::Pointer,
+    };
     projection
         .drawing_point_at(
             position,
             pointer.history_right,
             pointer.total,
             magnet,
-            AnchorSnap::Pointer,
+            snap,
             band,
         )
         .and_then(|point| Some((point.time_ms?, point.price)))

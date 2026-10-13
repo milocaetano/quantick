@@ -1,7 +1,7 @@
 //! The magnet's price and time halves, moved here with the functions.
 
 use super::*;
-use crate::gesture::MAGNET_REACH_PX;
+use crate::gesture::{Bands, MAGNET_REACH_PX};
 
 /// A bar spanning 98 … 102, for the magnet.
 fn magnet_candle() -> quantick_engine::Bar {
@@ -130,23 +130,18 @@ const DISTANT_BAR: usize = 80;
 /// A candle scrolled off the left edge, high 80.
 const OFF_SCREEN_BAR: usize = 10;
 
-/// A hundred flat candles at 50 with one tall visible candle and one tall
-/// off-screen one, on the default viewport (8 px a bar, following the
-/// newest) over a 400 px chart, so about the newest fifty are in view.
-/// Prices 0 … 100 over 200 px: two pixels a unit, so the 24 px candle
-/// reach is twelve units.
-fn with_visible_tape(test: impl FnOnce(&DrawingProjection<'_>, &Band)) {
+/// A [`TAPE`]-bar tape built by `bar`, on `viewport` over a 400 px chart.
+/// Prices 0 … 100 over 200 px: two pixels a unit, so the 24 px candle reach
+/// is twelve units.
+fn with_tape(
+    viewport: &Viewport,
+    bar: impl Fn(usize) -> quantick_engine::Bar,
+    test: impl FnOnce(&DrawingProjection<'_>, &Bands),
+) {
     use quantick_chart::state::{BarSpec, ChartState, SpecSelector};
-    let tape: Vec<quantick_engine::Bar> = (0..TAPE)
-        .map(|slot| match slot {
-            DISTANT_BAR => ohlc(slot as i64, 60, 70, 30, 40),
-            OFF_SCREEN_BAR => ohlc(slot as i64, 60, 80, 30, 40),
-            _ => ohlc(slot as i64, 50, 50, 50, 50),
-        })
-        .collect();
+    let tape: Vec<quantick_engine::Bar> = (0..TAPE).map(bar).collect();
     let spec = SpecSelector::new(BarSpec::Tick(10));
     let state = ChartState::new(BarSpec::Tick(10));
-    let viewport = Viewport::new();
     let indicators = IndicatorViews::new();
     let projection = DrawingProjection {
         series: PaneSeriesRead {
@@ -154,22 +149,40 @@ fn with_visible_tape(test: impl FnOnce(&DrawingProjection<'_>, &Band)) {
             state: &state,
             spec: &spec,
         },
-        viewport: &viewport,
+        viewport,
         indicators: &indicators,
     };
-    let (start, end) = viewport.visible_range(HISTORY_RIGHT, TAPE);
-    assert!(
-        (start..end).contains(&DISTANT_BAR) && !(start..end).contains(&OFF_SCREEN_BAR),
-        "fixture: the distant candle is in view and the other is not ({start}..{end})"
-    );
-    let band = Band {
+    let bands: Bands = smallvec::smallvec![Band {
         key: DrawingBand::Price,
         rect: PxRect::from_min_max(Px::default(), crate::pos2(HISTORY_RIGHT, 200.0)),
         scale: Some(PriceScale::from_range(0.0, 100.0, 0.0, 200.0)),
         label: "price".into(),
         refusal: None,
+    }];
+    test(&projection, &bands);
+}
+
+/// A hundred flat candles at 50 with one tall visible candle and one tall
+/// off-screen one, on the default viewport (8 px a bar, following the
+/// newest), so about the newest fifty are in view.
+fn with_visible_tape(test: impl FnOnce(&DrawingProjection<'_>, &Band)) {
+    with_visible_bands(|projection, bands| test(projection, &bands[0]));
+}
+
+/// [`with_visible_tape`], handing over the whole carve.
+fn with_visible_bands(test: impl FnOnce(&DrawingProjection<'_>, &Bands)) {
+    let viewport = Viewport::new();
+    let (start, end) = viewport.visible_range(HISTORY_RIGHT, TAPE);
+    assert!(
+        (start..end).contains(&DISTANT_BAR) && !(start..end).contains(&OFF_SCREEN_BAR),
+        "fixture: the distant candle is in view and the other is not ({start}..{end})"
+    );
+    let bar = |slot: usize| match slot {
+        DISTANT_BAR => ohlc(slot as i64, 60, 70, 30, 40),
+        OFF_SCREEN_BAR => ohlc(slot as i64, 60, 80, 30, 40),
+        _ => ohlc(slot as i64, 50, 50, 50, 50),
     };
-    test(&projection, &band);
+    with_tape(&viewport, bar, test);
 }
 
 fn tool_snap(id: &str) -> AnchorSnap {
@@ -310,4 +323,275 @@ fn a_trend_line_body_drag_ignores_distant_visible_prints() {
         );
         assert_eq!((line[0].price, line[1].price), (69.0, 69.0));
     });
+}
+
+/// The edge a level reads is the band's, not the viewport's generous range:
+/// a candle mostly scrolled off the left edge is no candidate, even when it
+/// is the nearer print, and the first candle fully in view is one.
+#[test]
+fn a_level_ignores_a_candle_mostly_past_the_left_edge() {
+    const CLIPPED: usize = 49;
+    const FIRST_IN_VIEW: usize = 50;
+    let mut viewport = Viewport::new();
+    // Three pixels into the past: bar 49 spans -5 … 3, bar 50 spans 3 … 11.
+    viewport.pan_pixels(3.0, TAPE);
+    let (start, end) = viewport.visible_range(HISTORY_RIGHT, TAPE);
+    assert!(
+        (start..end).contains(&CLIPPED),
+        "fixture: the generous range still names the clipped candle ({start}..{end})"
+    );
+    let half = 0.5 * viewport.candle_width();
+    assert!(viewport.x_center(CLIPPED, HISTORY_RIGHT, TAPE) < 0.0);
+    assert!(viewport.x_center(FIRST_IN_VIEW, HISTORY_RIGHT, TAPE) - half >= 0.0);
+    let bar = |slot: usize| match slot {
+        CLIPPED => ohlc(slot as i64, 60, 80, 30, 40),
+        FIRST_IN_VIEW => ohlc(slot as i64, 60, 70, 30, 40),
+        _ => ohlc(slot as i64, 50, 50, 50, 50),
+    };
+    with_tape(&viewport, bar, |projection, bands| {
+        let band = &bands[0];
+        let scale = band.scale.as_ref().unwrap();
+        let x = viewport.x_at_bar_position(POINTER_BAR, HISTORY_RIGHT, TAPE);
+        let point = projection
+            .drawing_point_at(
+                crate::pos2(x, scale.y(79.0)),
+                HISTORY_RIGHT,
+                TAPE,
+                true,
+                tool_snap("horizontal-line"),
+                band,
+            )
+            .unwrap();
+        assert_eq!(
+            point.price, 70.0,
+            "the clipped 80 is nearer, but only the first candle in view counts"
+        );
+    });
+}
+
+/// A level's body drag does not need the pointer to be on a bar: left of
+/// the first candle it still lands on a visible print. A trend line still
+/// does, and stays where the hand put it.
+#[test]
+fn a_level_body_drag_snaps_with_the_pointer_left_of_every_bar() {
+    let mut viewport = Viewport::new();
+    // Pushed all the way into the past: bar 0 sits at the right edge and
+    // the rest of the chart is empty canvas.
+    viewport.pan_pixels(10_000.0, TAPE);
+    let bar = |slot: usize| match slot {
+        0 => ohlc(0, 60, 70, 30, 40),
+        _ => ohlc(slot as i64, 50, 50, 50, 50),
+    };
+    with_tape(&viewport, bar, |projection, bands| {
+        let band = &bands[0];
+        let scale = band.scale.as_ref().unwrap();
+        let pointer = crate::pos2(10.0, scale.y(69.0));
+        assert_eq!(
+            Viewport::slot_of(viewport.bar_at_x(pointer.x, HISTORY_RIGHT, TAPE)),
+            None,
+            "fixture: the pointer is on no bar"
+        );
+        let mut line = [ChartPoint::at(-40.0, 69.0)];
+        projection.snap_body(
+            &mut line,
+            BodySnap::Levels,
+            band,
+            pointer,
+            (HISTORY_RIGHT, TAPE),
+        );
+        assert_eq!(line[0].price, 70.0, "the level takes bar 0's high");
+        assert_eq!(line[0].bar, -40.0, "and keeps its bar");
+
+        let before = [ChartPoint::at(-40.0, 69.0), ChartPoint::at(-30.0, 69.0)];
+        let mut trend = before;
+        projection.snap_body(
+            &mut trend,
+            BodySnap::Line,
+            band,
+            pointer,
+            (HISTORY_RIGHT, TAPE),
+        );
+        assert_eq!(trend, before, "a line with no bar under it is left alone");
+    });
+}
+
+/// A level on an indicator band keeps that band's own magnet: the
+/// candles' prints never cross onto it, whatever is in view.
+#[test]
+fn a_level_on_an_indicator_band_keeps_the_indicator_magnet() {
+    with_visible_tape(|projection, price| {
+        let band = Band {
+            key: DrawingBand::Indicator(crate::PaneKey {
+                kind: "native.cvd".into(),
+                ordinal: 0,
+            }),
+            rect: price.rect,
+            scale: price.scale,
+            label: "CVD".into(),
+            refusal: None,
+        };
+        let scale = band.scale.as_ref().unwrap();
+        let x = projection
+            .viewport
+            .x_at_bar_position(POINTER_BAR, HISTORY_RIGHT, TAPE);
+        for value in [69.0, 59.0, 41.0, 1.0] {
+            let at = crate::pos2(x, scale.y(value));
+            let point_with = |snap| {
+                projection
+                    .drawing_point_at(at, HISTORY_RIGHT, TAPE, true, snap, &band)
+                    .unwrap()
+                    .price
+            };
+            assert_eq!(
+                point_with(tool_snap("horizontal-line")),
+                point_with(AnchorSnap::Pointer),
+                "a level and the old magnet agree at {value}"
+            );
+            assert!(
+                (point_with(tool_snap("horizontal-line")) - value).abs() < 0.01,
+                "no candle print reaches an indicator band at {value}"
+            );
+        }
+    });
+}
+
+/// One pointer frame on the owning pane.
+fn own_pane_frame(
+    gestures: &mut super::super::PaneGestures,
+    drawings: &mut super::super::Marks,
+    projection: &DrawingProjection<'_>,
+    bands: &Bands,
+    pointer: &super::super::SharedPointer,
+) {
+    gestures.handle_pointer_tool(
+        drawings,
+        projection,
+        super::super::pointer::PointerFrame {
+            bands,
+            cached_bands: bands,
+            pointer,
+            on_pane_chrome: false,
+            alt: false,
+            shift: false,
+            double_clicked: false,
+            paper_gesture: false,
+            pointer_tool: true,
+            shared_pick: None,
+            shared: super::super::SharedInteraction::default(),
+            held: &|_| false,
+        },
+    );
+}
+
+/// Press a horizontal line placed at `price` over `from_bar`, carry it to
+/// `to`, release: a whole drag on the pane that owns it, with the rail's
+/// magnet off and the line's own magnet `own`. Answers where the line ends.
+fn own_magnet_drag(own: bool, price: f64, from_bar: f32, to: f64) -> f64 {
+    let mut result = f64::NAN;
+    with_visible_bands(|projection, bands| {
+        let scale = bands[0].scale.as_ref().unwrap();
+        let mut drawings = super::super::Marks::default();
+        assert!(drawings.place(
+            crate::DrawingTool::by_id("horizontal-line").unwrap(),
+            ChartPoint::at(POINTER_BAR, price),
+        ));
+        drawings.select(None);
+        drawings.set_magnet_at(0, own);
+        assert_eq!(drawings.items()[0].own_magnet(), own);
+        let x = projection
+            .viewport
+            .x_at_bar_position(from_bar, HISTORY_RIGHT, TAPE);
+        let mut pointer = super::super::SharedPointer {
+            position: Some(crate::pos2(x, scale.y(price))),
+            area: bands[0].rect,
+            over_chrome: false,
+            pressed: true,
+            down: true,
+            released: false,
+            history_right: HISTORY_RIGHT,
+            total: TAPE,
+            magnet: false,
+        };
+        let mut gestures = super::super::PaneGestures::default();
+        own_pane_frame(&mut gestures, &mut drawings, projection, bands, &pointer);
+        pointer.pressed = false;
+        pointer.position = Some(crate::pos2(x, scale.y(to)));
+        own_pane_frame(&mut gestures, &mut drawings, projection, bands, &pointer);
+        pointer.down = false;
+        pointer.released = true;
+        own_pane_frame(&mut gestures, &mut drawings, projection, bands, &pointer);
+        result = drawings.items()[0].points[0].price;
+    });
+    result
+}
+
+/// The object's own magnet, with the rail's off, reads every visible candle
+/// as the rail's does: a handle drag and a body drag both land a level on a
+/// distant candle's print, and without it the line follows the hand.
+#[test]
+fn a_levels_own_magnet_snaps_to_a_distant_visible_candle() {
+    // The handle sits on the anchor, at the pointer's bar.
+    assert_eq!(own_magnet_drag(true, 20.0, POINTER_BAR, 69.0), 70.0);
+    // The body, grabbed far from the handle.
+    assert_eq!(own_magnet_drag(true, 20.0, 60.0, 59.0), 60.0);
+    for from_bar in [POINTER_BAR, 60.0] {
+        let free = own_magnet_drag(false, 20.0, from_bar, 69.0);
+        assert!((free - 69.0).abs() < 0.01, "no magnet stays free: {free}");
+    }
+}
+
+/// The mirror of a level on another pane snaps where the level's own pane
+/// does: one magnet whichever chart the hand is on, by the rail or by the
+/// object's own switch.
+#[test]
+fn a_mirrored_level_snaps_where_its_own_pane_does() {
+    use super::super::pointer::PointerOutcome;
+    use super::super::{PaneGestures, SharedEdit, SharedPick, SharedPointer};
+    for (rail, own) in [(true, false), (false, true)] {
+        with_visible_bands(|projection, bands| {
+            let scale = bands[0].scale.as_ref().unwrap();
+            let own_pane = placed(projection, &bands[0], "horizontal-line", 69.0).price;
+            assert_eq!(
+                own_pane, 70.0,
+                "fixture: its own pane takes the distant high"
+            );
+            let x = projection
+                .viewport
+                .x_at_bar_position(POINTER_BAR, HISTORY_RIGHT, TAPE);
+            let pick = SharedPick {
+                owner: 1,
+                index: 0,
+                anchor: Some(0),
+                locked: false,
+                magnet: own,
+                snap: tool_snap("horizontal-line"),
+            };
+            let pointer = |y: f64, pressed: bool| SharedPointer {
+                position: Some(crate::pos2(x, scale.y(y))),
+                area: bands[0].rect,
+                over_chrome: false,
+                pressed,
+                down: true,
+                released: false,
+                history_right: HISTORY_RIGHT,
+                total: TAPE,
+                magnet: rail,
+            };
+            let mut gestures = PaneGestures::default();
+            let mut press = PointerOutcome::default();
+            gestures.interact_shared(
+                projection,
+                bands,
+                Some(pick),
+                &mut press,
+                pointer(20.0, true),
+            );
+            let mut drag = PointerOutcome::default();
+            gestures.interact_shared(projection, bands, None, &mut drag, pointer(69.0, false));
+            let Some(SharedEdit::MoveAnchor { price, .. }) = drag.shared.edit else {
+                panic!("the mirror moved no anchor: {:?}", drag.shared.edit);
+            };
+            assert_eq!(price, own_pane, "rail {rail}, own {own}");
+        });
+    }
 }

@@ -4,7 +4,8 @@
 //! a drawing store, a gesture, or the pane that supplies these disjoint fields.
 use quantick_chart::indicator_views::IndicatorViews;
 use quantick_chart_interaction::viewport::Viewport;
-use rust_decimal::prelude::ToPrimitive as _;
+use rust_decimal::Decimal;
+use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 use smallvec::SmallVec;
 
 use super::band::{self, Band};
@@ -64,6 +65,20 @@ pub fn magnet_price_of(
         })
         .min_by(|left, right| left.0.total_cmp(&right.0))
         .map(|(_, price)| price)
+}
+
+/// The prices [`CANDLE_MAGNET_REACH_PX`] around `pointer_y` reach, as one
+/// `[lo, hi]` interval, so a candle that cannot snap is skipped before any of
+/// its prints is converted. A pixel wider than the reach: rounding may only
+/// let a candle through to the exact test, never drop one. `None` when the
+/// bounds are no decimal, and every candle is tested.
+fn reach_interval(scale: &PriceScale, pointer_y: f32) -> Option<(Decimal, Decimal)> {
+    let edge = CANDLE_MAGNET_REACH_PX + 1.0;
+    let (a, b) = (
+        scale.price_at(pointer_y - edge),
+        scale.price_at(pointer_y + edge),
+    );
+    Some((Decimal::from_f64(a.min(b))?, Decimal::from_f64(a.max(b))?))
 }
 
 /// `anchor`, read back off the screen at `screen`, with each coordinate a
@@ -212,14 +227,17 @@ impl DrawingProjection<'_> {
 
     /// The magnet for a level ([`AnchorSnap::VisibleLevels`]): the open,
     /// high, low or close of any candle in view — the forming one included —
-    /// nearest `pointer_y` on screen within [`CANDLE_MAGNET_REACH_PX`], or
-    /// the candle under the pointer's own snap when that is nearer.
+    /// nearest `pointer_y` on screen within [`CANDLE_MAGNET_REACH_PX`]. The
+    /// candle under the pointer keeps its own rule ([`Self::magnet_value`]):
+    /// a pointer inside a tall body reaches that candle's nearest print even
+    /// past the reach.
     ///
     /// A level is drawn off a swing wherever it sits on screen, so the
     /// candidates are not tied to the pointer's bar; only the value moves,
-    /// never the bar. A candle scrolled out of view is no candidate: a level
-    /// snapping to a print the trader cannot see reads as a bug. An indicator
-    /// band keeps its own magnet unchanged.
+    /// never the bar. A candle is in view when its centre is inside the band
+    /// (`left ..= history_right`): one mostly scrolled off an edge is no
+    /// candidate, as a level snapping to a print the trader cannot see reads
+    /// as a bug. An indicator band keeps its own magnet unchanged.
     fn visible_level_value(
         &self,
         band: &Band,
@@ -228,18 +246,39 @@ impl DrawingProjection<'_> {
         scale: &PriceScale,
         (history_right, total): (f32, usize),
     ) -> Option<f64> {
-        let under = self.magnet_value(band, bar, pointer_y, scale);
         if !matches!(band.key, DrawingBand::Price) {
-            return under;
+            return self.magnet_value(band, bar, pointer_y, scale);
         }
+        let pointer_slot = Viewport::slot_of(bar);
+        let left = band.rect.left();
+        let (start, end) = self
+            .viewport
+            .visible_range((history_right - left).max(0.0), total);
+        let in_view = |slot: usize| {
+            (left..=history_right).contains(&self.viewport.x_center(slot, history_right, total))
+        };
+        // The pointer's own candle, when the scan below does not reach it.
+        let under = pointer_slot
+            .filter(|slot| !((start..end).contains(slot) && in_view(*slot)))
+            .and_then(|_| self.magnet_value(band, bar, pointer_y, scale));
+        let reach = reach_interval(scale, pointer_y);
         let off = |price: f64| (scale.y(price) - pointer_y).abs();
-        let width = (history_right - band.rect.left()).max(0.0);
-        let (start, end) = self.viewport.visible_range(width, total);
         (start..end)
-            .filter_map(|slot| self.series.candle_at_slot(slot))
-            .flat_map(|candle| [candle.open, candle.high, candle.low, candle.close])
-            .filter_map(|price| price.to_f64())
-            .filter(|price| off(*price) <= CANDLE_MAGNET_REACH_PX)
+            .filter(|slot| in_view(*slot))
+            .filter_map(|slot| Some((slot, self.series.candle_at_slot(slot)?)))
+            .filter(|(_, candle)| {
+                reach.is_none_or(|(lo, hi)| candle.high >= lo && candle.low <= hi)
+            })
+            .filter_map(|(slot, candle)| {
+                if pointer_slot == Some(slot) {
+                    return magnet_price_of(candle, pointer_y, scale, CANDLE_MAGNET_REACH_PX);
+                }
+                [candle.open, candle.high, candle.low, candle.close]
+                    .into_iter()
+                    .filter_map(|price| price.to_f64())
+                    .filter(|price| off(*price) <= CANDLE_MAGNET_REACH_PX)
+                    .min_by(|left, right| off(*left).total_cmp(&off(*right)))
+            })
             .chain(under)
             .min_by(|left, right| off(*left).total_cmp(&off(*right)))
     }
@@ -247,7 +286,8 @@ impl DrawingProjection<'_> {
     /// The magnet on a body drag: the edge of `points` nearest the pointer —
     /// an anchor's level, or a straight line's value at the pointer's bar —
     /// onto the print under the pointer (for levels, any visible print — see
-    /// [`Self::visible_level_value`]), and the whole object shifted by the
+    /// [`Self::visible_level_value`] — whatever bar the pointer is on), and
+    /// the whole object shifted by the
     /// same amount so it keeps its shape. The snapped anchor takes the print
     /// exactly; nothing in reach leaves `points` as they are.
     pub fn snap_body(
@@ -261,13 +301,16 @@ impl DrawingProjection<'_> {
         let (Some(scale), false) = (band.scale.as_ref(), body == BodySnap::Free) else {
             return;
         };
-        // The candle's own bar, so a line meets the print at the candle.
-        let Some(slot) = Viewport::slot_of(self.viewport.bar_at_x(pointer.x, history_right, total))
-        else {
-            return;
-        };
+        // The candle's own bar, so a line meets the print at the candle. A
+        // level reads every candle in view, so a pointer on no bar at all —
+        // left of the first — still snaps it; a line needs the bar.
+        let pointer_bar = self.viewport.bar_at_x(pointer.x, history_right, total);
         #[allow(clippy::cast_precision_loss)]
-        let bar = slot as f32;
+        let bar = match Viewport::slot_of(pointer_bar) {
+            Some(slot) => slot as f32,
+            None if body == BodySnap::Levels => pointer_bar,
+            None => return,
+        };
         let line = match points {
             [a, b] if body == BodySnap::Line && a.bar != b.bar => Some(
                 a.price + (b.price - a.price) * f64::from(bar - a.bar) / f64::from(b.bar - a.bar),
