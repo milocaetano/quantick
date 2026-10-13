@@ -26,9 +26,10 @@
 //! [`ClosedTrade::pnl_points`]: quantick_sim::ClosedTrade::pnl_points
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 
-use quantick_sim::{Currency, InstrumentMoney, Money};
+use quantick_sim::{ClosedTrade, Currency, InstrumentMoney, Money};
 use rust_decimal::Decimal;
 
 use crate::format::{fmt_decimal, fmt_exact};
@@ -72,6 +73,88 @@ impl PnlSettings {
         effective_primary(
             self.chosen.or_else(|| self.catalog.default_primary()),
             has_money,
+        )
+    }
+
+    /// The shipped catalog with the trader's file at `trader_file` laid
+    /// over it, and the display choice the paper sidecar stored.
+    ///
+    /// A missing trader file is the common case and reports nothing; one
+    /// that does not parse leaves the shipped catalog standing and is
+    /// logged by name. An unknown stored token reads as no choice.
+    #[must_use]
+    pub fn load(shipped: &str, trader_file: Option<&Path>, chosen: Option<&str>) -> Self {
+        let trader = trader_file.and_then(|path| std::fs::read_to_string(path).ok());
+        let (catalog, warning) = InstrumentCatalog::layered(shipped, trader.as_deref());
+        if let Some(warning) = warning {
+            tracing::warn!(
+                target: "quantick::paper",
+                event_code = "INSTRUMENTS_CATALOG",
+                %warning,
+                "instrument catalog not applied"
+            );
+        }
+        Self {
+            catalog: Arc::new(catalog),
+            chosen: chosen.and_then(PnlPrimary::from_token),
+        }
+    }
+}
+
+/// Every readout's one entry point: the units a symbol resolves to and the
+/// mode in force, so a ticket, a report row and a total cannot disagree.
+#[derive(Clone, Copy)]
+pub struct PnlReader<'a> {
+    pub book: PnlBook<'a>,
+    pub settings: &'a PnlSettings,
+}
+
+impl PnlReader<'_> {
+    /// The mode a readout of `symbol` leads with.
+    #[must_use]
+    pub fn primary(&self, symbol: &str) -> PnlPrimary {
+        self.settings
+            .primary(self.book.units(symbol).money.is_some())
+    }
+
+    /// One stored figure of `symbol` (move × quantity) as a row reads it:
+    /// the primary figure, then the one that keeps it honest.
+    #[must_use]
+    pub fn trade(&self, symbol: &str, pnl_points: Decimal, quantity: Decimal) -> String {
+        let units = self.book.units(symbol);
+        let pnl = TradePnl::of(pnl_points, quantity, &units);
+        fmt_trade(&pnl, &units, self.settings.primary(units.money.is_some()))
+    }
+
+    /// The trades' running total, never across currencies.
+    #[must_use]
+    pub fn sum<'t>(&self, rows: impl IntoIterator<Item = (&'t str, &'t ClosedTrade)>) -> PnlTotal {
+        let mut total = PnlTotal::default();
+        for (symbol, trade) in rows {
+            let units = self.book.units(symbol);
+            total.add(
+                &TradePnl::of(trade.pnl_points, trade.quantity, &units),
+                &units,
+            );
+        }
+        total
+    }
+
+    /// [`Self::sum`] as a total row reads it, the secondary figure behind.
+    #[must_use]
+    pub fn total<'t>(&self, rows: impl IntoIterator<Item = (&'t str, &'t ClosedTrade)>) -> String {
+        let total = self.sum(rows);
+        total.fmt_pair(self.settings.primary(total.money().is_some()))
+    }
+
+    /// The primary figure of one trade, for a curve: `None` where the
+    /// trade has no money to plot.
+    #[must_use]
+    pub fn value(&self, symbol: &str, trade: &ClosedTrade, primary: PnlPrimary) -> Option<Decimal> {
+        let units = self.book.units(symbol);
+        primary_value(
+            &TradePnl::of(trade.pnl_points, trade.quantity, &units),
+            primary,
         )
     }
 }
@@ -285,15 +368,20 @@ impl PnlTotal {
         (!self.money_unknown).then_some(&self.money)
     }
 
+    /// The unit shared by every trade in the total, or that they differ.
+    fn unit_text(&self) -> String {
+        match (&self.unit, self.mixed_units) {
+            (_, true) => "mixed units".to_owned(),
+            (Some(unit), false) => unit.clone(),
+            (None, false) => "pts".to_owned(),
+        }
+    }
+
     /// The total in the primary figure. Money lists each currency on its
     /// own; a points total over instruments in different units says so.
     #[must_use]
     pub fn fmt(&self, primary: PnlPrimary) -> String {
-        let unit = match (&self.unit, self.mixed_units) {
-            (_, true) => "mixed units".to_owned(),
-            (Some(unit), false) => unit.clone(),
-            (None, false) => "pts".to_owned(),
-        };
+        let unit = self.unit_text();
         match primary {
             PnlPrimary::Money => match self.money() {
                 None => UNSET_MONEY.to_owned(),
@@ -311,6 +399,39 @@ impl PnlTotal {
             PnlPrimary::PointsTimesQty => {
                 format!("{} {unit}", signed(self.grouped, fmt_decimal(self.grouped)))
             }
+        }
+    }
+}
+
+impl PnlTotal {
+    /// The total in the primary figure with its secondary behind it: money
+    /// leads the per-contract sum, a points figure leads the money.
+    #[must_use]
+    pub fn fmt_pair(&self, primary: PnlPrimary) -> String {
+        let secondary = match primary {
+            PnlPrimary::Money => PnlPrimary::PointsPerContract,
+            PnlPrimary::PointsPerContract | PnlPrimary::PointsTimesQty => PnlPrimary::Money,
+        };
+        format!("{} · {}", self.fmt(primary), self.fmt(secondary))
+    }
+
+    /// The unit the primary figure is plotted in, for an axis label.
+    #[must_use]
+    pub fn unit_label(&self, primary: PnlPrimary) -> String {
+        let unit = self.unit_text();
+        match primary {
+            PnlPrimary::Money => self.money().map_or_else(
+                || UNSET_MONEY.to_owned(),
+                |money| {
+                    money
+                        .keys()
+                        .map(Currency::code)
+                        .collect::<Vec<_>>()
+                        .join(" / ")
+                },
+            ),
+            PnlPrimary::PointsPerContract => format!("{unit}/ct"),
+            PnlPrimary::PointsTimesQty => unit,
         }
     }
 }

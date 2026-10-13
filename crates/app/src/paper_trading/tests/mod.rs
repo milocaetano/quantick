@@ -2721,16 +2721,16 @@ fn the_status_cell_distinguishes_open_from_flat() {
     paper.market(Side::Buy);
     paper.on_trade(&print(1, 100));
     let (text, _) = paper.status_cell().expect("a position is state");
-    assert_eq!(text, "SIM LONG 1 · 0 pts");
+    assert_eq!(text, "SIM LONG 1 · 0 pts × 1 · — set pt value");
     paper.on_trade(&print(2, 105));
     let (text, sign) = paper.status_cell().expect("still open");
-    assert_eq!(text, "SIM LONG 1 · +5 pts");
+    assert_eq!(text, "SIM LONG 1 · +5 pts × 1 · — set pt value");
     assert_eq!(sign, std::cmp::Ordering::Greater);
 
     paper.close_position();
     paper.on_trade(&print(3, 107));
     let (text, sign) = paper.status_cell().expect("history keeps the cell");
-    assert_eq!(text, "SIM +7 pts · flat");
+    assert_eq!(text, "SIM flat · +7 pts/ct · — set pt value");
     assert_eq!(sign, std::cmp::Ordering::Greater);
     assert!(paper.close_button_label().is_none(), "flat has no close");
 }

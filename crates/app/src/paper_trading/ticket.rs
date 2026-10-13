@@ -18,7 +18,7 @@ use super::{
     ArmedPlacement, PaperTrading, TradingTabAction, cmd, kind_short, kind_word, reveal_folder,
     side_word_upper, strategies,
 };
-use crate::paper_chrome::{caption, fmt_decimal, fmt_signed_points, pill_toggle, points_color};
+use crate::paper_chrome::{caption, fmt_decimal, pill_toggle, points_color};
 use crate::paper_report::LedgerAction;
 use crate::theme;
 use crate::timezone::TzOffset;
@@ -115,18 +115,21 @@ impl PaperTrading {
     /// strip. See `docs/ux/paper-trading.md` §3.
     pub fn draw_trading_tab(&mut self, ui: &mut egui::Ui) -> Option<TradingTabAction> {
         self.desk.gesture.hovered_order = None;
-        ui.label(
-            egui::RichText::new(
-                "Simulated fills from the tape - no broker. Results are in points; a currency here is the point value you declared.",
+        let mut pnl_mode_changed = false;
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Simulated fills from the tape - no broker.")
+                    .color(theme::TEXT_MUTED)
+                    .small(),
             )
-                .color(theme::TEXT_MUTED)
-                .small(),
-        )
-        .on_hover_text(
-            "A market order fills at the next print; a limit at its own price when \
+            .on_hover_text(
+                "A market order fills at the next print; a limit at its own price when \
              the tape trades at or through it; a stop at the print that triggers it. \
-             Nothing here touches a real account.",
-        );
+             Nothing here touches a real account. Money comes from the point value \
+             you declared, else from instruments.toml.",
+            );
+            pnl_mode_changed = self.draw_pnl_mode_switch(ui);
+        });
         ui.add_space(6.0);
 
         self.draw_position_card(ui);
@@ -145,7 +148,7 @@ impl PaperTrading {
             if changed.cmd_trading {
                 return Some(TradingTabAction::CmdTradingChanged);
             }
-            if changed.risk {
+            if changed.risk || pnl_mode_changed {
                 return Some(TradingTabAction::RiskSettingsChanged);
             }
         }
@@ -161,6 +164,8 @@ impl PaperTrading {
             position: position.as_ref(),
             mark: venue.mark_price(),
             realized: venue.realized_points(),
+            realized_text: self.account.realized_pnl_text(),
+            open_text: self.account.open_pnl_text(),
             has_working_orders: !venue.working_orders().is_empty(),
             stop_offset: parse_offset(&self.desk.ticket.stop_offset_text)
                 .ok()
@@ -469,12 +474,30 @@ impl PaperTrading {
         }
     }
 
+    /// The P&L mode switch: which figure leads every readout; the other
+    /// always follows it. True when the trader picked another one.
+    fn draw_pnl_mode_switch(&mut self, ui: &mut egui::Ui) -> bool {
+        let current = self.account.pnl_primary();
+        let mut picked = None;
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            for (primary, label) in self.account.pnl_modes().into_iter().rev() {
+                let hover = format!("lead P&L with {label} - the other figure stays beside it (trade.pnl_display.set)");
+                if ui.selectable_label(primary == current, egui::RichText::new(label).small()).on_hover_text(hover).clicked() && primary != current {
+                    picked = Some(primary);
+                }
+            }
+        });
+        picked
+            .inspect(|primary| self.account.set_pnl_primary(*primary))
+            .is_some()
+    }
+
     fn draw_session_summary(&mut self, ui: &mut egui::Ui) -> Option<TradingTabAction> {
         let mut action = None;
         ui.horizontal(|ui| {
             let realized = self.account.venue().realized_points();
             ui.label(
-                egui::RichText::new(format!("{} pts", fmt_signed_points(realized)))
+                egui::RichText::new(self.account.realized_pnl_text())
                     .monospace()
                     .strong()
                     .color(points_color(realized)),

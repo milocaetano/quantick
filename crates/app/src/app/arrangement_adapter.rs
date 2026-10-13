@@ -181,6 +181,7 @@ impl ArrangementAdapter<'_> {
         let inherited_risk = self.active_tab().paper.account().risk_settings().clone();
         let inherited_capital = self.active_tab().paper.account().capital().clone();
         let inherited_money = self.active_tab().paper.account().instrument_money().clone();
+        let inherited_pnl = self.active_tab().paper.account().pnl_settings().clone();
         let inherited_layers = self.active_tab().flow_pane.layer_states(self.style);
         let flow_inverted = self.active_tab().flow_pane.price_view.is_inverted();
         let time_inverted = self
@@ -210,6 +211,7 @@ impl ArrangementAdapter<'_> {
         tab.paper
             .account_mut()
             .set_instrument_money(inherited_money);
+        tab.paper.account_mut().set_pnl_settings(inherited_pnl);
         tab.flow_pane.request_opening_layout(inherited_layout);
         self.tabs.append(opening, tab);
         let config = self.config.clone();

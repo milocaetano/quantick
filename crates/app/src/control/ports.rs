@@ -7,6 +7,7 @@ use quantick_control_handlers::{
     history::{HistoryPort, HistoryRun},
     journal_sessions::JournalSessionsPort,
     notify::AttentionPort,
+    pnl_display::PnlDisplayPort,
     recovery::{FeedRecoveryPort, RecoveredFeed},
 };
 use quantick_control_schema::notify::AgentPopup;
@@ -82,6 +83,16 @@ impl JournalSessionsPort for dyn ControlPort {
     fn ledger_view(&mut self, change: &LedgerViewChange) -> Option<(LedgerView, bool)> {
         let paper = self.tabs_mut().active_paper_mut()?;
         Some(paper.account_mut().report_parts().0.ledger_view(change))
+    }
+}
+
+impl PnlDisplayPort for dyn ControlPort {
+    fn active_account(&mut self) -> Option<&mut quantick_paper::PaperAccount> {
+        Some(self.tabs_mut().active_paper_mut()?.account_mut())
+    }
+    fn persist_pnl_display(&mut self) {
+        self.paper_settings()
+            .persist(crate::app::paper_wiring::PaperSettingsChange::RiskSettings);
     }
 }
 

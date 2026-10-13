@@ -25,7 +25,8 @@ use crate::workspace_store::WorkspaceStore;
 pub(crate) enum PaperSettingsChange {
     /// The cmd-trading modifiers and entry kind.
     CmdTrading,
-    /// The risk per trade, the declared capital and the instrument money.
+    /// The risk per trade, the declared capital, the instrument money and
+    /// the figure P&L readouts lead with.
     RiskSettings,
     /// The named exit strategies, the ticket's selection and the wheel's
     /// per-instrument step.
@@ -146,10 +147,12 @@ impl PaperSettingsAdapter<'_> {
         let risk = account.risk_settings().clone();
         let capital = account.capital().clone();
         let book = account.instrument_money().clone();
+        let pnl = account.pnl_settings().clone();
         for tab in self.tabs.iter_mut() {
             tab.paper.account_mut().set_risk_settings(risk.clone());
             tab.paper.account_mut().set_capital(capital.clone());
             tab.paper.account_mut().set_instrument_money(book.clone());
+            tab.paper.account_mut().set_pnl_settings(pnl.clone());
         }
         let path = crate::paper_state::default_path();
         let mut state = crate::paper_state::load(&path);
@@ -159,6 +162,7 @@ impl PaperSettingsAdapter<'_> {
         state.risk_per_trade_lock = Some(risk.lock);
         state.paper_capital = crate::risk_sizing::records_from_capital(&capital);
         state.instrument_money = crate::risk_sizing::records_from_book(&book);
+        state.pnl_primary = pnl.chosen.map(|primary| primary.token().to_owned());
         crate::paper_state::save(&path, &state);
     }
 

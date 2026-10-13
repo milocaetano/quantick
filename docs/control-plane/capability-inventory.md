@@ -96,8 +96,9 @@ capability that cannot change application state.
 | `trade.order.bracket` | 1 | `trade` | no | `trade` |
 | `trade.order.cancel` | 1 | `trade` | no | `trade` |
 | `trade.order.place` | 1 | `trade` | no | `trade` |
+| `trade.pnl_display.set` | 1 | `trade` | no | `trade` |
 | `trade.risk.set` | 1 | `trade` | no | `trade` |
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-75 capabilities registered.
+76 capabilities registered.

@@ -14847,6 +14847,163 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Says which figure every paper P&L readout leads with - money in the instrument's currency, points per contract with the quantity, or points times quantity - and answers with both figures' units, the point value and where it came from. Left without a mode it only reads. The other figure always stays beside the primary, and nothing is ever converted between currencies.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "trade",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "trade.pnl_display.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "PnlDisplayMode": {
+            "description": "Which figure a paper P&L readout leads with; the other always follows.",
+            "oneOf": [
+              {
+                "const": "money",
+                "description": "Money in the instrument's own currency.",
+                "type": "string"
+              },
+              {
+                "const": "points_per_contract",
+                "description": "The move one contract made, with the quantity beside it.",
+                "type": "string"
+              },
+              {
+                "const": "points_times_qty",
+                "description": "The move times the quantity — the stored figure.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "description": "Read the P&L display, or set which figure leads it.",
+        "properties": {
+          "primary": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PnlDisplayMode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The figure to lead with. Left out, the call only reads."
+          }
+        },
+        "title": "SetPnlDisplayInput",
+        "type": "object"
+      },
+      "module": "trade",
+      "output_schema": {
+        "$defs": {
+          "PnlDisplayMode": {
+            "description": "Which figure a paper P&L readout leads with; the other always follows.",
+            "oneOf": [
+              {
+                "const": "money",
+                "description": "Money in the instrument's own currency.",
+                "type": "string"
+              },
+              {
+                "const": "points_per_contract",
+                "description": "The move one contract made, with the quantity beside it.",
+                "type": "string"
+              },
+              {
+                "const": "points_times_qty",
+                "description": "The move times the quantity — the stored figure.",
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "description": "What the chart's P&L readouts now mean: both figures and their units.",
+        "properties": {
+          "chosen": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PnlDisplayMode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The trader's choice; null defers to the catalog's default (money\nwhere a point value is known, else points per contract)."
+          },
+          "currency": {
+            "description": "The money's currency; null when no point value is known.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "money_source": {
+            "description": "Where the point value came from: `declared` or `config`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "point_value": {
+            "description": "What one point is worth per unit held, as a decimal string.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "primary": {
+            "$ref": "#/$defs/PnlDisplayMode",
+            "description": "The figure readouts of the chart's symbol lead with."
+          },
+          "primary_unit": {
+            "description": "The primary figure's unit, e.g. `BRL`, `pts per contract`.",
+            "type": "string"
+          },
+          "secondary_unit": {
+            "description": "The figure that always follows it, and its unit.",
+            "type": "string"
+          },
+          "symbol": {
+            "description": "The chart symbol the units below were resolved for.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "primary",
+          "symbol",
+          "primary_unit",
+          "secondary_unit"
+        ],
+        "title": "PnlDisplayResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "trade"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "The call answers with the display now in force, so a caller working from a stale read sees what is set. It changes no order, position or stored trade.",
+      "title": "Read or set the P&L display",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Says what one trade may lose - a fixed amount, or a share of the capital declared for the instrument's currency - and whether an entry whose stop risks more than that is refused. Shapes the size the next order would carry; changes no order that exists and never touches an open position.",
       "destructive": false,
       "dry_run_supported": false,

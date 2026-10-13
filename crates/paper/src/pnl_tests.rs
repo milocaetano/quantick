@@ -219,3 +219,87 @@ fn the_display_preference_round_trips_its_token() {
     }
     assert_eq!(PnlPrimary::from_token("dollars"), None);
 }
+
+fn closed(pnl_points: &str, quantity: &str) -> quantick_sim::ClosedTrade {
+    quantick_sim::ClosedTrade {
+        side: quantick_engine::Side::Buy,
+        quantity: d(quantity),
+        entry_price: d("100"),
+        exit_price: d("100"),
+        opened_ms: 0,
+        closed_ms: 1,
+        pnl_points: d(pnl_points),
+        exit_reason: quantick_sim::ExitReason::Manual,
+        entry_agg_id: None,
+        exit_agg_id: None,
+        mae_points: None,
+        mfe_points: None,
+    }
+}
+
+#[test]
+fn the_reader_leads_with_the_chosen_figure_and_keeps_the_other_beside_it() {
+    let declared = InstrumentBook::new();
+    let catalog = Arc::new(catalog());
+    let mut settings = PnlSettings {
+        catalog: Arc::clone(&catalog),
+        chosen: None,
+    };
+    let book = PnlBook {
+        declared: &declared,
+        catalog: &catalog,
+    };
+    let reader = PnlReader {
+        book,
+        settings: &settings,
+    };
+    assert_eq!(
+        reader.trade("WINZ26", d("400"), d("2")),
+        "+80.00 BRL · +200 pts × 2",
+        "money leads by default where a point value is known"
+    );
+    assert_eq!(
+        reader.trade("XYZ", d("10"), d("1")),
+        "+10 pts × 1 · — set pt value",
+        "points lead where none is"
+    );
+    let win = closed("400", "2");
+    assert_eq!(
+        reader.total([("WINZ26", &win), ("WINZ26", &win)]),
+        "+160.00 BRL · +400 pts/ct"
+    );
+    settings.chosen = Some(PnlPrimary::PointsTimesQty);
+    let reader = PnlReader {
+        book,
+        settings: &settings,
+    };
+    assert_eq!(
+        reader.trade("WINZ26", d("400"), d("2")),
+        "+400 pts · +80.00 BRL"
+    );
+    assert_eq!(
+        reader.total([("WINZ26", &win), ("XYZ", &closed("5", "1"))]),
+        "+405 pts · — set pt value",
+        "a money total with an unpriced trade is never a partial sum"
+    );
+    assert_eq!(
+        reader.sum([("WINZ26", &win)]).unit_label(PnlPrimary::Money),
+        "BRL"
+    );
+}
+
+#[test]
+fn a_missing_trader_catalog_loads_the_shipped_one_silently() {
+    let settings = PnlSettings::load(
+        CATALOG,
+        Some(std::path::Path::new("no-such-instruments.toml")),
+        Some("points_per_contract"),
+    );
+    assert!(settings.catalog.lookup("WINZ26").is_some());
+    assert_eq!(settings.chosen, Some(PnlPrimary::PointsPerContract));
+    let settings = PnlSettings::load(CATALOG, None, Some("dollars"));
+    assert_eq!(
+        settings.chosen, None,
+        "an unknown stored token is no choice"
+    );
+}

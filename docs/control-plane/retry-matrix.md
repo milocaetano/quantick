@@ -114,8 +114,8 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | --- | --- |
 | deduplicated per connection | 31 |
 | key refused; not retryable, read back | 17 |
-| refused before dispatch: no grant reaches it | 7 |
-| **Total** | **55** |
+| refused before dispatch: no grant reaches it | 8 |
+| **Total** | **56** |
 
 ## Capabilities
 
@@ -173,8 +173,9 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `trade.order.bracket` | 1 | forbidden | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].working_orders[].stop_loss` | the named order carries the stop and target asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.order.cancel` | 1 | forbidden | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].working_orders[].order_id` | the named order is no longer working | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.order.place` | 1 | forbidden | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].working_orders[].order_id` | an order the pre-call reading lacked is working, or a position opened | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
+| `trade.pnl_display.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `events.read` `trade.ticket.changed` | `payload.asked` | an event after the pre-call cursor carries the caller's input as `asked` | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.risk.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].risk_state` | the ticket's risk state follows the basis asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.ruler.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].ruler_ticks` | the ruler stands at the distance the call answered with | `a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once`, `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.strategy.select` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].armed_strategy` | the ticket is armed with the strategy asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 
-55 mutable capabilities registered, 55 with a readback.
+56 mutable capabilities registered, 56 with a readback.

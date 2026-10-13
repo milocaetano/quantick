@@ -89,6 +89,8 @@ pub const SET_RISK_CAPABILITY_ID: &str = "trade.risk.set";
 
 pub const SET_INSTRUMENT_MONEY_CAPABILITY_ID: &str = "trade.instrument.set_money";
 
+pub const PNL_DISPLAY_CAPABILITY_ID: &str = "trade.pnl_display.set";
+
 pub const CANCEL_CAPABILITY_ID: &str = "trade.order.cancel";
 
 /// How an entry meets the market, stated rather than inferred.
@@ -435,6 +437,49 @@ pub struct SetInstrumentMoneyInput {
     pub currency: Option<String>,
 }
 
+/// Which figure a paper P&L readout leads with; the other always follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PnlDisplayMode {
+    /// Money in the instrument's own currency.
+    Money,
+    /// The move one contract made, with the quantity beside it.
+    PointsPerContract,
+    /// The move times the quantity — the stored figure.
+    PointsTimesQty,
+}
+
+/// Read the P&L display, or set which figure leads it.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetPnlDisplayInput {
+    /// The figure to lead with. Left out, the call only reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary: Option<PnlDisplayMode>,
+}
+
+/// What the chart's P&L readouts now mean: both figures and their units.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+pub struct PnlDisplayResult {
+    /// The figure readouts of the chart's symbol lead with.
+    pub primary: PnlDisplayMode,
+    /// The trader's choice; null defers to the catalog's default (money
+    /// where a point value is known, else points per contract).
+    pub chosen: Option<PnlDisplayMode>,
+    /// The chart symbol the units below were resolved for.
+    pub symbol: String,
+    /// The primary figure's unit, e.g. `BRL`, `pts per contract`.
+    pub primary_unit: String,
+    /// The figure that always follows it, and its unit.
+    pub secondary_unit: String,
+    /// The money's currency; null when no point value is known.
+    pub currency: Option<String>,
+    /// What one point is worth per unit held, as a decimal string.
+    pub point_value: Option<String>,
+    /// Where the point value came from: `declared` or `config`.
+    pub money_source: Option<String>,
+}
+
 /// A shaping call's descriptor: `descriptor`'s shape with the three fields
 /// that are simply not true of it corrected.
 ///
@@ -495,6 +540,20 @@ pub fn set_instrument_money_descriptor() -> CapabilityDescriptor {
     ))
 }
 
+pub fn pnl_display_descriptor() -> CapabilityDescriptor {
+    CapabilityDescriptor {
+        output_schema: generated_schema::<PnlDisplayResult>(),
+        ..shaping_descriptor(descriptor(
+            PNL_DISPLAY_CAPABILITY_ID,
+            "Read or set the P&L display",
+            "Says which figure every paper P&L readout leads with - money in the instrument's currency, points per contract with the quantity, or points times quantity - and answers with both figures' units, the point value and where it came from. Left without a mode it only reads. The other figure always stays beside the primary, and nothing is ever converted between currencies.",
+            generated_schema::<SetPnlDisplayInput>(),
+            false,
+            "The call answers with the display now in force, so a caller working from a stale read sees what is set. It changes no order, position or stored trade.",
+        ))
+    }
+}
+
 pub const TRADE_SHAPING_TEST: &str =
     "a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once";
 
@@ -535,6 +594,14 @@ pub const READBACKS: &[Readback] = &[
         PAPER_SCOPE_ID,
         "tabs[].working_orders[].order_id",
         "an order the pre-call reading lacked is working, or a position opened",
+        &[TRADE_UNREACHABLE_TEST],
+    ),
+    journal(
+        "trade.pnl_display.set",
+        Optional,
+        TICKET_EVENT_KIND,
+        "payload.asked",
+        "an event after the pre-call cursor carries the caller's input as `asked`",
         &[TRADE_UNREACHABLE_TEST],
     ),
     snapshot(

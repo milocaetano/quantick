@@ -30,6 +30,7 @@ use quantick_civil::civil_utc;
 
 mod journal;
 mod orders;
+mod readout;
 mod risk;
 
 pub use journal::{elide_path, export_csv};
@@ -648,8 +649,10 @@ impl PaperAccount {
     }
 
     /// The status-bar cell, honest about open versus flat: `SIM LONG 1 ·
-    /// +2 pts` while a position is open (side, size and its open profit),
-    /// `SIM +7 pts · flat` otherwise (the session's realized points). `None`
+    /// +2 pts × 1 · — set pt value` while a position is open (side, size
+    /// and its open profit, in the P&L display's figures),
+    /// `SIM flat · +7 pts/ct · — set pt value` otherwise (the session's
+    /// realized total). `None`
     /// while the simulator has never been touched.
     #[must_use]
     pub fn status_cell(&self) -> Option<(String, std::cmp::Ordering)> {
@@ -659,12 +662,14 @@ impl PaperAccount {
                 .mark_price()
                 .map(|mark| position.open_points(mark))
                 .unwrap_or_default();
+            let text = self
+                .pnl_reader()
+                .trade(&self.symbol, open, position.quantity);
             return Some((
                 format!(
-                    "SIM {} {} · {} pts",
+                    "SIM {} {} · {text}",
                     position_word(position.side),
                     fmt_decimal(position.quantity),
-                    fmt_signed_points(open),
                 ),
                 open.cmp(&Decimal::ZERO),
             ));
@@ -677,7 +682,7 @@ impl PaperAccount {
         }
         let realized = self.venue.realized_points();
         Some((
-            format!("SIM {} pts · flat", fmt_signed_points(realized)),
+            format!("SIM flat · {}", self.realized_pnl_text()),
             realized.cmp(&Decimal::ZERO),
         ))
     }

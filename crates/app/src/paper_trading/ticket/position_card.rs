@@ -40,6 +40,9 @@ pub(super) struct PositionCard<'a> {
     pub mark: Option<Decimal>,
     /// The session's realized points, shown on the flat row.
     pub realized: Decimal,
+    /// The same total and the open profit as the account words them.
+    pub realized_text: String,
+    pub open_text: Option<String>,
     pub has_working_orders: bool,
     /// The ticket's stop and target offsets, when they parse.
     pub stop_offset: Option<Decimal>,
@@ -59,7 +62,7 @@ impl PositionCard<'_> {
             return self.flat_row(ui);
         };
         let open = self.mark.map(|mark| position.open_points(mark));
-        identity_row(ui, position, open);
+        identity_row(ui, position, open, self.open_text.as_deref());
         let mut command = self
             .brackets(ui, position)
             .map(|c| CardCommand::Venue(Box::new(c)));
@@ -79,12 +82,12 @@ impl PositionCard<'_> {
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    egui::RichText::new(format!("{} pts", fmt_signed_points(self.realized)))
+                    egui::RichText::new(&self.realized_text)
                         .monospace()
                         .strong()
                         .color(points_color(self.realized)),
                 )
-                .on_hover_text("this session's realized points");
+                .on_hover_text("this session's realized result");
             });
         });
         let cancel = self.has_working_orders
@@ -214,7 +217,7 @@ impl BracketLeg {
 }
 
 /// Identity: the HUD's own chip, so the two surfaces read as one.
-fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>) {
+fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>, text: Option<&str>) {
     let color = theme::side_color(position.side);
     ui.horizontal(|ui| {
         egui::Frame::none()
@@ -238,15 +241,15 @@ fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>) {
                 .monospace()
                 .color(theme::TEXT_PRIMARY),
         );
-        if let Some(open) = open {
+        if let (Some(open), Some(text)) = (open, text) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    egui::RichText::new(format!("{} pts", fmt_signed_points(open)))
+                    egui::RichText::new(text)
                         .monospace()
                         .strong()
                         .color(points_color(open)),
                 )
-                .on_hover_text("open profit at the last print, in points (price units × quantity)");
+                .on_hover_text("open profit at the last print");
             });
         }
     });
