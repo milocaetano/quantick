@@ -346,8 +346,9 @@ pub trait MarkTool: Sync {
         None
     }
     /// What a double click at `position` on this object would do, while the
-    /// pointer rests there: the cursor that announces it. `None`
-    /// (the default) means a double click here is a plain click.
+    /// pointer rests there: the cursor that announces it. `None` (the
+    /// default) leaves the object's own cursor; the double click may still
+    /// act there (a rectangle's centre does).
     ///
     /// The host asks only for the topmost object under the pointer, so the
     /// tool answers for its own geometry and nothing else.

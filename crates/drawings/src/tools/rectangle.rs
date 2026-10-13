@@ -66,35 +66,29 @@ enum ExtendZone {
     Center,
 }
 
-impl ExtendZone {
-    /// The `(left, right)` sides a double click in this zone extends.
-    fn sides(self) -> (bool, bool) {
-        match self {
-            Self::Left => (true, false),
-            Self::Right => (false, true),
-            Self::Center => (true, true),
-        }
-    }
-}
-
 /// The zone under `position` of a band drawn as `drawn` and painted as
 /// `painted` (the drawn rectangle run to the chart edges it extends to), or
-/// `None` off the band. The zones are measured from the drawn sides, so a
-/// side keeps its zone after the band runs past it, and whatever is painted
-/// beyond a drawn side belongs to that side. A narrow rectangle keeps a
-/// centre: each side zone takes at most a third of the drawn width.
+/// `None` off the band. A side's zone is the strip by its drawn side, which
+/// keeps its place after the band runs past it, and the strip by the painted
+/// edge the band now runs to - the side the trader sees. The painted run
+/// between them is no zone: there the band is only a band, and the chart
+/// keeps its double click. A narrow rectangle keeps a centre: each side zone
+/// takes at most a third of the drawn width.
 fn extend_zone(drawn: PxRect, painted: PxRect, position: Px) -> Option<ExtendZone> {
     if !painted.expand(EDGE_ZONE_SLACK_PX).contains(position) {
         return None;
     }
     let zone = side_zone_width(drawn);
-    Some(if position.x <= drawn.left() + zone {
-        ExtendZone::Left
-    } else if position.x >= drawn.right() - zone {
-        ExtendZone::Right
+    let x = position.x;
+    let by_drawn = |side: f32| (x - side).abs() <= zone.max(EDGE_ZONE_SLACK_PX);
+    if x <= drawn.left() + zone && (by_drawn(drawn.left()) || x <= painted.left() + zone) {
+        Some(ExtendZone::Left)
+    } else if x >= drawn.right() - zone && (by_drawn(drawn.right()) || x >= painted.right() - zone)
+    {
+        Some(ExtendZone::Right)
     } else {
-        ExtendZone::Center
-    })
+        (x > drawn.left() && x < drawn.right()).then_some(ExtendZone::Center)
+    }
 }
 
 fn side_zone_width(rect: PxRect) -> f32 {
@@ -128,8 +122,7 @@ impl RectanglePayload {
             return true;
         }
         let before = (self.extend_left, self.extend_right);
-        let (left, right) = zone.sides();
-        let after = (before.0 || left, before.1 || right);
+        let after = (true, true);
         if after == before {
             return false;
         }
@@ -620,9 +613,22 @@ mod tests {
             ..RectanglePayload::default()
         };
         assert_eq!(hint_at(&extended, 5.0), Some(DoubleClickHint::ExtendSideways));
-        let mut payload = extended;
-        assert!(double_click_at(&mut payload, 5.0), "the painted part takes its side back");
+        let mut payload = extended.clone();
+        assert!(double_click_at(&mut payload, 5.0), "the painted edge takes its side back");
         assert_eq!(payload, RectanglePayload::default());
+    }
+
+    #[test]
+    fn the_painted_run_between_the_edge_and_the_drawn_side_leaves_the_double_click_alone() {
+        let mut extended = RectanglePayload {
+            extend_left: true,
+            ..RectanglePayload::default()
+        };
+        assert_eq!(hint_at(&extended, 50.0), None, "the band, not a side");
+        assert!(!double_click_at(&mut extended, 50.0), "the chart keeps its double click");
+        assert!(extended.extend_left);
+        // The drawn side's slack still reaches just outside it.
+        assert_eq!(hint_at(&extended, 92.0), Some(DoubleClickHint::ExtendSideways));
     }
 
     #[test]
