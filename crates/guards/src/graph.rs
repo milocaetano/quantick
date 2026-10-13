@@ -116,17 +116,21 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     // The handler families over headless ports: the window adapts its own
     // state to each port and registers what this crate validates and answers.
     // `paper` and `civil` for the journal's sessions, so the capability lists,
-    // filters and edits through the very calls the ledger's gestures make.
+    // filters and edits through the very calls the ledger's gestures make;
+    // `drawings` and `chart-interaction` for the annotate tier, which resolves
+    // its anchors and folds its placements through the marks' own update;
     // `session` for the History press, which the handler phrases as the
     // tab session's own act and judges from its answer.
     (
         "control-handlers",
         &[
             "chart",
+            "chart-interaction",
             "civil",
             "control",
             "control-host",
             "control-schema",
+            "drawings",
             "engine",
             "paper",
             "session",

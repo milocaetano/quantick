@@ -3031,10 +3031,12 @@ name = "quantick-control-handlers"
 version = "0.1.0"
 dependencies = [
  "quantick-chart",
+ "quantick-chart-interaction",
  "quantick-civil",
  "quantick-control",
  "quantick-control-host",
  "quantick-control-schema",
+ "quantick-drawings",
  "quantick-engine",
  "quantick-paper",
  "quantick-session",

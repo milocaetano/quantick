@@ -77,7 +77,7 @@ pub use style::{
 };
 pub use tool::{DoubleClickHint, DrawingTool, MarkTool};
 pub use tools::*;
-pub use update::{DrawingEffect, DrawingIntent, update};
+pub use update::{DrawingEffect, DrawingIntent, Placement, PlacementFailure, update};
 
 /// The facts the mark model needs about the tool a mark was drawn with.
 ///
