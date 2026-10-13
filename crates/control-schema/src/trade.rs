@@ -49,7 +49,7 @@ use quantick_control::{
 
 use quantick_engine::Side;
 
-use quantick_sim::EntryKind;
+use quantick_trading::EntryKind;
 
 use rust_decimal::Decimal;
 

@@ -3,7 +3,8 @@
 // and ledger tests stay there with the surfaces they drive.
 
 use quantick_engine::Side;
-use quantick_sim::{ExitReason, history};
+use quantick_sim::history;
+use quantick_trading::ExitReason;
 use rust_decimal::Decimal;
 
 use super::*;
@@ -402,7 +403,7 @@ fn golden_history() -> LoadedHistory {
              side: Side,
              pnl: i64,
              held_ms: i64,
-             reason: quantick_sim::ExitReason,
+             reason: quantick_trading::ExitReason,
              excursions: Option<(i64, i64)>| ClosedTrade {
         side,
         quantity: Decimal::ONE,
@@ -417,7 +418,7 @@ fn golden_history() -> LoadedHistory {
         mae_points: excursions.map(|(mae, _)| Decimal::from(mae)),
         mfe_points: excursions.map(|(_, mfe)| Decimal::from(mfe)),
     };
-    use quantick_sim::ExitReason::{Manual, StopLoss, TakeProfit};
+    use quantick_trading::ExitReason::{Manual, StopLoss, TakeProfit};
     LoadedHistory {
         rows: vec![
             row(

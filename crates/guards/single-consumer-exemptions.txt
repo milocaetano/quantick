@@ -25,7 +25,6 @@
 # split is for.
 
 feed consumed by `app` only; it is the one crate below `app` allowed runtimes, threads and the wall clock, and isolating that exception is its reason to exist. Open: `backtest` reads recorded sessions through `replay`, not through the feed host.
-trading consumed by `sim` only; the venue-neutral `TradingVenue` port a broker adapter docks against beside the simulator. Open: no second venue implements it yet.
 backpressure consumed by `app` only; the owner-to-worker admission discipline (park, fold, never drop) moved out of `app` in #542, told the time. Open: `feed` workers still use their own channels.
 control-handlers consumed by `app` only; the control handler families over headless ports, moved out of `app` so the window keeps one adapter per family. Open: `mcp` or a test host could drive the same handlers over a fake window.
 operability consumed by `app` only; the behaviour-to-capability table and its drift check, pure data by design (#542). Open: a generator or `mcp` could read it without the window.

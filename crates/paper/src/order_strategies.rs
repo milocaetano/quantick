@@ -20,7 +20,7 @@
 //! show; a rung in ticks is one it can.
 
 use quantick_engine::Side;
-use quantick_sim::{Bracket, ExitPart, LadderError, MAX_EXIT_PARTS};
+use quantick_trading::{Bracket, ExitPart, LadderError, MAX_EXIT_PARTS};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 

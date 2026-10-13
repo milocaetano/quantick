@@ -404,10 +404,7 @@ fn the_report_names_every_single_consumer_crate() {
         .find_map(|line| line.strip_prefix("graph.single_consumer	"))
         .expect("the count row is printed");
     assert_eq!(listed.len().to_string(), counted, "{listed:?}");
-    assert!(
-        listed.contains(&"single_consumer.trading	sim"),
-        "{listed:?}"
-    );
+    assert!(listed.contains(&"single_consumer.feed	app"), "{listed:?}");
 }
 
 /// The modes are alternatives. `--report` with anything beside it is refused

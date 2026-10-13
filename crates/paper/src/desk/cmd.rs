@@ -8,7 +8,7 @@
 //! paints the line.
 
 use quantick_engine::Side;
-use quantick_sim::{Bracket, EntryKind};
+use quantick_trading::{Bracket, EntryKind};
 use rust_decimal::Decimal;
 
 use super::geometry::{Bounds, Point, TAG_HEIGHT_PX, clamp_tag_center};

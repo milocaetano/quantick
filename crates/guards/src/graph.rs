@@ -108,8 +108,9 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
             "orderbook",
             "orderflow",
             "pine",
-            "sim",
             "stores",
+            // Orders and round trips from their owner, not the simulator.
+            "trading",
         ],
     ),
     // The handler families over headless ports: the window adapts its own
@@ -183,7 +184,11 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     ),
     // The paper account: policy, sizing and the journal over a `sim` venue.
     // `workspace` for the one store-write gate every sidecar asks (DS7).
-    ("paper", &["civil", "engine", "replay", "sim", "workspace"]),
+    // `trading` for the order vocabulary; `sim` for the venue and the history.
+    (
+        "paper",
+        &["civil", "engine", "replay", "sim", "trading", "workspace"],
+    ),
     // Civil dates and the display offset: pure arithmetic, reached by the
     // paper account and the chart model below `app`, and by the window.
     ("civil", &[]),
