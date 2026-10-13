@@ -328,7 +328,7 @@ impl DetailSection<'_> {
             )
             .on_hover_text(
                 "how wide a candle must be before the profile and the numbers \
-                 appear; the POC never waits for it. 1.0 = numbers just fit; \
+                 appear; the POC and zone marks never wait for it. 1.0 = numbers just fit; \
                  lower = narrower candles, crowded; \
                  higher = wider candles, roomier. High values can push the full \
                  ladder to the deepest zoom; summary numbers still follow \

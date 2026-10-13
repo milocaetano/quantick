@@ -417,21 +417,17 @@ mod tests {
         // At scale 6 the profile and the numbers wait for six times the
         // width; the POC dot arrives at its own floor.
         let scale = 6.0;
+        let compact = compact_entry_width(COMPACT_FROM_PX, DETAILED_FROM_PX, scale);
+        let detailed = detailed_entry_width(DETAILED_MIN_WIDTH, DETAILED_FROM_PX, scale);
         let at = |width: f32| {
-            let scaled = level_for(
-                width / scale,
-                12.0,
-                FLOORS,
-                COMPACT_FROM_PX,
-                DETAILED_FROM_PX,
-            );
+            let scaled = level_for(width / scale, 12.0, FLOORS, compact, detailed);
             with_poc_floor(scaled, width)
         };
         assert_eq!(at(MARKS_MIN_WIDTH - 1.0), DetailLevel::Off);
         assert_eq!(at(MARKS_MIN_WIDTH), DetailLevel::Marks);
         assert_eq!(at(PROFILE_MIN_WIDTH * scale - 1.0), DetailLevel::Marks);
         assert_eq!(at(PROFILE_MIN_WIDTH * scale), DetailLevel::Profile);
-        assert_eq!(at(COMPACT_FROM_PX * scale + 0.01), DetailLevel::Compact);
+        assert_eq!(at(compact * scale + 0.01), DetailLevel::Compact);
         // A tight scale earns more than the raw width; the floor never lowers it.
         assert_eq!(with_poc_floor(DetailLevel::Marks, 1.0), DetailLevel::Marks);
     }

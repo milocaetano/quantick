@@ -399,7 +399,7 @@ impl LayerPlan {
         // the candle's own width, stretched by the trader's `detail_scale` (a
         // scale below one asks for detail at narrower candles, which is the same
         // statement as lowering every floor by it).
-        let scaled_width = frame.candle_width / frame.config.detail_scale.max(1e-3);
+        let scaled_width = frame.config.scaled_width(frame.candle_width);
         // `auto` is answered before anything is measured: it is a question about
         // the zoom, and every floor below is measured against a concrete style.
         // The chain is walked richest-first and the first link the candle can pay
@@ -1420,8 +1420,8 @@ mod tests {
     }
 
     /// Detail arrives sooner than it used to at every level — the point of the
-    /// retune — and `detail_scale` moves the whole ladder together without
-    /// reordering it.
+    /// retune — and a `detail_scale` below one moves the whole ladder together
+    /// without reordering it.
     #[test]
     fn detail_arrives_earlier_than_the_old_floors_and_scales_as_one() {
         // What each floor was when the ladder's font floor was 8 px.
