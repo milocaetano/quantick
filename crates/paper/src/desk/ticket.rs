@@ -162,6 +162,32 @@ impl Ticket {
     }
 }
 
+/// The most characters an entry button's face holds: room for `SELL 0.001`
+/// or `SELL 99999`. The toolbar sizes both entry buttons from this one
+/// number, so neither moves when the position or the quantity changes.
+pub const ENTRY_FACE_MAX_CHARS: usize = 10;
+
+/// The entry button's face: the side and the size it would send, nothing
+/// else (`BUY 5`). The close / add / reverse disclosure of [`entry_label`]
+/// lives in the hover, because a face that grows with the position moves
+/// the button out from under the trader's pointer. A face longer than
+/// [`ENTRY_FACE_MAX_CHARS`] is cut with a trailing `…`, marked as cut, and
+/// the hover still carries the whole size.
+#[must_use]
+pub fn entry_face(side: Side, quantity: Option<Decimal>) -> String {
+    let word = side_word_upper(side);
+    let face = match quantity {
+        Some(qty) => format!("{word} {}", fmt_decimal(qty)),
+        None => word.to_owned(),
+    };
+    if face.chars().count() <= ENTRY_FACE_MAX_CHARS {
+        return face;
+    }
+    let mut cut: String = face.chars().take(ENTRY_FACE_MAX_CHARS - 1).collect();
+    cut.push('…');
+    cut
+}
+
 /// State-aware entry label: what pressing this side's button would do to
 /// the open `position` — `SELL 1 (closes)`, `SELL 5 (reverses to short 4)`.
 /// Whether a press closes or flips hangs on a quantity field the toolbar

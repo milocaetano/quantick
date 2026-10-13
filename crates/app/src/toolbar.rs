@@ -32,6 +32,7 @@ use crate::theme;
 use crate::widgets::{IconButton, TOOLBAR_ICON};
 use quantick_feed::history_reach::HistoryReach;
 use quantick_feed::history_run::RunStatus;
+use quantick_paper::desk::ticket::ENTRY_FACE_MAX_CHARS;
 use quantick_session::{HistoryPagingOff, fmt_history_span};
 
 /// Height of the toolbar, in pixels (§5 zone 2).
@@ -83,6 +84,20 @@ const TRADE_GLYPH_PX: f32 = 7.0;
 const TRADE_BUTTON_PAD_PX: f32 = 16.0;
 /// The close button's `× ` prefix, in pixels.
 const TRADE_CLOSE_PREFIX_PX: f32 = 14.0;
+/// Estimated width of one glyph in an entry face, in pixels: the faces are
+/// strong upper case and digits, wider than the average label glyph.
+const TRADE_ENTRY_GLYPH_PX: f32 = 8.0;
+/// The one width both entry buttons wear, in every position state: room
+/// for the longest face the paper desk ever writes
+/// ([`ENTRY_FACE_MAX_CHARS`]), so a press lands where it landed flat.
+const TRADE_ENTRY_WIDTH_PX: f32 =
+    TRADE_BUTTON_PAD_PX + ENTRY_FACE_MAX_CHARS as f32 * TRADE_ENTRY_GLYPH_PX;
+/// The reverse button's face.
+const TRADE_REVERSE_LABEL: &str = "Reverse";
+/// What the reverse button does, shared by the inline button and the
+/// overflow menu.
+const TRADE_REVERSE_HOVER: &str = "reverse the open simulated position: one market order closes it \
+     and opens the same size the other way at the next print · Shift+R";
 
 /// Which groups stay inline at the current width. Everything folded is
 /// reachable through the `⋯` overflow menu instead — never hidden.
@@ -180,15 +195,15 @@ pub fn collapse_plan(available: f32, trade_width: f32, param_width: f32) -> Coll
     plan
 }
 
-/// Estimated TRADE width for the collapse plan. The state-aware labels
-/// (`SELL 5 (reverses to short 4)`, the close button) change with the
-/// position, so the fold decision must read them rather than a constant.
+/// Estimated TRADE width for the collapse plan. The entry pair is fixed
+/// ([`TRADE_ENTRY_WIDTH_PX`] each); only the close and reverse buttons,
+/// present while a position is open, change it.
 #[must_use]
 pub fn trade_width(paper: &PaperTradeModel) -> f32 {
     let button = |label: &str| TRADE_BUTTON_PAD_PX + label.chars().count() as f32 * TRADE_GLYPH_PX;
-    let mut width = button(&paper.buy_label) + button(&paper.sell_label);
+    let mut width = 2.0 * TRADE_ENTRY_WIDTH_PX;
     if let Some(close) = &paper.close_label {
-        width += button(close) + TRADE_CLOSE_PREFIX_PX;
+        width += button(close) + TRADE_CLOSE_PREFIX_PX + button(TRADE_REVERSE_LABEL);
     }
     width
 }
@@ -291,7 +306,8 @@ pub struct ToolbarModel<'a> {
 }
 
 /// What the TRADE group shows this frame, computed by the paper host so the
-/// toolbar stays decoupled from the simulator's types. The labels disclose
+/// toolbar stays decoupled from the simulator's types. The faces name side
+/// and size only (`SELL 1`) so the buttons never move; the hovers disclose
 /// what the press would do to the open position (`SELL 1 (closes)`), because
 /// the quantity deciding it lives in a tab the toolbar never shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,15 +315,17 @@ pub struct PaperTradeModel {
     /// Whether the simulator has seen a price — the buttons disable
     /// themselves (with the reason) until it has.
     pub ready: bool,
-    /// The buy button's state-aware label.
+    /// The buy button's face: side and size only (`BUY 5`).
     pub buy_label: String,
-    /// The sell button's state-aware label.
+    /// The sell button's face.
     pub sell_label: String,
-    /// The buy button's hover text (quantity and bracket disclosure).
+    /// The buy button's hover text: what the press does to the position,
+    /// then quantity and bracket disclosure.
     pub buy_hover: String,
     /// The sell button's hover text.
     pub sell_hover: String,
-    /// `Close 1 LONG` while a position is open; `None` removes the button.
+    /// `Close 1 LONG` while a position is open; `None` removes the button,
+    /// and the reverse button beside it.
     pub close_label: Option<String>,
 }
 
@@ -395,6 +413,8 @@ pub enum ToolbarAction {
     PaperSell,
     /// Exit the open simulated position at the next print.
     PaperClose,
+    /// Turn the open simulated position around at the next print.
+    PaperReverse,
 }
 
 /// Draw the toolbar as the 44 px top panel and return what was asked of the
@@ -432,7 +452,7 @@ pub fn draw(ctx: &egui::Context, model: &mut ToolbarModel) -> Vec<ToolbarAction>
                 }
                 if plan.trade_inline {
                     ui.separator();
-                    draw_trade(ui, model, &mut actions);
+                    draw_trade(ui, &model.paper, &mut actions);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if plan.overflow_needed() {
@@ -794,20 +814,24 @@ fn draw_history_menu(
 /// exit (`docs/ux/paper-trading.md`). Quantity and brackets live in the
 /// Trading dock tab; the labels disclose them. Gated on the simulator having
 /// seen a price, never on the provider — paper trading works on any feed.
-fn draw_trade(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<ToolbarAction>) {
-    let paper = &model.paper;
+fn draw_trade(ui: &mut egui::Ui, paper: &PaperTradeModel, actions: &mut Vec<ToolbarAction>) {
     // The entries speak the chip language: solid side colour, dark ink —
     // the same grammar as the price chips in the gutter, because the button
-    // and the entry line it will create are one statement.
+    // and the entry line it will create are one statement. Both wear one
+    // fixed size in every state, the face truncating rather than growing,
+    // so opening a position never slides SELL out from under the pointer.
     let entry = |ui: &mut egui::Ui, label: &str, fill: egui::Color32, enabled: bool| {
-        ui.add_enabled(
-            enabled,
-            egui::Button::new(egui::RichText::new(label).color(theme::CHIP_INK).strong())
-                .fill(fill)
-                .stroke(egui::Stroke::NONE)
-                .rounding(egui::Rounding::same(3.0))
-                .min_size(egui::vec2(52.0, 24.0)),
-        )
+        ui.add_enabled_ui(enabled, |ui| {
+            ui.add_sized(
+                egui::vec2(TRADE_ENTRY_WIDTH_PX, 24.0),
+                egui::Button::new(egui::RichText::new(label).color(theme::CHIP_INK).strong())
+                    .wrap_mode(egui::TextWrapMode::Truncate)
+                    .fill(fill)
+                    .stroke(egui::Stroke::NONE)
+                    .rounding(egui::Rounding::same(3.0)),
+            )
+        })
+        .inner
     };
     let buy = entry(ui, &paper.buy_label, theme::BUY, paper.ready)
         .on_hover_text(&paper.buy_hover)
@@ -821,14 +845,15 @@ fn draw_trade(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolbar
     if sell.clicked() {
         actions.push(ToolbarAction::PaperSell);
     }
-    // The exit control, on the same surface as the entries: an open position
-    // must never require a dock dive to leave (audit pain 1, B2). Outlined,
-    // not filled — leaving is deliberate, never the loudest thing on the bar.
+    // The exit controls, on the same surface as the entries: an open
+    // position must never require a dock dive to leave or flip (audit pain
+    // 1, B2). Outlined, not filled — leaving is deliberate, never the
+    // loudest thing on the bar.
     if let Some(close) = &paper.close_label {
-        let button = ui
-            .add(
+        let outlined = |ui: &mut egui::Ui, text: String| {
+            ui.add(
                 egui::Button::new(
-                    egui::RichText::new(format!("× {close}"))
+                    egui::RichText::new(text)
                         .color(theme::TEXT_PRIMARY)
                         .strong(),
                 )
@@ -837,9 +862,16 @@ fn draw_trade(ui: &mut egui::Ui, model: &ToolbarModel, actions: &mut Vec<Toolbar
                 .rounding(egui::Rounding::same(3.0))
                 .min_size(egui::vec2(0.0, 24.0)),
             )
+        };
+        let button = outlined(ui, format!("× {close}"))
             .on_hover_text("exit the open simulated position at the next print (market)");
         if button.clicked() {
             actions.push(ToolbarAction::PaperClose);
+        }
+        let reverse =
+            outlined(ui, TRADE_REVERSE_LABEL.to_owned()).on_hover_text(TRADE_REVERSE_HOVER);
+        if reverse.clicked() {
+            actions.push(ToolbarAction::PaperReverse);
         }
     }
 }
@@ -1149,6 +1181,7 @@ fn draw_overflow(
                     model.paper.ready,
                     egui::Button::new(format!("{} at market (SIM)", model.paper.buy_label)),
                 )
+                .on_hover_text(&model.paper.buy_hover)
                 .on_disabled_hover_text("waiting for the first print - there is no market yet");
             if buy.clicked() {
                 actions.push(ToolbarAction::PaperBuy);
@@ -1159,16 +1192,24 @@ fn draw_overflow(
                     model.paper.ready,
                     egui::Button::new(format!("{} at market (SIM)", model.paper.sell_label)),
                 )
+                .on_hover_text(&model.paper.sell_hover)
                 .on_disabled_hover_text("waiting for the first print - there is no market yet");
             if sell.clicked() {
                 actions.push(ToolbarAction::PaperSell);
                 ui.close_menu();
             }
-            if let Some(close) = &model.paper.close_label
-                && ui.button(format!("× {close} (SIM)")).clicked()
-            {
-                actions.push(ToolbarAction::PaperClose);
-                ui.close_menu();
+            if let Some(close) = &model.paper.close_label {
+                if ui.button(format!("× {close} (SIM)")).clicked() {
+                    actions.push(ToolbarAction::PaperClose);
+                    ui.close_menu();
+                }
+                let reverse = ui
+                    .button(format!("{TRADE_REVERSE_LABEL} (SIM)"))
+                    .on_hover_text(TRADE_REVERSE_HOVER);
+                if reverse.clicked() {
+                    actions.push(ToolbarAction::PaperReverse);
+                    ui.close_menu();
+                }
             }
         }
         if !plan.param_inline {
@@ -1289,15 +1330,13 @@ mod tests {
         assert!(plan.overflow_needed());
     }
 
-    /// An open position widens TRADE (state-aware labels + the close
-    /// button), and the plan reads that width: what exactly fits flat folds
-    /// once a position opens.
+    /// An open position widens TRADE (the close and reverse buttons), and
+    /// the plan reads that width: what exactly fits flat folds once a
+    /// position opens.
     #[test]
     fn an_open_position_widens_trade_and_folds_sooner() {
         let flat = PaperTradeModel::flat(true);
         let open = PaperTradeModel {
-            buy_label: "BUY 1 (adds to 2)".to_owned(),
-            sell_label: "SELL 1 (closes 1 of 2)".to_owned(),
             close_label: Some("Close 2 LONG".to_owned()),
             ..PaperTradeModel::flat(true)
         };
@@ -1730,5 +1769,120 @@ mod tests {
                 .contains("only streams forward"),
             "and a feed that cannot page gets the other reason, not the run's"
         );
+    }
+
+    /// Paint the TRADE group alone, settled, and return the buy and sell
+    /// buttons' rectangles with every text it painted, and whether the
+    /// paint had to cut that text to fit.
+    fn paint_trade(paper: &PaperTradeModel) -> (egui::Rect, egui::Rect, Vec<(String, bool)>) {
+        let ctx = egui::Context::default();
+        theme::apply(&ctx);
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1200.0, 200.0),
+            )),
+            ..Default::default()
+        };
+        let mut shapes = Vec::new();
+        for _ in 0..2 {
+            let output = ctx.run(input(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        let mut actions = Vec::new();
+                        draw_trade(ui, paper, &mut actions);
+                        assert!(actions.is_empty(), "no clicks, no actions");
+                    });
+                });
+            });
+            shapes = output.shapes;
+        }
+        let (mut buy, mut sell, mut texts) = (None, None, Vec::new());
+        for shape in shapes {
+            match shape.shape {
+                egui::epaint::Shape::Rect(rect) if rect.fill == theme::BUY => buy = Some(rect.rect),
+                egui::epaint::Shape::Rect(rect) if rect.fill == theme::SELL => {
+                    sell = Some(rect.rect);
+                }
+                egui::epaint::Shape::Text(text) => {
+                    texts.push((text.galley.text().to_owned(), text.galley.elided));
+                }
+                _ => {}
+            }
+        }
+        (
+            buy.expect("buy painted"),
+            sell.expect("sell painted"),
+            texts,
+        )
+    }
+
+    /// BUY and SELL keep one width and one place in every position state —
+    /// flat, long, short, a reverse-sized order and the longest face the
+    /// desk writes — so a press lands where it landed flat, and no face is
+    /// cut by the button.
+    #[test]
+    fn the_entry_pair_keeps_one_width_in_every_state() {
+        use quantick_engine::Side;
+        use quantick_paper::desk::ticket::entry_face;
+        use rust_decimal::Decimal;
+        let open = |buy: String, sell: String, close: &str| PaperTradeModel {
+            buy_label: buy,
+            sell_label: sell,
+            close_label: Some(close.to_owned()),
+            ..PaperTradeModel::flat(true)
+        };
+        let qty = |n: i64| Some(Decimal::from(n));
+        let states = [
+            PaperTradeModel::flat(true),
+            open("BUY 1".to_owned(), "SELL 1".to_owned(), "Close 2 LONG"),
+            open("BUY 1".to_owned(), "SELL 1".to_owned(), "Close 2 SHORT"),
+            open("BUY 999".to_owned(), "SELL 999".to_owned(), "Close 2 LONG"),
+            open(
+                entry_face(Side::Buy, qty(888_888)),
+                entry_face(Side::Sell, qty(88_888_888)),
+                "Close 88888888 SHORT",
+            ),
+        ];
+        let (flat_buy, flat_sell, _) = paint_trade(&states[0]);
+        assert_eq!(flat_buy.width(), TRADE_ENTRY_WIDTH_PX);
+        assert_eq!(flat_sell.width(), TRADE_ENTRY_WIDTH_PX);
+        for paper in &states {
+            let (buy, sell, texts) = paint_trade(paper);
+            assert_eq!(buy, flat_buy, "BUY moved or resized for {paper:?}");
+            assert_eq!(sell, flat_sell, "SELL moved or resized for {paper:?}");
+            for face in [&paper.buy_label, &paper.sell_label] {
+                let (_, elided) = texts
+                    .iter()
+                    .find(|(text, _)| text == face)
+                    .unwrap_or_else(|| panic!("{face} never painted"));
+                assert!(!elided, "{face} does not fit the fixed width");
+            }
+        }
+        let wide = trade_width(&states[4]);
+        assert_eq!(wide, trade_width(&states[1]) + 8.0 * TRADE_GLYPH_PX);
+        assert_eq!(
+            trade_width(&states[0]),
+            2.0 * TRADE_ENTRY_WIDTH_PX,
+            "flat TRADE is the fixed pair alone, whatever the faces say"
+        );
+    }
+
+    /// Reverse sits beside Close exactly while a position is open.
+    #[test]
+    fn reverse_shows_only_beside_an_open_position() {
+        let painted = |paper: &PaperTradeModel| {
+            let (_, _, texts) = paint_trade(paper);
+            texts.iter().any(|(text, _)| text == TRADE_REVERSE_LABEL)
+        };
+        assert!(
+            !painted(&PaperTradeModel::flat(true)),
+            "flat has no reverse"
+        );
+        let open = PaperTradeModel {
+            close_label: Some("Close 1 LONG".to_owned()),
+            ..PaperTradeModel::flat(true)
+        };
+        assert!(painted(&open), "an open position wears the reverse");
     }
 }

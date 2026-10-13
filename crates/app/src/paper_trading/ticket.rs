@@ -45,6 +45,18 @@ impl PaperTrading {
         self.desk.ticket.entry_hover(side)
     }
 
+    /// The toolbar's fixed-width face (`BUY 5`); see `Desk::entry_face`.
+    #[must_use]
+    pub fn entry_face(&self, side: Side) -> String {
+        self.desk.entry_face(&self.account, side)
+    }
+
+    /// The hover under the toolbar face: its disclosure, then the details.
+    #[must_use]
+    pub fn entry_face_hover(&self, side: Side) -> String {
+        self.desk.entry_face_hover(&self.account, side)
+    }
+
     // ------------------------------------------------------------------
     // Chart layer
     // ------------------------------------------------------------------

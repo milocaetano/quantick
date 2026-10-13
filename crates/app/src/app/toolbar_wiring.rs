@@ -7,6 +7,7 @@
 //! what a toolbar looks like.
 
 use eframe::egui;
+use quantick_engine::Side;
 
 use crate::indicator_worker::SlotId;
 use crate::pane::PaneSide;
@@ -179,10 +180,10 @@ impl QuantickApp {
                 // click here only toasted - and the doc promises the entry
                 // pair disables.
                 ready: tab.paper.ready() && !tab.paper.risk_report().1,
-                buy_label: tab.paper.entry_label(quantick_engine::Side::Buy),
-                sell_label: tab.paper.entry_label(quantick_engine::Side::Sell),
-                buy_hover: tab.paper.entry_hover(quantick_engine::Side::Buy),
-                sell_hover: tab.paper.entry_hover(quantick_engine::Side::Sell),
+                buy_label: tab.paper.entry_face(Side::Buy),
+                sell_label: tab.paper.entry_face(Side::Sell),
+                buy_hover: tab.paper.entry_face_hover(Side::Buy),
+                sell_hover: tab.paper.entry_face_hover(Side::Sell),
                 close_label: tab.paper.close_button_label(),
             },
             indicators,
@@ -343,15 +344,10 @@ impl QuantickApp {
             }
             // The toolbar acts on the market it is showing: the active tab's
             // simulator, whose tape the buttons' price came from.
-            ToolbarAction::PaperBuy => self
-                .active_tab_mut()
-                .paper
-                .market(quantick_engine::Side::Buy),
-            ToolbarAction::PaperSell => self
-                .active_tab_mut()
-                .paper
-                .market(quantick_engine::Side::Sell),
+            ToolbarAction::PaperBuy => self.active_tab_mut().paper.market(Side::Buy),
+            ToolbarAction::PaperSell => self.active_tab_mut().paper.market(Side::Sell),
             ToolbarAction::PaperClose => self.active_tab_mut().paper.close_position(),
+            ToolbarAction::PaperReverse => self.active_tab_mut().paper.reverse_position(),
         }
     }
 }

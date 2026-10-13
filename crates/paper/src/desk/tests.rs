@@ -19,7 +19,9 @@ use super::geometry::{
 use super::gesture::{ArmedPlacement, ChartCommand, ChartFrame, PaperDrag};
 use super::leg_tag::{LegPaint, leg_tag_text};
 use super::ruler::{RULER_MAX_NOTCHES, Ruler};
-use super::ticket::{Ticket, entry_label, offset_price, parse_offset};
+use super::ticket::{
+    ENTRY_FACE_MAX_CHARS, Ticket, entry_face, entry_label, offset_price, parse_offset,
+};
 use super::{Desk, HeldKeys, PriceAxis, StrategyEditor};
 use crate::PaperAccount;
 use crate::account::Leg;
@@ -739,6 +741,22 @@ fn the_entry_label_discloses_close_add_and_reverse() {
         offset_price(&long, Decimal::from(3), false),
         Decimal::from(103)
     );
+}
+
+/// The fixed-width face names side and size only, whatever the position,
+/// and a size too long for the face is cut visibly, never silently.
+#[test]
+fn the_entry_face_is_side_and_size_only_and_capped() {
+    assert_eq!(entry_face(Side::Buy, Some(Decimal::from(5))), "BUY 5");
+    assert_eq!(entry_face(Side::Sell, None), "SELL");
+    assert_eq!(entry_face(Side::Sell, Some(Decimal::from(999))), "SELL 999");
+    assert_eq!(
+        entry_face(Side::Sell, Some(Decimal::new(1, 2))),
+        "SELL 0.01"
+    );
+    let long = entry_face(Side::Sell, Some(Decimal::from(12_345_678)));
+    assert_eq!(long, "SELL 1234…");
+    assert_eq!(long.chars().count(), ENTRY_FACE_MAX_CHARS);
 }
 
 /// The editor opens on the armed strategy, follows the list through an

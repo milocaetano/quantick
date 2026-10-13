@@ -197,12 +197,39 @@ impl Desk {
     /// another is the plainest kind of lie this surface can tell.
     #[must_use]
     pub fn entry_label(&self, account: &PaperAccount, side: Side) -> String {
-        let derived = self.risk_report(account).0.derived_quantity();
         ticket::entry_label(
             side,
-            derived.or_else(|| self.ticket.quantity_preview()),
+            self.entry_quantity(account),
             account.venue().position(),
         )
+    }
+
+    /// The fixed-width entry button's face for `side`; see
+    /// [`ticket::entry_face`]. Same size as [`Self::entry_label`] names.
+    #[must_use]
+    pub fn entry_face(&self, account: &PaperAccount, side: Side) -> String {
+        ticket::entry_face(side, self.entry_quantity(account))
+    }
+
+    /// The hover under an [`Self::entry_face`] button: the disclosure the
+    /// face leaves out (`SELL 5 (reverses to short 4)`) on its own line
+    /// whenever it says more than the face, then the ticket's details.
+    #[must_use]
+    pub fn entry_face_hover(&self, account: &PaperAccount, side: Side) -> String {
+        let label = self.entry_label(account, side);
+        let details = self.ticket.entry_hover(side);
+        if label == self.entry_face(account, side) {
+            details
+        } else {
+            format!("{label}\n{details}")
+        }
+    }
+
+    /// The size an entry press would send: the risk-derived one, else the
+    /// typed field.
+    fn entry_quantity(&self, account: &PaperAccount) -> Option<Decimal> {
+        let derived = self.risk_report(account).0.derived_quantity();
+        derived.or_else(|| self.ticket.quantity_preview())
     }
 
     /// Cancel the transient chart interaction — an armed placement, else a
