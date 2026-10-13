@@ -212,8 +212,9 @@ pub const TYPICAL_BODY_FRAC: f32 = 0.72;
 /// a candle six pixels wide. The profile is a textless histogram whose *shape*
 /// is the signal, readable at twelve pixels while narrower candles show marks.
 ///
-/// The footprint config's `detail_scale` moves all four together, for a trader
-/// who wants detail earlier still (and tighter) or later and roomier.
+/// The footprint config's `detail_scale` moves Profile, Compact and Detailed
+/// together, for a trader who wants detail earlier still (and tighter) or
+/// later and roomier. Marks never wait longer than their own floor.
 pub const COMPACT_MIN_WIDTH: f32 = (QUANTITY_PX + QUANTITY_PADDING_PX) / TYPICAL_BODY_FRAC;
 
 /// Profile's candle-width floor, in pixels.
