@@ -2,6 +2,8 @@
 //! rule the live frame and a tape held in the past both cut their bands and
 //! gaps by, so the two cannot drift apart.
 
+use std::collections::BTreeMap;
+
 use rust_decimal::Decimal;
 
 use super::model::{BEFORE_CAPTURE, GapPrimitive, HeatmapCell, PriceWindow};
@@ -37,6 +39,31 @@ pub(super) fn bucket_rows(
     (y1 > y0).then_some((y0, y1))
 }
 
+/// A price row is identical for every interval at that level in this projection.
+/// Keep its exact Decimal conversion once, including an off-screen result.
+pub(super) struct PriceRows {
+    grouping: EffectiveGrouping,
+    prices: PriceWindow,
+    rows: BTreeMap<Decimal, Option<(f64, f64)>>,
+}
+
+impl PriceRows {
+    pub(super) fn new(grouping: EffectiveGrouping, prices: PriceWindow) -> Self {
+        Self {
+            grouping,
+            prices,
+            rows: BTreeMap::new(),
+        }
+    }
+
+    pub(super) fn get(&mut self, bucket: Decimal) -> Option<(f64, f64)> {
+        *self
+            .rows
+            .entry(bucket)
+            .or_insert_with(|| bucket_rows(bucket, self.grouping, self.prices))
+    }
+}
+
 /// The quantity a band reads full against: the drawn runs' 99th percentile,
 /// or the trader's pinned maximum.
 pub(super) fn liquidity_reference(
@@ -56,9 +83,8 @@ pub(super) fn percentile_99(values: impl Iterator<Item = Decimal>) -> Decimal {
     if positive.is_empty() {
         return Decimal::ZERO;
     }
-    positive.sort_unstable();
     let rank = (99 * positive.len()).div_ceil(100);
-    positive[rank.saturating_sub(1)]
+    *positive.select_nth_unstable(rank.saturating_sub(1)).1
 }
 
 /// Colour `drafts` against `reference`, keeping the strongest walls when
@@ -74,14 +100,22 @@ pub(super) fn finish_cells(
     }
     let dropped = drafts.len().saturating_sub(config.max_visible_cells);
     if dropped > 0 {
-        drafts.sort_by(|a, b| {
-            b.quantity
-                .cmp(&a.quantity)
-                .then_with(|| a.generation.cmp(&b.generation))
-                .then_with(|| a.price_bucket.cmp(&b.price_bucket))
-                .then_with(|| a.x0.total_cmp(&b.x0))
-        });
-        drafts.truncate(config.max_visible_cells);
+        // Select the retained prefix before sorting it. The original position
+        // breaks equal ranks exactly as the stable full sort did, so ties at
+        // the cap preserve side, geometry and carried/observed provenance.
+        let mut ranked: Vec<_> = drafts.into_iter().enumerate().collect();
+        let rank = |a: &(usize, DraftCell), b: &(usize, DraftCell)| {
+            b.1.quantity
+                .cmp(&a.1.quantity)
+                .then_with(|| a.1.generation.cmp(&b.1.generation))
+                .then_with(|| a.1.price_bucket.cmp(&b.1.price_bucket))
+                .then_with(|| a.1.x0.total_cmp(&b.1.x0))
+                .then_with(|| a.0.cmp(&b.0))
+        };
+        ranked.select_nth_unstable_by(config.max_visible_cells, rank);
+        ranked.truncate(config.max_visible_cells);
+        ranked.sort_unstable_by(rank);
+        drafts = ranked.into_iter().map(|(_, draft)| draft).collect();
     }
     let cells = drafts
         .into_iter()
@@ -161,3 +195,6 @@ pub(super) fn book_gaps(
     gaps.sort_by(|a, b| a.x0.total_cmp(&b.x0).then_with(|| a.x1.total_cmp(&b.x1)));
     gaps
 }
+
+#[cfg(test)]
+mod tests;

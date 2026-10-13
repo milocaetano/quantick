@@ -83,7 +83,7 @@ use tiers::{TierClusters, TierCut, TierGrouping, cluster_tier, refine_tier, tier
 
 #[cfg(test)]
 use heat_cells::percentile_99;
-use heat_cells::{DraftCell, book_gaps, bucket_rows, finish_cells};
+use heat_cells::{DraftCell, PriceRows, book_gaps, finish_cells};
 
 /// One level's resting liquidity, summed over one bar and weighted by time.
 ///
@@ -229,8 +229,9 @@ pub fn project_settled(
     let mut run_quantities = Vec::with_capacity(grouped.runs.len());
     let mut summary: BTreeMap<(usize, Decimal, RestingSide), SlotHeat> = BTreeMap::new();
     let lane_view = timeline.lane_start_ms().is_some();
+    let mut rows = PriceRows::new(effective_grouping, prices);
     for run in &grouped.runs {
-        let Some((y0, y1)) = bucket_rows(run.price_bucket, effective_grouping, prices) else {
+        let Some((y0, y1)) = rows.get(run.price_bucket) else {
             continue;
         };
         let draft = |x0: f64, x1: f64, quantity: Decimal| DraftCell {

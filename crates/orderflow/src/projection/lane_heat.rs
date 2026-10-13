@@ -11,7 +11,7 @@
 
 use rust_decimal::Decimal;
 
-use super::heat_cells::{DraftCell, bucket_rows, finish_cells};
+use super::heat_cells::{DraftCell, PriceRows, finish_cells};
 use super::model::{HeatmapCell, PriceWindow};
 use crate::grouping::{EffectiveGrouping, GroupingWindow, sweep_grouped_runs};
 use crate::history::LiquidityHistory;
@@ -112,8 +112,9 @@ pub(super) fn project_lane_heat(
             .map(|position| position.normalized)
     };
     let mut drafts = Vec::with_capacity(runs.len());
+    let mut rows = PriceRows::new(grouping, prices);
     for run in &runs {
-        let Some((y0, y1)) = bucket_rows(run.price_bucket, grouping, prices) else {
+        let Some((y0, y1)) = rows.get(run.price_bucket) else {
             continue;
         };
         // Only an open level reaches past the last confirmation, and only
