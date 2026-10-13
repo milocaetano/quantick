@@ -16,7 +16,6 @@ use super::bubbles::*;
 use super::constants::*;
 use super::heatmap::*;
 use super::layout::*;
-use super::legend::*;
 use super::preview::*;
 use super::*;
 use crate::viewport::Viewport;
