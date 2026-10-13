@@ -17,15 +17,15 @@ use quantick_paper::desk::geometry::TAG_HOVER_SLACK_PX;
 use quantick_paper::desk::leg_tag::{LegPaint, leg_tag_text};
 use quantick_paper::desk::{AimPaint, CmdPreview, PaperDrag, TagKey};
 
-use super::input::{Axis, held_keys};
+use super::input::Axis;
 use super::paint_ctx::{
     PaintCtx, bounds, bracket_handle_rect, clamp_tag_center, cmd_preview_layout, handles_visible,
     pos,
 };
 use super::{
-    AIM_ECHO_ALPHA, CMD_LINE_MAX_DASHES, LINE_HOVER_WIDTH_PX, LINE_WIDTH_PX, Leg, ORDER_DASH_PX,
-    ORDER_GAP_PX, POSITION_LINE_WIDTH_PX, PaperTrading, kind_short, kind_word, leg_color,
-    side_word, side_word_upper,
+    AIM_ECHO_ALPHA, AIM_ECHO_DASH_PX, AIM_ECHO_GAP_PX, AIM_ECHO_WIDTH_PX, CMD_LINE_MAX_DASHES,
+    LINE_HOVER_WIDTH_PX, LINE_WIDTH_PX, Leg, ORDER_DASH_PX, ORDER_GAP_PX, POSITION_LINE_WIDTH_PX,
+    PaperTrading, kind_short, kind_word, leg_color, side_word, side_word_upper,
 };
 use crate::chart::PriceScale;
 use crate::paper_chrome::{fmt_decimal, fmt_signed_points, points_color, position_word};
@@ -42,7 +42,8 @@ impl PaperTrading {
     /// (`close_button_rect`, `bracket_handle_rect`) — nothing is cached
     /// across frames, because a live chart autoscales between paint and
     /// press. `pointer` is `Some` only on the pane that owns paper input,
-    /// so hover affordances paint nowhere else.
+    /// so hover affordances paint nowhere else; `aimed_here` says that pane
+    /// ran this frame's input even when an overlay hides the pointer.
     #[expect(
         clippy::too_many_arguments,
         reason = "the pane hands over its frame geometry; bundling it here would rename, not simplify"
@@ -56,6 +57,7 @@ impl PaperTrading {
         scale: &PriceScale,
         reserved_chip_y: Option<f32>,
         pointer: Option<egui::Pos2>,
+        aimed_here: bool,
     ) {
         let ctx = PaintCtx {
             painter,
@@ -220,7 +222,7 @@ impl PaperTrading {
 
         // On top of every order line: the cmd preview is the thing being
         // aimed right now.
-        self.draw_cmd_preview(&ctx);
+        self.draw_cmd_preview(&ctx, aimed_here);
     }
 
     /// The protection the aim is carrying, drawn beside it.
@@ -494,7 +496,10 @@ impl PaperTrading {
     /// right-click menu cannot offer. The line is what ties the label at
     /// the pointer to the price on the axis, so it spans the whole way
     /// rather than hugging the edge.
-    pub(super) fn draw_cmd_preview(&self, ctx: &PaintCtx<'_>) {
+    pub(super) fn draw_cmd_preview(&self, ctx: &PaintCtx<'_>, aimed_here: bool) {
+        if self.desk.gesture.cmd_preview.is_none() {
+            return;
+        }
         // Lay out against the band the input hit-tests (its right edge is
         // the lane divider when the live tape lane is up), never the full
         // chart rect — a label painted right of the divider would be a
@@ -507,13 +512,11 @@ impl PaperTrading {
                 ctx.chart_rect.max.y,
             ),
         );
-        // The aim belongs to the band it was aimed in; every other pane of
+        // The aim belongs to the pane that made it; every other pane of
         // the split paints only its echo. The desk decides which.
-        let keys = held_keys(ctx.painter.ctx().input(|input| input.modifiers));
-        let hand_here = ctx.pointer.is_some();
         let preview = match self
             .desk
-            .aim_paint(bounds(band), hand_here, keys, &Axis(ctx.scale))
+            .aim_paint(bounds(band), aimed_here, &Axis(ctx.scale))
         {
             Some(AimPaint::Full(preview)) => *preview,
             Some(AimPaint::Echo { side, y }) => return draw_aim_echo(ctx, band, side, y),
@@ -523,16 +526,8 @@ impl PaperTrading {
         let (start, end, label) = cmd_preview_layout(band, ctx.axis_x, pos(preview.pointer));
         // The gesture in progress reads a step above a resting order's
         // line: this is the one thing on the chart the next click acts on.
-        // The dash period stretches on a very wide plot rather than paying
-        // for a segment every 8 px across it (see `CMD_LINE_MAX_DASHES`).
-        let period = ((end.x - start.x) / CMD_LINE_MAX_DASHES).max(ORDER_DASH_PX + ORDER_GAP_PX);
-        let dash = period * ORDER_DASH_PX / (ORDER_DASH_PX + ORDER_GAP_PX);
-        ctx.painter.extend(egui::Shape::dashed_line(
-            &[start, end],
-            egui::Stroke::new(LINE_HOVER_WIDTH_PX, color),
-            dash,
-            period - dash,
-        ));
+        let stroke = egui::Stroke::new(LINE_HOVER_WIDTH_PX, color);
+        dashed_run(ctx, [start, end], stroke, ORDER_DASH_PX, ORDER_GAP_PX);
         ctx.gutter_chip(preview.pointer.y, color, &fmt_decimal(preview.price));
         // Full fill, always: while it paints, the click is already live.
         // There is no resting state to distinguish — releasing the
@@ -581,20 +576,30 @@ impl PaperTrading {
     }
 }
 
-/// The aim as another pane sees it: a faint side-coloured dashed line at
-/// the aimed price across the plot band, in the aim's own dash rhythm. No
-/// label, chip or click target: the click belongs to the pane the hand is on.
+/// The aim as another pane sees it: a faint, finely dotted side-coloured
+/// line at the aimed price across the plot band. No label, chip or click
+/// target: the click belongs to the pane the aim was made in.
 fn draw_aim_echo(ctx: &PaintCtx<'_>, band: egui::Rect, side: Side, y: f32) {
-    let (start, end) = (egui::pos2(band.left(), y), egui::pos2(band.right(), y));
-    let period = ((end.x - start.x) / CMD_LINE_MAX_DASHES).max(ORDER_DASH_PX + ORDER_GAP_PX);
-    let dash = period * ORDER_DASH_PX / (ORDER_DASH_PX + ORDER_GAP_PX);
     let color = theme::side_color(side).gamma_multiply(AIM_ECHO_ALPHA);
-    ctx.painter.extend(egui::Shape::dashed_line(
-        &[start, end],
-        egui::Stroke::new(LINE_WIDTH_PX, color),
-        dash,
-        period - dash,
-    ));
+    let ends = [egui::pos2(band.left(), y), egui::pos2(band.right(), y)];
+    let stroke = egui::Stroke::new(AIM_ECHO_WIDTH_PX, color);
+    dashed_run(ctx, ends, stroke, AIM_ECHO_DASH_PX, AIM_ECHO_GAP_PX);
+}
+
+/// A horizontal dashed run in a `dash`:`gap` rhythm. The period stretches on
+/// a very wide plot rather than paying for a segment every few px across it
+/// (see `CMD_LINE_MAX_DASHES`); the dash keeps its share of the period.
+fn dashed_run(
+    ctx: &PaintCtx<'_>,
+    ends: [egui::Pos2; 2],
+    stroke: egui::Stroke,
+    dash: f32,
+    gap: f32,
+) {
+    let period = ((ends[1].x - ends[0].x) / CMD_LINE_MAX_DASHES).max(dash + gap);
+    let on = period * dash / (dash + gap);
+    ctx.painter
+        .extend(egui::Shape::dashed_line(&ends, stroke, on, period - on));
 }
 
 /// A working order's line colour: accent for an entry waiting to trade, the

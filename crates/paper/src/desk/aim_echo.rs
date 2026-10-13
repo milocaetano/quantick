@@ -1,18 +1,18 @@
 //! The aim, seen from the panes it was not made in.
 //!
 //! One desk serves every pane of a split, so the price a held key aims at in
-//! one pane is a level every other pane can show. The pane the hand is on
-//! paints the whole aim (line, label, chip and bracket). Every other pane
+//! one pane is a level every other pane can show. The pane the aim was made
+//! in paints the whole aim (line, label, chip and bracket). Every other pane
 //! paints an echo: a faint dashed line at the aimed price on its *own* axis,
 //! so the trader reads the level against tick, renko and minute bars at
 //! once. The echo is a picture and nothing else. It has no label, no chip
-//! and no click, because the click belongs to the pane the hand is on.
+//! and no click, because the click belongs to the pane the aim was made in.
 
 use quantick_engine::Side;
 use rust_decimal::prelude::ToPrimitive;
 
 use super::Desk;
-use super::cmd::{CmdPreview, HeldKeys};
+use super::cmd::CmdPreview;
 use super::geometry::{Bounds, PriceAxis};
 
 /// What one pane paints of this frame's aim.
@@ -28,40 +28,28 @@ pub enum AimPaint<'a> {
 impl Desk {
     /// What a pane paints of the aim this frame, or `None` for nothing.
     ///
-    /// `band` is the pane's interactive plot, `hand_here` whether its
-    /// pointer feeds paper input, `keys` the frame's held modifiers and
-    /// `axis` the pane's own price axis.
+    /// `band` is the pane's interactive plot, `aimed_here` whether this pane
+    /// ran this frame's paper input and `axis` the pane's own price axis.
     ///
-    /// The pane the aim was made in owns it whole: the one holding the hand,
-    /// or under the capture hook (where no pane holds a hand) the band that
-    /// holds the parked pointer. A pane holding the hand never echoes: its
-    /// own aim is the only one it can have.
-    ///
-    /// Panes are painted one after another, and only the pane under the hand
-    /// recomputes the aim, so a pane painted *before* it reads last frame's
-    /// aim. The held keys are this frame's, so the echo drops the very frame
-    /// the key is let go rather than one frame late. A price that moved is a
-    /// frame behind until the next frame, which an input event always asks
-    /// for.
+    /// The host runs the input pane before it paints any pane, so the aim
+    /// is always this frame's and was always made in the pane that ran the
+    /// input. That pane is asked by identity, never by where the pointer is
+    /// now: a toast or menu over the band hides the pointer from the pane
+    /// without making it someone else's aim. It paints the whole aim, or
+    /// nothing when the aim's pointer lies outside `band` (a forced aim
+    /// parked past the tape-lane divider), and never an echo of itself.
     #[must_use]
     pub fn aim_paint(
         &self,
         band: Bounds,
-        hand_here: bool,
-        keys: HeldKeys,
+        aimed_here: bool,
         axis: &dyn PriceAxis,
     ) -> Option<AimPaint<'_>> {
         let preview = self.gesture.cmd_preview.as_ref()?;
-        if hand_here || preview.forced {
-            if band.contains(preview.pointer) {
-                return Some(AimPaint::Full(preview));
-            }
-            if hand_here {
-                return None;
-            }
-        }
-        if !preview.forced && self.cmd_trading.aimed_side(keys) != Some(preview.side) {
-            return None;
+        if aimed_here {
+            return band
+                .contains(preview.pointer)
+                .then_some(AimPaint::Full(preview));
         }
         let y = axis.y(preview.price.to_f64().unwrap_or_default());
         (band.top() <= y && y <= band.bottom()).then_some(AimPaint::Echo {
@@ -105,7 +93,7 @@ mod tests {
         }
     }
 
-    /// The pane the hand is on: 80..120 over the left half.
+    /// The pane the aim is made in: 80..120 over the left half.
     const AIMED: Axis = Axis {
         low: 80.0,
         high: 120.0,
@@ -175,7 +163,7 @@ mod tests {
         desk
     }
 
-    /// The pane under the hand paints the whole aim; every other pane
+    /// The pane the aim was made in paints the whole aim; every other pane
     /// paints the echo at the aimed price on its own axis.
     #[test]
     fn the_other_pane_echoes_the_aim_at_its_own_y() {
@@ -184,11 +172,11 @@ mod tests {
         let desk = aiming_desk(&account);
 
         assert!(matches!(
-            desk.aim_paint(aimed_band(), true, SHIFT, &AIMED),
+            desk.aim_paint(aimed_band(), true, &AIMED),
             Some(AimPaint::Full(preview)) if preview.side == Side::Buy
         ));
         assert_eq!(
-            desk.aim_paint(other_band(), false, SHIFT, &OTHER),
+            desk.aim_paint(other_band(), false, &OTHER),
             Some(AimPaint::Echo {
                 side: Side::Buy,
                 y: OTHER.y(95.0),
@@ -211,7 +199,7 @@ mod tests {
             Some(&AIMED),
         );
         assert_eq!(desk.gesture.cmd_preview, None, "no key, no aim");
-        assert_eq!(desk.aim_paint(other_band(), false, SHIFT, &OTHER), None);
+        assert_eq!(desk.aim_paint(other_band(), false, &OTHER), None);
 
         let desk = aiming_desk(&account);
         let far = Axis {
@@ -219,47 +207,101 @@ mod tests {
             high: 210.0,
         };
         assert_eq!(
-            desk.aim_paint(other_band(), false, SHIFT, &far),
+            desk.aim_paint(other_band(), false, &far),
             None,
             "95 is off a 200..210 pane"
         );
     }
 
-    /// A pane painted before the one under the hand still holds last
-    /// frame's aim. The keys are this frame's: let go of Shift and the echo
-    /// is gone that same frame, and the hand's own pane never echoes.
+    /// The input pane runs first, so the frame the aim ends or moves, for
+    /// whatever reason, the echo ends or moves with it.
     #[test]
-    fn the_echo_drops_the_frame_the_key_is_released() {
-        let dir = ScratchDir::new("echo-release");
+    fn the_echo_follows_this_frames_aim() {
+        let dir = ScratchDir::new("echo-follow");
         let account = marked_account(&dir);
-        let desk = aiming_desk(&account);
+        let mut desk = aiming_desk(&account);
 
-        assert_eq!(
-            desk.aim_paint(other_band(), false, HeldKeys::default(), &OTHER),
-            None,
-            "the key is up: the aim ends now, not a frame later"
+        desk.handle_input(
+            &account,
+            &frame(Some(Point::new(200.0, 300.0)), SHIFT),
+            Some(&AIMED),
         );
+        assert_eq!(
+            desk.aim_paint(other_band(), false, &OTHER),
+            Some(AimPaint::Echo {
+                side: Side::Buy,
+                y: OTHER.y(90.0),
+            }),
+            "the aim moved to 90; the echo moved with it"
+        );
+
         let both = HeldKeys {
             shift: true,
             alt: true,
             command: false,
         };
+        for (why, keys) in [
+            ("the key is up", HeldKeys::default()),
+            ("both keys aim nothing", both),
+        ] {
+            let mut desk = aiming_desk(&account);
+            desk.handle_input(
+                &account,
+                &frame(Some(Point::new(200.0, 250.0)), keys),
+                Some(&AIMED),
+            );
+            assert_eq!(desk.aim_paint(other_band(), false, &OTHER), None, "{why}");
+        }
+
+        let mut desk = aiming_desk(&account);
+        let mut claimed = frame(Some(Point::new(200.0, 250.0)), SHIFT);
+        claimed.canvas_claimed = true;
+        desk.handle_input(&account, &claimed, Some(&AIMED));
         assert_eq!(
-            desk.aim_paint(other_band(), false, both, &OTHER),
+            desk.aim_paint(other_band(), false, &OTHER),
             None,
-            "both keys aim nothing, so nothing echoes"
-        );
-        assert_eq!(
-            desk.aim_paint(other_band(), true, SHIFT, &OTHER),
-            None,
-            "a pane holding the hand paints only its own aim"
+            "a drawing handle or the pane chrome took the hand"
         );
     }
 
-    /// The capture hook has no hand and no key: the band holding the
-    /// parked pointer paints the whole aim, and every other band echoes it.
+    /// The pane the aim was made in never echoes it. A toast or menu over
+    /// the band hides the pointer from the pane, but the pane still ran the
+    /// input, so it paints the whole aim; and a forced aim parked past the
+    /// tape-lane divider paints nothing there rather than an echo.
     #[test]
-    fn a_forced_aim_paints_whole_where_parked_and_echoes_elsewhere() {
+    fn the_aiming_pane_never_echoes_its_own_aim() {
+        let dir = ScratchDir::new("echo-self");
+        let account = marked_account(&dir);
+        let desk = aiming_desk(&account);
+        assert!(
+            matches!(
+                desk.aim_paint(aimed_band(), true, &AIMED),
+                Some(AimPaint::Full(_))
+            ),
+            "under an overlay, the aiming pane still owns its aim"
+        );
+
+        let mut desk = Desk::default();
+        desk.gesture.cmd_preview_force = CmdPreviewForce::parse("buy@0.9");
+        desk.handle_input(
+            &account,
+            &frame(Some(Point::new(200.0, 250.0)), HeldKeys::default()),
+            Some(&AIMED),
+        );
+        let preview = desk.gesture.cmd_preview.expect("the hook forces an aim");
+        assert_eq!(preview.pointer.x, 360.0);
+        let left_of_divider = Bounds::from_min_max(Point::new(0.0, 0.0), Point::new(300.0, 400.0));
+        assert_eq!(
+            desk.aim_paint(left_of_divider, true, &AIMED),
+            None,
+            "parked past the divider: no aim here, and no echo of it either"
+        );
+    }
+
+    /// The capture hook has no hand and no key: the input pane paints the
+    /// whole aim, and every other band echoes it.
+    #[test]
+    fn a_forced_aim_paints_whole_where_made_and_echoes_elsewhere() {
         let dir = ScratchDir::new("echo-forced");
         let account = marked_account(&dir);
         let mut desk = Desk::default();
@@ -273,11 +315,11 @@ mod tests {
         assert!(preview.forced);
 
         assert!(matches!(
-            desk.aim_paint(aimed_band(), false, HeldKeys::default(), &AIMED),
+            desk.aim_paint(aimed_band(), true, &AIMED),
             Some(AimPaint::Full(_))
         ));
         assert_eq!(
-            desk.aim_paint(other_band(), false, HeldKeys::default(), &OTHER),
+            desk.aim_paint(other_band(), false, &OTHER),
             Some(AimPaint::Echo {
                 side: Side::Buy,
                 y: OTHER.y(95.0),

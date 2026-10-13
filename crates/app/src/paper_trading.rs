@@ -173,10 +173,13 @@ const PAPER_ORDER_HOVER_ENV: &str = "QUANTICK_PAPER_ORDER_HOVER";
 /// dash *every frame the modifier is held*. Past this the dash period
 /// stretches instead, so the cost is bounded and the rhythm still reads.
 const CMD_LINE_MAX_DASHES: f32 = 96.0;
-/// Opacity of the aim's echo in the panes the hand is not on: enough to read
-/// the level against those bars, faint enough never to pass for the aim
-/// itself or for a resting order.
-pub(crate) const AIM_ECHO_ALPHA: f32 = 0.45;
+/// The aim's echo in the panes it was not made in: a fine, sparse dotted
+/// rhythm on a hairline, thinner and quieter than a pending leg's 4/4 dash,
+/// so it reads as the level and never as an order or as the aim itself.
+pub(crate) const AIM_ECHO_ALPHA: f32 = 0.6;
+const AIM_ECHO_WIDTH_PX: f32 = 0.75;
+const AIM_ECHO_DASH_PX: f32 = 2.0;
+const AIM_ECHO_GAP_PX: f32 = 6.0;
 
 /// What the Trading tab asked of its host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
