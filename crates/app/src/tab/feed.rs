@@ -1441,7 +1441,8 @@ impl Tab {
     }
 
     /// Load back to `reach` (begin now, or queue behind the opening fill) and
-    /// say what this press did; every surface presses via `TabsMut::press_history`.
+    /// say what this press did; the reach menu and `feed.history.load` press
+    /// here via `TabsMut::press_history`, the main click via `request_older_history`.
     pub fn load_history(&mut self, config: &AppConfig, reach: HistoryReach) -> Press {
         self.run_session(Some(config), Act::PressHistory(reach));
         self.session.last_press().unwrap_or(Press::AlreadyRunning)

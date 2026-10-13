@@ -7,7 +7,7 @@ use std::time::Instant;
 use quantick_engine::trade_tape::TradeTape;
 use quantick_engine::{Side, Trade};
 use quantick_session::{
-    Act, Effect, HistoryAct, HistoryOutcome, Msg, SessionSnapshot, TabSession, TabView,
+    Act, Effect, HistoryAct, HistoryOutcome, HistoryReply, Msg, TabSession, TabView,
     sets_window_default,
 };
 use quantick_sources::config::FeedCapabilities;
@@ -118,11 +118,7 @@ impl HistoryPort for SessionTab {
     fn history_paging(&self, index: usize) -> Option<bool> {
         (index == 0).then_some(capabilities().history_paging)
     }
-    fn dispatch_history(
-        &mut self,
-        index: usize,
-        act: HistoryAct,
-    ) -> Option<(HistoryOutcome, SessionSnapshot)> {
+    fn dispatch_history(&mut self, index: usize, act: HistoryAct) -> Option<HistoryReply> {
         if index != 0 {
             return None;
         }

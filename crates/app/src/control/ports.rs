@@ -14,7 +14,7 @@ use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{
     JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
 };
-use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
+use quantick_session::{HistoryAct, HistoryOutcome, HistoryReply};
 
 use crate::app::control_host::ControlPort;
 
@@ -53,11 +53,7 @@ impl HistoryPort for dyn ControlPort {
     }
     /// The toolbar's own press and cancel (Escape's too), so the two
     /// surfaces cannot judge one act two ways.
-    fn dispatch_history(
-        &mut self,
-        index: usize,
-        act: HistoryAct,
-    ) -> Option<(HistoryOutcome, SessionSnapshot)> {
+    fn dispatch_history(&mut self, index: usize, act: HistoryAct) -> Option<HistoryReply> {
         let (tab, outcome) = match act {
             HistoryAct::Press(reach) => {
                 let (tab, press) = self.tabs_mut().press_history(index, reach)?;

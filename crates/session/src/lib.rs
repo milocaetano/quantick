@@ -169,7 +169,7 @@ impl HistorySettings {
 /// Whether a press makes its target the window's main-click default
 /// ([`HistorySettings::history_reach`]): a press the tab took — started or
 /// queued — does, and one refused because a run is paging moves nothing.
-/// Asked once, by the window's press that the toolbar and
+/// Asked by the window's press that the toolbar's reach menu and
 /// `feed.history.load` share.
 #[must_use]
 pub const fn sets_window_default(press: Press) -> bool {
@@ -206,6 +206,10 @@ pub enum HistoryOutcome {
     /// What the cancel stopped.
     Cancelled(Cancelled),
 }
+
+/// What a routed [`HistoryAct`] answers: its own outcome and the session
+/// as it then stands.
+pub type HistoryReply = (HistoryOutcome, SessionSnapshot);
 
 /// One command to the session, and the facts it is judged against.
 ///

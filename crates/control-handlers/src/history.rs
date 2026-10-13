@@ -12,7 +12,7 @@ use quantick_control_schema::history::{
     HistoryCancelInput, HistoryCancelResult, HistoryLoadInput, HistoryLoadResult,
     HistoryLoadSnapshot, cancel_descriptor, load_descriptor,
 };
-use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot};
+use quantick_session::{HistoryAct, HistoryOutcome, HistoryReply};
 use quantick_sources::history_reach::{HistoryReach, MAX_REACH_HOURS, MAX_REACH_SESSIONS};
 use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use serde_json::{Value, json};
@@ -30,11 +30,7 @@ pub trait HistoryPort: TabDirectory {
     /// ([`quantick_session::sets_window_default`]) — and answer with what
     /// this act did and the session as it then stands; `None` when the tab
     /// is gone.
-    fn dispatch_history(
-        &mut self,
-        index: usize,
-        act: HistoryAct,
-    ) -> Option<(HistoryOutcome, SessionSnapshot)>;
+    fn dispatch_history(&mut self, index: usize, act: HistoryAct) -> Option<HistoryReply>;
 }
 
 /// Dock the press and its cancel.

@@ -13,7 +13,9 @@ use quantick_control_host::{journal::NewEvent, wire::PaneSideDto};
 use quantick_control_schema::chart::{BarProvenanceContext, ViewportSnapshot};
 use quantick_control_schema::notify::AgentPopup;
 use quantick_engine::{Bar, BarSpec, Side, Trade};
-use quantick_session::{HistoryAct, HistoryOutcome, SessionSnapshot, sets_window_default};
+use quantick_session::{
+    HistoryAct, HistoryOutcome, HistoryReply, SessionSnapshot, sets_window_default,
+};
 use quantick_sources::history_reach::{HistoryReach, ReachProgress};
 use quantick_sources::history_run::{Cancelled, Press, RunStatus};
 use rust_decimal::Decimal;
@@ -285,11 +287,7 @@ impl HistoryPort for FakeWindow {
     }
     /// The press and cancel over plain fields; a taken press moves the
     /// default as `TabsMut::press_history` does.
-    fn dispatch_history(
-        &mut self,
-        index: usize,
-        act: HistoryAct,
-    ) -> Option<(HistoryOutcome, SessionSnapshot)> {
+    fn dispatch_history(&mut self, index: usize, act: HistoryAct) -> Option<HistoryReply> {
         let tab = self.tabs.get_mut(index)?;
         let outcome = match act {
             HistoryAct::Press(reach) => {
