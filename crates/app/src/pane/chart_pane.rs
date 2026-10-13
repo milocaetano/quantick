@@ -205,6 +205,20 @@ impl ChartPane {
         }
     }
 
+    /// This pane's store and its gesture's copy of the anchors, beside the
+    /// series they anchor to — see [`gesture::PaneMarksMut`].
+    pub(super) fn marks_mut(&mut self) -> gesture::PaneMarksMut<'_> {
+        gesture::PaneMarksMut {
+            drawings: &mut self.drawings,
+            gestures: &mut self.gestures,
+            series: gesture::PaneSeriesRead {
+                history_prefix: &self.history_prefix,
+                state: &self.state,
+                spec: &self.spec,
+            },
+        }
+    }
+
     /// The marks this pane lends its companions: its store and the object
     /// its editor holds — see [`SharedSource`].
     pub(crate) fn shared_source(&self) -> SharedSource<'_> {

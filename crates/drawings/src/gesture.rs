@@ -26,6 +26,9 @@ mod pointer;
 mod projection;
 mod shared;
 
+#[cfg(test)]
+mod marks_tests;
+
 pub use band::{
     Band, Bands, MAX_BANDS, band_at, band_of, drawing_in_band, magnet_value_of, pane_key,
 };
@@ -180,6 +183,42 @@ impl PaneGestures {
     pub fn cancel_drag(&mut self) {
         self.drag = DrawingDrag::None;
         self.translate_from = None;
+    }
+}
+
+/// One pane's marks beside the series they anchor to: the store, and the
+/// gesture holding the one copy of anchors the store does not. A change of
+/// bar space has to reach both, or an object jumps under the hand.
+pub struct PaneMarksMut<'a> {
+    pub drawings: &'a mut Marks,
+    pub gestures: &'a mut PaneGestures,
+    pub series: PaneSeriesRead<'a>,
+}
+
+impl PaneMarksMut<'_> {
+    /// Re-express the marks against the series held now, `old_slots` being
+    /// the length of the series they were anchored to.
+    ///
+    /// The one call behind every re-cut — a timeframe switch, a bar-kind
+    /// switch, a rewind, a symbol change. Marks are never dropped by a state
+    /// change: the trader placed them and the trader removes them.
+    pub fn reanchor(self, old_slots: usize) {
+        let slots = (old_slots, self.series.slots());
+        let slot_of = |time| self.series.slot_of_time(time);
+        self.drawings.reanchor(slots.0, slots.1, slot_of);
+        // A body drag in flight holds its own copy of the anchors: same map.
+        if let Some(from) = self.gestures.translate_from.as_mut() {
+            crate::reanchor_points(&mut from.free, slots, &slot_of);
+        }
+    }
+
+    /// Move the marks with `delta` bars that arrived in front of them, then
+    /// put any mark the longer series now reaches back on its own instant.
+    pub fn shift_bars(self, delta: isize) {
+        self.drawings.shift_bars(delta);
+        self.gestures.shift_bars(delta);
+        self.drawings
+            .resettle_off_series(|time| self.series.slot_of_time(time));
     }
 }
 
