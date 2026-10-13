@@ -1,0 +1,28 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "feed_id": {
+      "type": "string"
+    },
+    "symbol": {
+      "type": "string"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "feed_id",
+    "symbol"
+  ],
+  "title": "FeedSourceInput",
+  "type": "object"
+}

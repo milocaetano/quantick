@@ -174,6 +174,28 @@
       ],
       "type": "object"
     },
+    "FeedSourceChoice": {
+      "properties": {
+        "display_name": {
+          "type": "string"
+        },
+        "feed_id": {
+          "type": "string"
+        },
+        "symbols": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "feed_id",
+        "display_name",
+        "symbols"
+      ],
+      "type": "object"
+    },
     "FeedStallSnapshot": {
       "description": "A feed the chart has decided is stalled.\n\nCarries no free text, for the same reason [`FeedNoticeSnapshot`] carries\nnone: the words name the venue and the terminal behind it, and the observe\ntier does not publish them. What it does carry is the part a client can act\non — which of the two recovery capabilities the application is offering\nfirst, and how long the feed has been like this.",
       "properties": {
@@ -486,6 +508,14 @@
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
+    "sources": {
+      "default": [],
+      "description": "Configured source pairs available to feed.source.set and the selectors.",
+      "items": {
+        "$ref": "#/$defs/FeedSourceChoice"
+      },
+      "type": "array"
+    },
     "tabs": {
       "items": {
         "$ref": "#/$defs/FeedTabSnapshot"

@@ -8951,6 +8951,103 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Selects a pair listed in feed.status.sources through the chart's source selectors. A changed source rebuilds all pane timelines, closes and journals any paper position, disarms strategies and applies the destination asset's saved settings. Refuses while replay owns the tab. Requires the same cockpit.recover permission as feed.reload. Repeating the active pair is a no-op. Read active_feed_id, active_symbol and feed_generation in feed.status.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit.recover",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "feed.source.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "feed_id": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "feed_id",
+          "symbol"
+        ],
+        "title": "FeedSourceInput",
+        "type": "object"
+      },
+      "module": "feed",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "feed_id": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "timeline_kept": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tab_id",
+          "feed_id",
+          "symbol",
+          "changed",
+          "timeline_kept"
+        ],
+        "title": "FeedSourceResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.recover"
+      ],
+      "reversible": false,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [
+        "timeline_rebuilt"
+      ],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab IDs and the configured feed/symbol pair are checked before mutation. A changed selection resets that tab's timeline with the same consequences as feed.reload; an already active pair changes nothing. Replay refuses the call.",
+      "title": "Select a configured feed and symbol",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Captures bounded structured application, indicator, and order-flow health.",
       "destructive": false,
       "dry_run_supported": false,
@@ -17016,6 +17113,28 @@
             ],
             "type": "object"
           },
+          "FeedSourceChoice": {
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "feed_id": {
+                "type": "string"
+              },
+              "symbols": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "feed_id",
+              "display_name",
+              "symbols"
+            ],
+            "type": "object"
+          },
           "FeedStallSnapshot": {
             "description": "A feed the chart has decided is stalled.\n\nCarries no free text, for the same reason [`FeedNoticeSnapshot`] carries\nnone: the words name the venue and the terminal behind it, and the observe\ntier does not publish them. What it does carry is the part a client can act\non — which of the two recovery capabilities the application is offering\nfirst, and how long the feed has been like this.",
             "properties": {
@@ -17328,6 +17447,14 @@
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "sources": {
+            "default": [],
+            "description": "Configured source pairs available to feed.source.set and the selectors.",
+            "items": {
+              "$ref": "#/$defs/FeedSourceChoice"
+            },
+            "type": "array"
+          },
           "tabs": {
             "items": {
               "$ref": "#/$defs/FeedTabSnapshot"
