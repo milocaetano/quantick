@@ -186,7 +186,7 @@ impl ChartPane {
             PrefixChange::Replace { delta } => delta,
         };
         self.model.viewport.shift_right_edge(delta);
-        self.shift_drawings(delta);
+        self.marks_mut().shift_bars(delta);
         // Indicator columns have no signed shift: on growth they are nudged so
         // the frames before the rebuild lands draw each value against its own
         // candle, and on a shrink the rebuild below re-cuts them wholesale a
@@ -267,7 +267,7 @@ impl ChartPane {
         } else {
             // Older bars shift every index up by `added`; keep the view steady.
             self.model.viewport.shift_right_edge(added as isize);
-            self.shift_drawings(added as isize);
+            self.marks_mut().shift_bars(added as isize);
         }
         // Indicator columns shift with them: the rebuild below is a round-trip
         // away, and until it lands every value would otherwise be drawn
@@ -352,58 +352,9 @@ impl ChartPane {
         true
     }
 
-    /// Where a market instant sits on this pane's series, as a fractional
-    /// slot — the strict answer, behind re-anchoring and every edit arriving
-    /// from another pane.
-    ///
-    /// Bar centres, not edges: an anchor is being asked which *bar* it belongs
-    /// to, and the middle of that bar is where it reads as being on it. `None`
-    /// means the series does not reach the instant at all.
-    ///
-    /// Deliberately not what [`Self::reproject`] uses. That one is answering a
-    /// different question — *where do I paint a mark whose instant may be off
-    /// my series?* — so it clamps to the nearest edge and reports the clamp,
-    /// which is what the fade is drawn from. This one is asked before the
-    /// store is written, where a clamp would silently move the trader's mark
-    /// onto data it has nothing to do with. Same lookup, opposite answer at
-    /// the edges, on purpose.
-    ///
-    /// Also not [`Self::covering_slot_at_time`], which refuses the future end
-    /// as well: a drawing may point past the newest bar, a fill may not.
-    pub(super) fn slot_of_time(&self, time: i64) -> Option<f32> {
-        self.series_read().slot_of_time(time)
-    }
-
-    /// Re-express this pane's drawings against the series it holds now,
-    /// `old_slots` being the length of the series they were anchored to.
-    ///
-    /// The one call behind every re-cut — a timeframe switch, a bar-kind
-    /// switch, a rewind, a symbol change. Marks are never dropped by a state
-    /// change: the trader placed them and the trader removes them.
+    /// See [`quantick_drawings::gesture::PaneMarksMut::reanchor`].
     pub fn reanchor_drawings(&mut self, old_slots: usize) {
-        let new_slots = self.slots();
-        // Taken out of `self` for the call: the store has to be handed this
-        // pane's own time→slot answer, and a closure borrowing `&self` cannot
-        // coexist with a `&mut` borrow of one of its fields.
-        let mut drawings = std::mem::take(&mut self.drawings);
-        drawings.reanchor(old_slots, new_slots, |time| self.slot_of_time(time));
-        self.drawings = drawings;
-        // A body drag in flight holds its own copy of the anchors: same map.
-        if let Some(mut from) = self.gestures.translate_from.take() {
-            let slot_of = |time| self.slot_of_time(time);
-            crate::drawings::reanchor_points(&mut from.free, (old_slots, new_slots), &slot_of);
-            self.gestures.translate_from = Some(from);
-        }
-    }
-
-    /// Move the marks with bars that arrived in front of them, then put any
-    /// mark the longer series now reaches back on its own instant.
-    fn shift_drawings(&mut self, delta: isize) {
-        self.drawings.shift_bars(delta);
-        self.gestures.shift_bars(delta);
-        let mut drawings = std::mem::take(&mut self.drawings);
-        drawings.resettle_off_series(|time| self.slot_of_time(time));
-        self.drawings = drawings;
+        self.marks_mut().reanchor(old_slots);
     }
 
     /// Ask for a re-anchor once there are bars, for drawings adopted onto an

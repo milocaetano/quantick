@@ -365,7 +365,7 @@ impl Viewport {
     ///   `i` at its centre and `i - 0.5` at its left edge. Truncating that
     ///   names the bar to the *left* for the whole left half of every candle,
     ///   which is half the pixels of every candle on the chart.
-    /// * `ChartPane::slot_of_time` writes a time-derived anchor at the slot's
+    /// * `PaneSeriesRead::slot_of_time` writes a time-derived anchor at the slot's
     ///   far *edge*, `i + 0.5`, deliberately. Rounding that to nearest sends
     ///   it to `i + 1` — every re-anchored drawing a bar late, silently.
     ///
@@ -486,7 +486,7 @@ mod tests {
     }
 
     /// The other producer's convention, and the one a rounding rule silently
-    /// breaks: `ChartPane::slot_of_time` writes a time-derived anchor at the
+    /// breaks: `PaneSeriesRead::slot_of_time` writes a time-derived anchor at the
     /// slot's far edge, `i + 0.5`. Nearest-rounding sends it to `i + 1`, so
     /// every drawing re-anchored across a timeframe switch would resolve one
     /// bar late and claim the next candle's instant — with nothing on screen
