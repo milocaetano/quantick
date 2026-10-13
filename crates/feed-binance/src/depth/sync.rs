@@ -71,6 +71,8 @@ pub enum SyncApplyOutcome {
 pub enum DepthApplyError {
     /// No snapshot has been installed.
     SnapshotRequired,
+    /// A futures update omitted the mandatory previous-event link.
+    MissingPreviousUpdate,
     /// A message from a different symbol reached this raw stream.
     SymbolMismatch {
         /// Configured symbol.
@@ -97,6 +99,9 @@ impl std::fmt::Display for DepthApplyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::SnapshotRequired => write!(f, "a depth snapshot is required"),
+            Self::MissingPreviousUpdate => {
+                write!(f, "futures depth update has no previous update id")
+            }
             Self::SymbolMismatch { expected, got } => {
                 write!(f, "depth symbol mismatch: expected {expected}, got {got}")
             }
@@ -141,17 +146,29 @@ pub struct DepthSynchronizer {
     generation: u64,
     phase: SyncPhase,
     book: OrderBook,
+    market: crate::BinanceMarket,
 }
 
 impl DepthSynchronizer {
     /// A fresh synchronizer for one symbol/session generation.
     #[must_use]
     pub fn new(symbol: impl Into<String>, generation: u64) -> Self {
+        Self::for_market(symbol, generation, crate::BinanceMarket::Spot)
+    }
+
+    /// A synchronizer using this market's snapshot and event-link rules.
+    #[must_use]
+    pub fn for_market(
+        symbol: impl Into<String>,
+        generation: u64,
+        market: crate::BinanceMarket,
+    ) -> Self {
         Self {
-            symbol: symbol.into().to_uppercase(),
+            symbol: market.wire_symbol(&symbol.into()),
             generation,
             phase: SyncPhase::AwaitingSnapshot,
             book: OrderBook::new(),
+            market,
         }
     }
 
@@ -218,7 +235,14 @@ impl DepthSynchronizer {
         let Some(current_update_id) = self.book.last_update_id() else {
             return Err(DepthApplyError::SnapshotRequired);
         };
-        if update.final_update_id <= current_update_id {
+        let was_awaiting_bridge = matches!(self.phase, SyncPhase::AwaitingBridge { .. });
+        let futures_bridge = self.market == crate::BinanceMarket::UsdM && was_awaiting_bridge;
+        if self.market == crate::BinanceMarket::UsdM && update.previous_update_id.is_none() {
+            return Err(DepthApplyError::MissingPreviousUpdate);
+        }
+        if update.final_update_id < current_update_id
+            || (update.final_update_id == current_update_id && !futures_bridge)
+        {
             debug!(
                 target: "quantick::depth",
                 schema_version = 1_u8,
@@ -238,7 +262,14 @@ impl DepthSynchronizer {
         }
 
         let expected_update_id = current_update_id.saturating_add(1);
-        if update.first_update_id > expected_update_id {
+        let gap = if futures_bridge {
+            update.first_update_id > current_update_id
+        } else if self.market == crate::BinanceMarket::UsdM {
+            false // The explicit predecessor is checked atomically by OrderBook.
+        } else {
+            update.first_update_id > expected_update_id
+        };
+        if gap {
             warn!(
                 target: "quantick::depth",
                 schema_version = 1_u8,
@@ -260,8 +291,24 @@ impl DepthSynchronizer {
             });
         }
 
-        let delta = update.to_book_delta()?;
-        let was_awaiting_bridge = matches!(self.phase, SyncPhase::AwaitingBridge { .. });
+        let delta = if was_awaiting_bridge {
+            update.to_snapshot_bridge_delta()?
+        } else {
+            update.to_book_delta()?
+        };
+        if futures_bridge && update.final_update_id == current_update_id {
+            // The snapshot already contains these exact updates. This event
+            // establishes the link for the next one without replaying levels.
+            self.phase = SyncPhase::Synchronized { current_update_id };
+            return Ok(SyncApplyOutcome::Applied {
+                bridged_snapshot: true,
+                first_update_id: update.first_update_id,
+                final_update_id: current_update_id,
+                changed_levels: 0,
+                bid_levels: self.book.bid_count(),
+                ask_levels: self.book.ask_count(),
+            });
+        }
         match self.book.apply_delta(&delta)? {
             ApplyOutcome::Stale {
                 final_update_id,
@@ -358,6 +405,7 @@ mod tests {
             symbol: "BTCUSDT".to_string(),
             first_update_id: first,
             final_update_id: final_id,
+            previous_update_id: None,
             bids,
             asks: Vec::new(),
         }

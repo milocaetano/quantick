@@ -18,6 +18,9 @@ use serde::Deserialize;
 pub enum ProviderKind {
     /// Binance public aggTrades (REST backfill + live WebSocket).
     Binance,
+    /// Binance USD-M perpetual public market data, independent of Spot.
+    #[serde(rename = "binance-futures")]
+    BinanceFutures,
     /// Hyperliquid public perpetual trades and complete L2 images.
     Hyperliquid,
     /// MetaTrader 5 via the local QuantickBridge EA (see `bridge/mt5/`).
@@ -33,7 +36,9 @@ impl ProviderKind {
         let ceiling = crate::history_reach::CAMPAIGN_PAGE_PRINTS;
         match self {
             Self::MetaTrader => ceiling,
-            Self::Binance | Self::Hyperliquid => configured.clamp(1, ceiling),
+            Self::Binance | Self::BinanceFutures | Self::Hyperliquid => {
+                configured.clamp(1, ceiling)
+            }
         }
     }
 
@@ -46,7 +51,9 @@ impl ProviderKind {
     #[must_use]
     pub fn may_count_deals(self) -> bool {
         match self {
-            ProviderKind::Binance | ProviderKind::Hyperliquid => false,
+            ProviderKind::Binance | ProviderKind::BinanceFutures | ProviderKind::Hyperliquid => {
+                false
+            }
             ProviderKind::MetaTrader => true,
         }
     }
@@ -57,7 +64,10 @@ impl ProviderKind {
     pub fn is_implemented(self) -> bool {
         matches!(
             self,
-            ProviderKind::Binance | ProviderKind::Hyperliquid | ProviderKind::MetaTrader
+            ProviderKind::Binance
+                | ProviderKind::BinanceFutures
+                | ProviderKind::Hyperliquid
+                | ProviderKind::MetaTrader
         )
     }
 
@@ -73,7 +83,7 @@ impl ProviderKind {
     #[must_use]
     pub fn capabilities(self) -> FeedCapabilities {
         match self {
-            ProviderKind::Binance => FeedCapabilities {
+            ProviderKind::Binance | ProviderKind::BinanceFutures => FeedCapabilities {
                 book_capture: true,
                 history_paging: true,
                 traded_volume: true,
@@ -142,7 +152,7 @@ impl ProviderKind {
     #[must_use]
     pub fn recovery_hint(self) -> &'static str {
         match self {
-            ProviderKind::Binance | ProviderKind::Hyperliquid => {
+            ProviderKind::Binance | ProviderKind::BinanceFutures | ProviderKind::Hyperliquid => {
                 "Check this machine's internet connection, then reconnect."
             }
             // The one provider whose data path runs through another

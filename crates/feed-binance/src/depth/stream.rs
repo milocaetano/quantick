@@ -35,6 +35,8 @@ pub const DEFAULT_DEPTH_BUFFER_CAPACITY: usize = 8_192;
 /// Runtime parameters for depth sessions and reconnects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DepthSessionConfig {
+    /// Market-specific snapshot bridge and stream continuity rules.
+    pub market: crate::BinanceMarket,
     /// Requested REST levels per side, clamped to `1..=5000`.
     pub snapshot_limit: u16,
     /// Maximum diff events buffered during bootstrap.
@@ -52,6 +54,7 @@ pub struct DepthSessionConfig {
 impl Default for DepthSessionConfig {
     fn default() -> Self {
         Self {
+            market: crate::BinanceMarket::Spot,
             snapshot_limit: MAX_DEPTH_LIMIT,
             buffer_capacity: DEFAULT_DEPTH_BUFFER_CAPACITY,
             max_snapshot_attempts: 5,
@@ -63,7 +66,8 @@ impl Default for DepthSessionConfig {
 impl DepthSessionConfig {
     fn normalized(self) -> Self {
         Self {
-            snapshot_limit: self.snapshot_limit.clamp(1, MAX_DEPTH_LIMIT),
+            market: self.market,
+            snapshot_limit: self.snapshot_limit.clamp(1, self.market.max_depth()),
             buffer_capacity: self.buffer_capacity.max(1),
             max_snapshot_attempts: self.max_snapshot_attempts.max(1),
             initial_generation: self.initial_generation,
@@ -122,6 +126,9 @@ impl DepthSessionError {
             Self::Snapshot(_) => "snapshot",
             Self::Wire(_) => "wire_decode",
             Self::Apply(DepthApplyError::Gap { .. }) => "sequence_gap",
+            Self::Apply(DepthApplyError::Book(
+                quantick_orderbook::BookError::PreviousUpdateMismatch { .. },
+            )) => "sequence_gap",
             Self::Apply(_) => "book_apply",
             Self::BufferOverflow { .. } => "buffer_overflow",
             Self::SnapshotAttemptsExhausted { .. } => "snapshot_attempts_exhausted",
@@ -216,7 +223,7 @@ pub async fn run_depth_session<S: DepthSnapshotSource>(
     synchronized: &mut bool,
 ) -> Result<(), DepthSessionError> {
     let config = config.normalized();
-    let symbol = symbol.to_uppercase();
+    let symbol = config.market.display_symbol(symbol);
     send_status(events, &symbol, generation, DepthStatus::Connecting).await?;
     info!(
         target: "quantick::depth",
@@ -255,7 +262,7 @@ pub async fn run_depth_session<S: DepthSnapshotSource>(
     .await?;
 
     let mut buffered = VecDeque::new();
-    let mut synchronizer = DepthSynchronizer::new(&symbol, generation);
+    let mut synchronizer = DepthSynchronizer::for_market(&symbol, generation, config.market);
 
     // Bootstrap may refetch a snapshot on the same already-open socket if the
     // first eligible buffered event is ahead of it.
@@ -421,7 +428,7 @@ async fn bridge_snapshot(
                     },
                 )
                 .await?;
-                publish_update(events, symbol, generation, &update).await?;
+                publish_update(events, symbol, generation, &update, true).await?;
                 send_status(
                     events,
                     symbol,
@@ -495,7 +502,7 @@ async fn apply_live_update(
     match synchronizer.apply(update) {
         Ok(SyncApplyOutcome::Stale { .. }) => Ok(()),
         Ok(SyncApplyOutcome::Applied { .. }) => {
-            publish_update(events, symbol, generation, update).await
+            publish_update(events, symbol, generation, update, false).await
         }
         Err(
             error @ DepthApplyError::Gap {
@@ -528,8 +535,14 @@ async fn publish_update(
     symbol: &str,
     generation: u64,
     update: &DepthUpdate,
+    snapshot_bridge: bool,
 ) -> Result<(), DepthSessionError> {
-    let delta = update.to_book_delta().map_err(DepthApplyError::Book)?;
+    let delta = if snapshot_bridge {
+        update.to_snapshot_bridge_delta()
+    } else {
+        update.to_book_delta()
+    }
+    .map_err(DepthApplyError::Book)?;
     send_event(
         events,
         DepthEvent::Update {
@@ -730,6 +743,7 @@ mod tests {
     #[test]
     fn config_normalizes_unsafe_zero_values() {
         let config = DepthSessionConfig {
+            market: crate::BinanceMarket::Spot,
             snapshot_limit: 0,
             buffer_capacity: 0,
             max_snapshot_attempts: 0,
@@ -782,6 +796,7 @@ mod tests {
         let source = FakeSnapshotSource { tcp_accepted };
         let (events_tx, mut events_rx) = tokio::sync::mpsc::channel(16);
         let config = DepthSessionConfig {
+            market: crate::BinanceMarket::Spot,
             snapshot_limit: 100,
             buffer_capacity: 8,
             max_snapshot_attempts: 2,

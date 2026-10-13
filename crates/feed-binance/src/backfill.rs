@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use quantick_engine::Trade;
 use tracing::{debug, info, instrument, warn};
 
+use crate::BinanceMarket;
 use crate::wire::{self, AggTrade, MapError};
 
 /// Binance's public REST base URL.
@@ -93,6 +94,7 @@ pub trait AggTradeSource {
 pub struct BinanceHttp {
     base_url: String,
     client: reqwest::Client,
+    market: BinanceMarket,
 }
 
 impl BinanceHttp {
@@ -105,10 +107,29 @@ impl BinanceHttp {
     /// A source pointing at a custom base URL (for a proxy or a test server).
     #[must_use]
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
+        Self::with_market_base(BinanceMarket::Spot, base_url)
+    }
+
+    /// Public source for a separately sequenced market.
+    #[must_use]
+    pub fn for_market(market: BinanceMarket) -> Self {
+        Self::with_market_base(market, market.rest_base())
+    }
+
+    /// Market routing with a custom origin for transport fixtures.
+    #[must_use]
+    pub fn with_market_base(market: BinanceMarket, base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
             client: reqwest::Client::new(),
+            market,
         }
+    }
+
+    /// The market every request on this client belongs to.
+    #[must_use]
+    pub fn market(&self) -> BinanceMarket {
+        self.market
     }
 }
 
@@ -126,9 +147,11 @@ impl AggTradeSource for BinanceHttp {
         limit: u32,
     ) -> Result<Vec<AggTrade>, FeedError> {
         let limit = limit.min(MAX_PAGE_LIMIT);
-        let url = format!("{}/api/v3/aggTrades", self.base_url);
-        let mut query: Vec<(&str, String)> =
-            vec![("symbol", symbol.to_string()), ("limit", limit.to_string())];
+        let url = format!("{}{}/aggTrades", self.base_url, self.market.rest_prefix());
+        let mut query: Vec<(&str, String)> = vec![
+            ("symbol", self.market.wire_symbol(symbol)),
+            ("limit", limit.to_string()),
+        ];
         if let Some(f) = from_id {
             query.push(("fromId", f.to_string()));
         }

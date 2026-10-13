@@ -651,6 +651,9 @@ pub fn spawn(
     match source {
         FeedSource::Live { provider, symbol } => match provider {
             ProviderKind::Binance => binance::spawn(&symbol),
+            ProviderKind::BinanceFutures => {
+                binance::spawn_market(&symbol, quantick_feed_binance::BinanceMarket::UsdM)
+            }
             ProviderKind::Hyperliquid => hyperliquid::spawn(&symbol),
             ProviderKind::MetaTrader => metatrader::spawn(&symbol, mt5_settings, clock_cache_dir),
         },

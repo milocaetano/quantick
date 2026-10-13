@@ -23,6 +23,13 @@ pub enum BookError {
         /// Final update id carried by the received event.
         final_update_id: u64,
     },
+    /// A linked event does not continue the installed book's last event.
+    PreviousUpdateMismatch {
+        /// Last update already represented by the local book.
+        expected: u64,
+        /// Predecessor named by the received event.
+        got: u64,
+    },
     /// A price was zero or negative.
     InvalidPrice {
         /// Side being installed/applied, or `None` when caught by the
@@ -81,6 +88,10 @@ impl std::fmt::Display for BookError {
                 write_side(f, *side)?;
                 write!(f, "price must be positive, got {price}")
             }
+            Self::PreviousUpdateMismatch { expected, got } => write!(
+                f,
+                "order-book sequence gap: expected previous update {expected}, got {got}"
+            ),
             Self::InvalidQuantity {
                 side,
                 price,

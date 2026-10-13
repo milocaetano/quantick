@@ -529,7 +529,9 @@ impl AppConfig {
     #[must_use]
     pub fn side_note(&self, id: &str) -> Option<&'static str> {
         match self.provider_of(id)? {
-            ProviderKind::Binance | ProviderKind::Hyperliquid => None,
+            ProviderKind::Binance | ProviderKind::BinanceFutures | ProviderKind::Hyperliquid => {
+                None
+            }
             ProviderKind::MetaTrader => Some(match self.metatrader.side_source {
                 Mt5SideSource::TickRule => "side: inferred (tick rule)",
                 Mt5SideSource::Flags => "side: broker flags",

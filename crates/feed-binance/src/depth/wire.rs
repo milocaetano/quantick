@@ -1,4 +1,4 @@
-//! Pure Binance Spot depth wire decoding.
+//! Pure Binance Spot and USD-M depth wire decoding.
 //!
 //! Binance sends prices and quantities as decimal strings. They are decoded to
 //! [`Decimal`] here, before they reach synchronization or the consumer, so the
@@ -61,6 +61,8 @@ pub struct DepthUpdate {
     pub first_update_id: u64,
     /// Final update id covered by this event (`u`).
     pub final_update_id: u64,
+    /// Futures link to the final id of the previous event (`pu`).
+    pub previous_update_id: Option<u64>,
     /// Absolute bid quantities changed by this event.
     pub bids: Vec<DepthLevel>,
     /// Absolute ask quantities changed by this event.
@@ -74,6 +76,19 @@ impl DepthUpdate {
     ///
     /// Returns [`BookError`] if a level violates the generic domain rules.
     pub fn to_book_delta(&self) -> Result<BookDelta, BookError> {
+        let delta = self.to_snapshot_bridge_delta()?;
+        Ok(match self.previous_update_id {
+            Some(previous) => delta.with_previous_update_id(previous),
+            None => delta,
+        })
+    }
+
+    /// Snapshot bootstrap proves range overlap instead of the stream's
+    /// predecessor link, which can precede the snapshot. Wire IDs stay exact.
+    ///
+    /// # Errors
+    /// Returns [`BookError`] for invalid levels.
+    pub fn to_snapshot_bridge_delta(&self) -> Result<BookDelta, BookError> {
         Ok(BookDelta::new(
             self.first_update_id,
             self.final_update_id,
@@ -180,6 +195,8 @@ struct RawUpdate {
     first_update_id: u64,
     #[serde(rename = "u")]
     final_update_id: u64,
+    #[serde(rename = "pu", default)]
+    previous_update_id: Option<u64>,
     #[serde(rename = "b")]
     bids: Vec<[String; 2]>,
     #[serde(rename = "a")]
@@ -267,6 +284,7 @@ pub fn parse_update(json: &str) -> Result<DepthUpdate, DepthWireError> {
         symbol: raw.symbol,
         first_update_id: raw.first_update_id,
         final_update_id: raw.final_update_id,
+        previous_update_id: raw.previous_update_id,
         bids: parse_levels(raw.bids, "bid")?,
         asks: parse_levels(raw.asks, "ask")?,
     })

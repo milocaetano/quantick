@@ -15,7 +15,7 @@ use tracing::{error, info, warn};
 
 use quantick_engine::Trade;
 use quantick_feed_binance::{
-    BINANCE_WS_BASE, Backoff, BinanceHttp, BinanceKlineHttp, KLINE_INTERVAL_1D, KLINE_INTERVAL_1M,
+    Backoff, BinanceHttp, BinanceKlineHttp, BinanceMarket, KLINE_INTERVAL_1D, KLINE_INTERVAL_1M,
     ONE_MINUTE_MS, agg_trade_url, backfill, backfill_before,
     depth::{
         BinanceDepthHttp, DepthEvent, DepthSessionConfig, MAX_DEPTH_LIMIT, run_depth_with_reconnect,
@@ -46,14 +46,20 @@ pub(crate) struct BinanceSource {
 /// Start the Binance feed for `symbol` on a background thread.
 #[must_use]
 pub fn spawn(symbol: &str) -> FeedHandle {
+    spawn_market(symbol, BinanceMarket::Spot)
+}
+
+/// Start an independent Spot or USD-M market session.
+#[must_use]
+pub fn spawn_market(symbol: &str, market: BinanceMarket) -> FeedHandle {
     let (tx, rx) = mpsc::channel(4096);
     let (book_tx, book_rx) = mpsc::channel(BOOK_EVENT_CHANNEL_CAPACITY);
     let (notice_tx, notice_rx) = mpsc::channel(NOTICE_CHANNEL_CAPACITY);
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
-    let symbol = symbol.to_string();
+    let symbol = market.display_symbol(symbol);
     let source = BinanceSource {
-        http: BinanceHttp::new(),
-        url: agg_trade_url(BINANCE_WS_BASE, &symbol),
+        http: BinanceHttp::for_market(market),
+        url: agg_trade_url(market.trade_ws_base(), &market.wire_symbol(&symbol)),
         // Fixed seed keeps a single desktop client's retry reproducible.
         backoff: Backoff::for_feed(0x9E37_79B9_7F4A_7C15),
     };
@@ -74,7 +80,13 @@ pub fn spawn(symbol: &str) -> FeedHandle {
         notices: notice_rx,
         // Every aggTrade is an execution carrying its real size, and the venue
         // answers the same for every symbol it lists — nothing to narrow later.
-        capabilities: super::fixed_capabilities(ProviderKind::Binance.capabilities()),
+        capabilities: super::fixed_capabilities(
+            match market {
+                BinanceMarket::Spot => ProviderKind::Binance,
+                BinanceMarket::UsdM => ProviderKind::BinanceFutures,
+            }
+            .capabilities(),
+        ),
         // A web-socket venue stamps a trade and quantick reads it: there is no
         // hop between those two to attribute a delay to.
         latency: super::unsplit_latency(),
@@ -92,6 +104,7 @@ pub(crate) async fn feed_task(
     source: BinanceSource,
 ) {
     let BinanceSource { http, url, backoff } = source;
+    let market = http.market();
     // 1. Backfill recent history so the chart opens populated. Remember the
     //    earliest agg_id so we can page further back on demand.
     let ControlFlow::Continue(earliest_id) = initial_backfill(&http, &symbol, &tx).await else {
@@ -117,7 +130,7 @@ pub(crate) async fn feed_task(
     let mut feed = BinanceLoop {
         // Candles come off a different endpoint with a different paging rule,
         // so they get their own client rather than overloading the aggTrade one.
-        klines: BinanceKlineHttp::new(),
+        klines: BinanceKlineHttp::for_market(market),
         http,
         symbol,
         tx,
@@ -312,6 +325,7 @@ impl BinanceLoop {
                 stop_book_capture(&mut self.book_capture, &self.symbol, stop_reason).await;
                 self.book_capture = Some(start_book_capture(
                     &self.symbol,
+                    self.http.market(),
                     initial_generation,
                     self.snapshot_limit,
                     &self.book_tx,
@@ -346,14 +360,16 @@ struct BookCaptureTask {
 /// Start one independently cancellable depth reconnect loop.
 fn start_book_capture(
     symbol: &str,
+    market: BinanceMarket,
     initial_generation: u64,
     snapshot_limit: u16,
     events: &mpsc::Sender<DepthEvent>,
 ) -> BookCaptureTask {
     let symbol = symbol.to_string();
     let events = events.clone();
-    let source = BinanceDepthHttp::new();
+    let source = BinanceDepthHttp::for_market(market);
     let config = DepthSessionConfig {
+        market,
         snapshot_limit,
         initial_generation,
         ..DepthSessionConfig::default()
@@ -373,7 +389,15 @@ fn start_book_capture(
         "starting synchronized Binance book capture"
     );
     let handle = tokio::spawn(async move {
-        run_depth_with_reconnect(BINANCE_WS_BASE, &symbol, &source, &events, config, backoff).await;
+        run_depth_with_reconnect(
+            market.depth_ws_base(),
+            &symbol,
+            &source,
+            &events,
+            config,
+            backoff,
+        )
+        .await;
         info!(
             target: "quantick::app",
             schema_version = 1_u8,

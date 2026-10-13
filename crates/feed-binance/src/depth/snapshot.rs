@@ -63,6 +63,7 @@ pub trait DepthSnapshotSource {
 pub struct BinanceDepthHttp {
     base_url: String,
     client: reqwest::Client,
+    market: crate::BinanceMarket,
 }
 
 impl BinanceDepthHttp {
@@ -75,9 +76,22 @@ impl BinanceDepthHttp {
     /// Source pointing at a custom base URL.
     #[must_use]
     pub fn with_base_url(base_url: impl Into<String>) -> Self {
+        Self::with_market_base(crate::BinanceMarket::Spot, base_url)
+    }
+
+    /// Public depth source for this market.
+    #[must_use]
+    pub fn for_market(market: crate::BinanceMarket) -> Self {
+        Self::with_market_base(market, market.rest_base())
+    }
+
+    /// Market routing with a custom origin for transport fixtures.
+    #[must_use]
+    pub fn with_market_base(market: crate::BinanceMarket, base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
             client: reqwest::Client::new(),
+            market,
         }
     }
 }
@@ -94,8 +108,9 @@ impl DepthSnapshotSource for BinanceDepthHttp {
         symbol: &str,
         limit: u16,
     ) -> Result<DepthSnapshot, DepthSnapshotError> {
-        let limit = limit.clamp(1, MAX_DEPTH_LIMIT);
-        let url = format!("{}/api/v3/depth", self.base_url);
+        let limit = limit.clamp(1, self.market.max_depth());
+        let url = format!("{}{}/depth", self.base_url, self.market.rest_prefix());
+        let wire_symbol = self.market.wire_symbol(symbol);
         debug!(
             target: "quantick::depth",
             schema_version = 1_u8,
@@ -108,7 +123,10 @@ impl DepthSnapshotSource for BinanceDepthHttp {
         let response = self
             .client
             .get(url)
-            .query(&[("symbol", symbol), ("limit", &limit.to_string())])
+            .query(&[
+                ("symbol", wire_symbol.as_str()),
+                ("limit", &limit.to_string()),
+            ])
             .send()
             .await
             .map_err(|error| DepthSnapshotError::Transport(error.to_string()))?;
