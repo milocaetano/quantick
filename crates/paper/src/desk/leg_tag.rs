@@ -18,7 +18,7 @@
 //! opens.
 
 use quantick_engine::Side;
-use quantick_sim::{BracketTarget, signed_points};
+use quantick_trading::{BracketTarget, signed_points};
 use rust_decimal::Decimal;
 
 use crate::account::Leg;

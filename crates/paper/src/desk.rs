@@ -16,7 +16,7 @@
 //! state this holds.
 
 use quantick_engine::Side;
-use quantick_sim::{Bracket, EntryKind};
+use quantick_trading::{Bracket, EntryKind};
 use rust_decimal::Decimal;
 
 use crate::PaperAccount;
