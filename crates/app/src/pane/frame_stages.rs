@@ -289,6 +289,16 @@ impl<'a> FlowFrame<'a> {
         header: Option<egui::Rect>,
     ) -> Option<egui::Rect> {
         let mut bounds = None;
+        let tick_regions = owner
+            .filter(|owner| {
+                owner.flow_execution_replaces_history()
+                    && owner.cached_config().volume_dots.tick_bubbles.is_some()
+            })
+            .map(|_| {
+                self.regional
+                    .as_ref()
+                    .map_or(&[][..], |(_, drawing)| drawing.plan.regions.as_slice())
+            });
         if let Some(owner) = owner
             && let Some(projection) = self.projection.as_deref()
         {
@@ -302,14 +312,20 @@ impl<'a> FlowFrame<'a> {
                 background: self.background,
                 lane_width: self.lane_width,
                 legend_inset,
+                tick_regions,
                 bounds: &mut bounds,
             });
         }
         if let Some(owner) = owner.filter(|owner| owner.flow_execution_replaces_history()) {
             let history = self.rect.with_max_x(self.rect.right() - self.lane_width);
-            let top = bounds.map_or(history.top() + FLOW_CAPTION_TOP_PX + legend_inset, |rect| {
-                rect.bottom() + FLOW_CAPTION_GAP_PX
+            let local_bounds = bounds.filter(|rect| {
+                tick_regions.is_none()
+                    || (rect.left() < history.right() && rect.right() > history.left())
             });
+            let top = local_bounds
+                .map_or(history.top() + FLOW_CAPTION_TOP_PX + legend_inset, |rect| {
+                    rect.bottom() + FLOW_CAPTION_GAP_PX
+                });
             if let Some(caption) = crate::orderflow_render::flow_caption(
                 self.painter,
                 history,
@@ -317,7 +333,7 @@ impl<'a> FlowFrame<'a> {
                 owner.flow_execution_frame(),
                 owner.flow_execution_progress(),
                 owner.legend_visible(),
-                owner.cached_config().volume_dots.tick_bubbles.is_some(),
+                tick_regions,
             ) {
                 bounds = Some(bounds.map_or(caption, |rect| rect.union(caption)));
             }

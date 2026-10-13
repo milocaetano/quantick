@@ -2,6 +2,20 @@
 
 use super::{BubbleAsset, FeedConfig, ProviderKind};
 
+impl FeedConfig {
+    /// The pre-scoping key whose saved look an existing BTC market owned.
+    /// USD-M is a new market and must never inherit Spot's former settings.
+    pub(crate) fn legacy_btc_key(&self, symbol: &str) -> Option<String> {
+        if self.provider == ProviderKind::BinanceFutures || scoped_asset(self, symbol).is_none() {
+            return None;
+        }
+        Some(
+            self.declared_asset(symbol)
+                .map_or_else(|| symbol.to_owned(), |asset| asset.key),
+        )
+    }
+}
+
 pub(super) fn scoped_asset(feed: &FeedConfig, symbol: &str) -> Option<BubbleAsset> {
     let symbol = symbol.to_ascii_uppercase();
     if symbol != "BTCUSDT" && symbol != "BTCUSDT.P" {

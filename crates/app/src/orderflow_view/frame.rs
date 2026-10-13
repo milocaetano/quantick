@@ -26,8 +26,8 @@ use crate::chart::PriceScale;
 use crate::live_strip;
 use crate::orderflow_render::{
     OrderflowRenderStyle, ProjectedLayout, RenderContext, draw_aggression_bubbles,
-    draw_compact_legend, draw_heatmap_background, draw_liquidity_events, draw_live_lane_marks,
-    theme_bubble_rgb,
+    draw_compact_legend, draw_compact_legend_avoiding, draw_heatmap_background,
+    draw_liquidity_events, draw_live_lane_marks, theme_bubble_rgb,
 };
 use crate::orderflow_worker::BookCommand;
 use crate::viewport::Viewport;
@@ -311,8 +311,9 @@ impl OrderflowView {
         canvas_background: egui::Color32,
         lane_width_px: f32,
         top_inset_px: f32,
+        tick_regions: Option<&[quantick_chart::flow_execution::FlowRegionVisual]>,
     ) -> Option<egui::Rect> {
-        let layout = ProjectedLayout::new(
+        let mut layout = ProjectedLayout::new(
             chart_rect,
             viewport,
             total_bars,
@@ -351,8 +352,11 @@ impl OrderflowView {
             style.aggression_layer = false;
             style.lane_aggression_layer = false;
         }
+        if tick_regions.is_some() && !style.live_lane.tape_only {
+            layout.chart_rect = chart_rect.with_max_x(chart_rect.right() - lane_width_px);
+        }
         let context = RenderContext::new(&frame.projection, layout, &style);
-        draw_compact_legend(painter, &context)
+        draw_compact_legend_avoiding(painter, &context, tick_regions)
     }
 
     /// `right_inset_px` is the room another piece of chrome has already claimed

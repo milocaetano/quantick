@@ -197,6 +197,124 @@ fn migration_preserves_an_existing_scoped_override() {
     assert!(other.saves_changes());
 }
 
+fn family_config() -> AppConfig {
+    let mut config = config();
+    for feed in &mut config.feeds {
+        if matches!(feed.id.as_str(), "binance" | "hyperliquid") {
+            feed.symbol_bubble_presets.remove("BTCUSDT");
+            feed.symbol_bubble_presets
+                .insert("BTC*".into(), "default".into());
+        }
+    }
+    config
+}
+
+#[test]
+fn family_customizations_migrate_once_without_sharing_later_edits_or_resets() {
+    let dir = ScratchDir::new("btc-family-migration");
+    let path = dir.join(ASSETS_FILE);
+    let config = family_config();
+    let mut file = AssetBubblesFile::default();
+    let mut legacy =
+        AssetBubbles::declared(bubble_presets::embedded().get("default").unwrap(), false);
+    legacy.look.bubbles.max_radius = 27.0;
+    legacy.look.bubbles.buy_color = Some([20, 210, 80]);
+    legacy.look.bubbles.sell_color = Some([230, 60, 70]);
+    file.assets.insert("BTC*".into(), legacy.clone());
+    save_to(&path, &file).unwrap();
+    let store = AssetBubblesStore::load(path.clone()).shared();
+    let (mut spot, opened) = bind(&store, &config, "binance", "BTCUSDT");
+    let (mut other, other_opened) = bind(&store, &config, "hyperliquid", "BTCUSDT");
+    assert_eq!(opened, legacy);
+    assert_eq!(other_opened, legacy);
+    let mut edited = legacy.clone();
+    edited.look.bubbles.max_radius = 39.0;
+    spot.note_edit();
+    assert!(spot.file(edited.clone()));
+    assert_eq!(other.adoption(), None);
+    assert_eq!(store.borrow_mut().flush(), Some(Ok(())));
+    let restart = AssetBubblesStore::load(path.clone()).shared();
+    assert_eq!(bind(&restart, &config, "binance", "BTCUSDT").1, edited);
+    assert_eq!(bind(&restart, &config, "hyperliquid", "BTCUSDT").1, legacy);
+    assert_ne!(
+        bind(&restart, &config, "binance-futures", "BTCUSDT.p").1,
+        legacy
+    );
+    spot.note_edit();
+    assert!(spot.file(spot.declared.clone()));
+    other.note_edit();
+    assert!(other.file(other.declared.clone()));
+    assert_eq!(store.borrow_mut().flush(), Some(Ok(())));
+    let restart = AssetBubblesStore::load(path).shared();
+    assert_eq!(
+        bind(&restart, &config, "binance", "BTCUSDT").1,
+        spot.declared
+    );
+    assert_eq!(
+        bind(&restart, &config, "hyperliquid", "BTCUSDT").1,
+        other.declared
+    );
+    assert_eq!(
+        restart.borrow_mut().flush(),
+        None,
+        "migration is not repeated"
+    );
+}
+
+#[test]
+fn family_save_off_migrates_with_or_without_a_saved_look_and_scoped_choices_win() {
+    for saved in [false, true] {
+        let dir = ScratchDir::new("btc-family-save-off");
+        let path = dir.join(ASSETS_FILE);
+        let config = family_config();
+        let mut file = AssetBubblesFile::default();
+        file.save_changes_off.insert("BTC*".into());
+        if saved {
+            let mut look =
+                AssetBubbles::declared(bubble_presets::embedded().get("default").unwrap(), false);
+            look.look.bubbles.max_radius = 27.0;
+            file.assets.insert("BTC*".into(), look);
+        }
+        save_to(&path, &file).unwrap();
+        let store = AssetBubblesStore::load(path.clone()).shared();
+        for feed in ["binance", "hyperliquid"] {
+            let (mut binding, opened) = bind(&store, &config, feed, "BTCUSDT");
+            assert!(!binding.saves_changes());
+            let mut edit = opened;
+            edit.look.bubbles.max_radius = 41.0;
+            binding.note_edit();
+            assert!(!binding.file(edit));
+        }
+        assert_eq!(store.borrow_mut().flush(), Some(Ok(())));
+        let restart = AssetBubblesStore::load(path).shared();
+        for feed in ["binance", "hyperliquid"] {
+            let (binding, opened) = bind(&restart, &config, feed, "BTCUSDT");
+            assert!(!binding.saves_changes());
+            assert_ne!(opened.look.bubbles.max_radius, 41.0);
+        }
+    }
+}
+
+#[test]
+fn family_migration_preserves_scoped_look_and_save_off_only_entries() {
+    let config = family_config();
+    let mut store = AssetBubblesStore::default();
+    let legacy =
+        AssetBubbles::declared(bubble_presets::embedded().get("dense tape").unwrap(), false);
+    let scoped = AssetBubbles::declared(bubble_presets::embedded().get("default").unwrap(), false);
+    store.file.assets.insert("BTC*".into(), legacy);
+    store.file.assets.insert("BTCUSDT".into(), scoped.clone());
+    let other_key = config.bubble_asset("hyperliquid", "BTCUSDT").key;
+    store.file.save_changes_off.insert(other_key.clone());
+    let store = store.shared();
+    let (spot, opened) = bind(&store, &config, "binance", "BTCUSDT");
+    assert_eq!(opened, scoped);
+    assert!(spot.saves_changes());
+    let (other, _) = bind(&store, &config, "hyperliquid", "BTCUSDT");
+    assert!(!other.saves_changes());
+    assert!(store.borrow().get(&other_key).is_none());
+}
+
 #[test]
 fn tick_calibration_survives_restart_without_replacing_a_saved_tape() {
     let dir = ScratchDir::new("btc-tick-settings");

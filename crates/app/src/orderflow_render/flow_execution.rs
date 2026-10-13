@@ -309,8 +309,9 @@ pub(crate) fn flow_caption(
     frame: Option<&FlowTapeFrame>,
     progress: FlowProgress,
     legend_visible: bool,
-    tick: bool,
+    tick_regions: Option<&[quantick_chart::flow_execution::FlowRegionVisual]>,
 ) -> Option<egui::Rect> {
+    let tick = tick_regions.is_some();
     let detail = quantick_orderflow::projection::flow_tape::styled_caption_text(
         frame,
         progress,
@@ -346,10 +347,18 @@ pub(crate) fn flow_caption(
         );
     }
     let galley = painter.layout_job(job);
-    let rect = egui::Rect::from_min_size(
+    let mut rect = egui::Rect::from_min_size(
         egui::pos2(history.left() + FLOW_CAPTION_INSET_PX, top),
         galley.size(),
     );
+    if let Some(regions) = tick_regions {
+        let placed = quantick_chart::flow_execution::place_flow_chrome(
+            [history.min.into(), history.max.into()],
+            [rect.min.into(), rect.max.into()],
+            regions,
+        )?;
+        rect = egui::Rect::from_min_max(placed[0].into(), placed[1].into());
+    }
     painter
         .with_clip_rect(history)
         .galley(rect.min, galley, crate::theme::TEXT_MUTED);

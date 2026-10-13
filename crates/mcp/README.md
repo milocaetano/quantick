@@ -50,13 +50,18 @@ live market transport, and `feed.deal_recording.set`, which starts or stops a
 MetaTrader B3 tab's deal recording (the REC control, as a call). None of them
 is destructive.
 
-`feed.reload` is, and it sits outside what this adapter can reach: it also
-requires the separately sensitive `cockpit.recover`, declares
-`reversible: false` with the risk flag `timeline_rebuilt`, and closes any open
-paper position and disarms every strategy. `main.rs` asks for `cockpit` and
-`cockpit.layout` only, so a cockpit connection through `quantick-mcp` cannot
-invoke it — the contract comment on `COCKPIT_RECOVER_PERMISSION_ID` is the
-reason it is a separate permission at all.
+`feed.reload` and `feed.source.set` rebuild the timeline, close open paper
+positions and disarm strategies. They also require the separately sensitive
+`cockpit.recover` permission. A default cockpit connection requests only
+`cockpit` and `cockpit.layout`; recovery remains excluded. To request recovery,
+launch `quantick-mcp --profile cockpit --allow-recovery` and separately grant
+`cockpit.recover` in the window's Local agent access panel. The flag is valid
+only with the cockpit profile and never grants access on its own. The normal
+handshake intersects the request with the window's grant; `quantick_describe`
+reports the effective scopes. Without either opt-in, these calls are refused.
+Inspect `feed.status.sources` for configured source choices before invoking
+`feed.source.set`; the capability reports source validation, replay refusal,
+and whether a change rebuilt the timeline.
 
 The contract chains a fourth profile, `trader` (place, bracket and cancel
 orders). Its `trade` permission is sensitive with `default_grant: Denied`, the
@@ -84,14 +89,16 @@ selected; with several and no choice the call fails with
 ## Running
 
 ```text
-quantick-mcp [serve] [--profile observer|annotator|cockpit] [--instance <id>] [--instances-dir <path>]
-quantick-mcp setup --client codex|claude [--profile observer|annotator|cockpit]
+quantick-mcp [serve] [--profile observer|analyst|annotator|cockpit] [--allow-recovery] [--instance <id>] [--instances-dir <path>]
+quantick-mcp setup --client codex|claude [--profile observer|analyst|annotator|cockpit] [--allow-recovery]
 ```
 
 `stdout` carries MCP frames only; diagnostics go to `stderr`. `setup` prints
 the registration command for the client (see
 `docs/control-plane/control-contract.md` §13) with this binary's absolute
 path. It writes no configuration file, embeds no token and launches nothing.
+Setup preserves an explicit `--allow-recovery` in the registration command
+and explains the separate window grant and recovery effects.
 
 ## Native chart image: observer setup and real smoke test
 

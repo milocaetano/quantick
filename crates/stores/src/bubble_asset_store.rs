@@ -85,43 +85,44 @@ pub struct AssetBubblesStore {
 }
 
 impl AssetBubblesStore {
-    /// Preserve the formerly shared BTCUSDT customization once, before any
+    /// Preserve the formerly resolved BTC customization once, before any
     /// view can edit it. Already scoped entries win; Futures is a new market.
     fn migrate_btc_venues(&mut self, config: &AppConfig) {
         if self.file.btc_venue_migration_done {
             return;
         }
         self.file.btc_venue_migration_done = true;
-        let legacy = self.file.get("BTCUSDT").cloned();
-        let saving_off = !self.file.saves_changes("BTCUSDT");
+        // Snapshot all old keys before writing any destination: migrating a
+        // family to Spot must not become another venue's legacy input.
+        let mut migrations = Vec::new();
         for feed in &config.feeds {
-            if matches!(
-                feed.provider,
-                crate::config::ProviderKind::Binance | crate::config::ProviderKind::BinanceFutures
-            ) {
-                continue;
-            }
             for symbol in &feed.symbols {
-                if !symbol.eq_ignore_ascii_case("BTCUSDT") {
+                let Some(legacy) = feed.legacy_btc_key(symbol) else {
                     continue;
-                }
-                let key = config.bubble_asset(&feed.id, symbol).key;
-                if self.file.get(&key).is_some() {
-                    continue;
-                }
-                if let Some(settings) = &legacy {
-                    self.file.assets.insert(key.clone(), settings.clone());
-                }
-                if saving_off {
-                    self.file.save_changes_off.insert(key.clone());
-                }
-                if legacy.is_some() || saving_off {
-                    self.unwritten.insert(key);
-                }
+                };
+                migrations.push((
+                    config.bubble_asset(&feed.id, symbol).key,
+                    self.file.get(&legacy).cloned(),
+                    !self.file.saves_changes(&legacy),
+                ));
             }
         }
-        if legacy.is_some() || saving_off {
-            self.pending = true;
+        for (key, legacy, saving_off) in migrations {
+            self.pending |= legacy.is_some() || saving_off;
+            // Either a saved look or a scoped save-off switch is an explicit
+            // destination choice. Neither may be overwritten by migration.
+            if self.file.get(&key).is_some() || !self.file.saves_changes(&key) {
+                continue;
+            }
+            if let Some(settings) = &legacy {
+                self.file.assets.insert(key.clone(), settings.clone());
+            }
+            if saving_off {
+                self.file.save_changes_off.insert(key.clone());
+            }
+            if legacy.is_some() || saving_off {
+                self.unwritten.insert(key);
+            }
         }
     }
     /// Read the store at `path`; a missing file is an empty store.

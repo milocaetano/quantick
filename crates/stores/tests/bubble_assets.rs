@@ -9,6 +9,7 @@ use quantick_stores::bubble_presets::{self, BubblePresetFile};
 use quantick_stores::config::{AppConfig, BubbleAsset};
 
 const NATIVE_PRESET: &str = "mini index regions";
+const BTC_SPOT_PRESET: &str = "Binance BTC Spot spheres";
 
 fn shipped_config() -> AppConfig {
     toml::from_str(include_str!("../../app/config/feeds.toml")).expect("shipped feeds parse")
@@ -56,7 +57,7 @@ fn the_win_family_is_one_asset_declared_by_a_config_pattern() {
     assert_eq!(wdo.preset.as_deref(), Some("live lane pie"));
     let btc = asset("binance", "BTCUSDT");
     assert_eq!(btc.key, "BTCUSDT");
-    assert_eq!(btc.preset, None);
+    assert_eq!(btc.preset.as_deref(), Some(BTC_SPOT_PRESET));
 }
 
 #[test]
@@ -129,7 +130,7 @@ fn a_win_recording_in_a_btc_tab_is_still_the_mini_index() {
     }
     let btc = config.bubble_asset("binance", "BTCUSDT");
     assert_eq!(btc.key, "BTCUSDT");
-    assert_eq!(btc.preset, None);
+    assert_eq!(btc.preset.as_deref(), Some(BTC_SPOT_PRESET));
     let unknown = config.bubble_asset("binance", "NOSUCHSYMBOL");
     assert_eq!(unknown.key, "NOSUCHSYMBOL");
     assert_eq!(unknown.preset, None);
@@ -165,7 +166,7 @@ fn a_pattern_on_one_venue_does_not_capture_another_venues_symbol() {
         .insert("BTC*".to_owned(), "live lane pie".to_owned());
     let btc = config.bubble_asset("binance", "BTCUSDT");
     assert_eq!(btc.key, "BTCUSDT", "Binance's BTCUSDT is its own asset");
-    assert_eq!(btc.preset, None);
+    assert_eq!(btc.preset.as_deref(), Some(BTC_SPOT_PRESET));
     let perp = config.bubble_asset("hyperliquid", "BTC");
     assert_eq!(perp.key, "BTC*");
     assert_eq!(perp.preset.as_deref(), Some("live lane pie"));
@@ -279,13 +280,12 @@ fn a_reloaded_declared_look_is_the_new_baseline() {
     let mut tuned = opened.clone();
     tuned.look.bubbles.max_radius = 33.0;
 
-    // The presets file now declares exactly that look as the default.
-    let active = presets.active.clone();
+    // The presets file now declares exactly that look for this asset.
     let preset = presets
         .presets
         .iter_mut()
-        .find(|preset| preset.name == active)
-        .expect("the active preset");
+        .find(|preset| preset.name == opened.look.name)
+        .expect("the asset's declared preset");
     preset.bubbles.max_radius = 33.0;
     let (fresh, _) = btc
         .refresh_declared(&presets)
@@ -294,7 +294,7 @@ fn a_reloaded_declared_look_is_the_new_baseline() {
     btc.note_edit();
     assert!(!btc.file(tuned), "the new declared look is not an edit");
     assert!(store.borrow().get("BTCUSDT").is_none());
-    assert_eq!(btc.source(), AssetSource::Default);
+    assert_eq!(btc.source(), AssetSource::Declared);
 }
 
 /// Review round 1, finding 4: a reload leaves an asset's own settings alone.

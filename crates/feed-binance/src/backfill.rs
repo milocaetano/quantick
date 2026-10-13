@@ -197,7 +197,8 @@ impl AggTradeSource for BinanceHttp {
 pub struct BackfillBatch {
     /// Executions in ascending aggregate-ID order, without duplicates.
     pub trades: Vec<Trade>,
-    /// Paging reached the USD-M 48-hour retention boundary.
+    /// The returned history reaches the USD-M 48-hour retention boundary.
+    /// False when count trimming leaves older retained executions to load.
     pub retention_limited: bool,
 }
 
@@ -339,7 +340,7 @@ pub async fn backfill_with_boundary<S: AggTradeSource>(
     );
     Ok(BackfillBatch {
         trades,
-        retention_limited,
+        retention_limited: retention_limited && start == 0,
     })
 }
 
@@ -417,7 +418,7 @@ pub async fn backfill_before_with_boundary<S: AggTradeSource>(
     );
     Ok(BackfillBatch {
         trades,
-        retention_limited,
+        retention_limited: retention_limited && start == 0,
     })
 }
 

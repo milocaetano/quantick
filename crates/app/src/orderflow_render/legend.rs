@@ -13,6 +13,7 @@ use crate::orderflow_render::constants::{
     LEGEND_TAPE_ROW_HEIGHT_PX, MAX_LEGEND_TOP_INSET_FRAC,
 };
 use eframe::egui;
+use quantick_chart::flow_execution::flow_chrome_layout;
 use quantick_orderflow::HeatmapTheme;
 use quantick_orderflow::config::legend::{LegendGlyph, legend_entries};
 
@@ -24,6 +25,14 @@ use super::{Palette, add_gradient_rect, draw_dashed_vertical, rgba, thermal_rgb}
 pub(crate) fn draw_compact_legend(
     painter: &egui::Painter,
     context: &RenderContext<'_>,
+) -> Option<egui::Rect> {
+    draw_compact_legend_avoiding(painter, context, None)
+}
+
+pub(crate) fn draw_compact_legend_avoiding(
+    painter: &egui::Painter,
+    context: &RenderContext<'_>,
+    tick_regions: Option<&[quantick_chart::flow_execution::FlowRegionVisual]>,
 ) -> Option<egui::Rect> {
     let style = context.style.sanitized();
     let tape_header = style.live_lane.tape_only && style.live_lane.enabled;
@@ -94,10 +103,10 @@ pub(crate) fn draw_compact_legend(
         (context.layout.chart_rect.width() - outer_margin * 2.0).max(LEGEND_MIN_PANEL_WIDTH_PX),
     );
     let max_content_width = (max_panel_width - inner_margin * 2.0).max(LEGEND_MIN_CONTENT_WIDTH_PX);
-    let flow = flow_layout(&widths, max_content_width, row_height, LEGEND_ENTRY_GAP_PX);
+    let flow = flow_chrome_layout(&widths, max_content_width, row_height, LEGEND_ENTRY_GAP_PX);
     let panel_size = egui::vec2(
-        (flow.size.x + inner_margin * 2.0).min(max_panel_width),
-        flow.size.y + inner_margin * 2.0,
+        (flow.size[0] + inner_margin * 2.0).min(max_panel_width),
+        flow.size[1] + inner_margin * 2.0,
     );
     // The chart header owns the first text row at the top-left, and the pane
     // may have stacked indicator chips under it. Keep the legend below all of
@@ -108,10 +117,19 @@ pub(crate) fn draw_compact_legend(
     } else {
         style.legend_top_inset
     };
-    let panel = egui::Rect::from_min_size(
+    let mut panel = egui::Rect::from_min_size(
         context.layout.chart_rect.left_top() + egui::vec2(outer_margin, outer_margin + top_inset),
         panel_size,
     );
+    if let Some(regions) = tick_regions {
+        let area = context.layout.chart_rect;
+        let placed = quantick_chart::flow_execution::place_flow_chrome(
+            [area.min.into(), area.max.into()],
+            [panel.min.into(), panel.max.into()],
+            regions,
+        )?;
+        panel = egui::Rect::from_min_max(placed[0].into(), placed[1].into());
+    }
     if !tape_header {
         let rounding = egui::Rounding::same(LEGEND_CORNER_RADIUS_PX);
         clip.rect_filled(panel, rounding, palette.legend_background);
@@ -129,7 +147,7 @@ pub(crate) fn draw_compact_legend(
     });
     let origin = panel.left_top() + egui::vec2(inner_margin, inner_margin);
     for (((glyph, _), galley), offset) in entries.iter().zip(galleys).zip(flow.positions) {
-        let item = origin + offset;
+        let item = origin + egui::Vec2::from(offset);
         draw_legend_glyph(&clip, *glyph, item, &palette, style.theme);
         let text_pos = egui::pos2(
             item.x + glyph_width(*glyph) + LEGEND_GLYPH_GAP_PX,
@@ -147,43 +165,6 @@ const fn glyph_width(glyph: LegendGlyph) -> f32 {
         LegendGlyph::Heat => LEGEND_HEAT_WIDTH_PX,
         LegendGlyph::Buy | LegendGlyph::Sell => LEGEND_DOT_WIDTH_PX,
         LegendGlyph::Aligned | LegendGlyph::DepthOnly | LegendGlyph::Gap => LEGEND_BAND_WIDTH_PX,
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct FlowLayout {
-    pub(super) positions: Vec<egui::Vec2>,
-    pub(super) size: egui::Vec2,
-}
-
-pub(super) fn flow_layout(widths: &[f32], max_width: f32, row_height: f32, gap: f32) -> FlowLayout {
-    let max_width = max_width.max(1.0);
-    let row_height = row_height.max(1.0);
-    let gap = gap.max(0.0);
-    let mut positions = Vec::with_capacity(widths.len());
-    let mut x = 0.0;
-    let mut y = 0.0;
-    let mut widest: f32 = 0.0;
-
-    for &raw_width in widths {
-        let width = raw_width.max(0.0);
-        if x > 0.0 && x + width > max_width {
-            widest = widest.max((x - gap).max(0.0));
-            x = 0.0;
-            y += row_height;
-        }
-        positions.push(egui::vec2(x, y));
-        x += width + gap;
-    }
-    widest = widest.max((x - gap).max(0.0)).min(max_width);
-    let height = if widths.is_empty() {
-        0.0
-    } else {
-        y + row_height
-    };
-    FlowLayout {
-        positions,
-        size: egui::vec2(widest, height),
     }
 }
 

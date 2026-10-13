@@ -7,7 +7,7 @@
 // `use super::*`, the root's own. The renderer has since been split into
 // sibling modules, and an item a test names in one of them is `pub(super)`
 // so this sidecar can still reach it - `bubbles::sphere_segments`,
-// `heatmap::gap_marks`, `legend::flow_layout` and their like have no
+// `heatmap::gap_marks` and their like have no
 // production caller outside their own file and carry that visibility for
 // these tests alone. The five glob imports below are how the sidecar sees
 // them; nothing here is `pub(crate)` or wider.
@@ -32,6 +32,7 @@ fn luminance(rgb: [u8; 3]) -> f32 {
 }
 
 mod dot_radii_tests;
+mod flow_chrome;
 mod tape_only_tests;
 mod tape_path_tests;
 mod tape_price_tests;
@@ -134,17 +135,6 @@ fn bubble_area_above_floor_tracks_normalized_quantity() {
     let quarter_area = quarter_quantity_radius.powi(2) - minimum.powi(2);
     let full_area = full_radius.powi(2) - minimum.powi(2);
     assert!((quarter_area / full_area - 0.25).abs() < 1e-5);
-}
-
-#[test]
-fn compact_legend_wraps_without_exceeding_width() {
-    let widths = [90.0, 90.0, 90.0];
-    let layout = flow_layout(&widths, 190.0, 17.0, 3.0);
-    assert_eq!(layout.positions[0], egui::vec2(0.0, 0.0));
-    assert_eq!(layout.positions[1], egui::vec2(93.0, 0.0));
-    assert_eq!(layout.positions[2], egui::vec2(0.0, 17.0));
-    assert!(layout.size.x <= 190.0);
-    assert_eq!(layout.size.y, 34.0);
 }
 
 /// The stretch older than this session's capture used to be a hatched,

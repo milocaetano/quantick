@@ -111,6 +111,56 @@ async fn normal_page_completion_is_not_labelled_retention_limited() {
 }
 
 #[tokio::test]
+async fn trimmed_retention_pages_leave_the_remaining_older_trades_reachable() {
+    for opening in [false, true] {
+        let source = RetainedSource::new(1_550);
+        let batch = if opening {
+            backfill_with_boundary(&source, "BTCUSDT.p", 1_200).await
+        } else {
+            backfill_before_with_boundary(&source, "BTCUSDT.p", 3_001, 1_200).await
+        }
+        .unwrap();
+        assert!(
+            !batch.retention_limited,
+            "the returned prefix has not reached expiry"
+        );
+        assert_eq!(batch.trades.len(), 1_200);
+        assert_eq!(batch.trades.first().unwrap().agg_id, 1_801);
+        let older = backfill_before_with_boundary(&source, "BTCUSDT.p", 1_801, 1_200)
+            .await
+            .unwrap();
+        assert!(older.retention_limited);
+        let ids: Vec<_> = older
+            .trades
+            .iter()
+            .chain(&batch.trades)
+            .map(|trade| trade.agg_id)
+            .collect();
+        assert_eq!(ids, (1_550..=3_000).collect::<Vec<_>>());
+        let exhausted = backfill_before_with_boundary(&source, "BTCUSDT.p", 1_550, 1_200)
+            .await
+            .unwrap();
+        assert!(exhausted.retention_limited);
+        assert!(exhausted.trades.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn an_exact_retained_count_reports_the_returned_boundary() {
+    let source = RetainedSource::new(1_550);
+    for opening in [false, true] {
+        let batch = if opening {
+            backfill_with_boundary(&source, "BTCUSDT.p", 1_451).await
+        } else {
+            backfill_before_with_boundary(&source, "BTCUSDT.p", 3_001, 1_451).await
+        }
+        .unwrap();
+        assert_eq!(batch.trades.first().unwrap().agg_id, 1_550);
+        assert!(batch.retention_limited);
+    }
+}
+
+#[tokio::test]
 async fn a_probe_transport_failure_is_not_misreported_as_expired_history() {
     let mut source = RetainedSource::new(1_550);
     source.failure_at = Some(2_000);

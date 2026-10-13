@@ -46,12 +46,20 @@ mod tests {
 
     #[test]
     fn tick_choices_refuse_other_venues_assets_and_unknown_names() {
-        let config: AppConfig = toml::from_str(crate::config::EMBEDDED_DEFAULT).unwrap();
+        let mut config: AppConfig = toml::from_str(crate::config::EMBEDDED_DEFAULT).unwrap();
+        config
+            .feeds
+            .iter_mut()
+            .find(|feed| feed.id == "hyperliquid")
+            .unwrap()
+            .symbols
+            .push("BTCUSDT".to_owned());
         for (feed, symbol, allowed) in [
             ("binance", "BTCUSDT", true),
             ("binance-futures", "BTCUSDT.p", true),
             ("binance", "ETHUSDT", false),
             ("hyperliquid", "BTCUSDT", false),
+            ("hyperliquid", "BTC", false),
             ("metatrader-b3", "WINV26", false),
         ] {
             let presets = bubble_presets::embedded();
@@ -75,5 +83,15 @@ mod tests {
             assert_eq!(look.tick_style(None).is_ok(), allowed);
             assert!(look.tick_style(Some("missing")).is_err());
         }
+    }
+
+    #[test]
+    fn a_recording_keeps_its_configured_owner_when_the_tab_does_not_offer_it() {
+        let config: AppConfig = toml::from_str(crate::config::EMBEDDED_DEFAULT).unwrap();
+        assert_eq!(
+            config.bubble_asset("hyperliquid", "BTCUSDT"),
+            config.bubble_asset("binance", "BTCUSDT")
+        );
+        assert_ne!(config.bubble_asset("hyperliquid", "BTC").key, "BTCUSDT");
     }
 }

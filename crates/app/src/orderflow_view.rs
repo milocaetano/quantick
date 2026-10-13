@@ -2219,6 +2219,7 @@ mod tests {
                             egui::Color32::BLACK,
                             0.0,
                             crate::orderflow_render::LEGEND_HEADER_CLEARANCE_PX,
+                            None,
                         );
                     } else {
                         view.draw_aggressions(

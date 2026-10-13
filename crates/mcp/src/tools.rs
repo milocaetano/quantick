@@ -147,7 +147,13 @@ const DETACH_RESULT_SCHEMA: &str =
 /// contract §8 for the ceiling, because a cached tool list must never promise
 /// less caution than the strongest capability it could reach.
 pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
-    let invoke_annotations = match profile_ceiling {
+    tools_with_recovery(profile_ceiling, false)
+}
+
+/// Recovery is an explicit cockpit opt-in, so its cached generic tool hint
+/// must include timeline rebuilds and paper-position closure even before a grant.
+pub fn tools_with_recovery(profile_ceiling: &str, allow_recovery: bool) -> Vec<Tool> {
+    let mut invoke_annotations = match profile_ceiling {
         // Both read-only ceilings answer the same way: the analyst reads
         // more, and reading more is still reading.
         "observer" | "analyst" => ToolAnnotations {
@@ -185,6 +191,9 @@ pub fn tools(profile_ceiling: &str) -> Vec<Tool> {
             open_world_hint: true,
         },
     };
+    if profile_ceiling == COCKPIT_PROFILE && allow_recovery {
+        invoke_annotations.destructive_hint = true;
+    }
     let mut tools = vec![
         Tool {
             name: DESCRIBE.to_owned(),
