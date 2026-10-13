@@ -233,6 +233,7 @@ impl<'a> FlowFrame<'a> {
                 geometry,
                 self.background,
                 backing,
+                owner.cached_config().volume_dots.tick_bubbles,
             );
             drawing.paint(
                 self.painter,
@@ -312,6 +313,7 @@ impl<'a> FlowFrame<'a> {
                 owner.flow_execution_frame(),
                 owner.flow_execution_progress(),
                 owner.legend_visible(),
+                owner.cached_config().volume_dots.tick_bubbles.is_some(),
             ) {
                 bounds = Some(bounds.map_or(caption, |rect| rect.union(caption)));
             }

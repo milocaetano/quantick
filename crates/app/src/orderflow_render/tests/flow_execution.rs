@@ -294,6 +294,7 @@ fn hiding_flow_legend_keeps_offset_and_exception_facts_but_hides_colour_key() {
             Some(&frame),
             FlowProgress::default(),
             false,
+            false,
         );
     });
     let texts = output

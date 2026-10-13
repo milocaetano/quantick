@@ -1,5 +1,5 @@
 //! Compact history execution groups on the FLOW candle coordinate system.
-use super::bubbles::{SphereShading, add_sector};
+use super::bubbles::{BubbleColors, SphereShading, add_sector};
 use crate::orderflow_render::constants::{
     FLOW_BUY, FLOW_CAPTION_FONT_PX, FLOW_CAPTION_INSET_PX, FLOW_CAPTION_WRAP_MARGIN_PX, FLOW_SELL,
     PIE_START_ANGLE,
@@ -73,16 +73,36 @@ pub(super) fn flow_mesh(
 pub(crate) struct FlowDrawing {
     pub plan: FlowPresentation,
     pub(super) meshes: [egui::Mesh; 2],
+    labels: Vec<quantick_chart::flow_execution::FlowQuantityLabel>,
 }
 impl FlowDrawing {
+    #[cfg(test)]
     pub fn new(
         frame: &FlowTapeFrame,
         plan: FlowPresentation,
         background: egui::Color32,
         backing: Option<egui::Color32>,
     ) -> Self {
+        Self::styled(frame, plan, background, backing, None)
+    }
+
+    pub fn styled(
+        frame: &FlowTapeFrame,
+        plan: FlowPresentation,
+        background: egui::Color32,
+        backing: Option<egui::Color32>,
+        tick: Option<quantick_orderflow::TickBubbleStyle>,
+    ) -> Self {
         use quantick_orderflow::config::dressing::flow::{colors, ordinary_colors};
         let mut meshes = [egui::Mesh::default(), egui::Mesh::default()];
+        let tick_style = tick.map(quantick_orderflow::TickBubbleStyle::bubbles);
+        let tick_colors = tick_style.as_ref().map(|style| {
+            BubbleColors::resolve(
+                &super::palette_for_theme(quantick_orderflow::HeatmapTheme::default()),
+                style,
+            )
+        });
+        let labels = plan.quantity_labels(frame, tick);
         let colors = [
             colors(None, true, false),
             colors(Some(background.to_array()), false, true),
@@ -92,7 +112,9 @@ impl FlowDrawing {
             let dot = &frame.dots[region.dot_index];
             let disc = region.disc;
             let mesh = &mut meshes[usize::from(region.role == FlowRegionRole::Peak)];
-            let [buy_color, sell_color] = if region.role == FlowRegionRole::Peak {
+            let [buy_color, sell_color] = if let Some(colors) = tick_colors {
+                [colors.buy, colors.sell]
+            } else if region.role == FlowRegionRole::Peak {
                 ordinary_colors(
                     backing.unwrap_or(background).to_array(),
                     frame.ordinary_region_opacity(dot),
@@ -115,13 +137,23 @@ impl FlowDrawing {
                     disc.radius,
                     angle as f32,
                     sweep as f32,
-                    SphereShading::flat(color),
-                    0.0,
+                    tick_style
+                        .as_ref()
+                        .map_or(SphereShading::flat(color), |style| {
+                            SphereShading::sphere(color, style).faded(style.opacity)
+                        }),
+                    tick_style
+                        .as_ref()
+                        .map_or(0.0, |_| super::bubbles::SPHERE_LIGHT_OFFSET),
                 );
                 angle += sweep;
             }
         }
-        Self { plan, meshes }
+        Self {
+            plan,
+            meshes,
+            labels,
+        }
     }
 
     pub fn paint(&self, painter: &egui::Painter, history: egui::Rect, foreground: bool) {
@@ -130,6 +162,33 @@ impl FlowDrawing {
             painter
                 .with_clip_rect(history)
                 .add(egui::Shape::mesh(mesh.clone()));
+        }
+        if foreground {
+            let clip = painter.with_clip_rect(history);
+            for label in &self.labels {
+                let radius = label.radius;
+                let galley = clip.layout_no_wrap(
+                    label.text.clone(),
+                    egui::FontId::proportional(
+                        (radius * super::constants::LABEL_FONT_SCALE).clamp(
+                            super::constants::LABEL_MIN_FONT_PX,
+                            super::constants::LABEL_MAX_FONT_PX,
+                        ),
+                    ),
+                    crate::theme::TEXT_PRIMARY,
+                );
+                if galley.size().x <= radius * super::constants::LABEL_MAX_WIDTH_SCALE
+                    && galley.size().y <= radius * super::constants::LABEL_MAX_HEIGHT_SCALE
+                {
+                    let pos = egui::Pos2::from(label.center) - galley.size() / 2.0;
+                    clip.galley_with_override_text_color(
+                        pos + super::constants::LABEL_SHADOW_OFFSET_PX,
+                        galley.clone(),
+                        egui::Color32::from_black_alpha(super::constants::LABEL_SHADOW_ALPHA),
+                    );
+                    clip.galley(pos, galley, crate::theme::TEXT_PRIMARY);
+                }
+            }
         }
     }
 }
@@ -154,6 +213,7 @@ pub(crate) fn flow_caption(
     frame: Option<&FlowTapeFrame>,
     progress: FlowProgress,
     legend_visible: bool,
+    tick: bool,
 ) -> Option<egui::Rect> {
     let detail =
         quantick_orderflow::projection::flow_tape::caption_text(frame, progress, legend_visible);
@@ -169,9 +229,10 @@ pub(crate) fn flow_caption(
     append("FLOW", crate::theme::TEXT_MUTED);
     if legend_visible {
         append(" \u{00b7} ", crate::theme::TEXT_MUTED);
-        append("Buy", FLOW_BUY);
+        let colors = super::palette_for_theme(quantick_orderflow::HeatmapTheme::default());
+        append("Buy", if tick { colors.buy } else { FLOW_BUY });
         append(" / ", crate::theme::TEXT_MUTED);
-        append("Sell", FLOW_SELL);
+        append("Sell", if tick { colors.sell } else { FLOW_SELL });
     }
     append(" \u{00b7} offset \u{2196}", crate::theme::TEXT_MUTED);
     if let Some(detail) = detail {

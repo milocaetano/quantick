@@ -125,6 +125,9 @@ pub struct BubblePreset {
     /// Every visual choice for the bubbles themselves.
     #[serde(default)]
     pub bubbles: BubbleStyle,
+    /// Optional tick-chart sphere appearance. Absent preserves regional FLOW.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tick_bubbles: Option<quantick_orderflow::TickBubbleStyle>,
     /// The live lane's own width, window, clustering and radius scale — how
     /// the tape *looks*, never whether its layers are drawn. See
     /// [`Self::apply_to`].
@@ -150,6 +153,7 @@ impl BubblePreset {
             region_rows: config.bubble_region_rows,
             region_ms: config.bubble_region_ms,
             bubbles: config.bubbles.clone(),
+            tick_bubbles: config.volume_dots.tick_bubbles,
             live_lane: LiveLaneStyle {
                 // A preset is a look, so it records none of the tape's
                 // visibility — neither whether the tape is on the canvas nor
@@ -174,6 +178,7 @@ impl BubblePreset {
         config.bubble_dust_merge_ms = self.dust_merge_ms;
         config.bubble_candle_summary = self.candle_summary;
         config.volume_dots = quantick_orderflow::VolumeDotStyle {
+            tick_bubbles: self.tick_bubbles,
             enabled: self.overlap_merge,
             full_quantity: quantick_orderflow::sane_volume_dot_full_quantity(
                 self.volume_dot_full_quantity,
@@ -216,6 +221,9 @@ impl BubblePreset {
             .region_ms
             .clamp(0, quantick_orderflow::config::MAX_BUBBLE_REGION_MS);
         self.bubbles.sanitize();
+        if let Some(tick) = &mut self.tick_bubbles {
+            tick.sanitize();
+        }
         self.live_lane.sanitize();
     }
 }
@@ -634,6 +642,7 @@ mod tests {
         let mut config = HeatmapConfig {
             bubble_cluster_ms: 50,
             volume_dots: quantick_orderflow::VolumeDotStyle {
+                tick_bubbles: None,
                 enabled: true,
                 full_quantity: 2_500.0,
                 auto_full: false,
@@ -905,6 +914,7 @@ name = "old"
         let mut file = BubblePresetFile::default();
         file.upsert(BubblePreset {
             name: "default".to_owned(),
+            tick_bubbles: None,
             cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
             dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,
             candle_summary: false,

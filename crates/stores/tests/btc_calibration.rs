@@ -182,13 +182,29 @@ fn report_btc_projection_calibration() {
     for (name, csv, _) in recordings() {
         let prints = trades(csv);
         let perpetual = name.starts_with("perpetual");
-        for reference in [
-            0.0,
-            if perpetual { 30.0 } else { 2.0 },
-            if perpetual { 60.0 } else { 5.0 },
-        ] {
+        let candidates = if perpetual {
+            vec![
+                (0.0, 15.0),
+                (30.0, 40.0),
+                (60.0, 40.0),
+                (80.0, 48.0),
+                (120.0, 48.0),
+                (160.0, 48.0),
+            ]
+        } else {
+            vec![
+                (0.0, 15.0),
+                (2.0, 30.0),
+                (5.0, 36.0),
+                (8.0, 40.0),
+                (12.0, 48.0),
+            ]
+        };
+        for (reference, cap) in candidates {
             let native = reference > 0.0;
-            let config = config(native, reference);
+            let mut config = config(native, reference);
+            config.bubbles.max_radius = cap;
+            config.bubbles.label_min_radius = 10.0;
             let (marks, full, prices) = projected(&prints, config.clone(), perpetual);
             let (drawn, radii, effective_cap, effective_full) = if native {
                 let mut memory = TapeDotMemory::default();
@@ -253,8 +269,14 @@ fn report_btc_projection_calibration() {
                 .filter(|radius| **radius >= effective_cap * 0.999)
                 .count();
             let quantities = drawn.iter().map(|mark| mark.quantity).sum::<Decimal>();
+            let capped_quantity = drawn
+                .iter()
+                .zip(&radii)
+                .filter(|(_, radius)| **radius >= effective_cap * 0.999)
+                .map(|(mark, _)| mark.quantity)
+                .sum::<Decimal>();
             eprintln!(
-                "BTC_CALIBRATION {name} native={native} typed={reference} raw={} cells={} drawn={} exact_quantity={quantities} full={effective_full} cap={effective_cap:.2} radii_p10={:.2} p50={:.2} p90={:.2} max={:.2} labels_eligible={labels} saturated={saturated}",
+                "BTC_CALIBRATION {name} native={native} typed={reference} raw={} cells={} drawn={} exact_quantity={quantities} capped_quantity={capped_quantity} full={effective_full} cap={effective_cap:.2} radii_p10={:.2} p50={:.2} p90={:.2} max={:.2} labels_eligible={labels} saturated={saturated}",
                 prints.len(),
                 marks.len(),
                 drawn.len(),

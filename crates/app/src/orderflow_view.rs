@@ -1503,6 +1503,7 @@ mod tests {
         let mut presets = embedded();
         presets.upsert(BubblePreset {
             name: "wide".to_owned(),
+            tick_bubbles: None,
             cluster_ms: 100,
             dust_merge_ms: 3_000,
             candle_summary: true,

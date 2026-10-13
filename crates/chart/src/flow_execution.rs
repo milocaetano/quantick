@@ -13,7 +13,9 @@ mod constants;
 pub use constants::FLOW_EXECUTION_OFFSET;
 use constants::{FLOW_MERGE_SUPPORT_RADIUS_PX, FLOW_RADIUS_LIMIT_PX};
 mod geometry;
+mod labels;
 pub use geometry::FlowExecutionGeometry;
+pub use labels::FlowQuantityLabel;
 mod disc;
 pub use disc::{FlowBounds, FlowDisc};
 mod presentation;
@@ -29,6 +31,42 @@ pub fn project_flow_executions<R: FlowRunner>(
     range: (f64, f64),
     clip: (f64, f64),
 ) {
+    project_styled_flow_executions(
+        enabled,
+        state,
+        session,
+        FlowChartView {
+            slots,
+            pixels,
+            range,
+            clip,
+            tick_bubbles: None,
+        },
+    );
+}
+
+/// The chart camera and its optional scoped tick-bubble appearance.
+pub struct FlowChartView {
+    pub slots: std::ops::Range<usize>,
+    pub pixels: (f32, f32),
+    pub range: (f64, f64),
+    pub clip: (f64, f64),
+    pub tick_bubbles: Option<quantick_orderflow::TickBubbleStyle>,
+}
+
+pub fn project_styled_flow_executions<R: FlowRunner>(
+    enabled: bool,
+    state: &ChartState,
+    session: &mut FlowSession<R>,
+    camera: FlowChartView,
+) {
+    let FlowChartView {
+        slots,
+        pixels,
+        range,
+        clip,
+        tick_bubbles,
+    } = camera;
     let Some(membership) = state
         .tick_membership()
         .filter(|_| enabled && !slots.is_empty())
@@ -72,8 +110,13 @@ pub fn project_flow_executions<R: FlowRunner>(
             width_px: pixels.0,
             height_px: pixels.1,
             prices,
-            reference: FlowReference::VisibleRegions,
-            radius_limit: FLOW_RADIUS_LIMIT_PX,
+            reference: tick_bubbles.map_or(FlowReference::VisibleRegions, |style| {
+                FlowReference::Typed(
+                    Decimal::from_f64(style.reference_quantity).unwrap_or(Decimal::ONE),
+                )
+            }),
+            radius_limit: tick_bubbles
+                .map_or(FLOW_RADIUS_LIMIT_PX, |style| style.bubbles().max_radius),
             merge_support_radius: FLOW_MERGE_SUPPORT_RADIUS_PX,
             exclude_opening: session.ignore_opening(),
         },

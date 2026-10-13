@@ -65,6 +65,7 @@ id = "binance"
 name = "Binance"
 provider = "binance"
 symbols = ["BTCUSDT", "ETHUSDT"]
+symbol_bubble_presets = { "BTCUSDT" = "Binance BTC Spot spheres" }
 # The default open: timeframe context beside the flow chart, side by side
 # (user decision 2026-08-06). Remove the key to open on the flow pane alone.
 default_layout = "time+flow"
@@ -83,6 +84,7 @@ id = "binance-futures"
 name = "Binance USD-M perpetual"
 provider = "binance-futures"
 symbols = ["BTCUSDT.p"]
+symbol_bubble_presets = { "BTCUSDT.p" = "Binance BTC perpetual spheres" }
 default_layout = "time+flow"
 default_bars = "tick:50"
 

@@ -43,7 +43,7 @@ pub(super) struct BubbleColors {
     pub(super) sell: egui::Color32,
     front: egui::Color32,
     pub(super) trail: egui::Color32,
-    text: egui::Color32,
+    pub(super) text: egui::Color32,
     /// The crown's colour per side. Derived from the side colour rather than
     /// from [`front`](Self::front), so consumption reads as the same event
     /// hotter instead of introducing a third hue — unless the panel explicitly
@@ -208,7 +208,7 @@ impl SphereShading {
     }
 
     /// A side colour lit from the upper left.
-    fn sphere(color: egui::Color32, bubbles: &BubbleStyle) -> Self {
+    pub(super) fn sphere(color: egui::Color32, bubbles: &BubbleStyle) -> Self {
         Self {
             core: sphere_core_color(color, bubbles.sphere_highlight),
             body: color,
@@ -217,7 +217,7 @@ impl SphereShading {
     }
 
     /// The same shading behind the bubble's configured fill alpha.
-    fn faded(self, opacity: f32) -> Self {
+    pub(super) fn faded(self, opacity: f32) -> Self {
         Self {
             core: self.core.gamma_multiply(opacity),
             body: self.body.gamma_multiply(opacity),
@@ -778,7 +778,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
                 && galley.size().y <= radius * LABEL_MAX_HEIGHT_SCALE
             {
                 let pos = center - galley.size() / 2.0;
-                clip.galley(
+                clip.galley_with_override_text_color(
                     pos + LABEL_SHADOW_OFFSET_PX,
                     galley.clone(),
                     egui::Color32::from_black_alpha(LABEL_SHADOW_ALPHA),

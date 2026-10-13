@@ -66,6 +66,7 @@ fn key(frame: &Arc<FlowTapeFrame>) -> Key<'_> {
         geometry: geometry(),
         clip: history(),
         backing: Some(egui::Color32::from_rgb(19, 23, 34)),
+        tick_bubbles: None,
         background: crate::theme::CANVAS,
     }
 }
@@ -107,6 +108,7 @@ fn paint_at_density(
             key.geometry,
             key.background,
             key.backing,
+            key.tick_bubbles,
         );
         drawing.paint(&painter, history(), false);
         drawing.paint(&painter, history(), true);

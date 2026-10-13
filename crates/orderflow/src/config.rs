@@ -9,6 +9,8 @@ pub mod labels;
 mod lane;
 pub mod legend;
 pub mod theme;
+mod tick_bubbles;
+pub use tick_bubbles::TickBubbleStyle;
 
 pub use bubbles::{
     BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, DEFAULT_BUBBLE_MAX_RADIUS,
@@ -46,6 +48,8 @@ const MAX_VOLUME_DOT_FULL_QUANTITY: f64 = 10_000_000.0;
 /// dot holds at the largest radius.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VolumeDotStyle {
+    /// Optional shaded spheres over tick candles; never alters native tape sizing.
+    pub tick_bubbles: Option<TickBubbleStyle>,
     /// Bubbles are drawn as volume dots. The layer `bubble_overlap_merge`,
     /// the preset key `overlap_merge`.
     pub enabled: bool,
@@ -66,6 +70,7 @@ pub struct VolumeDotStyle {
 impl Default for VolumeDotStyle {
     fn default() -> Self {
         Self {
+            tick_bubbles: None,
             enabled: false,
             full_quantity: DEFAULT_VOLUME_DOT_FULL_QUANTITY,
             auto_full: true,
@@ -702,6 +707,9 @@ impl HeatmapConfig {
         self.bubble_region_rows = self.bubble_region_rows.clamp(1, MAX_BUBBLE_REGION_ROWS);
         self.bubble_region_ms = self.bubble_region_ms.clamp(0, MAX_BUBBLE_REGION_MS);
         self.bubbles.sanitize();
+        if let Some(tick) = &mut self.volume_dots.tick_bubbles {
+            tick.sanitize();
+        }
         self.volume_dots.full_quantity =
             sane_volume_dot_full_quantity(self.volume_dots.full_quantity);
         self.live_lane.sanitize();

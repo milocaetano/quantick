@@ -212,8 +212,8 @@ pub struct FlowSession<R> {
 }
 impl<R: FlowRunner> FlowSession<R> {
     pub fn active(config: &crate::HeatmapConfig) -> bool {
-        config.live_lane.native()
-            && config.volume_dots.enabled
+        (config.volume_dots.tick_bubbles.is_some()
+            || (config.live_lane.native() && config.volume_dots.enabled))
             && config.show_aggressions
             && !config.tape_only()
     }

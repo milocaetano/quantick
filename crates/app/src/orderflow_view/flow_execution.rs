@@ -42,14 +42,17 @@ impl OrderflowView {
         range: (f64, f64),
         clip: (f64, f64),
     ) {
-        quantick_chart::flow_execution::project_flow_executions(
+        quantick_chart::flow_execution::project_styled_flow_executions(
             self.flow_execution_active(),
             state,
             &mut self.flow_execution,
-            slots,
-            (pixels.x, pixels.y),
-            range,
-            clip,
+            quantick_chart::flow_execution::FlowChartView {
+                slots,
+                pixels: (pixels.x, pixels.y),
+                range,
+                clip,
+                tick_bubbles: self.config.volume_dots.tick_bubbles,
+            },
         );
     }
 }
