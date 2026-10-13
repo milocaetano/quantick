@@ -73,6 +73,7 @@ pub(super) fn flow_mesh(
 pub(crate) struct FlowDrawing {
     pub plan: FlowPresentation,
     pub(super) meshes: [egui::Mesh; 2],
+    rims: [Vec<egui::Shape>; 2],
     labels: Vec<quantick_chart::flow_execution::FlowQuantityLabel>,
 }
 impl FlowDrawing {
@@ -95,6 +96,7 @@ impl FlowDrawing {
     ) -> Self {
         use quantick_orderflow::config::dressing::flow::{colors, ordinary_colors};
         let mut meshes = [egui::Mesh::default(), egui::Mesh::default()];
+        let mut rims = [Vec::new(), Vec::new()];
         let tick_style = tick.map(quantick_orderflow::TickBubbleStyle::bubbles);
         let tick_colors = tick_style.as_ref().map(|style| {
             BubbleColors::resolve(
@@ -102,7 +104,8 @@ impl FlowDrawing {
                 style,
             )
         });
-        let labels = plan.quantity_labels(frame, tick);
+        let mut labels = plan.quantity_labels(frame, tick);
+        labels.sort_by(|a, b| b.radius.total_cmp(&a.radius));
         let colors = [
             colors(None, true, false),
             colors(Some(background.to_array()), false, true),
@@ -124,6 +127,21 @@ impl FlowDrawing {
                 colors[region.role as usize]
             };
             let (buy, sell) = dot.side_shares();
+            if let Some(style) = &tick_style
+                && disc.radius >= style.detail_min_radius
+            {
+                let hair = super::bubbles::separator_ring_width(disc.radius);
+                rims[usize::from(region.role == FlowRegionRole::Peak)].push(
+                    egui::Shape::circle_stroke(
+                        disc.center.into(),
+                        disc.radius + hair / 2.0,
+                        egui::Stroke::new(
+                            hair,
+                            egui::Color32::from_black_alpha(super::bubbles::SEPARATOR_RING_ALPHA),
+                        ),
+                    ),
+                );
+            }
             let mut angle = f64::from(PIE_START_ANGLE);
             for (share, color) in [(buy, buy_color), (sell, sell_color)] {
                 if share <= 0.0 {
@@ -152,6 +170,7 @@ impl FlowDrawing {
         Self {
             plan,
             meshes,
+            rims,
             labels,
         }
     }
@@ -163,33 +182,110 @@ impl FlowDrawing {
                 .with_clip_rect(history)
                 .add(egui::Shape::mesh(mesh.clone()));
         }
-        if foreground {
-            let clip = painter.with_clip_rect(history);
-            for label in &self.labels {
-                let radius = label.radius;
-                let galley = clip.layout_no_wrap(
-                    label.text.clone(),
-                    egui::FontId::proportional(
-                        (radius * super::constants::LABEL_FONT_SCALE).clamp(
-                            super::constants::LABEL_MIN_FONT_PX,
-                            super::constants::LABEL_MAX_FONT_PX,
-                        ),
-                    ),
-                    crate::theme::TEXT_PRIMARY,
-                );
-                if galley.size().x <= radius * super::constants::LABEL_MAX_WIDTH_SCALE
-                    && galley.size().y <= radius * super::constants::LABEL_MAX_HEIGHT_SCALE
-                {
-                    let pos = egui::Pos2::from(label.center) - galley.size() / 2.0;
-                    clip.galley_with_override_text_color(
-                        pos + super::constants::LABEL_SHADOW_OFFSET_PX,
-                        galley.clone(),
-                        egui::Color32::from_black_alpha(super::constants::LABEL_SHADOW_ALPHA),
-                    );
-                    clip.galley(pos, galley, crate::theme::TEXT_PRIMARY);
-                }
+        painter
+            .with_clip_rect(history)
+            .extend(self.rims[usize::from(foreground)].clone());
+    }
+
+    /// Labels finish the candle pass, so no candle contour crosses a quantity.
+    pub fn paint_labels(&self, painter: &egui::Painter, history: egui::Rect) {
+        paint_quantity_labels(painter, history, &self.labels);
+    }
+}
+
+fn paint_quantity_labels(
+    painter: &egui::Painter,
+    history: egui::Rect,
+    labels: &[quantick_chart::flow_execution::FlowQuantityLabel],
+) {
+    let clip = painter.with_clip_rect(history);
+    let mut occupied = Vec::<egui::Rect>::new();
+    for label in labels {
+        let radius = label.radius;
+        let galley = clip.layout_no_wrap(
+            label.text.clone(),
+            egui::FontId::proportional((radius * super::constants::LABEL_FONT_SCALE).clamp(
+                super::constants::LABEL_MIN_FONT_PX,
+                super::constants::LABEL_MAX_FONT_PX,
+            )),
+            crate::theme::TEXT_PRIMARY,
+        );
+        if galley.size().x <= radius * super::constants::LABEL_MAX_WIDTH_SCALE
+            && galley.size().y <= radius * super::constants::LABEL_MAX_HEIGHT_SCALE
+        {
+            let pos = egui::Pos2::from(label.center) - galley.size() / 2.0;
+            let bounds = egui::Rect::from_min_size(pos, galley.size()).expand(2.0);
+            if !history.contains_rect(bounds)
+                || occupied.iter().any(|other| other.intersects(bounds))
+            {
+                continue;
             }
+            occupied.push(bounds);
+            clip.galley_with_override_text_color(
+                pos + super::constants::LABEL_SHADOW_OFFSET_PX,
+                galley.clone(),
+                egui::Color32::from_black_alpha(super::constants::LABEL_SHADOW_ALPHA),
+            );
+            clip.galley(pos, galley, crate::theme::TEXT_PRIMARY);
         }
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+    use quantick_chart::flow_execution::FlowQuantityLabel;
+
+    #[test]
+    fn tick_quantities_use_fitted_nonoverlapping_galleys() {
+        let ctx = egui::Context::default();
+        let history = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(240.0, 180.0));
+        let labels = [
+            FlowQuantityLabel {
+                center: [100.0, 90.0],
+                radius: 30.0,
+                text: "28.1".into(),
+            },
+            FlowQuantityLabel {
+                center: [105.0, 90.0],
+                radius: 20.0,
+                text: "14.7".into(),
+            },
+            FlowQuantityLabel {
+                center: [180.0, 90.0],
+                radius: 15.0,
+                text: "7.2".into(),
+            },
+            FlowQuantityLabel {
+                center: [0.0, 90.0],
+                radius: 15.0,
+                text: "7.2".into(),
+            },
+        ];
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            paint_quantity_labels(
+                &ctx.layer_painter(egui::LayerId::background()),
+                history,
+                &labels,
+            );
+        });
+        let bounds: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.override_text_color.is_none() => {
+                    Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            bounds.len(),
+            2,
+            "the overlapping and clipped labels are omitted"
+        );
+        assert!(!bounds[0].intersects(bounds[1]));
+        assert!(bounds.iter().all(|bounds| history.contains_rect(*bounds)));
     }
 }
 

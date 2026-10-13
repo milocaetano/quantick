@@ -19,6 +19,7 @@
 
 pub mod chart;
 pub mod dock;
+pub mod feed_source;
 pub mod history;
 pub mod journal_sessions;
 pub mod notify;

@@ -722,6 +722,12 @@ impl BookEngine {
         if config == self.config {
             return;
         }
+        if config.same_tape_settings(&self.config) {
+            // Tick appearance is read by its painter. Keep the tape seal's
+            // revision and retained projection: none of their inputs changed.
+            self.config = config;
+            return;
+        }
         self.view.past_tape = None;
         self.config = config;
         self.invalidate_projection();

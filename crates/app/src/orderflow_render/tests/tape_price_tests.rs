@@ -216,16 +216,22 @@ fn native_book_and_reductions_share_the_bubble_time_axis() {
             let output = ctx.run(egui::RawInput::default(), |ctx| {
                 draw_aggression_bubbles(&ctx.layer_painter(egui::LayerId::background()), &context);
             });
-            let circle = output
+            let circles: Vec<_> = output
                 .shapes
                 .iter()
-                .find_map(|shape| match &shape.shape {
+                .filter_map(|shape| match &shape.shape {
                     egui::Shape::Circle(circle) if circle.fill != egui::Color32::TRANSPARENT => {
                         Some(circle)
                     }
                     _ => None,
                 })
-                .expect("the factual native bubble is drawn");
+                .collect();
+            assert_eq!(
+                circles.len(),
+                1,
+                "the factual native boundary bubble is drawn once"
+            );
+            let circle = circles[0];
             assert!(
                 (circle.center.x - front.x).abs() < 0.001,
                 "book consumption and bubble must occupy the same instant"

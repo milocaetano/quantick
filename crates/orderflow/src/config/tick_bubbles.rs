@@ -2,6 +2,17 @@
 use super::BubbleStyle;
 use serde::{Deserialize, Serialize};
 
+impl super::HeatmapConfig {
+    /// Whether a change affects the tape or book. Tick painting has its own
+    /// cache identity and must not restart their retained factual groups.
+    #[must_use]
+    pub fn same_tape_settings(&self, other: &Self) -> bool {
+        let mut compared = other.clone();
+        compared.volume_dots.tick_bubbles = self.volume_dots.tick_bubbles;
+        *self == compared
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TickBubbleStyle {
     /// Minimum common reference in instrument units at the full radius.

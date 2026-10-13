@@ -1001,10 +1001,12 @@ impl OrderflowView {
         }
         // Explicit display changes begin a new epoch; advancing the clock,
         // changing book generations or following prices never clears it.
-        self.tape_rebuilds
-            .get_mut()
-            .start_over(self.tape_dots.get_mut());
-        self.past_dots.get_mut().clear();
+        if !self.config.same_tape_settings(&before) {
+            self.tape_rebuilds
+                .get_mut()
+                .start_over(self.tape_dots.get_mut());
+            self.past_dots.get_mut().clear();
+        }
         if self.config.native_tape() != before.native_tape()
             || self.config.volume_dots.enabled != before.volume_dots.enabled
         {

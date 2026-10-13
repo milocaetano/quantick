@@ -80,6 +80,90 @@ fn zooming_the_tape_repositions_the_cached_frame_before_the_worker_answers() {
     );
 }
 
+#[test]
+fn tick_style_edits_keep_retained_tape_membership_and_paint_unchanged() {
+    let mut view = OrderflowView::new("BTCUSDT");
+    let before = view.config.clone();
+    assert!(view.apply_preset("mini index regions"));
+    view.commit_config_changes(before);
+    view.set_live_lane_window(LaneWindow::Fixed { ms: 10_000 });
+    let mut partial = None::<Bar>;
+    for (agg_id, timestamp_ms, quantity, side) in [
+        (1, 1_000, 10, Side::Buy),
+        (2, 1_010, 20, Side::Sell),
+        (3, 3_000, 5, Side::Buy),
+    ] {
+        let trade = Trade {
+            agg_id,
+            timestamp_ms,
+            quantity: quantity.into(),
+            price: 100.into(),
+            side,
+        };
+        view.record_trade(&trade);
+        if let Some(bar) = &mut partial {
+            bar.extend(&trade);
+        } else {
+            partial = Some(Bar::opened_by(&trade));
+        }
+    }
+    view.set_replay_clock_at(9_000, Some(3_000), None);
+    let _ = view.project_visible(
+        VisibleBarTimeline::new(1, 0, &[], partial.as_ref()),
+        true,
+        true,
+        Some(10_000),
+        (90.0, 110.0),
+        Some(PaneGeometry {
+            px_per_bar: 10.0,
+            lane_width_px: 600.0,
+            lane_window_ms: 10_000,
+            height_px: 400.0,
+            lane_bars: vec![(1_000, 3_000)],
+        }),
+    );
+    view.flush_for_test();
+    let frame = view.published.frame.clone().unwrap();
+    let viewport = Viewport::new();
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(600.0, 400.0));
+    let ink = |view: &OrderflowView| {
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            view.draw_aggressions(
+                &ctx.layer_painter(egui::LayerId::background()),
+                rect,
+                &viewport,
+                1,
+                &frame,
+                egui::Color32::BLACK,
+                rect.width(),
+                false,
+                (90.0, 110.0),
+            );
+        });
+        format!("{:?}", output.shapes)
+    };
+    let expected_ink = ink(&view);
+    assert_eq!(ink(&view), expected_ink, "the unchanged tape is warm");
+    assert!(view.tape_dots.borrow().retained_group_count() > 0);
+    let membership = format!("{:?}", view.tape_dots.borrow());
+    let style = quantick_orderflow::TickBubbleStyle {
+        reference_quantity: 30.0,
+        max_radius: 25.0,
+        label_min_radius: 8.0,
+        opacity: 0.8,
+    };
+    for tick in [Some(style), Some(style), None] {
+        view.edit_config(|config| config.volume_dots.tick_bubbles = tick);
+        assert_eq!(
+            format!("{:?}", view.tape_dots.borrow()),
+            membership,
+            "a left-chart edit cannot discard the right tape's members"
+        );
+        assert_eq!(ink(&view), expected_ink);
+    }
+}
+
 /// Real queue and mailbox, without a flush or an artificial zero-backlog
 /// condition. CPU submission to egui is measured; feed and GPU latency are not.
 #[test]

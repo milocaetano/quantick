@@ -263,6 +263,10 @@ impl<'a> FlowFrame<'a> {
                 frame,
                 &drawing.plan,
             );
+            drawing.paint_labels(
+                self.painter,
+                self.rect.with_max_x(self.rect.right() - self.lane_width),
+            );
         }
     }
 

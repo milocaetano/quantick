@@ -17,6 +17,9 @@ pub const SCHEMA_VERSION: u32 = 1;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FeedSnapshot {
     pub tabs: Vec<FeedTabSnapshot>,
+    /// Configured source pairs available to feed.source.set and the selectors.
+    #[serde(default)]
+    pub sources: Vec<crate::feed_source::FeedSourceChoice>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -189,6 +192,14 @@ pub const FEED_GENERATION_TEST: &str =
 /// `retry_matrix` joins every family's rows into one table; a row belongs
 /// here, beside the capability it reconciles.
 pub const READBACKS: &[Readback] = &[
+    snapshot(
+        crate::feed_source::FEED_SOURCE_CAPABILITY_ID,
+        Optional,
+        SCOPE_ID,
+        "tabs[].active_symbol",
+        "the tab reports the requested active_feed_id and active_symbol; feed_generation advances only when the pair changed",
+        &["configured_feed_selection_is_validated_retry_safe_and_reads_back"],
+    ),
     snapshot(
         "feed.reconnect",
         Optional,

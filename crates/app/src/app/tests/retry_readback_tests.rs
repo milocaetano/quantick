@@ -59,6 +59,8 @@ mod candle_aggression;
 mod chart_settings_control;
 #[path = "drawing_magnet_control_tests.rs"]
 mod drawing_magnet_control;
+#[path = "feed_source_control_tests.rs"]
+mod feed_source_control;
 #[path = "history_control_tests.rs"]
 mod history_control_tests;
 #[path = "journal_sessions_control_tests.rs"]
@@ -711,6 +713,7 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
         // `respawned: false`, and the generation says so by not moving.
         ("feed.reconnect", 1, json!({}), Readback::Stays),
         ("feed.reload", 1, json!({}), Readback::Stays),
+        ("feed.source.set", 1, Value::Null, Readback::Stays),
         // A tab whose feed declares no deal counter and has no recorded day:
         // stopping a recorder that is not running acts on nothing, and the
         // scope lists no recorder either side of the call.
@@ -832,6 +835,11 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         let mut client = connect(&directory, &cockpit);
         let row = retry_matrix::readback(capability).expect("the matrix has a row");
         let payload = match capability {
+            "feed.source.set" => json!({
+                "tab_id": app.tabs.active_id().to_string(),
+                "feed_id": app.active_tab().active.0,
+                "symbol": app.active_tab().active.1,
+            }),
             "chart.price_axis.set" => json!({
                 "tab_id": app.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),

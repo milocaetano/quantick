@@ -18,6 +18,27 @@ use quantick_paper::report::session_edit::{
 };
 
 use crate::{app::control_host::ControlPort, tab::Tab};
+use quantick_control_handlers::feed_source::{FeedSelection, FeedSourcePort};
+
+impl FeedSourcePort for dyn ControlPort {
+    fn feed_choices(&self) -> Vec<quantick_control_schema::feed_source::FeedSourceChoice> {
+        quantick_control_schema::feed_source::choices(self.tab_reads().config())
+    }
+    fn feed_selection(&self, index: usize) -> Option<FeedSelection> {
+        let tab = self.tab_reads().tab_at(index)?;
+        Some(FeedSelection {
+            feed_id: tab.active.0.clone(),
+            symbol: tab.active.1.clone(),
+            replay: tab.replay.is_some(),
+        })
+    }
+    fn select_feed(&mut self, index: usize, feed_id: &str, symbol: &str) -> Option<FeedSelection> {
+        let (tab, config) = self.tabs_mut().tab_with_config(index)?;
+        (tab.feed_id, tab.symbol) = (feed_id.to_owned(), symbol.to_owned());
+        tab.maybe_switch_feed(config);
+        self.feed_selection(index)
+    }
+}
 
 impl TabDirectory for dyn ControlPort {
     fn active_tab_index(&self) -> usize {

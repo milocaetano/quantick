@@ -106,6 +106,12 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<quantick_control_schema::history::HistoryLoadInput>(
             "feed-history-load-input-v1.schema.json",
         ),
+        document::<quantick_control_schema::feed_source::FeedSourceInput>(
+            "feed-source-input-v1.schema.json",
+        ),
+        document::<quantick_control_schema::feed_source::FeedSourceResult>(
+            "feed-source-result-v1.schema.json",
+        ),
         document::<quantick_control_schema::history::HistoryLoadResult>(
             "feed-history-load-result-v1.schema.json",
         ),

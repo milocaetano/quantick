@@ -91,6 +91,7 @@ pub(crate) fn market_data_provenance(
 fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot {
     let config = app.tab_reads().config();
     FeedSnapshot {
+        sources: quantick_control_schema::feed_source::choices(config),
         tabs: app
             .tab_reads()
             .tabs()

@@ -94,6 +94,47 @@ fn live(frame: &VisibleOrderflow) -> Vec<AggressionPrimitive> {
 }
 
 #[test]
+fn tick_style_changes_preserve_the_native_tape_revision_and_factual_groups() {
+    let mut worker = engine(true, false);
+    let input = request(closed(), Some(forming()), 30_000);
+    let now = std::time::Instant::now();
+    let before = worker.project_at(&input, now).unwrap();
+    let revision = worker.config_revision;
+    let tape = live(&before);
+    assert!(!tape.is_empty());
+    let mut changed = worker.config.clone();
+    changed.volume_dots.tick_bubbles = Some(crate::TickBubbleStyle {
+        reference_quantity: 30.0,
+        max_radius: 25.0,
+        label_min_radius: 8.0,
+        opacity: 0.8,
+    });
+    for style in [changed.clone(), changed, worker.config.clone()] {
+        worker.apply_visual_config(style);
+        let after = worker.project_at(&input, now).unwrap();
+        assert_eq!(worker.config_revision, revision);
+        let before_seal = before
+            .projection
+            .tape_facts
+            .as_ref()
+            .unwrap()
+            .seal
+            .as_ref()
+            .unwrap();
+        let after_seal = after
+            .projection
+            .tape_facts
+            .as_ref()
+            .unwrap()
+            .seal
+            .as_ref()
+            .unwrap();
+        assert!(Arc::ptr_eq(&before_seal.lineage, &after_seal.lineage));
+        assert_eq!(live(&after), tape);
+    }
+}
+
+#[test]
 fn the_native_tape_beside_the_candles_projects_what_tape_only_projected() {
     let now = std::time::Instant::now();
     let mut tape_only = engine(false, true);
