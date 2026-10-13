@@ -98,7 +98,7 @@ impl Drawing<crate::DrawingTool> {
     /// that snaps by its own rule (a mark, an anchored VWAP) has no magnet.
     #[must_use]
     pub fn takes_magnet(&self) -> bool {
-        self.tool.anchor_snap() == crate::AnchorSnap::Pointer
+        self.tool.anchor_snap().takes_magnet()
     }
 
     /// This object's own magnet as its drags honour it, on its own pane or

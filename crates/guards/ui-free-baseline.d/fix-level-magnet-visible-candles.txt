@@ -1,0 +1,5 @@
+# Unbreak main after the #682 merge, as #685 does: main at 2a2d730a is 8
+# UI-free lines over the ceiling. This branch adds no UI-free line; drop this
+# file if main is fixed first.
+crates/app +8
+!budget +8

@@ -296,4 +296,6 @@ pub struct PaneGestures {
     pub shared_pointer_mark: Option<(i64, f64)>,
     /// The held mark's own magnet, joining the rail's for this gesture.
     pub shared_drag_magnet: bool,
+    /// The held mark's tool snap, which picks the magnet's candidates.
+    pub shared_drag_snap: crate::AnchorSnap,
 }

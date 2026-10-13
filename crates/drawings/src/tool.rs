@@ -456,7 +456,12 @@ impl DrawingTool {
 
     #[must_use]
     pub fn anchor_snap(self) -> AnchorSnap {
-        self.0.anchor_snap()
+        match self.0.anchor_snap() {
+            AnchorSnap::Pointer if self.body_snap() == BodySnap::Levels => {
+                AnchorSnap::VisibleLevels
+            }
+            snap => snap,
+        }
     }
 
     #[must_use]
