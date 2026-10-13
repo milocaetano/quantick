@@ -318,11 +318,11 @@ struct DetailSection<'a> {
 
 impl DetailSection<'_> {
     fn show(self, ui: &mut egui::Ui) -> bool {
-        section_heading(ui, "Detail by candle width");
+        section_heading(ui, "Zoom for detail");
         let scale = ui
             .add(
                 egui::Slider::new(&mut self.config.detail_scale, DETAIL_SCALE_RANGE)
-                    .text("candle width for numbers")
+                    .text("zoom for numbers")
                     .suffix("×")
                     .step_by(0.05),
             )
@@ -349,7 +349,7 @@ impl DetailSection<'_> {
             "summary numbers from px",
             "candle width where one delta number per row starts: zooming in it \
              appears there and zooming out it leaves at the same width \
-             (measured at candle width for numbers 1.0)",
+             (measured at zoom for numbers 1.0)",
         );
         let detailed = entry(
             &mut self.config.detailed_from_px,
