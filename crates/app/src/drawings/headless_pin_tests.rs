@@ -34,17 +34,12 @@ fn the_tool_glyphs_are_the_icon_font_s() {
         (icons::ANCHOR_SIMPLE, phosphor::ANCHOR_SIMPLE),
         (icons::ARROWS_HORIZONTAL, phosphor::ARROWS_HORIZONTAL),
         (
-            icons::ARROWS_IN_LINE_HORIZONTAL,
-            phosphor::ARROWS_IN_LINE_HORIZONTAL,
-        ),
-        (
             icons::ARROWS_OUT_LINE_HORIZONTAL,
             phosphor::ARROWS_OUT_LINE_HORIZONTAL,
         ),
         (icons::ARROWS_VERTICAL, phosphor::ARROWS_VERTICAL),
         (icons::ARROW_FAT_DOWN, phosphor::ARROW_FAT_DOWN),
         (icons::ARROW_FAT_UP, phosphor::ARROW_FAT_UP),
-        (icons::ARROW_LINE_LEFT, phosphor::ARROW_LINE_LEFT),
         (icons::ARROW_LINE_RIGHT, phosphor::ARROW_LINE_RIGHT),
         (icons::ARROW_UP_RIGHT, phosphor::ARROW_UP_RIGHT),
         (icons::CHART_BAR_HORIZONTAL, phosphor::CHART_BAR_HORIZONTAL),

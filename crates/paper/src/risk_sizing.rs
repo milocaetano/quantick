@@ -7,7 +7,7 @@
 //!
 //! # Where the line with the kernel falls
 //!
-//! [`quantick_sim::size_for_risk`] owns the arithmetic and owns nothing
+//! [`quantick_trading::size_for_risk`] owns the arithmetic and owns nothing
 //! else. It reports what the numbers say — including "the smallest tradable
 //! size already loses more than the budget" — and never decides whether an
 //! entry may be placed. That decision is *policy*, it is the trader's lock,
@@ -38,7 +38,7 @@
 use std::collections::BTreeMap;
 
 use quantick_engine::Side;
-use quantick_sim::{
+use quantick_trading::{
     Bracket, Currency, InstrumentMoney, Money, SizeOutcome, SizeRefusal, size_for_risk,
 };
 use rust_decimal::Decimal;
@@ -234,7 +234,7 @@ impl InstrumentMoneyRecord {
             min_size,
             max_size,
             currency,
-            source: quantick_sim::MoneySource::Declared,
+            source: quantick_trading::MoneySource::Declared,
         };
         // The same grid the kernel would refuse: caught here so a bad record
         // reads as "no money for this symbol" rather than as a refusal on
@@ -659,7 +659,7 @@ pub fn risk_of(
     quantity: Decimal,
 ) -> Option<Money> {
     let money = book.get(symbol)?;
-    quantick_sim::risk_at(side, entry, bracket, quantity, money).ok()
+    quantick_trading::risk_at(side, entry, bracket, quantity, money).ok()
 }
 
 /// Replace a state's risk with the risk of the ladder that will actually
@@ -832,7 +832,7 @@ pub fn parse_hook(spec: &str) -> Option<RiskHook> {
                 min_size: size_step,
                 max_size: None,
                 currency,
-                source: quantick_sim::MoneySource::Declared,
+                source: quantick_trading::MoneySource::Declared,
             })
         }
         _ => return None,
@@ -858,7 +858,7 @@ pub fn parse_hook(spec: &str) -> Option<RiskHook> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quantick_sim::{ExitPart, MoneySource};
+    use quantick_trading::{ExitPart, MoneySource};
 
     fn d(text: &str) -> Decimal {
         Decimal::from_str_exact(text).expect("test decimal literal")

@@ -8,7 +8,7 @@
 //! this file for the price and [`super::orders`] for the placement.
 
 use quantick_engine::Side;
-use quantick_sim::{Bracket, OcoId, OrderIntent, OrderRole, Position};
+use quantick_trading::{Bracket, OcoId, OrderIntent, OrderRole, Position};
 use rust_decimal::Decimal;
 
 use super::{AccountEnv, PaperAccount};
@@ -24,9 +24,9 @@ use crate::risk_sizing::{self, Capital, InstrumentBook, RiskSettings};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RiskRefusal {
     /// What the order would lose at its stop.
-    pub risk: quantick_sim::Money,
+    pub risk: quantick_trading::Money,
     /// The risk per trade it went over.
-    pub budget: quantick_sim::Money,
+    pub budget: quantick_trading::Money,
 }
 
 impl RiskRefusal {
@@ -291,7 +291,7 @@ impl PaperAccount {
     /// Grouped by OCO id, which is what a rung *is*, and walked in placement
     /// order so the rungs read in the order the trader wrote them.
     pub fn position_bracket(&self, position: &Position) -> Bracket {
-        let mut parts: Vec<(OcoId, quantick_sim::ExitPart)> = Vec::new();
+        let mut parts: Vec<(OcoId, quantick_trading::ExitPart)> = Vec::new();
         for leg in self
             .venue
             .working_orders()
@@ -306,7 +306,7 @@ impl PaperAccount {
                 None => {
                     parts.push((
                         oco,
-                        quantick_sim::ExitPart {
+                        quantick_trading::ExitPart {
                             quantity: Some(leg.quantity),
                             stop_loss: None,
                             take_profit: None,
@@ -324,7 +324,8 @@ impl PaperAccount {
         if parts.is_empty() {
             return Bracket::whole(position.stop_loss, position.take_profit);
         }
-        let rungs: Vec<quantick_sim::ExitPart> = parts.into_iter().map(|(_, part)| part).collect();
+        let rungs: Vec<quantick_trading::ExitPart> =
+            parts.into_iter().map(|(_, part)| part).collect();
         Bracket::ladder(&rungs)
             .unwrap_or_else(|_| Bracket::whole(position.stop_loss, position.take_profit))
     }

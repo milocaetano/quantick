@@ -10,15 +10,23 @@ publish.workspace = true
 # The chart model a chart pane's port hands over as it is: the bar state is
 # already headless, so the port names it rather than copying it.
 quantick-chart = { path = "../chart" }
+# The anchor resolver an annotation's coordinates pass before anything is
+# placed, and the quick-range request a gesture hands the same capability.
+quantick-chart-interaction = { path = "../chart-interaction" }
 # The civil dates a journal listing is filtered by.
 quantick-civil = { path = "../civil" }
 quantick-control = { path = "../control" }
 quantick-control-host = { path = "../control-host" }
 quantick-control-schema = { path = "../control-schema" }
+# The marks an annotation folds into, through the same update a click makes.
+quantick-drawings = { path = "../drawings" }
 quantick-engine = { path = "../engine" }
 # The trades journal's sessions: the listing, the filter and the edits the
 # ledger makes, so the capability and the gesture share one path.
 quantick-paper = { path = "../paper" }
+# The tab session the History press and its cancel are acts of: the handler
+# picks the act and judges the session's answer.
+quantick-session = { path = "../session" }
 # The history reach and run vocabulary the History press speaks.
 quantick-sources = { path = "../sources" }
 rust_decimal = { workspace = true }

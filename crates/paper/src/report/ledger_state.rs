@@ -11,8 +11,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use quantick_civil::{DateRange, TzOffset};
-use quantick_sim::ClosedTrade;
 use quantick_sim::history::{self, SessionSource};
+use quantick_trading::ClosedTrade;
 
 use super::session_edit::JournalEdit;
 use super::sessions::{

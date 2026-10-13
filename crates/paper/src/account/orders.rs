@@ -7,7 +7,8 @@
 //! back.
 
 use quantick_engine::Side;
-use quantick_sim::{Bracket, BracketTarget, Command, EntryKind, OrderId, OrderIntent, VenueEvent};
+use quantick_sim::Command;
+use quantick_trading::{Bracket, BracketTarget, EntryKind, OrderId, OrderIntent, VenueEvent};
 use rust_decimal::Decimal;
 
 use super::{AccountEnv, Leg, PaperAccount};
@@ -265,7 +266,7 @@ impl PaperAccount {
         else {
             return;
         };
-        let mut parts: Vec<quantick_sim::ExitPart> = entry.bracket.parts().copied().collect();
+        let mut parts: Vec<quantick_trading::ExitPart> = entry.bracket.parts().copied().collect();
         let Some(part) = parts.get_mut(index) else {
             return;
         };

@@ -326,26 +326,29 @@ fn hand_line(app: &mut QuantickApp, price: f64) {
     assert!(drawings.place_with(tool, &band, point, |_| fresh.take().unwrap()));
 }
 
-/// A call that places its first line and fails on the second.
+/// A batch of two placements whose second fails: the first line was placed,
+/// then retracted with the batch.
 fn fail_on_the_second_line(app: &mut QuantickApp) {
-    let tool = crate::drawings::DrawingTool::by_id("horizontal-line").unwrap();
-    let mut fresh = Some(app.tab_reads().new_drawing(tool));
-    let pane = app.active_tab_mut().drawing_pane_mut();
-    let refused = crate::control::install_all(pane, [true, false], |pane, places| {
-        if !places {
-            return Err(quantick_control::error::ControlError::invalid_request(
-                "the second line fails",
-            ));
+    use quantick_drawings::{DrawingEffect, DrawingIntent, Placement, update};
+    let placement = |tool_id: &str| {
+        let tool = crate::drawings::DrawingTool::by_id(tool_id).unwrap();
+        Placement {
+            tool,
+            points: vec![crate::drawings::ChartPoint::at_time(1.5, 100.0, None)],
+            opening: app.tab_reads().new_drawing(tool),
+            author: None,
+            name: None,
+            text: None,
         }
-        let point = crate::drawings::ChartPoint::at_time(1.5, 100.0, None);
-        let band = crate::drawings::DrawingBand::Price;
-        assert!(
-            pane.drawings
-                .place_with(tool, &band, point, |_| fresh.take().unwrap())
-        );
-        Ok((pane.drawings.items().last().unwrap().id.0, String::new()))
-    });
-    assert!(refused.is_err());
+    };
+    // A trend line takes two anchors: one leaves it unfinished.
+    let placements = vec![placement("horizontal-line"), placement("trend-line")];
+    let drawings = &mut app.active_tab_mut().drawing_pane_mut().drawings;
+    let refused = update(drawings, DrawingIntent::PlaceAll(placements));
+    assert!(matches!(
+        refused.as_slice(),
+        [DrawingEffect::NotPlaced { index: 1, .. }]
+    ));
 }
 
 #[test]

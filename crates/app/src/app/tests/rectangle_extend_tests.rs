@@ -1,6 +1,6 @@
-//! A rectangle's double click, driven through the real pointer path: the
-//! side it lands on is the side the band extends to, and the next double
-//! click puts back exactly the extent that was there.
+//! A rectangle's double click, driven through the real pointer path: a
+//! side zone toggles that side alone, and the centre extends both sides
+//! until its next double click puts back exactly the extent that was there.
 
 use super::*;
 
@@ -70,7 +70,7 @@ fn cursor_at(app: &mut QuantickApp, ctx: &egui::Context, position: egui::Pos2) -
 }
 
 #[test]
-fn a_double_click_by_a_side_extends_that_way_and_the_next_one_restores() {
+fn a_double_click_toggles_its_zones_sides_and_the_same_zone_takes_them_back() {
     let mid_y = (TOP + BOTTOM) / 2.0;
     for (position, expected) in [
         (egui::pos2(LEFT + 6.0, mid_y), (true, false)),
@@ -92,26 +92,50 @@ fn a_double_click_by_a_side_extends_that_way_and_the_next_one_restores() {
             "the extension is one undo step"
         );
         wait_out_the_click_sequence(&mut app, &ctx);
-        // Back on the band's original body, which every extension keeps.
-        double_click(&mut app, &ctx, egui::pos2((LEFT + RIGHT) / 2.0, mid_y));
+        // The drawn zone keeps its place whatever the band now paints.
+        double_click(&mut app, &ctx, position);
         assert_eq!(
             extent(&app),
             (false, false),
-            "the second double click restores"
+            "the same zone takes its extension back at {position:?}"
         );
     }
 }
 
-/// A press in a side zone still moves the band, so the cursor says move
-/// there too; the glyph alone announces the double click.
+/// The trader's sequence: extend right, then extend left too. A side's
+/// double click never restores the last extent.
 #[test]
-fn the_side_zones_keep_the_move_cursor() {
+fn extending_one_side_then_the_other_keeps_both() {
     let (mut app, ctx, _commands) = drawn_rectangle();
     let mid_y = (TOP + BOTTOM) / 2.0;
-    for x in [LEFT + 6.0, (LEFT + RIGHT) / 2.0, RIGHT - 6.0] {
+    double_click(&mut app, &ctx, egui::pos2(RIGHT - 6.0, mid_y));
+    assert_eq!(extent(&app), (false, true));
+    wait_out_the_click_sequence(&mut app, &ctx);
+    double_click(&mut app, &ctx, egui::pos2(LEFT + 6.0, mid_y));
+    assert_eq!(extent(&app), (true, true), "the left side extends too");
+    wait_out_the_click_sequence(&mut app, &ctx);
+    double_click(&mut app, &ctx, egui::pos2(RIGHT - 6.0, mid_y));
+    assert_eq!(
+        extent(&app),
+        (true, false),
+        "the right side alone comes back"
+    );
+}
+
+/// One cursor at a time: a side zone shows the horizontal resize cursor in
+/// place of the move grip, and the centre keeps the grip.
+#[test]
+fn a_side_zone_shows_only_the_resize_cursor() {
+    let (mut app, ctx, _commands) = drawn_rectangle();
+    let mid_y = (TOP + BOTTOM) / 2.0;
+    for (x, cursor) in [
+        (LEFT + 6.0, egui::CursorIcon::ResizeHorizontal),
+        ((LEFT + RIGHT) / 2.0, egui::CursorIcon::Move),
+        (RIGHT - 6.0, egui::CursorIcon::ResizeHorizontal),
+    ] {
         assert_eq!(
             cursor_at(&mut app, &ctx, egui::pos2(x, mid_y)),
-            egui::CursorIcon::Move,
+            cursor,
             "at x={x}"
         );
     }
@@ -170,7 +194,7 @@ fn an_extended_outline_band_leaves_the_charts_double_click_to_the_chart() {
         egui::pos2(LEFT - 150.0, TOP - 100.0),
     ] {
         let (mut app, ctx, _commands) = drawn_rectangle_with_fill(0);
-        // A gesture's extension: any double click the band took would restore it.
+        // A gesture's extension: any double click the band took would change it.
         double_click(&mut app, &ctx, egui::pos2((LEFT + RIGHT) / 2.0, mid_y));
         assert_eq!(extent(&app), (true, true));
         wait_out_the_click_sequence(&mut app, &ctx);
