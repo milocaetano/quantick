@@ -40,8 +40,6 @@ pub struct PointerOutcome {
     pub cursor: Option<GestureCursor>,
     pub begin_text_edit: bool,
     pub shared: SharedInteraction,
-    /// The glyph announcing what a double click under the pointer would do.
-    pub hint: Option<DoubleClickHint>,
 }
 /// What releasing a press as a click did beyond selecting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,11 +103,15 @@ impl PaneGestures {
         let mut double_click_taken = false;
         if let Some(pick) = pick {
             let (cursor, hint) = local_hover_cursor(drawings, projection, pick, frame.held);
+            // The double click's cursor replaces the move grip, never joins
+            // it; a drag in flight keeps the move grip it started with.
+            let cursor = match hint {
+                Some(hint) if !self.drag.is_active() => Some(hint_cursor(hint)),
+                _ => cursor,
+            };
             if let Some(cursor) = cursor {
                 outcome.set_cursor(cursor);
             }
-            // A drag in flight owns the pointer: no glyph rides along.
-            outcome.hint = hint.filter(|_| !self.drag.is_active());
             // Release-as-click precedes a new press. The press answer survives
             // inspector resize, including a captured miss (Some(None)).
             if pointer.released && self.drag_pending_from.is_some() {
@@ -432,8 +434,8 @@ fn local_hover_cursor(
         if drawing.locked {
             return (Some(GestureCursor::NotAllowed), None);
         }
-        // The cursor stays the move grip a press there is; the glyph alone
-        // says what a double click would do.
+        // The move grip, unless a double click here would act: the caller
+        // then shows that cursor instead.
         let hint = (!held(drawing.id))
             .then(|| {
                 projection.drawing_double_click_hint(
@@ -462,6 +464,13 @@ fn local_hover_cursor(
             )
         });
     (None, hint)
+}
+
+/// The cursor that announces a double click's hint.
+fn hint_cursor(hint: DoubleClickHint) -> GestureCursor {
+    match hint {
+        DoubleClickHint::ExtendSideways => GestureCursor::ResizeHorizontal,
+    }
 }
 
 fn move_handle(
@@ -956,7 +965,7 @@ mod tests {
     }
 
     #[test]
-    fn the_side_hint_keeps_the_move_cursor_and_hides_during_a_drag() {
+    fn the_side_zone_shows_one_resize_cursor_and_a_drag_keeps_the_move_grip() {
         with_projection(|projection, bands| {
             let (mut store, rect) = local_rectangle(projection, bands);
             store.items_mut()[0].style.fill_alpha = 40;
@@ -965,18 +974,34 @@ mod tests {
             let mut pointer = pointer_at(side, bands);
             pointer.down = false;
             let hover = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
-            assert!(
-                hover.hint.is_some(),
-                "the side zone announces its double click"
+            assert_eq!(
+                hover.cursor,
+                Some(GestureCursor::ResizeHorizontal),
+                "the side zone announces its double click with its cursor alone"
             );
-            assert_eq!(hover.cursor, Some(GestureCursor::Move));
+            let centre = owner_frame(
+                &mut PaneGestures::default(),
+                &mut store,
+                projection,
+                bands,
+                &pointer_at(rect.center(), bands),
+            );
+            assert_eq!(
+                centre.cursor,
+                Some(GestureCursor::Move),
+                "the centre is the grip"
+            );
             pointer.down = true;
             pointer.pressed = true;
             owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
             assert!(gestures.drag.is_active());
             pointer.pressed = false;
             let drag = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
-            assert_eq!(drag.hint, None, "a drag in flight shows no glyph");
+            assert_eq!(
+                drag.cursor,
+                Some(GestureCursor::Move),
+                "a drag in flight moves"
+            );
         });
     }
 
@@ -1016,7 +1041,7 @@ mod tests {
         with_projection(|projection, bands| {
             let (mut store, rect) = local_rectangle(projection, bands);
             assert!(rect.left() - bands[0].rect.left() > 20.0, "{rect:?}");
-            // A gesture's extension, so any double click it took would restore.
+            // A gesture's extension, so any double click it took would change it.
             assert_eq!(
                 missed_double_click(&mut store, projection, &bands[0], rect.center()),
                 ReleaseAnswer::DoubleClickTaken
@@ -1044,24 +1069,23 @@ mod tests {
     fn a_refused_double_click_selects_nothing() {
         with_projection(|projection, bands| {
             let (mut store, rect) = local_rectangle(projection, bands);
-            // Already run left by hand: the left zone has nothing to add.
-            set_extent(&mut store, true, false);
-            let left_zone = crate::pos2(rect.left() + 6.0, rect.center().y);
+            // Both sides run to the edge by hand: the centre has nothing to add.
+            set_extent(&mut store, true, true);
             let undo_before = store.undo_depth();
             assert_eq!(
-                missed_double_click(&mut store, projection, &bands[0], left_zone),
+                missed_double_click(&mut store, projection, &bands[0], rect.center()),
                 ReleaseAnswer::Plain
             );
             store.commit_gesture();
             assert_eq!(store.selected(), None);
             assert_eq!(store.undo_depth(), undo_before);
-            assert_eq!(extent(&store), (true, false));
+            assert_eq!(extent(&store), (true, true));
         });
     }
 
     /// Hover answers with the double click's own predicate: an outline
-    /// rectangle's drawn side zones show the glyph where the double click
-    /// acts, and the painted extension past them shows none.
+    /// rectangle's drawn side zones show the resize cursor where the double
+    /// click acts, and the painted extension past them shows none.
     #[test]
     fn hover_hints_exactly_where_an_outline_rectangles_double_click_acts() {
         with_projection(|projection, bands| {
@@ -1084,25 +1108,32 @@ mod tests {
                 )
             };
             for position in [left_zone, right_zone] {
-                let outcome = hover(&mut store, position);
-                assert!(outcome.hint.is_some(), "a hint at {position:?}");
-                assert_eq!(outcome.cursor, None, "no object takes a press there");
+                assert_eq!(
+                    hover(&mut store, position).cursor,
+                    Some(GestureCursor::ResizeHorizontal),
+                    "at {position:?}"
+                );
             }
             // Extended by a gesture, the band paints past its drawn sides and
-            // every side zone offers the restore; neither predicate reaches
-            // the painted-only part. The acting position goes last.
+            // every side zone still toggles its side; neither predicate
+            // reaches the painted-only part. The acting position goes last.
             assert_eq!(
                 missed_double_click(&mut store, projection, &bands[0], rect.center()),
                 ReleaseAnswer::DoubleClickTaken
             );
             store.select(None);
             for (position, acts) in [(painted_only, false), (left_zone, true)] {
-                let hinted = hover(&mut store, position).hint.is_some();
+                let hinted =
+                    hover(&mut store, position).cursor == Some(GestureCursor::ResizeHorizontal);
                 let taken = missed_double_click(&mut store, projection, &bands[0], position)
                     == ReleaseAnswer::DoubleClickTaken;
                 assert_eq!((hinted, taken), (acts, acts), "at {position:?}");
             }
-            assert_eq!(extent(&store), (false, false), "the left zone restored");
+            assert_eq!(
+                extent(&store),
+                (false, true),
+                "the left zone took back its side only"
+            );
         });
     }
 }

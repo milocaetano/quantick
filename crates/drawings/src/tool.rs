@@ -346,7 +346,7 @@ pub trait MarkTool: Sync {
         None
     }
     /// What a double click at `position` on this object would do, while the
-    /// pointer rests there: the glyph that announces it. `None`
+    /// pointer rests there: the cursor that announces it. `None`
     /// (the default) means a double click here is a plain click.
     ///
     /// The host asks only for the topmost object under the pointer, so the
@@ -376,13 +376,13 @@ pub trait MarkTool: Sync {
     fn test_geometry(&self) -> (Vec<Px>, Px);
 }
 
-/// A tool's answer to "what would a double click here do": a small glyph
-/// painted at `at`, so the gesture is discoverable before it is made. The
-/// cursor stays the object's own (a press there still moves it).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DoubleClickHint {
-    pub glyph: &'static str,
-    pub at: Px,
+/// A tool's answer to "what would a double click here do", shown as the
+/// hover cursor in place of the object's move cursor, so the gesture is
+/// discoverable before it is made. One cursor, never a cursor and a glyph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DoubleClickHint {
+    /// The double click runs a side out to the chart edge, or takes it back.
+    ExtendSideways,
 }
 
 /// A cheap, copyable reference to one registered implementation.

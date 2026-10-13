@@ -16,6 +16,7 @@ pub(super) fn cursor_icon(cursor: GestureCursor) -> egui::CursorIcon {
     match cursor {
         GestureCursor::Move => egui::CursorIcon::Move,
         GestureCursor::Resize => egui::CursorIcon::ResizeNwSe,
+        GestureCursor::ResizeHorizontal => egui::CursorIcon::ResizeHorizontal,
         GestureCursor::NotAllowed => egui::CursorIcon::NotAllowed,
         GestureCursor::Crosshair => egui::CursorIcon::Crosshair,
     }
