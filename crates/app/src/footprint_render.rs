@@ -40,7 +40,7 @@ use quantick_chart::footprint_legend::{LegendFacts, legend_text};
 use quantick_chart::footprint_lod::{
     AXIS_CLEARANCE_PX, DetailLevel, GLYPH_EM, GROUP_SNAP, LADDER_MIN_FONT_PX, LevelMemory,
     PROFILE_MIN_WIDTH, QUANTITY_GLYPHS, QUANTITY_PADDING_PX, QUANTITY_PX, TYPICAL_BODY_FRAC,
-    detailed_entry_width, height_to_split, on_screen_entries,
+    detailed_entry_width, height_to_split,
 };
 #[cfg(test)]
 use quantick_chart::footprint_lod::{
@@ -395,14 +395,11 @@ impl LayerPlan {
         // From the scale's own f64 density — never y(0) - y(group), which is
         // f32 rounding noise at index-future prices (see PriceScale::px_per_price).
         let base_row_px = (frame.scale.px_per_price() * group_f) as f32;
-        // The zoom this layer answers to, in the units its floors are written in:
-        // the candle's own width, stretched by the trader's `detail_scale` (a
-        // scale below one asks for detail at narrower candles, which is the same
-        // statement as lowering every floor by it).
-        let scaled_width = if frame.config.detail_scale > 0.0 {
-            frame.candle_width / frame.config.detail_scale
-        } else {
-            frame.candle_width
+        // On screen: `detail_scale` stretches only the text levels' entries.
+        let entries = |style| {
+            frame
+                .config
+                .on_screen_entries(detailed_min_width(style, frame.config))
         };
         // `auto` is answered before anything is measured: it is a question about
         // the zoom, and every floor below is measured against a concrete style.
@@ -411,12 +408,8 @@ impl LayerPlan {
         let requested = frame
             .config
             .style
-            .resolve_auto(|style| scaled_width >= detailed_min_width(style, frame.config));
-        let (compact_min, detailed_min) = on_screen_entries(
-            frame.config.compact_entry_width(),
-            detailed_min_width(requested, frame.config),
-            frame.config.detail_scale,
-        );
+            .resolve_auto(|style| frame.candle_width >= entries(style).1);
+        let (compact_min, detailed_min) = entries(requested);
         let level = lod.levels.resolve(
             frame.candle_width,
             base_row_px,

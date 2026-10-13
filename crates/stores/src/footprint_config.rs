@@ -433,6 +433,18 @@ impl FootprintConfig {
         )
     }
 
+    /// Compact's entry and the given Detailed entry (floors' units) on
+    /// screen: the candle widths the text levels start at, `detail_scale`
+    /// applied; Marks and Profile are never stretched.
+    #[must_use]
+    pub fn on_screen_entries(&self, detailed_min: f32) -> (f32, f32) {
+        quantick_chart::footprint_lod::on_screen_entries(
+            self.compact_entry_width(),
+            detailed_min,
+            self.detail_scale,
+        )
+    }
+
     /// The bounds `compact_from_px` may take: [`COMPACT_FROM_PX_RANGE`] cut at
     /// `detailed_from_px`, because the summary numbers come before the full
     /// ladder. The settings slider offers exactly this range.
