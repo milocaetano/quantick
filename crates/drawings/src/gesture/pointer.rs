@@ -47,9 +47,26 @@ enum ReleaseAnswer {
     Plain,
     /// A note was double clicked: type in it.
     TextEdit,
-    /// A tool took the click or the double click; the chart must not also
-    /// read it.
+    /// A tool took the click; the chart must not also read it.
     ClickTaken,
+    /// A tool took the double click; the chart must not also read it.
+    DoubleClickTaken,
+}
+
+/// How near the last click's press a press must land for egui's time-only
+/// double click to complete that click: a few pixels of hand wander.
+const DOUBLE_CLICK_SLOP_PX: f32 = 6.0;
+
+/// The last release the Pointer tool read as a click.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LastClick {
+    /// Where it pressed.
+    pub press: Px,
+    /// The drawing it left selected, if any.
+    pub drawing: Option<DrawingId>,
+    /// The store's revision right after a tool took it and recorded its
+    /// undo step; the double click it begins folds into that step.
+    pub step: Option<u64>,
 }
 
 impl PointerOutcome {
@@ -103,8 +120,11 @@ impl PaneGestures {
         });
         let mut click_taken = false;
         let mut single_click_taken = false;
+        let mut click_press = None;
         if let Some(pick) = pick {
             let (cursor, hint) = local_hover_cursor(drawings, projection, pick, frame.held);
+            // Alt+click only selects: no band announces an extension.
+            let hint = hint.filter(|hint| !(frame.alt && *hint == PointerHint::ExtendSide));
             // The hint's cursor replaces the move grip, never joins it; a
             // drag in flight keeps the cursor it started with.
             let cursor = match hint {
@@ -117,6 +137,7 @@ impl PaneGestures {
             // Release-as-click precedes a new press. The press answer survives
             // inspector resize, including a captured miss (Some(None)).
             if pointer.released && self.drag_pending_from.is_some() {
+                click_press = self.drag_pending_from;
                 let answer = self.select_released_press(
                     drawings,
                     projection,
@@ -126,8 +147,8 @@ impl PaneGestures {
                     frame.double_clicked,
                 );
                 outcome.begin_text_edit = answer == ReleaseAnswer::TextEdit;
-                click_taken = answer == ReleaseAnswer::ClickTaken;
-                single_click_taken = click_taken && !frame.double_clicked;
+                single_click_taken = answer == ReleaseAnswer::ClickTaken;
+                click_taken = single_click_taken || answer == ReleaseAnswer::DoubleClickTaken;
             }
         }
         let started = pointer.pressed
@@ -169,7 +190,11 @@ impl PaneGestures {
         if pointer.released {
             self.finish_local_release(drawings);
             // A click's undo step stays open to the double click it begins.
-            self.click_step = single_click_taken.then(|| drawings.revision());
+            self.last_click = click_press.map(|press| LastClick {
+                press,
+                drawing: drawings.selected_id(),
+                step: single_click_taken.then(|| drawings.revision()),
+            });
         }
         outcome
     }
@@ -245,15 +270,14 @@ impl PaneGestures {
         // strategy's window. The change arrives already worked out, so
         // selecting and applying it cannot half happen: either the object
         // changes and takes the click, or nothing moves and the chart reads it.
-        let kind = if double_clicked {
-            ClickKind::Double
-        } else {
-            ClickKind::Single
+        if alt || matches!(self.drag, DrawingDrag::Handle { .. }) {
+            return ReleaseAnswer::Plain;
+        }
+        let Some(band) = pointer_band else {
+            return ReleaseAnswer::Plain;
         };
-        if !alt
-            && !matches!(self.drag, DrawingDrag::Handle { .. })
-            && let Some(band) = pointer_band
-            && let Some((index, payload)) = projection.click_target(
+        let target = |kind| {
+            projection.click_target(
                 drawings,
                 selected,
                 position,
@@ -263,19 +287,43 @@ impl PaneGestures {
                 total,
                 held,
             )
-        {
-            // A double click folds into its first click's step: one Ctrl+Z
-            // goes back to before that click, never to the state between.
-            if let (ClickKind::Double, Some(step)) = (kind, self.click_step) {
-                drawings.fold_into_last_step(step);
-            }
-            // Baseline first, so the change is one undo step.
-            drawings.begin_gesture();
-            drawings.items_mut()[index].payload = payload;
-            drawings.select(Some(index));
-            return ReleaseAnswer::ClickTaken;
+        };
+        // egui's double click is time-only: it completes the last click only
+        // when its press lands near that one's, on that click's drawing.
+        // Anything else - the left band, then quickly the right - is a click
+        // of its own. A first click that hit no drawing names none to match.
+        let repeat = self.last_click.filter(|last| {
+            double_clicked
+                && self
+                    .drag_pending_from
+                    .is_some_and(|press| press.distance(last.press) <= DOUBLE_CLICK_SLOP_PX)
+        });
+        let (index, payload, answer, step) =
+            match repeat.map(|last| (last, target(ClickKind::Double))) {
+                Some((last, Some((index, payload))))
+                    if last
+                        .drawing
+                        .is_none_or(|id| id == drawings.items()[index].id) =>
+                {
+                    (index, payload, ReleaseAnswer::DoubleClickTaken, last.step)
+                }
+                // A double click that changes nothing leaves it to the chart.
+                Some((_, None)) => return ReleaseAnswer::Plain,
+                _ => match target(ClickKind::Single) {
+                    Some((index, payload)) => (index, payload, ReleaseAnswer::ClickTaken, None),
+                    None => return ReleaseAnswer::Plain,
+                },
+            };
+        // A double click folds into its first click's step: one Ctrl+Z goes
+        // back to before that click, never to the state between.
+        if let Some(step) = step {
+            drawings.fold_into_last_step(step);
         }
-        ReleaseAnswer::Plain
+        // Baseline first, so the change is one undo step.
+        drawings.begin_gesture();
+        drawings.items_mut()[index].payload = payload;
+        drawings.select(Some(index));
+        answer
     }
 
     fn begin_local_drag(
@@ -407,7 +455,7 @@ impl PaneGestures {
         self.translate_from = None;
         self.press_pick = None;
         self.drag_pending_from = None;
-        self.click_step = None;
+        self.last_click = None;
         self.shared_drag = SharedDrag::None;
         self.shared_drag_pending_from = None;
         self.shared_pointer_mark = None;
@@ -992,8 +1040,15 @@ mod tests {
         held: &dyn Fn(DrawingId) -> bool,
         double_clicked: bool,
     ) -> ReleaseAnswer {
+        // A double click completes a first click pressed on the same spot.
         let mut gestures = PaneGestures {
             press_pick: Some(picked),
+            drag_pending_from: Some(position),
+            last_click: double_clicked.then_some(LastClick {
+                press: position,
+                drawing: None,
+                step: None,
+            }),
             ..Default::default()
         };
         let pick = LocalPick {
@@ -1133,7 +1188,7 @@ mod tests {
             assert_eq!(extent(&store), (true, true));
             assert_eq!(
                 missed_double_click(&mut store, projection, &bands[0], rect.center()),
-                ReleaseAnswer::ClickTaken
+                ReleaseAnswer::DoubleClickTaken
             );
             assert_eq!(extent(&store), (false, false));
             assert_eq!(store.selected(), Some(0));
@@ -1307,7 +1362,7 @@ mod tests {
             }
             assert_eq!(
                 missed_double_click(&mut store, projection, &bands[0], rect.center()),
-                ReleaseAnswer::ClickTaken
+                ReleaseAnswer::DoubleClickTaken
             );
             assert_eq!(extent(&store), (false, false));
         });

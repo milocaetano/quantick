@@ -806,6 +806,32 @@ impl DrawingProjection<'_> {
         }
     }
 
+    /// The point handle - a drawing's own ring, never a side line - a press
+    /// at `pos` grabs, the selected object's first: what a held modifier
+    /// yields the canvas to.
+    #[must_use]
+    pub fn drawing_point_handle_at(
+        &self,
+        drawings: &Marks,
+        pos: Px,
+        band: &Band,
+        history_right: f32,
+        total: usize,
+    ) -> Option<(usize, usize)> {
+        let selected = drawings.selected();
+        selected
+            .into_iter()
+            .chain(
+                (0..drawings.items().len())
+                    .rev()
+                    .filter(|i| Some(*i) != selected),
+            )
+            .find_map(|index| {
+                self.drawing_handle_in(drawings, index, pos, band, history_right, total)
+                    .map(|handle| (index, handle))
+            })
+    }
+
     #[must_use]
     pub fn drawing_screen_point(
         &self,

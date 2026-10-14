@@ -285,9 +285,9 @@ pub struct PaneGestures {
     /// it as an undo step. Placement already refused to turn a twitch into a
     /// drag (`DRAWING_DRAG_THRESHOLD_PX`); moving now refuses too.
     pub drag_pending_from: Option<Px>,
-    /// The store's revision right after a click a tool took recorded its
-    /// undo step; the double click that click begins folds into that step.
-    pub click_step: Option<u64>,
+    /// The last release read as a click; a double click completes it only
+    /// near its press, on its drawing.
+    pub last_click: Option<pointer::LastClick>,
     /// The move or resize this gesture is, once it is one.
     pub drag: DrawingDrag,
     /// What a body drag grabbed; see [`TranslateFrom`].
