@@ -314,10 +314,9 @@ pub(crate) fn flow_caption(
     frame: Option<&FlowTapeFrame>,
     progress: FlowProgress,
     legend_visible: bool,
-    tick_regions: Option<&[quantick_chart::flow_execution::FlowRegionVisual]>,
-    theme: quantick_orderflow::HeatmapTheme,
+    spheres: Option<quantick_chart::flow_execution::SphereChrome<'_>>,
 ) -> Option<egui::Rect> {
-    let tick = tick_regions.is_some();
+    let tick = spheres.is_some();
     let detail = quantick_orderflow::projection::flow_tape::styled_caption_text(
         frame,
         progress,
@@ -342,7 +341,7 @@ pub(crate) fn flow_caption(
     append("FLOW", crate::theme::TEXT_MUTED);
     if legend_visible {
         append(" \u{00b7} ", crate::theme::TEXT_MUTED);
-        let colors = super::palette_for_theme(theme);
+        let colors = super::palette_for_theme(spheres.map_or_else(Default::default, |s| s.theme));
         append("Buy", if tick { colors.buy } else { FLOW_BUY });
         append(" / ", crate::theme::TEXT_MUTED);
         append("Sell", if tick { colors.sell } else { FLOW_SELL });
@@ -366,11 +365,11 @@ pub(crate) fn flow_caption(
         egui::pos2(history.left() + FLOW_CAPTION_INSET_PX, top),
         galley.size(),
     );
-    if let Some(regions) = tick_regions {
+    if let Some(spheres) = spheres {
         let placed = quantick_chart::flow_execution::place_flow_chrome(
             [history.min.into(), history.max.into()],
             [rect.min.into(), rect.max.into()],
-            regions,
+            spheres.regions,
         );
         let Some(placed) = placed else {
             return flow_notes(painter, history, rect.min, frame, progress);

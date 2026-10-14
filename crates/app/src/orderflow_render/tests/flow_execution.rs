@@ -295,7 +295,6 @@ fn hiding_flow_legend_keeps_offset_and_exception_facts_but_hides_colour_key() {
             FlowProgress::default(),
             false,
             None,
-            quantick_orderflow::HeatmapTheme::default(),
         );
     });
     let texts = output

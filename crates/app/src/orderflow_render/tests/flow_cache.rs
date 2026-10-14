@@ -105,8 +105,7 @@ fn tick_spheres_stand_on_their_executions() {
             geometry(),
             crate::theme::CANVAS,
             None,
-            Some(tick),
-            quantick_orderflow::HeatmapTheme::default(),
+            Some((tick, quantick_orderflow::HeatmapTheme::default())),
         ));
     });
     let drawing = drawn.unwrap();
@@ -181,8 +180,7 @@ fn paint_at_density(
             key.geometry,
             key.background,
             key.backing,
-            key.tick_bubbles,
-            key.theme,
+            key.tick_bubbles.map(|tick| (tick, key.theme)),
         );
         drawing.paint(&painter, history(), false);
         drawing.paint(&painter, history(), true);

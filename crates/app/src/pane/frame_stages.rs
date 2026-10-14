@@ -233,8 +233,11 @@ impl<'a> FlowFrame<'a> {
                 geometry,
                 self.background,
                 backing,
-                owner.cached_config().volume_dots.tick_bubbles,
-                owner.cached_config().theme,
+                owner
+                    .cached_config()
+                    .volume_dots
+                    .tick_bubbles
+                    .map(|tick| (tick, owner.cached_config().theme)),
             );
             drawing.paint(
                 self.painter,
@@ -334,8 +337,10 @@ impl<'a> FlowFrame<'a> {
                 owner.flow_execution_frame(),
                 owner.flow_execution_progress(),
                 owner.legend_visible(),
-                tick_regions,
-                owner.cached_config().theme,
+                tick_regions.map(|regions| quantick_chart::flow_execution::SphereChrome {
+                    regions,
+                    theme: owner.cached_config().theme,
+                }),
             ) {
                 bounds = Some(bounds.map_or(caption, |rect| rect.union(caption)));
             }

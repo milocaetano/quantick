@@ -53,8 +53,10 @@ fn tick_chrome_keeps_live_l2_wrapping_and_header_stacks_at_the_preferred_top() {
                     None,
                     quantick_orderflow::projection::flow_tape::FlowProgress::default(),
                     true,
-                    Some(&regions),
-                    quantick_orderflow::HeatmapTheme::default(),
+                    Some(quantick_chart::flow_execution::SphereChrome {
+                        regions: &regions,
+                        theme: quantick_orderflow::HeatmapTheme::default(),
+                    }),
                 );
             });
             let key = key.expect("the live L2 key remains visible");
@@ -100,8 +102,10 @@ fn a_replay_tick_caption_yields_when_its_header_is_occupied() {
             None,
             quantick_orderflow::projection::flow_tape::FlowProgress::default(),
             true,
-            Some(&regions),
-            quantick_orderflow::HeatmapTheme::default(),
+            Some(quantick_chart::flow_execution::SphereChrome {
+                regions: &regions,
+                theme: quantick_orderflow::HeatmapTheme::default(),
+            }),
         );
     });
     assert!(bounds.is_none());
@@ -156,8 +160,10 @@ fn quiet_narrow_tick_captions_stay_in_the_header_clear_of_candles_and_current_pr
                 None,
                 quantick_orderflow::projection::flow_tape::FlowProgress::default(),
                 true,
-                Some(&regions),
-                quantick_orderflow::HeatmapTheme::default(),
+                Some(quantick_chart::flow_execution::SphereChrome {
+                    regions: &regions,
+                    theme: quantick_orderflow::HeatmapTheme::default(),
+                }),
             );
         });
         let caption = caption.expect("the quiet capture's upper-left header has room");
@@ -254,8 +260,10 @@ fn tick_chrome_omits_a_blocked_l2_key_and_an_incomplete_caption() {
                 None,
                 quantick_orderflow::projection::flow_tape::FlowProgress::default(),
                 true,
-                Some(&[]),
-                quantick_orderflow::HeatmapTheme::default(),
+                Some(quantick_chart::flow_execution::SphereChrome {
+                    regions: &[],
+                    theme: quantick_orderflow::HeatmapTheme::default(),
+                }),
             )
             .is_none()
         );
@@ -282,8 +290,10 @@ fn the_tick_caption_key_follows_the_pane_theme() {
             None,
             quantick_orderflow::projection::flow_tape::FlowProgress::default(),
             true,
-            Some(&[]),
-            theme,
+            Some(quantick_chart::flow_execution::SphereChrome {
+                regions: &[],
+                theme,
+            }),
         );
     });
     let palette = crate::orderflow_render::palette_for_theme(theme);
@@ -377,8 +387,10 @@ fn a_blocked_tick_caption_keeps_its_honesty_notes() {
             Some(&frame),
             progress,
             true,
-            Some(&regions),
-            quantick_orderflow::HeatmapTheme::default(),
+            Some(quantick_chart::flow_execution::SphereChrome {
+                regions: &regions,
+                theme: quantick_orderflow::HeatmapTheme::default(),
+            }),
         );
     });
     let painted: Vec<String> = output

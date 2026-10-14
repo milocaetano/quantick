@@ -9,6 +9,14 @@ pub const FLOW_CHROME_MAX_WIDTH_PX: f32 = 320.0;
 /// A complete measured caption or key must fit within this header-local height.
 pub const FLOW_CHROME_MAX_HEIGHT_PX: f32 = 96.0;
 
+/// What a tick-sphere FLOW caption reads beyond regional FLOW's: the
+/// spheres it must not cover and the pane theme its Buy / Sell key wears.
+#[derive(Debug, Clone, Copy)]
+pub struct SphereChrome<'a> {
+    pub regions: &'a [FlowRegionVisual],
+    pub theme: quantick_orderflow::HeatmapTheme,
+}
+
 /// Rows of measured legend entries, independent of a font or painter.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FlowChromeLayout {

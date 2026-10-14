@@ -61,9 +61,13 @@ pub(crate) fn cached_flow(
     geometry: FlowExecutionGeometry,
     background: egui::Color32,
     backing: Option<egui::Color32>,
-    tick_bubbles: Option<quantick_orderflow::TickBubbleStyle>,
-    theme: quantick_orderflow::HeatmapTheme,
+    tick: Option<(
+        quantick_orderflow::TickBubbleStyle,
+        quantick_orderflow::HeatmapTheme,
+    )>,
 ) -> Arc<FlowDrawing> {
+    let (tick_bubbles, theme) = tick.unzip();
+    let theme = theme.unwrap_or_default();
     let clip = history.intersect(painter.clip_rect());
     let key = Key {
         frame,
@@ -86,13 +90,7 @@ pub(crate) fn cached_flow(
             tick_bubbles,
             |dot| geometry.point(dot).map(|(x, y)| [x, y]),
         );
-        Arc::new(FlowDrawing::styled(
-            frame,
-            plan,
-            background,
-            backing,
-            tick_bubbles.map(|tick| (tick, theme)),
-        ))
+        Arc::new(FlowDrawing::styled(frame, plan, background, backing, tick))
     }))
 }
 
@@ -112,7 +110,6 @@ pub(crate) fn draw_cached_flow(
         crate::theme::CANVAS,
         backing,
         None,
-        quantick_orderflow::HeatmapTheme::default(),
     );
     drawing.paint(painter, history, false);
     drawing.paint(painter, history, true);
