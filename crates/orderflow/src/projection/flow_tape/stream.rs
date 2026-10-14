@@ -1,7 +1,7 @@
 //! Source packets are nondropping; view requests may supersede older layouts.
 use super::constants::{
-    EVICTION_RESET_DIVISOR, KEEP_MARGIN_SLOTS, MAX_SOURCE_CHUNK, PUBLICATION_GROWTH_FACTOR,
-    SOURCE_CHUNK,
+    CAPTURES_PER_FRAME, EVICTION_RESET_DIVISOR, KEEP_MARGIN_SLOTS, MAX_SOURCE_CHUNK,
+    PUBLICATION_GROWTH_FACTOR, SOURCE_CHUNK,
 };
 use super::*;
 use std::ops::Range;
@@ -364,11 +364,12 @@ impl<R: FlowRunner> FlowSession<R> {
         self.unsent = None;
         self.frame = None;
     }
-    /// At most one bounded source packet is materialized. Full queues retain it.
+    /// At most [`CAPTURES_PER_FRAME`] bounded source packets are
+    /// materialized, one at a time. Full queues retain the last.
     pub fn project(
         &mut self,
         mut request: FlowRequest,
-        capture: impl FnOnce(Range<usize>) -> FlowChunk,
+        mut capture: impl FnMut(Range<usize>) -> FlowChunk,
     ) {
         if self
             .request
@@ -434,23 +435,39 @@ impl<R: FlowRunner> FlowSession<R> {
                 }
             });
         }
-        let room = MAX_FLOW_EXECUTIONS.saturating_sub(self.submitted.count(0..usize::MAX));
-        if self.unsent.is_none()
-            && room > 0
-            && let Some(gap) = self.submitted.last_gap(request.requested.clone())
-        {
-            // Newest first, so the candles at the live edge fill before older
-            // ones. Keep the first partial small, then use the already
-            // accepted coverage to grow cold-fill throughput without an
-            // unbounded copy.
-            let chunk = self
-                .submitted
-                .count(request.requested.clone())
-                .clamp(SOURCE_CHUNK, MAX_SOURCE_CHUNK);
-            let start = gap.start.max(gap.end.saturating_sub(chunk.min(room)));
-            self.unsent = Some(capture(start..gap.end));
-        }
-        if let Some(packet) = self.unsent.take() {
+        // Newest first, so the candles at the live edge fill before older
+        // ones, and more than one packet a frame, so a busy tape — a newer
+        // gap before every frame — never starves the history behind it.
+        for _ in 0..CAPTURES_PER_FRAME {
+            if self.unsent.is_none() {
+                let room = MAX_FLOW_EXECUTIONS.saturating_sub(self.submitted.count(0..usize::MAX));
+                let Some(gap) = self
+                    .submitted
+                    .last_gap(request.requested.clone())
+                    .filter(|_| room > 0)
+                else {
+                    break;
+                };
+                // Keep the first partial small, then use the already accepted
+                // coverage to grow cold-fill throughput without an unbounded
+                // copy.
+                let chunk = self
+                    .submitted
+                    .count(request.requested.clone())
+                    .clamp(SOURCE_CHUNK, MAX_SOURCE_CHUNK);
+                let start = gap.start.max(gap.end.saturating_sub(chunk.min(room)));
+                let packet = capture(start..gap.end);
+                if packet.executions.is_empty() {
+                    // Nothing there has a place on the chart: it is not asked
+                    // for again, so it cannot hold back the gaps behind it.
+                    self.submitted.insert(start..gap.end);
+                    continue;
+                }
+                self.unsent = Some(packet);
+            }
+            let Some(packet) = self.unsent.take() else {
+                break;
+            };
             let sent = packet
                 .executions
                 .first()
@@ -463,7 +480,10 @@ impl<R: FlowRunner> FlowSession<R> {
                         self.submitted.retain(request.keep.ordinals.clone());
                     }
                 }
-                Err(packet) => self.unsent = Some(*packet),
+                Err(packet) => {
+                    self.unsent = Some(*packet);
+                    break;
+                }
             }
         }
         self.progress = FlowProgress {

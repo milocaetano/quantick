@@ -43,6 +43,13 @@ pub(crate) const SOURCE_CHUNK: usize = 2048;
 /// packets per frame. Source capture stays bounded even for a whole-day view.
 pub(crate) const MAX_SOURCE_CHUNK: usize = 8 * SOURCE_CHUNK;
 
+/// Source packets captured a frame: the newest gap — on a busy tape the
+/// prints since the last frame — and the next one back, so a print before
+/// every frame never starves the history behind it. With packets growing to
+/// [`MAX_SOURCE_CHUNK`], history of `n` executions is captured within about
+/// `n / MAX_SOURCE_CHUNK + 4` frames however busy the tape stays.
+pub(crate) const CAPTURES_PER_FRAME: usize = 2;
+
 /// A fresh partial publication starts once the loaded source falls under
 /// the last publication's count divided by this: substantial eviction, not
 /// a small live pan.

@@ -70,13 +70,12 @@ impl FlowCoverage {
         }
         (requested.start < end).then_some(requested.start..end)
     }
-    /// Start of the coverage that runs to the end of `requested`; its end
-    /// when the newest ordinal is not covered.
+    /// Start of the coverage that runs to the end of `requested`: where its
+    /// last gap ends (its end when the newest ordinal is not covered), its
+    /// start when it has no gap.
     pub fn tail_start(&self, requested: Range<usize>) -> usize {
         self.last_gap(requested.clone())
-            .filter(|gap| gap.end == requested.end)
             .map_or(requested.start, |gap| gap.end)
-            .min(requested.end)
     }
     /// One past the newest ordinal of `requested` held; zero when none is.
     pub fn newest(&self, requested: Range<usize>) -> usize {
