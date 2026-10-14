@@ -283,7 +283,7 @@ fn bench_flow_frames_over_five_days() {
         timestamp_ms: 1_700_000_000_000 + (index * 1_000 / PRINTS_PER_SECOND) as i64,
         price: Decimal::new(6_000_000 + (index as i64 * 7_919 % 400) - 200, 2),
         quantity: Decimal::new(1 + index as i64 * 31 % 900, 3),
-        side: if index % 3 == 0 {
+        side: if index.is_multiple_of(3) {
             Side::Sell
         } else {
             Side::Buy

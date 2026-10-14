@@ -81,15 +81,31 @@ fn btc_tick_spheres_preserve_exact_sides_membership_and_area_at_each_zoom() {
                 .collect();
             members.sort_unstable();
             assert_eq!(members, (0..prints.len()).collect::<Vec<_>>());
-            let area_per_btc = f64::from(style.max_radius).powi(2)
-                / frame.effective_reference.unwrap().to_f64().unwrap();
-            let mut eligible = 0;
+            // #9: the preset's reference is the pane's one scale, whatever
+            // is on screen.
+            let reference = style.reference_quantity;
+            assert_eq!(
+                frame.effective_reference,
+                Decimal::from_f64(reference),
+                "{name}: the typed reference holds"
+            );
+            let area_per_btc = f64::from(style.max_radius).powi(2) / reference;
+            let (mut eligible, mut capped) = (0, 0);
             for dot in &frame.dots {
-                let expected = dot.mark.quantity.to_f64().unwrap() * area_per_btc;
-                assert!(
-                    (f64::from(dot.radius).powi(2) - expected).abs() <= expected * 0.00001,
-                    "{name}: area is proportional without a floor or capped whale"
-                );
+                let quantity = dot.mark.quantity.to_f64().unwrap();
+                if quantity > reference {
+                    assert_eq!(
+                        dot.radius, style.max_radius,
+                        "{name}: a region over the reference caps at the full radius"
+                    );
+                    capped += 1;
+                } else {
+                    let expected = quantity * area_per_btc;
+                    assert!(
+                        (f64::from(dot.radius).powi(2) - expected).abs() <= expected * 0.00001,
+                        "{name}: area is proportional up to the reference"
+                    );
+                }
                 let (buy, sell) = dot.side_shares();
                 assert!((buy + sell - 1.0).abs() < 1e-10);
                 eligible += usize::from(dot.radius >= style.label_min_radius);
@@ -99,7 +115,7 @@ fn btc_tick_spheres_preserve_exact_sides_membership_and_area_at_each_zoom() {
                 "{name}: meaningful quantities must be eligible in quiet and busy views"
             );
             eprintln!(
-                "BTC_LEFT {name} width={width} raw={} regions={} exact={} scale={} largest_radius={} labels_eligible={eligible} capped_quantity=0",
+                "BTC_LEFT {name} width={width} raw={} regions={} exact={} scale={} largest_radius={} labels_eligible={eligible} capped_regions={capped}",
                 prints.len(),
                 frame.dots.len(),
                 total,
