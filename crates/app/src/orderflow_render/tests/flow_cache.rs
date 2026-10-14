@@ -46,6 +46,77 @@ fn history() -> egui::Rect {
     egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(200.0, 120.0))
 }
 
+/// #10: tick spheres stand on their own executions, at the chart's factual
+/// place for them: no uniform offset, and no peak relocation, so a sphere
+/// never moves when another arrives beside it.
+#[test]
+fn tick_spheres_stand_on_their_executions() {
+    let trades = [1_000, 2_500].map(|timestamp_ms| Trade {
+        agg_id: 42,
+        timestamp_ms,
+        price: 100.into(),
+        quantity: 4500.into(),
+        side: Side::Buy,
+    });
+    // Two regions a second apart, at one price, a pixel or two apart.
+    let frame = Arc::new(project_flow_tape(
+        trades
+            .iter()
+            .enumerate()
+            .map(|(ordinal, trade)| FlowExecution {
+                ordinal,
+                slot: 0,
+                accepted_ordinal: ordinal,
+                ticks_per_bar: 50.into(),
+                trade,
+                opening: false,
+            }),
+        7,
+        2,
+        2,
+        FlowTapeView {
+            first_slot: 0,
+            end_slot: 1,
+            clip_left: 0.into(),
+            clip_right: 1.into(),
+            width_px: 200.0,
+            height_px: 120.0,
+            prices: PriceWindow::new(90.into(), 110.into()).unwrap(),
+            reference: FlowReference::Typed(4500.into()),
+            radius_limit: 12.0,
+            merge_support_radius: 6.0,
+            exclude_opening: false,
+        },
+    ));
+    assert_eq!(frame.dots.len(), 2);
+    let tick = quantick_orderflow::TickBubbleStyle {
+        reference_quantity: 4500.0,
+        max_radius: 12.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    };
+    let mut drawn = None;
+    let _ = egui::Context::default().run(egui::RawInput::default(), |ctx| {
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        drawn = Some(cached_flow(
+            &painter,
+            history(),
+            &frame,
+            geometry(),
+            crate::theme::CANVAS,
+            None,
+            Some(tick),
+        ));
+    });
+    let drawing = drawn.unwrap();
+    assert_eq!(drawing.plan.regions.len(), 2);
+    for region in &drawing.plan.regions {
+        let (x, y) = geometry().point(&frame.dots[region.dot_index]).unwrap();
+        assert_eq!(region.source_disc.center, [x, y], "no offset");
+        assert_eq!(region.disc, region.source_disc, "no relocation");
+    }
+}
+
 fn geometry() -> FlowExecutionGeometry {
     let mut viewport = Viewport::new();
     viewport.set_px_per_bar(64.0);
