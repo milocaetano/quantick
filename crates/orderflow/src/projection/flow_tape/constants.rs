@@ -28,8 +28,9 @@ pub const LARGE_REGION_REFERENCE_DIVISOR: u32 = 4;
 /// candles while the retained source stays bounded.
 pub(crate) const KEEP_MARGIN_SLOTS: usize = 32;
 
-/// Executions in the first source packet, and the least
-/// growth a cold fill waits for before its first partial publication.
+/// Executions in the first source packet, captured newest first, and the
+/// least growth of older history a cold fill waits for before its next
+/// partial publication.
 pub(crate) const SOURCE_CHUNK: usize = 2048;
 
 /// Cold admission grows after its first useful partial, capped at eight base
@@ -41,7 +42,7 @@ pub(crate) const MAX_SOURCE_CHUNK: usize = 8 * SOURCE_CHUNK;
 /// a small live pan.
 pub(crate) const EVICTION_RESET_DIVISOR: usize = 2;
 
-/// Cold-fill publications happen at geometric milestones: the loaded source
-/// must reach the last published count times this. Bounds total cold-fill
-/// projection work.
+/// Older history a cold fill adds is published at geometric milestones: the
+/// loaded source must reach the last published count times this. Bounds
+/// total cold-fill projection work; a newer print never waits for one.
 pub(crate) const PUBLICATION_GROWTH_FACTOR: usize = 2;

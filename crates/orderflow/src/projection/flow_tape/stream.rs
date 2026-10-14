@@ -56,6 +56,8 @@ struct PublishedCoverage {
     layout_revision: u64,
     requested: Range<usize>,
     loaded: usize,
+    /// One past the newest ordinal the publication held.
+    newest: usize,
     at_capacity: bool,
 }
 impl FlowPublication {
@@ -77,29 +79,49 @@ impl FlowPublication {
                 || last.at_capacity != at_capacity
         })
     }
-    fn due(&self, request: &FlowRequest, loaded: usize, at_capacity: bool, flush: bool) -> bool {
+    /// A change is published at once when it completes the request, reaches
+    /// the cache bound, or holds a newer print than the last publication —
+    /// no milestone ever delays a new print. Older history a cold fill adds
+    /// waits for geometric milestones, which bound total cold-fill work, or
+    /// for the host's quiet `flush`.
+    fn due(
+        &self,
+        request: &FlowRequest,
+        coverage: Coverage,
+        at_capacity: bool,
+        flush: bool,
+    ) -> bool {
+        let Coverage { loaded, newest } = coverage;
         self.dirty(request, loaded, at_capacity)
             && (flush
                 || loaded == request.requested.len()
                 || at_capacity
                 || self.last.as_ref().is_none_or(|last| {
-                    // Geometric milestones bound total cold-fill projection work.
-                    loaded
-                        >= last
-                            .loaded
-                            .saturating_mul(PUBLICATION_GROWTH_FACTOR)
-                            .max(SOURCE_CHUNK)
+                    newest > last.newest
+                        || loaded
+                            >= last
+                                .loaded
+                                .saturating_mul(PUBLICATION_GROWTH_FACTOR)
+                                .max(SOURCE_CHUNK)
                 }))
     }
-    fn record(&mut self, request: &FlowRequest, loaded: usize, at_capacity: bool) {
+    fn record(&mut self, request: &FlowRequest, coverage: Coverage, at_capacity: bool) {
         self.last = Some(PublishedCoverage {
             layout_revision: request.layout_revision,
             requested: request.requested.clone(),
-            loaded,
+            loaded: coverage.loaded,
+            newest: coverage.newest,
             at_capacity,
         });
     }
 }
+/// How much of a request a source holds, and how far its newest print runs.
+#[derive(Clone, Copy)]
+struct Coverage {
+    loaded: usize,
+    newest: usize,
+}
+
 #[derive(Default)]
 pub struct FlowWorkerCache {
     epoch: Option<u64>,
@@ -170,13 +192,16 @@ impl FlowWorkerCache {
         request: &FlowRequest,
         flush: bool,
     ) -> Option<Arc<FlowTapeFrame>> {
-        let loaded = self.source.coverage().count(request.requested.clone());
+        let coverage = Coverage {
+            loaded: self.source.coverage().count(request.requested.clone()),
+            newest: self.source.coverage().newest(request.requested.clone()),
+        };
         let at_capacity = self.source.len() == MAX_FLOW_EXECUTIONS;
-        if !self.publication.due(request, loaded, at_capacity, flush) {
+        if !self.publication.due(request, coverage, at_capacity, flush) {
             return None;
         }
         let frame = self.project(request);
-        self.publication.record(request, loaded, at_capacity);
+        self.publication.record(request, coverage, at_capacity);
         Some(frame)
     }
     /// The host only needs an idle timeout while an unpublished change exists.
@@ -208,6 +233,12 @@ pub struct FlowSession<R> {
     runner: R,
     progress: FlowProgress,
     frame: Option<Arc<FlowTapeFrame>>,
+    /// The frame on screen when the series was recut, in the new series'
+    /// coordinates ([`Self::carry_across`]): drawn until the new source
+    /// covers its prints.
+    carried: Option<Arc<FlowTapeFrame>>,
+    /// The newest print the last capture saw ([`Self::note_tail`]).
+    tail: Option<FlowTail>,
     ignore_opening: bool,
 }
 impl<R: FlowRunner> FlowSession<R> {
@@ -276,6 +307,30 @@ impl<R: FlowRunner> FlowSession<R> {
             }
         }
     }
+    /// The newest print the last capture saw, which tells the next capture
+    /// whether a new epoch is a recut of the same tape.
+    pub fn tail(&self) -> Option<FlowTail> {
+        self.tail
+    }
+    pub fn note_tail(&mut self, tail: Option<FlowTail>) {
+        self.tail = tail;
+    }
+    /// The series was recut into `epoch` from the same tape — a History
+    /// install, a footprint refold. Keep drawing `carry` of the frame on
+    /// screen, moved into the new series' coordinates, until the new
+    /// epoch's newest-first fill covers its prints: the spheres neither
+    /// vanish nor refill from the oldest candle. Call it before
+    /// [`Self::project`] with the new epoch; anything else is a new tape.
+    pub fn carry_across(
+        &mut self,
+        epoch: u64,
+        carry: impl FnOnce(&FlowTapeFrame) -> Option<FlowTapeFrame>,
+    ) {
+        if self.request.as_ref().is_none_or(|held| held.epoch == epoch) {
+            return;
+        }
+        self.carried = self.frame.as_deref().and_then(carry).map(Arc::new);
+    }
     fn clear_admission(&mut self) {
         self.submitted = FlowCoverage::default();
         self.unsent = None;
@@ -293,6 +348,12 @@ impl<R: FlowRunner> FlowSession<R> {
             .is_none_or(|held| held.epoch != request.epoch)
         {
             self.clear_admission();
+            // A recut of the same tape draws its carried frame meanwhile.
+            self.carried = self
+                .carried
+                .take()
+                .filter(|carried| carried.source_revision == request.epoch);
+            self.frame.clone_from(&self.carried);
         }
         request.layout_revision = self.request.as_ref().map_or(0, |held| {
             held.layout_revision
@@ -330,21 +391,36 @@ impl<R: FlowRunner> FlowSession<R> {
         if let Some(frame) = self.runner.finished()
             && frame.source_revision == request.epoch
         {
-            self.frame = Some(frame);
+            // A publication still filling keeps the carried spheres its
+            // newest-first fill has not reached; a complete one replaces them.
+            self.frame = Some(match &self.carried {
+                Some(carried)
+                    if carried.source_revision == frame.source_revision
+                        && frame.omitted_executions > 0 =>
+                {
+                    Arc::new(frame.with_carried(carried))
+                }
+                _ => {
+                    self.carried = None;
+                    frame
+                }
+            });
         }
         let room = MAX_FLOW_EXECUTIONS.saturating_sub(self.submitted.count(0..usize::MAX));
         if self.unsent.is_none()
             && room > 0
-            && let Some(gap) = self.submitted.first_gap(request.requested.clone())
+            && let Some(gap) = self.submitted.last_gap(request.requested.clone())
         {
-            // Keep the first partial small, then use the already accepted
-            // coverage to grow cold-fill throughput without an unbounded copy.
+            // Newest first, so the candles at the live edge fill before older
+            // ones. Keep the first partial small, then use the already
+            // accepted coverage to grow cold-fill throughput without an
+            // unbounded copy.
             let chunk = self
                 .submitted
                 .count(request.requested.clone())
                 .clamp(SOURCE_CHUNK, MAX_SOURCE_CHUNK);
-            let end = gap.end.min(gap.start.saturating_add(chunk.min(room)));
-            self.unsent = Some(capture(gap.start..end));
+            let start = gap.start.max(gap.end.saturating_sub(chunk.min(room)));
+            self.unsent = Some(capture(start..gap.end));
         }
         if let Some(packet) = self.unsent.take() {
             let sent = packet

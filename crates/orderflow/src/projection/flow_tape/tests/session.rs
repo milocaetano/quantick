@@ -102,7 +102,8 @@ fn queue_full_keeps_one_bounded_packet_and_copies_only_new_ordinals() {
             chunk(1, range)
         });
     }
-    assert_eq!(copied, [0..2048, 2048..4096, 4096..8192]);
+    // Newest first: the live edge's candles fill before older ones.
+    assert_eq!(copied, [7952..10000, 5904..7952, 1808..5904]);
     assert_eq!(session.submitted.count(0..10000), 4096);
     assert_eq!(session.unsent.as_ref().unwrap().executions.len(), 4096);
     while session.progress().pending {
@@ -141,10 +142,13 @@ fn cold_admission_grows_after_the_first_partial_and_preserves_the_complete_frame
         !session.progress().pending,
         "cold fill completes within sixteen frames"
     );
-    assert_eq!(copied[..4], [0..2048, 2048..4096, 4096..8192, 8192..16384]);
+    assert_eq!(
+        copied[..4],
+        [63488..65536, 61440..63488, 57344..61440, 49152..57344]
+    );
     assert!(copied.iter().all(|range| range.len() <= MAX_SOURCE_CHUNK));
-    assert_eq!(copied.last().unwrap().end, request.requested.end);
-    assert!(copied.windows(2).all(|pair| pair[0].end == pair[1].start));
+    assert_eq!(copied.last().unwrap().start, request.requested.start);
+    assert!(copied.windows(2).all(|pair| pair[1].end == pair[0].start));
 
     let mut complete = FlowWorkerCache::default();
     complete.select_request(&request);
@@ -168,7 +172,7 @@ fn changing_epoch_discards_a_grown_refused_packet_before_new_admission() {
         cold_chunk(2, range)
     });
     assert_eq!(copied.len(), 1);
-    assert_eq!(copied[0], 0..SOURCE_CHUNK);
+    assert_eq!(copied[0], 65_536 - SOURCE_CHUNK..65_536);
     assert_eq!(session.unsent.as_ref().unwrap().epoch, 2);
     session.runner.pump();
     session.project(replacement, |range| cold_chunk(2, range));
@@ -384,7 +388,9 @@ fn publication_large_cold_fill_projects_geometric_partials_and_exact_completion(
     let mut cache = FlowWorkerCache::default();
     let mut request = cold_request(0, 1_048_576);
     let mut published = Vec::new();
-    for start in (0..request.requested.end).step_by(2048) {
+    let end = request.requested.end;
+    // Newest first, as the session captures: each packet is older history.
+    for start in (0..end).step_by(2048).rev() {
         // Live view revisions must not restart the cold-fill publication milestone.
         request.layout_revision += 1;
         cache.select_request(&request);
@@ -396,7 +402,7 @@ fn publication_large_cold_fill_projects_geometric_partials_and_exact_completion(
                     .iter()
                     .map(|dot| dot.mark.trade_count)
                     .sum::<usize>(),
-                start + 2048
+                end - start
             );
             published.push(frame.loaded_executions);
         }
@@ -433,9 +439,9 @@ fn publication_quiet_partial_flushes_once_and_empty_request_publishes() {
     let mut cache = FlowWorkerCache::default();
     let request = cold_request(0, 20_000);
     cache.select_request(&request);
-    cache.append(&cold_chunk(1, 0..2048));
+    cache.append(&cold_chunk(1, 17_952..20_000));
     assert!(cache.project_if_due(&request, false).is_some());
-    cache.append(&cold_chunk(1, 2048..3000));
+    cache.append(&cold_chunk(1, 17_000..17_952));
     assert!(cache.project_if_due(&request, false).is_none());
     let partial = cache.project_if_due(&request, true).unwrap();
     assert_eq!(partial.loaded_executions, 3000);
@@ -544,13 +550,18 @@ fn publication_a_new_print_publishes_at_once_during_a_cold_fill() {
 #[test]
 fn publication_terminal_cache_limit_flushes_below_the_next_milestone_once() {
     let request = cold_request(0, MAX_FLOW_EXECUTIONS + 2048);
+    // Older history only: the newest print is the same throughout.
+    let held = |loaded| Coverage {
+        loaded,
+        newest: request.requested.end,
+    };
     let mut publication = FlowPublication::default();
-    publication.record(&request, 1_048_576, false);
-    assert!(!publication.due(&request, MAX_FLOW_EXECUTIONS, false, false));
-    assert!(publication.due(&request, MAX_FLOW_EXECUTIONS, true, false));
-    publication.record(&request, MAX_FLOW_EXECUTIONS, true);
+    publication.record(&request, held(1_048_576), false);
+    assert!(!publication.due(&request, held(MAX_FLOW_EXECUTIONS), false, false));
+    assert!(publication.due(&request, held(MAX_FLOW_EXECUTIONS), true, false));
+    publication.record(&request, held(MAX_FLOW_EXECUTIONS), true);
     assert!(!publication.dirty(&request, MAX_FLOW_EXECUTIONS, true));
-    assert!(!publication.due(&request, MAX_FLOW_EXECUTIONS, true, true));
+    assert!(!publication.due(&request, held(MAX_FLOW_EXECUTIONS), true, true));
 }
 
 #[test]

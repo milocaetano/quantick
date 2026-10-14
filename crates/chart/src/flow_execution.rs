@@ -3,7 +3,7 @@ use crate::state::ChartState;
 use quantick_orderflow::projection::{
     PriceWindow,
     flow_tape::{
-        FlowChunk, FlowReference, FlowRequest, FlowRunner, FlowSession, FlowTapeView,
+        FlowChunk, FlowReference, FlowRequest, FlowRunner, FlowSession, FlowTail, FlowTapeView,
         OwnedFlowExecution,
     },
 };
@@ -93,6 +93,7 @@ pub fn project_styled_flow_executions<R: FlowRunner>(
                 .map_or(state.trades().len(), |range| range.end)
     };
     let epoch = state.series_revision();
+    carry_recut(state, session, epoch);
     let keep = session.keep_for(
         epoch,
         slots.clone(),
@@ -145,6 +146,44 @@ pub fn project_styled_flow_executions<R: FlowRunner>(
             })
             .collect(),
     });
+    session.note_tail(tail(state));
+}
+
+/// The newest print of `state`'s tape, and how much of it is history.
+fn tail(state: &ChartState) -> Option<FlowTail> {
+    let ordinal = state.trades().len().checked_sub(1)?;
+    let trade = &state.trades()[ordinal];
+    Some(FlowTail {
+        backfill: state.backfill_trade_count(),
+        ordinal,
+        agg_id: trade.agg_id,
+        timestamp_ms: trade.timestamp_ms,
+    })
+}
+
+/// When `epoch` recut the tape the session last captured — older prints
+/// added in front (a History install), every later print where it was —
+/// carry the frame on screen into the new series instead of dropping it.
+fn carry_recut<R: FlowRunner>(state: &ChartState, session: &mut FlowSession<R>, epoch: u64) {
+    let (Some(old), Some(membership)) = (session.tail(), state.tick_membership()) else {
+        return;
+    };
+    let Some(shift) = state.backfill_trade_count().checked_sub(old.backfill) else {
+        return;
+    };
+    let same_tape = old.ordinal + shift < state.trades().len() && {
+        let trade = &state.trades()[old.ordinal + shift];
+        trade.agg_id == old.agg_id && trade.timestamp_ms == old.timestamp_ms
+    };
+    if same_tape {
+        session.carry_across(epoch, |frame| {
+            frame.carried(epoch, state.spec().parameter(), |ordinal| {
+                let ordinal = ordinal + shift;
+                let (slot, accepted) = membership.locate(ordinal)?;
+                Some((ordinal, slot, accepted))
+            })
+        });
+    }
 }
 
 /// Factual regional price on the current chart axis, including inverted views.

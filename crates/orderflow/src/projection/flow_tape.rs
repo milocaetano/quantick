@@ -6,6 +6,8 @@ use crate::{BubbleStyle, LiveLaneStyle};
 use quantick_engine::Trade;
 use rust_decimal::Decimal;
 use std::sync::Arc;
+mod carry;
+pub use carry::FlowTail;
 mod constants;
 use constants::{FLOW_MERGE_HEIGHT_PX, FLOW_MERGE_WIDTH_PX};
 pub use constants::{FLOW_REGION_WINDOW_MS, LARGE_REGION_REFERENCE_DIVISOR, MAX_FLOW_EXECUTIONS};
@@ -155,6 +157,9 @@ pub struct FlowTapeFrame {
     pub loaded_executions: usize,
     /// Exclusive end of contiguous loaded coverage from requested_ordinals.start.
     pub computed_through_ordinal: usize,
+    /// Start of the loaded coverage that runs to `requested_ordinals.end`:
+    /// a newest-first fill has computed everything from here on.
+    pub covered_from_ordinal: usize,
     pub cache_limit_reached: bool,
     pub omitted_executions: usize,
     pub off_axis_executions: usize,

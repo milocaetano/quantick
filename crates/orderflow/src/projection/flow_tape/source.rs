@@ -53,6 +53,39 @@ impl FlowCoverage {
         }
         (start < requested.end).then_some(start..requested.end)
     }
+    /// The newest gap of `requested`: what a newest-first fill loads next.
+    pub fn last_gap(&self, requested: Range<usize>) -> Option<Range<usize>> {
+        let mut end = requested.end;
+        for held in self.ranges.iter().rev() {
+            if held.start >= end {
+                continue;
+            }
+            if held.end <= requested.start {
+                break;
+            }
+            if held.end < end {
+                return Some(held.end.max(requested.start)..end);
+            }
+            end = end.min(held.start);
+        }
+        (requested.start < end).then_some(requested.start..end)
+    }
+    /// Start of the coverage that runs to the end of `requested`; its end
+    /// when the newest ordinal is not covered.
+    pub fn tail_start(&self, requested: Range<usize>) -> usize {
+        self.last_gap(requested.clone())
+            .filter(|gap| gap.end == requested.end)
+            .map_or(requested.start, |gap| gap.end)
+            .min(requested.end)
+    }
+    /// One past the newest ordinal of `requested` held; zero when none is.
+    pub fn newest(&self, requested: Range<usize>) -> usize {
+        self.ranges
+            .iter()
+            .rev()
+            .find(|held| held.start < requested.end && held.end > requested.start)
+            .map_or(0, |held| held.end.min(requested.end))
+    }
     pub fn count(&self, requested: Range<usize>) -> usize {
         self.ranges
             .iter()
@@ -192,6 +225,7 @@ impl FlowTapeSource {
                 .coverage
                 .first_gap(requested.clone())
                 .map_or(requested.end, |gap| gap.start),
+            covered_from_ordinal: self.coverage.tail_start(requested.clone()),
             ineligible_executions: self.ineligible.count(requested.clone()),
             requested_ordinals: requested,
             loaded_executions,
