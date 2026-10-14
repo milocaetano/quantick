@@ -37,7 +37,7 @@ pub fn reconcile_startup(
                 flow_bars: feed
                     .default_bars
                     .clone()
-                    .unwrap_or_else(|| "tick:50".to_owned()),
+                    .unwrap_or_else(|| crate::config::factory_flow_spec().to_config_string()),
                 time_bars: None,
                 context_bars: Vec::new(),
                 flow_layout: None,

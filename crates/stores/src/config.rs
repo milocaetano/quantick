@@ -40,6 +40,17 @@ pub const EMBEDDED_DEFAULT: &str = include_str!("../../app/config/feeds.toml");
 /// Conventional config file name looked up in the working directory.
 pub const CONFIG_FILENAME: &str = "quantick.toml";
 
+/// The tick size a flow pane opens on when neither the saved workspace nor
+/// the feed's `default_bars` names a spec. The type and its parameter are
+/// tunable live from the controls bar.
+pub const FACTORY_TICK_SIZE: u64 = 50;
+
+/// The factory flow spec, [`FACTORY_TICK_SIZE`] ticks.
+#[must_use]
+pub fn factory_flow_spec() -> quantick_chart::state::BarConfiguration {
+    quantick_chart::state::BarSpec::Tick(FACTORY_TICK_SIZE).into()
+}
+
 pub use quantick_workspace::arrangement_document::DeclaredLayout;
 
 /// One selectable feed: a named backend and the symbols it offers.
@@ -539,6 +550,13 @@ impl AppConfig {
                 None
             }
         }
+    }
+
+    /// The bar spec a tab on feed `id` opens on: its declared `default_bars`,
+    /// else the [factory spec](factory_flow_spec).
+    #[must_use]
+    pub fn opening_spec_for(&self, id: &str) -> quantick_chart::state::BarConfiguration {
+        self.startup_spec_for(id).unwrap_or_else(factory_flow_spec)
     }
 
     /// Data-honesty label for how feed `id` decides the aggressor side of a

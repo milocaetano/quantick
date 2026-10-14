@@ -8,12 +8,7 @@ use tracing_subscriber::EnvFilter;
 
 use quantick_feed as feed;
 
-use crate::state::BarSpec;
 use crate::ui_state::WorkspaceExt;
-
-/// The bar type the chart opens on. The type and its parameter are tunable live
-/// from the controls bar; the feed and symbol come from the configuration.
-const INITIAL_TICK_SIZE: u64 = 50;
 
 /// Install the tracing subscriber. Feed and app events flow to stderr; the level
 /// is controlled by `RUST_LOG` (default `quantick=info`). Set
@@ -248,8 +243,7 @@ pub(crate) fn run() -> eframe::Result {
                 .parse(&tab.flow_bars)
                 .ok()
         })
-        .or_else(|| config.startup_spec_for(&feed_id))
-        .unwrap_or_else(|| BarSpec::Tick(INITIAL_TICK_SIZE).into());
+        .unwrap_or_else(|| config.opening_spec_for(&feed_id));
 
     let feed = feed::spawn_live(
         provider,
