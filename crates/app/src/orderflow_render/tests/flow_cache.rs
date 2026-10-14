@@ -106,6 +106,7 @@ fn tick_spheres_stand_on_their_executions() {
             crate::theme::CANVAS,
             None,
             Some(tick),
+            quantick_orderflow::HeatmapTheme::default(),
         ));
     });
     let drawing = drawn.unwrap();
@@ -274,7 +275,10 @@ fn tick_spheres_follow_the_pane_theme() {
     let (default_entry, default_shapes) = paint(&ctx, bookmap);
     let (blind_entry, blind_shapes) = paint(&ctx, blind);
     assert!(!Arc::ptr_eq(&default_entry, &blind_entry));
-    assert_ne!(default_shapes, blind_shapes, "the sphere fills follow the theme");
+    assert_ne!(
+        default_shapes, blind_shapes,
+        "the sphere fills follow the theme"
+    );
     let (warm, _) = paint(&ctx, blind);
     assert!(Arc::ptr_eq(&blind_entry, &warm));
 }

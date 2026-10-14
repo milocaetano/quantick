@@ -96,17 +96,18 @@ impl FlowDrawing {
         plan: FlowPresentation,
         background: egui::Color32,
         backing: Option<egui::Color32>,
-        tick: Option<quantick_orderflow::TickBubbleStyle>,
+        tick_look: Option<(
+            quantick_orderflow::TickBubbleStyle,
+            quantick_orderflow::HeatmapTheme,
+        )>,
     ) -> Self {
         use quantick_orderflow::config::dressing::flow::{colors, ordinary_colors};
         let mut meshes = [egui::Mesh::default(), egui::Mesh::default()];
         let mut rims = [Vec::new(), Vec::new()];
+        let tick = tick_look.map(|(tick, _)| tick);
         let tick_style = tick.map(quantick_orderflow::TickBubbleStyle::bubbles);
-        let tick_colors = tick_style.as_ref().map(|style| {
-            BubbleColors::resolve(
-                &super::palette_for_theme(quantick_orderflow::HeatmapTheme::default()),
-                style,
-            )
+        let tick_colors = tick_look.map(|(tick, theme)| {
+            BubbleColors::resolve(&super::palette_for_theme(theme), &tick.bubbles())
         });
         let mut labels = plan.quantity_labels(frame, tick);
         labels.sort_by(|a, b| b.radius.total_cmp(&a.radius));
@@ -314,6 +315,7 @@ pub(crate) fn flow_caption(
     progress: FlowProgress,
     legend_visible: bool,
     tick_regions: Option<&[quantick_chart::flow_execution::FlowRegionVisual]>,
+    theme: quantick_orderflow::HeatmapTheme,
 ) -> Option<egui::Rect> {
     let tick = tick_regions.is_some();
     let detail = quantick_orderflow::projection::flow_tape::styled_caption_text(
@@ -340,7 +342,7 @@ pub(crate) fn flow_caption(
     append("FLOW", crate::theme::TEXT_MUTED);
     if legend_visible {
         append(" \u{00b7} ", crate::theme::TEXT_MUTED);
-        let colors = super::palette_for_theme(quantick_orderflow::HeatmapTheme::default());
+        let colors = super::palette_for_theme(theme);
         append("Buy", if tick { colors.buy } else { FLOW_BUY });
         append(" / ", crate::theme::TEXT_MUTED);
         append("Sell", if tick { colors.sell } else { FLOW_SELL });

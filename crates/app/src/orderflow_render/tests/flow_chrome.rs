@@ -54,6 +54,7 @@ fn tick_chrome_keeps_live_l2_wrapping_and_header_stacks_at_the_preferred_top() {
                     quantick_orderflow::projection::flow_tape::FlowProgress::default(),
                     true,
                     Some(&regions),
+                    quantick_orderflow::HeatmapTheme::default(),
                 );
             });
             let key = key.expect("the live L2 key remains visible");
@@ -100,6 +101,7 @@ fn a_replay_tick_caption_yields_when_its_header_is_occupied() {
             quantick_orderflow::projection::flow_tape::FlowProgress::default(),
             true,
             Some(&regions),
+            quantick_orderflow::HeatmapTheme::default(),
         );
     });
     assert!(bounds.is_none());
@@ -155,6 +157,7 @@ fn quiet_narrow_tick_captions_stay_in_the_header_clear_of_candles_and_current_pr
                 quantick_orderflow::projection::flow_tape::FlowProgress::default(),
                 true,
                 Some(&regions),
+                quantick_orderflow::HeatmapTheme::default(),
             );
         });
         let caption = caption.expect("the quiet capture's upper-left header has room");
@@ -247,7 +250,8 @@ fn tick_chrome_omits_a_blocked_l2_key_and_an_incomplete_caption() {
                 None,
                 quantick_orderflow::projection::flow_tape::FlowProgress::default(),
                 true,
-                Some(&[])
+                Some(&[]),
+                quantick_orderflow::HeatmapTheme::default(),
             )
             .is_none()
         );

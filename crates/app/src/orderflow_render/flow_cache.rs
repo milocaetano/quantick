@@ -26,6 +26,7 @@ struct Key<'a> {
     backing: Option<egui::Color32>,
     background: egui::Color32,
     tick_bubbles: Option<quantick_orderflow::TickBubbleStyle>,
+    theme: quantick_orderflow::HeatmapTheme,
 }
 impl Hash for Key<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -40,6 +41,7 @@ impl Hash for Key<'_> {
         self.tick_bubbles
             .map(|style| style.fingerprint())
             .hash(state);
+        self.theme.hash(state);
     }
 }
 impl ComputerMut<Key<'_>, Arc<Entry>> for Computer {
@@ -60,6 +62,7 @@ pub(crate) fn cached_flow(
     background: egui::Color32,
     backing: Option<egui::Color32>,
     tick_bubbles: Option<quantick_orderflow::TickBubbleStyle>,
+    theme: quantick_orderflow::HeatmapTheme,
 ) -> Arc<FlowDrawing> {
     let clip = history.intersect(painter.clip_rect());
     let key = Key {
@@ -69,6 +72,7 @@ pub(crate) fn cached_flow(
         backing,
         background,
         tick_bubbles,
+        theme,
     };
     let entry = painter
         .ctx()
@@ -87,7 +91,7 @@ pub(crate) fn cached_flow(
             plan,
             background,
             backing,
-            tick_bubbles,
+            tick_bubbles.map(|tick| (tick, theme)),
         ))
     }))
 }
@@ -108,6 +112,7 @@ pub(crate) fn draw_cached_flow(
         crate::theme::CANVAS,
         backing,
         None,
+        quantick_orderflow::HeatmapTheme::default(),
     );
     drawing.paint(painter, history, false);
     drawing.paint(painter, history, true);

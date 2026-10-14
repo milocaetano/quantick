@@ -180,7 +180,7 @@ impl DisplayGrouping {
 }
 
 /// Visual palette selected by the renderer.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HeatmapTheme {
     /// Dark Bookmap-inspired palette.
     #[default]
