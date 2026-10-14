@@ -4,7 +4,7 @@
 //! The figures and their wording are [`crate::pnl`]'s; this file only knows
 //! which symbol and which trades the account holds.
 
-use quantick_sim::ClosedTrade;
+use quantick_trading::ClosedTrade;
 use rust_decimal::Decimal;
 
 use super::PaperAccount;

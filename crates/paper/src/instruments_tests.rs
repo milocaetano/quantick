@@ -1,7 +1,7 @@
 // The instrument catalog: the shipped file parses, a B3 series matches its
 // contract codes and nothing else, and a bad entry is refused by name.
 
-use quantick_sim::MoneySource;
+use quantick_trading::MoneySource;
 use rust_decimal::Decimal;
 
 use super::*;

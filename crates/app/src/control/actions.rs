@@ -73,7 +73,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
         resolve_mark,
         generated_schema::<MarkCanonicalInput>(),
     )?;
-    super::annotate::register(&mut registry)?;
+    quantick_control_handlers::annotate::register(&mut registry)?;
     quantick_control_handlers::notify::register(&mut registry)?;
     super::layout::register(&mut registry)?;
     super::layers::register_action(&mut registry)?;

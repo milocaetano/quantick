@@ -23,14 +23,14 @@
 //! edited today re-reads yesterday's trades. Stamping it into history is a
 //! separate decision this module does not take.
 //!
-//! [`ClosedTrade::pnl_points`]: quantick_sim::ClosedTrade::pnl_points
+//! [`ClosedTrade::pnl_points`]: quantick_trading::ClosedTrade::pnl_points
 
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, LazyLock};
 
 use quantick_engine::display::round_for_display;
-use quantick_sim::{ClosedTrade, Currency, InstrumentMoney, Money};
+use quantick_trading::{ClosedTrade, Currency, InstrumentMoney, Money};
 use rust_decimal::Decimal;
 
 use crate::format::{fmt_decimal, fmt_exact};

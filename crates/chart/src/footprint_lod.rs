@@ -249,6 +249,19 @@ pub fn compact_entry_width(compact_from_px: f32, detailed_from_px: f32, detail_s
         .min(deepest_width(detail_scale))
 }
 
+/// The level drawn at `candle_width` on screen, given the `scaled` level the
+/// width over `detail_scale` earned: the POC dot (Marks) keeps its own floor
+/// at every scale, so a scale raised to hold the profile and the numbers back
+/// never hides the POC at zoom-out.
+#[must_use]
+pub fn with_poc_floor(scaled: DetailLevel, candle_width: f32) -> DetailLevel {
+    if candle_width >= MARKS_MIN_WIDTH {
+        scaled.max(DetailLevel::Marks)
+    } else {
+        scaled
+    }
+}
+
 /// The widest candle the zoom can reach, in the floors' units.
 fn deepest_width(detail_scale: f32) -> f32 {
     crate::viewport::MAX_CANDLE_WIDTH / detail_scale.max(1e-3)
@@ -397,6 +410,26 @@ mod tests {
         assert_eq!(height_to_split(Some(20), past, 12.0), None);
         let within = 12.0 * LEVEL_HYSTERESIS / (MAX_SPLIT_HINT_STRETCH - 1.0);
         assert!(height_to_split(Some(2), within, 12.0).is_some());
+    }
+
+    #[test]
+    fn a_wide_detail_scale_holds_back_everything_but_the_poc() {
+        // At scale 6 the profile and the numbers wait for six times the
+        // width; the POC dot arrives at its own floor.
+        let scale = 6.0;
+        let compact = compact_entry_width(COMPACT_FROM_PX, DETAILED_FROM_PX, scale);
+        let detailed = detailed_entry_width(DETAILED_MIN_WIDTH, DETAILED_FROM_PX, scale);
+        let at = |width: f32| {
+            let scaled = level_for(width / scale, 12.0, FLOORS, compact, detailed);
+            with_poc_floor(scaled, width)
+        };
+        assert_eq!(at(MARKS_MIN_WIDTH - 1.0), DetailLevel::Off);
+        assert_eq!(at(MARKS_MIN_WIDTH), DetailLevel::Marks);
+        assert_eq!(at(PROFILE_MIN_WIDTH * scale - 1.0), DetailLevel::Marks);
+        assert_eq!(at(PROFILE_MIN_WIDTH * scale), DetailLevel::Profile);
+        assert_eq!(at(compact * scale + 0.01), DetailLevel::Compact);
+        // A tight scale earns more than the raw width; the floor never lowers it.
+        assert_eq!(with_poc_floor(DetailLevel::Marks, 1.0), DetailLevel::Marks);
     }
 
     #[test]

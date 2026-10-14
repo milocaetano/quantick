@@ -7,7 +7,7 @@
 //! second operator reading the same ticket can never read it two ways.
 
 use quantick_engine::Side;
-use quantick_sim::{Bracket, EntryKind, Position};
+use quantick_trading::{Bracket, EntryKind, Position};
 use rust_decimal::Decimal;
 
 use crate::account::{TicketForm, side_word};

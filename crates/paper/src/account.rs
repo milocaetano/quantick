@@ -16,10 +16,8 @@
 use std::path::{Path, PathBuf};
 
 use quantick_engine::{Side, Trade};
-use quantick_sim::{
-    Bracket, CloseAmount, ClosedTrade, Command, OrderIntent, Simulator, TradingVenue, VenueEvent,
-    history,
-};
+use quantick_sim::{Command, Simulator, history};
+use quantick_trading::{Bracket, CloseAmount, ClosedTrade, OrderIntent, TradingVenue, VenueEvent};
 use rust_decimal::Decimal;
 
 use crate::format::{PositionSummary, fmt_decimal, position_word};
@@ -292,7 +290,7 @@ pub struct PaperAccount {
     feed: String,
     /// Money a launch hook asked for, waiting for the tab to learn which
     /// symbol it opens on. Spent once, on the first symbol.
-    hook_money: Option<quantick_sim::InstrumentMoney>,
+    hook_money: Option<quantick_trading::InstrumentMoney>,
     /// Whether a launch hook set the risk per trade for this run.
     ///
     /// An environment variable is an explicit request for one run, so it
@@ -741,7 +739,7 @@ impl PaperAccount {
     /// The resting entry orders, in placement order — the simulator's own
     /// view, read-only.
     #[must_use]
-    pub fn working_orders(&self) -> &[quantick_sim::Order] {
+    pub fn working_orders(&self) -> &[quantick_trading::Order] {
         self.venue.working_orders()
     }
 
@@ -823,7 +821,7 @@ impl PaperAccount {
                     self.set_toast(format!("SIM: dropped at the fill - {reason}"));
                 }
                 VenueEvent::Filled(fill) => {
-                    if matches!(fill.role, quantick_sim::FillRole::Entry(_)) {
+                    if matches!(fill.role, quantick_trading::FillRole::Entry(_)) {
                         self.set_toast(format!(
                             "SIM fill: {} {} @ {}",
                             side_word(fill.side),
@@ -861,13 +859,13 @@ impl PaperAccount {
                 // the trader did not click.
                 VenueEvent::Cancelled {
                     order,
-                    reason: quantick_sim::CancelReason::PriceTouched,
+                    reason: quantick_trading::CancelReason::PriceTouched,
                 } => {
                     self.set_toast(format!("SIM cancelled {}: target traded first", order.id));
                 }
                 VenueEvent::Cancelled {
                     order,
-                    reason: quantick_sim::CancelReason::AccountOccupied,
+                    reason: quantick_trading::CancelReason::AccountOccupied,
                 } => {
                     self.set_toast(format!(
                         "SIM stood down {}: account busy at its price",
@@ -880,13 +878,13 @@ impl PaperAccount {
                 // sentence more than they needed it for a single leg.
                 VenueEvent::Cancelled {
                     order,
-                    reason: quantick_sim::CancelReason::OcoFilled,
+                    reason: quantick_trading::CancelReason::OcoFilled,
                 } => {
                     self.set_toast(format!("SIM cancelled {}: its pair filled", order.id));
                 }
                 VenueEvent::Cancelled {
                     order,
-                    reason: quantick_sim::CancelReason::PositionClosed,
+                    reason: quantick_trading::CancelReason::PositionClosed,
                 } => {
                     self.set_toast(format!(
                         "SIM cancelled {}: the position it protected is closed",
@@ -895,7 +893,7 @@ impl PaperAccount {
                 }
                 VenueEvent::Cancelled {
                     order,
-                    reason: quantick_sim::CancelReason::BracketReplaced,
+                    reason: quantick_trading::CancelReason::BracketReplaced,
                 } => {
                     self.set_toast(format!("SIM cancelled {}: protection replaced", order.id));
                 }

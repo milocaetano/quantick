@@ -24,7 +24,7 @@ leaves; `guards` has no edges either way.
 | `mcp` | control-local, control | The MCP adapter; stdout carries MCP frames only. |
 | `guards` | — | Size, context, cycle and UI-free ratchets; English and encoding scans. |
 | `control-handlers` | control-schema, control-host, control, chart, sources, engine | Control handlers over headless ports. |
-| `control-schema` | control, control-host, stores, pine, layers, sim, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
+| `control-schema` | control, control-host, stores, pine, layers, trading, orderflow, indicators, orderbook, engine | Control-plane schemas over the domain crates. |
 | `stores` | chart, sources, workspace, orderflow, indicators, engine | Cockpit documents: catalogue, symbols, footprint, presets, scripts, arrangement, home, bundle. |
 | `chart` | chart-interaction, civil, orderflow, indicator-session, indicators, engine | State/geometry/viewport/style, indicator views |
 | `indicator-session` | pine, indicators, engine | Source binding, batches, deltas. |
@@ -35,7 +35,7 @@ leaves; `guards` has no edges either way.
 | `control-host` | control, engine | Projection registry, admission, idempotency store, event journal. Told the time. |
 | `indicators` | engine | The `Indicator` trait (commit/preview, rollback), incremental `ta.*` kernels, draw objects. |
 | `replay` | civil, engine | Recorded sessions: CSV, folder scan, deal recorder, playback clock; told the time. Test support is `replay::test_support`. |
-| `paper` | sim, replay, workspace, civil, engine | One paper account (orders, risk sizing, journal, home, report), three drivers. |
+| `paper` | sim, trading, replay, workspace, civil, engine | One paper account (orders, risk sizing, journal, home, report), three drivers. |
 | `sim` | trading, engine | `TradingVenue` impl; fills only on what the tape proves, never on quotes. |
 | `trading` | engine | Venue-neutral order vocabulary and the `TradingVenue` port. |
 | `feed` | feed-*, sources, replay, orderbook, engine | The `FeedEvent`/`FeedCommand` port, its adapters, session export. Owns runtimes, threads, clock. |

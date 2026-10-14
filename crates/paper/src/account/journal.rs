@@ -11,7 +11,8 @@
 use std::path::{Path, PathBuf};
 
 use quantick_engine::Side;
-use quantick_sim::{ClosedTrade, history};
+use quantick_sim::history;
+use quantick_trading::ClosedTrade;
 use rust_decimal::Decimal;
 
 use super::{PaperAccount, utc_compact};

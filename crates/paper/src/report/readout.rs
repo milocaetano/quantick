@@ -11,7 +11,7 @@
 //! express: it falls back to the grouped points and says why — or, where
 //! those points are worth different things, plots nothing and says so.
 
-use quantick_sim::ClosedTrade;
+use quantick_trading::ClosedTrade;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 

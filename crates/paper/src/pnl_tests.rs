@@ -2,7 +2,7 @@
 // over fixed fixtures: B3 futures in points, a linear crypto pair in its
 // quote asset, a forex pair in pips, and a symbol nobody priced.
 
-use quantick_sim::{Currency, InstrumentMoney, MoneySource};
+use quantick_trading::{Currency, InstrumentMoney, MoneySource};
 use rust_decimal::Decimal;
 
 use super::*;
@@ -228,8 +228,8 @@ fn the_display_preference_round_trips_its_token() {
     assert_eq!(PnlPrimary::from_token("dollars"), None);
 }
 
-fn closed(pnl_points: &str, quantity: &str) -> quantick_sim::ClosedTrade {
-    quantick_sim::ClosedTrade {
+fn closed(pnl_points: &str, quantity: &str) -> quantick_trading::ClosedTrade {
+    quantick_trading::ClosedTrade {
         side: quantick_engine::Side::Buy,
         quantity: d(quantity),
         entry_price: d("100"),
@@ -237,7 +237,7 @@ fn closed(pnl_points: &str, quantity: &str) -> quantick_sim::ClosedTrade {
         opened_ms: 0,
         closed_ms: 1,
         pnl_points: d(pnl_points),
-        exit_reason: quantick_sim::ExitReason::Manual,
+        exit_reason: quantick_trading::ExitReason::Manual,
         entry_agg_id: None,
         exit_agg_id: None,
         mae_points: None,

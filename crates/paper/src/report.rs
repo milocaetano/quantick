@@ -14,7 +14,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use quantick_sim::{ClosedTrade, PerformanceReport, history};
+use quantick_sim::{PerformanceReport, history};
+use quantick_trading::ClosedTrade;
 
 use crate::format::sanitize_symbol;
 use quantick_civil::{CivilDate, DAY_MS, DateRange, TzOffset};

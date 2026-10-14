@@ -322,13 +322,13 @@ fn a_worded_view_leads_each_row_and_the_net_with_the_chosen_figure() {
     let mut declared = World::new(None);
     declared.declared.insert(
         "WINZ26".to_owned(),
-        quantick_sim::InstrumentMoney {
+        quantick_trading::InstrumentMoney {
             point_value: d("1"),
             size_step: d("1"),
             min_size: d("1"),
             max_size: None,
-            currency: quantick_sim::Currency::new("BRL").expect("BRL"),
-            source: quantick_sim::MoneySource::Declared,
+            currency: quantick_trading::Currency::new("BRL").expect("BRL"),
+            source: quantick_trading::MoneySource::Declared,
         },
     );
     assert!(
@@ -345,7 +345,10 @@ fn saved_totals_are_summed_again_when_the_money_changes() {
     let rows = vec![row("WINZ26", 1_000, "400", "2")];
     let world = World::new(None);
     let mut totals = LedgerTotals::of_rows(world.reader(), &rows);
-    let eighty = BTreeMap::from([(quantick_sim::Currency::new("BRL").expect("BRL"), d("80"))]);
+    let eighty = BTreeMap::from([(
+        quantick_trading::Currency::new("BRL").expect("BRL"),
+        d("80"),
+    )]);
     assert_eq!(totals.net.money(), Some(&eighty));
     totals.reworded(world.reader(), Some(&rows));
     assert_eq!(totals.net.money(), Some(&eighty), "same reader, same sum");
@@ -353,18 +356,20 @@ fn saved_totals_are_summed_again_when_the_money_changes() {
     let mut declared = World::new(None);
     declared.declared.insert(
         "WINZ26".to_owned(),
-        quantick_sim::InstrumentMoney {
+        quantick_trading::InstrumentMoney {
             point_value: d("1"),
             size_step: d("1"),
             min_size: d("1"),
             max_size: None,
-            currency: quantick_sim::Currency::new("BRL").expect("BRL"),
-            source: quantick_sim::MoneySource::Declared,
+            currency: quantick_trading::Currency::new("BRL").expect("BRL"),
+            source: quantick_trading::MoneySource::Declared,
         },
     );
     totals.reworded(declared.reader(), Some(&rows));
-    let four_hundred =
-        BTreeMap::from([(quantick_sim::Currency::new("BRL").expect("BRL"), d("400"))]);
+    let four_hundred = BTreeMap::from([(
+        quantick_trading::Currency::new("BRL").expect("BRL"),
+        d("400"),
+    )]);
     assert_eq!(
         totals.net.money(),
         Some(&four_hundred),

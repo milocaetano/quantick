@@ -2,7 +2,7 @@
 // lock's refusal, the symbol switch, and the journal golden - the money
 // path's byte-for-byte record, moved here from `app` with the account.
 
-use quantick_sim::{Currency, InstrumentMoney, Money, MoneySource};
+use quantick_trading::{Currency, InstrumentMoney, Money, MoneySource};
 
 use super::*;
 use crate::report::HistoryRow;
@@ -380,7 +380,7 @@ fn the_export_csv_carries_readable_stamps_and_running_equity() {
         opened_ms: closed_ms - 60_000,
         closed_ms,
         pnl_points: Decimal::from(pnl),
-        exit_reason: quantick_sim::ExitReason::Manual,
+        exit_reason: quantick_trading::ExitReason::Manual,
         entry_agg_id: mae.map(|_| 1),
         exit_agg_id: mae.map(|_| 2),
         mae_points: mae.map(Decimal::from),
@@ -457,7 +457,7 @@ fn the_export_csv_adds_per_contract_points_and_money() {
         opened_ms: 1_773_666_000_000,
         closed_ms: 1_773_666_060_000,
         pnl_points: Decimal::from(pnl),
-        exit_reason: quantick_sim::ExitReason::Manual,
+        exit_reason: quantick_trading::ExitReason::Manual,
         entry_agg_id: None,
         exit_agg_id: None,
         mae_points: None,
@@ -824,7 +824,7 @@ fn an_unnamed_reset_close_invalidates_without_inventing_persistence_or_io_warnin
 }
 
 /// Rest a buy limit at `price` under a market marked at 100.
-fn rest_limit(account: &mut PaperAccount, price: i64) -> quantick_sim::OrderId {
+fn rest_limit(account: &mut PaperAccount, price: i64) -> quantick_trading::OrderId {
     let events = account
         .try_place_intent(OrderIntent::limit(
             Side::Buy,
@@ -852,7 +852,7 @@ fn cancelling_an_order_removes_it_and_tells_the_host_why() {
     assert!(
         matches!(
             events.as_slice(),
-            [VenueEvent::Cancelled { order, reason: quantick_sim::CancelReason::User }]
+            [VenueEvent::Cancelled { order, reason: quantick_trading::CancelReason::User }]
                 if order.id == first
         ),
         "one user cancellation of the named order: {events:?}"
@@ -975,8 +975,8 @@ fn same_time_closes_are_journaled_as_distinct_trades_of_their_file() {
 }
 
 /// One take-profit close at fixed venue times.
-fn take_profit_close() -> quantick_sim::ClosedTrade {
-    quantick_sim::ClosedTrade {
+fn take_profit_close() -> quantick_trading::ClosedTrade {
+    quantick_trading::ClosedTrade {
         side: Side::Buy,
         quantity: Decimal::ONE,
         entry_price: Decimal::from(100),
@@ -984,7 +984,7 @@ fn take_profit_close() -> quantick_sim::ClosedTrade {
         opened_ms: 1_773_666_000_000,
         closed_ms: 1_773_666_060_000,
         pnl_points: Decimal::from(3),
-        exit_reason: quantick_sim::ExitReason::TakeProfit,
+        exit_reason: quantick_trading::ExitReason::TakeProfit,
         entry_agg_id: None,
         exit_agg_id: None,
         mae_points: None,
@@ -1199,7 +1199,7 @@ fn a_saved_trade_prices_identically_from_any_tab() {
         opened_ms: 1_773_666_000_000,
         closed_ms: 1_773_666_060_000,
         pnl_points: Decimal::from(400),
-        exit_reason: quantick_sim::ExitReason::Manual,
+        exit_reason: quantick_trading::ExitReason::Manual,
         entry_agg_id: None,
         exit_agg_id: None,
         mae_points: None,

@@ -1656,7 +1656,7 @@ fn the_cmd_preview_paints_line_label_and_price_chip() {
             reserved_chip_y: None,
             pointer: Some(egui::pos2(400.0, 300.0)),
         };
-        paper.draw_cmd_preview(&paint);
+        paper.draw_cmd_preview(&paint, true);
     });
     let shapes = format!("{:?}", output.shapes);
     assert!(shapes.contains("BUY"), "the label names the side: {shapes}");
@@ -1778,15 +1778,18 @@ fn the_aim_paints_only_in_the_band_it_was_aimed_in() {
     let ctx = egui::Context::default();
     let output = ctx.run(egui::RawInput::default(), |ctx| {
         let painter = ctx.layer_painter(egui::LayerId::background());
-        paper.draw_cmd_preview(&PaintCtx {
-            painter: &painter,
-            chart_rect: other,
-            tag_right: other.right(),
-            axis_x: other.right(),
-            scale: &scale,
-            reserved_chip_y: None,
-            pointer: Some(egui::pos2(700.0, 300.0)),
-        });
+        paper.draw_cmd_preview(
+            &PaintCtx {
+                painter: &painter,
+                chart_rect: other,
+                tag_right: other.right(),
+                axis_x: other.right(),
+                scale: &scale,
+                reserved_chip_y: None,
+                pointer: Some(egui::pos2(700.0, 300.0)),
+            },
+            true,
+        );
     });
     let shapes = format!("{:?}", output.shapes);
     assert!(
@@ -1866,6 +1869,7 @@ fn layer_shapes(
             scale,
             None,
             pointer,
+            pointer.is_some(),
         );
     });
     format!("{:?}", output.shapes)

@@ -38,6 +38,7 @@ fn a_press_starts_the_run_and_moves_the_main_click_default() {
     assert_eq!(result["status"]["state"], "loading");
     assert_eq!(result["status"]["reach"], "sessions:2");
     assert_eq!(result["status"]["main_reach"], "sessions:2");
+    assert_eq!(window.default_reach, Some(HistoryReach::Sessions(2)));
 }
 
 #[test]
@@ -58,6 +59,7 @@ fn a_press_while_the_chart_fills_is_queued() {
     assert_eq!(result["press"], "queued");
     assert_eq!(result["status"]["state"], "queued");
     assert_eq!(result["status"]["main_reach"], "hours:3");
+    assert_eq!(window.default_reach, Some(HistoryReach::Hours(3)));
 }
 
 #[test]
@@ -70,6 +72,7 @@ fn a_press_on_a_running_tab_says_so_and_moves_nothing() {
     window.tabs[0].main_reach = HistoryReach::Hours(6);
     let again = call(load, &mut window, json!({ "reach": "hours:1" })).expect("pressed");
     assert_eq!(again["status"]["main_reach"], "hours:6");
+    assert_eq!(window.default_reach, None);
 }
 
 #[test]

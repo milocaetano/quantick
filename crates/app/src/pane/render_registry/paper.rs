@@ -44,6 +44,7 @@ fn paper(p: &mut PaperPass<'_>) {
         &p.scale,
         p.reserved_chip_y,
         pointer,
+        p.takes_input,
     );
     if p.hud_here {
         *p.hud_anchor = Some((p.rect, p.scale));

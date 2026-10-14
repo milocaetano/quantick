@@ -28,7 +28,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use quantick_sim::{Currency, InstrumentMoney, MoneySource};
+use quantick_trading::{Currency, InstrumentMoney, MoneySource};
 use rust_decimal::Decimal;
 use serde::Deserialize;
 
