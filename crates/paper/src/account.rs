@@ -30,9 +30,11 @@ mod journal;
 mod orders;
 mod readout;
 mod risk;
+mod ticket_edit;
 
 pub use journal::{elide_path, export_csv};
 pub use risk::{RiskEditor, RiskRefusal};
+pub use ticket_edit::{RiskEdit, RiskEditText};
 
 /// What the account is handed that only the ticket can know.
 ///
