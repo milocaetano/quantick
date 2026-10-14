@@ -15,6 +15,13 @@ use crate::engine::{ProjectionRequest, VisibleOrderflow};
 use crate::projection::PendingTape;
 use crate::tape_clock::TapeClock;
 
+#[path = "pane_depth.rs"]
+mod depth;
+
+#[cfg(test)]
+#[path = "pane_depth_tests.rs"]
+mod depth_tests;
+
 /// What recording one print asks of the worker that publishes the tape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingPrint {
@@ -32,6 +39,7 @@ pub struct PaneTape {
     pending: PendingTape,
     /// The overlay frame last completed, while unpublished prints are drawn.
     frame: Option<Arc<VisibleOrderflow>>,
+    depth: depth::CachedDepthPreview,
 }
 
 impl PaneTape {
@@ -119,6 +127,7 @@ impl PaneTape {
     pub fn reset(&mut self) -> u64 {
         let epoch = self.pending.reset();
         self.frame = None;
+        self.depth = depth::CachedDepthPreview::default();
         epoch
     }
 
@@ -131,15 +140,19 @@ impl PaneTape {
         request: &ProjectionRequest,
         published: Option<&Arc<VisibleOrderflow>>,
     ) -> Option<Arc<VisibleOrderflow>> {
+        let published = self.depth.consume(
+            published,
+            request.lane_now_ms.or_else(|| self.clock.now_ms()),
+        );
         if !config.immediate_tape() || self.pending.is_empty() {
             self.frame = None;
-            return published.cloned();
+            return published;
         }
         let frame = Arc::new(VisibleOrderflow::with_pending_overlay(
             &self.pending,
             config,
             request,
-            published.map(Arc::as_ref),
+            published.as_deref(),
         )?);
         self.frame = Some(Arc::clone(&frame));
         Some(frame)

@@ -217,3 +217,89 @@ fn current_book_ignores_rle_churn_tolerance_and_survives_exact_confirmation() {
             .all(|cell| !cell.current_book)
     );
 }
+
+#[test]
+fn first_seen_rows_exclude_unknown_initial_time_for_real_snapshot_coverage_and_grouping() {
+    for coverage in [
+        BookCoverage::Limited { levels_per_side: 1 },
+        BookCoverage::Full,
+    ] {
+        for multiple in [1, 2] {
+            let mut config = crate::HeatmapConfig {
+                enabled: true,
+                price_grouping: Decimal::ONE,
+                max_visible_cells: 8,
+                ..Default::default()
+            };
+            config.live_lane.depth_time_averaging = true;
+            let mut history = LiquidityHistory::new(config);
+            history
+                .install_snapshot(
+                    0,
+                    1,
+                    BookSnapshot::new(10, vec![level(99, 1)], vec![level(101, 1)], coverage),
+                )
+                .unwrap();
+            for i in 0..31 {
+                let id = 11 + i as u64;
+                history
+                    .apply_delta(
+                        600 + i * 10,
+                        &BookDelta::new(
+                            id,
+                            id,
+                            vec![level(95, if i % 2 == 0 { 10 } else { 20 })],
+                            vec![],
+                        ),
+                    )
+                    .unwrap();
+            }
+            let mut candle = bar();
+            candle.open_time = 0;
+            candle.close_time = 1_000;
+            let timeline = BarTimeline::from_bars(
+                0,
+                &[candle],
+                None,
+                Some(LiveEdge {
+                    now_ms: 1_000,
+                    window_ms: 1_000,
+                    reference_ms: 50,
+                    on_newest_bar: true,
+                }),
+            )
+            .with_full_lane_coverage();
+            let grouping = EffectiveGrouping::resolve(
+                DisplayGrouping::Multiple(multiple),
+                Decimal::ONE,
+                8.into(),
+            );
+            let price = crate::grouping::bucket_for_price(95.into(), grouping);
+            let (cells, _) = project_lane_heat(
+                &history,
+                &timeline,
+                PriceWindow::new(94.into(), 102.into()).unwrap(),
+                grouping,
+                20.into(),
+            );
+            assert!(cells.len() <= 8);
+            let first = cells
+                .iter()
+                .filter(|cell| cell.price_bucket == price && cell.time_averaged)
+                .min_by(|a, b| a.x0.total_cmp(&b.x0))
+                .unwrap();
+            assert!(
+                (first.x0 - 0.8).abs() < 1e-10,
+                "coverage starts at t600: {first:?}"
+            );
+            assert_eq!(first.quantity, Decimal::from(15));
+            let current = cells
+                .iter()
+                .find(|cell| cell.price_bucket == price && cell.current_book)
+                .unwrap();
+            assert_eq!(current.quantity, Decimal::from(10));
+            assert_eq!(current.current_book_source.unwrap().event_ms, 900);
+            assert_eq!(current.current_book_source.unwrap().update_id, Some(41));
+        }
+    }
+}

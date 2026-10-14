@@ -5,7 +5,8 @@ use crate::config::painting::GAP_EDGE_EPSILON;
 
 /// Only a current, exactly confirmed row can preview the book in chart forward
 /// space. It is a snapshot preview, with no historical-time claim. A stale or
-/// gapped book has no carried cells and therefore supplies no preview.
+/// gapped book supplies no eligible cells. Pane consumption expires cached
+/// eligibility against the advancing market clock before any reader sees it.
 pub fn current_book_preview(cell: &super::HeatmapCell, enabled: bool) -> bool {
     enabled && cell.current_book && !cell.time_averaged
 }

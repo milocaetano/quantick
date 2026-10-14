@@ -18,7 +18,10 @@ pub(super) struct DepthRun {
 
 /// Keep the current constant intervals exact. Older intervals become time
 /// averages, including observed zero depth, within one synchronized generation.
-/// Never average through a transport gap. The safety cap still reports omissions
+/// Conservatively begin each visual row at its first nonzero observation,
+/// including for full snapshots: absence before that observation is not used
+/// as zero. Internal observed zeros remain in the mean. Never average through
+/// a transport gap. The safety cap still reports omissions
 /// if even one cell per row/generation cannot fit.
 pub(super) fn project(
     runs: Vec<VisualLiquidityRun>,
@@ -58,6 +61,13 @@ pub(super) fn project(
             )
         })
         .collect();
+    let mut first_observed = current.clone();
+    for run in &historical {
+        first_observed
+            .entry((run.generation, run.side, run.price_bucket))
+            .and_modify(|start| *start = (*start).min(run.start_ms))
+            .or_insert(run.start_ms);
+    }
     let exact_rows: std::collections::BTreeSet<_> = current.keys().copied().collect();
     // An absent row's trailing observed zero must stay empty, especially at
     // the newest confirmation. Average internal zeros, never extend a deleted
@@ -93,7 +103,8 @@ pub(super) fn project(
             while from < run.end_ms {
                 let bin_start = start
                     .saturating_add((from.saturating_sub(start) / width) * width)
-                    .max(segment.start_ms);
+                    .max(segment.start_ms)
+                    .max(first_observed[&(run.generation, run.side, run.price_bucket)]);
                 let bin_end = start
                     .saturating_add((from.saturating_sub(start) / width + 1).saturating_mul(width))
                     .min(observed_end)

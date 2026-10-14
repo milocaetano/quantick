@@ -160,3 +160,27 @@ fn deleted_rows_never_average_into_unobserved_carry() {
             .all(|depth| !depth.time_averaged)
     );
 }
+
+#[test]
+fn first_observation_clips_unknown_time_but_keeps_internal_observed_zeros() {
+    let output = project(
+        vec![
+            run(1, RestingSide::Bid, 95, 10, 600, 650),
+            run(1, RestingSide::Bid, 95, 20, 700, 750),
+            run(1, RestingSide::Bid, 95, 1, 900, 1_000),
+        ],
+        [CoverageSegment {
+            generation: 1,
+            start_ms: 0,
+            end_ms: None,
+        }]
+        .into_iter(),
+        0,
+        1_000,
+        1_000,
+        2,
+    );
+    let average = output.iter().find(|depth| depth.time_averaged).unwrap();
+    assert_eq!(average.run, run(1, RestingSide::Bid, 95, 5, 600, 900));
+    assert_eq!(output.len(), 2);
+}
