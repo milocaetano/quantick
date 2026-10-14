@@ -220,6 +220,123 @@ fn tick_spheres_keep_their_regions_through_axis_drift_and_regroup_on_zoom() {
     assert_eq!(regions((97.0, 103.0)), [vec![1], vec![2]]);
 }
 
+/// The app's start: a seed of backfilled prints, then live prints one frame
+/// at a time. Every candle on screen — seed and live — has its spheres, and
+/// the newest-first fill leaves no older candle behind.
+#[test]
+fn seed_and_live_candles_all_get_spheres() {
+    let print = |id: u64| Trade {
+        agg_id: id,
+        timestamp_ms: 1_000 + id as i64 * 40,
+        price: (100 + id % 7).into(),
+        quantity: (1 + id % 3).into(),
+        side: if id % 2 == 0 { Side::Buy } else { Side::Sell },
+    };
+    let mut state = ChartState::new(BarSpec::Tick(50));
+    state.ingest_backfill(&(0..1_000).map(print).collect::<Vec<_>>());
+    let tick = quantick_orderflow::TickBubbleStyle {
+        reference_quantity: 1.0,
+        max_radius: 32.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    };
+    let mut session = FlowSession::<WorkerRunner>::default();
+    let show = |state: &ChartState, session: &mut FlowSession<WorkerRunner>| {
+        let total = state.bars().len() + usize::from(state.partial().is_some());
+        project_styled_flow_executions(
+            true,
+            state,
+            session,
+            FlowChartView {
+                slots: 0..total,
+                pixels: (total as f32 * 8.0, 400.0),
+                range: (95.0, 110.0),
+                clip: (0.0, total as f64),
+                tick_bubbles: Some(tick),
+            },
+        );
+    };
+    for id in 1_000..2_000 {
+        show(&state, &mut session);
+        state.ingest_live(&print(id));
+    }
+    for _ in 0..4 {
+        show(&state, &mut session);
+    }
+    let frame = session.frame().unwrap();
+    assert_eq!(frame.omitted_executions, 0, "the fill completed");
+    let mut slots: Vec<usize> = frame.dots.iter().map(|dot| dot.first_slot).collect();
+    slots.sort_unstable();
+    slots.dedup();
+    assert_eq!(
+        slots,
+        (0..40).collect::<Vec<_>>(),
+        "every candle has spheres"
+    );
+}
+
+/// #23: a pan by whole candles at the same zoom keeps every tick sphere
+/// that stays on screen: the same prints, at the same place on their
+/// candles, of the same size.
+#[test]
+fn a_pan_keeps_every_tick_sphere_on_screen() {
+    // Four prints a candle, each candle inside one region window, so no
+    // sphere spans two candles and every candle on screen is whole.
+    let mut state = ChartState::new(BarSpec::Tick(4));
+    for id in 0..40_u64 {
+        state.ingest_live(&Trade {
+            agg_id: id,
+            timestamp_ms: 1_000 * (id as i64 / 4 + 1) + id as i64 % 4 * 100,
+            price: (100 + id % 5).into(),
+            quantity: (1 + id % 3).into(),
+            side: if id % 2 == 0 { Side::Buy } else { Side::Sell },
+        });
+    }
+    let tick = quantick_orderflow::TickBubbleStyle {
+        reference_quantity: 4.0,
+        max_radius: 32.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    };
+    let mut session = FlowSession::<WorkerRunner>::default();
+    let mut spheres = |slots: std::ops::Range<usize>| {
+        let clip = (slots.start as f64, slots.end as f64);
+        let width = slots.len() as f32 * 40.0;
+        for _ in 0..2 {
+            project_styled_flow_executions(
+                true,
+                &state,
+                &mut session,
+                FlowChartView {
+                    slots: slots.clone(),
+                    pixels: (width, 300.0),
+                    range: (98.0, 106.0),
+                    clip,
+                    tick_bubbles: Some(tick),
+                },
+            );
+        }
+        let frame = session.frame().unwrap();
+        let mut spheres: Vec<(Vec<u64>, Decimal, u32)> = frame
+            .dots
+            .iter()
+            .filter(|dot| dot.first_slot >= 3 && dot.end_slot <= 7)
+            .inspect(|dot| assert_eq!(dot.end_slot, dot.first_slot + 1))
+            .map(|dot| {
+                let mut ids: Vec<u64> = dot.members.iter().map(|m| m.source_id).collect();
+                ids.sort_unstable();
+                (ids, dot.candle_position, dot.radius.to_bits())
+            })
+            .collect();
+        spheres.sort();
+        spheres
+    };
+    let before = spheres(2..8);
+    assert!(!before.is_empty());
+    assert_eq!(spheres(1..7), before, "one candle left");
+    assert_eq!(spheres(3..9), before, "one candle right");
+}
+
 #[test]
 fn retained_flow_prices_follow_the_current_axis_while_layout_is_pending() {
     let old = PriceWindow::new(90.into(), 110.into()).unwrap();
