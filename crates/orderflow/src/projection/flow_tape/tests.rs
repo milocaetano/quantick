@@ -142,6 +142,37 @@ fn ordinary_overflow_shrinks_the_common_frame_without_flattening_ratios() {
     assert!((a * a / (b * b) - 2.0).abs() < 0.0001);
 }
 
+/// #9: a typed reference is the pane's one sphere scale. A print larger than
+/// it arriving, or coming into view, caps at the radius limit; every other
+/// sphere keeps its radius, and the frame keeps its reference.
+#[test]
+fn a_typed_reference_holds_every_radius_when_a_larger_print_arrives() {
+    let ordinary = [
+        trade(1000, 95, 90, Side::Buy),
+        trade(1100, 105, 900, Side::Sell),
+    ];
+    let before = frame(&ordinary, 200.0);
+    let mut with_whale = ordinary.to_vec();
+    with_whale.push(trade(2_500, 100, 9_000, Side::Buy));
+    let after = frame(&with_whale, 200.0);
+    for frame in [&before, &after] {
+        assert_eq!(frame.effective_reference, Some(Decimal::from(900)));
+        assert_eq!(frame.scale_basis, FlowScaleBasis::TypedReference);
+    }
+    let radius = |frame: &FlowTapeFrame, quantity: i64| {
+        frame
+            .dots
+            .iter()
+            .find(|dot| dot.mark.quantity == Decimal::from(quantity))
+            .unwrap()
+            .radius
+    };
+    for quantity in [90, 900] {
+        assert_eq!(radius(&before, quantity), radius(&after, quantity));
+    }
+    assert_eq!(radius(&after, 9_000), 7.0, "an outsized print is capped");
+}
+
 #[test]
 fn mixed_opening_group_keeps_ordinary_quantity_in_the_common_reference() {
     let trades = [
