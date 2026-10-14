@@ -24,6 +24,9 @@ pub(super) struct DraftCell {
     pub(super) y1: f64,
     /// Past the last confirmation, carried to the live edge.
     pub(super) carried: bool,
+    pub(super) time_averaged: bool,
+    pub(super) current_book: bool,
+    pub(super) current_book_source: Option<super::model::BookSource>,
 }
 
 /// The `(y0, y1)` rows of the bucket at `price_bucket`, clipped to `prices`;
@@ -91,9 +94,18 @@ pub(super) fn percentile_99(values: impl Iterator<Item = Decimal>) -> Decimal {
 /// there are more than the cap allows. Returns the bands and how many the
 /// cap dropped. Hidden heat drops nothing: the trader chose to hide it.
 pub(super) fn finish_cells(
+    drafts: Vec<DraftCell>,
+    reference: Decimal,
+    config: &HeatmapConfig,
+) -> (Vec<HeatmapCell>, usize) {
+    finish_with_priority(drafts, reference, config, false)
+}
+
+pub(super) fn finish_with_priority(
     mut drafts: Vec<DraftCell>,
     reference: Decimal,
     config: &HeatmapConfig,
+    current_first: bool,
 ) -> (Vec<HeatmapCell>, usize) {
     if !config.show_liquidity {
         drafts.clear();
@@ -105,8 +117,17 @@ pub(super) fn finish_cells(
         // the cap preserve side, geometry and carried/observed provenance.
         let mut ranked: Vec<_> = drafts.into_iter().enumerate().collect();
         let rank = |a: &(usize, DraftCell), b: &(usize, DraftCell)| {
-            b.1.quantity
-                .cmp(&a.1.quantity)
+            (current_first && !a.1.current_book)
+                .cmp(&(current_first && !b.1.current_book))
+                .then_with(|| a.1.time_averaged.cmp(&b.1.time_averaged))
+                .then_with(|| {
+                    if current_first {
+                        b.1.x1.total_cmp(&a.1.x1)
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                })
+                .then_with(|| b.1.quantity.cmp(&a.1.quantity))
                 .then_with(|| a.1.generation.cmp(&b.1.generation))
                 .then_with(|| a.1.price_bucket.cmp(&b.1.price_bucket))
                 .then_with(|| a.1.x0.total_cmp(&b.1.x0))
@@ -140,6 +161,9 @@ pub(super) fn finish_cells(
                         1.0
                     },
                 carried: draft.carried,
+                time_averaged: draft.time_averaged,
+                current_book: draft.current_book,
+                current_book_source: draft.current_book_source,
             }
         })
         .collect();

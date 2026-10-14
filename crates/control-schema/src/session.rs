@@ -11,7 +11,7 @@ use quantick_control::{
     wire::{CanonicalDecimal, WireU64},
 };
 
-use quantick_sim::{ClosedTrade, Order};
+use quantick_trading::{ClosedTrade, Order};
 
 use schemars::JsonSchema;
 

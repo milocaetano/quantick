@@ -5,12 +5,10 @@
 
 pub const ANCHOR_SIMPLE: &str = "\u{E5D8}";
 pub const ARROWS_HORIZONTAL: &str = "\u{EB06}";
-pub const ARROWS_IN_LINE_HORIZONTAL: &str = "\u{E530}";
 pub const ARROWS_OUT_LINE_HORIZONTAL: &str = "\u{E534}";
 pub const ARROWS_VERTICAL: &str = "\u{EB04}";
 pub const ARROW_FAT_DOWN: &str = "\u{E518}";
 pub const ARROW_FAT_UP: &str = "\u{E52E}";
-pub const ARROW_LINE_LEFT: &str = "\u{E062}";
 pub const ARROW_LINE_RIGHT: &str = "\u{E064}";
 pub const ARROW_UP_RIGHT: &str = "\u{E092}";
 pub const CHART_BAR_HORIZONTAL: &str = "\u{E152}";

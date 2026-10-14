@@ -499,3 +499,72 @@ fn publication_terminal_cache_limit_flushes_below_the_next_milestone_once() {
     assert!(!publication.dirty(&request, MAX_FLOW_EXECUTIONS, true));
     assert!(!publication.due(&request, MAX_FLOW_EXECUTIONS, true, true));
 }
+
+#[test]
+fn tick_spheres_keep_closed_and_forming_slot_facts_inside_a_long_tape_window() {
+    let mut config = HeatmapConfig {
+        show_aggressions: true,
+        ..HeatmapConfig::default()
+    };
+    config.volume_dots.tick_bubbles = Some(crate::TickBubbleStyle {
+        reference_quantity: 10.0,
+        max_radius: 36.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    });
+    config.live_lane.window = crate::LaneWindow::Fixed { ms: 900_000 };
+    assert!(FlowSession::<Runner>::active(&config));
+    let mut cache = FlowWorkerCache::default();
+    // Every print occurs at the same instant, inside the long tape window.
+    // Candle membership still comes from accepted source slots, not lane time.
+    let original = request(1, 0..4);
+    cache.select_request(&original);
+    cache.append(&chunk(1, 0..7));
+    let full = cache.project(&original);
+    assert_eq!(
+        full.dots
+            .iter()
+            .map(|dot| dot.mark.trade_count)
+            .sum::<usize>(),
+        7
+    );
+    for slot in 0..4 {
+        assert!(
+            full.dots
+                .iter()
+                .flat_map(|dot| dot.members.iter())
+                .any(|member| member.candle_slot == slot)
+        );
+    }
+    let panned = request(1, 1..4);
+    cache.select_request(&panned);
+    let frame = cache.project(&panned);
+    assert_eq!(
+        frame
+            .dots
+            .iter()
+            .map(|dot| dot.mark.trade_count)
+            .sum::<usize>(),
+        5
+    );
+    assert_eq!(
+        frame.omitted_executions, 1,
+        "the requested eighth print is not yet in the forming slot"
+    );
+    for dot in &frame.dots {
+        assert_eq!(dot.mark.quantity, Decimal::from(dot.mark.trade_count));
+        assert_eq!(dot.mark.side, Side::Buy);
+    }
+    // Complete the asynchronous forming-slot request, then require all facts.
+    cache.append(&chunk(1, 7..8));
+    let complete = cache.project(&panned);
+    assert_eq!(complete.omitted_executions, 0);
+    assert_eq!(
+        complete
+            .dots
+            .iter()
+            .map(|dot| dot.mark.trade_count)
+            .sum::<usize>(),
+        6
+    );
+}

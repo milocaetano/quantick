@@ -40,7 +40,7 @@ use quantick_chart::footprint_legend::{LegendFacts, legend_text};
 use quantick_chart::footprint_lod::{
     AXIS_CLEARANCE_PX, DetailLevel, GLYPH_EM, GROUP_SNAP, LADDER_MIN_FONT_PX, LevelMemory,
     PROFILE_MIN_WIDTH, QUANTITY_GLYPHS, QUANTITY_PADDING_PX, QUANTITY_PX, TYPICAL_BODY_FRAC,
-    detailed_entry_width, height_to_split,
+    detailed_entry_width, height_to_split, with_poc_floor,
 };
 #[cfg(test)]
 use quantick_chart::footprint_lod::{
@@ -399,11 +399,7 @@ impl LayerPlan {
         // the candle's own width, stretched by the trader's `detail_scale` (a
         // scale below one asks for detail at narrower candles, which is the same
         // statement as lowering every floor by it).
-        let scaled_width = if frame.config.detail_scale > 0.0 {
-            frame.candle_width / frame.config.detail_scale
-        } else {
-            frame.candle_width
-        };
+        let scaled_width = frame.config.scaled_width(frame.candle_width);
         // `auto` is answered before anything is measured: it is a question about
         // the zoom, and every floor below is measured against a concrete style.
         // The chain is walked richest-first and the first link the candle can pay
@@ -412,13 +408,14 @@ impl LayerPlan {
             .config
             .style
             .resolve_auto(|style| scaled_width >= detailed_min_width(style, frame.config));
-        let level = lod.levels.resolve(
+        let scaled = lod.levels.resolve(
             scaled_width,
             base_row_px,
             frame.config.row_floors(),
             frame.config.compact_entry_width(),
             detailed_min_width(requested, frame.config),
         );
+        let level = with_poc_floor(scaled, frame.candle_width);
         // A style that cannot pay for itself at this zoom hands over to the one it
         // names, rather than drawing a worse version of itself. The legend says
         // both names — a chart that quietly became a different chart is the same
@@ -1423,8 +1420,8 @@ mod tests {
     }
 
     /// Detail arrives sooner than it used to at every level — the point of the
-    /// retune — and `detail_scale` moves the whole ladder together without
-    /// reordering it.
+    /// retune — and a `detail_scale` below one moves the whole ladder together
+    /// without reordering it.
     #[test]
     fn detail_arrives_earlier_than_the_old_floors_and_scales_as_one() {
         // What each floor was when the ladder's font floor was 8 px.

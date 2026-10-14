@@ -360,6 +360,13 @@ pub struct BubblesStateSnapshot {
     /// (see `asset`), read back by `layers.visibility` as layer `native_tape`.
     #[serde(default)]
     pub native_tape: bool,
+    /// Dense historical tape depth uses labelled duration-weighted averages;
+    /// current constant intervals remain exact.
+    #[serde(default)]
+    pub depth_time_averaging: bool,
+    /// Native dots keep the pinned area scale and configured radius.
+    #[serde(default)]
+    pub stable_size: bool,
     /// The pane shows the tape alone, Bookmap style: the native tape takes
     /// the whole canvas, no candle or candle mark is drawn and time runs
     /// across the full width on the tape's own window. The lane setting
@@ -466,6 +473,8 @@ impl BubblesStateSnapshot {
             floored_quantity: canonical_decimal(floored_quantity),
             overlap_merge: config.volume_dots.enabled,
             native_tape: config.native_tape(),
+            depth_time_averaging: config.live_lane.depth_time_averaging,
+            stable_size: config.live_lane.stable_size,
             tape_only: config.live_lane.tape_only,
             ignore_opening_burst_in_scale: config.volume_dots.ignore_opening_burst_in_scale,
             recorded_opening_windows_ms: opening_bursts.to_vec(),

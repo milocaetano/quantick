@@ -36,6 +36,9 @@
 
 use std::path::Path;
 
+mod startup;
+pub use startup::reconcile_startup;
+
 #[cfg(test)]
 use serde::Serialize;
 

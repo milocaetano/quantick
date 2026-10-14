@@ -16,13 +16,14 @@
 //! state this holds.
 
 use quantick_engine::Side;
-use quantick_sim::{Bracket, EntryKind};
+use quantick_trading::{Bracket, EntryKind};
 use rust_decimal::Decimal;
 
 use crate::PaperAccount;
 use crate::account::AccountEnv;
 use crate::risk_sizing::RiskState;
 
+pub mod aim_echo;
 pub mod cmd;
 pub mod geometry;
 pub mod gesture;
@@ -34,6 +35,7 @@ mod trade_bar;
 #[cfg(test)]
 mod tests;
 
+pub use aim_echo::AimPaint;
 pub use cmd::{
     CmdEntryKind, CmdModifier, CmdPreview, CmdPreviewForce, CmdTradingSettings, HeldKeys,
     resolve_cmd_kind,

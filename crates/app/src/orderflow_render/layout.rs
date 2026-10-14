@@ -257,7 +257,7 @@ impl<'a> ProjectedLayout<'a> {
         // opening belongs to the padded tape, while a historical cell ending
         // there still belongs to the candles' viewport.
         let lane_start = 1.0 - 1.0 / self.slot_count.max(1) as f64;
-        let time = if self.tape_geometry.is_some() && x0 >= lane_start && x1 > lane_start {
+        let time = if self.lane_left_x().is_some() && x0 >= lane_start && x1 > lane_start {
             self.with_lane_only()
         } else {
             self
@@ -292,6 +292,17 @@ impl<'a> ProjectedLayout<'a> {
         min_height: f32,
     ) -> egui::Rect {
         self.band(x0, x1, y0, y1, min_height)
+    }
+
+    /// Snapshot preview in the blank forward space, without stretching any
+    /// historical interval or borrowing the tape's oldest timestamp.
+    pub(crate) fn current_book_preview_rect(self, y0: f64, y1: f64) -> egui::Rect {
+        let (top, bottom) = (self.y(y0).min(self.y(y1)), self.y(y0).max(self.y(y1)));
+        egui::Rect::from_min_max(
+            egui::pos2(self.x_at_ext(self.slot_count.saturating_sub(1) as f32), top),
+            egui::pos2(self.history_right(), bottom),
+        )
+        .intersect(self.history_rect())
     }
 
     #[must_use]

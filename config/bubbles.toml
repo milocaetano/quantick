@@ -357,6 +357,9 @@ name = "Binance BTC Spot spheres"
 cluster_ms = 500
 dust_merge_ms = 1500
 candle_summary = true
+overlap_merge = true
+volume_dot_auto_full = false
+volume_dot_full_quantity = 1.0
 
 [presets.bubbles]
 min_radius = 2.1885
@@ -392,12 +395,20 @@ max_radius = 32.0
 label_min_radius = 8.0
 opacity = 0.9
 
-# Scoped tick-chart spheres; the native tape keeps its existing settings.
+# Scoped tick-chart spheres and a causal native tape with a pinned area scale.
+
+[presets.live_lane]
+native_tape = true
+depth_time_averaging = true
+stable_size = true
 [[presets]]
 name = "Binance BTC perpetual spheres"
 cluster_ms = 500
 dust_merge_ms = 1500
 candle_summary = true
+overlap_merge = true
+volume_dot_auto_full = false
+volume_dot_full_quantity = 10.0
 
 [presets.bubbles]
 min_radius = 2.1885
@@ -432,3 +443,8 @@ reference_quantity = 10.0
 max_radius = 36.0
 label_min_radius = 8.0
 opacity = 0.9
+
+[presets.live_lane]
+native_tape = true
+depth_time_averaging = true
+stable_size = true

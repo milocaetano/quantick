@@ -193,6 +193,35 @@ fn a_second_press_while_one_runs_is_refused_and_changes_nothing() {
 }
 
 #[test]
+fn a_press_not_yet_judged_carries_no_verdict_from_the_one_before() {
+    let mut session = TabSession::new();
+    let mut shell = Shell::new(&[None]);
+    let now = Instant::now();
+    shell.dispatch(&mut session, Act::PressHistory(YESTERDAY), now);
+    assert_eq!(session.last_press(), Some(Press::Start));
+    let view = TabView {
+        symbol: "TEST",
+        capabilities: shell.capabilities,
+        feed_pages: true,
+        panes: &[],
+        tape: &shell.tape,
+        history_wait: false,
+        outages: &Vec::<Outage>::new,
+        provider: None,
+        page_step: 2_000,
+        reach_bounds: ReachBounds::default(),
+    };
+    let act = HistoryAct::Press(HistoryReach::Sessions(5)).act();
+    // Only the first half: the judgement follows as a resume not carried out.
+    let effects = session.dispatch(Msg { act, tab: &view }, now);
+    assert!(matches!(
+        effects.as_deref(),
+        Ok([Effect::RetryRebuilds, ..])
+    ));
+    assert_eq!(session.last_press(), None);
+}
+
+#[test]
 fn a_page_that_never_left_ends_the_run_and_releases_the_panes() {
     let mut session = TabSession::new();
     let mut shell = Shell::new(&[None]);

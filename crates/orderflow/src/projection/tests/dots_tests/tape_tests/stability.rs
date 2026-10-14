@@ -7,6 +7,52 @@ use rust_decimal::prelude::ToPrimitive as _;
 const WIN_TIME_MS: i64 = 1_790_078_859_000;
 const WINDOW_MS: i64 = 30_000;
 
+#[test]
+fn pinned_stable_size_keeps_settled_area_through_new_maximum_and_expiry() {
+    let mut memory = TapeDotMemory::default();
+    let mut config = tape_config();
+    config.live_lane.stable_size = true;
+    let sizing = DotSizing {
+        native_tape: true,
+        tape_column_px: 1.0,
+        candle_column_px: 1.0,
+        px_per_price: 1.0,
+        typed_full: Some(Decimal::from(10)),
+    };
+    let prints = vec![
+        mark(1, WIN_TIME_MS - 28_000, 187_450, 100),
+        mark(2, WIN_TIME_MS + 100, 187_500, 1),
+    ];
+    let first = memory.project(
+        &prints,
+        view(WIN_TIME_MS + 2_000, "187450", "187550"),
+        sizing,
+        &config.bubbles,
+        &config.live_lane,
+        &[],
+    );
+    let old = represented(&first, &[2]);
+    let facts = source_facts(old);
+    let size = old.size;
+    let mut later = prints[1..].to_vec();
+    later.push(mark(3, WIN_TIME_MS + 3_020, 187_505, 1_000));
+    for now in [3_030, 3_100, 4_000] {
+        let next = memory.project(
+            &later,
+            view(WIN_TIME_MS + now, "187450", "187550"),
+            sizing,
+            &config.bubbles,
+            &config.live_lane,
+            &[],
+        );
+        let old = represented(&next, &[2]);
+        assert_eq!(source_facts(old), facts);
+        assert_eq!(old.size, size);
+        assert_eq!(next.max_radius, first.max_radius);
+        assert_eq!(next.full_quantity, Decimal::from(10));
+    }
+}
+
 fn mark(id: u64, time: i64, price: i64, quantity: i64) -> AggressionPrimitive {
     let (_, _, source) = fixture(3_400);
     let mut mark = source[0].clone();

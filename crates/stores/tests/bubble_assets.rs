@@ -61,7 +61,7 @@ fn the_win_family_is_one_asset_declared_by_a_config_pattern() {
 }
 
 #[test]
-fn only_the_win_family_opens_on_the_native_tape() {
+fn only_win_and_declared_binance_btc_looks_open_on_native_tape() {
     let store = memory();
     let config = shipped_config();
     for feed in &config.feeds {
@@ -70,7 +70,9 @@ fn only_the_win_family_opens_on_the_native_tape() {
             let native = settings.look.live_lane.native_tape && settings.look.overlap_merge;
             assert_eq!(
                 native,
-                symbol.starts_with("WIN"),
+                symbol.starts_with("WIN")
+                    || (matches!(feed.id.as_str(), "binance" | "binance-futures")
+                        && matches!(symbol.as_str(), "BTCUSDT" | "BTCUSDT.p")),
                 "{}/{symbol} opens on the native tape: {native}",
                 feed.id
             );

@@ -6,9 +6,9 @@
 //! family declares the narrow port it reads or acts through — a trait that
 //! speaks headless types only: the wire shapes in `quantick-control-schema`,
 //! the chart model in `quantick-chart`, the history vocabulary in
-//! `quantick-sources`, or a plain struct of its own. The application keeps
-//! one adapter per port that reads its panes and tabs into those types, and
-//! one registration line per family.
+//! `quantick-sources`, the marks in `quantick-drawings`, or a plain struct
+//! of its own. The application keeps one adapter per port that reads its
+//! panes and tabs into those types, and one registration line per family.
 //!
 //! Register functions are generic over the host and the access type, the
 //! registries in `quantick-control-host` already are, so the window docks a
@@ -17,6 +17,7 @@
 //! Nothing here reads a clock: a handler that stamps an event or a page is
 //! handed the time, or asks its port to stamp it.
 
+pub mod annotate;
 pub mod chart;
 pub mod dock;
 pub mod feed_source;

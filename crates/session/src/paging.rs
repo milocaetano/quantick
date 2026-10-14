@@ -98,7 +98,9 @@ impl TradePaging {
     /// page it held, then judge the press against the tab that leaves.
     pub(crate) fn prepare_press(&mut self, step: &mut Step<'_>, reach: HistoryReach) {
         step.effects.push(Effect::RetryRebuilds);
-        // A new press owns its own outcome.
+        // A new press owns its own outcome: no reader of this press may see
+        // the verdict of the one before it.
+        self.last_press = None;
         self.clear_note(step);
         step.effects.push(Effect::Resume(Resume::Press(reach)));
     }

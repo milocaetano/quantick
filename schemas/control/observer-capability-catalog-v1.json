@@ -3704,6 +3704,10 @@
                 "description": "The live book carried past its last confirmation to the lane's live\nedge: the book as last confirmed, not depth observed there. Omitted\nwhen false, so v1 readers remain compatible.",
                 "type": "boolean"
               },
+              "current_book_preview": {
+                "description": "Current book snapshot in chart forward space; no historical time claim.",
+                "type": "boolean"
+              },
               "end_slot_exclusive": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -3734,9 +3738,33 @@
               "side": {
                 "type": "string"
               },
+              "source_book_unix_ms": {
+                "description": "Book timeline timestamp, preserved with cached frames: source event time\nfor updates, effective coverage start for snapshots (not local arrival).",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "source_book_update_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Update ID of the exact current book used to build this painted frame."
+              },
               "start_slot": {
                 "$ref": "#/$defs/WireU64",
                 "description": "The closed-bar slots under the cell. A cell that lies wholly in the\nlive lane or on a held tape has none: both bounds then equal the lane\nboundary, and `live_lane` or `held_tape_end_unix_ms` says where it is."
+              },
+              "time_averaged": {
+                "description": "Quantity is a duration-weighted mean, rather than instantaneous depth.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -4158,6 +4186,10 @@
                 "description": "The live book carried past its last confirmation to the lane's live\nedge: the book as last confirmed, not depth observed there. Omitted\nwhen false, so v1 readers remain compatible.",
                 "type": "boolean"
               },
+              "current_book_preview": {
+                "description": "Current book snapshot in chart forward space; no historical time claim.",
+                "type": "boolean"
+              },
               "end_slot_exclusive": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -4188,9 +4220,33 @@
               "side": {
                 "type": "string"
               },
+              "source_book_unix_ms": {
+                "description": "Book timeline timestamp, preserved with cached frames: source event time\nfor updates, effective coverage start for snapshots (not local arrival).",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "source_book_update_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Update ID of the exact current book used to build this painted frame."
+              },
               "start_slot": {
                 "$ref": "#/$defs/WireU64",
                 "description": "The closed-bar slots under the cell. A cell that lies wholly in the\nlive lane or on a held tape has none: both bounds then equal the lane\nboundary, and `live_lane` or `held_tape_end_unix_ms` says where it is."
+              },
+              "time_averaged": {
+                "description": "Quantity is a duration-weighted mean, rather than instantaneous depth.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -17218,6 +17274,7 @@
                 "$ref": "#/$defs/WireU64"
               },
               "latest_arrival_latency_ms": {
+                "description": "Signed local receipt stamp minus venue stamp; includes clock disagreement.",
                 "format": "int64",
                 "type": [
                   "integer",
@@ -17899,7 +17956,7 @@
             "description": "Where a tab's tape delay is being spent.\n\nThe whole point of the breakdown is that \"the chart is eighteen seconds\nbehind\" is not actionable on its own: it reads the same whether the venue's\nadapter was late, the wire was late, or this process drained late, and those\nhave different fixes. An investigation that starts here can name the hop\nwithout a screenshot and without a person watching the corner of a window.",
             "properties": {
               "arrival_latency_ms": {
-                "description": "Newest print: venue stamp to this chart drawing it. The end-to-end\nfigure the status bar shows.",
+                "description": "Signed local receipt stamp minus venue stamp, including clock disagreement.\nWithout a provider breakdown this is not transport latency. Local worker\nresidence and processing are measured separately on a monotonic clock.",
                 "format": "int64",
                 "type": [
                   "integer",
@@ -17915,7 +17972,7 @@
                 ]
               },
               "feed_arrival_latency_ms": {
-                "description": "The same measurement taken where the feed read the print off the wire,\none hop earlier.\n\nThe gap between this and `arrival_latency_ms` is what quantick's own\nqueue and frame drain cost. It is a *derived* reading, not a measured\none — the two are sampled at different instants — but a gap of seconds\nbetween them is unambiguous, and it is the only way to see that hop at\nall. `None` on a provider that cannot cut its own chain.",
+                "description": "Provider receipt stamp minus venue stamp, one hop before chart drain.\nDifferent clock domains may produce signed offsets; separately sampled\nchart/provider values do not establish precise local queue residence.",
                 "format": "int64",
                 "type": [
                   "integer",
@@ -18197,6 +18254,10 @@
                 "description": "The live book carried past its last confirmation to the lane's live\nedge: the book as last confirmed, not depth observed there. Omitted\nwhen false, so v1 readers remain compatible.",
                 "type": "boolean"
               },
+              "current_book_preview": {
+                "description": "Current book snapshot in chart forward space; no historical time claim.",
+                "type": "boolean"
+              },
               "end_slot_exclusive": {
                 "$ref": "#/$defs/WireU64"
               },
@@ -18227,9 +18288,33 @@
               "side": {
                 "type": "string"
               },
+              "source_book_unix_ms": {
+                "description": "Book timeline timestamp, preserved with cached frames: source event time\nfor updates, effective coverage start for snapshots (not local arrival).",
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "x-unit": "unix_milliseconds"
+              },
+              "source_book_update_id": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WireU64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Update ID of the exact current book used to build this painted frame."
+              },
               "start_slot": {
                 "$ref": "#/$defs/WireU64",
                 "description": "The closed-bar slots under the cell. A cell that lies wholly in the\nlive lane or on a held tape has none: both bounds then equal the lane\nboundary, and `live_lane` or `held_tape_end_unix_ms` says where it is."
+              },
+              "time_averaged": {
+                "description": "Quantity is a duration-weighted mean, rather than instantaneous depth.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -18764,6 +18849,11 @@
                 "default": null,
                 "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on `bubbles`,\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —\nbelongs to this asset alone. While its `save_changes` is on it is\nsaved, reaches every tab showing the asset and is restored whenever\na tab shows it again; off, it stays on the pane it was made on for\nthe session. Wheeling or dragging the tape's window or width moves\nthe view only. Absent until the tab binds an asset."
               },
+              "depth_time_averaging": {
+                "default": false,
+                "description": "Dense historical tape depth uses labelled duration-weighted averages;\ncurrent constant intervals remain exact.",
+                "type": "boolean"
+              },
               "enabled": {
                 "description": "Aggression bubbles are drawn over the chart. Beside the native tape,\nFLOW draws regional execution totals on the tick candles;\n`layers.visibility` names any block.",
                 "type": "boolean"
@@ -18799,6 +18889,11 @@
                   "type": "integer"
                 },
                 "type": "array"
+              },
+              "stable_size": {
+                "default": false,
+                "description": "Native dots keep the pinned area scale and configured radius.",
+                "type": "boolean"
               },
               "tape_only": {
                 "default": false,

@@ -867,6 +867,8 @@ mod tests {
                 show_depth: true,
                 show_aggressions: true,
                 native_tape: false,
+                depth_time_averaging: false,
+                stable_size: false,
                 tape_only: false,
             },
             liquidity_correlation_ms: i64::MIN,

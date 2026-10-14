@@ -1,5 +1,6 @@
 //! Generated observer contracts committed under `schemas/control`.
 
+use quantick_control::annotation::{AnnotationInput, AnnotationResult, RemoveInput, RemoveResult};
 use quantick_control::schema::generated_schema;
 use quantick_control_schema::tape_view::{TapeViewInput, TapeViewResult};
 use serde_json::{Value, json};
@@ -9,7 +10,6 @@ use quantick_control_host::catalogue::SnapshotScopeDescriptor;
 use super::{
     actions::{MarkInput, MarkResult},
     analysis::{DrawingsSnapshot, IndicatorsSnapshot},
-    annotate::{AnnotationInput, AnnotationResult, RemoveInput, RemoveResult},
     chart::{ChartSnapshot, ChartWindowPage, ChartWindowQuery},
     contract::{ChartWindowInput, DescribeResult, EmptyInput, ObserverContract, SnapshotReadInput},
     drawing_magnet::{

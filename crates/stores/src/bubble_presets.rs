@@ -491,6 +491,36 @@ mod tests {
     }
 
     #[test]
+    fn only_btc_shipped_presets_opt_into_stable_size_and_depth_averaging() {
+        let shipped = embedded();
+        for preset in &shipped.presets {
+            let btc = preset.name.starts_with("Binance BTC");
+            assert_eq!(preset.live_lane.stable_size, btc, "{}", preset.name);
+            assert_eq!(
+                preset.live_lane.depth_time_averaging, btc,
+                "{}",
+                preset.name
+            );
+            if btc {
+                assert!(preset.live_lane.native_tape);
+                assert!(preset.overlap_merge);
+                let tick = preset.tick_bubbles.unwrap();
+                assert_eq!(
+                    tick.max_radius,
+                    if preset.name.contains("Spot") {
+                        32.0
+                    } else {
+                        36.0
+                    }
+                );
+                assert_eq!(tick.label_min_radius, 8.0);
+                assert_eq!(tick.opacity, 0.9);
+            }
+        }
+        assert_eq!(parse(&render(&shipped).unwrap()).unwrap(), shipped);
+    }
+
+    #[test]
     fn a_retired_key_is_named_rather_than_ignored_in_silence() {
         // The file still loads — that is the point of ignoring unknown keys —
         // but a preset that asked for the vertical front by name now draws a
@@ -725,7 +755,10 @@ mod tests {
         assert!(!config.tape_only());
         assert!(config.volume_dots.enabled);
         for preset in &presets.presets {
-            if preset.name != "mini index regions" {
+            if !matches!(
+                preset.name.as_str(),
+                "mini index regions" | "Binance BTC Spot spheres" | "Binance BTC perpetual spheres"
+            ) {
                 assert!(!preset.live_lane.tape_only, "{} keeps candles", preset.name);
                 assert!(
                     !preset.live_lane.native_tape,

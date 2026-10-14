@@ -296,47 +296,33 @@ impl OrderflowView {
             None => (&frame.projection, layout),
         };
         let layout = RenderContext::new(projection, layout, &style).layout;
+        let preview = |cell: &quantick_orderflow::HeatmapCell| {
+            quantick_orderflow::projection::current_book_preview(
+                cell,
+                self.config.live_lane.depth_time_averaging,
+            ) && layout
+                .current_book_preview_rect(cell.y0, cell.y1)
+                .contains(position)
+        };
         let cell = projection.cells.iter().rev().find(|cell| {
             layout
                 .heat_cell_rect(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height)
                 .contains(position)
+                || preview(cell)
         })?;
 
-        let regions = frame.slot_count.max(1);
-        let has_lane = frame.projection.live_now_x.is_some();
-        let bar_regions = regions.saturating_sub(usize::from(has_lane));
-        if bar_regions == 0 {
-            return None;
-        }
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let first_region = (cell.x0.clamp(0.0, 1.0) * regions as f64).floor() as usize;
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let after_region = (cell.x1.clamp(0.0, 1.0) * regions as f64).ceil() as usize;
-        let touches_lane = has_lane && after_region > bar_regions;
-        // A cell that lies wholly in the live lane has no closed bar under it;
-        // an empty range at the lane boundary says so, instead of borrowing
-        // the last bar's slot and calling it the cell's.
-        let (first_bar_region, after_bar_region) = if first_region >= bar_regions {
-            (bar_regions, bar_regions)
-        } else {
-            (
-                first_region,
-                after_region.max(first_region + 1).min(bar_regions),
-            )
-        };
-
-        Some(FlowCellHit {
-            generation: cell.generation,
-            side: cell.side,
-            price_bucket: cell.price_bucket,
-            price_span: projection.effective_grouping.bucket_width,
-            quantity: cell.quantity,
-            start_slot: frame.first_bar_index + first_bar_region,
-            end_slot_exclusive: frame.first_bar_index + after_bar_region,
-            live_lane: touches_lane && held.is_none(),
-            held_tape_end_ms: held.as_ref().and(self.tape_end.past_ms()),
-            carried: cell.carried,
-        })
+        FlowCellHit::from_cell(
+            cell,
+            projection.effective_grouping.bucket_width,
+            quantick_orderflow::projection::CellHitContext {
+                first_bar_index: frame.first_bar_index,
+                slot_count: frame.slot_count,
+                has_lane: frame.projection.live_now_x.is_some(),
+                held_tape_end_ms: held.as_ref().and(self.tape_end.past_ms()),
+                held: held.is_some(),
+                current_book_preview: preview(cell),
+            },
+        )
     }
 
     /// Pull the newest worker snapshot into this frame's mirror. Cheap: one
@@ -1532,6 +1518,8 @@ mod tests {
                 show_depth: true,
                 show_aggressions: true,
                 native_tape: false,
+                depth_time_averaging: false,
+                stable_size: false,
                 tape_only: false,
             },
         });
@@ -1732,6 +1720,69 @@ mod tests {
         assert_eq!(hit.start_slot, 0);
         assert_eq!(hit.end_slot_exclusive, 1);
         assert!(!hit.live_lane);
+    }
+
+    #[test]
+    fn forward_current_book_preview_pointer_keeps_exact_quantity_and_orientation() {
+        for native in [false, true] {
+            let mut view = OrderflowView::new("BTCUSDT");
+            view.edit_config(|config| {
+                config.live_lane.depth_time_averaging = true;
+                config.live_lane.native_tape = native;
+            });
+
+            view.set_enabled(true, 10);
+            view.handle_depth_event(snapshot_event(10));
+            view.set_replay_clock_at(1_100, Some(1_100), None);
+            let bars = [bar(900, 1_100)];
+            view.project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                (98.0, 102.0),
+                None,
+            );
+            view.flush_for_test();
+            view.project_visible(
+                visible_timeline(&bars),
+                true,
+                true,
+                None,
+                (98.0, 102.0),
+                None,
+            );
+            let frame = view.published.frame.as_ref().unwrap();
+            let cell = frame
+                .projection
+                .cells
+                .iter()
+                .find(|cell| cell.current_book && cell.side == quantick_orderflow::RestingSide::Bid)
+                .unwrap();
+            let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_000.0, 600.0));
+            let mut viewport = Viewport::new();
+            viewport.pan_pixels(-160.0, 1);
+            for inverted in [false, true] {
+                let layout = ProjectedLayout::new(
+                    chart,
+                    &viewport,
+                    1,
+                    frame.first_bar_index,
+                    frame.slot_count,
+                    300.0,
+                )
+                .with_inverted(inverted);
+                let position = layout.current_book_preview_rect(cell.y0, cell.y1).center();
+                let hit = view
+                    .control_flow_cell_at(chart, &viewport, 1, 300.0, inverted, position)
+                    .unwrap();
+                assert!(hit.current_book_preview);
+                assert!(!hit.time_averaged);
+                assert_eq!(hit.quantity, Decimal::from(5));
+                assert_eq!(hit.generation, 10);
+                assert_eq!(hit.side, cell.side);
+            }
+        }
     }
 
     /// Dragging the divider is the width slider by another route, and it stops

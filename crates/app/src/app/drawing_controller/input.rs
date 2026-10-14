@@ -238,21 +238,23 @@ impl DrawingController {
         effects: &mut DrawingEffects,
         now: Instant,
     ) {
-        // The toast names what went — the trader's own name, else the tool's
-        // — because the context bar deletes on a bare glyph and an undo is
+        // The toast names what went (their name, else the tool's): an undo is
         // useless to a trader who cannot tell what it would bring back.
         for effect in host.update(DrawingIntent::DeleteSelected { force: false }) {
             match effect {
                 DrawingEffect::Deleted { id, label } => {
                     self.chrome.set_delete_confirm(false);
-                    // The instance dies with its drawing, immediately — not
-                    // on the next closed bar, which a quiet tape may never
-                    // bring.
+                    // The instance dies with its drawing, not on a closed bar
+                    // a quiet tape may never bring.
                     host.remove_strategy(id);
                     effects.note_with_undo(format!("{label} deleted."), now);
                 }
                 DrawingEffect::ConfirmDelete => self.chrome.set_delete_confirm(true),
-                DrawingEffect::HistoryReplaced => {}
+                DrawingEffect::HistoryReplaced
+                | DrawingEffect::Placed { .. }
+                | DrawingEffect::NotPlaced { .. }
+                | DrawingEffect::Removed { .. }
+                | DrawingEffect::RemovalRefused { .. } => {}
             }
         }
     }
@@ -491,7 +493,9 @@ impl DrawingController {
             .place_quick_range
             .take_if(|placement| !placement.conversion.request().action.arms_placement())?;
         let operation = request.conversion.request();
-        let Some(input) = crate::control::quick_range_input(operation, request.side) else {
+        let Some(input) =
+            quantick_control_handlers::annotate::quick_range_input(operation, request.side.into())
+        else {
             self.chrome.quick_range.finish_conversion(
                 request.conversion,
                 quantick_chart_interaction::quick_range::conversion_plan::PlacementOutcome::InputInvalid,

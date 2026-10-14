@@ -1422,6 +1422,39 @@ fn panning_and_zooming_the_candles_never_move_the_lane() {
 }
 
 #[test]
+fn ordinary_lane_opening_never_stretches_old_depth_across_forward_space() {
+    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
+    let mut viewport = Viewport::new();
+    viewport.pan_pixels(-160.0, 60);
+    for native in [false, true] {
+        for inverted in [false, true] {
+            let mut layout =
+                ProjectedLayout::new(rect, &viewport, 60, 56, 5, 300.0).with_inverted(inverted);
+            if native {
+                layout.tape_geometry = Some(
+                    quantick_orderflow::projection::TapeHorizontalGeometry::resolve(
+                        300.0,
+                        100.0,
+                        &quantick_orderflow::BubbleStyle::default(),
+                    ),
+                );
+            }
+            let divider = layout.lane_left_x().unwrap();
+            let band = layout.band(0.8, 0.9, 0.2, 0.3, 1.0);
+            let opening = layout.with_lane_only().x(0.8);
+            assert!((band.left() - opening).abs() < 0.01);
+            assert!(band.left() >= divider);
+            let preview = layout.current_book_preview_rect(0.2, 0.3);
+            assert!(preview.is_positive());
+            assert!((preview.right() - divider).abs() < 0.01);
+            assert!(preview.left() < divider);
+            assert!(preview.intersect(band).width() <= 0.01);
+            assert_eq!(preview.top(), layout.y(0.2).min(layout.y(0.3)));
+        }
+    }
+}
+
+#[test]
 fn the_lane_is_the_only_region_wider_than_a_candle() {
     let viewport = Viewport::new(); // candle_width 8, following
     let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));

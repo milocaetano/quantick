@@ -485,7 +485,11 @@ impl TapeDotMemory {
             typed_full: Some(full),
             ..sizing
         };
-        let max_radius = tape_radius_limit(&shown, final_sizing, bubbles, lane, view.geometry);
+        let max_radius = if lane.stable_size && sizing.typed_full.is_some() {
+            bubbles.max_radius
+        } else {
+            tape_radius_limit(&shown, final_sizing, bubbles, lane, view.geometry)
+        };
         shown.extend(marks.iter().filter(|mark| !mark.live).cloned());
         TapeDotFrame {
             marks: shown,

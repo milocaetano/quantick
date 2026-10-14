@@ -15,6 +15,10 @@ use super::timeline::BarTimeline;
 
 mod candle_dots;
 mod constants;
+mod depth_display;
+pub use depth_display::{
+    GapMarks, current_book_preview, depth_caption, depth_cell_slots, gap_label, gap_marks_bounds,
+};
 mod dots;
 pub mod flow_tape;
 mod fold;
@@ -52,9 +56,9 @@ pub use dots::{
 };
 pub use lane_heat::{BOOK_CARRY_MAX_MS, BookCarry, CARRIED_BOOK_ALPHA, book_carry};
 pub use model::{
-    AggressionPrimitive, BEFORE_CAPTURE, BOOK_PENDING, FlowCellHit, GapPrimitive, HeatmapCell,
-    HeatmapProjection, LiquidityEventPrimitive, LiveMarks, PriceWindow, SettledProjection,
-    TapeFacts, normalized_area_size, normalized_log_intensity,
+    AggressionPrimitive, BEFORE_CAPTURE, BOOK_PENDING, BookSource, CellHitContext, FlowCellHit,
+    GapPrimitive, HeatmapCell, HeatmapProjection, LiquidityEventPrimitive, LiveMarks, PriceWindow,
+    SettledProjection, TapeFacts, normalized_area_size, normalized_log_intensity,
 };
 pub use past_heat::{PastHeat, PlacedPastHeat, project_past_heat};
 pub use past_tape::{PastBars, PastTape, past_block_ms, past_span, project_past_tape};
@@ -244,6 +248,9 @@ pub fn project_settled(
             y0,
             y1,
             carried: false,
+            time_averaged: false,
+            current_book: false,
+            current_book_source: None,
         };
 
         let mut drawn = false;
@@ -306,6 +313,9 @@ pub fn project_settled(
             y0: heat.y0,
             y1: heat.y1,
             carried: false,
+            time_averaged: false,
+            current_book: false,
+            current_book_source: None,
         });
     }
 

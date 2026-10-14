@@ -11,7 +11,7 @@
 
 use quantick_engine::Side;
 use quantick_engine::display::display_decimal;
-use quantick_sim::EntryKind;
+use quantick_trading::EntryKind;
 use rust_decimal::Decimal;
 
 /// The open position, read-only, as every chrome surface reports it — the

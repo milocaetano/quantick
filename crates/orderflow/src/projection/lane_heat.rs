@@ -11,13 +11,18 @@
 
 use rust_decimal::Decimal;
 
-use super::heat_cells::{DraftCell, PriceRows, finish_cells};
+use super::heat_cells::{DraftCell, PriceRows, finish_with_priority};
 use super::model::{HeatmapCell, PriceWindow};
 use crate::grouping::{EffectiveGrouping, GroupingWindow, sweep_grouped_runs};
 use crate::history::LiquidityHistory;
 use crate::timeline::BarTimeline;
 
 mod native_runs;
+mod time_average;
+
+#[cfg(test)]
+#[path = "lane_heat/tests.rs"]
+mod cap_tests;
 
 /// The longest stretch the live book is carried past its last confirmation.
 ///
@@ -106,6 +111,26 @@ pub(super) fn project_lane_heat(
         )
         .runs
     };
+    let runs = if config.live_lane.depth_time_averaging {
+        time_average::project(
+            runs,
+            history.coverage_segments().cloned(),
+            start_ms,
+            open_run_end_ms.min(lane_end_ms),
+            history
+                .latest_book_ms()
+                .unwrap_or(lane_end_ms)
+                .min(lane_end_ms),
+            config.max_visible_cells,
+        )
+    } else {
+        runs.into_iter()
+            .map(|run| time_average::DepthRun {
+                run,
+                time_averaged: false,
+            })
+            .collect()
+    };
     let x = |time_ms: i64| {
         timeline
             .locate_in_lane_clamped(time_ms)
@@ -113,7 +138,8 @@ pub(super) fn project_lane_heat(
     };
     let mut drafts = Vec::with_capacity(runs.len());
     let mut rows = PriceRows::new(grouping, prices);
-    for run in &runs {
+    for depth in &runs {
+        let run = &depth.run;
         let Some((y0, y1)) = rows.get(run.price_bucket) else {
             continue;
         };
@@ -124,7 +150,7 @@ pub(super) fn project_lane_heat(
             (run.start_ms, observed_end_ms, false),
             (observed_end_ms, run.end_ms, true),
         ] {
-            if to_ms <= from_ms {
+            if to_ms <= from_ms || (carried && config.live_lane.depth_time_averaging) {
                 continue;
             }
             if let (Some(x0), Some(x1)) = (x(from_ms), x(to_ms))
@@ -140,11 +166,66 @@ pub(super) fn project_lane_heat(
                     y0,
                     y1,
                     carried,
+                    time_averaged: depth.time_averaged,
+                    current_book: false,
+                    current_book_source: None,
                 });
             }
         }
     }
-    finish_cells(drafts, reference, config)
+    // The RLE history deliberately tolerates small quantity churn. Current
+    // rows instead read the authoritative synchronized book on this worker,
+    // including a publication exactly at NOW with no invented time span.
+    if config.live_lane.depth_time_averaging
+        && let crate::history::HistoryStatus::Synced {
+            generation,
+            last_event_ms,
+            ..
+        } = history.status()
+        && (0..=BOOK_CARRY_MAX_MS).contains(&lane_end_ms.saturating_sub(last_event_ms))
+        && let Some(x0) = x(last_event_ms)
+        && let Some(x1) = x(lane_end_ms)
+    {
+        let mut quantities = std::collections::BTreeMap::new();
+        for (side, levels) in [
+            (crate::RestingSide::Bid, history.book().bids()),
+            (crate::RestingSide::Ask, history.book().asks()),
+        ] {
+            for (&price, &quantity) in
+                levels.range((prices.low - grouping.bucket_width)..prices.high)
+            {
+                let bucket = (price / grouping.bucket_width).trunc() * grouping.bucket_width;
+                *quantities.entry((side, bucket)).or_insert(Decimal::ZERO) += quantity;
+            }
+        }
+        for ((side, price_bucket), quantity) in quantities {
+            if let Some((y0, y1)) = rows.get(price_bucket) {
+                drafts.push(DraftCell {
+                    generation,
+                    side,
+                    price_bucket,
+                    quantity,
+                    x0,
+                    x1,
+                    y0,
+                    y1,
+                    carried: lane_end_ms > last_event_ms,
+                    time_averaged: false,
+                    current_book: true,
+                    current_book_source: Some(super::model::BookSource {
+                        update_id: history.book().last_update_id(),
+                        event_ms: last_event_ms,
+                    }),
+                });
+            }
+        }
+    }
+    finish_with_priority(
+        drafts,
+        reference,
+        config,
+        config.live_lane.depth_time_averaging,
+    )
 }
 
 #[cfg(test)]

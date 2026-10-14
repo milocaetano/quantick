@@ -73,7 +73,7 @@ fn a_win_edit_is_filed_for_win_alone_and_survives_a_restart() {
     assert_eq!(btc.source(), AssetSource::Declared);
     assert_eq!(settings.look.name, "Binance BTC Spot spheres");
     assert!(!settings.candle_aggression && !settings.flow_ignore_opening);
-    assert!(!settings.look.live_lane.tape_only && !settings.look.live_lane.native_tape);
+    assert!(!settings.look.live_lane.tape_only && settings.look.live_lane.native_tape);
 }
 
 /// Review round 1, finding 7: when the file cannot be read or written the

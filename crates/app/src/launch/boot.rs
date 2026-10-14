@@ -212,6 +212,7 @@ pub(crate) fn run() -> eframe::Result {
 
     let workspace = crate::ui_state::load(&crate::ui_state::default_path()).restore(&config);
     let env_chose_market = startup.names_market();
+    let workspace = crate::ui_state::reconcile_startup(workspace, &config, env_chose_market);
     if !env_chose_market && let Some((feed, symbol)) = workspace.first_market() {
         config.default_feed = feed.to_owned();
         config.default_symbol = symbol.to_owned();
@@ -242,7 +243,6 @@ pub(crate) fn run() -> eframe::Result {
     let spec = workspace
         .tabs
         .first()
-        .filter(|_| !env_chose_market)
         .and_then(|tab| {
             quantick_engine::bar_registry::BUILTIN_BARS
                 .parse(&tab.flow_bars)

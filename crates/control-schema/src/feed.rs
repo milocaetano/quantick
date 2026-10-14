@@ -87,6 +87,7 @@ pub struct FeedTabSnapshot {
     #[schemars(extend("x-unit" = "unix_milliseconds"))]
     pub latest_trade_unix_ms: Option<i64>,
     #[schemars(extend("x-unit" = "milliseconds"))]
+    /// Signed local receipt stamp minus venue stamp; includes clock disagreement.
     pub latest_arrival_latency_ms: Option<i64>,
     #[schemars(extend("x-unit" = "milliseconds"))]
     pub tape_age_ms: Option<i64>,
@@ -225,3 +226,35 @@ pub const READBACKS: &[Readback] = &[
         &[EVERY_OPTIONAL_TEST],
     ),
 ];
+
+/// Shared factual provenance vocabulary for feed and chart snapshots.
+pub fn market_data_provenance(
+    replay: bool,
+    traded_volume: bool,
+    inferred_side: bool,
+) -> MarketDataProvenance {
+    MarketDataProvenance {
+        price: if replay {
+            "recorded_trade".to_owned()
+        } else {
+            "venue_or_broker_trade".to_owned()
+        },
+        volume: if traded_volume {
+            if replay {
+                "recorded".to_owned()
+            } else {
+                "venue_reported".to_owned()
+            }
+        } else {
+            "synthetic_unit_per_quote".to_owned()
+        },
+        aggressor_side: if replay {
+            "recording_declared".to_owned()
+        } else if inferred_side {
+            "inferred_or_derived".to_owned()
+        } else {
+            "venue_reported".to_owned()
+        },
+        replay,
+    }
+}

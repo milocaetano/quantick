@@ -1226,10 +1226,6 @@ impl BookEngine {
         Some(frame)
     }
 
-    fn invalidate_projection(&mut self) {
-        self.projection_cache = None;
-    }
-
     /// Mark retained history newer without throwing away the last good frame.
     /// The cache may serve that frame until the cadence elapses, coalescing all
     /// intervening updates into one settled projection.
@@ -1532,6 +1528,9 @@ mod tests {
             intensity: 0.5,
             alpha: 0.5,
             carried: false,
+            time_averaged: false,
+            current_book: false,
+            current_book_source: None,
         };
         let frame = |projection: HeatmapProjection| VisibleOrderflow {
             projection: Arc::new(projection),
@@ -2531,6 +2530,67 @@ mod tests {
         // Disabling capture is a hard reset: the frame must vanish.
         engine.set_enabled(false, 12);
         assert!(engine.published().frame.is_none());
+    }
+
+    #[test]
+    fn cached_preview_keeps_source_identity_and_gap_removes_only_current_rows() {
+        let mut engine = BookEngine::new("BTCUSDT");
+        let mut config = engine.config.clone();
+        config.live_lane.depth_time_averaging = true;
+        engine.apply_visual_config(config);
+        engine.set_enabled(true, 10);
+        engine.handle_depth_event(snapshot_event(10));
+        let bars = [bar(900, 1_100)];
+        let frame = engine.project(&request(&bars, (98.0, 102.0))).unwrap();
+        let source = frame
+            .projection
+            .cells
+            .iter()
+            .find(|cell| cell.current_book)
+            .unwrap()
+            .current_book_source
+            .unwrap();
+        assert_eq!(source.update_id, Some(10));
+        assert_eq!(
+            source.event_ms, 999,
+            "snapshot uses its effective timeline time"
+        );
+        engine.handle_depth_event(DepthEvent::Update {
+            symbol: "BTCUSDT".to_owned(),
+            generation: 10,
+            event_time_ms: 1_150,
+            delta: BookDelta::new(
+                11,
+                11,
+                vec![BookLevel::new(99.into(), 6.into()).unwrap()],
+                vec![],
+            ),
+        });
+        let published = engine.published();
+        assert_eq!(published.health.last_update_id, Some(11));
+        assert_eq!(
+            published
+                .frame
+                .unwrap()
+                .projection
+                .cells
+                .iter()
+                .find(|cell| cell.current_book)
+                .unwrap()
+                .current_book_source,
+            Some(source)
+        );
+        engine.prepare_restart(11, "test_gap");
+        assert!(
+            engine
+                .published()
+                .frame
+                .unwrap()
+                .projection
+                .cells
+                .iter()
+                .all(|cell| !cell.current_book)
+        );
     }
 
     /// The user's complaint made executable: hiding the map is pixels only.

@@ -5,6 +5,19 @@ use crate::{BarTimeline, HeatmapProjection, PriceWindow, SettledProjection, Volu
 use std::sync::Arc;
 
 impl BookEngine {
+    pub(super) fn invalidate_projection(&mut self) {
+        self.projection_cache = None;
+        // Keep historical ink during a soft rebuild, but a lost generation
+        // cannot continue advertising an exact current-book preview.
+        if let Some(frame) = &mut self.last_frame
+            && frame.projection.cells.iter().any(|cell| cell.current_book)
+        {
+            let frame = Arc::make_mut(frame);
+            let projection = Arc::make_mut(&mut frame.projection);
+            Arc::make_mut(&mut projection.cells).retain(|cell| !cell.current_book);
+        }
+    }
+
     /// Build the moving half on `settled`, folding only the native tape after
     /// the last publication's seal, and seal the result for the next frame
     /// and for the painter. Sealed short of the correlation reach: a

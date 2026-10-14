@@ -250,7 +250,8 @@ fn an_opening_scale_set_by_control_is_read_back_and_kept_per_asset() {
     let btc = bubbles(&mut app, &mut observer);
     assert_eq!(btc["asset"]["key"], "BTCUSDT");
     assert_eq!(btc["ignore_opening_burst_in_scale"], false);
-    assert_eq!(btc["native_tape"], false);
+    assert_eq!(btc["native_tape"], true);
+    assert_eq!(btc["asset"]["preset"], "Binance BTC Spot spheres");
 
     select_market(&mut app, "metatrader-b3", "WINV26");
     let back = bubbles(&mut app, &mut observer);

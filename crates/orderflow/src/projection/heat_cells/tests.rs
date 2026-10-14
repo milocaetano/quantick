@@ -43,6 +43,9 @@ fn drafts(count: usize) -> Vec<DraftCell> {
                 y0: 0.2,
                 y1: 0.3,
                 carried: index.is_multiple_of(3),
+                time_averaged: false,
+                current_book: false,
+                current_book_source: None,
             }
         })
         .collect()

@@ -299,3 +299,20 @@ fn a_reset_before_the_sync_sees_the_window_just_set() {
         LaneWindow::Fixed { ms: 6_000 }
     );
 }
+
+#[test]
+fn deliberate_same_name_btc_preset_selection_replaces_old_saved_lane_flags() {
+    let mut screen = Screen::open(embedded());
+    let name = "Binance BTC perpetual spheres";
+    assert!(screen.look.apply_preset(name, &mut screen.config));
+    let approved_tick = screen.config.volume_dots.tick_bubbles;
+    screen.config.live_lane.native_tape = false;
+    screen.config.volume_dots.enabled = false;
+    screen.config.live_lane.depth_time_averaging = false;
+    assert_eq!(screen.look.look_name(), name);
+    assert!(screen.look.apply_preset(name, &mut screen.config));
+    assert!(screen.config.live_lane.native_tape);
+    assert!(screen.config.volume_dots.enabled);
+    assert!(screen.config.live_lane.depth_time_averaging);
+    assert_eq!(screen.config.volume_dots.tick_bubbles, approved_tick);
+}

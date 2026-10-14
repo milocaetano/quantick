@@ -343,7 +343,8 @@ pub struct FootprintConfig {
     /// [`NUMBER_ROW_PX_RANGE`]; the default is the fixed floor it replaces.
     pub number_row_px: f32,
     /// How early the ladder's levels arrive, as a multiplier on the
-    /// candle-width each one needs.
+    /// candle-width each one needs. Marks (the POC dot and zone marks) never
+    /// wait longer than their own floor: above 1 only the other levels wait.
     ///
     /// `1.0` is the typographic budget itself — the width at which that
     /// level's text is drawn at its smallest legible size. Below 1 the levels
@@ -414,6 +415,17 @@ impl Default for FootprintConfig {
 }
 
 impl FootprintConfig {
+    /// The candle width in the floors' units: over `detail_scale`, taken as 1
+    /// when not positive so a bad value never unlocks every level.
+    #[must_use]
+    pub fn scaled_width(&self, candle_width: f32) -> f32 {
+        if self.detail_scale > 0.0 {
+            candle_width / self.detail_scale
+        } else {
+            candle_width
+        }
+    }
+
     /// Each level's row floor: the band fineness and the number-row floor.
     #[must_use]
     pub fn row_floors(&self) -> quantick_chart::footprint_lod::RowFloors {

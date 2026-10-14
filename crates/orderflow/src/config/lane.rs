@@ -407,6 +407,12 @@ pub struct LiveLaneStyle {
     /// with volume dots on: [`HeatmapConfig::native_tape`](crate::HeatmapConfig::native_tape)
     /// is the question every processing site asks.
     pub native_tape: bool,
+    /// Reduce dense historical depth into labelled duration-weighted cells.
+    /// Current constant intervals remain exact. Off preserves legacy display.
+    pub depth_time_averaging: bool,
+    /// Keep the configured native radius instead of resizing settled marks
+    /// for new collisions. Use with a pinned volume reference.
+    pub stable_size: bool,
     /// The pane shows the tape alone, Bookmap style: the lane takes the
     /// whole canvas and no candle and no candle mark is drawn. Presentation
     /// only, and always on the native tape. Off by default, so every other
@@ -426,6 +432,8 @@ impl Default for LiveLaneStyle {
             show_depth: true,
             show_aggressions: true,
             native_tape: false,
+            depth_time_averaging: false,
+            stable_size: false,
             tape_only: false,
         }
     }
@@ -465,6 +473,10 @@ struct LiveLaneStyleRepr {
     /// Written only when on, so a pane that never asked keeps its file.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     native_tape: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    depth_time_averaging: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    stable_size: bool,
     /// Written only when on, like `native_tape`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     tape_only: bool,
@@ -497,6 +509,8 @@ impl From<LiveLaneStyleRepr> for LiveLaneStyle {
             show_depth: repr.show_depth.unwrap_or(true),
             show_aggressions: repr.show_aggressions.unwrap_or(true),
             native_tape: repr.native_tape,
+            depth_time_averaging: repr.depth_time_averaging,
+            stable_size: repr.stable_size,
             tape_only: repr.tape_only,
         }
     }
@@ -522,6 +536,8 @@ impl From<LiveLaneStyle> for LiveLaneStyleRepr {
             show_depth: Some(style.show_depth),
             show_aggressions: Some(style.show_aggressions),
             native_tape: style.native_tape,
+            depth_time_averaging: style.depth_time_averaging,
+            stable_size: style.stable_size,
             tape_only: style.tape_only,
         }
     }

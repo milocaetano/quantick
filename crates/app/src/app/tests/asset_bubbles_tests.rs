@@ -47,9 +47,10 @@ fn a_win_edit_survives_a_round_trip_through_btc_in_one_tab() {
     let edited = edit_win(&mut app);
     select_market(&mut app, "binance", "BTCUSDT");
     assert!(
-        !app.active_tab().tape().cached_config().native_tape(),
-        "BTC opens without the mini index tape"
+        app.active_tab().tape().cached_config().native_tape(),
+        "BTC opens on its own stable tape"
     );
+    assert_eq!(look(&app).name, "Binance BTC Spot spheres");
     select_market(&mut app, "metatrader-b3", "WINV26");
     assert_eq!(look(&app), edited, "WIN comes back exactly as it was left");
 }
@@ -134,11 +135,12 @@ fn the_mini_dollar_beside_it_is_not_the_mini_index() {
     assert_eq!(look(&app).name, "live lane pie");
 }
 
-/// Every shipped market outside the WIN family opens as it did before the
-/// native tape existed: no native tape, no tape-only pane, no volume dots, no
-/// opening exclusion and no candle aggression.
+/// Only WIN and the explicitly declared Binance BTC looks enable native tape
+/// and its volume dots.
+/// Other shipped markets retain their ordinary lane and all non-WIN markets
+/// keep the opening scale, pane and candle aggression defaults.
 #[test]
-fn no_market_outside_the_win_family_opens_with_the_tape_features() {
+fn only_win_and_declared_binance_btc_looks_open_with_native_tape() {
     let config = shipped_config();
     for feed in &config.feeds {
         for symbol in feed
@@ -149,9 +151,15 @@ fn no_market_outside_the_win_family_opens_with_the_tape_features() {
             let app = app_on(config.clone(), &feed.id, symbol);
             let tape = app.active_tab().tape().cached_config();
             let at = format!("{}/{symbol}", feed.id);
-            assert!(!tape.native_tape(), "{at} opens on the native tape");
+            let btc = matches!(feed.id.as_str(), "binance" | "binance-futures")
+                && matches!(symbol.as_str(), "BTCUSDT" | "BTCUSDT.p");
+            assert_eq!(tape.native_tape(), btc, "{at} native tape policy");
             assert!(!tape.live_lane.tape_only, "{at} opens tape only");
-            assert!(!tape.volume_dots.enabled, "{at} opens on volume dots");
+            assert_eq!(tape.volume_dots.enabled, btc, "{at} volume dot policy");
+            if btc {
+                assert!(tape.live_lane.depth_time_averaging, "{at} averaged depth");
+                assert!(tape.live_lane.stable_size, "{at} stable tape scale");
+            }
             assert!(
                 !tape.volume_dots.ignore_opening_burst_in_scale,
                 "{at} excludes the opening"

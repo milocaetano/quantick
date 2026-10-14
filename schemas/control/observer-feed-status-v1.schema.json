@@ -279,6 +279,7 @@
           "$ref": "#/$defs/WireU64"
         },
         "latest_arrival_latency_ms": {
+          "description": "Signed local receipt stamp minus venue stamp; includes clock disagreement.",
           "format": "int64",
           "type": [
             "integer",

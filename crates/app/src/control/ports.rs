@@ -4,20 +4,19 @@
 
 use quantick_control_handlers::{
     TabDirectory,
-    history::{HistoryPort, HistoryRun},
+    history::HistoryPort,
     journal_sessions::JournalSessionsPort,
     notify::AttentionPort,
     recovery::{FeedRecoveryPort, RecoveredFeed},
 };
 use quantick_control_schema::notify::AgentPopup;
-use quantick_feed::history_reach::HistoryReach;
-use quantick_feed::history_run::{Cancelled, Press};
 use quantick_paper::report::ledger_state::{LedgerView, LedgerViewChange};
 use quantick_paper::report::session_edit::{
     JournalEdit, JournalEditOutcome, JournalScope, SessionEditError,
 };
+use quantick_session::{HistoryAct, HistoryOutcome, HistoryReply};
 
-use crate::{app::control_host::ControlPort, tab::Tab};
+use crate::app::control_host::ControlPort;
 use quantick_control_handlers::feed_source::{FeedSelection, FeedSourcePort};
 
 impl FeedSourcePort for dyn ControlPort {
@@ -73,20 +72,21 @@ impl HistoryPort for dyn ControlPort {
         let tab = reads.tab_at(index)?;
         Some(tab.capabilities(reads.config()).history_paging)
     }
-    fn press_history(&mut self, index: usize, reach: HistoryReach) -> Option<(Press, HistoryRun)> {
-        let (tab, press) = self.tabs_mut().press_history(index, reach)?;
-        Some((press, run(tab)))
-    }
-    fn cancel_history(&mut self, index: usize) -> Option<(Cancelled, HistoryRun)> {
-        let tab = self.tabs_mut().tab_at_mut(index)?;
-        Some((tab.cancel_history(), run(tab)))
-    }
-}
-
-fn run(tab: &Tab) -> HistoryRun {
-    HistoryRun {
-        status: tab.session.history_status(),
-        main_reach: tab.session.main_history_reach(),
+    /// The toolbar's own press and cancel (Escape's too), so the two
+    /// surfaces cannot judge one act two ways.
+    fn dispatch_history(&mut self, index: usize, act: HistoryAct) -> Option<HistoryReply> {
+        let (tab, outcome) = match act {
+            HistoryAct::Press(reach) => {
+                let (tab, press) = self.tabs_mut().press_history(index, reach)?;
+                (tab, HistoryOutcome::Pressed(press))
+            }
+            HistoryAct::Cancel => {
+                let tab = self.tabs_mut().tab_at_mut(index)?;
+                let cancelled = tab.cancel_history();
+                (tab, HistoryOutcome::Cancelled(cancelled))
+            }
+        };
+        Some((outcome, tab.session.snapshot()))
     }
 }
 

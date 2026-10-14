@@ -28,6 +28,7 @@ pub use quantick_sources::candles;
 pub mod clock;
 pub use quantick_sources::config;
 pub mod continuity;
+pub mod timing;
 pub use quantick_sources::history_reach;
 pub use quantick_sources::history_run;
 pub mod hooks;
@@ -466,13 +467,10 @@ pub fn silent_notices() -> mpsc::Receiver<FeedNotice> {
 /// "this hop is instant", which is a measurement nobody took.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FeedLatency {
-    /// Newest print: venue stamp to the provider reading it off the wire.
-    ///
-    /// Measured at the provider, not at the chart. The chart keeps its own
-    /// end-to-end figure (`Tab::trade_arrival_ms`), taken when the print is
-    /// drained into a frame, and the *difference* between the two is what
-    /// quantick's own queueing and drawing cost. Two measurements of two
-    /// different things, and every surface that shows both says which is which.
+    /// Signed provider receipt stamp minus venue stamp. Clock disagreement can
+    /// contribute; an unsplit reading is not a measurement of transport latency.
+    /// Chart drain reads another receipt stamp. Their separately sampled
+    /// difference is diagnostic, not precise local queue residence.
     pub arrival_lag_ms: i64,
     /// Venue stamp to the source handing the print over — everything upstream
     /// of quantick.

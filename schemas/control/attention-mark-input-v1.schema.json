@@ -223,6 +223,10 @@
           "description": "The live book carried past its last confirmation to the lane's live\nedge: the book as last confirmed, not depth observed there. Omitted\nwhen false, so v1 readers remain compatible.",
           "type": "boolean"
         },
+        "current_book_preview": {
+          "description": "Current book snapshot in chart forward space; no historical time claim.",
+          "type": "boolean"
+        },
         "end_slot_exclusive": {
           "$ref": "#/$defs/WireU64"
         },
@@ -253,9 +257,33 @@
         "side": {
           "type": "string"
         },
+        "source_book_unix_ms": {
+          "description": "Book timeline timestamp, preserved with cached frames: source event time\nfor updates, effective coverage start for snapshots (not local arrival).",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "x-unit": "unix_milliseconds"
+        },
+        "source_book_update_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireU64"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Update ID of the exact current book used to build this painted frame."
+        },
         "start_slot": {
           "$ref": "#/$defs/WireU64",
           "description": "The closed-bar slots under the cell. A cell that lies wholly in the\nlive lane or on a held tape has none: both bounds then equal the lane\nboundary, and `live_lane` or `held_tape_end_unix_ms` says where it is."
+        },
+        "time_averaged": {
+          "description": "Quantity is a duration-weighted mean, rather than instantaneous depth.",
+          "type": "boolean"
         }
       },
       "required": [
