@@ -239,6 +239,8 @@ pub struct FlowSession<R> {
     carried: Option<Arc<FlowTapeFrame>>,
     /// The newest print the last capture saw ([`Self::note_tail`]).
     tail: Option<FlowTail>,
+    /// The price scale tick spheres merge at ([`Self::merge_px_per_price`]).
+    merge_px_per_price: Option<f64>,
     ignore_opening: bool,
 }
 impl<R: FlowRunner> FlowSession<R> {
@@ -306,6 +308,21 @@ impl<R: FlowRunner> FlowSession<R> {
                 slots,
             }
         }
+    }
+    /// The pixels per price unit tick spheres merge at, for a chart drawn at
+    /// `live`: the held scale while `live` stays within [`FLOW_SCALE_HOLD`]
+    /// of it, so a pan or an axis fit keeps every region; past the band, a
+    /// zoom step, `live` is held instead and the regions follow it.
+    pub fn merge_px_per_price(&mut self, live: f64) -> f64 {
+        let held = self
+            .merge_px_per_price
+            .filter(|held| {
+                let ratio = live / held;
+                ratio.is_finite() && (1.0 / FLOW_SCALE_HOLD..=FLOW_SCALE_HOLD).contains(&ratio)
+            })
+            .unwrap_or(live);
+        self.merge_px_per_price = Some(held);
+        held
     }
     /// The newest print the last capture saw, which tells the next capture
     /// whether a new epoch is a recut of the same tape.

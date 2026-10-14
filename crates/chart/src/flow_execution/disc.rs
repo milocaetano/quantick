@@ -14,16 +14,27 @@ pub struct FlowDisc {
 }
 
 impl FlowDisc {
+    /// The earned circle of regional FLOW: [`FLOW_EXECUTION_OFFSET`] from
+    /// its execution's place.
     pub fn new(dot: &FlowTapeDot, center: [f32; 2]) -> Option<Self> {
+        Self::at(
+            dot,
+            [
+                center[0] + FLOW_EXECUTION_OFFSET[0],
+                center[1] + FLOW_EXECUTION_OFFSET[1],
+            ],
+        )
+    }
+
+    /// The earned circle exactly at `center`: the execution's own place on
+    /// its candle and at its price.
+    pub fn at(dot: &FlowTapeDot, center: [f32; 2]) -> Option<Self> {
         (center.iter().all(|coordinate| coordinate.is_finite())
             && dot.radius.is_finite()
             && dot.radius > 0.0
             && dot.mark.quantity > Decimal::ZERO)
             .then_some(Self {
-                center: [
-                    center[0] + FLOW_EXECUTION_OFFSET[0],
-                    center[1] + FLOW_EXECUTION_OFFSET[1],
-                ],
+                center,
                 radius: dot.radius,
             })
     }

@@ -39,10 +39,33 @@ pub struct FlowPresentation {
 }
 
 impl FlowPresentation {
+    /// Regional FLOW: every circle at the uniform offset, peaks relocated
+    /// off the circles they would hide.
     pub fn new(
         frame: &FlowTapeFrame,
         history: FlowBounds,
+        center: impl FnMut(&FlowTapeDot) -> Option<[f32; 2]>,
+    ) -> Self {
+        Self::build(frame, history, center, false)
+    }
+
+    /// The plan for a pane's look. Tick spheres stand on their own
+    /// executions — no uniform offset, no peak relocation — so a sphere never
+    /// moves when another arrives beside it; regional FLOW is [`Self::new`].
+    pub fn styled(
+        frame: &FlowTapeFrame,
+        history: FlowBounds,
+        tick_bubbles: Option<quantick_orderflow::TickBubbleStyle>,
+        center: impl FnMut(&FlowTapeDot) -> Option<[f32; 2]>,
+    ) -> Self {
+        Self::build(frame, history, center, tick_bubbles.is_some())
+    }
+
+    fn build(
+        frame: &FlowTapeFrame,
+        history: FlowBounds,
         mut center: impl FnMut(&FlowTapeDot) -> Option<[f32; 2]>,
+        factual: bool,
     ) -> Self {
         if !history.iter().flatten().all(|value| value.is_finite())
             || history[0][0] >= history[1][0]
@@ -55,7 +78,13 @@ impl FlowPresentation {
             .iter()
             .enumerate()
             .filter_map(|(dot_index, dot)| {
-                let disc = center(dot).and_then(|at| FlowDisc::new(dot, at))?;
+                let disc = center(dot).and_then(|at| {
+                    if factual {
+                        FlowDisc::at(dot, at)
+                    } else {
+                        FlowDisc::new(dot, at)
+                    }
+                })?;
                 disc.visible(history).then_some(FlowRegionVisual {
                     dot_index,
                     source_disc: disc,
@@ -87,7 +116,9 @@ impl FlowPresentation {
                 regions[region_index].role = FlowRegionRole::Peak;
             }
         }
-        place_peaks(&mut regions, frame, history);
+        if !factual {
+            place_peaks(&mut regions, frame, history);
+        }
         regions.sort_by(|a, b| {
             a.role
                 .cmp(&b.role)

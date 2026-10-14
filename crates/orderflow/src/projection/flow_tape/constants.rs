@@ -20,6 +20,12 @@ pub(crate) const FLOW_MERGE_HEIGHT_PX: f64 = 32.0;
 /// of the native 100 ms cell keeps facts whole.
 pub const FLOW_REGION_WINDOW_MS: i64 = 1_000;
 
+/// Tick spheres merge at a held price scale (pixels per price unit): the
+/// held scale is kept while the live one stays within this factor of it, so
+/// a pan or an axis fit never regroups a sphere; leaving the band is a zoom
+/// step, which does.
+pub const FLOW_SCALE_HOLD: f64 = 1.5;
+
 /// Start ordinary-region placement and gradual emphasis at a quarter of the
 /// reference: the reference quantity is divided by this.
 pub const LARGE_REGION_REFERENCE_DIVISOR: u32 = 4;

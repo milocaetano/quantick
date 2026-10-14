@@ -100,6 +100,15 @@ pub fn project_styled_flow_executions<R: FlowRunner>(
         state.bars().len() + usize::from(state.partial().is_some()),
         span,
     );
+    // Tick spheres merge at a held price scale, so an axis fit does not
+    // regroup them; the live window still decides what is on the axis.
+    let merge_height = match tick_bubbles {
+        Some(_) if range.1 > range.0 => {
+            let span = range.1 - range.0;
+            (session.merge_px_per_price(f64::from(pixels.1) / span) * span) as f32
+        }
+        _ => pixels.1,
+    };
     let request = FlowRequest {
         epoch,
         layout_revision: 0,
@@ -114,7 +123,7 @@ pub fn project_styled_flow_executions<R: FlowRunner>(
             first_slot: slots.start,
             end_slot: slots.end,
             width_px: pixels.0,
-            height_px: pixels.1,
+            height_px: merge_height,
             prices,
             reference: tick_bubbles.map_or(FlowReference::VisibleRegions, |style| {
                 FlowReference::Typed(

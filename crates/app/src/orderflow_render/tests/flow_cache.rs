@@ -229,10 +229,23 @@ fn tick_sphere_appearance_invalidates_cached_mesh_without_changing_facts() {
     assert!(!Arc::ptr_eq(&flat, &sphere));
     assert!(Arc::ptr_eq(&sphere, &warm));
     assert_eq!(shapes, repeated);
-    assert_eq!(
-        flat.mesh.get().unwrap().plan,
-        sphere.mesh.get().unwrap().plan
+    // The same facts and radii: tick spheres stand on their executions,
+    // regional FLOW at its uniform offset from them.
+    let (flat_plan, sphere_plan) = (
+        &flat.mesh.get().unwrap().plan,
+        &sphere.mesh.get().unwrap().plan,
     );
+    assert_eq!(flat_plan.regions.len(), sphere_plan.regions.len());
+    let offset = quantick_chart::flow_execution::FLOW_EXECUTION_OFFSET;
+    for (flat, sphere) in flat_plan.regions.iter().zip(&sphere_plan.regions) {
+        assert_eq!(flat.dot_index, sphere.dot_index);
+        assert_eq!(flat.disc.radius, sphere.disc.radius);
+        let at = sphere.source_disc.center;
+        assert_eq!(
+            [at[0] + offset[0], at[1] + offset[1]],
+            flat.source_disc.center
+        );
+    }
     let mut changed = styled;
     changed.tick_bubbles.as_mut().unwrap().opacity = 0.5;
     let (faded, _) = paint(&ctx, changed);

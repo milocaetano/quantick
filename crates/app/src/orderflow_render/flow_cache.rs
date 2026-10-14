@@ -76,9 +76,12 @@ pub(crate) fn cached_flow(
     // Build outside the Context memory lock. Logical sector vertices use only
     // WHITE_UV, independent of pixel density and the growing font atlas.
     Arc::clone(entry.mesh.get_or_init(|| {
-        let plan = FlowPresentation::new(frame, [clip.min.into(), clip.max.into()], |dot| {
-            geometry.point(dot).map(|(x, y)| [x, y])
-        });
+        let plan = FlowPresentation::styled(
+            frame,
+            [clip.min.into(), clip.max.into()],
+            tick_bubbles,
+            |dot| geometry.point(dot).map(|(x, y)| [x, y]),
+        );
         Arc::new(FlowDrawing::styled(
             frame,
             plan,
