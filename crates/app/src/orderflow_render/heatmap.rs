@@ -21,6 +21,12 @@ use super::{
 };
 use quantick_orderflow::projection::marker_band;
 
+/// Where the lane's depth caption sits, from the lane's left edge and the
+/// chart's top.
+const DEPTH_CAPTION_OFFSET: egui::Vec2 = egui::vec2(8.0, 30.0);
+/// The depth layer's small print: the depth caption and the gap labels.
+const SMALL_PRINT_FONT_PX: f32 = 10.0;
+
 /// Draw resting liquidity and explicit L2 coverage gaps behind the chart.
 pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderContext<'_>) {
     let style = context.style.sanitized();
@@ -101,10 +107,10 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
     {
         draw_text_with_shadow(
             &clip,
-            egui::pos2(left + 8.0, context.layout.chart_rect.top() + 30.0),
+            egui::pos2(left, context.layout.chart_rect.top()) + DEPTH_CAPTION_OFFSET,
             egui::Align2::LEFT_TOP,
             caption,
-            egui::FontId::proportional(10.0),
+            egui::FontId::proportional(SMALL_PRINT_FONT_PX),
             palette.muted_text,
         );
     }
@@ -168,7 +174,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
                 anchor,
                 align,
                 label,
-                egui::FontId::proportional(10.0),
+                egui::FontId::proportional(SMALL_PRINT_FONT_PX),
                 palette.muted_text,
             );
         }

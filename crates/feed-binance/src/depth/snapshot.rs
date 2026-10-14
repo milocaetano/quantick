@@ -10,6 +10,10 @@ use super::wire::{DepthSnapshot, DepthWireError, parse_snapshot};
 /// Binance's public REST base URL for current Spot depth.
 pub const BINANCE_DEPTH_REST_BASE: &str = "https://api.binance.com";
 
+/// How long one snapshot request may take before the depth socket gives up
+/// on it; each depth (re)connect waits on one.
+const SNAPSHOT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Maximum number of levels Binance returns per side.
 pub const MAX_DEPTH_LIMIT: u16 = 5_000;
 
@@ -132,7 +136,7 @@ impl DepthSnapshotSource for BinanceDepthHttp {
             .client
             .get(url)
             .query(&[("symbol", wire_symbol.as_str())])
-            .timeout(std::time::Duration::from_secs(10))
+            .timeout(SNAPSHOT_TIMEOUT)
             .send()
             .await
             .map_err(|error| DepthSnapshotError::Transport(error.to_string()))?;

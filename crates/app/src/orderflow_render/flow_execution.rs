@@ -16,6 +16,10 @@ use quantick_orderflow::projection::flow_tape::{FlowProgress, FlowTapeFrame};
 #[cfg(test)]
 use rust_decimal::Decimal;
 
+/// The clear margin around a sphere's quantity label that no other label
+/// may enter.
+const LABEL_CLEARANCE_PX: f32 = 2.0;
+
 // Regional volume controls emphasis while candle contours stay in front.
 #[cfg(test)]
 const FLOW_FILL_OPACITY: f32 = quantick_orderflow::config::dressing::flow::PEAK_OPACITY;
@@ -214,7 +218,7 @@ fn paint_quantity_labels(
             && galley.size().y <= radius * super::constants::LABEL_MAX_HEIGHT_SCALE
         {
             let pos = egui::Pos2::from(label.center) - galley.size() / 2.0;
-            let bounds = egui::Rect::from_min_size(pos, galley.size()).expand(2.0);
+            let bounds = egui::Rect::from_min_size(pos, galley.size()).expand(LABEL_CLEARANCE_PX);
             if !history.contains_rect(bounds)
                 || occupied.iter().any(|other| other.intersects(bounds))
             {
