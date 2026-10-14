@@ -91,6 +91,29 @@ fn project(session: &mut FlowSession<Runner>, request: FlowRequest) {
     let epoch = request.epoch;
     session.project(request, |range| chunk(epoch, range));
 }
+/// The coverage that runs to the end of a request starts where its last gap
+/// ends: a carried History frame keeps exactly the spheres older than it.
+#[test]
+fn the_tail_coverage_starts_after_the_last_gap() {
+    let mut coverage = FlowCoverage::default();
+    assert_eq!(coverage.tail_start(0..200), 200, "nothing at the tail");
+    coverage.insert(150..200);
+    assert_eq!(coverage.tail_start(0..200), 150);
+    coverage.insert(20..60);
+    assert_eq!(
+        coverage.tail_start(0..200),
+        150,
+        "an older run is not the tail"
+    );
+    assert_eq!(
+        coverage.tail_start(0..120),
+        120,
+        "the tail of 0..120 is a gap"
+    );
+    coverage.insert(0..20);
+    coverage.insert(60..150);
+    assert_eq!(coverage.tail_start(0..200), 0, "all of it");
+}
 #[test]
 fn queue_full_keeps_one_bounded_packet_and_copies_only_new_ordinals() {
     let mut session = FlowSession::<Runner>::default();

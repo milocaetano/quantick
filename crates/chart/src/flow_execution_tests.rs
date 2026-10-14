@@ -278,6 +278,87 @@ fn a_busy_tape_never_starves_the_seed_of_spheres() {
     assert_eq!(slots.len(), 121, "every candle has spheres");
 }
 
+/// A tape busy for as long as it lasts — a print before every one of 600
+/// frames over a 30,000-print seed — sphers every seed candle within six
+/// frames, and each new print within one: its sphere is in the frame the
+/// worker publishes right after the frame it arrived in.
+#[test]
+fn a_busy_seed_fill_is_bounded_and_the_live_edge_publishes_at_once() {
+    const SEED: u64 = 30_000;
+    const FRAMES: u64 = 600;
+    // Every seed candle sphered within this many frames of the first.
+    const CATCH_UP_FRAMES: usize = 6;
+    let print = |id: u64| Trade {
+        agg_id: id,
+        timestamp_ms: 1_000 + id as i64 * 40,
+        price: (100 + id % 7).into(),
+        quantity: (1 + id % 3).into(),
+        side: if id.is_multiple_of(2) {
+            Side::Buy
+        } else {
+            Side::Sell
+        },
+    };
+    let mut state = ChartState::new(BarSpec::Tick(50));
+    state.ingest_backfill(&(0..SEED).map(print).collect::<Vec<_>>());
+    let tick = quantick_orderflow::TickBubbleStyle {
+        reference_quantity: 1.0,
+        max_radius: 32.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    };
+    let mut session = FlowSession::<WorkerRunner>::default();
+    let show = |state: &ChartState, session: &mut FlowSession<WorkerRunner>| {
+        let total = state.bars().len() + usize::from(state.partial().is_some());
+        project_styled_flow_executions(
+            true,
+            state,
+            session,
+            FlowChartView {
+                slots: 0..total,
+                pixels: (total as f32 * 8.0, 400.0),
+                range: (95.0, 110.0),
+                clip: (0.0, total as f64),
+                tick_bubbles: Some(tick),
+            },
+        );
+    };
+    let mut caught_up = None;
+    for (frame, id) in (SEED..SEED + FRAMES).enumerate() {
+        state.ingest_live(&print(id));
+        show(&state, &mut session);
+        let Some(published) = session.frame() else {
+            continue;
+        };
+        let members = || published.dots.iter().flat_map(|dot| dot.members.iter());
+        if frame > 0 {
+            assert!(
+                members().any(|member| member.source_id == id - 1),
+                "frame {frame}: the print of the frame before is drawn"
+            );
+        }
+        if caught_up.is_none() && members().any(|member| member.ordinal == 0) {
+            caught_up = Some(frame);
+        }
+    }
+    let caught_up = caught_up.expect("the seed is sphered while the tape stays busy");
+    assert!(
+        caught_up <= CATCH_UP_FRAMES,
+        "the oldest seed candle waited {caught_up} frames"
+    );
+    let total = state.bars().len() + usize::from(state.partial().is_some());
+    let mut slots: Vec<usize> = session
+        .frame()
+        .unwrap()
+        .dots
+        .iter()
+        .map(|dot| dot.first_slot)
+        .collect();
+    slots.sort_unstable();
+    slots.dedup();
+    assert_eq!(slots.len(), total, "every candle has spheres");
+}
+
 /// The app's start: a seed of backfilled prints, then live prints one frame
 /// at a time. Every candle on screen — seed and live — has its spheres, and
 /// the newest-first fill leaves no older candle behind.
