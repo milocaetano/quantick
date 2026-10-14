@@ -358,6 +358,29 @@ fn a_live_book_holds_one_alpha_between_publications() {
     }
 }
 
+/// A lane that neither averages its depth nor asks for the forward preview
+/// reads no current book: the strip between the last candle and the tape
+/// stays empty, as the approved WIN tape has it, and the lane keeps its runs.
+#[test]
+fn a_lane_without_the_forward_preview_reads_no_current_book() {
+    let mut history = fixture();
+    let mut config = history.config().clone();
+    config.max_visible_cells = 32;
+    history.update_config(config).unwrap();
+    history
+        .apply_delta(1_950, &BookDelta::new(14, 14, vec![level(95, 131)], vec![]))
+        .unwrap();
+    for now_ms in [1_950, 2_000, 2_449] {
+        let (cells, _, source) = lane_at(&history, now_ms);
+        assert_eq!(source, None, "{now_ms}: a current book source");
+        assert!(
+            cells.iter().all(|cell| !cell.current_book),
+            "{now_ms}: a current row"
+        );
+        assert!(!cells.is_empty(), "{now_ms}: the lane keeps its runs");
+    }
+}
+
 /// The current book's top row sums its whole bucket, as the grouped runs
 /// beside it do, even when the window's high edge cuts through that bucket.
 #[test]
