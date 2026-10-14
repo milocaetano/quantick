@@ -142,3 +142,28 @@ fn the_caption_says_where_the_discs_are_drawn() {
     assert!(!spheres.contains("offset"), "{spheres}");
     assert!(spheres.contains("at executions"), "{spheres}");
 }
+
+/// Review #8: the notes a caption may never drop stand apart from its key,
+/// so a caption that cannot be placed can still show them.
+#[test]
+fn qualifications_stand_apart_from_the_key() {
+    let mut frame = frame(&[trade(1000, 100, 32100, Side::Buy)], 200.0);
+    let quiet = FlowProgress::default();
+    assert!(caption_qualifications(Some(&frame), quiet).is_none());
+    assert!(caption_qualifications(None, quiet).is_none());
+    frame.cache_limit_reached = true;
+    frame.ineligible_executions = 2;
+    let pending = FlowProgress {
+        pending: true,
+        ..FlowProgress::default()
+    };
+    let notes = caption_qualifications(Some(&frame), pending).unwrap();
+    assert!(notes.contains("Partial regional volume"), "{notes}");
+    assert!(notes.contains("2 records excluded"), "{notes}");
+    assert!(
+        !notes.contains("area ="),
+        "the key is not a qualification: {notes}"
+    );
+    let full = caption_text(Some(&frame), pending, true).unwrap();
+    assert!(full.ends_with(&notes), "{full}");
+}
