@@ -214,6 +214,11 @@ fn each_zone_shows_its_own_cursor() {
             "selected {selected}"
         );
         assert_eq!(at(right, MID_Y), zones[0], "selected {selected}");
+        assert_eq!(
+            zones[3],
+            egui::CursorIcon::ResizeNwSe,
+            "a corner resizes, selected {selected}"
+        );
         for (index, cursor) in zones.iter().enumerate() {
             assert!(
                 !zones[index + 1..].contains(cursor),
@@ -221,32 +226,6 @@ fn each_zone_shows_its_own_cursor() {
             );
         }
     }
-}
-
-/// A double click in a band is one undo step back to the state before its
-/// first click: Ctrl+Z never shows the extension that click made.
-#[test]
-fn a_double_click_in_a_band_is_one_undo_step() {
-    let (mut app, ctx, _commands) = drawn_rectangle();
-    app.active_tab_mut().flow_pane.drawings.items_mut()[0]
-        .payload
-        .as_any_mut()
-        .downcast_mut::<drawings::RectanglePayload>()
-        .expect("a rectangle carries a rectangle payload")
-        .extend_left = true;
-    run_frame(&mut app, &ctx);
-    let depth = app.active_tab().flow_pane.drawings.undo_depth();
-    let (_, right) = drawn_sides(&app);
-    double_click(&mut app, &ctx, egui::pos2(right - BAND_INSET, MID_Y));
-    assert_eq!(extent(&app), (false, false));
-    let drawings = &mut app.active_tab_mut().flow_pane.drawings;
-    assert_eq!(drawings.undo_depth(), depth + 1, "one undo step");
-    assert!(drawings.undo());
-    assert_eq!(
-        extent(&app),
-        (true, false),
-        "the state before the first click"
-    );
 }
 
 /// A band that visibly runs back to the chart's left edge is a region the
@@ -309,4 +288,50 @@ fn an_extended_outline_band_leaves_the_charts_double_click_to_the_chart() {
         );
         assert_eq!(extent(&app), (true, true), "the band held at {position:?}");
     }
+}
+
+/// egui's double click is time-only: a quick click in the left band and
+/// then the right one is two clicks, and each extends its side.
+#[test]
+fn a_quick_click_in_each_band_extends_both_sides() {
+    let (mut app, ctx, _commands) = drawn_rectangle();
+    let (left, _) = drawn_sides(&app);
+    click(&mut app, &ctx, egui::pos2(left + BAND_INSET, MID_Y));
+    // A selection may narrow the canvas: read the sides again.
+    let (_, right) = drawn_sides(&app);
+    click(&mut app, &ctx, egui::pos2(right - BAND_INSET, MID_Y));
+    assert_eq!(extent(&app), (true, true));
+}
+
+/// A held modifier yields to a drawing's point handles only: a corner keeps
+/// its press, while a side line, like the body, leaves it to the order aim.
+#[test]
+fn a_modifier_press_on_a_side_line_still_rests_the_order() {
+    let (mut app, ctx, _commands) = drawn_rectangle();
+    let (left, _) = drawn_sides(&app);
+    click_chart_with(
+        &mut app,
+        &ctx,
+        egui::pos2(left, TOP),
+        egui::Modifiers::SHIFT,
+    );
+    run_frame(&mut app, &ctx);
+    assert!(
+        app.active_tab().paper.working_orders().is_empty(),
+        "a corner keeps the press"
+    );
+    // The corner's press selected it, which may narrow the canvas.
+    let (left, _) = drawn_sides(&app);
+    click_chart_with(
+        &mut app,
+        &ctx,
+        egui::pos2(left, MID_Y),
+        egui::Modifiers::SHIFT,
+    );
+    run_frame(&mut app, &ctx);
+    assert_eq!(
+        app.active_tab().paper.working_orders().len(),
+        1,
+        "the side line leaves the press to the aim"
+    );
 }

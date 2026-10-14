@@ -958,7 +958,11 @@ mod tests {
     }
 
     fn extent(store: &Marks) -> (bool, bool) {
-        let payload = store.items()[0]
+        extent_of(store, 0)
+    }
+
+    fn extent_of(store: &Marks, index: usize) -> (bool, bool) {
+        let payload = store.items()[index]
             .payload
             .as_any()
             .downcast_ref::<crate::RectanglePayload>()
@@ -967,7 +971,11 @@ mod tests {
     }
 
     fn set_extent(store: &mut Marks, left: bool, right: bool) {
-        let payload = store.items_mut()[0]
+        set_extent_of(store, 0, (left, right));
+    }
+
+    fn set_extent_of(store: &mut Marks, index: usize, (left, right): (bool, bool)) {
+        let payload = store.items_mut()[index]
             .payload
             .as_any_mut()
             .downcast_mut::<crate::RectanglePayload>()
@@ -1502,6 +1510,108 @@ mod tests {
                     // records nothing, and Ctrl+Z never shows the state between.
                     assert_eq!(store.undo_depth(), depth);
                 }
+            }
+        });
+    }
+
+    /// egui's double click is time-only: a quick click in the left band and
+    /// then the right one is two clicks, so both sides extend.
+    #[test]
+    fn a_quick_click_in_each_band_extends_both_sides() {
+        with_projection(|projection, bands| {
+            let double = Hand {
+                double_clicked: true,
+                ..Hand::PLAIN
+            };
+            for fill in [40, 0] {
+                let (mut store, rect) = local_rectangle(projection, bands);
+                store.items_mut()[0].style.fill_alpha = fill;
+                let y = rect.center().y;
+                let mut gestures = PaneGestures::default();
+                let left_band = (bands, crate::pos2(rect.left() + 10.0, y));
+                press_and_release(
+                    &mut gestures,
+                    &mut store,
+                    projection,
+                    left_band,
+                    Hand::PLAIN,
+                );
+                let right_band = (bands, crate::pos2(rect.right() - 10.0, y));
+                press_and_release(&mut gestures, &mut store, projection, right_band, double);
+                assert_eq!(extent(&store), (true, true), "fill {fill}");
+            }
+        });
+    }
+
+    /// A quick click on another rectangle is that rectangle's own click,
+    /// never a double click folded into the first one's undo step.
+    #[test]
+    fn a_quick_click_on_another_rectangle_keeps_its_own_undo_step() {
+        with_projection(|projection, bands| {
+            let (mut store, first) = local_rectangle(projection, bands);
+            let at = crate::ChartPoint::at;
+            place_rectangle(&mut store, at(-20.0, 95.0), at(0.0, 75.0));
+            set_extent_of(&mut store, 1, (true, false));
+            let second = projected_rect(&store, 1, projection, bands);
+            assert!(!second.intersects(first), "{second:?} {first:?}");
+            let depth = store.undo_depth();
+            let mut gestures = PaneGestures::default();
+            let first_band = crate::pos2(first.right() - 10.0, first.center().y);
+            let second_band = crate::pos2(second.right() - 10.0, second.center().y);
+            let double = Hand {
+                double_clicked: true,
+                ..Hand::PLAIN
+            };
+            press_and_release(
+                &mut gestures,
+                &mut store,
+                projection,
+                (bands, first_band),
+                Hand::PLAIN,
+            );
+            press_and_release(
+                &mut gestures,
+                &mut store,
+                projection,
+                (bands, second_band),
+                double,
+            );
+            assert_eq!(extent_of(&store, 0), (false, true), "the first click");
+            assert_eq!(extent_of(&store, 1), (true, true), "the second click");
+            assert_eq!(store.undo_depth(), depth + 2, "two steps");
+            assert!(store.undo());
+            assert_eq!(extent_of(&store, 1), (true, false));
+            assert_eq!(extent_of(&store, 0), (false, true), "the first step held");
+        });
+    }
+
+    /// Alt+click only selects, so with Alt held a band announces no
+    /// extension: a filled body shows the move grip, an outline nothing.
+    #[test]
+    fn alt_shows_no_extend_cursor_in_a_band() {
+        with_projection(|projection, bands| {
+            let alt = Hand {
+                alt: true,
+                ..Hand::PLAIN
+            };
+            for (fill, cursor) in [(40, Some(GestureCursor::Move)), (0, None)] {
+                let (mut store, rect) = local_rectangle(projection, bands);
+                store.items_mut()[0].style.fill_alpha = fill;
+                let band = crate::pos2(rect.right() - 15.0, rect.center().y);
+                assert_eq!(
+                    hover(&mut store, projection, bands, band),
+                    Some(GestureCursor::ExtendSide)
+                );
+                let mut pointer = pointer_at(band, bands);
+                pointer.down = false;
+                let outcome = owner_frame_by(
+                    &mut PaneGestures::default(),
+                    &mut store,
+                    projection,
+                    (bands, &pointer),
+                    alt,
+                );
+                assert_eq!(outcome.cursor, cursor, "fill {fill}");
             }
         });
     }
