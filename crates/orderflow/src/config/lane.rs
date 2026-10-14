@@ -412,10 +412,10 @@ pub struct LiveLaneStyle {
     pub depth_time_averaging: bool,
     /// The strip between the last candle and the tape previews the current
     /// book, read exactly from the synchronized book while it is current.
-    /// Its own switch, independent of
-    /// [`depth_time_averaging`](Self::depth_time_averaging): off by default,
-    /// so a pane that never asked (the approved WIN tape) keeps that strip
-    /// empty.
+    /// Its own switch. A look that never set it follows
+    /// [`depth_time_averaging`](Self::depth_time_averaging), as every look did
+    /// before the switch existed, so a saved averaging look keeps its strip
+    /// and a pane without averaging (the approved WIN tape) keeps it empty.
     pub forward_book_preview: bool,
     /// Keep the configured native radius instead of resizing settled marks
     /// for new collisions. Use with a pinned volume reference.
@@ -483,8 +483,10 @@ struct LiveLaneStyleRepr {
     native_tape: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     depth_time_averaging: bool,
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    forward_book_preview: bool,
+    /// Absent follows `depth_time_averaging`, and is written only when it
+    /// differs from that, so a look saved before the switch keeps its file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    forward_book_preview: Option<bool>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     stable_size: bool,
     /// Written only when on, like `native_tape`.
@@ -520,7 +522,9 @@ impl From<LiveLaneStyleRepr> for LiveLaneStyle {
             show_aggressions: repr.show_aggressions.unwrap_or(true),
             native_tape: repr.native_tape,
             depth_time_averaging: repr.depth_time_averaging,
-            forward_book_preview: repr.forward_book_preview,
+            forward_book_preview: repr
+                .forward_book_preview
+                .unwrap_or(repr.depth_time_averaging),
             stable_size: repr.stable_size,
             tape_only: repr.tape_only,
         }
@@ -548,7 +552,8 @@ impl From<LiveLaneStyle> for LiveLaneStyleRepr {
             show_aggressions: Some(style.show_aggressions),
             native_tape: style.native_tape,
             depth_time_averaging: style.depth_time_averaging,
-            forward_book_preview: style.forward_book_preview,
+            forward_book_preview: (style.forward_book_preview != style.depth_time_averaging)
+                .then_some(style.forward_book_preview),
             stable_size: style.stable_size,
             tape_only: style.tape_only,
         }
@@ -1306,7 +1311,10 @@ mod tests {
         let old: LiveLaneStyle = toml::from_str("depth_time_averaging = true\n").unwrap();
         assert!(old.forward_book_preview, "the trader's saved BTC look");
         let quiet: LiveLaneStyle = toml::from_str("native_tape = true\n").unwrap();
-        assert!(!quiet.forward_book_preview, "a WIN look keeps the strip empty");
+        assert!(
+            !quiet.forward_book_preview,
+            "a WIN look keeps the strip empty"
+        );
         for averaging in [false, true] {
             for explicit in [false, true] {
                 let text = format!(

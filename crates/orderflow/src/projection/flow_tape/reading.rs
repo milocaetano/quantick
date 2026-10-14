@@ -38,6 +38,18 @@ impl FlowTapeFrame {
     }
 }
 
+/// Where the caption's discs are drawn, after the Buy / Sell key: regional
+/// FLOW sits at a fixed offset up and left of its execution so candles stay
+/// readable; tick spheres stand on their executions.
+#[must_use]
+pub fn placement_note(tick_spheres: bool) -> &'static str {
+    if tick_spheres {
+        " \u{00b7} spheres at executions"
+    } else {
+        " \u{00b7} offset \u{2196}"
+    }
+}
+
 /// Current viewport calibration and honest progress/opening qualifications.
 pub fn caption_text(
     frame: Option<&FlowTapeFrame>,

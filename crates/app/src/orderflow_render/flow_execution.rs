@@ -347,7 +347,10 @@ pub(crate) fn flow_caption(
         append(" / ", crate::theme::TEXT_MUTED);
         append("Sell", if tick { colors.sell } else { FLOW_SELL });
     }
-    append(" \u{00b7} offset \u{2196}", crate::theme::TEXT_MUTED);
+    append(
+        quantick_orderflow::projection::flow_tape::placement_note(tick),
+        crate::theme::TEXT_MUTED,
+    );
     if let Some(detail) = detail {
         job.append(
             &format!(" | {detail}"),
