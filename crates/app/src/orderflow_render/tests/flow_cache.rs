@@ -27,6 +27,8 @@ fn frame() -> Arc<FlowTapeFrame> {
         1,
         1,
         FlowTapeView {
+            tape_bursts: None,
+            region_window_ms: 1_000,
             first_slot: 0,
             end_slot: 1,
             clip_left: 0.into(),
@@ -148,6 +150,10 @@ fn tick_sphere_appearance_invalidates_cached_mesh_without_changing_facts() {
     let (flat, _) = paint(&ctx, key(&frame));
     let mut styled = key(&frame);
     styled.tick_bubbles = Some(quantick_orderflow::TickBubbleStyle {
+        volume_opacity_floor: None,
+        tape_bursts: None,
+        region_window_ms: 1_000,
+        quantity_unit: quantick_orderflow::TickQuantityUnit::Btc,
         reference_quantity: 10.0,
         max_radius: 36.0,
         label_min_radius: 8.0,

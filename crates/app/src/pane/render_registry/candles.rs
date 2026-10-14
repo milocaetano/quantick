@@ -2,7 +2,7 @@ use super::super::draw_frame::DrawFrame;
 use super::{Contribution, Package};
 use crate::pane::constants::SIDEBAR_BODY_FRAC;
 use crate::{
-    candle_view::{BarSlot, draw_candle},
+    candle_view::{BarSlot, CandleSurface, draw_candle},
     indicators::IndicatorViews,
     style::CandleStyle,
     viewport::Viewport,
@@ -22,6 +22,7 @@ pub(in crate::pane) struct CandlePass<'a, 'b> {
     pub viewport: &'a Viewport,
     pub indicators: &'a IndicatorViews,
     pub clear_depth: bool,
+    pub contour_backing: Option<egui::Color32>,
     pub half: f32,
     pub candle_lane: f32,
     pub content_half: f32,
@@ -94,7 +95,10 @@ fn paint(pass: &mut CandlePass<'_, '_>) {
             &pass.frame.scale,
             bar,
             forming,
-            pass.style,
+            CandleSurface {
+                style: pass.style,
+                contour_backing: pass.contour_backing,
+            },
             color,
         );
     });

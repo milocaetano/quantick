@@ -402,6 +402,7 @@ opacity = 0.9
 native_tape = true
 depth_time_averaging = true
 stable_size = true
+
 [[presets]]
 name = "Binance BTC perpetual spheres"
 cluster_ms = 500
@@ -449,3 +450,23 @@ opacity = 0.9
 native_tape = true
 depth_time_averaging = true
 stable_size = true
+
+# Chart-only WIN calibration. Applying it preserves the selected tape look.
+[[presets]]
+name = "B3 WIN tick spheres"
+tick_only = true
+
+[presets.tick_bubbles]
+quantity_unit = "contracts"
+volume_opacity_floor = 0.25
+region_window_ms = 100
+reference_quantity = 20000.0
+max_radius = 18.0
+label_min_radius = 8.0
+opacity = 0.9
+
+[presets.tick_bubbles.tape_bursts]
+window_ms = 72000
+width_px = 420.0
+price_units_per_pixel = 0.8
+max_radius = 18.0

@@ -55,18 +55,26 @@ pub fn styled_caption_text(
 ) -> Option<String> {
     let mut hints = Vec::new();
     if legend_visible {
+        let regions = if frame.is_some_and(|frame| frame.view.tape_bursts.is_some()) {
+            "Time-grouped bursts".to_owned()
+        } else {
+            let window = frame.map_or(FLOW_REGION_WINDOW_MS, |frame| frame.view.region_window_ms);
+            format!("{window} ms regions")
+        };
+        let scale =
+            if frame.is_some_and(|frame| frame.scale_basis == FlowScaleBasis::FixedReference) {
+                "fixed scale"
+            } else {
+                "scale"
+            };
         hints.push(
             frame
                 .and_then(|frame| frame.effective_reference)
                 .map_or_else(
-                    || {
-                        format!(
-                            "{FLOW_REGION_WINDOW_MS} ms regions · area = regional gross volume · visible scale"
-                        )
-                    },
+                    || format!("{regions} · area = regional gross volume · visible scale"),
                     |reference| {
                         format!(
-                            "{FLOW_REGION_WINDOW_MS} ms regions · area = regional gross volume · scale {}",
+                            "{regions} · area = regional gross volume · {scale} {}",
                             crate::config::labels::format_quantity(reference)
                         )
                     },
@@ -74,7 +82,7 @@ pub fn styled_caption_text(
         );
         hints.push(
             if tick_spheres {
-                "quantity in BTC; sphere area follows gross volume"
+                "quantity in source units; sphere area follows gross volume"
             } else {
                 "brightness rises with regional volume"
             }

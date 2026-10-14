@@ -104,6 +104,10 @@ fn tick_style_changes_preserve_the_native_tape_revision_and_factual_groups() {
     assert!(!tape.is_empty());
     let mut changed = worker.config.clone();
     changed.volume_dots.tick_bubbles = Some(crate::TickBubbleStyle {
+        volume_opacity_floor: None,
+        tape_bursts: None,
+        region_window_ms: 1_000,
+        quantity_unit: crate::TickQuantityUnit::Btc,
         reference_quantity: 30.0,
         max_radius: 25.0,
         label_min_radius: 8.0,

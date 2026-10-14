@@ -90,6 +90,8 @@ fn recorded_flow_cold_enable_and_layout_costs() {
     let low = trades.iter().map(|trade| trade.price).min().unwrap() - Decimal::from(5);
     let high = trades.iter().map(|trade| trade.price).max().unwrap() + Decimal::from(5);
     let view = FlowTapeView {
+        tape_bursts: None,
+        region_window_ms: 1_000,
         first_slot: 0,
         end_slot: PRINTS / TICKS,
         clip_left: Decimal::ZERO,

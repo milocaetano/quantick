@@ -43,6 +43,8 @@ fn projected(trades: &[Trade], ticks: usize, width: f32, height: f32) -> FlowTap
         trades.len(),
         trades.len(),
         FlowTapeView {
+            tape_bursts: None,
+            region_window_ms: 1_000,
             first_slot: 0,
             end_slot: slots,
             clip_left: Decimal::ZERO,
@@ -85,7 +87,9 @@ fn wire(frame: &FlowTapeFrame, progress: FlowProgress) -> Value {
 fn display_policy_reports_exact_threshold_without_changing_execution_facts() {
     let trades = [source_trade(0, 100, 13)];
     let mut frame = projected(&trades, 1, 200.0, 200.0);
+    frame.view.region_window_ms = 8_000;
     let original = wire(&frame, settled(&frame));
+    assert_eq!(original["region_window_ms"], "8000");
     assert_eq!(
         original["display_policy"],
         "volume_weighted_with_dim_context"
@@ -93,6 +97,24 @@ fn display_policy_reports_exact_threshold_without_changing_execution_facts() {
     assert_eq!(original["large_region_threshold"], "3.25");
     assert_eq!(original["buy_quantity"], "13");
     assert_eq!(original["sell_quantity"], "0");
+    frame.view.tape_bursts = Some(quantick_orderflow::projection::flow_tape::FlowBurstView {
+        calibration: quantick_orderflow::TickBurstGrouping {
+            window_ms: 72_000,
+            width_px: 420.0,
+            price_units_per_pixel: 0.8,
+            max_radius: 18.0,
+        },
+        from_ms: 0,
+        until_ms: 72_000,
+        settled_through_ms: 72_000,
+    });
+    let bursts = wire(&frame, settled(&frame));
+    assert_eq!(bursts["display_policy"], "fixed_area_spheres");
+    assert_eq!(bursts["tape_bursts"]["calibration"]["window_ms"], "72000");
+    assert_eq!(bursts["tape_bursts"]["from_ms"], "0");
+    assert_eq!(bursts["tape_bursts"]["settled_through_ms"], "72000");
+    assert_eq!(bursts["marks"], original["marks"]);
+    frame.view.tape_bursts = None;
     let mut previous = original.clone();
     previous["display_policy"] = "large_or_isolated_with_dim_context".into();
     let previous: FlowExecutionSnapshot = serde_json::from_value(previous).unwrap();

@@ -184,7 +184,7 @@ fn quiet_narrow_tick_captions_stay_in_the_header_clear_of_candles_and_current_pr
             text.galley
                 .job
                 .text
-                .contains("quantity in BTC; sphere area follows gross volume")
+                .contains("quantity in source units; sphere area follows gross volume")
         );
         assert_eq!(
             egui::Rect::from_min_size(text.pos, text.galley.size()),

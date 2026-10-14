@@ -8,6 +8,10 @@ pub struct TickMembership {
     next: usize,
     openings: quantick_orderflow::history::RecordedOpenings,
     opening_anchors: quantick_orderflow::history::RecordedOpeningAnchors,
+    /// Timestamp bounds follow canonical candle membership, including late prints.
+    times: Vec<(i64, i64)>,
+    latest: Option<i64>,
+    unordered_times: bool,
 }
 
 impl TickMembership {
@@ -35,6 +39,21 @@ impl TickMembership {
             self.closed.push(self.start..self.next);
             self.start = self.next;
         }
+        if let Some(bounds) = self.times.get_mut(self.closed.len()) {
+            bounds.0 = bounds.0.min(trade.timestamp_ms);
+            bounds.1 = bounds.1.max(trade.timestamp_ms);
+        } else {
+            self.times.push((trade.timestamp_ms, trade.timestamp_ms));
+        }
+        self.latest = Some(
+            self.latest
+                .map_or(trade.timestamp_ms, |latest| latest.max(trade.timestamp_ms)),
+        );
+        if self.times.len() > 1 {
+            let previous = self.times[self.times.len() - 2];
+            let current = self.times[self.times.len() - 1];
+            self.unordered_times |= current.0 < previous.0 || current.1 < previous.1;
+        }
         self.next += 1;
         if closed && included {
             self.closed.push(self.start..self.next);
@@ -54,6 +73,38 @@ impl TickMembership {
 
     pub fn opening_windows(&self) -> &[i64] {
         self.openings.windows()
+    }
+
+    /// Time extrema of whole candles; source ordinals need not be time-sorted.
+    pub fn time_bounds(&self, slots: Range<usize>) -> Option<(i64, i64)> {
+        let times = self.times.get(slots)?;
+        if !self.unordered_times {
+            return Some((times.first()?.0, times.last()?.1));
+        }
+        times
+            .iter()
+            .copied()
+            .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
+    }
+
+    /// Conservative whole-candle admission for a half-open time interval.
+    pub fn slots_at_times(&self, from: i64, until: i64) -> Option<Range<usize>> {
+        if !self.unordered_times {
+            let first = self.times.partition_point(|bounds| bounds.1 < from);
+            let end = self.times.partition_point(|bounds| bounds.0 < until);
+            return (first < end).then_some(first..end);
+        }
+        let mut matches = self
+            .times
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, &(low, high))| (high >= from && low < until).then_some(slot));
+        let first = matches.next()?;
+        Some(first..matches.next_back().unwrap_or(first) + 1)
+    }
+
+    pub fn latest_timestamp_ms(&self) -> Option<i64> {
+        self.latest
     }
 
     pub fn opening_ordinals(&self) -> impl Iterator<Item = usize> + '_ {

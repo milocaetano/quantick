@@ -18,6 +18,8 @@ fn at_scale(trades: &[Trade], width: f32, height: f32, prices: PriceWindow) -> F
         trades.len(),
         trades.len(),
         FlowTapeView {
+            tape_bursts: None,
+            region_window_ms: 1_000,
             first_slot: 0,
             end_slot: 1,
             clip_left: Decimal::ZERO,

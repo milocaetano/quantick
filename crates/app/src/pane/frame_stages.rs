@@ -244,8 +244,9 @@ impl<'a> FlowFrame<'a> {
         }
     }
 
-    pub(super) fn regional_aggressions(&self) {
-        if let Some((_, drawing)) = &self.regional {
+    pub(super) fn regional_aggressions(&self, candles: &mut CandlePass<'_, '_>) {
+        if let Some((frame, drawing)) = &self.regional {
+            candles.contour_backing = frame.view.tape_bursts.map(|_| self.background);
             drawing.paint(
                 self.painter,
                 self.rect.with_max_x(self.rect.right() - self.lane_width),
@@ -458,6 +459,7 @@ impl<'a, 'f> HistoryStage<'a, 'f> {
             viewport: self.viewport,
             indicators,
             clear_depth,
+            contour_backing: None,
             half: self.dress.half,
             candle_lane: self.dress.candle_lane,
             content_half: self.dress.content_half,

@@ -51,6 +51,8 @@ fn measure(
     // control limits the captured packet to its former 2048 executions.
     let membership = state.tick_membership().unwrap();
     let view = quantick_orderflow::projection::flow_tape::FlowTapeView {
+        tape_bursts: None,
+        region_window_ms: 1_000,
         first_slot: slots.start,
         end_slot: slots.end,
         clip_left: 0.into(),

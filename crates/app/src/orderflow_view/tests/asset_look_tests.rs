@@ -118,6 +118,46 @@ fn whole_preset_api_commits_the_changed_configuration_to_the_actual_worker() {
     );
 }
 
+#[test]
+fn win_tick_preset_picker_and_named_operation_preserve_the_saved_tape() {
+    let store = AssetBubblesStore::default().shared();
+    let mut api = bound_to(&store, ("metatrader-b3", "WINZ26"));
+    let mut ui = bound_win();
+    for view in [&mut api, &mut ui] {
+        view.edit_config(|config| {
+            config.live_lane.width_share = 0.35;
+            config.live_lane.stable_size = false;
+            config.live_lane.depth_time_averaging = false;
+            config.bubbles.max_radius = 18.0;
+            config.volume_dots.full_quantity = 20_000.0;
+            config.show_aggressions = false;
+        });
+    }
+    let before = api.config.clone();
+    let name = api.look.look_name().to_owned();
+    let window = api.look.lane_window_setting();
+    api.flush_for_test();
+    let worker_revision = api.cached_health().config_revision;
+    let ui_before = ui.config.clone();
+    assert!(ui.apply_preset("B3 WIN tick spheres"));
+    ui.commit_config_changes(ui_before);
+    assert!(api.apply_named_preset("B3 WIN tick spheres").unwrap());
+    assert_eq!(api.config, ui.config);
+    assert!(before.same_tape_settings(&api.config));
+    assert_eq!(api.look.look_name(), name);
+    assert_eq!(api.look.lane_window_setting(), window);
+    api.flush_for_test();
+    assert_eq!(api.cached_health().config_revision, worker_revision);
+    assert!(!api.apply_named_preset("B3 WIN tick spheres").unwrap());
+    api.sync_asset(false);
+    let restored = bound_to(&store, ("metatrader-b3", "WINZ26"));
+    assert_eq!(appearance(&restored), appearance(&api));
+    let mut btc = bound_to(&store, ("binance", "BTCUSDT"));
+    let btc_before = btc.config.clone();
+    assert!(btc.apply_named_preset("B3 WIN tick spheres").is_err());
+    assert_eq!(btc.config, btc_before);
+}
+
 fn ignore_opening(view: &mut OrderflowView, on: bool) -> bool {
     view.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = on)
 }

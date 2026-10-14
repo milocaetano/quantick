@@ -39,6 +39,8 @@ fn painted_region_with_backing(
         2,
         2,
         FlowTapeView {
+            tape_bursts: None,
+            region_window_ms: 1_000,
             first_slot: 0,
             end_slot: 1,
             clip_left: 0.into(),
@@ -455,6 +457,8 @@ fn dense_flow_fixture(dot_count: u64) -> FlowTapeFrame {
         trades.len(),
         trades.len(),
         FlowTapeView {
+            tape_bursts: None,
+            region_window_ms: 1_000,
             first_slot: 0,
             end_slot: slot_count,
             clip_left: 0.into(),

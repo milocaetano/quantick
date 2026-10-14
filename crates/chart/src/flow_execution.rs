@@ -9,6 +9,7 @@ use quantick_orderflow::projection::{
 };
 use rust_decimal::{Decimal, prelude::FromPrimitive as _};
 
+mod burst_context;
 mod chrome;
 mod constants;
 pub use chrome::{
@@ -66,8 +67,8 @@ pub fn project_styled_flow_executions<R: FlowRunner>(
     camera: FlowChartView,
 ) {
     let FlowChartView {
-        slots,
-        pixels,
+        mut slots,
+        mut pixels,
         range,
         clip,
         tick_bubbles,
@@ -82,6 +83,11 @@ pub fn project_styled_flow_executions<R: FlowRunner>(
     let Some(prices) = PriceWindow::from_f64_range(range) else {
         return;
     };
+    let tape_bursts = tick_bubbles
+        .and_then(|style| style.tape_bursts)
+        .and_then(|calibration| {
+            burst_context::context(membership, &mut slots, &mut pixels.0, calibration)
+        });
     let span = |slots: std::ops::Range<usize>| {
         membership
             .range(slots.start)
@@ -108,6 +114,11 @@ pub fn project_styled_flow_executions<R: FlowRunner>(
         opening_windows: membership.opening_windows().to_vec(),
         opening_ordinals: membership.opening_ordinals().collect(),
         view: FlowTapeView {
+            tape_bursts,
+            region_window_ms: tick_bubbles.map_or(
+                quantick_orderflow::projection::flow_tape::FLOW_REGION_WINDOW_MS,
+                |style| style.region_window_ms,
+            ),
             clip_left: Decimal::from_f64(clip.0).unwrap_or_default(),
             clip_right: Decimal::from_f64(clip.1).unwrap_or_default(),
             first_slot: slots.start,

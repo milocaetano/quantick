@@ -24,9 +24,9 @@ impl FlowPresentation {
             .map(|region| FlowQuantityLabel {
                 center: region.disc.center,
                 radius: region.disc.radius,
-                text: quantick_orderflow::config::labels::format_quantity(
-                    frame.dots[region.dot_index].mark.quantity,
-                ),
+                text: tick
+                    .expect("a tick style was selected")
+                    .quantity_label(frame.dots[region.dot_index].mark.quantity),
             })
             .collect()
     }

@@ -4,6 +4,17 @@ const ACTION: &str = "orderflow.bubbles.tick.set";
 
 #[test]
 fn tick_spheres_are_scoped_retry_safe_and_preserve_tape_settings() {
+    check_tick_selection("binance", "BTCUSDT", "Binance BTC Spot spheres", "BTC", 2);
+    check_tick_selection(
+        "metatrader-b3",
+        "WINZ26",
+        "B3 WIN tick spheres",
+        "contracts",
+        1,
+    );
+}
+
+fn check_tick_selection(feed: &str, symbol: &str, preset: &str, unit: &str, choices: usize) {
     let ctx = egui::Context::default();
     let (mut app, _commands) = app_with_history(4);
     let config: crate::config::AppConfig =
@@ -12,7 +23,7 @@ fn tick_spheres_are_scoped_retry_safe_and_preserve_tape_settings() {
     let (binding, settings) = quantick_stores::bubble_asset_store::AssetBinding::bind(
         quantick_stores::bubble_asset_store::AssetBubblesStore::default().shared(),
         &config,
-        ("binance", "BTCUSDT"),
+        (feed, symbol),
         &presets,
         false,
     );
@@ -36,7 +47,7 @@ fn tick_spheres_are_scoped_retry_safe_and_preserve_tape_settings() {
     let payload = json!({
         "tab_id": app.tabs.active_id().to_string(),
         "pane_id": app.active_tab().flow_pane.id.to_string(),
-        "preset": "Binance BTC Spot spheres",
+        "preset": preset,
     });
     let (denied, _) = unkeyed_call(&mut app, &mut observer, ACTION, payload.clone());
     assert_eq!(error_code(&denied), Some(codes::PERMISSION_DENIED));
@@ -66,6 +77,10 @@ fn tick_spheres_are_scoped_retry_safe_and_preserve_tape_settings() {
     );
     assert_eq!(first.outcome, retry.outcome);
     assert_eq!(success_result(&first)["changed"], true);
+    assert_eq!(
+        success_result(&first)["tick_bubbles"]["quantity_unit"],
+        unit
+    );
     let (noop, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, payload);
     assert_eq!(success_result(&noop)["changed"], false);
     let owner = app.active_tab().tape();
@@ -93,7 +108,7 @@ fn tick_spheres_are_scoped_retry_safe_and_preserve_tape_settings() {
         pane["bubbles"]["tick_bubbles"],
         success_result(&first)["tick_bubbles"]
     );
-    assert!(pane["bubbles"]["tick_presets"].as_array().unwrap().len() >= 2);
+    assert!(pane["bubbles"]["tick_presets"].as_array().unwrap().len() >= choices);
     off["pane_id"] = json!(u64::MAX.to_string());
     let (stale, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, off);
     assert_eq!(error_code(&stale), Some(codes::INVALID_REQUEST));

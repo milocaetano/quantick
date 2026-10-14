@@ -148,12 +148,20 @@ fn tick_style_edits_keep_retained_tape_membership_and_paint_unchanged() {
     assert!(view.tape_dots.borrow().retained_group_count() > 0);
     let membership = format!("{:?}", view.tape_dots.borrow());
     let style = quantick_orderflow::TickBubbleStyle {
+        volume_opacity_floor: None,
+        tape_bursts: None,
+        region_window_ms: 1_000,
+        quantity_unit: quantick_orderflow::TickQuantityUnit::Btc,
         reference_quantity: 30.0,
         max_radius: 25.0,
         label_min_radius: 8.0,
         opacity: 0.8,
     };
-    for tick in [Some(style), Some(style), None] {
+    let win = crate::bubble_presets::embedded()
+        .get("B3 WIN tick spheres")
+        .unwrap()
+        .tick_bubbles;
+    for tick in [Some(style), Some(style), win, None] {
         view.edit_config(|config| config.volume_dots.tick_bubbles = tick);
         assert_eq!(
             format!("{:?}", view.tape_dots.borrow()),

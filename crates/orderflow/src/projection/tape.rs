@@ -120,6 +120,7 @@ pub(super) fn position_tape_with(
 /// Exact moments prevent repeated centroid averaging from losing quantity.
 /// Coordinates begin at the projection's final floating-point boundary; the
 /// accumulation itself uses Decimal and converts back only to draw.
+#[derive(Clone)]
 pub(super) struct TapeMoment {
     mark: AggressionPrimitive,
     /// Volume eligible for the automatic reference; factual size and moments

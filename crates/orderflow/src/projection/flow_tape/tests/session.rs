@@ -53,6 +53,8 @@ fn request(epoch: u64, slots: Range<usize>) -> FlowRequest {
         opening_windows: vec![],
         opening_ordinals: vec![],
         view: FlowTapeView {
+            tape_bursts: None,
+            region_window_ms: 1_000,
             first_slot: slots.start,
             end_slot: slots.end,
             clip_left: slots.start.into(),
@@ -507,6 +509,10 @@ fn tick_spheres_keep_closed_and_forming_slot_facts_inside_a_long_tape_window() {
         ..HeatmapConfig::default()
     };
     config.volume_dots.tick_bubbles = Some(crate::TickBubbleStyle {
+        volume_opacity_floor: None,
+        tape_bursts: None,
+        region_window_ms: 1_000,
+        quantity_unit: crate::TickQuantityUnit::Btc,
         reference_quantity: 10.0,
         max_radius: 36.0,
         label_min_radius: 8.0,

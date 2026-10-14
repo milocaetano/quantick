@@ -34,12 +34,13 @@ impl BubbleLook {
             return Err("Unknown or empty bubble preset name".to_owned());
         }
         let mut desired = config.clone();
-        self.presets
-            .get(name)
-            .expect("validated preset")
-            .apply_to(&mut desired);
+        let preset = self.presets.get(name).expect("validated preset");
+        if preset.tick_only {
+            self.tick_style(Some(name))?;
+        }
+        preset.apply_to(&mut desired);
         desired.sanitize();
-        if desired == *config && self.look_name == name {
+        if desired == *config && (preset.tick_only || self.look_name == name) {
             return Ok(false);
         }
         self.apply_preset(name, config);

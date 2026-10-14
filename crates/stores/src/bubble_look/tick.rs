@@ -1,20 +1,40 @@
 //! Select the chart's sphere calibration without replacing the tape look.
 use super::BubbleLook;
-use quantick_orderflow::TickBubbleStyle;
+use quantick_orderflow::{TickBubbleStyle, TickQuantityUnit};
 
 impl BubbleLook {
     #[must_use]
+    pub fn tick_preset_label(&self, style: Option<TickBubbleStyle>) -> String {
+        self.tick_presets()
+            .into_iter()
+            .find(|name| self.tick_style(Some(name)).ok() == Some(style))
+            .unwrap_or_else(|| {
+                if style.is_some() {
+                    "Custom spheres"
+                } else {
+                    "Regional FLOW"
+                }
+                .to_owned()
+            })
+    }
+
+    #[must_use]
     pub fn tick_presets(&self) -> Vec<String> {
-        if !self
-            .asset()
-            .is_some_and(|asset| matches!(asset.key(), "BTCUSDT" | "binance-futures:BTCUSDT.p"))
-        {
+        let Some(unit) = self.asset().and_then(|asset| match asset.key() {
+            "BTCUSDT" | "binance-futures:BTCUSDT.p" => Some(TickQuantityUnit::Btc),
+            "WIN*" => Some(TickQuantityUnit::Contracts),
+            _ => None,
+        }) else {
             return Vec::new();
-        }
+        };
         self.presets()
             .presets
             .iter()
-            .filter(|preset| preset.tick_bubbles.is_some())
+            .filter(|preset| {
+                preset
+                    .tick_bubbles
+                    .is_some_and(|style| style.quantity_unit == unit)
+            })
             .map(|preset| preset.name.clone())
             .collect()
     }
@@ -22,7 +42,7 @@ impl BubbleLook {
     pub fn tick_style(&self, preset: Option<&str>) -> Result<Option<TickBubbleStyle>, String> {
         let choices = self.tick_presets();
         if choices.is_empty() {
-            return Err("Tick sphere presets require a Binance BTC asset".to_owned());
+            return Err("No tick sphere calibration is available for this asset".to_owned());
         }
         preset
             .map(|name| {
@@ -54,13 +74,19 @@ mod tests {
             .unwrap()
             .symbols
             .push("BTCUSDT".to_owned());
-        for (feed, symbol, allowed) in [
-            ("binance", "BTCUSDT", true),
-            ("binance-futures", "BTCUSDT.p", true),
-            ("binance", "ETHUSDT", false),
-            ("hyperliquid", "BTCUSDT", false),
-            ("hyperliquid", "BTC", false),
-            ("metatrader-b3", "WINV26", false),
+        for (feed, symbol, name) in [
+            ("binance", "BTCUSDT", Some("Binance BTC Spot spheres")),
+            (
+                "binance-futures",
+                "BTCUSDT.p",
+                Some("Binance BTC perpetual spheres"),
+            ),
+            ("binance", "ETHUSDT", None),
+            ("hyperliquid", "BTCUSDT", None),
+            ("hyperliquid", "BTC", None),
+            ("metatrader-b3", "WINV26", Some("B3 WIN tick spheres")),
+            ("metatrader-b3", "WINZ26", Some("B3 WIN tick spheres")),
+            ("metatrader-b3", "WDO$N", None),
         ] {
             let presets = bubble_presets::embedded();
             let (binding, _) = crate::bubble_asset_store::AssetBinding::bind(
@@ -75,12 +101,17 @@ mod tests {
                 &mut HeatmapConfig::default(),
             );
             look.bind(binding);
-            assert_eq!(!look.tick_presets().is_empty(), allowed);
-            assert_eq!(
-                look.tick_style(Some("Binance BTC Spot spheres")).is_ok(),
-                allowed
-            );
-            assert_eq!(look.tick_style(None).is_ok(), allowed);
+            assert_eq!(!look.tick_presets().is_empty(), name.is_some());
+            assert_eq!(look.tick_style(None).is_ok(), name.is_some());
+            if let Some(name) = name {
+                assert!(look.tick_style(Some(name)).unwrap().is_some());
+                let other = if name == "B3 WIN tick spheres" {
+                    "Binance BTC Spot spheres"
+                } else {
+                    "B3 WIN tick spheres"
+                };
+                assert!(look.tick_style(Some(other)).is_err());
+            }
             assert!(look.tick_style(Some("missing")).is_err());
         }
     }

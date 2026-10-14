@@ -114,6 +114,7 @@ impl FlowDrawing {
         for region in &plan.regions {
             let dot = &frame.dots[region.dot_index];
             let disc = region.disc;
+            let light_offset = tick.map_or(0.0, |style| style.light_offset(disc.radius));
             let mesh = &mut meshes[usize::from(region.role == FlowRegionRole::Peak)];
             let [buy_color, sell_color] = if let Some(colors) = tick_colors {
                 [colors.buy, colors.sell]
@@ -158,11 +159,18 @@ impl FlowDrawing {
                     tick_style
                         .as_ref()
                         .map_or(SphereShading::flat(color), |style| {
-                            SphereShading::sphere(color, style).faded(style.opacity)
+                            (if light_offset == 0.0 {
+                                SphereShading::flat(color)
+                            } else {
+                                SphereShading::sphere(color, style)
+                            })
+                            .faded(
+                                tick.map_or(style.opacity, |tick| {
+                                    tick.fill_opacity(dot.mark.quantity)
+                                }),
+                            )
                         }),
-                    tick_style
-                        .as_ref()
-                        .map_or(0.0, |_| super::bubbles::SPHERE_LIGHT_OFFSET),
+                    light_offset,
                 );
                 angle += sweep;
             }

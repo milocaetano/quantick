@@ -26,6 +26,8 @@ fn dot() -> FlowTapeDot {
         1,
         1,
         FlowTapeView {
+            tape_bursts: None,
+            region_window_ms: 1_000,
             first_slot: 2,
             end_slot: 3,
             clip_left: 2.into(),

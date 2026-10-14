@@ -116,8 +116,38 @@ impl TapeSource<'_> {
 }
 
 impl TapeDotMemory {
+    /// A cold causal pass shared by historical tape and candle burst adapters.
+    pub(super) fn settle_native_block(
+        facts: &[AggressionPrimitive],
+        view: TapeDotView,
+        sizing: DotSizing,
+        bubbles: &BubbleStyle,
+        lane: &LiveLaneStyle,
+        openings: &[i64],
+    ) -> Vec<Group> {
+        let mut memory = Self::default();
+        let _ = memory.project(facts, view, sizing, bubbles, lane, openings);
+        let mut groups = memory.settled;
+        groups.append(&mut memory.frontier);
+        groups
+    }
+
     pub fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    /// The candle adapter retains this separate memory between source updates.
+    /// Callers admit closed native cells only; forming cells use a cloned preview.
+    pub(super) fn project_native_block(
+        &mut self,
+        facts: &[AggressionPrimitive],
+        view: TapeDotView,
+        sizing: DotSizing,
+        bubbles: &BubbleStyle,
+        lane: &LiveLaneStyle,
+    ) -> Vec<Group> {
+        let _ = self.project(facts, view, sizing, bubbles, lane, &[]);
+        self.settled.iter().chain(&self.frontier).cloned().collect()
     }
 
     /// Reconcile under `abandoned`: once it is raised, what is left of a

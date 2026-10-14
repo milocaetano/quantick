@@ -14,6 +14,7 @@
 //! [`work_meter`] is the test instrument the budgets in this crate and in
 //! `app` are held with: a counting allocator, installed by each test binary.
 
+pub mod candle_slot;
 mod constants;
 pub mod day_turn;
 pub mod flow_execution;

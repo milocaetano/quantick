@@ -11,7 +11,8 @@ mod candles;
 mod style_window;
 
 use candles::color32;
-pub use candles::{BarSlot, draw_candle, is_bullish};
+pub use candles::{CandleSurface, draw_candle};
+pub use quantick_chart::candle_slot::{BarSlot, is_bullish};
 pub use style_window::{StylePanelResponse, draw_presets, draw_style_contents};
 
 #[cfg(test)]
@@ -44,6 +45,56 @@ mod tests {
         assert!(is_bullish(&bar("100", "101")));
         assert!(is_bullish(&bar("100", "100")));
         assert!(!is_bullish(&bar("100", "99")));
+    }
+
+    #[test]
+    fn candle_clearance_preserves_fills_and_never_enables_hidden_contours() {
+        let ctx = eframe::egui::Context::default();
+        let candle = bar("100", "101");
+        let scale = crate::chart::PriceScale::from_range(99.0, 102.0, 0.0, 100.0);
+        let background = eframe::egui::Color32::from_rgb(19, 23, 34);
+        let paint = |style: &CandleStyle, backing| {
+            ctx.run(Default::default(), |ctx| {
+                draw_candle(
+                    &ctx.layer_painter(eframe::egui::LayerId::background()),
+                    BarSlot {
+                        xc: 40.0,
+                        half_width: 3.0,
+                    },
+                    &scale,
+                    &candle,
+                    false,
+                    CandleSurface {
+                        style,
+                        contour_backing: backing,
+                    },
+                    None,
+                );
+            })
+            .shapes
+        };
+        let style = CandleStyle::default();
+        let base = paint(&style, None);
+        let isolated = paint(&style, Some(background));
+        assert!(isolated.len() > base.len());
+        let fills = |shapes: &[eframe::egui::epaint::ClippedShape]| {
+            shapes
+                .iter()
+                .filter_map(|s| {
+                    if let eframe::egui::Shape::Rect(rect) = &s.shape {
+                        (rect.fill != eframe::egui::Color32::TRANSPARENT)
+                            .then_some((rect.rect, rect.fill))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(fills(&base), fills(&isolated));
+        let mut hidden = style;
+        hidden.outline_opacity = 0.0;
+        hidden.wick_opacity = 0.0;
+        assert_eq!(paint(&hidden, None), paint(&hidden, Some(background)));
     }
 
     /// The last-price chip picks its colour straight from the candle palette

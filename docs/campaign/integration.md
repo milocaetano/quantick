@@ -96,6 +96,11 @@ branches. It is invalid for a final campaign-to-main PR, which uses the default
 main context (no `mission-base` record). Remove an obsolete record only after
 checking its branch and preserving its persisted source.
 
+A user-designated stacked PR may target `origin/feat/*` with the task issue
+as the third field and `none` as the fourth. This context binds reviews and
+readiness to that explicit base. It grants no integration authority: a merge
+action or a non-`none` grant on this kind of base is always refused.
+
 For every diff, task base and review dossier, resolve the base explicitly:
 
 ```sh

@@ -2,7 +2,7 @@
 use quantick_control::wire::{CanonicalDecimal, WireU64};
 use quantick_control_host::wire::{canonical_decimal, wire_usize};
 use quantick_orderflow::projection::flow_tape::{
-    FLOW_REGION_WINDOW_MS, FlowProgress, FlowReference, FlowScaleBasis, FlowTapeDot, FlowTapeFrame,
+    FlowProgress, FlowReference, FlowScaleBasis, FlowTapeDot, FlowTapeFrame,
 };
 use rust_decimal::Decimal;
 use schemars::JsonSchema;
@@ -37,6 +37,8 @@ pub struct FlowExecutionSnapshot {
     pub merge_support_radius_px: CanonicalDecimal,
     /// Intrinsic aligned interval before spatial pooling; never an order identifier.
     pub region_window_ms: WireU64,
+    /// Explicit fixed geometry and independent block boundaries of candle bursts.
+    pub tape_bursts: Option<FlowBurstContextSnapshot>,
     pub ignore_opening: bool,
     pub buy_quantity: CanonicalDecimal,
     pub sell_quantity: CanonicalDecimal,
@@ -44,6 +46,15 @@ pub struct FlowExecutionSnapshot {
     pub mark_count: WireU64,
     pub marks_truncated: bool,
     pub marks: Vec<FlowExecutionMark>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FlowBurstContextSnapshot {
+    pub calibration: crate::tick_bubbles::TickBurstSnapshot,
+    pub from_ms: String,
+    pub until_ms: String,
+    /// Source watermark; native cells at/after it are provisional until the next window.
+    pub settled_through_ms: String,
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -56,6 +67,8 @@ pub enum FlowExecutionScaleMode {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FlowExecutionDisplayPolicy {
+    /// Candle bursts keep a fixed volume-to-area scale and the selected sphere colors.
+    FixedAreaSpheres,
     /// Legacy readback policy, retained for previously captured snapshots.
     LargeOrIsolatedWithDimContext,
     /// Ordinary regions remain dim through one quarter of the reference, then
@@ -71,6 +84,7 @@ pub enum FlowExecutionScaleBasis {
     VisibleOrdinaryRegionMax,
     OpeningOnlyFallback,
     TypedReference,
+    FixedReference,
 }
 impl From<FlowScaleBasis> for FlowExecutionScaleBasis {
     fn from(value: FlowScaleBasis) -> Self {
@@ -80,6 +94,7 @@ impl From<FlowScaleBasis> for FlowExecutionScaleBasis {
             FlowScaleBasis::VisibleOrdinaryRegionMax => Self::VisibleOrdinaryRegionMax,
             FlowScaleBasis::OpeningOnlyFallback => Self::OpeningOnlyFallback,
             FlowScaleBasis::TypedReference => Self::TypedReference,
+            FlowScaleBasis::FixedReference => Self::FixedReference,
         }
     }
 }
@@ -180,7 +195,11 @@ impl From<(&FlowTapeFrame, FlowProgress)> for FlowExecutionSnapshot {
             scale_basis: frame.scale_basis.into(),
             typed_reference: frame.view.reference.typed().map(canonical_decimal),
             effective_reference: frame.effective_reference.map(canonical_decimal),
-            display_policy: FlowExecutionDisplayPolicy::VolumeWeightedWithDimContext,
+            display_policy: if frame.view.tape_bursts.is_some() {
+                FlowExecutionDisplayPolicy::FixedAreaSpheres
+            } else {
+                FlowExecutionDisplayPolicy::VolumeWeightedWithDimContext
+            },
             large_region_threshold: frame.large_region_threshold().map(canonical_decimal),
             opening_exclusion_effective: frame.opening_exclusion_effective,
             radius_limit_px: canonical_decimal(
@@ -190,7 +209,16 @@ impl From<(&FlowTapeFrame, FlowProgress)> for FlowExecutionSnapshot {
                 Decimal::from_f32_retain(frame.view.merge_support_radius).unwrap_or_default(),
             ),
             ignore_opening: frame.view.exclude_opening,
-            region_window_ms: WireU64(FLOW_REGION_WINDOW_MS as u64),
+            region_window_ms: WireU64(frame.view.region_window_ms as u64),
+            tape_bursts: frame
+                .view
+                .tape_bursts
+                .map(|burst| FlowBurstContextSnapshot {
+                    calibration: burst.calibration.into(),
+                    from_ms: burst.from_ms.to_string(),
+                    until_ms: burst.until_ms.to_string(),
+                    settled_through_ms: burst.settled_through_ms.to_string(),
+                }),
             buy_quantity: canonical_decimal(buy),
             sell_quantity: canonical_decimal(sell),
             trade_count: wire_usize(frame.dots.iter().map(|dot| dot.mark.trade_count).sum()),

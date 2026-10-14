@@ -85,6 +85,9 @@ const fn default_volume_dot_full_quantity() -> f64 {
 pub struct BubblePreset {
     /// Unique, human-chosen name shown in the picker.
     pub name: String,
+    /// Apply only tick-chart spheres; preserve every tape and book setting.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub tick_only: bool,
     /// Temporal window used to cluster compatible prints, in milliseconds.
     #[serde(default = "default_cluster_ms")]
     pub cluster_ms: i64,
@@ -141,6 +144,7 @@ impl BubblePreset {
     pub fn capture(name: impl Into<String>, config: &HeatmapConfig) -> Self {
         Self {
             name: name.into(),
+            tick_only: false,
             cluster_ms: config.bubble_cluster_ms,
             dust_merge_ms: config.bubble_dust_merge_ms,
             candle_summary: config.bubble_candle_summary,
@@ -174,6 +178,10 @@ impl BubblePreset {
     /// Apply this preset over `config`, touching nothing outside the panel —
     /// and never a layer's own switch, on either pane.
     pub fn apply_to(&self, config: &mut HeatmapConfig) {
+        if self.tick_only {
+            config.volume_dots.tick_bubbles = self.tick_bubbles;
+            return;
+        }
         config.bubble_cluster_ms = self.cluster_ms;
         config.bubble_dust_merge_ms = self.dust_merge_ms;
         config.bubble_candle_summary = self.candle_summary;
@@ -204,6 +212,10 @@ impl BubblePreset {
         config.live_lane.show_depth = visibility.1;
         config.live_lane.show_aggressions = visibility.2;
     }
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 impl BubblePreset {
@@ -757,7 +769,10 @@ mod tests {
         for preset in &presets.presets {
             if !matches!(
                 preset.name.as_str(),
-                "mini index regions" | "Binance BTC Spot spheres" | "Binance BTC perpetual spheres"
+                "mini index regions"
+                    | "Binance BTC Spot spheres"
+                    | "Binance BTC perpetual spheres"
+                    | "B3 WIN tick spheres"
             ) {
                 assert!(!preset.live_lane.tape_only, "{} keeps candles", preset.name);
                 assert!(
@@ -947,6 +962,7 @@ name = "old"
         let mut file = BubblePresetFile::default();
         file.upsert(BubblePreset {
             name: "default".to_owned(),
+            tick_only: false,
             tick_bubbles: None,
             cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
             dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,

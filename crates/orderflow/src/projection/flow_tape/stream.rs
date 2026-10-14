@@ -150,7 +150,7 @@ impl FlowWorkerCache {
                 }),
         );
     }
-    pub fn project(&self, request: &FlowRequest) -> Arc<FlowTapeFrame> {
+    pub fn project(&mut self, request: &FlowRequest) -> Arc<FlowTapeFrame> {
         Arc::new(self.source.project(
             request.epoch,
             request.layout_revision,

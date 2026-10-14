@@ -185,8 +185,7 @@ fn settle_block(
     if block.is_empty() {
         return Vec::new();
     }
-    let mut memory = TapeDotMemory::default();
-    let _ = memory.project(
+    TapeDotMemory::settle_native_block(
         &block,
         TapeDotView {
             now_ms: end,
@@ -205,8 +204,5 @@ fn settle_block(
         inputs.bubbles,
         inputs.lane,
         inputs.opening_bursts,
-    );
-    let mut groups = memory.settled;
-    groups.append(&mut memory.frontier);
-    groups
+    )
 }

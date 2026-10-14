@@ -18,7 +18,15 @@ if [ -e "$context_file" ]; then
     [ "$(wc -l < "$context_file" | tr -d ' ')" = 1 ] || fail 'Invalid campaign context record.'
     read -r recorded_branch context_base context_parent context_grant extra < "$context_file"
     [ "$recorded_branch" = "$context_branch" ] && [ -z "$extra" ] || fail 'Campaign context belongs to another branch or is malformed.'
-    case "$context_base" in origin/campaign/?*|origin/feature/?*) ;; *) fail 'Campaign base must be an explicit origin/campaign or origin/feature branch.' ;; esac
+    case "$context_base" in
+        origin/campaign/?*|origin/feature/?*) ;;
+        origin/feat/?*)
+            # A user-designated stacked PR base supports review and readiness,
+            # never integration authority, even if a grant URL is supplied.
+            [ "$context_grant" = none ] || fail 'A stacked task base cannot carry merge authority.'
+            ;;
+        *) fail 'Task base must be an explicit origin/campaign, origin/feature or review-only origin/feat branch.' ;;
+    esac
     git check-ref-format "refs/remotes/$context_base" >/dev/null || fail 'Invalid campaign base ref.'
     printf '%s\n' "$context_parent" | grep -Eq '^https://github.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[0-9]+$' || fail 'Campaign parent must be an issue URL.'
     if [ "$context_grant" != none ]; then
@@ -46,6 +54,7 @@ case "$operation" in
         context_action=${4:-ready}
         case "$context_pr" in ''|*[!0-9]*) fail 'Name one explicit PR number.' ;; esac
         if [ "$context_action" = merge ]; then
+            case "$context_base" in origin/feat/*) fail 'A stacked task base is review-only; merging is reserved for the user.' ;; esac
             [ "$context_base" != origin/main ] || fail 'Merge to main is reserved exclusively for the user.'
             [ "$context_grant" != none ] || fail 'No persisted authorization for campaign merges.'
         fi

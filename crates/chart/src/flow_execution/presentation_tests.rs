@@ -40,6 +40,8 @@ fn frame(quantities: &[i64]) -> FlowTapeFrame {
         trades.len(),
         trades.len(),
         FlowTapeView {
+            tape_bursts: None,
+            region_window_ms: 1_000,
             first_slot: 0,
             end_slot: trades.len(),
             clip_left: 0.into(),

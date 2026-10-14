@@ -18,7 +18,7 @@ pub(crate) const FLOW_MERGE_HEIGHT_PX: f64 = 32.0;
 /// coordinates from pooling minutes of routine flow into peers of a brief
 /// large execution. These are regions, not reconstructed orders. A multiple
 /// of the native 100 ms cell keeps facts whole.
-pub const FLOW_REGION_WINDOW_MS: i64 = 1_000;
+pub const FLOW_REGION_WINDOW_MS: i64 = crate::constants::DEFAULT_TICK_REGION_WINDOW_MS;
 
 /// Start ordinary-region placement and gradual emphasis at a quarter of the
 /// reference: the reference quantity is divided by this.

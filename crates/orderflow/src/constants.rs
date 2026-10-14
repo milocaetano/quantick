@@ -71,3 +71,5 @@ pub(crate) const DEFAULT_RESERVE_MS: i64 = 1_000;
 /// busy patch and leave the tape empty. Below a few seconds there is no tape
 /// left to read, whatever the bars did.
 pub(crate) const MIN_LANE_SPAN_MS: i64 = 4_000;
+/// Default temporal support of tick-chart regions; native tape grouping is separate.
+pub const DEFAULT_TICK_REGION_WINDOW_MS: i64 = 1_000;

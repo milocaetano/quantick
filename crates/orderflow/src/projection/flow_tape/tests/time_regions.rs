@@ -2,6 +2,16 @@
 use super::*;
 
 fn project(trades: &[Trade], width: f32, opening: bool, exclude: bool) -> FlowTapeFrame {
+    project_with_window(trades, width, opening, exclude, FLOW_REGION_WINDOW_MS)
+}
+
+fn project_with_window(
+    trades: &[Trade],
+    width: f32,
+    opening: bool,
+    exclude: bool,
+    region_window_ms: i64,
+) -> FlowTapeFrame {
     project_flow_tape(
         trades
             .iter()
@@ -18,6 +28,8 @@ fn project(trades: &[Trade], width: f32, opening: bool, exclude: bool) -> FlowTa
         trades.len(),
         trades.len(),
         FlowTapeView {
+            tape_bursts: None,
+            region_window_ms,
             first_slot: 0,
             end_slot: 1,
             clip_left: Decimal::ZERO,
@@ -31,6 +43,34 @@ fn project(trades: &[Trade], width: f32, opening: bool, exclude: bool) -> FlowTa
             exclude_opening: exclude,
         },
     )
+}
+
+#[test]
+fn win_time_support_reduces_clutter_without_losing_sides_or_members() {
+    let trades: Vec<_> = (0..10)
+        .map(|i| {
+            trade(
+                i * 1_000,
+                100,
+                if i < 5 { 40 } else { 400 },
+                if i % 2 == 0 { Side::Buy } else { Side::Sell },
+            )
+        })
+        .collect();
+    let btc = project(&trades, 20.0, false, false);
+    let win = project_with_window(&trades, 20.0, false, false, 5_000);
+    assert_eq!(btc.dots.len(), 10);
+    assert_eq!(win.dots.len(), 2);
+    assert_partition(&win, 10, 920, 1280);
+    assert_eq!(win.view.region_window_ms, 5_000);
+    let small = quantity(&win, 200);
+    let large = quantity(&win, 2000);
+    assert!((large.radius.powi(2) / small.radius.powi(2) - 10.0).abs() < 0.0001);
+    assert!(
+        caption_text(Some(&win), FlowProgress::default(), true)
+            .unwrap()
+            .contains("5000 ms regions")
+    );
 }
 
 fn quantity(frame: &FlowTapeFrame, quantity: i64) -> &FlowTapeDot {

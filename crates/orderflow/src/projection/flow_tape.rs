@@ -42,10 +42,24 @@ pub enum FlowScaleBasis {
     VisibleOrdinaryRegionMax,
     OpeningOnlyFallback,
     TypedReference,
+    FixedReference,
+}
+
+/// Complete temporal context admitted independently from the painted candle viewport.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FlowBurstView {
+    pub calibration: crate::config::TickBurstGrouping,
+    pub from_ms: i64,
+    pub until_ms: i64,
+    /// Native windows before this source watermark are closed. Later cells are previews.
+    pub settled_through_ms: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlowTapeView {
+    pub tape_bursts: Option<FlowBurstView>,
+    /// Temporal support of candle regions; native tape cells are unaffected.
+    pub region_window_ms: i64,
     pub first_slot: usize,
     pub end_slot: usize,
     /// Actual fractional candle-coordinate viewport; slots include admission overscan.
@@ -204,6 +218,7 @@ impl FlowHull {
             && self.bottom - self.top <= FLOW_MERGE_HEIGHT_PX
     }
 }
+#[derive(Clone)]
 struct Group {
     moment: TapeMoment,
     hull: FlowHull,
@@ -353,7 +368,11 @@ fn finish_groups(
     let mut windows = std::collections::BTreeMap::<i64, Vec<Group>>::new();
     for group in groups {
         windows
-            .entry(group.first_timestamp_ms().div_euclid(FLOW_REGION_WINDOW_MS))
+            .entry(
+                group
+                    .first_timestamp_ms()
+                    .div_euclid(view.region_window_ms.max(100)),
+            )
             .or_default()
             .push(group);
     }
@@ -371,6 +390,22 @@ fn finish_groups(
         groups.extend(merged);
     }
     groups.append(&mut standalone);
+    scale_groups(groups, view, off_axis_executions, offscreen_executions)
+}
+
+fn scale_groups(
+    groups: Vec<Group>,
+    view: FlowTapeView,
+    off_axis_executions: usize,
+    offscreen_executions: usize,
+) -> (
+    Vec<FlowTapeDot>,
+    Option<Decimal>,
+    usize,
+    usize,
+    FlowScaleBasis,
+    bool,
+) {
     let Some(full_max) = groups.iter().map(Group::quantity).max() else {
         return (
             Vec::new(),
@@ -395,6 +430,11 @@ fn finish_groups(
         .unwrap_or_default();
     let has_opening = groups.iter().any(|group| group.opening_anchor);
     let (effective_reference, scale_basis, opening_exclusion_effective) = match view.reference {
+        FlowReference::Typed(reference) if view.tape_bursts.is_some() => (
+            reference,
+            FlowScaleBasis::FixedReference,
+            view.exclude_opening && has_opening,
+        ),
         FlowReference::Typed(reference) => (
             reference.max(ordinary_max),
             FlowScaleBasis::TypedReference,
@@ -430,7 +470,7 @@ fn finish_groups(
             };
             FlowTapeDot {
                 radius: view.radius_limit
-                    * if opening_oversized {
+                    * if opening_oversized || view.tape_bursts.is_some() {
                         use rust_decimal::prelude::ToPrimitive as _;
                         (quantity.to_f64().unwrap_or_default()
                             / effective_reference.to_f64().unwrap_or(1.0))

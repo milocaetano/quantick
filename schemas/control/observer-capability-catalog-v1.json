@@ -12883,7 +12883,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Applies or reapplies an exact named whole look through the Bubbles picker owner. Discover names with orderflow.bubbles.presets.list. Preset tape navigation and appearance are applied; layer visibility is preserved. Changes follow the asset save switch, including session-only changes when off. Read selection and effective policies in orderflow.bubbles; tick-only selection remains independent.",
+      "description": "Applies or reapplies an exact named preset through the Bubbles picker owner. Discover names with orderflow.bubbles.presets.list. Whole looks apply their tape navigation and appearance; the B3 WIN tick spheres preset changes only the WIN tick-chart calibration and preserves the existing tape and look name. Layer visibility is preserved. Changes follow the asset save switch, including session-only changes when off. Read selection and effective policies in orderflow.bubbles; tick-only selection remains independent.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -12978,9 +12978,36 @@
               "opacity": {
                 "type": "string"
               },
-              "reference_quantity": {
-                "description": "Instrument quantity at max_radius. Larger visible groups increase the\ncommon reference uniformly, so all areas remain proportional.",
+              "quantity_unit": {
+                "default": "BTC",
+                "description": "Denomination of the preset's reference quantity and displayed labels.",
                 "type": "string"
+              },
+              "reference_quantity": {
+                "description": "Instrument quantity at the reference radius. Causal bursts keep it fixed;\nlegacy regions raise the common reference for larger visible groups.",
+                "type": "string"
+              },
+              "region_window_ms": {
+                "default": "1000",
+                "description": "Temporal support of candle regions; does not alter tape grouping.",
+                "type": "string"
+              },
+              "tape_bursts": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TickBurstSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "volume_opacity_floor": {
+                "description": "Optional fill fraction for small volume, reaching full opacity at reference/4.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -12988,6 +13015,30 @@
               "max_radius",
               "label_min_radius",
               "opacity"
+            ],
+            "type": "object"
+          },
+          "TickBurstSnapshot": {
+            "properties": {
+              "max_radius": {
+                "type": "string"
+              },
+              "price_units_per_pixel": {
+                "type": "string"
+              },
+              "width_px": {
+                "type": "string"
+              },
+              "window_ms": {
+                "description": "Independent UTC blocks; a boundary-crossing burst remains two groups.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "window_ms",
+              "width_px",
+              "price_units_per_pixel",
+              "max_radius"
             ],
             "type": "object"
           },
@@ -13068,7 +13119,7 @@
       "risk_flags": [],
       "risk_reducing": false,
       "stale_input_safety": "Stable tab/pane IDs and exact preset names are checked before mutation. Same-name drift is corrected; identical selection and configuration are a no-op. Keyed retries replay the first answer.",
-      "title": "Apply whole bubble preset",
+      "title": "Apply bubble preset",
       "version": 1
     },
     {
@@ -13327,7 +13378,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Applies only a named tick-chart sphere calibration to a Binance BTC tick pane. Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW. Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
+      "description": "Applies only a named tick-chart sphere calibration to a supported asset's tick pane. Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW. Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles, including quantity_unit, region_window_ms and optional tape_bursts calibration. WIN candle bursts use independent fixed time blocks; they do not reconstruct a running tape's prior display epoch. The Bubbles layer must be enabled to draw the selected style. The B3 WIN tick spheres preset is chart-only through orderflow.bubbles.preset.apply too; whole-look presets retain their declared scope.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -13383,9 +13434,36 @@
               "opacity": {
                 "type": "string"
               },
-              "reference_quantity": {
-                "description": "Instrument quantity at max_radius. Larger visible groups increase the\ncommon reference uniformly, so all areas remain proportional.",
+              "quantity_unit": {
+                "default": "BTC",
+                "description": "Denomination of the preset's reference quantity and displayed labels.",
                 "type": "string"
+              },
+              "reference_quantity": {
+                "description": "Instrument quantity at the reference radius. Causal bursts keep it fixed;\nlegacy regions raise the common reference for larger visible groups.",
+                "type": "string"
+              },
+              "region_window_ms": {
+                "default": "1000",
+                "description": "Temporal support of candle regions; does not alter tape grouping.",
+                "type": "string"
+              },
+              "tape_bursts": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TickBurstSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "volume_opacity_floor": {
+                "description": "Optional fill fraction for small volume, reaching full opacity at reference/4.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -13393,6 +13471,30 @@
               "max_radius",
               "label_min_radius",
               "opacity"
+            ],
+            "type": "object"
+          },
+          "TickBurstSnapshot": {
+            "properties": {
+              "max_radius": {
+                "type": "string"
+              },
+              "price_units_per_pixel": {
+                "type": "string"
+              },
+              "width_px": {
+                "type": "string"
+              },
+              "window_ms": {
+                "description": "Independent UTC blocks; a boundary-crossing burst remains two groups.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "window_ms",
+              "width_px",
+              "price_units_per_pixel",
+              "max_radius"
             ],
             "type": "object"
           },
@@ -19270,9 +19372,38 @@
             "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
             "type": "string"
           },
+          "FlowBurstContextSnapshot": {
+            "properties": {
+              "calibration": {
+                "$ref": "#/$defs/TickBurstSnapshot"
+              },
+              "from_ms": {
+                "type": "string"
+              },
+              "settled_through_ms": {
+                "description": "Source watermark; native cells at/after it are provisional until the next window.",
+                "type": "string"
+              },
+              "until_ms": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "calibration",
+              "from_ms",
+              "until_ms",
+              "settled_through_ms"
+            ],
+            "type": "object"
+          },
           "FlowExecutionDisplayPolicy": {
             "description": "Emphasis changes neither source membership nor volume-proportional area.\nSymbols may be separated above their source; reported prices remain factual.",
             "oneOf": [
+              {
+                "const": "fixed_area_spheres",
+                "description": "Candle bursts keep a fixed volume-to-area scale and the selected sphere colors.",
+                "type": "string"
+              },
               {
                 "const": "large_or_isolated_with_dim_context",
                 "description": "Legacy readback policy, retained for previously captured snapshots.",
@@ -19415,7 +19546,8 @@
               "visible_region_max",
               "visible_ordinary_region_max",
               "opening_only_fallback",
-              "typed_reference"
+              "typed_reference",
+              "fixed_reference"
             ],
             "type": "string"
           },
@@ -19520,6 +19652,17 @@
               },
               "source_revision": {
                 "$ref": "#/$defs/WireU64"
+              },
+              "tape_bursts": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/FlowBurstContextSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Explicit fixed geometry and independent block boundaries of candle bursts."
               },
               "trade_count": {
                 "$ref": "#/$defs/WireU64"
@@ -19732,9 +19875,36 @@
               "opacity": {
                 "type": "string"
               },
-              "reference_quantity": {
-                "description": "Instrument quantity at max_radius. Larger visible groups increase the\ncommon reference uniformly, so all areas remain proportional.",
+              "quantity_unit": {
+                "default": "BTC",
+                "description": "Denomination of the preset's reference quantity and displayed labels.",
                 "type": "string"
+              },
+              "reference_quantity": {
+                "description": "Instrument quantity at the reference radius. Causal bursts keep it fixed;\nlegacy regions raise the common reference for larger visible groups.",
+                "type": "string"
+              },
+              "region_window_ms": {
+                "default": "1000",
+                "description": "Temporal support of candle regions; does not alter tape grouping.",
+                "type": "string"
+              },
+              "tape_bursts": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/TickBurstSnapshot"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "volume_opacity_floor": {
+                "description": "Optional fill fraction for small volume, reaching full opacity at reference/4.",
+                "type": [
+                  "string",
+                  "null"
+                ]
               }
             },
             "required": [
@@ -19742,6 +19912,30 @@
               "max_radius",
               "label_min_radius",
               "opacity"
+            ],
+            "type": "object"
+          },
+          "TickBurstSnapshot": {
+            "properties": {
+              "max_radius": {
+                "type": "string"
+              },
+              "price_units_per_pixel": {
+                "type": "string"
+              },
+              "width_px": {
+                "type": "string"
+              },
+              "window_ms": {
+                "description": "Independent UTC blocks; a boundary-crossing burst remains two groups.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "window_ms",
+              "width_px",
+              "price_units_per_pixel",
+              "max_radius"
             ],
             "type": "object"
           },

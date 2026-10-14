@@ -1,4 +1,4 @@
-//! Whole bubble looks, shared with the Bubbles settings picker.
+//! Named bubble presets, shared with the Bubbles settings picker.
 use quantick_control::{
     registry::{CapabilityDescriptor, EffectPersistence, IdempotencyPolicy},
     wire::WireU64,
@@ -140,8 +140,8 @@ pub fn apply_descriptor() -> CapabilityDescriptor {
     let mut descriptor = crate::layout::transient_descriptor::<ApplyInput, ApplyResult>(
         BUBBLE_PRESET_CAPABILITY_ID,
         crate::orderflow::MODULE_ID,
-        "Apply whole bubble preset",
-        "Applies or reapplies an exact named whole look through the Bubbles picker owner. Discover names with orderflow.bubbles.presets.list. Preset tape navigation and appearance are applied; layer visibility is preserved. Changes follow the asset save switch, including session-only changes when off. Read selection and effective policies in orderflow.bubbles; tick-only selection remains independent.",
+        "Apply bubble preset",
+        "Applies or reapplies an exact named preset through the Bubbles picker owner. Discover names with orderflow.bubbles.presets.list. Whole looks apply their tape navigation and appearance; the B3 WIN tick spheres preset changes only the WIN tick-chart calibration and preserves the existing tape and look name. Layer visibility is preserved. Changes follow the asset save switch, including session-only changes when off. Read selection and effective policies in orderflow.bubbles; tick-only selection remains independent.",
         "Stable tab/pane IDs and exact preset names are checked before mutation. Same-name drift is corrected; identical selection and configuration are a no-op. Keyed retries replay the first answer.",
     );
     descriptor.persistence = EffectPersistence::Durable;

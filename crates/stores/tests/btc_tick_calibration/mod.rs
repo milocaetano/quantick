@@ -39,6 +39,8 @@ fn btc_tick_spheres_preserve_exact_sides_membership_and_area_at_each_zoom() {
                 prints.len(),
                 prints.len(),
                 FlowTapeView {
+                    tape_bursts: None,
+                    region_window_ms: 1_000,
                     first_slot: 0,
                     end_slot: slots,
                     clip_left: Decimal::ZERO,

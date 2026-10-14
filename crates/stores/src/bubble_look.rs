@@ -326,11 +326,16 @@ impl BubbleLook {
         let Some(preset) = self.presets.get(name).cloned() else {
             return false;
         };
+        if preset.tick_only && self.tick_style(Some(name)).is_err() {
+            return false;
+        }
         preset.apply_to(config);
-        self.look_name = preset.name.clone();
-        self.name_draft = preset.name.clone();
+        if !preset.tick_only {
+            self.look_name = preset.name.clone();
+            self.name_draft = preset.name.clone();
+            self.note_lane_set(config);
+        }
         self.status = Some(format!("'{}' applied", preset.name));
-        self.note_lane_set(config);
         true
     }
 

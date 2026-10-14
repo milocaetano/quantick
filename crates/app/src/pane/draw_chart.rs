@@ -202,7 +202,7 @@ impl ChartPane {
                 );
             }
             if flow_execution {
-                flow.regional_aggressions();
+                flow.regional_aggressions(&mut candle_pass);
                 renderers.candles(&mut candle_pass);
                 flow.regional_perimeters();
             }

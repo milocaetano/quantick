@@ -231,4 +231,16 @@ identity feature/test "$head" "$base"
 rm "$git_dir/mission-tier"
 stamp
 allow 'feature merge with the mission reviews' gate Bash "gh pr merge 42 --merge --match-head-commit $head" allow
+# Explicit stacked task bases support review/readiness without widening merges.
+git -C "$fixture/repo" update-ref refs/remotes/origin/feat/parent "$base"
+printf 'feat/child origin/feat/parent https://github.com/owner/repo/issues/1 none\n' > "$git_dir/mission-base"
+identity feat/parent "$head" "$base"
+allow 'stacked task review base resolves' test "$(sh "$helper" base "$fixture/repo")" = origin/feat/parent
+allow 'stacked task readiness checks its real base' sh "$helper" check-pr "$fixture/repo" 42 ready
+reject 'stacked task merge is always refused' sh "$helper" check-pr "$fixture/repo" 42 merge
+stacked_key=$(sh "$helper" key "$fixture/repo")
+context none
+reject 'stacked review key differs from campaign key' test "$stacked_key" = "$(sh "$helper" key "$fixture/repo")"
+printf 'feat/child origin/feat/parent https://github.com/owner/repo/issues/1 https://github.com/owner/repo/issues/1#issuecomment-2\n' > "$git_dir/mission-base"
+reject 'a grant cannot turn a stacked base into merge authority' sh "$helper" base "$fixture/repo"
 printf '%s campaign context tests passed\n' "$passed"

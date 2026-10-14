@@ -1,5 +1,7 @@
 //! Retained native facts and ordinal coverage, independent of view layout.
 use super::*;
+#[path = "bursts.rs"]
+mod bursts;
 use crate::history::{AggressorSide, RecordedOpenings, RestingSide};
 use crate::projection::tape::combine_tape_facts;
 use quantick_engine::Side;
@@ -76,6 +78,7 @@ struct NativeCell {
 #[derive(Default)]
 pub struct FlowTapeSource {
     cells: BTreeMap<(usize, i64, Decimal), NativeCell>,
+    bursts: bursts::BurstCache,
     coverage: FlowCoverage,
     ineligible: FlowCoverage,
     count: usize,
@@ -97,6 +100,9 @@ impl FlowTapeSource {
         let inside = self
             .cells
             .split_off(&(keep.slots.start, i64::MIN, Decimal::MIN));
+        for ((_, window, _), _) in self.cells.iter().chain(beyond.iter()) {
+            self.bursts.evicted(*window);
+        }
         self.cells = inside;
         drop(beyond);
         self.coverage.retain(keep.ordinals.clone());
@@ -149,6 +155,7 @@ impl FlowTapeSource {
                 RecordedOpenings::window_start(trade.timestamp_ms),
                 trade.price,
             );
+            self.bursts.changed(key.1);
             match self.cells.entry(key) {
                 std::collections::btree_map::Entry::Occupied(mut held) => {
                     let cell = held.get_mut();
@@ -174,7 +181,7 @@ impl FlowTapeSource {
         }
     }
     pub fn project(
-        &self,
+        &mut self,
         epoch: u64,
         layout_revision: u64,
         source_count: usize,
@@ -208,60 +215,28 @@ impl FlowTapeSource {
         if !valid(view) {
             return frame;
         }
-        let slots = Decimal::from(view.end_slot - view.first_slot);
-        // width_px covers the admission span, so padding cancels just as it does
-        // in the collision geometry; no viewport-width reinterpretation is made.
-        let pixels_per_slot = f64::from(view.width_px) / (view.end_slot - view.first_slot) as f64;
-        let position_px = |position: Decimal| {
-            (position - Decimal::from(view.first_slot))
-                .to_f64()
-                .unwrap_or_default()
-                * pixels_per_slot
-        };
-        let groups = self
-            .cells
-            .range(
-                (view.first_slot, i64::MIN, Decimal::MIN)..(view.end_slot, i64::MIN, Decimal::MIN),
+        let (groups, outside_context) = if let Some(bursts) = view.tape_bursts {
+            self.bursts.project(
+                &self.cells,
+                bursts,
+                view,
+                openings,
+                frame.omitted_executions == 0,
             )
-            .map(|(&(slot, window, _), cell)| {
-                let mut mark = cell.mark.clone(); // compact facts: identities live in shared member buffers
-                let position = cell.position_quantity / mark.quantity;
-                mark.x = ((position - Decimal::from(view.first_slot)) / slots)
-                    .to_f64()
-                    .unwrap_or_default();
-                mark.y = view.prices.y_unclamped(mark.price).unwrap_or_default();
-                let hull = FlowHull {
-                    left: position_px(cell.positions[0]),
-                    right: position_px(cell.positions[1]),
-                    top: mark.y * f64::from(view.height_px),
-                    bottom: mark.y * f64::from(view.height_px),
-                };
-                let opening = if openings.windows.contains(&window) {
-                    mark.quantity
-                } else {
-                    Decimal::ZERO
-                };
-                Group {
-                    first_ordinal: cell.first_ordinal,
-                    moment: TapeMoment::new(mark, f64::INFINITY),
-                    hull,
-                    members: FlowMembers {
-                        parts: vec![Arc::clone(&cell.members)],
-                        count: cell.members.len(),
-                    },
-                    position_quantity: cell.position_quantity,
-                    first_slot: slot,
-                    end_slot: slot + 1,
-                    opening,
-                    opening_anchor: openings.ordinals.iter().any(|ordinal| {
-                        cell.members
-                            .binary_search_by_key(ordinal, |member| member.ordinal)
-                            .is_ok()
-                    }),
-                    cells: 1,
-                }
-            })
-            .collect();
+        } else {
+            (
+                self.cells
+                    .range(
+                        (view.first_slot, i64::MIN, Decimal::MIN)
+                            ..(view.end_slot, i64::MIN, Decimal::MIN),
+                    )
+                    .map(|(&(slot, window, _), cell)| {
+                        cell_group(slot, window, cell, view, openings)
+                    })
+                    .collect(),
+                0,
+            )
+        };
         (
             frame.dots,
             frame.effective_reference,
@@ -269,15 +244,79 @@ impl FlowTapeSource {
             frame.offscreen_executions,
             frame.scale_basis,
             frame.opening_exclusion_effective,
-        ) = finish_groups(groups, view);
+        ) = if view.tape_bursts.is_some() {
+            bursts::finish(groups, view)
+        } else {
+            finish_groups(groups, view)
+        };
+        frame.offscreen_executions += outside_context;
         frame.order_for_paint();
         frame
     }
 }
+fn cell_group(
+    slot: usize,
+    window: i64,
+    cell: &NativeCell,
+    view: FlowTapeView,
+    openings: FlowOpeningSelection<'_>,
+) -> Group {
+    let slots = Decimal::from(view.end_slot - view.first_slot);
+    // width_px covers the admission span, so padding cancels just as it does
+    // in the collision geometry; no viewport-width reinterpretation is made.
+    let pixels_per_slot = f64::from(view.width_px) / (view.end_slot - view.first_slot) as f64;
+    let position_px = |position: Decimal| {
+        (position - Decimal::from(view.first_slot))
+            .to_f64()
+            .unwrap_or_default()
+            * pixels_per_slot
+    };
+
+    let mut mark = cell.mark.clone(); // compact facts: identities live in shared member buffers
+    let position = cell.position_quantity / mark.quantity;
+    mark.x = ((position - Decimal::from(view.first_slot)) / slots)
+        .to_f64()
+        .unwrap_or_default();
+    mark.y = view.prices.y_unclamped(mark.price).unwrap_or_default();
+    let hull = FlowHull {
+        left: position_px(cell.positions[0]),
+        right: position_px(cell.positions[1]),
+        top: mark.y * f64::from(view.height_px),
+        bottom: mark.y * f64::from(view.height_px),
+    };
+    let opening = if openings.windows.contains(&window) {
+        mark.quantity
+    } else {
+        Decimal::ZERO
+    };
+    Group {
+        first_ordinal: cell.first_ordinal,
+        moment: TapeMoment::new(mark, f64::INFINITY),
+        hull,
+        members: FlowMembers {
+            parts: vec![Arc::clone(&cell.members)],
+            count: cell.members.len(),
+        },
+        position_quantity: cell.position_quantity,
+        first_slot: slot,
+        end_slot: slot + 1,
+        opening,
+        opening_anchor: openings.ordinals.iter().any(|ordinal| {
+            cell.members
+                .binary_search_by_key(ordinal, |member| member.ordinal)
+                .is_ok()
+        }),
+        cells: 1,
+    }
+}
+
 fn valid(view: FlowTapeView) -> bool {
-    view.reference
-        .typed()
-        .is_none_or(|value| value > Decimal::ZERO)
+    view.tape_bursts
+        .is_none_or(|burst| burst.calibration.valid() && burst.until_ms > burst.from_ms)
+        && view
+            .reference
+            .typed()
+            .is_none_or(|value| value > Decimal::ZERO)
         && view.clip_right > view.clip_left
         && view.end_slot > view.first_slot
         && [

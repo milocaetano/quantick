@@ -21,6 +21,8 @@ fn source(trades: &[Trade]) -> FlowTapeSource {
 
 fn wide_view(count: usize) -> FlowTapeView {
     FlowTapeView {
+        tape_bursts: None,
+        region_window_ms: 1_000,
         end_slot: count,
         clip_right: Decimal::from(count),
         reference: FlowReference::VisibleRegions,
@@ -36,7 +38,7 @@ fn only_first_daily_region_is_uncapped_and_other_opening_cells_bound_the_referen
         trade(1100, 95, 100, Side::Buy),
         trade(1200, 100, 50, Side::Sell),
     ];
-    let source = source(&trades);
+    let mut source = source(&trades);
     let mut view = wide_view(4);
     let excluded = source.project(
         1,
@@ -208,7 +210,7 @@ fn zoom_regroups_source_members_without_moving_the_canonical_anchor() {
         trade(1100, 100, 90, Side::Buy),
         trade(1200, 100, 90, Side::Buy),
     ];
-    let source = source(&trades);
+    let mut source = source(&trades);
     for width in [300.0, 1.0, 300.0] {
         let mut view = wide_view(3);
         view.width_px = width;

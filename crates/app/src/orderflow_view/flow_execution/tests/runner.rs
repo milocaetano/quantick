@@ -21,6 +21,8 @@ fn request(end: usize) -> FlowRequest {
         opening_windows: Vec::new(),
         opening_ordinals: Vec::new(),
         view: FlowTapeView {
+            tape_bursts: None,
+            region_window_ms: 1_000,
             first_slot: 0,
             end_slot: 4,
             clip_left: 0.into(),

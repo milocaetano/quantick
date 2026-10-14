@@ -14,19 +14,9 @@ impl OrderflowView {
             return;
         }
         let current = self.config.volume_dots.tick_bubbles;
-        let selected = choices
-            .iter()
-            .find(|name| self.look.tick_style(Some(name)).ok() == Some(current));
-        let label = selected.map_or(
-            if current.is_some() {
-                "Custom spheres"
-            } else {
-                "Regional FLOW"
-            },
-            String::as_str,
-        );
+        let label = self.look.tick_preset_label(current);
         egui::ComboBox::from_id_salt("tick_sphere_preset")
-            .selected_text(label)
+            .selected_text(&label)
             .show_ui(ui, |ui| {
                 if ui
                     .selectable_label(current.is_none(), "Regional FLOW")
@@ -35,11 +25,11 @@ impl OrderflowView {
                     let _ = self.apply_tick_preset(None);
                 }
                 for name in &choices {
-                    if ui.selectable_label(selected == Some(name), name).clicked() {
+                    if ui.selectable_label(label == *name, name).clicked() {
                         let _ = self.apply_tick_preset(Some(name));
                     }
                 }
             });
-        ui.small("Tick chart spheres · quantity in BTC · tape settings stay as selected");
+        ui.small("Tick chart spheres · quantity in source units · tape settings stay as selected");
     }
 }

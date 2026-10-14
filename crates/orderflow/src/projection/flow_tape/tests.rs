@@ -19,6 +19,8 @@ fn trade(time: i64, price: i64, quantity: i64, side: Side) -> Trade {
 }
 fn view(width: f32) -> FlowTapeView {
     FlowTapeView {
+        tape_bursts: None,
+        region_window_ms: 1_000,
         first_slot: 0,
         end_slot: 2,
         clip_left: 0.into(),

@@ -52,9 +52,36 @@
         "opacity": {
           "type": "string"
         },
-        "reference_quantity": {
-          "description": "Instrument quantity at max_radius. Larger visible groups increase the\ncommon reference uniformly, so all areas remain proportional.",
+        "quantity_unit": {
+          "default": "BTC",
+          "description": "Denomination of the preset's reference quantity and displayed labels.",
           "type": "string"
+        },
+        "reference_quantity": {
+          "description": "Instrument quantity at the reference radius. Causal bursts keep it fixed;\nlegacy regions raise the common reference for larger visible groups.",
+          "type": "string"
+        },
+        "region_window_ms": {
+          "default": "1000",
+          "description": "Temporal support of candle regions; does not alter tape grouping.",
+          "type": "string"
+        },
+        "tape_bursts": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TickBurstSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "volume_opacity_floor": {
+          "description": "Optional fill fraction for small volume, reaching full opacity at reference/4.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -62,6 +89,30 @@
         "max_radius",
         "label_min_radius",
         "opacity"
+      ],
+      "type": "object"
+    },
+    "TickBurstSnapshot": {
+      "properties": {
+        "max_radius": {
+          "type": "string"
+        },
+        "price_units_per_pixel": {
+          "type": "string"
+        },
+        "width_px": {
+          "type": "string"
+        },
+        "window_ms": {
+          "description": "Independent UTC blocks; a boundary-crossing burst remains two groups.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "window_ms",
+        "width_px",
+        "price_units_per_pixel",
+        "max_radius"
       ],
       "type": "object"
     },
