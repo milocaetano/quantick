@@ -1,0 +1,166 @@
+# One authorized remote diagnostic run, never a PR delivery check.
+name: Observer budget diagnosis PR 702
+
+on:
+  push:
+    branches: ['tmp/ci-702-01-observer-budget']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-702-01-observer-budget
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  paired-diagnosis:
+    if: github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 321c94ab6a7a7a9af78740e07796ee09123b0fcb
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        with:
+          save-cache: 'false'
+          cache-key: linux
+          verbose-toolchain: 'true'
+      - name: Build fixed inputs sequentially, then collect bounded diagnostic evidence
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
+        run: |
+          python3 - <<'PY'
+          """One bounded CI-702-01 diagnostic; execute only on the proposed remote Linux job."""
+          import datetime
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+          import time
+
+          BASE = '72a5a747c70deee9a78715cc964ced37aea19f11'
+          CANDIDATE = '321c94ab6a7a7a9af78740e07796ee09123b0fcb'
+          CORE = 'app::tests::control_plane_tests::observer_core_capture_stays_within_the_ui_budget'
+          SCOPE = 'app::tests::control_plane_tests::observer_per_scope_capture_cost'
+          root = Path.cwd()
+          out = Path(os.environ['RUNNER_TEMP']) / 'observer-702-evidence'
+          out.mkdir(exist_ok=True)
+          base = Path(os.environ['RUNNER_TEMP']) / 'observer-702-base'
+          manifest = {'base': BASE, 'candidate': CANDIDATE, 'budget_us': 250, 'features': ['quick-range-harness'],
+                      'start_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                      'run_id': os.environ.get('GITHUB_RUN_ID'), 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
+                      'samples': [], 'binaries': {}, 'affinity': sorted(os.sched_getaffinity(0)),
+                      'environment': {k: os.environ.get(k) for k in ['CARGO_INCREMENTAL', 'CARGO_PROFILE_DEV_DEBUG', 'CARGO_TARGET_DIR', 'RUST_TEST_THREADS', 'ImageOS', 'ImageVersion']}}
+
+          def record():
+              (out / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+
+          def checked(args, cwd=root):
+              return subprocess.check_output(args, cwd=cwd, text=True).strip()
+
+          def digest(path):
+              with path.open('rb') as handle:
+                  return hashlib.file_digest(handle, 'sha256').hexdigest()
+
+          record()
+          if manifest['run_attempt'] != '1':
+              raise SystemExit('This proposal admits one first attempt only; no reruns.')
+          assert checked(['git', 'rev-parse', 'HEAD']) == CANDIDATE
+          subprocess.run(['git', 'worktree', 'add', '--detach', str(base), BASE], check=True)
+          (out / 'toolchain.txt').write_text(checked(['rustc', '-Vv']) + '\n' + checked(['cargo', '-V']) + '\n')
+          (out / 'host.txt').write_text(checked(['uname', '-a']) + '\n' + checked(['lscpu']) + '\n')
+          for name, path in [('cgroup-cpu-max', '/sys/fs/cgroup/cpu.max'), ('cpu-pressure-before', '/proc/pressure/cpu')]:
+              if Path(path).exists():
+                  (out / (name + '.txt')).write_text(Path(path).read_text())
+
+          # Both complete builds finish before any timing. The CI dependency cache is restore-only.
+          for label, source, sha in [('base', base, BASE), ('candidate', root, CANDIDATE)]:
+              assert checked(['git', 'rev-parse', 'HEAD'], source) == sha
+              assert not checked(['git', 'status', '--porcelain', '--untracked-files=no'], source)
+              (out / (label + '-source.txt')).write_text(checked(['git', 'rev-parse', 'HEAD', 'HEAD^{tree}'], source) + '\n')
+              with (out / (label + '-cargo.jsonl')).open('w') as stdout, (out / (label + '-build.log')).open('w') as stderr:
+                  result = subprocess.run(['cargo', 'test', '--locked', '-p', 'quantick-app', '--features', 'quick-range-harness', '--no-run', '--message-format=json'], cwd=source, stdout=stdout, stderr=stderr)
+              if result.returncode:
+                  manifest['build_error'] = {'label': label, 'exit': result.returncode}
+                  record()
+                  raise SystemExit(result.returncode)
+              artifacts = [json.loads(line) for line in (out / (label + '-cargo.jsonl')).read_text().splitlines() if line.startswith('{')]
+              artifacts = [item for item in artifacts if item.get('reason') == 'compiler-artifact' and item.get('target', {}).get('name') == 'quantick-app' and item.get('profile', {}).get('test') and item.get('executable')]
+              assert len(artifacts) == 1, artifacts
+              binary = out / (label + '-app-tests')
+              shutil.copy2(artifacts[0]['executable'], binary)
+              manifest['binaries'][label] = {'path': str(binary), 'sha256': digest(binary), 'source': str(source), 'lock_sha256': digest(source / 'Cargo.lock'), 'toolchain_sha256': digest(source / 'rust-toolchain.toml')}
+              record()
+
+          # Never use an unowned process's PID; all competing work is our own bounded test children.
+          assert subprocess.run(['pgrep', '-x', 'cargo'], capture_output=True).returncode == 1
+          assert subprocess.run(['pgrep', '-x', 'rustc'], capture_output=True).returncode == 1
+          assert manifest['binaries']['base']['lock_sha256'] == manifest['binaries']['candidate']['lock_sha256']
+          assert manifest['binaries']['base']['toolchain_sha256'] == manifest['binaries']['candidate']['toolchain_sha256']
+          failed = False
+          for label, mode, copies, name, extra in [
+              ('base', 'isolated', 1, CORE, []),
+              ('candidate', 'isolated', 1, CORE, []),
+              ('base', 'per-scope', 1, SCOPE, ['--ignored']),
+              ('candidate', 'per-scope', 1, SCOPE, ['--ignored']),
+              ('candidate', 'default-suite', 1, None, []),
+              ('base', 'default-suite', 1, None, []),
+          ]:
+              children = []
+              for copy in range(copies):
+                  log = out / f'{label}-{mode}-{copy}.log'
+                  handle = log.open('w')
+                  binary = manifest['binaries'][label]['path']
+                  command = ([binary, name, '--exact', '--nocapture', '--test-threads=1', *extra] if name else [binary, '--show-output'])
+                  child_env = dict(os.environ)
+                  child_env.pop('RUST_TEST_THREADS', None)
+                  start = time.monotonic()
+                  child = subprocess.Popen(command, cwd=Path(manifest['binaries'][label]['source']) / 'crates/app', stdout=handle, stderr=subprocess.STDOUT, env=child_env)
+                  children.append((child, handle, log, start, command))
+              for child, handle, log, start, command in children:
+                  try:
+                      status = child.wait(timeout=max(1, (180 if mode == 'default-suite' else 60) - (time.monotonic() - start)))
+                  except subprocess.TimeoutExpired:
+                      child.kill()
+                      child.wait()
+                      status = 124
+                  handle.close()
+                  text = log.read_text()
+                  valid = ('CONTROL_SCOPE_COST ' if name == SCOPE else 'CONTROL_CORE_CAPTURE ') in text
+                  if mode == 'default-suite':
+                      valid = valid and 'test result:' in text
+                  failed |= status != 0 or not valid
+                  manifest['samples'].append({'label': label, 'mode': mode, 'command': command, 'pid': child.pid, 'elapsed_s': time.monotonic() - start, 'exit': status, 'markers_present': valid, 'log': log.name})
+                  record()
+          if Path('/proc/pressure/cpu').exists():
+              (out / 'cpu-pressure-after.txt').write_text(Path('/proc/pressure/cpu').read_text())
+          manifest['end_utc'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+          manifest['diagnostic_only'] = True
+          record()
+          print(json.dumps(manifest, indent=2))
+          raise SystemExit(1 if failed else 0)
+          PY
+      - name: Preserve all outcomes without changing required PR CI
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-702-01-${{ github.run_id }}-attempt-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/observer-702-evidence
+            !${{ runner.temp }}/observer-702-evidence/*-app-tests
+          retention-days: 14
+          if-no-files-found: error
