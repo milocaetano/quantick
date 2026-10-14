@@ -1,10 +1,13 @@
 //! Member-level comparison against the unchanged tape kernel on a real WIN burst.
-use quantick_engine::fixture::parse_trades;
+use quantick_engine::{Side, Trade, fixture::parse_trades};
 use quantick_orderflow::{
     HeatmapConfig,
     projection::{
         DotSizing, PriceWindow, TapeDotGeometry, TapeDotMemory, TapeDotView,
-        flow_tape::{FlowBurstView, FlowExecution, FlowReference, FlowTapeView, project_flow_tape},
+        flow_tape::{
+            FlowBurstView, FlowExecution, FlowReference, FlowTapeFrame, FlowTapeView,
+            project_flow_tape,
+        },
     },
 };
 use quantick_stores::bubble_presets;
@@ -14,8 +17,22 @@ use rust_decimal::{
 };
 
 #[test]
-#[ignore = "requires WIN_TICK_FIXTURE containing the private canonical recording"]
-fn recorded_tape_burst_members_match_candles() {
+fn fixed_win_width_retains_the_measured_calibration() {
+    let style = bubble_presets::embedded()
+        .get("B3 WIN tick spheres")
+        .unwrap()
+        .tick_bubbles
+        .unwrap();
+    let calibration = style.tape_bursts.unwrap();
+    assert_eq!(calibration.width_px.to_bits(), 1_152_262_407);
+    assert_eq!(calibration.window_ms, 72_000);
+    assert_eq!(calibration.price_units_per_pixel, 0.8);
+    assert_eq!(calibration.max_radius, 18.0);
+    assert_eq!(style.reference_quantity, 20_000.0);
+    assert_eq!(style.max_radius, 18.0);
+}
+
+fn recorded_burst(width: f32) -> (FlowTapeFrame, Vec<Trade>) {
     let path = std::env::var_os("WIN_TICK_FIXTURE").expect("private canonical recording");
     let all = parse_trades(&std::fs::read_to_string(path).unwrap()).unwrap();
     let presets = bubble_presets::embedded();
@@ -24,7 +41,8 @@ fn recorded_tape_burst_members_match_candles() {
         .unwrap()
         .tick_bubbles
         .unwrap();
-    let calibration = style.tape_bursts.unwrap();
+    let mut calibration = style.tape_bursts.unwrap();
+    calibration.width_px = width;
     let target = all
         .iter()
         .rfind(|trade| trade.quantity == Decimal::from(1291))
@@ -169,7 +187,85 @@ fn recorded_tape_burst_members_match_candles() {
         peak.mark.last_timestamp_ms,
         peak.radius
     );
-    assert_eq!(peak.mark.quantity, Decimal::from(6113));
-    assert_eq!(peak.mark.buy_quantity, Decimal::from(611));
-    assert_eq!(peak.members.len(), 250);
+    let mut occurrences = vec![0; trades.len()];
+    for member in chart.dots.iter().flat_map(|dot| dot.members.iter()) {
+        occurrences[member.ordinal] += 1;
+    }
+    assert!(occurrences.iter().all(|count| *count == 1));
+    (chart, trades.to_vec())
+}
+
+#[test]
+#[ignore = "requires WIN_TICK_FIXTURE containing the private canonical recording"]
+fn recorded_fixed_width_segments_the_old_burst_without_losing_members() {
+    let (baseline, trades) = recorded_burst(420.0);
+    let old = baseline
+        .dots
+        .iter()
+        .max_by_key(|dot| dot.mark.quantity)
+        .unwrap();
+    assert_eq!(old.mark.quantity, Decimal::from(6113));
+    assert_eq!(old.mark.buy_quantity, Decimal::from(611));
+    assert_eq!(old.members.len(), 250);
+    let width = bubble_presets::embedded()
+        .get("B3 WIN tick spheres")
+        .unwrap()
+        .tick_bubbles
+        .unwrap()
+        .tape_bursts
+        .unwrap()
+        .width_px;
+    let (candidate, same_trades) = recorded_burst(width);
+    assert_eq!(trades, same_trades);
+    assert_eq!(candidate.dots.len(), 623);
+    let largest = candidate
+        .dots
+        .iter()
+        .max_by_key(|dot| dot.mark.quantity)
+        .unwrap();
+    assert_eq!(largest.mark.quantity, Decimal::from(4716));
+    assert_eq!(largest.mark.buy_quantity, Decimal::from(343));
+    assert_eq!(largest.members.len(), 88);
+    let old_members: std::collections::BTreeSet<_> =
+        old.members.iter().map(|member| member.ordinal).collect();
+    let touched: Vec<_> = candidate
+        .dots
+        .iter()
+        .filter(|dot| {
+            dot.members
+                .iter()
+                .any(|member| old_members.contains(&member.ordinal))
+        })
+        .collect();
+    assert_eq!(
+        touched.len(),
+        38,
+        "the old event is now explicitly segmented"
+    );
+    let mut original_count = 0;
+    let mut original_quantity = Decimal::ZERO;
+    let mut original_buy = Decimal::ZERO;
+    let mut extra_count = 0;
+    let mut extra_quantity = Decimal::ZERO;
+    for member in touched.iter().flat_map(|dot| dot.members.iter()) {
+        let trade = &trades[member.ordinal];
+        if old_members.contains(&member.ordinal) {
+            original_count += 1;
+            original_quantity += trade.quantity;
+            if trade.side == Side::Buy {
+                original_buy += trade.quantity;
+            }
+        } else {
+            extra_count += 1;
+            extra_quantity += trade.quantity;
+        }
+    }
+    assert_eq!(original_count, 250);
+    assert_eq!(original_quantity, Decimal::from(6113));
+    assert_eq!(original_buy, Decimal::from(611));
+    assert_eq!(
+        extra_count, 13,
+        "neighbors are not attributed to the old event"
+    );
+    assert_eq!(extra_quantity, Decimal::from(75));
 }

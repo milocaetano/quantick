@@ -119,7 +119,13 @@ These settings do not change the bar rule. As in BTC, circle area represents gro
 the two sectors preserve buy/sell quantities. Volumes above the reference earn
 larger radii; entering or leaving the viewport never rescales other groups.
 Grouping uses independent UTC-aligned 72-second blocks. A burst crossing a
-block boundary remains two groups. A forming 100 ms cell is a preview; it
+block boundary remains two groups. The fixed temporal span is 1393.0321 points,
+with 0.8 price units per point and grouping radius 18. This finer segmentation
+replaces the initial 420-point calibration; it does not reproduce the current
+Tape's groups. One recorded 6,113-contract pool becomes 38 groups, with every
+original member preserved and neighboring members accounted for separately.
+Grouping radius and temporal span are independent of the candle camera; final
+circle area still uses 20,000 contracts at radius 18. A forming 100 ms cell is a preview; it
 does not freeze partial quantities into retained groups. Incomplete source
 admission also remains provisional. Late executions update their group's facts
 without splitting unrelated retained groups. A cold reconstruction of out-of-order

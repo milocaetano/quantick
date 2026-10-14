@@ -371,6 +371,10 @@ jobs:
   harness-app:
     if: *full-ci
     runs-on: ubuntu-latest
+    env:
+      # Isolate the 250us observer budget from competing libtest cases (PR #702).
+      # Tests retain their internal worker concurrency and all assertions.
+      RUST_TEST_THREADS: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/rust-setup

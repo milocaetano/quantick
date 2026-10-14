@@ -468,6 +468,6 @@ opacity = 0.9
 
 [presets.tick_bubbles.tape_bursts]
 window_ms = 72000
-width_px = 420.0
+width_px = 1393.0321
 price_units_per_pixel = 0.8
 max_radius = 18.0
