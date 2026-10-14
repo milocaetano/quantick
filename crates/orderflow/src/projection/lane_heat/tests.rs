@@ -457,3 +457,101 @@ fn the_current_book_is_previewed_without_averaging() {
         "the lane still carries its own runs to the edge"
     );
 }
+
+/// #6: with depth averaging on and a book that has stopped changing, the
+/// requests of consecutive frames average the same history into the same
+/// cells as the clock advances: no bin edge moves with `now`.
+#[test]
+fn a_static_book_averages_identically_as_the_clock_advances() {
+    let mut config = crate::HeatmapConfig {
+        enabled: true,
+        price_grouping: Decimal::ONE,
+        max_visible_cells: 24,
+        ..crate::HeatmapConfig::default()
+    };
+    config.live_lane.depth_time_averaging = true;
+    let mut history = LiquidityHistory::new(config);
+    history
+        .install_snapshot(
+            0,
+            1,
+            BookSnapshot::new(
+                10,
+                vec![level(95, 10), level(96, 10), level(97, 10)],
+                vec![level(101, 10), level(102, 10)],
+                BookCoverage::Full,
+            ),
+        )
+        .unwrap();
+    // Every level flips between two sizes on its own beat for a minute, so
+    // the lane holds far more runs than the cap and must average.
+    for step in 1..600_i64 {
+        let id = 10 + u64::try_from(step).unwrap();
+        let size = |price: i64| {
+            level(
+                price,
+                if (step / (price % 5 + 1)) % 2 == 0 {
+                    10
+                } else {
+                    40
+                },
+            )
+        };
+        history
+            .apply_delta(
+                step * 100,
+                &BookDelta::new(
+                    id,
+                    id,
+                    vec![size(95), size(96), size(97)],
+                    vec![size(101), size(102)],
+                ),
+            )
+            .unwrap();
+    }
+    assert_eq!(history.latest_book_ms(), Some(59_900));
+    let averaged = |now_ms: i64| {
+        let timeline = BarTimeline::from_bars(
+            0,
+            &[quantick_engine::Bar {
+                open_time: 0,
+                close_time: 60_000,
+                ..bar()
+            }],
+            None,
+            Some(LiveEdge {
+                now_ms,
+                window_ms: 60_000,
+                reference_ms: 50,
+                on_newest_bar: true,
+            }),
+        )
+        .with_full_lane_coverage();
+        let grouping = EffectiveGrouping::resolve(DisplayGrouping::Native, Decimal::ONE, 8.into());
+        let (cells, _, _) = project_lane_heat(
+            &history,
+            &timeline,
+            PriceWindow::new(94.into(), 103.into()).unwrap(),
+            grouping,
+            40.into(),
+        );
+        let mut averaged: Vec<_> = cells
+            .iter()
+            .filter(|cell| cell.time_averaged)
+            .map(|cell| (cell.side, cell.price_bucket, cell.quantity))
+            .collect();
+        averaged.sort();
+        averaged
+    };
+    // The lane's oldest instant walks from 1 ms to 81 ms: inside one bin of
+    // any width, so the same bins must come back with the same means.
+    let first = averaged(60_001);
+    assert!(!first.is_empty(), "the lane averages its history");
+    for frame in 1..=5 {
+        assert_eq!(
+            averaged(60_001 + frame * 16),
+            first,
+            "frame {frame}: the averaged depth shimmered"
+        );
+    }
+}
