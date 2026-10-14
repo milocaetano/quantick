@@ -102,4 +102,24 @@ mod tests {
         assert_eq!(restored.tabs[1], spot);
         assert_eq!(restored.active_tab, 0);
     }
+
+    /// Review #25: the factory spec has one owner, the one boot falls back
+    /// to, so a feed with no `default_bars` opens on it here too.
+    #[test]
+    fn a_feed_without_default_bars_opens_on_the_factory_spec_boot_uses() {
+        let mut config = config();
+        for feed in &mut config.feeds {
+            feed.default_bars = None;
+        }
+        let workspace = Workspace::new(true, None, 0, Vec::new(), None);
+        let restored = reconcile_startup(workspace, &config, true);
+        assert_eq!(
+            restored.tabs[0].flow_bars,
+            crate::config::factory_flow_spec().to_config_string()
+        );
+        assert_eq!(
+            config.opening_spec_for(&config.default_feed),
+            crate::config::factory_flow_spec()
+        );
+    }
 }
