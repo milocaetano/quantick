@@ -200,7 +200,18 @@ impl FlowWorkerCache {
         if !self.publication.due(request, coverage, at_capacity, flush) {
             return None;
         }
-        let frame = self.project(request);
+        // The live edge refinishes only the region windows its prints joined.
+        let frame = Arc::new(self.source.project_cached(
+            request.epoch,
+            request.layout_revision,
+            request.source_count,
+            request.requested.clone(),
+            request.view,
+            FlowOpeningSelection {
+                windows: &request.opening_windows,
+                ordinals: &request.opening_ordinals,
+            },
+        ));
         self.publication.record(request, coverage, at_capacity);
         Some(frame)
     }

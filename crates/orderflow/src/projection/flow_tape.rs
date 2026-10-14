@@ -310,6 +310,117 @@ pub fn project_flow_tape<'a>(
     )
 }
 
+/// The merge frame of a view: every group a disc of the fixed support
+/// radius, in the view's pixels.
+fn merge_frame(view: FlowTapeView) -> (BubbleStyle, DotSizing, TapeDotGeometry) {
+    (
+        BubbleStyle {
+            max_radius: view.merge_support_radius,
+            ..BubbleStyle::default()
+        },
+        DotSizing {
+            native_tape: true,
+            tape_column_px: 0.0,
+            candle_column_px: 0.0,
+            px_per_price: 0.0,
+            typed_full: view.reference.typed(),
+        },
+        TapeDotGeometry {
+            left_x: 0.0,
+            right_x: 1.0,
+            width_px: view.width_px,
+            height_px: view.height_px,
+        },
+    )
+}
+
+/// Where one group stands in a view before merging.
+enum Admission {
+    /// Off the price axis, with its executions.
+    OffAxis(usize),
+    /// Outside the painted clip, with its executions.
+    Offscreen(usize),
+    /// Merged with its region window's neighbours.
+    Mergeable,
+    /// An oversized native cell: it cannot merge, and stays out of the
+    /// neighbour index, where near-identical centroids would cause
+    /// quadratic rejection.
+    Standalone,
+}
+
+fn admit(group: &Group, view: FlowTapeView) -> Admission {
+    if !(0.0..=1.0).contains(&group.y()) {
+        return Admission::OffAxis(group.members.len());
+    }
+    let position = group.position_quantity / group.quantity();
+    if position < view.clip_left || position > view.clip_right {
+        Admission::Offscreen(group.members.len())
+    } else if group.hull.within_merge_limits() {
+        Admission::Mergeable
+    } else {
+        Admission::Standalone
+    }
+}
+
+/// The region window a group merges in.
+fn region_window(group: &Group) -> i64 {
+    group.first_timestamp_ms().div_euclid(FLOW_REGION_WINDOW_MS)
+}
+
+/// One region window's mergeable groups, merged.
+fn merge_window(window: Vec<Group>, view: FlowTapeView) -> Vec<Group> {
+    let (bubbles, sizing, geometry) = merge_frame(view);
+    collide(
+        window,
+        sizing,
+        &bubbles,
+        &LiveLaneStyle::default(),
+        geometry,
+        Decimal::ZERO,
+        false,
+    )
+    .0
+}
+
+/// A merged group as the sphere drawn against `effective_reference`;
+/// `exclusion` says whether opening regions are kept out of the scale.
+fn finish_group(
+    mut group: Group,
+    view: FlowTapeView,
+    effective_reference: Decimal,
+    exclusion: bool,
+) -> FlowTapeDot {
+    let quantity = group.quantity();
+    let opening_oversized = exclusion && group.opening_anchor && quantity > effective_reference;
+    group.members.parts.sort_by_key(|part| part[0].ordinal);
+    let mut mark = group.moment.finish(effective_reference);
+    mark.folded_marks = if group.cells > 1 {
+        group.cells as u32
+    } else {
+        0
+    };
+    FlowTapeDot {
+        radius: view.radius_limit
+            * if opening_oversized {
+                use rust_decimal::prelude::ToPrimitive as _;
+                (quantity.to_f64().unwrap_or_default()
+                    / effective_reference.to_f64().unwrap_or(1.0))
+                .sqrt() as f32
+            } else {
+                super::normalized_area_size(quantity, effective_reference)
+            },
+        opening_anchor: group.opening_anchor,
+        opening_oversized,
+        candle_position: group.position_quantity / quantity,
+        mark,
+        members: group.members,
+        first_slot: group.first_slot,
+        end_slot: group.end_slot,
+        opening_quantity: group.opening,
+        native_cells: group.cells,
+    }
+}
+
 fn finish_groups(
     groups: Vec<Group>,
     view: FlowTapeView,
@@ -321,64 +432,27 @@ fn finish_groups(
     FlowScaleBasis,
     bool,
 ) {
-    let bubbles = BubbleStyle {
-        max_radius: view.merge_support_radius,
-        ..BubbleStyle::default()
-    };
-    let sizing = DotSizing {
-        native_tape: true,
-        tape_column_px: 0.0,
-        candle_column_px: 0.0,
-        px_per_price: 0.0,
-        typed_full: view.reference.typed(),
-    };
-    let geometry = TapeDotGeometry {
-        left_x: 0.0,
-        right_x: 1.0,
-        width_px: view.width_px,
-        height_px: view.height_px,
-    };
     let mut off_axis_executions = 0;
     let mut offscreen_executions = 0;
-    let (groups, mut standalone): (Vec<_>, Vec<_>) = groups
-        .into_iter()
-        .filter(|group| {
-            if !(0.0..=1.0).contains(&group.y()) {
-                off_axis_executions += group.members.len();
-                return false;
-            }
-            let position = group.position_quantity / group.quantity();
-            if position < view.clip_left || position > view.clip_right {
-                offscreen_executions += group.members.len();
-                return false;
-            }
-            true
-        })
-        // Oversized native cells cannot merge. Keep them out of the neighbour
-        // index, where near-identical centroids would cause quadratic rejection.
-        .partition(|group| group.hull.within_merge_limits());
     // Separate indexes bound neighbour work even when thousands of distant
     // time intervals occupy the same pixels. Rejecting only in permits_merge
     // would leave all those impossible neighbours in one growing index.
     let mut windows = std::collections::BTreeMap::<i64, Vec<Group>>::new();
+    let mut standalone = Vec::new();
     for group in groups {
-        windows
-            .entry(group.first_timestamp_ms().div_euclid(FLOW_REGION_WINDOW_MS))
-            .or_default()
-            .push(group);
+        match admit(&group, view) {
+            Admission::OffAxis(executions) => off_axis_executions += executions,
+            Admission::Offscreen(executions) => offscreen_executions += executions,
+            Admission::Mergeable => windows
+                .entry(region_window(&group))
+                .or_default()
+                .push(group),
+            Admission::Standalone => standalone.push(group),
+        }
     }
     let mut groups = Vec::new();
     for window in windows.into_values() {
-        let (merged, _) = collide(
-            window,
-            sizing,
-            &bubbles,
-            &LiveLaneStyle::default(),
-            geometry,
-            Decimal::ZERO,
-            false,
-        );
-        groups.extend(merged);
+        groups.extend(merge_window(window, view));
     }
     groups.append(&mut standalone);
     let Some(full_max) = groups.iter().map(Group::quantity).max() else {
@@ -429,38 +503,13 @@ fn finish_groups(
     };
     let dots = groups
         .into_iter()
-        .map(|mut group| {
-            let quantity = group.quantity();
-            let opening_oversized = opening_exclusion_effective
-                && group.opening_anchor
-                && quantity > effective_reference;
-            group.members.parts.sort_by_key(|part| part[0].ordinal);
-            let mut mark = group.moment.finish(effective_reference);
-            mark.folded_marks = if group.cells > 1 {
-                group.cells as u32
-            } else {
-                0
-            };
-            FlowTapeDot {
-                radius: view.radius_limit
-                    * if opening_oversized {
-                        use rust_decimal::prelude::ToPrimitive as _;
-                        (quantity.to_f64().unwrap_or_default()
-                            / effective_reference.to_f64().unwrap_or(1.0))
-                        .sqrt() as f32
-                    } else {
-                        super::normalized_area_size(quantity, effective_reference)
-                    },
-                opening_anchor: group.opening_anchor,
-                opening_oversized,
-                candle_position: group.position_quantity / quantity,
-                mark,
-                members: group.members,
-                first_slot: group.first_slot,
-                end_slot: group.end_slot,
-                opening_quantity: group.opening,
-                native_cells: group.cells,
-            }
+        .map(|group| {
+            finish_group(
+                group,
+                view,
+                effective_reference,
+                opening_exclusion_effective,
+            )
         })
         .collect();
     (

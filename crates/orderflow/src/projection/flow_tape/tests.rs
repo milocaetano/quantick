@@ -8,6 +8,69 @@ mod opening_anchor;
 mod reading;
 #[path = "tests/time_regions.rs"]
 mod time_regions;
+
+/// A worker's cached projection is the projection: through packets in any
+/// order, live prints into one region window, oversized cells, an opening
+/// anchor, a view change and an eviction, `project_cached` builds exactly
+/// the frame `project` builds.
+#[test]
+fn the_cached_projection_is_the_projection() {
+    let trades: Vec<Trade> = (0..400_i64)
+        .map(|n| {
+            let side = if n % 3 == 0 { Side::Sell } else { Side::Buy };
+            trade(1_000 + n * 37, 95 + n / 5 % 11, 1 + n * 13 % 17, side)
+        })
+        .collect();
+    let execution = |ordinal: usize| FlowExecution {
+        ordinal,
+        slot: ordinal / 4,
+        accepted_ordinal: ordinal % 4,
+        ticks_per_bar: 4.into(),
+        trade: &trades[ordinal],
+        opening: false,
+    };
+    let windows = [1_000_i64];
+    let ordinals = [0_usize];
+    let openings = FlowOpeningSelection {
+        windows: &windows,
+        ordinals: &ordinals,
+    };
+    let mut view = FlowTapeView {
+        first_slot: 0,
+        end_slot: 100,
+        clip_left: 0.into(),
+        clip_right: 100.into(),
+        width_px: 20_000.0,
+        ..view(20_000.0)
+    };
+    let mut source = FlowTapeSource::default();
+    let check = |source: &mut FlowTapeSource, view: FlowTapeView, at: &str| {
+        let cached = source.project_cached(1, 0, 400, 0..400, view, openings);
+        let whole = source.project(1, 0, 400, 0..400, view, openings);
+        assert!(!whole.dots.is_empty(), "{at}");
+        assert_eq!(cached, whole, "{at}");
+    };
+    for packet in [300..400, 0..100, 100..300] {
+        source.append(packet.clone().map(execution));
+        check(&mut source, view, &format!("packet {packet:?}"));
+    }
+    let mut live = FlowTapeSource::default();
+    for ordinal in 0..400 {
+        live.append(std::iter::once(execution(ordinal)));
+        if ordinal % 7 == 0 || ordinal > 380 {
+            check(&mut live, view, &format!("live {ordinal}"));
+        }
+    }
+    view.first_slot = 20;
+    view.clip_left = 20.into();
+    check(&mut source, view, "pan");
+    source.retain(&FlowKeep {
+        slots: 30..100,
+        ordinals: 120..400,
+    });
+    check(&mut source, view, "eviction");
+}
+
 fn trade(time: i64, price: i64, quantity: i64, side: Side) -> Trade {
     Trade {
         agg_id: 1,
