@@ -181,35 +181,71 @@ fn dragging_a_side_line_resizes_the_rectangle() {
     assert_eq!(extent(&app), (false, false));
 }
 
-/// Each zone shows its own OS cursor, and no two zones share one: the
-/// border line resizes sideways, the band says a click acts, the inside
-/// moves. A corner keeps neither side cursor.
+/// Each zone shows its own OS cursor, selected or not, and no two zones
+/// share one: the border line resizes sideways, the band says a click
+/// acts, the inside moves, and a corner, which a press resizes, says so.
 #[test]
 fn each_zone_shows_its_own_cursor() {
     let (mut app, ctx, _commands) = drawn_rectangle();
-    let (left, right) = drawn_sides(&app);
-    let zones = [
-        (left, egui::CursorIcon::ResizeHorizontal),
-        (left + BAND_INSET, egui::CursorIcon::PointingHand),
-        ((left + right) / 2.0, egui::CursorIcon::Move),
-        (right - BAND_INSET, egui::CursorIcon::PointingHand),
-        (right, egui::CursorIcon::ResizeHorizontal),
-    ];
-    for (x, cursor) in zones {
+    for selected in [true, false] {
+        let index = selected.then_some(0);
+        app.active_tab_mut().flow_pane.drawings.select(index);
+        run_frame(&mut app, &ctx);
+        let (left, right) = drawn_sides(&app);
+        let mut at = |x: f32, y: f32| cursor_at(&mut app, &ctx, egui::pos2(x, y));
+        let zones = [
+            at(left, MID_Y),
+            at(left + BAND_INSET, MID_Y),
+            at((left + right) / 2.0, MID_Y),
+            at(left, TOP),
+        ];
         assert_eq!(
-            cursor_at(&mut app, &ctx, egui::pos2(x, MID_Y)),
-            cursor,
-            "at x={x}"
+            zones[..3],
+            [
+                egui::CursorIcon::ResizeHorizontal,
+                egui::CursorIcon::PointingHand,
+                egui::CursorIcon::Move,
+            ],
+            "selected {selected}"
         );
+        assert_eq!(
+            at(right - BAND_INSET, MID_Y),
+            zones[1],
+            "selected {selected}"
+        );
+        assert_eq!(at(right, MID_Y), zones[0], "selected {selected}");
+        for (index, cursor) in zones.iter().enumerate() {
+            assert!(
+                !zones[index + 1..].contains(cursor),
+                "{cursor:?} is shared, selected {selected}: {zones:?}"
+            );
+        }
     }
-    let corner = cursor_at(&mut app, &ctx, egui::pos2(left, TOP));
-    assert!(
-        ![
-            egui::CursorIcon::ResizeHorizontal,
-            egui::CursorIcon::PointingHand
-        ]
-        .contains(&corner),
-        "the corner keeps its own cursor, got {corner:?}"
+}
+
+/// A double click in a band is one undo step back to the state before its
+/// first click: Ctrl+Z never shows the extension that click made.
+#[test]
+fn a_double_click_in_a_band_is_one_undo_step() {
+    let (mut app, ctx, _commands) = drawn_rectangle();
+    app.active_tab_mut().flow_pane.drawings.items_mut()[0]
+        .payload
+        .as_any_mut()
+        .downcast_mut::<drawings::RectanglePayload>()
+        .expect("a rectangle carries a rectangle payload")
+        .extend_left = true;
+    run_frame(&mut app, &ctx);
+    let depth = app.active_tab().flow_pane.drawings.undo_depth();
+    let (_, right) = drawn_sides(&app);
+    double_click(&mut app, &ctx, egui::pos2(right - BAND_INSET, MID_Y));
+    assert_eq!(extent(&app), (false, false));
+    let drawings = &mut app.active_tab_mut().flow_pane.drawings;
+    assert_eq!(drawings.undo_depth(), depth + 1, "one undo step");
+    assert!(drawings.undo());
+    assert_eq!(
+        extent(&app),
+        (true, false),
+        "the state before the first click"
     );
 }
 

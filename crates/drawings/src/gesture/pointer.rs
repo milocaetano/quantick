@@ -687,6 +687,38 @@ mod tests {
         bands: &Bands,
         pointer: &SharedPointer,
     ) -> PointerOutcome {
+        owner_frame_by(
+            gestures,
+            drawings,
+            projection,
+            (bands, pointer),
+            Hand::PLAIN,
+        )
+    }
+
+    /// What the hand does beyond the pointer this frame.
+    #[derive(Clone, Copy)]
+    struct Hand<'a> {
+        alt: bool,
+        double_clicked: bool,
+        held: &'a dyn Fn(DrawingId) -> bool,
+    }
+
+    impl Hand<'static> {
+        const PLAIN: Self = Self {
+            alt: false,
+            double_clicked: false,
+            held: &|_| false,
+        };
+    }
+
+    fn owner_frame_by(
+        gestures: &mut PaneGestures,
+        drawings: &mut Marks,
+        projection: &DrawingProjection<'_>,
+        (bands, pointer): (&Bands, &SharedPointer),
+        hand: Hand<'_>,
+    ) -> PointerOutcome {
         gestures.handle_pointer_tool(
             drawings,
             projection,
@@ -695,14 +727,14 @@ mod tests {
                 cached_bands: bands,
                 pointer,
                 on_pane_chrome: false,
-                alt: false,
+                alt: hand.alt,
                 shift: false,
-                double_clicked: false,
+                double_clicked: hand.double_clicked,
                 paper_gesture: false,
                 pointer_tool: true,
                 shared_pick: None,
                 shared: SharedInteraction::default(),
-                held: &|_| false,
+                held: hand.held,
             },
         )
     }
@@ -997,16 +1029,65 @@ mod tests {
         bands: &Bands,
         position: Px,
     ) -> Option<GestureCursor> {
+        hover_by(store, projection, (bands, position), &|_| false)
+    }
+
+    fn hover_by(
+        store: &mut Marks,
+        projection: &DrawingProjection<'_>,
+        (bands, position): (&Bands, Px),
+        held: &dyn Fn(DrawingId) -> bool,
+    ) -> Option<GestureCursor> {
         let mut pointer = pointer_at(position, bands);
         pointer.down = false;
-        owner_frame(
+        let hand = Hand {
+            held,
+            ..Hand::PLAIN
+        };
+        owner_frame_by(
             &mut PaneGestures::default(),
             store,
             projection,
-            bands,
-            &pointer,
+            (bands, &pointer),
+            hand,
         )
         .cursor
+    }
+
+    /// A press and release at `position`, as the window reports them.
+    fn press_and_release(
+        gestures: &mut PaneGestures,
+        store: &mut Marks,
+        projection: &DrawingProjection<'_>,
+        (bands, position): (&Bands, Px),
+        hand: Hand<'_>,
+    ) -> PointerOutcome {
+        let mut pointer = pointer_at(position, bands);
+        pointer.pressed = true;
+        owner_frame_by(gestures, store, projection, (bands, &pointer), hand);
+        pointer.pressed = false;
+        pointer.down = false;
+        pointer.released = true;
+        owner_frame_by(gestures, store, projection, (bands, &pointer), hand)
+    }
+
+    /// Place a rectangle from `from` to `to`, unselected, behind nothing.
+    fn place_rectangle(store: &mut Marks, from: crate::ChartPoint, to: crate::ChartPoint) {
+        let rectangle = crate::DrawingTool::by_id("rectangle").unwrap();
+        assert!(!store.place(rectangle, from));
+        assert!(store.place(rectangle, to));
+        store.select(None);
+    }
+
+    fn projected_rect(
+        store: &Marks,
+        index: usize,
+        projection: &DrawingProjection<'_>,
+        bands: &Bands,
+    ) -> PxRect {
+        let scale = bands[0].scale.as_ref().unwrap();
+        let points = projection.projected_drawing_points(&store.items()[index], 200.0, 1, scale);
+        PxRect::from_two_pos(points[0], points[1])
     }
 
     fn drawn_rect(store: &Marks, projection: &DrawingProjection<'_>, bands: &Bands) -> PxRect {
@@ -1112,15 +1193,11 @@ mod tests {
                     "at {position:?}"
                 );
             }
-            let distinct = [
-                GestureCursor::ResizeHorizontal,
-                GestureCursor::ExtendSide,
-                GestureCursor::Move,
-                GestureCursor::Resize,
-            ];
-            for (at, cursor) in distinct.iter().enumerate() {
-                assert!(!distinct[at + 1..].contains(cursor), "{cursor:?} is shared");
-            }
+            // Unselected, a corner already resizes on a press: it says so.
+            assert_eq!(
+                hover(&mut store, projection, bands, rect.left_top()),
+                Some(GestureCursor::Resize)
+            );
             // Selected, the side line is the side's handle and keeps its own
             // cursor; the corner keeps the corner resize.
             store.select(Some(0));
@@ -1290,6 +1367,150 @@ mod tests {
                 hover(&mut store, projection, bands, right_band),
                 Some(GestureCursor::ExtendSide)
             );
+        });
+    }
+
+    /// A side line under another drawing's body is not the lower drawing's
+    /// to take: the press goes where the cursor points, the drawing on top.
+    #[test]
+    fn a_side_line_under_another_drawing_leaves_the_press_to_the_one_on_top() {
+        with_projection(|projection, bands| {
+            let mut store = Marks::default();
+            let at = crate::ChartPoint::at;
+            place_rectangle(&mut store, at(-10.0, 70.0), at(0.0, 30.0));
+            place_rectangle(&mut store, at(-18.0, 60.0), at(-2.0, 40.0));
+            store.items_mut()[1].style.fill_alpha = 40;
+            let lower = projected_rect(&store, 0, projection, bands);
+            let upper = projected_rect(&store, 1, projection, bands);
+            let side = crate::pos2(lower.left(), upper.center().y);
+            assert!(
+                side.x - upper.left() > 30.0 && upper.right() - side.x > 30.0,
+                "{side:?} sits well inside {upper:?}"
+            );
+            assert_eq!(
+                hover(&mut store, projection, bands, side),
+                Some(GestureCursor::Move)
+            );
+            let (lower_before, upper_before) = (
+                store.items()[0].points.clone(),
+                store.items()[1].points.clone(),
+            );
+            let mut gestures = PaneGestures::default();
+            let mut pointer = pointer_at(side, bands);
+            pointer.pressed = true;
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            assert_eq!(gestures.drag, DrawingDrag::Translate);
+            assert_eq!(store.selected(), Some(1));
+            pointer.pressed = false;
+            pointer.position = Some(crate::pos2(side.x - 20.0, side.y));
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            pointer.down = false;
+            pointer.released = true;
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            assert_eq!(store.items()[0].points, lower_before, "the lower one held");
+            assert_ne!(store.items()[1].points, upper_before, "the top one moved");
+        });
+    }
+
+    /// A strategy's region still reshapes by its side line and corners, so
+    /// it shows the resize its press makes; only its band's click, which it
+    /// refuses, goes unannounced.
+    #[test]
+    fn a_strategy_held_rectangle_shows_the_resize_its_press_makes() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            store.items_mut()[0].style.fill_alpha = 40;
+            let bound = store.items()[0].id;
+            let held: &dyn Fn(DrawingId) -> bool = &move |id| id == bound;
+            let side = crate::pos2(rect.left(), rect.center().y);
+            for (position, cursor) in [
+                (side, GestureCursor::ResizeHorizontal),
+                (rect.left_top(), GestureCursor::Resize),
+                (crate::pos2(rect.left() + 10.0, side.y), GestureCursor::Move),
+            ] {
+                assert_eq!(
+                    hover_by(&mut store, projection, (bands, position), held),
+                    Some(cursor),
+                    "at {position:?}"
+                );
+            }
+            let mut gestures = PaneGestures::default();
+            let mut pointer = pointer_at(side, bands);
+            pointer.pressed = true;
+            let hand = Hand {
+                held,
+                ..Hand::PLAIN
+            };
+            owner_frame_by(
+                &mut gestures,
+                &mut store,
+                projection,
+                (bands, &pointer),
+                hand,
+            );
+            assert!(
+                matches!(gestures.drag, DrawingDrag::Handle { .. }),
+                "{:?}",
+                gestures.drag
+            );
+        });
+    }
+
+    /// Alt+click walks down the z-order: it selects, and nothing else.
+    #[test]
+    fn alt_click_in_a_band_only_selects() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            store.items_mut()[0].style.fill_alpha = 40;
+            let band = crate::pos2(rect.right() - 10.0, rect.center().y);
+            let alt = Hand {
+                alt: true,
+                ..Hand::PLAIN
+            };
+            press_and_release(
+                &mut PaneGestures::default(),
+                &mut store,
+                projection,
+                (bands, band),
+                alt,
+            );
+            assert_eq!(store.selected(), Some(0));
+            assert_eq!(extent(&store), (false, false), "alt never extends");
+        });
+    }
+
+    /// A double click in a band is one undo step: its first click extended
+    /// that side, the double click put the original size back, and Ctrl+Z
+    /// returns to the state before the first click, never the one between.
+    #[test]
+    fn a_double_click_in_a_band_is_one_undo_step() {
+        with_projection(|projection, bands| {
+            let double = Hand {
+                double_clicked: true,
+                ..Hand::PLAIN
+            };
+            for left_before in [true, false] {
+                let (mut store, rect) = local_rectangle(projection, bands);
+                store.items_mut()[0].style.fill_alpha = 40;
+                set_extent(&mut store, left_before, false);
+                let band = crate::pos2(rect.right() - 10.0, rect.center().y);
+                let depth = store.undo_depth();
+                let mut gestures = PaneGestures::default();
+                let at = (bands, band);
+                press_and_release(&mut gestures, &mut store, projection, at, Hand::PLAIN);
+                assert_eq!(extent(&store), (left_before, true), "the first click");
+                press_and_release(&mut gestures, &mut store, projection, at, double);
+                assert_eq!(extent(&store), (false, false), "the double click");
+                if left_before {
+                    assert_eq!(store.undo_depth(), depth + 1, "one step");
+                    assert!(store.undo());
+                    assert_eq!(extent(&store), (true, false), "before the first click");
+                } else {
+                    // Back where it started: a pair that changed nothing
+                    // records nothing, and Ctrl+Z never shows the state between.
+                    assert_eq!(store.undo_depth(), depth);
+                }
+            }
         });
     }
 }

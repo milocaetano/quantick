@@ -719,7 +719,6 @@ mod tests {
         assert_eq!(hint_at(&payload, pos2(290.0, MID_Y)), Some(PointerHint::ExtendSide));
         assert_eq!(hint_at(&payload, pos2(200.0, MID_Y)), None);
         assert_eq!(hint_at(&payload, pos2(100.0, 80.0)), None);
-        assert_ne!(PointerHint::ResizeSide, PointerHint::ExtendSide);
     }
 
     /// The side line is a handle of its own: grabbing it moves that side
