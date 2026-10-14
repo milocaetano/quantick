@@ -230,7 +230,11 @@ fn seed_and_live_candles_all_get_spheres() {
         timestamp_ms: 1_000 + id as i64 * 40,
         price: (100 + id % 7).into(),
         quantity: (1 + id % 3).into(),
-        side: if id % 2 == 0 { Side::Buy } else { Side::Sell },
+        side: if id.is_multiple_of(2) {
+            Side::Buy
+        } else {
+            Side::Sell
+        },
     };
     let mut state = ChartState::new(BarSpec::Tick(50));
     state.ingest_backfill(&(0..1_000).map(print).collect::<Vec<_>>());
@@ -289,7 +293,11 @@ fn a_pan_keeps_every_tick_sphere_on_screen() {
             timestamp_ms: 1_000 * (id as i64 / 4 + 1) + id as i64 % 4 * 100,
             price: (100 + id % 5).into(),
             quantity: (1 + id % 3).into(),
-            side: if id % 2 == 0 { Side::Buy } else { Side::Sell },
+            side: if id.is_multiple_of(2) {
+                Side::Buy
+            } else {
+                Side::Sell
+            },
         });
     }
     let tick = quantick_orderflow::TickBubbleStyle {
