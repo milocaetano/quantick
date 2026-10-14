@@ -178,12 +178,15 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
     ("sim", &["engine", "trading"]),
     // The cockpit stores: documents over the vocabularies they persist. The
     // window resolves every path; the store never reads the environment.
+    // `orderbook` for the approved WIN tape's depth golden alone, a test that
+    // hands the engine an MT5-shaped book the way the feed does.
     (
         "stores",
         &[
             "chart",
             "engine",
             "indicators",
+            "orderbook",
             "orderflow",
             "sources",
             "workspace",

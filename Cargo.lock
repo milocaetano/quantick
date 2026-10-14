@@ -3316,6 +3316,7 @@ dependencies = [
  "quantick-chart",
  "quantick-engine",
  "quantick-indicators",
+ "quantick-orderbook",
  "quantick-orderflow",
  "quantick-sources",
  "quantick-workspace",
