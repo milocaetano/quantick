@@ -11,6 +11,38 @@ impl super::HeatmapConfig {
         compared.volume_dots.tick_bubbles = self.volume_dots.tick_bubbles;
         *self == compared
     }
+
+    /// Whether a change keeps the tape's painted groups
+    /// ([`TapeDotMemory`](crate::projection::TapeDotMemory)): the same tape
+    /// settings but for the lane's width share, a view parameter like the
+    /// window the lane shows. An explicit zoom (the lane's window setting)
+    /// and every other tape setting start a new display epoch.
+    #[must_use]
+    pub fn same_tape_grouping(&self, other: &Self) -> bool {
+        let mut compared = other.clone();
+        compared.live_lane.width_share = self.live_lane.width_share;
+        self.same_tape_settings(&compared)
+    }
+}
+
+#[cfg(test)]
+mod grouping_tests {
+    use crate::HeatmapConfig;
+
+    #[test]
+    fn a_lane_width_keeps_the_tape_grouping_and_a_zoom_does_not() {
+        let config = HeatmapConfig::default();
+        let mut wider = config.clone();
+        wider.live_lane.width_share += 0.1;
+        assert!(wider.same_tape_grouping(&config));
+        assert!(
+            !wider.same_tape_settings(&config),
+            "the worker still hears it"
+        );
+        let mut zoomed = config.clone();
+        zoomed.zoom_lane_window(2.0);
+        assert!(!zoomed.same_tape_grouping(&config));
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

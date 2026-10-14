@@ -984,8 +984,9 @@ impl OrderflowView {
             return false;
         }
         // Explicit display changes begin a new epoch; advancing the clock,
-        // changing book generations or following prices never clears it.
-        if !self.config.same_tape_settings(&before) {
+        // changing book generations, following prices or resizing the lane
+        // never clears it.
+        if !self.config.same_tape_grouping(&before) {
             self.tape_rebuilds
                 .get_mut()
                 .start_over(self.tape_dots.get_mut());
