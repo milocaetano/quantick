@@ -32,14 +32,15 @@ jobs:
           ref: 321c94ab6a7a7a9af78740e07796ee09123b0fcb
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/rust-setup
-        with:
-          save-cache: 'false'
-          cache-key: linux
-          verbose-toolchain: 'true'
+      - name: Install desktop dependencies and pinned toolchain without compiled caches
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libwayland-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+          rustc -Vv
+          cargo -V
       - name: Build fixed inputs sequentially, then collect bounded diagnostic evidence
-        env:
-          CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: |
           python3 - <<'PY'
           """One bounded CI-702-01 diagnostic; execute only on the proposed remote Linux job."""
@@ -87,13 +88,18 @@ jobs:
               if Path(path).exists():
                   (out / (name + '.txt')).write_text(Path(path).read_text())
 
-          # Both complete builds finish before any timing. The CI dependency cache is restore-only.
+          # Separate fresh SHA-owned targets; no compiled workspace artifacts are restored or shared.
           for label, source, sha in [('base', base, BASE), ('candidate', root, CANDIDATE)]:
               assert checked(['git', 'rev-parse', 'HEAD'], source) == sha
               assert not checked(['git', 'status', '--porcelain', '--untracked-files=no'], source)
               (out / (label + '-source.txt')).write_text(checked(['git', 'rev-parse', 'HEAD', 'HEAD^{tree}'], source) + '\n')
+              target = Path(os.environ['RUNNER_TEMP']) / ('observer-702-target-' + sha)
+              assert not target.exists(), 'Each source requires a new empty target'
+              build_env = dict(os.environ)
+              build_env['CARGO_TARGET_DIR'] = str(target)
+              (out / (label + '-disk-before.txt')).write_text(str(shutil.disk_usage(target.parent)) + '\n')
               with (out / (label + '-cargo.jsonl')).open('w') as stdout, (out / (label + '-build.log')).open('w') as stderr:
-                  result = subprocess.run(['cargo', 'test', '--locked', '-p', 'quantick-app', '--features', 'quick-range-harness', '--no-run', '--message-format=json'], cwd=source, stdout=stdout, stderr=stderr)
+                  result = subprocess.run(['cargo', 'test', '--locked', '-p', 'quantick-app', '--features', 'quick-range-harness', '--no-run', '--message-format=json'], cwd=source, stdout=stdout, stderr=stderr, env=build_env)
               if result.returncode:
                   manifest['build_error'] = {'label': label, 'exit': result.returncode}
                   record()
@@ -103,10 +109,10 @@ jobs:
               assert len(artifacts) == 1, artifacts
               binary = out / (label + '-app-tests')
               shutil.copy2(artifacts[0]['executable'], binary)
-              manifest['binaries'][label] = {'path': str(binary), 'sha256': digest(binary), 'source': str(source), 'lock_sha256': digest(source / 'Cargo.lock'), 'toolchain_sha256': digest(source / 'rust-toolchain.toml')}
+              manifest['binaries'][label] = {'path': str(binary), 'sha256': digest(binary), 'source': str(source), 'target': str(target), 'build_features': ['quick-range-harness'], 'lock_sha256': digest(source / 'Cargo.lock'), 'toolchain_sha256': digest(source / 'rust-toolchain.toml')}
               record()
 
-          # Never use an unowned process's PID; all competing work is our own bounded test children.
+          # Both builds must finish before any measurement; do not overlap cargo/rustc.
           assert subprocess.run(['pgrep', '-x', 'cargo'], capture_output=True).returncode == 1
           assert subprocess.run(['pgrep', '-x', 'rustc'], capture_output=True).returncode == 1
           assert manifest['binaries']['base']['lock_sha256'] == manifest['binaries']['candidate']['lock_sha256']
