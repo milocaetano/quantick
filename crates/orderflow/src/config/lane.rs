@@ -1296,4 +1296,30 @@ mod tests {
         assert!(lane_time_ticks(100_000, 0, 4).is_empty());
         assert!(lane_time_ticks(100_000, 15_000, 0).is_empty());
     }
+
+    /// A look saved before the strip preview had its own switch: depth
+    /// averaging on meant the strip showed the current book, and it still
+    /// does. Averaging off and no switch keeps the strip empty (WIN), an
+    /// explicit switch wins either way, and an absent switch stays absent.
+    #[test]
+    fn an_absent_forward_preview_follows_depth_averaging() {
+        let old: LiveLaneStyle = toml::from_str("depth_time_averaging = true\n").unwrap();
+        assert!(old.forward_book_preview, "the trader's saved BTC look");
+        let quiet: LiveLaneStyle = toml::from_str("native_tape = true\n").unwrap();
+        assert!(!quiet.forward_book_preview, "a WIN look keeps the strip empty");
+        for averaging in [false, true] {
+            for explicit in [false, true] {
+                let text = format!(
+                    "depth_time_averaging = {averaging}\nforward_book_preview = {explicit}\n"
+                );
+                let style: LiveLaneStyle = toml::from_str(&text).unwrap();
+                assert_eq!(style.forward_book_preview, explicit, "{text}");
+                let again = toml::to_string(&style).unwrap();
+                assert_eq!(toml::from_str::<LiveLaneStyle>(&again).unwrap(), style);
+            }
+        }
+        let rewritten = toml::to_string(&old).unwrap();
+        assert!(!rewritten.contains("forward_book_preview"), "{rewritten}");
+        assert_eq!(toml::from_str::<LiveLaneStyle>(&rewritten).unwrap(), old);
+    }
 }

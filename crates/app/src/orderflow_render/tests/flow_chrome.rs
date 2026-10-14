@@ -189,6 +189,10 @@ fn quiet_narrow_tick_captions_stay_in_the_header_clear_of_candles_and_current_pr
                 .text
                 .contains("quantity in BTC; sphere area follows gross volume")
         );
+        assert!(
+            !text.galley.job.text.contains("offset"),
+            "tick spheres stand on their executions"
+        );
         assert_eq!(
             egui::Rect::from_min_size(text.pos, text.galley.size()),
             caption

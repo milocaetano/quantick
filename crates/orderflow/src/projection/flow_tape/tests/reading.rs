@@ -132,3 +132,13 @@ fn oversized_region_caption_remains_visible_and_separates_total_from_opening() {
     assert!(text.contains("first daily regions"));
     assert!(text.contains("area proportional"));
 }
+
+/// The caption says where its discs are drawn: regional FLOW keeps its
+/// offset from the candle, tick spheres stand on their executions.
+#[test]
+fn the_caption_says_where_the_discs_are_drawn() {
+    assert_eq!(placement_note(false), " \u{00b7} offset \u{2196}");
+    let spheres = placement_note(true);
+    assert!(!spheres.contains("offset"), "{spheres}");
+    assert!(spheres.contains("at executions"), "{spheres}");
+}
