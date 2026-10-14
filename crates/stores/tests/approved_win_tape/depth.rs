@@ -433,6 +433,12 @@ fn paint(frame: &VisibleOrderflow, config: &HeatmapConfig, canvas: &Canvas<'_>) 
         !style.live_lane.depth_time_averaging,
         "the approved WIN tape paints its book exact, never averaged"
     );
+    assert!(
+        !style.live_lane.forward_book_preview
+            && projection.current_book.is_none()
+            && projection.cells.iter().all(|cell| !cell.current_book),
+        "the approved WIN tape previews no current book"
+    );
     let Some(region) = layout.layer_clip(style.depth_layer, style.lane_depth_layer) else {
         out.push_str("depth off\n");
         return out;

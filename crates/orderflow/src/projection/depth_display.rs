@@ -12,6 +12,16 @@ pub fn current_book_preview(cell: &super::HeatmapCell, live: bool) -> bool {
     live && cell.current_book && !cell.time_averaged
 }
 
+/// Whether a pane previews its current book in the strip between the last
+/// candle and the tape: its lane asks for it
+/// ([`LiveLaneStyle::forward_book_preview`](crate::config::LiveLaneStyle::forward_book_preview))
+/// and the frame holds its book current (`live`). The `live` argument
+/// [`current_book_preview`] and [`depth_caption`] take.
+#[must_use]
+pub fn forward_book_preview(lane: &crate::config::LiveLaneStyle, live: bool) -> bool {
+    lane.forward_book_preview && live
+}
+
 pub fn depth_caption(cells: &[super::HeatmapCell], preview_visible: bool) -> Option<&'static str> {
     let averaged = cells.iter().any(|cell| cell.time_averaged);
     let preview = preview_visible && cells.iter().any(|cell| current_book_preview(cell, true));

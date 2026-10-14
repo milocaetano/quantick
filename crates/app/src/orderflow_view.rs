@@ -291,10 +291,15 @@ impl OrderflowView {
         };
         let layout = RenderContext::new(projection, layout, &style).layout;
         let preview = |cell: &quantick_orderflow::HeatmapCell| {
-            quantick_orderflow::projection::current_book_preview(cell, frame.current_book_live)
-                && layout
-                    .current_book_preview_rect(cell.y0, cell.y1)
-                    .contains(position)
+            quantick_orderflow::projection::current_book_preview(
+                cell,
+                quantick_orderflow::projection::forward_book_preview(
+                    &self.config.live_lane,
+                    frame.current_book_live,
+                ),
+            ) && layout
+                .current_book_preview_rect(cell.y0, cell.y1)
+                .contains(position)
         };
         let cell = projection.cells.iter().rev().find(|cell| {
             layout
@@ -1528,6 +1533,7 @@ mod tests {
                 show_aggressions: true,
                 native_tape: false,
                 depth_time_averaging: false,
+                forward_book_preview: false,
                 stable_size: false,
                 tape_only: false,
             },
@@ -1733,11 +1739,13 @@ mod tests {
 
     #[test]
     fn forward_current_book_preview_pointer_keeps_exact_quantity_and_orientation() {
-        // The strip previews the current book with depth averaging on or off.
+        // A lane that asks for it previews the current book in the strip,
+        // with depth averaging on or off.
         for (native, averaging) in [(false, true), (true, true), (false, false), (true, false)] {
             let mut view = OrderflowView::new("BTCUSDT");
             view.edit_config(|config| {
                 config.live_lane.depth_time_averaging = averaging;
+                config.live_lane.forward_book_preview = true;
                 config.live_lane.native_tape = native;
             });
 

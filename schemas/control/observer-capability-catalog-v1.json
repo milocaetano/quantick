@@ -13014,6 +13014,9 @@
           "depth_time_averaging": {
             "type": "boolean"
           },
+          "forward_book_preview": {
+            "type": "boolean"
+          },
           "native_tape": {
             "type": "boolean"
           },
@@ -13051,7 +13054,8 @@
           "native_tape_requested",
           "native_tape",
           "stable_size",
-          "depth_time_averaging"
+          "depth_time_averaging",
+          "forward_book_preview"
         ],
         "title": "ApplyResult",
         "type": "object"
@@ -19344,6 +19348,11 @@
               "floored_quantity": {
                 "$ref": "#/$defs/CanonicalDecimal",
                 "description": "The exact quantity the trader's own display floor keeps off the canvas.\nFloored, not dropped: it is still in the totals."
+              },
+              "forward_book_preview": {
+                "default": false,
+                "description": "The strip between the last candle and the tape previews the current\nbook, read exactly while it is current. The lane setting\n`forward_book_preview`, one of the asset's bubble settings.",
+                "type": "boolean"
               },
               "ignore_opening_burst_in_scale": {
                 "default": false,

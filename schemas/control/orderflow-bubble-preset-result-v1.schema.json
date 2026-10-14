@@ -88,6 +88,9 @@
     "depth_time_averaging": {
       "type": "boolean"
     },
+    "forward_book_preview": {
+      "type": "boolean"
+    },
     "native_tape": {
       "type": "boolean"
     },
@@ -125,7 +128,8 @@
     "native_tape_requested",
     "native_tape",
     "stable_size",
-    "depth_time_averaging"
+    "depth_time_averaging",
+    "forward_book_preview"
   ],
   "title": "ApplyResult",
   "type": "object"

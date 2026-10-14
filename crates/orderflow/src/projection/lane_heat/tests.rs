@@ -332,6 +332,8 @@ fn a_live_book_holds_one_alpha_between_publications() {
         let mut history = fixture();
         let mut config = history.config().clone();
         config.live_lane.depth_time_averaging = averaging;
+        // Without averaging only the forward preview reads the current book.
+        config.live_lane.forward_book_preview = true;
         config.max_visible_cells = 32;
         history.update_config(config).unwrap();
         history
@@ -442,14 +444,15 @@ fn the_current_row_sums_its_whole_top_bucket() {
     assert_eq!(lane.quantity, top.quantity, "the strip and the lane agree");
 }
 
-/// The strip between the last candle and the tape previews the current
-/// book with depth averaging off too. Its rows claim no lane time — the
-/// lane's own runs carry the book to the live edge — so they stand at the
-/// live edge, for the preview alone.
+/// On a lane that asks for the forward preview, the strip between the last
+/// candle and the tape previews the current book with depth averaging off
+/// too. Its rows claim no lane time — the lane's own runs carry the book to
+/// the live edge — so they stand at the live edge, for the preview alone.
 #[test]
 fn the_current_book_is_previewed_without_averaging() {
     let mut history = fixture();
     let mut config = history.config().clone();
+    config.live_lane.forward_book_preview = true;
     config.max_visible_cells = 32;
     history.update_config(config).unwrap();
     history

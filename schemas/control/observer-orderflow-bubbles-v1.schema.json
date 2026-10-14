@@ -90,6 +90,11 @@
           "$ref": "#/$defs/CanonicalDecimal",
           "description": "The exact quantity the trader's own display floor keeps off the canvas.\nFloored, not dropped: it is still in the totals."
         },
+        "forward_book_preview": {
+          "default": false,
+          "description": "The strip between the last candle and the tape previews the current\nbook, read exactly while it is current. The lane setting\n`forward_book_preview`, one of the asset's bubble settings.",
+          "type": "boolean"
+        },
         "ignore_opening_burst_in_scale": {
           "default": false,
           "description": "Exclude the first recorded 100 ms burst from automatic tape-only\nsizing; its factual volume is retained and its drawn radius capped.",

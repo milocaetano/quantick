@@ -400,6 +400,7 @@ opacity = 0.9
 [presets.live_lane]
 native_tape = true
 depth_time_averaging = true
+forward_book_preview = true
 stable_size = true
 [[presets]]
 name = "Binance BTC perpetual spheres"
@@ -447,4 +448,5 @@ opacity = 0.9
 [presets.live_lane]
 native_tape = true
 depth_time_averaging = true
+forward_book_preview = true
 stable_size = true

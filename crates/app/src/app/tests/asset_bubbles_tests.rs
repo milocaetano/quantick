@@ -158,6 +158,7 @@ fn only_win_and_declared_binance_btc_looks_open_with_native_tape() {
             assert_eq!(tape.volume_dots.enabled, btc, "{at} volume dot policy");
             if btc {
                 assert!(tape.live_lane.depth_time_averaging, "{at} averaged depth");
+                assert!(tape.live_lane.forward_book_preview, "{at} forward book");
                 assert!(tape.live_lane.stable_size, "{at} stable tape scale");
             }
             assert!(

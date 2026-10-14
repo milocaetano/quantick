@@ -501,6 +501,11 @@ mod tests {
                 "{}",
                 preset.name
             );
+            assert_eq!(
+                preset.live_lane.forward_book_preview, btc,
+                "{}",
+                preset.name
+            );
             if btc {
                 assert!(preset.live_lane.native_tape);
                 assert!(preset.overlap_merge);

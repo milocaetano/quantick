@@ -24,6 +24,7 @@ fn whole_presets_reapply_drift_and_are_authorized_retry_safe() {
         config.live_lane.native_tape = false;
         config.live_lane.stable_size = false;
         config.live_lane.depth_time_averaging = false;
+        config.live_lane.forward_book_preview = false;
     });
     let directory = gateway_test_directory("whole-preset");
     grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
@@ -61,6 +62,7 @@ fn whole_presets_reapply_drift_and_are_authorized_retry_safe() {
     assert_eq!(success_result(&first)["changed"], true);
     assert_eq!(success_result(&first)["stable_size"], true);
     assert_eq!(success_result(&first)["depth_time_averaging"], true);
+    assert_eq!(success_result(&first)["forward_book_preview"], true);
     assert_eq!(success_result(&first)["native_tape_requested"], true);
     // Drift after the first result proves the keyed retry does not execute again.
     app.active_tab_mut()

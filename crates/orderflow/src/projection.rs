@@ -17,7 +17,8 @@ mod candle_dots;
 mod constants;
 mod depth_display;
 pub use depth_display::{
-    GapMarks, current_book_preview, depth_caption, depth_cell_slots, gap_label, gap_marks_bounds,
+    GapMarks, current_book_preview, depth_caption, depth_cell_slots, forward_book_preview,
+    gap_label, gap_marks_bounds,
 };
 mod dots;
 pub mod flow_tape;

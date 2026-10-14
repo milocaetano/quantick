@@ -25,6 +25,10 @@ use quantick_orderflow::projection::marker_band;
 pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderContext<'_>) {
     let style = context.style.sanitized();
     let palette = super::palette_for_theme(style.theme);
+    let previews = quantick_orderflow::projection::forward_book_preview(
+        &style.live_lane,
+        context.current_book_live,
+    );
     // Each pane answers for its own canvas, and a run that crosses the divider
     // is cut at it rather than dropped.
     let Some(region) = context
@@ -71,7 +75,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         if in_lane {
             add_gradient_rect(&mut mesh, rect, fill, fill);
         }
-        if quantick_orderflow::projection::current_book_preview(cell, context.current_book_live) {
+        if quantick_orderflow::projection::current_book_preview(cell, previews) {
             let preview = context.layout.current_book_preview_rect(cell.y0, cell.y1);
             if preview.is_positive() && style.depth_layer {
                 add_gradient_rect(&mut mesh, preview, fill, fill);
@@ -87,7 +91,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         && let Some(caption) = quantick_orderflow::projection::depth_caption(
             &context.projection.cells,
             style.depth_layer
-                && context.current_book_live
+                && previews
                 && context
                     .layout
                     .current_book_preview_rect(0.0, 1.0)

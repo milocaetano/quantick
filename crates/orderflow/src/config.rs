@@ -868,6 +868,7 @@ mod tests {
                 show_aggressions: true,
                 native_tape: false,
                 depth_time_averaging: false,
+                forward_book_preview: false,
                 stable_size: false,
                 tape_only: false,
             },

@@ -410,6 +410,13 @@ pub struct LiveLaneStyle {
     /// Reduce dense historical depth into labelled duration-weighted cells.
     /// Current constant intervals remain exact. Off preserves legacy display.
     pub depth_time_averaging: bool,
+    /// The strip between the last candle and the tape previews the current
+    /// book, read exactly from the synchronized book while it is current.
+    /// Its own switch, independent of
+    /// [`depth_time_averaging`](Self::depth_time_averaging): off by default,
+    /// so a pane that never asked (the approved WIN tape) keeps that strip
+    /// empty.
+    pub forward_book_preview: bool,
     /// Keep the configured native radius instead of resizing settled marks
     /// for new collisions. Use with a pinned volume reference.
     pub stable_size: bool,
@@ -433,6 +440,7 @@ impl Default for LiveLaneStyle {
             show_aggressions: true,
             native_tape: false,
             depth_time_averaging: false,
+            forward_book_preview: false,
             stable_size: false,
             tape_only: false,
         }
@@ -476,6 +484,8 @@ struct LiveLaneStyleRepr {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     depth_time_averaging: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
+    forward_book_preview: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     stable_size: bool,
     /// Written only when on, like `native_tape`.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -510,6 +520,7 @@ impl From<LiveLaneStyleRepr> for LiveLaneStyle {
             show_aggressions: repr.show_aggressions.unwrap_or(true),
             native_tape: repr.native_tape,
             depth_time_averaging: repr.depth_time_averaging,
+            forward_book_preview: repr.forward_book_preview,
             stable_size: repr.stable_size,
             tape_only: repr.tape_only,
         }
@@ -537,6 +548,7 @@ impl From<LiveLaneStyle> for LiveLaneStyleRepr {
             show_aggressions: Some(style.show_aggressions),
             native_tape: style.native_tape,
             depth_time_averaging: style.depth_time_averaging,
+            forward_book_preview: style.forward_book_preview,
             stable_size: style.stable_size,
             tape_only: style.tape_only,
         }

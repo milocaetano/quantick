@@ -367,6 +367,11 @@ pub struct BubblesStateSnapshot {
     /// current constant intervals remain exact.
     #[serde(default)]
     pub depth_time_averaging: bool,
+    /// The strip between the last candle and the tape previews the current
+    /// book, read exactly while it is current. The lane setting
+    /// `forward_book_preview`, one of the asset's bubble settings.
+    #[serde(default)]
+    pub forward_book_preview: bool,
     /// Native dots keep the pinned area scale and configured radius.
     #[serde(default)]
     pub stable_size: bool,
@@ -478,6 +483,7 @@ impl BubblesStateSnapshot {
             overlap_merge: config.volume_dots.enabled,
             native_tape: config.native_tape(),
             depth_time_averaging: config.live_lane.depth_time_averaging,
+            forward_book_preview: config.live_lane.forward_book_preview,
             stable_size: config.live_lane.stable_size,
             tape_only: config.live_lane.tape_only,
             ignore_opening_burst_in_scale: config.volume_dots.ignore_opening_burst_in_scale,

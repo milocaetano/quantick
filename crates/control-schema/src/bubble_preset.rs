@@ -30,6 +30,7 @@ pub struct ApplyResult {
     pub native_tape: bool,
     pub stable_size: bool,
     pub depth_time_averaging: bool,
+    pub forward_book_preview: bool,
     pub tick_bubbles: Option<crate::tick_bubbles::TickBubblesSnapshot>,
     pub asset: Option<crate::orderflow::BubbleAssetSnapshot>,
 }
@@ -111,6 +112,7 @@ pub fn applied(
         native_tape: snapshot.native_tape,
         stable_size: snapshot.stable_size,
         depth_time_averaging: snapshot.depth_time_averaging,
+        forward_book_preview: snapshot.forward_book_preview,
         tick_bubbles: snapshot.tick_bubbles,
         asset: snapshot.asset,
     }

@@ -265,9 +265,11 @@ pub(super) fn project_lane_heat_folded(
     // With averaging they fill the lane from the confirmation to the live
     // edge, where the averaged runs stop; without it the lane's own runs
     // carry the book there, so the rows claim no lane time and stand at the
-    // edge for the preview alone. Either way the strip between the last
-    // candle and the tape previews them, and they are never carried.
-    let source = current_source(history, lane_end_ms);
+    // edge for the forward preview alone, and only a lane that asks for that
+    // preview reads them. They are never carried.
+    let source = (averaging || config.live_lane.forward_book_preview)
+        .then(|| current_source(history, lane_end_ms))
+        .flatten();
     if let Some((generation, source)) = source
         && let Some(x1) = x(lane_end_ms)
         && let Some(x0) = if averaging {
