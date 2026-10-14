@@ -294,3 +294,183 @@ fn a_gap_is_never_carried_across() {
         assert!(frame.heat_end_x < frame.edge_x - EPSILON, "frame {index}");
     }
 }
+
+/// The live book's cost on one fixed scenario, for the performance gate: a
+/// BTC-shaped book (80 levels a side on its 1 USD capture grid, 40 of them
+/// changing every 100 ms, five minutes recorded), depth time-averaging on, a two-minute
+/// lane, the book stamped 5 ms ahead of the trade-anchored clock, a request
+/// and a pane frame every 16 ms for ten seconds. Prints the worker's Project
+/// cost per request and the pane's per-frame book work. Ignored: a
+/// measurement, not an assertion.
+#[test]
+#[ignore]
+fn bench_the_live_book_on_the_worker_and_the_render_thread() {
+    const SYMBOL: &str = "BTCUSDT";
+    const LEVELS: i64 = 80;
+    const CHANGES: i64 = 40;
+    const BEAT_MS: i64 = 100;
+    const PRINT_EVERY_MS: i64 = 500;
+    const LANE_MS: i64 = 120_000;
+    const BAR_MS: i64 = 15_000;
+    const AHEAD_MS: i64 = 5;
+    const RECORDED_MS: i64 = 300_000;
+    const FRAMES: i64 = 600;
+    let tick = Decimal::new(1, 1);
+    let spacing = Decimal::ONE;
+    let mid = Decimal::from(60_000);
+    let mut config = HeatmapConfig {
+        price_grouping: tick,
+        show_depth: true,
+        ..config()
+    };
+    config.live_lane.window = crate::LaneWindow::Fixed { ms: LANE_MS };
+    config.live_lane.depth_time_averaging = true;
+    let price = |bid: bool, index: i64| {
+        if bid {
+            mid - spacing * Decimal::from(index + 1)
+        } else {
+            mid + spacing * Decimal::from(index)
+        }
+    };
+    // Every touch moves a level past the capture's churn band, so each beat
+    // cuts a run per touched level, as a busy BTC book does.
+    let quantity = |bid: bool, index: i64, high: bool| {
+        Decimal::new(
+            10 + i64::from(high) * 40 + (index * 13 + i64::from(bid) * 5) % 7,
+            1,
+        )
+    };
+    let mut engine = BookEngine::new(SYMBOL);
+    engine.set_enabled(true, GENERATION);
+    engine.apply_visual_config(config.clone());
+    let side = |bid: bool, step: i64| -> Vec<BookLevel> {
+        (0..LEVELS)
+            .map(|index| BookLevel::new(price(bid, index), quantity(bid, index, step > 0)).unwrap())
+            .collect()
+    };
+    engine.handle_depth_event(DepthEvent::Snapshot {
+        symbol: SYMBOL.to_owned(),
+        generation: GENERATION,
+        observed_at_ms: 0,
+        effective_at_ms: 0,
+        price_step: Some(tick),
+        snapshot: BookSnapshot::new(
+            1,
+            side(true, 0),
+            side(false, 0),
+            BookCoverage::Limited {
+                levels_per_side: LEVELS as usize,
+            },
+        ),
+    });
+    let mut high = vec![false; 2 * LEVELS as usize];
+    let mut beat = |engine: &mut BookEngine, step: i64| {
+        let (mut bids, mut asks) = (Vec::new(), Vec::new());
+        for change in 0..CHANGES {
+            let (bid, index) = (change % 2 == 0, (step * 3 + change) % LEVELS);
+            let toggle = &mut high[usize::try_from(index + i64::from(bid) * LEVELS).unwrap()];
+            *toggle = !*toggle;
+            let level = BookLevel::new(price(bid, index), quantity(bid, index, *toggle)).unwrap();
+            if bid {
+                bids.push(level)
+            } else {
+                asks.push(level)
+            }
+        }
+        let id = u64::try_from(step + 1).unwrap();
+        engine.handle_depth_event(DepthEvent::Update {
+            symbol: SYMBOL.to_owned(),
+            generation: GENERATION,
+            event_time_ms: step * BEAT_MS,
+            delta: BookDelta::new(id, id, bids, asks),
+        });
+        if (step * BEAT_MS) % PRINT_EVERY_MS == 0 {
+            engine.record_trade(&Trade {
+                agg_id: u64::try_from(step).unwrap(),
+                timestamp_ms: step * BEAT_MS - AHEAD_MS,
+                price: mid,
+                quantity: Decimal::new(1, 2),
+                side: if step % 2 == 0 { Side::Buy } else { Side::Sell },
+            });
+        }
+    };
+    let mut step = 1;
+    while step * BEAT_MS <= RECORDED_MS {
+        beat(&mut engine, step);
+        step += 1;
+    }
+    let bar = |open_time: i64, close_time: i64| Bar {
+        open_time,
+        close_time,
+        open: mid,
+        high: mid + Decimal::ONE,
+        low: mid - Decimal::ONE,
+        close: mid,
+        buy_volume: Decimal::ONE,
+        sell_volume: Decimal::ONE,
+        trade_count: 2,
+    };
+    let closed: Vec<Bar> = (0..RECORDED_MS / BAR_MS)
+        .map(|index| bar(index * BAR_MS, (index + 1) * BAR_MS - 1))
+        .collect();
+    let mut pane = crate::pane_tape::PaneTape::default();
+    let started = Instant::now();
+    let (mut worker, mut render) = (Duration::ZERO, Duration::ZERO);
+    let mut live_ms = 0.0_f64;
+    let (mut copies, mut cells, mut averaged) = (0, 0, 0);
+    for frame in 0..FRAMES {
+        let now_ms = RECORDED_MS + frame * FRAME_MS;
+        while step * BEAT_MS <= now_ms + AHEAD_MS {
+            beat(&mut engine, step);
+            step += 1;
+        }
+        let request = ProjectionRequest {
+            timeline_revision: 1,
+            first_bar_index: 0,
+            closed: closed.clone(),
+            partial: Some(bar(RECORDED_MS, now_ms)),
+            lane: true,
+            on_newest_bar: true,
+            lane_reference_ms: Some(BAR_MS),
+            lane_now_ms: Some(now_ms),
+            price_range: (59_900.0, 60_100.0),
+            dot_zoom: Some(DotZoom {
+                native_tape: true,
+                tape_window_ms: 100,
+                tape_level_ticks: 1,
+                candle_level_ticks: 1,
+                lane_bars: vec![(RECORDED_MS, now_ms)],
+            }),
+        };
+        let cache_now = started + Duration::from_millis(u64::try_from(frame * FRAME_MS).unwrap());
+        let began = Instant::now();
+        let published = engine
+            .project_at(&request, cache_now)
+            .expect("the lane projects");
+        worker += began.elapsed();
+        live_ms += f64::from(engine.last_live_ms);
+        let began = Instant::now();
+        let shown = pane
+            .complete_frame(&config, &request, Some(&published))
+            .expect("the pane draws");
+        render += began.elapsed();
+        copies += usize::from(!Arc::ptr_eq(&shown, &published));
+        cells = published.projection.cells.len();
+        averaged = published
+            .projection
+            .cells
+            .iter()
+            .filter(|cell| cell.time_averaged)
+            .count();
+    }
+    let frames = u32::try_from(FRAMES).unwrap();
+    eprintln!(
+        "BENCH live_book worker_ms_per_request={:.3} live_half_ms_per_request={:.3} \
+         render_us_per_frame={:.2} cells={cells} averaged={averaged} copied_frames={copies} \
+         runs={}",
+        worker.as_secs_f64() * 1000.0 / f64::from(frames),
+        live_ms / f64::from(frames),
+        render.as_secs_f64() * 1_000_000.0 / f64::from(frames),
+        engine.history.archived_run_count(),
+    );
+}
