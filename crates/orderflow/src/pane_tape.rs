@@ -36,6 +36,8 @@ pub struct PendingPrint {
 #[derive(Default)]
 pub struct PaneTape {
     clock: TapeClock,
+    /// Preview freshness follows source time independently of lane geometry.
+    depth_clock: TapeClock,
     pending: PendingTape,
     /// The overlay frame last completed, while unpublished prints are drawn.
     frame: Option<Arc<VisibleOrderflow>>,
@@ -58,6 +60,7 @@ impl PaneTape {
     /// Advance a live tape by the host's monotonic instant; a pane without
     /// a native tape keeps no clock.
     pub fn follow_live(&mut self, native_tape: bool, applied_ms: Option<i64>, monotonic_ms: u64) {
+        self.depth_clock.live_at(applied_ms, monotonic_ms);
         if native_tape {
             self.clock.live_at(applied_ms, monotonic_ms);
         } else {
@@ -75,6 +78,8 @@ impl PaneTape {
         applied_ms: Option<i64>,
         next_unapplied_ms: Option<i64>,
     ) {
+        self.depth_clock
+            .replay_at(position_ms, applied_ms, next_unapplied_ms);
         if native_tape {
             self.clock
                 .replay_at(position_ms, applied_ms, next_unapplied_ms);
@@ -86,6 +91,7 @@ impl PaneTape {
     /// Another market: the clock starts over without an old anchor.
     pub fn reset_clock(&mut self) {
         self.clock.reset();
+        self.depth_clock.reset();
     }
 
     /// The prints the worker has not published yet.
@@ -142,7 +148,7 @@ impl PaneTape {
     ) -> Option<Arc<VisibleOrderflow>> {
         let published = self.depth.consume(
             published,
-            request.lane_now_ms.or_else(|| self.clock.now_ms()),
+            request.lane_now_ms.or_else(|| self.depth_clock.now_ms()),
         );
         if !config.immediate_tape() || self.pending.is_empty() {
             self.frame = None;

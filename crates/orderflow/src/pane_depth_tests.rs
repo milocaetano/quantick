@@ -13,7 +13,7 @@ use crate::projection::{
 };
 use crate::{BarTimeline, HeatmapConfig, LiquidityHistory, LiveEdge, PriceWindow};
 
-fn fixture() -> (HeatmapConfig, LiquidityHistory, ProjectionRequest) {
+fn fixture(native: bool) -> (HeatmapConfig, LiquidityHistory, ProjectionRequest) {
     let mut config = HeatmapConfig {
         enabled: true,
         price_grouping: Decimal::ONE,
@@ -21,7 +21,7 @@ fn fixture() -> (HeatmapConfig, LiquidityHistory, ProjectionRequest) {
     };
     config.live_lane.enabled = true;
     config.live_lane.depth_time_averaging = true;
-    config.live_lane.native_tape = true;
+    config.live_lane.native_tape = native;
     config.volume_dots.enabled = true;
     let level = |price| BookLevel::new(price, Decimal::ONE).unwrap();
     let mut history = LiquidityHistory::new(config.clone());
@@ -62,7 +62,7 @@ fn fixture() -> (HeatmapConfig, LiquidityHistory, ProjectionRequest) {
         lane_now_ms: Some(1_000),
         price_range: (94.0, 102.0),
         dot_zoom: Some(crate::projection::DotZoom {
-            native_tape: true,
+            native_tape: native,
             tape_window_ms: crate::projection::DOT_WINDOW_LADDER_MS[0],
             tape_level_ticks: 1,
             candle_level_ticks: 1,
@@ -90,18 +90,20 @@ fn publish(history: &LiquidityHistory, request: &ProjectionRequest) -> Arc<Visib
     let settled = project_settled(history, &timeline, prices, Some(&dots));
     let live = project_live(history, &timeline, prices, &settled, Some(&dots));
     let mut projection = settled.with_live(live, history.config());
-    crate::projection::seal_tape(
-        Arc::make_mut(projection.tape_facts.as_mut().unwrap()),
-        None,
-        crate::projection::SealInputs {
-            revision: 1,
-            window_ms: dots.tape_window_ms,
-            native_width: Decimal::ONE,
-            seal_from_ms: Some(900),
-            lane_from_ms: timeline.lane_start_ms(),
-            recorded: 0,
-        },
-    );
+    if let Some(facts) = projection.tape_facts.as_mut() {
+        crate::projection::seal_tape(
+            Arc::make_mut(facts),
+            None,
+            crate::projection::SealInputs {
+                revision: 1,
+                window_ms: dots.tape_window_ms,
+                native_width: Decimal::ONE,
+                seal_from_ms: Some(900),
+                lane_from_ms: timeline.lane_start_ms(),
+                recorded: 0,
+            },
+        );
+    }
     Arc::new(VisibleOrderflow {
         projection: Arc::new(projection),
         first_bar_index: 0,
@@ -115,7 +117,7 @@ fn publish(history: &LiquidityHistory, request: &ProjectionRequest) -> Arc<Visib
 #[test]
 fn delayed_publication_expires_shared_preview_policy_at_market_clock_boundary() {
     for pending in [false, true] {
-        let (config, history, mut request) = fixture();
+        let (config, history, mut request) = fixture(true);
         let published = publish(&history, &request);
         let mut pane = PaneTape::default();
         if pending {
@@ -221,7 +223,7 @@ fn delayed_publication_expires_shared_preview_policy_at_market_clock_boundary() 
 
 #[test]
 fn gap_publication_replaces_cached_preview_without_relabelling_its_source() {
-    let (config, mut history, mut request) = fixture();
+    let (config, mut history, mut request) = fixture(true);
     let published = publish(&history, &request);
     let mut pane = PaneTape::default();
     assert!(
@@ -250,7 +252,7 @@ fn gap_publication_replaces_cached_preview_without_relabelling_its_source() {
 
 #[test]
 fn supplied_monotonic_clock_expires_and_reuses_the_cached_read_model() {
-    let (config, history, mut request) = fixture();
+    let (config, history, mut request) = fixture(true);
     let published = publish(&history, &request);
     let mut pane = PaneTape::default();
     request.lane_now_ms = None;
@@ -281,4 +283,113 @@ fn supplied_monotonic_clock_expires_and_reuses_the_cached_read_model() {
             .any(|cell| cell.current_book),
         "the worker publication stays immutable"
     );
+}
+
+#[test]
+fn ordinary_preview_expires_on_market_and_elapsed_time_without_moving_lane_geometry() {
+    for pending in [false, true] {
+        let (config, history, mut request) = fixture(false);
+        request.lane_now_ms = None;
+        request.dot_zoom.as_mut().unwrap().native_tape = false;
+        let published = publish(&history, &request);
+        let mut pane = PaneTape::default();
+        if pending {
+            pane.record(
+                &quantick_engine::Trade {
+                    agg_id: 1,
+                    timestamp_ms: 1_000,
+                    price: 100.into(),
+                    quantity: Decimal::ONE,
+                    side: quantick_engine::Side::Buy,
+                },
+                &config,
+            );
+        }
+        for (applied, monotonic, fresh) in [
+            (1_000, 10_000, true),
+            (1_000, 10_400, true),
+            (1_000, 10_401, false),
+            (2_000, 10_401, false),
+        ] {
+            request.closed[0].close_time = applied;
+            pane.follow_live(false, Some(applied), monotonic);
+            assert_eq!(pane.lane_now_ms(false), None);
+            let frame = pane
+                .complete_frame(&config, &request, Some(&published))
+                .unwrap();
+            assert_eq!(
+                frame
+                    .projection
+                    .cells
+                    .iter()
+                    .any(|cell| current_book_preview(cell, true)),
+                fresh
+            );
+            for original in published.projection.cells.iter() {
+                let cell = frame
+                    .projection
+                    .cells
+                    .iter()
+                    .find(|cell| {
+                        cell.price_bucket == original.price_bucket
+                            && cell.x0 == original.x0
+                            && cell.x1 == original.x1
+                            && cell.current_book_source == original.current_book_source
+                    })
+                    .unwrap();
+                let mut expected = original.clone();
+                if !fresh {
+                    expected.current_book = false;
+                }
+                assert_eq!(cell, &expected, "only current eligibility changes");
+            }
+            let again = pane
+                .complete_frame(&config, &request, Some(&published))
+                .unwrap();
+            assert!(
+                Arc::ptr_eq(&frame, &again),
+                "ordinary cached frames are reused"
+            );
+        }
+    }
+}
+
+#[test]
+fn ordinary_preview_replay_clamps_rewinds_and_resets_source_clock() {
+    let (config, history, mut request) = fixture(false);
+    request.lane_now_ms = None;
+    let published = publish(&history, &request);
+    let mut pane = PaneTape::default();
+    for (position, applied, next, fresh) in [
+        (2_000, 1_000, Some(1_400), true),
+        (2_000, 1_000, Some(1_401), false),
+        (1_400, 1_000, None, true),
+        (1_000, 2_000, None, false),
+    ] {
+        pane.follow_replay(false, position, Some(applied), next);
+        assert_eq!(pane.lane_now_ms(false), None);
+        let frame = pane
+            .complete_frame(&config, &request, Some(&published))
+            .unwrap();
+        assert_eq!(
+            frame.projection.cells.iter().any(|cell| cell.current_book),
+            fresh
+        );
+    }
+    pane.reset_clock();
+    pane.follow_live(false, Some(1_000), 50_000);
+    assert!(Arc::ptr_eq(
+        &published,
+        &pane
+            .complete_frame(&config, &request, Some(&published))
+            .unwrap()
+    ));
+    pane.follow_live(false, None, 60_000);
+    pane.follow_live(false, Some(1_000), 70_000);
+    assert!(Arc::ptr_eq(
+        &published,
+        &pane
+            .complete_frame(&config, &request, Some(&published))
+            .unwrap()
+    ));
 }
