@@ -138,6 +138,7 @@ fn key(frame: &Arc<FlowTapeFrame>) -> Key<'_> {
         clip: history(),
         backing: Some(egui::Color32::from_rgb(19, 23, 34)),
         tick_bubbles: None,
+        theme: quantick_orderflow::HeatmapTheme::default(),
         background: crate::theme::CANVAS,
     }
 }
@@ -180,6 +181,7 @@ fn paint_at_density(
             key.background,
             key.backing,
             key.tick_bubbles,
+            key.theme,
         );
         drawing.paint(&painter, history(), false);
         drawing.paint(&painter, history(), true);
@@ -250,6 +252,31 @@ fn tick_sphere_appearance_invalidates_cached_mesh_without_changing_facts() {
     changed.tick_bubbles.as_mut().unwrap().opacity = 0.5;
     let (faded, _) = paint(&ctx, changed);
     assert!(!Arc::ptr_eq(&sphere, &faded));
+}
+
+/// Review #12: tick spheres wear the pane's theme, never the default one,
+/// and a theme change rebuilds the cached mesh.
+#[test]
+fn tick_spheres_follow_the_pane_theme() {
+    let frame = frame();
+    let ctx = egui::Context::default();
+    let mut bookmap = key(&frame);
+    bookmap.tick_bubbles = Some(quantick_orderflow::TickBubbleStyle {
+        reference_quantity: 10.0,
+        max_radius: 36.0,
+        label_min_radius: 8.0,
+        opacity: 1.0,
+    });
+    let blind = Key {
+        theme: quantick_orderflow::HeatmapTheme::ColorBlind,
+        ..bookmap
+    };
+    let (default_entry, default_shapes) = paint(&ctx, bookmap);
+    let (blind_entry, blind_shapes) = paint(&ctx, blind);
+    assert!(!Arc::ptr_eq(&default_entry, &blind_entry));
+    assert_ne!(default_shapes, blind_shapes, "the sphere fills follow the theme");
+    let (warm, _) = paint(&ctx, blind);
+    assert!(Arc::ptr_eq(&blind_entry, &warm));
 }
 
 #[test]

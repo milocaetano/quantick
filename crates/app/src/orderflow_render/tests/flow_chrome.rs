@@ -259,3 +259,42 @@ fn tick_chrome_omits_a_blocked_l2_key_and_an_incomplete_caption() {
             .all(|shape| !matches!(&shape.shape, egui::Shape::Text(_)))
     );
 }
+
+/// Review #12: the tick caption's Buy and Sell keys wear the pane's theme.
+#[test]
+fn the_tick_caption_key_follows_the_pane_theme() {
+    let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480.0, 400.0));
+    let theme = quantick_orderflow::HeatmapTheme::ColorBlind;
+    let ctx = egui::Context::default();
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        flow_caption(
+            &ctx.layer_painter(egui::LayerId::background()),
+            area,
+            LEGEND_HEADER_CLEARANCE_PX,
+            None,
+            quantick_orderflow::projection::flow_tape::FlowProgress::default(),
+            true,
+            Some(&[]),
+            theme,
+        );
+    });
+    let palette = crate::orderflow_render::palette_for_theme(theme);
+    let job = output
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) if text.galley.job.text.contains("FLOW") => {
+                Some(text.galley.job.clone())
+            }
+            _ => None,
+        })
+        .expect("the caption is painted");
+    let colour_of = |word: &str| {
+        job.sections
+            .iter()
+            .find(|section| &job.text[section.byte_range.clone()] == word)
+            .map(|section| section.format.color)
+    };
+    assert_eq!(colour_of("Buy"), Some(palette.buy));
+    assert_eq!(colour_of("Sell"), Some(palette.sell));
+}
