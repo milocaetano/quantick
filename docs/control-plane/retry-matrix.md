@@ -112,10 +112,10 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 
 | Enforced | Capabilities |
 | --- | --- |
-| deduplicated per connection | 33 |
+| deduplicated per connection | 34 |
 | key refused; not retryable, read back | 17 |
 | refused before dispatch: no grant reaches it | 7 |
-| **Total** | **57** |
+| **Total** | **58** |
 
 ## Capabilities
 
@@ -166,6 +166,7 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `notify.popup` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `notify.raised` | `payload.message` | an event after the pre-call cursor carries the call's own `message`; send one unique to the call | `an_interrupted_notification_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `notify.sound` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `notify.raised` | `payload.message` | an event after the pre-call cursor carries the call's own `message`; send one unique to the call | `an_interrupted_notification_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
 | `notify.toast` | 1 | forbidden | key refused; not retryable, read back | `annotator` | `events.read` `notify.raised` | `payload.message` | an event after the pre-call cursor carries the call's own `message`; send one unique to the call | `an_interrupted_notification_is_resolved_by_its_readback`, `every_reachable_forbidden_row_refuses_a_key_before_the_application` |
+| `orderflow.bubbles.preset.apply` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.bubbles` | `tabs[].panes[].bubbles.preset` | the addressed pane reports the selected whole look and effective tape policy after application | `whole_presets_reapply_drift_and_are_authorized_retry_safe`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `orderflow.bubbles.save_changes.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.bubbles` | `tabs[].panes[].bubbles.asset.save_changes` | the addressed pane's asset reports the requested switch | `save_changes_is_the_assets_permission_checked_retry_safe_and_read_back`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `orderflow.bubbles.tick.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.bubbles` | `tabs[].panes[].bubbles.tick_bubbles` | the addressed pane reports the selected tick sphere calibration independently of the tape | `tick_spheres_are_scoped_retry_safe_and_preserve_tape_settings`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
 | `orderflow.tape.opening_scale.set` | 1 | optional | deduplicated per connection | `cockpit` | `snapshot.read` `orderflow.bubbles` | `tabs[].panes[].opening_scale` | the addressed pane reports independent tape and candle opening-burst scaling preferences | `opening_scale_is_default_off_named_permission_checked_and_read_back`, `flow_opening_scale_is_independent_retry_safe_and_refuses_context`, `every_reachable_optional_row_replays_a_dropped_answer_and_begins_once` |
@@ -179,4 +180,4 @@ key and lost-reply proofs live in `crates/mcp/tests/fake_gateway.rs`.
 | `trade.ruler.set` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].ruler_ticks` | the ruler stands at the distance the call answered with | `a_dropped_trade_shaping_answer_is_replayed_and_the_ticket_changes_once`, `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 | `trade.strategy.select` | 1 | optional | refused before dispatch: no grant reaches it | none (`trader` ceiling) | `snapshot.read` `session.paper` (also needs `observe.paper`) | `tabs[].armed_strategy` | the ticket is armed with the strategy asked for | `no_production_grant_reaches_a_trade_capability_keyed_or_not` |
 
-57 mutable capabilities registered, 57 with a readback.
+58 mutable capabilities registered, 58 with a readback.

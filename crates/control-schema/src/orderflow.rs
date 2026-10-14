@@ -321,6 +321,9 @@ pub struct PaneBubblesSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BubblesStateSnapshot {
+    /// Whole-look selection, including unbound views; empty after defaults.
+    #[serde(default)]
+    pub preset: String,
     #[serde(default)]
     pub tick_bubbles: Option<crate::tick_bubbles::TickBubblesSnapshot>,
     /// Chart-only presets available for this asset.
@@ -466,6 +469,7 @@ impl BubblesStateSnapshot {
     ) -> Self {
         Self {
             tick_bubbles: config.volume_dots.tick_bubbles.map(Into::into),
+            preset: String::new(),
             tick_presets,
             enabled: config.show_aggressions,
             lane_enabled: config.lane_aggressions_visible(),

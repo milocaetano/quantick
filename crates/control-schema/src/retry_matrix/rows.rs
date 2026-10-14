@@ -24,6 +24,7 @@ pub const FAMILIES: &[&[Readback]] = &[
     notify::READBACKS,
     crate::opening_scale::READBACKS,
     crate::tick_bubbles::READBACKS,
+    crate::bubble_preset::READBACKS,
     crate::price_axis::READBACKS,
     crate::tape_view::READBACKS,
     crate::time_axis::READBACKS,

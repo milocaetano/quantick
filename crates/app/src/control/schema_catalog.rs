@@ -43,7 +43,7 @@ pub(crate) struct SchemaDocument {
 }
 
 pub(crate) fn documents() -> Vec<SchemaDocument> {
-    vec![
+    let mut documents = vec![
         document::<EmptyInput>("observer-empty-input-v1.schema.json"),
         document::<SnapshotReadInput>("observer-snapshot-read-input-v1.schema.json"),
         document::<ChartWindowInput>("observer-chart-window-input-v1.schema.json"),
@@ -97,12 +97,6 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<quantick_control_schema::opening_scale::OpeningScaleResult>(
             "orderflow-opening-scale-result-v1.schema.json",
         ),
-        document::<quantick_control_schema::tick_bubbles::TickBubblesInput>(
-            "orderflow-tick-bubbles-input-v1.schema.json",
-        ),
-        document::<quantick_control_schema::tick_bubbles::TickBubblesResult>(
-            "orderflow-tick-bubbles-result-v1.schema.json",
-        ),
         document::<quantick_control_schema::history::HistoryLoadInput>(
             "feed-history-load-input-v1.schema.json",
         ),
@@ -120,12 +114,6 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         ),
         document::<quantick_control_schema::history::HistoryCancelResult>(
             "feed-history-cancel-result-v1.schema.json",
-        ),
-        document::<quantick_control_schema::bubble_save::SaveChangesInput>(
-            "orderflow-bubbles-save-changes-input-v1.schema.json",
-        ),
-        document::<quantick_control_schema::bubble_save::SaveChangesResult>(
-            "orderflow-bubbles-save-changes-result-v1.schema.json",
         ),
         document::<HeatmapSnapshot>("observer-orderflow-heatmap-v1.schema.json"),
         document::<L2Snapshot>("observer-orderflow-l2-v1.schema.json"),
@@ -173,7 +161,13 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<LayersSnapshot>("observer-layers-visibility-v1.schema.json"),
         document::<SetVisibilityInput>("layers-visibility-set-input-v1.schema.json"),
         document::<VisibilityResult>("layers-visibility-set-result-v1.schema.json"),
-    ]
+    ];
+    documents.extend(
+        quantick_control_schema::bubble_preset::documents()
+            .into_iter()
+            .map(|(file_name, schema)| SchemaDocument { file_name, schema }),
+    );
+    documents
 }
 
 pub(crate) fn capability_catalog() -> Value {

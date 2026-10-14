@@ -186,18 +186,12 @@ impl OrderflowView {
     pub(crate) fn bubbles_snapshot(
         &self,
     ) -> quantick_control_schema::orderflow::BubblesStateSnapshot {
-        quantick_control_schema::orderflow::BubblesStateSnapshot::from_config(
+        quantick_control_schema::bubble_preset::snapshot(
             self.cached_config(),
             self.cached_health().floored_quantity,
             self.dot_scale(),
             &self.recorded_opening_bursts(),
-            self.look.asset().map(|binding| {
-                quantick_control_schema::orderflow::BubbleAssetSnapshot::of(
-                    binding,
-                    self.look.look_name(),
-                )
-            }),
-            self.look.tick_presets(),
+            &self.look,
         )
     }
 
@@ -1100,6 +1094,22 @@ impl OrderflowView {
     /// ([`BubbleLook::apply_preset`]).
     pub(crate) fn apply_preset(&mut self, name: &str) -> bool {
         self.look.apply_preset(name, &mut self.config)
+    }
+
+    pub(crate) fn apply_named_preset(&mut self, name: &str) -> Result<bool, String> {
+        let before = self.config.clone();
+        let changed = self.look.apply_named_preset(name, &mut self.config)?;
+        if changed {
+            self.commit_config_changes(before);
+        }
+        Ok(changed)
+    }
+
+    pub(crate) fn bubble_presets_page(
+        &self,
+        input: &quantick_control_schema::bubble_preset::ListInput,
+    ) -> Result<quantick_control_schema::bubble_preset::ListResult, String> {
+        quantick_control_schema::bubble_preset::page(input, &self.look)
     }
 
     /// Put `settings` on screen as the asset `binding` names. The flow

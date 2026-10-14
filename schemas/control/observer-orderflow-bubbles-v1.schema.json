@@ -109,6 +109,11 @@
           "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nOn the native tape, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Explicit display changes\nstart a new grouping. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
           "type": "boolean"
         },
+        "preset": {
+          "default": "",
+          "description": "Whole-look selection, including unbound views; empty after defaults.",
+          "type": "string"
+        },
         "recorded_opening_windows_ms": {
           "default": [],
           "description": "First recorded native window of each retained UTC day. For daytime\nWIN sessions, this identifies the first available burst, not a proven\nexchange auction. Empty until executions have been observed.",

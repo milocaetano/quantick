@@ -1,0 +1,53 @@
+{
+  "$defs": {
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "names": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "next_offset": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireU64"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "preset": {
+      "type": "string"
+    },
+    "revision": {
+      "type": "string"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "total": {
+      "$ref": "#/$defs/WireU64"
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "preset",
+    "names",
+    "total",
+    "revision"
+  ],
+  "title": "ListResult",
+  "type": "object"
+}

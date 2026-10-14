@@ -12883,6 +12883,327 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Applies or reapplies an exact named whole look through the Bubbles picker owner. Discover names with orderflow.bubbles.presets.list. Preset tape navigation and appearance are applied; layer visibility is preserved. Changes follow the asset save switch, including session-only changes when off. Read selection and effective policies in orderflow.bubbles; tick-only selection remains independent.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.bubbles.preset.apply",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "preset": {
+            "description": "Exact name returned by orderflow.bubbles.presets.list.",
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "preset"
+        ],
+        "title": "ApplyInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "BubbleAssetSnapshot": {
+            "description": "The asset a pane's bubble settings belong to.",
+            "properties": {
+              "key": {
+                "description": "The asset's key: the feed config's `symbol_bubble_presets` key that\nnames the symbol (`WIN*` covers every mini index contract), or the\nsymbol itself.",
+                "type": "string"
+              },
+              "preset": {
+                "description": "The preset the look on screen started from; empty once the panel's\ndefaults replaced it.",
+                "type": "string"
+              },
+              "save_changes": {
+                "default": true,
+                "description": "The asset's \"Save changes for this asset\" (default on), the same in\nevery tab on it; `orderflow.bubbles.save_changes.set` switches it.\nOff, a change stays on the pane it was made on for this session — not\nstored, not shown in other tabs on the asset, which show the stored\nsettings — and `saved` is `false` while one is on screen. Switched on\nagain, the switching pane's settings are stored for the asset, unless\nits stored settings changed since that pane last showed them: then\nthe pane wears those instead (the action's result `screen` says\nwhich).",
+                "type": "boolean"
+              },
+              "save_error": {
+                "default": null,
+                "description": "Why they are not saved; absent when they are.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "saved": {
+                "description": "Whether the store file holds the settings this pane shows. `false`\nuntil the next frame writes a change, while the file cannot be read\nor written — they are kept in memory, retried, for this run only —\nand while saving is off and a change is on screen.",
+                "type": "boolean"
+              },
+              "source": {
+                "description": "Where the settings came from: `stored` (changed for this asset; see\n`saved`), `declared` (the preset the feed config declares) or\n`default` (the presets file's active look).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "source",
+              "preset",
+              "saved"
+            ],
+            "type": "object"
+          },
+          "TickBubblesSnapshot": {
+            "properties": {
+              "label_min_radius": {
+                "type": "string"
+              },
+              "max_radius": {
+                "type": "string"
+              },
+              "opacity": {
+                "type": "string"
+              },
+              "reference_quantity": {
+                "description": "Instrument quantity at max_radius. Larger visible groups increase the\ncommon reference uniformly, so all areas remain proportional.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "reference_quantity",
+              "max_radius",
+              "label_min_radius",
+              "opacity"
+            ],
+            "type": "object"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "asset": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BubbleAssetSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "changed": {
+            "type": "boolean"
+          },
+          "depth_time_averaging": {
+            "type": "boolean"
+          },
+          "native_tape": {
+            "type": "boolean"
+          },
+          "native_tape_requested": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "preset": {
+            "type": "string"
+          },
+          "stable_size": {
+            "type": "boolean"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "tick_bubbles": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/TickBubblesSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "changed",
+          "preset",
+          "native_tape_requested",
+          "native_tape",
+          "stable_size",
+          "depth_time_averaging"
+        ],
+        "title": "ApplyResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab/pane IDs and exact preset names are checked before mutation. Same-name drift is corrected; identical selection and configuration are a no-op. Keyed retries replay the first answer.",
+      "title": "Apply whole bubble preset",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
+      "description": "Lists 1..64 exact whole-look names in picker order for a pane, with selected name, total and next_offset. Offset starts at zero. Reloading presets may change the order; restart pagination after a reload. This read does not apply or save anything.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "observe",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_items": 64,
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.bubbles.presets.list",
+      "idempotency": "forbidden",
+      "input_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "format": "uint",
+            "maximum": 64,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "revision": {
+            "description": "Required on continuation pages; restart at offset zero after a reload.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "offset",
+          "limit"
+        ],
+        "title": "ListInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WireU64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "preset": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "string"
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "total": {
+            "$ref": "#/$defs/WireU64"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "preset",
+          "names",
+          "total",
+          "revision"
+        ],
+        "title": "ListResult",
+        "type": "object"
+      },
+      "pagination": "revision_locked",
+      "persistence": "none",
+      "preconditions": [],
+      "read_only": true,
+      "required_permissions": [
+        "observe",
+        "observe.orderflow"
+      ],
+      "reversible": false,
+      "revision_policy": "forbidden",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "title": "List whole bubble presets",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Switches the asset's \"Save changes for this asset\", which every tab on that asset shares; it starts on. On, a bubble setting changed on a pane is stored for the asset the pane shows and every tab on it wears it. Off, a change stays on the pane it was made on for this session: not stored, not shown in other tabs on the asset, which keep the stored settings; showing another market in that tab and back, or restarting, brings the stored settings back. Switching it on again stores what the addressed pane shows now and other tabs on the asset wear it — unless the asset's stored settings changed since that pane last showed them (another tab's change, an import): then the pane drops what it shows and wears the stored settings, and nothing of its screen is stored. The result's screen says which happened: stored, replaced_by_stored, or kept when the switch went off or did not move. The switch itself is stored. No other asset and no shared presets file is touched.",
       "destructive": false,
       "dry_run_supported": false,
@@ -18880,6 +19201,11 @@
                 "default": false,
                 "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nOn the native tape, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Explicit display changes\nstart a new grouping. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
                 "type": "boolean"
+              },
+              "preset": {
+                "default": "",
+                "description": "Whole-look selection, including unbound views; empty after defaults.",
+                "type": "string"
               },
               "recorded_opening_windows_ms": {
                 "default": [],

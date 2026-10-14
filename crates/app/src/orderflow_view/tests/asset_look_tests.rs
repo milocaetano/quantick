@@ -24,6 +24,100 @@ fn appearance(view: &OrderflowView) -> BubblePreset {
     BubblePreset::capture(view.look.look_name(), &view.config)
 }
 
+#[test]
+fn whole_preset_api_matches_picker_navigation_visibility_and_save_scope() {
+    let store = AssetBubblesStore::default().shared();
+    let mut api = bound_to(&store, ("binance-futures", "BTCUSDT.p"));
+    let mut other = bound_to(&store, ("binance", "BTCUSDT"));
+    let unrelated = appearance(&other);
+    let mut ui = bound_to(
+        &AssetBubblesStore::default().shared(),
+        ("binance-futures", "BTCUSDT.p"),
+    );
+    let name = "mini index regions";
+    for view in [&mut api, &mut ui] {
+        view.edit_config(|config| {
+            config.live_lane.width_share = 0.4;
+            config.show_aggressions = false;
+            config.live_lane.stable_size = false;
+        });
+    }
+    api.set_save_asset_changes(false).unwrap();
+    let before = ui.config.clone();
+    assert!(ui.apply_preset(name));
+    ui.commit_config_changes(before);
+    assert!(api.apply_named_preset(name).unwrap());
+    assert_eq!(
+        api.config, ui.config,
+        "same picker operation and worker commit"
+    );
+    assert_eq!(
+        api.look.lane_window_setting(),
+        ui.look.lane_window_setting()
+    );
+    assert!(
+        !api.config.show_aggressions,
+        "a whole look preserves layer visibility"
+    );
+    let chosen = appearance(&api);
+    api.sync_asset(false);
+    assert_eq!(
+        appearance(&api),
+        chosen,
+        "save-off changes stay on this view"
+    );
+    other.sync_asset(false);
+    assert_eq!(appearance(&other), unrelated);
+    let reopened = bound_to(&store, ("binance-futures", "BTCUSDT.p"));
+    assert_ne!(
+        appearance(&reopened),
+        chosen,
+        "save-off does not replace the stored asset look"
+    );
+    api.set_save_asset_changes(true).unwrap();
+    api.sync_asset(false);
+    let restored = bound_to(&store, ("binance-futures", "BTCUSDT.p"));
+    assert_eq!(
+        appearance(&restored),
+        chosen,
+        "save-on follows the existing asset persistence path"
+    );
+    assert!(!api.apply_named_preset(name).unwrap());
+}
+
+#[test]
+fn whole_preset_api_commits_the_changed_configuration_to_the_actual_worker() {
+    let mut view = bound_to(
+        &AssetBubblesStore::default().shared(),
+        ("binance-futures", "BTCUSDT.p"),
+    );
+    view.edit_config(|config| config.live_lane.stable_size = false);
+    fn revision(view: &mut OrderflowView) -> u64 {
+        view.flush_for_test();
+        view.cached_health().config_revision
+    }
+    let before = revision(&mut view);
+    assert!(
+        view.apply_named_preset("Binance BTC perpetual spheres")
+            .unwrap()
+    );
+    assert!(
+        revision(&mut view) > before,
+        "API commit reaches the worker"
+    );
+    let after = revision(&mut view);
+    assert!(
+        !view
+            .apply_named_preset("Binance BTC perpetual spheres")
+            .unwrap()
+    );
+    assert_eq!(
+        revision(&mut view),
+        after,
+        "a no-op sends no repeated config effect"
+    );
+}
+
 fn ignore_opening(view: &mut OrderflowView, on: bool) -> bool {
     view.edit_config(|config| config.volume_dots.ignore_opening_burst_in_scale = on)
 }

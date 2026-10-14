@@ -53,6 +53,8 @@ const CLIENT_NAME: &str = "quantick integration test";
 
 #[path = "asset_bubbles_save_tests.rs"]
 mod asset_bubbles_save_tests;
+#[path = "bubble_preset_control_tests.rs"]
+mod bubble_preset_control;
 #[path = "candle_aggression_tests.rs"]
 mod candle_aggression;
 #[path = "chart_settings_control_tests.rs"]
@@ -642,6 +644,12 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         (
+            "orderflow.bubbles.preset.apply",
+            1,
+            Value::Null,
+            Readback::Stays,
+        ),
+        (
             "orderflow.bubbles.tick.set",
             1,
             Value::Null,
@@ -841,7 +849,7 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
         let mut client = connect(&directory, &cockpit);
         let row = retry_matrix::readback(capability).expect("the matrix has a row");
         let payload = match capability {
-            "orderflow.bubbles.tick.set" => {
+            "orderflow.bubbles.tick.set" | "orderflow.bubbles.preset.apply" => {
                 let config: crate::config::AppConfig =
                     toml::from_str(quantick_stores::config::EMBEDDED_DEFAULT).unwrap();
                 let presets = quantick_stores::bubble_presets::embedded();

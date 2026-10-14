@@ -137,4 +137,14 @@ pub(super) const ROWS: &[UiBehaviour] = &[
         )],
         mapping: capability!("orderflow.bubbles.tick.set"),
     },
+    UiBehaviour {
+        id: "orderflow.bubbles.preset.apply",
+        title: "Apply or reapply a named whole bubble look",
+        reach: "Bubbles settings, whole-look preset picker",
+        keys: &[(
+            Source::Authored,
+            "whole-look preset selection permits same-name reapplication",
+        )],
+        mapping: capability!("orderflow.bubbles.preset.apply"),
+    },
 ];

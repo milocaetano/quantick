@@ -22,6 +22,19 @@ pub struct TickBubblesResult {
     pub tick_bubbles: Option<TickBubblesSnapshot>,
 }
 
+pub fn result(
+    input: &TickBubblesInput,
+    changed: bool,
+    config: &quantick_orderflow::HeatmapConfig,
+) -> TickBubblesResult {
+    TickBubblesResult {
+        tab_id: input.tab_id,
+        pane_id: input.pane_id,
+        changed,
+        tick_bubbles: config.volume_dots.tick_bubbles.map(Into::into),
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct TickBubblesSnapshot {
     /// Instrument quantity at max_radius. Larger visible groups increase the

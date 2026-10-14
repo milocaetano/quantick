@@ -1,0 +1,132 @@
+{
+  "$defs": {
+    "BubbleAssetSnapshot": {
+      "description": "The asset a pane's bubble settings belong to.",
+      "properties": {
+        "key": {
+          "description": "The asset's key: the feed config's `symbol_bubble_presets` key that\nnames the symbol (`WIN*` covers every mini index contract), or the\nsymbol itself.",
+          "type": "string"
+        },
+        "preset": {
+          "description": "The preset the look on screen started from; empty once the panel's\ndefaults replaced it.",
+          "type": "string"
+        },
+        "save_changes": {
+          "default": true,
+          "description": "The asset's \"Save changes for this asset\" (default on), the same in\nevery tab on it; `orderflow.bubbles.save_changes.set` switches it.\nOff, a change stays on the pane it was made on for this session — not\nstored, not shown in other tabs on the asset, which show the stored\nsettings — and `saved` is `false` while one is on screen. Switched on\nagain, the switching pane's settings are stored for the asset, unless\nits stored settings changed since that pane last showed them: then\nthe pane wears those instead (the action's result `screen` says\nwhich).",
+          "type": "boolean"
+        },
+        "save_error": {
+          "default": null,
+          "description": "Why they are not saved; absent when they are.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "saved": {
+          "description": "Whether the store file holds the settings this pane shows. `false`\nuntil the next frame writes a change, while the file cannot be read\nor written — they are kept in memory, retried, for this run only —\nand while saving is off and a change is on screen.",
+          "type": "boolean"
+        },
+        "source": {
+          "description": "Where the settings came from: `stored` (changed for this asset; see\n`saved`), `declared` (the preset the feed config declares) or\n`default` (the presets file's active look).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "source",
+        "preset",
+        "saved"
+      ],
+      "type": "object"
+    },
+    "TickBubblesSnapshot": {
+      "properties": {
+        "label_min_radius": {
+          "type": "string"
+        },
+        "max_radius": {
+          "type": "string"
+        },
+        "opacity": {
+          "type": "string"
+        },
+        "reference_quantity": {
+          "description": "Instrument quantity at max_radius. Larger visible groups increase the\ncommon reference uniformly, so all areas remain proportional.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "reference_quantity",
+        "max_radius",
+        "label_min_radius",
+        "opacity"
+      ],
+      "type": "object"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "asset": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BubbleAssetSnapshot"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "changed": {
+      "type": "boolean"
+    },
+    "depth_time_averaging": {
+      "type": "boolean"
+    },
+    "native_tape": {
+      "type": "boolean"
+    },
+    "native_tape_requested": {
+      "type": "boolean"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "preset": {
+      "type": "string"
+    },
+    "stable_size": {
+      "type": "boolean"
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "tick_bubbles": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TickBubblesSnapshot"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "changed",
+    "preset",
+    "native_tape_requested",
+    "native_tape",
+    "stable_size",
+    "depth_time_averaging"
+  ],
+  "title": "ApplyResult",
+  "type": "object"
+}

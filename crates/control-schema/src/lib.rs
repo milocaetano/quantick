@@ -9,6 +9,7 @@
 
 pub mod analysis;
 pub mod attention;
+pub mod bubble_preset;
 pub mod bubble_save;
 pub mod chart;
 pub mod chart_settings;
