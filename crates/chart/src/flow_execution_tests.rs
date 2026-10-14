@@ -101,6 +101,70 @@ fn capture_preserves_same_ms_membership_forming_bar_view_and_empty_reset() {
     assert_eq!(session.progress().requested_executions, 0);
     assert!(session.ignore_opening());
 }
+/// #10: a History install recuts the series from older prints. The spheres
+/// on screen stay drawn at their own prints on the frame after the install,
+/// before the new series has refilled anything, and the refilled frame puts
+/// them at the same places.
+#[test]
+fn a_history_install_keeps_the_spheres_on_screen_at_their_prints() {
+    let trade = |id: u64| Trade {
+        agg_id: id,
+        timestamp_ms: id as i64 * 1_000,
+        price: (100 + id % 3).into(),
+        quantity: 1.into(),
+        side: Side::Buy,
+    };
+    let mut state = ChartState::new(BarSpec::Tick(2));
+    state.ingest_backfill(&(10..20).map(trade).collect::<Vec<_>>());
+    let mut session = FlowSession::<Runner>::default();
+    let show =
+        |state: &ChartState, session: &mut FlowSession<Runner>, slots: std::ops::Range<usize>| {
+            let clip = (slots.start as f64, slots.end as f64);
+            let width = slots.len() as f32 * 100.0;
+            project_flow_executions(
+                true,
+                state,
+                session,
+                slots,
+                (width, 200.0),
+                (90.0, 110.0),
+                clip,
+            );
+        };
+    for _ in 0..2 {
+        show(&state, &mut session, 0..5);
+    }
+    // Where each sphere stands, by the venue ids of its prints.
+    let placed = |frame: &FlowTapeFrame| {
+        let mut placed: Vec<(Vec<u64>, Decimal)> = frame
+            .dots
+            .iter()
+            .map(|dot| {
+                let mut ids: Vec<u64> = dot.members.iter().map(|m| m.source_id).collect();
+                ids.sort_unstable();
+                (ids, dot.candle_position)
+            })
+            .collect();
+        placed.sort();
+        placed
+    };
+    let before = placed(session.frame().unwrap());
+    assert!(!before.is_empty());
+    // Two older bars arrive: every print of the screen moves two candles on.
+    state.prepend_history(&(6..10).map(trade).collect::<Vec<_>>());
+    let shifted: Vec<_> = before
+        .iter()
+        .map(|(ids, position)| (ids.clone(), *position + Decimal::TWO))
+        .collect();
+    show(&state, &mut session, 2..7);
+    let carried = session
+        .frame()
+        .expect("the spheres stay on screen across the install");
+    assert_eq!(placed(carried), shifted);
+    show(&state, &mut session, 2..7);
+    assert_eq!(placed(session.frame().unwrap()), shifted);
+}
+
 #[test]
 fn retained_flow_prices_follow_the_current_axis_while_layout_is_pending() {
     let old = PriceWindow::new(90.into(), 110.into()).unwrap();

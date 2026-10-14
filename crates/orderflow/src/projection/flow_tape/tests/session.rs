@@ -488,6 +488,59 @@ fn publication_rebases_after_eviction_and_a_b_a_or_epoch_changes() {
     }
 }
 
+/// #10: a cold fill captures the newest prints first, so the candles at the
+/// live edge get their spheres before the older ones, and keeps going back
+/// in contiguous packets.
+#[test]
+fn a_cold_fill_captures_the_newest_prints_first() {
+    let request = cold_request(0, 65_536);
+    let mut session = FlowSession::<Runner>::default();
+    let mut copied = Vec::new();
+    for _ in 0..16 {
+        session.project(request.clone(), |range| {
+            copied.push(range.clone());
+            cold_chunk(1, range)
+        });
+        if !session.progress().pending {
+            break;
+        }
+        session.runner.pump();
+    }
+    assert!(!session.progress().pending, "the fill completes");
+    assert_eq!(copied[0], 65_536 - SOURCE_CHUNK..65_536);
+    assert!(copied.windows(2).all(|pair| pair[1].end == pair[0].start));
+    assert_eq!(copied.last().unwrap().start, 0);
+}
+
+/// #10: no publication milestone delays a new print. While a cold fill is
+/// still between milestones, a print at the live edge is published at once.
+#[test]
+fn publication_a_new_print_publishes_at_once_during_a_cold_fill() {
+    let mut cache = FlowWorkerCache::default();
+    let request = cold_request(0, 20_000);
+    cache.select_request(&request);
+    cache.append(&cold_chunk(1, 17_952..20_000));
+    assert!(cache.project_if_due(&request, false).is_some());
+    cache.append(&cold_chunk(1, 16_952..17_952));
+    assert!(
+        cache.project_if_due(&request, false).is_none(),
+        "older history still waits for its milestone"
+    );
+    let live = cold_request(0, 20_001);
+    cache.select_request(&live);
+    cache.append(&cold_chunk(1, 20_000..20_001));
+    let frame = cache
+        .project_if_due(&live, false)
+        .expect("the new print is drawn now");
+    assert!(
+        frame
+            .dots
+            .iter()
+            .flat_map(|dot| dot.members.iter())
+            .any(|member| member.ordinal == 20_000)
+    );
+}
+
 #[test]
 fn publication_terminal_cache_limit_flushes_below_the_next_milestone_once() {
     let request = cold_request(0, MAX_FLOW_EXECUTIONS + 2048);
