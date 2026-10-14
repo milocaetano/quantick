@@ -1733,10 +1733,11 @@ mod tests {
 
     #[test]
     fn forward_current_book_preview_pointer_keeps_exact_quantity_and_orientation() {
-        for native in [false, true] {
+        // The strip previews the current book with depth averaging on or off.
+        for (native, averaging) in [(false, true), (true, true), (false, false), (true, false)] {
             let mut view = OrderflowView::new("BTCUSDT");
             view.edit_config(|config| {
-                config.live_lane.depth_time_averaging = true;
+                config.live_lane.depth_time_averaging = averaging;
                 config.live_lane.native_tape = native;
             });
 
@@ -1785,11 +1786,13 @@ mod tests {
                 let hit = view
                     .control_flow_cell_at(chart, &viewport, 1, 300.0, inverted, position)
                     .unwrap();
-                assert!(hit.current_book_preview);
+                assert!(hit.current_book_preview, "averaging {averaging}");
                 assert!(!hit.time_averaged);
+                assert!(!hit.carried, "a current book is never a carry");
                 assert_eq!(hit.quantity, Decimal::from(5));
                 assert_eq!(hit.generation, 10);
                 assert_eq!(hit.side, cell.side);
+                assert_eq!(hit.current_book_source, frame.projection.current_book);
             }
         }
     }

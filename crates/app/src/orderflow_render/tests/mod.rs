@@ -1454,6 +1454,88 @@ fn ordinary_lane_opening_never_stretches_old_depth_across_forward_space() {
     }
 }
 
+/// The strip between the last candle and the tape previews the current
+/// book while the frame holds it current, with depth averaging on or off. A
+/// row standing at the live edge (averaging off) fills the strip and none of
+/// the lane, and an expired book leaves the strip and its caption empty.
+#[test]
+fn the_strip_previews_a_live_current_book_and_drops_an_expired_one() {
+    let rect = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1000.0, 100.0));
+    let mut viewport = Viewport::new();
+    viewport.pan_pixels(-160.0, 60);
+    let layout = ProjectedLayout::new(rect, &viewport, 60, 56, 5, 300.0);
+    let strip = layout.current_book_preview_rect(0.2, 0.3);
+    let divider = layout.lane_left_x().unwrap();
+    assert!(strip.is_positive());
+    let mut projection = HeatmapProjection::empty(
+        true,
+        quantick_orderflow::EffectiveGrouping::resolve(
+            quantick_orderflow::DisplayGrouping::Native,
+            Decimal::ONE,
+            Decimal::from(100),
+        ),
+    );
+    projection.cells = std::sync::Arc::new(vec![quantick_orderflow::HeatmapCell {
+        generation: 1,
+        side: quantick_orderflow::RestingSide::Bid,
+        price_bucket: Decimal::from(99),
+        quantity: Decimal::from(5),
+        x0: 1.0,
+        x1: 1.0,
+        y0: 0.2,
+        y1: 0.3,
+        intensity: 0.8,
+        alpha: 0.8,
+        carried: false,
+        time_averaged: false,
+        current_book: true,
+    }]);
+    projection.current_book = Some(quantick_orderflow::projection::BookSource {
+        update_id: Some(1),
+        event_ms: 1_000,
+    });
+    for averaging in [false, true] {
+        let mut style = OrderflowRenderStyle {
+            depth_layer: true,
+            lane_depth_layer: true,
+            edge_glow: 0.0,
+            ..OrderflowRenderStyle::default()
+        };
+        style.live_lane.depth_time_averaging = averaging;
+        for live in [true, false] {
+            let output = egui::Context::default().run(egui::RawInput::default(), |ctx| {
+                let painter = ctx.layer_painter(egui::LayerId::background());
+                draw_heatmap_background(
+                    &painter,
+                    &RenderContext::new(&projection, layout, &style).with_current_book_live(live),
+                );
+            });
+            let vertices: Vec<egui::Pos2> = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Mesh(mesh) => Some(mesh.vertices.iter().map(|vertex| vertex.pos)),
+                    _ => None,
+                })
+                .flatten()
+                .collect();
+            let filled = vertices
+                .iter()
+                .any(|pos| pos.x >= strip.left() - 0.01 && pos.x <= strip.right() + 0.01);
+            assert_eq!(filled, live, "averaging {averaging}, live {live}");
+            assert!(
+                vertices.iter().all(|pos| pos.x <= divider + 0.01),
+                "averaging {averaging}: a row at the live edge claims no lane time"
+            );
+            assert_eq!(
+                format!("{:?}", output.shapes).contains("Current book preview"),
+                live,
+                "averaging {averaging}, live {live}: the caption follows the strip"
+            );
+        }
+    }
+}
+
 #[test]
 fn the_lane_is_the_only_region_wider_than_a_candle() {
     let viewport = Viewport::new(); // candle_width 8, following
