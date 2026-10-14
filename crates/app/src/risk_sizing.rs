@@ -22,6 +22,7 @@ pub(crate) struct RiskBlock<'a> {
     pub settings: &'a mut RiskSettings,
     pub capital: &'a mut Capital,
     pub book: &'a mut InstrumentBook,
+    pub seeded: Option<InstrumentMoney>,
     pub amount_text: &'a mut String,
     pub percent_text: &'a mut String,
     pub capital_text: &'a mut String,
@@ -44,7 +45,11 @@ pub(crate) fn draw_risk_block(ui: &mut eframe::egui::Ui, mut block: RiskBlock<'_
     ui.label(caption("RISK PER TRADE"));
     let mut changed = block.basis_pills(ui);
 
-    let declared = block.book.get(block.symbol).cloned();
+    let declared = block
+        .book
+        .get(block.symbol)
+        .cloned()
+        .or(block.seeded.take());
     let currency_code = declared.as_ref().map_or_else(
         || block.currency_text.trim().to_uppercase(),
         |money| money.currency.code().to_owned(),
@@ -268,12 +273,9 @@ impl InstrumentMoneySection<'_> {
             }
         });
         ui.label(
-            egui::RichText::new(
-                "what one point of price is worth per unit held, and the smallest size you can \
-                 trade. No feed reports these; saved per symbol.",
-            )
-            .color(theme::TEXT_FAINT)
-            .small(),
+            egui::RichText::new(money_note(self.declared))
+                .color(theme::TEXT_FAINT)
+                .small(),
         );
         changed
     }

@@ -586,11 +586,7 @@ impl QuantickApp {
                     &paper_state.paper_capital,
                 ));
         }
-        tab.paper
-            .account_mut()
-            .set_instrument_money(crate::risk_sizing::book_from_records(
-                &paper_state.instrument_money,
-            ));
+        crate::paper_state::restore_money(tab.paper.account_mut(), &paper_state);
         // Resolved once: under test the settings path is a fresh scratch
         // file per call, and the load must read the same file the saves
         // will write.

@@ -85,7 +85,7 @@ impl PaperAccount {
             self.set_toast("SIM: nothing to export yet - close a trade first.".to_owned());
             return;
         }
-        let text = export_csv(&rows);
+        let text = export_csv(&rows, &self.pnl_book());
         let count = rows.len();
         // The one wall-clock read on this path, and it names a file rather
         // than deciding anything: no venue time says when the trader pressed

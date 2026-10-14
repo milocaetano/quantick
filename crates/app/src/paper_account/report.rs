@@ -53,6 +53,7 @@ impl PaperAccount {
                 session_trade_at: core.session_trade_at(),
                 session_trade_sources: core.session_trade_sources(),
                 open,
+                pnl: core.pnl_reader(),
             },
         )
     }
@@ -90,6 +91,7 @@ impl PaperAccount {
             summary,
             mark_price: venue.mark_price(),
             held_ms,
+            pnl: self.core.open_pnl_text(),
         })
     }
 

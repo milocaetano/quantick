@@ -14,12 +14,14 @@ use rust_decimal::Decimal;
 
 // The items the split gave owners; `super::*` still carries the state
 // itself, the environment types and the module's constants.
-use super::ledger::{LedgerPage, LedgerTotals};
+use super::ledger::LedgerPage;
 use super::rows::{GroupView, Item, LedgerRow, TradeMeta, elide_tail, ledger_detail, push_groups};
 use super::window::ReportPeriod;
 use super::*;
 use crate::paper_calendar::{CivilDate, DateRange, DaySelection};
 use crate::paper_trading::PaperTrading;
+use quantick_paper::pnl::PnlReader;
+use quantick_paper::report::readout::LedgerTotals;
 
 mod ledger_keys_tests;
 
@@ -54,6 +56,7 @@ fn plain_items<'a>(items: &[(&'a str, &'a ClosedTrade)]) -> Vec<Item<'a>> {
                 trade_ref: Default::default(),
                 source: None,
                 tags: &[],
+                pnl: PnlReader::plain().of(symbol),
             },
         })
         .collect()
@@ -117,7 +120,9 @@ fn the_report_opens_on_real_and_keeps_replay_out_until_asked() {
         problem_rows: 0,
         sessions: Default::default(),
     });
-    paper.report_state_mut().ensure_report_view(utc);
+    paper
+        .report_state_mut()
+        .ensure_report_view(utc, PnlReader::plain());
     let view = paper
         .report_state()
         .report_view
@@ -136,14 +141,18 @@ fn the_report_opens_on_real_and_keeps_replay_out_until_asked() {
     assert_eq!(view.report.net_points, Decimal::from(8));
 
     paper.report_state_mut().report_source = SourceFilter::Replay;
-    paper.report_state_mut().ensure_report_view(utc);
+    paper
+        .report_state_mut()
+        .ensure_report_view(utc, PnlReader::plain());
     let view = paper.report_state().report_view.as_ref().expect("rebuilt");
     assert_eq!(view.rows.len(), 1, "the practice run, alone");
     assert_eq!(view.report.net_points, Decimal::from(100));
     assert_eq!(view.hidden_by_source, 2);
 
     paper.report_state_mut().report_source = SourceFilter::All;
-    paper.report_state_mut().ensure_report_view(utc);
+    paper
+        .report_state_mut()
+        .ensure_report_view(utc, PnlReader::plain());
     let view = paper.report_state().report_view.as_ref().expect("rebuilt");
     assert_eq!(view.rows.len(), 3, "All mixes on purpose");
     assert_eq!(view.hidden_by_source, 0);
@@ -185,7 +194,9 @@ fn the_report_reports_itself_as_data() {
 
     // The pills in force, no dates picked.
     paper.report_state_mut().report_period = ReportPeriod::All;
-    paper.report_state_mut().ensure_report_view(tz);
+    paper
+        .report_state_mut()
+        .ensure_report_view(tz, PnlReader::plain());
     let snapshot = paper.report_state().snapshot().expect("a snapshot");
     assert_eq!(snapshot.symbol, Some("WINV26"));
     assert_eq!(snapshot.source, SourceFilter::Real);
@@ -199,7 +210,9 @@ fn the_report_reports_itself_as_data() {
     paper
         .report_state_mut()
         .pick_report_dates(DaySelection::None.click(day));
-    paper.report_state_mut().ensure_report_view(tz);
+    paper
+        .report_state_mut()
+        .ensure_report_view(tz, PnlReader::plain());
     let snapshot = paper.report_state().snapshot().expect("a snapshot");
     assert_eq!(
         snapshot.window,
@@ -360,14 +373,14 @@ fn the_ledger_builds_a_bounded_number_of_rows_however_deep_the_history() {
     // And the strip under the list is summed with the load, not on the
     // frame: the totals are a stored value, so the frame reads them
     // rather than walking five thousand trades to print one line.
-    let totals = LedgerTotals::of(saved.iter());
+    let totals = LedgerTotals::of_trades(PnlReader::plain(), "X", saved.iter());
     assert_eq!(totals.trades, 5_000);
     assert_eq!(totals.wins, 5_000, "every fixture trade is a winner");
-    assert_eq!(totals.net, Decimal::from(5_000));
+    assert_eq!(totals.net.grouped(), Decimal::from(5_000));
     assert_eq!(totals.win_rate(), Some(100));
     // Nothing saved plus this session's own trades still adds up.
     assert_eq!(
-        LedgerTotals::default().plus(totals),
+        LedgerTotals::default().plus(&totals),
         totals,
         "an empty half must be the identity"
     );
@@ -484,21 +497,21 @@ fn ledger_rows_open_a_new_day_caption_when_the_day_changes() {
     let plain = plain_items(&items);
     push_plain(&mut rows, &plain, tz, &std::collections::BTreeSet::new());
     assert_eq!(rows.len(), 5, "two day captions over three trades");
-    match rows[0] {
+    match &rows[0] {
         LedgerRow::Day(date, count, net, folded) => {
-            assert_eq!(date, day.offset_days(1));
-            assert_eq!(count, 1);
-            assert_eq!(net, Decimal::from(8));
-            assert!(!folded);
+            assert_eq!(*date, day.offset_days(1));
+            assert_eq!(*count, 1);
+            assert_eq!(net.0, Decimal::from(8));
+            assert!(!*folded);
         }
         _ => panic!("the list opens on a day caption"),
     }
     assert!(matches!(rows[1], LedgerRow::Earlier(..)));
-    match rows[2] {
+    match &rows[2] {
         LedgerRow::Day(date, count, net, _) => {
-            assert_eq!(date, day);
-            assert_eq!(count, 2, "both of the 17th's trades");
-            assert_eq!(net, Decimal::from(114), "and what the day netted");
+            assert_eq!(*date, day);
+            assert_eq!(*count, 2, "both of the 17th's trades");
+            assert_eq!(net.0, Decimal::from(114), "and what the day netted");
         }
         _ => panic!("the next day opens its own caption"),
     }
@@ -512,12 +525,12 @@ fn ledger_rows_open_a_new_day_caption_when_the_day_changes() {
     let mut rows = Vec::new();
     push_plain(&mut rows, &plain, tz, &folded_days);
     assert_eq!(rows.len(), 3, "two captions and only the open day's row");
-    match rows[2] {
+    match &rows[2] {
         LedgerRow::Day(date, count, net, folded) => {
-            assert_eq!(date, day);
-            assert!(folded, "and it says it is folded");
-            assert_eq!(count, 2, "a folded day still counts its trades");
-            assert_eq!(net, Decimal::from(114), "and still states its net");
+            assert_eq!(*date, day);
+            assert!(*folded, "and it says it is folded");
+            assert_eq!(*count, 2, "a folded day still counts its trades");
+            assert_eq!(net.0, Decimal::from(114), "and still states its net");
         }
         _ => panic!("a folded day keeps its caption"),
     }
@@ -556,7 +569,9 @@ fn a_picked_calendar_range_cuts_the_report_and_the_pills_stand_down() {
 
     let picked = paper.report_state().calendar.selection.click(first);
     paper.report_state_mut().pick_report_dates(picked);
-    paper.report_state_mut().ensure_report_view(tz);
+    paper
+        .report_state_mut()
+        .ensure_report_view(tz, PnlReader::plain());
     let view = paper.report_state().report_view.as_ref().expect("a view");
     assert_eq!(view.rows.len(), 1, "one day, one trade");
     assert_eq!(
@@ -572,7 +587,9 @@ fn a_picked_calendar_range_cuts_the_report_and_the_pills_stand_down() {
         .selection
         .click(first.offset_days(5));
     paper.report_state_mut().pick_report_dates(picked);
-    paper.report_state_mut().ensure_report_view(tz);
+    paper
+        .report_state_mut()
+        .ensure_report_view(tz, PnlReader::plain());
     let view = paper.report_state().report_view.as_ref().expect("a view");
     assert_eq!(view.rows.len(), 3, "both ends of the span are inside");
     assert_eq!(
@@ -587,7 +604,9 @@ fn a_picked_calendar_range_cuts_the_report_and_the_pills_stand_down() {
         .report_state_mut()
         .pick_report_dates(DaySelection::None);
     paper.report_state_mut().report_period = ReportPeriod::All;
-    paper.report_state_mut().ensure_report_view(tz);
+    paper
+        .report_state_mut()
+        .ensure_report_view(tz, PnlReader::plain());
     let view = paper.report_state().report_view.as_ref().expect("a view");
     assert!(view.range.is_none());
     assert_eq!(view.rows.len(), 4, "every saved trade is back");
@@ -611,7 +630,9 @@ fn a_picked_day_with_no_trades_reports_an_honest_empty() {
     });
     let picked = paper.report_state().calendar.selection.click(day);
     paper.report_state_mut().pick_report_dates(picked);
-    paper.report_state_mut().ensure_report_view(tz);
+    paper
+        .report_state_mut()
+        .ensure_report_view(tz, PnlReader::plain());
     let view = paper.report_state().report_view.as_ref().expect("a view");
     assert!(view.rows.is_empty());
     assert_eq!(
@@ -646,7 +667,9 @@ fn the_day_index_follows_the_source_filter_and_the_timezone() {
         problem_rows: 0,
         sessions: Default::default(),
     });
-    paper.report_state_mut().ensure_report_view(tz);
+    paper
+        .report_state_mut()
+        .ensure_report_view(tz, PnlReader::plain());
     assert_eq!(
         paper.report_state().report_days.len(),
         1,
@@ -662,7 +685,9 @@ fn the_day_index_follows_the_source_filter_and_the_timezone() {
     );
 
     paper.report_state_mut().report_source = SourceFilter::All;
-    paper.report_state_mut().ensure_report_view(tz);
+    paper
+        .report_state_mut()
+        .ensure_report_view(tz, PnlReader::plain());
     assert_eq!(
         paper.report_state().report_days.len(),
         2,
@@ -672,7 +697,7 @@ fn the_day_index_follows_the_source_filter_and_the_timezone() {
     // The same trades, read on another clock, land on other days.
     paper
         .report_state_mut()
-        .ensure_report_view(TzOffset::new(0));
+        .ensure_report_view(TzOffset::new(0), PnlReader::plain());
     assert_eq!(paper.report_state().report_days.len(), 2);
     assert!(
         paper
@@ -701,7 +726,9 @@ fn the_report_view_filters_by_period_from_the_newest_trade() {
         sessions: Default::default(),
     });
     paper.report_state_mut().report_period = ReportPeriod::Week;
-    paper.report_state_mut().ensure_report_view(utc);
+    paper
+        .report_state_mut()
+        .ensure_report_view(utc, PnlReader::plain());
     let view = paper
         .report_state()
         .report_view
@@ -717,7 +744,9 @@ fn the_report_view_filters_by_period_from_the_newest_trade() {
     assert_eq!(view.report.net_points, Decimal::from(5));
 
     paper.report_state_mut().report_period = ReportPeriod::All;
-    paper.report_state_mut().ensure_report_view(utc);
+    paper
+        .report_state_mut()
+        .ensure_report_view(utc, PnlReader::plain());
     assert_eq!(
         paper
             .report_state()
@@ -747,7 +776,9 @@ fn all_symbols_hides_older_markets_but_says_so_and_scope_restores_them() {
         sessions: Default::default(),
     });
     paper.report_state_mut().report_period = ReportPeriod::Month;
-    paper.report_state_mut().ensure_report_view(utc);
+    paper
+        .report_state_mut()
+        .ensure_report_view(utc, PnlReader::plain());
     let view = paper
         .report_state()
         .report_view
@@ -770,7 +801,9 @@ fn all_symbols_hides_older_markets_but_says_so_and_scope_restores_them() {
         sessions: Default::default(),
     });
     paper.report_state_mut().report_view = None;
-    paper.report_state_mut().ensure_report_view(utc);
+    paper
+        .report_state_mut()
+        .ensure_report_view(utc, PnlReader::plain());
     let view = paper.report_state().report_view.as_ref().expect("rebuilt");
     assert_eq!(view.rows.len(), 1, "its own scope shows the old market");
     assert_eq!(view.hidden_outside, 0);
@@ -841,6 +874,7 @@ fn an_inline_edit_row_stands_once_however_many_days_its_session_spans() {
                 trade_ref: Default::default(),
                 source: None,
                 tags: &[],
+                pnl: PnlReader::plain().of("X"),
             },
         })
         .collect();

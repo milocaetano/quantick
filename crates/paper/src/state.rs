@@ -64,6 +64,11 @@ pub struct PaperState {
     /// crossed without saying so is not a ceiling.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub risk_per_trade_lock: Option<bool>,
+    /// Which figure P&L readouts lead with (`money`, `points_per_contract`
+    /// or `points_times_qty`); `None` defers to the instrument catalog's
+    /// default, and an unknown token reads the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pnl_primary: Option<String>,
     /// Which named exit strategy the ticket is set to. A name this build no
     /// longer knows selects nothing, which is the honest reading of "the
     /// strategy you chose is gone".
@@ -261,6 +266,7 @@ mod tests {
                 }],
             }]),
             selected_order_strategy: Some("halves".to_owned()),
+            pnl_primary: Some("points_per_contract".to_owned()),
             cmd_entry_kind: Some("limit".to_owned()),
             risk_per_trade_basis: Some("amount".to_owned()),
             risk_per_trade_amount: Some("100".to_owned()),

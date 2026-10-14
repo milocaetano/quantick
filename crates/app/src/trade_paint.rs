@@ -33,9 +33,7 @@ use quantick_sim::ClosedTrade;
 use rust_decimal::prelude::ToPrimitive;
 
 use crate::chart::PriceScale;
-use crate::paper_chrome::{
-    fmt_decimal, fmt_duration_ms, fmt_signed_points, points_color, position_word,
-};
+use crate::paper_chrome::{fmt_decimal, fmt_duration_ms, points_color, position_word};
 use crate::theme;
 use crate::timezone::TzOffset;
 
@@ -81,6 +79,8 @@ pub(crate) struct TradePaintFrame<'a> {
     /// The pointer, for the hover tooltip; `None` paints no tooltip.
     pub pointer: Option<egui::Pos2>,
     pub tz: TzOffset,
+    /// Words a trade's P&L the way the ticket leads with it.
+    pub pnl: quantick_paper::pnl::SymbolPnl<'a>,
 }
 
 /// One drawable mark, kept for the hover pass.
@@ -319,12 +319,12 @@ fn draw_tooltip(
     let font = egui::FontId::monospace(11.0);
     let caption = egui::FontId::monospace(10.0);
     let head = format!(
-        "{} {} · {} → {} · {} pts",
+        "{} {} · {} → {} · {}",
         position_word(trade.side),
         fmt_decimal(trade.quantity),
         fmt_decimal(trade.entry_price),
         fmt_decimal(trade.exit_price),
-        fmt_signed_points(trade.pnl_points),
+        frame.pnl.compact(trade),
     );
     let detail = format!(
         "{} · {} · {}",
@@ -422,6 +422,7 @@ mod tests {
                     background: egui::Color32::BLACK,
                     pointer,
                     tz: TzOffset::default(),
+                    pnl: quantick_paper::pnl::PnlReader::plain().of("WINV26"),
                 };
                 draw(&frame, trades, None, &slot_at_time, |slot| {
                     ((slot % 100) as f32) * 4.0

@@ -12,9 +12,7 @@ use egui_phosphor::regular as icons;
 use quantick_sim::{Command, Position};
 use rust_decimal::Decimal;
 
-use crate::paper_chrome::{
-    fmt_decimal, fmt_points, fmt_signed_points, points_color, position_word,
-};
+use crate::paper_chrome::{fmt_decimal, fmt_points, points_color, position_word};
 use crate::theme;
 use quantick_paper::desk::ticket::offset_price;
 
@@ -40,6 +38,11 @@ pub(super) struct PositionCard<'a> {
     pub mark: Option<Decimal>,
     /// The session's realized points, shown on the flat row.
     pub realized: Decimal,
+    /// The same total and the open profit as the account words them.
+    pub realized_text: String,
+    pub open_text: Option<String>,
+    /// The stop and the target, each with what the position reads there.
+    pub brackets: [Option<(Decimal, String)>; 2],
     pub has_working_orders: bool,
     /// The ticket's stop and target offsets, when they parse.
     pub stop_offset: Option<Decimal>,
@@ -59,7 +62,7 @@ impl PositionCard<'_> {
             return self.flat_row(ui);
         };
         let open = self.mark.map(|mark| position.open_points(mark));
-        identity_row(ui, position, open);
+        identity_row(ui, position, open, self.open_text.as_deref());
         let mut command = self
             .brackets(ui, position)
             .map(|c| CardCommand::Venue(Box::new(c)));
@@ -79,12 +82,12 @@ impl PositionCard<'_> {
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    egui::RichText::new(format!("{} pts", fmt_signed_points(self.realized)))
+                    egui::RichText::new(&self.realized_text)
                         .monospace()
                         .strong()
                         .color(points_color(self.realized)),
                 )
-                .on_hover_text("this session's realized points");
+                .on_hover_text("this session's realized result");
             });
         });
         let cancel = self.has_working_orders
@@ -107,7 +110,7 @@ impl PositionCard<'_> {
                     BracketLeg {
                         stop: true,
                         word: "SL",
-                        level: position.stop_loss,
+                        level: self.brackets[0].clone(),
                         color: theme::SELL,
                         offset: self.stop_offset,
                         clear_hover: "remove the protective stop",
@@ -115,7 +118,7 @@ impl PositionCard<'_> {
                     BracketLeg {
                         stop: false,
                         word: "TP",
-                        level: position.take_profit,
+                        level: self.brackets[1].clone(),
                         color: theme::BUY,
                         offset: self.profit_offset,
                         clear_hover: "remove the profit target",
@@ -137,7 +140,7 @@ struct BracketLeg {
     /// The stop leg, not the target.
     stop: bool,
     word: &'static str,
-    level: Option<Decimal>,
+    level: Option<(Decimal, String)>,
     color: egui::Color32,
     offset: Option<Decimal>,
     clear_hover: &'static str,
@@ -150,16 +153,12 @@ impl BracketLeg {
                 .color(theme::TEXT_MUTED)
                 .small(),
         );
-        match (self.level, self.offset) {
-            (Some(level), _) => {
+        match (&self.level, self.offset) {
+            (Some((level, pnl)), _) => {
                 ui.label(
-                    egui::RichText::new(format!(
-                        "{} {} pts",
-                        fmt_decimal(level),
-                        fmt_signed_points(position.open_points(level)),
-                    ))
-                    .monospace()
-                    .color(self.color),
+                    egui::RichText::new(format!("{} {}", fmt_decimal(*level), pnl,))
+                        .monospace()
+                        .color(self.color),
                 );
                 let cleared = ui
                     .small_button("×")
@@ -214,7 +213,7 @@ impl BracketLeg {
 }
 
 /// Identity: the HUD's own chip, so the two surfaces read as one.
-fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>) {
+fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>, text: Option<&str>) {
     let color = theme::side_color(position.side);
     ui.horizontal(|ui| {
         egui::Frame::none()
@@ -238,15 +237,15 @@ fn identity_row(ui: &mut egui::Ui, position: &Position, open: Option<Decimal>) {
                 .monospace()
                 .color(theme::TEXT_PRIMARY),
         );
-        if let Some(open) = open {
+        if let (Some(open), Some(text)) = (open, text) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(
-                    egui::RichText::new(format!("{} pts", fmt_signed_points(open)))
+                    egui::RichText::new(text)
                         .monospace()
                         .strong()
                         .color(points_color(open)),
                 )
-                .on_hover_text("open profit at the last print, in points (price units × quantity)");
+                .on_hover_text("open profit at the last print");
             });
         }
     });

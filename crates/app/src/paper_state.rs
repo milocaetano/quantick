@@ -22,6 +22,29 @@ pub(crate) use quantick_paper::state::*;
 /// The file's name inside the durable cockpit home. See [`crate::store_home`].
 pub(crate) const STATE_FILE: &str = "paper-state.toml";
 
+/// The trader's instrument catalog inside the cockpit home, laid over the
+/// shipped one (`quantick_paper::instruments`).
+pub(crate) const INSTRUMENTS_FILE: &str = "instruments.toml";
+
+/// The instrument catalog this build ships.
+const INSTRUMENTS: &str = include_str!("../config/instruments.toml");
+
+/// The declared instrument money, the catalog and the stored P&L display an
+/// account opens with. Under test only the shipped catalog: no trader's
+/// file may leak in.
+pub(crate) fn restore_money(account: &mut quantick_paper::PaperAccount, state: &PaperState) {
+    account.set_instrument_money(crate::risk_sizing::book_from_records(
+        &state.instrument_money,
+    ));
+    let trader = (!cfg!(test)).then(|| crate::store_home::resolve(INSTRUMENTS_FILE));
+    let chosen = state.pnl_primary.as_deref();
+    account.set_pnl_settings(quantick_paper::pnl::PnlSettings::load(
+        INSTRUMENTS,
+        trader.as_deref(),
+        chosen,
+    ));
+}
+
 /// The paper-state file the app opens with and writes back to. Under test
 /// it is a scratch file of its own per process, for the same reason the
 /// chart layers do it: tests must not restore one another's choice, nor
