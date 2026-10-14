@@ -4,11 +4,12 @@ use super::{BEFORE_CAPTURE, BOOK_PENDING};
 use crate::config::painting::GAP_EDGE_EPSILON;
 
 /// Only a current, exactly confirmed row can preview the book in chart forward
-/// space. It is a snapshot preview, with no historical-time claim. A stale or
-/// gapped book supplies no eligible cells. Pane consumption expires cached
-/// eligibility against the advancing market clock before any reader sees it.
-pub fn current_book_preview(cell: &super::HeatmapCell, enabled: bool) -> bool {
-    enabled && cell.current_book && !cell.time_averaged
+/// space. It is a snapshot preview, with no historical-time claim. A gapped
+/// book supplies no eligible cells; `live` is the frame's verdict on whether
+/// its book is still current at the pane's clock
+/// ([`VisibleOrderflow::current_book_live`](crate::engine::VisibleOrderflow::current_book_live)).
+pub fn current_book_preview(cell: &super::HeatmapCell, live: bool) -> bool {
+    live && cell.current_book && !cell.time_averaged
 }
 
 pub fn depth_caption(cells: &[super::HeatmapCell], preview_visible: bool) -> Option<&'static str> {

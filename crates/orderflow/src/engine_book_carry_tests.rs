@@ -158,9 +158,12 @@ fn run(
                 let unit = (book_ms - (now_ms - WINDOW_MS)) as f64 / WINDOW_MS as f64;
                 lane_x + unit.clamp(0.0, 1.0) * (1.0 - lane_x)
             });
+            // The lane's own runs: the current book's rows stand at the edge
+            // for the strip's preview and claim no lane time.
             let (carried, observed): (Vec<_>, Vec<_>) = projection
                 .cells
                 .iter()
+                .filter(|cell| !cell.current_book)
                 .cloned()
                 .partition(|cell| cell.carried);
             Frame {

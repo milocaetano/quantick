@@ -62,6 +62,9 @@ pub struct CellHitContext {
     pub held_tape_end_ms: Option<i64>,
     pub held: bool,
     pub current_book_preview: bool,
+    /// The book the frame's current rows were read from
+    /// ([`HeatmapProjection::current_book`]).
+    pub current_book_source: Option<BookSource>,
 }
 
 impl FlowCellHit {
@@ -90,7 +93,7 @@ impl FlowCellHit {
             carried: cell.carried,
             time_averaged: cell.time_averaged,
             current_book_preview: context.current_book_preview,
-            current_book_source: cell.current_book_source,
+            current_book_source: context.current_book_source.filter(|_| cell.current_book),
         })
     }
 }
@@ -169,9 +172,10 @@ pub struct HeatmapCell {
     pub carried: bool,
     /// Quantity is a duration-weighted mean over this displayed interval.
     pub time_averaged: bool,
-    /// Exact current-book row; zero-width at the confirmation instant.
+    /// Exact current-book row, read from [`HeatmapProjection::current_book`];
+    /// zero-width at the confirmation instant, and at the live edge when the
+    /// lane's own runs carry the book there (depth averaging off).
     pub current_book: bool,
-    pub current_book_source: Option<super::model::BookSource>,
 }
 
 /// One aggressive execution ready for circles, footprint cells or tooltips.
@@ -360,6 +364,10 @@ pub struct HeatmapProjection {
     pub liquidity_events: Vec<LiquidityEventPrimitive>,
     /// Visible continuity gaps. Shared for the reason [`cells`](Self::cells) is.
     pub gaps: Arc<Vec<GapPrimitive>>,
+    /// The one book every current row ([`HeatmapCell::current_book`]) was
+    /// read from, so a reader checks their freshness once, in O(1)
+    /// ([`super::book_is_current`]); `None` when the frame read none.
+    pub current_book: Option<BookSource>,
     /// Normalized x the live edge has reached inside the lane, and the signal
     /// that this frame has a lane at all. `None` when it follows no live edge.
     ///
@@ -425,6 +433,7 @@ impl HeatmapProjection {
             volume_dots: false,
             liquidity_events: Vec::new(),
             gaps: Arc::new(Vec::new()),
+            current_book: None,
             live_now_x: None,
             effective_grouping,
             liquidity_reference: Decimal::ZERO,
@@ -521,6 +530,8 @@ pub struct LiveMarks {
     pub cells: Vec<HeatmapCell>,
     /// Tape bands the visible-cell cap left out.
     pub dropped_cells: usize,
+    /// The book the current rows among [`cells`](Self::cells) were read from.
+    pub current_book: Option<BookSource>,
 }
 
 impl SettledProjection {
@@ -615,6 +626,7 @@ impl SettledProjection {
             volume_dots: self.volume_dots,
             liquidity_events,
             gaps: Arc::clone(&self.gaps),
+            current_book: live.current_book,
             live_now_x: live.live_now_x,
             effective_grouping: self.effective_grouping,
             liquidity_reference: self.liquidity_reference,

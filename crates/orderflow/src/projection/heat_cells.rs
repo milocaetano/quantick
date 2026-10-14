@@ -25,8 +25,8 @@ pub(super) struct DraftCell {
     /// Past the last confirmation, carried to the live edge.
     pub(super) carried: bool,
     pub(super) time_averaged: bool,
+    /// Read from the current book ([`super::lane_heat::book_is_current`]).
     pub(super) current_book: bool,
-    pub(super) current_book_source: Option<super::model::BookSource>,
 }
 
 /// The `(y0, y1)` rows of the bucket at `price_bucket`, clipped to `prices`;
@@ -101,6 +101,10 @@ pub(super) fn finish_cells(
     finish_with_priority(drafts, reference, config, false)
 }
 
+/// [`finish_cells`] for the live lane: an averaged lane, where only the
+/// current book and the newest stretch are exact, keeps the current book's
+/// rows first and the newest bands next (`current_first`). Without averaging
+/// the current rows compete with the lane's runs like any band.
 pub(super) fn finish_with_priority(
     mut drafts: Vec<DraftCell>,
     reference: Decimal,
@@ -163,7 +167,6 @@ pub(super) fn finish_with_priority(
                 carried: draft.carried,
                 time_averaged: draft.time_averaged,
                 current_book: draft.current_book,
-                current_book_source: draft.current_book_source,
             }
         })
         .collect();

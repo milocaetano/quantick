@@ -11,10 +11,14 @@
 
 use rust_decimal::Decimal;
 
+use std::collections::BTreeMap;
+
+use quantick_orderbook::OrderBook;
+
 use super::heat_cells::{DraftCell, PriceRows, finish_with_priority};
-use super::model::{HeatmapCell, PriceWindow};
-use crate::grouping::{EffectiveGrouping, GroupingWindow, sweep_grouped_runs};
-use crate::history::LiquidityHistory;
+use super::model::{BookSource, HeatmapCell, PriceWindow};
+use crate::grouping::{EffectiveGrouping, GroupingWindow, bucket_for_price, sweep_grouped_runs};
+use crate::history::{HistoryStatus, LiquidityHistory, RestingSide};
 use crate::timeline::BarTimeline;
 
 mod native_runs;
@@ -39,6 +43,21 @@ pub const BOOK_CARRY_MAX_MS: i64 = 500;
 /// visibly fainter, so carried depth never passes for observed depth.
 pub const CARRIED_BOOK_ALPHA: f32 = 0.45;
 
+/// Whether a book confirmed at `confirmed_ms` is still the current book at
+/// `now_ms`: it confirmed no more than [`BOOK_CARRY_MAX_MS`] before, or at
+/// or after `now_ms`. A stamp ahead of a trade-anchored clock is the newest
+/// book there is, never an expired one; past the bound the book stopped
+/// confirming.
+///
+/// The one staleness rule: the worker reads current rows only from a book it
+/// holds, the pane keeps previewing them only while it holds, and a current
+/// row is never drawn carried — so its alpha cannot flip from one
+/// publication of a live book to the next.
+#[must_use]
+pub const fn book_is_current(now_ms: i64, confirmed_ms: i64) -> bool {
+    now_ms.saturating_sub(confirmed_ms) <= BOOK_CARRY_MAX_MS
+}
+
 /// The stretch the live book is carried over: from its last confirmation to
 /// the lane's live edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,29 +81,77 @@ pub fn book_carry(history: &LiquidityHistory, live_edge_ms: i64) -> Option<BookC
     }
     let from_ms = history.latest_book_ms()?;
     let span_ms = live_edge_ms.checked_sub(from_ms)?;
-    (span_ms > 0 && span_ms <= BOOK_CARRY_MAX_MS).then_some(BookCarry {
+    (span_ms > 0 && book_is_current(live_edge_ms, from_ms)).then_some(BookCarry {
         from_ms,
         until_ms: live_edge_ms,
     })
 }
 
+/// The synchronized book's generation and source, while it is still
+/// current at the lane's live edge ([`book_is_current`]).
+fn current_source(history: &LiquidityHistory, live_edge_ms: i64) -> Option<(u64, BookSource)> {
+    let HistoryStatus::Synced {
+        generation,
+        last_event_ms,
+        ..
+    } = history.status()
+    else {
+        return None;
+    };
+    book_is_current(live_edge_ms, last_event_ms).then(|| {
+        (
+            generation,
+            BookSource {
+                update_id: history.book().last_update_id(),
+                event_ms: last_event_ms,
+            },
+        )
+    })
+}
+
+/// The book's quantity in every row the window shows any of, summed over
+/// whole buckets as the grouped runs are: a row the window's edge cuts
+/// still reads every level it holds.
+fn current_quantities(
+    book: &OrderBook,
+    prices: PriceWindow,
+    grouping: EffectiveGrouping,
+) -> BTreeMap<(RestingSide, Decimal), Decimal> {
+    let low = bucket_for_price(prices.low, grouping);
+    let high = bucket_for_price(prices.high, grouping) + grouping.bucket_width;
+    let mut quantities = BTreeMap::new();
+    for (side, levels) in [
+        (RestingSide::Bid, book.bids()),
+        (RestingSide::Ask, book.asks()),
+    ] {
+        for (&price, &quantity) in levels.range(low..high) {
+            *quantities
+                .entry((side, bucket_for_price(price, grouping)))
+                .or_insert(Decimal::ZERO) += quantity;
+        }
+    }
+    quantities
+}
+
 /// The book's bands on the lane of `timeline`, coloured against `reference`
 /// (the settled half's, so a wall reads the same on both panes). Returns the
-/// bands and how many the cell cap dropped.
+/// bands, how many the cell cap dropped, and the one book the current rows
+/// were read from.
 pub(super) fn project_lane_heat(
     history: &LiquidityHistory,
     timeline: &BarTimeline,
     prices: PriceWindow,
     grouping: EffectiveGrouping,
     reference: Decimal,
-) -> (Vec<HeatmapCell>, usize) {
+) -> (Vec<HeatmapCell>, usize, Option<BookSource>) {
     let config = history.config();
     let Some((lane_start_ms, lane_end_ms)) = timeline.lane_bounds_ms() else {
-        return (Vec::new(), 0);
+        return (Vec::new(), 0, None);
     };
     if !config.depth_visible_anywhere() {
-        return (Vec::new(), 0);
+        return (Vec::new(), 0, None);
     }
+    let averaging = config.live_lane.depth_time_averaging;
     let start_ms = history
         .retention_start_ms()
         .map_or(lane_start_ms, |retained| retained.max(lane_start_ms));
@@ -111,7 +178,7 @@ pub(super) fn project_lane_heat(
         )
         .runs
     };
-    let runs = if config.live_lane.depth_time_averaging {
+    let runs = if averaging {
         time_average::project(
             runs,
             history.coverage_segments().cloned(),
@@ -150,7 +217,7 @@ pub(super) fn project_lane_heat(
             (run.start_ms, observed_end_ms, false),
             (observed_end_ms, run.end_ms, true),
         ] {
-            if to_ms <= from_ms || (carried && config.live_lane.depth_time_averaging) {
+            if to_ms <= from_ms || (carried && averaging) {
                 continue;
             }
             if let (Some(x0), Some(x1)) = (x(from_ms), x(to_ms))
@@ -168,7 +235,6 @@ pub(super) fn project_lane_heat(
                     carried,
                     time_averaged: depth.time_averaged,
                     current_book: false,
-                    current_book_source: None,
                 });
             }
         }
@@ -176,29 +242,22 @@ pub(super) fn project_lane_heat(
     // The RLE history deliberately tolerates small quantity churn. Current
     // rows instead read the authoritative synchronized book on this worker,
     // including a publication exactly at NOW with no invented time span.
-    if config.live_lane.depth_time_averaging
-        && let crate::history::HistoryStatus::Synced {
-            generation,
-            last_event_ms,
-            ..
-        } = history.status()
-        && (0..=BOOK_CARRY_MAX_MS).contains(&lane_end_ms.saturating_sub(last_event_ms))
-        && let Some(x0) = x(last_event_ms)
+    // With averaging they fill the lane from the confirmation to the live
+    // edge, where the averaged runs stop; without it the lane's own runs
+    // carry the book there, so the rows claim no lane time and stand at the
+    // edge for the preview alone. Either way the strip between the last
+    // candle and the tape previews them, and they are never carried.
+    let source = current_source(history, lane_end_ms);
+    if let Some((generation, source)) = source
         && let Some(x1) = x(lane_end_ms)
-    {
-        let mut quantities = std::collections::BTreeMap::new();
-        for (side, levels) in [
-            (crate::RestingSide::Bid, history.book().bids()),
-            (crate::RestingSide::Ask, history.book().asks()),
-        ] {
-            for (&price, &quantity) in
-                levels.range((prices.low - grouping.bucket_width)..prices.high)
-            {
-                let bucket = (price / grouping.bucket_width).trunc() * grouping.bucket_width;
-                *quantities.entry((side, bucket)).or_insert(Decimal::ZERO) += quantity;
-            }
+        && let Some(x0) = if averaging {
+            x(source.event_ms)
+        } else {
+            Some(x1)
         }
-        for ((side, price_bucket), quantity) in quantities {
+    {
+        for ((side, price_bucket), quantity) in current_quantities(history.book(), prices, grouping)
+        {
             if let Some((y0, y1)) = rows.get(price_bucket) {
                 drafts.push(DraftCell {
                     generation,
@@ -209,23 +268,15 @@ pub(super) fn project_lane_heat(
                     x1,
                     y0,
                     y1,
-                    carried: lane_end_ms > last_event_ms,
+                    carried: false,
                     time_averaged: false,
                     current_book: true,
-                    current_book_source: Some(super::model::BookSource {
-                        update_id: history.book().last_update_id(),
-                        event_ms: last_event_ms,
-                    }),
                 });
             }
         }
     }
-    finish_with_priority(
-        drafts,
-        reference,
-        config,
-        config.live_lane.depth_time_averaging,
-    )
+    let (cells, dropped) = finish_with_priority(drafts, reference, config, averaging);
+    (cells, dropped, source.map(|(_, source)| source))
 }
 
 #[cfg(test)]

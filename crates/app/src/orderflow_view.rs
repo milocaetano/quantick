@@ -291,12 +291,10 @@ impl OrderflowView {
         };
         let layout = RenderContext::new(projection, layout, &style).layout;
         let preview = |cell: &quantick_orderflow::HeatmapCell| {
-            quantick_orderflow::projection::current_book_preview(
-                cell,
-                self.config.live_lane.depth_time_averaging,
-            ) && layout
-                .current_book_preview_rect(cell.y0, cell.y1)
-                .contains(position)
+            quantick_orderflow::projection::current_book_preview(cell, frame.current_book_live)
+                && layout
+                    .current_book_preview_rect(cell.y0, cell.y1)
+                    .contains(position)
         };
         let cell = projection.cells.iter().rev().find(|cell| {
             layout
@@ -315,6 +313,7 @@ impl OrderflowView {
                 held_tape_end_ms: held.as_ref().and(self.tape_end.past_ms()),
                 held: held.is_some(),
                 current_book_preview: preview(cell),
+                current_book_source: projection.current_book,
             },
         )
     }

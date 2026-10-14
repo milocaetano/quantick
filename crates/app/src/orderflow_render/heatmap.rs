@@ -44,7 +44,9 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         let rect = context
             .layout
             .band(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height);
-        if !rect.is_positive() && !cell.current_book {
+        // A current row with no time span only previews the book.
+        let in_lane = rect.is_positive() && (cell.x1 > cell.x0 || !cell.current_book);
+        if !in_lane && !cell.current_book {
             continue;
         }
 
@@ -54,7 +56,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         };
         let fill = rgba(rgb, alpha);
 
-        if style.edge_glow > 0.0 {
+        if in_lane && style.edge_glow > 0.0 {
             let spread = 0.55 + quantize_heat(finite_unit(cell.intensity)) * 0.85;
             let glow_rect = egui::Rect::from_min_max(
                 egui::pos2(rect.left(), rect.top() - spread),
@@ -66,11 +68,10 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         }
         // Solid fill (no horizontal gradient), so a short run is a clean block
         // rather than a bright-headed streak.
-        add_gradient_rect(&mut mesh, rect, fill, fill);
-        if quantick_orderflow::projection::current_book_preview(
-            cell,
-            style.live_lane.depth_time_averaging,
-        ) {
+        if in_lane {
+            add_gradient_rect(&mut mesh, rect, fill, fill);
+        }
+        if quantick_orderflow::projection::current_book_preview(cell, context.current_book_live) {
             let preview = context.layout.current_book_preview_rect(cell.y0, cell.y1);
             if preview.is_positive() && style.depth_layer {
                 add_gradient_rect(&mut mesh, preview, fill, fill);
@@ -86,7 +87,7 @@ pub(crate) fn draw_heatmap_background(painter: &egui::Painter, context: &RenderC
         && let Some(caption) = quantick_orderflow::projection::depth_caption(
             &context.projection.cells,
             style.depth_layer
-                && style.live_lane.depth_time_averaging
+                && context.current_book_live
                 && context
                     .layout
                     .current_book_preview_rect(0.0, 1.0)

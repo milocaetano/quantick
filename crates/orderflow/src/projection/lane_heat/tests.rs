@@ -41,6 +41,18 @@ fn projection(history: &LiquidityHistory) -> (Vec<HeatmapCell>, usize) {
 }
 
 fn projection_at(history: &LiquidityHistory, now_ms: i64) -> (Vec<HeatmapCell>, usize) {
+    let (cells, dropped, _) = lane_at(history, now_ms);
+    (cells, dropped)
+}
+
+fn lane_at(
+    history: &LiquidityHistory,
+    now_ms: i64,
+) -> (
+    Vec<HeatmapCell>,
+    usize,
+    Option<crate::projection::BookSource>,
+) {
     let timeline = BarTimeline::from_bars(
         0,
         &[bar()],
@@ -116,8 +128,8 @@ fn averaged_lane_retains_current_near_spread_depth_and_its_provenance() {
         assert_eq!(cell.quantity, Decimal::ONE);
         assert!(!cell.time_averaged);
         assert!(
-            cell.carried,
-            "the freshest publication carries honestly to NOW"
+            !cell.carried,
+            "a book still confirming is the current book, not a carry of it"
         );
     }
 }
@@ -177,7 +189,7 @@ fn current_book_ignores_rle_churn_tolerance_and_survives_exact_confirmation() {
     assert_eq!(history.book().last_update_id(), Some(14));
     assert_eq!(history.latest_book_ms(), Some(1_950));
     for now_ms in [1_950, 2_000, 2_450] {
-        let cells = projection_at(&history, now_ms).0;
+        let (cells, _, source) = lane_at(&history, now_ms);
         let current: Vec<_> = cells
             .iter()
             .filter(|cell| super::super::current_book_preview(cell, true))
@@ -190,13 +202,13 @@ fn current_book_ignores_rle_churn_tolerance_and_survives_exact_confirmation() {
         assert_eq!(bid.side, crate::RestingSide::Bid);
         assert_eq!(bid.generation, 1);
         assert_eq!(
-            bid.current_book_source,
+            source,
             Some(crate::projection::BookSource {
                 update_id: Some(14),
                 event_ms: 1_950
             })
         );
-        assert_eq!(bid.carried, now_ms > 1_950);
+        assert!(!bid.carried, "{now_ms}: current, never carried");
         assert!(
             !current
                 .iter()
@@ -275,7 +287,7 @@ fn first_seen_rows_exclude_unknown_initial_time_for_real_snapshot_coverage_and_g
                 8.into(),
             );
             let price = crate::grouping::bucket_for_price(95.into(), grouping);
-            let (cells, _) = project_lane_heat(
+            let (cells, _, source) = project_lane_heat(
                 &history,
                 &timeline,
                 PriceWindow::new(94.into(), 102.into()).unwrap(),
@@ -298,8 +310,8 @@ fn first_seen_rows_exclude_unknown_initial_time_for_real_snapshot_coverage_and_g
                 .find(|cell| cell.price_bucket == price && cell.current_book)
                 .unwrap();
             assert_eq!(current.quantity, Decimal::from(10));
-            assert_eq!(current.current_book_source.unwrap().event_ms, 900);
-            assert_eq!(current.current_book_source.unwrap().update_id, Some(41));
+            assert_eq!(source.unwrap().event_ms, 900);
+            assert_eq!(source.unwrap().update_id, Some(41));
         }
     }
 }
@@ -388,7 +400,7 @@ fn the_current_row_sums_its_whole_top_bucket() {
     let grouping = EffectiveGrouping::resolve(DisplayGrouping::Multiple(2), Decimal::ONE, 8.into());
     assert_eq!(grouping.bucket_width, Decimal::TWO);
     // The high edge, 101, falls inside the top bucket [100, 102).
-    let (cells, _) = project_lane_heat(
+    let (cells, _, _) = project_lane_heat(
         &history,
         &timeline,
         PriceWindow::new(94.into(), 101.into()).unwrap(),

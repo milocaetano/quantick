@@ -1,62 +1,52 @@
-//! Expire current-preview eligibility when a pane consumes a cached publication.
+//! Whether a published current book is still current when a pane draws it.
 
 use std::sync::Arc;
 
 use crate::engine::VisibleOrderflow;
-use crate::projection::BOOK_CARRY_MAX_MS;
+use crate::projection::book_is_current;
 
-/// Cache the expired read model, so delayed publication copies it only once.
+/// The pane's answer for the last publication whose book it no longer
+/// holds current, kept so a stale publication is relabelled only once.
 #[derive(Default)]
 pub(crate) struct CachedDepthPreview {
-    expired: Option<(Arc<VisibleOrderflow>, Arc<VisibleOrderflow>)>,
+    relabelled: Option<(Arc<VisibleOrderflow>, Arc<VisibleOrderflow>)>,
 }
 
 impl CachedDepthPreview {
+    /// The frame to draw `published` as at `now_ms`: the publication itself
+    /// while its book is current ([`book_is_current`]), else the same frame
+    /// with [`VisibleOrderflow::current_book_live`] cleared. O(1): one check
+    /// of the publication's one book source, and at most one shallow copy
+    /// per publication that shares every cell, mark and gap.
+    ///
     /// `now_ms` is the pane's market clock, anchored by market timestamps and
-    /// advanced by monotonic elapsed time (or replay position), never wall time.
-    /// Historical geometry and source identity survive expiry unchanged.
+    /// advanced by monotonic elapsed time (or replay position), never wall
+    /// time; without one the publication is drawn as published.
     pub(crate) fn consume(
         &mut self,
         published: Option<&Arc<VisibleOrderflow>>,
         now_ms: Option<i64>,
     ) -> Option<Arc<VisibleOrderflow>> {
         let published = published?;
-        let Some(now_ms) = now_ms else {
-            return Some(Arc::clone(published));
+        let live = match (published.projection.current_book, now_ms) {
+            (Some(source), Some(now_ms)) => book_is_current(now_ms, source.event_ms),
+            _ => published.current_book_live,
         };
-        let stale = |cell: &crate::projection::HeatmapCell| {
-            cell.current_book
-                && cell.current_book_source.is_none_or(|source| {
-                    !(0..=BOOK_CARRY_MAX_MS).contains(&now_ms.saturating_sub(source.event_ms))
-                })
-        };
-        // Check time again before reusing the cache: replay can move backwards.
-        if !published.projection.cells.iter().any(stale) {
-            self.expired = None;
+        if live == published.current_book_live {
             return Some(Arc::clone(published));
         }
-        if let Some((input, output)) = &self.expired
+        // Checked again on every frame: replay can move the clock backwards.
+        if let Some((input, output)) = &self.relabelled
             && Arc::ptr_eq(input, published)
-            && input
-                .projection
-                .cells
-                .iter()
-                .zip(output.projection.cells.iter())
-                .all(|(original, expired)| {
-                    expired.current_book == (original.current_book && !stale(original))
-                })
+            && output.current_book_live == live
         {
             return Some(Arc::clone(output));
         }
-        let mut frame = published.as_ref().clone();
-        let projection = Arc::make_mut(&mut frame.projection);
-        for cell in Arc::make_mut(&mut projection.cells) {
-            if stale(cell) {
-                cell.current_book = false;
-            }
-        }
-        let output = Arc::new(frame);
-        self.expired = Some((Arc::clone(published), Arc::clone(&output)));
+        let output = Arc::new(VisibleOrderflow {
+            current_book_live: live,
+            ..published.as_ref().clone()
+        });
+        self.relabelled = Some((Arc::clone(published), Arc::clone(&output)));
         Some(output)
     }
 }

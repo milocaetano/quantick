@@ -111,6 +111,7 @@ fn publish(history: &LiquidityHistory, request: &ProjectionRequest) -> Arc<Visib
         live_edge: Some(edge),
         volume_dots: None,
         tape_overlay: None,
+        current_book_live: true,
     })
 }
 
@@ -143,19 +144,16 @@ fn delayed_publication_expires_shared_preview_policy_at_market_clock_boundary() 
                     "exercise the cached overlay fast path"
                 );
             }
+            assert_eq!(previews(&frame), fresh);
             assert_eq!(
-                frame
-                    .projection
-                    .cells
-                    .iter()
-                    .any(|cell| current_book_preview(cell, true)),
-                fresh
-            );
-            assert_eq!(
-                depth_caption(&frame.projection.cells, true)
+                depth_caption(&frame.projection.cells, frame.current_book_live)
                     .is_some_and(|caption| caption.contains("current book preview")
                         || caption.contains("Current book preview")),
                 fresh
+            );
+            assert_eq!(
+                frame.projection.current_book, published.projection.current_book,
+                "the source survives expiry"
             );
             for original in published
                 .projection
@@ -167,29 +165,9 @@ fn delayed_publication_expires_shared_preview_policy_at_market_clock_boundary() 
                     .projection
                     .cells
                     .iter()
-                    .find(|cell| {
-                        cell.current_book_source == original.current_book_source
-                            && cell.price_bucket == original.price_bucket
-                    })
+                    .find(|cell| cell.current_book && cell.price_bucket == original.price_bucket)
                     .unwrap();
-                assert_eq!(
-                    (
-                        cell.x0,
-                        cell.x1,
-                        cell.y0,
-                        cell.y1,
-                        cell.quantity,
-                        cell.current_book_source
-                    ),
-                    (
-                        original.x0,
-                        original.x1,
-                        original.y0,
-                        original.y1,
-                        original.quantity,
-                        original.current_book_source
-                    )
-                );
+                assert_eq!(cell, original, "expiry never touches a cell");
                 let hit = FlowCellHit::from_cell(
                     cell,
                     Decimal::ONE,
@@ -199,12 +177,13 @@ fn delayed_publication_expires_shared_preview_policy_at_market_clock_boundary() 
                         has_lane: true,
                         held_tape_end_ms: None,
                         held: false,
-                        current_book_preview: current_book_preview(cell, true),
+                        current_book_preview: current_book_preview(cell, frame.current_book_live),
+                        current_book_source: frame.projection.current_book,
                     },
                 )
                 .unwrap();
                 assert_eq!(hit.current_book_preview, fresh);
-                assert_eq!(hit.current_book_source, original.current_book_source);
+                assert_eq!(hit.current_book_source, published.projection.current_book);
             }
             for cell in published
                 .projection
@@ -226,27 +205,19 @@ fn gap_publication_replaces_cached_preview_without_relabelling_its_source() {
     let (config, mut history, mut request) = fixture(true);
     let published = publish(&history, &request);
     let mut pane = PaneTape::default();
-    assert!(
-        pane.complete_frame(&config, &request, Some(&published))
+    assert!(previews(
+        &pane
+            .complete_frame(&config, &request, Some(&published))
             .unwrap()
-            .projection
-            .cells
-            .iter()
-            .any(|cell| cell.current_book)
-    );
+    ));
     history.mark_gap(950, "sequence_gap").unwrap();
     let gapped = publish(&history, &request);
     request.lane_now_ms = Some(1_100);
     let frame = pane
         .complete_frame(&config, &request, Some(&gapped))
         .unwrap();
-    assert!(
-        frame
-            .projection
-            .cells
-            .iter()
-            .all(|cell| !current_book_preview(cell, true))
-    );
+    assert!(!previews(&frame));
+    assert_eq!(frame.projection.current_book, None, "a gap reads no book");
     assert!(!frame.projection.gaps.is_empty());
 }
 
@@ -261,26 +232,17 @@ fn supplied_monotonic_clock_expires_and_reuses_the_cached_read_model() {
     let expired = pane
         .complete_frame(&config, &request, Some(&published))
         .unwrap();
-    assert!(
-        expired
-            .projection
-            .cells
-            .iter()
-            .all(|cell| !cell.current_book)
-    );
+    assert!(!expired.current_book_live);
+    assert!(!previews(&expired));
     let again = pane
         .complete_frame(&config, &request, Some(&published))
         .unwrap();
     assert!(
         Arc::ptr_eq(&expired, &again),
-        "expiry copies once per publication"
+        "a publication is relabelled once"
     );
     assert!(
-        published
-            .projection
-            .cells
-            .iter()
-            .any(|cell| cell.current_book),
+        published.current_book_live && previews(&published),
         "the worker publication stays immutable"
     );
 }
@@ -317,32 +279,11 @@ fn ordinary_preview_expires_on_market_and_elapsed_time_without_moving_lane_geome
             let frame = pane
                 .complete_frame(&config, &request, Some(&published))
                 .unwrap();
-            assert_eq!(
-                frame
-                    .projection
-                    .cells
-                    .iter()
-                    .any(|cell| current_book_preview(cell, true)),
-                fresh
+            assert_eq!(previews(&frame), fresh);
+            assert!(
+                Arc::ptr_eq(&frame.projection, &published.projection),
+                "only current eligibility changes"
             );
-            for original in published.projection.cells.iter() {
-                let cell = frame
-                    .projection
-                    .cells
-                    .iter()
-                    .find(|cell| {
-                        cell.price_bucket == original.price_bucket
-                            && cell.x0 == original.x0
-                            && cell.x1 == original.x1
-                            && cell.current_book_source == original.current_book_source
-                    })
-                    .unwrap();
-                let mut expected = original.clone();
-                if !fresh {
-                    expected.current_book = false;
-                }
-                assert_eq!(cell, &expected, "only current eligibility changes");
-            }
             let again = pane
                 .complete_frame(&config, &request, Some(&published))
                 .unwrap();
@@ -371,10 +312,7 @@ fn ordinary_preview_replay_clamps_rewinds_and_resets_source_clock() {
         let frame = pane
             .complete_frame(&config, &request, Some(&published))
             .unwrap();
-        assert_eq!(
-            frame.projection.cells.iter().any(|cell| cell.current_book),
-            fresh
-        );
+        assert_eq!(previews(&frame), fresh);
     }
     pane.reset_clock();
     pane.follow_live(false, Some(1_000), 50_000);
@@ -401,7 +339,7 @@ fn previews(frame: &VisibleOrderflow) -> bool {
         .projection
         .cells
         .iter()
-        .any(|cell| current_book_preview(cell, true))
+        .any(|cell| current_book_preview(cell, frame.current_book_live))
 }
 
 /// A book stamped ahead of the pane's trade-anchored clock is the newest

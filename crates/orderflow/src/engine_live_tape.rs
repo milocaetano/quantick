@@ -15,6 +15,7 @@ impl BookEngine {
             let frame = Arc::make_mut(frame);
             let projection = Arc::make_mut(&mut frame.projection);
             Arc::make_mut(&mut projection.cells).retain(|cell| !cell.current_book);
+            projection.current_book = None;
         }
     }
 

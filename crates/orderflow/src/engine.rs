@@ -120,6 +120,13 @@ pub struct VisibleOrderflow {
     pub volume_dots: Option<DotScale>,
     /// Accepted prints `projection` does not hold yet, beside it.
     pub tape_overlay: Option<Arc<crate::projection::TapeOverlay>>,
+    /// Whether the projection's current book
+    /// ([`HeatmapProjection::current_book`](crate::projection::HeatmapProjection::current_book))
+    /// is still the book at the pane's market clock. The worker publishes it
+    /// `true`, reading rows only from a current book; the pane answers again
+    /// each frame, in O(1), without touching a cell
+    /// ([`PaneTape::complete_frame`](crate::pane_tape::PaneTape::complete_frame)).
+    pub current_book_live: bool,
 }
 
 impl VisibleOrderflow {
@@ -1220,6 +1227,7 @@ impl BookEngine {
                 .as_ref()
                 .map(|dots| dots.scale(&self.config, request.price_range)),
             tape_overlay: None,
+            current_book_live: true,
         });
         self.view.past_tape = self.project_past(request, &settled, dots.as_ref(), prices, held);
         self.last_frame = Some(Arc::clone(&frame));
@@ -1530,7 +1538,6 @@ mod tests {
             carried: false,
             time_averaged: false,
             current_book: false,
-            current_book_source: None,
         };
         let frame = |projection: HeatmapProjection| VisibleOrderflow {
             projection: Arc::new(projection),
@@ -1539,6 +1546,7 @@ mod tests {
             live_edge: None,
             volume_dots: None,
             tape_overlay: None,
+            current_book_live: true,
         };
 
         // No cells: no boundary — the paint must not invent a cut.
@@ -2502,8 +2510,18 @@ mod tests {
             "sub-quantum shift reuses the settled half"
         );
         assert_eq!(engine.projection_cache_hits, 1);
+        let settled = |frame: &VisibleOrderflow| {
+            frame
+                .projection
+                .cells
+                .iter()
+                .filter(|cell| !cell.current_book)
+                .cloned()
+                .collect::<Vec<_>>()
+        };
         assert_eq!(
-            first.projection.cells, wiggled.projection.cells,
+            settled(&first),
+            settled(&wiggled),
             "and draws the very same map"
         );
 
@@ -2522,10 +2540,19 @@ mod tests {
 
         // A gap invalidates the cache but the published frame survives, so the
         // UI never flashes to an empty heatmap while the rebuild is queued.
+        // Only the current book's rows go: a lost generation previews nothing.
         engine.prepare_restart(11, "test_gap");
-        let published = engine.published();
-        assert!(published.frame.is_some());
-        assert!(Arc::ptr_eq(&published.frame.unwrap(), &frame));
+        let published = engine.published().frame.unwrap();
+        assert_eq!(
+            published.projection.cells.iter().collect::<Vec<_>>(),
+            frame
+                .projection
+                .cells
+                .iter()
+                .filter(|cell| !cell.current_book)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(published.projection.current_book, None);
 
         // Disabling capture is a hard reset: the frame must vanish.
         engine.set_enabled(false, 12);
@@ -2542,14 +2569,8 @@ mod tests {
         engine.handle_depth_event(snapshot_event(10));
         let bars = [bar(900, 1_100)];
         let frame = engine.project(&request(&bars, (98.0, 102.0))).unwrap();
-        let source = frame
-            .projection
-            .cells
-            .iter()
-            .find(|cell| cell.current_book)
-            .unwrap()
-            .current_book_source
-            .unwrap();
+        assert!(frame.projection.cells.iter().any(|cell| cell.current_book));
+        let source = frame.projection.current_book.unwrap();
         assert_eq!(source.update_id, Some(10));
         assert_eq!(
             source.event_ms, 999,
@@ -2569,28 +2590,19 @@ mod tests {
         let published = engine.published();
         assert_eq!(published.health.last_update_id, Some(11));
         assert_eq!(
-            published
-                .frame
-                .unwrap()
-                .projection
-                .cells
-                .iter()
-                .find(|cell| cell.current_book)
-                .unwrap()
-                .current_book_source,
+            published.frame.unwrap().projection.current_book,
             Some(source)
         );
         engine.prepare_restart(11, "test_gap");
+        let gapped = engine.published().frame.unwrap();
         assert!(
-            engine
-                .published()
-                .frame
-                .unwrap()
+            gapped
                 .projection
                 .cells
                 .iter()
                 .all(|cell| !cell.current_book)
         );
+        assert_eq!(gapped.projection.current_book, None);
     }
 
     /// The user's complaint made executable: hiding the map is pixels only.

@@ -337,6 +337,8 @@ pub(crate) struct RenderContext<'a> {
     )>,
     pub(super) past_tape: Option<(&'a std::cell::RefCell<PastTapeMemory>, &'a PastTape)>,
     pub(super) tape_overlay: Option<&'a Arc<quantick_orderflow::projection::TapeOverlay>>,
+    /// The frame's verdict on its current book (`VisibleOrderflow::current_book_live`).
+    pub(super) current_book_live: bool,
 }
 
 impl<'a> RenderContext<'a> {
@@ -363,6 +365,7 @@ impl<'a> RenderContext<'a> {
             tape_rebuilds: None,
             past_tape: None,
             tape_overlay: None,
+            current_book_live: true,
         }
     }
 
@@ -372,6 +375,12 @@ impl<'a> RenderContext<'a> {
         past: Option<(&'a std::cell::RefCell<PastTapeMemory>, &'a PastTape)>,
     ) -> Self {
         self.past_tape = past;
+        self
+    }
+
+    /// Preview the frame's current book only while the pane holds it current.
+    pub(crate) fn with_current_book_live(mut self, live: bool) -> Self {
+        self.current_book_live = live;
         self
     }
 

@@ -143,7 +143,8 @@ impl OrderflowView {
         // The frame's book is today's: a held tape draws its own beside it.
         let right = chart_rect.right() - lane_width_px * f32::from(!self.tape_end.is_live());
         let depth = painter.with_clip_rect(chart_rect.with_max_x(right));
-        let context = RenderContext::new(&frame.projection, layout, &style);
+        let context = RenderContext::new(&frame.projection, layout, &style)
+            .with_current_book_live(frame.current_book_live);
         draw_heatmap_background(&depth, &context);
         if let Some(heat) = self.held_heat(frame) {
             let mut tape = style.clone();

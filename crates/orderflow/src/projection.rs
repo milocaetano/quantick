@@ -54,7 +54,9 @@ pub use dots::{
     DotRungMemory, DotScale, DotSizing, DotZoom, PaneGeometry, VolumeDots, candle_dot_px,
     dot_level_ticks, dot_radius_range, dot_window_ms, hold_rung, lane_bars, tape_price_range,
 };
-pub use lane_heat::{BOOK_CARRY_MAX_MS, BookCarry, CARRIED_BOOK_ALPHA, book_carry};
+pub use lane_heat::{
+    BOOK_CARRY_MAX_MS, BookCarry, CARRIED_BOOK_ALPHA, book_carry, book_is_current,
+};
 pub use model::{
     AggressionPrimitive, BEFORE_CAPTURE, BOOK_PENDING, BookSource, CellHitContext, FlowCellHit,
     GapPrimitive, HeatmapCell, HeatmapProjection, LiquidityEventPrimitive, LiveMarks, PriceWindow,
@@ -250,7 +252,6 @@ pub fn project_settled(
             carried: false,
             time_averaged: false,
             current_book: false,
-            current_book_source: None,
         };
 
         let mut drawn = false;
@@ -315,7 +316,6 @@ pub fn project_settled(
             carried: false,
             time_averaged: false,
             current_book: false,
-            current_book_source: None,
         });
     }
 
@@ -557,7 +557,7 @@ pub fn project_live_after(
     let live_now_x = timeline
         .live_now_position()
         .map(|position| position.normalized);
-    let (cells, dropped_cells) = lane_heat::project_lane_heat(
+    let (cells, dropped_cells, current_book) = lane_heat::project_lane_heat(
         history,
         timeline,
         prices,
@@ -575,6 +575,7 @@ pub fn project_live_after(
             live_now_x,
             cells,
             dropped_cells,
+            current_book,
             ..LiveMarks::default()
         };
     };
@@ -722,6 +723,7 @@ pub fn project_live_after(
         live_now_x,
         cells,
         dropped_cells,
+        current_book,
     }
 }
 

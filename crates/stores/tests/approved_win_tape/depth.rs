@@ -442,7 +442,9 @@ fn paint(frame: &VisibleOrderflow, config: &HeatmapConfig, canvas: &Canvas<'_>) 
     let mut cells = Vec::new();
     for cell in projection.cells.iter().filter(|cell| cell.x1 > lane_start) {
         let rect = layout.band(cell.x0, cell.x1, cell.y0, cell.y1, style.min_cell_height);
-        if !rect.is_positive() && !cell.current_book {
+        // A current row with no time span only previews the book, in the
+        // strip this harness does not paint.
+        if !(rect.is_positive() && (cell.x1 > cell.x0 || !cell.current_book)) {
             continue;
         }
         let Some((rgb, alpha)) = heat_fill_parts(&style, cell.side, cell.intensity, cell.alpha)
