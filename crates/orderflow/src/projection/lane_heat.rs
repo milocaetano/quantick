@@ -7,7 +7,9 @@
 //! frame's clock while its book stood still on the clock of the last cut, and
 //! the newest confirmations waited up to an interval to be drawn. Native rows
 //! reuse the captured RLE intervals directly, including in a five-minute lane;
-//! only wider display rows require another quantity sweep.
+//! only wider display rows require another quantity sweep. An averaged lane
+//! is folded once per closed run instead ([`LaneFold`]), on bins that never
+//! move with the clock.
 
 use rust_decimal::Decimal;
 
@@ -21,8 +23,11 @@ use crate::grouping::{EffectiveGrouping, GroupingWindow, bucket_for_price, sweep
 use crate::history::{HistoryStatus, LiquidityHistory, RestingSide};
 use crate::timeline::BarTimeline;
 
+mod lane_fold;
 mod native_runs;
-mod time_average;
+
+use lane_fold::DepthRun;
+pub use lane_fold::LaneFold;
 
 #[cfg(test)]
 #[path = "lane_heat/tests.rs"]
@@ -137,12 +142,27 @@ fn current_quantities(
 /// (the settled half's, so a wall reads the same on both panes). Returns the
 /// bands, how many the cell cap dropped, and the one book the current rows
 /// were read from.
+#[cfg(test)]
 pub(super) fn project_lane_heat(
     history: &LiquidityHistory,
     timeline: &BarTimeline,
     prices: PriceWindow,
     grouping: EffectiveGrouping,
     reference: Decimal,
+) -> (Vec<HeatmapCell>, usize, Option<BookSource>) {
+    let mut fold = LaneFold::default();
+    project_lane_heat_folded(history, timeline, prices, grouping, reference, &mut fold)
+}
+
+/// [`project_lane_heat`] on a lane `fold` kept between requests: an averaged
+/// lane folds only the runs closed since the last one.
+pub(super) fn project_lane_heat_folded(
+    history: &LiquidityHistory,
+    timeline: &BarTimeline,
+    prices: PriceWindow,
+    grouping: EffectiveGrouping,
+    reference: Decimal,
+    fold: &mut LaneFold,
 ) -> (Vec<HeatmapCell>, usize, Option<BookSource>) {
     let config = history.config();
     let Some((lane_start_ms, lane_end_ms)) = timeline.lane_bounds_ms() else {
@@ -167,23 +187,11 @@ pub(super) fn project_lane_heat(
         price_low: prices.low,
         price_high: prices.high,
     };
-    let runs = if grouping.multiple == 1 && grouping.bucket_width == config.price_grouping {
-        native_runs::project(history, window)
-    } else {
-        sweep_grouped_runs(
-            history.runs_intersecting(start_ms, lane_end_ms),
-            history.coverage_segments(),
+    let runs = if averaging {
+        fold.project(
+            history,
             grouping,
             window,
-        )
-        .runs
-    };
-    let runs = if averaging {
-        time_average::project(
-            runs,
-            history.coverage_segments().cloned(),
-            start_ms,
-            open_run_end_ms.min(lane_end_ms),
             history
                 .latest_book_ms()
                 .unwrap_or(lane_end_ms)
@@ -191,8 +199,20 @@ pub(super) fn project_lane_heat(
             config.max_visible_cells,
         )
     } else {
+        fold.clear();
+        let runs = if grouping.multiple == 1 && grouping.bucket_width == config.price_grouping {
+            native_runs::project(history, window)
+        } else {
+            sweep_grouped_runs(
+                history.runs_intersecting(start_ms, lane_end_ms),
+                history.coverage_segments(),
+                grouping,
+                window,
+            )
+            .runs
+        };
         runs.into_iter()
-            .map(|run| time_average::DepthRun {
+            .map(|run| DepthRun {
                 run,
                 time_averaged: false,
             })

@@ -18,6 +18,8 @@ pub(super) struct ViewAsk {
     pub(super) tape_end_ms: Option<i64>,
     /// The native tape at `tape_end_ms`, rebuilt with every projection.
     pub(super) past_tape: Option<Arc<PastTape>>,
+    /// The averaged lane of the view's requests, folded once per closed run.
+    pub(super) lane_fold: crate::projection::LaneFold,
 }
 
 impl BookEngine {

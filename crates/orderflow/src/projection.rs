@@ -55,7 +55,7 @@ pub use dots::{
     dot_level_ticks, dot_radius_range, dot_window_ms, hold_rung, lane_bars, tape_price_range,
 };
 pub use lane_heat::{
-    BOOK_CARRY_MAX_MS, BookCarry, CARRIED_BOOK_ALPHA, book_carry, book_is_current,
+    BOOK_CARRY_MAX_MS, BookCarry, CARRIED_BOOK_ALPHA, LaneFold, book_carry, book_is_current,
 };
 pub use model::{
     AggressionPrimitive, BEFORE_CAPTURE, BOOK_PENDING, BookSource, CellHitContext, FlowCellHit,
@@ -550,6 +550,22 @@ pub fn project_live_after(
     dots: Option<&VolumeDots>,
     reuse: Option<TapeReuse<'_>>,
 ) -> LiveMarks {
+    let mut fold = LaneFold::default();
+    project_live_folded(history, timeline, prices, settled, dots, reuse, &mut fold)
+}
+
+/// [`project_live_after`] on the lane `fold` its worker keeps between
+/// requests, so an averaged lane folds only the runs closed since the last.
+#[must_use]
+pub fn project_live_folded(
+    history: &LiquidityHistory,
+    timeline: &BarTimeline,
+    prices: PriceWindow,
+    settled: &SettledProjection,
+    dots: Option<&VolumeDots>,
+    reuse: Option<TapeReuse<'_>>,
+    fold: &mut LaneFold,
+) -> LiveMarks {
     let config = history.config();
     if !settled.enabled || !config.any_layer_enabled() {
         return LiveMarks::default();
@@ -557,12 +573,13 @@ pub fn project_live_after(
     let live_now_x = timeline
         .live_now_position()
         .map(|position| position.normalized);
-    let (cells, dropped_cells, current_book) = lane_heat::project_lane_heat(
+    let (cells, dropped_cells, current_book) = lane_heat::project_lane_heat_folded(
         history,
         timeline,
         prices,
         settled.effective_grouping,
         settled.liquidity_reference,
+        fold,
     );
     // No boundary means no bar is represented at all, so there is no live half
     // to draw — and no reason to walk the retained tape looking for one.

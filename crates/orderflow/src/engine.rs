@@ -120,11 +120,8 @@ pub struct VisibleOrderflow {
     pub volume_dots: Option<DotScale>,
     /// Accepted prints `projection` does not hold yet, beside it.
     pub tape_overlay: Option<Arc<crate::projection::TapeOverlay>>,
-    /// Whether the projection's current book
-    /// ([`HeatmapProjection::current_book`](crate::projection::HeatmapProjection::current_book))
-    /// is still the book at the pane's market clock. The worker publishes it
-    /// `true`, reading rows only from a current book; the pane answers again
-    /// each frame, in O(1), without touching a cell
+    /// Whether the projection's current book is still the book at the pane's
+    /// clock: published `true`, answered again by the pane each frame in O(1)
     /// ([`PaneTape::complete_frame`](crate::pane_tape::PaneTape::complete_frame)).
     pub current_book_live: bool,
 }
