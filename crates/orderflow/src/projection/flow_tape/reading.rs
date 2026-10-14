@@ -56,14 +56,17 @@ pub fn caption_text(
     progress: super::FlowProgress,
     legend_visible: bool,
 ) -> Option<String> {
-    styled_caption_text(frame, progress, legend_visible, false)
+    styled_caption_text(frame, progress, legend_visible, false, None)
 }
 
+/// [`caption_text`] for the look drawn: tick spheres count in `unit`, the
+/// quantity unit the asset's config mode names, and claim none without one.
 pub fn styled_caption_text(
     frame: Option<&FlowTapeFrame>,
     progress: super::FlowProgress,
     legend_visible: bool,
     tick_spheres: bool,
+    unit: Option<&str>,
 ) -> Option<String> {
     let mut hints = Vec::new();
     if legend_visible {
@@ -84,14 +87,11 @@ pub fn styled_caption_text(
                     },
                 ),
         );
-        hints.push(
-            if tick_spheres {
-                "quantity in BTC; sphere area follows gross volume"
-            } else {
-                "brightness rises with regional volume"
-            }
-            .to_owned(),
-        );
+        hints.push(match (tick_spheres, unit) {
+            (true, Some(unit)) => format!("quantity in {unit}; sphere area follows gross volume"),
+            (true, None) => "sphere area follows gross volume".to_owned(),
+            (false, _) => "brightness rises with regional volume".to_owned(),
+        });
     }
     hints.extend(qualifications(frame, progress));
     (!hints.is_empty()).then(|| hints.join(" | "))

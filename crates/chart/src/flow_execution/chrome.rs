@@ -10,11 +10,13 @@ pub const FLOW_CHROME_MAX_WIDTH_PX: f32 = 320.0;
 pub const FLOW_CHROME_MAX_HEIGHT_PX: f32 = 96.0;
 
 /// What a tick-sphere FLOW caption reads beyond regional FLOW's: the
-/// spheres it must not cover and the pane theme its Buy / Sell key wears.
+/// spheres it must not cover, the pane theme its Buy / Sell key wears and
+/// the quantity unit the asset's config mode names, if it names one.
 #[derive(Debug, Clone, Copy)]
 pub struct SphereChrome<'a> {
     pub regions: &'a [FlowRegionVisual],
     pub theme: quantick_orderflow::HeatmapTheme,
+    pub unit: Option<&'a str>,
 }
 
 /// Rows of measured legend entries, independent of a font or painter.

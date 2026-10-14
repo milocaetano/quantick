@@ -340,6 +340,7 @@ impl<'a> FlowFrame<'a> {
                 tick_regions.map(|regions| quantick_chart::flow_execution::SphereChrome {
                     regions,
                     theme: owner.cached_config().theme,
+                    unit: owner.asset().and_then(|asset| asset.quantity_unit()),
                 }),
             ) {
                 bounds = Some(bounds.map_or(caption, |rect| rect.union(caption)));

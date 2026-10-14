@@ -37,8 +37,23 @@ default_symbol = "BTCUSDT"
 #                   venue's symbol; a symbol its feed does not offer (a
 #                   recording replayed there) takes the key another feed
 #                   declares for it. A key two feeds declare opens on the
-#                   first one's preset. BTCUSDT keeps separate venue/market
-#                   identities; Binance Spot retains its legacy saved key.
+#                   first one's preset.
+#   symbol_asset_modes — optional: per asset, keyed like symbol_bubble_presets,
+#                   behaviour the asset gets only because this file switches
+#                   it on, never because of its name. A mode is a table:
+#                     quantity_unit — what a quantity on the asset counts
+#                                     ("BTC"); the sphere caption and the
+#                                     settings say it. Required.
+#                     look_key      — optional: the key the asset's bubble
+#                                     settings are saved under. Absent, it is
+#                                     "<feed id>:<symbol>", so one venue's
+#                                     market never shares a look with another.
+#                   With a mode on, the asset may wear the tick-chart spheres
+#                   presets carry (on tick charts), a whole preset brings its
+#                   spheres along, and a recording of the symbol replayed in
+#                   another tab keeps this feed's mode, key and look. Without
+#                   one, a preset's spheres stay behind, and spheres an asset
+#                   already wears can still be switched off.
 #   default_layout — optional: the canvas layout a tab on this feed opens
 #                   showing — "flow" (the default), "time" (a full-window
 #                   timeframe chart) or "time+flow" (the split). Startup-only:
@@ -66,6 +81,8 @@ name = "Binance"
 provider = "binance"
 symbols = ["BTCUSDT", "ETHUSDT"]
 symbol_bubble_presets = { "BTCUSDT" = "Binance BTC Spot spheres" }
+# Spot BTC keeps "BTCUSDT", the key its saved look has always used.
+symbol_asset_modes = { "BTCUSDT" = { quantity_unit = "BTC", look_key = "BTCUSDT" } }
 # The default open: timeframe context beside the flow chart, side by side
 # (user decision 2026-08-06). Remove the key to open on the flow pane alone.
 default_layout = "time+flow"
@@ -85,6 +102,7 @@ name = "Binance USD-M perpetual"
 provider = "binance-futures"
 symbols = ["BTCUSDT.p"]
 symbol_bubble_presets = { "BTCUSDT.p" = "Binance BTC perpetual spheres" }
+symbol_asset_modes = { "BTCUSDT.p" = { quantity_unit = "BTC" } }
 default_layout = "time+flow"
 default_bars = "tick:50"
 

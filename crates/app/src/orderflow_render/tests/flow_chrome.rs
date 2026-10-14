@@ -56,6 +56,7 @@ fn tick_chrome_keeps_live_l2_wrapping_and_header_stacks_at_the_preferred_top() {
                     Some(quantick_chart::flow_execution::SphereChrome {
                         regions: &regions,
                         theme: quantick_orderflow::HeatmapTheme::default(),
+                        unit: None,
                     }),
                 );
             });
@@ -105,6 +106,7 @@ fn a_replay_tick_caption_yields_when_its_header_is_occupied() {
             Some(quantick_chart::flow_execution::SphereChrome {
                 regions: &regions,
                 theme: quantick_orderflow::HeatmapTheme::default(),
+                unit: None,
             }),
         );
     });
@@ -264,6 +266,7 @@ fn tick_chrome_omits_a_blocked_l2_key_and_an_incomplete_caption() {
                 Some(quantick_chart::flow_execution::SphereChrome {
                     regions: &[],
                     theme: quantick_orderflow::HeatmapTheme::default(),
+                    unit: None,
                 }),
             )
             .is_none()
@@ -294,6 +297,7 @@ fn the_tick_caption_key_follows_the_pane_theme() {
             Some(quantick_chart::flow_execution::SphereChrome {
                 regions: &[],
                 theme,
+                unit: None,
             }),
         );
     });
@@ -391,6 +395,7 @@ fn a_blocked_tick_caption_keeps_its_honesty_notes() {
             Some(quantick_chart::flow_execution::SphereChrome {
                 regions: &regions,
                 theme: quantick_orderflow::HeatmapTheme::default(),
+                unit: None,
             }),
         );
     });

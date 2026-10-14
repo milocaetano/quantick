@@ -322,6 +322,7 @@ pub(crate) fn flow_caption(
         progress,
         legend_visible,
         tick,
+        spheres.and_then(|spheres| spheres.unit),
     );
     let mut job = egui::text::LayoutJob::default();
     job.wrap.max_width = (history.width() - FLOW_CAPTION_WRAP_MARGIN_PX).max(1.0);

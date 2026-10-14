@@ -1,14 +1,26 @@
 //! Select the chart's sphere calibration without replacing the tape look.
 use super::BubbleLook;
+use crate::config::AssetMode;
 use quantick_orderflow::TickBubbleStyle;
 
 impl BubbleLook {
+    /// The mode the config switches on for the bound asset, if any.
+    #[must_use]
+    pub fn asset_mode(&self) -> Option<&AssetMode> {
+        self.asset().and_then(|asset| asset.mode())
+    }
+
+    /// What a quantity on the bound asset counts, when its mode names it.
+    #[must_use]
+    pub fn quantity_unit(&self) -> Option<&str> {
+        self.asset().and_then(|asset| asset.quantity_unit())
+    }
+
+    /// The sphere presets this asset offers: every preset carrying tick
+    /// spheres, and none unless the config switches the asset's mode on.
     #[must_use]
     pub fn tick_presets(&self) -> Vec<String> {
-        if !self
-            .asset()
-            .is_some_and(|asset| matches!(asset.key(), "BTCUSDT" | "binance-futures:BTCUSDT.p"))
-        {
+        if self.asset_mode().is_none() {
             return Vec::new();
         }
         self.presets()
@@ -19,22 +31,37 @@ impl BubbleLook {
             .collect()
     }
 
+    /// The spheres `preset` names, or none: dropping spheres is always
+    /// allowed, whatever put them on (review #29); a named preset must be one
+    /// this asset offers.
     pub fn tick_style(&self, preset: Option<&str>) -> Result<Option<TickBubbleStyle>, String> {
-        let choices = self.tick_presets();
-        if choices.is_empty() {
-            return Err("Tick sphere presets require a Binance BTC asset".to_owned());
+        let Some(name) = preset else {
+            return Ok(None);
+        };
+        if self.asset_mode().is_none() {
+            return Err(
+                "Tick sphere presets require an asset whose config asset mode is on".to_owned(),
+            );
         }
-        preset
-            .map(|name| {
-                if !choices.iter().any(|choice| choice == name) {
-                    return Err(format!("Unknown tick sphere preset: {name}"));
-                }
-                Ok(self
-                    .presets()
-                    .get(name)
-                    .and_then(|preset| preset.tick_bubbles))
-            })
-            .unwrap_or(Ok(None))
+        if !self.tick_presets().iter().any(|choice| choice == name) {
+            return Err(format!("Unknown tick sphere preset: {name}"));
+        }
+        Ok(self
+            .presets()
+            .get(name)
+            .and_then(|preset| preset.tick_bubbles))
+    }
+
+    /// The settings line under the sphere picker: the unit the asset's mode
+    /// counts in, and never one it does not name.
+    #[must_use]
+    pub fn tick_hint(&self) -> String {
+        match self.quantity_unit() {
+            Some(unit) => {
+                format!("Tick chart spheres · quantity in {unit} · tape settings stay as selected")
+            }
+            None => "Tick chart spheres · tape settings stay as selected".to_owned(),
+        }
     }
 }
 

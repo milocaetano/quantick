@@ -85,28 +85,26 @@ pub struct AssetBubblesStore {
 }
 
 impl AssetBubblesStore {
-    /// Preserve the formerly resolved BTC customization once, before any
-    /// view can edit it. Already scoped entries win; Futures is a new market.
+    /// Preserve the look a key had before a config mode moved it, once,
+    /// before any view can edit it. Entries already under the new key win.
     fn migrate_btc_venues(&mut self, config: &AppConfig) {
         if self.file.btc_venue_migration_done {
             return;
         }
         self.file.btc_venue_migration_done = true;
         // Snapshot all old keys before writing any destination: migrating a
-        // family to Spot must not become another venue's legacy input.
-        let mut migrations = Vec::new();
-        for feed in &config.feeds {
-            for symbol in &feed.symbols {
-                let Some(legacy) = feed.legacy_btc_key(symbol) else {
-                    continue;
-                };
-                migrations.push((
-                    config.bubble_asset(&feed.id, symbol).key,
+        // family to one venue must not become another venue's legacy input.
+        let migrations: Vec<_> = config
+            .moved_asset_keys()
+            .into_iter()
+            .map(|(key, legacy)| {
+                (
+                    key,
                     self.file.get(&legacy).cloned(),
                     !self.file.saves_changes(&legacy),
-                ));
-            }
-        }
+                )
+            })
+            .collect();
         for (key, legacy, saving_off) in migrations {
             self.pending |= legacy.is_some() || saving_off;
             // Either a saved look or a scoped save-off switch is an explicit
@@ -538,6 +536,18 @@ impl AssetBinding {
         &self.asset.key
     }
 
+    /// The mode the config switches on for the asset, if any.
+    #[must_use]
+    pub fn mode(&self) -> Option<&crate::config::AssetMode> {
+        self.asset.mode.as_ref()
+    }
+
+    /// What a quantity on the asset counts, when its mode names it.
+    #[must_use]
+    pub fn quantity_unit(&self) -> Option<&str> {
+        self.mode().map(|mode| mode.quantity_unit.as_str())
+    }
+
     /// The store this binding files into, which the asset a switch arrives
     /// at binds to as well.
     #[must_use]
@@ -813,7 +823,13 @@ fn declared(
                 .unwrap_or_else(|| BubblePreset::capture(String::new(), &HeatmapConfig::default())),
         ),
     };
-    (source, AssetBubbles::declared(&preset, candle_default))
+    let mut settings = AssetBubbles::declared(&preset, candle_default);
+    if asset.mode.is_none() {
+        // A preset's tick spheres come along only where the config switches
+        // the asset's mode on (review #18).
+        settings.look.tick_bubbles = None;
+    }
+    (source, settings)
 }
 
 #[cfg(test)]

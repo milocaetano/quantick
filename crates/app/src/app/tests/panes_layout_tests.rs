@@ -1931,6 +1931,7 @@ fn a_new_tab_takes_the_feeds_declared_defaults_over_inheritance() {
         symbols: vec!["WINQ26".to_string()],
         bubble_preset: None,
         symbol_bubble_presets: Default::default(),
+        symbol_asset_modes: Default::default(),
         default_layout: Some(crate::config::DeclaredLayout::TimeAndFlow),
         default_bars: Some("tick:7".to_string()),
         record_deals: false,

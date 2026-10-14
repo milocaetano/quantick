@@ -40,6 +40,6 @@ impl OrderflowView {
                     }
                 }
             });
-        ui.small("Tick chart spheres · quantity in BTC · tape settings stay as selected");
+        ui.small(self.look.tick_hint());
     }
 }

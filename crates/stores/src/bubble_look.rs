@@ -327,6 +327,11 @@ impl BubbleLook {
             return false;
         };
         preset.apply_to(config);
+        if self.asset_mode().is_none() {
+            // Spheres come along only where the config switches the asset's
+            // mode on (review #18).
+            config.volume_dots.tick_bubbles = None;
+        }
         self.look_name = preset.name.clone();
         self.name_draft = preset.name.clone();
         self.status = Some(format!("'{}' applied", preset.name));
