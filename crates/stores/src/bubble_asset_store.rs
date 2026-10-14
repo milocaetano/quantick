@@ -43,8 +43,8 @@ use crate::bubble_presets::{BubblePreset, BubblePresetFile};
 use crate::config::{AppConfig, BubbleAsset};
 
 #[cfg(test)]
-#[path = "btc_asset_tests.rs"]
-mod btc_asset_tests;
+#[path = "asset_mode_tests.rs"]
+mod asset_mode_tests;
 
 /// The store every view of one app shares.
 pub type SharedAssetBubbles = Rc<RefCell<AssetBubblesStore>>;

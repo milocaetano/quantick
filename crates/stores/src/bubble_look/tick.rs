@@ -76,11 +76,16 @@ mod tests {
             );
             look.bind(binding);
             assert_eq!(!look.tick_presets().is_empty(), allowed);
+            assert_eq!(look.asset_mode().is_some(), allowed);
             assert_eq!(
                 look.tick_style(Some("Binance BTC Spot spheres")).is_ok(),
                 allowed
             );
-            assert_eq!(look.tick_style(None).is_ok(), allowed);
+            assert_eq!(
+                look.tick_style(None),
+                Ok(None),
+                "review #29: dropping spheres is always allowed"
+            );
             assert!(look.tick_style(Some("missing")).is_err());
         }
     }

@@ -167,3 +167,21 @@ fn qualifications_stand_apart_from_the_key() {
     let full = caption_text(Some(&frame), pending, true).unwrap();
     assert!(full.ends_with(&notes), "{full}");
 }
+
+/// Review #18: the sphere caption counts in the unit the asset's config mode
+/// names, and claims no unit without one.
+#[test]
+fn the_sphere_caption_names_the_configured_unit_or_none() {
+    let frame = frame(&[trade(1000, 100, 32100, Side::Buy)], 200.0);
+    let quiet = FlowProgress::default();
+    let eth = styled_caption_text(Some(&frame), quiet, true, true, Some("ETH")).unwrap();
+    assert!(
+        eth.contains("quantity in ETH; sphere area follows gross volume"),
+        "{eth}"
+    );
+    let bare = styled_caption_text(Some(&frame), quiet, true, true, None).unwrap();
+    assert!(bare.contains("sphere area follows gross volume"), "{bare}");
+    assert!(!bare.contains("quantity in"), "{bare}");
+    let regional = styled_caption_text(Some(&frame), quiet, true, false, None).unwrap();
+    assert!(regional.contains("brightness rises with regional volume"));
+}

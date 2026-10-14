@@ -1,0 +1,424 @@
+//! Per-asset modes the config switches on (`symbol_asset_modes`): which
+//! assets wear tick spheres, the unit their sizes count, and the key their
+//! saved look lives under. No symbol, feed id or provider in code decides
+//! any of it.
+
+use super::*;
+use crate::bubble_assets::{ASSETS_FILE, save_to};
+use crate::bubble_look::BubbleLook;
+use crate::bubble_presets;
+use crate::config::AssetMode;
+use crate::scratch::ScratchDir;
+use quantick_orderflow::HeatmapConfig;
+
+const SPOT_SPHERES: &str = "Binance BTC Spot spheres";
+
+fn shipped() -> AppConfig {
+    toml::from_str(crate::config::EMBEDDED_DEFAULT).unwrap()
+}
+
+fn mode(unit: &str) -> AssetMode {
+    AssetMode {
+        quantity_unit: unit.to_owned(),
+        look_key: None,
+    }
+}
+
+fn feed<'a>(config: &'a mut AppConfig, id: &str) -> &'a mut crate::config::FeedConfig {
+    config.feeds.iter_mut().find(|feed| feed.id == id).unwrap()
+}
+
+/// The shipped config, with ETHUSDT and Hyperliquid's BTC switched on by
+/// config alone.
+fn opted_in() -> AppConfig {
+    let mut config = shipped();
+    let binance = feed(&mut config, "binance");
+    binance
+        .symbol_asset_modes
+        .insert("ETHUSDT".to_owned(), mode("ETH"));
+    let hyperliquid = feed(&mut config, "hyperliquid");
+    hyperliquid
+        .symbol_asset_modes
+        .insert("BTC".to_owned(), mode("BTC"));
+    config
+}
+
+/// Hyperliquid also offering BTCUSDT on a look of its own, with the mode
+/// switched on for it: a market whose key the mode moves off main's.
+fn venue_config() -> AppConfig {
+    let mut config = shipped();
+    let other = feed(&mut config, "hyperliquid");
+    other.symbols.push("BTCUSDT".to_owned());
+    other
+        .symbol_bubble_presets
+        .insert("BTCUSDT".to_owned(), "dense tape".to_owned());
+    other
+        .symbol_asset_modes
+        .insert("BTCUSDT".to_owned(), mode("BTC"));
+    config
+}
+
+fn bind(
+    store: &SharedAssetBubbles,
+    config: &AppConfig,
+    feed: &str,
+    symbol: &str,
+) -> (AssetBinding, AssetBubbles) {
+    AssetBinding::bind(
+        store.clone(),
+        config,
+        (feed, symbol),
+        &bubble_presets::embedded(),
+        false,
+    )
+}
+
+fn look(config: &AppConfig, feed: &str, symbol: &str) -> (BubbleLook, HeatmapConfig) {
+    let mut screen = HeatmapConfig::default();
+    let mut look = BubbleLook::open(
+        (
+            bubble_presets::embedded(),
+            bubble_presets::PresetSource::Embedded,
+            None,
+        ),
+        &mut screen,
+    );
+    let (binding, settings) = bind(&AssetBubblesStore::default().shared(), config, feed, symbol);
+    look.bind(binding);
+    look.wear(&settings, false, &mut screen);
+    (look, screen)
+}
+
+/// The store at `path`, as the app opens it.
+fn open(path: &std::path::Path, _config: &AppConfig) -> SharedAssetBubbles {
+    AssetBubblesStore::load(path.to_path_buf()).shared()
+}
+
+#[test]
+fn the_shipped_config_switches_the_mode_on_for_binance_btc_alone() {
+    let config = shipped();
+    let spot = config.bubble_asset("binance", "BTCUSDT");
+    let perp = config.bubble_asset("binance-futures", "BTCUSDT.p");
+    assert_eq!(spot.key, "BTCUSDT", "the key main always saved it under");
+    assert_eq!(perp.key, "binance-futures:BTCUSDT.p", "feed id and symbol");
+    assert_eq!(spot.preset.as_deref(), Some(SPOT_SPHERES));
+    assert_eq!(
+        perp.preset.as_deref(),
+        Some("Binance BTC perpetual spheres")
+    );
+    for asset in [&spot, &perp] {
+        assert_eq!(asset.mode.as_ref().unwrap().quantity_unit, "BTC");
+    }
+    let mut on = Vec::new();
+    for offering in &config.feeds {
+        for symbol in &offering.symbols {
+            if config.bubble_asset(&offering.id, symbol).mode.is_some() {
+                on.push(format!("{}/{symbol}", offering.id));
+            }
+        }
+    }
+    assert_eq!(on, ["binance/BTCUSDT", "binance-futures/BTCUSDT.p"]);
+    assert_eq!(
+        config.bubble_asset("binance", "BTCUSDT.p"),
+        perp,
+        "a perpetual recording remains its market"
+    );
+    assert_eq!(
+        config.bubble_asset("binance-futures", "BTCUSDT"),
+        spot,
+        "a spot recording remains its market"
+    );
+}
+
+#[test]
+fn any_other_asset_gets_the_mode_by_config_alone() {
+    assert!(shipped().bubble_asset("binance", "ETHUSDT").mode.is_none());
+    assert_eq!(shipped().bubble_asset("hyperliquid", "BTC").key, "BTC");
+    let config = opted_in();
+    let eth = config.bubble_asset("binance", "ETHUSDT");
+    assert_eq!(eth.key, "binance:ETHUSDT");
+    assert_eq!(eth.mode.unwrap().quantity_unit, "ETH");
+    let btc = config.bubble_asset("hyperliquid", "BTC");
+    assert_eq!(btc.key, "hyperliquid:BTC");
+    assert_eq!(btc.mode.unwrap().quantity_unit, "BTC");
+    let mut keyed = config.clone();
+    feed(&mut keyed, "binance")
+        .symbol_asset_modes
+        .get_mut("ETHUSDT")
+        .unwrap()
+        .look_key = Some("ETH-spot".to_owned());
+    assert_eq!(keyed.bubble_asset("binance", "ETHUSDT").key, "ETH-spot");
+    assert!(keyed.validate().is_ok());
+}
+
+#[test]
+fn a_mode_names_an_offered_symbol_a_unit_and_a_usable_key() {
+    for (key, unit, look_key, refusal) in [
+        ("NOSUCH", "ETH", None, "matches none of the symbols"),
+        ("ETHUSDT", " ", None, "empty quantity_unit"),
+        ("ETHUSDT", "ETH", Some(" "), "empty look_key"),
+    ] {
+        let mut config = shipped();
+        feed(&mut config, "binance").symbol_asset_modes.insert(
+            key.to_owned(),
+            AssetMode {
+                quantity_unit: unit.to_owned(),
+                look_key: look_key.map(str::to_owned),
+            },
+        );
+        let error = config.validate().unwrap_err();
+        assert!(error.contains(refusal), "{key}: {error}");
+    }
+    let typo = crate::config::EMBEDDED_DEFAULT.replace(
+        "symbol_asset_modes = { \"BTCUSDT\" = {",
+        "symbol_asset_modes = { \"BTCUSDT\" = { quantity_units = \"BTC\",",
+    );
+    assert_ne!(typo, crate::config::EMBEDDED_DEFAULT);
+    let error = toml::from_str::<AppConfig>(&typo).unwrap_err().to_string();
+    assert!(
+        error.contains("quantity_units"),
+        "a misspelt mode key is refused: {error}"
+    );
+}
+
+#[test]
+fn tick_choices_and_the_unit_follow_the_mode() {
+    let config = opted_in();
+    for (feed, symbol, unit) in [
+        ("binance", "BTCUSDT", Some("BTC")),
+        ("binance-futures", "BTCUSDT.p", Some("BTC")),
+        ("binance", "ETHUSDT", Some("ETH")),
+        ("hyperliquid", "BTC", Some("BTC")),
+        ("hyperliquid", "ETH", None),
+        ("metatrader-b3", "WIN$N", None),
+    ] {
+        let (look, _) = look(&config, feed, symbol);
+        assert_eq!(look.quantity_unit(), unit, "{feed}/{symbol}");
+        assert_eq!(!look.tick_presets().is_empty(), unit.is_some());
+        assert_eq!(
+            look.tick_style(Some(SPOT_SPHERES)).is_ok(),
+            unit.is_some(),
+            "{feed}/{symbol}"
+        );
+        assert_eq!(
+            look.tick_style(None),
+            Ok(None),
+            "dropping spheres is always allowed"
+        );
+        assert!(look.tick_style(Some("missing")).is_err());
+        let hint = look.tick_hint();
+        match unit {
+            Some(unit) => assert!(hint.contains(&format!("quantity in {unit}")), "{hint}"),
+            None => assert!(!hint.contains("quantity in"), "{hint}"),
+        }
+    }
+}
+
+#[test]
+fn a_whole_preset_brings_spheres_only_to_a_mode_asset() {
+    let config = shipped();
+    for (feed, symbol, spheres) in [
+        ("binance", "BTCUSDT", true),
+        ("binance-futures", "BTCUSDT.p", true),
+        ("binance", "ETHUSDT", false),
+        ("metatrader-b3", "WIN$N", false),
+    ] {
+        let (mut look, mut screen) = look(&config, feed, symbol);
+        assert!(look.apply_preset(SPOT_SPHERES, &mut screen));
+        assert_eq!(
+            screen.volume_dots.tick_bubbles.is_some(),
+            spheres,
+            "{feed}/{symbol}"
+        );
+    }
+    let mut declared = shipped();
+    feed(&mut declared, "binance")
+        .symbol_bubble_presets
+        .insert("ETHUSDT".to_owned(), SPOT_SPHERES.to_owned());
+    let (_, opened) = bind(
+        &AssetBubblesStore::default().shared(),
+        &declared,
+        "binance",
+        "ETHUSDT",
+    );
+    assert_eq!(opened.look.name, SPOT_SPHERES);
+    assert_eq!(
+        opened.look.tick_bubbles, None,
+        "a declared look brings no spheres without the mode"
+    );
+}
+
+#[test]
+fn venue_identity_is_market_specific_and_current_feed_presets_cannot_leak() {
+    let config = venue_config();
+    let spot = config.bubble_asset("binance", "BTCUSDT");
+    let other = config.bubble_asset("hyperliquid", "BTCUSDT");
+    assert_eq!(other.key, "hyperliquid:BTCUSDT");
+    assert_ne!(other.key, spot.key);
+    assert_eq!(other.preset.as_deref(), Some("dense tape"));
+    assert_eq!(spot.preset.as_deref(), Some(SPOT_SPHERES));
+}
+
+#[test]
+fn futures_is_selectable_without_changing_spot_startup_and_refuses_bad_aliases() {
+    let config = shipped();
+    assert_eq!(config.default_feed, "binance");
+    assert_eq!(config.default_symbol, "BTCUSDT");
+    let future = config.feed("binance-futures").unwrap();
+    assert_eq!(future.provider, crate::config::ProviderKind::BinanceFutures);
+    assert_eq!(future.symbols, ["BTCUSDT.p"]);
+    assert!(config.validate().is_ok());
+    for invalid in ["BTCUSDT", "btcusdt.p", "BTCUSDT.P", "BTC USDT.p"] {
+        let mut invalid_config = config.clone();
+        let futures = feed(&mut invalid_config, "binance-futures");
+        futures.symbols = vec![invalid.to_owned()];
+        futures.symbol_bubble_presets.clear();
+        futures.symbol_asset_modes.clear();
+        let error = invalid_config.validate().unwrap_err();
+        assert!(
+            error.contains("requires canonical USD-M symbols"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn legacy_look_survives_a_moved_key_through_spot_edits_resets_and_restarts() {
+    let dir = ScratchDir::new("asset-mode-legacy-venue");
+    let path = dir.join(ASSETS_FILE);
+    let config = venue_config();
+    let mut file = AssetBubblesFile::default();
+    let mut legacy =
+        AssetBubbles::declared(bubble_presets::embedded().get("default").unwrap(), false);
+    legacy.look.bubbles.max_radius = 21.0;
+    file.assets.insert("BTCUSDT".to_owned(), legacy.clone());
+    save_to(&path, &file).unwrap();
+    let store = open(&path, &config);
+    let (mut spot, opened) = bind(&store, &config, "binance", "BTCUSDT");
+    let (mut other, preserved) = bind(&store, &config, "hyperliquid", "BTCUSDT");
+    assert_eq!(opened, legacy, "spot's key did not move");
+    assert_eq!(preserved, legacy, "the moved key starts on the old look");
+    let mut edit = opened;
+    edit.look.bubbles.max_radius = 29.0;
+    spot.note_edit();
+    assert!(spot.file(edit.clone()));
+    assert_eq!(
+        other.adoption(),
+        None,
+        "spot edits never reach another venue"
+    );
+    assert_eq!(store.borrow_mut().flush(), Some(Ok(())));
+    let restarted = open(&path, &config);
+    assert_eq!(
+        bind(&restarted, &config, "hyperliquid", "BTCUSDT").1,
+        legacy
+    );
+    assert_eq!(bind(&restarted, &config, "binance", "BTCUSDT").1, edit);
+    let other_default = other.declared.clone();
+    other.note_edit();
+    assert!(other.file(other_default.clone()));
+    spot.note_edit();
+    assert!(spot.file(spot.declared.clone()));
+    assert_eq!(store.borrow_mut().flush(), Some(Ok(())));
+    let restarted = open(&path, &config);
+    assert_eq!(
+        bind(&restarted, &config, "hyperliquid", "BTCUSDT").1,
+        other_default,
+        "a reset is not undone by the move"
+    );
+    assert_eq!(
+        bind(&restarted, &config, "binance", "BTCUSDT").1,
+        spot.declared
+    );
+}
+
+#[test]
+fn saving_off_moves_with_the_key_and_stays_local_to_the_venue() {
+    let dir = ScratchDir::new("asset-mode-saving-off");
+    let path = dir.join(ASSETS_FILE);
+    let config = venue_config();
+    let mut file = AssetBubblesFile::default();
+    file.save_changes_off.insert("BTCUSDT".to_owned());
+    save_to(&path, &file).unwrap();
+    let store = open(&path, &config);
+    let (spot, _) = bind(&store, &config, "binance", "BTCUSDT");
+    let (mut other, opened) = bind(&store, &config, "hyperliquid", "BTCUSDT");
+    let (mut other_tab, _) = bind(&store, &config, "hyperliquid", "BTCUSDT");
+    assert!(!spot.saves_changes());
+    assert!(!other.saves_changes());
+    assert!(
+        bind(&store, &config, "binance-futures", "BTCUSDT.p")
+            .0
+            .saves_changes()
+    );
+    let mut edit = opened.clone();
+    edit.look.bubbles.max_radius = 31.0;
+    other.note_edit();
+    assert!(!other.file(edit.clone()));
+    assert_eq!(other_tab.adoption(), None);
+    assert_eq!(other.on_screen(), &edit);
+}
+
+#[test]
+fn a_moved_key_keeps_a_look_already_stored_under_it() {
+    let dir = ScratchDir::new("asset-mode-already-scoped");
+    let path = dir.join(ASSETS_FILE);
+    let config = venue_config();
+    let key = config.bubble_asset("hyperliquid", "BTCUSDT").key;
+    let mut file = AssetBubblesFile::default();
+    let legacy = AssetBubbles::declared(bubble_presets::embedded().get("default").unwrap(), false);
+    let scoped =
+        AssetBubbles::declared(bubble_presets::embedded().get("dense tape").unwrap(), false);
+    file.assets.insert("BTCUSDT".to_owned(), legacy);
+    file.assets.insert(key, scoped.clone());
+    file.save_changes_off.insert("BTCUSDT".to_owned());
+    save_to(&path, &file).unwrap();
+    let store = open(&path, &config);
+    let (other, restored) = bind(&store, &config, "hyperliquid", "BTCUSDT");
+    assert_eq!(restored, scoped);
+    assert!(other.saves_changes());
+}
+
+#[test]
+fn tick_calibration_survives_restart_without_replacing_a_saved_tape() {
+    let dir = ScratchDir::new("asset-mode-tick-settings");
+    let path = dir.join(ASSETS_FILE);
+    let config = venue_config();
+    let store = open(&path, &config);
+    let (mut spot, mut saved) = bind(&store, &config, "binance", "BTCUSDT");
+    saved.look.bubbles.max_radius = 48.0;
+    saved.look.volume_dot_full_quantity = 120.0;
+    saved.look.tick_bubbles = None;
+    spot.note_edit();
+    assert!(spot.file(saved.clone()));
+    let (_, reopened) = bind(&store, &config, "binance", "BTCUSDT");
+    assert_eq!(
+        reopened, saved,
+        "new presets preserve an existing saved look"
+    );
+    let mut spheres = saved.clone();
+    spheres.look.tick_bubbles = bubble_presets::embedded()
+        .get(SPOT_SPHERES)
+        .unwrap()
+        .tick_bubbles;
+    spot.note_edit();
+    assert!(spot.file(spheres.clone()));
+    assert_eq!(store.borrow_mut().flush(), Some(Ok(())));
+    let restart = open(&path, &config);
+    assert_eq!(bind(&restart, &config, "binance", "BTCUSDT").1, spheres);
+    assert_ne!(
+        bind(&restart, &config, "binance-futures", "BTCUSDT.p")
+            .1
+            .look
+            .tick_bubbles,
+        spheres.look.tick_bubbles
+    );
+    assert_ne!(
+        bind(&restart, &config, "hyperliquid", "BTCUSDT")
+            .1
+            .look
+            .bubbles
+            .max_radius,
+        48.0
+    );
+}

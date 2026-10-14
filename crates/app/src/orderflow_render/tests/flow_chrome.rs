@@ -163,6 +163,7 @@ fn quiet_narrow_tick_captions_stay_in_the_header_clear_of_candles_and_current_pr
                 Some(quantick_chart::flow_execution::SphereChrome {
                     regions: &regions,
                     theme: quantick_orderflow::HeatmapTheme::default(),
+                    unit: Some("BTC"),
                 }),
             );
         });
