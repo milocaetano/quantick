@@ -248,6 +248,31 @@ fn tape_history_is_cleared_by_source_replay_mode_and_explicit_visual_changes() {
     }
 }
 
+/// #11: the lane's width is a view parameter, like the window it shows: a
+/// width change keeps the painted past as it was, while an explicit zoom of
+/// the tape's window starts a fresh display epoch.
+#[test]
+fn a_lane_width_change_keeps_tape_history_and_a_zoom_starts_it_over() {
+    for (change, kept) in [("width", true), ("zoom", false)] {
+        let (mut view, hold) = memory_view();
+        let _ = seed_closed_history(&mut view);
+        let groups = view.tape_dots.borrow().retained_group_count();
+        match change {
+            "width" => {
+                let before = view.config.clone();
+                view.config.live_lane.width_share = 0.45;
+                view.commit_config_changes(before);
+            }
+            "zoom" => view.zoom_live_lane(2.0),
+            _ => unreachable!(),
+        }
+        let after = view.tape_dots.borrow().retained_group_count();
+        hold.release();
+        assert!(groups > 0, "fixture has painted history before {change}");
+        assert_eq!(after, if kept { groups } else { 0 }, "{change}");
+    }
+}
+
 #[test]
 fn retained_weighted_prices_participate_in_fit_after_an_old_member_expires() {
     let (mut view, hold) = memory_view();
