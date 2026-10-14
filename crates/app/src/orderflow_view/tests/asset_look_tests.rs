@@ -214,3 +214,45 @@ fn restored_defaults_are_kept_for_the_asset_and_say_so() {
         AssetSource::Stored
     );
 }
+
+/// Review #19/#29: the sphere picker asks the rule tick.set asks. A mode
+/// asset offers its spheres on a tick chart and not on a volume chart; an
+/// asset without the mode offers none, but spheres it already wears can be
+/// switched off there.
+#[test]
+fn the_sphere_picker_follows_the_tick_sphere_rule() {
+    let texts = |view: &mut OrderflowView, tick_chart: bool| -> String {
+        let ctx = egui::Context::default();
+        let output = ctx.run(egui::RawInput::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                view.draw_bubbles_tab(ui, tick_chart);
+            });
+        });
+        output
+            .shapes
+            .iter()
+            .filter_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(text.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let store = AssetBubblesStore::default().shared();
+    let mut btc = bound_to(&store, ("binance", "BTCUSDT"));
+    let spheres = btc.config.volume_dots.tick_bubbles;
+    assert!(spheres.is_some(), "the declared look wears spheres");
+    assert!(texts(&mut btc, true).contains("quantity in BTC"));
+    assert!(
+        !texts(&mut btc, false).contains("Tick chart spheres"),
+        "a volume chart offers no spheres"
+    );
+    let mut eth = bound_to(&store, ("binance", "ETHUSDT"));
+    assert!(!texts(&mut eth, true).contains("Tick chart spheres"));
+    eth.edit_config(|config| config.volume_dots.tick_bubbles = spheres);
+    let offered = texts(&mut eth, true);
+    assert!(offered.contains("Tick chart spheres"), "{offered}");
+    assert!(!offered.contains("quantity in"), "{offered}");
+    assert_eq!(eth.apply_tick_preset(None), Ok(true));
+    assert_eq!(eth.config.volume_dots.tick_bubbles, None);
+}
