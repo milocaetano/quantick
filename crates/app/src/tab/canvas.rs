@@ -437,10 +437,13 @@ impl Tab {
             footprint: chrome.footprint,
             layers: chrome.layers,
         };
-        // Time pane first, then flow. Both take the same two steps in the
-        // same order — which is what keeps the split honest: the second pane
-        // cannot drift from the first, and one pane is this same loop with
-        // one entry in it.
+        // The paper input pane first, then time panes, then flow. Every pane
+        // takes the same two steps in the same order — which is what keeps
+        // the split honest: the second pane cannot drift from the first, and
+        // one pane is this same loop with one entry in it. The input pane
+        // leads because it makes this frame's aim, which every later pane
+        // paints whole or as its echo; an aim no pane remakes paints nowhere.
+        chrome.paper.clear_cmd_preview();
         // Context panes carry addresses `1..`, the flow pane `0` — the order
         // `Tab::pane_at` uses, never the order they sit in.
         let context = time_panes
@@ -458,7 +461,9 @@ impl Tab {
                 0 as PaneIndex,
             )
         });
-        for (pane, rect, strip, side) in context.chain(flow) {
+        let mut walk: SmallVec<[_; MAX_CANVAS_PANES]> = context.chain(flow).collect();
+        walk.sort_by_key(|&(.., side)| side != trading_pane);
+        for (pane, rect, strip, side) in walk {
             pane.frame.layout_strip = Some(strip);
             chrome.side = PaneSide::from_index(side);
             chrome.paper_takes_input = side == trading_pane;

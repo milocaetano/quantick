@@ -2930,3 +2930,100 @@ fn drawing_owner_cleanup_delete_all_nonfocused() {
 fn drawing_owner_cleanup_delete_all_focused() {
     drawing_owner_cleanup_case("delete_all", true);
 }
+
+/// The dotted echo segments `output` painted inside `pane`, as their y.
+fn aim_echo_ys(output: &egui::FullOutput, pane: egui::Rect) -> Vec<f32> {
+    fn walk(shape: &egui::Shape, pane: egui::Rect, color: egui::Color32, ys: &mut Vec<f32>) {
+        match shape {
+            egui::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    walk(shape, pane, color, ys);
+                }
+            }
+            egui::Shape::LineSegment { points, stroke }
+                if stroke.color == egui::epaint::ColorMode::Solid(color)
+                    && points[0].y == points[1].y
+                    && points.iter().all(|point| pane.x_range().contains(point.x)) =>
+            {
+                ys.push(points[0].y);
+            }
+            _ => {}
+        }
+    }
+    let color = crate::theme::side_color(quantick_engine::Side::Buy)
+        .gamma_multiply(crate::paper_trading::AIM_ECHO_ALPHA);
+    let mut ys = Vec::new();
+    for clipped in &output.shapes {
+        walk(&clipped.shape, pane, color, &mut ys);
+    }
+    ys
+}
+
+/// The price at `y` on `side`'s axis, the inverse of `price_y`.
+fn price_at_y(app: &QuantickApp, side: PaneSide, y: f32) -> f64 {
+    let pane = app.active_tab().pane(side);
+    let chart = pane.frame.chart_area.expect("the pane reported its rect");
+    let auto = pane.frame.auto_range.expect("the pane fitted a range");
+    let (lo, hi) = pane.price_view.resolve(auto);
+    PriceScale::from_range(lo, hi, chart.top(), chart.bottom()).price_at(y)
+}
+
+/// The Shift aim in one pane of a split is echoed in the other: a faint
+/// dotted line at the aimed price mapped through *that* pane's axis. The
+/// pane taking paper input is walked first, so whichever side of the split
+/// the hand is on, the echo appears and leaves the very frame the aim
+/// does. Moves and the exact price mapping are the desk's (`aim_echo`).
+#[test]
+fn the_aim_is_echoed_in_the_other_pane_of_the_split() {
+    let shift = egui::Modifiers {
+        shift: true,
+        ..Default::default()
+    };
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = split_app(&ctx, 200);
+    for (aimed, other) in [
+        (PaneSide::Flow, PaneSide::Time(0)),
+        (PaneSide::Time(0), PaneSide::Flow),
+    ] {
+        let rect = |app: &QuantickApp, side| {
+            app.active_tab()
+                .pane(side)
+                .frame
+                .chart_area
+                .expect("the pane reported its rect")
+        };
+        // One echo level on `other`, at the price the hand aims at on `aimed`.
+        let assert_echo = |app: &QuantickApp, output: &egui::FullOutput, hand: egui::Pos2| {
+            let ys = aim_echo_ys(output, rect(app, other));
+            assert!(ys.len() >= 8, "a dotted echo in {other:?}, got {ys:?}");
+            assert!(ys.iter().all(|y| y == &ys[0]), "one level, got {ys:?}");
+            // Within half a tick: the aim snaps, the hand does not.
+            let echoed = price_at_y(app, other, ys[0]);
+            let aimed_price = price_at_y(app, aimed, hand.y);
+            let tick = f64::try_from(app.active_tab().paper.account().tick_size()).unwrap();
+            assert!(
+                (echoed - aimed_price).abs() <= tick / 2.0 + 1e-6,
+                "{other:?} echoes {echoed}, the hand aims {aimed_price} in {aimed:?} (tick {tick})"
+            );
+            assert!(
+                aim_echo_ys(output, rect(app, aimed)).is_empty(),
+                "the aiming pane paints the aim, never its echo"
+            );
+        };
+        let point = pane_point(&app, aimed) - egui::vec2(0.0, 40.0);
+        let idle = move_chart_with(&mut app, &ctx, point, egui::Modifiers::NONE);
+        assert!(
+            aim_echo_ys(&idle, rect(&app, other)).is_empty(),
+            "no aim, no echo in {other:?}"
+        );
+
+        let first = move_chart_with(&mut app, &ctx, point, shift);
+        assert_echo(&app, &first, point);
+
+        let released = move_chart_with(&mut app, &ctx, point, egui::Modifiers::NONE);
+        assert!(
+            aim_echo_ys(&released, rect(&app, other)).is_empty(),
+            "the echo leaves {other:?} the frame the key is let go"
+        );
+    }
+}
