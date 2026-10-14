@@ -725,13 +725,13 @@ mod tests {
                 ..Default::default()
             };
             assert_eq!(
-                gestures.select_released_press(&mut store, projection, pick, false, None),
+                gestures.select_released_press(&mut store, projection, pick, false, &|_| false, false),
                 ReleaseAnswer::Plain
             );
             assert_eq!(store.selected(), None);
             assert_eq!(gestures.press_pick, None);
             // An absent capture really does use the same release geometry.
-            gestures.select_released_press(&mut store, projection, pick, false, None);
+            gestures.select_released_press(&mut store, projection, pick, false, &|_| false, false);
             assert_eq!(store.selected(), Some(0));
         });
     }
@@ -916,111 +916,6 @@ mod tests {
         (payload.extend_left, payload.extend_right)
     }
 
-    #[test]
-    fn a_double_click_takes_an_outline_rectangles_interior_but_a_click_does_not() {
-        with_projection(|projection, bands| {
-            let (mut store, rect) = local_rectangle(projection, bands);
-            let pick = LocalPick {
-                position: rect.center(),
-                band: Some(&bands[0]),
-                history_right: 200.0,
-                total: 1,
-            };
-            // The press missed: an unfilled interior is not the object.
-            let mut gestures = PaneGestures {
-                press_pick: Some(None),
-                ..Default::default()
-            };
-            assert_eq!(
-                gestures.select_released_press(&mut store, projection, pick, false, None),
-                ReleaseAnswer::Plain
-            );
-            assert_eq!(store.selected(), None, "a single click still falls through");
-            gestures.press_pick = Some(None);
-            let free: &dyn Fn(DrawingId) -> bool = &|_| false;
-            assert_eq!(
-                gestures.select_released_press(&mut store, projection, pick, false, Some(free)),
-                ReleaseAnswer::DoubleClickTaken
-            );
-            assert_eq!(store.selected(), Some(0));
-            assert_eq!(extent(&store), (true, true));
-        });
-    }
-
-    #[test]
-    fn a_double_click_leaves_a_strategy_bound_region_alone() {
-        with_projection(|projection, bands| {
-            let (mut store, rect) = local_rectangle(projection, bands);
-            let bound = store.items()[0].id;
-            let held: &dyn Fn(DrawingId) -> bool = &move |id| id == bound;
-            for position in [
-                rect.center(),
-                crate::pos2(rect.left() + 4.0, rect.center().y),
-            ] {
-                let pick = LocalPick {
-                    position,
-                    band: Some(&bands[0]),
-                    history_right: 200.0,
-                    total: 1,
-                };
-                let mut gestures = PaneGestures {
-                    press_pick: Some(Some(0)),
-                    ..Default::default()
-                };
-                assert_eq!(
-                    gestures.select_released_press(&mut store, projection, pick, false, Some(held)),
-                    ReleaseAnswer::Plain
-                );
-                assert_eq!(
-                    extent(&store),
-                    (false, false),
-                    "the bot's window held at {position:?}"
-                );
-            }
-        });
-    }
-
-    #[test]
-    fn the_side_zone_shows_one_resize_cursor_and_a_drag_keeps_the_move_grip() {
-        with_projection(|projection, bands| {
-            let (mut store, rect) = local_rectangle(projection, bands);
-            store.items_mut()[0].style.fill_alpha = 40;
-            let side = crate::pos2(rect.left() + 6.0, rect.center().y);
-            let mut gestures = PaneGestures::default();
-            let mut pointer = pointer_at(side, bands);
-            pointer.down = false;
-            let hover = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
-            assert_eq!(
-                hover.cursor,
-                Some(GestureCursor::ResizeHorizontal),
-                "the side zone announces its double click with its cursor alone"
-            );
-            let centre = owner_frame(
-                &mut PaneGestures::default(),
-                &mut store,
-                projection,
-                bands,
-                &pointer_at(rect.center(), bands),
-            );
-            assert_eq!(
-                centre.cursor,
-                Some(GestureCursor::Move),
-                "the centre is the grip"
-            );
-            pointer.down = true;
-            pointer.pressed = true;
-            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
-            assert!(gestures.drag.is_active());
-            pointer.pressed = false;
-            let drag = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
-            assert_eq!(
-                drag.cursor,
-                Some(GestureCursor::Move),
-                "a drag in flight moves"
-            );
-        });
-    }
-
     fn set_extent(store: &mut Marks, left: bool, right: bool) {
         let payload = store.items_mut()[0]
             .payload
@@ -1030,14 +925,17 @@ mod tests {
         (payload.extend_left, payload.extend_right) = (left, right);
     }
 
-    fn missed_double_click(
+    /// One click released at `position`, the press having picked `picked`.
+    fn release_click(
         store: &mut Marks,
         projection: &DrawingProjection<'_>,
         band: &Band,
-        position: Px,
+        (position, picked): (Px, Option<usize>),
+        held: &dyn Fn(DrawingId) -> bool,
+        double_clicked: bool,
     ) -> ReleaseAnswer {
         let mut gestures = PaneGestures {
-            press_pick: Some(None),
+            press_pick: Some(picked),
             ..Default::default()
         };
         let pick = LocalPick {
@@ -1046,7 +944,237 @@ mod tests {
             history_right: 200.0,
             total: 1,
         };
-        gestures.select_released_press(store, projection, pick, false, Some(&|_| false))
+        gestures.select_released_press(store, projection, pick, false, held, double_clicked)
+    }
+
+    fn missed_click(
+        store: &mut Marks,
+        projection: &DrawingProjection<'_>,
+        band: &Band,
+        position: Px,
+    ) -> ReleaseAnswer {
+        release_click(store, projection, band, (position, None), &|_| false, false)
+    }
+
+    fn missed_double_click(
+        store: &mut Marks,
+        projection: &DrawingProjection<'_>,
+        band: &Band,
+        position: Px,
+    ) -> ReleaseAnswer {
+        release_click(store, projection, band, (position, None), &|_| false, true)
+    }
+
+    fn hover(
+        store: &mut Marks,
+        projection: &DrawingProjection<'_>,
+        bands: &Bands,
+        position: Px,
+    ) -> Option<GestureCursor> {
+        let mut pointer = pointer_at(position, bands);
+        pointer.down = false;
+        owner_frame(
+            &mut PaneGestures::default(),
+            store,
+            projection,
+            bands,
+            &pointer,
+        )
+        .cursor
+    }
+
+    fn drawn_rect(store: &Marks, projection: &DrawingProjection<'_>, bands: &Bands) -> PxRect {
+        let scale = bands[0].scale.as_ref().unwrap();
+        let points = projection.projected_drawing_points(&store.items()[0], 200.0, 1, scale);
+        PxRect::from_two_pos(points[0], points[1])
+    }
+
+    /// An outline rectangle's band takes one click even past the reach of
+    /// its border; its inside leaves a single click to the chart.
+    #[test]
+    fn one_click_in_an_outline_rectangles_band_extends_that_side() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            store.items_mut()[0].style.fill_alpha = 0;
+            let band = crate::pos2(rect.right() - 15.0, rect.center().y);
+            assert_eq!(
+                missed_click(&mut store, projection, &bands[0], band),
+                ReleaseAnswer::ClickTaken
+            );
+            assert_eq!(extent(&store), (false, true));
+            assert_eq!(store.selected(), Some(0));
+            store.select(None);
+            assert_eq!(
+                missed_click(&mut store, projection, &bands[0], rect.center()),
+                ReleaseAnswer::Plain
+            );
+            assert_eq!(store.selected(), None, "the inside's click falls through");
+            assert_eq!(extent(&store), (false, true));
+        });
+    }
+
+    #[test]
+    fn a_double_click_inside_puts_back_the_original_size_and_a_click_does_not() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            store.items_mut()[0].style.fill_alpha = 0;
+            set_extent(&mut store, true, true);
+            assert_eq!(
+                missed_click(&mut store, projection, &bands[0], rect.center()),
+                ReleaseAnswer::Plain
+            );
+            assert_eq!(extent(&store), (true, true));
+            assert_eq!(
+                missed_double_click(&mut store, projection, &bands[0], rect.center()),
+                ReleaseAnswer::ClickTaken
+            );
+            assert_eq!(extent(&store), (false, false));
+            assert_eq!(store.selected(), Some(0));
+        });
+    }
+
+    #[test]
+    fn a_click_leaves_a_strategy_bound_region_alone() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            set_extent(&mut store, false, true);
+            let bound = store.items()[0].id;
+            let held: &dyn Fn(DrawingId) -> bool = &move |id| id == bound;
+            let band = crate::pos2(rect.left() + 10.0, rect.center().y);
+            for (position, double_clicked) in [(rect.center(), true), (band, false), (band, true)] {
+                assert_eq!(
+                    release_click(
+                        &mut store,
+                        projection,
+                        &bands[0],
+                        (position, Some(0)),
+                        held,
+                        double_clicked
+                    ),
+                    ReleaseAnswer::Plain
+                );
+                assert_eq!(
+                    extent(&store),
+                    (false, true),
+                    "the bot's window held at {position:?}"
+                );
+            }
+        });
+    }
+
+    /// The sketch's zones, each with its own cursor: the border line resizes
+    /// sideways, the band just inside it says a click extends, the inside
+    /// moves. No two zones share a cursor.
+    #[test]
+    fn each_zone_shows_its_own_cursor() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            store.items_mut()[0].style.fill_alpha = 40;
+            let y = rect.center().y;
+            let zones = [
+                (rect.left(), GestureCursor::ResizeHorizontal),
+                (rect.left() + 10.0, GestureCursor::ExtendSide),
+                (rect.center().x, GestureCursor::Move),
+                (rect.right() - 10.0, GestureCursor::ExtendSide),
+                (rect.right(), GestureCursor::ResizeHorizontal),
+            ];
+            for (x, cursor) in zones {
+                let position = crate::pos2(x, y);
+                assert_eq!(
+                    hover(&mut store, projection, bands, position),
+                    Some(cursor),
+                    "at {position:?}"
+                );
+            }
+            let distinct = [
+                GestureCursor::ResizeHorizontal,
+                GestureCursor::ExtendSide,
+                GestureCursor::Move,
+                GestureCursor::Resize,
+            ];
+            for (at, cursor) in distinct.iter().enumerate() {
+                assert!(!distinct[at + 1..].contains(cursor), "{cursor:?} is shared");
+            }
+            // Selected, the side line is the side's handle and keeps its own
+            // cursor; the corner keeps the corner resize.
+            store.select(Some(0));
+            let side = crate::pos2(rect.left(), y);
+            assert_eq!(
+                hover(&mut store, projection, bands, side),
+                Some(GestureCursor::ResizeHorizontal)
+            );
+            assert_eq!(
+                hover(&mut store, projection, bands, rect.left_top()),
+                Some(GestureCursor::Resize)
+            );
+        });
+    }
+
+    #[test]
+    fn dragging_a_side_line_moves_that_side_alone_under_its_own_cursor() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            let mut gestures = PaneGestures::default();
+            let mut pointer = pointer_at(crate::pos2(rect.left(), rect.center().y), bands);
+            pointer.pressed = true;
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            assert!(
+                matches!(gestures.drag, DrawingDrag::Handle { .. }),
+                "{:?}",
+                gestures.drag
+            );
+            pointer.pressed = false;
+            pointer.position = Some(crate::pos2(rect.left() - 15.0, rect.center().y + 20.0));
+            let drag = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            assert_eq!(drag.cursor, Some(GestureCursor::ResizeHorizontal));
+            pointer.down = false;
+            pointer.released = true;
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            let moved = drawn_rect(&store, projection, bands);
+            assert!(moved.left() < rect.left() - 5.0, "{moved:?} from {rect:?}");
+            assert!((moved.right() - rect.right()).abs() < 0.01, "{moved:?}");
+            assert!((moved.top() - rect.top()).abs() < 0.01, "{moved:?}");
+            assert!((moved.bottom() - rect.bottom()).abs() < 0.01, "{moved:?}");
+            assert_eq!(extent(&store), (false, false));
+        });
+    }
+
+    /// A press and release in the band is one click: it extends. A press
+    /// that drags from the band moves the rectangle, as anywhere inside.
+    #[test]
+    fn a_click_in_the_band_extends_and_a_drag_from_it_moves() {
+        with_projection(|projection, bands| {
+            let (mut store, rect) = local_rectangle(projection, bands);
+            store.items_mut()[0].style.fill_alpha = 40;
+            let band = crate::pos2(rect.right() - 10.0, rect.center().y);
+            let mut gestures = PaneGestures::default();
+            let mut pointer = pointer_at(band, bands);
+            pointer.pressed = true;
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            pointer.pressed = false;
+            pointer.down = false;
+            pointer.released = true;
+            let release = owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            assert!(release.consumed);
+            assert_eq!(extent(&store), (false, true));
+
+            let (mut store, rect) = local_rectangle(projection, bands);
+            store.items_mut()[0].style.fill_alpha = 40;
+            let mut gestures = PaneGestures::default();
+            let mut pointer = pointer_at(band, bands);
+            pointer.pressed = true;
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            pointer.pressed = false;
+            pointer.position = Some(crate::pos2(band.x - 30.0, band.y));
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            pointer.down = false;
+            pointer.released = true;
+            owner_frame(&mut gestures, &mut store, projection, bands, &pointer);
+            assert_eq!(extent(&store), (false, false), "a drag never extends");
+            let moved = drawn_rect(&store, projection, bands);
+            assert!(moved.left() < rect.left() - 20.0, "{moved:?} from {rect:?}");
+            assert!(moved.right() < rect.right() - 20.0, "{moved:?} from {rect:?}");
+        });
     }
 
     /// A double click whose press missed every object reaches a rectangle
@@ -1056,14 +1184,9 @@ mod tests {
     fn a_missed_double_click_reaches_only_the_drawn_rectangle() {
         with_projection(|projection, bands| {
             let (mut store, rect) = local_rectangle(projection, bands);
+            store.items_mut()[0].style.fill_alpha = 0;
             assert!(rect.left() - bands[0].rect.left() > 20.0, "{rect:?}");
-            // A gesture's extension, so any double click it took would change it.
-            assert_eq!(
-                missed_double_click(&mut store, projection, &bands[0], rect.center()),
-                ReleaseAnswer::DoubleClickTaken
-            );
-            assert_eq!(extent(&store), (true, true));
-            store.select(None);
+            set_extent(&mut store, true, true);
             let painted_only =
                 crate::pos2((bands[0].rect.left() + rect.left()) / 2.0, rect.center().y);
             let off_band = crate::pos2(painted_only.x, rect.top() - 20.0);
@@ -1076,6 +1199,11 @@ mod tests {
                 assert_eq!(extent(&store), (true, true), "at {position:?}");
                 assert_eq!(store.selected(), None, "at {position:?}");
             }
+            assert_eq!(
+                missed_double_click(&mut store, projection, &bands[0], rect.center()),
+                ReleaseAnswer::ClickTaken
+            );
+            assert_eq!(extent(&store), (false, false));
         });
     }
 
@@ -1085,8 +1213,8 @@ mod tests {
     fn a_refused_double_click_selects_nothing() {
         with_projection(|projection, bands| {
             let (mut store, rect) = local_rectangle(projection, bands);
-            // Both sides run to the edge by hand: the centre has nothing to add.
-            set_extent(&mut store, true, true);
+            store.items_mut()[0].style.fill_alpha = 0;
+            // Already at its original size: nothing to put back.
             let undo_before = store.undo_depth();
             assert_eq!(
                 missed_double_click(&mut store, projection, &bands[0], rect.center()),
@@ -1095,60 +1223,43 @@ mod tests {
             store.commit_gesture();
             assert_eq!(store.selected(), None);
             assert_eq!(store.undo_depth(), undo_before);
-            assert_eq!(extent(&store), (true, true));
+            assert_eq!(extent(&store), (false, false));
         });
     }
 
-    /// Hover answers with the double click's own predicate: an outline
-    /// rectangle's drawn side zones show the resize cursor where the double
-    /// click acts, and the painted extension past them shows none.
+    /// Hover answers with the click's own predicate: an outline rectangle's
+    /// bands show the extend cursor where one click acts, and a side already
+    /// run to the edge shows none.
     #[test]
-    fn hover_hints_exactly_where_an_outline_rectangles_double_click_acts() {
+    fn hover_hints_exactly_where_an_outline_rectangles_click_acts() {
         with_projection(|projection, bands| {
             let (mut store, rect) = local_rectangle(projection, bands);
             store.items_mut()[0].style.fill_alpha = 0;
-            // Inside a side zone, past the border's click reach.
-            let left_zone = crate::pos2(rect.left() + 15.0, rect.center().y);
-            let right_zone = crate::pos2(rect.right() - 15.0, rect.center().y);
-            let painted_only =
-                crate::pos2((bands[0].rect.left() + rect.left()) / 2.0, rect.center().y);
-            let hover = |store: &mut Marks, position: Px| {
-                let mut pointer = pointer_at(position, bands);
-                pointer.down = false;
-                owner_frame(
-                    &mut PaneGestures::default(),
-                    store,
-                    projection,
-                    bands,
-                    &pointer,
-                )
-            };
-            for position in [left_zone, right_zone] {
+            // Inside a band, past the border's click reach.
+            let left_band = crate::pos2(rect.left() + 15.0, rect.center().y);
+            let right_band = crate::pos2(rect.right() - 15.0, rect.center().y);
+            for position in [left_band, right_band] {
                 assert_eq!(
-                    hover(&mut store, position).cursor,
-                    Some(GestureCursor::ResizeHorizontal),
+                    hover(&mut store, projection, bands, position),
+                    Some(GestureCursor::ExtendSide),
                     "at {position:?}"
                 );
             }
-            // Extended by a gesture, the band paints past its drawn sides and
-            // every side zone still toggles its side; neither predicate
-            // reaches the painted-only part. The acting position goes last.
+            assert_eq!(hover(&mut store, projection, bands, rect.center()), None);
             assert_eq!(
-                missed_double_click(&mut store, projection, &bands[0], rect.center()),
-                ReleaseAnswer::DoubleClickTaken
+                missed_click(&mut store, projection, &bands[0], left_band),
+                ReleaseAnswer::ClickTaken
             );
             store.select(None);
-            for (position, acts) in [(painted_only, false), (left_zone, true)] {
-                let hinted =
-                    hover(&mut store, position).cursor == Some(GestureCursor::ResizeHorizontal);
-                let taken = missed_double_click(&mut store, projection, &bands[0], position)
-                    == ReleaseAnswer::DoubleClickTaken;
-                assert_eq!((hinted, taken), (acts, acts), "at {position:?}");
-            }
+            assert_eq!(extent(&store), (true, false));
+            assert_eq!(hover(&mut store, projection, bands, left_band), None);
             assert_eq!(
-                extent(&store),
-                (false, true),
-                "the left zone took back its side only"
+                missed_click(&mut store, projection, &bands[0], left_band),
+                ReleaseAnswer::Plain
+            );
+            assert_eq!(
+                hover(&mut store, projection, bands, right_band),
+                Some(GestureCursor::ExtendSide)
             );
         });
     }
