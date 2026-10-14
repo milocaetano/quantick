@@ -1504,6 +1504,7 @@ mod tests {
         presets.upsert(BubblePreset {
             name: "wide".to_owned(),
             tick_only: false,
+            tick_asset_keys: Vec::new(),
             tick_bubbles: None,
             cluster_ms: 100,
             dust_merge_ms: 3_000,

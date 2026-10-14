@@ -355,7 +355,13 @@ impl BubbleLook {
         if self.refused_preset_name(&name) {
             return;
         }
-        self.presets.upsert(BubblePreset::capture(&name, config));
+        let mut preset = BubblePreset::capture(&name, config);
+        if preset.tick_bubbles.is_some()
+            && let Some(asset) = self.asset()
+        {
+            preset.tick_asset_keys = vec![asset.key().to_owned()];
+        }
+        self.presets.upsert(preset);
         self.look_name = name.clone();
         self.note_edit();
         self.persist(format!("'{name}' saved"), writer);

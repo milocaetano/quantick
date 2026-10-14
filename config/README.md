@@ -140,3 +140,12 @@ calibration, admitted time interval and native-cell watermark in one object.
 FLOW also reports the admitted temporal context and fixed scale basis. Layer visibility
 remains a separate choice. Source side provenance is unchanged: a feed using
 tick-rule inference remains inferred, and recordings without L2 supply no book.
+
+Tick sphere calibrations declare `tick_asset_keys` on the preset, matching the
+resolved asset key from the feed configuration (for example `WIN*`). Both tick
+pickers and chart-only preset application use this list. Add a configured family
+and a preset entry to support another instrument; quantity denomination only
+formats labels. An omitted list retains both original Binance BTC asset keys for
+older preset files; an explicit empty list disables tick discovery. Saving a
+sphere look records its currently bound asset key. Whole looks retain their
+existing cross-asset application behavior.

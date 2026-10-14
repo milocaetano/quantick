@@ -1,4 +1,5 @@
 //! A fixed temporal/price calibration for candle bursts, independent of the camera.
+use crate::constants::NATIVE_TAPE_WINDOW_MS;
 use serde::{Deserialize, Serialize};
 
 /// Runs the native tape kernel in deterministic UTC blocks before candle placement.
@@ -16,8 +17,8 @@ pub struct TickBurstGrouping {
 impl TickBurstGrouping {
     #[must_use]
     pub fn valid(self) -> bool {
-        self.window_ms >= 100
-            && self.window_ms % 100 == 0
+        self.window_ms >= NATIVE_TAPE_WINDOW_MS
+            && self.window_ms % NATIVE_TAPE_WINDOW_MS == 0
             && self.width_px.is_finite()
             && self.width_px > 0.0
             && self.price_units_per_pixel.is_finite()
@@ -27,7 +28,8 @@ impl TickBurstGrouping {
     }
 
     pub fn sanitize(&mut self) {
-        self.window_ms = (self.window_ms / 100 * 100).clamp(1_000, 300_000);
+        self.window_ms =
+            (self.window_ms / NATIVE_TAPE_WINDOW_MS * NATIVE_TAPE_WINDOW_MS).clamp(1_000, 300_000);
         if !self.width_px.is_finite() || self.width_px <= 0.0 {
             self.width_px = 420.0;
         }

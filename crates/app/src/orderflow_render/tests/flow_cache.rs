@@ -7,11 +7,15 @@ use quantick_orderflow::projection::{
 };
 
 fn frame() -> Arc<FlowTapeFrame> {
+    frame_with_quantity(4500)
+}
+
+fn frame_with_quantity(quantity: i32) -> Arc<FlowTapeFrame> {
     let trade = Trade {
         agg_id: 42,
         timestamp_ms: 1000,
         price: 100.into(),
-        quantity: 4500.into(),
+        quantity: quantity.into(),
         side: Side::Buy,
     };
     Arc::new(project_flow_tape(
@@ -460,4 +464,37 @@ fn precomposed_colours_match_gamma_premultiplied_gpu_blending_over_footprint() {
             "the oversized opening retains its translucent drawing"
         );
     }
+}
+
+#[test]
+fn quantity_unit_alone_rebuilds_cached_labels_for_the_same_frame() {
+    let frame = frame_with_quantity(5850);
+    let ctx = egui::Context::default();
+    let mut styled = key(&frame);
+    styled.tick_bubbles = Some(quantick_orderflow::TickBubbleStyle {
+        volume_opacity_floor: None,
+        tape_bursts: Some(quantick_orderflow::TickBurstGrouping {
+            window_ms: 72_000,
+            width_px: 420.0,
+            price_units_per_pixel: 0.8,
+            max_radius: 18.0,
+        }),
+        quantity_unit: quantick_orderflow::TickQuantityUnit::Contracts,
+        region_window_ms: 100,
+        reference_quantity: 20_000.0,
+        max_radius: 32.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    });
+    let (contracts, _) = paint(&ctx, styled);
+    assert_eq!(contracts.mesh.get().unwrap().labels[0].text, "5.8K");
+    styled.tick_bubbles.as_mut().unwrap().quantity_unit = quantick_orderflow::TickQuantityUnit::Btc;
+    let (btc, _) = paint(&ctx, styled);
+    assert!(!Arc::ptr_eq(&contracts, &btc));
+    assert_eq!(btc.mesh.get().unwrap().labels[0].text, "5.85K");
+    assert_eq!(
+        contracts.mesh.get().unwrap().plan,
+        btc.mesh.get().unwrap().plan
+    );
+    assert_eq!(frame.dots[0].mark.quantity, 5850.into());
 }

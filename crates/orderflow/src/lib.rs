@@ -9,6 +9,7 @@
 
 pub mod config;
 mod constants;
+pub use constants::NATIVE_TAPE_WINDOW_MS;
 pub mod engine;
 pub mod grouping;
 pub mod history;

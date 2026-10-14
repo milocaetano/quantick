@@ -1,6 +1,6 @@
 //! Select the chart's sphere calibration without replacing the tape look.
 use super::BubbleLook;
-use quantick_orderflow::{TickBubbleStyle, TickQuantityUnit};
+use quantick_orderflow::TickBubbleStyle;
 
 impl BubbleLook {
     #[must_use]
@@ -20,23 +20,22 @@ impl BubbleLook {
 
     #[must_use]
     pub fn tick_presets(&self) -> Vec<String> {
-        let Some(unit) = self.asset().and_then(|asset| match asset.key() {
-            "BTCUSDT" | "binance-futures:BTCUSDT.p" => Some(TickQuantityUnit::Btc),
-            "WIN*" => Some(TickQuantityUnit::Contracts),
-            _ => None,
-        }) else {
-            return Vec::new();
-        };
         self.presets()
             .presets
             .iter()
-            .filter(|preset| {
-                preset
-                    .tick_bubbles
-                    .is_some_and(|style| style.quantity_unit == unit)
-            })
+            .filter(|preset| self.tick_calibration_available(preset))
             .map(|preset| preset.name.clone())
             .collect()
+    }
+
+    pub(super) fn tick_calibration_available(
+        &self,
+        preset: &crate::bubble_presets::BubblePreset,
+    ) -> bool {
+        preset.tick_bubbles.is_some()
+            && self
+                .asset()
+                .is_some_and(|asset| preset.tick_asset_keys.iter().any(|key| key == asset.key()))
     }
 
     pub fn tick_style(&self, preset: Option<&str>) -> Result<Option<TickBubbleStyle>, String> {
@@ -114,6 +113,143 @@ mod tests {
             }
             assert!(look.tick_style(Some("missing")).is_err());
         }
+    }
+
+    #[test]
+    fn configured_asset_calibrations_dock_without_a_production_asset_match() {
+        let mut config: AppConfig = toml::from_str(crate::config::EMBEDDED_DEFAULT).unwrap();
+        let feed = config
+            .feeds
+            .iter_mut()
+            .find(|feed| feed.id == "metatrader-b3")
+            .unwrap();
+        feed.symbols.push("SYNZ26".to_owned());
+        feed.symbol_bubble_presets
+            .insert("SYN*".to_owned(), "default".to_owned());
+        let mut presets = bubble_presets::embedded();
+        let mut synthetic = presets.get("B3 WIN tick spheres").unwrap().clone();
+        synthetic.name = "Synthetic contract calibration".to_owned();
+        synthetic.tick_asset_keys = vec!["SYN*".to_owned()];
+        synthetic.tick_bubbles.as_mut().unwrap().reference_quantity = 1234.0;
+        presets.upsert(synthetic);
+        let serialized = toml::to_string(&presets).unwrap();
+        let presets = bubble_presets::parse(&serialized).unwrap();
+        let (binding, _) = crate::bubble_asset_store::AssetBinding::bind(
+            AssetBubblesStore::default().shared(),
+            &config,
+            ("metatrader-b3", "SYNZ26"),
+            &presets,
+            false,
+        );
+        assert_eq!(binding.key(), "SYN*");
+        let mut current = HeatmapConfig::default();
+        let mut look = BubbleLook::open(
+            (presets, bubble_presets::PresetSource::Embedded, None),
+            &mut current,
+        );
+        look.bind(binding);
+        assert_eq!(look.tick_presets(), ["Synthetic contract calibration"]);
+        assert!(
+            look.preset_page(0, 64)
+                .unwrap()
+                .iter()
+                .any(|name| name == "Synthetic contract calibration")
+        );
+        assert!(
+            !look
+                .preset_page(0, 64)
+                .unwrap()
+                .iter()
+                .any(|name| name == "B3 WIN tick spheres")
+        );
+        assert!(look.tick_style(Some("B3 WIN tick spheres")).is_err());
+        assert!(
+            look.apply_named_preset("B3 WIN tick spheres", &mut current)
+                .is_err()
+        );
+        let tape = current.clone();
+        assert!(
+            look.apply_named_preset("Synthetic contract calibration", &mut current)
+                .unwrap()
+        );
+        assert_eq!(
+            current.volume_dots.tick_bubbles.unwrap().reference_quantity,
+            1234.0
+        );
+        assert!(current.same_tape_settings(&tape));
+        *look.name_draft_mut() = "Saved synthetic calibration".to_owned();
+        look.save_preset(&current, |_| {
+            Ok(std::path::PathBuf::from("in-memory-only.toml"))
+        });
+        assert!(
+            look.tick_presets()
+                .iter()
+                .any(|name| name == "Saved synthetic calibration")
+        );
+    }
+
+    #[test]
+    fn saved_win_calibration_keeps_asset_availability_after_reload() {
+        let config: AppConfig = toml::from_str(crate::config::EMBEDDED_DEFAULT).unwrap();
+        let presets = bubble_presets::embedded();
+        let (binding, _) = crate::bubble_asset_store::AssetBinding::bind(
+            AssetBubblesStore::default().shared(),
+            &config,
+            ("metatrader-b3", "WINZ26"),
+            &presets,
+            false,
+        );
+        let mut current = HeatmapConfig::default();
+        let mut look = BubbleLook::open(
+            (presets, bubble_presets::PresetSource::Embedded, None),
+            &mut current,
+        );
+        look.bind(binding);
+        assert!(
+            look.apply_named_preset("B3 WIN tick spheres", &mut current)
+                .unwrap()
+        );
+        let expected = current.volume_dots.tick_bubbles;
+        *look.name_draft_mut() = "My WIN spheres".to_owned();
+        let mut stored = String::new();
+        look.save_preset(&current, |document| {
+            stored = toml::to_string(document).unwrap();
+            Ok(std::path::PathBuf::from("in-memory-only.toml"))
+        });
+        let reloaded = bubble_presets::parse(&stored).unwrap();
+        assert_eq!(
+            reloaded.get("My WIN spheres").unwrap().tick_asset_keys,
+            ["WIN*"]
+        );
+        let (binding, _) = crate::bubble_asset_store::AssetBinding::bind(
+            AssetBubblesStore::default().shared(),
+            &config,
+            ("metatrader-b3", "WINZ26"),
+            &reloaded,
+            false,
+        );
+        let mut restored = HeatmapConfig::default();
+        let mut reopened = BubbleLook::open(
+            (reloaded, bubble_presets::PresetSource::Embedded, None),
+            &mut restored,
+        );
+        reopened.bind(binding);
+        assert!(
+            reopened
+                .tick_presets()
+                .iter()
+                .any(|name| name == "My WIN spheres")
+        );
+        assert_eq!(
+            reopened.tick_style(Some("My WIN spheres")).unwrap(),
+            expected
+        );
+        assert!(
+            reopened
+                .apply_named_preset("My WIN spheres", &mut restored)
+                .unwrap()
+        );
+        assert_eq!(restored.volume_dots.tick_bubbles, expected);
     }
 
     #[test]

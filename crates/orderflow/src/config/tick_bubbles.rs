@@ -1,5 +1,6 @@
 //! Optional tick-chart spheres, independent of the native tape appearance.
 use super::BubbleStyle;
+use crate::constants::NATIVE_TAPE_WINDOW_MS;
 use rust_decimal::{Decimal, prelude::ToPrimitive as _};
 use serde::{Deserialize, Serialize};
 
@@ -82,7 +83,9 @@ impl TickBubbleStyle {
         if let Some(bursts) = &mut self.tape_bursts {
             bursts.sanitize();
         }
-        self.region_window_ms = (self.region_window_ms / 100 * 100).clamp(100, 10_000);
+        self.region_window_ms = (self.region_window_ms / NATIVE_TAPE_WINDOW_MS
+            * NATIVE_TAPE_WINDOW_MS)
+            .clamp(NATIVE_TAPE_WINDOW_MS, 10_000);
         if !self.reference_quantity.is_finite() || self.reference_quantity <= 0.0 {
             self.reference_quantity = 40.0;
         }
@@ -106,9 +109,13 @@ impl TickBubbleStyle {
     }
 
     #[must_use]
-    pub fn fingerprint(self) -> [u64; 11] {
+    pub fn fingerprint(self) -> [u64; 12] {
         let bursts = self.tape_bursts.map_or([0; 4], |value| value.fingerprint());
         [
+            match self.quantity_unit {
+                TickQuantityUnit::Btc => 0,
+                TickQuantityUnit::Contracts => 1,
+            },
             self.reference_quantity.to_bits(),
             u64::from(self.max_radius.to_bits()),
             u64::from(self.label_min_radius.to_bits()),

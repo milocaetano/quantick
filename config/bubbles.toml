@@ -453,6 +453,7 @@ stable_size = true
 [[presets]]
 name = "B3 WIN tick spheres"
 tick_only = true
+tick_asset_keys = ["WIN*"]
 
 [presets.tick_bubbles]
 quantity_unit = "contracts"

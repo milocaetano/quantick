@@ -10,17 +10,31 @@ impl BubbleLook {
         if !(1..=PRESET_PAGE_MAX).contains(&limit) {
             return Err(format!("Preset page limit must be 1..={PRESET_PAGE_MAX}"));
         }
-        if offset > self.presets.presets.len() {
+        let available: Vec<_> = self.available_presets().collect();
+        if offset > available.len() {
             return Err("Preset page offset exceeds the available count".to_owned());
         }
-        Ok(self
-            .presets
-            .presets
-            .iter()
+        Ok(available
+            .into_iter()
             .skip(offset)
             .take(limit)
             .map(|preset| preset.name.clone())
             .collect())
+    }
+
+    /// Shared whole-look picker policy: chart-only entries require calibration
+    /// support; whole looks retain their existing cross-asset application.
+    #[must_use]
+    pub fn preset_available(&self, preset: &crate::bubble_presets::BubblePreset) -> bool {
+        !preset.tick_only || self.tick_calibration_available(preset)
+    }
+
+    /// Exact picker entries, also used for control pagination identity and totals.
+    pub fn available_presets(&self) -> impl Iterator<Item = &crate::bubble_presets::BubblePreset> {
+        self.presets
+            .presets
+            .iter()
+            .filter(|preset| self.preset_available(preset))
     }
 
     /// Uses the UI picker operation, including same-name reapplication.

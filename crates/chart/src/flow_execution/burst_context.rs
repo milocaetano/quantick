@@ -1,6 +1,8 @@
 //! Expand source admission to complete causal blocks without changing the camera clip.
 use crate::tick_membership::TickMembership;
-use quantick_orderflow::{TickBurstGrouping, projection::flow_tape::FlowBurstView};
+use quantick_orderflow::{
+    NATIVE_TAPE_WINDOW_MS, TickBurstGrouping, projection::flow_tape::FlowBurstView,
+};
 use std::ops::Range;
 
 pub(super) fn context(
@@ -22,7 +24,11 @@ pub(super) fn context(
         calibration,
         from_ms,
         until_ms,
-        settled_through_ms: (membership.latest_timestamp_ms()?.div_euclid(100) * 100).min(until_ms),
+        settled_through_ms: (membership
+            .latest_timestamp_ms()?
+            .div_euclid(NATIVE_TAPE_WINDOW_MS)
+            * NATIVE_TAPE_WINDOW_MS)
+            .min(until_ms),
     })
 }
 

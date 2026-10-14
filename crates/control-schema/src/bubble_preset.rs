@@ -64,9 +64,7 @@ pub fn page(
 ) -> Result<ListResult, String> {
     let offset = usize::try_from(input.offset.get()).map_err(|_| "Preset offset is too large")?;
     let revision = quantick_control::canonical::canonical_digest(&serde_json::json!(
-        look.presets()
-            .presets
-            .iter()
+        look.available_presets()
             .map(|preset| &preset.name)
             .collect::<Vec<_>>()
     ))
@@ -83,7 +81,7 @@ pub fn page(
         );
     }
     let names = look.preset_page(offset, input.limit)?;
-    let total = look.presets().presets.len();
+    let total = look.available_presets().count();
     let next = offset + names.len();
     Ok(ListResult {
         tab_id: input.tab_id,
@@ -233,6 +231,7 @@ mod tests {
         let expected: Vec<_> = presets
             .presets
             .iter()
+            .filter(|preset| !preset.tick_only)
             .map(|preset| preset.name.clone())
             .collect();
         let mut look = BubbleLook::open(
@@ -250,6 +249,7 @@ mod tests {
         loop {
             let result = page(&input, &look).unwrap();
             assert!(result.names.len() <= 64);
+            assert_eq!(result.total, WireU64::new(expected.len() as u64));
             names.extend(result.names);
             let Some(next) = result.next_offset else {
                 break;
@@ -258,6 +258,10 @@ mod tests {
             input.revision = Some(result.revision);
         }
         assert_eq!(names, expected);
+        assert!(
+            !names.iter().any(|name| name == "B3 WIN tick spheres"),
+            "unbound panes cannot apply chart-only asset calibrations"
+        );
         input.offset = WireU64::new(1);
         input.revision = None;
         assert!(page(&input, &look).is_err());

@@ -1,5 +1,6 @@
 //! Causal tape grouping in declared market-time geometry, then exact candle placement.
 use super::*;
+use crate::constants::NATIVE_TAPE_WINDOW_MS;
 use crate::projection::{TapeDotMemory, TapeDotView, tape_group::NativeKey};
 use rust_decimal::prelude::FromPrimitive as _;
 
@@ -189,7 +190,7 @@ fn settle(
     let tape_view = TapeDotView {
         now_ms: through_ms,
         window_ms: calibration.window_ms,
-        dot_window_ms: 100,
+        dot_window_ms: NATIVE_TAPE_WINDOW_MS,
         evicted_through_ms: None,
         prices,
         geometry: TapeDotGeometry {
@@ -213,7 +214,9 @@ fn settle(
     let closed: Vec<_> = facts
         .iter()
         .filter(|mark| {
-            RecordedOpenings::window_start(mark.last_timestamp_ms).saturating_add(100) <= through_ms
+            RecordedOpenings::window_start(mark.last_timestamp_ms)
+                .saturating_add(NATIVE_TAPE_WINDOW_MS)
+                <= through_ms
         })
         .cloned()
         .collect();
@@ -231,7 +234,7 @@ fn settle(
             .map(|mark| RecordedOpenings::window_start(mark.last_timestamp_ms))
             .max()
             .unwrap_or(through_ms)
-            .saturating_add(100);
+            .saturating_add(NATIVE_TAPE_WINDOW_MS);
         groups = preview.project_native_block(
             &facts,
             TapeDotView {

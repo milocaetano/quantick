@@ -72,6 +72,15 @@ const fn default_volume_dot_full_quantity() -> f64 {
     quantick_orderflow::DEFAULT_VOLUME_DOT_FULL_QUANTITY
 }
 
+/// Older sphere presets were available to these two resolved Binance assets.
+fn legacy_tick_assets() -> Vec<String> {
+    vec!["BTCUSDT".to_owned(), "binance-futures:BTCUSDT.p".to_owned()]
+}
+
+fn legacy_tick_asset_keys(keys: &[String]) -> bool {
+    keys == legacy_tick_assets()
+}
+
 /// One named snapshot of the aggression-bubble panel's *appearance*.
 ///
 /// Deliberately not a switch: whether the layer draws at all stays a live
@@ -88,6 +97,13 @@ pub struct BubblePreset {
     /// Apply only tick-chart spheres; preserve every tape and book setting.
     #[serde(default, skip_serializing_if = "is_false")]
     pub tick_only: bool,
+    /// Resolved asset keys eligible for this chart calibration. An omitted list
+    /// preserves the original BTC discovery policy; an empty list offers none.
+    #[serde(
+        default = "legacy_tick_assets",
+        skip_serializing_if = "legacy_tick_asset_keys"
+    )]
+    pub tick_asset_keys: Vec<String>,
     /// Temporal window used to cluster compatible prints, in milliseconds.
     #[serde(default = "default_cluster_ms")]
     pub cluster_ms: i64,
@@ -145,6 +161,7 @@ impl BubblePreset {
         Self {
             name: name.into(),
             tick_only: false,
+            tick_asset_keys: legacy_tick_assets(),
             cluster_ms: config.bubble_cluster_ms,
             dust_merge_ms: config.bubble_dust_merge_ms,
             candle_summary: config.bubble_candle_summary,
@@ -963,6 +980,7 @@ name = "old"
         file.upsert(BubblePreset {
             name: "default".to_owned(),
             tick_only: false,
+            tick_asset_keys: legacy_tick_assets(),
             tick_bubbles: None,
             cluster_ms: DEFAULT_BUBBLE_CLUSTER_MS,
             dust_merge_ms: DEFAULT_BUBBLE_DUST_MERGE_MS,

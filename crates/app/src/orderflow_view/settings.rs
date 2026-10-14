@@ -39,10 +39,7 @@ impl OrderflowView {
     /// Every change is kept for the asset on screen; saving names the look
     /// as a preset any asset can pick, never over a look other assets open on.
     fn draw_bubble_presets(&mut self, ui: &mut egui::Ui) {
-        // The picker reads the stored presets while the closure below wants to
-        // mutate them, so it hands back an index and the name is read after.
-        // Cloning every name each frame would be the other way out, and this
-        // runs on the render thread.
+        // Clone only the clicked name; ordinary frames borrow the shared picker list.
         let mut chosen = None;
         ui.horizontal(|ui| {
             ui.label("preset");
@@ -54,12 +51,12 @@ impl OrderflowView {
             egui::ComboBox::from_id_salt("bubble_preset")
                 .selected_text(selected)
                 .show_ui(ui, |ui| {
-                    for (index, preset) in self.look.presets().presets.iter().enumerate() {
+                    for preset in self.look.available_presets() {
                         if ui
                             .selectable_label(self.look.look_name() == preset.name, &preset.name)
                             .clicked()
                         {
-                            chosen = Some(index);
+                            chosen = Some(preset.name.clone());
                         }
                     }
                 });
@@ -92,14 +89,7 @@ impl OrderflowView {
                 self.look.delete_preset(bubble_presets::save);
             }
         });
-        if let Some(index) = chosen
-            && let Some(name) = self
-                .look
-                .presets()
-                .presets
-                .get(index)
-                .map(|preset| preset.name.clone())
-        {
+        if let Some(name) = chosen {
             self.apply_preset(&name);
         }
         ui.small(format!("presets · {}", self.look.source()));

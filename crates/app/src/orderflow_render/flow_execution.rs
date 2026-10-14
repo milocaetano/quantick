@@ -74,7 +74,7 @@ pub(crate) struct FlowDrawing {
     pub plan: FlowPresentation,
     pub(super) meshes: [egui::Mesh; 2],
     rims: [Vec<egui::Shape>; 2],
-    labels: Vec<quantick_chart::flow_execution::FlowQuantityLabel>,
+    pub(super) labels: Vec<quantick_chart::flow_execution::FlowQuantityLabel>,
 }
 impl FlowDrawing {
     #[cfg(test)]

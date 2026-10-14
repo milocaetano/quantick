@@ -1,6 +1,9 @@
 //! Exact retained ordinal ranges from the canonical tick builder's decisions.
 use std::ops::Range;
 
+mod time_index;
+use time_index::TimeIndex;
+
 #[derive(Debug, Default)]
 pub struct TickMembership {
     closed: Vec<Range<usize>>,
@@ -10,6 +13,7 @@ pub struct TickMembership {
     opening_anchors: quantick_orderflow::history::RecordedOpeningAnchors,
     /// Timestamp bounds follow canonical candle membership, including late prints.
     times: Vec<(i64, i64)>,
+    time_index: TimeIndex,
     latest: Option<i64>,
     unordered_times: bool,
 }
@@ -36,6 +40,7 @@ impl TickMembership {
         // This owner is installed only for fixed tick bars, which admit every print.
         debug_assert!(admitted);
         if closed && !included {
+            self.index_closed_time();
             self.closed.push(self.start..self.next);
             self.start = self.next;
         }
@@ -56,6 +61,7 @@ impl TickMembership {
         }
         self.next += 1;
         if closed && included {
+            self.index_closed_time();
             self.closed.push(self.start..self.next);
             self.start = self.next;
         }
@@ -89,18 +95,24 @@ impl TickMembership {
 
     /// Conservative whole-candle admission for a half-open time interval.
     pub fn slots_at_times(&self, from: i64, until: i64) -> Option<Range<usize>> {
-        if !self.unordered_times {
-            let first = self.times.partition_point(|bounds| bounds.1 < from);
-            let end = self.times.partition_point(|bounds| bounds.0 < until);
-            return (first < end).then_some(first..end);
+        if from >= until {
+            return None;
         }
-        let mut matches = self
-            .times
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, &(low, high))| (high >= from && low < until).then_some(slot));
-        let first = matches.next()?;
-        Some(first..matches.next_back().unwrap_or(first) + 1)
+        let indexed = self.time_index.slots(from, until);
+        let current = self.times.get(self.closed.len()).and_then(|&(low, high)| {
+            (high >= from && low < until).then_some(self.closed.len()..self.closed.len() + 1)
+        });
+        match (indexed, current) {
+            (Some(a), Some(b)) => Some(a.start.min(b.start)..a.end.max(b.end)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    fn index_closed_time(&mut self) {
+        let slot = self.closed.len();
+        if let Some(&(low, high)) = self.times.get(slot) {
+            self.time_index.insert(low, high, slot);
+        }
     }
 
     pub fn latest_timestamp_ms(&self) -> Option<i64> {

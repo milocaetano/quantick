@@ -33,7 +33,7 @@ pub const PENDING_LANE_REFERENCE_MS: i64 = 15_000;
 // Native tape (retention metadata and display projection).
 
 /// Fixed execution window, in milliseconds, before visual aggregation.
-pub(crate) const NATIVE_TAPE_WINDOW_MS: i64 = 100;
+pub const NATIVE_TAPE_WINDOW_MS: i64 = 100;
 
 // Recorded tape history (`history/openings.rs`).
 
