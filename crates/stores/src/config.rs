@@ -631,12 +631,7 @@ impl AppConfig {
             // whatever the added-symbols sidecar merged into it.
             for symbol in &feed.symbols {
                 if feed.provider == ProviderKind::BinanceFutures
-                    && !symbol.strip_suffix(".p").is_some_and(|wire| {
-                        !wire.is_empty()
-                            && wire
-                                .bytes()
-                                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
-                    })
+                    && !quantick_sources::perpetual::is_canonical(symbol)
                 {
                     return Err(format!(
                         "feed '{}' requires canonical USD-M symbols such as BTCUSDT.p",

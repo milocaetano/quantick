@@ -51,20 +51,18 @@ impl BinanceMarket {
     /// Exchange symbol; `.p` is an application display identity only.
     #[must_use]
     pub fn wire_symbol(self, symbol: &str) -> String {
-        let upper = symbol.to_ascii_uppercase();
         match self {
-            Self::Spot => upper,
-            Self::UsdM => upper.strip_suffix(".P").unwrap_or(&upper).to_owned(),
+            Self::Spot => symbol.to_ascii_uppercase(),
+            Self::UsdM => quantick_sources::perpetual::wire_symbol(symbol),
         }
     }
 
     /// Canonical identity on the application's independent market channels.
     #[must_use]
     pub fn display_symbol(self, symbol: &str) -> String {
-        let wire = self.wire_symbol(symbol);
         match self {
-            Self::Spot => wire,
-            Self::UsdM => format!("{wire}.p"),
+            Self::Spot => self.wire_symbol(symbol),
+            Self::UsdM => quantick_sources::perpetual::display_symbol(symbol),
         }
     }
 

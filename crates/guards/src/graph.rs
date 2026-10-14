@@ -234,9 +234,10 @@ pub const ALLOWED: &[(&str, &[&str])] = &[
 const TOP_OF_THE_GRAPH: &str = "app";
 
 /// What a `feed-*` venue crate may reach, and nothing else. A feed produces
-/// trades; it links the vocabulary of a trade and of a book, and no more —
-/// and no feed may depend on another feed.
-const FEEDS_MAY_REACH: &[&str] = &["engine", "orderbook"];
+/// trades; it links the vocabulary of a trade and of a book, and the source
+/// vocabulary's symbol rules (a perpetual's `.p`) the config document checks
+/// with, and no more — and no feed may depend on another feed.
+const FEEDS_MAY_REACH: &[&str] = &["engine", "orderbook", "sources"];
 
 /// The rule a dependency-direction finding cites.
 const RULE_DIRECTION: &str = "CLAUDE.md: Architecture, dependency direction";

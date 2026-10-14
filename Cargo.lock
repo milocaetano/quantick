@@ -3145,6 +3145,7 @@ dependencies = [
  "futures-util",
  "quantick-engine",
  "quantick-orderbook",
+ "quantick-sources",
  "reqwest",
  "rust_decimal",
  "serde",
