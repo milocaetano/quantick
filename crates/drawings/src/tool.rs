@@ -345,21 +345,39 @@ pub trait MarkTool: Sync {
     ) -> Option<Handles> {
         None
     }
-    /// What a double click at `position` on this object would do, while the
-    /// pointer rests there: the cursor that announces it. `None` (the
-    /// default) leaves the object's own cursor; the double click may still
-    /// act there (a rectangle's centre does).
+    /// The hint a grab on handle `handle` announces when it is narrower than
+    /// a free reshape. `None` (the default) is the plain resize cursor.
+    fn handle_hint(&self, _handle: usize) -> Option<PointerHint> {
+        None
+    }
+    /// What the pointer at `position` on this object would do there, while
+    /// it rests: the cursor that announces it. `None` (the default) leaves
+    /// the object's own cursor; a double click may still act there. A
+    /// [`PointerHint::ResizeSide`] names the handle a press there grabs - a
+    /// rectangle's side line, a handle along a line rather than at a point.
     ///
-    /// The host asks only for the topmost object under the pointer, so the
-    /// tool answers for its own geometry and nothing else.
-    fn double_click_hint(
+    /// The host asks only the selected object and the topmost one under the
+    /// pointer, so the tool answers for its own geometry and nothing else.
+    fn pointer_hint(
         &self,
         _chart_rect: PxRect,
         _points: &[Px],
         _position: Px,
         _ctxt: &DrawContext<'_>,
-    ) -> Option<DoubleClickHint> {
+    ) -> Option<PointerHint> {
         None
+    }
+    /// Apply one click (a press and release without a drag) at `position`
+    /// to the object's payload. Answers whether anything changed; the host
+    /// folds the change into the open gesture, so it is one undo step.
+    fn click(
+        &self,
+        _chart_rect: PxRect,
+        _points: &[Px],
+        _position: Px,
+        _payload: &mut dyn DrawingPayload,
+    ) -> bool {
+        false
     }
     /// Apply a double click at `position` to the object's payload. Answers
     /// whether anything changed; the host folds the change into the open
@@ -377,13 +395,18 @@ pub trait MarkTool: Sync {
     fn test_geometry(&self) -> (Vec<Px>, Px);
 }
 
-/// A tool's answer to "what would a double click here do", shown as the
-/// hover cursor in place of the object's move cursor, so the gesture is
-/// discoverable before it is made. One cursor, never a cursor and a glyph.
+/// A tool's answer to "what would the pointer do here", shown as the hover
+/// cursor in place of the object's move cursor, so the gesture is
+/// discoverable before it is made. One cursor, never a cursor and a glyph,
+/// and each hint its own cursor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DoubleClickHint {
-    /// The double click runs a side out to the chart edge, or takes it back.
-    ExtendSideways,
+pub enum PointerHint {
+    /// One click runs this side out to the chart edge.
+    ExtendSide,
+    /// A press grabs `handle`, this side line, and its drag moves the side
+    /// sideways and nothing else. The index follows the point handles;
+    /// [`MarkTool::drag_handle`] owns the drag.
+    ResizeSide { handle: usize },
 }
 
 /// A cheap, copyable reference to one registered implementation.
@@ -676,6 +699,12 @@ impl DrawingTool {
             .map(|(index, _)| index)
     }
 
+    /// See [`MarkTool::handle_hint`].
+    #[must_use]
+    pub fn handle_hint(self, handle: usize) -> Option<PointerHint> {
+        self.0.handle_hint(handle)
+    }
+
     /// A mirror can resize only raw anchors, using the same policy as its owner.
     #[must_use]
     pub fn hit_shared_handle(
@@ -740,14 +769,24 @@ impl DrawingTool {
     }
 
     #[must_use]
-    pub fn double_click_hint(
+    pub fn pointer_hint(
         self,
         chart_rect: PxRect,
         points: &[Px],
         position: Px,
         ctxt: &DrawContext<'_>,
-    ) -> Option<DoubleClickHint> {
-        self.0.double_click_hint(chart_rect, points, position, ctxt)
+    ) -> Option<PointerHint> {
+        self.0.pointer_hint(chart_rect, points, position, ctxt)
+    }
+
+    pub fn click(
+        self,
+        chart_rect: PxRect,
+        points: &[Px],
+        position: Px,
+        payload: &mut dyn DrawingPayload,
+    ) -> bool {
+        self.0.click(chart_rect, points, position, payload)
     }
 
     pub fn double_click(

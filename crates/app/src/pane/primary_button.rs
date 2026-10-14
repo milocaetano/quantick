@@ -123,7 +123,7 @@ impl PaperArbitration<'_> {
                             .filter(|band| band.drawable())
                             .is_some_and(|band| {
                                 self.projection
-                                    .drawing_handle_at(
+                                    .drawing_point_handle_at(
                                         self.drawings,
                                         px(position),
                                         band,

@@ -15,11 +15,43 @@ use super::{
 };
 use crate::chart::PriceScale;
 use crate::{
-    AnchorSnap, BodySnap, ChartPoint, Constrain, DoubleClickHint, DrawContext, DrawingBand,
-    DrawingId, DrawingPayload, Px, PxRect, UNMEASURED,
+    AnchorSnap, BodySnap, ChartPoint, Constrain, DrawContext, DrawingBand, DrawingId,
+    DrawingPayload, PointerHint, Px, PxRect, UNMEASURED,
 };
 
 pub use quantick_chart::pane_series::PaneSeriesRead;
+
+/// What a press at a pixel takes under the Pointer tool. Press, hover
+/// cursor and the control plane's pick all read this one answer, so the
+/// cursor always names what the press does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PressTarget {
+    /// Handle `handle` of drawing `index`: the press reshapes it.
+    Handle { index: usize, handle: usize },
+    /// The body of drawing `index`, and what its tool says the pointer
+    /// does there.
+    Body {
+        index: usize,
+        hint: Option<PointerHint>,
+    },
+}
+
+impl PressTarget {
+    /// The drawing the press lands on.
+    #[must_use]
+    pub fn index(self) -> usize {
+        match self {
+            Self::Handle { index, .. } | Self::Body { index, .. } => index,
+        }
+    }
+}
+
+/// Which click a release completes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClickKind {
+    Single,
+    Double,
+}
 
 #[cfg(test)]
 #[path = "projection_tests.rs"]
@@ -490,9 +522,60 @@ impl DrawingProjection<'_> {
         history_right: f32,
         total: usize,
     ) -> Option<usize> {
-        self.drawing_handle_at(drawings, pos, band, history_right, total)
-            .map(|(drawing_index, _)| drawing_index)
-            .or_else(|| self.drawing_at(drawings, pos, band, history_right, total))
+        self.press_target(drawings, pos, band, history_right, total)
+            .map(PressTarget::index)
+    }
+
+    /// What a press at `pos` takes: the selected object's handles first -
+    /// its point handles, then a side line its tool names - then any other
+    /// object's point handle, then the topmost body under the pointer, whose
+    /// side line the press grabs. A side line belongs to the selected object
+    /// or the topmost one only, never to one beneath another's body. Each
+    /// tool is asked for its hint once.
+    #[must_use]
+    pub fn press_target(
+        &self,
+        drawings: &Marks,
+        pos: Px,
+        band: &Band,
+        history_right: f32,
+        total: usize,
+    ) -> Option<PressTarget> {
+        let hint_of =
+            |index| self.drawing_pointer_hint(drawings, index, pos, band, history_right, total);
+        let side_line = |index, hint| match hint {
+            Some(PointerHint::ResizeSide { handle }) => Some(PressTarget::Handle { index, handle }),
+            _ => None,
+        };
+        let point_handle = |index| {
+            self.drawing_handle_in(drawings, index, pos, band, history_right, total)
+                .map(|handle| PressTarget::Handle { index, handle })
+        };
+        let selected = drawings.selected();
+        let mut selected_hint = None;
+        if let Some(index) = selected {
+            if let Some(target) = point_handle(index) {
+                return Some(target);
+            }
+            selected_hint = hint_of(index);
+            if let Some(target) = side_line(index, selected_hint) {
+                return Some(target);
+            }
+        }
+        let others = (0..drawings.items().len()).rev();
+        if let Some(target) = others
+            .filter(|index| Some(*index) != selected)
+            .find_map(point_handle)
+        {
+            return Some(target);
+        }
+        let index = self.drawing_at(drawings, pos, band, history_right, total)?;
+        let hint = if Some(index) == selected {
+            selected_hint
+        } else {
+            hint_of(index)
+        };
+        Some(side_line(index, hint).unwrap_or(PressTarget::Body { index, hint }))
     }
 
     /// Apply one frame of a handle drag, with the pointer already resolved to
@@ -582,11 +665,11 @@ impl DrawingProjection<'_> {
         }
     }
 
-    /// What a double click at `pos` would do to drawing `drawing_index`, as
+    /// What the pointer at `pos` would do to drawing `drawing_index`, as
     /// its tool announces it on hover. Same projection and context as the
     /// hit-test, so the hint sits exactly where the click lands.
     #[must_use]
-    pub fn drawing_double_click_hint(
+    pub fn drawing_pointer_hint(
         &self,
         drawings: &Marks,
         drawing_index: usize,
@@ -594,12 +677,13 @@ impl DrawingProjection<'_> {
         band: &Band,
         history_right: f32,
         total: usize,
-    ) -> Option<DoubleClickHint> {
+    ) -> Option<PointerHint> {
         let scale = band.scale.as_ref()?;
         let drawing = drawings
             .items()
             .get(drawing_index)
-            .filter(|drawing| !drawing.locked && band::drawing_in_band(drawing, band))?;
+            .filter(|drawing| !drawing.locked && band::drawing_in_band(drawing, band))
+            .filter(|_| drawings.is_visible(drawing_index))?;
         let projected = self.projected_drawing_points(drawing, history_right, total, scale);
         let ctxt = self.draw_context(
             drawing,
@@ -607,54 +691,47 @@ impl DrawingProjection<'_> {
             band,
             drawings.selected_id() == Some(drawing.id),
         );
-        drawing
-            .tool
-            .double_click_hint(band.rect, &projected, pos, &ctxt)
+        drawing.tool.pointer_hint(band.rect, &projected, pos, &ctxt)
     }
 
-    /// The drawing a double click at `pos` belongs to, with its payload as
-    /// the click leaves it: the one the press `picked` when it picked one,
-    /// else the topmost visible object whose tool would change there and
-    /// whose *drawn* anchors enclose `pos` - an outline-only rectangle's
-    /// interior takes no part in the click's hit-test, but its double click
-    /// still lands. The fallback reads the drawn extent, never the painted
+    /// The drawing a click of `kind` at `pos` belongs to, with its payload as the click leaves it: the one the
+    /// press `picked` when it picked one, else the topmost visible object
+    /// whose tool would change there and whose *drawn* anchors enclose
+    /// `pos` - an outline-only rectangle's interior takes no part in the
+    /// click's hit-test, but its band's click and its double click still
+    /// land. The fallback reads the drawn extent, never the painted
     /// one: a band run to the chart edges would otherwise swallow the
     /// chart's own double click across its whole width. Locked objects, and
     /// those `held` names (any strategy-bound region), never take one.
     ///
     /// The change is worked out on a copy, so the caller applies it whole
-    /// or not at all; hover asks the same question for its hint.
+    /// or not at all; hover reads [`Self::missed_click_hint`] instead.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
-    pub fn double_click_target(
+    pub fn click_target(
         &self,
         drawings: &Marks,
         picked: Option<usize>,
         pos: Px,
+        kind: ClickKind,
         band: &Band,
         history_right: f32,
         total: usize,
         held: &dyn Fn(DrawingId) -> bool,
     ) -> Option<(usize, Box<dyn DrawingPayload>)> {
-        let scale = band.scale.as_ref()?;
         let trial = |index: usize, fallback: bool| {
-            let drawing = drawings.items().get(index)?;
-            if drawing.locked
-                || held(drawing.id)
-                || !drawings.is_visible(index)
-                || !band::drawing_in_band(drawing, band)
-            {
-                return None;
-            }
-            let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+            let (drawing, projected) =
+                self.click_candidate(drawings, index, band, (history_right, total), held)?;
             if fallback && !PxRect::from_points(&projected).contains(pos) {
                 return None;
             }
             let mut payload = drawing.payload.clone_box();
-            drawing
-                .tool
-                .double_click(band.rect, &projected, pos, payload.as_mut())
-                .then_some((index, payload))
+            let (tool, rect) = (drawing.tool, band.rect);
+            let changed = match kind {
+                ClickKind::Single => tool.click(rect, &projected, pos, payload.as_mut()),
+                ClickKind::Double => tool.double_click(rect, &projected, pos, payload.as_mut()),
+            };
+            changed.then_some((index, payload))
         };
         match picked {
             Some(index) => trial(index, false),
@@ -664,6 +741,56 @@ impl DrawingProjection<'_> {
         }
     }
 
+    /// The hint a click at `pos` that missed every hit-test still answers
+    /// to: the topmost object whose drawn anchors enclose `pos` and whose
+    /// tool says one click acts there - the drawing [`Self::click_target`]'s
+    /// fallback hands that click. Read off the tool's hint, never by trying
+    /// the click, so hover copies nothing.
+    #[must_use]
+    pub fn missed_click_hint(
+        &self,
+        drawings: &Marks,
+        pos: Px,
+        band: &Band,
+        view: (f32, usize),
+        held: &dyn Fn(DrawingId) -> bool,
+    ) -> Option<PointerHint> {
+        let scale = band.scale.as_ref()?;
+        (0..drawings.items().len()).rev().find_map(|index| {
+            let (drawing, projected) = self.click_candidate(drawings, index, band, view, held)?;
+            if !PxRect::from_points(&projected).contains(pos) {
+                return None;
+            }
+            let selected = drawings.selected_id() == Some(drawing.id);
+            let ctxt = self.draw_context(drawing, scale, band, selected);
+            let hint = drawing.tool.pointer_hint(band.rect, &projected, pos, &ctxt);
+            hint.filter(|hint| *hint == PointerHint::ExtendSide)
+        })
+    }
+
+    /// Drawing `index` with its anchors on screen, when a click may change
+    /// it: unlocked, not `held`, visible and on `band`.
+    fn click_candidate<'d>(
+        &self,
+        drawings: &'d Marks,
+        index: usize,
+        band: &Band,
+        (history_right, total): (f32, usize),
+        held: &dyn Fn(DrawingId) -> bool,
+    ) -> Option<(&'d Mark, SmallVec<[Px; 4]>)> {
+        let scale = band.scale.as_ref()?;
+        let drawing = drawings.items().get(index)?;
+        let refuses = drawing.locked
+            || held(drawing.id)
+            || !drawings.is_visible(index)
+            || !band::drawing_in_band(drawing, band);
+        (!refuses).then(|| {
+            let projected = self.projected_drawing_points(drawing, history_right, total, scale);
+            (drawing, projected)
+        })
+    }
+
+    /// The handle a press at `pos` grabs, as [`Self::press_target`] answers.
     #[must_use]
     pub fn drawing_handle_at(
         &self,
@@ -673,19 +800,35 @@ impl DrawingProjection<'_> {
         history_right: f32,
         total: usize,
     ) -> Option<(usize, usize)> {
-        let selected = drawings.selected();
-        if let Some(drawing_index) = selected
-            && let Some(handle) =
-                self.drawing_handle_in(drawings, drawing_index, pos, band, history_right, total)
-        {
-            return Some((drawing_index, handle));
+        match self.press_target(drawings, pos, band, history_right, total)? {
+            PressTarget::Handle { index, handle } => Some((index, handle)),
+            PressTarget::Body { .. } => None,
         }
-        (0..drawings.items().len())
-            .rev()
-            .filter(|drawing_index| Some(*drawing_index) != selected)
-            .find_map(|drawing_index| {
-                self.drawing_handle_in(drawings, drawing_index, pos, band, history_right, total)
-                    .map(|handle| (drawing_index, handle))
+    }
+
+    /// The point handle - a drawing's own ring, never a side line - a press
+    /// at `pos` grabs, the selected object's first: what a held modifier
+    /// yields the canvas to.
+    #[must_use]
+    pub fn drawing_point_handle_at(
+        &self,
+        drawings: &Marks,
+        pos: Px,
+        band: &Band,
+        history_right: f32,
+        total: usize,
+    ) -> Option<(usize, usize)> {
+        let selected = drawings.selected();
+        selected
+            .into_iter()
+            .chain(
+                (0..drawings.items().len())
+                    .rev()
+                    .filter(|i| Some(*i) != selected),
+            )
+            .find_map(|index| {
+                self.drawing_handle_in(drawings, index, pos, band, history_right, total)
+                    .map(|handle| (index, handle))
             })
     }
 

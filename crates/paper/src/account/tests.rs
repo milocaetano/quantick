@@ -404,25 +404,101 @@ fn the_export_csv_carries_readable_stamps_and_running_equity() {
             tags: Vec::new(),
         },
     ];
-    let text = export_csv(&rows);
+    let declared = crate::risk_sizing::InstrumentBook::new();
+    let catalog = crate::instruments::InstrumentCatalog::default();
+    let text = export_csv(
+        &rows,
+        &crate::pnl::PnlBook {
+            declared: &declared,
+            catalog: &catalog,
+            feed: "",
+        },
+    );
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 3, "header plus two rows");
     assert!(lines[0].starts_with("symbol,side,quantity,opened_ms,opened_utc"));
-    assert!(lines[0].ends_with(",source"), "{}", lines[0]);
+    assert!(
+        lines[0].ends_with(",source,pnl_per_unit,pnl_money,currency"),
+        "{}",
+        lines[0]
+    );
     assert!(
         lines[1].contains("2026-03-16T13:01:08Z"),
         "human-readable UTC beside the epoch: {}",
         lines[1]
     );
-    assert!(lines[1].ends_with(",manual,1,2,2,2,live"), "{}", lines[1]);
+    assert!(
+        lines[1].ends_with(",manual,1,2,2,2,live,5,,"),
+        "{}",
+        lines[1]
+    );
     assert!(
         lines[2].contains(",3,"),
         "running equity 5 + (-2): {}",
         lines[2]
     );
     assert!(
-        lines[2].ends_with(",manual,,,,,"),
+        lines[2].ends_with(",manual,,,,,,-2,,"),
         "unknown v1 fields and an unrecorded source stay empty: {}",
+        lines[2]
+    );
+}
+
+/// The export carries what the report shows: the move per contract and the
+/// money it made, in the instrument's own currency - empty where no point
+/// value is known, never a guessed zero.
+#[test]
+fn the_export_csv_adds_per_contract_points_and_money() {
+    let trade = |pnl: i64, quantity: i64| ClosedTrade {
+        side: Side::Buy,
+        quantity: Decimal::from(quantity),
+        entry_price: Decimal::from(100),
+        exit_price: Decimal::from(100 + pnl / quantity),
+        opened_ms: 1_773_666_000_000,
+        closed_ms: 1_773_666_060_000,
+        pnl_points: Decimal::from(pnl),
+        exit_reason: quantick_trading::ExitReason::Manual,
+        entry_agg_id: None,
+        exit_agg_id: None,
+        mae_points: None,
+        mfe_points: None,
+    };
+    let row = |symbol: &str, trade: ClosedTrade| HistoryRow {
+        symbol: symbol.to_owned(),
+        source: None,
+        trade,
+        session: None,
+        trade_ref: history::TradeRef::default(),
+        tags: Vec::new(),
+    };
+    let rows = vec![row("WINV26", trade(400, 2)), row("XAUUSD", trade(30, 3))];
+    let catalog = crate::instruments::InstrumentCatalog::parse(
+        "version = 1
+[instruments.\"WIN*\"]
+currency = \"BRL\"
+point_value = \"0.20\"
+size_step = \"1\"
+",
+    )
+    .expect("catalog");
+    let declared = crate::risk_sizing::InstrumentBook::new();
+    let text = export_csv(
+        &rows,
+        &crate::pnl::PnlBook {
+            declared: &declared,
+            catalog: &catalog,
+            feed: "",
+        },
+    );
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines[1].ends_with(",400,400,60000,manual,,,,,,200,80,BRL"),
+        "{}",
+        lines[1]
+    );
+    assert!(
+        lines[2].ends_with(",10,,"),
+        "unknown money stays empty: {}",
         lines[2]
     );
 }
@@ -1012,5 +1088,190 @@ fn the_risk_lock_refuses_a_reverse_it_would_refuse_as_an_entry() {
         (position.side, position.quantity),
         (Side::Sell, Decimal::from(1000)),
         "unlocked, the same flip goes through"
+    );
+}
+
+/// The position card's stop and target read what the position would at
+/// each level, in the same words as the open P&L beside them.
+#[test]
+fn the_brackets_read_what_the_position_would_at_each_level() {
+    let dir = ScratchDir::new("account-bracket-pnl");
+    let mut account = account(&dir, "WINZ26");
+    account.seed(&print(0, 100));
+    assert_eq!(account.bracket_pnl(), [None, None], "flat: no legs");
+    let mut book = InstrumentBook::new();
+    book.insert(
+        "WINZ26".to_owned(),
+        InstrumentMoney {
+            point_value: Decimal::new(20, 2),
+            size_step: Decimal::ONE,
+            min_size: Decimal::ONE,
+            max_size: None,
+            currency: Currency::new("BRL").expect("BRL"),
+            source: MoneySource::Declared,
+        },
+    );
+    account.set_instrument_money(book);
+    let intent = OrderIntent::market(Side::Buy, Decimal::from(2)).with_bracket(Bracket::whole(
+        Some(Decimal::from(90)),
+        Some(Decimal::from(120)),
+    ));
+    let events = account.place_intent(intent);
+    account.handle_events(events);
+    account.on_trade(&print(1, 100));
+    let [stop, target] = account.bracket_pnl();
+    assert_eq!(
+        stop,
+        Some((Decimal::from(90), "-4.00 BRL · -10 pts × 2".to_owned())),
+        "ten points against two contracts at 0.20 a point"
+    );
+    assert_eq!(
+        target,
+        Some((Decimal::from(120), "+8.00 BRL · +20 pts × 2".to_owned()))
+    );
+}
+
+/// Every feed id a tab could carry, and none.
+const TAB_FEEDS: [&str; 4] = ["metatrader-b3", "binance", "hyperliquid", ""];
+
+fn shipped_settings() -> crate::pnl::PnlSettings {
+    crate::pnl::PnlSettings::load(
+        include_str!("../../../app/config/instruments.toml"),
+        None,
+        None,
+    )
+}
+
+#[test]
+fn the_account_reads_the_shipped_catalog_whatever_the_tab_feed() {
+    let dir = ScratchDir::new("catalog-feed");
+    let mut account = account(&dir, "BTCUSDT");
+    account.set_pnl_settings(shipped_settings());
+    for feed in TAB_FEEDS {
+        account.set_feed(feed);
+        let money = account.symbol_money().cloned().expect("BTCUSDT");
+        assert_eq!(
+            money.size_step,
+            Decimal::new(1, 5),
+            "the ticket steps 0.00001"
+        );
+        assert_eq!(
+            money.currency.code(),
+            "USDT",
+            "a risk amount is stamped USDT"
+        );
+        let seeded = account.risk_editor().seeded;
+        assert_eq!(seeded.as_ref(), Some(&money));
+        assert!(
+            crate::risk_sizing::money_note(seeded.as_ref()).contains("from instruments.toml"),
+            "the risk block names where the value came from"
+        );
+    }
+    // A WIN replay opened on a tab whose live feed is Binance still reads
+    // the mini index's money; Binance's WINUSDT never does.
+    account.set_feed("binance");
+    account.set_symbol("WINV26");
+    let win = account
+        .symbol_money()
+        .cloned()
+        .expect("WINV26 on a binance tab");
+    assert_eq!(win.point_value, Decimal::new(20, 2));
+    assert_eq!(win.currency.code(), "BRL");
+    for symbol in ["WINUSDT", "DOLOUSDT"] {
+        account.set_symbol(symbol);
+        assert_eq!(account.symbol_money(), None, "{symbol} is no B3 contract");
+    }
+    assert!(crate::risk_sizing::money_note(None).contains("No feed reports"));
+}
+
+/// A saved trade is worth what it is worth: the ledger row, the total and
+/// the CSV export read the same money from every tab.
+#[test]
+fn a_saved_trade_prices_identically_from_any_tab() {
+    let dir = ScratchDir::new("catalog-any-tab");
+    let mut account = account(&dir, "BTCUSDT");
+    account.set_pnl_settings(shipped_settings());
+    let trade = ClosedTrade {
+        side: Side::Buy,
+        quantity: Decimal::from(2),
+        entry_price: Decimal::from(100),
+        exit_price: Decimal::from(300),
+        opened_ms: 1_773_666_000_000,
+        closed_ms: 1_773_666_060_000,
+        pnl_points: Decimal::from(400),
+        exit_reason: quantick_trading::ExitReason::Manual,
+        entry_agg_id: None,
+        exit_agg_id: None,
+        mae_points: None,
+        mfe_points: None,
+    };
+    let rows = vec![HistoryRow {
+        symbol: "WINV26".to_owned(),
+        source: None,
+        trade: trade.clone(),
+        session: None,
+        trade_ref: history::TradeRef::default(),
+        tags: Vec::new(),
+    }];
+    let read = |account: &PaperAccount| {
+        let reader = account.pnl_reader();
+        (
+            reader.trade("WINV26", trade.pnl_points, trade.quantity),
+            reader.total(rows.iter().map(|row| (row.symbol.as_str(), &row.trade))),
+            export_csv(&rows, &account.pnl_book()),
+        )
+    };
+    account.set_feed("metatrader-b3");
+    let on_b3 = read(&account);
+    assert!(on_b3.0.contains("80.00 BRL"), "{}", on_b3.0);
+    assert!(
+        on_b3
+            .2
+            .lines()
+            .nth(1)
+            .is_some_and(|line| line.ends_with(",200,80,BRL")),
+        "{}",
+        on_b3.2
+    );
+    for feed in TAB_FEEDS {
+        account.set_feed(feed);
+        assert_eq!(read(&account), on_b3, "read from a {feed:?} tab");
+    }
+}
+
+/// The close toast words the trade in the figure the ticket leads with —
+/// the trader's chosen mode, its honest second figure and their units —
+/// never a bare points total that ignores the switch.
+#[test]
+fn the_close_toast_reads_in_the_chosen_figure() {
+    let dir = ScratchDir::new("close-toast-pnl");
+    let mut account = account(&dir, "WINZ26");
+    account.set_pnl_settings(shipped_settings());
+    let close_two = |account: &mut PaperAccount, first: u64| {
+        account.seed(&print(first, 100));
+        let env = AccountEnv {
+            ruler_levels: None,
+            form: TicketForm {
+                quantity: Ok(Decimal::from(2)),
+                offsets: Some((None, None)),
+            },
+        };
+        account.market(Side::Buy, Decimal::from(100), Bracket::none(), &env);
+        account.on_trade(&print(first + 1, 100));
+        let events = account.dispatch(Command::ClosePosition);
+        account.handle_events(events);
+        account.on_trade(&print(first + 2, 105));
+        account.take_toast().expect("the close is said")
+    };
+    account.set_pnl_primary(crate::pnl::PnlPrimary::PointsPerContract);
+    assert_eq!(
+        close_two(&mut account, 0),
+        "SIM closed: LONG 2 for +5 pts × 2 · +2.00 BRL (manual)",
+        "pts/ct leads, money keeps it honest"
+    );
+    account.set_pnl_primary(crate::pnl::PnlPrimary::Money);
+    assert_eq!(
+        close_two(&mut account, 10),
+        "SIM closed: LONG 2 for +2.00 BRL · +5 pts × 2 (manual)"
     );
 }

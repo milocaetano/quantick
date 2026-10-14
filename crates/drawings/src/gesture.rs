@@ -37,7 +37,9 @@ pub use placing::{
     placement_surface,
 };
 pub use pointer::{PointerFrame, PointerOutcome};
-pub use projection::{DrawingProjection, PaneSeriesRead, magnet_price_of, snap_bar_to_tape};
+pub use projection::{
+    ClickKind, DrawingProjection, PaneSeriesRead, PressTarget, magnet_price_of, snap_bar_to_tape,
+};
 pub use shared::{
     PaneIndex, SharedDrag, SharedEdit, SharedInteraction, SharedMarksMut, SharedPick,
     SharedPointer, SharedSource,
@@ -148,8 +150,11 @@ pub enum GestureCursor {
     Move,
     /// A handle a press would reshape.
     Resize,
-    /// A side a double click would run out to the chart edge, or take back.
+    /// A side line a drag would move sideways.
     ResizeHorizontal,
+    /// A band one click would run out to the chart edge. Its own cursor,
+    /// never the side line's: the two zones sit side by side.
+    ExtendSide,
     /// Geometry that refuses: locked, or a band that cannot take an anchor.
     NotAllowed,
     /// A band an armed tool would place an anchor in.
@@ -280,6 +285,9 @@ pub struct PaneGestures {
     /// it as an undo step. Placement already refused to turn a twitch into a
     /// drag (`DRAWING_DRAG_THRESHOLD_PX`); moving now refuses too.
     pub drag_pending_from: Option<Px>,
+    /// The last release read as a click; a double click completes it only
+    /// near its press, on its drawing.
+    pub last_click: Option<pointer::LastClick>,
     /// The move or resize this gesture is, once it is one.
     pub drag: DrawingDrag,
     /// What a body drag grabbed; see [`TranslateFrom`].

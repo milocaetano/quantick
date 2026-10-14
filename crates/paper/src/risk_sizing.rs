@@ -39,7 +39,7 @@ use std::collections::BTreeMap;
 
 use quantick_engine::Side;
 use quantick_trading::{
-    Bracket, Currency, InstrumentMoney, Money, SizeOutcome, SizeRefusal, size_for_risk,
+    Bracket, Currency, InstrumentMoney, Money, MoneySource, SizeOutcome, SizeRefusal, size_for_risk,
 };
 use rust_decimal::Decimal;
 
@@ -126,8 +126,18 @@ impl Default for RiskSettings {
 pub struct RiskContext<'a> {
     pub settings: &'a RiskSettings,
     pub capital: &'a Capital,
-    pub book: &'a InstrumentBook,
+    /// The declared records and the catalog: a declared
+    /// record always outranks the shipped one.
+    pub book: PnlBook<'a>,
     pub symbol: &'a str,
+}
+
+impl<'a> RiskContext<'a> {
+    /// The money this symbol is sized in; see [`PnlBook::money`].
+    #[must_use]
+    pub fn money(&self) -> Option<&'a InstrumentMoney> {
+        self.book.money(self.symbol)
+    }
 }
 
 /// Why no budget could be resolved at all.
@@ -162,12 +172,32 @@ pub enum BudgetRefusal {
 /// applies.
 pub type Capital = BTreeMap<String, Decimal>;
 
-/// The declared money for each symbol, keyed by the bare symbol.
-///
-/// Bare, like `ruler_steps` beside it: what a point of an instrument is
-/// worth describes the instrument, not who streams it, so a recorded
-/// session must not make a trader type it again.
-pub type InstrumentBook = BTreeMap<String, InstrumentMoney>;
+pub use crate::instruments::InstrumentBook;
+use crate::pnl::PnlBook;
+
+/// Where the risk block's point value and step came from, as the line
+/// under them reads: a catalog value is never shown as if nobody knew it.
+#[must_use]
+pub fn money_note(money: Option<&InstrumentMoney>) -> &'static str {
+    match money.map(|money| money.source) {
+        Some(MoneySource::Config) => {
+            "what one point of price is worth per unit held, and the smallest size you can \
+             trade - from instruments.toml; type a value to declare your own for this symbol."
+        }
+        Some(MoneySource::Venue) => {
+            "what one point of price is worth per unit held, and the smallest size you can \
+             trade - reported by the venue."
+        }
+        Some(MoneySource::Declared) => {
+            "what one point of price is worth per unit held, and the smallest size you can \
+             trade - declared by you; saved per symbol."
+        }
+        None => {
+            "what one point of price is worth per unit held, and the smallest size you can \
+             trade. No feed reports these; saved per symbol."
+        }
+    }
+}
 
 /// One instrument's money as the sidecar stores it.
 ///
@@ -563,7 +593,7 @@ pub fn evaluate(
     if context.settings.basis == RiskBasis::Off {
         return RiskState::Off;
     }
-    let Some(money) = context.book.get(context.symbol) else {
+    let Some(money) = context.money() else {
         return RiskState::NoInstrumentMoney {
             symbol: context.symbol.to_owned(),
         };
@@ -635,31 +665,13 @@ pub fn sized_for_aim(
     if resting == probe {
         return (state, resting);
     }
-    let Some(risk) = risk_of(
-        context.book,
-        context.symbol,
-        side,
-        entry,
-        &resting,
-        quantity,
-    ) else {
+    let Some(risk) = context
+        .money()
+        .and_then(|money| quantick_trading::risk_at(side, entry, &resting, quantity, money).ok())
+    else {
         return (state, resting);
     };
     (with_restated_risk(state, risk), resting)
-}
-
-/// What `quantity` risks at this protection, when the symbol's money is
-/// declared.
-pub fn risk_of(
-    book: &InstrumentBook,
-    symbol: &str,
-    side: Side,
-    entry: Decimal,
-    bracket: &Bracket,
-    quantity: Decimal,
-) -> Option<Money> {
-    let money = book.get(symbol)?;
-    quantick_trading::risk_at(side, entry, bracket, quantity, money).ok()
 }
 
 /// Replace a state's risk with the risk of the ladder that will actually
@@ -905,7 +917,7 @@ mod tests {
         RiskContext {
             settings,
             capital,
-            book,
+            book: PnlBook::declared_only(book),
             symbol,
         }
     }
@@ -1071,15 +1083,9 @@ mod tests {
         // rung - one contract cannot be split in halves - so the real risk
         // is the 400-point stop, not the weighted mean.
         let resting = Bracket::whole(Some(d("139600")), None);
-        let restated = risk_of(
-            &[("WIN$N".to_owned(), money)].into_iter().collect(),
-            "WIN$N",
-            Side::Buy,
-            d("140000"),
-            &resting,
-            Decimal::ONE,
-        )
-        .expect("risk");
+        let restated =
+            quantick_trading::risk_at(Side::Buy, d("140000"), &resting, Decimal::ONE, &money)
+                .expect("risk");
         assert_eq!(restated.amount, d("80"), "400 points x 0.20 x 1");
         let state = with_restated_risk(weighted, restated);
         match state {

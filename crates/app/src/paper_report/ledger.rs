@@ -13,8 +13,6 @@ use quantick_paper::report::ledger_state::{
 use quantick_paper::report::load_history;
 use quantick_paper::report::session_edit::JournalEdit;
 use quantick_paper::report::sessions::{JournaledTrade, SessionKey, TradeRef, live_keys};
-use quantick_sim::ClosedTrade;
-use rust_decimal::Decimal;
 
 use super::rows::{
     GroupView, Item, LedgerRow, TradeMeta, draw_day_header, draw_group_header, draw_ledger_row,
@@ -22,11 +20,11 @@ use super::rows::{
 };
 use super::sessions::{draw_hidden_live, draw_inline, draw_session_head};
 use super::{
-    LEDGER_PAGE_TRADES, LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, ReportEnv, ReportState,
-    TOTALS_STRIP_PX,
+    LEDGER_PAGE_TRADES, LEDGER_ROW_HEIGHT_PX, LEDGER_SCOPE_COMBO_PX, LedgerTotals, ReportEnv,
+    ReportState, TOTALS_STRIP_PX,
 };
 use crate::paper_calendar::CivilDate;
-use crate::paper_chrome::{caption, fmt_signed_points, list_symbol_folders, points_color};
+use crate::paper_chrome::{caption, list_symbol_folders, points_color};
 use crate::theme;
 use crate::timezone::TzOffset;
 
@@ -43,7 +41,7 @@ impl ReportState {
         let history = load_history(env.dir, symbol, env.session_journal_paths);
         // The strip under the list sums every saved trade, not the revealed
         // page, so it is summed once here rather than on every frame.
-        self.saved_totals = LedgerTotals::of(history.rows.iter().map(|row| &row.trade));
+        self.saved_totals = LedgerTotals::of_rows(env.pnl, &history.rows);
         self.sessions.reloaded(&history);
         self.history_cache = Some(history);
         self.ledger_symbols = list_symbol_folders(env.dir);
@@ -143,7 +141,7 @@ impl ReportState {
         ui.horizontal(|ui| {
             ui.label(caption("TRADE"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(caption("PTS"));
+                ui.label(caption("P&L"));
             });
         });
         ui.separator();
@@ -153,7 +151,7 @@ impl ReportState {
         if let Some(open) = &env.open {
             ui.label(caption("OPEN"));
             let symbol = (!env.symbol.is_empty()).then_some(env.symbol);
-            draw_open_row(ui, &open.summary, symbol, open.mark_price, open.held_ms);
+            draw_open_row(ui, open, symbol);
         }
 
         let saved_len = self
@@ -195,6 +193,7 @@ impl ReportState {
                     trade_ref: live.at.map_or_else(TradeRef::default, |at| at.trade),
                     source: live.source,
                     tags: live.tags,
+                    pnl: env.pnl.of(env.symbol),
                 },
             })
             .collect();
@@ -221,6 +220,7 @@ impl ReportState {
                                 trade_ref: row.trade_ref,
                                 source: row.source,
                                 tags: &row.tags,
+                                pnl: env.pnl.of(&row.symbol),
                             },
                         }
                     })
@@ -263,13 +263,17 @@ impl ReportState {
         // handful — are counted here. A filter narrows the scope, and the
         // strip follows it.
         let totals = if self.sessions.state.view.filter.is_default() {
+            let own = LedgerTotals::of_trades(env.pnl, env.symbol, env.session_trades);
             self.saved_totals
-                .plus(LedgerTotals::of(env.session_trades.iter()))
+                .reworded(env.pnl, cache.map(|cache| cache.rows.as_slice()))
+                .plus(&own)
         } else {
             let kept = cache.map_or(LedgerTotals::default(), |cache| {
-                LedgerTotals::of(cut.kept.iter().map(|&index| &cache.rows[index].trade))
+                LedgerTotals::of_rows(env.pnl, cut.kept.iter().map(|&index| &cache.rows[index]))
             });
-            kept.plus(LedgerTotals::of(live.iter().map(|item| item.trade)))
+            kept.plus(&LedgerTotals::of(
+                live.iter().map(|item| (item.meta.pnl, item.trade)),
+            ))
         };
         let shown = live.len() + cut.kept.len();
         let rows_listed = live.len() + saved.len();
@@ -321,7 +325,7 @@ impl ReportState {
         }
         self.sessions
             .draw_filter_status(ui, shown, env.session_trades.len() + saved_len);
-        draw_totals_strip(ui, totals, page, rows_listed);
+        draw_totals_strip(ui, env.pnl.worded(&totals.net), &totals, page, rows_listed);
         self.draw_ledger_disclosure(ui);
         action
     }
@@ -567,7 +571,7 @@ impl RowList<'_, '_> {
         match &rows[index] {
             LedgerRow::Header(label, count) => draw_group_header(ui, label, *count),
             LedgerRow::Day(date, count, net, folded) => {
-                if draw_day_header(ui, *date, *count, *net, *folded) {
+                if draw_day_header(ui, *date, *count, net, *folded) {
                     presses.fold = Some((*date, !*folded));
                 }
             }
@@ -658,7 +662,8 @@ enum TradePick {
 /// and the net points.
 fn draw_totals_strip(
     ui: &mut egui::Ui,
-    totals: LedgerTotals,
+    net: (String, rust_decimal::Decimal),
+    totals: &LedgerTotals,
     page: LedgerPage,
     rows_listed: usize,
 ) {
@@ -684,10 +689,10 @@ fn draw_totals_strip(
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
-                egui::RichText::new(format!("{} pts", fmt_signed_points(totals.net)))
+                egui::RichText::new(net.0)
                     .monospace()
                     .strong()
-                    .color(points_color(totals.net)),
+                    .color(points_color(net.1)),
             );
         });
     });
@@ -739,45 +744,6 @@ pub enum LedgerAction {
     /// Rename, tag or delete a session. The host applies it for every tab,
     /// the same way the `session.journal.set` capability does.
     Edit(JournalEdit),
-}
-
-/// The ledger's totals over every saved trade in scope. Summed when the
-/// folder is read, never on the frame: walking a year of sessions sixty
-/// times a second to print one line is work nobody asked for.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) struct LedgerTotals {
-    pub(super) trades: usize,
-    pub(super) wins: usize,
-    pub(super) net: Decimal,
-}
-
-impl LedgerTotals {
-    pub(super) fn of<'a>(trades: impl Iterator<Item = &'a ClosedTrade>) -> Self {
-        let mut totals = Self::default();
-        for trade in trades {
-            totals.trades += 1;
-            if trade.pnl_points > Decimal::ZERO {
-                totals.wins += 1;
-            }
-            totals.net = totals.net.saturating_add(trade.pnl_points);
-        }
-        totals
-    }
-
-    /// The two sets the strip adds up: what is saved on disk and what this
-    /// session has closed since.
-    pub(super) fn plus(self, other: Self) -> Self {
-        Self {
-            trades: self.trades + other.trades,
-            wins: self.wins + other.wins,
-            net: self.net.saturating_add(other.net),
-        }
-    }
-
-    /// Whole-percent win rate; `None` when there is nothing to divide by.
-    pub(super) fn win_rate(self) -> Option<usize> {
-        (self.wins * 100).checked_div(self.trades)
-    }
 }
 
 /// How much saved history the ledger is showing and how much it is

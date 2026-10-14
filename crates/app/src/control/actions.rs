@@ -87,6 +87,7 @@ pub(crate) fn standard_actions() -> Result<ActionRegistry, RegistryError> {
     quantick_control_handlers::feed_source::register(&mut registry)?;
     quantick_control_handlers::history::register(&mut registry)?;
     quantick_control_handlers::journal_sessions::register(&mut registry)?;
+    quantick_control_handlers::pnl_display::register(&mut registry)?;
     super::deal_recording::register(&mut registry)?;
     super::drawing_magnet::register(&mut registry)?;
     super::drawing_magnet::register_object(&mut registry)?;

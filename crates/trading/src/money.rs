@@ -111,6 +111,21 @@ pub enum MoneySource {
     Declared,
     /// Reported by the venue that streams the instrument.
     Venue,
+    /// Shipped or edited in the instrument catalog (`instruments.toml`).
+    /// A record the trader declares for the symbol outranks it.
+    Config,
+}
+
+impl MoneySource {
+    /// The stable word a readout or a control result names the source by.
+    #[must_use]
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::Declared => "declared",
+            Self::Venue => "venue",
+            Self::Config => "config",
+        }
+    }
 }
 
 /// What one instrument's price and size are made of, in money.

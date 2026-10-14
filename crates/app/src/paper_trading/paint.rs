@@ -28,7 +28,7 @@ use super::{
     PaperTrading, kind_short, kind_word, leg_color, side_word, side_word_upper,
 };
 use crate::chart::PriceScale;
-use crate::paper_chrome::{fmt_decimal, fmt_signed_points, points_color, position_word};
+use crate::paper_chrome::{fmt_decimal, points_color, position_word};
 use crate::theme;
 
 impl PaperTrading {
@@ -183,7 +183,7 @@ impl PaperTrading {
                     .map(|mark| position.open_points(mark))
                     .map(|open| {
                         (
-                            format!("{} pts", fmt_signed_points(open)),
+                            self.account.pnl_compact(open, position.quantity),
                             points_color(open),
                         )
                     });
@@ -342,11 +342,11 @@ impl PaperTrading {
                     y,
                     color,
                     &format!(
-                        "{} {} · {} · {} pts",
+                        "{} {} · {} · {}",
                         leg.word(),
                         fmt_decimal(shown),
                         fmt_decimal(share),
-                        fmt_signed_points(points),
+                        self.account.pnl_compact(points, share),
                     ),
                     order.is_some() && !dragging,
                     false,
@@ -479,7 +479,8 @@ impl PaperTrading {
             .desk
             .gesture
             .open_tag(TagKey::Leg(paint.owner, paint.leg));
-        let text = leg_tag_text(paint, shown, dragging || open.is_some(), dragging);
+        let pnl = self.account.symbol_pnl();
+        let text = leg_tag_text(paint, shown, dragging || open.is_some(), dragging, pnl);
         ctx.chip_tag(
             y,
             color,

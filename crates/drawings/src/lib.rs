@@ -75,7 +75,7 @@ pub use style::{
     SELECTED_ANCHOR_RING_WIDTH_PX, SELECTION_HALO_COLOR, SELECTION_HALO_EXTRA_WIDTH_PX,
     drawing_fill, drawing_stroke, faded_style, painted_color, painted_style,
 };
-pub use tool::{DoubleClickHint, DrawingTool, MarkTool};
+pub use tool::{DrawingTool, MarkTool, PointerHint};
 pub use tools::*;
 pub use update::{DrawingEffect, DrawingIntent, Placement, PlacementFailure, update};
 

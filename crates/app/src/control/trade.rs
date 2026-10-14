@@ -40,8 +40,6 @@ use quantick_engine::Side;
 
 use quantick_sim::{Bracket, EntryKind, OrderId, OrderIntent, VenueEvent};
 
-use rust_decimal::Decimal;
-
 use serde_json::{Value, json};
 
 use crate::paper_trading::PaperTrading;
@@ -314,79 +312,12 @@ fn set_risk<P: TabsPort + TabsMutPort + PaperPort + ?Sized>(
     let asked = input.clone();
     let input: SetRiskInput = serde_json::from_value(input.clone())
         .map_err(|error| ControlError::invalid_request(error.to_string()))?;
-    let basis = crate::risk_sizing::RiskBasis::from_token(&input.basis).ok_or_else(|| {
-        ControlError::invalid_request("basis must be `off`, `amount` or `percent`")
-    })?;
-    let decimal = |field: &str, text: &Option<String>| match text {
-        None => Ok(None),
-        Some(text) => Decimal::from_str_exact(text.trim())
-            .map(Some)
-            .map_err(|_| ControlError::invalid_request(format!("{field} must be a decimal"))),
-    };
-    let amount = decimal("amount", &input.amount)?;
-    let percent = decimal("percent", &input.percent)?;
-    let capital = decimal("capital", &input.capital)?;
-    // The UI and the launch hook both refuse a non-positive risk; a third
-    // entry point that accepts one would persist it and fan it to every tab,
-    // leaving the ticket saying "set a risk per trade above zero" about a
-    // number the trader never typed - and surviving a restart.
-    for (field, value) in [("amount", amount), ("percent", percent)] {
-        if value.is_some_and(|value| value <= Decimal::ZERO) {
-            return Err(ControlError::invalid_request(format!(
-                "{field} must be above zero"
-            )));
-        }
-    }
-    // A capital with no currency has nothing to be keyed by, and a currency
-    // with no capital declares nothing. Both or neither.
-    let currency = match (&capital, &input.currency) {
-        (Some(_), Some(code)) => Some(
-            quantick_sim::Currency::new(code)
-                .ok_or_else(|| ControlError::invalid_request("currency must not be blank"))?,
-        ),
-        (None, None) => None,
-        _ => {
-            return Err(ControlError::invalid_request(
-                "capital and currency go together - nothing here converts between currencies",
-            ));
-        }
-    };
-    let paper = app
-        .tabs_mut()
+    let edit = quantick_control_handlers::ticket_money::risk_edit(&input)?;
+    app.tabs_mut()
         .active_paper_mut()
-        .ok_or_else(no_chart_open)?;
-    // The currency an amount set through this call is denominated in: the one
-    // the call named, or the chart's own instrument. Read before the mutation
-    // so it describes the instrument the caller was looking at.
-    let instrument_currency = paper
-        .account()
-        .instrument_money()
-        .get(paper.account().symbol())
-        .map(|money| money.currency.clone());
-    let mut risk = paper.account().risk_settings().clone();
-    risk.basis = basis;
-    if let Some(amount) = amount {
-        risk.amount = amount;
-        // Stamped with the currency it was entered in, never left to adopt
-        // whichever instrument a tab happens to be on later.
-        risk.amount_currency = currency.clone().or(instrument_currency);
-    }
-    if let Some(percent) = percent {
-        risk.percent = percent;
-    }
-    if let Some(lock) = input.lock {
-        risk.lock = lock;
-    }
-    paper.account_mut().set_risk_settings(risk);
-    if let (Some(amount), Some(currency)) = (capital, currency) {
-        let mut declared = paper.account().capital().clone();
-        if amount > Decimal::ZERO {
-            declared.insert(currency.code().to_owned(), amount);
-        } else {
-            declared.remove(currency.code());
-        }
-        paper.account_mut().set_capital(declared);
-    }
+        .ok_or_else(no_chart_open)?
+        .account_mut()
+        .apply_risk_edit(edit);
     app.paper_settings()
         .persist(crate::app::paper_wiring::PaperSettingsChange::RiskSettings);
     let result = answer(app, &[]);
@@ -407,61 +338,7 @@ fn set_instrument_money<P: TabsPort + TabsMutPort + PaperPort + ?Sized>(
         .tabs_mut()
         .active_paper_mut()
         .ok_or_else(no_chart_open)?;
-    let symbol = match input.symbol.as_deref().map(str::trim) {
-        Some(symbol) if !symbol.is_empty() => symbol.to_owned(),
-        _ => paper.account().symbol().to_owned(),
-    };
-    if symbol.is_empty() {
-        return Err(ControlError::invalid_request(
-            "no chart symbol to declare money for - name one",
-        ));
-    }
-    let mut book = paper.account().instrument_money().clone();
-    let declared = match (
-        input.point_value.as_deref(),
-        input.size_step.as_deref(),
-        input.currency.as_deref(),
-    ) {
-        (Some(point_value), Some(size_step), Some(currency)) => {
-            let parse = |field: &str, text: &str| {
-                Decimal::from_str_exact(text.trim()).map_err(|_| {
-                    ControlError::invalid_request(format!("{field} must be a decimal"))
-                })
-            };
-            let point_value = parse("point_value", point_value)?;
-            let size_step = parse("size_step", size_step)?;
-            if point_value <= Decimal::ZERO || size_step <= Decimal::ZERO {
-                return Err(ControlError::invalid_request(
-                    "point_value and size_step must both be above zero",
-                ));
-            }
-            let currency = quantick_sim::Currency::new(currency)
-                .ok_or_else(|| ControlError::invalid_request("currency must not be blank"))?;
-            let existing = book.get(&symbol);
-            Some(quantick_sim::InstrumentMoney {
-                point_value,
-                size_step,
-                // Whatever minimum is already declared is the trader's, the
-                // same as the maximum beside it.
-                min_size: existing.map_or(size_step, |money| money.min_size),
-                max_size: existing.and_then(|money| money.max_size),
-                currency,
-                source: quantick_sim::MoneySource::Declared,
-            })
-        }
-        // Half a declaration is no declaration: clearing is the honest
-        // answer, and it is what returns the ticket to saying so.
-        _ => None,
-    };
-    match declared {
-        Some(money) => {
-            book.insert(symbol, money);
-        }
-        None => {
-            book.remove(&symbol);
-        }
-    }
-    paper.account_mut().set_instrument_money(book);
+    quantick_control_handlers::ticket_money::declare_money(paper.account_mut(), &input)?;
     app.paper_settings()
         .persist(crate::app::paper_wiring::PaperSettingsChange::RiskSettings);
     let result = answer(app, &[]);

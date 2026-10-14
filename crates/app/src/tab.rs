@@ -596,6 +596,7 @@ impl Tab {
         self.replay = handle.replay;
         // The journal records where a session's trades came from; the
         // attached handle is the single truth for that.
+        self.paper.account_mut().set_feed(&self.feed_id);
         self.paper
             .account_mut()
             .set_session_source(if self.replay.is_some() {

@@ -21,7 +21,7 @@ use rust_decimal::Decimal;
 
 use super::{LEDGER_ROW_HEIGHT_PX, SourceFilter};
 use crate::paper_calendar::{CalendarAction, CalendarState, DayIndex, draw_month, today};
-use crate::paper_chrome::{fmt_signed_points, pill_toggle, points_color};
+use crate::paper_chrome::{pill_toggle, points_color};
 use crate::theme;
 use crate::timezone::TzOffset;
 
@@ -51,7 +51,7 @@ pub(super) struct SessionHead {
     pub(super) label: String,
     pub(super) source: Option<SessionSource>,
     pub(super) count: usize,
-    pub(super) net: Decimal,
+    pub(super) net: (Decimal, String),
     pub(super) folded: bool,
     pub(super) focused: bool,
     /// A tab is still journaling to it: delete is refused.
@@ -313,9 +313,9 @@ pub(super) fn draw_session_head(ui: &mut egui::Ui, head: &SessionHead) -> Option
         painter.text(
             egui::pos2(rect.right() - 6.0, mid),
             egui::Align2::RIGHT_CENTER,
-            format!("{} · {}", head.count, fmt_signed_points(head.net)),
+            format!("{} · {}", head.count, head.net.1),
             egui::FontId::monospace(10.0),
-            points_color(head.net),
+            points_color(head.net.0),
         );
     }
     if response.clicked() {

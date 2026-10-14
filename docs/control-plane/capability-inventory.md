@@ -95,6 +95,7 @@ capability that cannot change application state.
 | `scene.read` | 1 | `scene` | yes | `observe`, `observe.attention`, `observe.market`, `observe.workspace` |
 | `session.journal.delete` | 1 | `session` | no | `cockpit`, `cockpit.journal.delete` |
 | `session.journal.set` | 1 | `session` | no | `cockpit` |
+| `session.pnl_display.set` | 1 | `session` | no | `cockpit` |
 | `snapshot.read` | 1 | `snapshot` | yes | `observe` |
 | `trade.instrument.set_money` | 1 | `trade` | no | `trade` |
 | `trade.order.bracket` | 1 | `trade` | no | `trade` |
@@ -104,4 +105,4 @@ capability that cannot change application state.
 | `trade.ruler.set` | 1 | `trade` | no | `trade` |
 | `trade.strategy.select` | 1 | `trade` | no | `trade` |
 
-79 capabilities registered.
+80 capabilities registered.

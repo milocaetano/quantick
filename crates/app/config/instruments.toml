@@ -1,0 +1,169 @@
+# quantick — what one point of each instrument is worth, for paper P&L in
+# money and for risk-per-trade sizing.
+#
+# This is the *shipped* catalog, compiled into the binary. A trader's own
+# `instruments.toml` in the durable cockpit home (Documents/Quantick) is laid
+# over it key by key at startup, so editing a value there changes it on the
+# next launch without a rebuild. A file that does not parse is ignored whole
+# (logged), and this one stands.
+#
+# Precedence: a point value the trader declares for a symbol (the ticket, or
+# the `trade.instrument_money.set` capability) > this catalog > nothing. With
+# nothing, money reads "— set pt value": it is never guessed.
+#
+# Keys: an exact symbol, a `PREFIX*` family, or a futures root with
+# `series = "b3"`. The exact key wins, else the longest matching root.
+# A B3 series matches the contract code's shape only: the root, a month
+# letter (F G H J K M N Q U V X Z) and a two-digit year (WINV26), or the MT5
+# continuous aliases WIN$ and WIN$N. A bare `WIN*` would also price Binance's
+# WINUSDT, which is why no shipped entry is a prefix.
+#
+# Fields (decimals are strings, so a value is never rounded through a float):
+#   currency     the currency P&L is in; currencies are never converted or
+#                added together.
+#   point_value  money per 1.0 of price, per 1 unit of quantity.
+#                B3: tick value / tick size. Linear crypto: 1 (quote asset).
+#                Forex: the contract size per lot (quote currency).
+#   size_step    smallest quantity increment.
+#   min_size     smallest quantity (default: size_step).
+#   price_unit   points | pips | quote — what the per-contract move is called.
+#                Crypto never says "points": it reads as a quote-asset move.
+#   pip_size     the price increment one pip is; required with pips only.
+#   series       "b3" on a bare root: match B3 contract codes, as above.
+#   feeds        optional, your own file only: the feed ids (feeds.toml `id`)
+#                the entry is limited to; absent, every feed. No shipped entry
+#                names one: a point value belongs to the instrument, so a
+#                saved trade reads the same money from any tab. An entry that
+#                names feeds prices a saved trade only from a tab on them.
+#   disabled     `true` in your own file switches a shipped key off; the
+#                other fields may then be left out.
+#
+# Not supported: inverse (coin-margined) contracts such as Binance COIN-M
+# BTCUSD_PERP. Their P&L is contracts x size x (1/entry - 1/exit), in coin:
+# no constant point value exists, so none may be written here.
+version = 1
+
+[display]
+# Which figure leads a P&L readout until the trader picks one:
+# money | points_per_contract | points_times_qty. Absent: money where a
+# point value is known, points per contract where not.
+# primary = "money"
+
+# --- B3 futures (BRL). Step and minimum 1 contract. -------------------------
+# Mini index: R$0.20 per point, tick 5 points (R$1.00 per tick).
+# Source: borainvestir.b3.com.br/glossario/mini-indice/
+[instruments.WIN]
+series = "b3"
+currency = "BRL"
+point_value = "0.20"
+size_step = "1"
+min_size = "1"
+price_unit = "points"
+
+# Full index: R$1.00 per point (5x the mini). Source: as above.
+[instruments.IND]
+series = "b3"
+currency = "BRL"
+point_value = "1"
+size_step = "1"
+min_size = "1"
+price_unit = "points"
+
+# Mini dollar: quoted in R$ per US$1,000, R$10 per point, tick 0.5 points.
+# Source: blog.toroinvestimentos.com.br/trading/mini-dolar-o-que-e-como-funciona-wdo/
+[instruments.WDO]
+series = "b3"
+currency = "BRL"
+point_value = "10"
+size_step = "1"
+min_size = "1"
+price_unit = "points"
+
+# Full dollar: R$50 per point (5x the mini, derived). Source: as above.
+[instruments.DOL]
+series = "b3"
+currency = "BRL"
+point_value = "50"
+size_step = "1"
+min_size = "1"
+price_unit = "points"
+
+# --- Linear crypto. Quantity in the base asset; P&L in the quote asset. ----
+# Steps from the venues' exchangeInfo (2026-10-13). Spot BTCUSDT steps
+# 0.00001 and ETHUSDT 0.0001; USDT-M perps step 0.001 — the spot grid is the
+# finer one, so it serves both. Source: api.binance.com/api/v3/exchangeInfo,
+# fapi.binance.com/fapi/v1/exchangeInfo
+[instruments.BTCUSDT]
+currency = "USDT"
+point_value = "1"
+size_step = "0.00001"
+min_size = "0.00001"
+price_unit = "quote"
+
+[instruments.ETHUSDT]
+currency = "USDT"
+point_value = "1"
+size_step = "0.0001"
+min_size = "0.0001"
+price_unit = "quote"
+
+# Hyperliquid perps settle in USDC; the step is 10^-szDecimals.
+# Source: hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
+[instruments.BTC]
+currency = "USDC"
+point_value = "1"
+size_step = "0.00001"
+min_size = "0.00001"
+price_unit = "quote"
+
+[instruments.ETH]
+currency = "USDC"
+point_value = "1"
+size_step = "0.0001"
+min_size = "0.0001"
+price_unit = "quote"
+
+[instruments.SOL]
+currency = "USDC"
+point_value = "1"
+size_step = "0.01"
+min_size = "0.01"
+price_unit = "quote"
+
+[instruments.HYPE]
+currency = "USDC"
+point_value = "1"
+size_step = "0.01"
+min_size = "0.01"
+price_unit = "quote"
+
+[instruments.ZEC]
+currency = "USDC"
+point_value = "1"
+size_step = "0.01"
+min_size = "0.01"
+price_unit = "quote"
+
+# --- Forex: examples only, broker-defined. ----------------------------------
+# MT5 FOREX mode: profit = (close - open) x contract size x lots, in the QUOTE
+# currency. Contract size and lot step are the broker's; read them from the
+# terminal's symbol specification before uncommenting. A USDJPY profit is in
+# JPY and stays in JPY: nothing here converts it.
+# Source: mql5.com/en/docs/constants/environment_state/marketinfoconstants,
+# mql5.com/en/docs/trading/ordercalcprofit
+#
+# [instruments.EURUSD]
+# currency = "USD"
+# point_value = "100000"
+# size_step = "0.01"
+# min_size = "0.01"
+# price_unit = "pips"
+# pip_size = "0.0001"
+#
+# [instruments.USDJPY]
+# currency = "JPY"
+# point_value = "100000"
+# size_step = "0.01"
+# min_size = "0.01"
+# price_unit = "pips"
+# pip_size = "0.01"

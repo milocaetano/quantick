@@ -29,6 +29,7 @@ pub mod layout_v2;
 pub mod notify;
 pub mod opening_scale;
 pub mod orderflow;
+pub mod pnl_display;
 pub mod price_axis;
 pub mod readback;
 pub mod recovery;

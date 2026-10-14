@@ -236,6 +236,7 @@ const CAPTURE_OVERRIDES: &[(&str, &str)] = &[
         crate::indicators::state_file::STATE_FILE,
         "QUANTICK_INDICATORS_STATE",
     ),
+    (crate::paper_state::INSTRUMENTS_FILE, "QUANTICK_INSTRUMENTS"),
     (crate::layouts::LAYOUTS_FILE, "QUANTICK_LAYOUTS"),
     (crate::paper_state::STATE_FILE, "QUANTICK_PAPER_STATE"),
     (
@@ -256,6 +257,7 @@ crate::hooks::declare_hooks![
     "QUANTICK_FOOTPRINT_PRESETS",
     "QUANTICK_INDICATOR_PRESETS",
     "QUANTICK_INDICATORS_STATE",
+    "QUANTICK_INSTRUMENTS",
     "QUANTICK_LAYOUTS",
     "QUANTICK_PAPER_STATE",
     "QUANTICK_STRATEGY_PRESETS",
@@ -373,6 +375,14 @@ mod tests {
         });
         assert_eq!(asked, Some("D:/somewhere/else.toml".into()));
         assert_eq!(capture_override("unknown.toml", |_| Some("x".into())), None);
+        let catalog = capture_override(crate::paper_state::INSTRUMENTS_FILE, |env| {
+            (env == "QUANTICK_INSTRUMENTS").then(|| "D:/scratch/instruments.toml".into())
+        });
+        assert_eq!(
+            catalog,
+            Some("D:/scratch/instruments.toml".into()),
+            "a harness run reads its own instrument catalog, never the trader's"
+        );
     }
 
     /// Two stores may never share a file or a key: the bundle keys sections

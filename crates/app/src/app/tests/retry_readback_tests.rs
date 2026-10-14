@@ -629,6 +629,14 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             json!({ "session": "WINJ26/no-such-session.csv" }),
             Readback::Stays,
         ),
+        // A display preference: the first set moves the stored choice and
+        // journals it; the retry under the same key never reaches the app.
+        (
+            "session.pnl_display.set",
+            1,
+            json!({ "primary": "points_times_qty" }),
+            Readback::Moves,
+        ),
         ("chart.tape_view.set", 1, Value::Null, Readback::Moves),
         ("chart.time_axis.reset", 1, Value::Null, Readback::Moves),
         (

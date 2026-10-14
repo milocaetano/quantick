@@ -20,7 +20,7 @@ use quantick_sim::{Command, Simulator, history};
 use quantick_trading::{Bracket, CloseAmount, ClosedTrade, OrderIntent, TradingVenue, VenueEvent};
 use rust_decimal::Decimal;
 
-use crate::format::{PositionSummary, fmt_decimal, fmt_signed_points, position_word};
+use crate::format::{PositionSummary, fmt_decimal, position_word};
 use crate::order_strategies::OrderStrategy;
 use crate::report::sessions::JournaledTrade;
 use crate::risk_sizing::{Capital, InstrumentBook, RiskHook, RiskSettings};
@@ -28,10 +28,13 @@ use quantick_civil::civil_utc;
 
 mod journal;
 mod orders;
+mod readout;
 mod risk;
+mod ticket_edit;
 
 pub use journal::{elide_path, export_csv};
 pub use risk::{RiskEditor, RiskRefusal};
+pub use ticket_edit::{RiskEdit, RiskEditText};
 
 /// What the account is handed that only the ticket can know.
 ///
@@ -283,6 +286,10 @@ pub struct PaperAccount {
     /// What one point of each instrument is worth, by bare symbol. Declared
     /// by the trader; nothing here derives it from the tape.
     instrument_money: InstrumentBook,
+    /// The instrument catalog and how P&L reads; see [`crate::pnl`].
+    pnl: crate::pnl::PnlSettings,
+    /// The tab's feed id, for a trader's catalog entry that names feeds.
+    feed: String,
     /// Money a launch hook asked for, waiting for the tab to learn which
     /// symbol it opens on. Spent once, on the first symbol.
     hook_money: Option<quantick_trading::InstrumentMoney>,
@@ -397,6 +404,8 @@ impl PaperAccount {
             risk: RiskSettings::default(),
             capital: Capital::new(),
             instrument_money: InstrumentBook::new(),
+            pnl: crate::pnl::PnlSettings::default(),
+            feed: String::new(),
             risk_from_hook: false,
             hook_money: None,
             demo: None,
@@ -643,8 +652,10 @@ impl PaperAccount {
     }
 
     /// The status-bar cell, honest about open versus flat: `SIM LONG 1 ·
-    /// +2 pts` while a position is open (side, size and its open profit),
-    /// `SIM +7 pts · flat` otherwise (the session's realized points). `None`
+    /// +2 pts × 1 · — set pt value` while a position is open (side, size
+    /// and its open profit, in the P&L display's figures),
+    /// `SIM flat · +7 pts/ct · — set pt value` otherwise (the session's
+    /// realized total). `None`
     /// while the simulator has never been touched.
     #[must_use]
     pub fn status_cell(&self) -> Option<(String, std::cmp::Ordering)> {
@@ -654,12 +665,14 @@ impl PaperAccount {
                 .mark_price()
                 .map(|mark| position.open_points(mark))
                 .unwrap_or_default();
+            let text = self
+                .pnl_reader()
+                .trade(&self.symbol, open, position.quantity);
             return Some((
                 format!(
-                    "SIM {} {} · {} pts",
+                    "SIM {} {} · {text}",
                     position_word(position.side),
                     fmt_decimal(position.quantity),
-                    fmt_signed_points(open),
                 ),
                 open.cmp(&Decimal::ZERO),
             ));
@@ -670,10 +683,9 @@ impl PaperAccount {
         if untouched {
             return None;
         }
-        let realized = self.venue.realized_points();
         Some((
-            format!("SIM {} pts · flat", fmt_signed_points(realized)),
-            realized.cmp(&Decimal::ZERO),
+            format!("SIM flat · {}", self.realized_pnl_text()),
+            self.realized_pnl_tint().cmp(&Decimal::ZERO),
         ))
     }
 
@@ -832,13 +844,13 @@ impl PaperAccount {
                     // The toast slot holds one message: a healthy "closed"
                     // must not paint over the could-not-save warning.
                     if saved {
+                        // In the ticket's own words: the chosen figure,
+                        // then the one that keeps it honest.
                         self.set_toast(format!(
-                            // Same reason as the hover card above: the
-                            // toast is a proportional-font label.
-                            "SIM closed: {} {} for {} pts ({})",
+                            "SIM closed: {} {} for {} ({})",
                             position_word(trade.side),
                             fmt_decimal(trade.quantity),
-                            fmt_signed_points(trade.pnl_points),
+                            self.trade_pnl_text(&trade),
                             trade.exit_reason.as_str().replace('_', " "),
                         ));
                     }

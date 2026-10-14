@@ -8,11 +8,12 @@
 //! this file for the price and [`super::orders`] for the placement.
 
 use quantick_engine::Side;
-use quantick_trading::{Bracket, OcoId, OrderIntent, OrderRole, Position};
+use quantick_trading::{Bracket, InstrumentMoney, OcoId, OrderIntent, OrderRole, Position};
 use rust_decimal::Decimal;
 
 use super::{AccountEnv, PaperAccount};
 use crate::format::fmt_decimal;
+use crate::pnl::{PnlBook, PnlSettings};
 use crate::risk_sizing::{self, Capital, InstrumentBook, RiskSettings};
 
 /// The risk lock refused an order: what it would have risked, and the risk
@@ -67,6 +68,9 @@ pub struct RiskEditor<'a> {
     pub capital: &'a mut Capital,
     /// What one point of each instrument is worth, by bare symbol.
     pub book: &'a mut InstrumentBook,
+    /// The catalog's money for the symbol: what the block
+    /// shows until the trader declares their own.
+    pub seeded: Option<InstrumentMoney>,
 }
 
 impl PaperAccount {
@@ -119,7 +123,7 @@ impl PaperAccount {
             &risk_sizing::RiskContext {
                 settings: &self.risk,
                 capital: &self.capital,
-                book: &self.instrument_money,
+                book: self.pnl_book(),
                 symbol: &self.symbol,
             },
             side,
@@ -204,20 +208,16 @@ impl PaperAccount {
             .price
             .or_else(|| self.venue.mark_price())
             .unwrap_or_default();
-        let risk = risk_sizing::risk_of(
-            &self.instrument_money,
-            &self.symbol,
+        let money = self.symbol_money()?;
+        let risk = quantick_trading::risk_at(
             intent.side,
             reference,
             &intent.bracket,
             intent.quantity,
-        )?;
-        let budget = risk_sizing::budget_for(
-            &self.risk,
-            &self.capital,
-            &self.instrument_money.get(&self.symbol)?.currency,
+            money,
         )
         .ok()?;
+        let budget = risk_sizing::budget_for(&self.risk, &self.capital, &money.currency).ok()?;
         (risk.amount > budget.amount).then_some(RiskRefusal { risk, budget })
     }
 
@@ -266,6 +266,49 @@ impl PaperAccount {
         self.instrument_money = book;
     }
 
+    /// The catalog's money for this account's symbol, whether or not a
+    /// declared record outranks it.
+    #[must_use]
+    pub fn seeded_money(&self) -> Option<&InstrumentMoney> {
+        self.pnl_book().spec(&self.symbol).map(|spec| &spec.money)
+    }
+
+    /// Follow the tab's feed. Only a trader's catalog entry that names
+    /// its `feeds` asks it; every shipped entry prices any tab alike.
+    pub fn set_feed(&mut self, feed: &str) {
+        if self.feed != feed {
+            feed.clone_into(&mut self.feed);
+        }
+    }
+
+    /// The money this account's symbol is sized and read in: the trader's
+    /// declared record, else the instrument catalog's, else none.
+    #[must_use]
+    pub fn symbol_money(&self) -> Option<&InstrumentMoney> {
+        self.pnl_book().money(&self.symbol)
+    }
+
+    /// The instrument catalog and the trader's P&L display choice.
+    #[must_use]
+    pub fn pnl_settings(&self) -> &PnlSettings {
+        &self.pnl
+    }
+
+    /// Replace them. App-wide, like the risk settings beside them.
+    pub fn set_pnl_settings(&mut self, pnl: PnlSettings) {
+        self.pnl = pnl;
+    }
+
+    /// Where any symbol's P&L units are looked up from this account.
+    #[must_use]
+    pub fn pnl_book(&self) -> PnlBook<'_> {
+        PnlBook {
+            declared: &self.instrument_money,
+            catalog: &self.pnl.catalog,
+            feed: &self.feed,
+        }
+    }
+
     /// The risk settings, the capital and the instrument book, borrowed
     /// together for an editor that writes all three; see [`RiskEditor`].
     pub fn risk_editor(&mut self) -> RiskEditor<'_> {
@@ -274,6 +317,11 @@ impl PaperAccount {
             settings: &mut self.risk,
             capital: &mut self.capital,
             book: &mut self.instrument_money,
+            seeded: self
+                .pnl
+                .catalog
+                .lookup(&self.feed, &self.symbol)
+                .map(|spec| spec.money.clone()),
         }
     }
 
@@ -418,8 +466,7 @@ impl PaperAccount {
     /// The size one stepper press moves, for the hover that promises it.
     pub fn quantity_step_hint(&self, notches: Decimal) -> String {
         let unit = self
-            .instrument_money
-            .get(&self.symbol)
+            .symbol_money()
             .map_or(Decimal::ONE, |money| money.size_step);
         fmt_decimal(notches.saturating_mul(unit))
     }

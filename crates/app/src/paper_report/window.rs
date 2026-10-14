@@ -7,6 +7,7 @@
 
 use eframe::egui;
 use egui_phosphor::regular as icons;
+use quantick_paper::pnl::PnlReader;
 pub(crate) use quantick_paper::report::{ReportPeriod, load_history, parse_period};
 
 use super::curve::draw_equity_curve;
@@ -148,13 +149,14 @@ impl ReportState {
     /// Rebuild the filtered view when a filter, the timezone or the loaded
     /// history changed. The anchor is the newest trade in scope — after
     /// the Source filter, never a clock.
-    pub(crate) fn ensure_report_view(&mut self, tz: TzOffset) {
+    pub(crate) fn ensure_report_view(&mut self, tz: TzOffset, pnl: PnlReader<'_>) {
         let range = self.calendar.selection.range();
         let fresh = self.report_view.as_ref().is_some_and(|view| {
             view.period == self.report_period
                 && view.source == self.report_source
                 && view.range == range
                 && view.tz == tz
+                && view.worded_by(pnl)
         });
         if fresh {
             return;
@@ -191,13 +193,10 @@ impl ReportState {
 
         // The numbers are the paper account's crate's: the same cut a
         // backtest or an operator with no window gets for the same history.
-        self.report_view = Some(ReportView::cut(
-            history,
-            self.report_period,
-            self.report_source,
-            range,
-            tz,
-        ));
+        self.report_view = Some(
+            ReportView::cut(history, self.report_period, self.report_source, range, tz)
+                .with_pnl(pnl),
+        );
         // The cut states itself as data. A trader reads the window; an
         // operator that cannot see it reads this line — and it is the same
         // snapshot either of them would be handed.
@@ -238,7 +237,7 @@ impl ReportState {
         if !self.report_open {
             return asked;
         }
-        self.ensure_report_view(tz);
+        self.ensure_report_view(tz, env.pnl);
         let mut open = true;
         let mut reload = false;
         let mut toggle_list = false;
@@ -266,13 +265,13 @@ impl ReportState {
                 // pill, a cleared range. Re-cutting it here rather than
                 // next frame is what keeps a click from flashing the empty
                 // state and collapsing the window for one frame.
-                self.ensure_report_view(tz);
+                self.ensure_report_view(tz, env.pnl);
                 ui.separator();
                 let list_open = self.report_list_open;
                 let calendar_open = self.calendar.open;
                 match &self.report_view {
                     Some(view) if !view.rows.is_empty() => {
-                        draw_report_tiles(ui, &view.report);
+                        draw_report_tiles(ui, view);
                         ui.add_space(8.0);
                         draw_equity_curve(
                             ui,
@@ -385,12 +384,9 @@ impl ReportState {
                     );
                 }
                 ui.label(
-                    egui::RichText::new(
-                        "All figures are simulated, in points (price units × quantity) - \
-                         the workspace knows no per-instrument currency value.",
-                    )
-                    .color(theme::TEXT_MUTED)
-                    .small(),
+                    egui::RichText::new(env.pnl.footnote())
+                        .color(theme::TEXT_MUTED)
+                        .small(),
                 );
             });
         if toggle_list {
