@@ -61,10 +61,7 @@ mod grouping_tests {
                 opacity: 0.9,
             };
             style.sanitize();
-            assert_eq!(
-                style.reference_quantity,
-                super::FALLBACK_REFERENCE_QUANTITY
-            );
+            assert_eq!(style.reference_quantity, super::FALLBACK_REFERENCE_QUANTITY);
         }
     }
 }
