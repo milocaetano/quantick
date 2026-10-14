@@ -43,6 +43,25 @@ mod grouping_tests {
         zoomed.zoom_lane_window(2.0);
         assert!(!zoomed.same_tape_grouping(&config));
     }
+
+    /// Review #26: a reference that is not a positive number falls back to
+    /// a named value, never an inline literal.
+    #[test]
+    fn an_invalid_reference_falls_back_to_the_named_quantity() {
+        for invalid in [f64::NAN, f64::INFINITY, 0.0, -1.0] {
+            let mut style = super::TickBubbleStyle {
+                reference_quantity: invalid,
+                max_radius: 32.0,
+                label_min_radius: 8.0,
+                opacity: 0.9,
+            };
+            style.sanitize();
+            assert_eq!(
+                style.reference_quantity,
+                super::FALLBACK_REFERENCE_QUANTITY
+            );
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
