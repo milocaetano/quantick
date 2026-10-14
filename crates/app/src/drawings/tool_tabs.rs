@@ -84,64 +84,7 @@ fn draw_vwap_tab(ui: &mut egui::Ui, drawing: &mut Drawing, host: &mut dyn Preset
     }
 
     ui.separator();
-
-    // Named presets via the host — the same contract the FRVP tab uses.
-    let customs = host.custom_preset_names(tool_id);
-    ui.horizontal(|ui| {
-        let selected_id = ui.id().with("avwap-preset");
-        let mut selected: String =
-            ui.data_mut(|data| data.get_temp(selected_id).unwrap_or_default());
-        egui::ComboBox::from_id_salt(selected_id)
-            .selected_text(if selected.is_empty() {
-                "Custom presets"
-            } else {
-                selected.as_str()
-            })
-            .show_ui(ui, |ui| {
-                for name in &customs {
-                    ui.selectable_value(&mut selected, name.clone(), name);
-                }
-            });
-        ui.data_mut(|data| data.insert_temp(selected_id, selected.clone()));
-        let has_selection = customs.contains(&selected);
-        if ui
-            .add_enabled(has_selection, egui::Button::new("Apply").small())
-            .clicked()
-            && let Some(value) = host.load_custom_preset(tool_id, &selected)
-            && payload.import_preset(&value)
-        {
-            edited = true;
-        }
-        if ui
-            .add_enabled(has_selection, egui::Button::new("Delete").small())
-            .clicked()
-        {
-            host.delete_custom_preset(tool_id, &selected);
-        }
-    });
-    ui.horizontal(|ui| {
-        let name_id = ui.id().with("avwap-preset-name");
-        let mut name: String = ui.data_mut(|data| data.get_temp(name_id).unwrap_or_default());
-        ui.add(
-            egui::TextEdit::singleline(&mut name)
-                .hint_text("Preset name")
-                .desired_width(120.0),
-        );
-        let trimmed = name.trim();
-        if ui
-            .add_enabled(
-                !trimmed.is_empty(),
-                egui::Button::new("Save preset").small(),
-            )
-            .clicked()
-            && let Some(value) = payload.export_preset()
-        {
-            host.save_custom_preset(tool_id, trimmed, value, true);
-        }
-        ui.data_mut(|data| data.insert_temp(name_id, name));
-    });
-
-    edited
+    edited | draw_preset_rows(ui, host, (tool_id, "avwap"), payload)
 }
 
 /// The Profile tab in the inspector: value-area fraction, histogram width,
@@ -205,11 +148,22 @@ fn draw_profile_tab(ui: &mut egui::Ui, drawing: &mut Drawing, host: &mut dyn Pre
         .changed();
 
     ui.separator();
+    edited | draw_preset_rows(ui, host, (tool_id, "frvp"), payload)
+}
 
-    // Named presets via the host — the same contract the Fib tab uses.
+/// Named presets via the host: pick one to apply or delete, or save the
+/// payload under a new name. `salt` keeps each tab's egui ids its own:
+/// `<salt>-preset` and `<salt>-preset-name`.
+fn draw_preset_rows(
+    ui: &mut egui::Ui,
+    host: &mut dyn PresetHost,
+    (tool_id, salt): (&str, &str),
+    payload: &mut dyn DrawingPayload,
+) -> bool {
+    let mut edited = false;
     let customs = host.custom_preset_names(tool_id);
     ui.horizontal(|ui| {
-        let selected_id = ui.id().with("frvp-preset");
+        let selected_id = ui.id().with(format!("{salt}-preset"));
         let mut selected: String =
             ui.data_mut(|data| data.get_temp(selected_id).unwrap_or_default());
         egui::ComboBox::from_id_salt(selected_id)
@@ -241,7 +195,7 @@ fn draw_profile_tab(ui: &mut egui::Ui, drawing: &mut Drawing, host: &mut dyn Pre
         }
     });
     ui.horizontal(|ui| {
-        let name_id = ui.id().with("frvp-preset-name");
+        let name_id = ui.id().with(format!("{salt}-preset-name"));
         let mut name: String = ui.data_mut(|data| data.get_temp(name_id).unwrap_or_default());
         ui.add(
             egui::TextEdit::singleline(&mut name)
@@ -261,7 +215,6 @@ fn draw_profile_tab(ui: &mut egui::Ui, drawing: &mut Drawing, host: &mut dyn Pre
         }
         ui.data_mut(|data| data.insert_temp(name_id, name));
     });
-
     edited
 }
 
