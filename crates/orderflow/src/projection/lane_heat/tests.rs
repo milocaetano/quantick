@@ -303,3 +303,145 @@ fn first_seen_rows_exclude_unknown_initial_time_for_real_snapshot_coverage_and_g
         }
     }
 }
+
+fn current_rows(cells: &[HeatmapCell]) -> Vec<&HeatmapCell> {
+    cells
+        .iter()
+        .filter(|cell| super::super::current_book_preview(cell, true))
+        .collect()
+}
+
+/// Symptom 2: a live book reads current in every publication. Its rows'
+/// alpha never flips between the confirmation instant and the frames after
+/// it, so the strip between the last candle and the tape holds steady.
+#[test]
+fn a_live_book_holds_one_alpha_between_publications() {
+    for averaging in [true, false] {
+        let mut history = fixture();
+        let mut config = history.config().clone();
+        config.live_lane.depth_time_averaging = averaging;
+        config.max_visible_cells = 32;
+        history.update_config(config).unwrap();
+        history
+            .apply_delta(1_950, &BookDelta::new(14, 14, vec![level(95, 131)], vec![]))
+            .unwrap();
+        let mut alphas = Vec::new();
+        for now_ms in [1_950, 1_966, 2_000, 2_449] {
+            let cells = projection_at(&history, now_ms).0;
+            let rows = current_rows(&cells);
+            let bid = rows
+                .iter()
+                .find(|cell| cell.price_bucket == Decimal::from(95))
+                .unwrap_or_else(|| panic!("averaging {averaging}, {now_ms}: no current row"));
+            assert!(
+                !bid.carried,
+                "averaging {averaging}, {now_ms}: a current book is not a carry"
+            );
+            alphas.push(bid.alpha);
+        }
+        assert!(
+            alphas.windows(2).all(|pair| pair[0] == pair[1]),
+            "averaging {averaging}: the alpha flipped {alphas:?}"
+        );
+    }
+}
+
+/// The current book's top row sums its whole bucket, as the grouped runs
+/// beside it do, even when the window's high edge cuts through that bucket.
+#[test]
+fn the_current_row_sums_its_whole_top_bucket() {
+    let mut config = crate::HeatmapConfig {
+        enabled: true,
+        price_grouping: Decimal::ONE,
+        max_visible_cells: 32,
+        ..crate::HeatmapConfig::default()
+    };
+    config.live_lane.depth_time_averaging = true;
+    let mut history = LiquidityHistory::new(config);
+    history
+        .install_snapshot(
+            1_000,
+            1,
+            BookSnapshot::new(
+                10,
+                vec![level(96, 2)],
+                vec![level(100, 3), level(101, 4)],
+                BookCoverage::Full,
+            ),
+        )
+        .unwrap();
+    history
+        .apply_delta(1_900, &BookDelta::new(11, 11, vec![], vec![]))
+        .unwrap();
+    let timeline = BarTimeline::from_bars(
+        0,
+        &[bar()],
+        None,
+        Some(LiveEdge {
+            now_ms: 2_000,
+            window_ms: 1_000,
+            reference_ms: 50,
+            on_newest_bar: true,
+        }),
+    )
+    .with_full_lane_coverage();
+    let grouping = EffectiveGrouping::resolve(DisplayGrouping::Multiple(2), Decimal::ONE, 8.into());
+    assert_eq!(grouping.bucket_width, Decimal::TWO);
+    // The high edge, 101, falls inside the top bucket [100, 102).
+    let (cells, _) = project_lane_heat(
+        &history,
+        &timeline,
+        PriceWindow::new(94.into(), 101.into()).unwrap(),
+        grouping,
+        10.into(),
+    );
+    let top = current_rows(&cells)
+        .into_iter()
+        .find(|cell| cell.price_bucket == Decimal::from(100))
+        .expect("the top bucket has a current row");
+    assert_eq!(top.quantity, Decimal::from(7), "both levels of [100, 102)");
+    let lane = cells
+        .iter()
+        .find(|cell| !cell.current_book && cell.price_bucket == Decimal::from(100))
+        .expect("the lane draws the same bucket");
+    assert_eq!(lane.quantity, top.quantity, "the strip and the lane agree");
+}
+
+/// The strip between the last candle and the tape previews the current
+/// book with depth averaging off too. Its rows claim no lane time — the
+/// lane's own runs carry the book to the live edge — so they stand at the
+/// live edge, for the preview alone.
+#[test]
+fn the_current_book_is_previewed_without_averaging() {
+    let mut history = fixture();
+    let mut config = history.config().clone();
+    config.max_visible_cells = 32;
+    history.update_config(config).unwrap();
+    history
+        .apply_delta(
+            1_950,
+            &BookDelta::new(14, 14, vec![level(95, 131)], vec![level(101, 0)]),
+        )
+        .unwrap();
+    let cells = projection_at(&history, 2_000).0;
+    let rows = current_rows(&cells);
+    let bid = rows
+        .iter()
+        .find(|cell| cell.price_bucket == Decimal::from(95))
+        .expect("the current book is previewed");
+    assert_eq!(bid.quantity, Decimal::from(131));
+    assert!(!bid.time_averaged);
+    assert!((bid.x0 - 1.0).abs() < 1e-12 && (bid.x1 - 1.0).abs() < 1e-12);
+    assert!(
+        !rows
+            .iter()
+            .any(|cell| cell.price_bucket == Decimal::from(101)),
+        "a deleted level has no current row"
+    );
+    assert!(
+        cells
+            .iter()
+            .any(|cell| cell.carried && cell.price_bucket == Decimal::from(95)),
+        "the lane still carries its own runs to the edge"
+    );
+}

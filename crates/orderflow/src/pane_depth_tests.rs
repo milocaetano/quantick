@@ -393,3 +393,53 @@ fn ordinary_preview_replay_clamps_rewinds_and_resets_source_clock() {
             .unwrap()
     ));
 }
+
+/// Whether `frame` previews the book in the strip between the last candle
+/// and the tape.
+fn previews(frame: &VisibleOrderflow) -> bool {
+    frame
+        .projection
+        .cells
+        .iter()
+        .any(|cell| current_book_preview(cell, true))
+}
+
+/// A book stamped ahead of the pane's trade-anchored clock is the newest
+/// book there is: current, never expired, however far the clock trails it.
+#[test]
+fn a_book_stamped_ahead_of_the_clock_is_current() {
+    let (config, history, mut request) = fixture(true);
+    let published = publish(&history, &request);
+    let mut pane = PaneTape::default();
+    for (now_ms, current) in [
+        (895, true),
+        (0, true),
+        (900, true),
+        (1_400, true),
+        (1_401, false),
+    ] {
+        request.lane_now_ms = Some(now_ms);
+        let frame = pane
+            .complete_frame(&config, &request, Some(&published))
+            .unwrap();
+        assert_eq!(previews(&frame), current, "pane clock {now_ms}");
+    }
+}
+
+/// Expiring the preview is a verdict on the frame, never a copy of it: the
+/// pane's frame shares the publication's projection, cells and all.
+#[test]
+fn an_expired_preview_shares_the_published_projection() {
+    let (config, history, mut request) = fixture(true);
+    let published = publish(&history, &request);
+    let mut pane = PaneTape::default();
+    request.lane_now_ms = Some(2_000);
+    let frame = pane
+        .complete_frame(&config, &request, Some(&published))
+        .unwrap();
+    assert!(!previews(&frame), "the book stopped confirming");
+    assert!(
+        Arc::ptr_eq(&frame.projection, &published.projection),
+        "nothing of the publication is copied"
+    );
+}
