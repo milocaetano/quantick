@@ -207,6 +207,18 @@ impl<T: Clone + PartialEq> Drawings<T> {
         }
     }
 
+    /// Reopen the last undo step as the open gesture's baseline, so what
+    /// the gesture changes folds into that step and one Ctrl+Z undoes both.
+    /// Only while nothing was recorded or undone since `revision`, the
+    /// reading taken right after that step.
+    pub fn fold_into_last_step(&mut self, revision: u64) {
+        if revision == self.revision
+            && let Some(step) = self.undo.pop()
+        {
+            self.gesture_baseline = Some(step);
+        }
+    }
+
     /// End coalescing. A gesture that changed nothing records nothing.
     pub fn commit_gesture(&mut self) {
         if let Some(baseline) = self.gesture_baseline.take() {

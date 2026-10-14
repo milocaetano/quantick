@@ -37,7 +37,9 @@ pub use placing::{
     placement_surface,
 };
 pub use pointer::{PointerFrame, PointerOutcome};
-pub use projection::{DrawingProjection, PaneSeriesRead, magnet_price_of, snap_bar_to_tape};
+pub use projection::{
+    ClickKind, DrawingProjection, PaneSeriesRead, PressTarget, magnet_price_of, snap_bar_to_tape,
+};
 pub use shared::{
     PaneIndex, SharedDrag, SharedEdit, SharedInteraction, SharedMarksMut, SharedPick,
     SharedPointer, SharedSource,
@@ -283,6 +285,9 @@ pub struct PaneGestures {
     /// it as an undo step. Placement already refused to turn a twitch into a
     /// drag (`DRAWING_DRAG_THRESHOLD_PX`); moving now refuses too.
     pub drag_pending_from: Option<Px>,
+    /// The store's revision right after a click a tool took recorded its
+    /// undo step; the double click that click begins folds into that step.
+    pub click_step: Option<u64>,
     /// The move or resize this gesture is, once it is one.
     pub drag: DrawingDrag,
     /// What a body drag grabbed; see [`TranslateFrom`].

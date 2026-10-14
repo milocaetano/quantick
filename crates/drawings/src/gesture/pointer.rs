@@ -1,7 +1,7 @@
 //! Pointer-tool and mirrored-mark updates belong to their retained gesture.
 //! Inputs borrow coordinates and the independent store; effects return to chrome.
 use super::band::{self, Band};
-use super::projection::DrawingProjection;
+use super::projection::{ClickKind, DrawingProjection, PressTarget};
 use super::{
     DRAWING_DRAG_THRESHOLD_PX, DrawingDrag, GestureCursor, Marks, PaneGestures, SharedDrag,
     SharedInteraction, SharedPick, SharedPointer, TranslateFrom,
@@ -102,6 +102,7 @@ impl PaneGestures {
             total: pointer.total,
         });
         let mut click_taken = false;
+        let mut single_click_taken = false;
         if let Some(pick) = pick {
             let (cursor, hint) = local_hover_cursor(drawings, projection, pick, frame.held);
             // The hint's cursor replaces the move grip, never joins it; a
@@ -126,6 +127,7 @@ impl PaneGestures {
                 );
                 outcome.begin_text_edit = answer == ReleaseAnswer::TextEdit;
                 click_taken = answer == ReleaseAnswer::ClickTaken;
+                single_click_taken = click_taken && !frame.double_clicked;
             }
         }
         let started = pointer.pressed
@@ -166,6 +168,8 @@ impl PaneGestures {
         outcome.consumed = click_taken || self.drag.is_active() || self.shared_drag.is_active();
         if pointer.released {
             self.finish_local_release(drawings);
+            // A click's undo step stays open to the double click it begins.
+            self.click_step = single_click_taken.then(|| drawings.revision());
         }
         outcome
     }
@@ -236,23 +240,35 @@ impl PaneGestures {
         // Any other tool may own a click or a double click on its body: a
         // click in a rectangle's band extends that side, a double click
         // inside puts its original size back. A press that grabbed a
-        // resize handle stays a resize, and a drawing a strategy is bound
-        // to keeps its extent, that strategy's window. The change arrives
-        // already worked out, so selecting and applying it cannot half
-        // happen: either the object changes and takes the click, or nothing
-        // moves and the chart reads it.
-        if !matches!(self.drag, DrawingDrag::Handle { .. })
+        // resize handle stays a resize, Alt+click only walks the z-order,
+        // and a drawing a strategy is bound to keeps its extent, that
+        // strategy's window. The change arrives already worked out, so
+        // selecting and applying it cannot half happen: either the object
+        // changes and takes the click, or nothing moves and the chart reads it.
+        let kind = if double_clicked {
+            ClickKind::Double
+        } else {
+            ClickKind::Single
+        };
+        if !alt
+            && !matches!(self.drag, DrawingDrag::Handle { .. })
             && let Some(band) = pointer_band
             && let Some((index, payload)) = projection.click_target(
                 drawings,
                 selected,
-                (position, double_clicked),
+                position,
+                kind,
                 band,
                 history_right,
                 total,
                 held,
             )
         {
+            // A double click folds into its first click's step: one Ctrl+Z
+            // goes back to before that click, never to the state between.
+            if let (ClickKind::Double, Some(step)) = (kind, self.click_step) {
+                drawings.fold_into_last_step(step);
+            }
             // Baseline first, so the change is one undo step.
             drawings.begin_gesture();
             drawings.items_mut()[index].payload = payload;
@@ -278,13 +294,15 @@ impl PaneGestures {
             return false;
         };
         // One question, asked once, on the geometry the user was
-        // actually looking at when they pressed.
-        self.press_pick =
-            Some(projection.drawing_pick_at(drawings, position, band, history_right, total));
+        // actually looking at when they pressed - the one hover asks too.
+        let target = projection.press_target(drawings, position, band, history_right, total);
+        self.press_pick = Some(target.map(PressTarget::index));
         self.drag_pending_from = Some(position);
         self.translate_from = None;
-        if let Some((drawing_index, handle)) =
-            projection.drawing_handle_at(drawings, position, band, history_right, total)
+        if let Some(PressTarget::Handle {
+            index: drawing_index,
+            handle,
+        }) = target
         {
             drawings.select(Some(drawing_index));
             self.drag = if drawings.items()[drawing_index].locked {
@@ -296,9 +314,7 @@ impl PaneGestures {
                     handle,
                 }
             };
-        } else if let Some(index) =
-            projection.drawing_at(drawings, position, band, history_right, total)
-        {
+        } else if let Some(PressTarget::Body { index, .. }) = target {
             drawings.select(Some(index));
             self.drag = if drawings.items()[index].locked {
                 DrawingDrag::Blocked
@@ -391,6 +407,7 @@ impl PaneGestures {
         self.translate_from = None;
         self.press_pick = None;
         self.drag_pending_from = None;
+        self.click_step = None;
         self.shared_drag = SharedDrag::None;
         self.shared_drag_pending_from = None;
         self.shared_pointer_mark = None;
@@ -399,11 +416,13 @@ impl PaneGestures {
     }
 }
 
-/// The hover cursor, and the hint the object under the pointer offers (a
-/// handle answers with its own; a drawing a strategy is bound to offers
-/// none). Off every object's hit-test, the hint asks the click's own
-/// fallback, so an outline rectangle's bands announce themselves exactly
-/// where the click acts.
+/// The hover cursor, and the hint the object under the pointer offers.
+/// Both read the press's own target, so the cursor names what a press
+/// does: a handle answers with its own cursor, a body with the move grip
+/// and its tool's hint (none on a drawing a strategy is bound to, which
+/// refuses the click). Off every object's hit-test, the hint is the one the
+/// click's fallback answers to, so an outline rectangle's bands announce
+/// themselves exactly where the click acts.
 fn local_hover_cursor(
     drawings: &Marks,
     projection: &DrawingProjection<'_>,
@@ -419,62 +438,35 @@ fn local_hover_cursor(
     let Some(band) = band else {
         return (None, None);
     };
-    if let Some(selected) = drawings.selected()
-        && let Some(handle) =
-            projection.drawing_handle_in(drawings, selected, position, band, history_right, total)
-    {
-        let drawing = &drawings.items()[selected];
-        let cursor = if drawing.locked {
-            GestureCursor::NotAllowed
-        } else {
-            handle_cursor(drawing, handle)
-        };
-        return (Some(cursor), None);
-    } else if let Some(hovered) =
-        projection.drawing_at(drawings, position, band, history_right, total)
-    {
-        let drawing = &drawings.items()[hovered];
-        if drawing.locked {
-            return (Some(GestureCursor::NotAllowed), None);
-        }
+    let Some(target) = projection.press_target(drawings, position, band, history_right, total)
+    else {
+        // No object here takes a press; the cursor stays the chart's own.
+        let view = (history_right, total);
+        return (
+            None,
+            projection.missed_click_hint(drawings, position, band, view, held),
+        );
+    };
+    let drawing = &drawings.items()[target.index()];
+    if drawing.locked {
+        return (Some(GestureCursor::NotAllowed), None);
+    }
+    match target {
+        PressTarget::Handle { handle, .. } => (Some(handle_cursor(drawing, handle)), None),
         // The move grip, unless the tool says the pointer acts otherwise
         // here: the caller then shows that cursor instead.
-        let hint = (!held(drawing.id))
-            .then(|| {
-                projection.drawing_pointer_hint(
-                    drawings,
-                    hovered,
-                    position,
-                    band,
-                    history_right,
-                    total,
-                )
-            })
-            .flatten();
-        return (Some(GestureCursor::Move), hint);
+        PressTarget::Body { hint, .. } => (
+            Some(GestureCursor::Move),
+            hint.filter(|_| !held(drawing.id)),
+        ),
     }
-    // No object here takes a press; the cursor stays the chart's own.
-    let hint = projection
-        .click_target(
-            drawings,
-            None,
-            (position, false),
-            band,
-            history_right,
-            total,
-            held,
-        )
-        .and_then(|(index, _)| {
-            projection.drawing_pointer_hint(drawings, index, position, band, history_right, total)
-        });
-    (None, hint)
 }
 
 /// The cursor that announces a hint: each hint its own.
 fn hint_cursor(hint: PointerHint) -> GestureCursor {
     match hint {
         PointerHint::ExtendSide => GestureCursor::ExtendSide,
-        PointerHint::ResizeSide => GestureCursor::ResizeHorizontal,
+        PointerHint::ResizeSide { .. } => GestureCursor::ResizeHorizontal,
     }
 }
 

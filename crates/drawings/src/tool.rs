@@ -345,18 +345,6 @@ pub trait MarkTool: Sync {
     ) -> Option<Handles> {
         None
     }
-    /// A handle grabbed along a line rather than at a point, asked after
-    /// the point handles miss - a rectangle's side line. Its index follows
-    /// the point handles; [`MarkTool::drag_handle`] owns its drag.
-    fn side_handle_at(
-        &self,
-        _chart_rect: PxRect,
-        _points: &[Px],
-        _position: Px,
-        _ctxt: &DrawContext<'_>,
-    ) -> Option<usize> {
-        None
-    }
     /// The hint a grab on handle `handle` announces when it is narrower than
     /// a free reshape. `None` (the default) is the plain resize cursor.
     fn handle_hint(&self, _handle: usize) -> Option<PointerHint> {
@@ -364,10 +352,12 @@ pub trait MarkTool: Sync {
     }
     /// What the pointer at `position` on this object would do there, while
     /// it rests: the cursor that announces it. `None` (the default) leaves
-    /// the object's own cursor; a double click may still act there.
+    /// the object's own cursor; a double click may still act there. A
+    /// [`PointerHint::ResizeSide`] names the handle a press there grabs - a
+    /// rectangle's side line, a handle along a line rather than at a point.
     ///
-    /// The host asks only for the topmost object under the pointer, so the
-    /// tool answers for its own geometry and nothing else.
+    /// The host asks only the selected object and the topmost one under the
+    /// pointer, so the tool answers for its own geometry and nothing else.
     fn pointer_hint(
         &self,
         _chart_rect: PxRect,
@@ -413,8 +403,10 @@ pub trait MarkTool: Sync {
 pub enum PointerHint {
     /// One click runs this side out to the chart edge.
     ExtendSide,
-    /// A drag moves this side line sideways, and nothing else.
-    ResizeSide,
+    /// A press grabs `handle`, this side line, and its drag moves the side
+    /// sideways and nothing else. The index follows the point handles;
+    /// [`MarkTool::drag_handle`] owns the drag.
+    ResizeSide { handle: usize },
 }
 
 /// A cheap, copyable reference to one registered implementation.
@@ -705,7 +697,6 @@ impl DrawingTool {
             .filter(|(_, distance)| *distance <= radius * radius)
             .min_by(|left, right| left.1.total_cmp(&right.1))
             .map(|(index, _)| index)
-            .or_else(|| self.0.side_handle_at(chart_rect, points, position, ctxt))
     }
 
     /// See [`MarkTool::handle_hint`].

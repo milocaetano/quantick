@@ -248,6 +248,18 @@ fn resize_from_corner(
     Some(Handles::from_slice(&[first, second]))
 }
 
+/// The handle of the side line on `side`. Handles follow anchors, not
+/// screen sides, so a drag that carries one side past the other keeps hold
+/// of it.
+fn side_handle(points: &[Px], side: Side) -> usize {
+    let first_is_left = points[0].x <= points[1].x;
+    if (side == Side::Left) == first_is_left {
+        FIRST_SIDE_HANDLE
+    } else {
+        SECOND_SIDE_HANDLE
+    }
+}
+
 pub(super) static TOOL: Rectangle = Rectangle;
 
 pub(super) struct Rectangle;
@@ -351,28 +363,9 @@ impl MarkTool for Rectangle {
     ) -> Option<Handles> {
         resize_from_corner(points, handle, to)
     }
-    fn side_handle_at(
-        &self,
-        chart_rect: PxRect,
-        points: &[Px],
-        position: Px,
-        ctxt: &DrawContext<'_>,
-    ) -> Option<usize> {
-        let Some(Zone::Border(side)) = zone_at(points, chart_rect, payload_of(ctxt), position)
-        else {
-            return None;
-        };
-        // Handles follow anchors, not screen sides, so a drag that carries
-        // one side past the other keeps hold of it.
-        let first_is_left = points[0].x <= points[1].x;
-        Some(if (side == Side::Left) == first_is_left {
-            FIRST_SIDE_HANDLE
-        } else {
-            SECOND_SIDE_HANDLE
-        })
-    }
     fn handle_hint(&self, handle: usize) -> Option<PointerHint> {
-        matches!(handle, FIRST_SIDE_HANDLE | SECOND_SIDE_HANDLE).then_some(PointerHint::ResizeSide)
+        matches!(handle, FIRST_SIDE_HANDLE | SECOND_SIDE_HANDLE)
+            .then_some(PointerHint::ResizeSide { handle })
     }
     fn pointer_hint(
         &self,
@@ -382,7 +375,9 @@ impl MarkTool for Rectangle {
         ctxt: &DrawContext<'_>,
     ) -> Option<PointerHint> {
         match zone_at(points, chart_rect, payload_of(ctxt), position)? {
-            Zone::Border(_) => Some(PointerHint::ResizeSide),
+            Zone::Border(side) => Some(PointerHint::ResizeSide {
+                handle: side_handle(points, side),
+            }),
             Zone::Extend(_) => Some(PointerHint::ExtendSide),
             // The inside is where the trader grabs the band to move it.
             Zone::Inside => None,
@@ -565,10 +560,17 @@ mod tests {
         with_context(payload, |ctxt| TOOL.pointer_hint(CHART, &BAND, position, ctxt))
     }
 
-    fn handle_at(payload: &RectanglePayload, position: Px) -> Option<usize> {
+    fn point_handle_at(payload: &RectanglePayload, position: Px) -> Option<usize> {
         with_context(payload, |ctxt| {
             DrawingTool(&TOOL).hit_handle(CHART, &BAND, position, 12.0, ctxt)
         })
+    }
+
+    fn side_handle_at(payload: &RectanglePayload, position: Px) -> Option<usize> {
+        match hint_at(payload, position)? {
+            PointerHint::ResizeSide { handle } => Some(handle),
+            PointerHint::ExtendSide => None,
+        }
     }
 
     fn extent(payload: &RectanglePayload) -> (bool, bool) {
@@ -713,26 +715,30 @@ mod tests {
     #[test]
     fn each_zone_names_its_own_hint() {
         let payload = RectanglePayload::default();
-        assert_eq!(hint_at(&payload, pos2(100.0, MID_Y)), Some(PointerHint::ResizeSide));
-        assert_eq!(hint_at(&payload, pos2(300.0, MID_Y)), Some(PointerHint::ResizeSide));
+        let side = |handle| Some(PointerHint::ResizeSide { handle });
+        assert_eq!(hint_at(&payload, pos2(100.0, MID_Y)), side(FIRST_SIDE_HANDLE));
+        assert_eq!(hint_at(&payload, pos2(300.0, MID_Y)), side(SECOND_SIDE_HANDLE));
         assert_eq!(hint_at(&payload, pos2(110.0, MID_Y)), Some(PointerHint::ExtendSide));
         assert_eq!(hint_at(&payload, pos2(290.0, MID_Y)), Some(PointerHint::ExtendSide));
         assert_eq!(hint_at(&payload, pos2(200.0, MID_Y)), None);
         assert_eq!(hint_at(&payload, pos2(100.0, 80.0)), None);
     }
 
-    /// The side line is a handle of its own: grabbing it moves that side
-    /// alone, and says so with the side's hint.
+    /// The side line is a handle of its own, named by its hint: grabbing it
+    /// moves that side alone, and its drag says so with the same hint.
     #[test]
     fn a_side_line_is_a_handle_that_moves_that_side_alone() {
         let payload = RectanglePayload::default();
-        let left = handle_at(&payload, pos2(100.0, MID_Y)).expect("the left line grabs");
-        let right = handle_at(&payload, pos2(300.0 + 2.0, MID_Y)).expect("the right line grabs");
+        let left = side_handle_at(&payload, pos2(100.0, MID_Y)).expect("the left line grabs");
+        let right =
+            side_handle_at(&payload, pos2(300.0 + 2.0, MID_Y)).expect("the right line grabs");
         assert_ne!(left, right);
-        assert_eq!(handle_at(&payload, pos2(100.0, 82.0)), Some(0), "the corner wins");
-        assert_eq!(handle_at(&payload, pos2(110.0, MID_Y)), None, "the band is no handle");
+        assert_eq!(point_handle_at(&payload, pos2(100.0, 82.0)), Some(0), "the corner's");
+        assert_eq!(side_handle_at(&payload, pos2(100.0, 82.0)), None, "no side line there");
+        assert_eq!(point_handle_at(&payload, pos2(100.0, MID_Y)), None, "no point handle");
+        assert_eq!(side_handle_at(&payload, pos2(110.0, MID_Y)), None, "the band is no handle");
         for handle in [left, right] {
-            assert_eq!(TOOL.handle_hint(handle), Some(PointerHint::ResizeSide));
+            assert_eq!(TOOL.handle_hint(handle), Some(PointerHint::ResizeSide { handle }));
         }
         for corner in 0..4 {
             assert_eq!(TOOL.handle_hint(corner), None);
@@ -748,7 +754,7 @@ mod tests {
         .expect("the rectangle owns its side drag");
         assert_eq!(moved.as_slice(), &[pos2(100.0, 80.0), pos2(250.0, 220.0)]);
         // A side run to the chart edge has no line to grab.
-        assert_eq!(handle_at(&right_only(), pos2(300.0, MID_Y)), None);
+        assert_eq!(side_handle_at(&right_only(), pos2(300.0, MID_Y)), None);
     }
 
     #[test]
