@@ -93,6 +93,24 @@ pub fn styled_caption_text(
             .to_owned(),
         );
     }
+    hints.extend(qualifications(frame, progress));
+    (!hints.is_empty()).then(|| hints.join(" | "))
+}
+
+/// The notes a FLOW caption may never drop, without its key: volume still
+/// updating or partial, records left out, and how the opening is scaled. A
+/// caption that cannot be placed still shows these.
+#[must_use]
+pub fn caption_qualifications(
+    frame: Option<&FlowTapeFrame>,
+    progress: super::FlowProgress,
+) -> Option<String> {
+    let notes = qualifications(frame, progress);
+    (!notes.is_empty()).then(|| notes.join(" | "))
+}
+
+fn qualifications(frame: Option<&FlowTapeFrame>, progress: super::FlowProgress) -> Vec<String> {
+    let mut hints = Vec::new();
     if progress.pending {
         hints.push(
             if frame.is_some_and(|f| f.cache_limit_reached) {
@@ -131,5 +149,5 @@ pub fn styled_caption_text(
             hints.push("Opening-only scale fallback".to_owned());
         }
     }
-    (!hints.is_empty()).then(|| hints.join(" | "))
+    hints
 }

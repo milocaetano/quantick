@@ -371,12 +371,37 @@ pub(crate) fn flow_caption(
             [history.min.into(), history.max.into()],
             [rect.min.into(), rect.max.into()],
             regions,
-        )?;
+        );
+        let Some(placed) = placed else {
+            return flow_notes(painter, history, rect.min, frame, progress);
+        };
         rect = egui::Rect::from_min_max(placed[0].into(), placed[1].into());
     }
     painter
         .with_clip_rect(history)
         .galley(rect.min, galley, crate::theme::TEXT_MUTED);
+    Some(rect)
+}
+/// The caption stood down: its honesty notes still show where it would have
+/// been, over a sphere if they must, and nothing else of it does.
+fn flow_notes(
+    painter: &egui::Painter,
+    history: egui::Rect,
+    at: egui::Pos2,
+    frame: Option<&FlowTapeFrame>,
+    progress: FlowProgress,
+) -> Option<egui::Rect> {
+    let notes = quantick_orderflow::projection::flow_tape::caption_qualifications(frame, progress)?;
+    let galley = painter.layout(
+        format!("FLOW | {notes}"),
+        egui::FontId::proportional(FLOW_CAPTION_FONT_PX),
+        crate::theme::TEXT_MUTED,
+        (history.width() - FLOW_CAPTION_WRAP_MARGIN_PX).max(1.0),
+    );
+    let rect = egui::Rect::from_min_size(at, galley.size());
+    painter
+        .with_clip_rect(history)
+        .galley(at, galley, crate::theme::TEXT_MUTED);
     Some(rect)
 }
 #[cfg(test)]
