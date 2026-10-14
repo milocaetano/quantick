@@ -2,6 +2,11 @@
 use super::BubbleStyle;
 use serde::{Deserialize, Serialize};
 
+/// The reference, in instrument units at full radius, that a stored value
+/// which is not a positive finite number reads as. A reference is a preset
+/// calibration, so a bad one is replaced rather than guessed from the tape.
+pub const FALLBACK_REFERENCE_QUANTITY: f64 = 40.0;
+
 impl super::HeatmapConfig {
     /// Whether a change affects the tape or book. Tick painting has its own
     /// cache identity and must not restart their retained factual groups.
@@ -83,7 +88,7 @@ pub struct TickBubbleStyle {
 impl TickBubbleStyle {
     pub fn sanitize(&mut self) {
         if !self.reference_quantity.is_finite() || self.reference_quantity <= 0.0 {
-            self.reference_quantity = 40.0;
+            self.reference_quantity = FALLBACK_REFERENCE_QUANTITY;
         }
         let style = self.bubbles();
         self.max_radius = style.max_radius;
