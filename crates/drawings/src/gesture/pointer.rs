@@ -6,7 +6,7 @@ use super::{
     DRAWING_DRAG_THRESHOLD_PX, DrawingDrag, GestureCursor, Marks, PaneGestures, SharedDrag,
     SharedInteraction, SharedPick, SharedPointer, TranslateFrom,
 };
-use crate::{Constrain, DoubleClickHint, DrawingId, Px};
+use crate::{Constrain, DrawingId, PointerHint, Px};
 
 /// One frame of the pointer under the Pointer tool, as the window read it.
 pub struct PointerFrame<'a> {
@@ -47,8 +47,9 @@ enum ReleaseAnswer {
     Plain,
     /// A note was double clicked: type in it.
     TextEdit,
-    /// A tool took the double click; the chart must not also read it.
-    DoubleClickTaken,
+    /// A tool took the click or the double click; the chart must not also
+    /// read it.
+    ClickTaken,
 }
 
 impl PointerOutcome {
@@ -100,11 +101,11 @@ impl PaneGestures {
             history_right: pointer.history_right,
             total: pointer.total,
         });
-        let mut double_click_taken = false;
+        let mut click_taken = false;
         if let Some(pick) = pick {
             let (cursor, hint) = local_hover_cursor(drawings, projection, pick, frame.held);
-            // The double click's cursor replaces the move grip, never joins
-            // it; a drag in flight keeps the move grip it started with.
+            // The hint's cursor replaces the move grip, never joins it; a
+            // drag in flight keeps the cursor it started with.
             let cursor = match hint {
                 Some(hint) if !self.drag.is_active() => Some(hint_cursor(hint)),
                 _ => cursor,
@@ -120,10 +121,11 @@ impl PaneGestures {
                     projection,
                     pick,
                     frame.alt,
-                    frame.double_clicked.then_some(frame.held),
+                    frame.held,
+                    frame.double_clicked,
                 );
                 outcome.begin_text_edit = answer == ReleaseAnswer::TextEdit;
-                double_click_taken = answer == ReleaseAnswer::DoubleClickTaken;
+                click_taken = answer == ReleaseAnswer::ClickTaken;
             }
         }
         let started = pointer.pressed
@@ -161,8 +163,7 @@ impl PaneGestures {
             );
         }
         // Local release remains consumed even after its state is cleared.
-        outcome.consumed =
-            double_click_taken || self.drag.is_active() || self.shared_drag.is_active();
+        outcome.consumed = click_taken || self.drag.is_active() || self.shared_drag.is_active();
         if pointer.released {
             self.finish_local_release(drawings);
         }
@@ -175,8 +176,9 @@ impl PaneGestures {
         projection: &DrawingProjection<'_>,
         pick: LocalPick<'_>,
         alt: bool,
-        // Which drawings a strategy holds, present only on a double click.
-        double_clicked: Option<&dyn Fn(DrawingId) -> bool>,
+        // Which drawings a strategy holds: their extent is its window.
+        held: &dyn Fn(DrawingId) -> bool,
+        double_clicked: bool,
     ) -> ReleaseAnswer {
         let LocalPick {
             position,
@@ -221,7 +223,7 @@ impl PaneGestures {
         // that branch's `primary_free`. Without this, fixing a typo
         // meant hunting for a field in a panel that placing a note no
         // longer opens.
-        if double_clicked.is_some()
+        if double_clicked
             && let Some(index) = selected
             && drawings
                 .items()
@@ -231,20 +233,20 @@ impl PaneGestures {
             self.content_editing = Some(index);
             return ReleaseAnswer::TextEdit;
         }
-        // Any other tool may own a double click on its body: the rectangle
-        // extends toward the side it lands on. A press that grabbed a
+        // Any other tool may own a click or a double click on its body: a
+        // click in a rectangle's band extends that side, a double click
+        // inside puts its original size back. A press that grabbed a
         // resize handle stays a resize, and a drawing a strategy is bound
         // to keeps its extent, that strategy's window. The change arrives
         // already worked out, so selecting and applying it cannot half
         // happen: either the object changes and takes the click, or nothing
         // moves and the chart reads it.
-        if let Some(held) = double_clicked
-            && !matches!(self.drag, DrawingDrag::Handle { .. })
+        if !matches!(self.drag, DrawingDrag::Handle { .. })
             && let Some(band) = pointer_band
-            && let Some((index, payload)) = projection.double_click_target(
+            && let Some((index, payload)) = projection.click_target(
                 drawings,
                 selected,
-                position,
+                (position, double_clicked),
                 band,
                 history_right,
                 total,
@@ -255,7 +257,7 @@ impl PaneGestures {
             drawings.begin_gesture();
             drawings.items_mut()[index].payload = payload;
             drawings.select(Some(index));
-            return ReleaseAnswer::DoubleClickTaken;
+            return ReleaseAnswer::ClickTaken;
         }
         ReleaseAnswer::Plain
     }
@@ -397,17 +399,17 @@ impl PaneGestures {
     }
 }
 
-/// The hover cursor, and the double-click hint the object a double click
-/// there would take offers (a resize handle outranks the hint; a drawing a
-/// strategy is bound to offers none). Off every object's hit-test, the hint
-/// asks the double click's own fallback, so an outline rectangle's drawn
-/// side zones announce themselves exactly where the double click acts.
+/// The hover cursor, and the hint the object under the pointer offers (a
+/// handle answers with its own; a drawing a strategy is bound to offers
+/// none). Off every object's hit-test, the hint asks the click's own
+/// fallback, so an outline rectangle's bands announce themselves exactly
+/// where the click acts.
 fn local_hover_cursor(
     drawings: &Marks,
     projection: &DrawingProjection<'_>,
     pick: LocalPick<'_>,
     held: &dyn Fn(DrawingId) -> bool,
-) -> (Option<GestureCursor>, Option<DoubleClickHint>) {
+) -> (Option<GestureCursor>, Option<PointerHint>) {
     let LocalPick {
         position,
         band,
@@ -418,14 +420,14 @@ fn local_hover_cursor(
         return (None, None);
     };
     if let Some(selected) = drawings.selected()
-        && projection
-            .drawing_handle_in(drawings, selected, position, band, history_right, total)
-            .is_some()
+        && let Some(handle) =
+            projection.drawing_handle_in(drawings, selected, position, band, history_right, total)
     {
-        let cursor = if drawings.items()[selected].locked {
+        let drawing = &drawings.items()[selected];
+        let cursor = if drawing.locked {
             GestureCursor::NotAllowed
         } else {
-            GestureCursor::Resize
+            handle_cursor(drawing, handle)
         };
         return (Some(cursor), None);
     } else if let Some(hovered) =
@@ -435,11 +437,11 @@ fn local_hover_cursor(
         if drawing.locked {
             return (Some(GestureCursor::NotAllowed), None);
         }
-        // The move grip, unless a double click here would act: the caller
-        // then shows that cursor instead.
+        // The move grip, unless the tool says the pointer acts otherwise
+        // here: the caller then shows that cursor instead.
         let hint = (!held(drawing.id))
             .then(|| {
-                projection.drawing_double_click_hint(
+                projection.drawing_pointer_hint(
                     drawings,
                     hovered,
                     position,
@@ -453,25 +455,36 @@ fn local_hover_cursor(
     }
     // No object here takes a press; the cursor stays the chart's own.
     let hint = projection
-        .double_click_target(drawings, None, position, band, history_right, total, held)
+        .click_target(
+            drawings,
+            None,
+            (position, false),
+            band,
+            history_right,
+            total,
+            held,
+        )
         .and_then(|(index, _)| {
-            projection.drawing_double_click_hint(
-                drawings,
-                index,
-                position,
-                band,
-                history_right,
-                total,
-            )
+            projection.drawing_pointer_hint(drawings, index, position, band, history_right, total)
         });
     (None, hint)
 }
 
-/// The cursor that announces a double click's hint.
-fn hint_cursor(hint: DoubleClickHint) -> GestureCursor {
+/// The cursor that announces a hint: each hint its own.
+fn hint_cursor(hint: PointerHint) -> GestureCursor {
     match hint {
-        DoubleClickHint::ExtendSideways => GestureCursor::ResizeHorizontal,
+        PointerHint::ExtendSide => GestureCursor::ExtendSide,
+        PointerHint::ResizeSide => GestureCursor::ResizeHorizontal,
     }
+}
+
+/// The cursor over, or dragging, `handle`: the plain resize unless the tool
+/// names a narrower grab.
+fn handle_cursor(drawing: &super::Mark, handle: usize) -> GestureCursor {
+    drawing
+        .tool
+        .handle_hint(handle)
+        .map_or(GestureCursor::Resize, hint_cursor)
 }
 
 fn move_handle(
@@ -523,7 +536,13 @@ fn move_handle(
                 },
             );
         }
-        outcome.set_cursor(GestureCursor::Resize);
+        let cursor = drawings
+            .items()
+            .get(drawing_index)
+            .map_or(GestureCursor::Resize, |drawing| {
+                handle_cursor(drawing, handle)
+            });
+        outcome.set_cursor(cursor);
     }
 }
 
@@ -725,7 +744,14 @@ mod tests {
                 ..Default::default()
             };
             assert_eq!(
-                gestures.select_released_press(&mut store, projection, pick, false, &|_| false, false),
+                gestures.select_released_press(
+                    &mut store,
+                    projection,
+                    pick,
+                    false,
+                    &|_| false,
+                    false
+                ),
                 ReleaseAnswer::Plain
             );
             assert_eq!(store.selected(), None);
@@ -1173,7 +1199,10 @@ mod tests {
             assert_eq!(extent(&store), (false, false), "a drag never extends");
             let moved = drawn_rect(&store, projection, bands);
             assert!(moved.left() < rect.left() - 20.0, "{moved:?} from {rect:?}");
-            assert!(moved.right() < rect.right() - 20.0, "{moved:?} from {rect:?}");
+            assert!(
+                moved.right() < rect.right() - 20.0,
+                "{moved:?} from {rect:?}"
+            );
         });
     }
 

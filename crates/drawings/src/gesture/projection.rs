@@ -15,8 +15,8 @@ use super::{
 };
 use crate::chart::PriceScale;
 use crate::{
-    AnchorSnap, BodySnap, ChartPoint, Constrain, DoubleClickHint, DrawContext, DrawingBand,
-    DrawingId, DrawingPayload, Px, PxRect, UNMEASURED,
+    AnchorSnap, BodySnap, ChartPoint, Constrain, DrawContext, DrawingBand, DrawingId,
+    DrawingPayload, PointerHint, Px, PxRect, UNMEASURED,
 };
 
 pub use quantick_chart::pane_series::PaneSeriesRead;
@@ -582,11 +582,11 @@ impl DrawingProjection<'_> {
         }
     }
 
-    /// What a double click at `pos` would do to drawing `drawing_index`, as
+    /// What the pointer at `pos` would do to drawing `drawing_index`, as
     /// its tool announces it on hover. Same projection and context as the
     /// hit-test, so the hint sits exactly where the click lands.
     #[must_use]
-    pub fn drawing_double_click_hint(
+    pub fn drawing_pointer_hint(
         &self,
         drawings: &Marks,
         drawing_index: usize,
@@ -594,7 +594,7 @@ impl DrawingProjection<'_> {
         band: &Band,
         history_right: f32,
         total: usize,
-    ) -> Option<DoubleClickHint> {
+    ) -> Option<PointerHint> {
         let scale = band.scale.as_ref()?;
         let drawing = drawings
             .items()
@@ -607,17 +607,16 @@ impl DrawingProjection<'_> {
             band,
             drawings.selected_id() == Some(drawing.id),
         );
-        drawing
-            .tool
-            .double_click_hint(band.rect, &projected, pos, &ctxt)
+        drawing.tool.pointer_hint(band.rect, &projected, pos, &ctxt)
     }
 
-    /// The drawing a double click at `pos` belongs to, with its payload as
-    /// the click leaves it: the one the press `picked` when it picked one,
-    /// else the topmost visible object whose tool would change there and
-    /// whose *drawn* anchors enclose `pos` - an outline-only rectangle's
-    /// interior takes no part in the click's hit-test, but its double click
-    /// still lands. The fallback reads the drawn extent, never the painted
+    /// The drawing a click - or, `double`, a double click - at `pos`
+    /// belongs to, with its payload as the click leaves it: the one the
+    /// press `picked` when it picked one, else the topmost visible object
+    /// whose tool would change there and whose *drawn* anchors enclose
+    /// `pos` - an outline-only rectangle's interior takes no part in the
+    /// click's hit-test, but its band's click and its double click still
+    /// land. The fallback reads the drawn extent, never the painted
     /// one: a band run to the chart edges would otherwise swallow the
     /// chart's own double click across its whole width. Locked objects, and
     /// those `held` names (any strategy-bound region), never take one.
@@ -626,11 +625,11 @@ impl DrawingProjection<'_> {
     /// or not at all; hover asks the same question for its hint.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
-    pub fn double_click_target(
+    pub fn click_target(
         &self,
         drawings: &Marks,
         picked: Option<usize>,
-        pos: Px,
+        (pos, double): (Px, bool),
         band: &Band,
         history_right: f32,
         total: usize,
@@ -651,10 +650,16 @@ impl DrawingProjection<'_> {
                 return None;
             }
             let mut payload = drawing.payload.clone_box();
-            drawing
-                .tool
-                .double_click(band.rect, &projected, pos, payload.as_mut())
-                .then_some((index, payload))
+            let changed = if double {
+                drawing
+                    .tool
+                    .double_click(band.rect, &projected, pos, payload.as_mut())
+            } else {
+                drawing
+                    .tool
+                    .click(band.rect, &projected, pos, payload.as_mut())
+            };
+            changed.then_some((index, payload))
         };
         match picked {
             Some(index) => trial(index, false),

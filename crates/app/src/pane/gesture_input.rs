@@ -17,6 +17,9 @@ pub(super) fn cursor_icon(cursor: GestureCursor) -> egui::CursorIcon {
         GestureCursor::Move => egui::CursorIcon::Move,
         GestureCursor::Resize => egui::CursorIcon::ResizeNwSe,
         GestureCursor::ResizeHorizontal => egui::CursorIcon::ResizeHorizontal,
+        // Not a resize arrow: on Windows every horizontal resize icon is the
+        // same system cursor, and the band sits right beside the side line.
+        GestureCursor::ExtendSide => egui::CursorIcon::PointingHand,
         GestureCursor::NotAllowed => egui::CursorIcon::NotAllowed,
         GestureCursor::Crosshair => egui::CursorIcon::Crosshair,
     }

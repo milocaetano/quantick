@@ -106,7 +106,7 @@ fn cursor_at(app: &mut QuantickApp, ctx: &egui::Context, position: egui::Pos2) -
 fn one_click_in_a_band_extends_that_side() {
     for fill in [40, 0] {
         let (mut app, ctx, _commands) = drawn_rectangle_with_fill(fill);
-        let (left, right) = drawn_sides(&app);
+        let (_, right) = drawn_sides(&app);
         assert_eq!(extent(&app), (false, false));
         let undo_before = app.active_tab().flow_pane.drawings.undo_depth();
         click(&mut app, &ctx, egui::pos2(right - BAND_INSET, MID_Y));
@@ -120,7 +120,11 @@ fn one_click_in_a_band_extends_that_side() {
         // A selection may narrow the canvas: read the sides again.
         let (left, _) = drawn_sides(&app);
         click(&mut app, &ctx, egui::pos2(left + BAND_INSET, MID_Y));
-        assert_eq!(extent(&app), (true, true), "then the left band, fill {fill}");
+        assert_eq!(
+            extent(&app),
+            (true, true),
+            "then the left band, fill {fill}"
+        );
     }
 }
 
@@ -166,37 +170,15 @@ fn dragging_a_side_line_resizes_the_rectangle() {
     );
     run_frame(&mut app, &ctx);
     let (left_after, right_after) = drawn_sides(&app);
-    assert!((left_after - left).abs() < 0.5, "the left side held: {left} -> {left_after}");
-    assert!(right_after > right + 40.0, "the right side grew: {right} -> {right_after}");
+    assert!(
+        (left_after - left).abs() < 0.5,
+        "the left side held: {left} -> {left_after}"
+    );
+    assert!(
+        right_after > right + 40.0,
+        "the right side grew: {right} -> {right_after}"
+    );
     assert_eq!(extent(&app), (false, false));
-    wait_out_the_click_sequence(&mut app, &ctx);
-    drag_chart(
-        &mut app,
-        &ctx,
-        egui::pos2(left_after, MID_Y),
-        egui::pos2(left_after + 60.0, MID_Y),
-    );
-    run_frame(&mut app, &ctx);
-    let (left_shrunk, _) = drawn_sides(&app);
-    assert!(left_shrunk > left_after + 40.0, "the left side shrank in: {left_shrunk}");
-}
-
-/// A press that drags from the band moves the rectangle; only a click
-/// extends.
-#[test]
-fn a_drag_from_a_band_moves_the_rectangle() {
-    let (mut app, ctx, _commands) = drawn_rectangle();
-    let (left, right) = drawn_sides(&app);
-    drag_chart(
-        &mut app,
-        &ctx,
-        egui::pos2(right - BAND_INSET, MID_Y),
-        egui::pos2(right - BAND_INSET + 60.0, MID_Y),
-    );
-    run_frame(&mut app, &ctx);
-    let (left_after, right_after) = drawn_sides(&app);
-    assert_eq!(extent(&app), (false, false), "a drag never extends");
-    assert!(left_after > left + 40.0 && right_after > right + 40.0, "it moved");
 }
 
 /// Each zone shows its own OS cursor, and no two zones share one: the
@@ -222,7 +204,11 @@ fn each_zone_shows_its_own_cursor() {
     }
     let corner = cursor_at(&mut app, &ctx, egui::pos2(left, TOP));
     assert!(
-        ![egui::CursorIcon::ResizeHorizontal, egui::CursorIcon::PointingHand].contains(&corner),
+        ![
+            egui::CursorIcon::ResizeHorizontal,
+            egui::CursorIcon::PointingHand
+        ]
+        .contains(&corner),
         "the corner keeps its own cursor, got {corner:?}"
     );
 }

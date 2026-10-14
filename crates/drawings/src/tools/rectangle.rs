@@ -5,7 +5,7 @@ use crate::icons;
 use serde::{Deserialize, Serialize};
 
 use super::shape_core::SHAPES_FAMILY;
-use super::{Constrain, DoubleClickHint, DrawContext, DrawingPayload, DrawingStyle, MarkTool, Handles, ToolFamily, ToolShortcut, drawing_fill, drawing_stroke};
+use super::{Constrain, DrawContext, DrawingPayload, DrawingStyle, MarkTool, Handles, PointerHint, ToolFamily, ToolShortcut, drawing_fill, drawing_stroke};
 
 /// Registry id, named like `frvp::TOOL_ID` for the callers that gate on
 /// this one shape (the strategy seat does: two anchors honestly bound a
@@ -40,97 +40,112 @@ pub struct RectanglePayload {
     /// edge. An armed strategy reads it too: the region is then active
     /// before its left anchor as well.
     pub extend_left: bool,
-    /// The `(left, right)` extension a double click on the centre replaced,
-    /// held so the next centre double click puts back exactly the extent
-    /// that was there. `None` while the extension is the trader's own
-    /// setting, and after a side's double click, which owns only its side.
-    ///
-    /// Session state, never exported: a tool default or a named preset that
-    /// carried it would hand every new rectangle a restore point it never
-    /// had, and the layout shares that export, so a reload forgets it too.
-    pub extended_from: Option<(bool, bool)>,
 }
 
 /// About half a centimetre on a typical desktop display: how far inside the
-/// left or right side the pointer is "on that side" for the double click
-/// that extends the band that way.
+/// left or right side the band reaches whose click extends the rectangle
+/// that way.
 pub(crate) const EDGE_ZONE_PX: f32 = 18.0;
-/// Reach outside the drawn border that still counts as on the rectangle -
-/// the same slack the pane gives a click that selects a drawing.
-const EDGE_ZONE_SLACK_PX: f32 = 10.0;
-/// Where on the rectangle a double click lands.
+/// Half the width of the strip around a side line that grabs that side: the
+/// line itself, thin enough to leave the band inside it room.
+const BORDER_PX: f32 = 4.0;
+/// How near a corner the corner's own resize handle takes the pointer - the
+/// reach the pane gives a handle - so no side zone reaches a corner.
+const CORNER_PX: f32 = crate::gesture::DRAWING_ANCHOR_RADIUS_PX;
+/// The side handles' indices follow the four corner handles: the side line
+/// of the first anchor, then the second's.
+const FIRST_SIDE_HANDLE: usize = 4;
+const SECOND_SIDE_HANDLE: usize = FIRST_SIDE_HANDLE + 1;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExtendZone {
+enum Side {
     Left,
     Right,
-    Center,
 }
 
-/// The zone under `position` of a band drawn as `drawn` and painted as
-/// `painted` (the drawn rectangle run to the chart edges it extends to), or
-/// `None` off the band. A side's zone is the strip by its drawn side, which
-/// keeps its place after the band runs past it, and the strip by the painted
-/// edge the band now runs to - the side the trader sees. The painted run
-/// between them is no zone: there the band is only a band, and the chart
-/// keeps its double click. A narrow rectangle keeps a centre: each side zone
-/// takes at most a third of the drawn width.
-fn extend_zone(drawn: PxRect, painted: PxRect, position: Px) -> Option<ExtendZone> {
-    if !painted.expand(EDGE_ZONE_SLACK_PX).contains(position) {
+/// What the pointer is on, as the trader sketched it. Cursor, hit-test and
+/// click all read this one answer, so each zone acts exactly where its
+/// cursor shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Zone {
+    /// On a side line, not a corner: a drag moves that side sideways.
+    Border(Side),
+    /// The band just inside a side: one click runs that side to the chart
+    /// edge.
+    Extend(Side),
+    /// Anywhere else inside: a double click puts back the original size.
+    Inside,
+}
+
+/// The zone under `position`, or `None` off the rectangle and on its
+/// corners. A side already run to the chart edge has no line to drag and
+/// nothing left to extend: all of it is inside. A narrow rectangle keeps an
+/// inside: each band takes at most a third of the drawn width.
+fn zone_at(
+    points: &[Px],
+    chart_rect: PxRect,
+    payload: &RectanglePayload,
+    position: Px,
+) -> Option<Zone> {
+    let [first, second] = points else {
+        return None;
+    };
+    let drawn = PxRect::from_two_pos(*first, *second);
+    let on_corner = [
+        drawn.left_top(),
+        drawn.right_top(),
+        drawn.right_bottom(),
+        drawn.left_bottom(),
+    ]
+    .iter()
+    .any(|corner| corner.distance_sq(position) <= CORNER_PX * CORNER_PX);
+    if on_corner || position.y < drawn.top() || position.y > drawn.bottom() {
         return None;
     }
-    let zone = side_zone_width(drawn);
-    let x = position.x;
-    let by_drawn = |side: f32| (x - side).abs() <= zone.max(EDGE_ZONE_SLACK_PX);
-    if x <= drawn.left() + zone && (by_drawn(drawn.left()) || x <= painted.left() + zone) {
-        Some(ExtendZone::Left)
-    } else if x >= drawn.right() - zone && (by_drawn(drawn.right()) || x >= painted.right() - zone)
-    {
-        Some(ExtendZone::Right)
-    } else {
-        (x > drawn.left() && x < drawn.right()).then_some(ExtendZone::Center)
+    let band = EDGE_ZONE_PX.min(drawn.width() / 3.0);
+    for (side, edge, inward, extended) in [
+        (Side::Left, drawn.left(), 1.0, payload.extend_left),
+        (Side::Right, drawn.right(), -1.0, payload.extend_right),
+    ] {
+        if extended {
+            continue;
+        }
+        let depth = (position.x - edge) * inward;
+        if depth.abs() <= BORDER_PX {
+            return Some(Zone::Border(side));
+        }
+        if depth > BORDER_PX && depth <= band {
+            return Some(Zone::Extend(side));
+        }
     }
-}
-
-fn side_zone_width(rect: PxRect) -> f32 {
-    EDGE_ZONE_PX.min(rect.width() / 3.0)
+    screen_rect(points, chart_rect, payload)
+        .contains(position)
+        .then_some(Zone::Inside)
 }
 
 impl RectanglePayload {
-    /// The double click. A side zone toggles that side alone - run it to
-    /// the chart edge, or take it back - so the trader can extend one way
-    /// and then the other without a restore in between. The centre restores
-    /// the extent a previous centre double click replaced, else extends both
-    /// sides. Answers whether anything changed - extending from the centre
-    /// when both sides already run to the edge is a no-op.
-    fn apply_double_click(&mut self, zone: ExtendZone) -> bool {
+    /// One click: a band runs its side to the chart edge. Answers whether
+    /// anything changed.
+    fn apply_click(&mut self, zone: Zone) -> bool {
         match zone {
-            ExtendZone::Left => {
-                self.extend_left = !self.extend_left;
-                self.extended_from = None;
-                return true;
-            }
-            ExtendZone::Right => {
-                self.extend_right = !self.extend_right;
-                self.extended_from = None;
-                return true;
-            }
-            ExtendZone::Center => {}
+            Zone::Extend(Side::Left) => self.extend_left = true,
+            Zone::Extend(Side::Right) => self.extend_right = true,
+            Zone::Border(_) | Zone::Inside => return false,
         }
-        if let Some((left, right)) = self.extended_from.take() {
-            self.extend_left = left;
-            self.extend_right = right;
-            return true;
-        }
-        let before = (self.extend_left, self.extend_right);
-        let after = (true, true);
-        if after == before {
-            return false;
-        }
-        self.extended_from = Some(before);
-        (self.extend_left, self.extend_right) = after;
         true
     }
 
+    /// A double click inside, the bands included: back to the original
+    /// size. Answers whether anything changed - a rectangle at its original
+    /// size leaves the double click to the chart.
+    fn apply_double_click(&mut self, zone: Zone) -> bool {
+        let extended = self.extend_left || self.extend_right;
+        if matches!(zone, Zone::Border(_)) || !extended {
+            return false;
+        }
+        (self.extend_left, self.extend_right) = (false, false);
+        true
+    }
 }
 
 impl DrawingPayload for RectanglePayload {
@@ -166,8 +181,6 @@ impl DrawingPayload for RectanglePayload {
         }
         self.extend_right = data.extend_right;
         self.extend_left = data.extend_left;
-        // The extension is now the preset's setting, not a gesture's.
-        self.extended_from = None;
         true
     }
 }
@@ -213,7 +226,7 @@ fn rectangle_handles(points: &[Px]) -> Option<Handles> {
 }
 
 /// Move the two anchor components owned by one corner while the diagonally
-/// opposite corner stays fixed.
+/// opposite corner stays fixed; a side handle moves one anchor's x.
 fn resize_from_corner(
     points: &[Px],
     handle: usize,
@@ -227,6 +240,9 @@ fn resize_from_corner(
         1 => (pos2(first.x, to.y), pos2(to.x, second.y)),
         2 => (*first, to),
         3 => (pos2(to.x, first.y), pos2(second.x, to.y)),
+        // A side line moves its own anchor's x alone.
+        FIRST_SIDE_HANDLE => (pos2(to.x, first.y), *second),
+        SECOND_SIDE_HANDLE => (*first, pos2(to.x, second.y)),
         _ => return None,
     };
     Some(Handles::from_slice(&[first, second]))
@@ -335,24 +351,54 @@ impl MarkTool for Rectangle {
     ) -> Option<Handles> {
         resize_from_corner(points, handle, to)
     }
-    fn double_click_hint(
+    fn side_handle_at(
         &self,
         chart_rect: PxRect,
         points: &[Px],
         position: Px,
         ctxt: &DrawContext<'_>,
-    ) -> Option<DoubleClickHint> {
-        if points.len() != 2 {
+    ) -> Option<usize> {
+        let Some(Zone::Border(side)) = zone_at(points, chart_rect, payload_of(ctxt), position)
+        else {
             return None;
+        };
+        // Handles follow anchors, not screen sides, so a drag that carries
+        // one side past the other keeps hold of it.
+        let first_is_left = points[0].x <= points[1].x;
+        Some(if (side == Side::Left) == first_is_left {
+            FIRST_SIDE_HANDLE
+        } else {
+            SECOND_SIDE_HANDLE
+        })
+    }
+    fn handle_hint(&self, handle: usize) -> Option<PointerHint> {
+        matches!(handle, FIRST_SIDE_HANDLE | SECOND_SIDE_HANDLE).then_some(PointerHint::ResizeSide)
+    }
+    fn pointer_hint(
+        &self,
+        chart_rect: PxRect,
+        points: &[Px],
+        position: Px,
+        ctxt: &DrawContext<'_>,
+    ) -> Option<PointerHint> {
+        match zone_at(points, chart_rect, payload_of(ctxt), position)? {
+            Zone::Border(_) => Some(PointerHint::ResizeSide),
+            Zone::Extend(_) => Some(PointerHint::ExtendSide),
+            // The inside is where the trader grabs the band to move it.
+            Zone::Inside => None,
         }
-        let drawn = PxRect::from_two_pos(points[0], points[1]);
-        let painted = screen_rect(points, chart_rect, payload_of(ctxt));
-        // The hint lives in the side zones only, where a double click always
-        // toggles that side: the centre is where the trader grabs the band
-        // to move it, and keeps the move cursor. Its double click still works.
-        extend_zone(drawn, painted, position)
-            .is_some_and(|zone| zone != ExtendZone::Center)
-            .then_some(DoubleClickHint::ExtendSideways)
+    }
+    fn click(
+        &self,
+        chart_rect: PxRect,
+        points: &[Px],
+        position: Px,
+        payload: &mut dyn DrawingPayload,
+    ) -> bool {
+        let Some(payload) = payload.as_any_mut().downcast_mut::<RectanglePayload>() else {
+            return false;
+        };
+        zone_at(points, chart_rect, payload, position).is_some_and(|zone| payload.apply_click(zone))
     }
     fn double_click(
         &self,
@@ -364,12 +410,8 @@ impl MarkTool for Rectangle {
         let Some(payload) = payload.as_any_mut().downcast_mut::<RectanglePayload>() else {
             return false;
         };
-        if points.len() != 2 {
-            return false;
-        }
-        let drawn = PxRect::from_two_pos(points[0], points[1]);
-        let painted = screen_rect(points, chart_rect, payload);
-        extend_zone(drawn, painted, position).is_some_and(|zone| payload.apply_double_click(zone))
+        zone_at(points, chart_rect, payload, position)
+            .is_some_and(|zone| payload.apply_double_click(zone))
     }
 
     #[cfg(test)]

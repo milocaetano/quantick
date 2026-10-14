@@ -148,8 +148,11 @@ pub enum GestureCursor {
     Move,
     /// A handle a press would reshape.
     Resize,
-    /// A side a double click would run out to the chart edge, or take back.
+    /// A side line a drag would move sideways.
     ResizeHorizontal,
+    /// A band one click would run out to the chart edge. Its own cursor,
+    /// never the side line's: the two zones sit side by side.
+    ExtendSide,
     /// Geometry that refuses: locked, or a band that cannot take an anchor.
     NotAllowed,
     /// A band an armed tool would place an anchor in.

@@ -295,7 +295,7 @@ fn draw_rectangle_tab(ui: &mut egui::Ui, drawing: &mut Drawing) -> bool {
     let left = ui
         .checkbox(&mut payload.extend_left, "extend left")
         .on_hover_text(
-            "run the band back to the chart's left edge - a double click near the \
+            "run the band back to the chart's left edge - one click just inside the \
              left side does the same",
         )
         .changed();
@@ -306,11 +306,6 @@ fn draw_rectangle_tab(ui: &mut egui::Ui, drawing: &mut Drawing) -> bool {
              strategy then keeps watching past the drawn end instead of expiring there",
         )
         .changed();
-    if left || right {
-        // A hand-set extension is the trader's own; a double click no
-        // longer has an earlier extent to put back.
-        payload.extended_from = None;
-    }
     left || right
 }
 
