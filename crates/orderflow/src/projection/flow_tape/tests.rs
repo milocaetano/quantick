@@ -127,14 +127,48 @@ fn opening_earned_oversize_changes_no_source_facts() {
     assert_eq!(f.dots[0].mark.quantity, Decimal::from(9000));
     assert_eq!(f.dots[0].opening_quantity, Decimal::from(9000));
 }
+/// Over a typed reference a region caps at the radius limit; the reference
+/// does not grow to it, so nothing else on screen shrinks.
 #[test]
-fn ordinary_overflow_shrinks_the_common_frame_without_flattening_ratios() {
+fn ordinary_overflow_caps_at_the_typed_reference() {
     let f = frame(
         &[
             trade(1000, 95, 1800, Side::Buy),
             trade(1100, 105, 900, Side::Sell),
         ],
         200.0,
+    );
+    assert_eq!(f.effective_reference, Some(Decimal::from(900)));
+    assert!(f.dots.iter().all(|dot| dot.radius == 7.0));
+}
+
+/// Without a typed reference the visible regions set the scale: an
+/// overflow shrinks the common frame without flattening ratios.
+#[test]
+fn visible_regions_shrink_the_common_frame_without_flattening_ratios() {
+    let trades = [
+        trade(1000, 95, 1800, Side::Buy),
+        trade(1100, 105, 900, Side::Sell),
+    ];
+    let f = project_flow_tape(
+        trades
+            .iter()
+            .enumerate()
+            .map(|(ordinal, trade)| FlowExecution {
+                ordinal,
+                slot: ordinal / 2,
+                accepted_ordinal: ordinal % 2,
+                ticks_per_bar: 2.into(),
+                trade,
+                opening: false,
+            }),
+        1,
+        2,
+        2,
+        FlowTapeView {
+            reference: FlowReference::VisibleRegions,
+            ..view(200.0)
+        },
     );
     assert_eq!(f.effective_reference, Some(Decimal::from(1800)));
     let a = f.dots[0].radius;
@@ -194,7 +228,10 @@ fn mixed_opening_group_keeps_ordinary_quantity_in_the_common_reference() {
         1,
         2,
         2,
-        view(10.0),
+        FlowTapeView {
+            reference: FlowReference::VisibleRegions,
+            ..view(10.0)
+        },
     );
     assert_eq!(f.effective_reference, Some(Decimal::from(1800)));
     assert_eq!(f.dots[0].mark.quantity, Decimal::from(1900));

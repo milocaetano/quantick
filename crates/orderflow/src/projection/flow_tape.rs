@@ -19,12 +19,15 @@ pub use stream::{
     OwnedFlowExecution,
 };
 
-/// Production uses one common reference from the final visible regional groups.
+/// The quantity a FLOW sphere is sized against.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum FlowReference {
+    /// One common reference from the final visible regional groups.
     #[default]
     VisibleRegions,
-    /// Explicit fixture calibration; ordinary overflow still shrinks uniformly.
+    /// The pane's fixed reference (the tick spheres' preset value): no pan,
+    /// zoom or new print resizes a sphere, and a larger region caps at the
+    /// radius limit.
     Typed(Decimal),
 }
 impl FlowReference {
@@ -395,8 +398,11 @@ fn finish_groups(
         .unwrap_or_default();
     let has_opening = groups.iter().any(|group| group.opening_anchor);
     let (effective_reference, scale_basis, opening_exclusion_effective) = match view.reference {
+        // The pane's one scale: nothing on screen moves it. A region larger
+        // than the reference caps at the radius limit instead of shrinking
+        // every other sphere (`normalized_area_size` clamps the ratio).
         FlowReference::Typed(reference) => (
-            reference.max(ordinary_max),
+            reference,
             FlowScaleBasis::TypedReference,
             view.exclude_opening && has_opening,
         ),
