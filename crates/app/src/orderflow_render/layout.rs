@@ -52,7 +52,8 @@ pub(crate) struct ProjectedLayout<'a> {
     pub(crate) inverted: bool,
     /// Every position is on the tape, its opening too: a held tape's book.
     pub(crate) lane_only: bool,
-    /// Native tape time inset, shared by depth, reductions, dots and picking.
+    /// Native tape time inset the lane's depth, reductions and picking share
+    /// with the dots; `None` keeps them linear (see `from_style`).
     pub(crate) tape_geometry: Option<quantick_orderflow::projection::TapeHorizontalGeometry>,
 }
 

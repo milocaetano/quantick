@@ -58,7 +58,9 @@ pub struct OrderflowRenderStyle {
     /// How volume dots are sized on this screen: each dot's cell and its
     /// pane's full size. `None` draws the style's radii on the typed scale.
     pub dot_sizing: Option<crate::DotSizing>,
-    /// Whether every tape layer uses the native execution-time inset.
+    /// Whether the tape is native: its dots use the execution-time inset,
+    /// and its book, fronts and picking share it only with depth
+    /// time-averaging on ([`TapeHorizontalGeometry::from_style`](crate::projection::TapeHorizontalGeometry::from_style)).
     pub native_tape: bool,
     /// Exclude known first recorded native bursts only from the tape's auto scale.
     pub ignore_opening_burst_in_scale: bool,

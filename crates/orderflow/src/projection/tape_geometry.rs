@@ -19,15 +19,21 @@ pub struct TapeHorizontalGeometry {
 }
 
 impl TapeHorizontalGeometry {
-    /// Native time geometry shared by every painted or picked tape layer.
+    /// The native time geometry the tape's book, reduction fronts and
+    /// picking share with its dots; `None` keeps them on the linear lane.
+    ///
+    /// Only a native tape with depth time-averaging on moves its book onto
+    /// the dots' inset axis. Averaging off is the legacy display
+    /// ([`LiveLaneStyle::depth_time_averaging`](crate::config::LiveLaneStyle::depth_time_averaging)):
+    /// the book and its fronts keep the linear lane they were approved on,
+    /// while the dots keep their own inset ([`Self::resolve`]).
     #[must_use]
     pub fn from_style(
         style: &crate::config::theme::OrderflowRenderStyle,
         width: f32,
         height: f32,
     ) -> Option<Self> {
-        style
-            .native_tape
+        (style.native_tape && style.live_lane.depth_time_averaging)
             .then(|| Self::resolve(width, height, &style.sanitized().bubbles))
     }
 

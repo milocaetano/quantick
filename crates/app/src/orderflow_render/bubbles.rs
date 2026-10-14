@@ -637,10 +637,16 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
     // whole reason it gets a radius range of its own (volume dots excepted).
     let (lane_min, lane_max) = style.live_lane.pane_radii(bubbles, true, dots);
     let (candle_min, candle_max) = style.live_lane.pane_radii(bubbles, false, dots);
+    // Factual dots keep the native inset whatever the book shares
+    // (`TapeHorizontalGeometry::from_style`).
+    let dot_layout = super::layout::ProjectedLayout {
+        tape_geometry: Some(tape_geometry),
+        ..context.layout
+    };
     let center_at = |trade: &AggressionPrimitive| {
         egui::pos2(
             if factual_tape && trade.live {
-                context.layout.with_lane_only().x(trade.x)
+                dot_layout.with_lane_only().x(trade.x)
             } else {
                 context.layout.x(trade.x)
             },
