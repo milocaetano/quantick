@@ -220,6 +220,64 @@ fn tick_spheres_keep_their_regions_through_axis_drift_and_regroup_on_zoom() {
     assert_eq!(regions((97.0, 103.0)), [vec![1], vec![2]]);
 }
 
+/// The live app: a seed larger than one capture packet, then a print before
+/// every frame. The newest-first fill must still reach the oldest seed
+/// candle while prints keep arriving: the live tail never starves history.
+#[test]
+fn a_busy_tape_never_starves_the_seed_of_spheres() {
+    let print = |id: u64| Trade {
+        agg_id: id,
+        timestamp_ms: 1_000 + id as i64 * 40,
+        price: (100 + id % 7).into(),
+        quantity: (1 + id % 3).into(),
+        side: if id.is_multiple_of(2) {
+            Side::Buy
+        } else {
+            Side::Sell
+        },
+    };
+    let mut state = ChartState::new(BarSpec::Tick(50));
+    state.ingest_backfill(&(0..6_000).map(print).collect::<Vec<_>>());
+    let tick = quantick_orderflow::TickBubbleStyle {
+        reference_quantity: 1.0,
+        max_radius: 32.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    };
+    let mut session = FlowSession::<WorkerRunner>::default();
+    let show = |state: &ChartState, session: &mut FlowSession<WorkerRunner>| {
+        let total = state.bars().len() + usize::from(state.partial().is_some());
+        project_styled_flow_executions(
+            true,
+            state,
+            session,
+            FlowChartView {
+                slots: 0..total,
+                pixels: (total as f32 * 8.0, 400.0),
+                range: (95.0, 110.0),
+                clip: (0.0, total as f64),
+                tick_bubbles: Some(tick),
+            },
+        );
+    };
+    // A print arrives before every frame, as on a busy tape.
+    for id in 6_000..6_040 {
+        state.ingest_live(&print(id));
+        show(&state, &mut session);
+    }
+    show(&state, &mut session);
+    let frame = session.frame().unwrap();
+    let mut slots: Vec<usize> = frame.dots.iter().map(|dot| dot.first_slot).collect();
+    slots.sort_unstable();
+    slots.dedup();
+    assert_eq!(
+        slots.first(),
+        Some(&0),
+        "the oldest seed candle has spheres"
+    );
+    assert_eq!(slots.len(), 121, "every candle has spheres");
+}
+
 /// The app's start: a seed of backfilled prints, then live prints one frame
 /// at a time. Every candle on screen — seed and live — has its spheres, and
 /// the newest-first fill leaves no older candle behind.
