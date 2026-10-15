@@ -257,22 +257,10 @@ pub fn dashed_segment(
     dash_px: f32,
     gap_px: f32,
 ) {
-    let span = to - from;
-    let length = span.length();
-    let step = dash_px + gap_px;
-    if !(length > f32::EPSILON && length.is_finite() && step > 0.0 && step.is_finite()) {
+    let Some(walk) = DashWalk::along(from, to, dash_px, gap_px) else {
         return;
-    }
-    let direction = span / length;
-    let mut travelled = 0.0_f32;
-    while travelled < length {
-        let dash_end = (travelled + dash_px).min(length);
-        scene.line_segment(
-            [from + direction * travelled, from + direction * dash_end],
-            stroke,
-        );
-        travelled += step;
-    }
+    };
+    walk.paint(scene, (0.0, walk.length), stroke);
 }
 
 /// [`dashed_segment`] for the part of `from`–`to` that can reach `clip`,
@@ -288,30 +276,61 @@ pub fn dashed_segment_within(
     dash_px: f32,
     gap_px: f32,
 ) {
-    let span = to - from;
-    let length = span.length();
-    let step = dash_px + gap_px;
-    if !(length > f32::EPSILON && length.is_finite() && step > 0.0 && step.is_finite()) {
-        return;
-    }
-    // A dash reaching the clip may start a dash's length outside it.
-    let Some((near, far)) = span_within(clip.expand(dash_px.max(0.0)), from, span) else {
+    let Some(walk) = DashWalk::along(from, to, dash_px, gap_px) else {
         return;
     };
-    let direction = span / length;
-    // Whole dashes only: the one holding each end of the visible span
-    // is the whole walk's dash, never a dash cut at the clip.
+    let Some((near, far)) = span_within(clip, from, to - from) else {
+        return;
+    };
+    // Whole strides only: the dash crossing each edge of the clip is the
+    // whole walk's dash, never one cut at the clip.
+    let (length, step) = (walk.length, walk.step);
     let first = (near * length / step).floor() * step;
     let last = ((far * length / step).ceil() * step).min(length);
-    if first < last {
-        dashed_segment(
-            scene,
-            from + direction * first,
-            from + direction * last,
-            stroke,
-            dash_px,
-            gap_px,
-        );
+    walk.paint(scene, (first, last), stroke);
+}
+
+/// A segment as dashes walk it: its direction, its length and the stride
+/// from one dash to the next. `None` where there is nothing to walk.
+struct DashWalk {
+    from: Px,
+    direction: Px,
+    length: f32,
+    dash_px: f32,
+    step: f32,
+}
+
+impl DashWalk {
+    fn along(from: Px, to: Px, dash_px: f32, gap_px: f32) -> Option<Self> {
+        let span = to - from;
+        let length = span.length();
+        let step = dash_px + gap_px;
+        (length > f32::EPSILON && length.is_finite() && step > 0.0 && step.is_finite()).then(|| {
+            Self {
+                from,
+                direction: span / length,
+                length,
+                dash_px,
+                step,
+            }
+        })
+    }
+
+    /// The dashes from `start` to `end` along the walk, in pixels from
+    /// `from`, each starting on a stride of the whole walk.
+    fn paint(&self, scene: &mut MarkScene, (start, end): (f32, f32), stroke: Stroke) {
+        let mut travelled = start;
+        while travelled < end {
+            let dash_end = (travelled + self.dash_px).min(end);
+            scene.line_segment(
+                [
+                    self.from + self.direction * travelled,
+                    self.from + self.direction * dash_end,
+                ],
+                stroke,
+            );
+            travelled += self.step;
+        }
     }
 }
 
