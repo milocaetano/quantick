@@ -44,6 +44,15 @@ impl FlowReference {
             Self::Typed(value) => Some(value),
         }
     }
+
+    /// Whether a first daily region past the reference stops at the radius
+    /// limit like any region. A typed reference is the pane's one scale, so
+    /// it does; visible regions draw such a region's earned area past the
+    /// limit. The sphere's radius and the caption's note on it both read
+    /// this, so the note never claims an area the sphere did not draw.
+    fn caps_oversized_opening(self) -> bool {
+        self.typed().is_some()
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlowScaleBasis {
@@ -388,7 +397,8 @@ fn merge_window(window: Vec<Group>, view: FlowTapeView) -> Vec<Group> {
 /// A merged group as the sphere drawn against `effective_reference`;
 /// `exclusion` says whether opening regions are kept out of the scale. An
 /// oversized opening draws its earned area past the radius limit only over
-/// visible regions: a typed reference caps it like any region.
+/// visible regions: a typed reference caps it like any region
+/// ([`FlowReference::caps_oversized_opening`]), and the caption says which.
 fn finish_group(
     mut group: Group,
     view: FlowTapeView,
@@ -406,7 +416,7 @@ fn finish_group(
     };
     FlowTapeDot {
         radius: view.radius_limit
-            * if opening_oversized && view.reference.typed().is_none() {
+            * if opening_oversized && !view.reference.caps_oversized_opening() {
                 use rust_decimal::prelude::ToPrimitive as _;
                 (quantity.to_f64().unwrap_or_default()
                     / effective_reference.to_f64().unwrap_or(1.0))

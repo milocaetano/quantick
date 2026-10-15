@@ -182,11 +182,19 @@ fn qualifications(frame: Option<&FlowTapeFrame>, progress: super::FlowProgress) 
             },
         );
         if count > 0 {
+            // What the spheres drew: the earned area over visible regions,
+            // the radius limit's over a typed reference.
+            let area = if frame.view.reference.caps_oversized_opening() {
+                "capped at the radius limit"
+            } else {
+                "proportional"
+            };
             hints.push(format!(
-                "{} first daily regions: total {}, recorded opening {} (faint area proportional)",
+                "{} first daily regions: total {}, recorded opening {} (faint area {})",
                 count,
                 quantick_engine::display::display_decimal(total),
-                quantick_engine::display::display_decimal(opening)
+                quantick_engine::display::display_decimal(opening),
+                area
             ));
         }
         if frame.opening_exclusion_effective {
