@@ -101,7 +101,7 @@ impl OrderflowView {
                 .get(index)
                 .map(|preset| preset.name.clone())
         {
-            self.apply_preset(&name, spheres);
+            self.look.apply_preset(&name, &mut self.config, spheres);
         }
         ui.small(format!("presets · {}", self.look.source()));
         let mut save_switched = None;

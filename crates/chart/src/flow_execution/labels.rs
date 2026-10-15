@@ -2,6 +2,7 @@
 use super::FlowPresentation;
 use quantick_orderflow::{TickBubbleStyle, projection::flow_tape::FlowTapeFrame};
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct FlowQuantityLabel {
     pub center: [f32; 2],
     pub radius: f32,

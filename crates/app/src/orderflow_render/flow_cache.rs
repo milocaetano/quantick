@@ -1,5 +1,4 @@
-//! Pack immutable FLOW geometry once, rims tessellated and labels laid out;
-//! ordinary frames only copy the final mesh and place the laid-out labels.
+//! Pack immutable FLOW geometry, rims and labels once; frames only copy the final mesh.
 use super::flow_execution::FlowDrawing;
 use eframe::egui::{
     self,
@@ -27,15 +26,13 @@ struct Key<'a> {
     backing: Option<egui::Color32>,
     background: egui::Color32,
     tick: Option<quantick_orderflow::TickLook>,
-    /// Tick spheres tessellate their rims and lay out their labels at this
-    /// density; regional geometry is logical and reused across densities.
-    pixels_per_point: f32,
+    /// The pixel density tick rims and labels follow; regional geometry is logical.
+    density: Option<u32>,
 }
 impl Hash for Key<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         Arc::as_ptr(self.frame).hash(state);
-        let density = self.tick.map(|_| self.pixels_per_point.to_bits());
-        density.hash(state);
+        self.density.hash(state);
         self.geometry.fingerprint().hash(state);
         self.clip.min.x.to_bits().hash(state);
         self.clip.min.y.to_bits().hash(state);
@@ -75,7 +72,7 @@ pub(crate) fn cached_flow(
         backing,
         background,
         tick,
-        pixels_per_point: painter.ctx().pixels_per_point(),
+        density: tick.map(|_| painter.ctx().pixels_per_point().to_bits()),
     };
     let entry = painter
         .ctx()

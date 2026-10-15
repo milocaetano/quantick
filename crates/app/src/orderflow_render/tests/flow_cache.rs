@@ -139,7 +139,7 @@ fn key(frame: &Arc<FlowTapeFrame>) -> Key<'_> {
         backing: Some(egui::Color32::from_rgb(19, 23, 34)),
         tick: None,
         background: crate::theme::CANVAS,
-        pixels_per_point: 1.0,
+        density: None,
     }
 }
 
@@ -170,6 +170,7 @@ fn paint_at_density(
             .with_clip_rect(key.clip);
         let actual = Key {
             clip: history().intersect(painter.clip_rect()),
+            density: key.tick.map(|_| pixels_per_point.to_bits()),
             ..key
         };
         assert_eq!(ctx.pixels_per_point(), pixels_per_point);

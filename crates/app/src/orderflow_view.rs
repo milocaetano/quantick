@@ -246,9 +246,9 @@ impl OrderflowView {
         &self.config
     }
 
-    /// Resolve the topmost displayed L2 heat cell under `position` from the frame the chart most
-    /// recently painted ([`PaneTape::drawn`]). Projection and hit testing share [`ProjectedLayout`]; the lookup is
-    /// O(visible cells) and runs only for an explicit cursor snapshot.
+    /// Resolve the topmost displayed L2 heat cell under `position` from the frame the chart
+    /// most recently painted ([`PaneTape::drawn`]). Projection and hit testing share
+    /// [`ProjectedLayout`]; the lookup is O(visible cells), only for a cursor snapshot.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn control_flow_cell_at(
         &self,
@@ -1095,12 +1095,6 @@ impl OrderflowView {
         self.worker.send(BookCommand::TapeEpoch(epoch));
     }
 
-    /// Apply the stored preset called `name`, reporting whether it exists
-    /// ([`BubbleLook::apply_preset`]).
-    pub(crate) fn apply_preset(&mut self, name: &str, spheres: bool) -> bool {
-        self.look.apply_preset(name, &mut self.config, spheres)
-    }
-
     pub(crate) fn apply_named_preset(&mut self, name: &str, spheres: bool) -> Result<bool, String> {
         let before = self.config.clone();
         let changed = self
@@ -1165,6 +1159,15 @@ impl OrderflowView {
         self.flow_execution
             .set_ignore_opening(settings.flow_ignore_opening);
         self.apply_config(before);
+    }
+}
+
+#[cfg(test)]
+/// The whole-look pick as the settings picker makes it
+/// ([`BubbleLook::apply_preset`]), for tests.
+impl OrderflowView {
+    pub(crate) fn apply_preset(&mut self, name: &str, spheres: bool) -> bool {
+        self.look.apply_preset(name, &mut self.config, spheres)
     }
 }
 

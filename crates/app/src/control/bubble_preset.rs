@@ -2,20 +2,16 @@
 use super::price_axis::{invalid, pane};
 use crate::app::control_host::ControlPort;
 use quantick_control::error::ControlError;
-use quantick_control_schema::bubble_preset::{ApplyInput, ApplyResult, ListInput, ListResult};
-impl quantick_control_handlers::bubble_preset::BubblePresetPort for dyn ControlPort {
-    fn apply_bubble_preset(
-        &mut self,
-        input: &ApplyInput,
-        spheres: bool,
-    ) -> Result<ApplyResult, ControlError> {
+use quantick_control_handlers::bubble_preset::{BubblePresetPort, PresetApplied};
+use quantick_control_schema::bubble_preset::{ApplyInput, ListInput, ListResult};
+impl BubblePresetPort for dyn ControlPort {
+    fn apply_bubble_preset(&mut self, input: &ApplyInput, spheres: bool) -> PresetApplied {
         let owner = pane(self, input.tab_id, input.pane_id)?
             .orderflow
             .as_mut()
             .ok_or_else(|| invalid("The pane has no order-flow view"))?;
-        let changed = owner
-            .apply_named_preset(&input.preset, spheres)
-            .map_err(invalid)?;
+        let applied = owner.apply_named_preset(&input.preset, spheres);
+        let changed = applied.map_err(invalid)?;
         Ok(quantick_control_schema::bubble_preset::applied(
             input,
             changed,
