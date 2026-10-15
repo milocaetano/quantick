@@ -89,6 +89,27 @@ fn look(config: &AppConfig, feed: &str, symbol: &str) -> (BubbleLook, HeatmapCon
     (look, screen)
 }
 
+/// A view of `market` wearing its asset's look from `store`, over presets
+/// already parsed, for the tests that open many.
+fn wearing(
+    store: &SharedAssetBubbles,
+    presets: &bubble_presets::BubblePresetFile,
+    config: &AppConfig,
+    market: (&str, &str),
+) -> (BubbleLook, HeatmapConfig) {
+    let mut screen = HeatmapConfig::default();
+    let document = (
+        presets.clone(),
+        bubble_presets::PresetSource::Embedded,
+        None,
+    );
+    let mut look = BubbleLook::open(document, &mut screen);
+    let (binding, settings) = AssetBinding::bind(store.clone(), config, market, presets, false);
+    look.bind(binding);
+    look.wear(&settings, false, &mut screen);
+    (look, screen)
+}
+
 /// The store at `path`, as the app opens it: read, then migrated once.
 fn open(path: &std::path::Path, config: &AppConfig) -> SharedAssetBubbles {
     let mut store = AssetBubblesStore::load(path.to_path_buf());
@@ -217,7 +238,9 @@ fn tick_choices_and_the_unit_follow_the_mode() {
 }
 
 /// The verdict is the tick sphere rule's (control-handlers TickSpherePane),
-/// which every door asks: it admits no asset without the mode.
+/// which every door asks: it admits no asset without the mode, and no chart
+/// but a tick chart. Where it refuses, the pick leaves the spheres the look
+/// wears as they were; it never takes the preset's in their place.
 #[test]
 fn a_whole_preset_brings_spheres_only_where_the_rule_admits_them() {
     let config = shipped();
@@ -228,10 +251,13 @@ fn a_whole_preset_brings_spheres_only_where_the_rule_admits_them() {
         ("metatrader-b3", "WIN$N", false),
     ] {
         let (mut look, mut screen) = look(&config, feed, symbol);
+        let worn = screen.volume_dots.tick_bubbles;
+        let carried = look.presets().get(SPOT_SPHERES).unwrap().tick_bubbles;
+        assert!(carried.is_some());
         assert!(look.apply_preset(SPOT_SPHERES, &mut screen, spheres));
         assert_eq!(
-            screen.volume_dots.tick_bubbles.is_some(),
-            spheres,
+            screen.volume_dots.tick_bubbles,
+            if spheres { carried } else { worn },
             "{feed}/{symbol}"
         );
     }
@@ -250,6 +276,81 @@ fn a_whole_preset_brings_spheres_only_where_the_rule_admits_them() {
         opened.look.tick_bubbles, None,
         "a declared look brings no spheres without the mode"
     );
+}
+
+/// Review round 2, R2-1: given no spheres by the rule, a whole preset leaves
+/// the spheres the look wears exactly as they were, whatever the preset
+/// carries or lacks, and brings none to a look that wears none. Both doors
+/// (the picker's and the control call's) leave the same screen.
+#[test]
+fn whole_preset_without_the_sphere_verdict_leaves_the_looks_own() {
+    let (config, presets) = (shipped(), bubble_presets::embedded());
+    for market in [
+        ("binance", "BTCUSDT"),
+        ("binance-futures", "BTCUSDT.p"),
+        ("binance", "ETHUSDT"),
+    ] {
+        let open = || {
+            wearing(
+                &AssetBubblesStore::default().shared(),
+                &presets,
+                &config,
+                market,
+            )
+        };
+        let ((mut by_pick, mut picked), (mut by_name, mut named)) = (open(), open());
+        let worn = picked.volume_dots.tick_bubbles;
+        for name in [
+            SPOT_SPHERES,
+            "Binance BTC perpetual spheres",
+            "mini index regions",
+        ] {
+            assert!(by_pick.apply_preset(name, &mut picked, false));
+            by_name.apply_named_preset(name, &mut named, false).unwrap();
+            for (door, screen) in [("apply_preset", &picked), ("apply_named_preset", &named)] {
+                assert_eq!(
+                    screen.volume_dots.tick_bubbles, worn,
+                    "{market:?}: {door}({name})"
+                );
+            }
+        }
+    }
+}
+
+/// Review round 2, R2-1, end to end: a volume chart and a tick chart of one
+/// asset share its look through the store. The volume chart is given no
+/// spheres, and what its pick files for the asset must not take the tick
+/// chart's, which adopts the filed look.
+#[test]
+fn volume_chart_whole_preset_pick_leaves_the_tick_charts_spheres() {
+    let (config, presets) = (shipped(), bubble_presets::embedded());
+    for name in [SPOT_SPHERES, "mini index regions"] {
+        let store = AssetBubblesStore::default().shared();
+        let pane = || wearing(&store, &presets, &config, ("binance", "BTCUSDT"));
+        let ((mut tick, mut tick_screen), (mut volume, mut volume_screen)) = (pane(), pane());
+        let spheres = tick_screen.volume_dots.tick_bubbles;
+        assert!(spheres.is_some(), "BTC wears its declared spheres");
+
+        volume
+            .apply_named_preset(name, &mut volume_screen, false)
+            .unwrap();
+        volume.sync(&volume_screen, false, false);
+        let filed = tick.sync(&tick_screen, false, false);
+        if name == "mini index regions" {
+            assert!(filed.is_some(), "a pick that changes the look files it");
+        }
+        if let Some(adopted) = filed {
+            tick.wear(&adopted.settings, !adopted.lane_moved, &mut tick_screen);
+        }
+        assert_eq!(
+            tick_screen.volume_dots.tick_bubbles, spheres,
+            "{name}: the tick chart keeps its spheres"
+        );
+        assert_eq!(
+            volume_screen.volume_dots.tick_bubbles, spheres,
+            "{name}: and so does the look the volume chart files"
+        );
+    }
 }
 
 /// Review round 1 #4: a sphere preset worn without its spheres reads back as
