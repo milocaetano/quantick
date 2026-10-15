@@ -597,8 +597,10 @@ fn the_move_runs_at_load_and_writes_only_when_a_copy_lands() {
 }
 
 /// Review round 1 #2: each move is settled on its own, so a mode the config
-/// switches on after the first migration still carries its asset's look over
-/// and logs it, while the move already settled is not run again.
+/// switches on after the first migration still carries its asset's look over.
+/// Its log line is read back in `tests/asset_key_move_log.rs`, alone in its
+/// process: this binary has many threads moving keys, and `tracing` decides
+/// whether a line is wanted from the first thread that reaches it.
 #[test]
 fn a_mode_added_after_the_first_migration_still_moves_its_look() {
     let dir = ScratchDir::new("asset-mode-added-later");
@@ -625,33 +627,10 @@ fn a_mode_added_after_the_first_migration_still_moves_its_look() {
     other
         .symbol_asset_modes
         .insert("ETHUSDT".to_owned(), mode("ETH"));
-    let log = Capture::default();
-    let writer = log.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(move || writer.clone())
-        .with_max_level(tracing::Level::INFO)
-        .with_ansi(false)
-        .finish();
-    let store = tracing::subscriber::with_default(subscriber, || {
-        // Another test's thread may have cached the line as unwanted before
-        // this subscriber existed.
-        tracing::callsite::rebuild_interest_cache();
-        open(&path, &later)
-    });
-    let logged = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+    let store = open(&path, &later);
 
     assert_eq!(store.borrow().get("hyperliquid:ETHUSDT"), Some(&eth));
     assert_eq!(store.borrow().get("hyperliquid:BTCUSDT"), Some(&btc));
-    assert!(
-        logged.contains("ASSET_BUBBLES_KEY_MOVED")
-            && logged.contains("asset=\"hyperliquid:ETHUSDT\"")
-            && logged.contains("from=\"ETHUSDT\""),
-        "{logged}"
-    );
-    assert!(
-        !logged.contains("asset=\"hyperliquid:BTCUSDT\""),
-        "a settled move does not run again: {logged}"
-    );
     assert_eq!(store.borrow_mut().flush(), Some(Ok(())));
 }
 
@@ -686,20 +665,6 @@ fn a_file_main_rewrote_reads_back_whole() {
         None,
         "nothing moved over a kept look"
     );
-}
-
-/// Every log line written while it is the subscriber's writer.
-#[derive(Clone, Default)]
-struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-
-impl std::io::Write for Capture {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.lock().unwrap().extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
 }
 
 /// A store as main (ef882174) writes it: format version 1, its own fields and
