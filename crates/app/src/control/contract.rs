@@ -561,12 +561,10 @@ mod tests {
                 "{}: only read-only capabilities sit inside the observer ceiling",
                 capability.id
             );
-            // No capability in this contract is destructive, and the reason
-            // is documented on `super::recovery`'s descriptor: the flag is
-            // coupled to an expected-revision check this host refuses, so
-            // claiming it would advertise a guarantee nothing delivers. The
-            // assertion that matters either way is that nothing which could
-            // end a trade is reachable from the observer ceiling.
+            // The rebuilds under `cockpit.recover` are destructive and sit
+            // behind a permission of their own. The assertion that matters is
+            // that nothing which could end a trade is reachable from the
+            // observer ceiling.
             assert!(
                 !(capability.destructive && reachable),
                 "{}: a destructive capability is inside the observer ceiling",

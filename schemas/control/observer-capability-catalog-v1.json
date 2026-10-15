@@ -8913,7 +8913,7 @@
       },
       "confirmation_class": "none",
       "description": "Throws the timeline away and rebuilds it: refetches history, closes any open paper position (journaled, with its reason) and disarms every strategy. For a terminal that froze while its socket stayed open, where reconnecting fixes nothing. The same call the Reload button in the chart's offline corner makes.",
-      "destructive": false,
+      "destructive": true,
       "dry_run_supported": false,
       "effect": "cockpit.recover",
       "examples": [],
@@ -8993,12 +8993,11 @@
         "cockpit.recover"
       ],
       "reversible": false,
-      "revision_policy": "optional_for_additive",
+      "revision_policy": "required",
       "risk_flags": [
         "timeline_rebuilt"
       ],
       "risk_reducing": false,
-      "stale_input_safety": "A stale caller can only rebuild a chart that had already come back, which costs it the history refetch and any open paper position — journaled, with its reason. The call names the tab and the market it acted on and says whether it really respawned, so a caller that guessed wrong can see it did.",
       "title": "Reload a chart from a new feed session",
       "version": 1
     },
@@ -9007,8 +9006,8 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Selects a pair listed in feed.status.sources through the chart's source selectors. A changed source rebuilds all pane timelines, closes and journals any paper position, disarms strategies and applies the destination asset's saved settings. Refuses while replay owns the tab. Requires the same cockpit.recover permission as feed.reload. Repeating the active pair is a no-op. Read active_feed_id, active_symbol and feed_generation in feed.status.",
-      "destructive": false,
+      "description": "Selects a pair listed in feed.status.sources through the chart's source selectors. A changed source rebuilds all pane timelines, closes and journals any paper position, disarms strategies and applies the destination asset's saved settings. Refuses while replay owns the tab. Requires the same cockpit.recover permission as feed.reload. The tab id and the configured pair are checked before anything changes; repeating the active pair is a no-op. A changed source journals `feed.source.changed` naming who switched it, the pair it left and the pair it chose. Read active_feed_id, active_symbol and feed_generation in feed.status.",
+      "destructive": true,
       "dry_run_supported": false,
       "effect": "cockpit.recover",
       "examples": [],
@@ -9062,6 +9061,13 @@
           "feed_id": {
             "type": "string"
           },
+          "from_feed_id": {
+            "description": "The pair the tab showed before the call; the same pair when nothing\nchanged.",
+            "type": "string"
+          },
+          "from_symbol": {
+            "type": "string"
+          },
           "symbol": {
             "type": "string"
           },
@@ -9076,6 +9082,8 @@
           "tab_id",
           "feed_id",
           "symbol",
+          "from_feed_id",
+          "from_symbol",
           "changed",
           "timeline_kept"
         ],
@@ -9090,12 +9098,11 @@
         "cockpit.recover"
       ],
       "reversible": false,
-      "revision_policy": "optional_for_additive",
+      "revision_policy": "required",
       "risk_flags": [
         "timeline_rebuilt"
       ],
       "risk_reducing": false,
-      "stale_input_safety": "Stable tab IDs and the configured feed/symbol pair are checked before mutation. A changed selection resets that tab's timeline with the same consequences as feed.reload; an already active pair changes nothing. Replay refuses the call.",
       "title": "Select a configured feed and symbol",
       "version": 1
     },

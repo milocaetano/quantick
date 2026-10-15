@@ -45,6 +45,10 @@ pub const RECONNECT_CAPABILITY_ID: &str = "feed.reconnect";
 
 pub const RELOAD_CAPABILITY_ID: &str = "feed.reload";
 
+/// The journal event a reload that respawned writes: who threw the tab's
+/// timeline away. Its payload is the call's result under `feed_reload`.
+pub const RELOAD_EVENT_KIND: &str = "feed.timeline.rebuilt";
+
 /// Which tab to recover. Omitted means the one the trader is looking at — the
 /// same default every other cockpit call takes.
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
@@ -116,10 +120,17 @@ pub fn descriptor(
         // does make the second call cost nothing, within one connection;
         // `gateway/idempotency.rs` states where that stops.
         idempotency: IdempotencyPolicy::Optional,
-        revision_policy: RevisionPolicy::OptionalForAdditive,
-        stale_input_safety: Some(if destructive {
-            "A stale caller can only rebuild a chart that had already come back, which costs it the history refetch and any open paper position — journaled, with its reason. The call names the tab and the market it acted on and says whether it really respawned, so a caller that guessed wrong can see it did.".to_owned()
+        // The registry couples `destructive` to `Required`. The strict tier
+        // every connection uses checks no revision and so asks for none
+        // (`control_host::admission`): a client calls a rebuild without one,
+        // and what guards a stale caller is what the call answers, the tab
+        // and the market it acted on and whether it really respawned.
+        revision_policy: if destructive {
+            RevisionPolicy::Required
         } else {
+            RevisionPolicy::OptionalForAdditive
+        },
+        stale_input_safety: (!destructive).then(|| {
             "A stale caller can only reconnect a transport that had already reconnected, which costs it the overlap window it would otherwise have dropped. The call names the tab and the market it acted on, so a caller that guessed wrong can see it did.".to_owned()
         }),
         dry_run_supported: false,
@@ -129,20 +140,12 @@ pub fn descriptor(
         // reopens it either, and a client reading this field before calling is
         // exactly who needs to know that.
         reversible: !destructive,
-        // Deliberately `false` even for the rebuild, and the reason is a
-        // contract one rather than a claim about the act. `registry.rs` forces
-        // a `destructive` capability to `RevisionPolicy::Required`, while this
-        // host's `ObserverContract::prepare` refuses any envelope carrying
-        // `expected_revisions` at all — so a capability marked destructive here
-        // is one no conforming client can invoke, and the staleness guarantee
-        // the flag advertises is one this host cannot honour. Claiming it would
-        // be the worse lie. What is enforced carries the truth instead: the
-        // `timeline_rebuilt` risk flag, `reversible: false`, a
-        // `cockpit.recover` permission of its own that is marked sensitive and
-        // off until the trader ticks it, and a description naming what it
-        // closes. Lifting this needs the revision check the reference host in
-        // `control::fake` already models and this one has never implemented.
-        destructive: false,
+        // A rebuild closes the paper position and disarms every strategy, and
+        // the flag says so to every client that reads it before calling, along
+        // with the `timeline_rebuilt` risk flag, `reversible: false` and a
+        // `cockpit.recover` permission of its own that is off until the
+        // trader ticks it. Who rebuilt is journaled by the handler.
+        destructive,
         risk_reducing: false,
         required_permissions: permissions
             .into_iter()

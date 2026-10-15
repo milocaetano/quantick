@@ -5,6 +5,11 @@ use serde::{Deserialize, Serialize};
 
 pub const FEED_SOURCE_CAPABILITY_ID: &str = "feed.source.set";
 
+/// The journal event a changed source writes: who switched the tab, and the
+/// pair it left for the pair it chose. Its payload is the call's result under
+/// `feed_source`.
+pub const FEED_SOURCE_EVENT_KIND: &str = "feed.source.changed";
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FeedSourceChoice {
     pub feed_id: String,
@@ -38,6 +43,10 @@ pub struct FeedSourceResult {
     pub tab_id: WireU64,
     pub feed_id: String,
     pub symbol: String,
+    /// The pair the tab showed before the call; the same pair when nothing
+    /// changed.
+    pub from_feed_id: String,
+    pub from_symbol: String,
     pub changed: bool,
     pub timeline_kept: bool,
 }
@@ -46,11 +55,10 @@ pub fn descriptor() -> CapabilityDescriptor {
     let mut descriptor = crate::recovery::descriptor(
         FEED_SOURCE_CAPABILITY_ID,
         "Select a configured feed and symbol",
-        "Selects a pair listed in feed.status.sources through the chart's source selectors. A changed source rebuilds all pane timelines, closes and journals any paper position, disarms strategies and applies the destination asset's saved settings. Refuses while replay owns the tab. Requires the same cockpit.recover permission as feed.reload. Repeating the active pair is a no-op. Read active_feed_id, active_symbol and feed_generation in feed.status.",
+        "Selects a pair listed in feed.status.sources through the chart's source selectors. A changed source rebuilds all pane timelines, closes and journals any paper position, disarms strategies and applies the destination asset's saved settings. Refuses while replay owns the tab. Requires the same cockpit.recover permission as feed.reload. The tab id and the configured pair are checked before anything changes; repeating the active pair is a no-op. A changed source journals `feed.source.changed` naming who switched it, the pair it left and the pair it chose. Read active_feed_id, active_symbol and feed_generation in feed.status.",
         true,
         generated_schema::<FeedSourceInput>(),
     );
     descriptor.output_schema = generated_schema::<FeedSourceResult>();
-    descriptor.stale_input_safety = Some("Stable tab IDs and the configured feed/symbol pair are checked before mutation. A changed selection resets that tab's timeline with the same consequences as feed.reload; an already active pair changes nothing. Replay refuses the call.".to_owned());
     descriptor
 }

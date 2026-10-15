@@ -13,6 +13,13 @@
     "feed_id": {
       "type": "string"
     },
+    "from_feed_id": {
+      "description": "The pair the tab showed before the call; the same pair when nothing\nchanged.",
+      "type": "string"
+    },
+    "from_symbol": {
+      "type": "string"
+    },
     "symbol": {
       "type": "string"
     },
@@ -27,6 +34,8 @@
     "tab_id",
     "feed_id",
     "symbol",
+    "from_feed_id",
+    "from_symbol",
     "changed",
     "timeline_kept"
   ],

@@ -276,9 +276,9 @@ pub fn delete_descriptor() -> CapabilityDescriptor {
     ]);
     descriptor.persistence = EffectPersistence::Durable;
     // Nothing in the contract moves the file back. `destructive` stays false
-    // for the reason `feed.reload`'s does (see `crate::recovery`): the
-    // registry couples it to an expected-revision check this host refuses,
-    // so the loss is declared by the permission, the risk flag and this.
+    // until this capability is re-decided as `feed.reload` was (see
+    // `crate::recovery`); the loss is declared by the permission, the risk
+    // flag and this.
     descriptor.reversible = false;
     descriptor.stale_input_safety = Some(
         "The call names its session by file. A repeated delete finds nothing and is refused with session_not_found, removing nothing more; a stale listing can only name a session that has since moved, which the call refuses the same way."
