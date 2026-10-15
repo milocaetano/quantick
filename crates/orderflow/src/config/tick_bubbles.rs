@@ -1,10 +1,12 @@
 //! Optional tick-chart spheres, independent of the native tape appearance.
 use super::BubbleStyle;
+use rust_decimal::{Decimal, prelude::FromPrimitive as _};
 use serde::{Deserialize, Serialize};
 
 /// The reference, in instrument units at full radius, that a stored value
-/// which is not a positive finite number reads as. A reference is a preset
-/// calibration, so a bad one is replaced rather than guessed from the tape.
+/// which is not a positive amount a decimal can hold reads as
+/// ([`TickBubbleStyle::reference`]). A reference is a preset calibration, so
+/// a bad one is replaced rather than guessed from the tape.
 pub const FALLBACK_REFERENCE_QUANTITY: f64 = 40.0;
 
 impl super::HeatmapConfig {
@@ -68,6 +70,7 @@ mod grouping_tests {
             };
             style.sanitize();
             assert_eq!(style.reference_quantity, super::FALLBACK_REFERENCE_QUANTITY);
+            assert_eq!(style.reference(), rust_decimal::Decimal::from(40));
         }
     }
 }
@@ -77,8 +80,10 @@ pub type TickLook = (TickBubbleStyle, super::HeatmapTheme);
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TickBubbleStyle {
-    /// Minimum common reference in instrument units at the full radius.
-    /// Larger visible groups raise it uniformly, preserving every area ratio.
+    /// The pane's one reference, in instrument units, drawn at the full
+    /// radius: no pan, zoom or new print changes it, and a larger region
+    /// caps at the full radius (`FlowReference::Typed`). Read through
+    /// [`Self::reference`].
     pub reference_quantity: f64,
     /// Full-size radius in logical pixels.
     #[serde(serialize_with = "super::bubbles::serialize_short_f32")]
@@ -93,13 +98,24 @@ pub struct TickBubbleStyle {
 
 impl TickBubbleStyle {
     pub fn sanitize(&mut self) {
-        if !self.reference_quantity.is_finite() || self.reference_quantity <= 0.0 {
+        if usable_reference(self.reference_quantity).is_none() {
             self.reference_quantity = FALLBACK_REFERENCE_QUANTITY;
         }
         let style = self.bubbles();
         self.max_radius = style.max_radius;
         self.label_min_radius = style.label_min_radius;
         self.opacity = style.opacity;
+    }
+
+    /// The reference the spheres are drawn against, the one rule for it:
+    /// [`Self::reference_quantity`] while it is a positive amount a decimal
+    /// can hold, else [`FALLBACK_REFERENCE_QUANTITY`].
+    #[must_use]
+    pub fn reference(self) -> Decimal {
+        usable_reference(self.reference_quantity).unwrap_or_else(|| {
+            usable_reference(FALLBACK_REFERENCE_QUANTITY)
+                .expect("the fallback reference is a positive decimal")
+        })
     }
 
     #[must_use]
@@ -124,4 +140,9 @@ impl TickBubbleStyle {
             u64::from(self.opacity.to_bits()),
         ]
     }
+}
+
+/// `quantity` as a reference, when it is a positive amount a decimal holds.
+fn usable_reference(quantity: f64) -> Option<Decimal> {
+    Decimal::from_f64(quantity).filter(|reference| *reference > Decimal::ZERO)
 }

@@ -126,9 +126,7 @@ pub fn project_styled_flow_executions<R: FlowRunner>(
             height_px: merge_height,
             prices,
             reference: tick_bubbles.map_or(FlowReference::VisibleRegions, |style| {
-                FlowReference::Typed(
-                    Decimal::from_f64(style.reference_quantity).unwrap_or(Decimal::ONE),
-                )
+                FlowReference::Typed(style.reference())
             }),
             radius_limit: tick_bubbles
                 .map_or(FLOW_RADIUS_LIMIT_PX, |style| style.bubbles().max_radius),
