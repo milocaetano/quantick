@@ -250,6 +250,27 @@ fn a_whole_preset_brings_spheres_only_to_a_mode_asset() {
     );
 }
 
+/// Review round 1 #4: a sphere preset worn without its spheres reads back as
+/// itself, so picking the same one again is a no-op: no change, no edit for
+/// the asset to file, no status.
+#[test]
+fn reapplying_a_sphere_preset_without_its_spheres_changes_nothing() {
+    let (mut look, mut screen) = look(&shipped(), "binance", "ETHUSDT");
+    assert_eq!(look.apply_named_preset(SPOT_SPHERES, &mut screen), Ok(true));
+    assert_eq!(screen.volume_dots.tick_bubbles, None);
+    look.sync(&screen, false, false);
+    assert!(!look.asset().unwrap().edited());
+    let (before, status) = (screen.clone(), look.status().map(str::to_owned));
+
+    assert_eq!(
+        look.apply_named_preset(SPOT_SPHERES, &mut screen),
+        Ok(false)
+    );
+    assert_eq!(screen, before);
+    assert!(!look.asset().unwrap().edited(), "nothing to file");
+    assert_eq!(look.status().map(str::to_owned), status);
+}
+
 #[test]
 fn venue_identity_is_market_specific_and_current_feed_presets_cannot_leak() {
     let config = venue_config();
