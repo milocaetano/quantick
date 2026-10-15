@@ -386,7 +386,9 @@ fn merge_window(window: Vec<Group>, view: FlowTapeView) -> Vec<Group> {
 }
 
 /// A merged group as the sphere drawn against `effective_reference`;
-/// `exclusion` says whether opening regions are kept out of the scale.
+/// `exclusion` says whether opening regions are kept out of the scale. An
+/// oversized opening draws its earned area past the radius limit only over
+/// visible regions: a typed reference caps it like any region.
 fn finish_group(
     mut group: Group,
     view: FlowTapeView,
@@ -404,7 +406,7 @@ fn finish_group(
     };
     FlowTapeDot {
         radius: view.radius_limit
-            * if opening_oversized {
+            * if opening_oversized && view.reference.typed().is_none() {
                 use rust_decimal::prelude::ToPrimitive as _;
                 (quantity.to_f64().unwrap_or_default()
                     / effective_reference.to_f64().unwrap_or(1.0))
