@@ -139,6 +139,7 @@ fn key(frame: &Arc<FlowTapeFrame>) -> Key<'_> {
         backing: Some(egui::Color32::from_rgb(19, 23, 34)),
         tick: None,
         background: crate::theme::CANVAS,
+        pixels_per_point: 1.0,
     }
 }
 

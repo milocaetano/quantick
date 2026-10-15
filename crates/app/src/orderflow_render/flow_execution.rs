@@ -63,44 +63,46 @@ pub(super) fn flow_mesh(
     let plan = FlowPresentation::new(frame, [history.min.into(), history.max.into()], |dot| {
         center(dot).map(Into::into)
     });
-    let drawing = FlowDrawing::new(
-        frame,
-        plan,
-        backing.unwrap_or(crate::theme::CANVAS),
-        backing,
-    );
+    let ctx = egui::Context::default();
+    let painter = ctx.layer_painter(egui::LayerId::background());
+    let background = backing.unwrap_or(crate::theme::CANVAS);
+    let drawing = FlowDrawing::styled(frame, plan, background, backing, None, &painter, history);
     let mut mesh = drawing.meshes[0].clone();
     mesh.append(drawing.meshes[1].clone());
     mesh
 }
 
+/// One quantity label as laid out: where its galley goes, and the galley.
+type PlacedLabel = (egui::Pos2, std::sync::Arc<egui::Galley>);
+
+/// Everything a frame paints of one FLOW frame, built once per cached
+/// drawing: each pass's sectors with its rims tessellated in after them, as
+/// egui would at paint time, and the quantity labels already laid out.
 pub(crate) struct FlowDrawing {
     pub plan: FlowPresentation,
     pub(super) meshes: [egui::Mesh; 2],
-    rims: [Vec<egui::Shape>; 2],
-    labels: Vec<quantick_chart::flow_execution::FlowQuantityLabel>,
+    labels: Vec<PlacedLabel>,
 }
 impl FlowDrawing {
-    #[cfg(test)]
-    pub fn new(
-        frame: &FlowTapeFrame,
-        plan: FlowPresentation,
-        background: egui::Color32,
-        backing: Option<egui::Color32>,
-    ) -> Self {
-        Self::styled(frame, plan, background, backing, None)
-    }
-
+    /// `painter` lends the context's tessellation and fonts, and `history`
+    /// is the area the drawing is painted in.
     pub fn styled(
         frame: &FlowTapeFrame,
         plan: FlowPresentation,
         background: egui::Color32,
         backing: Option<egui::Color32>,
         tick_look: Option<quantick_orderflow::TickLook>,
+        painter: &egui::Painter,
+        history: egui::Rect,
     ) -> Self {
         use quantick_orderflow::config::dressing::flow::{colors, ordinary_colors};
         let mut meshes = [egui::Mesh::default(), egui::Mesh::default()];
-        let mut rims = [Vec::new(), Vec::new()];
+        let mut rims = [egui::Mesh::default(), egui::Mesh::default()];
+        let ctx = painter.ctx();
+        let options = ctx.tessellation_options(|options| *options);
+        let mut tessellator =
+            egui::epaint::Tessellator::new(ctx.pixels_per_point(), options, [1, 1], Vec::new());
+        tessellator.set_clip_rect(history.intersect(painter.clip_rect()));
         let tick = tick_look.map(|(tick, _)| tick);
         let tick_style = tick.map(quantick_orderflow::TickBubbleStyle::bubbles);
         let tick_colors = tick_look.map(|(tick, theme)| {
@@ -133,7 +135,7 @@ impl FlowDrawing {
                 && disc.radius >= style.detail_min_radius
             {
                 let hair = super::bubbles::separator_ring_width(disc.radius);
-                rims[usize::from(region.role == FlowRegionRole::Peak)].push(
+                tessellator.tessellate_shape(
                     egui::Shape::circle_stroke(
                         disc.center.into(),
                         disc.radius + hair / 2.0,
@@ -142,6 +144,7 @@ impl FlowDrawing {
                             egui::Color32::from_black_alpha(super::bubbles::SEPARATOR_RING_ALPHA),
                         ),
                     ),
+                    &mut rims[usize::from(region.role == FlowRegionRole::Peak)],
                 );
             }
             let mut angle = f64::from(PIE_START_ANGLE);
@@ -169,11 +172,13 @@ impl FlowDrawing {
                 angle += sweep;
             }
         }
+        for (mesh, rims) in meshes.iter_mut().zip(rims) {
+            mesh.append(rims);
+        }
         Self {
+            labels: lay_out_quantity_labels(painter, history, &labels),
             plan,
             meshes,
-            rims,
-            labels,
         }
     }
 
@@ -184,9 +189,6 @@ impl FlowDrawing {
                 .with_clip_rect(history)
                 .add(egui::Shape::mesh(mesh.clone()));
         }
-        painter
-            .with_clip_rect(history)
-            .extend(self.rims[usize::from(foreground)].clone());
     }
 
     /// Labels finish the candle pass, so no candle contour crosses a quantity.
@@ -195,16 +197,28 @@ impl FlowDrawing {
     }
 }
 
-fn paint_quantity_labels(
+fn paint_quantity_labels(painter: &egui::Painter, history: egui::Rect, labels: &[PlacedLabel]) {
+    let clip = painter.with_clip_rect(history);
+    for (pos, galley) in labels {
+        let shadow = egui::Color32::from_black_alpha(super::constants::LABEL_SHADOW_ALPHA);
+        let offset = super::constants::LABEL_SHADOW_OFFSET_PX;
+        clip.galley_with_override_text_color(*pos + offset, galley.clone(), shadow);
+        clip.galley(*pos, galley.clone(), crate::theme::TEXT_PRIMARY);
+    }
+}
+
+/// The labels that fit their sphere, inside `history` and clear of every
+/// larger one placed before, in the order given (largest sphere first).
+fn lay_out_quantity_labels(
     painter: &egui::Painter,
     history: egui::Rect,
     labels: &[quantick_chart::flow_execution::FlowQuantityLabel],
-) {
-    let clip = painter.with_clip_rect(history);
+) -> Vec<PlacedLabel> {
+    let mut placed = Vec::new();
     let mut occupied = Vec::<egui::Rect>::new();
     for label in labels {
         let radius = label.radius;
-        let galley = clip.layout_no_wrap(
+        let galley = painter.layout_no_wrap(
             label.text.clone(),
             egui::FontId::proportional((radius * super::constants::LABEL_FONT_SCALE).clamp(
                 super::constants::LABEL_MIN_FONT_PX,
@@ -223,14 +237,10 @@ fn paint_quantity_labels(
                 continue;
             }
             occupied.push(bounds);
-            clip.galley_with_override_text_color(
-                pos + super::constants::LABEL_SHADOW_OFFSET_PX,
-                galley.clone(),
-                egui::Color32::from_black_alpha(super::constants::LABEL_SHADOW_ALPHA),
-            );
-            clip.galley(pos, galley, crate::theme::TEXT_PRIMARY);
+            placed.push((pos, galley));
         }
     }
+    placed
 }
 
 #[cfg(test)]
@@ -265,11 +275,9 @@ mod label_tests {
             },
         ];
         let output = ctx.run(egui::RawInput::default(), |ctx| {
-            paint_quantity_labels(
-                &ctx.layer_painter(egui::LayerId::background()),
-                history,
-                &labels,
-            );
+            let painter = ctx.layer_painter(egui::LayerId::background());
+            let placed = lay_out_quantity_labels(&painter, history, &labels);
+            paint_quantity_labels(&painter, history, &placed);
         });
         let bounds: Vec<_> = output
             .shapes
