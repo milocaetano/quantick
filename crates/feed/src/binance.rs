@@ -105,7 +105,7 @@ pub(crate) async fn feed_task(
     tx: mpsc::Sender<FeedEvent>,
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
-    _capabilities: watch::Sender<FeedCapabilities>,
+    capabilities: watch::Sender<FeedCapabilities>,
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
     source: BinanceSource,
 ) {
@@ -120,6 +120,9 @@ pub(crate) async fn feed_task(
     else {
         return; // UI gone
     };
+    if history_retention_limited {
+        withdraw_paging(&capabilities, &symbol);
+    }
 
     // 2. Stream live trades on top, reconnecting as needed. run_with_reconnect
     //    speaks Trade; the loop below tags each as a live FeedEvent and, in the
@@ -146,6 +149,7 @@ pub(crate) async fn feed_task(
         tx,
         book_tx,
         notice_tx,
+        capabilities,
         earliest_id,
         history_retention_limited,
         snapshot_limit: initial_book_depth(),
@@ -236,10 +240,14 @@ struct BinanceLoop {
     tx: mpsc::Sender<FeedEvent>,
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
+    /// The session's capabilities as the tab reads them: paging is withdrawn
+    /// here once the venue retains nothing older.
+    capabilities: watch::Sender<FeedCapabilities>,
     http: BinanceHttp,
     klines: BinanceKlineHttp,
     /// Earliest agg_id held, the cursor *load older* pages back from.
     earliest_id: Option<u64>,
+    /// The venue retains nothing older than `earliest_id`.
     history_retention_limited: bool,
     snapshot_limit: u16,
     book_capture: Option<BookCaptureTask>,
@@ -295,11 +303,7 @@ impl BinanceLoop {
 
     async fn on_link(&mut self, connected: bool) -> ControlFlow<()> {
         let notice = connection_notice(connected, &mut self.ever_connected, "Binance");
-        send_or_break(&self.notice_tx, notice).await?;
-        if connected && self.history_retention_limited {
-            send_or_break(&self.notice_tx, retention_notice()).await?;
-        }
-        ControlFlow::Continue(())
+        send_or_break(&self.notice_tx, notice).await
     }
 
     async fn on_command(&mut self, cmd: Option<FeedCommand>) -> ControlFlow<()> {
@@ -314,7 +318,7 @@ impl BinanceLoop {
                     self.history_retention_limited,
                     count,
                     &self.tx,
-                    &self.notice_tx,
+                    &self.capabilities,
                 )
                 .await;
                 if self.tx.is_closed() {
@@ -637,13 +641,20 @@ fn spawn_ohlcv(
 
 /// Fetch `count` trades older than `earliest`, send them to the UI, and return
 /// the new earliest agg_id (unchanged if nothing older was available or a fetch
-/// failed). `None` earliest means there is no history to page back from.
+/// failed) and whether the venue's retention boundary is reached. `None`
+/// earliest means there is no history to page back from.
 ///
 /// Every call answers the UI with exactly one [`FeedEvent::HistoryPrepended`] —
 /// empty when nothing older exists or the fetch failed — mirroring how a failed
 /// initial backfill still sends an empty [`FeedEvent::Backfilled`]. The UI keys
 /// its loading indicator on that reply, so a silent no-answer would leave a
 /// spinner running forever.
+///
+/// Neither the boundary nor a failed fetch is the feed going offline, so
+/// neither raises a [`FeedNotice`]: the boundary withdraws paging before the
+/// page goes out, so the run judging it ends on the venue having nothing
+/// older, and a failure is logged and answered with an empty page, as
+/// Hyperliquid answers every request.
 async fn load_older(
     http: &BinanceHttp,
     symbol: &str,
@@ -651,10 +662,11 @@ async fn load_older(
     retention_limited: bool,
     count: usize,
     tx: &mpsc::Sender<FeedEvent>,
-    notice_tx: &mpsc::Sender<FeedNotice>,
+    capabilities: &watch::Sender<FeedCapabilities>,
 ) -> (Option<u64>, bool) {
     if retention_limited {
-        let _ = notice_tx.send(retention_notice()).await;
+        // Paging is already withdrawn; a request queued before that is
+        // answered without another HTTP request.
         let _ = tx.send(FeedEvent::HistoryPrepended(Vec::new())).await;
         return (earliest, true);
     }
@@ -667,7 +679,7 @@ async fn load_older(
         Ok(batch) => {
             let new_earliest = batch.trades.first().map(|trade| trade.agg_id).or(earliest);
             if batch.retention_limited {
-                let _ = notice_tx.send(retention_notice()).await;
+                withdraw_paging(capabilities, symbol);
             }
             info!(target: "quantick::app", symbol, count = batch.trades.len(),
                 retention_limited = batch.retention_limited, "older history ready");
@@ -675,24 +687,29 @@ async fn load_older(
             (new_earliest, batch.retention_limited)
         }
         Err(error) => {
-            error!(target: "quantick::app", symbol, %error, "load older failed");
-            let _ = notice_tx
-                .send(FeedNotice::attention(
-                    "Binance trade history could not be fetched",
-                    format!("{error}. Retry the history request."),
-                ))
-                .await;
+            error!(target: "quantick::app", schema_version = 1_u8,
+                event_code = "BINANCE_HISTORY_FETCH_FAILED", symbol, %error,
+                action = "answer_empty", "load older failed");
             let _ = tx.send(FeedEvent::HistoryPrepended(Vec::new())).await;
             (earliest, false)
         }
     }
 }
 
-fn retention_notice() -> FeedNotice {
-    FeedNotice::attention(
-        "Binance perpetual trade history is limited to the recent 48 hours",
-        "Available executions were retained. Record sessions to keep older tape.",
-    )
+/// The venue retains no executions older than the chart holds — USD-M keeps
+/// the recent 48 hours — so *load older* has nothing left to fetch. Withdrawn
+/// the way MetaTrader withdraws it at the terminal's oldest tick: never offer
+/// what nothing can back.
+fn withdraw_paging(capabilities: &watch::Sender<FeedCapabilities>, symbol: &str) {
+    info!(
+        target: "quantick::app",
+        schema_version = 1_u8,
+        event_code = "BINANCE_HISTORY_RETENTION_REACHED",
+        symbol,
+        action = "withdraw_paging",
+        "the venue retains no older executions (USD-M keeps the recent 48 hours)"
+    );
+    capabilities.send_modify(|caps| caps.history_paging = false);
 }
 
 #[cfg(test)]
@@ -703,7 +720,7 @@ mod tests {
     async fn a_known_retention_boundary_answers_retries_without_another_http_request() {
         let source = BinanceHttp::with_market_base(BinanceMarket::UsdM, "http://127.0.0.1:1");
         let (tx, mut rx) = mpsc::channel(2);
-        let (notice_tx, mut notices) = mpsc::channel(2);
+        let (capabilities, _caps) = watch::channel(ProviderKind::BinanceFutures.capabilities());
         for _ in 0..2 {
             assert_eq!(
                 load_older(
@@ -713,16 +730,13 @@ mod tests {
                     true,
                     1000,
                     &tx,
-                    &notice_tx
+                    &capabilities
                 )
                 .await,
                 (Some(1_550), true)
             );
             assert!(
                 matches!(rx.recv().await, Some(FeedEvent::HistoryPrepended(trades)) if trades.is_empty())
-            );
-            assert!(
-                matches!(notices.recv().await, Some(FeedNotice::Attention { headline, .. }) if headline.contains("48 hours"))
             );
         }
     }
