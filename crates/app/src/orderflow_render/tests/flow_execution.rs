@@ -282,6 +282,9 @@ fn common_offset_preserves_vectors_and_radii() {
 #[test]
 fn hiding_flow_legend_keeps_offset_and_exception_facts_but_hides_colour_key() {
     let (mut frame, _) = painted_region(100, 0);
+    // Regional FLOW (WIN) draws the first daily region uncapped; over a typed
+    // reference its note says the area is capped at the radius limit.
+    frame.view.reference = FlowReference::VisibleRegions;
     frame.dots[0].opening_anchor = true;
     frame.dots[0].opening_oversized = true;
     frame.dots[0].opening_quantity = 90.into();

@@ -125,12 +125,72 @@ fn missing_reference_uses_ordinary_volume_and_extreme_ratios_stay_finite() {
 #[test]
 fn oversized_region_caption_remains_visible_and_separates_total_from_opening() {
     let mut frame = frame(&[trade(1000, 100, 32100, Side::Buy)], 200.0);
+    frame.view.reference = FlowReference::VisibleRegions;
     frame.dots[0].opening_oversized = true;
     frame.dots[0].opening_quantity = 31000.into();
     let text = caption_text(Some(&frame), FlowProgress::default(), false).unwrap();
     assert!(text.contains("total 32100, recorded opening 31000"));
     assert!(text.contains("first daily regions"));
     assert!(text.contains("area proportional"));
+}
+
+/// Review round 2, R2-2: the note on a first daily region says what its
+/// sphere drew. Visible regions draw the earned area, proportional to the
+/// gross volume and past the radius limit (WIN's regional FLOW, unchanged);
+/// a typed reference caps the radius at the limit, and the note says so
+/// instead of claiming a proportional area the sphere does not have.
+#[test]
+fn an_oversized_openings_note_says_whether_its_area_was_capped() {
+    let trades = [
+        trade(1000, 95, 40, Side::Buy),
+        trade(1100, 105, 1, Side::Sell),
+    ];
+    let note = |reference| {
+        let frame = project_flow_tape(
+            trades
+                .iter()
+                .enumerate()
+                .map(|(ordinal, trade)| FlowExecution {
+                    ordinal,
+                    slot: ordinal,
+                    accepted_ordinal: 0,
+                    ticks_per_bar: 2.into(),
+                    trade,
+                    opening: ordinal == 0,
+                }),
+            1,
+            2,
+            2,
+            FlowTapeView {
+                reference,
+                radius_limit: 32.0,
+                ..view(200.0)
+            },
+        );
+        let opening = frame.dots.iter().find(|dot| dot.opening_anchor).unwrap();
+        assert!(opening.opening_oversized);
+        let text = caption_text(Some(&frame), FlowProgress::default(), false).unwrap();
+        (opening.radius, text)
+    };
+    let first_daily = "1 first daily regions: total 40, recorded opening 40";
+
+    let (radius, typed) = note(FlowReference::Typed(Decimal::ONE));
+    assert_eq!(radius, 32.0, "capped at the radius limit");
+    assert!(
+        typed.contains(&format!(
+            "{first_daily} (faint area capped at the radius limit)"
+        )),
+        "{typed}"
+    );
+    assert!(!typed.contains("proportional"), "{typed}");
+
+    let (radius, regions) = note(FlowReference::VisibleRegions);
+    assert!(radius > 32.0, "the earned area passes the limit: {radius}");
+    assert!(
+        regions.contains(&format!("{first_daily} (faint area proportional)")),
+        "{regions}"
+    );
+    assert!(!regions.contains("capped"), "{regions}");
 }
 
 /// The caption says where its discs are drawn: regional FLOW keeps its
