@@ -666,6 +666,71 @@ fn a_tick_drawing_paints_each_pass_as_one_mesh() {
     assert!(shapes.len() <= 2, "one mesh per pass");
 }
 
+/// A frame copies no FLOW triangle into the candles' mesh. egui folds
+/// consecutive meshes of one texture and clip into one buffer, copying each
+/// every frame; on a texture of its own, each pass tessellates into a
+/// primitive of its own between the candles', moved whole. That texture is
+/// one white texel, like the font atlas's under `WHITE_UV`, so every triangle
+/// still paints its vertex colour.
+#[test]
+fn flow_passes_tessellate_apart_from_the_candles() {
+    let history = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 795.0));
+    let frame = dense_tick_frame();
+    let ctx = egui::Context::default();
+    let mut passes = Vec::new();
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        let candles = painter.with_clip_rect(history);
+        let drawing = dense_tick_drawing(&frame, &painter, history);
+        for foreground in [false, true] {
+            candles.rect_filled(history.shrink(10.0), 0.0, egui::Color32::GRAY);
+            drawing.paint(&painter, history, foreground);
+            passes.push(drawing.meshes[usize::from(foreground)].clone());
+        }
+        candles.rect_filled(history.shrink(20.0), 0.0, egui::Color32::GRAY);
+    });
+    assert!(
+        passes.iter().all(|pass| !pass.is_empty()),
+        "both passes paint"
+    );
+    let texture = passes[0].texture_id;
+    assert_ne!(texture, egui::TextureId::default(), "FLOW's own texture");
+    assert!(passes.iter().all(|pass| pass.texture_id == texture));
+    let white = output
+        .textures_delta
+        .set
+        .iter()
+        .find(|(id, _)| *id == texture)
+        .map(|(_, delta)| delta.image.clone());
+    let Some(egui::ImageData::Color(white)) = white else {
+        panic!("FLOW's texture is uploaded as a colour image");
+    };
+    assert_eq!(white.size, [1, 1]);
+    assert_eq!(white.pixels, [egui::Color32::WHITE]);
+    let primitives: Vec<_> = ctx
+        .tessellate(output.shapes, 1.0)
+        .into_iter()
+        .map(|primitive| match primitive.primitive {
+            egui::epaint::Primitive::Mesh(mesh) => mesh,
+            egui::epaint::Primitive::Callback(_) => unreachable!("FLOW paints meshes"),
+        })
+        .collect();
+    assert_eq!(
+        primitives.len(),
+        5,
+        "candles, context, candles, peaks, candles"
+    );
+    assert_eq!(primitives[1], passes[0]);
+    assert_eq!(primitives[3], passes[1]);
+    for candles in [&primitives[0], &primitives[2], &primitives[4]] {
+        assert_eq!(
+            candles.vertices.len(),
+            4,
+            "a candle mesh holds no FLOW vertex"
+        );
+    }
+}
+
 /// Review round 1 #10: the cached drawing paints what the per-frame path
 /// painted. The rims tessellated into the mesh give the triangles the old
 /// circle strokes gave after the sectors, and the labels laid out once are
