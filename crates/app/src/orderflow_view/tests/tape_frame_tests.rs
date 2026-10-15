@@ -148,6 +148,7 @@ fn tick_style_edits_keep_retained_tape_membership_and_paint_unchanged() {
     assert!(view.tape_dots.borrow().retained_group_count() > 0);
     let membership = format!("{:?}", view.tape_dots.borrow());
     let style = quantick_orderflow::TickBubbleStyle {
+        viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 30.0,
         max_radius: 25.0,

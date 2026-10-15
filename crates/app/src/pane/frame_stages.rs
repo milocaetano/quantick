@@ -236,7 +236,11 @@ impl<'a> FlowFrame<'a> {
                 owner.cached_config().tick_look(),
             );
             drawing.paint(self.painter, false);
-            self.regional = Some((Arc::clone(frame), drawing));
+            owner.note_flow_paint(frame, drawing.viewport_frame.as_ref());
+            self.regional = Some((
+                Arc::clone(drawing.viewport_frame.as_ref().unwrap_or(frame)),
+                drawing,
+            ));
         }
     }
 
@@ -320,7 +324,10 @@ impl<'a> FlowFrame<'a> {
                 self.painter,
                 history,
                 top,
-                owner.flow_execution_frame(),
+                self.regional
+                    .as_ref()
+                    .map(|(frame, _)| frame.as_ref())
+                    .or_else(|| owner.flow_execution_frame()),
                 owner.flow_execution_progress(),
                 owner.legend_visible(),
                 tick_regions.map(|regions| quantick_chart::flow_execution::SphereChrome {

@@ -387,7 +387,8 @@ pub struct BubblesStateSnapshot {
     /// `forward_book_preview`, one of the asset's bubble settings.
     #[serde(default)]
     pub forward_book_preview: bool,
-    /// Native dots keep the pinned area scale and configured radius.
+    /// Native dots retain their factual groups. An optional viewport scale
+    /// changes their common presentation reference and radius after grouping.
     #[serde(default)]
     pub stable_size: bool,
     /// The quantity drawn at the configured maximum radius for stable native
@@ -397,6 +398,9 @@ pub struct BubblesStateSnapshot {
     /// Absent for automatic sizing and legacy native Tape looks.
     #[serde(default)]
     pub tape_display_full_quantity: Option<CanonicalDecimal>,
+    /// Visible-relative native Tape presentation, independent of grouping.
+    #[serde(default)]
+    pub tape_viewport_scale: Option<crate::tick_bubbles::ViewportBubbleScaleSnapshot>,
     /// The pane shows the tape alone, Bookmap style: the native tape takes
     /// the whole canvas, no candle or candle mark is drawn and time runs
     /// across the full width on the tape's own window. The lane setting
@@ -511,10 +515,12 @@ impl BubblesStateSnapshot {
                 && config.volume_dots.enabled
                 && config.live_lane.stable_size
                 && !config.volume_dots.auto_full
+                && config.bubbles.viewport_scale.is_none()
                 && config.bubbles.size_reference == quantick_orderflow::BubbleSizeReference::Fixed)
                 .then(|| config.bubbles.fixed_reference_decimal())
                 .flatten()
                 .map(canonical_decimal),
+            tape_viewport_scale: config.bubbles.viewport_scale.map(Into::into),
             tape_only: config.live_lane.tape_only,
             ignore_opening_burst_in_scale: config.volume_dots.ignore_opening_burst_in_scale,
             recorded_opening_windows_ms: opening_bursts.to_vec(),
@@ -549,13 +555,19 @@ mod tape_size_tests {
         );
         assert_eq!(config.volume_dots.full_quantity, 1.0);
         let fixed = config.clone();
-        for legacy in 0..4 {
+        for legacy in 0..5 {
             let mut config = fixed.clone();
             match legacy {
                 0 => config.live_lane.stable_size = false,
                 1 => config.volume_dots.auto_full = true,
                 2 => config.bubbles.size_reference = BubbleSizeReference::VisibleP99,
-                _ => config.volume_dots.enabled = false,
+                3 => config.volume_dots.enabled = false,
+                _ => {
+                    config.bubbles.viewport_scale = Some(quantick_orderflow::ViewportBubbleScale {
+                        x_units_per_pixel: 200.0,
+                        price_units_per_pixel: 1.0,
+                    })
+                }
             }
             assert_eq!(snapshot(&config).tape_display_full_quantity, None);
         }

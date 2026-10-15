@@ -228,6 +228,7 @@ fn fixed_native_size_control_edits_the_drawn_reference_and_preserves_grouping() 
         view.config.bubbles.size_reference = BubbleSizeReference::Fixed;
         view.config.bubbles.size_reference_quantity = 8.0;
         let tick = quantick_orderflow::TickBubbleStyle {
+            viewport_scale: None,
             reference_quantity: 1.0,
             reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
             max_radius: 32.0,

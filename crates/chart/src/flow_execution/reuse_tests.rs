@@ -12,6 +12,8 @@ const TICK: quantick_orderflow::TickBubbleStyle = quantick_orderflow::TickBubble
     max_radius: 24.0,
     label_min_radius: 8.0,
     opacity: 0.9,
+    reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
+    viewport_scale: None,
 };
 
 /// Prints a second apart at their own prices, so each is a region of its own.

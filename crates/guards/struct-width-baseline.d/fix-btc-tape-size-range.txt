@@ -1,0 +1,6 @@
+# One optional owned presentation calibration on the existing serialized look.
+# Keeping it beside the existing radius settings preserves old preset keys and
+# avoids an unrelated migration of the legacy BubbleStyle public configuration.
+# It does not add grouping, market data, lifecycle or UI state to this type.
+orderflow::BubbleStyle +1
+!budget +1

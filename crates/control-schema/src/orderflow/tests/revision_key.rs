@@ -42,6 +42,8 @@ fn every_kind_of_config_change_moves_the_engine_revision_key() {
                 max_radius: 32.0,
                 label_min_radius: 12.0,
                 opacity: 0.9,
+                reference_mode: Default::default(),
+                viewport_scale: None,
             });
         }),
         ("a fixed intensity", |c| {

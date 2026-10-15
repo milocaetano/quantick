@@ -47,14 +47,6 @@ impl FlowReference {
             Self::Typed(value) | Self::VisibleRegionsAtLeast(value) => Some(value),
         }
     }
-}
-impl From<crate::TickBubbleStyle> for FlowReference {
-    fn from(style: crate::TickBubbleStyle) -> Self {
-        match style.reference_mode {
-            crate::TickReferenceMode::Fixed => Self::Typed(style.reference()),
-            crate::TickReferenceMode::VisibleMax => Self::VisibleRegionsAtLeast(style.reference()),
-        }
-    }
 
     /// Whether a first daily region past the reference stops at the radius
     /// limit like any region. A typed reference is the pane's one scale, so
@@ -63,6 +55,14 @@ impl From<crate::TickBubbleStyle> for FlowReference {
     /// this, so the note never claims an area the sphere did not draw.
     fn caps_oversized_opening(self) -> bool {
         self.typed().is_some()
+    }
+}
+impl From<crate::TickBubbleStyle> for FlowReference {
+    fn from(style: crate::TickBubbleStyle) -> Self {
+        match style.reference_mode {
+            crate::TickReferenceMode::Fixed => Self::Typed(style.reference()),
+            crate::TickReferenceMode::VisibleMax => Self::VisibleRegionsAtLeast(style.reference()),
+        }
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,7 +188,9 @@ pub struct FlowTapeFrame {
     pub covered_from_ordinal: usize,
     pub cache_limit_reached: bool,
     pub omitted_executions: usize,
+    /// Worker exclusions plus any additional current-camera presentation exclusions.
     pub off_axis_executions: usize,
+    /// Worker exclusions plus any additional current-camera presentation exclusions.
     pub offscreen_executions: usize,
     /// Admitted records with nonpositive quantity or an invalid tick denominator.
     pub ineligible_executions: usize,
@@ -457,6 +459,65 @@ fn resize_dot(dot: &mut FlowTapeDot, view: FlowTapeView, reference: Decimal, exc
 }
 
 impl FlowTapeFrame {
+    /// Repaint retained factual groups on a current camera. Selection happens
+    /// after grouping; the caller supplies only groups whose centers are visible.
+    /// This presentation copy never becomes input to merging or source retention.
+    #[must_use]
+    pub fn viewport_relative(
+        &self,
+        radius_limit: f32,
+        visible: impl FnMut(&FlowTapeDot) -> bool,
+    ) -> Self {
+        let mut frame = self.clone();
+        frame.dots.retain(visible);
+        frame.view.reference = FlowReference::VisibleRegions;
+        frame.view.radius_limit = radius_limit;
+        let full = frame.dots.iter().map(|dot| dot.mark.quantity).max();
+        let ordinary = frame
+            .dots
+            .iter()
+            .map(|dot| {
+                dot.mark.quantity
+                    - if frame.view.exclude_opening && dot.opening_anchor {
+                        dot.opening_quantity
+                    } else {
+                        Decimal::ZERO
+                    }
+            })
+            .max()
+            .unwrap_or_default();
+        let has_opening = frame.dots.iter().any(|dot| dot.opening_anchor);
+        frame.opening_exclusion_effective =
+            frame.view.exclude_opening && has_opening && ordinary > Decimal::ZERO;
+        frame.effective_reference = full.map(|full| {
+            if ordinary > Decimal::ZERO {
+                ordinary
+            } else {
+                full
+            }
+        });
+        frame.scale_basis = match frame.effective_reference {
+            None => FlowScaleBasis::Empty,
+            Some(_) if ordinary <= Decimal::ZERO => FlowScaleBasis::OpeningOnlyFallback,
+            Some(_) if frame.opening_exclusion_effective => {
+                FlowScaleBasis::VisibleOrdinaryRegionMax
+            }
+            Some(_) => FlowScaleBasis::VisibleRegionMax,
+        };
+        if let Some(reference) = frame.effective_reference {
+            for dot in &mut frame.dots {
+                resize_dot(
+                    dot,
+                    frame.view,
+                    reference,
+                    frame.opening_exclusion_effective,
+                );
+            }
+        }
+        frame.order_for_paint();
+        frame
+    }
+
     /// Cached windows and carried history retain factual groups. A visible
     /// floor mode sizes their complete publication against one common scale.
     fn rescale_visible_floor(&mut self) {

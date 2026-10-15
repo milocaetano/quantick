@@ -352,6 +352,7 @@ cluster_ms = 100
 radius_scale = 1.7
 show_marks = true
 
+# Scoped BTC spheres: visible-relative area and gradual camera scaling.
 [[presets]]
 name = "Binance BTC Spot spheres"
 cluster_ms = 500
@@ -362,6 +363,7 @@ volume_dot_auto_full = false
 volume_dot_full_quantity = 1.0
 
 [presets.bubbles]
+viewport_scale = { x_units_per_pixel = 200.0, price_units_per_pixel = 1.0 }
 min_radius = 2.1885
 max_radius = 15.0
 opacity = 0.9
@@ -390,13 +392,14 @@ label_min_radius = 13.5
 
 
 [presets.tick_bubbles]
+viewport_scale = { x_units_per_pixel = 0.045454545454545456, price_units_per_pixel = 1.0 }
 reference_mode = "visible_max"
 reference_quantity = 1.0
 max_radius = 32.0
 label_min_radius = 8.0
 opacity = 0.9
 
-# Scoped tick-chart spheres and a causal native tape with a pinned area scale.
+# The Tape retains its own grouping and camera.
 
 [presets.live_lane]
 native_tape = true
@@ -413,6 +416,7 @@ volume_dot_auto_full = false
 volume_dot_full_quantity = 10.0
 
 [presets.bubbles]
+viewport_scale = { x_units_per_pixel = 200.0, price_units_per_pixel = 1.0 }
 min_radius = 2.1885
 max_radius = 15.0
 opacity = 0.9
@@ -441,6 +445,7 @@ label_min_radius = 13.5
 
 
 [presets.tick_bubbles]
+viewport_scale = { x_units_per_pixel = 0.045454545454545456, price_units_per_pixel = 1.0 }
 reference_mode = "visible_max"
 reference_quantity = 10.0
 max_radius = 36.0

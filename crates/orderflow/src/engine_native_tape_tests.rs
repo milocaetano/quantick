@@ -104,6 +104,7 @@ fn tick_style_changes_preserve_the_native_tape_revision_and_factual_groups() {
     assert!(!tape.is_empty());
     let mut changed = worker.config.clone();
     changed.volume_dots.tick_bubbles = Some(crate::TickBubbleStyle {
+        viewport_scale: None,
         reference_mode: crate::TickReferenceMode::Fixed,
         reference_quantity: 30.0,
         max_radius: 25.0,

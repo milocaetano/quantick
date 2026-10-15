@@ -19,6 +19,9 @@ use quantick_stores::bubble_presets;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
 
+#[path = "btc_tape_range/viewport.rs"]
+mod viewport;
+
 const WINDOW_MS: i64 = 60_000;
 const CELL_MS: i64 = 100;
 
@@ -92,6 +95,9 @@ impl Recording {
             .get(preset)
             .unwrap()
             .apply_to(&mut config);
+        // Retain the previous saved fixed-display policy as the comparator.
+        // The viewport tests opt into the new shipped presentation explicitly.
+        config.bubbles.viewport_scale = None;
         if legacy {
             config.bubbles.size_reference = BubbleSizeReference::VisibleP99;
             config.bubbles.size_reference_quantity = 100.0;
@@ -310,7 +316,7 @@ fn assert_unchanged(
 }
 
 #[test]
-fn shipped_btc_tapes_preserve_source_facts_and_consolidated_sizes() {
+fn saved_fixed_btc_tapes_preserve_source_facts_and_consolidated_sizes() {
     for (name, csv) in recordings() {
         let recording = Recording::new(name, csv);
         let source_ids: BTreeSet<_> = recording.prints.iter().map(|trade| trade.agg_id).collect();
@@ -367,7 +373,7 @@ fn shipped_btc_tapes_preserve_source_facts_and_consolidated_sizes() {
 }
 
 #[test]
-fn shipped_fixed_btc_scale_distinguishes_formerly_saturated_groups_without_regrouping() {
+fn saved_fixed_btc_scale_distinguishes_formerly_saturated_groups_without_regrouping() {
     for (name, csv) in recordings() {
         let fixed = Recording::new(name, csv);
         let legacy = Recording::with_display(name, csv, true);

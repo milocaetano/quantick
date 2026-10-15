@@ -27,6 +27,8 @@ mod presentation;
 pub use presentation::{FlowPresentation, FlowRegionRole, FlowRegionVisual};
 mod reuse;
 pub use reuse::{FlowRegionKey, paint_runs, reusable_regions, reusable_runs};
+mod paint_state;
+pub use paint_state::FlowPaintState;
 
 /// Capture canonical membership when the caller enables regional FLOW.
 pub fn project_flow_executions<R: FlowRunner>(

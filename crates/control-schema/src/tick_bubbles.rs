@@ -28,6 +28,9 @@ pub struct TickBubblesSnapshot {
     pub reference_quantity: String,
     #[serde(default)]
     pub reference_mode: TickBubbleReferenceMode,
+    /// Present when final visible quantities and the current camera size the spheres.
+    #[serde(default)]
+    pub viewport_scale: Option<ViewportBubbleScaleSnapshot>,
     pub max_radius: String,
     pub label_min_radius: String,
     pub opacity: String,
@@ -51,9 +54,27 @@ impl From<quantick_orderflow::TickBubbleStyle> for TickBubblesSnapshot {
                     TickBubbleReferenceMode::VisibleMax
                 }
             },
+            viewport_scale: style.viewport_scale.map(Into::into),
             max_radius: style.max_radius.to_string(),
             label_min_radius: style.label_min_radius.to_string(),
             opacity: style.opacity.to_string(),
+        }
+    }
+}
+
+/// Optional drawing calibration; factual grouping uses its existing settings.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ViewportBubbleScaleSnapshot {
+    /// Bars on candles; milliseconds on native Tape.
+    pub x_units_per_pixel: String,
+    pub price_units_per_pixel: String,
+}
+
+impl From<quantick_orderflow::ViewportBubbleScale> for ViewportBubbleScaleSnapshot {
+    fn from(scale: quantick_orderflow::ViewportBubbleScale) -> Self {
+        Self {
+            x_units_per_pixel: scale.x_units_per_pixel.to_string(),
+            price_units_per_pixel: scale.price_units_per_pixel.to_string(),
         }
     }
 }

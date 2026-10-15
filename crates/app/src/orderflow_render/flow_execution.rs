@@ -87,6 +87,8 @@ pub(crate) struct FlowDrawing {
     pub history: egui::Rect,
     /// The paint order's runs as drawn: each one's pass, then its sectors and rims.
     runs: Vec<(usize, Arc<[egui::Mesh; 2]>)>,
+    /// Exact presentation frame when the current camera resizes tick spheres.
+    pub viewport_frame: Option<Arc<FlowTapeFrame>>,
     labels: Vec<PlacedLabel>,
     /// Each region's key and the cuts into runs, for the next drawing to keep runs by.
     cut: (Vec<flow::FlowRegionKey>, Vec<Range<usize>>),
@@ -187,6 +189,7 @@ impl FlowDrawing {
             runs: runs.collect(),
             labels: flow::place_quantity_labels(labels, area, fit, measure),
             history,
+            viewport_frame: None,
             plan,
             cut: (keys, cuts),
         }

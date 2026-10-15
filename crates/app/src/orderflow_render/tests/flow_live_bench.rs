@@ -49,6 +49,8 @@ const TICK: quantick_orderflow::TickBubbleStyle = quantick_orderflow::TickBubble
     max_radius: 32.0,
     label_min_radius: 8.0,
     opacity: 0.9,
+    reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
+    viewport_scale: None,
 };
 const WARMUP_FRAMES: usize = 240;
 const MEASURED_FRAMES: usize = 900;

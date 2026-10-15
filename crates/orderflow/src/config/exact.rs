@@ -3,7 +3,7 @@
 use super::{
     BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, DisplayGrouping,
     HeatmapConfig, HeatmapTheme, IntensityMode, LaneWindow, LiveLaneStyle, TickBubbleStyle,
-    VolumeDotStyle,
+    TickReferenceMode, ViewportBubbleScale, VolumeDotStyle,
 };
 use rust_decimal::Decimal;
 
@@ -44,6 +44,7 @@ exact_by_eq!(
     BubbleRenderMode,
     BubbleSizeReference,
     ConsumptionMark,
+    TickReferenceMode,
 );
 
 /// Every field by name: the destructuring has no `..`, so a field added to
@@ -73,7 +74,10 @@ exact_fields! {
     VolumeDotStyle {
         tick_bubbles, enabled, full_quantity, auto_full, ignore_opening_burst_in_scale,
     }
-    TickBubbleStyle { reference_quantity, max_radius, label_min_radius, opacity }
+    TickBubbleStyle {
+        reference_quantity, reference_mode, viewport_scale, max_radius, label_min_radius, opacity,
+    }
+    ViewportBubbleScale { x_units_per_pixel, price_units_per_pixel }
     BubbleStyle {
         min_radius, max_radius, opacity, outline_width, halo_strength, detail_min_radius,
         readable_min_radius, hollow_small_buys, render_mode, sphere_shading,
@@ -81,7 +85,7 @@ exact_fields! {
         side_offset, consumption_mark, front_width, front_length_scale, show_impact_ring,
         impact_ring_width, trail_length, trail_opacity, show_quantity_labels,
         show_trade_count, label_min_radius, buy_color, sell_color, front_color,
-        trail_color, label_color,
+        trail_color, label_color, viewport_scale,
     }
     LiveLaneStyle {
         width_share, window, cluster_ms, radius_scale, show_marks, enabled, show_depth,

@@ -32,6 +32,7 @@ mod pending;
 mod pending_overlay;
 mod reduction_band;
 mod tape;
+mod tape_display;
 mod tape_frame;
 mod tape_geometry;
 mod tape_group;
@@ -68,6 +69,7 @@ pub use past_tape::{PastBars, PastTape, past_block_ms, past_span, project_past_t
 pub use pending::PendingTape;
 pub use reduction_band::{EventBand, marker_band};
 pub use tape::{TapeDotGeometry, merge_tape_dots, position_tape_at};
+pub use tape_display::TapeBubbleDisplay;
 pub use tape_frame::{
     TapeFrameInputs, TapeRebuild, project_past_tape_frame, project_retained_tape_frame,
     project_tape_frame, project_tape_frame_with_overlay, tape_frame_work,

@@ -220,3 +220,33 @@ fn visible_floor_reconciles_one_scale_when_history_frames_are_carried() {
     assert_eq!(off_axis.dots.len(), 2);
     assert_eq!(off_axis.effective_reference, Some(900.into()));
 }
+
+#[test]
+fn viewport_presentation_keeps_opening_exclusion_and_never_changes_factual_groups() {
+    let trades = [
+        trade(1_000, 95, 3_600, Side::Buy),
+        trade(2_000, 105, 900, Side::Sell),
+    ];
+    let source = projected(
+        &trades,
+        FlowReference::VisibleRegionsAtLeast(9_000.into()),
+        true,
+    );
+    let before = source.clone();
+    let displayed = source.viewport_relative(5.0, |_| true);
+    assert_eq!(source, before);
+    assert_eq!(displayed.effective_reference, Some(900.into()));
+    assert!(displayed.opening_exclusion_effective);
+    for (raw, drawn) in source.dots.iter().zip(&displayed.dots) {
+        let mut expected = raw.clone();
+        expected.mark.size = drawn.mark.size;
+        expected.radius = drawn.radius;
+        expected.opening_oversized = drawn.opening_oversized;
+        assert_eq!(&expected, drawn);
+        assert_eq!(drawn.radius, if drawn.opening_anchor { 10.0 } else { 5.0 });
+    }
+    let only_opening = source.viewport_relative(5.0, |dot| dot.opening_anchor);
+    assert_eq!(only_opening.effective_reference, Some(3_600.into()));
+    assert!(!only_opening.opening_exclusion_effective);
+    assert_eq!(only_opening.dots[0].radius, 5.0);
+}
