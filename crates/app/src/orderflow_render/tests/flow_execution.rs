@@ -1,4 +1,6 @@
 use super::*;
+#[path = "flow_live_bench.rs"]
+mod live_bench;
 #[path = "flow_stage_profile.rs"]
 mod profile;
 use quantick_engine::{Side, Trade};
