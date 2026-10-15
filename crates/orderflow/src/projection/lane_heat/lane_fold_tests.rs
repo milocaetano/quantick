@@ -262,6 +262,7 @@ fn the_kept_fold_draws_what_a_fresh_fold_draws() {
                 },
                 window.start_ms,
             )),
+            ..LaneFold::default()
         };
         let rebuilt = fresh.project(&history, grouping, window, at_ms, cap);
         let shape = |runs: &[DepthRun]| {

@@ -114,6 +114,49 @@ fn current_source(history: &LiquidityHistory, live_edge_ms: i64) -> Option<(u64,
     })
 }
 
+/// One book's rows over one price window, as [`current_quantities`] read
+/// them.
+type BookRows = Vec<((RestingSide, Decimal), Decimal)>;
+
+/// The current book's rows, read again only when the book, its grouping or
+/// the price window changes: a request over an unchanged book scans
+/// nothing. A book without an update id is read every time, since nothing
+/// then says it is unchanged.
+#[derive(Debug, Default)]
+pub(crate) struct CurrentRows {
+    /// The book generation, its last update id, the grouping and the
+    /// window the rows were read for.
+    key: Option<(u64, u64, EffectiveGrouping, PriceWindow)>,
+    rows: BookRows,
+    #[cfg(test)]
+    pub(super) scans: usize,
+}
+
+impl CurrentRows {
+    fn read(
+        &mut self,
+        history: &LiquidityHistory,
+        (generation, source): (u64, BookSource),
+        prices: PriceWindow,
+        grouping: EffectiveGrouping,
+    ) -> &BookRows {
+        let key = source
+            .update_id
+            .map(|update_id| (generation, update_id, grouping, prices));
+        if key.is_none() || key != self.key {
+            self.rows = current_quantities(history.book(), prices, grouping)
+                .into_iter()
+                .collect();
+            self.key = key;
+            #[cfg(test)]
+            {
+                self.scans += 1;
+            }
+        }
+        &self.rows
+    }
+}
+
 /// The book's quantity in every row the window shows any of, summed over
 /// whole buckets as the grouped runs are: a row the window's edge cuts
 /// still reads every level it holds.
@@ -278,8 +321,10 @@ pub(super) fn project_lane_heat_folded(
             Some(x1)
         }
     {
-        for ((side, price_bucket), quantity) in current_quantities(history.book(), prices, grouping)
-        {
+        let current = fold
+            .current
+            .read(history, (generation, source), prices, grouping);
+        for &((side, price_bucket), quantity) in current {
             if let Some((y0, y1)) = rows.get(price_bucket) {
                 drafts.push(DraftCell {
                     generation,

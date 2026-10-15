@@ -361,12 +361,21 @@ fn choose_width(spans: &[(i64, i64)], slots: usize, current_ms: i64) -> i64 {
 #[derive(Debug, Default)]
 pub struct LaneFold {
     fold: Option<Fold>,
+    /// The current book's rows, kept apart from the fold: a lane that only
+    /// previews the book reads them too.
+    pub(super) current: super::CurrentRows,
 }
 
 impl LaneFold {
-    /// Forget the fold: the lane is not averaged.
+    /// Forget the fold: the lane is not averaged. The current rows stay.
     pub(crate) fn clear(&mut self) {
         self.fold = None;
+    }
+
+    /// How many times the current rows were read from the book.
+    #[cfg(test)]
+    pub(crate) fn current_scans(&self) -> usize {
+        self.current.scans
     }
 
     fn fold(
