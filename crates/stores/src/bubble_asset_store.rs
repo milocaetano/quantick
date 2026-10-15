@@ -49,6 +49,14 @@ mod asset_mode_tests;
 /// The store every view of one app shares.
 pub type SharedAssetBubbles = Rc<RefCell<AssetBubblesStore>>;
 
+/// `store` as an app opens it: migrated for `config` where it was read,
+/// before any view binds ([`AssetBubblesStore::migrate_identities`]).
+#[must_use]
+pub fn open_asset_bubbles(store: &SharedAssetBubbles, config: &AppConfig) -> SharedAssetBubbles {
+    store.borrow_mut().migrate_identities(config);
+    Rc::clone(store)
+}
+
 /// The most flush opportunities — frames — a failing disk waits between two
 /// write attempts. The wait doubles from one up to this.
 pub const MAX_WRITE_BACKOFF: u32 = 512;
