@@ -581,3 +581,75 @@ fn a_static_book_averages_identically_as_the_clock_advances() {
         );
     }
 }
+
+/// Review round 1 #8: the current rows are read from the book once per book
+/// update, grouping and price window, not on every request: a frame over an
+/// unchanged book scans nothing.
+#[test]
+fn an_unchanged_book_is_read_once() {
+    let mut config = crate::HeatmapConfig {
+        enabled: true,
+        price_grouping: Decimal::ONE,
+        ..crate::HeatmapConfig::default()
+    };
+    config.live_lane.forward_book_preview = true;
+    let mut history = LiquidityHistory::new(config);
+    history
+        .install_snapshot(
+            1_000,
+            1,
+            BookSnapshot::new(
+                10,
+                vec![level(95, 100), level(99, 1)],
+                vec![level(101, 1)],
+                BookCoverage::Full,
+            ),
+        )
+        .unwrap();
+    let timeline = BarTimeline::from_bars(
+        0,
+        &[bar()],
+        None,
+        Some(LiveEdge {
+            now_ms: 1_100,
+            window_ms: 1_000,
+            reference_ms: 50,
+            on_newest_bar: true,
+        }),
+    )
+    .with_full_lane_coverage();
+    let grouping = EffectiveGrouping::resolve(DisplayGrouping::Native, Decimal::ONE, 8.into());
+    let wide = PriceWindow::new(94.into(), 102.into()).unwrap();
+    let lane = |history: &LiquidityHistory, fold: &mut LaneFold, prices| {
+        let (cells, _, _) =
+            project_lane_heat_folded(history, &timeline, prices, grouping, 130.into(), fold);
+        cells
+            .into_iter()
+            .filter(|cell| cell.current_book)
+            .map(|cell| (cell.price_bucket, cell.quantity))
+            .collect::<Vec<_>>()
+    };
+    let mut fold = LaneFold::default();
+    let first = lane(&history, &mut fold, wide);
+    assert!(first.contains(&(Decimal::from(95), Decimal::from(100))));
+    assert_eq!(lane(&history, &mut fold, wide), first);
+    assert_eq!(fold.current_scans(), 1, "an unchanged book is read once");
+
+    history
+        .apply_delta(
+            1_050,
+            &BookDelta::new(11, 11, vec![level(95, 7)], Vec::new()),
+        )
+        .unwrap();
+    let updated = lane(&history, &mut fold, wide);
+    assert_eq!(fold.current_scans(), 2, "an update is read");
+    assert!(updated.contains(&(Decimal::from(95), Decimal::from(7))));
+    let narrow = PriceWindow::new(96.into(), 102.into()).unwrap();
+    let narrowed = lane(&history, &mut fold, narrow);
+    assert_eq!(fold.current_scans(), 3, "another window is read");
+    assert!(
+        !narrowed
+            .iter()
+            .any(|(bucket, _)| *bucket == Decimal::from(95))
+    );
+}
