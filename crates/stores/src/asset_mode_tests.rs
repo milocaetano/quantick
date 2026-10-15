@@ -89,9 +89,11 @@ fn look(config: &AppConfig, feed: &str, symbol: &str) -> (BubbleLook, HeatmapCon
     (look, screen)
 }
 
-/// The store at `path`, as the app opens it.
-fn open(path: &std::path::Path, _config: &AppConfig) -> SharedAssetBubbles {
-    AssetBubblesStore::load(path.to_path_buf()).shared()
+/// The store at `path`, as the app opens it: read, then migrated once.
+fn open(path: &std::path::Path, config: &AppConfig) -> SharedAssetBubbles {
+    let mut store = AssetBubblesStore::load(path.to_path_buf());
+    store.migrate_identities(config);
+    store.shared()
 }
 
 #[test]
@@ -421,4 +423,50 @@ fn tick_calibration_survives_restart_without_replacing_a_saved_tape() {
             .max_radius,
         48.0
     );
+}
+
+/// Review #14: the move runs when the store is read, before any view binds,
+/// and asks for a write only when a copy lands. The written file carries the
+/// marker; a file with nothing to move is left exactly as it was.
+#[test]
+fn the_move_runs_at_load_and_writes_only_when_a_copy_lands() {
+    let dir = ScratchDir::new("asset-mode-move-at-load");
+    let path = dir.join(ASSETS_FILE);
+    let mut legacy =
+        AssetBubbles::declared(bubble_presets::embedded().get("default").unwrap(), false);
+    legacy.look.bubbles.max_radius = 23.0;
+    let mut file = AssetBubblesFile::default();
+    file.assets.insert("BTCUSDT".to_owned(), legacy.clone());
+    save_to(&path, &file).unwrap();
+    let before = std::fs::read_to_string(&path).unwrap();
+
+    // The shipped config moves no key that holds a look: nothing to write.
+    let shipped_store = open(&path, &shipped());
+    assert_eq!(shipped_store.borrow_mut().flush(), None);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+
+    // Binding alone moves nothing any more.
+    let config = venue_config();
+    let unmigrated = AssetBubblesStore::load(path.clone()).shared();
+    let _ = bind(&unmigrated, &config, "hyperliquid", "BTCUSDT");
+    assert_eq!(unmigrated.borrow().get("hyperliquid:BTCUSDT"), None);
+    assert_eq!(unmigrated.borrow_mut().flush(), None);
+
+    // Read with a moved key: copied before any view, written once, marked.
+    let store = open(&path, &config);
+    assert_eq!(store.borrow().get("hyperliquid:BTCUSDT"), Some(&legacy));
+    assert_eq!(
+        store.borrow().get("BTCUSDT"),
+        Some(&legacy),
+        "the old key stays"
+    );
+    assert_eq!(store.borrow_mut().flush(), Some(Ok(())));
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(written.contains("key_migration = 1"), "{written}");
+    assert!(
+        written.contains("version = 1"),
+        "main's format version: {written}"
+    );
+    let again = open(&path, &config);
+    assert_eq!(again.borrow_mut().flush(), None, "migrated once");
 }

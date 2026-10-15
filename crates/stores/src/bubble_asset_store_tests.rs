@@ -285,7 +285,7 @@ fn the_later_filing_wins_and_an_import_wins_over_an_unfiled_edit() {
     let mut file = AssetBubblesFile::default();
     file.assets.insert("WIN*".to_owned(), opened.clone());
     save_to(&path, &file).expect("an imported store");
-    store.borrow_mut().reload();
+    store.borrow_mut().reload(&shipped_config());
     let mut late = second;
     late.look.bubbles.max_radius = 26.0;
     b.note_edit();
@@ -311,7 +311,7 @@ fn a_reloaded_store_reaches_every_bound_view() {
     file.assets.insert("WIN*".to_owned(), imported.clone());
     save_to(&path, &file).expect("an imported store");
 
-    store.borrow_mut().reload();
+    store.borrow_mut().reload(&shipped_config());
     let adopted = win
         .adoption()
         .expect("the import reaches the view")
