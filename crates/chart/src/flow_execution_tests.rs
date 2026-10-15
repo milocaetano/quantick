@@ -181,6 +181,7 @@ fn tick_spheres_keep_their_regions_through_axis_drift_and_regroup_on_zoom() {
         });
     }
     let tick = quantick_orderflow::TickBubbleStyle {
+        reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
         max_radius: 32.0,
         label_min_radius: 8.0,
@@ -234,6 +235,7 @@ fn an_unrepresentable_reference_reads_the_named_fallback() {
         side: Side::Buy,
     });
     let tick = quantick_orderflow::TickBubbleStyle {
+        reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1e30,
         max_radius: 32.0,
         label_min_radius: 8.0,
@@ -258,6 +260,61 @@ fn an_unrepresentable_reference_reads_the_named_fallback() {
     assert_eq!(frame.effective_reference, Some(Decimal::from(40)));
 }
 
+#[test]
+fn tick_reference_mode_changes_at_eof_without_changing_execution_regions() {
+    let mut state = ChartState::new(BarSpec::Tick(50));
+    for (id, time, price, quantity) in [(1, 1_000, 95, 4), (2, 2_000, 105, 1)] {
+        state.ingest_live(&Trade {
+            agg_id: id,
+            timestamp_ms: time,
+            price: price.into(),
+            quantity: quantity.into(),
+            side: if id == 1 { Side::Buy } else { Side::Sell },
+        });
+    }
+    let mut tick = quantick_orderflow::TickBubbleStyle {
+        reference_quantity: 1.0,
+        reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
+        max_radius: 32.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    };
+    let mut session = FlowSession::<WorkerRunner>::default();
+    let mut frame = |tick| {
+        for _ in 0..2 {
+            project_styled_flow_executions(
+                true,
+                &state,
+                &mut session,
+                FlowChartView {
+                    slots: 0..1,
+                    pixels: (300.0, 300.0),
+                    range: (90.0, 110.0),
+                    clip: (0.0, 1.0),
+                    tick_bubbles: Some(tick),
+                },
+            );
+        }
+        session.frame().unwrap().clone()
+    };
+    let fixed = frame(tick);
+    tick.reference_mode = quantick_orderflow::TickReferenceMode::VisibleMax;
+    let visible = frame(tick);
+    assert!(visible.layout_revision > fixed.layout_revision);
+    assert_eq!(
+        visible.view.reference,
+        FlowReference::VisibleRegionsAtLeast(1.into())
+    );
+    assert_eq!(visible.effective_reference, Some(4.into()));
+    assert_eq!(visible.source_revision, fixed.source_revision);
+    for (fixed, visible) in fixed.dots.iter().zip(&visible.dots) {
+        let mut resized = fixed.clone();
+        resized.mark.size = visible.mark.size;
+        resized.radius = visible.radius;
+        assert_eq!(&resized, visible);
+    }
+}
+
 /// The live app: a seed larger than one capture packet, then a print before
 /// every frame. The newest-first fill must still reach the oldest seed
 /// candle while prints keep arriving: the live tail never starves history.
@@ -277,6 +334,7 @@ fn a_busy_tape_never_starves_the_seed_of_spheres() {
     let mut state = ChartState::new(BarSpec::Tick(50));
     state.ingest_backfill(&(0..6_000).map(print).collect::<Vec<_>>());
     let tick = quantick_orderflow::TickBubbleStyle {
+        reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
         max_radius: 32.0,
         label_min_radius: 8.0,
@@ -340,6 +398,7 @@ fn a_busy_seed_fill_is_bounded_and_the_live_edge_publishes_at_once() {
     let mut state = ChartState::new(BarSpec::Tick(50));
     state.ingest_backfill(&(0..SEED).map(print).collect::<Vec<_>>());
     let tick = quantick_orderflow::TickBubbleStyle {
+        reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
         max_radius: 32.0,
         label_min_radius: 8.0,
@@ -416,6 +475,7 @@ fn seed_and_live_candles_all_get_spheres() {
     let mut state = ChartState::new(BarSpec::Tick(50));
     state.ingest_backfill(&(0..1_000).map(print).collect::<Vec<_>>());
     let tick = quantick_orderflow::TickBubbleStyle {
+        reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
         max_radius: 32.0,
         label_min_radius: 8.0,
@@ -478,6 +538,7 @@ fn a_pan_keeps_every_tick_sphere_on_screen() {
         });
     }
     let tick = quantick_orderflow::TickBubbleStyle {
+        reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 4.0,
         max_radius: 32.0,
         label_min_radius: 8.0,
@@ -596,6 +657,7 @@ fn bench_flow_frames_over_five_days() {
     state.ingest_backfill(&history);
     drop(history);
     let tick = quantick_orderflow::TickBubbleStyle {
+        reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 1.0,
         max_radius: 32.0,
         label_min_radius: 8.0,

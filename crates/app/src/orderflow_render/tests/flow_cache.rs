@@ -90,6 +90,7 @@ fn tick_spheres_stand_on_their_executions() {
     ));
     assert_eq!(frame.dots.len(), 2);
     let tick = quantick_orderflow::TickBubbleStyle {
+        reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 4500.0,
         max_radius: 12.0,
         label_min_radius: 8.0,
@@ -222,6 +223,7 @@ fn tick_sphere_appearance_invalidates_cached_mesh_without_changing_facts() {
     let mut styled = key(&frame);
     styled.tick = Some((
         quantick_orderflow::TickBubbleStyle {
+            reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
             reference_quantity: 10.0,
             max_radius: 36.0,
             label_min_radius: 8.0,
@@ -266,6 +268,7 @@ fn tick_spheres_follow_the_pane_theme() {
     let mut bookmap = key(&frame);
     bookmap.tick = Some((
         quantick_orderflow::TickBubbleStyle {
+            reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
             reference_quantity: 10.0,
             max_radius: 36.0,
             label_min_radius: 8.0,

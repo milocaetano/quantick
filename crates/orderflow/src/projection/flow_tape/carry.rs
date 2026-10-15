@@ -115,6 +115,7 @@ impl FlowTapeFrame {
                 })
                 .cloned(),
         );
+        frame.rescale_visible_floor();
         frame.order_for_paint();
         frame
     }

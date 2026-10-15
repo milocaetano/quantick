@@ -148,12 +148,17 @@ fn tick_style_edits_keep_retained_tape_membership_and_paint_unchanged() {
     assert!(view.tape_dots.borrow().retained_group_count() > 0);
     let membership = format!("{:?}", view.tape_dots.borrow());
     let style = quantick_orderflow::TickBubbleStyle {
+        reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 30.0,
         max_radius: 25.0,
         label_min_radius: 8.0,
         opacity: 0.8,
     };
-    for tick in [Some(style), Some(style), None] {
+    let visible = quantick_orderflow::TickBubbleStyle {
+        reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
+        ..style
+    };
+    for tick in [Some(style), Some(visible), Some(style), None] {
         view.edit_config(|config| config.volume_dots.tick_bubbles = tick);
         assert_eq!(
             format!("{:?}", view.tape_dots.borrow()),

@@ -127,9 +127,7 @@ pub fn project_styled_flow_executions<R: FlowRunner>(
             width_px: pixels.0,
             height_px: merge_height,
             prices,
-            reference: tick_bubbles.map_or(FlowReference::VisibleRegions, |style| {
-                FlowReference::Typed(style.reference())
-            }),
+            reference: tick_bubbles.map_or(FlowReference::VisibleRegions, FlowReference::from),
             radius_limit: tick_bubbles
                 .map_or(FLOW_RADIUS_LIMIT_PX, |style| style.bubbles().max_radius),
             merge_support_radius: FLOW_MERGE_SUPPORT_RADIUS_PX,

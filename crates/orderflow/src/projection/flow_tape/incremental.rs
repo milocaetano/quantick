@@ -2,10 +2,11 @@
 //! region windows a print joined since the last projection.
 //!
 //! FLOW merges inside region windows of [`FLOW_REGION_WINDOW_MS`], never
-//! across them, and a typed reference sizes each sphere on its own. Under
-//! one view and one opening selection a new print can therefore change only
-//! the spheres of its own window, and the live edge costs one window rather
-//! than every candle on screen. The frame is exactly the one
+//! across them. Under one view and one opening selection a new print changes
+//! only its window's groups. Fixed references retain their radii; a visible
+//! maximum with a floor resizes the cloned output at its common reference.
+//! The live edge merges one window rather than every candle on screen.
+//! The frame is exactly the one
 //! [`FlowTapeSource::project`] builds.
 use super::super::{
     Admission, FLOW_REGION_WINDOW_MS, FlowScaleBasis, FlowTapeDot, FlowTapeFrame, FlowTapeView,
@@ -116,9 +117,10 @@ impl FlowTapeSource {
     }
 
     /// [`Self::project`] for a worker that keeps its projections. Under a
-    /// typed reference, with the view and openings of the last call, only
-    /// the region windows a print joined since then are merged and finished
-    /// again; the frame is the one [`Self::project`] builds. Every other
+    /// configured reference, with the view and openings of the last call, only
+    /// the region windows a print joined since then are merged again. A visible
+    /// floor resizes the output without regrouping; the frame is the one
+    /// [`Self::project`] builds. Every other
     /// projection is [`Self::project`] itself.
     pub fn project_cached(
         &mut self,
@@ -176,6 +178,7 @@ impl FlowTapeSource {
             frame.scale_basis = FlowScaleBasis::TypedReference;
             frame.opening_exclusion_effective = view.exclude_opening && opening;
         }
+        frame.rescale_visible_floor();
         frame.order_for_paint();
         self.memo = Some(memo);
         frame

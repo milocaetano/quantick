@@ -24,18 +24,33 @@ pub struct TickBubblesResult {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct TickBubblesSnapshot {
-    /// Instrument quantity at max_radius. Larger visible groups increase the
-    /// common reference uniformly, so all areas remain proportional.
+    /// Full-radius quantity in fixed mode; configured floor in visible-max mode.
     pub reference_quantity: String,
+    #[serde(default)]
+    pub reference_mode: TickBubbleReferenceMode,
     pub max_radius: String,
     pub label_min_radius: String,
     pub opacity: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TickBubbleReferenceMode {
+    #[default]
+    Fixed,
+    VisibleMax,
 }
 
 impl From<quantick_orderflow::TickBubbleStyle> for TickBubblesSnapshot {
     fn from(style: quantick_orderflow::TickBubbleStyle) -> Self {
         Self {
             reference_quantity: style.reference_quantity.to_string(),
+            reference_mode: match style.reference_mode {
+                quantick_orderflow::TickReferenceMode::Fixed => TickBubbleReferenceMode::Fixed,
+                quantick_orderflow::TickReferenceMode::VisibleMax => {
+                    TickBubbleReferenceMode::VisibleMax
+                }
+            },
             max_radius: style.max_radius.to_string(),
             label_min_radius: style.label_min_radius.to_string(),
             opacity: style.opacity.to_string(),

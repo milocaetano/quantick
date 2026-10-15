@@ -227,6 +227,14 @@ fn fixed_native_size_control_edits_the_drawn_reference_and_preserves_grouping() 
         view.config.volume_dots.full_quantity = 1.0;
         view.config.bubbles.size_reference = BubbleSizeReference::Fixed;
         view.config.bubbles.size_reference_quantity = 8.0;
+        let tick = quantick_orderflow::TickBubbleStyle {
+            reference_quantity: 1.0,
+            reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
+            max_radius: 32.0,
+            label_min_radius: 8.0,
+            opacity: 0.9,
+        };
+        view.config.volume_dots.tick_bubbles = Some(tick);
         let before = view.config.clone();
         let (ctx, text) = open_controls(&mut view);
         assert_eq!(
@@ -281,6 +289,11 @@ fn fixed_native_size_control_edits_the_drawn_reference_and_preserves_grouping() 
             vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
         );
         assert_eq!(view.config.bubbles.size_reference_quantity, 16.0);
+        assert_eq!(
+            view.config.volume_dots.tick_bubbles,
+            Some(tick),
+            "editing the Tape reference preserves the candle reference and policy"
+        );
         assert_eq!(
             view.config.volume_dots.full_quantity, 1.0,
             "grouping scale stays intact"

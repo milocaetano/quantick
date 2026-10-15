@@ -391,6 +391,7 @@ label_min_radius = 13.5
 
 
 [presets.tick_bubbles]
+reference_mode = "visible_max"
 reference_quantity = 1.0
 max_radius = 32.0
 label_min_radius = 8.0
@@ -441,6 +442,7 @@ label_min_radius = 13.5
 
 
 [presets.tick_bubbles]
+reference_mode = "visible_max"
 reference_quantity = 10.0
 max_radius = 36.0
 label_min_radius = 8.0
