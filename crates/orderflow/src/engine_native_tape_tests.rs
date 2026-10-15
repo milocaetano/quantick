@@ -104,12 +104,20 @@ fn tick_style_changes_preserve_the_native_tape_revision_and_factual_groups() {
     assert!(!tape.is_empty());
     let mut changed = worker.config.clone();
     changed.volume_dots.tick_bubbles = Some(crate::TickBubbleStyle {
+        reference_mode: crate::TickReferenceMode::Fixed,
         reference_quantity: 30.0,
         max_radius: 25.0,
         label_min_radius: 8.0,
         opacity: 0.8,
     });
-    for style in [changed.clone(), changed, worker.config.clone()] {
+    let mut visible = changed.clone();
+    visible
+        .volume_dots
+        .tick_bubbles
+        .as_mut()
+        .unwrap()
+        .reference_mode = crate::TickReferenceMode::VisibleMax;
+    for style in [changed.clone(), visible, changed, worker.config.clone()] {
         worker.apply_visual_config(style);
         let after = worker.project_at(&input, now).unwrap();
         assert_eq!(worker.config_revision, revision);

@@ -252,7 +252,7 @@
           "type": "boolean"
         },
         "opening_capped": {
-          "description": "Compatibility field: FLOW no longer caps opening regions; always false.",
+          "description": "Legacy compatibility field, always false; radius_px reports actual area.",
           "type": "boolean"
         },
         "opening_oversized": {
@@ -645,6 +645,13 @@
       ],
       "type": "object"
     },
+    "TickBubbleReferenceMode": {
+      "enum": [
+        "fixed",
+        "visible_max"
+      ],
+      "type": "string"
+    },
     "TickBubblesSnapshot": {
       "properties": {
         "label_min_radius": {
@@ -656,8 +663,12 @@
         "opacity": {
           "type": "string"
         },
+        "reference_mode": {
+          "$ref": "#/$defs/TickBubbleReferenceMode",
+          "default": "fixed"
+        },
         "reference_quantity": {
-          "description": "Instrument quantity at max_radius. Larger visible groups increase the\ncommon reference uniformly, so all areas remain proportional.",
+          "description": "Full-radius quantity in fixed mode; configured floor in visible-max mode.",
           "type": "string"
         }
       },

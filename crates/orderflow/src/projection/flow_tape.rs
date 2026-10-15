@@ -36,12 +36,23 @@ pub enum FlowReference {
     /// zoom or new print resizes a sphere, and a larger region caps at the
     /// radius limit.
     Typed(Decimal),
+    /// Visible ordinary region maximum with a configured floor. This keeps
+    /// ordinary areas proportional when regions exceed the preset quantity.
+    VisibleRegionsAtLeast(Decimal),
 }
 impl FlowReference {
     pub fn typed(self) -> Option<Decimal> {
         match self {
             Self::VisibleRegions => None,
-            Self::Typed(value) => Some(value),
+            Self::Typed(value) | Self::VisibleRegionsAtLeast(value) => Some(value),
+        }
+    }
+}
+impl From<crate::TickBubbleStyle> for FlowReference {
+    fn from(style: crate::TickBubbleStyle) -> Self {
+        match style.reference_mode {
+            crate::TickReferenceMode::Fixed => Self::Typed(style.reference()),
+            crate::TickReferenceMode::VisibleMax => Self::VisibleRegionsAtLeast(style.reference()),
         }
     }
 }
@@ -52,6 +63,7 @@ pub enum FlowScaleBasis {
     VisibleOrdinaryRegionMax,
     OpeningOnlyFallback,
     TypedReference,
+    VisibleRegionMaxWithFloor,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -388,7 +400,7 @@ fn merge_window(window: Vec<Group>, view: FlowTapeView) -> Vec<Group> {
 /// A merged group as the sphere drawn against `effective_reference`;
 /// `exclusion` says whether opening regions are kept out of the scale. An
 /// oversized opening draws its earned area past the radius limit only over
-/// visible regions: a typed reference caps it like any region.
+/// visible regions: a fixed reference caps it like any region.
 fn finish_group(
     mut group: Group,
     view: FlowTapeView,
@@ -396,7 +408,6 @@ fn finish_group(
     exclusion: bool,
 ) -> FlowTapeDot {
     let quantity = group.quantity();
-    let opening_oversized = exclusion && group.opening_anchor && quantity > effective_reference;
     group.members.parts.sort_by_key(|part| part[0].ordinal);
     let mut mark = group.moment.finish(effective_reference);
     mark.folded_marks = if group.cells > 1 {
@@ -404,18 +415,10 @@ fn finish_group(
     } else {
         0
     };
-    FlowTapeDot {
-        radius: view.radius_limit
-            * if opening_oversized && view.reference.typed().is_none() {
-                use rust_decimal::prelude::ToPrimitive as _;
-                (quantity.to_f64().unwrap_or_default()
-                    / effective_reference.to_f64().unwrap_or(1.0))
-                .sqrt() as f32
-            } else {
-                super::normalized_area_size(quantity, effective_reference)
-            },
+    let mut dot = FlowTapeDot {
+        radius: 0.0,
         opening_anchor: group.opening_anchor,
-        opening_oversized,
+        opening_oversized: false,
         candle_position: group.position_quantity / quantity,
         mark,
         members: group.members,
@@ -423,6 +426,68 @@ fn finish_group(
         end_slot: group.end_slot,
         opening_quantity: group.opening,
         native_cells: group.cells,
+    };
+    resize_dot(&mut dot, view, effective_reference, exclusion);
+    dot
+}
+
+/// Paint an already consolidated region at the frame's common reference.
+/// The factual group, its membership and its center never change here.
+fn resize_dot(dot: &mut FlowTapeDot, view: FlowTapeView, reference: Decimal, exclusion: bool) {
+    dot.mark.size = super::normalized_area_size(dot.mark.quantity, reference);
+    dot.opening_oversized = exclusion && dot.opening_anchor && dot.mark.quantity > reference;
+    dot.radius = view.radius_limit
+        * if dot.opening_oversized && !matches!(view.reference, FlowReference::Typed(_)) {
+            use rust_decimal::prelude::ToPrimitive as _;
+            (dot.mark.quantity.to_f64().unwrap_or_default() / reference.to_f64().unwrap_or(1.0))
+                .sqrt() as f32
+        } else {
+            dot.mark.size
+        };
+}
+
+impl FlowTapeFrame {
+    /// Cached windows and carried history retain factual groups. A visible
+    /// floor mode sizes their complete publication against one common scale.
+    fn rescale_visible_floor(&mut self) {
+        let FlowReference::VisibleRegionsAtLeast(floor) = self.view.reference else {
+            return;
+        };
+        if self.dots.is_empty() {
+            return;
+        }
+        let visible = |dot: &&FlowTapeDot| {
+            dot.candle_position >= self.view.clip_left
+                && dot.candle_position <= self.view.clip_right
+                && dot.mark.price >= self.view.prices.low
+                && dot.mark.price <= self.view.prices.high
+        };
+        let reference = self
+            .dots
+            .iter()
+            .filter(visible)
+            .map(|dot| {
+                dot.mark.quantity
+                    - if self.view.exclude_opening && dot.opening_anchor {
+                        dot.opening_quantity
+                    } else {
+                        Decimal::ZERO
+                    }
+            })
+            .max()
+            .unwrap_or_default()
+            .max(floor);
+        self.effective_reference = Some(reference);
+        self.scale_basis = FlowScaleBasis::VisibleRegionMaxWithFloor;
+        self.opening_exclusion_effective = self.view.exclude_opening
+            && self
+                .dots
+                .iter()
+                .filter(visible)
+                .any(|dot| dot.opening_anchor);
+        for dot in &mut self.dots {
+            resize_dot(dot, self.view, reference, self.opening_exclusion_effective);
+        }
     }
 }
 
@@ -490,6 +555,11 @@ fn finish_groups(
         FlowReference::Typed(reference) => (
             reference,
             FlowScaleBasis::TypedReference,
+            view.exclude_opening && has_opening,
+        ),
+        FlowReference::VisibleRegionsAtLeast(reference) => (
+            reference.max(ordinary_max),
+            FlowScaleBasis::VisibleRegionMaxWithFloor,
             view.exclude_opening && has_opening,
         ),
         FlowReference::VisibleRegions if ordinary_max > Decimal::ZERO => {

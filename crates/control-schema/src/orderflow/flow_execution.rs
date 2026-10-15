@@ -80,7 +80,22 @@ impl From<FlowScaleBasis> for FlowExecutionScaleBasis {
             FlowScaleBasis::VisibleOrdinaryRegionMax => Self::VisibleOrdinaryRegionMax,
             FlowScaleBasis::OpeningOnlyFallback => Self::OpeningOnlyFallback,
             FlowScaleBasis::TypedReference => Self::TypedReference,
+            FlowScaleBasis::VisibleRegionMaxWithFloor => Self::VisibleRegionMax,
         }
+    }
+}
+
+impl FlowExecutionScaleBasis {
+    fn for_frame(frame: &FlowTapeFrame) -> Self {
+        if frame.scale_basis == FlowScaleBasis::VisibleRegionMaxWithFloor {
+            if frame.effective_reference == frame.view.reference.typed() {
+                return Self::TypedReference;
+            }
+            if frame.opening_exclusion_effective {
+                return Self::VisibleOrdinaryRegionMax;
+            }
+        }
+        frame.scale_basis.into()
     }
 }
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -132,7 +147,7 @@ pub struct FlowExecutionMark {
     /// Radius of a disc with the same area as the sell sector; not a separate painted disc.
     pub sell_radius_px: CanonicalDecimal,
     pub opening_quantity: CanonicalDecimal,
-    /// Compatibility field: FLOW no longer caps opening regions; always false.
+    /// Legacy compatibility field, always false; radius_px reports actual area.
     pub opening_capped: bool,
     #[serde(default)]
     pub opening_anchor: bool,
@@ -176,8 +191,9 @@ impl From<(&FlowTapeFrame, FlowProgress)> for FlowExecutionSnapshot {
             scale_mode: match frame.view.reference {
                 FlowReference::VisibleRegions => FlowExecutionScaleMode::VisibleRegions,
                 FlowReference::Typed(_) => FlowExecutionScaleMode::Typed,
+                FlowReference::VisibleRegionsAtLeast(_) => FlowExecutionScaleMode::VisibleRegions,
             },
-            scale_basis: frame.scale_basis.into(),
+            scale_basis: FlowExecutionScaleBasis::for_frame(frame),
             typed_reference: frame.view.reference.typed().map(canonical_decimal),
             effective_reference: frame.effective_reference.map(canonical_decimal),
             display_policy: FlowExecutionDisplayPolicy::VolumeWeightedWithDimContext,

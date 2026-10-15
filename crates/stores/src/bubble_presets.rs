@@ -511,6 +511,10 @@ mod tests {
                 assert!(preset.overlap_merge);
                 let tick = preset.tick_bubbles.unwrap();
                 assert_eq!(
+                    tick.reference_mode,
+                    quantick_orderflow::TickReferenceMode::VisibleMax
+                );
+                assert_eq!(
                     tick.max_radius,
                     if preset.name.contains("Spot") {
                         32.0
@@ -520,6 +524,11 @@ mod tests {
                 );
                 assert_eq!(tick.label_min_radius, 8.0);
                 assert_eq!(tick.opacity, 0.9);
+            } else if let Some(tick) = preset.tick_bubbles {
+                assert_eq!(
+                    tick.reference_mode,
+                    quantick_orderflow::TickReferenceMode::Fixed
+                );
             }
         }
         assert_eq!(parse(&render(&shipped).unwrap()).unwrap(), shipped);

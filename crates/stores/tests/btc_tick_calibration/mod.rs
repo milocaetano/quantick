@@ -3,7 +3,7 @@ use super::*;
 use quantick_orderflow::projection::flow_tape::{
     FlowExecution, FlowReference, FlowTapeView, project_flow_tape,
 };
-use rust_decimal::prelude::{FromPrimitive as _, ToPrimitive as _};
+use rust_decimal::prelude::ToPrimitive as _;
 
 #[test]
 fn btc_tick_spheres_preserve_exact_sides_membership_and_area_at_each_zoom() {
@@ -46,9 +46,7 @@ fn btc_tick_spheres_preserve_exact_sides_membership_and_area_at_each_zoom() {
                     width_px: width,
                     height_px: 500.0,
                     prices: PriceWindow::new(first_price, last_price).unwrap(),
-                    reference: FlowReference::Typed(
-                        Decimal::from_f64(style.reference_quantity).unwrap(),
-                    ),
+                    reference: FlowReference::from(style),
                     radius_limit: style.max_radius,
                     merge_support_radius: 6.0,
                     exclude_opening: false,
@@ -81,31 +79,28 @@ fn btc_tick_spheres_preserve_exact_sides_membership_and_area_at_each_zoom() {
                 .collect();
             members.sort_unstable();
             assert_eq!(members, (0..prints.len()).collect::<Vec<_>>());
-            // #9: the preset's reference is the pane's one scale, whatever
-            // is on screen.
-            let reference = style.reference_quantity;
+            let expected_reference = frame
+                .dots
+                .iter()
+                .map(|dot| dot.mark.quantity)
+                .max()
+                .unwrap()
+                .max(style.reference());
             assert_eq!(
                 frame.effective_reference,
-                Decimal::from_f64(reference),
-                "{name}: the typed reference holds"
+                Some(expected_reference),
+                "{name}: the visible maximum respects the configured floor"
             );
+            let reference = expected_reference.to_f64().unwrap();
             let area_per_btc = f64::from(style.max_radius).powi(2) / reference;
-            let (mut eligible, mut capped) = (0, 0);
+            let mut eligible = 0;
             for dot in &frame.dots {
                 let quantity = dot.mark.quantity.to_f64().unwrap();
-                if quantity > reference {
-                    assert_eq!(
-                        dot.radius, style.max_radius,
-                        "{name}: a region over the reference caps at the full radius"
-                    );
-                    capped += 1;
-                } else {
-                    let expected = quantity * area_per_btc;
-                    assert!(
-                        (f64::from(dot.radius).powi(2) - expected).abs() <= expected * 0.00001,
-                        "{name}: area is proportional up to the reference"
-                    );
-                }
+                let expected = quantity * area_per_btc;
+                assert!(
+                    (f64::from(dot.radius).powi(2) - expected).abs() <= expected * 0.00001,
+                    "{name}: all ordinary areas remain proportional"
+                );
                 let (buy, sell) = dot.side_shares();
                 assert!((buy + sell - 1.0).abs() < 1e-10);
                 eligible += usize::from(dot.radius >= style.label_min_radius);
@@ -115,7 +110,7 @@ fn btc_tick_spheres_preserve_exact_sides_membership_and_area_at_each_zoom() {
                 "{name}: meaningful quantities must be eligible in quiet and busy views"
             );
             eprintln!(
-                "BTC_LEFT {name} width={width} raw={} regions={} exact={} scale={} largest_radius={} labels_eligible={eligible} capped_regions={capped}",
+                "BTC_LEFT {name} width={width} raw={} regions={} exact={} scale={} largest_radius={} labels_eligible={eligible}",
                 prints.len(),
                 frame.dots.len(),
                 total,

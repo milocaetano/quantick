@@ -6,6 +6,8 @@ mod hull;
 mod opening_anchor;
 #[path = "tests/reading.rs"]
 mod reading;
+#[path = "tests/reference_modes.rs"]
+mod reference_modes;
 #[path = "tests/time_regions.rs"]
 mod time_regions;
 
@@ -15,6 +17,15 @@ mod time_regions;
 /// the frame `project` builds.
 #[test]
 fn the_cached_projection_is_the_projection() {
+    for reference in [
+        FlowReference::Typed(900.into()),
+        FlowReference::VisibleRegionsAtLeast(900.into()),
+    ] {
+        check_cached_projection(reference);
+    }
+}
+
+fn check_cached_projection(reference: FlowReference) {
     let trades: Vec<Trade> = (0..400_i64)
         .map(|n| {
             let side = if n % 3 == 0 { Side::Sell } else { Side::Buy };
@@ -41,6 +52,7 @@ fn the_cached_projection_is_the_projection() {
         clip_left: 0.into(),
         clip_right: 100.into(),
         width_px: 20_000.0,
+        reference,
         ..view(20_000.0)
     };
     let mut source = FlowTapeSource::default();
