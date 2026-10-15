@@ -185,3 +185,33 @@ fn the_sphere_caption_names_the_configured_unit_or_none() {
     let regional = styled_caption_text(Some(&frame), quiet, true, false, None).unwrap();
     assert!(regional.contains("brightness rises with regional volume"));
 }
+
+/// The caption reads name, key, placement and detail in that order, the key
+/// inked by side; a caption that cannot be placed keeps its notes alone.
+#[test]
+fn caption_segments_keep_their_order_inks_and_notes() {
+    let mut frame = frame(&[trade(1000, 100, 32100, Side::Buy)], 200.0);
+    let quiet = FlowProgress::default();
+    let words = |segments: &[(String, CaptionInk)]| {
+        segments
+            .iter()
+            .map(|(text, _)| text.as_str())
+            .collect::<String>()
+    };
+    let spheres = caption_segments(Some(&frame), quiet, true, Some(Some("BTC")));
+    assert_eq!(spheres[0], ("FLOW".to_owned(), CaptionInk::Muted));
+    assert_eq!(spheres[2], ("Buy".to_owned(), CaptionInk::Buy));
+    assert_eq!(spheres[4], ("Sell".to_owned(), CaptionInk::Sell));
+    let text = words(&spheres);
+    assert!(text.contains(placement_note(true)), "{text}");
+    assert!(text.contains("quantity in BTC"), "{text}");
+    let regional = words(&caption_segments(Some(&frame), quiet, false, None));
+    assert!(
+        regional.starts_with(&format!("FLOW{}", placement_note(false))),
+        "{regional}"
+    );
+    assert!(notes_segments(Some(&frame), quiet).is_none());
+    frame.ineligible_executions = 4;
+    let notes = notes_segments(Some(&frame), quiet).unwrap();
+    assert_eq!(words(&notes), "FLOW | 4 records excluded");
+}

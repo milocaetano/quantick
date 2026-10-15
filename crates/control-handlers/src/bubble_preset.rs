@@ -57,6 +57,14 @@ pub struct TickSpherePane {
 }
 
 impl TickSpherePane {
+    #[must_use]
+    pub const fn new(tick_chart: bool, asset_mode: bool) -> Self {
+        Self {
+            tick_chart,
+            asset_mode,
+        }
+    }
+
     /// The one rule for tick spheres, which the settings picker and
     /// `orderflow.bubbles.tick.set` both ask: they may be chosen on a tick
     /// chart whose asset the config switches the mode on for.
@@ -95,6 +103,16 @@ impl TickSpherePane {
     }
 }
 
+/// What wearing tick spheres answers: whether the look changed, and the
+/// spheres it wears after.
+pub type WornSpheres = Result<
+    (
+        bool,
+        Option<quantick_control_schema::tick_bubbles::TickBubblesSnapshot>,
+    ),
+    ControlError,
+>;
+
 /// The chart-only selector's narrow port: the facts the rule reads, and
 /// wearing what the rule admitted. The policy stays here.
 pub trait TickBubblePort {
@@ -104,20 +122,9 @@ pub trait TickBubblePort {
         tab_id: u64,
         pane_id: u64,
     ) -> Result<TickSpherePane, ControlError>;
-    /// Wear `preset`'s spheres, or none: whether the look changed, and the
-    /// spheres it wears after.
-    fn wear_tick_spheres(
-        &mut self,
-        tab_id: u64,
-        pane_id: u64,
-        preset: Option<&str>,
-    ) -> Result<
-        (
-            bool,
-            Option<quantick_control_schema::tick_bubbles::TickBubblesSnapshot>,
-        ),
-        ControlError,
-    >;
+    /// Wear `preset`'s spheres, or none.
+    fn wear_tick_spheres(&mut self, tab_id: u64, pane_id: u64, preset: Option<&str>)
+    -> WornSpheres;
 }
 pub fn register_tick<D: ActionDock<H, A>, H: TickBubblePort + ?Sized, A>(
     registry: &mut D,
@@ -153,7 +160,6 @@ fn tick<H: TickBubblePort + ?Sized, A>(
 #[cfg(test)]
 mod tick_rule_tests {
     use super::*;
-    use quantick_control_schema::tick_bubbles::TickBubblesSnapshot;
     use serde_json::json;
 
     /// Review #19/#29: one rule decides tick spheres for the picker and for
@@ -208,7 +214,7 @@ mod tick_rule_tests {
             _tab_id: u64,
             _pane_id: u64,
             preset: Option<&str>,
-        ) -> Result<(bool, Option<TickBubblesSnapshot>), ControlError> {
+        ) -> WornSpheres {
             self.worn = Some(preset.map(str::to_owned));
             Ok((true, None))
         }

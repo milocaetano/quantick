@@ -96,10 +96,7 @@ impl FlowDrawing {
         plan: FlowPresentation,
         background: egui::Color32,
         backing: Option<egui::Color32>,
-        tick_look: Option<(
-            quantick_orderflow::TickBubbleStyle,
-            quantick_orderflow::HeatmapTheme,
-        )>,
+        tick_look: Option<quantick_orderflow::TickLook>,
     ) -> Self {
         use quantick_orderflow::config::dressing::flow::{colors, ordinary_colors};
         let mut meshes = [egui::Mesh::default(), egui::Mesh::default()];
@@ -316,93 +313,57 @@ pub(crate) fn flow_caption(
     legend_visible: bool,
     spheres: Option<quantick_chart::flow_execution::SphereChrome<'_>>,
 ) -> Option<egui::Rect> {
-    let tick = spheres.is_some();
-    let detail = quantick_orderflow::projection::flow_tape::styled_caption_text(
-        frame,
-        progress,
-        legend_visible,
-        tick,
-        spheres.and_then(|spheres| spheres.unit),
-    );
-    let mut job = egui::text::LayoutJob::default();
-    job.wrap.max_width = (history.width() - FLOW_CAPTION_WRAP_MARGIN_PX).max(1.0);
-    if tick {
-        job.wrap.max_width = job
-            .wrap
-            .max_width
-            .min(quantick_chart::flow_execution::FLOW_CHROME_MAX_WIDTH_PX);
+    use quantick_orderflow::projection::flow_tape::{caption_segments, notes_segments};
+    let segments = caption_segments(frame, progress, legend_visible, spheres.map(|s| s.unit));
+    let at = egui::pos2(history.left() + FLOW_CAPTION_INSET_PX, top);
+    let mut galley = caption_galley(painter, history, &segments, spheres);
+    if let Some(chrome) = spheres {
+        let rect = egui::Rect::from_min_size(at, galley.size());
+        let area = [history.min.into(), history.max.into()];
+        let panel = [rect.min.into(), rect.max.into()];
+        // A caption that cannot be placed stands down, but its honesty notes
+        // never vanish with it: they take its place, over a sphere if they must.
+        if quantick_chart::flow_execution::place_flow_chrome(area, panel, chrome.regions).is_none()
+        {
+            galley = caption_galley(painter, history, &notes_segments(frame, progress)?, spheres);
+        }
     }
-    let mut append = |text: &str, color| {
-        job.append(
-            text,
-            0.0,
-            egui::TextFormat::simple(egui::FontId::proportional(FLOW_CAPTION_FONT_PX), color),
-        )
-    };
-    append("FLOW", crate::theme::TEXT_MUTED);
-    if legend_visible {
-        append(" \u{00b7} ", crate::theme::TEXT_MUTED);
-        let colors = super::palette_for_theme(spheres.map_or_else(Default::default, |s| s.theme));
-        append("Buy", if tick { colors.buy } else { FLOW_BUY });
-        append(" / ", crate::theme::TEXT_MUTED);
-        append("Sell", if tick { colors.sell } else { FLOW_SELL });
-    }
-    append(
-        quantick_orderflow::projection::flow_tape::placement_note(tick),
-        crate::theme::TEXT_MUTED,
-    );
-    if let Some(detail) = detail {
-        job.append(
-            &format!(" | {detail}"),
-            0.0,
-            egui::TextFormat::simple(
-                egui::FontId::proportional(FLOW_CAPTION_FONT_PX),
-                crate::theme::TEXT_MUTED,
-            ),
-        );
-    }
-    let galley = painter.layout_job(job);
-    let mut rect = egui::Rect::from_min_size(
-        egui::pos2(history.left() + FLOW_CAPTION_INSET_PX, top),
-        galley.size(),
-    );
-    if let Some(spheres) = spheres {
-        let placed = quantick_chart::flow_execution::place_flow_chrome(
-            [history.min.into(), history.max.into()],
-            [rect.min.into(), rect.max.into()],
-            spheres.regions,
-        );
-        let Some(placed) = placed else {
-            return flow_notes(painter, history, rect.min, frame, progress);
-        };
-        rect = egui::Rect::from_min_max(placed[0].into(), placed[1].into());
-    }
-    painter
-        .with_clip_rect(history)
-        .galley(rect.min, galley, crate::theme::TEXT_MUTED);
-    Some(rect)
-}
-/// The caption stood down: its honesty notes still show where it would have
-/// been, over a sphere if they must, and nothing else of it does.
-fn flow_notes(
-    painter: &egui::Painter,
-    history: egui::Rect,
-    at: egui::Pos2,
-    frame: Option<&FlowTapeFrame>,
-    progress: FlowProgress,
-) -> Option<egui::Rect> {
-    let notes = quantick_orderflow::projection::flow_tape::caption_qualifications(frame, progress)?;
-    let galley = painter.layout(
-        format!("FLOW | {notes}"),
-        egui::FontId::proportional(FLOW_CAPTION_FONT_PX),
-        crate::theme::TEXT_MUTED,
-        (history.width() - FLOW_CAPTION_WRAP_MARGIN_PX).max(1.0),
-    );
     let rect = egui::Rect::from_min_size(at, galley.size());
     painter
         .with_clip_rect(history)
         .galley(at, galley, crate::theme::TEXT_MUTED);
     Some(rect)
+}
+
+/// Lay caption `segments` out at the caption font and wrap; tick spheres key
+/// their Buy / Sell in the pane theme, regional FLOW in its own colours.
+fn caption_galley(
+    painter: &egui::Painter,
+    history: egui::Rect,
+    segments: &[(
+        String,
+        quantick_orderflow::projection::flow_tape::CaptionInk,
+    )],
+    spheres: Option<quantick_chart::flow_execution::SphereChrome<'_>>,
+) -> std::sync::Arc<egui::Galley> {
+    use quantick_orderflow::projection::flow_tape::CaptionInk;
+    let mut job = egui::text::LayoutJob::default();
+    let wrap = (history.width() - FLOW_CAPTION_WRAP_MARGIN_PX).max(1.0);
+    let chrome = quantick_chart::flow_execution::FLOW_CHROME_MAX_WIDTH_PX;
+    job.wrap.max_width = spheres.map_or(wrap, |_| wrap.min(chrome));
+    let palette = spheres.map(|spheres| super::palette_for_theme(spheres.theme));
+    for (text, ink) in segments {
+        let color = match (ink, &palette) {
+            (CaptionInk::Buy, Some(palette)) => palette.buy,
+            (CaptionInk::Sell, Some(palette)) => palette.sell,
+            (CaptionInk::Buy, None) => FLOW_BUY,
+            (CaptionInk::Sell, None) => FLOW_SELL,
+            (CaptionInk::Muted, _) => crate::theme::TEXT_MUTED,
+        };
+        let font = egui::FontId::proportional(FLOW_CAPTION_FONT_PX);
+        job.append(text, 0.0, egui::TextFormat::simple(font, color));
+    }
+    painter.layout_job(job)
 }
 #[cfg(test)]
 #[path = "tests/flow_execution.rs"]

@@ -233,11 +233,7 @@ impl<'a> FlowFrame<'a> {
                 geometry,
                 self.background,
                 backing,
-                owner
-                    .cached_config()
-                    .volume_dots
-                    .tick_bubbles
-                    .map(|tick| (tick, owner.cached_config().theme)),
+                owner.cached_config().tick_look(),
             );
             drawing.paint(
                 self.painter,

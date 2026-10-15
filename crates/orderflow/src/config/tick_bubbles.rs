@@ -17,6 +17,12 @@ impl super::HeatmapConfig {
         *self == compared
     }
 
+    /// The tick spheres this config draws, with the theme they are painted in.
+    #[must_use]
+    pub fn tick_look(&self) -> Option<TickLook> {
+        self.volume_dots.tick_bubbles.map(|tick| (tick, self.theme))
+    }
+
     /// Whether a change keeps the tape's painted groups
     /// ([`TapeDotMemory`](crate::projection::TapeDotMemory)): the same tape
     /// settings but for the lane's width share, a view parameter like the
@@ -65,6 +71,9 @@ mod grouping_tests {
         }
     }
 }
+
+/// Tick spheres as a pane paints them: their style and the pane's theme.
+pub type TickLook = (TickBubbleStyle, super::HeatmapTheme);
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TickBubbleStyle {

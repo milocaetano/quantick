@@ -21,10 +21,9 @@ use super::{
 };
 use quantick_orderflow::projection::marker_band;
 
-/// Where the lane's depth caption sits, from the lane's left edge and the
-/// chart's top.
+/// The lane depth caption's offset from the lane's left edge and chart top.
 const DEPTH_CAPTION_OFFSET: egui::Vec2 = egui::vec2(8.0, 30.0);
-/// The depth layer's small print: the depth caption and the gap labels.
+/// The small print the depth caption and the gap labels share.
 const SMALL_PRINT_FONT_PX: f32 = 10.0;
 
 /// Draw resting liquidity and explicit L2 coverage gaps behind the chart.

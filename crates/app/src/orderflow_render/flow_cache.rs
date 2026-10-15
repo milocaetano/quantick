@@ -25,8 +25,7 @@ struct Key<'a> {
     clip: egui::Rect,
     backing: Option<egui::Color32>,
     background: egui::Color32,
-    tick_bubbles: Option<quantick_orderflow::TickBubbleStyle>,
-    theme: quantick_orderflow::HeatmapTheme,
+    tick: Option<quantick_orderflow::TickLook>,
 }
 impl Hash for Key<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -38,10 +37,9 @@ impl Hash for Key<'_> {
         self.clip.max.y.to_bits().hash(state);
         self.backing.hash(state);
         self.background.hash(state);
-        self.tick_bubbles
-            .map(|style| style.fingerprint())
+        self.tick
+            .map(|(style, theme)| (style.fingerprint(), theme))
             .hash(state);
-        self.theme.hash(state);
     }
 }
 impl ComputerMut<Key<'_>, Arc<Entry>> for Computer {
@@ -61,13 +59,8 @@ pub(crate) fn cached_flow(
     geometry: FlowExecutionGeometry,
     background: egui::Color32,
     backing: Option<egui::Color32>,
-    tick: Option<(
-        quantick_orderflow::TickBubbleStyle,
-        quantick_orderflow::HeatmapTheme,
-    )>,
+    tick: Option<quantick_orderflow::TickLook>,
 ) -> Arc<FlowDrawing> {
-    let (tick_bubbles, theme) = tick.unzip();
-    let theme = theme.unwrap_or_default();
     let clip = history.intersect(painter.clip_rect());
     let key = Key {
         frame,
@@ -75,8 +68,7 @@ pub(crate) fn cached_flow(
         clip,
         backing,
         background,
-        tick_bubbles,
-        theme,
+        tick,
     };
     let entry = painter
         .ctx()
@@ -87,7 +79,7 @@ pub(crate) fn cached_flow(
         let plan = FlowPresentation::styled(
             frame,
             [clip.min.into(), clip.max.into()],
-            tick_bubbles,
+            tick.map(|(style, _)| style),
             |dot| geometry.point(dot).map(|(x, y)| [x, y]),
         );
         Arc::new(FlowDrawing::styled(frame, plan, background, backing, tick))

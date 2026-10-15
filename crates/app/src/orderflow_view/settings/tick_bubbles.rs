@@ -9,21 +9,10 @@ impl OrderflowView {
         Ok(self.edit_config(|config| config.volume_dots.tick_bubbles = style))
     }
 
-    /// The facts the tick sphere rule reads about this view's pane.
-    pub(crate) fn tick_sphere_pane(&self, tick_chart: bool) -> TickSpherePane {
-        let asset_mode = self.look.asset_mode().is_some();
-        TickSpherePane {
-            tick_chart,
-            asset_mode,
-        }
-    }
-
     pub(super) fn draw_tick_bubbles(&mut self, ui: &mut egui::Ui, tick_chart: bool) {
         let current = self.config.volume_dots.tick_bubbles;
-        let Some(choices) = self
-            .tick_sphere_pane(tick_chart)
-            .offered(self.look.tick_presets(), current.is_some())
-        else {
+        let rule = TickSpherePane::new(tick_chart, self.look.asset_mode().is_some());
+        let Some(choices) = rule.offered(self.look.tick_presets(), current.is_some()) else {
             return;
         };
         let selected = self.look.tick_preset_worn(current);

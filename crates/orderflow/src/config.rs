@@ -10,7 +10,7 @@ mod lane;
 pub mod legend;
 pub mod theme;
 mod tick_bubbles;
-pub use tick_bubbles::TickBubbleStyle;
+pub use tick_bubbles::{TickBubbleStyle, TickLook};
 
 pub use bubbles::{
     BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, DEFAULT_BUBBLE_MAX_RADIUS,

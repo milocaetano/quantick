@@ -14,7 +14,10 @@ pub use constants::{
     FLOW_REGION_WINDOW_MS, FLOW_SCALE_HOLD, LARGE_REGION_REFERENCE_DIVISOR, MAX_FLOW_EXECUTIONS,
 };
 mod reading;
-pub use reading::{caption_qualifications, caption_text, placement_note, styled_caption_text};
+pub use reading::{
+    CaptionInk, caption_qualifications, caption_segments, caption_text, notes_segments,
+    placement_note, styled_caption_text,
+};
 mod source;
 pub use source::{FlowCoverage, FlowOpeningSelection, FlowTapeSource};
 mod stream;
