@@ -42,13 +42,13 @@ The three exclusion classes are closed:
 
 | Outcome | Behaviours |
 | --- | --- |
-| Reachable by capability | 72 |
+| Reachable by capability | 73 |
 | Excluded: `authority` | 6 |
 | Excluded: `ui_only_by_decision` | 2 |
 | Excluded: `pending_capability` | 50 |
-| **Total** | **130** |
+| **Total** | **131** |
 
-83 of the 130 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 47 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
+83 of the 131 rows claim at least one registry entry, so the drift guard fails when the interface changes under them. The other 48 say in the table that no registry stands behind them — a drag on a splitter, a number typed into the ticket — each with the reason, listed in full below. A row that says neither is a guard failure, not a third category.
 
 ## Behaviours
 
@@ -57,7 +57,8 @@ The three exclusion classes are closed:
 | `app.exit` | Close the application | File menu, and the window's own close button | — | `authority` — `docs/control-plane/observer-threat-model.md` section 6 refuses starting or stopping Quantick, a terminal, a broker or any other process. A capability that closes the window would end every other capability's session |
 | `tab.market.activate` | Switch to another market tab | tab strip in the menu row; Ctrl+Tab and Ctrl+Shift+Tab | — | `pending_capability` — `layout.tab.switch` switches a layout tab, not a market tab; nothing reaches the strip that carries the open markets. Tracked in issue 401 |
 | `tab.market.close` | Close the active market tab | tab strip chip, File menu, Ctrl+W | — | `pending_capability` — closing a tab discards its drawings and its paper position, and the control contract admits no destructive effect yet — the same ceiling `layout.tab.delete` sits under. Tracked in issue 401 |
-| `tab.market.open` | Open a new market tab | tab strip +, File menu, Ctrl+T | — | `pending_capability` — no capability opens a market; the source picker is the only door. Tracked in issue 401 |
+| `tab.market.open` | Open a new market tab | tab strip +, File menu, Ctrl+T | — | `pending_capability` — no capability opens a second market tab. `feed.source.set` switches the feed and symbol of a tab already open, as the SOURCE combos do. Tracked in issue 401 |
+| `tab.market.source.set` | Switch the active tab to another configured feed and symbol | the toolbar's SOURCE feed and symbol combos | `feed.source.set` | — |
 | `replay.browser.open` | Open the market replay browser | File menu, Ctrl+R | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
 | `replay.close` | Leave replay and go back to the live tape | File menu, while a tab is replaying | — | `pending_capability` — no capability drives the replay transport, so an operator can neither start a session nor end one. Tracked in issue 401 |
 | `replay.format_help.open` | Read what a replay file has to look like | Help menu | — | `pending_capability` — no capability opens or closes this surface; an operator can read what is on screen and not change it. Tracked in issue 401 |
@@ -206,7 +207,7 @@ matrix fails the build.
 | `hotkey` | 16 |
 | `menu_entry` | 28 |
 | `scripted_menu` | 0 |
-| `authored` | 47 |
+| `authored` | 48 |
 
 ## Appendix: rows no registry stands behind
 
@@ -218,6 +219,7 @@ declares nothing here is a guard failure.
 
 | Behaviour | Why nothing registers it |
 | --- | --- |
+| `tab.market.source.set` | the SOURCE combos are toolbar widgets writing the tab's selection, not entries in its action enum |
 | `chart.bars.set_spec` | the bar-kind and size controls are toolbar widgets, not entries in its action enum |
 | `chart.pan` | a pointer drag the canvas handles directly; no registry names it |
 | `chart.price_axis.set` | price-axis gestures update the pane's PriceView directly |
