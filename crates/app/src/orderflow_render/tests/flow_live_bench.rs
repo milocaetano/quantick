@@ -3,12 +3,13 @@
 //! chart's FLOW session with its worker run inline and timed apart, the
 //! cached drawing with its labels, the caption's sphere check, and egui's
 //! own tessellation of what was painted. Run by name:
-//! `cargo test -p quantick-app --release --lib live_flow_frames -- --ignored --nocapture`
+//! `cargo test -p quantick-app --release --bin quantick-app live_flow_frames -- --ignored --nocapture`
 //!
 //! What it cannot see: the GPU driver (the upload is a plain copy into a warm
-//! buffer), the rest of the app frame (candles, footprint, the tape lane, the
-//! book and its depth fold), the worker running on its own thread, and
-//! egui's window and input handling.
+//! buffer, and a draw call per FLOW mesh costs nothing here), the rest of the
+//! app frame (candles, footprint, the tape lane, the book and its depth
+//! fold), the worker running on its own thread, and egui's window and input
+//! handling.
 use super::*;
 use quantick_chart::flow_execution::{
     FlowChartView, FlowExecutionGeometry, place_flow_chrome, project_styled_flow_executions,
