@@ -1,5 +1,6 @@
 # Two pane-owned egui size controls and their existing-owner/control adapters.
 # Domain gains, validation contracts and frame scaling remain below app.
 # The controls dock before navigation to own their input without expanding the app root.
-crates/app +270
-!budget +270
+# One hover declaration keeps rounded slider bounds from registering an ID twice.
+crates/app +271
+!budget +271
