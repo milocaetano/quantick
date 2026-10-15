@@ -32,6 +32,29 @@ pub struct FlowRegionVisual {
     pub unresolved_overlap: bool,
 }
 
+impl FlowRegionVisual {
+    /// Regional FLOW's buy and sell fill for this region, premultiplied: the
+    /// opening's faint pair, context over the canvas `background`, a peak at
+    /// its emphasis over the footprint's `backing` (the canvas without one).
+    #[must_use]
+    pub fn regional_fill(
+        &self,
+        frame: &FlowTapeFrame,
+        background: [u8; 4],
+        backing: Option<[u8; 4]>,
+    ) -> [[u8; 4]; 2] {
+        use quantick_orderflow::config::dressing::flow::{colors, ordinary_colors};
+        match self.role {
+            FlowRegionRole::Opening => colors(None, true, false),
+            FlowRegionRole::Context => colors(Some(background), false, true),
+            FlowRegionRole::Peak => ordinary_colors(
+                backing.unwrap_or(background),
+                frame.ordinary_region_opacity(&frame.dots[self.dot_index]),
+            ),
+        }
+    }
+}
+
 /// One backend-independent plan for drawing.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct FlowPresentation {

@@ -29,20 +29,20 @@ struct Key<'a> {
     /// The pixel density tick rims and labels follow; regional geometry is logical.
     density: Option<u32>,
 }
+impl Key<'_> {
+    /// All but the frame and the camera: what a drawing keeps the runs of the one before by.
+    fn look(&self) -> impl Hash {
+        let (min, max) = (self.clip.min, self.clip.max);
+        let corners = [min.x, min.y, max.x, max.y].map(f32::to_bits);
+        let tick = self.tick.map(|(style, theme)| (style.fingerprint(), theme));
+        (corners, self.backing, self.background, tick, self.density)
+    }
+}
 impl Hash for Key<'_> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         Arc::as_ptr(self.frame).hash(state);
-        self.density.hash(state);
         self.geometry.fingerprint().hash(state);
-        self.clip.min.x.to_bits().hash(state);
-        self.clip.min.y.to_bits().hash(state);
-        self.clip.max.x.to_bits().hash(state);
-        self.clip.max.y.to_bits().hash(state);
-        self.backing.hash(state);
-        self.background.hash(state);
-        self.tick
-            .map(|(style, theme)| (style.fingerprint(), theme))
-            .hash(state);
+        self.look().hash(state);
     }
 }
 impl ComputerMut<Key<'_>, Arc<Entry>> for Computer {
@@ -74,9 +74,9 @@ pub(crate) fn cached_flow(
         tick,
         density: tick.map(|_| painter.ctx().pixels_per_point().to_bits()),
     };
-    let entry = painter
-        .ctx()
-        .memory_mut(|memory| memory.caches.cache::<Cache>().get(key));
+    let ctx = painter.ctx();
+    let entry = ctx.memory_mut(|memory| memory.caches.cache::<Cache>().get(key));
+    let last_painted = egui::Id::new(key.look());
     // Build outside the Context memory lock. Logical sector vertices use only
     // WHITE_UV, independent of pixel density and the growing font atlas.
     Arc::clone(entry.mesh.get_or_init(|| {
@@ -86,8 +86,13 @@ pub(crate) fn cached_flow(
             tick.map(|(style, _)| style),
             |dot| geometry.point(dot).map(|(x, y)| [x, y]),
         );
-        let drawing = FlowDrawing::styled(frame, plan, background, backing, tick, painter, history);
-        Arc::new(drawing)
+        let previous = ctx.data(|data| data.get_temp::<Weak<FlowDrawing>>(last_painted));
+        let previous = previous.and_then(|drawing| drawing.upgrade());
+        let (made, held) = ((frame.as_ref(), plan), previous.as_deref());
+        let drawing = FlowDrawing::styled(made, background, backing, tick, painter, history, held);
+        let drawing = Arc::new(drawing);
+        ctx.data_mut(|data| data.insert_temp(last_painted, Arc::downgrade(&drawing)));
+        drawing
     }))
 }
 
@@ -108,8 +113,8 @@ pub(crate) fn draw_cached_flow(
         backing,
         None,
     );
-    drawing.paint(painter, history, false);
-    drawing.paint(painter, history, true);
+    drawing.paint(painter, false);
+    drawing.paint(painter, true);
 }
 
 #[cfg(test)]

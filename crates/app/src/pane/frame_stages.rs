@@ -235,38 +235,28 @@ impl<'a> FlowFrame<'a> {
                 backing,
                 owner.cached_config().tick_look(),
             );
-            drawing.paint(
-                self.painter,
-                self.rect.with_max_x(self.rect.right() - self.lane_width),
-                false,
-            );
+            drawing.paint(self.painter, false);
             self.regional = Some((Arc::clone(frame), drawing));
         }
     }
 
     pub(super) fn regional_aggressions(&self) {
         if let Some((_, drawing)) = &self.regional {
-            drawing.paint(
-                self.painter,
-                self.rect.with_max_x(self.rect.right() - self.lane_width),
-                true,
-            );
+            drawing.paint(self.painter, true);
         }
     }
 
     /// Only the earned inner circumference crosses the configured candles.
     pub(super) fn regional_perimeters(&self) {
         if let Some((frame, drawing)) = &self.regional {
+            let history = self.rect.with_max_x(self.rect.right() - self.lane_width);
             crate::orderflow_render::draw_flow_perimeters(
                 self.painter,
-                self.rect.with_max_x(self.rect.right() - self.lane_width),
+                history,
                 frame,
                 &drawing.plan,
             );
-            drawing.paint_labels(
-                self.painter,
-                self.rect.with_max_x(self.rect.right() - self.lane_width),
-            );
+            drawing.paint_labels(self.painter);
         }
     }
 

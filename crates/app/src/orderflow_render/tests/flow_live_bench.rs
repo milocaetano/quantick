@@ -347,9 +347,9 @@ fn live_flow_frames_at(ticks: u64) {
                     None,
                     Some(look),
                 );
-                drawing.paint(&painter, HISTORY, false);
+                drawing.paint(&painter, false);
                 candles.rect_filled(HISTORY.shrink(400.0), 0.0, egui::Color32::GRAY);
-                drawing.paint(&painter, HISTORY, true);
+                drawing.paint(&painter, true);
                 candles.rect_filled(HISTORY.shrink(450.0), 0.0, egui::Color32::GRAY);
                 crate::orderflow_render::draw_flow_perimeters(
                     &painter,
@@ -357,7 +357,7 @@ fn live_flow_frames_at(ticks: u64) {
                     &frame,
                     &drawing.plan,
                 );
-                drawing.paint_labels(&painter, HISTORY);
+                drawing.paint_labels(&painter);
                 let caption = [
                     [HISTORY.left() + 8.0, HISTORY.top() + 28.0],
                     [HISTORY.left() + 328.0, HISTORY.top() + 72.0],
@@ -418,8 +418,9 @@ fn live_flow_frames_at(ticks: u64) {
         .iter()
         .filter(|region| region.disc.radius >= TICK.bubbles().detail_min_radius)
         .count();
-    let mesh_vertices: usize = drawing.meshes.iter().map(|mesh| mesh.vertices.len()).sum();
-    let mesh_indices: usize = drawing.meshes.iter().map(|mesh| mesh.indices.len()).sum();
+    let meshes = drawing.meshes();
+    let mesh_vertices: usize = meshes.iter().map(|mesh| mesh.vertices.len()).sum();
+    let mesh_indices: usize = meshes.iter().map(|mesh| mesh.indices.len()).sum();
     eprintln!(
         "FLOW_LIVE {{\"spec\":\"tick:{ticks}\",\"marks\":{},\"regions\":{regions},\"rims\":{rims},\"labels\":{},\"trades\":{},\"mesh_vertices\":{mesh_vertices},\"mesh_indices\":{mesh_indices},\"tessellated_vertices\":{vertices},\"tessellated_indices\":{indices},\"frames\":{MEASURED_FRAMES},\"publications\":{publications},\"drawing_builds\":{builds},\"range_changes\":{range_changes},\"new_bars\":{new_bars}}}",
         frame.dots.len(),
@@ -440,57 +441,64 @@ fn live_flow_frames_at(ticks: u64) {
     floor_experiments(&ctx, &drawing, ticks);
 }
 
-/// What a frame that reuses the drawing pays, piece by piece, and what it
-/// would pay with FLOW kept out of its neighbours' mesh.
+/// What a frame that reuses the drawing pays, piece by piece: the copies egui
+/// is handed (one whole mesh per pass, or the runs as painted), its checks,
+/// and its tessellation with FLOW merged into the neighbours' mesh or apart.
 fn floor_experiments(ctx: &egui::Context, drawing: &FlowDrawing, ticks: u64) {
     const RUNS: u32 = 20;
     let clip = |shape| egui::epaint::ClippedShape {
         clip_rect: HISTORY,
         shape,
     };
-    let mut clone_time = Duration::ZERO;
+    let whole = drawing.meshes();
+    let parts: Vec<&egui::Mesh> = drawing
+        .runs
+        .iter()
+        .flat_map(|(_, run)| run.iter())
+        .collect();
+    let (mut whole_time, mut runs_time) = (Duration::ZERO, Duration::ZERO);
     let mut merged_time = Duration::ZERO;
     let mut isolated_time = Duration::ZERO;
     let mut validate_time = Duration::ZERO;
     for _ in 0..RUNS {
         let started = Instant::now();
-        let meshes = drawing.meshes.clone();
-        clone_time += started.elapsed();
+        let meshes = whole.clone();
+        whole_time += started.elapsed();
         let started = Instant::now();
-        std::hint::black_box(meshes.iter().all(egui::Mesh::is_valid));
-        std::hint::black_box(meshes.iter().map(egui::Mesh::calc_bounds).count());
+        let copies: Vec<egui::Mesh> = parts.iter().map(|mesh| (*mesh).clone()).collect();
+        runs_time += started.elapsed();
+        let started = Instant::now();
+        std::hint::black_box(copies.iter().all(egui::Mesh::is_valid));
+        std::hint::black_box(copies.iter().map(egui::Mesh::calc_bounds).count());
         validate_time += started.elapsed();
-        let neighbour = || egui::Shape::rect_filled(HISTORY, 0.0, crate::theme::CANVAS);
+        let neighbour = || clip(egui::Shape::rect_filled(HISTORY, 0.0, crate::theme::CANVAS));
         let [context, peaks] = meshes;
         let merged = vec![
-            clip(neighbour()),
-            clip(egui::Shape::mesh(context.clone())),
-            clip(neighbour()),
-            clip(egui::Shape::mesh(peaks.clone())),
-            clip(neighbour()),
+            neighbour(),
+            clip(egui::Shape::mesh(context)),
+            neighbour(),
+            clip(egui::Shape::mesh(peaks)),
+            neighbour(),
         ];
         let started = Instant::now();
         std::hint::black_box(ctx.tessellate(merged, PIXELS_PER_POINT));
         merged_time += started.elapsed();
-        let own = |mut mesh: egui::Mesh| {
-            mesh.texture_id = egui::TextureId::User(7);
-            egui::Shape::mesh(mesh)
-        };
-        let isolated = vec![
-            clip(neighbour()),
-            clip(own(context)),
-            clip(neighbour()),
-            clip(own(peaks)),
-            clip(neighbour()),
-        ];
+        let mut isolated = vec![neighbour()];
+        for (index, mut mesh) in copies.into_iter().enumerate() {
+            mesh.texture_id = egui::TextureId::User(7 + index as u64 % 2);
+            isolated.push(clip(egui::Shape::mesh(mesh)));
+        }
+        isolated.push(neighbour());
         let started = Instant::now();
         std::hint::black_box(ctx.tessellate(isolated, PIXELS_PER_POINT));
         isolated_time += started.elapsed();
     }
     let ms = |time: Duration| time.as_secs_f64() * 1e3 / f64::from(RUNS);
     eprintln!(
-        "FLOW_FLOOR spec=tick:{ticks} clone_ms={:.2} validate_and_bounds_ms={:.2} tessellate_merged_ms={:.2} tessellate_isolated_ms={:.2}",
-        ms(clone_time),
+        "FLOW_FLOOR spec=tick:{ticks} runs={} clone_whole_ms={:.2} clone_runs_ms={:.2} validate_and_bounds_ms={:.2} tessellate_whole_merged_ms={:.2} tessellate_runs_apart_ms={:.2}",
+        parts.len(),
+        ms(whole_time),
+        ms(runs_time),
         ms(validate_time),
         ms(merged_time),
         ms(isolated_time),
@@ -506,6 +514,7 @@ fn stage_breakdown(
 ) {
     let mut plan_time = Duration::ZERO;
     let mut drawing_time = Duration::ZERO;
+    let mut kept_time = Duration::ZERO;
     let mut labels_time = Duration::ZERO;
     const RUNS: u32 = 5;
     for _ in 0..RUNS {
@@ -525,28 +534,44 @@ fn stage_breakdown(
                 );
                 plan_time += started.elapsed();
                 let started = Instant::now();
-                let built = FlowDrawing::styled(
-                    frame,
-                    plan,
+                let (canvas, look) = (
                     crate::theme::CANVAS,
-                    None,
                     Some((TICK, quantick_orderflow::config::HeatmapTheme::default())),
-                    &painter,
-                    HISTORY,
                 );
+                let build = |plan, previous| {
+                    FlowDrawing::styled(
+                        (frame.as_ref(), plan),
+                        canvas,
+                        None,
+                        look,
+                        &painter,
+                        HISTORY,
+                        previous,
+                    )
+                };
+                let built = build(plan.clone(), None);
                 drawing_time += started.elapsed();
                 let started = Instant::now();
-                let mut labels = built.plan.quantity_labels(frame, Some(TICK));
-                labels.sort_by(|a, b| b.radius.total_cmp(&a.radius));
-                std::hint::black_box(place_quantity_labels(&painter, HISTORY, labels));
+                let kept = build(plan, Some(&built));
+                kept_time += started.elapsed();
+                assert!(kept.meshes() == built.meshes());
+                let started = Instant::now();
+                let labels = built.plan.quantity_labels(frame, Some(TICK));
+                let fit = [LABEL_MAX_WIDTH_SCALE, LABEL_MAX_HEIGHT_SCALE];
+                let measure =
+                    |label: &FlowQuantityLabel| quantity_galley(&painter, label).size().into();
+                let area = [HISTORY.min.into(), HISTORY.max.into()];
+                std::hint::black_box(flow::place_quantity_labels(labels, area, fit, measure));
                 labels_time += started.elapsed();
             },
         );
     }
+    let us = |time: Duration| time.as_secs_f64() * 1e6 / f64::from(RUNS);
     eprintln!(
-        "FLOW_STAGES spec=tick:{ticks} plan_us={:.1} drawing_us={:.1} of_which_labels_us={:.1}",
-        plan_time.as_secs_f64() * 1e6 / f64::from(RUNS),
-        drawing_time.as_secs_f64() * 1e6 / f64::from(RUNS),
-        labels_time.as_secs_f64() * 1e6 / f64::from(RUNS),
+        "FLOW_STAGES spec=tick:{ticks} plan_us={:.1} drawing_us={:.1} kept_drawing_us={:.1} of_which_labels_us={:.1}",
+        us(plan_time),
+        us(drawing_time),
+        us(kept_time),
+        us(labels_time),
     );
 }

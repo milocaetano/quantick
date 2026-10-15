@@ -68,7 +68,7 @@ fn frame(trades: &[Trade], reference: FlowReference) -> FlowTapeFrame {
 fn planned(frame: &FlowTapeFrame, pan: f32, tick: bool) -> (FlowPresentation, Vec<FlowRegionKey>) {
     let plan = FlowPresentation::styled(frame, HISTORY, tick.then_some(TICK), |dot| {
         Some([
-            dot.candle_position.to_f32()? * 120.0 + pan,
+            dot.candle_position.to_f32()? * 5.0 + pan,
             (130.0 - dot.mark.price.to_f32()?) * 10.0,
         ])
     });
@@ -180,4 +180,47 @@ fn every_match_is_an_equal_key() {
             assert_eq!(keys[*held], shuffled[region]);
         }
     }
+}
+
+/// Runs cover the paint order in order, each inside one pass.
+#[test]
+fn runs_cut_the_paint_order_within_each_pass() {
+    let frame = frame(&prints(400), FlowReference::Typed(TICK.reference()));
+    let (plan, keys) = planned(&frame, 0.0, true);
+    let runs = paint_runs(&keys);
+    assert!(runs.len() > 4, "{} runs", runs.len());
+    assert_eq!((runs[0].start, runs[runs.len() - 1].end), (0, keys.len()));
+    assert!(runs.windows(2).all(|pair| pair[0].end == pair[1].start));
+    let peak = |index: usize| plan.regions[index].role == FlowRegionRole::Peak;
+    for run in &runs {
+        assert!(run.clone().all(|index| peak(index) == peak(run.start)));
+    }
+}
+
+/// A new print changes the run its region joins, or the two it splits:
+/// every other run is found whole in the frame before; a moved camera keeps
+/// none.
+#[test]
+fn a_new_print_keeps_every_run_but_its_own() {
+    let trades = prints(401);
+    let reference = FlowReference::Typed(TICK.reference());
+    let (_, old_keys) = planned(&frame(&trades[..400], reference), 0.0, true);
+    let (_, new_keys) = planned(&frame(&trades, reference), 0.0, true);
+    let (old_runs, new_runs) = (paint_runs(&old_keys), paint_runs(&new_keys));
+    let kept = reusable_runs((&old_keys, &old_runs), (&new_keys, &new_runs));
+    for (run, held) in new_runs.iter().zip(&kept) {
+        if let Some(held) = held {
+            assert_eq!(old_keys[old_runs[*held].clone()], new_keys[run.clone()]);
+        }
+    }
+    let rebuilt = kept.iter().filter(|held| held.is_none()).count();
+    assert!(
+        (1..=2).contains(&rebuilt),
+        "{rebuilt} of {} runs",
+        new_runs.len()
+    );
+    let (_, panned) = planned(&frame(&trades, reference), 8.0, true);
+    let panned_runs = paint_runs(&panned);
+    let moved = reusable_runs((&new_keys, &new_runs), (&panned, &panned_runs));
+    assert!(moved.iter().all(Option::is_none));
 }

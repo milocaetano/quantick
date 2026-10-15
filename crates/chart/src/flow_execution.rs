@@ -20,11 +20,13 @@ use constants::{FLOW_MERGE_SUPPORT_RADIUS_PX, FLOW_RADIUS_LIMIT_PX};
 mod geometry;
 mod labels;
 pub use geometry::FlowExecutionGeometry;
-pub use labels::FlowQuantityLabel;
+pub use labels::{FlowQuantityLabel, place_quantity_labels};
 mod disc;
 pub use disc::{FlowBounds, FlowDisc};
 mod presentation;
 pub use presentation::{FlowPresentation, FlowRegionRole, FlowRegionVisual};
+mod reuse;
+pub use reuse::{FlowRegionKey, paint_runs, reusable_regions, reusable_runs};
 
 /// Capture canonical membership when the caller enables regional FLOW.
 pub fn project_flow_executions<R: FlowRunner>(

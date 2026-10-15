@@ -1,13 +1,13 @@
 //! Compact history execution groups on the FLOW candle coordinate system.
-use super::bubbles::{BubbleColors, SphereShading, add_sector};
+use super::bubbles::{BubbleColors, SPHERE_LIGHT_OFFSET, SphereShading, add_sector};
 use crate::orderflow_render::constants::{
     FLOW_BUY, FLOW_CAPTION_FONT_PX, FLOW_CAPTION_INSET_PX, FLOW_CAPTION_WRAP_MARGIN_PX, FLOW_SELL,
-    PIE_START_ANGLE,
+    LABEL_MAX_HEIGHT_SCALE, LABEL_MAX_WIDTH_SCALE, PIE_START_ANGLE,
 };
 use eframe::egui;
 #[cfg(test)]
 pub(super) use quantick_chart::flow_execution::FlowDisc;
-use quantick_chart::flow_execution::{FlowPresentation, FlowQuantityLabel, FlowRegionRole};
+use quantick_chart::flow_execution::{self as flow, FlowPresentation, FlowQuantityLabel};
 #[cfg(test)]
 use quantick_orderflow::HeatmapConfig;
 #[cfg(test)]
@@ -15,11 +15,7 @@ use quantick_orderflow::projection::flow_tape::FlowTapeDot;
 use quantick_orderflow::projection::flow_tape::{FlowProgress, FlowTapeFrame};
 #[cfg(test)]
 use rust_decimal::Decimal;
-use std::sync::Arc;
-
-/// The clear margin around a sphere's quantity label that no other label
-/// may enter.
-const LABEL_CLEARANCE_PX: f32 = 2.0;
+use std::{ops::Range, sync::Arc};
 
 // Regional volume controls emphasis while candle contours stay in front.
 #[cfg(test)]
@@ -67,35 +63,46 @@ pub(super) fn flow_mesh(
     let ctx = egui::Context::default();
     let painter = ctx.layer_painter(egui::LayerId::background());
     let background = backing.unwrap_or(crate::theme::CANVAS);
-    let drawing = FlowDrawing::styled(frame, plan, background, backing, None, &painter, history);
-    let mut mesh = drawing.meshes[0].clone();
-    mesh.append(drawing.meshes[1].clone());
+    let drawing = FlowDrawing::styled(
+        (frame, plan),
+        background,
+        backing,
+        None,
+        &painter,
+        history,
+        None,
+    );
+    let [mut mesh, peaks] = drawing.meshes();
+    mesh.append(peaks);
     mesh
 }
 
 /// A placed quantity label: where its galley goes, and the label.
-type PlacedLabel = (egui::Pos2, FlowQuantityLabel);
+type PlacedLabel = ([f32; 2], FlowQuantityLabel);
 /// One FLOW frame as every frame paints it, built once per cached drawing: each pass's
-/// sectors with its rims tessellated in after them, as egui would, and placed labels.
+/// runs, their sectors then their rims as egui would tessellate them, and placed labels.
 pub(crate) struct FlowDrawing {
     pub plan: FlowPresentation,
-    pub(super) meshes: [egui::Mesh; 2],
+    /// The area painted in, which clips every pass and holds the labels.
+    pub history: egui::Rect,
+    /// The paint order's runs as drawn: each one's pass, then its sectors and rims.
+    runs: Vec<(usize, Arc<[egui::Mesh; 2]>)>,
     labels: Vec<PlacedLabel>,
+    /// Each region's key and the cuts into runs, for the next drawing to keep runs by.
+    cut: (Vec<flow::FlowRegionKey>, Vec<Range<usize>>),
 }
 impl FlowDrawing {
-    /// `painter` lends tessellation and fonts; `history` is the area painted in.
+    /// `painter` lends tessellation and fonts; `history` is the area painted in. Runs
+    /// whose keys held since `previous`, this look's drawing before, are kept from it.
     pub fn styled(
-        frame: &FlowTapeFrame,
-        plan: FlowPresentation,
+        (frame, plan): (&FlowTapeFrame, FlowPresentation),
         background: egui::Color32,
         backing: Option<egui::Color32>,
         tick_look: Option<quantick_orderflow::TickLook>,
         painter: &egui::Painter,
         history: egui::Rect,
+        previous: Option<&Self>,
     ) -> Self {
-        use quantick_orderflow::config::dressing::flow::{colors, ordinary_colors};
-        let mut meshes = [egui::Mesh::default(), egui::Mesh::default()];
-        let mut rims = [egui::Mesh::default(), egui::Mesh::default()];
         let ppp = painter.ctx().pixels_per_point();
         let options = painter.ctx().options(|o| o.tessellation_options);
         let mut tessellator = egui::epaint::Tessellator::new(ppp, options, [1, 1], Vec::new());
@@ -105,122 +112,152 @@ impl FlowDrawing {
         let tick_colors = tick_look.map(|(tick, theme)| {
             BubbleColors::resolve(&super::palette_for_theme(theme), &tick.bubbles())
         });
-        let mut labels = plan.quantity_labels(frame, tick);
-        labels.sort_by(|a, b| b.radius.total_cmp(&a.radius));
-        let colors = [
-            colors(None, true, false),
-            colors(Some(background.to_array()), false, true),
-        ]
-        .map(|palette| palette.map(super::premultiplied));
-        for region in &plan.regions {
-            let dot = &frame.dots[region.dot_index];
-            let disc = region.disc;
-            let mesh = &mut meshes[usize::from(region.role == FlowRegionRole::Peak)];
-            let [buy_color, sell_color] = if let Some(colors) = tick_colors {
-                [colors.buy, colors.sell]
-            } else if region.role == FlowRegionRole::Peak {
-                ordinary_colors(
-                    backing.unwrap_or(background).to_array(),
-                    frame.ordinary_region_opacity(dot),
-                )
-                .map(super::premultiplied)
-            } else {
-                colors[region.role as usize]
-            };
-            let (buy, sell) = dot.side_shares();
-            if let Some(style) = &tick_style
-                && disc.radius >= style.detail_min_radius
-            {
-                let hair = super::bubbles::separator_ring_width(disc.radius);
-                tessellator.tessellate_shape(
-                    egui::Shape::circle_stroke(
-                        disc.center.into(),
-                        disc.radius + hair / 2.0,
-                        egui::Stroke::new(
-                            hair,
-                            egui::Color32::from_black_alpha(super::bubbles::SEPARATOR_RING_ALPHA),
+        let canvas = background.to_array();
+        let underlay = backing.as_ref().map(egui::Color32::to_array);
+        let keys = plan.region_keys(frame, tick.is_some());
+        let cuts = flow::paint_runs(&keys);
+        let held = previous.map_or_else(Vec::new, |previous| {
+            flow::reusable_runs((&previous.cut.0, &previous.cut.1), (&keys, &cuts))
+        });
+        let hair_color = egui::Color32::from_black_alpha(super::bubbles::SEPARATOR_RING_ALPHA);
+        let light = tick_style.as_ref().map_or(0.0, |_| SPHERE_LIGHT_OFFSET);
+        let shade = |color| match &tick_style {
+            Some(style) => SphereShading::sphere(color, style).faded(style.opacity),
+            None => SphereShading::flat(color),
+        };
+        let mut build = |regions: &[flow::FlowRegionVisual]| {
+            let [mut mesh, mut rim] = [egui::Mesh::default(), egui::Mesh::default()];
+            for region in regions {
+                let dot = &frame.dots[region.dot_index];
+                let disc = region.disc;
+                let [buy_color, sell_color] = match tick_colors {
+                    Some(colors) => [colors.buy, colors.sell],
+                    None => region
+                        .regional_fill(frame, canvas, underlay)
+                        .map(super::premultiplied),
+                };
+                let (buy, sell) = dot.side_shares();
+                if let Some(style) = &tick_style
+                    && disc.radius >= style.detail_min_radius
+                {
+                    let hair = super::bubbles::separator_ring_width(disc.radius);
+                    tessellator.tessellate_shape(
+                        egui::Shape::circle_stroke(
+                            disc.center.into(),
+                            disc.radius + hair / 2.0,
+                            egui::Stroke::new(hair, hair_color),
                         ),
-                    ),
-                    &mut rims[usize::from(region.role == FlowRegionRole::Peak)],
-                );
-            }
-            let mut angle = f64::from(PIE_START_ANGLE);
-            for (share, color) in [(buy, buy_color), (sell, sell_color)] {
-                if share <= 0.0 {
-                    continue;
+                        &mut rim,
+                    );
                 }
-                // Exact sides reach geometry directly; no cached share or readability cutoff.
-                let sweep = share * std::f64::consts::TAU;
-                add_sector(
-                    mesh,
-                    disc.center.into(),
-                    disc.radius,
-                    angle as f32,
-                    sweep as f32,
-                    tick_style
-                        .as_ref()
-                        .map_or(SphereShading::flat(color), |style| {
-                            SphereShading::sphere(color, style).faded(style.opacity)
-                        }),
-                    tick_style
-                        .as_ref()
-                        .map_or(0.0, |_| super::bubbles::SPHERE_LIGHT_OFFSET),
-                );
-                angle += sweep;
+                let mut angle = f64::from(PIE_START_ANGLE);
+                for (share, color) in [(buy, buy_color), (sell, sell_color)] {
+                    if share <= 0.0 {
+                        continue;
+                    }
+                    // Exact sides reach geometry directly; no cached share or readability cutoff.
+                    let sweep = share * std::f64::consts::TAU;
+                    add_sector(
+                        &mut mesh,
+                        disc.center.into(),
+                        disc.radius,
+                        angle as f32,
+                        sweep as f32,
+                        shade(color),
+                        light,
+                    );
+                    angle += sweep;
+                }
             }
-        }
-        let texture = flow_texture(painter.ctx());
-        for (mesh, rims) in meshes.iter_mut().zip(rims) {
-            mesh.append(rims);
-            mesh.texture_id = texture;
-        }
+            Arc::new([mesh, rim])
+        };
+        let runs = cuts.iter().enumerate();
+        let runs = runs.map(|(index, cut)| {
+            let pass = usize::from(plan.regions[cut.start].role == flow::FlowRegionRole::Peak);
+            match (previous, held.get(index)) {
+                (Some(previous), Some(&Some(held))) => (pass, Arc::clone(&previous.runs[held].1)),
+                _ => (pass, build(&plan.regions[cut.clone()])),
+            }
+        });
+        let labels = plan.quantity_labels(frame, tick);
+        let fit = [LABEL_MAX_WIDTH_SCALE, LABEL_MAX_HEIGHT_SCALE];
+        let measure = |label: &FlowQuantityLabel| quantity_galley(painter, label).size().into();
+        let area = [history.min.into(), history.max.into()];
         Self {
-            labels: place_quantity_labels(painter, history, labels),
+            runs: runs.collect(),
+            labels: flow::place_quantity_labels(labels, area, fit, measure),
+            history,
             plan,
-            meshes,
+            cut: (keys, cuts),
         }
     }
 
-    pub fn paint(&self, painter: &egui::Painter, history: egui::Rect, foreground: bool) {
-        let mesh = &self.meshes[usize::from(foreground)];
-        if !mesh.is_empty() {
-            painter
-                .with_clip_rect(history)
-                .add(egui::Shape::mesh(mesh.clone()));
+    /// The pass's runs, sectors then rims, on FLOW's two white texels in
+    /// turn, so egui moves each whole into a primitive of its own.
+    pub fn paint(&self, painter: &egui::Painter, foreground: bool) {
+        let clip = painter.with_clip_rect(self.history);
+        let texels = flow_texels(painter.ctx());
+        let pass = self
+            .runs
+            .iter()
+            .filter(|run| run.0 == usize::from(foreground));
+        let sectors = pass.clone().map(|run| &run.1[0]);
+        let meshes = sectors.chain(pass.map(|run| &run.1[1]));
+        for (index, mesh) in meshes.filter(|mesh| !mesh.is_empty()).enumerate() {
+            let mut mesh = mesh.clone();
+            mesh.texture_id = texels[index % 2];
+            clip.add(egui::Shape::mesh(mesh));
         }
     }
 
     /// Labels finish the candle pass, so no candle contour crosses a quantity.
-    pub fn paint_labels(&self, painter: &egui::Painter, history: egui::Rect) {
-        paint_quantity_labels(painter, history, &self.labels);
+    pub fn paint_labels(&self, painter: &egui::Painter) {
+        paint_quantity_labels(painter, self.history, &self.labels);
     }
 }
 
-/// FLOW's own white texel. egui folds consecutive meshes of one texture and
-/// clip into one buffer, copying each every frame; a pass on a texture of its
-/// own is moved there whole. One white texel under `WHITE_UV`, like the font
-/// atlas's, so every triangle paints its vertex colour as before.
-pub(crate) fn flow_texture(ctx: &egui::Context) -> egui::TextureId {
-    let id = egui::Id::new("flow white texel");
-    if let Some(held) = ctx.data(|data| data.get_temp::<egui::TextureHandle>(id)) {
-        return held.id();
+#[cfg(test)]
+impl FlowDrawing {
+    /// Each pass's runs joined into one mesh, sectors then rims, as painted.
+    pub(super) fn meshes(&self) -> [egui::Mesh; 2] {
+        std::array::from_fn(|pass| {
+            let mut mesh = egui::Mesh::default();
+            for part in [0, 1] {
+                for (_, run) in self.runs.iter().filter(|(held, _)| *held == pass) {
+                    mesh.append_ref(&run[part]);
+                }
+            }
+            mesh
+        })
     }
-    let white = egui::ColorImage::new([1, 1], egui::Color32::WHITE);
-    let held = ctx.load_texture("flow white texel", white, egui::TextureOptions::LINEAR);
+}
+
+/// FLOW's two white texels: egui copies consecutive meshes of one texture and clip
+/// into one buffer each frame, but moves runs drawn on the two in turn. White under
+/// `WHITE_UV`, like the font atlas's texel, so every triangle paints its vertex colour.
+pub(crate) fn flow_texels(ctx: &egui::Context) -> [egui::TextureId; 2] {
+    let id = egui::Id::new("flow white texels");
+    if let Some(held) = ctx.data(|data| data.get_temp::<[egui::TextureHandle; 2]>(id)) {
+        return held.each_ref().map(egui::TextureHandle::id);
+    }
+    let white = || egui::ColorImage::new([1, 1], egui::Color32::WHITE);
+    let options = egui::TextureOptions::LINEAR;
+    let held = ["flow texel", "flow texel 2"].map(|name| ctx.load_texture(name, white(), options));
     ctx.data_mut(|data| data.insert_temp(id, held.clone()));
-    held.id()
+    held.each_ref().map(egui::TextureHandle::id)
 }
 
 fn paint_quantity_labels(painter: &egui::Painter, history: egui::Rect, labels: &[PlacedLabel]) {
     let clip = painter.with_clip_rect(history);
     for (pos, label) in labels {
+        let pos = egui::Pos2::from(*pos);
         // Laid out each frame (egui's galley cache answers): a galley kept across
         // frames would outlive a font atlas egui recreates.
         let galley = quantity_galley(painter, label);
         let shadow = egui::Color32::from_black_alpha(super::constants::LABEL_SHADOW_ALPHA);
         let offset = super::constants::LABEL_SHADOW_OFFSET_PX;
-        clip.galley_with_override_text_color(*pos + offset, galley.clone(), shadow);
-        clip.galley(*pos, galley, crate::theme::TEXT_PRIMARY);
+        clip.galley_with_override_text_color(pos + offset, galley.clone(), shadow);
+        clip.galley(pos, galley, crate::theme::TEXT_PRIMARY);
     }
 }
 
@@ -229,32 +266,6 @@ fn quantity_galley(painter: &egui::Painter, label: &FlowQuantityLabel) -> Arc<eg
     let font = (label.radius * LABEL_FONT_SCALE).clamp(LABEL_MIN_FONT_PX, LABEL_MAX_FONT_PX);
     let font = egui::FontId::proportional(font);
     painter.layout_no_wrap(label.text.clone(), font, crate::theme::TEXT_PRIMARY)
-}
-
-/// The labels that fit their sphere, inside `history` and clear of every
-/// larger one placed before, in the order given (largest sphere first).
-fn place_quantity_labels(
-    painter: &egui::Painter,
-    history: egui::Rect,
-    labels: Vec<FlowQuantityLabel>,
-) -> Vec<PlacedLabel> {
-    use super::constants::{LABEL_MAX_HEIGHT_SCALE, LABEL_MAX_WIDTH_SCALE};
-    let mut occupied = Vec::<egui::Rect>::new();
-    let place = |label: FlowQuantityLabel| {
-        let size = quantity_galley(painter, &label).size();
-        let fits = size.x <= label.radius * LABEL_MAX_WIDTH_SCALE
-            && size.y <= label.radius * LABEL_MAX_HEIGHT_SCALE;
-        let pos = egui::Pos2::from(label.center) - size / 2.0;
-        let bounds = egui::Rect::from_min_size(pos, size).expand(LABEL_CLEARANCE_PX);
-        let free = fits
-            && history.contains_rect(bounds)
-            && !occupied.iter().any(|other| other.intersects(bounds));
-        free.then(|| {
-            occupied.push(bounds);
-            (pos, label)
-        })
-    };
-    labels.into_iter().filter_map(place).collect()
 }
 
 #[cfg(test)]
@@ -290,7 +301,11 @@ mod label_tests {
         ];
         let output = ctx.run(egui::RawInput::default(), |ctx| {
             let painter = ctx.layer_painter(egui::LayerId::background());
-            let placed = place_quantity_labels(&painter, history, labels.to_vec());
+            let fit = [LABEL_MAX_WIDTH_SCALE, LABEL_MAX_HEIGHT_SCALE];
+            let measure =
+                |label: &FlowQuantityLabel| quantity_galley(&painter, label).size().into();
+            let area = [history.min.into(), history.max.into()];
+            let placed = flow::place_quantity_labels(labels.to_vec(), area, fit, measure);
             paint_quantity_labels(&painter, history, &placed);
         });
         let bounds: Vec<_> = output

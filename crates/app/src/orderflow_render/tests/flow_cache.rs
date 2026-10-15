@@ -183,8 +183,8 @@ fn paint_at_density(
             key.backing,
             key.tick,
         );
-        drawing.paint(&painter, history(), false);
-        drawing.paint(&painter, history(), true);
+        drawing.paint(&painter, false);
+        drawing.paint(&painter, true);
         entry = Some(ctx.memory_mut(|memory| memory.caches.cache::<Cache>().get(actual)));
     });
     let entry = entry.unwrap();
@@ -208,7 +208,7 @@ fn warm_paint_reuses_the_same_geometry_and_exact_mesh_output() {
         cold.mesh
             .get()
             .unwrap()
-            .meshes
+            .meshes()
             .iter()
             .all(egui::Mesh::is_valid)
     );
@@ -407,12 +407,14 @@ fn sector_mesh_uses_only_white_uv_and_survives_font_atlas_growth() {
     let frame = frame();
     let ctx = egui::Context::default();
     let (entry, before_shapes) = paint(&ctx, key(&frame));
-    let mesh = &entry.mesh.get().unwrap().meshes[1];
+    let meshes = entry.mesh.get().unwrap().meshes();
+    let mesh = &meshes[1];
     assert!(!mesh.vertices.is_empty());
-    assert_eq!(
-        mesh.texture_id,
-        super::super::flow_execution::flow_texture(&ctx)
-    );
+    let texels = super::super::flow_execution::flow_texels(&ctx);
+    assert!(before_shapes.iter().all(|clipped| matches!(
+        &clipped.shape,
+        egui::Shape::Mesh(painted) if texels.contains(&painted.texture_id)
+    )));
     assert!(
         mesh.vertices
             .iter()
