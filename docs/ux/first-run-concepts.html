@@ -1,0 +1,570 @@
+<title>Quantick First-Run Concepts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: dark trading-desk page; one finalist at a time in an app-window mockup, notes beside it, comparison at the end. Single dark look on purpose (it is the app's own world). */
+:root{
+  color-scheme:dark;
+  --bg:#0a0d12; --panel:#10151d; --panel2:#151b25; --line:#212a37; --line2:#2c3746;
+  --fg:#dfe5ee; --muted:#8390a3; --faint:#566175;
+  --accent:#f2b544; --accent-ink:#1a1306;
+  --up:#2fc79a; --down:#f2606f; --info:#6aa8ff;
+  --display:"Instrument Sans",system-ui,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 var(--display);margin:0;padding:32px 20px 64px}
+.wrap{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:36px}
+h1,h2,h3{text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:clamp(30px,4.4vw,48px);font-weight:700;letter-spacing:-.02em}
+h1 em{font-style:normal;color:var(--accent)}
+.lede{color:var(--muted);max-width:68ch;margin:10px 0 0}
+.eyebrow{font:500 11px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+.process{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.step{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:6px}
+.step b{font:600 22px/1 var(--mono);color:var(--accent)}
+.step span{color:var(--muted);font-size:13.5px}
+.debate{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 24px;margin:12px 0 0;padding:0;list-style:none}
+.debate li{font-size:14px;color:var(--muted);padding-left:12px;border-left:2px solid var(--line2)}
+.debate li strong{color:var(--fg);font-weight:600}
+/* picker */
+.tabs{display:flex;gap:8px;flex-wrap:wrap;position:sticky;top:env(safe-area-inset-top,0px);background:var(--bg);padding:10px 0;z-index:5;border-bottom:1px solid var(--line)}
+.tab{font:500 14px var(--display);color:var(--muted);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:8px 14px;cursor:pointer;display:flex;gap:8px;align-items:center}
+.tab .n{font:600 12px var(--mono);color:var(--faint)}
+.tab[aria-selected="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.tab[aria-selected="true"] .n{color:var(--accent-ink)}
+.tab:focus-visible,button:focus-visible,input:focus-visible{outline:2px solid var(--info);outline-offset:2px}
+.idea{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:24px;align-items:start}
+.idea-head{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px}
+.idea-head h2{font-size:30px;letter-spacing:-.01em}
+.badge{font:600 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:5px 8px;border-radius:5px;background:var(--panel2);color:var(--muted);border:1px solid var(--line2)}
+.badge.rec{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.pitch{grid-column:1/-1;color:var(--muted);max-width:75ch;margin:0}
+.notes{display:flex;flex-direction:column;gap:16px;min-width:0}
+.notes h3{font:600 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-bottom:6px}
+.notes ol{margin:0;padding-left:20px;font-size:14px}
+.notes ol li{margin:3px 0}
+.notes p{margin:0;font-size:14px}
+.cost{display:flex;align-items:center;gap:10px;font-size:14px}
+.cost .meter{display:flex;gap:3px}
+.cost .meter i{width:16px;height:8px;border-radius:2px;background:var(--line2)}
+.cost .meter i.on{background:var(--accent)}
+.pc{display:grid;gap:6px;font-size:14px}
+.pc div{padding-left:22px;position:relative}
+.pc div::before{position:absolute;left:0;font:600 13px var(--mono)}
+.pc .pro::before{content:"+";color:var(--up)}
+.pc .con::before{content:"−";color:var(--down)}
+.try{font-size:13px;color:var(--info);background:color-mix(in srgb,var(--info) 10%,transparent);border:1px solid color-mix(in srgb,var(--info) 30%,transparent);border-radius:8px;padding:8px 10px}
+/* app window mockup */
+.win{background:#07090d;border:1px solid var(--line2);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;min-width:0;box-shadow:0 20px 50px -20px #000}
+.titlebar{display:flex;align-items:center;gap:6px;height:30px;padding:0 10px;background:var(--panel);border-bottom:1px solid var(--line);font:12px var(--mono);color:var(--muted)}
+.titlebar .dots{display:flex;gap:5px;margin-right:8px}
+.titlebar .dots i{width:9px;height:9px;border-radius:50%;background:var(--line2)}
+.apptab{padding:3px 10px;border-radius:5px 5px 0 0;border:1px solid var(--line);border-bottom:none;background:var(--panel2);color:var(--fg);display:flex;gap:6px;align-items:center;font-size:11.5px;white-space:nowrap}
+.apptab.ghost{background:transparent;color:var(--faint);border-color:transparent}
+.screen{position:relative;height:500px;overflow:hidden}
+canvas.chart{position:absolute;inset:0;width:100%;height:100%;display:block}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--up);display:inline-block;box-shadow:0 0 0 0 var(--up);animation:pulse 1.6s infinite}
+.dot.amber{background:var(--accent);animation:none}
+.dot.grey{background:var(--faint);animation:none}
+@keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--up) 60%,transparent)}100%{box-shadow:0 0 0 7px transparent}}
+@media (prefers-reduced-motion:reduce){.dot{animation:none}}
+.mono{font-family:var(--mono)}
+.chip{position:absolute;top:12px;left:12px;display:flex;gap:6px;z-index:3}
+.chip button{font:600 12.5px var(--mono);color:var(--fg);background:rgba(16,21,29,.92);border:1px solid var(--line2);border-radius:7px;padding:7px 10px;cursor:pointer;display:flex;align-items:center;gap:7px}
+.chip button.active{border-color:var(--accent)}
+.hint{position:absolute;top:52px;left:14px;z-index:2;font-size:12.5px;color:var(--fg);background:rgba(242,181,68,.12);border:1px solid rgba(242,181,68,.35);border-radius:7px;padding:6px 10px}
+.hint kbd,.foot kbd{font:600 11px var(--mono);background:var(--panel2);border:1px solid var(--line2);border-bottom-width:2px;border-radius:4px;padding:1px 5px;color:var(--fg)}
+.drop{position:absolute;top:50px;left:12px;width:min(370px,calc(100% - 24px));max-height:calc(100% - 64px);overflow:auto;z-index:4;background:var(--panel);border:1px solid var(--line2);border-radius:10px;box-shadow:0 18px 40px -10px #000;padding:8px}
+.search{width:100%;font:13px var(--mono);color:var(--fg);background:var(--bg);border:1px solid var(--line2);border-radius:7px;padding:9px 10px}
+.search::placeholder{color:var(--faint)}
+.grp{font:600 10.5px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--faint);padding:10px 6px 4px}
+.row{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:6px;cursor:pointer;font-size:13px;min-width:0}
+.row:hover,.row.sel{background:var(--panel2)}
+.row .sym{font:600 13px var(--mono);min-width:76px}
+.row .ven{color:var(--muted);font-size:12px;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .px{font:12px var(--mono);color:var(--fg);font-variant-numeric:tabular-nums}
+.row.off{opacity:.45;cursor:default}
+.row .st{font:11px var(--mono);color:var(--muted);white-space:nowrap}
+.row .st.warn{color:var(--accent)}
+.row canvas{width:56px;height:18px;flex:none}
+.health{position:absolute;right:10px;bottom:10px;z-index:2;font:11px var(--mono);color:var(--muted);background:rgba(16,21,29,.85);border:1px solid var(--line);border-radius:999px;padding:4px 10px;display:flex;gap:6px;align-items:center}
+/* palette */
+.dim::after{content:"";position:absolute;inset:0;background:rgba(7,9,13,.62);z-index:1}
+.palette{position:absolute;z-index:3;left:50%;top:13%;transform:translateX(-50%);width:min(520px,calc(100% - 24px));background:var(--panel);border:1px solid var(--line2);border-radius:12px;box-shadow:0 30px 60px -10px #000;padding:14px;display:flex;flex-direction:column;gap:6px}
+.palette h4{margin:0 0 4px;font-size:16px}
+.palette .search{font-size:15px;padding:11px 12px}
+.pill{font:11px var(--mono);border:1px solid var(--line2);border-radius:999px;padding:2px 8px;color:var(--muted);white-space:nowrap}
+.foot{display:flex;gap:14px;flex-wrap:wrap;font:11px var(--mono);color:var(--faint);padding:6px 4px 0;border-top:1px solid var(--line);margin-top:4px}
+/* shelf */
+.shelf{position:absolute;inset:0;overflow:auto;padding:18px;display:flex;flex-direction:column;gap:14px;background:#07090d}
+.shelf h4{margin:0;font-size:20px}
+.shelf .sub{color:var(--muted);font-size:13px;margin-top:-8px}
+.cards{display:grid;gap:10px}
+.cards.big{grid-template-columns:repeat(2,minmax(0,1fr))}
+.cards.small{grid-template-columns:repeat(5,minmax(0,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:12px;display:flex;flex-direction:column;gap:6px;cursor:pointer;min-width:0;text-align:left;color:var(--fg);font:inherit}
+.card:hover{border-color:var(--accent)}
+.card .top{display:flex;justify-content:space-between;align-items:center;gap:6px}
+.card .sym{font:600 15px var(--mono)}
+.cards.small .card .sym{font-size:13px}
+.card .meta{font:11px var(--mono);color:var(--muted)}
+.card canvas{width:100%;height:46px}
+.cards.small .card canvas{height:28px}
+.card.soon{border-style:dashed;opacity:.5;cursor:default}
+.card.soon:hover{border-color:var(--line)}
+.card .open{font:600 12px var(--display);color:var(--accent)}
+.ribbon{font:600 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--accent-ink);background:var(--accent);border-radius:4px;padding:3px 6px}
+.statusbar{display:flex;gap:16px;flex-wrap:wrap;font:11px var(--mono);color:var(--muted);border-top:1px solid var(--line);padding-top:10px;margin-top:auto}
+.statusbar span{display:flex;gap:6px;align-items:center}
+.back{position:absolute;top:12px;right:12px;z-index:3;font:600 12px var(--display);color:var(--fg);background:var(--panel);border:1px solid var(--line2);border-radius:7px;padding:7px 10px;cursor:pointer}
+/* preview picker */
+.pp{position:absolute;inset:0;display:grid;grid-template-columns:250px minmax(0,1fr)}
+.rail{border-right:1px solid var(--line);overflow:auto;padding:8px;background:var(--panel)}
+.pv{position:relative;display:flex;flex-direction:column;min-width:0}
+.pv .pvhead{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;font:600 13px var(--mono);border-bottom:1px solid var(--line);gap:8px}
+.pv .pvchart{position:relative;flex:1}
+.pv .pvfoot{display:flex;flex-direction:column;gap:8px;padding:10px 14px;border-top:1px solid var(--line)}
+.seg{display:inline-flex;border:1px solid var(--line2);border-radius:7px;overflow:hidden}
+.seg button{font:500 12px var(--mono);color:var(--muted);background:transparent;border:none;padding:6px 12px;cursor:pointer}
+.seg button.on{background:var(--panel2);color:var(--fg)}
+.caption{font-size:12.5px;color:var(--muted)}
+.pvfoot .line{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.toggles{display:flex;gap:6px}
+.toggles span{font:11px var(--mono);border:1px solid var(--line2);border-radius:5px;padding:3px 7px;color:var(--faint)}
+.toggles span.on{color:var(--fg);border-color:var(--up)}
+.cta{font:600 13px var(--display);color:var(--accent-ink);background:var(--accent);border:none;border-radius:7px;padding:9px 14px;cursor:pointer}
+/* recipes */
+.recipes{grid-template-columns:repeat(3,minmax(0,1fr))}
+.recipe{padding:0;overflow:hidden}
+.recipe .thumb{position:relative;height:120px;border-bottom:1px solid var(--line)}
+.recipe .body{padding:10px 12px;display:flex;flex-direction:column;gap:5px}
+.recipe h5{margin:0;font-size:15px}
+.tags{display:flex;gap:5px;flex-wrap:wrap}
+.minirow{display:flex;gap:10px;flex-wrap:wrap}
+.minirow .card{flex:1 1 180px;flex-direction:row;align-items:center;justify-content:space-between}
+/* comparison */
+.cmp-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;min-width:760px;font-size:14px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:600 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--faint);background:var(--panel)}
+td.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+tr:last-child td{border-bottom:none}
+.verdict{background:var(--panel);border:1px solid var(--line2);border-left:3px solid var(--accent);border-radius:8px;padding:16px 18px;font-size:15px}
+.small-note{font-size:12.5px;color:var(--faint)}
+@media (max-width:960px){
+  .idea{grid-template-columns:minmax(0,1fr)}
+  .debate{grid-template-columns:minmax(0,1fr)}
+  .cards.small{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:640px){
+  body{padding-inline:16px}
+  .process{grid-template-columns:minmax(0,1fr)}
+  .screen{height:460px}
+  .pp{grid-template-columns:minmax(0,1fr);grid-template-rows:150px minmax(0,1fr)}
+  .rail{border-right:none;border-bottom:1px solid var(--line)}
+  .cards.big,.recipes{grid-template-columns:minmax(0,1fr)}
+  .cards.small{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .titlebar .apptab:nth-child(n+4){display:none}
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Quantick · first run · UX proposal</div>
+    <h1>Open the app, <em>the chart is already running.</em></h1>
+    <p class="lede">Eight designers proposed, a five-role panel debated and merged ideas, and five finalists remain, very different from each other. All of them avoid the tour: newcomers learn by using the real product. The mockups below are clickable and the charts run on simulated data.</p>
+  </header>
+
+  <section>
+    <div class="process">
+      <div class="step"><b>8</b><span>designers, each with one lens: card home screen, chart already open, Ctrl+K-style search, recipes, market map, live preview, newcomer and B3 trader.</span></div>
+      <div class="step"><b>5</b><span>roles on the critique panel: visual designer, interaction designer, B3 day trader, crypto scalper and an engineer estimating egui cost.</span></div>
+      <div class="step"><b>5</b><span>finalists, some merging several proposals. Panel order: 1 is the recommendation.</span></div>
+    </div>
+    <ul class="debate">
+      <li><strong>Visual designer:</strong> one beautiful full-screen chart beats seven flashing sparklines. Motion is saved for the chart.</li>
+      <li><strong>Interaction:</strong> the fastest first run asks for no choice at all. A live chart behind the picker gives both.</li>
+      <li><strong>Crypto scalper:</strong> open on vol:5 with bubbles, not a bare tick:50 candle chart. The bubbles are the product.</li>
+      <li><strong>B3 trader:</strong> “mini índice” must find WIN, and outside the session it must say “Market closed · reopens Mon 09:00 BRT”. A dead tile looks like a broken app.</li>
+      <li><strong>Engineer:</strong> seven live tiles are seven feed subscriptions at launch (cost L). A chip with a dropdown over one chart is cost S.</li>
+      <li><strong>Everyone:</strong> every path becomes a named command (no mouse needed), and replay always shows as REPLAY, never as live.</li>
+    </ul>
+  </section>
+
+  <nav class="tabs" role="tablist" aria-label="Finalists">
+    <button class="tab" role="tab" id="t1" aria-selected="true" data-i="1"><span class="n">1</span>Live on Launch</button>
+    <button class="tab" role="tab" id="t2" aria-selected="false" data-i="2"><span class="n">2</span>Type a Ticker</button>
+    <button class="tab" role="tab" id="t3" aria-selected="false" data-i="3"><span class="n">3</span>Market Shelf</button>
+    <button class="tab" role="tab" id="t4" aria-selected="false" data-i="4"><span class="n">4</span>Live Preview Picker</button>
+    <button class="tab" role="tab" id="t5" aria-selected="false" data-i="5"><span class="n">5</span>Recipe Shelf</button>
+  </nav>
+
+  <!-- 1 -->
+  <section class="idea" data-p="1" role="tabpanel" aria-labelledby="t1">
+    <div class="idea-head"><h2>Live on Launch</h2><span class="badge rec">Recommended by the panel</span><span class="badge">Merge of proposals 3, 8 and 4</span></div>
+    <p class="pitch">The app opens already streaming BTCUSDT on Binance with bubbles: the first frame is already the product. A chip in the corner turns into the list of all markets, with an honest status on each row.</p>
+    <div class="win">
+      <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="apptab"><span class="dot"></span><span id="l1tab">BTCUSDT · vol:5</span></span><span class="apptab ghost">+</span></div>
+      <div class="screen" id="s1">
+        <canvas class="chart" data-chart="s1"></canvas>
+        <div class="chip"><button id="chip1" class="active" aria-expanded="true"><span class="dot"></span><span id="chip1lbl">BTCUSDT · Binance · vol:5</span> ▾</button></div>
+        <div class="hint" id="hint1" hidden>Live now. Press <kbd>Ctrl</kbd>+<kbd>K</kbd> to switch market</div>
+        <div class="drop" id="drop1">
+          <input class="search" id="q1" placeholder="Search markets (BTC, ETH, mini índice…)" autocomplete="off">
+          <div id="list1"></div>
+        </div>
+        <div class="health"><span class="dot"></span><span id="h1">Binance · 41 trades/s · 18 ms</span></div>
+      </div>
+    </div>
+    <aside class="notes">
+      <div><h3>From zero to chart</h3><ol><li>Open the app: chart already running. <b>0 clicks.</b></li><li>Optional: click the chip or <span class="mono">Ctrl+K</span>.</li><li>Type or use the arrows to pick a market.</li><li>Enter: switches in place, no new screen.</li></ol></div>
+      <div class="try">Try it: click a row in the list (ETH, SOL…). The chart switches at once. Type “mini” to see WIN with an honest status.</div>
+      <div class="pc"><div class="pro">Guarantees a smooth, good-looking chart in the very first second.</div><div class="pro">The dropdown becomes the everyday Ctrl+K, so it is not a beginner-only screen.</div><div class="con">Decides for the B3 trader: the first market he sees was not chosen by him.</div></div>
+      <div class="cost"><span class="meter"><i class="on"></i><i></i><i></i></span><b>Cost S</b><span class="small-note">one feed subscription, a popup over the chart that already exists</span></div>
+    </aside>
+  </section>
+
+  <!-- 2 -->
+  <section class="idea" data-p="2" role="tabpanel" aria-labelledby="t2" hidden>
+    <div class="idea-head"><h2>Type a Ticker</h2><span class="badge">Merge of proposals 4 and 8</span></div>
+    <p class="pitch">A centered search field, already focused, over a BTC chart running dimmed in the background. As you type, each asset shows up grouped by broker with price and trades/s. The same palette becomes the everyday Ctrl+T.</p>
+    <div class="win">
+      <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="apptab">New tab</span><span class="apptab ghost">+</span></div>
+      <div class="screen dim" id="s2">
+        <canvas class="chart" data-chart="s2"></canvas>
+        <div class="palette">
+          <h4>Open a market</h4>
+          <input class="search" id="q2" value="btc" placeholder="Type a ticker or name" autocomplete="off">
+          <div id="list2"></div>
+          <div class="foot"><span><kbd>↑↓</kbd> choose</span><span><kbd>Enter</kbd> open</span><span><kbd>Tab</kbd> bar type</span><span><kbd>Shift</kbd>+<kbd>Enter</kbd> replay</span><span><kbd>Esc</kbd> close</span></div>
+        </div>
+        <button class="back" id="back2" hidden>Back to palette</button>
+      </div>
+    </div>
+    <aside class="notes">
+      <div><h3>From zero to chart</h3><ol><li>Open the app: palette focused, BTC running behind it.</li><li>Type “btc” (or just press Enter).</li><li><span class="mono">Tab</span> switches the bar type.</li><li>Enter opens. <b>1 key at minimum.</b></li></ol></div>
+      <div class="try">Try it: clear the field and type “eth”, “sol” or “dólar”. Click a row to open.</div>
+      <div class="pc"><div class="pro">Fast for keyboard users; it is the same gesture as TradingView.</div><div class="pro">Brokers without setup appear in the list with the reason, no wizard.</div><div class="con">An empty field blocks anyone who knows no ticker.</div></div>
+      <div class="cost"><span class="meter"><i class="on"></i><i class="on"></i><i></i></span><b>Cost M</b><span class="small-note">fuzzy search, alias table, live price per row</span></div>
+    </aside>
+  </section>
+
+  <!-- 3 -->
+  <section class="idea" data-p="3" role="tabpanel" aria-labelledby="t3" hidden>
+    <div class="idea-head"><h2>Market Shelf</h2><span class="badge">Merge of proposals 2, 1 and 6</span></div>
+    <p class="pitch">A Home tab that feels like a game library: two large live cards for Binance BTC and ETH, compact Hyperliquid cards and an advanced row. Picking a market becomes a choice you can see.</p>
+    <div class="win">
+      <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="apptab" id="l3tab">⌂ Home</span><span class="apptab ghost">+</span></div>
+      <div class="screen" id="s3">
+        <canvas class="chart" data-chart="s3" hidden></canvas>
+        <button class="back" id="back3" hidden>⌂ Back to Home</button>
+        <div class="shelf" id="shelf3">
+          <h4>Pick a market. It's already live.</h4>
+          <div class="sub">Crypto needs no account. Click a card to open its chart.</div>
+          <div class="cards big" id="big3"></div>
+          <div class="eyebrow">Hyperliquid</div>
+          <div class="cards small" id="small3"></div>
+          <div class="eyebrow">Coming soon · Advanced</div>
+          <div class="cards small">
+            <div class="card soon"><div class="sym">Bybit</div><div class="meta">BTCUSDT · ETHUSDT</div><div class="meta">coming soon</div></div>
+            <div class="card"><div class="sym">B3 via MT5</div><div class="meta">WIN · WDO</div><div class="open">Set up (5 min) →</div></div>
+            <div class="card"><div class="sym">Replay</div><div class="meta">recorded sessions</div><div class="open">Watch →</div></div>
+          </div>
+          <div class="statusbar"><span><span class="dot"></span>Binance live</span><span><span class="dot"></span>Hyperliquid live</span><span><span class="dot grey"></span>MT5 not installed</span></div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes">
+      <div><h3>From zero to chart</h3><ol><li>Open the app: Home tab with cards already moving.</li><li>Click a card (or arrows and Enter). <b>1 click.</b></li></ol></div>
+      <div class="try">Try it: click the BTCUSDT card. It opens as a chart; “Back to Home” returns.</div>
+      <div class="pc"><div class="pro">Best for people who like to explore and for promotional screenshots.</div><div class="pro">Shows everything the app has right away.</div><div class="con">One more screen before the chart, and live cards cost CPU.</div></div>
+      <div class="cost"><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i></span><b>Cost L</b><span class="small-note">up to seven live subscriptions and per-card states</span></div>
+    </aside>
+  </section>
+
+  <!-- 4 -->
+  <section class="idea" data-p="4" role="tabpanel" aria-labelledby="t4" hidden>
+    <div class="idea-head"><h2>Live Preview Picker</h2><span class="badge">Proposal 7</span></div>
+    <p class="pitch">A full-screen picker: markets on the left, a large live preview on the right, and a bar type control that explains itself in one line. It teaches what tick and volume bars are before opening.</p>
+    <div class="win">
+      <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="apptab">Pick a market to start</span></div>
+      <div class="screen" id="s4">
+        <div class="pp">
+          <div class="rail" id="rail4"></div>
+          <div class="pv">
+            <div class="pvhead"><span id="pv4">BTCUSDT · Binance</span><span style="display:flex;gap:6px;align-items:center;color:var(--up)"><span class="dot"></span>LIVE</span></div>
+            <div class="pvchart"><canvas class="chart" data-chart="s4"></canvas></div>
+            <div class="pvfoot">
+              <div class="line"><div class="seg" id="seg4"><button class="on" data-b="tick">Tick 50</button><button data-b="vol">Volume 5</button><button data-b="time">Time 1m</button></div><div class="toggles"><span class="on">Bubbles</span><span>Footprint</span><span>Heatmap</span></div></div>
+              <div class="line"><span class="caption" id="cap4">Tick: a new bar every 50 trades. Fast markets print more bars.</span><button class="cta" id="cta4">Open BTCUSDT chart →</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes">
+      <div><h3>From zero to chart</h3><ol><li>Open the app: picker with BTC already running in the preview.</li><li>Hover or use the arrows: the preview switches.</li><li>Choose the bar type and see the difference.</li><li>Enter or “Open chart”. <b>1 click.</b></li></ol></div>
+      <div class="try">Try it: hover the markets and switch Tick/Volume/Time. The caption explains each one.</div>
+      <div class="pc"><div class="pro">Teaches alternative bars in two seconds, with no long text.</div><div class="pro">Opens exactly what you saw in the preview.</div><div class="con">The heaviest to build, and slow for anyone who already knows what they want.</div></div>
+      <div class="cost"><span class="meter"><i class="on"></i><i class="on"></i><i class="on"></i></span><b>Cost L</b><span class="small-note">warmed-up subscriptions and a second chart instance</span></div>
+    </aside>
+  </section>
+
+  <!-- 5 -->
+  <section class="idea" data-p="5" role="tabpanel" aria-labelledby="t5" hidden>
+    <div class="idea-head"><h2>Recipe Shelf</h2><span class="badge">Proposal 5</span></div>
+    <p class="pitch">Asks “what do you want to watch?” and opens a full workspace already tuned for each intent. Each recipe is a TOML workspace, so new recipes arrive as data, not code.</p>
+    <div class="win">
+      <div class="titlebar"><span class="dots"><i></i><i></i><i></i></span><span class="apptab" id="l5tab">Start</span><span class="apptab ghost">+</span></div>
+      <div class="screen" id="s5">
+        <canvas class="chart" data-chart="s5" hidden></canvas>
+        <button class="back" id="back5" hidden>Back to recipes</button>
+        <div class="shelf" id="shelf5">
+          <h4>What do you want to watch?</h4>
+          <div class="sub">Every recipe opens live. You can change anything afterwards.</div>
+          <div class="cards recipes" id="rec5"></div>
+          <div class="minirow">
+            <div class="card"><div><div class="sym" style="font-size:13px">More markets</div><div class="meta">Hyperliquid SOL · HYPE · ZEC</div></div><span class="open">Browse (7) →</span></div>
+            <div class="card soon"><div><div class="sym" style="font-size:13px">Bybit BTC perp</div><div class="meta">coming soon</div></div></div>
+            <div class="card"><div><div class="sym" style="font-size:13px">Brazil B3 · WIN / WDO</div><div class="meta">needs MetaTrader 5 bridge</div></div><span class="open">Set up →</span></div>
+          </div>
+          <div class="small-note">Watch a replay instead (offline) · Blank chart</div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes">
+      <div><h3>From zero to chart</h3><ol><li>Open the app: recipes screen.</li><li>Click a recipe or press 1, 2, 3. <b>1 click.</b></li></ol></div>
+      <div class="try">Try it: click “Scalp BTC order flow”. The ready workspace opens.</div>
+      <div class="pc"><div class="pro">Shows what Quantick is good at, already with the setup that looks good.</div><div class="pro">A new recipe is just a file, no code.</div><div class="con">Assumes a trading style; a split screen can be scary the first time.</div></div>
+      <div class="cost"><span class="meter"><i class="on"></i><i class="on"></i><i></i></span><b>Cost M</b><span class="small-note">reuses workspaces, but each recipe must be tuned and maintained</span></div>
+    </aside>
+  </section>
+
+  <section>
+    <div class="eyebrow" style="margin-bottom:10px">Comparison</div>
+    <div class="cmp-wrap">
+      <table>
+        <thead><tr><th>Idea</th><th>Clicks to running</th><th>Cost</th><th>Best for</th><th>Weak point</th></tr></thead>
+        <tbody>
+          <tr><td><b>1 · Live on Launch</b></td><td class="num">0</td><td class="num">S</td><td>First use in crypto</td><td>Picks the market for the user</td></tr>
+          <tr><td><b>2 · Type a Ticker</b></td><td class="num">1 key</td><td class="num">M</td><td>Keyboard and repeat use</td><td>Empty field blocks newcomers</td></tr>
+          <tr><td><b>3 · Market Shelf</b></td><td class="num">1</td><td class="num">L</td><td>Exploring, promotion</td><td>Extra screen, card CPU</td></tr>
+          <tr><td><b>4 · Live Preview Picker</b></td><td class="num">0 to see, 1 to open</td><td class="num">L</td><td>Anyone who never saw alternative bars</td><td>Heavy and slow for veterans</td></tr>
+          <tr><td><b>5 · Recipe Shelf</b></td><td class="num">1</td><td class="num">M</td><td>Showing the best of the app</td><td>Assumes a trading style</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="verdict"><b>Panel recommendation:</b> start with 1. It is the only one that guarantees a smooth, good-looking chart in the first second at cost S, and its dropdown grows naturally into the palette of idea 2. The shelf (3) waits until Bybit and MT5 make the list long enough to need a screen of its own.<div class="small-note" style="margin-top:8px">Bybit does not exist in the code yet; it shows as “coming soon” in every concept. The text inside the mockups is in English because that is the app's interface language. Prices and trades are simulated.</div></div>
+</div>
+
+<script>
+(()=>{
+// ---------- market simulation (one stream per market, shared by every surface) ----------
+const M={
+  "BTCUSDT@Binance":{sym:"BTCUSDT",ven:"Binance",px:64210.5,tick:.1,rate:40,vol:.012},
+  "ETHUSDT@Binance":{sym:"ETHUSDT",ven:"Binance",px:2481.37,tick:.01,rate:28,vol:.014},
+  "BTC@Hyperliquid":{sym:"BTC",ven:"Hyperliquid",px:64206,tick:1,rate:22,vol:.012},
+  "ETH@Hyperliquid":{sym:"ETH",ven:"Hyperliquid",px:2480.9,tick:.1,rate:16,vol:.014},
+  "HYPE@Hyperliquid":{sym:"HYPE",ven:"Hyperliquid",px:38.214,tick:.001,rate:12,vol:.025},
+  "SOL@Hyperliquid":{sym:"SOL",ven:"Hyperliquid",px:152.31,tick:.01,rate:14,vol:.02},
+  "ZEC@Hyperliquid":{sym:"ZEC",ven:"Hyperliquid",px:41.28,tick:.01,rate:6,vol:.03},
+};
+let seed=7;const rnd=()=>{seed=(seed*16807)%2147483647;return seed/2147483647};
+const gauss=()=>{let u=0;for(let i=0;i<6;i++)u+=rnd();return u-3};
+for(const k in M){const m=M[k];m.key=k;m.drift=0;m.trades=[];m.bars=[];m.cur=null;m.spark=[];m.last=m.px;m.tps=m.rate;m.open0=m.px}
+const BAR={tick:50,vol:5,time:60};
+function trade(m){
+  m.drift=m.drift*.97+gauss()*.03;
+  const step=m.px*m.vol*.0006*(gauss()+m.drift*2);
+  m.px=Math.max(m.tick,Math.round((m.px+step)/m.tick)*m.tick);
+  const side=step>=0?1:-1;
+  const big=rnd()<.035;
+  const size=big?(1+rnd()*6)**2:rnd()*1.2;
+  m.last=m.px;
+  if(!m.cur)m.cur={o:m.px,h:m.px,l:m.px,c:m.px,n:0,bub:[]};
+  const b=m.cur;b.h=Math.max(b.h,m.px);b.l=Math.min(b.l,m.px);b.c=m.px;b.n++;
+  if(big)b.bub.push({p:m.px,s:size,side});
+  if(b.n>=Math.round(BAR.tick*.6)){m.bars.push(b);if(m.bars.length>140)m.bars.shift();m.cur=null}
+}
+// warm up so nothing ever opens empty
+for(const k in M){const m=M[k];for(let i=0;i<6000;i++)trade(m);for(let i=0;i<60;i++)m.spark.push(m.bars[m.bars.length-60+i]?.c??m.px);m.open0=m.bars[0].o}
+// ---------- chart renderer ----------
+const css=getComputedStyle(document.documentElement);
+const C=n=>css.getPropertyValue(n).trim();
+const UP=C("--up"),DN=C("--down"),GRID="#141a23",TXT=C("--muted");
+const charts=[];
+function makeChart(cv,key,opts={}){const c={cv,key,opts,lo:null,hi:null};charts.push(c);return c}
+function fmt(m,v){const d=m.tick<1?String(m.tick).split(".")[1].length:0;return v.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d})}
+function draw(c){
+  const cv=c.cv;if(!cv.offsetParent)return;
+  const r=cv.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  const W=Math.round(r.width*dpr),H=Math.round(r.height*dpr);if(!W||!H)return;
+  if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H}
+  const g=cv.getContext("2d");g.setTransform(dpr,0,0,dpr,0,0);
+  const w=r.width,h=r.height,m=M[c.key],axis=c.opts.mini?0:66;
+  g.fillStyle="#07090d";g.fillRect(0,0,w,h);
+  const n=c.opts.mini?40:Math.max(30,Math.min(90,Math.floor((w-axis)/9)));
+  const bars=m.bars.slice(-n+1);if(m.cur)bars.push(m.cur);
+  let lo=Infinity,hi=-Infinity;for(const b of bars){lo=Math.min(lo,b.l);hi=Math.max(hi,b.h)}
+  const pad=(hi-lo)*.12+m.tick*4;lo-=pad;hi+=pad;
+  if(c.lo==null){c.lo=lo;c.hi=hi}else{c.lo+=(lo-c.lo)*.08;c.hi+=(hi-c.hi)*.08}
+  const y=v=>h-((v-c.lo)/(c.hi-c.lo))*(h-24)-12;
+  const bw=(w-axis-8)/n;
+  if(!c.opts.mini){
+    g.strokeStyle=GRID;g.lineWidth=1;g.fillStyle=TXT;g.font="11px JetBrains Mono, monospace";g.textBaseline="middle";
+    for(let i=1;i<6;i++){const yy=Math.round(h*i/6)+.5;g.beginPath();g.moveTo(0,yy);g.lineTo(w-axis,yy);g.stroke();
+      const v=c.lo+(c.hi-c.lo)*(1-(yy-12)/(h-24));g.fillText(fmt(m,v),w-axis+8,yy)}
+  }
+  bars.forEach((b,i)=>{
+    const x=8+i*bw+bw/2,up=b.c>=b.o,col=up?UP:DN;
+    g.strokeStyle=col;g.lineWidth=1;g.beginPath();g.moveTo(Math.round(x)+.5,y(b.h));g.lineTo(Math.round(x)+.5,y(b.l));g.stroke();
+    const top=y(Math.max(b.o,b.c)),bh=Math.max(1,Math.abs(y(b.o)-y(b.c)));
+    g.fillStyle=col;g.globalAlpha=b===m.cur?.55:.9;g.fillRect(x-bw*.32,top,bw*.64,bh);g.globalAlpha=1;
+    if(!c.opts.noBubbles)for(const p of b.bub){const rr=Math.min(c.opts.mini?7:22,Math.sqrt(p.s)*(c.opts.mini?1.1:2.6));
+      g.beginPath();g.arc(x,y(p.p),rr,0,7);g.fillStyle=p.side>0?"rgba(47,199,154,.22)":"rgba(242,96,111,.22)";g.fill();
+      g.strokeStyle=p.side>0?"rgba(47,199,154,.7)":"rgba(242,96,111,.7)";g.stroke()}
+  });
+  if(!c.opts.mini){
+    const yy=y(m.last);g.setLineDash([3,3]);g.strokeStyle="rgba(242,181,68,.6)";g.beginPath();g.moveTo(0,yy);g.lineTo(w-axis,yy);g.stroke();g.setLineDash([]);
+    g.fillStyle=C("--accent");g.fillRect(w-axis+2,yy-9,axis-4,18);g.fillStyle=C("--accent-ink");g.font="600 11px JetBrains Mono, monospace";g.fillText(fmt(m,m.last),w-axis+7,yy);
+    if(c.opts.label){g.fillStyle="rgba(131,144,163,.55)";g.font="600 12px JetBrains Mono, monospace";g.textBaseline="bottom";g.fillText(c.opts.label(),12,h-10)}
+  }
+}
+const sparks=[];
+function spark(cv,key){sparks.push({cv,key});return cv}
+function drawSpark(s){
+  const cv=s.cv;if(!cv.offsetParent)return;const r=cv.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+  const W=Math.round(r.width*dpr),H=Math.round(r.height*dpr);if(!W||!H)return;if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H}
+  const g=cv.getContext("2d");g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,r.width,r.height);
+  const d=M[s.key].spark,lo=Math.min(...d),hi=Math.max(...d)||1,up=d[d.length-1]>=d[0],col=up?UP:DN;
+  const X=i=>i/(d.length-1)*(r.width-4)+2,Y=v=>r.height-3-((v-lo)/((hi-lo)||1))*(r.height-6);
+  g.beginPath();d.forEach((v,i)=>i?g.lineTo(X(i),Y(v)):g.moveTo(X(i),Y(v)));
+  g.strokeStyle=col;g.lineWidth=1.4;g.stroke();g.lineTo(X(d.length-1),r.height);g.lineTo(X(0),r.height);g.closePath();
+  g.fillStyle=up?"rgba(47,199,154,.12)":"rgba(242,96,111,.12)";g.fill();
+  g.beginPath();g.arc(X(d.length-1),Y(d[d.length-1]),2.2,0,7);g.fillStyle=col;g.fill();
+}
+const pxEls=[];
+function pxEl(key){const s=document.createElement("span");s.className="px";s.dataset.k=key;pxEls.push(s);return s}
+// ---------- loop ----------
+let last=performance.now(),acc=0,sparkT=0;
+const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+function loop(t){
+  const dt=Math.min(.1,(t-last)/1000);last=t;
+  for(const k in M){const m=M[k];m.acc=(m.acc||0)+m.rate*dt*(.6+rnd()*.8);let k2=0;while(m.acc>=1){trade(m);m.acc--;k2++}m.tps=m.tps*.95+(k2/Math.max(dt,.001))*.05}
+  sparkT+=dt;if(sparkT>.5){sparkT=0;for(const k in M){const m=M[k];m.spark.push(m.px);if(m.spark.length>60)m.spark.shift()}sparks.forEach(drawSpark)}
+  charts.forEach(draw);
+  acc+=dt;if(acc>.25){acc=0;pxEls.forEach(e=>{if(e.offsetParent)e.textContent=fmt(M[e.dataset.k],M[e.dataset.k].last)});
+    const h=document.getElementById("h1");const m=M[c1.key];h.textContent=`${m.ven} · ${Math.round(m.tps)} trades/s · 18 ms`}
+  requestAnimationFrame(loop);
+}
+// ---------- tabs ----------
+document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>{
+  document.querySelectorAll(".tab").forEach(x=>x.setAttribute("aria-selected",x===b));
+  document.querySelectorAll(".idea").forEach(s=>s.hidden=s.dataset.p!==b.dataset.i);
+  try{localStorage.setItem("qpc-tab",b.dataset.i)}catch(e){}
+}));
+try{const s=localStorage.getItem("qpc-tab");if(s)document.querySelector(`.tab[data-i="${s}"]`)?.click()}catch(e){}
+
+// ---------- idea 1 ----------
+const c1=makeChart(document.querySelector('[data-chart="s1"]'),"BTCUSDT@Binance",{label:()=>`${M[c1.key].sym} · ${M[c1.key].ven} · LIVE · vol:5`});
+const extra1=[
+  {g:"Coming soon",sym:"BTCUSDT",ven:"Bybit",st:"coming soon",off:true,alias:"bybit"},
+  {g:"Needs setup",sym:"WIN",ven:"B3 mini índice · MT5",st:"Set up MT5 (5 min)",warn:true,alias:"mini indice índice win b3"},
+  {g:"Needs setup",sym:"WDO",ven:"B3 mini dólar · MT5",st:"Set up MT5 (5 min)",warn:true,alias:"mini dolar dólar wdo b3"},
+  {g:"Needs setup",sym:"XAUUSD",ven:"Tickmill · MT5",st:"Set up MT5",warn:true,alias:"gold ouro xau"},
+  {g:"Offline",sym:"Replay",ven:"recorded BTCUSDT session",st:"REPLAY",alias:"replay offline"},
+];
+function list1(){
+  const q=document.getElementById("q1").value.toLowerCase().trim(),el=document.getElementById("list1");el.innerHTML="";
+  const groups={};
+  for(const k in M){const m=M[k];const g=k==="BTCUSDT@Binance"||k==="ETHUSDT@Binance"?"Start here · no account":"Hyperliquid";
+    if(q&&!(m.sym+" "+m.ven).toLowerCase().includes(q))continue;(groups[g]??=[]).push({key:k,sym:m.sym,ven:m.ven})}
+  for(const x of extra1){if(q&&!(x.sym+" "+x.ven+" "+x.alias).toLowerCase().includes(q))continue;(groups[x.g]??=[]).push(x)}
+  for(const g in groups){const h=document.createElement("div");h.className="grp";h.textContent=g;el.append(h);
+    for(const it of groups[g]){const r=document.createElement("div");r.className="row"+(it.off?" off":"")+(it.key===c1.key?" sel":"");
+      r.innerHTML=`<span class="sym">${it.sym}</span><span class="ven">${it.ven}</span>`;
+      if(it.key){r.append(spark(document.createElement("canvas"),it.key),pxEl(it.key));r.tabIndex=0;
+        const go=()=>{c1.key=it.key;c1.lo=null;const m=M[it.key];document.getElementById("chip1lbl").textContent=`${m.sym} · ${m.ven} · vol:5`;document.getElementById("l1tab").textContent=`${m.sym} · vol:5`;close1();};
+        r.onclick=go;r.onkeydown=e=>{if(e.key==="Enter")go()}}
+      else{const s=document.createElement("span");s.className="st"+(it.warn?" warn":"");s.textContent=it.st;r.append(s)}
+      el.append(r)}}
+  if(!el.children.length)el.innerHTML='<div class="row off"><span class="ven">No market matches. Try “btc” or “mini”.</span></div>';
+  sparks.forEach(drawSpark);pxEls.forEach(e=>{e.textContent=fmt(M[e.dataset.k],M[e.dataset.k].last)});
+}
+const drop1=document.getElementById("drop1"),chip1=document.getElementById("chip1"),hint1=document.getElementById("hint1");
+function close1(){drop1.hidden=true;chip1.setAttribute("aria-expanded","false");chip1.classList.remove("active");hint1.hidden=false}
+chip1.onclick=()=>{const o=drop1.hidden;drop1.hidden=!o;chip1.setAttribute("aria-expanded",o);chip1.classList.toggle("active",o);hint1.hidden=true;if(o)list1()};
+document.getElementById("q1").oninput=list1;list1();
+
+// ---------- idea 2 ----------
+const c2=makeChart(document.querySelector('[data-chart="s2"]'),"BTCUSDT@Binance",{label:()=>`${M[c2.key].sym} · ${M[c2.key].ven} · LIVE · tick:50`});
+const alias2={"dólar":"wdo","dolar":"wdo","mini":"win","índice":"win","indice":"win","ouro":"xau","gold":"xau"};
+function list2(){
+  const raw=document.getElementById("q2").value.toLowerCase().trim(),q=alias2[raw]??raw,el=document.getElementById("list2");el.innerHTML="";
+  const base={btc:"BTC",eth:"ETH",sol:"SOL",hype:"HYPE",zec:"ZEC"};
+  const assets={};
+  for(const k in M){const m=M[k];const a=m.sym.replace("USDT","");if(q&&!a.toLowerCase().startsWith(q)&&!m.ven.toLowerCase().startsWith(q))continue;(assets[a]??=[]).push(k)}
+  let i=0;
+  for(const a in assets){const h=document.createElement("div");h.className="grp";h.textContent=a;el.append(h);
+    for(const k of assets[a]){const m=M[k],r=document.createElement("div");r.className="row"+(i++===0?" sel":"");r.tabIndex=0;
+      r.innerHTML=`<span class="sym">${m.sym}</span><span class="ven">${m.ven} · ${Math.round(m.rate)} trades/s</span>`;
+      r.append(pxEl(k));const p=document.createElement("span");p.className="pill";p.textContent="tick:50";r.append(p);
+      const go=()=>{c2.key=k;c2.lo=null;document.getElementById("s2").classList.remove("dim");document.querySelector("#s2 .palette").hidden=true;document.getElementById("back2").hidden=false};
+      r.onclick=go;r.onkeydown=e=>{if(e.key==="Enter")go()};el.append(r)}
+    if(a==="BTC"||a==="ETH"){const r=document.createElement("div");r.className="row off";r.innerHTML=`<span class="sym">${a}USDT</span><span class="ven">Bybit</span><span class="st">coming soon</span>`;el.append(r)}}
+  if(q==="win"||q==="wdo"||q==="xau"){const h=document.createElement("div");h.className="grp";h.textContent="MetaTrader 5";el.append(h);
+    const r=document.createElement("div");r.className="row";r.innerHTML=`<span class="sym">${q.toUpperCase()}${q==="xau"?"USD":""}</span><span class="ven">${q==="xau"?"Tickmill":"B3"} · via MT5</span><span class="st warn">Setup required →</span>`;el.append(r)}
+  if(!el.children.length)el.innerHTML='<div class="row off"><span class="ven">No market matches. Try “btc”, “eth” or “mini”.</span></div>';
+  pxEls.forEach(e=>{e.textContent=fmt(M[e.dataset.k],M[e.dataset.k].last)});
+}
+document.getElementById("q2").oninput=list2;list2();
+document.getElementById("back2").onclick=()=>{document.getElementById("s2").classList.add("dim");document.querySelector("#s2 .palette").hidden=false;document.getElementById("back2").hidden=true;c2.key="BTCUSDT@Binance";c2.lo=null};
+
+// ---------- idea 3 ----------
+const c3=makeChart(document.querySelector('[data-chart="s3"]'),"BTCUSDT@Binance",{label:()=>`${M[c3.key].sym} · ${M[c3.key].ven} · LIVE · tick:50`});
+function card3(k,big){const m=M[k],b=document.createElement("button");b.className="card";
+  b.innerHTML=`<div class="top"><span class="sym">${m.sym}</span>${big?'<span class="ribbon">Start here</span>':'<span class="dot"></span>'}</div><div class="meta">${m.ven}</div>`;
+  const cv=document.createElement("canvas");b.append(spark(cv,k));
+  const f=document.createElement("div");f.className="top";const p=pxEl(k);p.className="meta";f.append(p);
+  if(big){const o=document.createElement("span");o.className="open";o.textContent="Open chart ↵";f.append(o)}b.append(f);
+  b.onclick=()=>{c3.key=k;c3.lo=null;document.getElementById("shelf3").hidden=true;c3.cv.hidden=false;document.getElementById("back3").hidden=false;document.getElementById("l3tab").textContent=`${m.sym} · tick:50`};return b}
+["BTCUSDT@Binance","ETHUSDT@Binance"].forEach(k=>document.getElementById("big3").append(card3(k,true)));
+["BTC","ETH","HYPE","SOL","ZEC"].forEach(s=>document.getElementById("small3").append(card3(s+"@Hyperliquid",false)));
+document.getElementById("back3").onclick=()=>{document.getElementById("shelf3").hidden=false;c3.cv.hidden=true;document.getElementById("back3").hidden=true;document.getElementById("l3tab").textContent="⌂ Home"};
+
+// ---------- idea 4 ----------
+const c4=makeChart(document.querySelector('[data-chart="s4"]'),"BTCUSDT@Binance",{label:()=>"preview · nothing opened yet"});
+const caps={tick:"Tick: a new bar every 50 trades. Fast markets print more bars.",vol:"Volume: a new bar every 5 BTC traded. Big trades close bars sooner.",time:"Time: a new bar every minute, like a classic chart. Quiet minutes look the same as busy ones."};
+const rail=document.getElementById("rail4");
+const railGroups=[["Crypto · no account",["BTCUSDT@Binance","ETHUSDT@Binance"]],["Hyperliquid",["BTC@Hyperliquid","ETH@Hyperliquid","HYPE@Hyperliquid","SOL@Hyperliquid","ZEC@Hyperliquid"]]];
+let sel4=null;
+for(const [g,ks] of railGroups){const h=document.createElement("div");h.className="grp";h.textContent=g;rail.append(h);
+  for(const k of ks){const m=M[k],r=document.createElement("div");r.className="row";r.tabIndex=0;r.innerHTML=`<span class="sym">${m.sym}</span><span class="ven">${m.ven}</span>`;r.append(spark(document.createElement("canvas"),k));
+    const pick=()=>{if(c4.key===k)return;c4.key=k;c4.lo=null;sel4?.classList.remove("sel");r.classList.add("sel");sel4=r;document.getElementById("pv4").textContent=`${m.sym} · ${m.ven}`;document.getElementById("cta4").textContent=`Open ${m.sym} chart →`};
+    r.onmouseenter=pick;r.onfocus=pick;r.onclick=pick;if(!sel4){r.classList.add("sel");sel4=r}rail.append(r)}}
+[["Coming soon","Bybit","BTCUSDT · ETHUSDT","soon",true],["MetaTrader 5 · advanced","WIN · WDO","B3","Set up →",false]].forEach(([g,s,v,st,off])=>{
+  const h=document.createElement("div");h.className="grp";h.textContent=g;rail.append(h);
+  const r=document.createElement("div");r.className="row"+(off?" off":"");r.innerHTML=`<span class="sym">${s}</span><span class="ven">${v}</span><span class="st ${off?"":"warn"}">${st}</span>`;rail.append(r)});
+document.querySelectorAll("#seg4 button").forEach(b=>b.onclick=()=>{document.querySelectorAll("#seg4 button").forEach(x=>x.classList.toggle("on",x===b));document.getElementById("cap4").textContent=caps[b.dataset.b];c4.lo=null});
+document.getElementById("cta4").onclick=()=>{const m=M[c4.key];document.getElementById("cta4").textContent=`Opened ${m.sym} in a new tab ✓`};
+
+// ---------- idea 5 ----------
+const c5=makeChart(document.querySelector('[data-chart="s5"]'),"BTCUSDT@Binance",{label:()=>`${M[c5.key].sym} · ${M[c5.key].ven} · LIVE · recipe`});
+[["Scalp BTC order flow","BTCUSDT@Binance",["Recommended","Binance","vol:5","bubbles + footprint"]],
+ ["Compare BTC: Binance vs Hyperliquid","BTC@Hyperliquid",["split view","tick:50"]],
+ ["Read the ETH tape","ETHUSDT@Binance",["Binance","tick:50","heatmap"]]].forEach(([t,k,tags],i)=>{
+  const b=document.createElement("button");b.className="card recipe";
+  const th=document.createElement("div");th.className="thumb";const cv=document.createElement("canvas");cv.className="chart";th.append(cv);b.append(th);
+  makeChart(cv,k,{mini:true});
+  const body=document.createElement("div");body.className="body";body.innerHTML=`<h5>${i+1} · ${t}</h5><div class="tags">${tags.map((x,j)=>`<span class="${j===0&&x==="Recommended"?"ribbon":"pill"}">${x}</span>`).join("")}</div><span class="open">Open live →</span>`;b.append(body);
+  b.onclick=()=>{c5.key=k;c5.lo=null;document.getElementById("shelf5").hidden=true;c5.cv.hidden=false;document.getElementById("back5").hidden=false;document.getElementById("l5tab").textContent=t};
+  document.getElementById("rec5").append(b)});
+document.getElementById("back5").onclick=()=>{document.getElementById("shelf5").hidden=false;c5.cv.hidden=true;document.getElementById("back5").hidden=true;document.getElementById("l5tab").textContent="Start"};
+
+if(reduce){charts.forEach(draw);sparks.forEach(drawSpark);setInterval(()=>{for(const k in M)for(let i=0;i<20;i++)trade(M[k]);charts.forEach(draw)},1000)}
+else requestAnimationFrame(loop);
+})();
+</script>
