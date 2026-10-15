@@ -470,3 +470,40 @@ fn the_move_runs_at_load_and_writes_only_when_a_copy_lands() {
     let again = open(&path, &config);
     assert_eq!(again.borrow_mut().flush(), None, "migrated once");
 }
+
+/// Review #14, the trader alternates this build and main (ef882174) on one
+/// store. The fixture is main's own rewrite of a file this build migrated:
+/// main's loader read that file whole (all three looks, the save-off
+/// switch), the trader's WIN edit there set 20, and main wrote it back. This
+/// build reads main's file with every look, and the re-check the missing
+/// marker causes copies nothing over a look main kept.
+#[test]
+fn a_file_main_rewrote_reads_back_whole() {
+    let dir = ScratchDir::new("asset-mode-main-rewrite");
+    let path = dir.join(ASSETS_FILE);
+    std::fs::write(&path, MAIN_REWRITE).unwrap();
+    let file = crate::bubble_assets::parse(MAIN_REWRITE).expect("main's file reads here");
+    assert_eq!(
+        file.assets.keys().collect::<Vec<_>>(),
+        ["BTCUSDT", "WIN*", "hyperliquid:BTCUSDT"]
+    );
+    assert_eq!((file.version, file.key_migration), (1, None));
+    assert!(file.save_changes_off.contains("WDO$N"));
+    assert_eq!(file.get("WIN*").unwrap().look.bubbles.max_radius, 20.0);
+    // Main keeps every look but drops the look fields it does not know,
+    // so the BTC looks come back without their spheres (reported in A4).
+    assert_eq!(file.get("BTCUSDT").unwrap().look.tick_bubbles, None);
+    let store = open(&path, &venue_config());
+    for key in ["BTCUSDT", "WIN*", "hyperliquid:BTCUSDT"] {
+        assert_eq!(store.borrow().get(key), file.get(key), "{key}");
+    }
+    assert_eq!(
+        store.borrow_mut().flush(),
+        None,
+        "nothing moved over a kept look"
+    );
+}
+
+/// A store as main (ef882174) writes it: format version 1, its own fields and
+/// none of this build's. Written by main's `save_to` in a scratch worktree.
+const MAIN_REWRITE: &str = include_str!("../tests/fixtures/bubble-assets-main-rewrite.toml");
