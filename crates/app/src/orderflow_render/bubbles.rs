@@ -28,6 +28,7 @@ use quantick_orderflow::{
 };
 pub(super) use quantick_orderflow::{bubble_radius, side_offset_y};
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive as _;
 
 use super::layout::RenderContext;
 use super::{Palette, add_gradient_rect, finite_unit, mix_rgb};
@@ -561,7 +562,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             .tape_display_full_quantity(&style.bubbles, &style.live_lane)
             .is_some()
     });
-    if factual_tape && !fixed_tape_size {
+    if factual_tape && !fixed_tape_size && style.bubbles.viewport_scale.is_none() {
         style.bubbles.max_radius = tape_geometry.max_radius;
     }
     let merged = factual_tape
@@ -679,10 +680,27 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         if let Some(frame) = &merged {
             fulls.0 = frame.full_quantity;
         }
-        (sizing, fulls)
+        let display = factual_tape
+            .then(|| {
+                quantick_orderflow::projection::TapeBubbleDisplay::resolve(
+                    bubbles,
+                    shown.iter().copied(),
+                    context.tape_time.map_or(f64::NAN, |(edge, _)| {
+                        f64::from(tape_geometry.span_px) / edge.window_ms as f64
+                    }),
+                    context.tape_prices.map_or(f64::NAN, |prices| {
+                        f64::from(context.layout.chart_rect.height())
+                            / (prices.high - prices.low).to_f64().unwrap_or(0.0)
+                    }),
+                    tape_geometry.max_radius,
+                )
+            })
+            .flatten();
+        (sizing, fulls, display)
     });
     let drawn = |trade: &AggressionPrimitive| match dot_sizing {
-        Some((sizing, fulls)) => sizing.draw(bubbles, &style.live_lane, trade, fulls),
+        Some((_, _, Some(display))) if trade.live => display.draw(trade.quantity),
+        Some((sizing, fulls, _)) => sizing.draw(bubbles, &style.live_lane, trade, fulls),
         None if trade.live => (trade.size, bubble_radius(trade.size, lane_min, lane_max)),
         None => (
             trade.size,

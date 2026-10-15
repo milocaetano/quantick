@@ -4,6 +4,8 @@
 use super::*;
 use quantick_orderflow::DotSizing;
 
+mod viewport_tests;
+
 /// A volume dot on `live`'s pane, holding `quantity` contracts one tick
 /// tall, at `(x, y)`.
 fn dot(live: bool, quantity: i64, x: f64, y: f64) -> AggressionPrimitive {

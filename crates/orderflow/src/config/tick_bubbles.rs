@@ -16,6 +16,7 @@ impl super::HeatmapConfig {
     pub fn same_tape_settings(&self, other: &Self) -> bool {
         let mut compared = other.clone();
         compared.volume_dots.tick_bubbles = self.volume_dots.tick_bubbles;
+        compared.bubbles.viewport_scale = self.bubbles.viewport_scale;
         *self == compared
     }
 
@@ -57,7 +58,9 @@ mod grouping_tests {
             "reference_quantity = 1.0\nmax_radius = 32.0\nlabel_min_radius = 8.0\nopacity = 0.9\n";
         let fixed: super::TickBubbleStyle = toml::from_str(old).unwrap();
         assert_eq!(fixed.reference_mode, super::TickReferenceMode::Fixed);
+        assert_eq!(fixed.viewport_scale, None);
         assert!(!toml::to_string(&fixed).unwrap().contains("reference_mode"));
+        assert!(!toml::to_string(&fixed).unwrap().contains("viewport_scale"));
         let visible = super::TickBubbleStyle {
             reference_mode: super::TickReferenceMode::VisibleMax,
             ..fixed
@@ -71,6 +74,12 @@ mod grouping_tests {
         config.volume_dots.tick_bubbles = Some(fixed);
         let mut changed = config.clone();
         changed.volume_dots.tick_bubbles = Some(visible);
+        assert!(config.same_tape_settings(&changed));
+        assert!(config.same_tape_grouping(&changed));
+        changed.bubbles.viewport_scale = Some(super::super::ViewportBubbleScale {
+            x_units_per_pixel: 1.0,
+            price_units_per_pixel: 1.0,
+        });
         assert!(config.same_tape_settings(&changed));
         assert!(config.same_tape_grouping(&changed));
         changed.bubbles.size_reference_quantity = 8.0;
@@ -131,6 +140,7 @@ mod grouping_tests {
     fn an_invalid_reference_falls_back_to_the_named_quantity() {
         for invalid in [f64::NAN, f64::INFINITY, 0.0, -1.0] {
             let mut style = super::TickBubbleStyle {
+                viewport_scale: None,
                 reference_mode: crate::TickReferenceMode::Fixed,
                 reference_quantity: invalid,
                 max_radius: 32.0,
@@ -166,12 +176,18 @@ impl TickReferenceMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct TickBubbleStyle {
-    /// Full-radius quantity in fixed mode, or the floor of the common
-    /// visible reference in visible-max mode. Read through [`Self::reference`].
+    /// Full-radius quantity in fixed mode, or the floor of the common visible
+    /// reference in visible-max mode, while `viewport_scale` is absent. The
+    /// viewport policy uses the exact visible maximum instead of this amount.
+    /// Read through [`Self::reference`].
     pub reference_quantity: f64,
     /// Omitted values retain the fixed scale of existing saved styles.
     #[serde(default, skip_serializing_if = "TickReferenceMode::is_fixed")]
     pub reference_mode: TickReferenceMode,
+    /// Exact visible-volume sizing with a common camera gain. Missing values
+    /// preserve the fixed or visible-floor policy of saved appearances.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewport_scale: Option<super::ViewportBubbleScale>,
     /// Full-size radius in logical pixels.
     #[serde(serialize_with = "super::bubbles::serialize_short_f32")]
     pub max_radius: f32,
@@ -185,6 +201,9 @@ pub struct TickBubbleStyle {
 
 impl TickBubbleStyle {
     pub fn sanitize(&mut self) {
+        self.viewport_scale = self
+            .viewport_scale
+            .and_then(super::ViewportBubbleScale::sanitized);
         if usable_reference(self.reference_quantity).is_none() {
             self.reference_quantity = FALLBACK_REFERENCE_QUANTITY;
         }
@@ -194,9 +213,10 @@ impl TickBubbleStyle {
         self.opacity = style.opacity;
     }
 
-    /// The reference the spheres are drawn against, the one rule for it:
+    /// The configured reference before any optional viewport presentation:
     /// [`Self::reference_quantity`] while it is a positive amount a decimal
-    /// can hold, else [`FALLBACK_REFERENCE_QUANTITY`].
+    /// can hold, else [`FALLBACK_REFERENCE_QUANTITY`]. Without `viewport_scale`
+    /// this is the fixed reference or visible-reference floor.
     #[must_use]
     pub fn reference(self) -> Decimal {
         usable_reference(self.reference_quantity).unwrap_or_else(|| {
@@ -219,13 +239,20 @@ impl TickBubbleStyle {
     }
 
     #[must_use]
-    pub fn fingerprint(self) -> [u64; 5] {
+    pub fn fingerprint(self) -> [u64; 8] {
+        let viewport = self
+            .viewport_scale
+            .and_then(super::ViewportBubbleScale::sanitized);
+        let density = viewport.map_or([0; 2], super::ViewportBubbleScale::fingerprint);
         [
             self.reference_quantity.to_bits(),
             u64::from(self.max_radius.to_bits()),
             u64::from(self.label_min_radius.to_bits()),
             u64::from(self.opacity.to_bits()),
             self.reference_mode as u64,
+            u64::from(viewport.is_some()),
+            density[0],
+            density[1],
         ]
     }
 }

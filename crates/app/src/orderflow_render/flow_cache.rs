@@ -4,7 +4,7 @@ use eframe::egui::{
     self,
     util::cache::{ComputerMut, FrameCache},
 };
-use quantick_chart::flow_execution::{FlowExecutionGeometry, FlowPresentation};
+use quantick_chart::flow_execution::FlowExecutionGeometry;
 use quantick_orderflow::projection::flow_tape::FlowTapeFrame;
 use std::{
     hash::{Hash, Hasher},
@@ -80,13 +80,15 @@ pub(crate) fn cached_flow(
     // Build outside the Context memory lock. Logical sector vertices use only
     // WHITE_UV, independent of pixel density and the growing font atlas.
     Arc::clone(entry.mesh.get_or_init(|| {
-        let plan = FlowPresentation::styled(
+        let (plan, viewport_frame) = geometry.presentation(
             frame,
-            [clip.min.into(), clip.max.into()],
             tick.map(|(style, _)| style),
-            |dot| geometry.point(dot).map(|(x, y)| [x, y]),
+            [clip.min.into(), clip.max.into()],
         );
-        let drawing = FlowDrawing::styled(frame, plan, background, backing, tick, painter, history);
+        let displayed = viewport_frame.as_deref().unwrap_or(frame);
+        let mut drawing =
+            FlowDrawing::styled(displayed, plan, background, backing, tick, painter, history);
+        drawing.viewport_frame = viewport_frame;
         Arc::new(drawing)
     }))
 }

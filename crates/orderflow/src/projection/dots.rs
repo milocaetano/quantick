@@ -363,6 +363,7 @@ impl DotSizing {
         (self.native_tape
             && lane.stable_size
             && self.typed_full.is_some()
+            && bubbles.viewport_scale.is_none()
             && bubbles.size_reference == BubbleSizeReference::Fixed)
             .then(|| bubbles.fixed_reference_decimal())
             .flatten()

@@ -82,6 +82,7 @@ pub struct LiveLane {
 /// Stateful UI/controller facade for the optional heatmap.
 pub struct OrderflowView {
     flow_execution: flow_execution::FlowExecutionView,
+    flow_paint: std::cell::RefCell<quantick_chart::flow_execution::FlowPaintState>,
     symbol: String,
     /// UI mirror of the engine configuration. The engine owns
     /// `price_grouping` (auto-base can rewrite it); the mirror adopts engine
@@ -133,6 +134,7 @@ impl OrderflowView {
         let base_grouping = config.price_grouping;
         Self {
             flow_execution: Default::default(),
+            flow_paint: Default::default(),
             worker: BookWorker::spawn(&symbol),
             symbol,
             config,

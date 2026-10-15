@@ -79,6 +79,8 @@ type PlacedLabel = (egui::Pos2, FlowQuantityLabel);
 /// sectors with its rims tessellated in after them, as egui would, and placed labels.
 pub(crate) struct FlowDrawing {
     pub plan: FlowPresentation,
+    /// Exact presentation frame when the current camera resizes tick spheres.
+    pub viewport_frame: Option<Arc<FlowTapeFrame>>,
     pub(super) meshes: [egui::Mesh; 2],
     labels: Vec<PlacedLabel>,
 }
@@ -173,6 +175,7 @@ impl FlowDrawing {
             mesh.append(rims);
         }
         Self {
+            viewport_frame: None,
             labels: place_quantity_labels(painter, history, labels),
             plan,
             meshes,

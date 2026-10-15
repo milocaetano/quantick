@@ -25,6 +25,18 @@
         "reference_quantity": {
           "description": "Full-radius quantity in fixed mode; configured floor in visible-max mode.",
           "type": "string"
+        },
+        "viewport_scale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ViewportBubbleScaleSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Present when final visible quantities and the current camera size the spheres."
         }
       },
       "required": [
@@ -32,6 +44,23 @@
         "max_radius",
         "label_min_radius",
         "opacity"
+      ],
+      "type": "object"
+    },
+    "ViewportBubbleScaleSnapshot": {
+      "description": "Optional drawing calibration; factual grouping uses its existing settings.",
+      "properties": {
+        "price_units_per_pixel": {
+          "type": "string"
+        },
+        "x_units_per_pixel": {
+          "description": "Bars on candles; milliseconds on native Tape.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "x_units_per_pixel",
+        "price_units_per_pixel"
       ],
       "type": "object"
     },

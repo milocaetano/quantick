@@ -594,6 +594,7 @@ fn dense_production_flow_cache_benchmark() {
 /// The tick spheres the dense fixture is drawn with: rims from 3.5 px,
 /// labels from 8 px.
 const DENSE_TICK: quantick_orderflow::TickBubbleStyle = quantick_orderflow::TickBubbleStyle {
+    viewport_scale: None,
     reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
     reference_quantity: 2964.0,
     max_radius: 32.0,

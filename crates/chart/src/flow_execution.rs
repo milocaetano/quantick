@@ -25,6 +25,8 @@ mod disc;
 pub use disc::{FlowBounds, FlowDisc};
 mod presentation;
 pub use presentation::{FlowPresentation, FlowRegionRole, FlowRegionVisual};
+mod paint_state;
+pub use paint_state::FlowPaintState;
 
 /// Capture canonical membership when the caller enables regional FLOW.
 pub fn project_flow_executions<R: FlowRunner>(

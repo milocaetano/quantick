@@ -1,4 +1,6 @@
 use super::*;
+#[path = "viewport_benchmark.rs"]
+mod viewport_benchmark;
 use quantick_chart::viewport::Viewport;
 use quantick_engine::{Side, Trade};
 use quantick_orderflow::projection::{
@@ -90,6 +92,7 @@ fn tick_spheres_stand_on_their_executions() {
     ));
     assert_eq!(frame.dots.len(), 2);
     let tick = quantick_orderflow::TickBubbleStyle {
+        viewport_scale: None,
         reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
         reference_quantity: 4500.0,
         max_radius: 12.0,
@@ -223,6 +226,7 @@ fn tick_sphere_appearance_invalidates_cached_mesh_without_changing_facts() {
     let mut styled = key(&frame);
     styled.tick = Some((
         quantick_orderflow::TickBubbleStyle {
+            viewport_scale: None,
             reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
             reference_quantity: 10.0,
             max_radius: 36.0,
@@ -259,6 +263,98 @@ fn tick_sphere_appearance_invalidates_cached_mesh_without_changing_facts() {
     assert!(!Arc::ptr_eq(&sphere, &faded));
 }
 
+#[test]
+fn viewport_tick_mesh_and_readback_follow_the_current_camera_before_worker_publication() {
+    let frame = frame();
+    let original = (*frame).clone();
+    let ctx = egui::Context::default();
+    let style = quantick_orderflow::TickBubbleStyle {
+        viewport_scale: Some(quantick_orderflow::ViewportBubbleScale {
+            x_units_per_pixel: 1.0 / 22.0,
+            price_units_per_pixel: 1.0,
+        }),
+        reference_mode: quantick_orderflow::TickReferenceMode::VisibleMax,
+        reference_quantity: 9_000.0,
+        max_radius: 32.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    };
+    let mut a = key(&frame);
+    a.tick = Some((style, quantick_orderflow::HeatmapTheme::default()));
+    let (first, first_shapes) = paint(&ctx, a);
+    let first_draw = first.mesh.get().unwrap();
+    let first_frame = first_draw.viewport_frame.as_ref().unwrap();
+    assert_eq!(first_frame.effective_reference, Some(4500.into()));
+    let first_radius = first_frame.dots[0].radius;
+    assert_eq!(first_draw.plan.regions[0].disc.radius, first_radius);
+    let center = egui::Pos2::from(first_draw.plan.regions[0].disc.center);
+    let painted_radius = first_draw
+        .meshes
+        .iter()
+        .flat_map(|mesh| &mesh.vertices)
+        .filter_map(|vertex| {
+            // The sphere's light core is offset. Measure its colored outer
+            // boundary, excluding the separately tessellated black separator.
+            let [r, g, b, _] = vertex.color.to_array();
+            (r != 0 || g != 0 || b != 0).then_some(vertex.pos.distance(center))
+        })
+        .fold(0.0_f32, f32::max);
+    assert!(
+        (painted_radius - first_radius).abs() < 0.00002,
+        "the mesh uses the reported radius"
+    );
+    let snapshot = quantick_control_schema::orderflow::FlowExecutionSnapshot::from((
+        first_frame.as_ref(),
+        quantick_orderflow::projection::flow_tape::FlowProgress::default(),
+    ));
+    let wire = serde_json::to_value(snapshot).unwrap();
+    assert_eq!(wire["effective_reference"], "4500");
+    let reported: f32 = wire["marks"][0]["radius_px"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_eq!(reported, first_radius);
+    let mut b = a;
+    let mut viewport = Viewport::new();
+    viewport.set_px_per_bar(64.0);
+    b.geometry = FlowExecutionGeometry::new(
+        viewport,
+        1,
+        0,
+        (60.0, 140.0),
+        [0.0, 0.0, 200.0, 120.0],
+        false,
+    )
+    .unwrap();
+    let (compressed, _) = paint(&ctx, b);
+    assert!(
+        compressed
+            .mesh
+            .get()
+            .unwrap()
+            .viewport_frame
+            .as_ref()
+            .unwrap()
+            .dots[0]
+            .radius
+            < first_radius
+    );
+    let (_, returned_shapes) = paint(&ctx, a);
+    assert_eq!(
+        first_shapes, returned_shapes,
+        "same published frame, reversible camera only"
+    );
+    assert_eq!(*frame, original);
+    a.tick.as_mut().unwrap().0.viewport_scale = None;
+    let (legacy, _) = paint(&ctx, a);
+    assert!(legacy.mesh.get().unwrap().viewport_frame.is_none());
+    assert_eq!(
+        legacy.mesh.get().unwrap().plan.regions[0].disc.radius,
+        frame.dots[0].radius
+    );
+}
+
 /// Review #12: tick spheres wear the pane's theme, never the default one,
 /// and a theme change rebuilds the cached mesh.
 #[test]
@@ -268,6 +364,7 @@ fn tick_spheres_follow_the_pane_theme() {
     let mut bookmap = key(&frame);
     bookmap.tick = Some((
         quantick_orderflow::TickBubbleStyle {
+            viewport_scale: None,
             reference_mode: quantick_orderflow::TickReferenceMode::Fixed,
             reference_quantity: 10.0,
             max_radius: 36.0,

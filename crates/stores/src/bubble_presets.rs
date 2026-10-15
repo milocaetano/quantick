@@ -495,6 +495,12 @@ mod tests {
         let shipped = embedded();
         for preset in &shipped.presets {
             let btc = preset.name.starts_with("Binance BTC");
+            assert_eq!(
+                preset.bubbles.viewport_scale.is_some(),
+                btc,
+                "{}",
+                preset.name
+            );
             assert_eq!(preset.live_lane.stable_size, btc, "{}", preset.name);
             assert_eq!(
                 preset.live_lane.depth_time_averaging, btc,
@@ -510,6 +516,7 @@ mod tests {
                 assert!(preset.live_lane.native_tape);
                 assert!(preset.overlap_merge);
                 let tick = preset.tick_bubbles.unwrap();
+                assert!(tick.viewport_scale.is_some());
                 assert_eq!(
                     tick.reference_mode,
                     quantick_orderflow::TickReferenceMode::VisibleMax
@@ -525,6 +532,7 @@ mod tests {
                 assert_eq!(tick.label_min_radius, 8.0);
                 assert_eq!(tick.opacity, 0.9);
             } else if let Some(tick) = preset.tick_bubbles {
+                assert!(tick.viewport_scale.is_none());
                 assert_eq!(
                     tick.reference_mode,
                     quantick_orderflow::TickReferenceMode::Fixed
