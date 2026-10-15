@@ -326,17 +326,22 @@ impl BubbleLook {
         let Some(preset) = self.presets.get(name).cloned() else {
             return false;
         };
-        preset.apply_to(config);
-        if self.asset_mode().is_none() {
-            // Spheres come along only where the config switches the asset's
-            // mode on (review #18).
-            config.volume_dots.tick_bubbles = None;
-        }
+        self.dress(&preset, config);
         self.look_name = preset.name.clone();
         self.name_draft = preset.name.clone();
         self.status = Some(format!("'{}' applied", preset.name));
         self.note_lane_set(config);
         true
+    }
+
+    /// `config` in `preset` as a whole-preset pick wears it, the one place
+    /// that says so: spheres come along only where the config switches the
+    /// asset's mode on (review #18).
+    fn dress(&self, preset: &BubblePreset, config: &mut HeatmapConfig) {
+        preset.apply_to(config);
+        if self.asset_mode().is_none() {
+            config.volume_dots.tick_bubbles = None;
+        }
     }
 
     /// Save the look on `config` under the name field's name, through

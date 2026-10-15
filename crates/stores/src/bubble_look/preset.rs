@@ -30,14 +30,14 @@ impl BubbleLook {
         name: &str,
         config: &mut HeatmapConfig,
     ) -> Result<bool, String> {
-        if name.trim().is_empty() || self.presets.get(name).is_none() {
-            return Err("Unknown or empty bubble preset name".to_owned());
-        }
+        let preset = match self.presets.get(name) {
+            Some(preset) if !name.trim().is_empty() => preset.clone(),
+            _ => return Err("Unknown or empty bubble preset name".to_owned()),
+        };
+        // Dressed as the pick dresses the screen, so a look worn without its
+        // spheres reads back as itself.
         let mut desired = config.clone();
-        self.presets
-            .get(name)
-            .expect("validated preset")
-            .apply_to(&mut desired);
+        self.dress(&preset, &mut desired);
         desired.sanitize();
         if desired == *config && self.look_name == name {
             return Ok(false);
