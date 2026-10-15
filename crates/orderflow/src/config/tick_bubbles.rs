@@ -17,6 +17,7 @@ impl super::HeatmapConfig {
         let mut compared = other.clone();
         compared.volume_dots.tick_bubbles = self.volume_dots.tick_bubbles;
         compared.bubbles.viewport_scale = self.bubbles.viewport_scale;
+        compared.bubbles.display_scale = self.bubbles.display_scale;
         *self == compared
     }
 

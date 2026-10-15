@@ -13,6 +13,7 @@ pub const FAMILIES: &[&[Readback]] = &[
     analysis::READBACKS,
     attention::READBACKS,
     crate::bubble_save::READBACKS,
+    crate::bubble_scale::READBACKS,
     crate::chart_settings::READBACKS,
     crate::drawing_magnet::READBACKS,
     feed::READBACKS,

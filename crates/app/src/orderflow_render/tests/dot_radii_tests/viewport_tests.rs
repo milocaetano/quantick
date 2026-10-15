@@ -9,7 +9,7 @@ use std::cell::RefCell;
 fn visible_native_display_reaches_circle_and_sphere_radii_without_changing_candles() {
     for spheres in [false, true] {
         let mut style = stable_native_style(spheres);
-        let (_, old_candles) = native_painted_radii(&style, spheres);
+        let (_, old_candles) = native_painted_radii(&style);
         style.bubbles.viewport_scale = Some(ViewportBubbleScale {
             x_units_per_pixel: 200.0,
             price_units_per_pixel: 1.0,
@@ -28,7 +28,7 @@ fn visible_native_display_reaches_circle_and_sphere_radii_without_changing_candl
             geometry.max_radius,
         )
         .unwrap();
-        let (tape, candles) = native_painted_radii(&style, spheres);
+        let (tape, candles) = native_painted_radii(&style);
         assert_eq!(
             candles, old_candles,
             "Tape presentation never changes candle marks"

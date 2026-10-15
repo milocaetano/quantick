@@ -292,3 +292,84 @@ fn current_clip_excludes_whales_before_scaling_and_quiet_views_use_the_full_rang
     assert!(empty.dots.is_empty());
     assert_eq!(empty.effective_reference, None);
 }
+
+#[cfg(test)]
+mod display_scale_tests {
+    use super::*;
+
+    #[test]
+    fn manual_candle_gain_preserves_facts_reference_and_both_side_ratios_in_every_mode() {
+        let mut source = viewport_source();
+        source.dots[0].mark.buy_quantity = source.dots[0].mark.quantity / Decimal::from(2);
+        source.dots[0].mark.buy_share = 0.5;
+        let original = source.clone();
+        let camera = viewport_camera(64.0, (90.0, 110.0));
+        let clip = [[0.0, 0.0], [300.0, 200.0]];
+        let mut fixed = viewport_style();
+        fixed.viewport_scale = None;
+        fixed.reference_mode = quantick_orderflow::TickReferenceMode::Fixed;
+        for tick in [None, Some(fixed), Some(viewport_style())] {
+            let base = camera
+                .viewport_frame(&source, tick, clip)
+                .unwrap_or_else(|| source.clone());
+            for gain in [0.25, 0.5, 2.0, 3.0] {
+                let scaled_camera = camera.with_display_scale(gain);
+                assert_ne!(scaled_camera.fingerprint(), camera.fingerprint());
+                let scaled = scaled_camera.viewport_frame(&source, tick, clip).unwrap();
+                assert_eq!(scaled.view.reference, base.view.reference);
+                assert_eq!(scaled.effective_reference, base.effective_reference);
+                assert_eq!(scaled.scale_basis, base.scale_basis);
+                assert_eq!(
+                    scaled.view.merge_support_radius,
+                    base.view.merge_support_radius
+                );
+                assert_eq!(scaled.view.radius_limit, base.view.radius_limit * gain);
+                assert_eq!(scaled.dots.len(), base.dots.len());
+                for (before, after) in base.dots.iter().zip(&scaled.dots) {
+                    let mut expected = before.clone();
+                    expected.radius *= gain;
+                    assert_eq!(after, &expected, "only drawn radius changes");
+                    let (buy, sell) = before.side_radii();
+                    let (scaled_buy, scaled_sell) = after.side_radii();
+                    assert!((scaled_buy - buy * gain).abs() < 0.00001);
+                    assert!((scaled_sell - sell * gain).abs() < 0.00001);
+                }
+                assert_eq!(
+                    camera
+                        .viewport_frame(&source, tick, clip)
+                        .unwrap_or_else(|| source.clone()),
+                    base
+                );
+            }
+        }
+        assert_eq!(source, original);
+        assert!(
+            camera
+                .with_display_scale(1.0)
+                .viewport_frame(&source, None, clip)
+                .is_none()
+        );
+        assert_eq!(camera, camera.with_display_scale(f32::NAN));
+    }
+
+    #[test]
+    fn manual_legacy_gain_keeps_peak_placement_and_source_centers() {
+        let source = viewport_source();
+        let camera = viewport_camera(64.0, (90.0, 110.0));
+        let clip = [[0.0, 0.0], [300.0, 200.0]];
+        let (base, identity) = camera.presentation(&source, None, clip);
+        assert!(identity.is_none());
+        for gain in [0.25, 3.0] {
+            let (changed, displayed) = camera
+                .with_display_scale(gain)
+                .presentation(&source, None, clip);
+            assert!(displayed.is_some());
+            let mut expected = base.clone();
+            for region in &mut expected.regions {
+                region.source_disc.radius *= gain;
+                region.disc.radius *= gain;
+            }
+            assert_eq!(changed, expected);
+        }
+    }
+}

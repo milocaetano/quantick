@@ -97,6 +97,12 @@ pub(crate) fn documents() -> Vec<SchemaDocument> {
         document::<quantick_control_schema::opening_scale::OpeningScaleResult>(
             "orderflow-opening-scale-result-v1.schema.json",
         ),
+        document::<quantick_control_schema::bubble_scale::BubbleScaleInput>(
+            "orderflow-bubble-scale-input-v1.schema.json",
+        ),
+        document::<quantick_control_schema::bubble_scale::BubbleScaleResult>(
+            "orderflow-bubble-scale-result-v1.schema.json",
+        ),
         document::<quantick_control_schema::history::HistoryLoadInput>(
             "feed-history-load-input-v1.schema.json",
         ),

@@ -4,6 +4,8 @@
 use super::*;
 use quantick_orderflow::DotSizing;
 
+#[cfg(test)]
+mod display_scale_tests;
 mod viewport_tests;
 
 /// A volume dot on `live`'s pane, holding `quantity` contracts one tick
@@ -173,7 +175,7 @@ fn stable_native_style(spheres: bool) -> OrderflowRenderStyle {
 /// Read actual circle fills or shaded mesh vertices emitted by the painter.
 /// A sphere's separator gives its exact centre; the mesh's farthest vertex
 /// gives its filled radius without depending on tessellation segment counts.
-fn native_painted_radii(style: &OrderflowRenderStyle, spheres: bool) -> (Vec<f32>, Vec<f32>) {
+fn native_painted_radii(style: &OrderflowRenderStyle) -> (Vec<f32>, Vec<f32>) {
     use quantick_orderflow::projection::{
         TapeDotGeometry, TapeDotMemory, TapeDotView, TapeHorizontalGeometry,
     };
@@ -276,13 +278,19 @@ fn native_painted_radii(style: &OrderflowRenderStyle, spheres: bool) -> (Vec<f32
         assert_eq!(group.side, source.side);
         assert_eq!(group.trade_count, source.trade_count);
     }
+    let mut painted_style = style.bubbles.clone();
+    painted_style.sanitize();
     let mut separator_center = None;
     let mut tape = Vec::new();
     let mut candles = Vec::new();
     for clipped in output.shapes {
         let (center, radius) = match clipped.shape {
             egui::Shape::Circle(circle) if circle.fill != egui::Color32::TRANSPARENT => {
-                assert!(!spheres, "the dressed sphere uses its shaded mesh");
+                assert!(
+                    circle.radius < painted_style.detail_min_radius
+                        || painted_style.render_mode != BubbleRenderMode::Sphere,
+                    "a filled circle follows the actual dressing threshold"
+                );
                 (circle.center, circle.radius)
             }
             egui::Shape::Circle(circle) => {
@@ -290,13 +298,14 @@ fn native_painted_radii(style: &OrderflowRenderStyle, spheres: bool) -> (Vec<f32
                 continue;
             }
             egui::Shape::Mesh(mesh) => {
-                assert!(spheres, "the cheap dot uses one circle");
                 let center = separator_center.take().expect("a sphere has its separator");
                 let radius = mesh
                     .vertices
                     .iter()
                     .map(|vertex| vertex.pos.distance(center))
                     .fold(0.0, f32::max);
+                assert_eq!(painted_style.render_mode, BubbleRenderMode::Sphere);
+                assert!(radius + 0.001 >= painted_style.detail_min_radius);
                 (center, radius)
             }
             _ => continue,
@@ -319,7 +328,7 @@ fn native_painted_radii(style: &OrderflowRenderStyle, spheres: bool) -> (Vec<f32
 fn stable_native_fixed_display_reference_reaches_circle_and_sphere_radii() {
     for spheres in [false, true] {
         let style = stable_native_style(spheres);
-        let (tape, candles) = native_painted_radii(&style, spheres);
+        let (tape, candles) = native_painted_radii(&style);
         for (radius, quantity) in tape.iter().zip([1.0_f32, 4.0, 8.0]) {
             let expected = bubble_radius((quantity / 8.0).sqrt(), 2.0, 15.0);
             assert!(
@@ -337,7 +346,7 @@ fn stable_native_fixed_display_reference_reaches_circle_and_sphere_radii() {
 fn fixed_native_small_prints_keep_a_visible_radius_and_quantity_order() {
     let mut style = stable_native_style(false);
     style.bubbles.size_reference_quantity = 800_000.0;
-    let (tape, _) = native_painted_radii(&style, false);
+    let (tape, _) = native_painted_radii(&style);
     assert!(tape[0] >= style.bubbles.min_radius);
     assert!(tape[2] < style.bubbles.min_radius + 0.01);
     assert!(tape.windows(2).all(|pair| pair[0] < pair[1]));
@@ -352,7 +361,7 @@ fn legacy_native_reference_policies_keep_their_painted_radii() {
             if stable {
                 style.bubbles.size_reference = quantick_orderflow::BubbleSizeReference::VisibleP99;
             }
-            let (tape, candles) = native_painted_radii(&style, spheres);
+            let (tape, candles) = native_painted_radii(&style);
             assert!(tape.iter().all(|radius| (radius - 15.0).abs() < 0.001));
             assert!(candles.iter().all(|radius| (radius - 6.0).abs() < 0.001));
         }

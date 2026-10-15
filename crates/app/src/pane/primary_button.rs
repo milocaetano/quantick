@@ -135,9 +135,10 @@ impl PaperArbitration<'_> {
             });
         // The wheel over the plot, offered to the paper layer first: with an
         // aim up it belongs to the ruler, and the chart's zoom is told in
-        // `handle_navigation` to leave that frame's travel alone.
+        // `handle_navigation` to leave that frame's travel alone. Floating
+        // controls own their wheel too, just as they own the primary press.
         let paper_scroll = pointer_position
-            .filter(|position| drawing_area.contains(*position))
+            .filter(|position| !over_chrome && drawing_area.contains(*position))
             .map_or(0.0, |_| {
                 ui.input(|input| {
                     let delta = input.raw_scroll_delta;

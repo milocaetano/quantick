@@ -298,6 +298,9 @@ pub struct BubbleStyle {
     /// settings preserve the existing fixed or automatic sizing policy.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub viewport_scale: Option<super::ViewportBubbleScale>,
+    /// Independent manual radius gains applied only after grouping and layout.
+    #[serde(skip_serializing_if = "super::BubbleDisplayScale::is_identity")]
+    pub display_scale: super::BubbleDisplayScale,
     /// Prints below this exact quantity are not drawn. Zero draws everything.
     ///
     /// Display-only and applied *after* liquidity association, so hiding small
@@ -387,6 +390,7 @@ impl Default for BubbleStyle {
             size_reference: BubbleSizeReference::VisibleP99,
             size_reference_quantity: 100.0,
             viewport_scale: None,
+            display_scale: super::BubbleDisplayScale::default(),
             min_quantity: 0.0,
             // Wide enough that two prints on one price row visibly straddle
             // it, which is the second channel carrying side at speck size.
@@ -528,6 +532,7 @@ impl BubbleStyle {
         self.viewport_scale = self
             .viewport_scale
             .and_then(super::ViewportBubbleScale::sanitized);
+        self.display_scale = self.display_scale.sanitized();
         if !self.min_quantity.is_finite() || self.min_quantity < 0.0 {
             self.min_quantity = 0.0;
         }

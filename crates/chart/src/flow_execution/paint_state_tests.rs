@@ -44,15 +44,15 @@ fn display_readback_requires_the_same_source_and_look_and_clears_on_reset() {
     };
     let look = Some((tick, HeatmapTheme::default()));
     let mut state = FlowPaintState::default();
-    assert!(state.frame_for(&source, look).is_none());
-    state.record(&source, Some(&display), look);
+    assert!(state.frame_for(&source, look, 1.0).is_none());
+    state.record(&source, Some(&display), look, 1.0);
     assert!(Arc::ptr_eq(
-        &state.frame_for(&source, look).unwrap(),
+        &state.frame_for(&source, look, 1.0).unwrap(),
         &display
     ));
     let replaced = Arc::new((*source).clone());
     assert!(
-        state.frame_for(&replaced, look).is_none(),
+        state.frame_for(&replaced, look, 1.0).is_none(),
         "identical revisions do not identify an allocation"
     );
     let changed = Some((
@@ -62,7 +62,7 @@ fn display_readback_requires_the_same_source_and_look_and_clears_on_reset() {
         },
         HeatmapTheme::default(),
     ));
-    assert!(state.frame_for(&source, changed).is_none());
+    assert!(state.frame_for(&source, changed, 1.0).is_none());
     let legacy = Some((
         TickBubbleStyle {
             viewport_scale: None,
@@ -71,12 +71,34 @@ fn display_readback_requires_the_same_source_and_look_and_clears_on_reset() {
         HeatmapTheme::default(),
     ));
     assert!(Arc::ptr_eq(
-        &state.frame_for(&source, legacy).unwrap(),
+        &state.frame_for(&source, legacy, 1.0).unwrap(),
         &source
     ));
     state.clear();
-    assert!(state.frame_for(&source, look).is_none());
-    state.record(&source, Some(&display), look);
-    state.record(&source, None, look);
-    assert!(state.frame_for(&source, look).is_none());
+    assert!(state.frame_for(&source, look, 1.0).is_none());
+    state.record(&source, Some(&display), look, 1.0);
+    state.record(&source, None, look, 1.0);
+    assert!(state.frame_for(&source, look, 1.0).is_none());
+}
+
+#[test]
+fn manual_legacy_scale_requires_matching_paint_without_changing_the_look() {
+    let source = source();
+    let display = Arc::new((*source).clone());
+    let mut state = FlowPaintState::default();
+    assert!(Arc::ptr_eq(
+        &state.frame_for(&source, None, 1.0).unwrap(),
+        &source
+    ));
+    assert!(state.frame_for(&source, None, 0.5).is_none());
+    state.record(&source, Some(&display), None, 0.5);
+    assert!(Arc::ptr_eq(
+        &state.frame_for(&source, None, 0.5).unwrap(),
+        &display
+    ));
+    assert!(state.frame_for(&source, None, 2.0).is_none());
+    assert!(Arc::ptr_eq(
+        &state.frame_for(&source, None, 1.0).unwrap(),
+        &source
+    ));
 }

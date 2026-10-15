@@ -27,6 +27,7 @@ mod time_axis;
 use quantick_control_host::journal;
 mod bubble_preset;
 mod bubble_save;
+mod bubble_scale;
 mod layers;
 mod layout;
 mod notify;
