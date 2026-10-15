@@ -274,3 +274,7 @@ pub fn dashed_segment(
         travelled += step;
     }
 }
+
+#[cfg(test)]
+#[path = "scene_tests.rs"]
+mod scene_tests;
