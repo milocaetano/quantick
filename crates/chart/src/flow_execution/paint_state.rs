@@ -5,6 +5,7 @@ use std::sync::{Arc, Weak};
 struct PaintedFrame {
     source: Weak<FlowTapeFrame>,
     look: Option<TickLook>,
+    display_scale: f32,
     frame: Arc<FlowTapeFrame>,
 }
 
@@ -24,31 +25,37 @@ impl FlowPaintState {
         source: &Arc<FlowTapeFrame>,
         frame: Option<&Arc<FlowTapeFrame>>,
         look: Option<TickLook>,
+        display_scale: f32,
     ) {
         self.last = frame.map(|frame| PaintedFrame {
             source: Arc::downgrade(source),
             look,
+            display_scale: quantick_orderflow::sane_bubble_display_scale(display_scale),
             frame: Arc::clone(frame),
         });
     }
 
     /// Read back the current-camera frame last painted. A changed look or
     /// source cannot expose a stale presentation as the new appearance.
-    /// Legacy looks resume their published source without a presentation copy.
+    /// Legacy looks at identity gain resume their published source without a copy.
     pub fn frame_for(
         &self,
         source: &Arc<FlowTapeFrame>,
         look: Option<TickLook>,
+        display_scale: f32,
     ) -> Option<Arc<FlowTapeFrame>> {
+        let display_scale = quantick_orderflow::sane_bubble_display_scale(display_scale);
         if look
             .and_then(|(tick, _)| tick.viewport_scale)
             .and_then(ViewportBubbleScale::sanitized)
             .is_none()
+            && display_scale == 1.0
         {
             return Some(Arc::clone(source));
         }
         let paint = self.last.as_ref()?;
         (paint.look == look
+            && paint.display_scale == display_scale
             && paint
                 .source
                 .upgrade()

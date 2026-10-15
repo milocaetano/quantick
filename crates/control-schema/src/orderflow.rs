@@ -321,6 +321,9 @@ pub struct PaneBubblesSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BubblesStateSnapshot {
+    /// Independent final-radius gains; 1 preserves the selected preset's sizes.
+    #[serde(default)]
+    pub display_scale: BubbleDisplayScaleSnapshot,
     /// Whole-look selection, including unbound views; empty after defaults.
     #[serde(default)]
     pub preset: String,
@@ -347,8 +350,8 @@ pub struct BubblesStateSnapshot {
     /// once they leave the live aggregation region, their membership stays
     /// fixed while time and price axes transform their coordinates. The
     /// default area scale follows the largest visible dot, with a common
-    /// radius cap to keep neighbours readable. Explicit display changes
-    /// start a new grouping. The bubble setting `overlap_merge` is
+    /// radius cap to keep neighbours readable. Grouping changes start a
+    /// new grouping; final-radius gains preserve it. The bubble setting `overlap_merge` is
     /// switched by `layers.visibility.set` as layer `bubble_overlap_merge`.
     #[serde(default)]
     pub overlap_merge: bool,
@@ -408,7 +411,8 @@ pub struct BubblesStateSnapshot {
     /// The asset these bubble settings belong to. Every change made while
     /// it is on screen — the panel, `layers.visibility.set` on `bubbles`,
     /// `bubble_overlap_merge`, `native_tape`, `tape_only` and the flow
-    /// pane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —
+    /// pane's `candle_aggression`, `orderflow.tape.opening_scale.set`, and
+    /// `orderflow.bubbles.size.set` —
     /// belongs to this asset alone. While its `save_changes` is on it is
     /// saved, reaches every tab showing the asset and is restored whenever
     /// a tab shows it again; off, it stays on the pane it was made on for
@@ -416,6 +420,21 @@ pub struct BubblesStateSnapshot {
     /// the view only. Absent until the tab binds an asset.
     #[serde(default)]
     pub asset: Option<BubbleAssetSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BubbleDisplayScaleSnapshot {
+    pub tape: String,
+    pub candle: String,
+}
+
+impl Default for BubbleDisplayScaleSnapshot {
+    fn default() -> Self {
+        Self {
+            tape: "1".to_owned(),
+            candle: "1".to_owned(),
+        }
+    }
 }
 
 /// The asset a pane's bubble settings belong to.
@@ -485,6 +504,10 @@ impl BubblesStateSnapshot {
     ) -> Self {
         Self {
             tick_bubbles: config.volume_dots.tick_bubbles.map(Into::into),
+            display_scale: BubbleDisplayScaleSnapshot {
+                tape: config.bubbles.display_scale.tape.to_string(),
+                candle: config.bubbles.display_scale.candle.to_string(),
+            },
             preset: String::new(),
             tick_presets,
             enabled: config.show_aggressions,

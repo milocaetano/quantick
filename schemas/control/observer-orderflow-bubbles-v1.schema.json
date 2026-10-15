@@ -59,6 +59,21 @@
       ],
       "type": "object"
     },
+    "BubbleDisplayScaleSnapshot": {
+      "properties": {
+        "candle": {
+          "type": "string"
+        },
+        "tape": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tape",
+        "candle"
+      ],
+      "type": "object"
+    },
     "BubblesStateSnapshot": {
       "properties": {
         "aggression_provenance": {
@@ -75,12 +90,20 @@
             }
           ],
           "default": null,
-          "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on `bubbles`,\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —\nbelongs to this asset alone. While its `save_changes` is on it is\nsaved, reaches every tab showing the asset and is restored whenever\na tab shows it again; off, it stays on the pane it was made on for\nthe session. Wheeling or dragging the tape's window or width moves\nthe view only. Absent until the tab binds an asset."
+          "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on `bubbles`,\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, `orderflow.tape.opening_scale.set`, and\n`orderflow.bubbles.size.set` —\nbelongs to this asset alone. While its `save_changes` is on it is\nsaved, reaches every tab showing the asset and is restored whenever\na tab shows it again; off, it stays on the pane it was made on for\nthe session. Wheeling or dragging the tape's window or width moves\nthe view only. Absent until the tab binds an asset."
         },
         "depth_time_averaging": {
           "default": false,
           "description": "Dense historical tape depth uses labelled duration-weighted averages;\ncurrent constant intervals remain exact.",
           "type": "boolean"
+        },
+        "display_scale": {
+          "$ref": "#/$defs/BubbleDisplayScaleSnapshot",
+          "default": {
+            "candle": "1",
+            "tape": "1"
+          },
+          "description": "Independent final-radius gains; 1 preserves the selected preset's sizes."
         },
         "enabled": {
           "description": "Aggression bubbles are drawn over the chart. Beside the native tape,\nFLOW draws regional execution totals on the tick candles;\n`layers.visibility` names any block.",
@@ -111,7 +134,7 @@
         },
         "overlap_merge": {
           "default": false,
-          "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nOn the native tape, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Explicit display changes\nstart a new grouping. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
+          "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nOn the native tape, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Grouping changes start a\nnew grouping; final-radius gains preserve it. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
           "type": "boolean"
         },
         "preset": {

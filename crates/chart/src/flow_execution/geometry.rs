@@ -15,9 +15,17 @@ pub struct FlowExecutionGeometry {
     prices: PriceWindow,
     history: [f32; 4],
     inverted: bool,
+    display_scale: f32,
 }
 
 impl FlowExecutionGeometry {
+    /// Manual gain belongs to presentation, never the worker's merging camera.
+    #[must_use]
+    pub fn with_display_scale(mut self, scale: f32) -> Self {
+        self.display_scale = quantick_orderflow::sane_bubble_display_scale(scale);
+        self
+    }
+
     /// Build the paint plan and its matching optional current-camera frame.
     /// The backend uses the same dot indices for sectors, labels and readback.
     pub fn presentation(
@@ -32,25 +40,47 @@ impl FlowExecutionGeometry {
         let displayed = self
             .viewport_frame(frame, tick, clip)
             .map(std::sync::Arc::new);
-        let plan = super::FlowPresentation::styled(
-            displayed.as_deref().unwrap_or(frame),
+        let legacy_gain = tick.is_none() && self.display_scale != 1.0;
+        let mut plan = super::FlowPresentation::styled(
+            if legacy_gain {
+                frame
+            } else {
+                displayed.as_deref().unwrap_or(frame)
+            },
             clip,
             tick,
             |dot| self.point(dot).map(|(x, y)| [x, y]),
         );
+        if legacy_gain {
+            // Legacy peak placement keeps its original collision inputs.
+            for region in &mut plan.regions {
+                region.source_disc.radius *= self.display_scale;
+                region.disc.radius *= self.display_scale;
+            }
+        }
         (plan, displayed)
     }
 
     /// Current-camera presentation, independent of the worker's held grouping
-    /// scale. Legacy appearances continue to paint their published frame.
+    /// scale. Identity gains keep legacy appearances on their published frame.
     pub fn viewport_frame(
         &self,
         frame: &FlowTapeFrame,
         tick: Option<quantick_orderflow::TickBubbleStyle>,
         clip: super::FlowBounds,
     ) -> Option<FlowTapeFrame> {
-        let tick = tick?;
-        let calibration = tick.viewport_scale?.sanitized()?;
+        let Some((tick, calibration)) = tick.and_then(|tick| {
+            tick.viewport_scale?
+                .sanitized()
+                .map(|calibration| (tick, calibration))
+        }) else {
+            if self.display_scale == 1.0 {
+                return None;
+            }
+            let mut displayed = frame.clone();
+            self.scale_radii(&mut displayed);
+            return Some(displayed);
+        };
         let gain = calibration.radius_gain(
             f64::from(self.viewport.px_per_bar()),
             f64::from(self.history[3] - self.history[1]) / (self.range.1 - self.range.0),
@@ -86,7 +116,17 @@ impl FlowExecutionGeometry {
         displayed.view.clip_left = position(clip[0][0]);
         displayed.view.clip_right = position(clip[1][0]);
         displayed.view.prices = self.prices;
+        self.scale_radii(&mut displayed);
         Some(displayed)
+    }
+
+    fn scale_radii(&self, frame: &mut FlowTapeFrame) {
+        if self.display_scale != 1.0 {
+            frame.view.radius_limit *= self.display_scale;
+            for dot in &mut frame.dots {
+                dot.radius *= self.display_scale;
+            }
+        }
     }
 
     /// `history` is [left, top, right, bottom] in logical pixels, excluding Tape.
@@ -107,12 +147,13 @@ impl FlowExecutionGeometry {
             prices,
             history,
             inverted,
+            display_scale: 1.0,
         })
     }
 
     /// Exact key for every input affecting the transform or its visible clip.
     /// A resolved live/manual anchor is sufficient; its gesture state is not geometry.
-    pub fn fingerprint(&self) -> [u64; 11] {
+    pub fn fingerprint(&self) -> [u64; 12] {
         [
             self.range.0.to_bits(),
             self.range.1.to_bits(),
@@ -125,6 +166,7 @@ impl FlowExecutionGeometry {
             u64::from(self.viewport.right_edge_bar(self.total).to_bits()),
             self.prefix_len as u64,
             self.total as u64,
+            u64::from(self.display_scale.to_bits()),
         ]
     }
 

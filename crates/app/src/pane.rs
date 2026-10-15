@@ -36,6 +36,8 @@ use quantick_drawings::gesture::MAGNET_REACH_PX;
 use strategies::strategy_badge_text;
 
 mod axes_and_panes;
+mod bubble_scale_controls;
+pub(crate) use bubble_scale_controls::show as bubble_scale_controls;
 mod canvas_gestures;
 mod constants;
 // `pub(crate)`, like `app::launch_hooks`: `split_time_pane` returns

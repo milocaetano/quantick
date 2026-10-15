@@ -24,16 +24,18 @@ pub mod timeline;
 // the public DTOs here gives later renderers one stable import surface.
 #[allow(unused_imports)]
 pub use config::{
-    BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark,
-    DEFAULT_VOLUME_DOT_FULL_QUANTITY, DOT_TAPE_WINDOW_MS, DisplayGrouping, GOLDEN_ANGLE,
-    HeatmapConfig, HeatmapTheme, INV_PHI, INV_PHI_2, INV_PHI_3, IntensityMode,
-    LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle, MAX_BUBBLE_MAX_RADIUS,
-    MAX_BUBBLE_MIN_RADIUS, MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE,
-    MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
+    BubbleDisplayScale, BubbleRenderMode, BubbleScaleTarget, BubbleSizeReference, BubbleStyle,
+    ConsumptionMark, DEFAULT_BUBBLE_DISPLAY_SCALE, DEFAULT_VOLUME_DOT_FULL_QUANTITY,
+    DOT_TAPE_WINDOW_MS, DisplayGrouping, GOLDEN_ANGLE, HeatmapConfig, HeatmapTheme, INV_PHI,
+    INV_PHI_2, INV_PHI_3, IntensityMode, LANE_WINDOW_PRESETS_MS, LaneWindow, LiveLaneStyle,
+    MAX_BUBBLE_DISPLAY_SCALE, MAX_BUBBLE_MAX_RADIUS, MAX_BUBBLE_MIN_RADIUS,
+    MAX_LIVE_LANE_RADIUS_SCALE, MAX_LIVE_LANE_SHARE, MAX_LIVE_LANE_WINDOW_MS, MAX_LIVE_LANE_ZOOM,
+    MIN_BUBBLE_DISPLAY_SCALE, MIN_BUBBLE_MAX_RADIUS, MIN_LIVE_LANE_RADIUS_SCALE,
     MIN_LIVE_LANE_SHARE, MIN_LIVE_LANE_WINDOW_MS, MIN_LIVE_LANE_ZOOM, TickBubbleStyle, TickLook,
     TickReferenceMode, ViewportBubbleScale, VolumeDotStyle, bubble_halo_padding,
     bubble_impact_ring_padding, bubble_radius, format_window_ms, lane_lag_label, lane_time_ticks,
-    lane_window_label, same_lane_window, sane_volume_dot_full_quantity, side_offset_y,
+    lane_window_label, same_lane_window, sane_bubble_display_scale, sane_volume_dot_full_quantity,
+    side_offset_y,
 };
 #[allow(unused_imports)]
 pub use grouping::{

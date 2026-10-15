@@ -23,18 +23,23 @@ impl OrderflowView {
         self.flow_execution.frame_handle()
     }
     pub(crate) fn flow_execution_snapshot_frame(&self) -> Option<std::sync::Arc<FlowTapeFrame>> {
-        self.flow_paint
-            .borrow()
-            .frame_for(self.flow_execution_handle()?, self.config.tick_look())
+        self.flow_paint.borrow().frame_for(
+            self.flow_execution_handle()?,
+            self.config.tick_look(),
+            self.config.bubbles.display_scale.candle,
+        )
     }
     pub(crate) fn note_flow_paint(
         &self,
         source: &std::sync::Arc<FlowTapeFrame>,
         frame: Option<&std::sync::Arc<FlowTapeFrame>>,
     ) {
-        self.flow_paint
-            .borrow_mut()
-            .record(source, frame, self.config.tick_look());
+        self.flow_paint.borrow_mut().record(
+            source,
+            frame,
+            self.config.tick_look(),
+            self.config.bubbles.display_scale.candle,
+        );
     }
     pub(crate) fn flow_execution_progress(&self) -> FlowProgress {
         self.flow_execution.progress()

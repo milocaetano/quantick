@@ -13378,6 +13378,130 @@
         "status": "available"
       },
       "confirmation_class": "none",
+      "description": "Sets the independent radius multiplier for Tape or tick-chart bubbles on one pane. The target must already be active. One preserves its appearance; changing size preserves execution quantities, sides, membership, grouping, source positions and the other target's scale. The existing asset save switch governs persistence: saved for the displayed asset when enabled, otherwise retained for this pane's session.",
+      "destructive": false,
+      "dry_run_supported": false,
+      "effect": "cockpit",
+      "examples": [],
+      "expected_cost": {
+        "class": "ui_bounded",
+        "max_response_bytes": 8388608
+      },
+      "id": "orderflow.bubbles.size.set",
+      "idempotency": "optional",
+      "input_schema": {
+        "$defs": {
+          "BubbleScaleTarget": {
+            "enum": [
+              "tape",
+              "candle"
+            ],
+            "type": "string"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "scale": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "Canonical decimal string from 0.25 through 3, inclusive. Multiplies\nfinal radii; \"1\" preserves the current appearance."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "target": {
+            "$ref": "#/$defs/BubbleScaleTarget",
+            "description": "The Tape or tick-chart bubbles on the addressed pane."
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "target",
+          "scale"
+        ],
+        "title": "BubbleScaleInput",
+        "type": "object"
+      },
+      "module": "orderflow",
+      "output_schema": {
+        "$defs": {
+          "BubbleScaleTarget": {
+            "enum": [
+              "tape",
+              "candle"
+            ],
+            "type": "string"
+          },
+          "CanonicalDecimal": {
+            "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+            "type": "string"
+          },
+          "WireU64": {
+            "pattern": "^(0|[1-9][0-9]*)$",
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "changed": {
+            "type": "boolean"
+          },
+          "pane_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "scale": {
+            "$ref": "#/$defs/CanonicalDecimal",
+            "description": "The actual multiplier retained by the addressed display owner."
+          },
+          "tab_id": {
+            "$ref": "#/$defs/WireU64"
+          },
+          "target": {
+            "$ref": "#/$defs/BubbleScaleTarget"
+          }
+        },
+        "required": [
+          "tab_id",
+          "pane_id",
+          "target",
+          "scale",
+          "changed"
+        ],
+        "title": "BubbleScaleResult",
+        "type": "object"
+      },
+      "persistence": "durable",
+      "preconditions": [],
+      "read_only": false,
+      "required_permissions": [
+        "cockpit",
+        "cockpit.layout"
+      ],
+      "reversible": true,
+      "revision_policy": "optional_for_additive",
+      "risk_flags": [],
+      "risk_reducing": false,
+      "stale_input_safety": "Stable tab and pane IDs select the display owner. The result and orderflow.bubbles report the actual multiplier; repeating a value has no further effect.",
+      "title": "Set bubble size",
+      "version": 1
+    },
+    {
+      "availability": {
+        "status": "available"
+      },
+      "confirmation_class": "none",
       "description": "Applies only a named tick-chart sphere calibration to a tick pane whose asset the feed config switches an asset mode on for (symbol_asset_modes). Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW on any pane, whatever put the spheres on. Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
       "destructive": false,
       "dry_run_supported": false,
@@ -19405,6 +19529,21 @@
             ],
             "type": "object"
           },
+          "BubbleDisplayScaleSnapshot": {
+            "properties": {
+              "candle": {
+                "type": "string"
+              },
+              "tape": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "tape",
+              "candle"
+            ],
+            "type": "object"
+          },
           "BubblesStateSnapshot": {
             "properties": {
               "aggression_provenance": {
@@ -19421,12 +19560,20 @@
                   }
                 ],
                 "default": null,
-                "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on `bubbles`,\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, and `orderflow.tape.opening_scale.set` —\nbelongs to this asset alone. While its `save_changes` is on it is\nsaved, reaches every tab showing the asset and is restored whenever\na tab shows it again; off, it stays on the pane it was made on for\nthe session. Wheeling or dragging the tape's window or width moves\nthe view only. Absent until the tab binds an asset."
+                "description": "The asset these bubble settings belong to. Every change made while\nit is on screen — the panel, `layers.visibility.set` on `bubbles`,\n`bubble_overlap_merge`, `native_tape`, `tape_only` and the flow\npane's `candle_aggression`, `orderflow.tape.opening_scale.set`, and\n`orderflow.bubbles.size.set` —\nbelongs to this asset alone. While its `save_changes` is on it is\nsaved, reaches every tab showing the asset and is restored whenever\na tab shows it again; off, it stays on the pane it was made on for\nthe session. Wheeling or dragging the tape's window or width moves\nthe view only. Absent until the tab binds an asset."
               },
               "depth_time_averaging": {
                 "default": false,
                 "description": "Dense historical tape depth uses labelled duration-weighted averages;\ncurrent constant intervals remain exact.",
                 "type": "boolean"
+              },
+              "display_scale": {
+                "$ref": "#/$defs/BubbleDisplayScaleSnapshot",
+                "default": {
+                  "candle": "1",
+                  "tape": "1"
+                },
+                "description": "Independent final-radius gains; 1 preserves the selected preset's sizes."
               },
               "enabled": {
                 "description": "Aggression bubbles are drawn over the chart. Beside the native tape,\nFLOW draws regional execution totals on the tick candles;\n`layers.visibility` names any block.",
@@ -19457,7 +19604,7 @@
               },
               "overlap_merge": {
                 "default": false,
-                "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nOn the native tape, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Explicit display changes\nstart a new grouping. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
+                "description": "Bubbles use volume dots with a buy/sell pie. The ordinary chart and\nlane use dots keyed by bars or market-time windows and price levels.\nOn the native tape, dots use quantity-weighted trade time and price;\nthe forming dot rides the right edge. Nearby recent prints may merge;\nonce they leave the live aggregation region, their membership stays\nfixed while time and price axes transform their coordinates. The\ndefault area scale follows the largest visible dot, with a common\nradius cap to keep neighbours readable. Grouping changes start a\nnew grouping; final-radius gains preserve it. The bubble setting `overlap_merge` is\nswitched by `layers.visibility.set` as layer `bubble_overlap_merge`.",
                 "type": "boolean"
               },
               "preset": {

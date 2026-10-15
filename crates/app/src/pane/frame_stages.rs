@@ -230,7 +230,7 @@ impl<'a> FlowFrame<'a> {
                 self.painter,
                 self.rect.with_max_x(self.rect.right() - self.lane_width),
                 frame,
-                geometry,
+                geometry.with_display_scale(owner.cached_config().bubbles.display_scale.candle),
                 self.background,
                 backing,
                 owner.cached_config().tick_look(),

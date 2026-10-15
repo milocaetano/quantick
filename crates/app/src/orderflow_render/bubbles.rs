@@ -698,7 +698,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             .flatten();
         (sizing, fulls, display)
     });
-    let drawn = |trade: &AggressionPrimitive| match dot_sizing {
+    let base_drawn = |trade: &AggressionPrimitive| match dot_sizing {
         Some((_, _, Some(display))) if trade.live => display.draw(trade.quantity),
         Some((sizing, fulls, _)) => sizing.draw(bubbles, &style.live_lane, trade, fulls),
         None if trade.live => (trade.size, bubble_radius(trade.size, lane_min, lane_max)),
@@ -706,6 +706,16 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             trade.size,
             bubble_radius(trade.size, candle_min, candle_max),
         ),
+    };
+    let display_scale = bubbles.display_scale.sanitized();
+    let drawn = |trade: &AggressionPrimitive| {
+        let (size, radius) = base_drawn(trade);
+        let gain = if trade.live {
+            display_scale.tape
+        } else {
+            display_scale.candle
+        };
+        (size, radius * gain)
     };
     let radius_of = |trade: &AggressionPrimitive| drawn(trade).1;
     // Legacy dots keep their edge clamp. Factual tape dots use the common
@@ -719,7 +729,7 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
             return None;
         }
         if dots && !factual_tape {
-            center.x = inside_right_edge(center.x, radius_of(trade), pane.right());
+            center.x = inside_right_edge(center.x, base_drawn(trade).1, pane.right());
         }
         Some(center + egui::vec2(0.0, lean_sign * lean * side_offset))
     };

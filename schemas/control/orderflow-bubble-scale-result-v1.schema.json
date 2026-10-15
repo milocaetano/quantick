@@ -1,0 +1,47 @@
+{
+  "$defs": {
+    "BubbleScaleTarget": {
+      "enum": [
+        "tape",
+        "candle"
+      ],
+      "type": "string"
+    },
+    "CanonicalDecimal": {
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]*[1-9])?$",
+      "type": "string"
+    },
+    "WireU64": {
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "changed": {
+      "type": "boolean"
+    },
+    "pane_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "scale": {
+      "$ref": "#/$defs/CanonicalDecimal",
+      "description": "The actual multiplier retained by the addressed display owner."
+    },
+    "tab_id": {
+      "$ref": "#/$defs/WireU64"
+    },
+    "target": {
+      "$ref": "#/$defs/BubbleScaleTarget"
+    }
+  },
+  "required": [
+    "tab_id",
+    "pane_id",
+    "target",
+    "scale",
+    "changed"
+  ],
+  "title": "BubbleScaleResult",
+  "type": "object"
+}

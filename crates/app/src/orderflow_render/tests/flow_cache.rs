@@ -677,3 +677,46 @@ fn precomposed_colours_match_gamma_premultiplied_gpu_blending_over_footprint() {
         );
     }
 }
+
+#[cfg(test)]
+mod display_scale_cache {
+    use super::*;
+
+    #[test]
+    fn manual_candle_scale_rebuilds_eof_cache_and_restores_legacy_mesh_exactly() {
+        let source = frame();
+        let original = (*source).clone();
+        let ctx = egui::Context::default();
+        let baseline = key(&source);
+        assert_eq!(baseline.tick, None);
+        let (base, base_shapes) = paint(&ctx, baseline);
+        let mut changed = baseline;
+        changed.geometry = changed.geometry.with_display_scale(0.5);
+        let (scaled, scaled_shapes) = paint(&ctx, changed);
+        assert!(!Arc::ptr_eq(&base, &scaled));
+        assert_ne!(base_shapes, scaled_shapes);
+        let drawing = scaled.mesh.get().unwrap();
+        let displayed = drawing.viewport_frame.as_ref().unwrap();
+        assert_eq!(displayed.effective_reference, source.effective_reference);
+        assert_eq!(displayed.view.reference, source.view.reference);
+        assert_eq!(displayed.dots[0].radius, source.dots[0].radius * 0.5);
+        for (before, after) in base
+            .mesh
+            .get()
+            .unwrap()
+            .plan
+            .regions
+            .iter()
+            .zip(&drawing.plan.regions)
+        {
+            assert_eq!(before.disc.center, after.disc.center);
+            assert_eq!(before.source_disc.center, after.source_disc.center);
+            assert_eq!(after.disc.radius, before.disc.radius * 0.5);
+        }
+        let (warm, _) = paint(&ctx, changed);
+        assert!(Arc::ptr_eq(&scaled, &warm));
+        let (_, restored_shapes) = paint(&ctx, baseline);
+        assert_eq!(base_shapes, restored_shapes);
+        assert_eq!(*source, original);
+    }
+}

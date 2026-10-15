@@ -55,6 +55,8 @@ const CLIENT_NAME: &str = "quantick integration test";
 mod asset_bubbles_save_tests;
 #[path = "bubble_preset_control_tests.rs"]
 mod bubble_preset_control;
+#[path = "bubble_scale_control_tests.rs"]
+mod bubble_scale_control;
 #[path = "candle_aggression_tests.rs"]
 mod candle_aggression;
 #[path = "chart_settings_control_tests.rs"]
@@ -652,6 +654,12 @@ fn replay_plan() -> Vec<(&'static str, u32, Value, Readback)> {
             Readback::Moves,
         ),
         (
+            "orderflow.bubbles.size.set",
+            1,
+            Value::Null,
+            Readback::Moves,
+        ),
+        (
             "orderflow.bubbles.preset.apply",
             1,
             Value::Null,
@@ -918,6 +926,17 @@ fn every_reachable_optional_row_replays_a_dropped_answer_and_begins_once() {
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
                 "save_changes": false,
             }),
+            "orderflow.bubbles.size.set" => {
+                let tape = app.active_tab_mut().tape_mut();
+                assert!(tape.apply_preset("mini index regions", false));
+                tape.set_bubbles_enabled(true);
+                json!({
+                    "tab_id": app.tabs.active_id().to_string(),
+                    "pane_id": app.active_tab().flow_pane.id.to_string(),
+                    "target": "tape",
+                    "scale": "2",
+                })
+            }
             "layers.visibility.set" => json!({
                 "tab_id": app.tabs.active_id().to_string(),
                 "pane_id": app.active_tab().flow_pane.id.to_string(),
