@@ -51,11 +51,14 @@ async fn binance_automatic_reconnect_reports_loss_on_the_host_channel() {
     let (book_tx, _book_rx) = mpsc::channel(8);
     let (notice_tx, _notice_rx) = mpsc::channel(32);
     let (cmd_tx, cmd_rx) = mpsc::channel(8);
+    let (caps_tx, _caps) =
+        tokio::sync::watch::channel(crate::config::ProviderKind::Binance.capabilities());
     let host = tokio::spawn(crate::binance::feed_task(
         "BTCUSDT".into(),
         tx,
         book_tx,
         notice_tx,
+        caps_tx,
         cmd_rx,
         crate::binance::BinanceSource {
             http: quantick_feed_binance::BinanceHttp::with_base_url(rest_url),

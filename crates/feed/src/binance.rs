@@ -25,7 +25,8 @@ use quantick_feed_binance::{
 use quantick_sources::trade_admission::{RecentTradeIds, TradeAdmission};
 
 use super::{
-    FeedCommand, FeedEvent, FeedHandle, FeedNotice, connection_notice, initial_backfill_target,
+    FeedCapabilities, FeedCommand, FeedEvent, FeedHandle, FeedNotice, connection_notice,
+    initial_backfill_target,
 };
 use crate::config::ProviderKind;
 use crate::venue_loop::{CommandPlan, Slot, ohlcv_reply_frees_slot, plan_command, send_or_break};
@@ -57,6 +58,15 @@ pub fn spawn_market(symbol: &str, market: BinanceMarket) -> FeedHandle {
     let (book_tx, book_rx) = mpsc::channel(BOOK_EVENT_CHANNEL_CAPACITY);
     let (notice_tx, notice_rx) = mpsc::channel(NOTICE_CHANNEL_CAPACITY);
     let (cmd_tx, cmd_rx) = mpsc::channel(16);
+    // Every aggTrade is an execution carrying its real size, and the venue
+    // answers the same for every symbol it lists.
+    let (caps_tx, caps_rx) = watch::channel(
+        match market {
+            BinanceMarket::Spot => ProviderKind::Binance,
+            BinanceMarket::UsdM => ProviderKind::BinanceFutures,
+        }
+        .capabilities(),
+    );
     let symbol = market.display_symbol(symbol);
     let source = BinanceSource {
         http: BinanceHttp::for_market(market),
@@ -72,22 +82,16 @@ pub fn spawn_market(symbol: &str, market: BinanceMarket) -> FeedHandle {
                 .enable_all()
                 .build()
                 .expect("build feed runtime");
-            runtime.block_on(feed_task(symbol, tx, book_tx, notice_tx, cmd_rx, source));
+            runtime.block_on(feed_task(
+                symbol, tx, book_tx, notice_tx, caps_tx, cmd_rx, source,
+            ));
         })
         .expect("spawn feed thread");
     FeedHandle {
         events: rx,
         book_events: book_rx,
         notices: notice_rx,
-        // Every aggTrade is an execution carrying its real size, and the venue
-        // answers the same for every symbol it lists — nothing to narrow later.
-        capabilities: super::fixed_capabilities(
-            match market {
-                BinanceMarket::Spot => ProviderKind::Binance,
-                BinanceMarket::UsdM => ProviderKind::BinanceFutures,
-            }
-            .capabilities(),
-        ),
+        capabilities: caps_rx,
         // A web-socket venue stamps a trade and quantick reads it: there is no
         // hop between those two to attribute a delay to.
         latency: super::unsplit_latency(),
@@ -101,6 +105,7 @@ pub(crate) async fn feed_task(
     tx: mpsc::Sender<FeedEvent>,
     book_tx: mpsc::Sender<DepthEvent>,
     notice_tx: mpsc::Sender<FeedNotice>,
+    _capabilities: watch::Sender<FeedCapabilities>,
     mut cmd_rx: mpsc::Receiver<FeedCommand>,
     source: BinanceSource,
 ) {

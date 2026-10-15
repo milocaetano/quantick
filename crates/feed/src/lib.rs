@@ -23,6 +23,8 @@
 pub mod binance;
 #[cfg(test)]
 mod binance_admission_tests;
+#[cfg(test)]
+mod binance_history_tests;
 pub use quantick_sources::candle_base;
 pub use quantick_sources::candles;
 pub mod clock;

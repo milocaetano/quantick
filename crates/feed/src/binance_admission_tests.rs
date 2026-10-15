@@ -69,11 +69,14 @@ async fn backfill_seeded_spot_and_perpetual_reconnects_keep_unique_quantity_and_
         let (book_tx, _book_rx) = mpsc::channel(8);
         let (notice_tx, _notice_rx) = mpsc::channel(32);
         let (cmd_tx, cmd_rx) = mpsc::channel(8);
+        let (caps_tx, _caps) =
+            tokio::sync::watch::channel(crate::config::ProviderKind::Binance.capabilities());
         let host = tokio::spawn(super::binance::feed_task(
             market.display_symbol("BTCUSDT"),
             tx,
             book_tx,
             notice_tx,
+            caps_tx,
             cmd_rx,
             super::binance::BinanceSource {
                 http: BinanceHttp::with_market_base(market, rest_url),
