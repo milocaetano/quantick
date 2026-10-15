@@ -108,6 +108,7 @@ fn draw_control(
         .default_size(control.rect.size())
         .constrain_to(control.rect)
         .movable(false)
+        .sense(egui::Sense::hover())
         .order(egui::Order::Middle)
         .show(ctx, |ui| {
             egui::Frame::none()
@@ -157,9 +158,9 @@ fn draw_control(
                 })
                 .inner
         });
-    // egui registers Area's remembered bounds before measuring this frame.
-    // Adding drag updates that same root widget to the measured bounds on resize.
-    let _ = shown.response.interact(egui::Sense::drag());
+    // Area's initial bounds may move when rounded or resized. Declare interaction
+    // only for the measured bounds, keeping one interactive registration per ID.
+    let _ = shown.response.interact(egui::Sense::click_and_drag());
     ((value != control.value).then_some(value), shown.inner)
 }
 

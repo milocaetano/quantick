@@ -186,6 +186,65 @@ fn drive_with(
 }
 
 #[test]
+fn fractional_controls_hover_and_resize_without_id_diagnostics() {
+    fn has_diagnostic(shape: &egui::Shape) -> bool {
+        match shape {
+            egui::Shape::Text(text) => text.galley.job.text.contains("widget ID"),
+            egui::Shape::Rect(rect) => rect.stroke.color == egui::Color32::RED,
+            egui::Shape::Vec(shapes) => shapes.iter().any(has_diagnostic),
+            _ => false,
+        }
+    }
+    for target in [BubbleScaleTarget::Candle, BubbleScaleTarget::Tape] {
+        for density in [1.0, 1.25, 1.5, 2.0] {
+            let ctx = egui::Context::default();
+            ctx.options_mut(|options| options.warn_on_id_clash = true);
+            ctx.style_mut(|style| style.animation_time = 0.0);
+            let id = egui::Id::new("fractional_bubble_control");
+            for width in [156.0, 156.0, 100.0, 100.0, 156.0] {
+                let rect =
+                    egui::Rect::from_min_size(egui::pos2(100.4, 50.3), egui::vec2(width, HEIGHT));
+                let mut input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1000.0, 700.0),
+                    )),
+                    events: vec![egui::Event::PointerMoved(rect.center())],
+                    ..Default::default()
+                };
+                input
+                    .viewports
+                    .get_mut(&egui::ViewportId::ROOT)
+                    .unwrap()
+                    .native_pixels_per_point = Some(density);
+                let output = ctx.run(input, |ctx| {
+                    let (changed, _) = draw_control(
+                        ctx,
+                        id,
+                        ScaleControl {
+                            target,
+                            rect,
+                            value: 0.85,
+                        },
+                    );
+                    assert_eq!(changed, None, "hover and resize do not edit the scale");
+                    let registered = ctx.read_response(id.with("move")).unwrap();
+                    assert!(rect.expand(1.0).contains_rect(registered.interact_rect));
+                });
+                assert!(ctx.options(|options| options.warn_on_id_clash));
+                assert!(
+                    !output
+                        .shapes
+                        .iter()
+                        .any(|shape| has_diagnostic(&shape.shape)),
+                    "ID diagnostic at density {density}, width {width}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn initial_controls_do_not_capture_the_chart_below_their_visible_bounds() {
     for density in [1.0, 2.0] {
         for target in 0..2 {
