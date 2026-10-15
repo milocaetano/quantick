@@ -825,9 +825,9 @@ fn flow_passes_tessellate_apart_from_the_candles() {
         );
     }
     let triangles = |mesh: &egui::Mesh| {
-        let triangles = mesh.indices.chunks_exact(3);
+        let triangles = mesh.indices.as_chunks::<3>().0.iter();
         triangles
-            .map(|t| [t[0], t[1], t[2]].map(|index| mesh.vertices[index as usize]))
+            .map(|triangle| triangle.map(|index| mesh.vertices[index as usize]))
             .collect::<Vec<_>>()
     };
     for (pass, range) in [candles[0] + 1..candles[1], candles[1] + 1..candles[2]]
@@ -842,7 +842,7 @@ fn flow_passes_tessellate_apart_from_the_candles() {
             "texels alternate"
         );
         assert!(runs.iter().all(|run| texels.contains(&run.texture_id)));
-        let painted: Vec<_> = runs.iter().flat_map(|run| triangles(run)).collect();
+        let painted: Vec<_> = runs.iter().flat_map(&triangles).collect();
         assert_eq!(
             painted,
             triangles(&passes[pass]),
@@ -897,10 +897,10 @@ fn the_cached_drawing_paints_what_the_per_frame_path_painted() {
             .flat_map(|primitive| match primitive.primitive {
                 egui::epaint::Primitive::Mesh(mesh) => mesh
                     .indices
-                    .chunks_exact(3)
-                    .map(|triangle| {
-                        [0, 1, 2].map(|corner| mesh.vertices[triangle[corner] as usize])
-                    })
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .map(|triangle| triangle.map(|index| mesh.vertices[index as usize]))
                     .collect::<Vec<_>>(),
                 egui::epaint::Primitive::Callback(_) => unreachable!("FLOW paints meshes"),
             })
