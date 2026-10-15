@@ -590,3 +590,52 @@ fn dense_production_flow_cache_benchmark() {
         }
     }
 }
+
+/// A tick drawing over the dense fixture: spheres with rims and labels,
+/// many of them overlapping.
+fn dense_tick_drawing(history: egui::Rect) -> FlowDrawing {
+    use rust_decimal::prelude::ToPrimitive as _;
+    let frame = dense_flow_fixture(400);
+    let tick = quantick_orderflow::TickBubbleStyle {
+        reference_quantity: 2964.0,
+        max_radius: 32.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    };
+    let plan = FlowPresentation::styled(
+        &frame,
+        [history.min.into(), history.max.into()],
+        Some(tick),
+        |dot| {
+            let y = dot.candle_position.to_f32().unwrap_or(0.5);
+            Some([dot.first_slot as f32 * 120.0 + 60.0, y * history.height()])
+        },
+    );
+    let look = (tick, quantick_orderflow::config::HeatmapTheme::default());
+    FlowDrawing::styled(&frame, plan, crate::theme::CANVAS, None, Some(look))
+}
+
+/// Review round 1 #10: a cached tick drawing paints each pass as one mesh
+/// with its rims tessellated in, so a frame neither copies rim shapes nor
+/// tessellates them again.
+#[test]
+fn a_tick_drawing_paints_each_pass_as_one_mesh() {
+    let history = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 795.0));
+    let ctx = egui::Context::default();
+    let output = ctx.run(egui::RawInput::default(), |ctx| {
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        let drawing = dense_tick_drawing(history);
+        drawing.paint(&painter, history, false);
+        drawing.paint(&painter, history, true);
+    });
+    let shapes: Vec<_> = output.shapes.iter().map(|clipped| &clipped.shape).collect();
+    assert!(!shapes.is_empty());
+    assert!(
+        shapes
+            .iter()
+            .all(|shape| matches!(shape, egui::Shape::Mesh(_))),
+        "rims ride in the cached mesh: {} shapes",
+        shapes.len()
+    );
+    assert!(shapes.len() <= 2, "one mesh per pass");
+}
