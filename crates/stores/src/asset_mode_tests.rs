@@ -471,6 +471,60 @@ fn the_move_runs_at_load_and_writes_only_when_a_copy_lands() {
     assert_eq!(again.borrow_mut().flush(), None, "migrated once");
 }
 
+/// Review round 1 #2: each move is settled on its own, so a mode the config
+/// switches on after the first migration still carries its asset's look over
+/// and logs it, while the move already settled is not run again.
+#[test]
+fn a_mode_added_after_the_first_migration_still_moves_its_look() {
+    let dir = ScratchDir::new("asset-mode-added-later");
+    let path = dir.join(ASSETS_FILE);
+    let mut btc = AssetBubbles::declared(bubble_presets::embedded().get("default").unwrap(), false);
+    btc.look.bubbles.max_radius = 23.0;
+    let mut eth = btc.clone();
+    eth.look.bubbles.max_radius = 27.0;
+    let mut file = AssetBubblesFile::default();
+    file.assets.insert("BTCUSDT".to_owned(), btc.clone());
+    file.assets.insert("ETHUSDT".to_owned(), eth.clone());
+    save_to(&path, &file).unwrap();
+    let first = open(&path, &venue_config());
+    assert_eq!(first.borrow().get("hyperliquid:BTCUSDT"), Some(&btc));
+    assert_eq!(first.borrow_mut().flush(), Some(Ok(())));
+
+    // Feeds.toml later switches a mode on for ETHUSDT on the same venue.
+    let mut later = venue_config();
+    let other = feed(&mut later, "hyperliquid");
+    other.symbols.push("ETHUSDT".to_owned());
+    other
+        .symbol_bubble_presets
+        .insert("ETHUSDT".to_owned(), "dense tape".to_owned());
+    other
+        .symbol_asset_modes
+        .insert("ETHUSDT".to_owned(), mode("ETH"));
+    let log = Capture::default();
+    let writer = log.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_max_level(tracing::Level::INFO)
+        .with_ansi(false)
+        .finish();
+    let store = tracing::subscriber::with_default(subscriber, || open(&path, &later));
+    let logged = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+
+    assert_eq!(store.borrow().get("hyperliquid:ETHUSDT"), Some(&eth));
+    assert_eq!(store.borrow().get("hyperliquid:BTCUSDT"), Some(&btc));
+    assert!(
+        logged.contains("ASSET_BUBBLES_KEY_MOVED")
+            && logged.contains("asset=\"hyperliquid:ETHUSDT\"")
+            && logged.contains("from=\"ETHUSDT\""),
+        "{logged}"
+    );
+    assert!(
+        !logged.contains("asset=\"hyperliquid:BTCUSDT\""),
+        "a settled move does not run again: {logged}"
+    );
+    assert_eq!(store.borrow_mut().flush(), Some(Ok(())));
+}
+
 /// Review #14, the trader alternates this build and main (ef882174) on one
 /// store. The fixture is main's own rewrite of a file this build migrated:
 /// main's loader read that file whole (all three looks, the save-off
@@ -502,6 +556,20 @@ fn a_file_main_rewrote_reads_back_whole() {
         None,
         "nothing moved over a kept look"
     );
+}
+
+/// Every log line written while it is the subscriber's writer.
+#[derive(Clone, Default)]
+struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Capture {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 /// A store as main (ef882174) writes it: format version 1, its own fields and
