@@ -158,7 +158,6 @@ pub(crate) async fn feed_task(
         ohlcv_task: None,
         continuity,
         admission,
-        stale_notice_sent: false,
         ever_connected: false,
     };
 
@@ -255,7 +254,6 @@ struct BinanceLoop {
     ohlcv_task: Option<JoinHandle<()>>,
     continuity: crate::continuity::BinanceContinuity,
     admission: RecentTradeIds,
-    stale_notice_sent: bool,
     ever_connected: bool,
 }
 
@@ -277,6 +275,15 @@ impl BinanceLoop {
         send_or_break(&self.tx, event).await // UI gone
     }
 
+    /// Put one live execution on the tape unless the session already holds it
+    /// or cannot tell.
+    ///
+    /// An execution a whole admission window behind the newest cannot be
+    /// checked against what the chart already counted, so it stays off the
+    /// tape: logged, and counted as a backwards id by the continuity event
+    /// that goes out before admission. It raises no [`FeedNotice`] — the
+    /// transport is up and the tape keeps moving, while every Attention is
+    /// drawn as the chart not being fed and stands stall detection down.
     async fn on_trade(&mut self, trade: Trade) -> ControlFlow<()> {
         if let Some(event) = self.continuity.observe(&trade) {
             send_or_break(&self.tx, FeedEvent::Continuity(event)).await?;
@@ -285,16 +292,10 @@ impl BinanceLoop {
             TradeAdmission::Accept => {}
             TradeAdmission::Duplicate => return ControlFlow::Continue(()),
             TradeAdmission::TooOld => {
-                warn!(target: "quantick::app", event_code = "BINANCE_TRADE_OUTSIDE_ADMISSION_WINDOW",
-                    symbol = self.symbol, agg_id = trade.agg_id,
+                warn!(target: "quantick::app", schema_version = 1_u8,
+                    event_code = "BINANCE_TRADE_OUTSIDE_ADMISSION_WINDOW",
+                    symbol = self.symbol, agg_id = trade.agg_id, action = "exclude",
                     "old execution not admitted: duplicate status cannot be verified");
-                if !self.stale_notice_sent {
-                    self.stale_notice_sent = true;
-                    send_or_break(&self.notice_tx, FeedNotice::attention(
-                        "Binance delivered executions older than the reconnect ID window",
-                        "Old arrivals were excluded because duplicate status cannot be verified. Recent unseen reordered executions are retained.",
-                    )).await?;
-                }
                 return ControlFlow::Continue(());
             }
         }
