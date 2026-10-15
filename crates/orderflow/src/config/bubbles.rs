@@ -289,7 +289,9 @@ pub struct BubbleStyle {
     /// How the full-size reference quantity is chosen.
     pub size_reference: BubbleSizeReference,
     /// Quantity mapped to [`max_radius`](Self::max_radius) when the reference
-    /// is [`BubbleSizeReference::Fixed`].
+    /// is [`BubbleSizeReference::Fixed`]. Stable native tapes with a typed
+    /// grouping reference use this only for drawing; their groups keep that
+    /// original reference. Their minimum radius reserves visible area for dust.
     pub size_reference_quantity: f64,
     /// Prints below this exact quantity are not drawn. Zero draws everything.
     ///

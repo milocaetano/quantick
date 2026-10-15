@@ -217,3 +217,77 @@ fn the_tape_quantity_tooltip_does_not_claim_to_resize_the_independent_candle_ove
 
 #[path = "native_split_controls_tests.rs"]
 mod native_split_controls_tests;
+
+#[test]
+fn fixed_native_size_control_edits_the_drawn_reference_and_preserves_grouping() {
+    for automatic in [false, true] {
+        let mut view = view(true);
+        view.config.live_lane.stable_size = true;
+        view.config.volume_dots.auto_full = automatic;
+        view.config.volume_dots.full_quantity = 1.0;
+        view.config.bubbles.size_reference = BubbleSizeReference::Fixed;
+        view.config.bubbles.size_reference_quantity = 8.0;
+        let before = view.config.clone();
+        let (ctx, text) = open_controls(&mut view);
+        assert_eq!(
+            view.config, before,
+            "opening the controls changes no settings"
+        );
+        assert_eq!(has(&text, "smallest print px"), !automatic);
+        assert!(
+            !text
+                .iter()
+                .any(|(label, _)| label.starts_with("dot full size qty"))
+        );
+        let control = text
+            .iter()
+            .find(|(label, _)| label.starts_with("Tape full size qty"))
+            .expect("the effective Tape reference is editable");
+        assert!(control.0.contains('8'));
+        let pos = control.1.center();
+        for pressed in [true, false] {
+            let _ = paint(
+                &mut view,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let _ = paint(
+            &mut view,
+            &ctx,
+            vec![
+                key(egui::Key::A, egui::Modifiers::COMMAND),
+                egui::Event::Text("16".to_owned()),
+            ],
+        );
+        let _ = paint(
+            &mut view,
+            &ctx,
+            vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
+        );
+        assert_eq!(view.config.bubbles.size_reference_quantity, 16.0);
+        assert_eq!(
+            view.config.volume_dots.full_quantity, 1.0,
+            "grouping scale stays intact"
+        );
+        assert!(
+            !view.config.volume_dots.auto_full,
+            "typing selects the fixed scale"
+        );
+    }
+}

@@ -370,3 +370,31 @@ fn a_visit_to_the_past_leaves_the_live_tape_exactly_as_it_was() {
     assert!(!expected.is_empty());
     assert_eq!(live, expected);
 }
+
+#[test]
+fn stable_native_navigation_moves_one_group_memory_through_zoom_and_back_to_live() {
+    use quantick_orderflow::tape_view::TapeEnd;
+    let (mut view, hold) = memory_view();
+    view.edit_config(|config| {
+        config.live_lane.stable_size = true;
+        config.volume_dots.auto_full = false;
+        config.volume_dots.full_quantity = 100.0;
+    });
+    let shown = seed_closed_history(&mut view);
+    let before = retained(&view, &shown, WIN_PRICES);
+    let groups = view.tape_dots.borrow().retained_group_count();
+    assert!(groups > 0);
+    view.set_tape_end(TapeEnd::Past {
+        end_ms: WIN_TIME_MS + 900,
+    });
+    assert_eq!(view.tape_dots.borrow().retained_group_count(), 0);
+    assert!(view.past_dots.borrow().cached_block_count() > 0);
+    view.zoom_live_lane(2.0);
+    assert!(view.past_dots.borrow().cached_block_count() > 0);
+    view.set_tape_end(TapeEnd::Live);
+    let after = retained(&view, &shown, WIN_PRICES);
+    hold.release();
+    assert_eq!(view.tape_dots.borrow().retained_group_count(), groups);
+    assert_eq!(after.marks, before.marks);
+    assert_eq!(after.max_radius, before.max_radius);
+}

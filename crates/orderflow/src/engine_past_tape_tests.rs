@@ -8,6 +8,9 @@ use crate::projection::{
 };
 use quantick_engine::{Side, Trade};
 
+#[path = "engine_past_stable_tests.rs"]
+mod stable_tests;
+
 const WINDOW_MS: i64 = 30_000;
 const DOT_MS: i64 = 100;
 

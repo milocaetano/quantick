@@ -375,6 +375,13 @@ pub struct BubblesStateSnapshot {
     /// Native dots keep the pinned area scale and configured radius.
     #[serde(default)]
     pub stable_size: bool,
+    /// The quantity drawn at the configured maximum radius for stable native
+    /// Tape with a fixed display reference. Its minimum radius remains visible;
+    /// area above that minimum grows with quantity up to this amount. Separate
+    /// from `volume_dots.volume_dot_full_quantity`, which still governs grouping.
+    /// Absent for automatic sizing and legacy native Tape looks.
+    #[serde(default)]
+    pub tape_display_full_quantity: Option<CanonicalDecimal>,
     /// The pane shows the tape alone, Bookmap style: the native tape takes
     /// the whole canvas, no candle or candle mark is drawn and time runs
     /// across the full width on the tape's own window. The lane setting
@@ -485,11 +492,57 @@ impl BubblesStateSnapshot {
             depth_time_averaging: config.live_lane.depth_time_averaging,
             forward_book_preview: config.live_lane.forward_book_preview,
             stable_size: config.live_lane.stable_size,
+            tape_display_full_quantity: (config.native_tape()
+                && config.volume_dots.enabled
+                && config.live_lane.stable_size
+                && !config.volume_dots.auto_full
+                && config.bubbles.size_reference == quantick_orderflow::BubbleSizeReference::Fixed)
+                .then(|| config.bubbles.fixed_reference_decimal())
+                .flatten()
+                .map(canonical_decimal),
             tape_only: config.live_lane.tape_only,
             ignore_opening_burst_in_scale: config.volume_dots.ignore_opening_burst_in_scale,
             recorded_opening_windows_ms: opening_bursts.to_vec(),
             volume_dots: dot_scale.map(Into::into),
             asset,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tape_size_tests {
+    use super::*;
+    use quantick_orderflow::BubbleSizeReference;
+    use rust_decimal::Decimal;
+
+    #[test]
+    fn fixed_native_display_reference_is_observable_without_relabeling_grouping() {
+        let mut config = HeatmapConfig::default();
+        config.live_lane.tape_only = true;
+        config.live_lane.stable_size = true;
+        config.volume_dots.enabled = true;
+        config.volume_dots.auto_full = false;
+        config.volume_dots.full_quantity = 1.0;
+        config.bubbles.size_reference = BubbleSizeReference::Fixed;
+        config.bubbles.size_reference_quantity = 8.0;
+        let snapshot = |config: &HeatmapConfig| {
+            BubblesStateSnapshot::from_config(config, Decimal::ZERO, None, &[], None, Vec::new())
+        };
+        assert_eq!(
+            snapshot(&config).tape_display_full_quantity,
+            Some(canonical_decimal(Decimal::from(8)))
+        );
+        assert_eq!(config.volume_dots.full_quantity, 1.0);
+        let fixed = config.clone();
+        for legacy in 0..4 {
+            let mut config = fixed.clone();
+            match legacy {
+                0 => config.live_lane.stable_size = false,
+                1 => config.volume_dots.auto_full = true,
+                2 => config.bubbles.size_reference = BubbleSizeReference::VisibleP99,
+                _ => config.volume_dots.enabled = false,
+            }
+            assert_eq!(snapshot(&config).tape_display_full_quantity, None);
         }
     }
 }
@@ -505,9 +558,10 @@ pub struct VolumeDotsSnapshot {
     /// Native ticks per candle level, chosen from the candle price axis. A
     /// candle dot is its whole bar at one level.
     pub candle_level_ticks: WireU64,
-    /// Contracts a dot holds at the largest radius when the size is typed:
-    /// area is proportional to quantity against it. The bubble setting
-    /// `volume_dot_full_quantity`.
+    /// The typed volume-dot reference (`volume_dot_full_quantity`). Native
+    /// Tape uses it to group recent prints; stable native Tape with a fixed
+    /// display reference draws against `tape_display_full_quantity` instead.
+    /// Other volume dots draw at the largest radius at this amount.
     pub volume_dot_full_quantity: CanonicalDecimal,
     /// Each pane sizes its dots relative to its own biggest dot on screen
     /// instead of `volume_dot_full_quantity`. The bubble setting

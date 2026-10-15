@@ -275,10 +275,15 @@ impl OrderflowView {
         }
         .show(ui);
         let native_tape = config.native_tape() && config.volume_dots.enabled;
+        let fixed_tape_size = native_tape
+            && config.live_lane.stable_size
+            && !config.volume_dots.auto_full
+            && config.bubbles.size_reference == quantick_orderflow::BubbleSizeReference::Fixed;
         let bubbles = &mut config.bubbles;
         SizePlacementSection {
             bubbles: &mut *bubbles,
             native_tape,
+            fixed_tape_size,
         }
         .show(ui);
         ConsumptionMarksSection {

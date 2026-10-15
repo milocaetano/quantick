@@ -25,15 +25,24 @@ impl super::HeatmapConfig {
         self.volume_dots.tick_bubbles.map(|tick| (tick, self.theme))
     }
 
+    /// Native groups whose fixed scale must survive navigation.
+    #[must_use]
+    pub fn stable_tape_groups(&self) -> bool {
+        self.native_tape() && self.live_lane.stable_size && !self.volume_dots.auto_full
+    }
+
     /// Whether a change keeps the tape's painted groups
     /// ([`TapeDotMemory`](crate::projection::TapeDotMemory)): the same tape
     /// settings but for the lane's width share, a view parameter like the
-    /// window the lane shows. An explicit zoom (the lane's window setting)
-    /// and every other tape setting start a new display epoch.
+    /// window the lane shows. Stable native groups also survive an explicit
+    /// window change; ordinary lanes retain their existing zoom regrouping.
     #[must_use]
     pub fn same_tape_grouping(&self, other: &Self) -> bool {
         let mut compared = other.clone();
         compared.live_lane.width_share = self.live_lane.width_share;
+        if self.stable_tape_groups() && other.stable_tape_groups() {
+            compared.live_lane.window = self.live_lane.window;
+        }
         self.same_tape_settings(&compared)
     }
 }
@@ -54,6 +63,35 @@ mod grouping_tests {
         );
         let mut zoomed = config.clone();
         zoomed.zoom_lane_window(2.0);
+        assert!(!zoomed.same_tape_grouping(&config));
+    }
+
+    #[test]
+    fn only_a_stable_native_typed_tape_keeps_groups_across_window_changes() {
+        let mut config = HeatmapConfig::default();
+        config.live_lane.native_tape = true;
+        config.live_lane.stable_size = true;
+        config.volume_dots.enabled = true;
+        config.volume_dots.auto_full = false;
+        assert!(config.stable_tape_groups());
+        let mut zoomed = config.clone();
+        zoomed.zoom_lane_window(2.0);
+        assert!(zoomed.same_tape_grouping(&config));
+        assert!(!zoomed.same_tape_settings(&config));
+        zoomed.live_lane.window = crate::LaneWindow::Fixed { ms: 3_000 };
+        assert!(zoomed.same_tape_grouping(&config));
+        for mode in 0..3 {
+            let mut ordinary = config.clone();
+            match mode {
+                0 => ordinary.live_lane.stable_size = false,
+                1 => ordinary.volume_dots.auto_full = true,
+                _ => ordinary.live_lane.native_tape = false,
+            }
+            let mut changed = ordinary.clone();
+            changed.zoom_lane_window(2.0);
+            assert!(!changed.same_tape_grouping(&ordinary));
+        }
+        zoomed.bubbles.max_radius += 1.0;
         assert!(!zoomed.same_tape_grouping(&config));
     }
 

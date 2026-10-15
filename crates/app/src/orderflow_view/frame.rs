@@ -248,6 +248,21 @@ impl OrderflowView {
             .filter(|_| self.config.native_tape());
         let (window, retained) = self.tape_bounds();
         let end = live.map_or(TapeEnd::Live, |live| end.reclamped(live, window, retained));
+        if self.config.stable_tape_groups() {
+            if self.tape_end.is_live() && !end.is_live() {
+                let memory = self
+                    .tape_rebuilds
+                    .get_mut()
+                    .take_displayed(self.tape_dots.get_mut());
+                self.past_dots.get_mut().hold_live(memory);
+            } else if !self.tape_end.is_live()
+                && end.is_live()
+                && let Some(memory) = self.past_dots.get_mut().resume_live()
+            {
+                self.tape_rebuilds.get_mut().discard();
+                *self.tape_dots.get_mut() = memory;
+            }
+        }
         if std::mem::replace(&mut self.tape_end, end) != end {
             self.worker.send(BookCommand::TapeEnd(end.past_ms()));
         }
