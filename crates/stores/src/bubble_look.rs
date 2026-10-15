@@ -319,7 +319,8 @@ impl BubbleLook {
     /// Apply the stored preset called `name` to `config`, reporting whether
     /// it exists. `spheres` is the tick sphere rule's verdict for the pane
     /// (`TickSpherePane::may_choose` in control-handlers, which every door
-    /// asks): the preset's spheres come along only where it admits them.
+    /// asks): the preset's spheres come along only where it admits them, and
+    /// where it does not the look keeps the spheres it wears.
     ///
     /// The choice is the asset's own: it is filed for the asset on screen.
     /// An unknown name changes nothing and returns `false`; the caller
@@ -447,11 +448,14 @@ impl BubbleLook {
 }
 
 /// `config` in `preset` as a whole-preset pick wears it, the one place that
-/// says so: its spheres only where the tick sphere rule admits them.
+/// says so: its spheres only where the tick sphere rule admits them. Where it
+/// does not, the look keeps the spheres it wears, none added and none taken:
+/// the look is the asset's, and the asset's tick chart wears it too.
 fn dress(preset: &BubblePreset, config: &mut HeatmapConfig, spheres: bool) {
+    let worn = config.volume_dots.tick_bubbles;
     preset.apply_to(config);
     if !spheres {
-        config.volume_dots.tick_bubbles = None;
+        config.volume_dots.tick_bubbles = worn;
     }
 }
 
