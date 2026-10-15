@@ -72,8 +72,9 @@ pub const BOOK_PROVENANCE: &str = "venue_published_depth";
 /// book, an empty tape or a zeroed setup.
 pub const NO_ENGINE: &str = "order_flow_engine_not_attached_to_this_pane";
 
-/// Revision rows are never serialized. The setup debug strings compare every
-/// field exactly, including floats that prevent deriving `Eq` on the configs.
+/// Revision rows are never serialized. The footprint setup's debug string and
+/// the engine's `IdenticalConfig` compare every field exactly, including
+/// floats that prevent deriving `Eq` on the configs.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OrderflowRevisionKey {
     pub tab_id: u64,
@@ -99,8 +100,22 @@ pub struct EngineRevisionKey {
     lane_enabled: bool,
     status: &'static str,
     grouping: rust_decimal::Decimal,
-    config: String,
+    config: IdenticalConfig,
 }
+
+/// The whole engine config, compared by [`HeatmapConfig::identical`]: as exact
+/// as its `Debug` rendering, without formatting it at every capture.
+#[derive(Clone, Debug)]
+struct IdenticalConfig(HeatmapConfig);
+
+impl PartialEq for IdenticalConfig {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.identical(&other.0)
+    }
+}
+
+/// `identical` is reflexive, a NaN field included.
+impl Eq for IdenticalConfig {}
 
 impl EngineRevisionKey {
     pub fn from_config(
@@ -117,7 +132,7 @@ impl EngineRevisionKey {
             lane_enabled: config.lane_enabled(),
             status: status.code(),
             grouping,
-            config: format!("{config:?}"),
+            config: IdenticalConfig(config.clone()),
         }
     }
 }

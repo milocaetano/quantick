@@ -5,6 +5,7 @@ use rust_decimal::Decimal;
 mod bubbles;
 pub mod crown;
 pub mod dressing;
+mod exact;
 pub mod labels;
 mod lane;
 pub mod legend;
