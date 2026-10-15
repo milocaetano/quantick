@@ -14,7 +14,7 @@ use std::any::Any;
 use crate::icons;
 
 use super::line_core::{Extend, line_ends};
-use super::{DrawContext, DrawingPayload, DrawingStyle, MarkTool, Handles, Constrain, ToolShortcut, dashed_segment, distance_to_segment, drawing_fill, drawing_stroke, level_with, off_line_by, unit_normal};
+use super::{DrawContext, DrawingPayload, DrawingStyle, MarkTool, Handles, Constrain, ToolShortcut, dashed_segment_within, distance_to_segment, drawing_fill, drawing_stroke, level_with, off_line_by, unit_normal};
 
 pub(super) static TOOL: ParallelChannel = ParallelChannel;
 
@@ -477,7 +477,15 @@ impl MarkTool for ParallelChannel {
         // widened underneath itself reads as a smear, so the midline is
         // geometry-only.
         if let Some((from, to)) = channel.midline.filter(|_| !ctxt.halo) {
-            dashed_segment(painter, from, to, stroke, MIDLINE_DASH_PX, MIDLINE_GAP_PX);
+            dashed_segment_within(
+                painter,
+                chart_rect,
+                from,
+                to,
+                stroke,
+                MIDLINE_DASH_PX,
+                MIDLINE_GAP_PX,
+            );
         }
     }
     fn hit_test(

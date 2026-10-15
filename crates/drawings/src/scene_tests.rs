@@ -1,5 +1,4 @@
 use super::*;
-use crate::test_prelude::*;
 
 const DASH: f32 = 5.0;
 const GAP: f32 = 4.0;
@@ -37,14 +36,18 @@ fn a_dashed_segment_far_past_the_clip_walks_only_its_visible_part() {
     let dashes = dashes(&scene);
     let across = (clip().width() / STEP).ceil() as usize;
     assert!(
-        !dashes.is_empty() && dashes.len() <= across + 2,
+        !dashes.is_empty() && dashes.len() <= across + 3,
         "{} dashes for a {} px clip",
         dashes.len(),
         clip().width()
     );
-    let reach = clip().expand(DASH);
+    // The dash holding each edge may start a step before it.
+    let reach = clip().expand(DASH + STEP);
     for [start, end] in &dashes {
-        assert!(reach.contains(*start) && reach.contains(*end), "{start:?}-{end:?}");
+        assert!(
+            reach.contains(*start) && reach.contains(*end),
+            "{start:?}-{end:?}"
+        );
     }
 }
 

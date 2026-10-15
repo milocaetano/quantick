@@ -21,8 +21,8 @@ use crate::{
     DrawingBand, DrawingPayload, DrawingStyle, DrawingTool, FIB_LABEL_OFFSET_PX, FIB_LABEL_SIZE_PX,
     GlyphSize, Handles, IconDots, IconLetter, IconStrokes, MarkTool, NoPayload, PointerHint,
     PresetHost, SELECTED_ANCHOR_RADIUS_PX, SELECTED_ANCHOR_RING_WIDTH_PX, ToolFamily, ToolShortcut,
-    ValueUnit, dashed_segment, distance_to_segment, drawing_fill, drawing_stroke, level_with,
-    off_line_by, unit_normal,
+    ValueUnit, dashed_segment, dashed_segment_within, distance_to_segment, drawing_fill,
+    drawing_stroke, level_with, off_line_by, unit_normal,
 };
 
 macro_rules! register_drawing_tools {
