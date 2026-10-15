@@ -99,3 +99,60 @@ fn tick_spheres_are_scoped_retry_safe_and_preserve_tape_settings() {
     assert_eq!(error_code(&stale), Some(codes::INVALID_REQUEST));
     disable_test_gateway(&mut app, &ctx);
 }
+
+/// Review round 1 #9: the whole-preset door asks the rule tick.set asks. On a
+/// volume chart of a mode asset preset.apply wears no spheres and tick.set
+/// refuses them; on a tick chart both give the preset's spheres.
+#[test]
+fn a_whole_preset_and_tick_set_agree_on_spheres() {
+    let ctx = egui::Context::default();
+    let (mut app, _commands) = app_with_history(4);
+    let config: crate::config::AppConfig =
+        toml::from_str(quantick_stores::config::EMBEDDED_DEFAULT).unwrap();
+    let (binding, settings) = quantick_stores::bubble_asset_store::AssetBinding::bind(
+        quantick_stores::bubble_asset_store::AssetBubblesStore::default().shared(),
+        &config,
+        ("binance", "BTCUSDT"),
+        &quantick_stores::bubble_presets::embedded(),
+        false,
+    );
+    app.active_tab_mut()
+        .tape_mut()
+        .bind_asset(binding, &settings);
+    let directory = gateway_test_directory("tick-sphere-doors");
+    grant_annotate_for_test(&mut app, "all-reads,cockpit,cockpit.layout");
+    enable_test_gateway(&mut app, &ctx, &directory, 4);
+    let mut cockpit = connect(
+        &directory,
+        &options("cockpit", &["cockpit", "cockpit.layout"]),
+    );
+    let payload = json!({
+        "tab_id": app.tabs.active_id().to_string(),
+        "pane_id": app.active_tab().flow_pane.id.to_string(),
+        "preset": "Binance BTC Spot spheres",
+    });
+    for (spec, tick_chart) in [
+        (crate::state::BarSpec::Volume(Decimal::from(5)), false),
+        (crate::state::BarSpec::Tick(1), true),
+    ] {
+        app.active_tab_mut().flow_pane.spec.retain(spec);
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut().apply_spec_changes();
+        app.active_tab_mut()
+            .tape_mut()
+            .edit_config(|config| config.volume_dots.tick_bubbles = None);
+        let apply = "orderflow.bubbles.preset.apply";
+        let (whole, _) = unkeyed_call(&mut app, &mut cockpit, apply, payload.clone());
+        assert_eq!(error_code(&whole), None, "{spec:?}");
+        let tape = app.active_tab().tape().cached_config();
+        let worn = tape.volume_dots.tick_bubbles.is_some();
+        let (tick, _) = unkeyed_call(&mut app, &mut cockpit, ACTION, payload.clone());
+        assert_eq!(worn, tick_chart, "{spec:?}: the whole preset");
+        assert_eq!(
+            error_code(&tick).is_none(),
+            tick_chart,
+            "{spec:?}: tick.set"
+        );
+    }
+    disable_test_gateway(&mut app, &ctx);
+}
