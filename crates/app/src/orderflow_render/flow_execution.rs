@@ -169,8 +169,10 @@ impl FlowDrawing {
                 angle += sweep;
             }
         }
+        let texture = flow_texture(painter.ctx());
         for (mesh, rims) in meshes.iter_mut().zip(rims) {
             mesh.append(rims);
+            mesh.texture_id = texture;
         }
         Self {
             labels: place_quantity_labels(painter, history, labels),
@@ -192,6 +194,21 @@ impl FlowDrawing {
     pub fn paint_labels(&self, painter: &egui::Painter, history: egui::Rect) {
         paint_quantity_labels(painter, history, &self.labels);
     }
+}
+
+/// FLOW's own white texel. egui folds consecutive meshes of one texture and
+/// clip into one buffer, copying each every frame; a pass on a texture of its
+/// own is moved there whole. One white texel under `WHITE_UV`, like the font
+/// atlas's, so every triangle paints its vertex colour as before.
+pub(crate) fn flow_texture(ctx: &egui::Context) -> egui::TextureId {
+    let id = egui::Id::new("flow white texel");
+    if let Some(held) = ctx.data(|data| data.get_temp::<egui::TextureHandle>(id)) {
+        return held.id();
+    }
+    let white = egui::ColorImage::new([1, 1], egui::Color32::WHITE);
+    let held = ctx.load_texture("flow white texel", white, egui::TextureOptions::LINEAR);
+    ctx.data_mut(|data| data.insert_temp(id, held.clone()));
+    held.id()
 }
 
 fn paint_quantity_labels(painter: &egui::Painter, history: egui::Rect, labels: &[PlacedLabel]) {

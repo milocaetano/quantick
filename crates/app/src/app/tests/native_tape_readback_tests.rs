@@ -423,7 +423,11 @@ fn regional_fans(meshes: &[egui::Mesh]) -> Vec<RegionalFan> {
     let mut fans: Vec<RegionalFan> = Vec::new();
     for mesh in meshes {
         assert!(mesh.is_valid());
-        assert_eq!(mesh.texture_id, egui::TextureId::default());
+        assert_ne!(
+            mesh.texture_id,
+            egui::TextureId::default(),
+            "FLOW paints from its own white texel"
+        );
         assert!(
             mesh.vertices
                 .iter()

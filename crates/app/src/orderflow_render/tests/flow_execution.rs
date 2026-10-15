@@ -725,8 +725,8 @@ fn flow_passes_tessellate_apart_from_the_candles() {
     for candles in [&primitives[0], &primitives[2], &primitives[4]] {
         assert_eq!(
             candles.vertices.len(),
-            4,
-            "a candle mesh holds no FLOW vertex"
+            8,
+            "a candle mesh holds its feathered rectangle and no FLOW vertex"
         );
     }
 }
@@ -771,11 +771,18 @@ fn the_cached_drawing_paints_what_the_per_frame_path_painted() {
         }
     });
     let rims = old.len() - 2;
+    // Every triangle in paint order, whichever primitive egui put it in.
     let triangles = |shapes: Vec<egui::epaint::ClippedShape>| {
         ctx.tessellate(shapes, 1.0)
             .into_iter()
-            .map(|primitive| match primitive.primitive {
-                egui::epaint::Primitive::Mesh(mesh) => (mesh.vertices, mesh.indices),
+            .flat_map(|primitive| match primitive.primitive {
+                egui::epaint::Primitive::Mesh(mesh) => mesh
+                    .indices
+                    .chunks_exact(3)
+                    .map(|triangle| {
+                        [0, 1, 2].map(|corner| mesh.vertices[triangle[corner] as usize])
+                    })
+                    .collect::<Vec<_>>(),
                 egui::epaint::Primitive::Callback(_) => unreachable!("FLOW paints meshes"),
             })
             .collect::<Vec<_>>()

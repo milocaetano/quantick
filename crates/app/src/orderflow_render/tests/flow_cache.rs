@@ -409,7 +409,10 @@ fn sector_mesh_uses_only_white_uv_and_survives_font_atlas_growth() {
     let (entry, before_shapes) = paint(&ctx, key(&frame));
     let mesh = &entry.mesh.get().unwrap().meshes[1];
     assert!(!mesh.vertices.is_empty());
-    assert_eq!(mesh.texture_id, egui::TextureId::default());
+    assert_eq!(
+        mesh.texture_id,
+        super::super::flow_execution::flow_texture(&ctx)
+    );
     assert!(
         mesh.vertices
             .iter()
@@ -523,6 +526,11 @@ fn direct_mesh_separates_peaks_without_changing_sector_geometry_or_colours() {
                 78.0,
             ))
         });
+        // FLOW's own white texel stands where the font atlas's stood.
+        let expected = egui::Mesh {
+            texture_id: actual.texture_id,
+            ..expected
+        };
         assert_eq!(actual, expected, "backing={backing:?}");
     }
 }
