@@ -198,8 +198,11 @@ pub const READBACKS: &[Readback] = &[
         Optional,
         SCOPE_ID,
         "tabs[].active_symbol",
-        "the tab reports the requested active_feed_id and active_symbol; feed_generation advances only when the pair changed",
-        &["configured_feed_selection_is_validated_retry_safe_and_reads_back"],
+        "the tab reports the requested active_feed_id and active_symbol; feed_generation advances by one when the pair changed and not otherwise",
+        &[
+            "configured_feed_selection_is_validated_retry_safe_and_reads_back",
+            "a_pair_switch_advances_the_generation_once_and_flattens_the_paper_position",
+        ],
     ),
     snapshot(
         "feed.reconnect",
