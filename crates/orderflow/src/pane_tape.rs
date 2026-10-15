@@ -111,6 +111,24 @@ impl PaneTape {
         self.frame.as_ref()
     }
 
+    /// The frame this pane last drew for `published`
+    /// ([`complete_frame`](Self::complete_frame)): the overlay while
+    /// unpublished prints are drawn, else `published` with the verdict on its
+    /// current book the painter used. The cursor reads this one, so it never
+    /// reports a strip the painter no longer draws.
+    #[must_use]
+    pub fn drawn<'a>(
+        &'a self,
+        published: Option<&'a Arc<VisibleOrderflow>>,
+    ) -> Option<&'a Arc<VisibleOrderflow>> {
+        let published = published?;
+        Some(
+            self.frame
+                .as_ref()
+                .unwrap_or_else(|| self.depth.drawn(published)),
+        )
+    }
+
     /// Every opening burst the source recorded, with those `published`
     /// already folded.
     #[must_use]

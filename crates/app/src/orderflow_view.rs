@@ -247,7 +247,7 @@ impl OrderflowView {
     }
 
     /// Resolve the topmost displayed L2 heat cell under `position` from the frame the chart most
-    /// recently painted. Projection and hit testing share [`ProjectedLayout`]; the lookup is
+    /// recently painted ([`PaneTape::drawn`]). Projection and hit testing share [`ProjectedLayout`]; the lookup is
     /// O(visible cells) and runs only for an explicit cursor snapshot.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn control_flow_cell_at(
@@ -259,7 +259,7 @@ impl OrderflowView {
         inverted: bool,
         position: egui::Pos2,
     ) -> Option<FlowCellHit> {
-        let frame = self.published.frame.as_deref()?;
+        let frame = &**self.pane_tape.drawn(self.published.frame.as_ref())?;
         let layout = ProjectedLayout::new(
             chart_rect,
             viewport,

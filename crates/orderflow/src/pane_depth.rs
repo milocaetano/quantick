@@ -10,6 +10,8 @@ use crate::projection::book_is_current;
 #[derive(Default)]
 pub(crate) struct CachedDepthPreview {
     relabelled: Option<(Arc<VisibleOrderflow>, Arc<VisibleOrderflow>)>,
+    /// The publication last consumed and the frame it was drawn as.
+    drawn: Option<(Arc<VisibleOrderflow>, Arc<VisibleOrderflow>)>,
 }
 
 impl CachedDepthPreview {
@@ -27,26 +29,52 @@ impl CachedDepthPreview {
         published: Option<&Arc<VisibleOrderflow>>,
         now_ms: Option<i64>,
     ) -> Option<Arc<VisibleOrderflow>> {
-        let published = published?;
+        let Some(published) = published else {
+            self.drawn = None;
+            return None;
+        };
+        let output = self.relabel(published, now_ms);
+        self.drawn = Some((Arc::clone(published), Arc::clone(&output)));
+        Some(output)
+    }
+
+    /// `published` as the last [`consume`](Self::consume) drew it: its
+    /// relabelled copy when that call relabelled this very publication, else
+    /// the publication itself.
+    pub(crate) fn drawn<'a>(
+        &'a self,
+        published: &'a Arc<VisibleOrderflow>,
+    ) -> &'a Arc<VisibleOrderflow> {
+        match &self.drawn {
+            Some((input, output)) if Arc::ptr_eq(input, published) => output,
+            _ => published,
+        }
+    }
+
+    fn relabel(
+        &mut self,
+        published: &Arc<VisibleOrderflow>,
+        now_ms: Option<i64>,
+    ) -> Arc<VisibleOrderflow> {
         let live = match (published.projection.current_book, now_ms) {
             (Some(source), Some(now_ms)) => book_is_current(now_ms, source.event_ms),
             _ => published.current_book_live,
         };
         if live == published.current_book_live {
-            return Some(Arc::clone(published));
+            return Arc::clone(published);
         }
         // Checked again on every frame: replay can move the clock backwards.
         if let Some((input, output)) = &self.relabelled
             && Arc::ptr_eq(input, published)
             && output.current_book_live == live
         {
-            return Some(Arc::clone(output));
+            return Arc::clone(output);
         }
         let output = Arc::new(VisibleOrderflow {
             current_book_live: live,
             ..published.as_ref().clone()
         });
         self.relabelled = Some((Arc::clone(published), Arc::clone(&output)));
-        Some(output)
+        output
     }
 }
