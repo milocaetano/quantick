@@ -220,6 +220,44 @@ fn tick_spheres_keep_their_regions_through_axis_drift_and_regroup_on_zoom() {
     assert_eq!(regions((97.0, 103.0)), [vec![1], vec![2]]);
 }
 
+/// Review round 1 #6: a reference no decimal can hold reads the one named
+/// fallback (`FALLBACK_REFERENCE_QUANTITY`, 40), as a non-positive one does,
+/// never a second fallback of the chart's own.
+#[test]
+fn an_unrepresentable_reference_reads_the_named_fallback() {
+    let mut state = ChartState::new(BarSpec::Tick(50));
+    state.ingest_live(&Trade {
+        agg_id: 1,
+        timestamp_ms: 1_000,
+        price: 100.into(),
+        quantity: 20.into(),
+        side: Side::Buy,
+    });
+    let tick = quantick_orderflow::TickBubbleStyle {
+        reference_quantity: 1e30,
+        max_radius: 32.0,
+        label_min_radius: 8.0,
+        opacity: 0.9,
+    };
+    let mut session = FlowSession::<WorkerRunner>::default();
+    for _ in 0..2 {
+        project_styled_flow_executions(
+            true,
+            &state,
+            &mut session,
+            FlowChartView {
+                slots: 0..1,
+                pixels: (100.0, 200.0),
+                range: (90.0, 110.0),
+                clip: (0.0, 1.0),
+                tick_bubbles: Some(tick),
+            },
+        );
+    }
+    let frame = session.frame().unwrap();
+    assert_eq!(frame.effective_reference, Some(Decimal::from(40)));
+}
+
 /// The live app: a seed larger than one capture packet, then a print before
 /// every frame. The newest-first fill must still reach the oldest seed
 /// candle while prints keep arriving: the live tail never starves history.
