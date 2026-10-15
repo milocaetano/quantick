@@ -1,4 +1,7 @@
 use super::*;
+use crate::test_support::{FakeAccess, FakeWindow};
+use quantick_control::registry::RevisionPolicy;
+use quantick_control_host::{actions::ActionRegistry, journal::EventActor};
 use serde_json::json;
 
 struct Window {
@@ -50,8 +53,8 @@ impl FeedSourcePort for Window {
 fn call(window: &mut Window, input: Value) -> Result<Value, ControlError> {
     select(
         window,
-        &mut (),
-        &crate::test_support::FakeWindow::assistant(),
+        &mut FakeAccess::with_budget(0),
+        &FakeWindow::assistant(),
         &input,
     )
 }
@@ -89,18 +92,89 @@ fn source_selection_validates_before_mutation_and_retries_without_another_switch
     assert_eq!(window.symbol, "BTCUSDT.p");
 }
 
+/// Both acts that throw a timeline away say so in the descriptor a client
+/// reads before calling: destructive, irreversible, behind `cockpit.recover`,
+/// carrying `timeline_rebuilt`. The reconnect beside them keeps the trader's
+/// work and stays the one that is not.
 #[test]
-fn source_selection_declares_the_reload_permissions_and_effects() {
-    let descriptor = quantick_control_schema::feed_source::descriptor();
-    let reload = quantick_control_schema::recovery::descriptor(
-        "feed.reload",
-        "Reload",
-        "Reload",
-        true,
-        json!({}),
-    );
-    assert_eq!(descriptor.required_permissions, reload.required_permissions);
-    assert_eq!(descriptor.effect, reload.effect);
-    assert_eq!(descriptor.risk_flags, reload.risk_flags);
-    assert!(!descriptor.reversible);
+fn source_selection_and_reload_declare_themselves_destructive() {
+    let mut sources = ActionRegistry::<Window, FakeAccess>::new();
+    register(&mut sources).expect("the source descriptor is valid");
+    let mut recoveries = ActionRegistry::<FakeWindow, FakeAccess>::new();
+    crate::recovery::register(&mut recoveries).expect("the recovery descriptors are valid");
+    let descriptors: Vec<_> = sources
+        .descriptors()
+        .chain(recoveries.descriptors())
+        .cloned()
+        .collect();
+    let named = |id: &str| {
+        descriptors
+            .iter()
+            .find(|descriptor| descriptor.id.as_str() == id)
+            .unwrap_or_else(|| panic!("{id} is registered"))
+            .clone()
+    };
+    let source = named("feed.source.set");
+    let reload = named("feed.reload");
+    for descriptor in [&source, &reload] {
+        let id = descriptor.id.as_str();
+        assert!(descriptor.destructive, "{id} is destructive");
+        assert!(!descriptor.reversible, "{id} cannot be undone");
+        assert_eq!(descriptor.revision_policy, RevisionPolicy::Required, "{id}");
+        assert!(descriptor.stale_input_safety.is_none(), "{id}");
+        assert!(
+            descriptor
+                .risk_flags
+                .iter()
+                .any(|flag| flag.as_str() == "timeline_rebuilt"),
+            "{id} carries timeline_rebuilt"
+        );
+        let permissions: Vec<_> = descriptor
+            .required_permissions
+            .iter()
+            .map(|permission| permission.as_str().to_owned())
+            .collect();
+        assert_eq!(permissions, ["cockpit", "cockpit.recover"], "{id}");
+    }
+    assert_eq!(source.effect, reload.effect);
+    let reconnect = named("feed.reconnect");
+    assert!(!reconnect.destructive, "a reconnect keeps the timeline");
+    assert!(reconnect.reversible);
+}
+
+/// Who switched a tab's market, and from what to what, is on the record,
+/// whoever it was: the trader's own call and an assistant's journal the same
+/// event under their own names. Repeating the active pair switches nothing
+/// and records nothing.
+#[test]
+fn a_changed_source_journals_who_switched_it_from_what_to_what() {
+    for actor in [FakeWindow::trader(), FakeWindow::assistant()] {
+        let mut window = Window {
+            feed: "spot".into(),
+            symbol: "BTCUSDT".into(),
+            replay: false,
+            switches: 0,
+        };
+        let mut access = FakeAccess::with_budget(0);
+        let input = json!({"tab_id":"7","feed_id":"futures","symbol":"BTCUSDT.p"});
+        let result = select(&mut window, &mut access, &actor, &input).expect("the switch answers");
+        select(&mut window, &mut access, &actor, &input).expect("the repeat answers");
+        assert_eq!(window.switches, 1);
+        assert_eq!(access.events.len(), 1, "one switch, one record");
+        let event = &access.events[0];
+        assert_eq!(event.module_id.as_str(), "feed");
+        assert_eq!(event.kind.as_str(), "feed.source.changed");
+        assert_eq!(event.actor, Some(EventActor::from(&actor)));
+        let expected = json!({
+            "tab_id": "7",
+            "feed_id": "futures",
+            "symbol": "BTCUSDT.p",
+            "from_feed_id": "spot",
+            "from_symbol": "BTCUSDT",
+            "changed": true,
+            "timeline_kept": false,
+        });
+        assert_eq!(event.payload, json!({ "feed_source": expected }));
+        assert_eq!(result, expected, "the caller reads what the journal reads");
+    }
 }
