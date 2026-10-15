@@ -622,6 +622,16 @@ fn dense_tick_drawing(
     painter: &egui::Painter,
     history: egui::Rect,
 ) -> FlowDrawing {
+    dense_tick_drawing_after(frame, painter, history, None)
+}
+
+/// [`dense_tick_drawing`], built after `previous`.
+fn dense_tick_drawing_after(
+    frame: &FlowTapeFrame,
+    painter: &egui::Painter,
+    history: egui::Rect,
+    previous: Option<&FlowDrawing>,
+) -> FlowDrawing {
     use rust_decimal::prelude::ToPrimitive as _;
     let plan = FlowPresentation::styled(
         frame,
@@ -636,8 +646,57 @@ fn dense_tick_drawing(
         DENSE_TICK,
         quantick_orderflow::config::HeatmapTheme::default(),
     );
-    let background = crate::theme::CANVAS;
-    FlowDrawing::styled(frame, plan, background, None, Some(look), painter, history)
+    let ink = (crate::theme::CANVAS, None, Some(look));
+    FlowDrawing::styled(frame, plan, ink, painter, history, previous)
+}
+
+/// A new print must not rebuild every sphere. A drawing built after the one
+/// before it copies each region whose key held — a poisoned copy shows
+/// through — and builds the rest; after the true one it paints exactly what
+/// a drawing built from nothing paints, labels included.
+#[test]
+fn a_drawing_after_the_one_before_copies_what_held_and_paints_the_same() {
+    let history = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 795.0));
+    let before = dense_tick_frame();
+    let mut after = before.clone();
+    after.dots[3].radius *= 1.25;
+    let ctx = egui::Context::default();
+    let _ = ctx.run(egui::RawInput::default(), |ctx| {
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        let first = dense_tick_drawing(&before, &painter, history);
+        let fresh = dense_tick_drawing(&after, &painter, history);
+        let kept = dense_tick_drawing_after(&after, &painter, history, Some(&first));
+        assert_eq!(
+            kept.meshes, fresh.meshes,
+            "the same triangles in the same order"
+        );
+        assert_eq!(kept.labels, fresh.labels);
+        assert_eq!(kept.plan, fresh.plan);
+        let mut poisoned = dense_tick_drawing(&before, &painter, history);
+        for vertex in poisoned
+            .meshes
+            .iter_mut()
+            .flat_map(|mesh| &mut mesh.vertices)
+        {
+            vertex.color = egui::Color32::RED;
+        }
+        let copied = dense_tick_drawing_after(&after, &painter, history, Some(&poisoned));
+        let red = |drawing: &FlowDrawing| {
+            drawing
+                .meshes
+                .iter()
+                .flat_map(|mesh| &mesh.vertices)
+                .filter(|vertex| vertex.color == egui::Color32::RED)
+                .count()
+        };
+        let all: usize = fresh.meshes.iter().map(|mesh| mesh.vertices.len()).sum();
+        assert!(
+            red(&copied) * 10 > all * 9,
+            "the regions that held are copied"
+        );
+        assert!(red(&copied) < all, "the grown region is built again");
+        assert_eq!(red(&fresh), 0);
+    });
 }
 
 /// Review round 1 #10: a cached tick drawing paints each pass as one mesh
