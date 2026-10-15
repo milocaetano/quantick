@@ -16,7 +16,7 @@ fn from_document(document: BubblePresetFile) -> OrderflowView {
         &mut HeatmapConfig::default(),
     );
     let active = view.look.presets().active.clone();
-    assert!(view.apply_preset(&active));
+    assert!(view.apply_preset(&active, false));
     view
 }
 
@@ -44,9 +44,9 @@ fn whole_preset_api_matches_picker_navigation_visibility_and_save_scope() {
     }
     api.set_save_asset_changes(false).unwrap();
     let before = ui.config.clone();
-    assert!(ui.apply_preset(name));
+    assert!(ui.apply_preset(name, false));
     ui.commit_config_changes(before);
-    assert!(api.apply_named_preset(name).unwrap());
+    assert!(api.apply_named_preset(name, false).unwrap());
     assert_eq!(
         api.config, ui.config,
         "same picker operation and worker commit"
@@ -82,7 +82,7 @@ fn whole_preset_api_matches_picker_navigation_visibility_and_save_scope() {
         chosen,
         "save-on follows the existing asset persistence path"
     );
-    assert!(!api.apply_named_preset(name).unwrap());
+    assert!(!api.apply_named_preset(name, false).unwrap());
 }
 
 #[test]
@@ -98,7 +98,7 @@ fn whole_preset_api_commits_the_changed_configuration_to_the_actual_worker() {
     }
     let before = revision(&mut view);
     assert!(
-        view.apply_named_preset("Binance BTC perpetual spheres")
+        view.apply_named_preset("Binance BTC perpetual spheres", true)
             .unwrap()
     );
     assert!(
@@ -108,7 +108,7 @@ fn whole_preset_api_commits_the_changed_configuration_to_the_actual_worker() {
     let after = revision(&mut view);
     assert!(
         !view
-            .apply_named_preset("Binance BTC perpetual spheres")
+            .apply_named_preset("Binance BTC perpetual spheres", true)
             .unwrap()
     );
     assert_eq!(

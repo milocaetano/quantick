@@ -24,7 +24,7 @@ impl Screen {
         assert!(
             screen
                 .look
-                .apply_preset("mini index regions", &mut screen.config)
+                .apply_preset("mini index regions", &mut screen.config, false)
         );
         screen.ignore_opening(true);
         let win = screen.appearance();
@@ -304,13 +304,13 @@ fn a_reset_before_the_sync_sees_the_window_just_set() {
 fn deliberate_same_name_btc_preset_selection_replaces_old_saved_lane_flags() {
     let mut screen = Screen::open(embedded());
     let name = "Binance BTC perpetual spheres";
-    assert!(screen.look.apply_preset(name, &mut screen.config));
+    assert!(screen.look.apply_preset(name, &mut screen.config, false));
     let approved_tick = screen.config.volume_dots.tick_bubbles;
     screen.config.live_lane.native_tape = false;
     screen.config.volume_dots.enabled = false;
     screen.config.live_lane.depth_time_averaging = false;
     assert_eq!(screen.look.look_name(), name);
-    assert!(screen.look.apply_preset(name, &mut screen.config));
+    assert!(screen.look.apply_preset(name, &mut screen.config, false));
     assert!(screen.config.live_lane.native_tape);
     assert!(screen.config.volume_dots.enabled);
     assert!(screen.config.live_lane.depth_time_averaging);

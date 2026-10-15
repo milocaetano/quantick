@@ -777,7 +777,11 @@ fn each_symbol_of_a_feed_keeps_its_own_panel_look() {
     );
 
     // The user picks a different look by hand on this symbol...
-    assert!(app.active_tab_mut().tape_mut().apply_preset("dense tape"));
+    assert!(
+        app.active_tab_mut()
+            .tape_mut()
+            .apply_preset("dense tape", false)
+    );
     // ...then hops to another symbol of the same feed, which is another
     // asset: it opens on the look the feed declares for it.
     app.active_tab_mut().symbol = "OTHERUSDT".to_string();

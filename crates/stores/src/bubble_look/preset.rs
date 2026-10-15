@@ -23,12 +23,14 @@ impl BubbleLook {
             .collect())
     }
 
-    /// Uses the UI picker operation, including same-name reapplication.
-    /// An identical configuration and selection have no asset or lane effects.
+    /// Uses the UI picker operation, including same-name reapplication, and
+    /// the same `spheres` verdict ([`BubbleLook::apply_preset`]). An
+    /// identical configuration and selection have no asset or lane effects.
     pub fn apply_named_preset(
         &mut self,
         name: &str,
         config: &mut HeatmapConfig,
+        spheres: bool,
     ) -> Result<bool, String> {
         let preset = match self.presets.get(name) {
             Some(preset) if !name.trim().is_empty() => preset.clone(),
@@ -37,12 +39,12 @@ impl BubbleLook {
         // Dressed as the pick dresses the screen, so a look worn without its
         // spheres reads back as itself.
         let mut desired = config.clone();
-        self.dress(&preset, &mut desired);
+        super::dress(&preset, &mut desired, spheres);
         desired.sanitize();
         if desired == *config && self.look_name == name {
             return Ok(false);
         }
-        self.apply_preset(name, config);
+        self.apply_preset(name, config, spheres);
         self.note_edit();
         Ok(true)
     }

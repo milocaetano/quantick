@@ -216,17 +216,19 @@ fn tick_choices_and_the_unit_follow_the_mode() {
     }
 }
 
+/// The verdict is the tick sphere rule's (control-handlers TickSpherePane),
+/// which every door asks: it admits no asset without the mode.
 #[test]
-fn a_whole_preset_brings_spheres_only_to_a_mode_asset() {
+fn a_whole_preset_brings_spheres_only_where_the_rule_admits_them() {
     let config = shipped();
     for (feed, symbol, spheres) in [
         ("binance", "BTCUSDT", true),
-        ("binance-futures", "BTCUSDT.p", true),
+        ("binance-futures", "BTCUSDT.p", false),
         ("binance", "ETHUSDT", false),
         ("metatrader-b3", "WIN$N", false),
     ] {
         let (mut look, mut screen) = look(&config, feed, symbol);
-        assert!(look.apply_preset(SPOT_SPHERES, &mut screen));
+        assert!(look.apply_preset(SPOT_SPHERES, &mut screen, spheres));
         assert_eq!(
             screen.volume_dots.tick_bubbles.is_some(),
             spheres,
@@ -256,16 +258,16 @@ fn a_whole_preset_brings_spheres_only_to_a_mode_asset() {
 #[test]
 fn reapplying_a_sphere_preset_without_its_spheres_changes_nothing() {
     let (mut look, mut screen) = look(&shipped(), "binance", "ETHUSDT");
-    assert_eq!(look.apply_named_preset(SPOT_SPHERES, &mut screen), Ok(true));
+    let pick = |look: &mut BubbleLook, screen: &mut HeatmapConfig| {
+        look.apply_named_preset(SPOT_SPHERES, screen, false)
+    };
+    assert_eq!(pick(&mut look, &mut screen), Ok(true));
     assert_eq!(screen.volume_dots.tick_bubbles, None);
     look.sync(&screen, false, false);
     assert!(!look.asset().unwrap().edited());
     let (before, status) = (screen.clone(), look.status().map(str::to_owned));
 
-    assert_eq!(
-        look.apply_named_preset(SPOT_SPHERES, &mut screen),
-        Ok(false)
-    );
+    assert_eq!(pick(&mut look, &mut screen), Ok(false));
     assert_eq!(screen, before);
     assert!(!look.asset().unwrap().edited(), "nothing to file");
     assert_eq!(look.status().map(str::to_owned), status);

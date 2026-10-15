@@ -9,9 +9,8 @@ impl OrderflowView {
         Ok(self.edit_config(|config| config.volume_dots.tick_bubbles = style))
     }
 
-    pub(super) fn draw_tick_bubbles(&mut self, ui: &mut egui::Ui, tick_chart: bool) {
+    pub(super) fn draw_tick_bubbles(&mut self, ui: &mut egui::Ui, rule: TickSpherePane) {
         let current = self.config.volume_dots.tick_bubbles;
-        let rule = TickSpherePane::new(tick_chart, self.look.asset_mode().is_some());
         let Some(choices) = rule.offered(self.look.tick_presets(), current.is_some()) else {
             return;
         };

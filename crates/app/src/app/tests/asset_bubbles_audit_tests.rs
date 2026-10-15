@@ -364,7 +364,13 @@ const EDITS: &[Edit] = &[
     },
     Edit {
         name: "a preset picked",
-        apply: |app, _| assert!(app.active_tab_mut().tape_mut().apply_preset("dense tape")),
+        apply: |app, _| {
+            assert!(
+                app.active_tab_mut()
+                    .tape_mut()
+                    .apply_preset("dense tape", false)
+            )
+        },
         presets: Presets::Untouched,
         moves_win: true,
     },

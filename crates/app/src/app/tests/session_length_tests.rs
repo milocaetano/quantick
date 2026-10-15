@@ -795,7 +795,7 @@ impl AppRig {
         assert!(
             app.active_tab_mut()
                 .tape_mut()
-                .apply_preset("dense tape btc"),
+                .apply_preset("dense tape btc", false),
             "the dense preset puts a lane on screen"
         );
         app.active_tab_mut()

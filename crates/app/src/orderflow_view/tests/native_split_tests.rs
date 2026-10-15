@@ -18,7 +18,7 @@ const SPLIT_CHART_PX: f32 = 1_500.0;
 fn win_view(tape_only: bool) -> OrderflowView {
     let mut view = OrderflowView::new("WINV26");
     let before = view.config.clone();
-    assert!(view.apply_preset("mini index regions"));
+    assert!(view.apply_preset("mini index regions", false));
     view.config.live_lane.tape_only = tape_only;
     view.config.live_lane.native_tape = !tape_only;
     view.commit_config_changes(before);
@@ -252,7 +252,7 @@ fn panning_or_zooming_the_candles_leaves_the_native_tape_unchanged() {
 fn the_mini_index_preset_keeps_candles_beside_a_resizable_native_tape() {
     let mut view = OrderflowView::new("WINV26");
     let before = view.config.clone();
-    assert!(view.apply_preset("mini index regions"));
+    assert!(view.apply_preset("mini index regions", false));
     view.commit_config_changes(before);
     assert!(view.config.native_tape() && !view.config.tape_only());
     let share = view.config.live_lane.width_share;

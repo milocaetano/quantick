@@ -1097,13 +1097,15 @@ impl OrderflowView {
 
     /// Apply the stored preset called `name`, reporting whether it exists
     /// ([`BubbleLook::apply_preset`]).
-    pub(crate) fn apply_preset(&mut self, name: &str) -> bool {
-        self.look.apply_preset(name, &mut self.config)
+    pub(crate) fn apply_preset(&mut self, name: &str, spheres: bool) -> bool {
+        self.look.apply_preset(name, &mut self.config, spheres)
     }
 
-    pub(crate) fn apply_named_preset(&mut self, name: &str) -> Result<bool, String> {
+    pub(crate) fn apply_named_preset(&mut self, name: &str, spheres: bool) -> Result<bool, String> {
         let before = self.config.clone();
-        let changed = self.look.apply_named_preset(name, &mut self.config)?;
+        let changed = self
+            .look
+            .apply_named_preset(name, &mut self.config, spheres)?;
         if changed {
             self.commit_config_changes(before);
         }
@@ -1543,7 +1545,7 @@ mod tests {
             (presets, PresetSource::Embedded, None),
             &mut HeatmapConfig::default(),
         );
-        assert!(view.apply_preset("wide"), "a stored name applies");
+        assert!(view.apply_preset("wide", false), "a stored name applies");
         assert_eq!(view.config.bubbles.max_radius, 42.0);
         assert_eq!(view.config.bubble_cluster_ms, 100);
         assert_eq!(view.config.bubble_dust_merge_ms, 3_000);
@@ -1562,7 +1564,7 @@ mod tests {
 
         // An unknown name changes nothing at all, and says so.
         let after = view.config.clone();
-        assert!(!view.apply_preset("nope"));
+        assert!(!view.apply_preset("nope", false));
         assert_eq!(view.config, after);
         assert_eq!(view.look.look_name(), "wide");
     }

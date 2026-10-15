@@ -5920,7 +5920,7 @@ fn incremental_lane_dense_frame_benchmark() {
         assert!(
             app.active_tab_mut()
                 .tape_mut()
-                .apply_preset("dense tape btc")
+                .apply_preset("dense tape btc", false)
         );
         app.active_tab_mut().flow_pane.add_indicator(
             crate::indicator_worker::IndicatorSource::Native {

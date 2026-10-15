@@ -5,11 +5,17 @@ use quantick_control_schema::bubble_preset::{ApplyInput, ApplyResult, ListInput,
 use serde_json::Value;
 
 pub trait BubblePresetPort {
-    fn apply_bubble_preset(&mut self, input: &ApplyInput) -> Result<ApplyResult, ControlError>;
+    /// Wear the whole preset `input` names; its tick spheres only when
+    /// `spheres`, the pane's [`TickSpherePane::may_choose`].
+    fn apply_bubble_preset(
+        &mut self,
+        input: &ApplyInput,
+        spheres: bool,
+    ) -> Result<ApplyResult, ControlError>;
     fn list_bubble_presets(&mut self, input: &ListInput) -> Result<ListResult, ControlError>;
 }
 
-pub fn register<D: ActionDock<H, A>, H: BubblePresetPort + ?Sized, A>(
+pub fn register<D: ActionDock<H, A>, H: BubblePresetPort + TickBubblePort + ?Sized, A>(
     registry: &mut D,
 ) -> Result<(), RegistryError> {
     registry.register(
@@ -22,14 +28,18 @@ pub fn register<D: ActionDock<H, A>, H: BubblePresetPort + ?Sized, A>(
     )
 }
 
-fn apply<H: BubblePresetPort + ?Sized, A>(
+fn apply<H: BubblePresetPort + TickBubblePort + ?Sized, A>(
     host: &mut H,
     _access: &mut A,
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    let input = serde_json::from_value(input.clone()).map_err(invalid)?;
-    serde_json::to_value(host.apply_bubble_preset(&input)?).map_err(invalid)
+    let input: ApplyInput = serde_json::from_value(input.clone()).map_err(invalid)?;
+    // A whole look brings its spheres by the rule tick.set asks.
+    let spheres = host
+        .tick_sphere_pane(input.tab_id.get(), input.pane_id.get())?
+        .may_choose();
+    serde_json::to_value(host.apply_bubble_preset(&input, spheres)?).map_err(invalid)
 }
 
 fn list<H: BubblePresetPort + ?Sized, A>(

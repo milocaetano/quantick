@@ -7,7 +7,7 @@ use quantick_orderflow::projection::PaneGeometry;
 fn zooming_the_tape_repositions_the_cached_frame_before_the_worker_answers() {
     let mut view = OrderflowView::new("WINV26");
     let before = view.config.clone();
-    assert!(view.apply_preset("mini index regions"));
+    assert!(view.apply_preset("mini index regions", false));
     view.commit_config_changes(before);
     view.set_live_lane_window(LaneWindow::Fixed { ms: 10_000 });
     let mut trade = Trade {
@@ -84,7 +84,7 @@ fn zooming_the_tape_repositions_the_cached_frame_before_the_worker_answers() {
 fn tick_style_edits_keep_retained_tape_membership_and_paint_unchanged() {
     let mut view = OrderflowView::new("BTCUSDT");
     let before = view.config.clone();
-    assert!(view.apply_preset("mini index regions"));
+    assert!(view.apply_preset("mini index regions", false));
     view.commit_config_changes(before);
     view.set_live_lane_window(LaneWindow::Fixed { ms: 10_000 });
     let mut partial = None::<Bar>;
