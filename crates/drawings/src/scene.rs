@@ -275,6 +275,72 @@ pub fn dashed_segment(
     }
 }
 
+/// [`dashed_segment`] for the part of `from`–`to` that can reach `clip`,
+/// in the phase the whole segment has: a line that runs far past the chart
+/// costs the dashes across the chart, not the dashes along its length, and
+/// the ones on screen land where the whole walk would put them.
+pub fn dashed_segment_within(
+    scene: &mut MarkScene,
+    clip: PxRect,
+    from: Px,
+    to: Px,
+    stroke: Stroke,
+    dash_px: f32,
+    gap_px: f32,
+) {
+    let span = to - from;
+    let length = span.length();
+    let step = dash_px + gap_px;
+    if !(length > f32::EPSILON && length.is_finite() && step > 0.0 && step.is_finite()) {
+        return;
+    }
+    // A dash reaching the clip may start a dash's length outside it.
+    let Some((near, far)) = span_within(clip.expand(dash_px.max(0.0)), from, span) else {
+        return;
+    };
+    let direction = span / length;
+    // Whole dashes only: the one holding each end of the visible span
+    // is the whole walk's dash, never a dash cut at the clip.
+    let first = (near * length / step).floor() * step;
+    let last = ((far * length / step).ceil() * step).min(length);
+    if first < last {
+        dashed_segment(
+            scene,
+            from + direction * first,
+            from + direction * last,
+            stroke,
+            dash_px,
+            gap_px,
+        );
+    }
+}
+
+/// The parameter range of `from + t * span`, `t` in `0..=1`, inside
+/// `clip` (Liang–Barsky), or `None` when the segment misses it.
+fn span_within(clip: PxRect, from: Px, span: Px) -> Option<(f32, f32)> {
+    let (mut enter, mut leave) = (0.0_f32, 1.0_f32);
+    for (delta, start, low, high) in [
+        (span.x, from.x, clip.min.x, clip.max.x),
+        (span.y, from.y, clip.min.y, clip.max.y),
+    ] {
+        for (p, q) in [(-delta, start - low), (delta, high - start)] {
+            if p == 0.0 {
+                if q < 0.0 {
+                    return None;
+                }
+            } else {
+                let t = q / p;
+                if p < 0.0 {
+                    enter = enter.max(t);
+                } else {
+                    leave = leave.min(t);
+                }
+            }
+        }
+    }
+    (enter <= leave).then_some((enter, leave))
+}
+
 #[cfg(test)]
 #[path = "scene_tests.rs"]
 mod scene_tests;
