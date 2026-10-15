@@ -84,3 +84,38 @@ pub fn gap_label(reason: &str) -> &'static str {
         _ => "L2 continuity unavailable",
     }
 }
+
+#[cfg(test)]
+mod caption_tests {
+    use super::depth_caption;
+    use crate::projection::HeatmapCell;
+
+    /// Review round 1 #7: an averaged lane draws no reduction holes and no
+    /// gaps around consumption bubbles (the approved look, as at 72a5a747);
+    /// its caption says so rather than hiding them silently.
+    #[test]
+    fn an_averaged_lane_says_its_reduction_holes_are_not_drawn() {
+        let averaged = HeatmapCell {
+            generation: 1,
+            side: crate::RestingSide::Bid,
+            price_bucket: rust_decimal::Decimal::from(99),
+            quantity: rust_decimal::Decimal::from(5),
+            x0: 0.5,
+            x1: 0.9,
+            y0: 0.2,
+            y1: 0.3,
+            intensity: 0.8,
+            alpha: 0.8,
+            carried: false,
+            time_averaged: true,
+            current_book: false,
+        };
+        let caption = depth_caption(std::slice::from_ref(&averaged), false).unwrap();
+        assert!(caption.contains("reduction holes not drawn"), "{caption}");
+        let exact = HeatmapCell {
+            time_averaged: false,
+            ..averaged
+        };
+        assert_eq!(depth_caption(&[exact], false), None);
+    }
+}
