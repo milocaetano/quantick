@@ -298,6 +298,36 @@ mod tests {
         }
     }
 
+    /// The toolbar's SOURCE combos and `feed.source.set` are one act: an
+    /// operator reading the matrix finds the capability behind the combos, and
+    /// is not told the picker is the only door to a market.
+    #[test]
+    fn the_source_combos_map_to_the_source_capability() {
+        let source = UI_BEHAVIOURS
+            .iter()
+            .find(|behaviour| {
+                matches!(behaviour.mapping, Mapping::Capabilities(ids) if ids.contains(&"feed.source.set"))
+            })
+            .expect("a row maps feed.source.set");
+        assert!(
+            source.reach.contains("SOURCE"),
+            "{} names the SOURCE combos: {}",
+            source.id,
+            source.reach
+        );
+        let open = UI_BEHAVIOURS
+            .iter()
+            .find(|behaviour| behaviour.id == "tab.market.open")
+            .expect("opening a tab has a row");
+        let Mapping::Excluded { reason, .. } = open.mapping else {
+            panic!("no capability opens a market tab yet");
+        };
+        assert!(
+            !reason.contains("only door") && reason.contains("feed.source.set"),
+            "tab.market.open points at feed.source.set: {reason}"
+        );
+    }
+
     /// A hygiene check the drift function performs and nothing else would:
     /// two rows may not claim the same registry entry, and a row may not claim
     /// an `authored` key.
