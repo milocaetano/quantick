@@ -135,9 +135,11 @@ fn a_whole_preset_and_tick_set_agree_on_spheres() {
         (crate::state::BarSpec::Volume(Decimal::from(5)), false),
         (crate::state::BarSpec::Tick(1), true),
     ] {
-        app.active_tab_mut().flow_pane.spec.retain(spec);
+        app.active_tab_mut().flow_pane.spec.set(spec);
         app.active_tab_mut().apply_spec_changes();
         app.active_tab_mut().apply_spec_changes();
+        let membership = app.active_tab().flow_pane.state.tick_membership();
+        assert_eq!(membership.is_some(), tick_chart, "{spec:?}");
         app.active_tab_mut()
             .tape_mut()
             .edit_config(|config| config.volume_dots.tick_bubbles = None);
