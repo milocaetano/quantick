@@ -1,9 +1,9 @@
 //! Whether two configs are the same setting, field for field, without
 //! formatting either: floats and decimals compare by representation.
 use super::{
-    BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, DisplayGrouping,
-    HeatmapConfig, HeatmapTheme, IntensityMode, LaneWindow, LiveLaneStyle, TickBubbleStyle,
-    TickReferenceMode, ViewportBubbleScale, VolumeDotStyle, BubbleDisplayScale,
+    BubbleDisplayScale, BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark,
+    DisplayGrouping, HeatmapConfig, HeatmapTheme, IntensityMode, LaneWindow, LiveLaneStyle,
+    TickBubbleStyle, TickReferenceMode, ViewportBubbleScale, VolumeDotStyle,
 };
 use rust_decimal::Decimal;
 
