@@ -22,12 +22,17 @@ pub fn forward_book_preview(lane: &crate::config::LiveLaneStyle, live: bool) -> 
     lane.forward_book_preview && live
 }
 
+/// The lane's depth caption: what its depth is, and what it leaves out. An
+/// averaged lane cuts no reduction holes and no gaps around consumption
+/// bubbles (the approved look), so it says so rather than hide them silently.
 pub fn depth_caption(cells: &[super::HeatmapCell], preview_visible: bool) -> Option<&'static str> {
     let averaged = cells.iter().any(|cell| cell.time_averaged);
     let preview = preview_visible && cells.iter().any(|cell| current_book_preview(cell, true));
     match (averaged, preview) {
-        (true, true) => Some("Time-averaged depth · current book preview in forward space"),
-        (true, false) => Some("Time-averaged depth"),
+        (true, true) => Some(
+            "Time-averaged depth · reduction holes not drawn\nCurrent book preview in forward space",
+        ),
+        (true, false) => Some("Time-averaged depth · reduction holes not drawn"),
         (false, true) => Some("Current book preview in forward space"),
         (false, false) => None,
     }
