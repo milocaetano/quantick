@@ -30,6 +30,13 @@ pub const ASSETS_FILE: &str = "bubble-assets.toml";
 /// The store's format version; a file from another version is not read.
 pub const FORMAT_VERSION: u32 = 1;
 
+/// The asset-key migration a file read by this build has had: 1, the keys
+/// config asset modes (`symbol_asset_modes`) moved. A marker beside
+/// [`FORMAT_VERSION`] rather than a new version, because a build that reads
+/// only version 1 (main) blanks a file of any other: such a build ignores
+/// the marker, and drops it when it rewrites the file.
+pub const KEY_MIGRATION: u32 = 1;
+
 const fn format_version() -> u32 {
     FORMAT_VERSION
 }
@@ -89,15 +96,15 @@ impl AssetBubbles {
 pub struct AssetBubblesFile {
     #[serde(default = "format_version")]
     pub version: u32,
+    /// The asset-key migration this file has had ([`KEY_MIGRATION`]);
+    /// absent, and not written, before any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_migration: Option<u32>,
     /// The assets whose "Save changes for this asset" is off: a change made
     /// while one is on screen stays on that screen for the session and is
     /// never stored. Saving is on for every asset not listed.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub save_changes_off: BTreeSet<String>,
-    /// Legacy BTCUSDT settings have been copied to existing venue identities.
-    /// Kept after a reset so another bind cannot resurrect the legacy look.
-    #[serde(default)]
-    pub btc_venue_migration_done: bool,
     /// Settings by asset key, in key order.
     #[serde(default)]
     pub assets: BTreeMap<String, AssetBubbles>,
@@ -107,8 +114,8 @@ impl Default for AssetBubblesFile {
     fn default() -> Self {
         Self {
             version: FORMAT_VERSION,
+            key_migration: None,
             save_changes_off: BTreeSet::new(),
-            btc_venue_migration_done: false,
             assets: BTreeMap::new(),
         }
     }

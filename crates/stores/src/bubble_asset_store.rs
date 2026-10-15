@@ -85,42 +85,50 @@ pub struct AssetBubblesStore {
 }
 
 impl AssetBubblesStore {
-    /// Preserve the look a key had before a config mode moved it, once,
-    /// before any view can edit it. Entries already under the new key win.
-    fn migrate_btc_venues(&mut self, config: &AppConfig) {
-        if self.file.btc_venue_migration_done {
+    /// Carry each look a config asset mode re-keyed
+    /// ([`AppConfig::moved_asset_keys`]) to its new key, once per file: run
+    /// where the store is read, before any view binds. A saved look and a
+    /// save-off switch are copied only where the new key holds neither; each
+    /// copy is logged and asks for a write. The file is then marked
+    /// [`KEY_MIGRATION`](bubble_assets::KEY_MIGRATION), written with the next
+    /// write. A build that rewrites the file without the marker (main) sends
+    /// it through here again, which overwrites nothing it kept.
+    pub fn migrate_identities(&mut self, config: &AppConfig) {
+        if self.file.key_migration >= Some(bubble_assets::KEY_MIGRATION) {
             return;
         }
-        self.file.btc_venue_migration_done = true;
+        self.file.key_migration = Some(bubble_assets::KEY_MIGRATION);
         // Snapshot all old keys before writing any destination: migrating a
         // family to one venue must not become another venue's legacy input.
         let migrations: Vec<_> = config
             .moved_asset_keys()
             .into_iter()
             .map(|(key, legacy)| {
-                (
-                    key,
-                    self.file.get(&legacy).cloned(),
-                    !self.file.saves_changes(&legacy),
-                )
+                let look = self.file.get(&legacy).cloned();
+                let saving_off = !self.file.saves_changes(&legacy);
+                (key, legacy, look, saving_off)
             })
             .collect();
-        for (key, legacy, saving_off) in migrations {
-            self.pending |= legacy.is_some() || saving_off;
+        for (key, legacy, look, saving_off) in migrations {
             // Either a saved look or a scoped save-off switch is an explicit
             // destination choice. Neither may be overwritten by migration.
-            if self.file.get(&key).is_some() || !self.file.saves_changes(&key) {
+            let kept = self.file.get(&key).is_some() || !self.file.saves_changes(&key);
+            if kept || (look.is_none() && !saving_off) {
                 continue;
             }
-            if let Some(settings) = &legacy {
-                self.file.assets.insert(key.clone(), settings.clone());
+            tracing::info!(target: "quantick::app", schema_version = 1_u8,
+                event_code = "ASSET_BUBBLES_KEY_MOVED", asset = key.as_str(),
+                from = legacy.as_str(), look = look.is_some(), save_changes_off = saving_off,
+                action = "copy_settings_to_the_mode_key",
+                "a config asset mode moved the asset's bubble settings to a new key; copied once");
+            if let Some(settings) = look {
+                self.file.assets.insert(key.clone(), settings);
             }
             if saving_off {
                 self.file.save_changes_off.insert(key.clone());
             }
-            if legacy.is_some() || saving_off {
-                self.unwritten.insert(key);
-            }
+            self.unwritten.insert(key);
+            self.pending = true;
         }
     }
     /// Read the store at `path`; a missing file is an empty store.
@@ -140,12 +148,13 @@ impl AssetBubblesStore {
         Rc::new(RefCell::new(self))
     }
 
-    /// Read the file again — a workspace import wrote it — and make every
-    /// view adopt its asset's settings from it at its next
-    /// [`AssetBinding::adoption`]. What memory held unsaved gives way: the
-    /// file is the newer word.
-    pub fn reload(&mut self) {
+    /// Read the file again — a workspace import wrote it — migrate it like a
+    /// loaded one ([`Self::migrate_identities`]) and make every view adopt
+    /// its asset's settings from it at its next [`AssetBinding::adoption`].
+    /// What memory held unsaved gives way: the file is the newer word.
+    pub fn reload(&mut self, config: &AppConfig) {
         self.read();
+        self.migrate_identities(config);
         self.changes += 1;
         self.reloaded_at = self.changes;
     }
@@ -486,7 +495,6 @@ impl AssetBinding {
         presets: &BubblePresetFile,
         candle_default: bool,
     ) -> (Self, AssetBubbles) {
-        store.borrow_mut().migrate_btc_venues(config);
         let asset = config.bubble_asset(feed_id, symbol);
         if let Some(name) = asset
             .preset

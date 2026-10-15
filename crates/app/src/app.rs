@@ -670,6 +670,7 @@ impl QuantickApp {
         app.active_tab_mut().refresh_chip_label(&config);
         app.active_tab_mut().ensure_book_capture(&config);
         let assets = app.workspace.bubble_assets().clone();
+        assets.borrow_mut().migrate_identities(&config);
         app.active_tab_mut().bind_asset_bubbles(&config, &assets);
         // A feed read by timeframe can open straight on the timeframe chart.
         app.active_tab_mut().apply_feed_declared_layout(&config);
