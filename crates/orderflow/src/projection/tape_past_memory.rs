@@ -1,11 +1,9 @@
-//! Past tape groups, frozen block by block on the window's own grid.
+//! Past tape groups, retaining the partition already drawn by the pane.
 //!
-//! The live memory grows causally from whenever its epoch began, so its
-//! groups depend on when the trader was looking. A past window cannot replay
-//! that. It runs one cold causal pass per block `[k·block, (k+1)·block)`,
-//! keeps every settled block for the epoch, and draws the blocks the window
-//! touches. A print's group is a function of its own block's prints: panning
-//! never regroups, and the same data and window give the same marks.
+//! Stable native panes carry one factual display history between live and
+//! past. New facts use a cold causal pass over their fetch block; retained
+//! groups survive view transforms. Other panes keep the existing frozen
+//! block cache on the window's grid, rebuilt when its display epoch changes.
 
 use std::collections::BTreeMap;
 
@@ -15,6 +13,9 @@ use super::{Group, TapeDotFrame, TapeDotMemory, TapeDotView, window_start};
 use crate::config::{BubbleStyle, LiveLaneStyle};
 use crate::projection::constants::{MAX_PAST_BLOCKS, PAST_PRICE_SPAN_BAND};
 use crate::projection::{AggressionPrimitive, DotSizing, PastTape, PriceWindow, TapeDotGeometry};
+
+#[path = "tape_past_stable.rs"]
+mod stable;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct PastEpoch {
@@ -26,11 +27,29 @@ struct PastEpoch {
     prices: PriceWindow,
 }
 
-/// Per-pane frozen past, separate from the live memory it never touches.
+impl PastEpoch {
+    fn from_view(view: TapeDotView, block_ms: i64) -> Self {
+        Self {
+            window_ms: view.window_ms,
+            dot_window_ms: view.dot_window_ms,
+            block_ms,
+            width_px: view.geometry.width_px,
+            height_px: view.geometry.height_px,
+            prices: view.prices,
+        }
+    }
+}
+
+/// Per-pane past history. Stable native panes transfer their live groups;
+/// other panes use an independent cache of frozen blocks.
 #[derive(Debug, Default)]
 pub struct PastTapeMemory {
     epoch: Option<PastEpoch>,
     blocks: BTreeMap<i64, Vec<Group>>,
+    /// Stable panes move their one display history between live and past.
+    stable: Option<TapeDotMemory>,
+    stable_block_ms: Option<i64>,
+    stable_source: Option<stable::Source>,
 }
 
 /// The inputs every block of one epoch is merged with.
@@ -43,6 +62,21 @@ struct BlockInputs<'a> {
     opening_bursts: &'a [i64],
 }
 
+impl TapeDotMemory {
+    /// The same offscreen budget follows stable groups back to live. A held
+    /// unchanged frame needs no bucket walk.
+    pub(super) fn trim_history(&mut self, view: TapeDotView, changed: bool) {
+        let Some(block_ms) = self.retained_bucket_ms else {
+            return;
+        };
+        let position = (view.now_ms, view.window_ms);
+        if changed || self.retained_trim_at != Some(position) {
+            stable::trim(self, block_ms, view);
+            self.retained_trim_at = Some(position);
+        }
+    }
+}
+
 impl PastTapeMemory {
     pub fn clear(&mut self) {
         *self = Self::default();
@@ -50,7 +84,9 @@ impl PastTapeMemory {
 
     #[must_use]
     pub fn cached_block_count(&self) -> usize {
-        self.blocks.len()
+        self.stable.as_ref().map_or(self.blocks.len(), |memory| {
+            stable::bucket_count(memory, self.stable_block_ms.unwrap_or(1))
+        })
     }
 
     /// The frame at `view.now_ms`, a past instant, from `facts` — the
@@ -79,14 +115,21 @@ impl PastTapeMemory {
                 opening_bursts,
             );
         }
-        let inputs = BlockInputs {
-            epoch: self.prepare(view, block_ms),
+        let mut inputs = BlockInputs {
+            epoch: PastEpoch::from_view(view, block_ms),
             evicted_through_ms: view.evicted_through_ms,
             sizing,
             bubbles,
             lane,
             opening_bursts,
         };
+        if lane.stable_size && sizing.typed_full.is_some() {
+            return self.project_stable(facts, tape, view, inputs);
+        }
+        self.stable = None;
+        self.stable_block_ms = None;
+        self.stable_source = None;
+        inputs.epoch = self.prepare(view, block_ms);
         let first = view
             .now_ms
             .saturating_sub(view.window_ms)
@@ -150,14 +193,7 @@ impl PastTapeMemory {
                 && (1.0 / PAST_PRICE_SPAN_BAND..=PAST_PRICE_SPAN_BAND).contains(&ratio)
         });
         held.unwrap_or_else(|| {
-            let epoch = PastEpoch {
-                window_ms: view.window_ms,
-                dot_window_ms: view.dot_window_ms,
-                block_ms,
-                width_px: view.geometry.width_px,
-                height_px: view.geometry.height_px,
-                prices: view.prices,
-            };
+            let epoch = PastEpoch::from_view(view, block_ms);
             self.blocks.clear();
             self.epoch = Some(epoch);
             epoch

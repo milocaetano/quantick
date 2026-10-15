@@ -38,7 +38,7 @@ pub use past::PastTapeMemory;
 /// Drawing inputs. The window, the pixel geometry and the price axis are
 /// view parameters: changing them transforms the retained groups and never
 /// regroups them. Only another native dot window starts a new display epoch
-/// here; an explicit zoom is answered by the pane clearing the memory
+/// here; the pane decides which settings clear the memory
 /// ([`HeatmapConfig::same_tape_grouping`](crate::HeatmapConfig::same_tape_grouping)).
 #[derive(Debug, Clone, Copy)]
 pub struct TapeDotView {
@@ -55,7 +55,8 @@ pub struct TapeDotView {
 pub struct TapeDotFrame {
     pub marks: Vec<AggressionPrimitive>,
     pub max_radius: f32,
-    /// The exact reference used both for collision clearance and disc sizing.
+    /// The exact grouping reference. Drawing may use the stable tape's
+    /// independent fixed reference through [`DotSizing::draw`].
     pub full_quantity: Decimal,
 }
 
@@ -67,6 +68,10 @@ pub struct TapeDotMemory {
     /// The longest window this epoch has drawn: groups are retained over it,
     /// so a window that shrinks and grows back finds them as they were.
     retained_ms: i64,
+    /// Once navigation transfers stable groups, distance from live cannot
+    /// expire them before the bounded offscreen cache does.
+    retained_bucket_ms: Option<i64>,
+    retained_trim_at: Option<(i64, i64)>,
     settled: Vec<Group>,
     frontier: Vec<Group>,
     /// A frozen past has no forming window to pin at its right edge.
@@ -342,7 +347,12 @@ impl TapeDotMemory {
         opening_bursts: &[i64],
     ) -> TapeDotFrame {
         self.reconciled = incoming.len();
-        let mut changed = self.replace_facts(&mut incoming, view.evicted_through_ms, below);
+        let mut changed = self.replace_facts(
+            &mut incoming,
+            view.evicted_through_ms,
+            below,
+            lane.stable_size && sizing.typed_full.is_some(),
+        );
         let mut windows: BTreeMap<i64, BTreeMap<NativeKey, AggressionPrimitive>> = BTreeMap::new();
         for (key, mark) in incoming {
             windows
@@ -390,7 +400,9 @@ impl TapeDotMemory {
             self.frontier = merge_groups(candidates, view, sizing, bubbles, lane, reference);
             changed = true;
         }
-        if let Some(closed_at) = last_closed {
+        if let Some(closed_at) = last_closed
+            && self.retained_bucket_ms.is_none()
+        {
             let retained_ms = self.retained_ms;
             self.settled
                 .retain(|group| group.retained_at(closed_at, retained_ms));
@@ -399,6 +411,7 @@ impl TapeDotMemory {
             self.coalesce_coincident();
         }
         self.seal_at(view.now_ms, view, bubbles.max_radius);
+        self.trim_history(view, changed);
         let has_forming = !forming.is_empty();
         let active: Vec<&Group> = self.frontier.iter().chain(&forming).collect();
         let quantities = reference_quantities(active.iter().copied(), opening_bursts);
@@ -435,6 +448,10 @@ impl TapeDotMemory {
         let shown: Vec<_> = self
             .settled
             .iter()
+            .filter(|group| {
+                !(lane.stable_size && sizing.typed_full.is_some())
+                    || group.visible_at(view.now_ms, view.window_ms)
+            })
             .map(|group| group.mark.clone())
             .chain(active.into_iter().map(|dot: PreviewDot| dot.mark))
             .collect();
@@ -536,7 +553,19 @@ impl TapeDotMemory {
         incoming: &mut BTreeMap<NativeKey, &AggressionPrimitive>,
         evicted: Option<i64>,
         below: Option<i64>,
+        keep_newer: bool,
     ) -> bool {
+        // A worker publication may predate accepted native facts the pane
+        // already drew. Trades append to a cell: neither side can shrink
+        // without the explicit eviction handled below.
+        let replaces = |held: &AggressionPrimitive, next: &AggressionPrimitive| {
+            (!keep_newer
+                || (next.trade_count >= held.trade_count
+                    && next.quantity >= held.quantity
+                    && next.buy_quantity >= held.buy_quantity
+                    && next.quantity - next.buy_quantity >= held.quantity - held.buy_quantity))
+                && !same_native_fact(held, next)
+        };
         // Cells before `below` arrive only from the overlay or as keys that
         // left it; a group wholly before it is visited for those keys alone.
         let early: Vec<NativeKey> = below.map_or_else(Vec::new, |below| {
@@ -566,7 +595,7 @@ impl TapeDotMemory {
             if reaches {
                 for (key, source) in &mut group.sources {
                     if let Some(next) = incoming.remove(key)
-                        && !same_native_fact(source, next)
+                        && replaces(source, next)
                     {
                         *source = normalized_native_fact(next);
                         changed = true;
@@ -576,7 +605,7 @@ impl TapeDotMemory {
                 for key in &early {
                     if let Some(source) = group.sources.get_mut(key)
                         && let Some(next) = incoming.remove(key)
-                        && !same_native_fact(source, next)
+                        && replaces(source, next)
                     {
                         *source = normalized_native_fact(next);
                         changed = true;
@@ -632,9 +661,11 @@ impl TapeDotMemory {
 
     fn seal_at(&mut self, now_ms: i64, view: TapeDotView, radius: f32) {
         self.seal_frontier_at(now_ms, view, radius);
-        let retained_ms = self.retained_ms;
-        self.settled
-            .retain(|group| group.retained_at(now_ms, retained_ms));
+        if self.retained_bucket_ms.is_none() {
+            let retained_ms = self.retained_ms;
+            self.settled
+                .retain(|group| group.retained_at(now_ms, retained_ms));
+        }
     }
 
     /// Settle the frontier groups no dot at `now_ms` can reach any more, and
@@ -652,9 +683,11 @@ impl TapeDotMemory {
                 self.frontier.push(group);
             }
         }
-        let retained_ms = self.retained_ms.max(view.window_ms);
-        self.frontier
-            .retain(|group| group.retained_at(now_ms, retained_ms));
+        if self.retained_bucket_ms.is_none() {
+            let retained_ms = self.retained_ms.max(view.window_ms);
+            self.frontier
+                .retain(|group| group.retained_at(now_ms, retained_ms));
+        }
     }
 
     fn reference(

@@ -72,8 +72,8 @@ use quantick_engine::Bar;
 
 use super::model::{AggressionPrimitive, normalized_area_size, price_span};
 use crate::config::{
-    BubbleStyle, CANDLE_DOT_RADIUS_SHARE, DisplayGrouping, HeatmapConfig, LiveLaneStyle,
-    bubble_radius,
+    BubbleSizeReference, BubbleStyle, CANDLE_DOT_RADIUS_SHARE, DisplayGrouping, HeatmapConfig,
+    LiveLaneStyle, bubble_radius,
 };
 use crate::grouping::EffectiveGrouping;
 use crate::history::LiquidityHistory;
@@ -352,8 +352,24 @@ impl DotSizing {
         (pane(true), pane(false))
     }
 
-    /// The `(normalized size, radius)` `mark` is drawn with against its
-    /// pane's full size in `fulls` ([`Self::pane_fulls`]).
+    /// The fixed display reference of an opted-in stable native tape.
+    /// Collision sizing continues to use `typed_full`, preserving group membership.
+    #[must_use]
+    pub fn tape_display_full_quantity(
+        &self,
+        bubbles: &BubbleStyle,
+        lane: &LiveLaneStyle,
+    ) -> Option<Decimal> {
+        (self.native_tape
+            && lane.stable_size
+            && self.typed_full.is_some()
+            && bubbles.size_reference == BubbleSizeReference::Fixed)
+            .then(|| bubbles.fixed_reference_decimal())
+            .flatten()
+    }
+
+    /// The `(normalized size, radius)` painted for `mark`. A stable native
+    /// tape may opt into a fixed display reference independently of grouping.
     #[must_use]
     pub fn draw(
         &self,
@@ -362,13 +378,22 @@ impl DotSizing {
         mark: &AggressionPrimitive,
         fulls: (Decimal, Decimal),
     ) -> (f32, f32) {
+        if mark.live
+            && let Some(full) = self.tape_display_full_quantity(bubbles, lane)
+        {
+            let size = normalized_area_size(mark.quantity, full);
+            return (
+                size,
+                bubble_radius(size, bubbles.min_radius, bubbles.max_radius),
+            );
+        }
         let full = if mark.live { fulls.0 } else { fulls.1 };
         let radius = self.radius(bubbles, lane, mark, full);
         (normalized_area_size(mark.quantity, full), radius)
     }
 
-    /// The radius `mark` is drawn with against `full` ([`Self::full_quantity`]):
-    /// area proportional to quantity inside [`dot_radius_range`] of its cell.
+    /// The grouping radius against `full` ([`Self::full_quantity`]). It is also
+    /// the painted radius unless [`Self::draw`] selects a fixed display reference.
     #[must_use]
     pub fn radius(
         &self,

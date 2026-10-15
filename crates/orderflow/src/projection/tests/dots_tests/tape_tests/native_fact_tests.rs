@@ -272,7 +272,12 @@ impl TapeDotMemory {
             "retained_source_replacement",
             || native_facts(marks, view),
             |mut index| {
-                let changed = self.replace_facts(&mut index, view.evicted_through_ms, None);
+                let changed = self.replace_facts(
+                    &mut index,
+                    view.evicted_through_ms,
+                    None,
+                    style.live_lane.stable_size && sizing.typed_full.is_some(),
+                );
                 (changed, index)
             },
         );

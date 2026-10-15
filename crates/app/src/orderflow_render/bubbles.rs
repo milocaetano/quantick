@@ -556,7 +556,12 @@ pub(crate) fn draw_aggression_bubbles(painter: &egui::Painter, context: &RenderC
         tape_rect.height(),
         &style.bubbles,
     );
-    if factual_tape {
+    let fixed_tape_size = style.dot_sizing.is_some_and(|sizing| {
+        sizing
+            .tape_display_full_quantity(&style.bubbles, &style.live_lane)
+            .is_some()
+    });
+    if factual_tape && !fixed_tape_size {
         style.bubbles.max_radius = tape_geometry.max_radius;
     }
     let merged = factual_tape

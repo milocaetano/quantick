@@ -133,6 +133,18 @@
           "description": "Native dots keep the pinned area scale and configured radius.",
           "type": "boolean"
         },
+        "tape_display_full_quantity": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CanonicalDecimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The quantity drawn at the configured maximum radius for stable native\nTape with a fixed display reference. Its minimum radius remains visible;\narea above that minimum grows with quantity up to this amount. Separate\nfrom `volume_dots.volume_dot_full_quantity`, which still governs grouping.\nAbsent for automatic sizing and legacy native Tape looks."
+        },
         "tape_only": {
           "default": false,
           "description": "The pane shows the tape alone, Bookmap style: the native tape takes\nthe whole canvas, no candle or candle mark is drawn and time runs\nacross the full width on the tape's own window. The lane setting\n`tape_only`, switched by `layers.visibility.set` as layer `tape_only`.",
@@ -678,7 +690,7 @@
         },
         "volume_dot_full_quantity": {
           "$ref": "#/$defs/CanonicalDecimal",
-          "description": "Contracts a dot holds at the largest radius when the size is typed:\narea is proportional to quantity against it. The bubble setting\n`volume_dot_full_quantity`."
+          "description": "The typed volume-dot reference (`volume_dot_full_quantity`). Native\nTape uses it to group recent prints; stable native Tape with a fixed\ndisplay reference draws against `tape_display_full_quantity` instead.\nOther volume dots draw at the largest radius at this amount."
         }
       },
       "required": [
