@@ -94,23 +94,22 @@ pub struct AssetBubblesStore {
 
 impl AssetBubblesStore {
     /// Carry each look a config asset mode re-keyed
-    /// ([`AppConfig::moved_asset_keys`]) to its new key, once per file: run
+    /// ([`AppConfig::moved_asset_keys`]) to its new key, once per move: run
     /// where the store is read, before any view binds. A saved look and a
     /// save-off switch are copied only where the new key holds neither; each
-    /// copy is logged and asks for a write. The file is then marked
-    /// [`KEY_MIGRATION`](bubble_assets::KEY_MIGRATION), written with the next
-    /// write. A build that rewrites the file without the marker (main) sends
-    /// it through here again, which overwrites nothing it kept.
+    /// copy is logged and asks for a write. Every move is settled the first
+    /// time it is read ([`AssetBubblesFile::moved_keys`], written with the
+    /// next write): a mode the config adds later still moves, and a look the
+    /// trader clears under a moved key is never brought back. A build that
+    /// rewrites the file without the record (main) sends it through here
+    /// again, which overwrites nothing it kept.
     pub fn migrate_identities(&mut self, config: &AppConfig) {
-        if self.file.key_migration >= Some(bubble_assets::KEY_MIGRATION) {
-            return;
-        }
-        self.file.key_migration = Some(bubble_assets::KEY_MIGRATION);
         // Snapshot all old keys before writing any destination: migrating a
         // family to one venue must not become another venue's legacy input.
         let migrations: Vec<_> = config
             .moved_asset_keys()
             .into_iter()
+            .filter(|(key, _)| !self.file.moved_keys.contains(key))
             .map(|(key, legacy)| {
                 let look = self.file.get(&legacy).cloned();
                 let saving_off = !self.file.saves_changes(&legacy);
@@ -118,6 +117,9 @@ impl AssetBubblesStore {
             })
             .collect();
         for (key, legacy, look, saving_off) in migrations {
+            // Settled now, carried or not: the old key may stay another
+            // asset's, and what it holds later is that asset's alone.
+            self.file.moved_keys.insert(key.clone());
             // Either a saved look or a scoped save-off switch is an explicit
             // destination choice. Neither may be overwritten by migration.
             let kept = self.file.get(&key).is_some() || !self.file.saves_changes(&key);
@@ -128,7 +130,7 @@ impl AssetBubblesStore {
                 event_code = "ASSET_BUBBLES_KEY_MOVED", asset = key.as_str(),
                 from = legacy.as_str(), look = look.is_some(), save_changes_off = saving_off,
                 action = "copy_settings_to_the_mode_key",
-                "a config asset mode moved the asset's bubble settings to a new key; copied once");
+                "a config asset mode moved the asset's bubble settings to a new key; copied once per move");
             if let Some(settings) = look {
                 self.file.assets.insert(key.clone(), settings);
             }

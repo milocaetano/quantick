@@ -89,7 +89,8 @@ impl AppConfig {
 
     /// Every saved-look key a mode moved: `(the mode's key, the key the asset
     /// had without it)` for each offered symbol whose two differ. What a
-    /// store migrates once so a look saved before the mode keeps showing.
+    /// store migrates, once per move, so a look saved before the mode keeps
+    /// showing.
     #[must_use]
     pub fn moved_asset_keys(&self) -> Vec<(String, String)> {
         let mut moved = Vec::new();

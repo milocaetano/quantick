@@ -427,7 +427,7 @@ fn tick_calibration_survives_restart_without_replacing_a_saved_tape() {
 
 /// Review #14: the move runs when the store is read, before any view binds,
 /// and asks for a write only when a copy lands. The written file carries the
-/// marker; a file with nothing to move is left exactly as it was.
+/// record of the move; a file with nothing to move is left exactly as it was.
 #[test]
 fn the_move_runs_at_load_and_writes_only_when_a_copy_lands() {
     let dir = ScratchDir::new("asset-mode-move-at-load");
@@ -462,7 +462,8 @@ fn the_move_runs_at_load_and_writes_only_when_a_copy_lands() {
     );
     assert_eq!(store.borrow_mut().flush(), Some(Ok(())));
     let written = std::fs::read_to_string(&path).unwrap();
-    assert!(written.contains("key_migration = 1"), "{written}");
+    let settled = crate::bubble_assets::parse(&written).unwrap().moved_keys;
+    assert!(settled.contains("hyperliquid:BTCUSDT"), "{written}");
     assert!(
         written.contains("version = 1"),
         "main's format version: {written}"
@@ -507,7 +508,12 @@ fn a_mode_added_after_the_first_migration_still_moves_its_look() {
         .with_max_level(tracing::Level::INFO)
         .with_ansi(false)
         .finish();
-    let store = tracing::subscriber::with_default(subscriber, || open(&path, &later));
+    let store = tracing::subscriber::with_default(subscriber, || {
+        // Another test's thread may have cached the line as unwanted before
+        // this subscriber existed.
+        tracing::callsite::rebuild_interest_cache();
+        open(&path, &later)
+    });
     let logged = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
 
     assert_eq!(store.borrow().get("hyperliquid:ETHUSDT"), Some(&eth));
@@ -530,7 +536,7 @@ fn a_mode_added_after_the_first_migration_still_moves_its_look() {
 /// main's loader read that file whole (all three looks, the save-off
 /// switch), the trader's WIN edit there set 20, and main wrote it back. This
 /// build reads main's file with every look, and the re-check the missing
-/// marker causes copies nothing over a look main kept.
+/// record causes copies nothing over a look main kept.
 #[test]
 fn a_file_main_rewrote_reads_back_whole() {
     let dir = ScratchDir::new("asset-mode-main-rewrite");
@@ -541,7 +547,7 @@ fn a_file_main_rewrote_reads_back_whole() {
         file.assets.keys().collect::<Vec<_>>(),
         ["BTCUSDT", "WIN*", "hyperliquid:BTCUSDT"]
     );
-    assert_eq!((file.version, file.key_migration), (1, None));
+    assert_eq!((file.version, file.moved_keys.len()), (1, 0));
     assert!(file.save_changes_off.contains("WDO$N"));
     assert_eq!(file.get("WIN*").unwrap().look.bubbles.max_radius, 20.0);
     // Main keeps every look but drops the look fields it does not know,
