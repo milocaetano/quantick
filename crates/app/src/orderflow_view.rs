@@ -1806,6 +1806,82 @@ mod tests {
         }
     }
 
+    /// The cursor reads the strip the painter drew: once the pane's clock is
+    /// past the current book's carry, neither the paint nor the readback
+    /// shows the preview, before the worker republishes anything.
+    #[test]
+    fn the_pointer_and_the_paint_agree_on_a_current_book_gone_stale() {
+        for averaging in [false, true] {
+            let mut view = OrderflowView::new("BTCUSDT");
+            view.edit_config(|config| {
+                config.live_lane.depth_time_averaging = averaging;
+                config.live_lane.forward_book_preview = true;
+            });
+            view.set_enabled(true, 10);
+            view.handle_depth_event(snapshot_event(10));
+            view.set_replay_clock_at(1_100, Some(1_100), None);
+            let bars = [bar(900, 1_100)];
+            let project = |view: &mut OrderflowView| {
+                let timeline = visible_timeline(&bars);
+                view.project_visible(timeline, true, true, None, (98.0, 102.0), None)
+            };
+            project(&mut view);
+            view.flush_for_test();
+            let chart = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1_000.0, 600.0));
+            let mut viewport = Viewport::new();
+            viewport.pan_pixels(-160.0, 1);
+            // Whether the painter previewed the book in the strip, read from
+            // its caption (the fill and the caption follow the same verdict;
+            // this one-level book is too thin to tint), and whether the cursor
+            // over a current row's strip reads a preview.
+            let strip =
+                |view: &OrderflowView, frame: &quantick_orderflow::engine::VisibleOrderflow| {
+                    let cell = frame
+                        .projection
+                        .cells
+                        .iter()
+                        .find(|cell| cell.current_book)
+                        .expect("a current row");
+                    let layout = ProjectedLayout::new(
+                        chart,
+                        &viewport,
+                        1,
+                        frame.first_bar_index,
+                        frame.slot_count,
+                        300.0,
+                    );
+                    let preview = layout.current_book_preview_rect(cell.y0, cell.y1);
+                    assert!(preview.is_positive());
+                    let output = egui::Context::default().run(egui::RawInput::default(), |ctx| {
+                        let painter = ctx.layer_painter(egui::LayerId::background());
+                        let background = egui::Color32::BLACK;
+                        view.draw_background(
+                            &painter, chart, &viewport, 1, frame, background, 300.0, false,
+                        );
+                    });
+                    let painted = format!("{:?}", output.shapes).contains("Current book preview");
+                    let read = view
+                        .control_flow_cell_at(chart, &viewport, 1, 300.0, false, preview.center())
+                        .is_some_and(|hit| hit.current_book_preview);
+                    (painted, read)
+                };
+
+            let live = project(&mut view).expect("published frame");
+            assert!(live.current_book_live);
+            assert_eq!(strip(&view, &live), (true, true), "averaging {averaging}");
+
+            let stale_ms = 1_100 + quantick_orderflow::projection::BOOK_CARRY_MAX_MS + 1_000;
+            view.set_replay_clock_at(stale_ms, Some(1_100), None);
+            let stale = project(&mut view).expect("the same publication, drawn stale");
+            assert!(!stale.current_book_live);
+            assert_eq!(
+                strip(&view, &stale),
+                (false, false),
+                "averaging {averaging}: the cursor reads the strip the painter drew"
+            );
+        }
+    }
+
     /// Dragging the divider is the width slider by another route, and it stops
     /// at half the chart: past that the history has no room to be read in.
     #[test]
