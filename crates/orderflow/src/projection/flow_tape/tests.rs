@@ -186,7 +186,7 @@ fn opening_earned_oversize_changes_no_source_facts() {
     );
     assert_eq!(f.effective_reference, Some(Decimal::from(900)));
     assert!(f.dots[0].opening_oversized);
-    assert!((f.dots[0].radius.powi(2) / 49.0 - 10.0).abs() < 0.00001);
+    assert_eq!(f.dots[0].radius, 7.0, "a typed reference caps the opening");
     assert_eq!(f.dots[0].mark.quantity, Decimal::from(9000));
     assert_eq!(f.dots[0].opening_quantity, Decimal::from(9000));
 }
@@ -268,6 +268,59 @@ fn a_typed_reference_holds_every_radius_when_a_larger_print_arrives() {
         assert_eq!(radius(&before, quantity), radius(&after, quantity));
     }
     assert_eq!(radius(&after, 9_000), 7.0, "an outsized print is capped");
+}
+
+/// Review round 1 #3: a typed reference is the pane's one scale, so an
+/// opening burst far past it caps at the radius limit like any region (40
+/// at a reference of 1 no longer draws six limits wide). Visible regions
+/// still draw the opening's earned area beside a scale that leaves it out.
+#[test]
+fn a_typed_reference_caps_an_opening_burst_at_the_radius_limit() {
+    let trades = [
+        trade(1000, 95, 40, Side::Buy),
+        trade(1100, 105, 1, Side::Sell),
+    ];
+    let project = |reference| {
+        project_flow_tape(
+            trades
+                .iter()
+                .enumerate()
+                .map(|(ordinal, trade)| FlowExecution {
+                    ordinal,
+                    slot: ordinal,
+                    accepted_ordinal: 0,
+                    ticks_per_bar: 2.into(),
+                    trade,
+                    opening: ordinal == 0,
+                }),
+            1,
+            2,
+            2,
+            FlowTapeView {
+                reference,
+                radius_limit: 32.0,
+                ..view(200.0)
+            },
+        )
+    };
+    let opening = |frame: &FlowTapeFrame| {
+        frame
+            .dots
+            .iter()
+            .find(|dot| dot.opening_anchor)
+            .map(|dot| (dot.opening_oversized, dot.radius))
+            .unwrap()
+    };
+
+    let typed = project(FlowReference::Typed(Decimal::ONE));
+    assert_eq!(opening(&typed), (true, 32.0));
+    assert!(typed.dots.iter().all(|dot| dot.radius <= 32.0));
+
+    let regions = project(FlowReference::VisibleRegions);
+    assert_eq!(regions.effective_reference, Some(Decimal::ONE));
+    let (oversized, radius) = opening(&regions);
+    assert!(oversized);
+    assert!((radius / 32.0 - 40.0_f32.sqrt()).abs() < 0.0001, "{radius}");
 }
 
 #[test]
