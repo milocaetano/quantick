@@ -1,20 +1,25 @@
-//! *History* against the production Binance host, over local sockets: what
-//! the 48 h perpetual retention boundary and a failed fetch tell the chart.
+//! The production Binance host over local sockets: what the 48 h perpetual
+//! retention boundary, a failed *History* fetch and a live execution too old
+//! to admit tell the chart.
 //!
-//! Neither is the feed going offline, so neither may raise
+//! None of them is the feed going offline, so none may raise
 //! [`FeedNotice::Attention`]: the app draws every Attention as an offline
 //! card with a Reconnect button and stands stall detection down while it is
 //! up. The boundary withdraws paging instead, so the run ends `Exhausted`; a
-//! failed fetch is logged and answered with an empty page.
+//! failed fetch is logged and answered with an empty page; a too-old
+//! execution is logged and left off the tape, its backwards id counted as a
+//! continuity anomaly.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use futures_util::SinkExt as _;
 use quantick_engine::Trade;
 use quantick_feed_binance::{Backoff, BinanceHttp, BinanceMarket, depth::DepthEvent};
 use quantick_sources::history_reach::{
     Campaign, CampaignEnd, CampaignStart, CampaignStep, HistoryReach, ReachBounds, TapeFacts,
 };
+use quantick_sources::trade_admission::RECONNECT_ID_WINDOW;
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
     net::{TcpListener, TcpStream},
@@ -22,11 +27,14 @@ use tokio::{
     task::JoinHandle,
     time::timeout,
 };
+use tokio_tungstenite::tungstenite::Message;
 use tracing_subscriber::fmt::MakeWriter;
 
 use crate::config::ProviderKind;
 use crate::stall::{SILENT_BUDGET_MS, StallInput, assess};
-use crate::{FeedCapabilities, FeedCommand, FeedConnectionState, FeedEvent, FeedNotice};
+use crate::{
+    FeedCapabilities, FeedCommand, FeedConnectionState, FeedEvent, FeedIntegrity, FeedNotice,
+};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -100,6 +108,30 @@ async fn quiet_socket(drop_first: oneshot::Receiver<()>) -> (String, JoinHandle<
                 held.push(socket);
             }
         }
+    });
+    (url, server)
+}
+
+/// One live aggTrade frame for aggregate `id`, stamped like the opening page.
+fn live_print(id: u64) -> String {
+    format!(
+        r#"{{"e":"aggTrade","s":"BTCUSDT","a":{id},"p":"81200.10","q":"0.001","f":1,"l":1,"T":{id}000,"m":false}}"#
+    )
+}
+
+/// A trade socket that prints `ids` once `go` fires, then holds its one
+/// connection open.
+async fn printing_socket(go: oneshot::Receiver<()>, ids: Vec<u64>) -> (String, JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("ws://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+        let _ = go.await;
+        for id in ids {
+            socket.send(Message::Text(live_print(id))).await.unwrap();
+        }
+        std::future::pending::<()>().await;
     });
     (url, server)
 }
@@ -192,11 +224,31 @@ impl Host {
         }
     }
 
+    /// Read the live tape until print `last` lands: the ids put on it, in
+    /// order, and the anomalies reported beside them.
+    async fn live_until(&mut self, last: u64) -> (Vec<u64>, FeedIntegrity) {
+        let mut tape = Vec::new();
+        let mut integrity = FeedIntegrity::default();
+        while tape.last() != Some(&last) {
+            match timeout(WAIT, self.events.recv()).await.unwrap() {
+                Some(FeedEvent::Live(trade)) => tape.push(trade.agg_id),
+                Some(FeedEvent::Continuity(event)) => integrity.observe(event),
+                _ => panic!("the live tape carries prints and their anomalies"),
+            }
+        }
+        // Whatever the host said about the earlier prints is in the channel
+        // by now.
+        while let Ok(notice) = self.notices.try_recv() {
+            self.heard.push(notice);
+        }
+        (tape, integrity)
+    }
+
     fn can_page(&self) -> bool {
         self.capabilities.borrow().history_paging
     }
 
-    /// Neither the boundary nor a failed fetch is the feed going offline.
+    /// None of these is the feed going offline.
     fn assert_no_attention(&self) {
         assert!(
             self.heard
@@ -288,6 +340,26 @@ async fn the_retention_boundary_withdraws_paging_and_ends_history_exhausted() {
 #[derive(Clone)]
 struct SharedLog(Arc<Mutex<Vec<u8>>>);
 
+impl SharedLog {
+    /// Capture this thread's warnings and errors until the guard drops. The
+    /// host runs on the test's single-threaded runtime, so the scoped
+    /// subscriber sees its lines.
+    fn capture() -> (Self, tracing::subscriber::DefaultGuard) {
+        let log = Self(Arc::new(Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(log.clone())
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .finish();
+        let guard = tracing::subscriber::set_default(subscriber);
+        (log, guard)
+    }
+
+    fn text(&self) -> String {
+        String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
 impl std::io::Write for SharedLog {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.0.lock().unwrap().extend_from_slice(buf);
@@ -307,15 +379,7 @@ impl<'a> MakeWriter<'a> for SharedLog {
 
 #[tokio::test]
 async fn a_failed_history_fetch_is_logged_and_answered_with_an_empty_page() {
-    let log = Arc::new(Mutex::new(Vec::new()));
-    let subscriber = tracing_subscriber::fmt()
-        .with_writer(SharedLog(log.clone()))
-        .with_max_level(tracing::Level::WARN)
-        .with_ansi(false)
-        .finish();
-    // The host runs on this test's single-threaded runtime, so the scoped
-    // subscriber sees its lines.
-    let _logging = tracing::subscriber::set_default(subscriber);
+    let (log, _logging) = SharedLog::capture();
     let (rest_url, rest) = rest_venue(response("429 Too Many Requests", RATE_LIMITED)).await;
     let (_drop_first, first_dropped) = oneshot::channel();
     let (url, socket) = quiet_socket(first_dropped).await;
@@ -337,12 +401,56 @@ async fn a_failed_history_fetch_is_logged_and_answered_with_an_empty_page() {
     );
     host.assert_no_attention();
     host.assert_stall_detection_armed();
-    let log = String::from_utf8(log.lock().unwrap().clone()).unwrap();
+    let log = log.text();
     assert!(
         log.contains("load older failed"),
         "the failure is logged: {log}"
     );
     assert!(log.contains("429"), "with the venue's status: {log}");
+    host.stop().await;
+    socket.abort();
+    rest.abort();
+}
+
+/// An execution a whole admission window behind the newest the session holds
+/// cannot be checked against what the chart already counted, so it stays off
+/// the tape. The transport is up and the tape keeps moving: the chart is fed.
+#[tokio::test]
+async fn a_too_old_execution_is_logged_and_left_off_the_tape_without_an_offline_card() {
+    let (log, _logging) = SharedLog::capture();
+    // Nothing here pages back.
+    let (rest_url, rest) = rest_venue(response("429 Too Many Requests", RATE_LIMITED)).await;
+    // Older than the opening page and never seen, a window behind the newest.
+    let too_old: u64 = 999;
+    let newest = too_old + RECONNECT_ID_WINDOW as u64 + 1;
+    let (go, printing) = oneshot::channel();
+    let (url, socket) = printing_socket(printing, vec![newest, too_old, newest + 1]).await;
+    let mut host = Host::start(BinanceMarket::UsdM, rest_url, url);
+    host.backfill().await;
+    host.connected(1).await;
+
+    go.send(()).unwrap();
+    let (tape, integrity) = host.live_until(newest + 1).await;
+    assert_eq!(
+        tape,
+        [newest, newest + 1],
+        "the too-old execution is left out"
+    );
+    assert_eq!(
+        integrity.non_monotonic, 1,
+        "its backwards id is labelled, not dropped in silence"
+    );
+    host.assert_no_attention();
+    host.assert_stall_detection_armed();
+    let log = log.text();
+    assert!(
+        log.contains("BINANCE_TRADE_OUTSIDE_ADMISSION_WINDOW"),
+        "the exclusion is logged under its event code: {log}"
+    );
+    assert!(
+        log.contains(&format!("agg_id={too_old}")),
+        "naming the execution left out: {log}"
+    );
     host.stop().await;
     socket.abort();
     rest.abort();
