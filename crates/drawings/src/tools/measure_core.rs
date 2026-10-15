@@ -17,7 +17,8 @@ use crate::{
 use quantick_chart::style::PremultipliedRgba;
 
 use super::{
-    ChartPoint, DrawingStyle, ToolFamily, ValueUnit, dashed_segment, drawing_fill, drawing_stroke,
+    ChartPoint, DrawingStyle, ToolFamily, ValueUnit, dashed_segment_within, drawing_fill,
+    drawing_stroke,
 };
 use crate::palette as theme;
 
@@ -290,22 +291,15 @@ fn paint_ruler(
 /// has there: an off-screen side costs nothing and the dashes never crawl.
 fn dash_visible(painter: &mut MarkScene, clip: PxRect, side: [Px; 2], stroke: Stroke) {
     let [from, to] = side;
-    let direction = (to - from).normalized();
-    let (start, end) = (clip.clamp(from), clip.clamp(to));
-    let (near, far) = ((start - from).dot(direction), (end - from).dot(direction));
-    // Sides are axis-aligned: one outside the clip clamps across itself.
-    if far > near && (start - from).dot(direction.rot90()).abs() <= 1e-3 {
-        let step = RULER_BOX_DASH_PX + RULER_BOX_GAP_PX;
-        let first = from + direction * ((near / step).floor() * step);
-        dashed_segment(
-            painter,
-            first,
-            end,
-            stroke,
-            RULER_BOX_DASH_PX,
-            RULER_BOX_GAP_PX,
-        );
-    }
+    dashed_segment_within(
+        painter,
+        clip,
+        from,
+        to,
+        stroke,
+        RULER_BOX_DASH_PX,
+        RULER_BOX_GAP_PX,
+    );
 }
 
 /// The rectangle a measurement covers, with a suppressed axis spanning the
@@ -392,6 +386,7 @@ pub(super) fn hit_measure(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dashed_segment;
     use crate::test_prelude::*;
 
     fn anchors(from: (f32, f64, i64), to: (f32, f64, i64)) -> Vec<ChartPoint> {
