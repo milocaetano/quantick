@@ -3,7 +3,7 @@
 use super::{
     BubbleRenderMode, BubbleSizeReference, BubbleStyle, ConsumptionMark, DisplayGrouping,
     HeatmapConfig, HeatmapTheme, IntensityMode, LaneWindow, LiveLaneStyle, TickBubbleStyle,
-    TickReferenceMode, ViewportBubbleScale, VolumeDotStyle,
+    TickReferenceMode, ViewportBubbleScale, VolumeDotStyle, BubbleDisplayScale,
 };
 use rust_decimal::Decimal;
 
@@ -85,8 +85,9 @@ exact_fields! {
         side_offset, consumption_mark, front_width, front_length_scale, show_impact_ring,
         impact_ring_width, trail_length, trail_opacity, show_quantity_labels,
         show_trade_count, label_min_radius, buy_color, sell_color, front_color,
-        trail_color, label_color, viewport_scale,
+        trail_color, label_color, viewport_scale, display_scale,
     }
+    BubbleDisplayScale { tape, candle }
     LiveLaneStyle {
         width_share, window, cluster_ms, radius_scale, show_marks, enabled, show_depth,
         show_aggressions, native_tape, depth_time_averaging, forward_book_preview,
