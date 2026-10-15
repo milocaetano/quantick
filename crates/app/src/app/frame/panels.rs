@@ -82,6 +82,7 @@ pub(super) fn draw_dock(
         paper,
         ..
     } = tabs.runtime_mut(tabs.active_index());
+    let tick_chart = flow_pane.state.tick_membership().is_some();
     let orderflow = flow_pane
         .orderflow
         .as_mut()
@@ -90,6 +91,7 @@ pub(super) fn draw_dock(
         ctx,
         &mut DockEnv {
             orderflow,
+            tick_chart,
             replay_view,
             replay: replay.as_ref(),
             paper,

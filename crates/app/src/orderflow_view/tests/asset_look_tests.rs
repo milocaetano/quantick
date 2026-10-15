@@ -244,8 +244,9 @@ fn the_sphere_picker_follows_the_tick_sphere_rule() {
     assert!(spheres.is_some(), "the declared look wears spheres");
     assert!(texts(&mut btc, true).contains("quantity in BTC"));
     assert!(
-        !texts(&mut btc, false).contains("Tick chart spheres"),
-        "a volume chart offers no spheres"
+        texts(&mut btc, false).contains("Tick chart spheres"),
+        "a volume chart offers no presets (TickSpherePane::offered) but keeps \
+         the switch-off for spheres the asset wears, as tick.set(null) does"
     );
     let mut eth = bound_to(&store, ("binance", "ETHUSDT"));
     assert!(!texts(&mut eth, true).contains("Tick chart spheres"));

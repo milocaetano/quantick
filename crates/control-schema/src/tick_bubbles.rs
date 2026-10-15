@@ -22,19 +22,6 @@ pub struct TickBubblesResult {
     pub tick_bubbles: Option<TickBubblesSnapshot>,
 }
 
-pub fn result(
-    input: &TickBubblesInput,
-    changed: bool,
-    config: &quantick_orderflow::HeatmapConfig,
-) -> TickBubblesResult {
-    TickBubblesResult {
-        tab_id: input.tab_id,
-        pane_id: input.pane_id,
-        changed,
-        tick_bubbles: config.volume_dots.tick_bubbles.map(Into::into),
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct TickBubblesSnapshot {
     /// Instrument quantity at max_radius. Larger visible groups increase the
@@ -61,8 +48,8 @@ pub fn descriptor() -> quantick_control::registry::CapabilityDescriptor {
         TICK_BUBBLES_CAPABILITY_ID,
         crate::orderflow::MODULE_ID,
         "Set tick chart sphere preset",
-        "Applies only a named tick-chart sphere calibration to a Binance BTC tick pane. Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW. Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
-        "Stable tab and pane IDs, tick membership, asset ownership and preset names are validated before any edit. Repeating a selection is a no-op.",
+        "Applies only a named tick-chart sphere calibration to a tick pane whose asset the feed config switches an asset mode on for (symbol_asset_modes). Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW on any pane, whatever put the spheres on. Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
+        "Stable tab and pane IDs and preset names are validated, and one rule shared with the settings picker (a tick chart and the asset's config mode) is asked, before any edit. Repeating a selection is a no-op.",
     );
     descriptor.persistence = quantick_control::registry::EffectPersistence::Durable;
     descriptor

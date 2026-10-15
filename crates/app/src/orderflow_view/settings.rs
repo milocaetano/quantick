@@ -207,7 +207,7 @@ impl OrderflowView {
     /// Everything here is independent of L2 capture — bubbles are built from
     /// the aggregate-trade stream. Same return contract as
     /// [`Self::draw_l2_tab`].
-    pub fn draw_bubbles_tab(&mut self, ui: &mut egui::Ui) -> bool {
+    pub fn draw_bubbles_tab(&mut self, ui: &mut egui::Ui, tick_chart: bool) -> bool {
         self.sync_published();
         let before = self.config.clone();
         egui::ScrollArea::vertical()
@@ -224,7 +224,7 @@ impl OrderflowView {
                 ui.separator();
 
                 self.draw_bubble_presets(ui);
-                self.draw_tick_bubbles(ui);
+                self.draw_tick_bubbles(ui, tick_chart);
                 ui.separator();
 
                 ui.checkbox(&mut self.config.show_aggressions, "show aggression bubbles")

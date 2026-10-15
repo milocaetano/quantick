@@ -13331,7 +13331,7 @@
         "status": "available"
       },
       "confirmation_class": "none",
-      "description": "Applies only a named tick-chart sphere calibration to a Binance BTC tick pane. Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW. Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
+      "description": "Applies only a named tick-chart sphere calibration to a tick pane whose asset the feed config switches an asset mode on for (symbol_asset_modes). Read available names from orderflow.bubbles.tick_presets. A null preset restores regional FLOW on any pane, whatever put the spheres on. Tape sizing, colors, grouping and source settings are preserved. Changes follow the asset save switch and are read back in orderflow.bubbles.tick_bubbles. The Bubbles layer must be enabled to draw the selected style.",
       "destructive": false,
       "dry_run_supported": false,
       "effect": "cockpit",
@@ -13446,7 +13446,7 @@
       "revision_policy": "optional_for_additive",
       "risk_flags": [],
       "risk_reducing": false,
-      "stale_input_safety": "Stable tab and pane IDs, tick membership, asset ownership and preset names are validated before any edit. Repeating a selection is a no-op.",
+      "stale_input_safety": "Stable tab and pane IDs and preset names are validated, and one rule shared with the settings picker (a tick chart and the asset's config mode) is asked, before any edit. Repeating a selection is a no-op.",
       "title": "Set tick chart sphere preset",
       "version": 1
     },

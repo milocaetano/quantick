@@ -120,6 +120,8 @@ impl DockTab {
 pub struct DockEnv<'a> {
     /// The order-flow facade whose settings the L2/Bubbles tabs edit.
     pub orderflow: &'a mut OrderflowView,
+    /// Its pane draws tick bars, which the tick sphere picker's rule reads.
+    pub tick_chart: bool,
     /// The replay browser the Session tab opens.
     pub replay_view: &'a mut ReplayView,
     /// The playing session, if any.
@@ -345,7 +347,8 @@ impl Dock {
                             response.restart_book_capture |= env.orderflow.draw_l2_tab(ui);
                         }
                         DockTab::Bubbles => {
-                            response.restart_book_capture |= env.orderflow.draw_bubbles_tab(ui);
+                            response.restart_book_capture |=
+                                env.orderflow.draw_bubbles_tab(ui, env.tick_chart);
                         }
                         DockTab::Session => {
                             response.replay_action = draw_session_tab(ui, env);
@@ -542,6 +545,7 @@ mod tests {
                         ctx,
                         &mut DockEnv {
                             orderflow: &mut orderflow,
+                            tick_chart: true,
                             replay_view: &mut replay_view,
                             replay: None,
                             paper: &mut paper,
@@ -563,6 +567,7 @@ mod tests {
                 ctx,
                 &mut DockEnv {
                     orderflow: &mut orderflow,
+                    tick_chart: true,
                     replay_view: &mut replay_view,
                     replay: None,
                     paper: &mut paper,
@@ -590,6 +595,7 @@ mod tests {
                         ctx,
                         &mut DockEnv {
                             orderflow: &mut OrderflowView::new("TESTUSDT"),
+                            tick_chart: true,
                             replay_view: &mut ReplayView::new(None, None),
                             replay: None,
                             paper,

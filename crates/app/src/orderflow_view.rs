@@ -1378,7 +1378,7 @@ mod tests {
         let frame = |view: &mut OrderflowView| {
             ctx.run(egui::RawInput::default(), |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    view.draw_bubbles_tab(ui);
+                    view.draw_bubbles_tab(ui, true);
                     view.draw_l2_tab(ui);
                 });
             })
@@ -1447,7 +1447,7 @@ mod tests {
             };
             ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    view.draw_bubbles_tab(ui);
+                    view.draw_bubbles_tab(ui, true);
                 });
             })
         };

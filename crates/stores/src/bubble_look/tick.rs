@@ -52,6 +52,14 @@ impl BubbleLook {
             .and_then(|preset| preset.tick_bubbles))
     }
 
+    /// The offered sphere preset `current` is, if it is one.
+    #[must_use]
+    pub fn tick_preset_worn(&self, current: Option<TickBubbleStyle>) -> Option<String> {
+        self.tick_presets()
+            .into_iter()
+            .find(|name| self.tick_style(Some(name)).ok() == Some(current))
+    }
+
     /// The settings line under the sphere picker: the unit the asset's mode
     /// counts in, and never one it does not name.
     #[must_use]

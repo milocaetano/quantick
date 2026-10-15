@@ -46,12 +46,78 @@ fn invalid(error: impl std::fmt::Display) -> ControlError {
     ControlError::invalid_request(error.to_string())
 }
 
-/// The existing chart-only selector retains its independent contract.
+/// What the tick sphere rule reads about a pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TickSpherePane {
+    /// The pane draws tick bars.
+    pub tick_chart: bool,
+    /// The config switches the mode on for the pane's asset
+    /// (`symbol_asset_modes` in feeds.toml).
+    pub asset_mode: bool,
+}
+
+impl TickSpherePane {
+    /// The one rule for tick spheres, which the settings picker and
+    /// `orderflow.bubbles.tick.set` both ask: they may be chosen on a tick
+    /// chart whose asset the config switches the mode on for.
+    #[must_use]
+    pub fn may_choose(self) -> bool {
+        self.tick_chart && self.asset_mode
+    }
+
+    /// What the settings picker offers, by the same rule: the asset's
+    /// `presets` where spheres may be chosen; only the switch-off where they
+    /// may not but the pane is `wearing` some; no picker otherwise.
+    #[must_use]
+    pub fn offered(self, presets: Vec<String>, wearing: bool) -> Option<Vec<String>> {
+        if self.may_choose() {
+            Some(presets)
+        } else {
+            wearing.then(Vec::new)
+        }
+    }
+
+    /// Whether `preset` may be worn. Dropping spheres always may, whatever
+    /// put them on (review #29); a named preset needs [`Self::may_choose`].
+    ///
+    /// # Errors
+    ///
+    /// Says which half of the rule a named preset fails.
+    pub fn admit(self, preset: Option<&str>) -> Result<(), &'static str> {
+        match preset {
+            None => Ok(()),
+            Some(_) if !self.tick_chart => Err("Tick sphere presets require a tick chart"),
+            Some(_) if !self.asset_mode => {
+                Err("Tick sphere presets require an asset whose config asset mode is on")
+            }
+            Some(_) => Ok(()),
+        }
+    }
+}
+
+/// The chart-only selector's narrow port: the facts the rule reads, and
+/// wearing what the rule admitted. The policy stays here.
 pub trait TickBubblePort {
-    fn set_tick_bubbles(
+    /// The addressed pane's facts for [`TickSpherePane::admit`].
+    fn tick_sphere_pane(
         &mut self,
-        input: &quantick_control_schema::tick_bubbles::TickBubblesInput,
-    ) -> Result<quantick_control_schema::tick_bubbles::TickBubblesResult, ControlError>;
+        tab_id: u64,
+        pane_id: u64,
+    ) -> Result<TickSpherePane, ControlError>;
+    /// Wear `preset`'s spheres, or none: whether the look changed, and the
+    /// spheres it wears after.
+    fn wear_tick_spheres(
+        &mut self,
+        tab_id: u64,
+        pane_id: u64,
+        preset: Option<&str>,
+    ) -> Result<
+        (
+            bool,
+            Option<quantick_control_schema::tick_bubbles::TickBubblesSnapshot>,
+        ),
+        ControlError,
+    >;
 }
 pub fn register_tick<D: ActionDock<H, A>, H: TickBubblePort + ?Sized, A>(
     registry: &mut D,
@@ -64,8 +130,24 @@ fn tick<H: TickBubblePort + ?Sized, A>(
     _actor: &ActorContext,
     input: &Value,
 ) -> Result<Value, ControlError> {
-    let input = serde_json::from_value(input.clone()).map_err(invalid)?;
-    serde_json::to_value(host.set_tick_bubbles(&input)?).map_err(invalid)
+    let input: quantick_control_schema::tick_bubbles::TickBubblesInput =
+        serde_json::from_value(input.clone()).map_err(invalid)?;
+    let (tab, pane, preset) = (
+        input.tab_id.get(),
+        input.pane_id.get(),
+        input.preset.as_deref(),
+    );
+    host.tick_sphere_pane(tab, pane)?
+        .admit(preset)
+        .map_err(invalid)?;
+    let (changed, tick_bubbles) = host.wear_tick_spheres(tab, pane, preset)?;
+    serde_json::to_value(quantick_control_schema::tick_bubbles::TickBubblesResult {
+        tab_id: input.tab_id,
+        pane_id: input.pane_id,
+        changed,
+        tick_bubbles,
+    })
+    .map_err(invalid)
 }
 
 #[cfg(test)]
@@ -92,6 +174,19 @@ mod tick_rule_tests {
                     "{pane:?}"
                 );
                 assert!(pane.admit(None).is_ok(), "{pane:?}");
+                let presets = vec!["Binance BTC Spot spheres".to_owned()];
+                let offered = pane.offered(presets.clone(), false);
+                assert_eq!(offered, pane.may_choose().then(|| presets.clone()));
+                let wearing = pane.offered(presets.clone(), true);
+                assert_eq!(
+                    wearing,
+                    Some(if pane.may_choose() {
+                        presets
+                    } else {
+                        Vec::new()
+                    }),
+                    "spheres a pane wears can always be switched off"
+                );
             }
         }
     }
