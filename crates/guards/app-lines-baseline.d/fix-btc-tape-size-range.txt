@@ -3,5 +3,7 @@
 # control-handlers; the gains and their admission in orderflow; frame scaling in chart.
 # The controls dock before navigation to own their input without expanding the app root.
 # One hover declaration keeps rounded slider bounds from registering an ID twice.
-crates/app +259
-!budget +259
+# The review fixes on #706 (tick-only candle gain through the paint pass, the NOW
+# inset callers, one pruned temp slot for FLOW's last-painted drawings) add 18.
+crates/app +277
+!budget +277
