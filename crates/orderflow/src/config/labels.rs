@@ -87,10 +87,22 @@ pub const fn consumption_mark_label(mark: ConsumptionMark) -> &'static str {
     }
 }
 
+/// Significant figures a quantity label keeps at most.
+const LABEL_SIGNIFICANT_FIGURES: u32 = 3;
+
 /// A quantity as a bubble labels it: three significant figures at most,
-/// thousands as `K`, millions as `M`, billions as `B`.
+/// thousands as `K`, millions as `M`, billions as `B`. Below one unit the
+/// figures are counted from the first nonzero digit, exactly, so a positive
+/// fraction of a coin never reads as `0`.
 #[must_use]
 pub fn format_quantity(quantity: Decimal) -> String {
+    if !quantity.is_zero() && quantity.abs() < Decimal::ONE {
+        return quantity
+            .round_sf(LABEL_SIGNIFICANT_FIGURES)
+            .unwrap_or(quantity)
+            .normalize()
+            .to_string();
+    }
     let value = quantity.to_f64().unwrap_or(0.0);
     let absolute = value.abs();
     let (scaled, suffix) = if absolute >= 1_000_000_000.0 {
