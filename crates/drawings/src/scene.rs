@@ -260,7 +260,7 @@ pub fn dashed_segment(
     let Some(walk) = DashWalk::along(from, to, dash_px, gap_px) else {
         return;
     };
-    walk.paint(scene, (0.0, walk.length), stroke);
+    walk.paint(scene, (0, walk.length), stroke);
 }
 
 /// [`dashed_segment`] for the part of `from`–`to` that can reach `clip`,
@@ -285,7 +285,7 @@ pub fn dashed_segment_within(
     // Whole strides only: the dash crossing each edge of the clip is the
     // whole walk's dash, never one cut at the clip.
     let (length, step) = (walk.length, walk.step);
-    let first = (near * length / step).floor() * step;
+    let first = (near * length / step).floor() as u64;
     let last = ((far * length / step).ceil() * step).min(length);
     walk.paint(scene, (first, last), stroke);
 }
@@ -316,11 +316,16 @@ impl DashWalk {
         })
     }
 
-    /// The dashes from `start` to `end` along the walk, in pixels from
-    /// `from`, each starting on a stride of the whole walk.
-    fn paint(&self, scene: &mut MarkScene, (start, end): (f32, f32), stroke: Stroke) {
-        let mut travelled = start;
-        while travelled < end {
+    /// The dashes from stride `first` to `end` pixels along the walk, each
+    /// starting on a stride of the whole walk. The stride is counted, not
+    /// accumulated: far enough out, adding a step to an `f32` changes
+    /// nothing, and a sum that stops moving never reaches `end`.
+    fn paint(&self, scene: &mut MarkScene, (first, end): (u64, f32), stroke: Stroke) {
+        for stride in first.. {
+            let travelled = stride as f32 * self.step;
+            if travelled >= end {
+                break;
+            }
             let dash_end = (travelled + self.dash_px).min(end);
             scene.line_segment(
                 [
@@ -329,7 +334,6 @@ impl DashWalk {
                 ],
                 stroke,
             );
-            travelled += self.step;
         }
     }
 }

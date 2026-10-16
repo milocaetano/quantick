@@ -83,6 +83,24 @@ fn a_clipped_dashed_segment_keeps_the_whole_segment_phase() {
     }
 }
 
+/// A visible span that starts far enough out that one `f32` step no
+/// longer moves the position: the walk must still end, with at most one
+/// dash per stride across the clip. Accumulating the step there spins
+/// forever.
+#[test]
+fn a_dashed_segment_starting_past_f32_step_resolution_still_ends() {
+    let mut scene = MarkScene::default();
+    let (from, to) = (Px::new(-3.0e8, 50.0), Px::new(3.0e8, 50.0));
+    dashed_segment_within(&mut scene, clip(), from, to, stroke(), DASH, GAP);
+    let across = (clip().width() / STEP).ceil() as usize;
+    assert!(
+        !scene.shapes.is_empty() && scene.shapes.len() <= across + 3,
+        "{} dashes for a {} px clip",
+        scene.shapes.len(),
+        clip().width()
+    );
+}
+
 /// A segment the clip never meets, or one that cannot be walked, paints
 /// nothing.
 #[test]
