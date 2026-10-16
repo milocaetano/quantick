@@ -1823,6 +1823,7 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
     let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
         book_capture: false,
         history_paging: true,
+        history_boundary: None,
         traded_volume: true,
         deal_counter: false,
         ohlcv_history: false,
@@ -1856,7 +1857,26 @@ fn a_run_stops_the_moment_the_venue_says_its_record_ends() {
         history_reach::HistoryReach::Sessions(1),
     ));
     assert_eq!(drain_load_older(&mut cmd_rx).len(), 1);
-    caps_tx.send_modify(|caps| caps.history_paging = false);
+    let scope = observer_scope("feed.status");
+    let boundary = |app: &QuantickApp| {
+        let mut registry = crate::control::standard_registry().unwrap();
+        let capture = registry
+            .capture(app, &observer_instance(), std::slice::from_ref(&scope))
+            .unwrap()
+            .into_serialized()
+            .unwrap();
+        capture.scopes[&scope].value["tabs"][0]["capabilities"]["history_boundary"].clone()
+    };
+    assert!(boundary(&app).is_null(), "paging is still on");
+    caps_tx.send_modify(|caps| {
+        caps.history_paging = false;
+        caps.history_boundary = Some(crate::config::HistoryBoundary::VenueRetention);
+    });
+    assert_eq!(
+        boundary(&app),
+        "venue_retention",
+        "feed.status says why paging went off"
+    );
     evt_tx
         .try_send(FeedEvent::HistoryPrepended(
             (-10..0).map(minute_trade_at).collect(),

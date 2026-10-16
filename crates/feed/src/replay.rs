@@ -375,6 +375,7 @@ pub fn spawn(request: ReplayRequest) -> FeedHandle {
             // promise about what a request will return, and this source
             // returns no older print under any reach.
             history_paging: false,
+            history_boundary: None,
             traded_volume: true,
             deal_counter: false,
             // The candles are the record it *can* page, and only when one was

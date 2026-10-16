@@ -1881,6 +1881,7 @@ fn a_feed_declaring_layout_and_bars_opens_wearing_them() {
             capabilities: feed::fixed_capabilities(FeedCapabilities {
                 book_capture: false,
                 history_paging: true,
+                history_boundary: None,
                 traded_volume: true,
                 deal_counter: false,
                 ohlcv_history: true,
@@ -3158,6 +3159,7 @@ fn the_flow_pane_cutting_time_bars_earns_the_venue_prefix() {
             capabilities: feed::fixed_capabilities(FeedCapabilities {
                 book_capture: false,
                 history_paging: true,
+                history_boundary: None,
                 traded_volume: true,
                 deal_counter: false,
                 ohlcv_history: true,

@@ -91,6 +91,7 @@ fn snapshot<P: TabsPort + ?Sized>(app: &P, now_ms: Option<i64>) -> FeedSnapshot 
                     capabilities: FeedCapabilitiesSnapshot {
                         book_capture: capabilities.book_capture,
                         history_paging: capabilities.history_paging,
+                        history_boundary: capabilities.history_boundary.map(Into::into),
                         traded_volume: capabilities.traded_volume,
                         deal_counter: capabilities.deal_counter,
                         venue_ohlcv_history: capabilities.ohlcv_history,

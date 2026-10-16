@@ -1115,6 +1115,7 @@ fn a_layer_the_source_cannot_draw_says_why_in_a_code_not_a_sentence() {
             capabilities: feed::fixed_capabilities(FeedCapabilities {
                 book_capture: false,
                 history_paging: false,
+                history_boundary: None,
                 traded_volume: false,
                 deal_counter: false,
                 ohlcv_history: false,

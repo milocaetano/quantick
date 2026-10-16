@@ -153,12 +153,33 @@ pub struct FeedGapSnapshot {
 pub struct FeedCapabilitiesSnapshot {
     pub book_capture: bool,
     pub history_paging: bool,
+    /// Why `history_paging` is off when the feed knows: `venue_retention`
+    /// means the venue keeps nothing older. Absent while paging is on, and
+    /// on a provider that never pages; optional, so additive to v1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_boundary: Option<HistoryBoundarySnapshot>,
     pub traded_volume: bool,
     /// Defaults off for snapshots produced before deal counters existed.
     #[serde(default)]
     pub deal_counter: bool,
     pub venue_ohlcv_history: bool,
     pub venue_ohlcv_generation: WireU64,
+}
+
+/// Where a feed's pageable trade history ends.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryBoundarySnapshot {
+    /// The venue retains no executions older than the chart holds.
+    VenueRetention,
+}
+
+impl From<quantick_stores::config::HistoryBoundary> for HistoryBoundarySnapshot {
+    fn from(boundary: quantick_stores::config::HistoryBoundary) -> Self {
+        match boundary {
+            quantick_stores::config::HistoryBoundary::VenueRetention => Self::VenueRetention,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]

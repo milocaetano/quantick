@@ -78,6 +78,7 @@ fn push_feed_app_restoring(
     let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
         book_capture: false,
         history_paging: true,
+        history_boundary: None,
         traded_volume: true,
         deal_counter: false,
         ohlcv_history: true,

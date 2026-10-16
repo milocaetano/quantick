@@ -718,6 +718,7 @@ fn a_capability_that_rises_later_is_asked_again() {
     let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
         book_capture: false,
         history_paging: true,
+        history_boundary: None,
         traded_volume: true,
         deal_counter: false,
         ohlcv_history: false,
@@ -803,6 +804,7 @@ fn a_new_candle_generation_is_asked_for_again_and_installed() {
     let (caps_tx, caps_rx) = tokio::sync::watch::channel(FeedCapabilities {
         book_capture: false,
         history_paging: true,
+        history_boundary: None,
         traded_volume: true,
         deal_counter: false,
         ohlcv_history: true,

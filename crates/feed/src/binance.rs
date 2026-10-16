@@ -710,7 +710,10 @@ fn withdraw_paging(capabilities: &watch::Sender<FeedCapabilities>, symbol: &str)
         action = "withdraw_paging",
         "the venue retains no older executions (USD-M keeps the recent 48 hours)"
     );
-    capabilities.send_modify(|caps| caps.history_paging = false);
+    capabilities.send_modify(|caps| {
+        caps.history_paging = false;
+        caps.history_boundary = Some(quantick_sources::config::HistoryBoundary::VenueRetention);
+    });
 }
 
 #[cfg(test)]
@@ -740,6 +743,20 @@ mod tests {
                 matches!(rx.recv().await, Some(FeedEvent::HistoryPrepended(trades)) if trades.is_empty())
             );
         }
+    }
+
+    /// The control plane reads why paging stopped, not only that it did.
+    #[test]
+    fn the_retention_boundary_withdraws_paging_and_labels_why() {
+        let (capabilities, caps) = watch::channel(ProviderKind::BinanceFutures.capabilities());
+        assert_eq!(caps.borrow().history_boundary, None);
+        withdraw_paging(&capabilities, "BTCUSDT.p");
+        let caps = *caps.borrow();
+        assert!(!caps.history_paging);
+        assert_eq!(
+            caps.history_boundary,
+            Some(quantick_sources::config::HistoryBoundary::VenueRetention)
+        );
     }
 
     #[test]

@@ -76,7 +76,7 @@ fn load<H: HistoryPort + ?Sized, A>(
         return Err(refused(
             "this tab's feed cannot page older trades".to_owned(),
             &input.reach,
-            "read feed.status capabilities.history_paging; venue candles load with the History menu's + older candles",
+            "read feed.status capabilities.history_paging and history_boundary (venue_retention: the venue keeps nothing older); venue candles load with the History menu's + older candles",
         ));
     }
     let (outcome, session) = app

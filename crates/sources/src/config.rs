@@ -106,6 +106,7 @@ impl ProviderKind {
             ProviderKind::Binance | ProviderKind::BinanceFutures => FeedCapabilities {
                 book_capture: true,
                 history_paging: true,
+                history_boundary: None,
                 traded_volume: true,
                 deal_counter: false,
                 ohlcv_history: true,
@@ -124,6 +125,7 @@ impl ProviderKind {
             ProviderKind::Hyperliquid => FeedCapabilities {
                 book_capture: true,
                 history_paging: false,
+                history_boundary: None,
                 traded_volume: true,
                 deal_counter: false,
                 ohlcv_history: true,
@@ -146,6 +148,7 @@ impl ProviderKind {
             ProviderKind::MetaTrader => FeedCapabilities {
                 book_capture: true,
                 history_paging: false,
+                history_boundary: None,
                 traded_volume: true,
                 deal_counter: false,
                 ohlcv_history: false,
@@ -193,6 +196,11 @@ pub struct FeedCapabilities {
     pub book_capture: bool,
     /// Can fetch trades older than what is loaded, on demand.
     pub history_paging: bool,
+    /// Why [`history_paging`](Self::history_paging) went off on a running
+    /// feed, when the feed knows: `false` alone cannot tell "the venue keeps
+    /// nothing older" from "this provider never pages". `None` while the feed
+    /// pages, and on a provider that never did.
+    pub history_boundary: Option<HistoryBoundary>,
     /// Its prints carry a volume the venue really traded.
     ///
     /// False on a broker-quoted instrument — an index CFD prints nothing, so
@@ -254,6 +262,15 @@ pub struct FeedCapabilities {
     pub ohlcv_aggressor_split: bool,
 }
 
+/// Where a feed's pageable trade history ends, labelled rather than left
+/// for a reader to infer from paging being off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryBoundary {
+    /// The venue retains no executions older than the chart holds: USD-M
+    /// keeps the recent 48 hours.
+    VenueRetention,
+}
+
 impl FeedCapabilities {
     /// Nothing is available — the honest answer for a feed that does not
     /// resolve to a provider.
@@ -262,6 +279,7 @@ impl FeedCapabilities {
         Self {
             book_capture: false,
             history_paging: false,
+            history_boundary: None,
             traded_volume: false,
             deal_counter: false,
             ohlcv_history: false,

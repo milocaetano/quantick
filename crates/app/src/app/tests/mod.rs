@@ -1638,6 +1638,7 @@ fn app_backfilled_with(
             capabilities: feed::fixed_capabilities(FeedCapabilities {
                 book_capture: false,
                 history_paging: true,
+                history_boundary: None,
                 traded_volume: true,
                 deal_counter: false,
                 ohlcv_history: true,
