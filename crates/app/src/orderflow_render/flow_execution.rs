@@ -224,9 +224,7 @@ fn caption_galley(
     }
     painter.layout_job(job)
 }
-#[path = "flow_labels.rs"]
 mod flow_labels;
-#[path = "flow_runs.rs"]
 mod flow_runs;
 #[cfg(test)]
 #[path = "tests/flow_execution.rs"]
